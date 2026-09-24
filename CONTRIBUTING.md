@@ -393,9 +393,9 @@ module depends only on the layers before it:
 3. `diagnostic` and `op_attribute`, whose tags are `described_tag`
    vocabularies
 4. `tree`
-5. `expr` (with `expr::pattern` and `expr::builtins`) and `pass`, which do
+5. `expression` (with `expression::pattern` and `expression::builtins`) and `pass`, which do
    not depend on each other
-6. `expr::passes`, the passes over expressions, which depends on both
+6. `expression::passes`, the passes over expressions, which depends on both
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -410,11 +410,11 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.provenance` | `fhy_core::provenance` |
 | `fhy_core.op_attribute` | `fhy_core::op_attribute` |
 | `fhy_core.value_domain` | `fhy_core::value_domain` |
-| `fhy_core.symbolic.symbol_type` | `fhy_core::expr` (`SymbolType`) |
-| `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expr` |
-| `fhy_core.symbolic.expression.builtins` | `fhy_core::expr::builtins` |
-| `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expr::pattern`; the rule-applier pass is in `fhy_core::expr::passes` |
-| `fhy_core.symbolic.expression.passes` | `fhy_core::expr::passes` |
+| `fhy_core.symbolic.symbol_type` | `fhy_core::expression` (`SymbolType`) |
+| `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expression` |
+| `fhy_core.symbolic.expression.builtins` | `fhy_core::expression::builtins` |
+| `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expression::pattern`; the rule-applier pass is in `fhy_core::expression::passes` |
+| `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 
 ### Errors belong to their module

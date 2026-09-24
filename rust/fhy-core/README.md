@@ -6,7 +6,7 @@ This crate is the Rust implementation of the `fhy_core` Python package. Where a 
 
 ## Modules
 
-Each module depends only on the modules listed before it, except that `expr` and `pass` are independent of each other and `expr::passes` joins them. Each public item has exactly one public path.
+Each module depends only on the modules listed before it, except that `expression` and `pass` are independent of each other and `expression::passes` joins them. Each public item has exactly one public path.
 
 - `identifier`: `Identifier`, a name hint paired with a process-unique id.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical value per key.
@@ -16,10 +16,10 @@ Each module depends only on the modules listed before it, except that `expr` and
 - `value_domain`: `ValueDomain`, an open, hierarchical classification of the values an operation handles. The shipped defaults are `ValueDomain::data()` and `ValueDomain::address()`.
 - `provenance`: `Position`, `Span` and `Provenance`, where a value came from.
 - `tree`: the `Tree` trait, and iterative walks (`walk_tree`) and memoized rewrites (`rewrite_tree`) over any tree-shaped IR.
-- `expr`: `Expression`, its node kinds, builders, literals and analyses, and `BooleanScreen`.
-  - `expr::builtins`: the catalogue of built-in functions and constants.
-  - `expr::pattern`: `Pattern`, `Capture`, the `Rule` trait and `RewriteRule`, and `apply_rewrite_rules`.
-  - `expr::passes`: `RewriteRuleApplier`, `ExpressionPrettyFormatter` and `register_expression_passes`.
+- `expression`: `Expression`, its node kinds, builders, literals and analyses, and `BooleanScreen`.
+  - `expression::builtins`: the catalogue of built-in functions and constants.
+  - `expression::pattern`: `Pattern`, `Capture`, the `Rule` trait and `RewriteRule`, and `apply_rewrite_rules`.
+  - `expression::passes`: `RewriteRuleApplier`, `ExpressionPrettyFormatter` and `register_expression_passes`.
 - `pass`: `CompilerPass`, `PassManager`, `FixpointPassGroup`, analyses, `Validator`s and the owned `PassRegistry`.
 
 ## One copy per process

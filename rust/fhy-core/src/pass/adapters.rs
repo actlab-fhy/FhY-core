@@ -27,7 +27,7 @@ use crate::tree::{Rewriter, TraversalOrder, Tree, TreeVisitor, rewrite_tree, wal
 /// ```
 /// use std::convert::Infallible;
 ///
-/// use fhy_core::expr::Expression;
+/// use fhy_core::expression::Expression;
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass::{CompilerPass, ExecutePass, WalkPass};
 /// use fhy_core::tree::{TraversalOrder, TreeVisitor};
@@ -119,7 +119,7 @@ where
 /// ```
 /// use std::convert::Infallible;
 ///
-/// use fhy_core::expr::{Expression, ExpressionKind};
+/// use fhy_core::expression::{Expression, ExpressionKind};
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass::{ExecutePass, RewritePass};
 /// use fhy_core::tree::Rewriter;

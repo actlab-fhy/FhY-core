@@ -16,8 +16,8 @@ use expression_support::{
     build_literal,
 };
 use fhy_core::diagnostic::{Note, NoteKind};
-use fhy_core::expr::builtins::{BuiltinConstant, BuiltinFunction};
-use fhy_core::expr::{
+use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
+use fhy_core::expression::{
     BigInt, BinaryOperation, Callee, Decimal, Expression, ExpressionKind, FunctionName,
     FunctionSort, LiteralValue, LogicalOperation, SymbolType, UnaryOperation,
 };

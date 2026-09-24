@@ -155,7 +155,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
 
 ## Rust Crate
 
-Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`. Its modules are `identifier`, `interned`, `described_tag`, `diagnostic`, `op_attribute`, `value_domain`, `provenance`, `tree`, `expr` (with `expr::builtins`, `expr::pattern` and `expr::passes`) and `pass`; the crate's [README](rust/fhy-core/README.md) describes each. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's; elsewhere Rust defines it. The crate serves two purposes:
+Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`. Its modules are `identifier`, `interned`, `described_tag`, `diagnostic`, `op_attribute`, `value_domain`, `provenance`, `tree`, `expression` (with `expression::builtins`, `expression::pattern` and `expression::passes`) and `pass`; the crate's [README](rust/fhy-core/README.md) describes each. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's; elsewhere Rust defines it. The crate serves two purposes:
 
 - **Standalone Rust library**: usable by any Rust project, from crates.io: `fhy-core = "0.2"`.
 - **Python extension module**: the separate `fhy-core-py` crate under `rust/fhy-core-py/` depends on `fhy-core` and wraps it with [PyO3](https://pyo3.rs/) bindings. [maturin](https://www.maturin.rs/) compiles it into the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.

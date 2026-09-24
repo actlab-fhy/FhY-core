@@ -7,7 +7,7 @@
 //! them. Do not add a second test.
 
 use fhy_core::diagnostic::NoteKind;
-use fhy_core::expr::builtins::BuiltinFunction;
+use fhy_core::expression::builtins::BuiltinFunction;
 use fhy_core::identifier::{ID_CAP, Identifier};
 use fhy_core::op_attribute::OpAttribute;
 use fhy_core::value_domain::ValueDomain;

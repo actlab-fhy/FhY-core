@@ -25,7 +25,7 @@ behavior, error model and test plan for each area.
 - Part II: batch sections
   - B1: identity, interning and tag types
   - B2: serialization, diagnostics, provenance
-  - B3: expression core (`fhy_core::expr`)
+  - B3: expression core (`fhy_core::expression`)
   - B4: patterns, rewrite rules, expression passes
   - B5: pass infrastructure (`fhy_core::pass`) and `fhy_core::tree`
   - B6: workspace, tests, docs, bindings, CONTRIBUTING
@@ -49,7 +49,7 @@ behavior is kept only where a concept is defined in both languages at once:
     append-only, and cannot be cleared.
 - **Layering.** There are no dependency cycles:
   `identifier → interned → {diagnostic, provenance, op_attribute,
-  value_domain, described_tag, tree} → expr → pass`, with `expr::passes`
+  value_domain, described_tag, tree} → expr → pass`, with `expression::passes`
   above both.
 - **Serialization.**
   - Plain serde derives, with no envelope, no decode framework and no
@@ -79,16 +79,16 @@ no glob re-exports.
 | `fhy_core::diagnostic` | `Diagnostic`, `Note`, `NoteKind`, `ValidationReport`, … | same |
 | `fhy_core::provenance` | `Position`, `Span`, `Provenance`, … | same |
 | `fhy_core::tree` | `Tree`, `NodeHandle`, `NodeIdentity`, `TreeVisitor<N, C = ()>`, `Rewriter<N, C = ()>`, `walk_tree`, `rewrite_tree`, `TraversalOrder`, `RewriteTreeError` | `pass_infrastructure::{tree, analysis}` |
-| `fhy_core::expr` | `Expression`, node kinds, builders, literals, operations, `BooleanScreen`, `ExpressionDisplay`, `BigInt` | `symbolic::expression`, `symbolic::symbol_type` |
-| `fhy_core::expr::builtins` | `BuiltinFunction`, `BuiltinConstant` | `symbolic::expression::builtins` |
-| `fhy_core::expr::pattern` | `Pattern`, `Capture`, `MatchBindings`, `Rule`, `RewriteRule`, `apply_rewrite_rules`, … | `symbolic::expression::pattern` |
-| `fhy_core::expr::passes` | `RewriteRuleApplier`, `ExpressionPrettyFormatter`, `register_expression_passes(&mut PassRegistry)` | `symbolic::expression::{registration, pattern::rewrite}` |
+| `fhy_core::expression` | `Expression`, node kinds, builders, literals, operations, `BooleanScreen`, `ExpressionDisplay`, `BigInt` | `symbolic::expression`, `symbolic::symbol_type` |
+| `fhy_core::expression::builtins` | `BuiltinFunction`, `BuiltinConstant` | `symbolic::expression::builtins` |
+| `fhy_core::expression::pattern` | `Pattern`, `Capture`, `MatchBindings`, `Rule`, `RewriteRule`, `apply_rewrite_rules`, … | `symbolic::expression::pattern` |
+| `fhy_core::expression::passes` | `RewriteRuleApplier`, `ExpressionPrettyFormatter`, `register_expression_passes(&mut PassRegistry)` | `symbolic::expression::{registration, pattern::rewrite}` |
 | `fhy_core::pass` | `CompilerPass`, `PassManager`, `PassRegistry`, `Validator`, `WalkPass`, `RewritePass`, errors, … | `pass_infrastructure` |
 
 **Layering rules:**
 - `tree` depends only on `std`.
-- `pass` depends on `tree` and `diagnostic`, never on `expr`.
-- In `expr`, only `expr::passes` may import `pass`.
+- `pass` depends on `tree` and `diagnostic`, never on `expression`.
+- In `expression`, only `expression::passes` may import `pass`.
 - CI checks the public paths (B6 §5.4). The layering rules are checked by
   grep in review.
 
@@ -143,7 +143,7 @@ These apply to every batch.
 
 | # | Conflict or gap | Resolution | Affected text |
 |---|---|---|---|
-| R-1 | Where the expression passes live: B4 says `fhy_core::pass::expr`, B3 and B6 say `fhy_core::expr::passes` | **`fhy_core::expr::passes`.** The generic pass framework never depends on `expr`, and passes live with the IR they transform. B4 §2.9 and every `pass::expr` path in B4 read as `expr::passes`. B4's "nothing under `expr` imports `pass`" becomes "only `expr::passes` imports `pass`" | B4 |
+| R-1 | Where the expression passes live: B4 says `fhy_core::pass::expr`, B3 and B6 say `fhy_core::expression::passes` | **`fhy_core::expression::passes`.** The generic pass framework never depends on `expression`, and passes live with the IR they transform. B4 §2.9 and every `pass::expr` path in B4 read as `expression::passes`. B4's "nothing under `expression` imports `pass`" becomes "only `expression::passes` imports `pass`" | B4 |
 | R-2 | Ids for built-in function parameters: B1 reserves ids 64–90 (`MAX_PARAMETERS` … `GELU_PARAMETERS`), while B3 keeps them lazy | **Lazy (B3).** `ID_CAP` removes the exhaustion that forced eager creation, and the parameters are never serialized. Delete the parameter rows and constants from B1's reserved table. The table then covers only the 10 shipped tags (note kinds 0–3, op attributes 16–19, value domains 32–33). B6 step 4's "built-in parameters follow B1's reserved ids" is void | B1 §2.2, B6 §5.1 |
 | R-3 | How far the Python change reaches: B1 D-5 moves Python's shipped tags onto the reserved ids and adds a `reserved_identifiers.json` corpus | **Counter and cap only.** Python's `identifier.py` starts its fallback counter at 1024 and applies the 2^63 cap with the same errors, and nothing more. Python's own tags are created at import in a fixed order, so their ids are already stable, and they will be replaced by the Rust tags later. Drop the Python changes to `op_attribute.py`, `diagnostic.py`, `value_domain.py` and `builtins.py`, the new corpus and its noxfile change | B1 §2.9, §8, §9 |
 | R-4 | B1 N-1: decoding a `Canonical<ValueDomain>` recurses once per parent level, and postcard has no nesting limit | **Fix in B1.** The wire form of a value domain is a flat, root-first list of `{name, description}` ancestors, decoded iteratively. Regression test: `value_domain_decodes_a_deep_chain_on_a_small_stack` | B1 §2.7, §8 |
@@ -207,14 +207,14 @@ workspace green: fmt, clippy `-D warnings`, tests and doc.
 |---|---|---|
 | 0.1 | `#[expect]` on the clippy break (R-7) | none |
 | 0.2 | CONTRIBUTING "Porting to Rust" replacement text (B6 §6) | none |
-| 0.3 | Rename `symbolic` to `expr`, and `pattern/core.rs` to `matching.rs` | 0.1 |
+| 0.3 | Rename `symbolic` to `expression`, and `pattern/core.rs` to `matching.rs` | 0.1 |
 | 0.4 | Rename `pass_infrastructure` to `pass` (tree items stay for now) | 0.3 |
 | 0.5 | Merge the isolation-safe integration tests into `tests/it` | 0.4 |
 | 1 | B1: identity, interning, tags, Python counter | 0 |
 | 2 | B2: serde, diagnostics, provenance | 1 |
 | 3 | B5: `tree` and `pass` | 0; may overlap step 2 once B2 freezes `Diagnostic`'s API |
-| 4 | B3: expression core; create `expr::passes` | 1, 2, 3 |
-| 5 | B4: patterns, rule applier into `expr::passes` | 3, 4 |
+| 4 | B3: expression core; create `expression::passes` | 1, 2, 3 |
+| 5 | B4: patterns, rule applier into `expression::passes` | 3, 4 |
 | 6 | B6 finish: last test merges, CI checks, lints, docs, manifest | 1–5 |
 
 Each finding follows the test-first discipline:
@@ -1481,7 +1481,7 @@ F-015 (reports), F-021 (`Diagnostic::new`, `Span::try_new`, `fuse`), F-035
 
 Layering (S-1): `diagnostic` depends on `identifier`, `interned` and B1's
 described-tag type. `provenance` depends on nothing in the crate. Neither
-hosts passes, so the `expr::passes` versus `pass` choice does not apply.
+hosts passes, so the `expression::passes` versus `pass` choice does not apply.
 
 ---
 
@@ -2703,7 +2703,7 @@ PartialEq + Debug>(value: &T)`, which checks both formats, plus these cases:
 
 ---
 
-## B3: the symbolic expression core, becoming `fhy_core::expr`
+## B3: the symbolic expression core, becoming `fhy_core::expression`
 
 Batch files at HEAD 412e234: `src/symbolic/{mod.rs, symbol_type.rs,
 wire_name.rs}` and `src/symbolic/expression/{mod.rs, node.rs, literal.rs,
@@ -2752,7 +2752,7 @@ consume, it lists what they have to adapt to.
 
 ### 1. Summary
 
-The expression core moves to `fhy_core::expr` and stops imitating Python's
+The expression core moves to `fhy_core::expression` and stops imitating Python's
 runtime model:
 
 - **Nodes:**
@@ -2776,46 +2776,46 @@ linear time.
 ### 2. Module layout (S-1)
 
 ```
-src/expr/mod.rs          explicit re-exports only (no globs); `pub use num_bigint::BigInt;`
-src/expr/node.rs         Expression, ExpressionKind, UnaryExpression, BinaryExpression,
+src/expression/mod.rs          explicit re-exports only (no globs); `pub use num_bigint::BigInt;`
+src/expression/node.rs         Expression, ExpressionKind, UnaryExpression, BinaryExpression,
                          LogicalExpression, PiecewiseExpression, CallExpression
-src/expr/build.rs        constructors, From impls, operator impls
-src/expr/callee.rs       Callee, FunctionName, FunctionNameError
-src/expr/literal.rs      LiteralValue, Decimal, LiteralTextError      (absorbs the decimal part of python_text.rs)
-src/expr/operation.rs    UnaryOperation, BinaryOperation, LogicalOperation, UnknownNameError
-src/expr/sort.rs         FunctionSort
-src/expr/symbol_type.rs  SymbolType                                   (was src/symbolic/symbol_type.rs)
-src/expr/alpha.rs        AlphaRenaming
-src/expr/error.rs        PiecewiseError, RebuildError, NonInjectiveRenamingError
-src/expr/display.rs      FormatOptions, Notation, IdentifierStyle, ExpressionDisplay, `impl Debug/Display for Expression`  (was pprint.rs)
-src/expr/screen.rs       BooleanScreen, Environment, SymbolTypes, SortLookup, NoRegisteredSorts,
+src/expression/build.rs        constructors, From impls, operator impls
+src/expression/callee.rs       Callee, FunctionName, FunctionNameError
+src/expression/literal.rs      LiteralValue, Decimal, LiteralTextError      (absorbs the decimal part of python_text.rs)
+src/expression/operation.rs    UnaryOperation, BinaryOperation, LogicalOperation, UnknownNameError
+src/expression/sort.rs         FunctionSort
+src/expression/symbol_type.rs  SymbolType                                   (was src/symbolic/symbol_type.rs)
+src/expression/alpha.rs        AlphaRenaming
+src/expression/error.rs        PiecewiseError, RebuildError, NonInjectiveRenamingError
+src/expression/display.rs      FormatOptions, Notation, IdentifierStyle, ExpressionDisplay, `impl Debug/Display for Expression`  (was pprint.rs)
+src/expression/screen.rs       BooleanScreen, Environment, SymbolTypes, SortLookup, NoRegisteredSorts,
                          BooleanPosition, NonBooleanLogicalOperandError
-src/expr/wire.rs         private wire shapes; `impl Serialize/Deserialize for Expression`
-src/expr/builtins.rs     `pub mod builtins`: BuiltinFunction, BuiltinConstant, ComposedFunction
-src/expr/passes.rs       `pub mod passes`: ExpressionPrettyFormatter (+ B4's RewriteRuleApplier, register_expression_passes)
-src/expr/pattern/        B4
+src/expression/wire.rs         private wire shapes; `impl Serialize/Deserialize for Expression`
+src/expression/builtins.rs     `pub mod builtins`: BuiltinFunction, BuiltinConstant, ComposedFunction
+src/expression/passes.rs       `pub mod passes`: ExpressionPrettyFormatter (+ B4's RewriteRuleApplier, register_expression_passes)
+src/expression/pattern/        B4
 ```
 
-- **Where the pass types go (S-1 choice for this batch): `fhy_core::expr::passes`.**
-  - This is the only module under `expr` that imports `fhy_core::pass`.
-  - `fhy_core::pass` does not import `expr`. I grepped
+- **Where the pass types go (S-1 choice for this batch): `fhy_core::expression::passes`.**
+  - This is the only module under `expression` that imports `fhy_core::pass`.
+  - `fhy_core::pass` does not import `expression`. I grepped
     `src/pass_infrastructure`: the only mentions of `symbolic` are doc
     examples in `tree.rs:424,519`, which move with the tree module in B5.
   - I recommend that B4 put `RewriteRuleApplier` and
     `register_expression_passes` in the same module.
-- **What core `expr` depends on:**
+- **What core `expression` depends on:**
   - `crate::identifier`;
   - `crate::tree`, for `Tree`, `NodeHandle`, `NodeIdentity`, `walk_tree`,
     `rewrite_tree` and the identity hasher. **Assumption about B5:** these
     move to `fhy_core::tree`, and the walkers are generic over a context
-    `C`, so `expr` calls them with `()` and needs no `PassContext` (F-008).
+    `C`, so `expression` calls them with `()` and needs no `PassContext` (F-008).
 - `symbolic/` and `wire_name.rs` are deleted.
 
 ### 3. Desired public interface
 
 Visibility is `pub`, reachable at the path shown, unless stated otherwise.
 
-#### 3.1 `fhy_core::expr::Expression` and node kinds (`node.rs`)
+#### 3.1 `fhy_core::expression::Expression` and node kinds (`node.rs`)
 
 ```rust
 #[derive(Clone)]
@@ -3015,7 +3015,7 @@ impl Error for UnknownNameError;
 
 `FunctionSort` (`sort.rs`) and `SymbolType` (`symbol_type.rs`, which moves
 from `fhy_core::symbolic::symbol_type::SymbolType` to
-`fhy_core::expr::SymbolType`) get the same treatment:
+`fhy_core::expression::SymbolType`) get the same treatment:
 
 - the derive and `rename_all` attributes above;
 - `as_str`, `Display`, and `FromStr<Err = UnknownNameError>`;
@@ -3153,7 +3153,7 @@ impl fmt::Display for ExpressionDisplay<'_>;
 // REMOVED: format_expression (use expr.display(opts).to_string())
 ```
 
-`fhy_core::expr::passes::ExpressionPrettyFormatter` moves here from
+`fhy_core::expression::passes::ExpressionPrettyFormatter` moves here from
 `pprint.rs`. Its API is unchanged: `new(FormatOptions)`, `options()`, and
 `CompilerPass<Expression, String>`. Its `run` returns
 `ir.display(self.options).to_string()`. Its default `name()` follows B5's
@@ -3224,7 +3224,7 @@ impl Error for NonBooleanLogicalOperandError;
 // REMOVED: validate_logical_operands, validate_predicate
 ```
 
-#### 3.10 Built-ins (`fhy_core::expr::builtins`, F-024, F-029)
+#### 3.10 Built-ins (`fhy_core::expression::builtins`, F-024, F-029)
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -3288,7 +3288,7 @@ exposes only the two identifier-counter functions.
 
 | Change | Item | Before (HEAD) | After | Semver | Call sites |
 |---|---|---|---|---|---|
-| move | module | `fhy_core::symbolic::expression::*`, `fhy_core::symbolic::symbol_type::SymbolType` | `fhy_core::expr::*`, `fhy_core::expr::SymbolType` | breaking | every symbolic test file; `src/shipped.rs:12,44-45` (deleted by B1); `src/identifier.rs:714` (B1 test); `src/pass_infrastructure/tree.rs:424,519` (B5 doc examples) |
+| move | module | `fhy_core::symbolic::expression::*`, `fhy_core::symbolic::symbol_type::SymbolType` | `fhy_core::expression::*`, `fhy_core::expression::SymbolType` | breaking | every symbolic test file; `src/shipped.rs:12,44-45` (deleted by B1); `src/identifier.rs:714` (B1 test); `src/pass_infrastructure/tree.rs:424,519` (B5 doc examples) |
 | change | `ExpressionKind` | 6 variants | + `Logical(LogicalExpression)` | breaking (exhaustive) | every `match expr.kind()`: `pattern/core.rs` (B4), `tests/common/expression.rs`, `pprint_properties.rs::count_inner_nodes`, the tree and pass tests |
 | remove | `BinaryOperation::{LogicalAnd, LogicalOr}` | 15 variants | 13 variants; `LogicalOperation::{And, Or}` | breaking | builders, screen, pprint, vocabulary tests, `tests/common/expression.rs`, builtins_stories, pattern_stories (B4) |
 | rename | `BinaryOperation::Modulo` | `Modulo`, wire `"modulo"` | `FloorMod`, wire `"floor_mod"` | breaking | builders, pprint, vocabulary tests, pattern_properties (B4), `tests/common/expression.rs` |
@@ -3321,7 +3321,7 @@ exposes only the two identifier-counter functions.
 | add | `Expression::display`, `ExpressionDisplay`, `impl Display for Expression` | none | §3.8 | non-breaking | none |
 | change | `Expression: Debug` | derived, recursive | hand-written, bounded | behavioral | failure arms only |
 | change | `Notation`, `IdentifierStyle` | exhaustive | `#[non_exhaustive]` | breaking | none outside the crate |
-| move | `ExpressionPrettyFormatter` | `symbolic::expression` | `expr::passes` | breaking | `expression_pass_stories.rs` |
+| move | `ExpressionPrettyFormatter` | `symbolic::expression` | `expression::passes` | breaking | `expression_pass_stories.rs` |
 | replace | `validate_logical_operands`, `validate_predicate` | 4-parameter free fns taking `&HashMap`s | `BooleanScreen` builder | breaking | `expression_screen_stories.rs`, `expression_properties.rs` |
 | change | `SortLookup::call_result_sort` | `(&self, &str)` | `(&self, &FunctionName)`, with defaults | breaking | screen stories `BuiltinSorts`; properties `:132-136` |
 | change | `BooleanPosition` | `LogicalOperand { operation: BinaryOperation }`, `PredicateRoot` | `LogicalOperand { operation: LogicalOperation, operand_index }`; no `PredicateRoot` | breaking | screen stories |
@@ -3588,7 +3588,7 @@ exposes only the two identifier-counter functions.
   counter as it goes, so a payload refused later may already have advanced
   it. The `Deserialize` doc says so. The "refused payload restores no
   identifier" guarantee (`wire.rs:1-6, 194-201`) is dropped.
-- **Formats.** No `serde_json` type appears in `expr`, and serde's
+- **Formats.** No `serde_json` type appears in `expression`, and serde's
   `deserialize_any` is never called. A postcard or bincode round trip
   works: the wire shape is a struct holding a sequence of externally tagged
   enums with typed fields. That still depends on B1's `Identifier` serde
@@ -3734,7 +3734,7 @@ binding will need to:
 
 #### 8.1 Existing tests: keep, modify, delete
 
-Every file also gets the mechanical updates: the `fhy_core::expr` path,
+Every file also gets the mechanical updates: the `fhy_core::expression` path,
 `Expression::piecewise/call/all`, `impl Into<Expression>` helpers, and `!`
 in place of `.logical_not()`. These are not repeated below.
 `tests/common/expression.rs` changes as follows:
@@ -4078,7 +4078,7 @@ in place of `.logical_not()`. These are not repeated below.
   - If this commit has to land first, use
     `#[expect(clippy::manual_assert_eq, reason = "Debug of a 2^64-occurrence DAG does not terminate until the bounded Debug lands")]`
     and remove it together with the `Debug` change.
-- `expression_pretty_formatter_*` (6 tests) move to `expr::passes`.
+- `expression_pretty_formatter_*` (6 tests) move to `expression::passes`.
   `…_execute_matches_format_expression` becomes `…_matches_display`.
 - `expression_pretty_formatter_name_is_its_type_name` pins `type_name`
   output (F-035). It follows B5's naming decision.
@@ -4196,12 +4196,12 @@ in place of `.logical_not()`. These are not repeated below.
   the wire shape is documented, not exposed as types.
 - **Trait-object lookups.** `BooleanScreen` stores `&dyn` lookups, so its
   signature exposes no generic map types.
-- **Module privacy.** Node structs live in the leaf `expr::node`. Only
+- **Module privacy.** Node structs live in the leaf `expression::node`. Only
   `node.rs`, `build.rs` and `wire.rs` construct them, through `pub(crate)`
   constructors that check the invariants, and no descendant module touches
   their fields.
 - **Single paths.** Each item has one public path, and `mod.rs` has no glob
-  re-export. `BigInt`'s single path is `fhy_core::expr::BigInt`.
+  re-export. `BigInt`'s single path is `fhy_core::expression::BigInt`.
 
 ### 10. Findings covered and decisions for sign-off
 
@@ -4262,7 +4262,7 @@ Decisions I made that the user should confirm:
     and `SymbolType` are closed classifications. `BuiltinFunction`,
     `BuiltinConstant`, `Notation`, `IdentifierStyle`, `BooleanPosition` and
     every error enum stay `#[non_exhaustive]`.
-12. **Pass types go in `fhy_core::expr::passes`** (S-1 choice). B4 should
+12. **Pass types go in `fhy_core::expression::passes`** (S-1 choice). B4 should
     match this for `RewriteRuleApplier` and registration.
 13. **`display` returns a named `ExpressionDisplay<'_>`, not `impl
     Display`.** It follows `Path::display` and can be stored in a struct.
@@ -4292,7 +4292,7 @@ Possibly misjudged or incomplete in the audit:
 
 ---
 
-## B4: patterns, rewrite rules and the expression passes (`fhy_core::expr::pattern`, `fhy_core::pass::expr`)
+## B4: patterns, rewrite rules and the expression passes (`fhy_core::expression::pattern`, `fhy_core::pass::expr`)
 
 Scope at HEAD 412e234:
 - `rust/fhy-core/src/symbolic/expression/pattern/{mod.rs, core.rs, rewrite.rs}`
@@ -4304,27 +4304,27 @@ Findings: F-009, F-014 (pattern and rewrite errors), F-019, F-029 (pattern part)
 
 ### 1. Summary
 
-Patterns get typed `Capture` handles, bindings that are indexed by handle, and constructors that cannot fail and take no `Option` mode arguments. Matching now uses one literal equality, and bindings are kept on a `&mut` trail. Rewrite rules become one composable `Rule` trait: a rule that declines or returns its own input does not fire, which fixes F-009 on the rule side. The two concrete expression passes and their registration move out of `expr` into `fhy_core::pass::expr`, and registration fills a caller-owned `PassRegistry` (decision 7). With that move, `expr` no longer imports anything from `pass`.
+Patterns get typed `Capture` handles, bindings that are indexed by handle, and constructors that cannot fail and take no `Option` mode arguments. Matching now uses one literal equality, and bindings are kept on a `&mut` trail. Rewrite rules become one composable `Rule` trait: a rule that declines or returns its own input does not fire, which fixes F-009 on the rule side. The two concrete expression passes and their registration move out of `expression` into `fhy_core::pass::expr`, and registration fills a caller-owned `PassRegistry` (decision 7). With that move, `expression` no longer imports anything from `pass`.
 
 ### 2. Desired public interface
 
 Module layout (S-1). There are no glob re-exports, and every item has exactly one public path:
 
 ```
-src/expr/pattern/mod.rs        module docs; explicit `pub use` of the items below
-src/expr/pattern/matching.rs   (private; replaces pattern/core.rs) Capture, Pattern, MatchBindings, CallbackError
-src/expr/pattern/rewrite.rs    (private) Rule, RewriteRule, RewriteOutcome, FiredRule, RewriteError, apply_rewrite_rules
+src/expression/pattern/mod.rs        module docs; explicit `pub use` of the items below
+src/expression/pattern/matching.rs   (private; replaces pattern/core.rs) Capture, Pattern, MatchBindings, CallbackError
+src/expression/pattern/rewrite.rs    (private) Rule, RewriteRule, RewriteOutcome, FiredRule, RewriteError, apply_rewrite_rules
 src/pass/expr.rs               RewriteRuleApplier, ExpressionPrettyFormatter, register_expression_passes
 ```
 
-Public paths: `fhy_core::expr::pattern::{Capture, Pattern, MatchBindings, CallbackError, Rule, RewriteRule, RewriteOutcome, FiredRule, RewriteError, apply_rewrite_rules}` and `fhy_core::pass::expr::{RewriteRuleApplier, ExpressionPrettyFormatter, register_expression_passes}`.
+Public paths: `fhy_core::expression::pattern::{Capture, Pattern, MatchBindings, CallbackError, Rule, RewriteRule, RewriteOutcome, FiredRule, RewriteError, apply_rewrite_rules}` and `fhy_core::pass::expr::{RewriteRuleApplier, ExpressionPrettyFormatter, register_expression_passes}`.
 
-**Layering decision (S-1): the passes go to `fhy_core::pass::expr`, not `expr::passes`.** Reasons:
-- Nothing under `src/expr/` imports `crate::pass`, so a single grep checks the rule "expr must not depend on pass".
-- The dependency then points up the S-1 chain (`expr → pass`, so `pass` may use `expr`).
-- In a later crate split (decision 13), the two passes land in the passes crate, which already sits above the symbolic crate. An `expr::passes` module would have to move out of its parent crate.
+**Layering decision (S-1): the passes go to `fhy_core::pass::expr`, not `expression::passes`.** Reasons:
+- Nothing under `src/expression/` imports `crate::pass`, so a single grep checks the rule "expr must not depend on pass".
+- The dependency then points up the S-1 chain (`expr → pass`, so `pass` may use `expression`).
+- In a later crate split (decision 13), the two passes land in the passes crate, which already sits above the symbolic crate. An `expression::passes` module would have to move out of its parent crate.
 
-`expr::pattern` still uses `rewrite_tree`/`Rewriter`/`Tree` and the identity-keyed map. After F-008 (B5) these come from `fhy_core::tree`. This spec assumes `NodeIdentity` and the crate-private `BuildIdentityHasher` also live at or below `expr` (in `tree`). If B5 keeps them in `pass`, the blame map keys on a private address newtype in `expr::pattern` instead, with the same contract.
+`expression::pattern` still uses `rewrite_tree`/`Rewriter`/`Tree` and the identity-keyed map. After F-008 (B5) these come from `fhy_core::tree`. This spec assumes `NodeIdentity` and the crate-private `BuildIdentityHasher` also live at or below `expression` (in `tree`). If B5 keeps them in `pass`, the blame map keys on a private address newtype in `expression::pattern` instead, with the same contract.
 
 #### 2.1 `Capture` (NEW, `pub`)
 
@@ -4594,7 +4594,7 @@ All changes are breaking unless marked otherwise; S-8 allows every one. "p_stori
 
 | Change | Item | Before (HEAD) | After | Semver | Call sites |
 |---|---|---|---|---|---|
-| moved | module | `symbolic::expression::pattern` (`pattern/core.rs` + `rewrite.rs`) | `expr::pattern` (`matching.rs` + `rewrite.rs`, private) | breaking | every `use` in the 6 test files; doc tests in core.rs:120-137, 578-590, rewrite.rs:203-231, 468-504 |
+| moved | module | `symbolic::expression::pattern` (`pattern/core.rs` + `rewrite.rs`) | `expression::pattern` (`matching.rs` + `rewrite.rs`, private) | breaking | every `use` in the 6 test files; doc tests in core.rs:120-137, 578-590, rewrite.rs:203-231, 468-504 |
 | added | `Capture` | n/a (names were `&str`) | `Capture::new(&str)`, `name()`, identity `Eq`/`Hash` | non-breaking | new in all rule builders (common:155-222, p_props:269-283) |
 | changed | `Pattern::capture` | `core.rs:160` `fn capture(name: &str, sub_pattern: Pattern) -> Result<Self, PatternError>` | `fn capture(&Capture) -> Self` + `fn captured_as(self, &Capture) -> Self` | breaking | p_props 3, p_rewrite 1, common 2, p_stories 1; wrappers `build_capture` (p_stories 34, p_rewrite 7, p_user 4, eps 3) and `build_capture_of` (p_stories 14, p_rewrite 2, p_user 2) |
 | changed | `Pattern::literal` | `core.rs:182` `fn literal(value: Option<LiteralValue>) -> Self` | `literal(impl Into<LiteralValue>)`, `any_literal()` | breaking | p_stories 7, p_props 4, p_rewrite 2, common 1; wrapper `build_literal_pattern` (p_stories 24, p_rewrite 13, p_user 3, eps 2); rustdoc core.rs:129, rewrite.rs:215, 481 |
@@ -4628,13 +4628,13 @@ All changes are breaking unless marked otherwise; S-8 allows every one. "p_stori
 
 ### 4. Encapsulation delta
 
-- **`match_under`** (pub) becomes `Pattern::match_into`, `pub(super)`, visible only inside `expr::pattern`. **`try_bind`** (pub) becomes the private `MatchBindings::bind`. `truncate`/`clear` on the trail are `pub(super)`. Neither had a caller outside the crate.
+- **`match_under`** (pub) becomes `Pattern::match_into`, `pub(super)`, visible only inside `expression::pattern`. **`try_bind`** (pub) becomes the private `MatchBindings::bind`. `truncate`/`clear` on the trail are `pub(super)`. Neither had a caller outside the crate.
 - **`MatchBindings`** gains no public constructor that can bind a capture. Only a successful match produces non-empty bindings, so bindings always reflect a real match.
 - **`Capture`** keeps its representation private (an `Arc` of a private name struct); identity is the whole contract.
 - **`Pattern`** keeps its private kind; it changes from a `Box` tree to `Arc<PatternKind>`.
 - **`RewriteError` variants** get `#[non_exhaustive]`, so code outside the crate can match them only with `..` and cannot build them. `RewriteError` itself was already `#[non_exhaustive]`.
 - **Crate-private seam:** `run_rules`/`RuleRun` are `pub(crate)` and used only by `pass::expr`.
-- **Layering:** `src/expr/**` no longer imports `crate::pass`. Today it imports it at rewrite.rs:20-23, pprint.rs:16 and registration.rs:3; the node.rs and screen.rs imports are B5's/B3's to move to `tree`. The removed `PassContext::new_standalone` use at rewrite.rs:627 was one of F-008's "crate-private back doors".
+- **Layering:** `src/expression/**` no longer imports `crate::pass`. Today it imports it at rewrite.rs:20-23, pprint.rs:16 and registration.rs:3; the node.rs and screen.rs imports are B5's/B3's to move to `tree`. The removed `PassContext::new_standalone` use at rewrite.rs:627 was one of F-008's "crate-private back doors".
 - **Module named `core`** (`pattern/mod.rs:11`, which shadows the `core` crate) is gone.
 - **Blame helpers:** `find_refused_child_index` (rewrite.rs:43-48) hard-codes the piecewise child layout (`case_index * 2`). It moves next to `Expression::children` in node.rs as a `pub(crate)` method, so the child layout has one owner.
 
@@ -4901,7 +4901,7 @@ Covered:
 - **F-035/F-037**, pattern tests: 8.1, 8.3, 8.5.
 
 Decisions the user should sign off:
-- **D-B4-1** The passes and registration go to `fhy_core::pass::expr`, not `fhy_core::expr::passes` (reasons in section 2).
+- **D-B4-1** The passes and registration go to `fhy_core::pass::expr`, not `fhy_core::expression::passes` (reasons in section 2).
 - **D-B4-2** One literal equality, the canonical `LiteralValue ==`. `Pattern::literal(5)` starts matching `"05"`, and `literal(nan)` starts matching NaN.
 - **D-B4-3** `CallbackError` stays type-erased and stops implementing `std::error::Error` (anyhow-style), so the blanket `From<E: Error>` is possible. This departs from S-5's shape rule for this one transport type.
 - **D-B4-4** `with_guard` conjoins guards (the one added last runs first) instead of replacing the earlier guard. This follows from composing the guard into the rewrite.
@@ -4917,7 +4917,7 @@ Findings I think were misjudged, or need a note:
 - **F-019 "two equalities, so `nan - nan → 0` fires":** this is only half right. The two relations do disagree, and that is fixed. But once they are unified on the lawful relation, `nan - nan → 0` *still* fires. Structural equality of expressions is not IEEE equality: `x - x → 0` is unsound for floats (NaN, ±inf) whatever the matcher does. A rule that needs IEEE semantics must guard on it. Unifying on stored-form equality would stop that firing only by making the matcher non-reflexive.
 - **F-009 "fixpoint loops never terminate":** the fix makes loops terminate for rules that return their input or a subterm. Rules that rebuild a structurally equal fresh node still loop, because the change test is `ptr_eq` by design. This is documented rather than fixed; a structural-equality change test would cost a full comparison per firing.
 - **PAT-01's suggested storage `Vec<Option<Expression>>` indexed by capture id:** rejected (2.3). It needs globally unique dense ids (new global state, against decision 2) or per-pattern id sets (easy to misuse).
-- **Path mismatch:** decision 13's example path `fhy_core::expr::Pattern` conflicts with S-1's `fhy_core::expr::pattern` module. This spec follows S-1, with `fhy_core::expr::pattern::Pattern` as the single path. The user may prefer `expr::Pattern`.
+- **Path mismatch:** decision 13's example path `fhy_core::expression::Pattern` conflicts with S-1's `fhy_core::expression::pattern` module. This spec follows S-1, with `fhy_core::expression::pattern::Pattern` as the single path. The user may prefer `expression::Pattern`.
 - **F-039 wording "drop the per-firing map":** for this crate, dropping it would lose correct blame in the shared-condition case (p_rewrite:931). The identity hasher alone addresses the perf nit.
 
 Coordination:
@@ -4989,14 +4989,14 @@ src/pass/adapters.rs   WalkPass, RewritePass
 - The file is `compiler_pass.rs`, not `pass.rs`, because `pass::pass` trips
   `clippy::module_inception`.
 - **Dependencies.** `tree` depends only on `std`. `pass` depends on `tree`,
-  `diagnostic` and `identifier`. `pass` has **no** dependency on `expr`, so
+  `diagnostic` and `identifier`. `pass` has **no** dependency on `expression`, so
   B4 may put `RewriteRuleApplier`, `ExpressionPrettyFormatter` and
-  `register_expression_passes` in `fhy_core::pass` or in an `expr::passes`
+  `register_expression_passes` in `fhy_core::pass` or in an `expression::passes`
   module without creating a cycle. B4 owns that choice.
 - **Decision B5-1.** `NodeIdentity` and `NodeHandle` move to
   `fhy_core::tree`, together with the items S-1 lists. `Tree: NodeHandle`,
-  and `expr` implements both for `Expression`. If they stayed in `pass`,
-  `expr` would still depend on `pass`, which is the F-008 layering bug.
+  and `expression` implements both for `Expression`. If they stayed in `pass`,
+  `expression` would still depend on `pass`, which is the F-008 layering bug.
 
 #### 2.2 `fhy_core::tree`
 
@@ -6291,12 +6291,12 @@ also sets the order in which B1 to B6 land.
 Batch-level decisions (the user signs off on these; section 9 lists them
 again):
 
-- **B6-D1:** expression passes live in **`fhy_core::expr::passes`**, not in
-  `fhy_core::pass`. The generic `pass` module then never depends on `expr`.
+- **B6-D1:** expression passes live in **`fhy_core::expression::passes`**, not in
+  `fhy_core::pass`. The generic `pass` module then never depends on `expression`.
   This also matches Python's `fhy_core/symbolic/expression/passes/`.
 - **B6-D2:** `NodeHandle`, `NodeIdentity` and the crate-private
-  `BuildIdentityHasher` move to `fhy_core::tree`. `expr` uses them
-  (`node.rs`, `screen.rs`), so leaving them in `pass` would make `expr`
+  `BuildIdentityHasher` move to `fhy_core::tree`. `expression` uses them
+  (`node.rs`, `screen.rs`), so leaving them in `pass` would make `expression`
   depend on `pass`. B5 confirms this.
 - **B6-D3:** `pattern/core.rs` is **renamed** to `pattern/matching.rs`
   rather than folded into `pattern/mod.rs`. `Pattern` then stays in a leaf
@@ -6332,9 +6332,9 @@ The layering has no cycles. An arrow means "may depend on":
 
 ```
 identifier ← interned ← {diagnostic, provenance, op_attribute, value_domain} ← tree
-tree ← expr (expr::pattern, expr::builtins)        expr never names crate::pass
-tree, diagnostic, identifier ← pass                pass never names crate::expr
-expr, pass ← expr::passes                          the only module that names both
+tree ← expr (expression::pattern, expression::builtins)        expr never names crate::pass
+tree, diagnostic, identifier ← pass                pass never names crate::expression
+expr, pass ← expression::passes                          the only module that names both
 ```
 
 At HEAD, `identifier.rs` and `shipped.rs` depend on `symbolic::expression`
@@ -6359,19 +6359,19 @@ column with its owner. B6 changes only the module part of a path.
 | `value_domain::ValueDomain` | unchanged | unchanged |
 | `value_domain::{get_data_domain, get_address_domain}` | unchanged | `ValueDomain::{data, address}()` (S-7) |
 | `symbolic` (module) | **REMOVED** | removed |
-| `symbolic::expression` (module) | `expr` | `expr` |
-| `symbolic::expression::{AlphaRenaming, BigInt, BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression, UnaryExpression, BinaryOperation, UnaryOperation, LiteralKind, LiteralValue, LiteralTextError, ExpressionBuildError, BooleanPosition, NonBooleanLogicalOperandError, NonInjectiveRenamingError, FunctionSort, SortLookup, NoRegisteredSorts, IntoOperand, FormatOptions, IdentifierStyle, Notation}` | `expr::{same names}` | `expr::…`. Names and fate (e.g. `IntoOperand`, F-024) are B3's. `BigInt` keeps `expr::BigInt` as its single path |
-| `symbolic::expression::{build_call, build_logical_and, build_logical_or, build_piecewise, validate_logical_operands, validate_predicate, format_expression}` | `expr::{same}` | `expr::…` (B3). `format_expression` becomes `expr.display(opts)` (S-7) |
-| `symbolic::expression::ExpressionPrettyFormatter` | `expr::ExpressionPrettyFormatter` | `expr::passes::ExpressionPrettyFormatter` (B3, B6-D1) |
-| `symbolic::expression::register_expression_passes` | `expr::register_expression_passes` | `expr::passes::register_expression_passes` (B3; signature takes B5's `PassRegistry`, decision 7) |
+| `symbolic::expression` (module) | `expression` | `expression` |
+| `symbolic::expression::{AlphaRenaming, BigInt, BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression, UnaryExpression, BinaryOperation, UnaryOperation, LiteralKind, LiteralValue, LiteralTextError, ExpressionBuildError, BooleanPosition, NonBooleanLogicalOperandError, NonInjectiveRenamingError, FunctionSort, SortLookup, NoRegisteredSorts, IntoOperand, FormatOptions, IdentifierStyle, Notation}` | `expression::{same names}` | `expression::…`. Names and fate (e.g. `IntoOperand`, F-024) are B3's. `BigInt` keeps `expression::BigInt` as its single path |
+| `symbolic::expression::{build_call, build_logical_and, build_logical_or, build_piecewise, validate_logical_operands, validate_predicate, format_expression}` | `expression::{same}` | `expression::…` (B3). `format_expression` becomes `expr.display(opts)` (S-7) |
+| `symbolic::expression::ExpressionPrettyFormatter` | `expression::ExpressionPrettyFormatter` | `expression::passes::ExpressionPrettyFormatter` (B3, B6-D1) |
+| `symbolic::expression::register_expression_passes` | `expression::register_expression_passes` | `expression::passes::register_expression_passes` (B3; signature takes B5's `PassRegistry`, decision 7) |
 | `symbolic::symbol_type` (module) | **REMOVED** | removed |
-| `symbolic::symbol_type::SymbolType` | `expr::SymbolType` | `expr::SymbolType` |
-| `symbolic::expression::pattern` (module) | `expr::pattern` | `expr::pattern` |
-| `symbolic::expression::pattern::{Pattern, MatchBindings, CallbackError, PatternError, RewriteRule, RewriteOutcome, RewriteError, FiredRule}` | `expr::pattern::{same}` | `expr::pattern::…` (B4 content) |
-| `symbolic::expression::pattern::{match_pattern, does_pattern_match, apply_rewrite_rule, apply_rewrite_rules}` | `expr::pattern::{same}` | methods: `pattern.matches(&e)`, `rule.apply(&e)` … (S-7, B4) |
-| `symbolic::expression::pattern::RewriteRuleApplier` | `expr::pattern::RewriteRuleApplier` | `expr::passes::RewriteRuleApplier` (B4, B6-D1) |
-| `symbolic::expression::builtins` (module) | `expr::builtins` | `expr::builtins` |
-| `symbolic::expression::builtins::{ComposedFunction, NativeFunctionSignature, NativeConstantSpec, find_composed_function, find_native_function, find_native_constant, list_composed_functions, list_native_functions, list_native_constants}` | `expr::builtins::{same}` | `expr::builtins::…`. No `list_` prefix (S-7). Enum-named built-ins (F-024) are B3's |
+| `symbolic::symbol_type::SymbolType` | `expression::SymbolType` | `expression::SymbolType` |
+| `symbolic::expression::pattern` (module) | `expression::pattern` | `expression::pattern` |
+| `symbolic::expression::pattern::{Pattern, MatchBindings, CallbackError, PatternError, RewriteRule, RewriteOutcome, RewriteError, FiredRule}` | `expression::pattern::{same}` | `expression::pattern::…` (B4 content) |
+| `symbolic::expression::pattern::{match_pattern, does_pattern_match, apply_rewrite_rule, apply_rewrite_rules}` | `expression::pattern::{same}` | methods: `pattern.matches(&e)`, `rule.apply(&e)` … (S-7, B4) |
+| `symbolic::expression::pattern::RewriteRuleApplier` | `expression::pattern::RewriteRuleApplier` | `expression::passes::RewriteRuleApplier` (B4, B6-D1) |
+| `symbolic::expression::builtins` (module) | `expression::builtins` | `expression::builtins` |
+| `symbolic::expression::builtins::{ComposedFunction, NativeFunctionSignature, NativeConstantSpec, find_composed_function, find_native_function, find_native_constant, list_composed_functions, list_native_functions, list_native_constants}` | `expression::builtins::{same}` | `expression::builtins::…`. No `list_` prefix (S-7). Enum-named built-ins (F-024) are B3's |
 | `pass_infrastructure` (module) | `pass` | `pass` |
 | `pass_infrastructure::{Analysis, AnalysisId, PreservedAnalyses, CompilerPass, ExecutePass, PassFailure, PassOutcome, PassContext, PassError, PassHook, PassRegistrationError, PassManager, PassManagerResult, PassRunRecord, PipelineRecord, FixpointPassGroup, FixpointGroupRecord, FixpointIterationRecord, ValidationManager, WalkPass, RewritePass}` | `pass::{same}` | `pass::…` (B5 content) |
 | `pass_infrastructure::{register_pass, create_pass, registered_passes, PassInfo}` | `pass::{same}` | methods of an owned `pass::PassRegistry` (B5, decision 7) |
@@ -6385,17 +6385,17 @@ Step 0 moves the private modules too:
 
 | HEAD file | After step 0 |
 |---|---|
-| `src/symbolic/mod.rs` | deleted; its docs merge into `src/expr/mod.rs` |
-| `src/symbolic/expression/mod.rs` | `src/expr/mod.rs` (gains `mod symbol_type; mod wire_name; pub use symbol_type::SymbolType;`) |
-| `src/symbolic/expression/{alpha,build,builtins,error,literal,node,operation,pprint,registration,screen,sort,wire}.rs` | `src/expr/<same>.rs` |
-| `src/symbolic/symbol_type.rs` | `src/expr/symbol_type.rs` (private module) |
-| `src/symbolic/wire_name.rs` | `src/expr/wire_name.rs` (private; B2 may delete it under F-025) |
-| `src/symbolic/expression/pattern/{mod,rewrite}.rs` | `src/expr/pattern/{mod,rewrite}.rs` |
-| `src/symbolic/expression/pattern/core.rs` | `src/expr/pattern/matching.rs` (B6-D3; fixes F-028's `mod core` shadowing) |
+| `src/symbolic/mod.rs` | deleted; its docs merge into `src/expression/mod.rs` |
+| `src/symbolic/expression/mod.rs` | `src/expression/mod.rs` (gains `mod symbol_type; mod wire_name; pub use symbol_type::SymbolType;`) |
+| `src/symbolic/expression/{alpha,build,builtins,error,literal,node,operation,pprint,registration,screen,sort,wire}.rs` | `src/expression/<same>.rs` |
+| `src/symbolic/symbol_type.rs` | `src/expression/symbol_type.rs` (private module) |
+| `src/symbolic/wire_name.rs` | `src/expression/wire_name.rs` (private; B2 may delete it under F-025) |
+| `src/symbolic/expression/pattern/{mod,rewrite}.rs` | `src/expression/pattern/{mod,rewrite}.rs` |
+| `src/symbolic/expression/pattern/core.rs` | `src/expression/pattern/matching.rs` (B6-D3; fixes F-028's `mod core` shadowing) |
 | `src/pass_infrastructure/*.rs` | `src/pass/*.rs` |
 
 Later batches create `src/tree.rs` (B5) and
-`src/expr/passes/{mod,pretty,rewrite,registration}.rs` (B3, B4). The pass
+`src/expression/passes/{mod,pretty,rewrite,registration}.rs` (B3, B4). The pass
 names inside string constants, such as
 `"fhy_core.symbolic.expression.apply_rewrite_rules"` in
 `pattern/rewrite.rs:35`, are not module paths. B6 leaves them for B4 and B5,
@@ -6418,7 +6418,7 @@ below in step 6, once B1, B2 and B5 have made it true:
 //! # Modules
 //!
 //! Each module depends only on the modules listed before it, except that
-//! [`expr`] and [`pass`] are independent and [`expr::passes`] joins them.
+//! [`expression`] and [`pass`] are independent and [`expression::passes`] joins them.
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -6429,7 +6429,7 @@ below in step 6, once B1, B2 and B5 have made it true:
 //! | [`op_attribute`] | [`OpAttribute`](op_attribute::OpAttribute): open semantic tags on operations |
 //! | [`value_domain`] | [`ValueDomain`](value_domain::ValueDomain): the hierarchy of value classifications |
 //! | [`tree`] | the [`Tree`](tree::Tree) trait and iterative walks and rewrites over any tree-shaped IR |
-//! | [`expr`] | symbolic expressions, their builders and analyses; [`expr::pattern`] and [`expr::builtins`] |
+//! | [`expression`] | symbolic expressions, their builders and analyses; [`expression::pattern`] and [`expression::builtins`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses and the pass registry |
 //!
 //! # Example
@@ -6437,7 +6437,7 @@ below in step 6, once B1, B2 and B5 have made it true:
 //! ```
 //! use std::collections::HashMap;
 //!
-//! use fhy_core::expr::Expression;
+//! use fhy_core::expression::Expression;
 //! use fhy_core::identifier::Identifier;
 //!
 //! let x = Identifier::new("x");
@@ -6630,8 +6630,8 @@ The following are added under `[workspace.lints.clippy]`. Nothing is loosened.
 
 | Change | Item | Before | After | Semver | Call sites |
 |---|---|---|---|---|---|
-| move | 55 items and 3 modules under `symbolic::expression[::pattern\|::builtins]` | `fhy_core::symbolic::expression::…` | `fhy_core::expr::…` | breaking | src (16): `symbolic/expression/{alpha,build,builtins,error,literal,mod,node,operation,pprint,registration,screen,sort}.rs`, `pattern/{core,rewrite}.rs`, `symbolic/symbol_type.rs`, `pass_infrastructure/tree.rs` (doc links and doctests), plus `identifier.rs` and `shipped.rs` (`crate::symbolic`). tests (20): `builtins_scope_stories`, `builtins_stories`, `common/expression`, `common/pattern`, `expression_{builders,literal,node,pass,screen,tree,wire}_stories`, `expression_properties`, `pattern_{properties,rewrite_stories,stories,user_stories}`, `payload_form_stories`, `pprint_{properties,stories}`, `vocabulary_stories`. CONTRIBUTING.md:357 |
-| move | `SymbolType` | `fhy_core::symbolic::symbol_type::SymbolType` | `fhy_core::expr::SymbolType` | breaking | 4 files (`screen.rs` via `crate::`, `vocabulary_stories.rs`, `expression_screen_stories.rs`, `expression_properties.rs`) |
+| move | 55 items and 3 modules under `symbolic::expression[::pattern\|::builtins]` | `fhy_core::symbolic::expression::…` | `fhy_core::expression::…` | breaking | src (16): `symbolic/expression/{alpha,build,builtins,error,literal,mod,node,operation,pprint,registration,screen,sort}.rs`, `pattern/{core,rewrite}.rs`, `symbolic/symbol_type.rs`, `pass_infrastructure/tree.rs` (doc links and doctests), plus `identifier.rs` and `shipped.rs` (`crate::symbolic`). tests (20): `builtins_scope_stories`, `builtins_stories`, `common/expression`, `common/pattern`, `expression_{builders,literal,node,pass,screen,tree,wire}_stories`, `expression_properties`, `pattern_{properties,rewrite_stories,stories,user_stories}`, `payload_form_stories`, `pprint_{properties,stories}`, `vocabulary_stories`. CONTRIBUTING.md:357 |
+| move | `SymbolType` | `fhy_core::symbolic::symbol_type::SymbolType` | `fhy_core::expression::SymbolType` | breaking | 4 files (`screen.rs` via `crate::`, `vocabulary_stories.rs`, `expression_screen_stories.rs`, `expression_properties.rs`) |
 | remove | module `symbolic`, `symbolic::symbol_type` | public modules | none | breaking | the rows above |
 | move | 37 items of `pass_infrastructure` | `fhy_core::pass_infrastructure::…` | `fhy_core::pass::…` (tree items later `fhy_core::tree::…`, by B5) | breaking | src (9): `pass_infrastructure/{analysis,manager,pass,preserved,registry,tree}.rs` (doctests), `symbolic/expression/{node,screen,pprint,registration}.rs`, `pattern/rewrite.rs`. tests (11): `common/{pass_ir,tree_ir}`, `expression_{pass,tree}_stories`, `pass_infrastructure_{core,manager,run_count,tree,validation}_stories`, `pass_infrastructure_{manager,tree}_properties` |
 | rename | private module | `pattern::core` | `pattern::matching` | none (private) | `pattern/mod.rs`, `pattern/rewrite.rs` (`super::core`) |
@@ -6648,17 +6648,17 @@ uses only `fhy_core::identifier`, so step 0 needs no binding change.
 ### 4. Encapsulation delta
 
 - **Private module paths:** `symbolic/wire_name.rs` becomes the private
-  `expr::wire_name`. Its items narrow from `pub(crate)` to `pub(super)`,
+  `expression::wire_name`. Its items narrow from `pub(crate)` to `pub(super)`,
   because every user (`operation`, `sort`, `symbol_type`) is now a sibling in
-  `expr`. `symbol_type` becomes a private module with one `pub use`.
+  `expression`. `symbol_type` becomes a private module with one `pub use`.
 - **Leaf module for `Pattern`:** `pattern::matching` is a leaf module.
   `Pattern`'s fields stay unreachable from `pattern::rewrite` and from B4's
-  `expr::passes::rewrite`.
+  `expression::passes::rewrite`.
 - **Identity hashing:** `BuildIdentityHasher` stays `pub(crate)` and moves
   with the tree module (B5).
 - **No re-exports:** there are no `pub use` re-exports between public
   modules. The only `pub use` of a foreign item is `num_bigint::BigInt` at
-  `expr::BigInt`. CI checks this (section 5.4).
+  `expression::BigInt`. CI checks this (section 5.4).
 - **Test helpers:** test helpers go from `pub` (which only silenced
   dead-code warnings) to `pub(crate)` inside `tests/it/support/`. The
   workspace's `unreachable_pub` then flags any `pub` left over, and
@@ -6680,14 +6680,14 @@ tests (17) before and after the moves. Only the binary count drops.
 |---|---|---|---|---|
 | 0.1 | B3 (content), landed first | Fix the clippy break at `tests/expression_pass_stories.rs:287` | none | CI is red at HEAD. Every later step must start from green |
 | 0.2 | B6 | CONTRIBUTING "Porting to Rust" replacement text (section 6) | none | The rules steer everyone implementing B1 to B5. Left as they are, they require global registries, Python module paths and the decode ordering the batches remove |
-| 0.3 | B6 | `symbolic` → `expr` (plus `pattern/core.rs` → `matching.rs`) | 0.1 | This is one atomic rename and must be one commit. Done before other work, it conflicts with nothing, and every later doctest and test is written against final paths. Done last, it would rewrite about 115 import sites after B3 and B4 had just touched them |
+| 0.3 | B6 | `symbolic` → `expression` (plus `pattern/core.rs` → `matching.rs`) | 0.1 | This is one atomic rename and must be one commit. Done before other work, it conflicts with nothing, and every later doctest and test is written against final paths. Done last, it would rewrite about 115 import sites after B3 and B4 had just touched them |
 | 0.4 | B6 | `pass_infrastructure` → `pass`. Tree items stay in `pass` for now | 0.3 | Same reason. The tree items move once, in step 3, so their call sites change only once |
 | 0.5 | B6 | Merge the isolation-safe integration tests into `tests/it` (section 5.2) | 0.4 | Later batches edit tests at their final location, and dead-helper detection works while they add helpers |
 | 1 | B1 identity | Reserved ids, `ID_CAP`, `try_new`, delete `shipped.rs`, the `testing` feature, the deterministic tests and corpus, the tag-type corpus, `RegistryGuard` and pinned ids. Remove the last isolation-harness callers and the harness (section 5.2) | 0 | Breaks the `identifier → expr/diagnostic/op_attribute` cycle (F-007), which later layering depends on. Removes the `testing` feature that complicates CI and packaging. Deletes 5 of the 6 non-mergeable binaries |
 | 2 | B2 serde, diagnostics, provenance | Plain serde, delete the decode framework, remove `arbitrary_precision`, S-5 errors for diagnostic and provenance | 1 | B2 rewrites `Identifier`/`Canonical` decoding on top of B1's cap and reserved-id semantics. With `shipped.rs` gone, the "initialize defaults before restore" ordering is gone too, so the decode framework can simply be deleted |
 | 3 | B5 pass and tree | `src/tree.rs` generic over `C` (F-008), `NodeHandle`/`NodeIdentity` move, owned `PassRegistry`, run counters deleted, `Send` passes, F-009/F-016/F-022 | 0 (and 2, see next column) | `PassContext` stores B2's `Diagnostic`, so B5 follows B2's diagnostic API. B5 may start in parallel with B2 if B2 freezes `Diagnostic`'s constructor and accessor names first |
-| 4 | B3 expression core | `Display`, `floor_mod`, n-ary logic, built-in enum, literals, S-5 errors. Create `expr::passes` and move `ExpressionPrettyFormatter` and `register_expression_passes` into it | 1, 2, 3 | `node.rs` and `substitute` need B5's generic `rewrite_tree` (no `PassContext`). The expression wire form follows B2's serde conventions. Built-in parameters follow B1's reserved ids |
-| 5 | B4 patterns | Typed captures, `matches`/`apply` methods, `RewriteRuleApplier` → `expr::passes` | 3, 4 | Patterns match B3's expression kinds and built-in enum, and the applier rides on B5's `rewrite_tree` and hooks |
+| 4 | B3 expression core | `Display`, `floor_mod`, n-ary logic, built-in enum, literals, S-5 errors. Create `expression::passes` and move `ExpressionPrettyFormatter` and `register_expression_passes` into it | 1, 2, 3 | `node.rs` and `substitute` need B5's generic `rewrite_tree` (no `PassContext`). The expression wire form follows B2's serde conventions. Built-in parameters follow B1's reserved ids |
+| 5 | B4 patterns | Typed captures, `matches`/`apply` methods, `RewriteRuleApplier` → `expression::passes` | 3, 4 | Patterns match B3's expression kinds and built-in enum, and the applier rides on B5's `rewrite_tree` and hooks |
 | 6 | B6 finish | Merge `interned_equivalence`, delete `tests/common/`, update the nox corpus settings, add the CI checks and lints, the `lib.rs` overview, both READMEs, the manifest metadata and the package steps | 1 to 5 | Needs the final names (the example and README) and the final enum decisions (lints). The last merges need B1's deletions |
 
 #### 5.2 Test architecture (F-034, F-038)
@@ -6731,19 +6731,19 @@ file's assertions):
 
 | HEAD file | Step | New location | Content owner |
 |---|---|---|---|
-| `builtins_stories.rs` | 0.5 | `it/expr/builtins_stories.rs` | B3 |
+| `builtins_stories.rs` | 0.5 | `it/expression/builtins_stories.rs` | B3 |
 | `diagnostic_stories.rs` | 0.5 | `it/diagnostic_stories.rs` | B2 |
-| `expression_builders_stories.rs` | 0.5 | `it/expr/builders_stories.rs` | B3 |
-| `expression_literal_stories.rs` | 0.5 | `it/expr/literal_stories.rs` | B3 |
-| `expression_node_stories.rs` | 0.5 | `it/expr/node_stories.rs` | B3 |
-| `expression_pass_stories.rs` | 0.5 | `it/expr/pass_stories.rs` | B3 (formatter, registration), B4 (applier) |
-| `expression_properties.rs` | 0.5 | `it/expr/properties.rs` | B3 |
-| `expression_screen_stories.rs` | 0.5 | `it/expr/screen_stories.rs` | B3 |
-| `expression_tree_stories.rs` | 0.5 | `it/expr/tree_stories.rs` | B3 |
-| `expression_wire_stories.rs` | 0.5 | `it/expr/wire_stories.rs` | B2 (wire form), B3 (n-ary logic) |
-| `vocabulary_stories.rs` | 0.5 | `it/expr/vocabulary_stories.rs` | B2 (F-025 serde derive), B3 |
-| `pprint_stories.rs`, `pprint_properties.rs` | 0.5 | `it/expr/pprint_{stories,properties}.rs` | B3 |
-| `pattern_{stories,properties,rewrite_stories,user_stories}.rs` | 0.5 | `it/expr/pattern/*.rs` | B4 |
+| `expression_builders_stories.rs` | 0.5 | `it/expression/builders_stories.rs` | B3 |
+| `expression_literal_stories.rs` | 0.5 | `it/expression/literal_stories.rs` | B3 |
+| `expression_node_stories.rs` | 0.5 | `it/expression/node_stories.rs` | B3 |
+| `expression_pass_stories.rs` | 0.5 | `it/expression/pass_stories.rs` | B3 (formatter, registration), B4 (applier) |
+| `expression_properties.rs` | 0.5 | `it/expression/properties.rs` | B3 |
+| `expression_screen_stories.rs` | 0.5 | `it/expression/screen_stories.rs` | B3 |
+| `expression_tree_stories.rs` | 0.5 | `it/expression/tree_stories.rs` | B3 |
+| `expression_wire_stories.rs` | 0.5 | `it/expression/wire_stories.rs` | B2 (wire form), B3 (n-ary logic) |
+| `vocabulary_stories.rs` | 0.5 | `it/expression/vocabulary_stories.rs` | B2 (F-025 serde derive), B3 |
+| `pprint_stories.rs`, `pprint_properties.rs` | 0.5 | `it/expression/pprint_{stories,properties}.rs` | B3 |
+| `pattern_{stories,properties,rewrite_stories,user_stories}.rs` | 0.5 | `it/expression/pattern/*.rs` | B4 |
 | `pass_infrastructure_{core,manager,validation}_stories.rs`, `…_manager_properties.rs` | 0.5 | `it/pass/*.rs` | B5 |
 | `pass_infrastructure_tree_{stories,properties}.rs` | 0.5 | `it/tree/{stories,properties}.rs` | B5 |
 | `provenance_stories.rs`, `provenance_diagnostic_properties.rs` | 0.5 | `it/*.rs` | B2 |
@@ -6970,7 +6970,7 @@ output, and both pass.
 - **Layering:** a CI step for the layering was considered and not added,
   because `grep` cannot see `super::` paths. B6 checks the layering once, in
   step 6, with `grep -rn 'crate::pass' rust/fhy-core/src/expr --include=*.rs
-  | grep -v '^rust/fhy-core/src/expr/passes/'` and `grep -rn 'crate::expr'
+  | grep -v '^rust/fhy-core/src/expression/passes/'` and `grep -rn 'crate::expression'
   rust/fhy-core/src/{pass,tree.rs}`. Both must print nothing.
 - **Unchanged:** the `golden-expanded` job itself.
 
@@ -7068,9 +7068,9 @@ paths follow Rust layering"**:
 > 1. `identifier`, `interned`
 > 2. `diagnostic`, `provenance`, `op_attribute`, `value_domain`
 > 3. `tree`
-> 4. `expr` (with `expr::pattern` and `expr::builtins`) and `pass`, which do
+> 4. `expression` (with `expression::pattern` and `expression::builtins`) and `pass`, which do
 >    not depend on each other
-> 5. `expr::passes`, the passes over expressions, which depends on both
+> 5. `expression::passes`, the passes over expressions, which depends on both
 >
 > A private module is never named `core`, which shadows the `core` crate. A
 > port records its Python module in this table, the one place that maps
@@ -7084,11 +7084,11 @@ paths follow Rust layering"**:
 > | `fhy_core.provenance` | `fhy_core::provenance` |
 > | `fhy_core.op_attribute` | `fhy_core::op_attribute` |
 > | `fhy_core.value_domain` | `fhy_core::value_domain` |
-> | `fhy_core.symbolic.symbol_type` | `fhy_core::expr` (`SymbolType`) |
-> | `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expr` |
-> | `fhy_core.symbolic.expression.builtins` | `fhy_core::expr::builtins` |
-> | `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expr::pattern`; the rule-applier pass is in `fhy_core::expr::passes` |
-> | `fhy_core.symbolic.expression.passes` | `fhy_core::expr::passes` |
+> | `fhy_core.symbolic.symbol_type` | `fhy_core::expression` (`SymbolType`) |
+> | `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expression` |
+> | `fhy_core.symbolic.expression.builtins` | `fhy_core::expression::builtins` |
+> | `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expression::pattern`; the rule-applier pass is in `fhy_core::expression::passes` |
+> | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 > | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 
 **"Errors belong to their module"** (CHANGED: this narrows "the same
@@ -7188,7 +7188,7 @@ its `use` lines change. Also kept: `tests/test_rs_stub.py`,
 
 - **Step 0.3/0.4 imports:** the 20 + 11 test files and the source files listed in
   section 3 change `fhy_core::symbolic::…` and
-  `fhy_core::pass_infrastructure::…` to `fhy_core::expr::…` and
+  `fhy_core::pass_infrastructure::…` to `fhy_core::expression::…` and
   `fhy_core::pass::…`. The doctests in those source files change the same
   way. The acceptance check is that passed and ignored counts are unchanged.
 - **Step 0.5 includes:** `#[path] pub mod` becomes `use
@@ -7217,9 +7217,9 @@ its `use` lines change. Also kept: `tests/test_rs_stub.py`,
 
 | Item | File (after 0.5) | Owner | Required outcome |
 |---|---|---|---|
-| Hand-indented `.with_…` chains at column 0 inside `proptest!` (8 lines; rustfmt does not format macro bodies) | `it/expr/pprint_properties.rs` | B3 (it rewrites these calls for `expr.display`) | Bodies indented as rustfmt would. See B6-D11 |
-| `COMPOSED_NAMES`, `NATIVE_FUNCTION_NAMES` and `NATIVE_CONSTANT_NAMES`, re-listed in several tests | `it/expr/builtins_stories.rs:34-57, 378` | B3 (F-024) | Lists derived from the built-in enum or catalogue iterator, and one expected table |
-| `build_plus_zero` and `describe_fired`, duplicated | `it/expr/pass_stories.rs`, `it/expr/pattern/rewrite_stories.rs` | B4 | Moved to `support::pattern` |
+| Hand-indented `.with_…` chains at column 0 inside `proptest!` (8 lines; rustfmt does not format macro bodies) | `it/expression/pprint_properties.rs` | B3 (it rewrites these calls for `expr.display`) | Bodies indented as rustfmt would. See B6-D11 |
+| `COMPOSED_NAMES`, `NATIVE_FUNCTION_NAMES` and `NATIVE_CONSTANT_NAMES`, re-listed in several tests | `it/expression/builtins_stories.rs:34-57, 378` | B3 (F-024) | Lists derived from the built-in enum or catalogue iterator, and one expected table |
+| `build_plus_zero` and `describe_fired`, duplicated | `it/expression/pass_stories.rs`, `it/expression/pattern/rewrite_stories.rs` | B4 | Moved to `support::pattern` |
 | `build_file` and `build_named`, duplicated | `it/provenance_stories.rs`, `it/provenance_diagnostic_properties.rs` | B2 | Moved to a `support::provenance` |
 | `check_get`, `check_require`, `replay_case` and `lock_replay`, duplicated | `*_equivalence.rs` | B1 | Gone once the tag-type and deterministic replays are deleted |
 | About 16 copy-pasted identity pass types | `it/pass/core_stories.rs` | B5 | Generated by one macro (F-031) |
@@ -7228,10 +7228,10 @@ its `use` lines change. Also kept: `tests/test_rs_stub.py`,
 **Regression test per finding:**
 
 - **F-028:**
-  - the crate-level doctest in `lib.rs` (2.3), which reaches `expr` and
+  - the crate-level doctest in `lib.rs` (2.3), which reaches `expression` and
     `identifier` by their single paths;
   - the CI "Public Paths" step;
-  - a doctest per moved module (`expr`, `expr::pattern`, `expr::builtins`,
+  - a doctest per moved module (`expression`, `expression::pattern`, `expression::builtins`,
     `pass`) using the new path.
   - Also `pattern::matching` exists and no module is named `core`: `find
     rust/fhy-core/src -name core.rs` prints nothing (checked in step 6).
@@ -7312,7 +7312,7 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
 
 **Decisions for sign-off:**
 
-- **B6-D1:** `expr::passes`, not `pass`, holds the expression passes.
+- **B6-D1:** `expression::passes`, not `pass`, holds the expression passes.
 - **B6-D2:** `NodeHandle` and `NodeIdentity` move to `tree` (B5 to
   confirm).
 - **B6-D3:** `pattern/core.rs` is renamed to `pattern/matching.rs`, not
@@ -7348,13 +7348,13 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   on the test function. On the `assert!` statement itself clippy still
   reports the lint and the expectation goes unfulfilled.
 - **Step 0.3 and 0.4 (R-24):** the modules take the `foo.rs` + `foo/`
-  layout, so B6 §2.2's `src/expr/mod.rs` and `src/expr/pattern/mod.rs`
-  are `src/expr.rs` and `src/expr/pattern.rs`, and `src/pass/mod.rs` is
+  layout, so B6 §2.2's `src/expression/mod.rs` and `src/expression/pattern/mod.rs`
+  are `src/expression.rs` and `src/expression/pattern.rs`, and `src/pass/mod.rs` is
   `src/pass.rs`. The private `pass_infrastructure/pass.rs` becomes
   `src/pass/compiler_pass.rs` now rather than in B5, because `pass::pass`
   trips `clippy::module_inception` (B5 §2.1 names the file the same way).
 - **Step 0.5 (D-18):** `tests/it` uses the same layout: `it/support.rs`,
-  `it/interned.rs`, `it/expr.rs`, `it/expr/pattern.rs`, `it/pass.rs` and
+  `it/interned.rs`, `it/expression.rs`, `it/expression/pattern.rs`, `it/pass.rs` and
   `it/tree.rs` next to their directories, instead of the `mod.rs` files
   that B6 §5.2's target layout shows.
 - **Step 0.5, dead helpers:** with every helper `pub(crate)`, `dead_code`
@@ -7394,7 +7394,7 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   `it::diagnostic_stories::note_decode_rejects_malformed_payloads` decodes
   from text. The expression path is kept rather than dropped.
 - **Step 1, `IdentifierWire`:** it is `pub(crate)`, not private, so
-  `expr::wire` can keep checking a whole expression payload before it
+  `expression::wire` can keep checking a whole expression payload before it
   restores any identifier until B3 replaces that wire format;
   `IdentifierPayload` is gone. `wire.rs`'s `build_node` is now generic over
   the serde error so a restore error needs no new `ExpressionBuildError`
@@ -7426,7 +7426,7 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   `it::tag_type_stories`.
 - **Step 1, `decode.rs`:** `DeferredPayload` and `decode/buffered.rs` lost
   their last users and are deleted; `Decode`, `deserialize_via_payload`
-  and `deserialize_map_only` remain for `expr::wire` and `provenance`.
+  and `deserialize_map_only` remain for `expression::wire` and `provenance`.
 - **Step 1, Python:** the pinned ids of the built-in constants in
   `tests/symbolic/expression/test_registry.py` move from 8-11 to
   65,544-65,547 with the counter start. `_PythonIdCounter` takes a
@@ -7438,20 +7438,20 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   keep them at least two apart on every try.
 
 - **Step 2, F-012 not done:** `arbitrary_precision` stays on. Turning it
-  off breaks `expr::wire`: big-integer literals as JSON integers, float
+  off breaks `expression::wire`: big-integer literals as JSON integers, float
   tokens beyond `f64`, and the expression JSON round-trip properties (7
   tests). B3 removes it together with its BigInt-as-decimal-string wire
-  format. B3 also moves `serde_json` to `[dev-dependencies]` (`expr::wire`
+  format. B3 also moves `serde_json` to `[dev-dependencies]` (`expression::wire`
   is its last `src` user), drops the workspace manifest comment and the
   `lib.rs` `arbitrary_precision` paragraph, restores B1's weakened
   nested-path message checks, and adds B2 §8.3's two F-012 regression
   tests to `it::serde_format_stories`. Those tests fail while the feature
   is on.
 - **Step 2, `decode.rs`:** only `deserialize_map_only` and `MapOnly` are
-  left, for `expr::wire`. `Decode` and `deserialize_via_payload` are gone,
+  left, for `expression::wire`. `Decode` and `deserialize_via_payload` are gone,
   and `ExpressionPayload` is now private. B3 deletes the file.
   `it::payload_form_stories` keeps only its two expression cases, since
-  map-only decoding is still `expr::wire`'s behavior, instead of being
+  map-only decoding is still `expression::wire`'s behavior, instead of being
   deleted as B2 §8.1 says. B3 deletes it with the wire format.
 - **Step 2, `python_text.rs`:** the exact decimal normalization,
   `format_normalized_decimal` and the shared positional and scientific
@@ -7556,7 +7556,7 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   `Callee`, `FunctionName`, the `From` conversions, the serde derives and
   `FromStr`, `BooleanScreen`, the flat node-list wire format, floats and
   big integers as strings, the `arbitrary_precision` removal and
-  `expr::passes` are B3b's.
+  `expression::passes` are B3b's.
 - **Step 4 (B3a), decimal notation:** a decimal displays positionally
   (B3 §5.3); `format_normalized_decimal` and the scientific writers go with
   `python_repr.rs`. `Decimal` stores a `BigInt` coefficient, so its unit
@@ -7668,12 +7668,12 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   workspace, `serde_json` is a dev-dependency of `fhy-core`, and postcard
   keeps B1's `features = ["alloc"]`. Both regression tests were checked to
   fail with the feature turned back on.
-- **Step 4 (B3b), R-1:** `RewriteRuleApplier` moves into `expr::passes`
+- **Step 4 (B3b), R-1:** `RewriteRuleApplier` moves into `expression::passes`
   with `register_expression_passes`, which builds it, so `pattern` no
   longer imports `crate::pass`; `pattern::rewrite` exposes `RuleRun` and
-  `run_rewrite_rules` as `pub(in crate::expr)` for the pass. B4 owns any
+  `run_rewrite_rules` as `pub(in crate::expression)` for the pass. B4 owns any
   further change to the applier. Its tests stay in
-  `tests/it/expr/pass_stories.rs` with the new paths.
+  `tests/it/expression/pass_stories.rs` with the new paths.
 - **Step 4 (B3b), test counts:** the built-in stories' 16-name `#[values]`
   lists became loops over `BuiltinFunction::iter()` (F-037), and the
   `find_*` lookups became `FromStr` refusal tables, so fewer test cases are
@@ -7709,7 +7709,7 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   `rewrite_rule_with_guard_runs_guards_in_the_order_added`, beside the
   every-guard table `rewrite_rule_with_guard_requires_every_guard`.
 - **Step 5 (B4), seams:** the walk keeps B3b's `RuleRun` and
-  `run_rewrite_rules` (B4 §2.7 says `run_rules`), `pub(in crate::expr)`.
+  `run_rewrite_rules` (B4 §2.7 says `run_rules`), `pub(in crate::expression)`.
   `match_into` is `pub(super)`; the trail operations `bind` and `truncate`
   are private to `matching.rs`, their only user, and there is no `clear`.
   A rule's name is converted to `Arc<str>` on its first firing or failure
@@ -7738,7 +7738,7 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   `build_leaf_hiding_sharing`, `build_hash_consing_node`) stay in
   `support::tree_ir` although only `tree::stories` uses them: moving them
   would widen `ToyNode`'s fields. The expression-DAG strategy moved to
-  `expr::properties` with its private parts, so `support::expression`'s
+  `expression::properties` with its private parts, so `support::expression`'s
   `CALLEES` is now `pub(crate)`.
 - **Step 6 (B6), F-037 leftovers:** `build_plus_zero` and `describe_fired`
   (B4's) now live in `support::pattern`, `describe_fired` taking the
@@ -7778,3 +7778,13 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   under `target/`, which needs an empty `[workspace]` appended to the
   copy's manifest, since `target/` lies inside this workspace. CI extracts
   to `$RUNNER_TEMP` and needs no change.
+
+### Post-implementation: `expr` renamed to `expression` (2026-09-24)
+
+At the user's request, the module `fhy_core::expr` is now
+`fhy_core::expression`. That covers `expression::builtins`,
+`expression::pattern` and `expression::passes`, and the integration tests
+under `tests/it/expression/`. This document's references were updated to
+match. The audit report's decision 13 still shows the original example,
+`fhy_core::expr::Pattern`. The registry key
+`fhy_core.symbolic.expression.apply_rewrite_rules` is unchanged (D-12).

@@ -342,7 +342,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::diagnostic::Note;
-    use crate::expr::Expression;
+    use crate::expression::Expression;
     use crate::interned::Canonical;
     use crate::op_attribute::OpAttribute;
     use crate::test_support::{assert_send_sync, compute_hash};

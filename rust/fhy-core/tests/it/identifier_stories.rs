@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use fhy_core::diagnostic::NoteKind;
-use fhy_core::expr::builtins::{BuiltinFunction, ComposedFunction};
+use fhy_core::expression::builtins::{BuiltinFunction, ComposedFunction};
 use fhy_core::identifier::{Identifier, RESERVED_ID_COUNT};
 use fhy_core::interned::Canonical;
 use fhy_core::op_attribute::OpAttribute;

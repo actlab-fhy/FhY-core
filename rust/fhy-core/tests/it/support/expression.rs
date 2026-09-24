@@ -2,8 +2,8 @@
 
 use std::sync::LazyLock;
 
-use fhy_core::expr::builtins::BuiltinFunction;
-use fhy_core::expr::{
+use fhy_core::expression::builtins::BuiltinFunction;
+use fhy_core::expression::{
     BigInt, BinaryExpression, BinaryOperation, CallExpression, Callee, Decimal, Expression,
     ExpressionKind, LiteralValue, LogicalExpression, LogicalOperation, PiecewiseExpression,
     UnaryExpression, UnaryOperation,

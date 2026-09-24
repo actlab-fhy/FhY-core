@@ -102,7 +102,7 @@ impl<I, V: Validator<I> + ?Sized> Validator<I> for Box<V> {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::expr::Expression;
+/// use fhy_core::expression::Expression;
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass::{PassValidator, ValidationManager, WalkPass};
 /// use fhy_core::tree::{TraversalOrder, TreeVisitor};

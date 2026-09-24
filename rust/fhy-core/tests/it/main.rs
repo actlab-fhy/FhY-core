@@ -6,7 +6,7 @@
 //! none moves the identifier counter further than the ids it allocates.
 
 mod diagnostic_stories;
-mod expr;
+mod expression;
 mod identifier_stories;
 mod interned;
 mod pass;

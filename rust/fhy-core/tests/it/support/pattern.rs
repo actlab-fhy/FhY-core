@@ -3,11 +3,11 @@
 use std::error::Error;
 use std::fmt;
 
-use fhy_core::expr::pattern::{
+use fhy_core::expression::pattern::{
     CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteOutcome, RewriteRule, Rule,
     apply_rewrite_rules,
 };
-use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
+use fhy_core::expression::{BinaryOperation, Expression, LiteralValue};
 
 /// An error a test callback fails with, recognizable after propagation.
 #[derive(Debug, Clone, PartialEq, Eq)]

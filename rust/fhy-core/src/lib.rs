@@ -6,8 +6,8 @@
 //! # Modules
 //!
 //! Each module depends only on the modules listed before it, except that
-//! [`expr`] and [`pass`] are independent of each other and
-//! [`expr::passes`] joins them.
+//! [`expression`] and [`pass`] are independent of each other and
+//! [`expression::passes`] joins them.
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -19,7 +19,7 @@
 //! | [`value_domain`] | [`ValueDomain`](value_domain::ValueDomain): the hierarchy of value classifications |
 //! | [`provenance`] | source positions, spans and where a value came from |
 //! | [`tree`] | the [`Tree`](tree::Tree) trait and iterative walks and rewrites over any tree-shaped IR |
-//! | [`expr`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expr::builtins`], patterns and rewrite rules in [`expr::pattern`], and the passes over expressions in [`expr::passes`] |
+//! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //!
 //! Each public item has exactly one public path.
@@ -29,7 +29,7 @@
 //! ```
 //! use std::collections::HashMap;
 //!
-//! use fhy_core::expr::Expression;
+//! use fhy_core::expression::Expression;
 //! use fhy_core::identifier::Identifier;
 //!
 //! let x = Identifier::new("x");
@@ -63,7 +63,7 @@
 //! `Deserialize`, with a plain serde shape documented on the type. The
 //! impls work with self-describing formats such as JSON and with
 //! non-self-describing ones such as postcard. The integers and floats of an
-//! [`Expression`](expr::Expression)'s literals, which a format may not hold
+//! [`Expression`](expression::Expression)'s literals, which a format may not hold
 //! exactly, serialize as strings.
 //!
 //! Deserializing an [`Identifier`](identifier::Identifier) advances the id
@@ -78,7 +78,7 @@
 
 pub mod described_tag;
 pub mod diagnostic;
-pub mod expr;
+pub mod expression;
 pub mod identifier;
 pub mod interned;
 pub mod op_attribute;
