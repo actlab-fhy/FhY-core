@@ -3,9 +3,7 @@
 //! [`RewriteRuleApplier`] applies a list of rewrite rules bottom-up over an
 //! expression, and [`ExpressionPrettyFormatter`] formats an expression as
 //! text. [`register_expression_passes`] registers the passes a
-//! [`PassRegistry`] can build by name. This is the only module of
-//! [`expr`](super) that depends on [`crate::pass`]; the pass framework
-//! itself does not depend on expressions.
+//! [`PassRegistry`] can build by name.
 
 use std::borrow::Cow;
 
@@ -22,23 +20,18 @@ use super::pattern::{FiredRule, RewriteRule, Rule, RuleRun, run_rewrite_rules};
 /// The rules are of any one [`Rule`] type, [`RewriteRule`] by default; a
 /// list of `Box<dyn Rule + Send>` mixes rule types. A run is
 /// [`apply_rewrite_rules`](super::pattern::apply_rewrite_rules) with the
-/// pass's rules: its output is the rewritten tree, and it changed the IR
-/// exactly when the output is a different node from the input
-/// ([`Expression::ptr_eq`]); see
-/// [`RewriteOutcome::is_changed`](super::pattern::RewriteOutcome::is_changed).
-/// Each firing of a named rule reports an informational diagnostic,
+/// pass's rules, and it changed the IR exactly when its output is a
+/// different node from its input ([`Expression::ptr_eq`]). Each firing of a
+/// named rule reports the informational diagnostic
 /// `applied rewrite rule "<name>"`, the name escaped as `Debug` writes a
-/// string, and the firings of the last run are kept for
-/// [`fired`](Self::fired). A failing callback or a refused rebuild fails
-/// the run with the [`RewriteError`](super::pattern::RewriteError), which
-/// the resulting [`PassError`](crate::pass::PassError) holds as its
-/// [`source`](std::error::Error::source).
+/// string, and the last run's firings are kept for [`fired`](Self::fired).
+/// A failing callback or a refused rebuild fails the run with the
+/// [`RewriteError`](super::pattern::RewriteError), the
+/// [`source`](std::error::Error::source) of the resulting
+/// [`PassError`](crate::pass::PassError).
 ///
-/// The pass is named [`NAME`](Self::NAME),
-/// `fhy_core.symbolic.expression.apply_rewrite_rules`, a stable registry
-/// key rather than a Rust path, and [`register_expression_passes`]
-/// registers it under that name. An applier of no rules needs its rule
-/// type named, as `RewriteRuleApplier::<RewriteRule>::new([])`.
+/// The pass is named [`NAME`](Self::NAME). An applier of no rules needs its
+/// rule type named, as `RewriteRuleApplier::<RewriteRule>::new([])`.
 ///
 /// # Examples
 ///
@@ -185,20 +178,16 @@ impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
         Ok(ir.display(self.options).to_string())
     }
 
-    fn did_change(&mut self, input: &Expression, output: &String) -> Result<bool, PassFailure> {
-        let _ = (input, output);
+    fn did_change(&mut self, _input: &Expression, _output: &String) -> Result<bool, PassFailure> {
         Ok(true)
     }
 }
 
 /// Register the expression passes in `registry`.
 ///
-/// Registers [`RewriteRuleApplier`] under its [`NAME`](RewriteRuleApplier::NAME),
-/// `fhy_core.symbolic.expression.apply_rewrite_rules`, and its
-/// [`DESCRIPTION`](RewriteRuleApplier::DESCRIPTION);
-/// [`PassRegistry::create`] then builds an applier with no rules. The name
-/// is a stable registry key, not a Rust path. The passes are registered in
-/// `registry` only, so two registries hold independent registrations.
+/// Registers [`RewriteRuleApplier`] under its [`NAME`](RewriteRuleApplier::NAME)
+/// and [`DESCRIPTION`](RewriteRuleApplier::DESCRIPTION);
+/// [`PassRegistry::create`] then builds an applier with no rules.
 /// Registering again in the same registry changes nothing.
 ///
 /// # Errors
