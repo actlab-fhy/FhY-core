@@ -1,9 +1,10 @@
 //! Screens that refuse a number in a Boolean position.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 
 use crate::identifier::Identifier;
+use crate::pass_infrastructure::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 use crate::symbolic::symbol_type::SymbolType;
 
 use super::error::{BooleanPosition, NonBooleanLogicalOperandError};
@@ -28,6 +29,13 @@ struct PendingNode<'a> {
     is_bound_here: bool,
 }
 
+/// Return whether a screen may reach `expression` more than once with the
+/// same flags: when the tree may share it, or when it sits inside a bound
+/// value, which every reference to the bound identifier reaches.
+fn may_recur(expression: &Expression, is_bound_here: bool) -> bool {
+    !is_bound_here || expression.is_shared()
+}
+
 impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E, T, L> {
     /// Return the value `identifier` is bound to, unless it is a native
     /// constant's canonical identifier or the bindings do not apply.
@@ -41,10 +49,19 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
     /// Return whether `expression` provably denotes a number.
     ///
     /// A piecewise does when all its branches do, so the branches are
-    /// checked from a work list rather than by recursion.
+    /// checked from a work list rather than by recursion. A node reached
+    /// again with the same flags is checked once: the answer is the
+    /// conjunction over every node reached, so checking it again adds
+    /// nothing.
     fn is_provably_numeric(&self, expression: &Expression, is_bound_here: bool) -> bool {
+        let mut checked: HashSet<(NodeIdentity, bool), BuildIdentityHasher> = HashSet::default();
         let mut pending = vec![(expression, is_bound_here)];
         while let Some((expression, is_bound_here)) = pending.pop() {
+            if may_recur(expression, is_bound_here)
+                && !checked.insert((expression.identity(), is_bound_here))
+            {
+                continue;
+            }
             let is_numeric = match expression.kind() {
                 ExpressionKind::Literal(literal) => !matches!(literal.kind(), LiteralKind::Bool(_)),
                 ExpressionKind::Unary(node) => node.operation().is_arithmetic(),
@@ -81,17 +98,32 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
 
     /// Report the first Boolean-position operand under `root` that provably
     /// denotes a number, in depth-first pre-order, as an error.
+    ///
+    /// A node reached again with the same flags is screened once: the walk
+    /// is depth-first, so by then everything below its first occurrence
+    /// has been screened without an error.
     fn find_numeric_operand(
         &self,
         root: &Expression,
         is_root_in_boolean_position: bool,
     ) -> Result<(), NonBooleanLogicalOperandError> {
+        let mut screened: HashSet<(NodeIdentity, bool, bool), BuildIdentityHasher> =
+            HashSet::default();
         let mut pending = vec![PendingNode {
             expression: root,
             is_in_boolean_position: is_root_in_boolean_position,
             is_bound_here: true,
         }];
         while let Some(node) = pending.pop() {
+            if may_recur(node.expression, node.is_bound_here)
+                && !screened.insert((
+                    node.expression.identity(),
+                    node.is_in_boolean_position,
+                    node.is_bound_here,
+                ))
+            {
+                continue;
+            }
             if let ExpressionKind::Identifier(identifier) = node.expression.kind() {
                 if let Some(bound) = self.find_binding(identifier, node.is_bound_here) {
                     pending.push(PendingNode {
@@ -254,10 +286,12 @@ impl SortLookup for NoRegisteredSorts {
 /// piecewise's conditions, then its values, then its otherwise branch) and
 /// the first offending one is reported, before the walk descends into the
 /// children in [`Expression::children`] order. The walk keeps its pending
-/// nodes on the heap, so it handles a tree of any depth. An identifier
-/// `environment` binds (and `sorts` does not report as a native constant) is
-/// screened by walking its bound value in the identifier's own position,
-/// with no binding applied inside it.
+/// nodes on the heap, so it handles a tree of any depth, and screens a
+/// subtree it meets again in the same position once, so a DAG costs time
+/// linear in its distinct nodes. An identifier `environment` binds (and
+/// `sorts` does not report as a native constant) is screened by walking its
+/// bound value in the identifier's own position, with no binding applied
+/// inside it.
 ///
 /// # Errors
 ///

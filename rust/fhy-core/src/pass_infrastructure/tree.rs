@@ -185,7 +185,10 @@ pub trait Rewriter<N: Tree> {
 /// itself, which spreads its bits into both the high and the low bits of the
 /// hash.
 #[derive(Debug, Default, Clone, Copy)]
-struct IdentityHasher(u64);
+pub(crate) struct IdentityHasher(u64);
+
+/// Builds [`IdentityHasher`]s, for maps and sets keyed by node identities.
+pub(crate) type BuildIdentityHasher = BuildHasherDefault<IdentityHasher>;
 
 impl Hasher for IdentityHasher {
     fn finish(&self) -> u64 {
@@ -290,7 +293,7 @@ where
     // The results of the shared nodes rewritten so far. Every original node
     // stays alive through `root` while the rewrite runs, so its identity
     // keys its result unambiguously.
-    let mut shared_results: HashMap<NodeIdentity, Option<N>, BuildHasherDefault<IdentityHasher>> =
+    let mut shared_results: HashMap<NodeIdentity, Option<N>, BuildIdentityHasher> =
         HashMap::default();
     // The children of every node being rewritten, and the results of those
     // rewritten so far, each node's in one contiguous run on top of its

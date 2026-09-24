@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use expression_support::{
     build_call_node_or_panic, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
-    build_piecewise_node_or_panic, build_text_literal, is_doubling_dag_over,
+    build_piecewise_node_or_panic, build_text_literal, copy_deeply, is_doubling_dag_over,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -1190,6 +1190,12 @@ fn alpha_renaming_are_identifiers_alpha_equivalent_follows_the_renaming(
 /// occurrences, which no walk visiting every occurrence finishes.
 const DOUBLING_LEVELS: usize = 64;
 
+/// Return a doubling DAG [`DOUBLING_LEVELS`] deep over a fresh reference to
+/// `identifier`, sharing no node with any other DAG.
+fn build_doubling_dag_over(identifier: &Identifier, levels: usize) -> Expression {
+    build_doubling_dag(&Expression::from(identifier.clone()), levels)
+}
+
 /// Return `(x < 3 ? f(-x) : x ** 2)` over the reference `x`.
 fn build_mixed_tree(x: &Expression) -> Expression {
     build_piecewise_node_or_panic(
@@ -1312,6 +1318,116 @@ fn expression_substitute_keeps_an_untouched_doubling_dag_itself() {
     ));
 }
 
+/// Test the free identifiers of a doubling DAG over `a * b` are `a` and
+/// `b`.
+#[test]
+fn expression_free_identifiers_of_a_doubling_dag_are_its_leaves() {
+    let (a, a_reference) = build_identifier("a");
+    let (b, b_reference) = build_identifier("b");
+    let dag = build_doubling_dag(
+        &Expression::new_binary(BinaryOperation::Multiply, &a_reference, &b_reference),
+        DOUBLING_LEVELS,
+    );
+
+    let free = dag.free_identifiers();
+
+    assert_eq!(free, collect_identifiers([&a, &b]));
+}
+
+/// Test two doubling DAGs built separately, sharing no node, are equal both
+/// ways and hash equally.
+#[test]
+fn expression_separately_built_doubling_dags_are_equal_and_hash_equally() {
+    let a = Identifier::new("a");
+    let first = build_doubling_dag_over(&a, DOUBLING_LEVELS);
+    let second = build_doubling_dag_over(&a, DOUBLING_LEVELS);
+
+    assert!(first == second, "equal doubling DAGs compare unequal");
+    assert!(second == first, "equal doubling DAGs compare unequal");
+    assert_eq!(hash_of(&first), hash_of(&second));
+}
+
+/// Test doubling DAGs over different identifiers are unequal and hash
+/// differently.
+#[test]
+fn expression_doubling_dags_over_different_leaves_are_unequal_and_hash_differently() {
+    let first = build_doubling_dag_over(&Identifier::new("a"), DOUBLING_LEVELS);
+    let second = build_doubling_dag_over(&Identifier::new("b"), DOUBLING_LEVELS);
+
+    assert!(first != second, "doubling DAGs over a and b compare equal");
+    assert_ne!(hash_of(&first), hash_of(&second));
+}
+
+/// Test DAGs that agree on a shared doubling DAG and differ in one literal
+/// beside it are unequal, whichever side the literal is on: `d + (d - 1)`
+/// against `d' + (d' - 2)`, and the mirror image.
+#[rstest]
+#[case::difference_on_the_right(false)]
+#[case::difference_on_the_left(true)]
+fn expression_dags_differing_beside_a_shared_subtree_are_unequal(
+    #[case] is_difference_on_the_left: bool,
+) {
+    let a = Identifier::new("a");
+    let build = |literal: i64| {
+        let dag = build_doubling_dag_over(&a, DOUBLING_LEVELS);
+        let difference = Expression::new_binary(BinaryOperation::Subtract, &dag, literal);
+        if is_difference_on_the_left {
+            Expression::new_binary(BinaryOperation::Add, difference, &dag)
+        } else {
+            Expression::new_binary(BinaryOperation::Add, &dag, difference)
+        }
+    };
+    let first = build(1);
+    let second = build(2);
+
+    assert!(first != second, "the DAGs differ in one literal");
+    assert!(second != first, "the DAGs differ in one literal");
+}
+
+/// Test an expression sharing its subtrees hashes like a copy of it sharing
+/// no node.
+#[rstest]
+#[case::doubling_dag(|| build_doubling_dag(&build_identifier("a").1, 6))]
+#[case::shared_piecewise_branches(|| {
+    let (_, x) = build_identifier("x");
+    let shared = Expression::new_binary(BinaryOperation::Multiply, &x, 2);
+    build_piecewise_node_or_panic(vec![(x.less(0), shared.clone())], shared)
+})]
+#[case::shared_call_arguments(|| {
+    let shared = build_mixed_tree(&build_identifier("x").1);
+    build_call_node_or_panic("f", vec![shared.clone(), shared.clone(), shared])
+})]
+#[case::shared_literal(|| {
+    let five = build_literal(5);
+    Expression::new_binary(BinaryOperation::Add, &five, &five)
+})]
+fn expression_hash_does_not_depend_on_sharing(#[case] build: fn() -> Expression) {
+    let expression = build();
+    let copy = copy_deeply(&expression);
+
+    let hash = hash_of(&expression);
+
+    assert_eq!(hash, hash_of(&copy));
+}
+
+/// Test a doubling DAG over `a` is equivalent under `a -> c` to a doubling
+/// DAG over `c` built separately, and not to one over `d`.
+#[test]
+fn expression_is_alpha_equivalent_under_a_renaming_of_doubling_dags() {
+    let (a, c, d) = (
+        Identifier::new("a"),
+        Identifier::new("c"),
+        Identifier::new("d"),
+    );
+    let dag = build_doubling_dag_over(&a, DOUBLING_LEVELS);
+    let renamed = build_doubling_dag_over(&c, DOUBLING_LEVELS);
+    let other = build_doubling_dag_over(&d, DOUBLING_LEVELS);
+    let renaming = build_renaming([(a, c)]);
+
+    assert!(dag.is_alpha_equivalent_under(&renamed, &renaming));
+    assert!(!dag.is_alpha_equivalent_under(&other, &renaming));
+}
+
 // =============================================================================
 // Deep trees
 // =============================================================================
@@ -1397,6 +1513,58 @@ fn expression_substitute_reaches_the_bottom_of_a_deep_tree_on_a_small_stack() {
             result == build_deep_sum(&build_literal(0), SMALL_STACK_DEPTH),
             "the substituted tree differs from the tree over 0"
         );
+    });
+}
+
+/// Test a doubling DAG [`SMALL_STACK_DEPTH`] levels deep has its leaf as
+/// its free identifiers, on a small thread stack.
+#[test]
+fn expression_free_identifiers_of_a_deep_doubling_dag_reach_the_bottom_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let a = Identifier::new("a");
+        let dag = build_doubling_dag_over(&a, SMALL_STACK_DEPTH);
+
+        let free = dag.free_identifiers();
+
+        assert_eq!(free, collect_identifiers([&a]));
+    });
+}
+
+/// Test two doubling DAGs [`SMALL_STACK_DEPTH`] levels deep built
+/// separately are equal and hash equally, and differ and hash differently
+/// from one over another leaf, on a small thread stack.
+#[test]
+fn expression_equality_and_hash_of_deep_doubling_dags_reach_the_bottom_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let a = Identifier::new("a");
+        let first = build_doubling_dag_over(&a, SMALL_STACK_DEPTH);
+        let second = build_doubling_dag_over(&a, SMALL_STACK_DEPTH);
+        let other = build_doubling_dag_over(&Identifier::new("b"), SMALL_STACK_DEPTH);
+
+        assert!(first == second, "equal deep DAGs compare unequal");
+        assert!(first != other, "deep DAGs over a and b compare equal");
+        assert_eq!(hash_of(&first), hash_of(&second));
+        assert_ne!(hash_of(&first), hash_of(&other));
+    });
+}
+
+/// Test renaming equivalence of two doubling DAGs [`SMALL_STACK_DEPTH`]
+/// levels deep reaches the bottom, on a small thread stack.
+#[test]
+fn expression_is_alpha_equivalent_under_a_renaming_of_deep_doubling_dags_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (a, c, d) = (
+            Identifier::new("a"),
+            Identifier::new("c"),
+            Identifier::new("d"),
+        );
+        let dag = build_doubling_dag_over(&a, SMALL_STACK_DEPTH);
+        let renamed = build_doubling_dag_over(&c, SMALL_STACK_DEPTH);
+        let other = build_doubling_dag_over(&d, SMALL_STACK_DEPTH);
+        let renaming = build_renaming([(a, c)]);
+
+        assert!(dag.is_alpha_equivalent_under(&renamed, &renaming));
+        assert!(!dag.is_alpha_equivalent_under(&other, &renaming));
     });
 }
 

@@ -11,17 +11,20 @@
 //!
 //! Dropping, equality, hashing, alpha-equivalence, substitution and free
 //! identifier collection keep their pending nodes in a work list on the heap
-//! rather than on the call stack, so they handle a tree of any depth. The
-//! derived `Debug` recurses once per tree level.
+//! rather than on the call stack, so they handle a tree of any depth. All but
+//! dropping handle a subtree that occurs in several places once, so they
+//! take time linear in the distinct nodes of a DAG, not in its occurrences.
+//! The derived `Debug` recurses once per tree level.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::identifier::Identifier;
 use crate::pass_infrastructure::{
-    NodeHandle, NodeIdentity, PassContext, RewriteTreeError, Rewriter, Tree, rewrite_tree,
+    BuildIdentityHasher, NodeHandle, NodeIdentity, PassContext, RewriteTreeError, Rewriter,
+    TraversalOrder, Tree, TreeVisitor, rewrite_tree, walk_tree,
 };
 
 use super::alpha::AlphaRenaming;
@@ -31,6 +34,10 @@ use super::operation::{BinaryOperation, UnaryOperation};
 
 /// The name of the pass context substitution runs its rewrite in.
 const SUBSTITUTION_PASS_NAME: &str = "substitute";
+
+/// The name of the pass context free-identifier collection runs its walk
+/// in.
+const FREE_IDENTIFIERS_PASS_NAME: &str = "free_identifiers";
 
 /// The children of a node, in visiting order, from either end.
 enum Children<'a> {
@@ -158,15 +165,29 @@ fn is_node_data_equal(
 /// Compare two trees node by node; identical handles are skipped when
 /// `skip_shared_nodes` is set, and `identifiers_match` compares two
 /// identifier leaves.
+///
+/// A pair of nodes both of which may be shared is compared once: the walk
+/// is depth-first, so by the time a pair comes up again every pair below
+/// its first occurrence has been compared, and a difference would have
+/// ended the walk. Two DAGs therefore compare in time linear in their
+/// distinct pairs of nodes.
 fn is_tree_equal(
     left: &Expression,
     right: &Expression,
     skip_shared_nodes: bool,
     identifiers_match: &impl Fn(&Identifier, &Identifier) -> bool,
 ) -> bool {
+    let mut compared: HashSet<(NodeIdentity, NodeIdentity), BuildIdentityHasher> =
+        HashSet::default();
     let mut pending = vec![(left, right)];
     while let Some((left, right)) = pending.pop() {
         if skip_shared_nodes && Expression::ptr_eq(left, right) {
+            continue;
+        }
+        if left.is_shared()
+            && right.is_shared()
+            && !compared.insert((left.identity(), right.identity()))
+        {
             continue;
         }
         if !is_node_data_equal(left, right, identifiers_match) {
@@ -175,6 +196,134 @@ fn is_tree_equal(
         pending.extend(left.children().zip(right.children()));
     }
     true
+}
+
+/// Feed the data of `expression`'s node, excluding its children, to
+/// `hasher`: a tag for its kind, then its operation, identifier, literal,
+/// case count, or function name and argument count.
+fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
+    match expression.kind() {
+        ExpressionKind::Unary(node) => {
+            hasher.write_u8(0);
+            node.operation.hash(hasher);
+        }
+        ExpressionKind::Binary(node) => {
+            hasher.write_u8(1);
+            node.operation.hash(hasher);
+        }
+        ExpressionKind::Identifier(identifier) => {
+            hasher.write_u8(2);
+            identifier.hash(hasher);
+        }
+        ExpressionKind::Literal(value) => {
+            hasher.write_u8(3);
+            value.hash(hasher);
+        }
+        ExpressionKind::Piecewise(node) => {
+            hasher.write_u8(4);
+            hasher.write_usize(node.cases.len());
+        }
+        ExpressionKind::Call(node) => {
+            hasher.write_u8(5);
+            node.function_name.hash(hasher);
+            hasher.write_usize(node.arguments.len());
+        }
+    }
+}
+
+/// A node whose structural digest is being computed: the node, its
+/// children still to digest, and where its children's digests start on the
+/// walk's digest stack.
+struct DigestFrame<'a> {
+    node: &'a Expression,
+    children: Children<'a>,
+    first_digest: usize,
+}
+
+impl<'a> DigestFrame<'a> {
+    /// Start digesting `node`, whose children's digests will start at
+    /// `first_digest`.
+    fn new(node: &'a Expression, first_digest: usize) -> Self {
+        Self {
+            node,
+            children: node.iterate_children(),
+            first_digest,
+        }
+    }
+}
+
+/// Return the structural digest of `root`: the hash, under the fixed-key
+/// [`DefaultHasher`], of the node's data (see [`hash_node_data`]) followed
+/// by the digests of its children in order.
+///
+/// The digest depends only on the structure, so equal expressions have
+/// equal digests however their subtrees are shared. It is computed
+/// bottom-up, and the digest of a node that may be shared is remembered by
+/// identity, so each distinct shared node is digested once.
+fn compute_structural_digest(root: &Expression) -> u64 {
+    let mut shared_digests: HashMap<NodeIdentity, u64, BuildIdentityHasher> = HashMap::default();
+    let mut digests: Vec<u64> = Vec::new();
+    let mut ancestors: Vec<DigestFrame<'_>> = Vec::new();
+    let mut current = DigestFrame::new(root, 0);
+    loop {
+        if let Some(child) = current.children.next() {
+            let known = child
+                .is_shared()
+                .then(|| shared_digests.get(&child.identity()))
+                .flatten();
+            if let Some(&digest) = known {
+                digests.push(digest);
+            } else {
+                let frame = DigestFrame::new(child, digests.len());
+                ancestors.push(std::mem::replace(&mut current, frame));
+            }
+            continue;
+        }
+        let mut hasher = DefaultHasher::new();
+        hash_node_data(current.node, &mut hasher);
+        for child_digest in digests.drain(current.first_digest..) {
+            hasher.write_u64(child_digest);
+        }
+        let digest = hasher.finish();
+        let Some(parent) = ancestors.pop() else {
+            return digest;
+        };
+        if current.node.is_shared() {
+            shared_digests.insert(current.node.identity(), digest);
+        }
+        digests.push(digest);
+        current = parent;
+    }
+}
+
+/// The visitor behind [`Expression::free_identifiers`]: records every
+/// identifier reference, walking below a node that may be shared only at
+/// its first occurrence.
+#[derive(Default)]
+struct FreeIdentifierCollector {
+    free: HashSet<Identifier>,
+    visited_shared_nodes: HashSet<NodeIdentity, BuildIdentityHasher>,
+    /// Whether the node just visited is seen for the first time.
+    is_first_visit: bool,
+}
+
+impl TreeVisitor<Expression> for FreeIdentifierCollector {
+    type Error = Infallible;
+
+    fn visit(&mut self, node: &Expression, _cx: &mut PassContext<'_>) -> Result<(), Infallible> {
+        self.is_first_visit =
+            !node.is_shared() || self.visited_shared_nodes.insert(node.identity());
+        if self.is_first_visit {
+            if let ExpressionKind::Identifier(identifier) = node.kind() {
+                self.free.insert(identifier.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn walks_children(&mut self, _node: &Expression) -> bool {
+        self.is_first_visit
+    }
 }
 
 /// The rewriter behind [`Expression::substitute`]: replaces each reference
@@ -207,7 +356,9 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 ///
 /// Dropping, comparing, hashing, substituting into, collecting the free
 /// identifiers of, and screening a tree keep their pending nodes on the
-/// heap, so they handle a tree of any depth on any thread. `Debug`,
+/// heap, so they handle a tree of any depth on any thread. All but dropping
+/// handle a subtree occurring in several places once, so a DAG such as
+/// `x(k+1) = xk + xk` costs time linear in its distinct nodes. `Debug`,
 /// serialization, and deserialization recurse once per tree level: a
 /// serialization round trip of a tree 4000 levels deep through `serde_json`
 /// values needs up to 32 MiB of stack in an unoptimized build and up to
@@ -328,22 +479,7 @@ impl Expression {
     /// literal has no children.
     #[must_use]
     pub fn children(&self) -> impl DoubleEndedIterator<Item = &Expression> {
-        match self.kind() {
-            ExpressionKind::Unary(node) => {
-                Children::Contiguous(std::slice::from_ref(&node.operand).iter())
-            }
-            ExpressionKind::Binary(node) => Children::Contiguous(node.operands.iter()),
-            ExpressionKind::Piecewise(node) => Children::Piecewise {
-                cases: node.cases.iter(),
-                front_value: None,
-                back_condition: None,
-                otherwise: Some(&node.otherwise),
-            },
-            ExpressionKind::Call(node) => Children::Contiguous(node.arguments.iter()),
-            ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {
-                Children::Contiguous(std::slice::Iter::default())
-            }
-        }
+        self.iterate_children()
     }
 
     /// Build a node of the same kind and operation from new children, given
@@ -406,18 +542,13 @@ impl Expression {
     /// Return the identifiers the expression refers to.
     ///
     /// Expressions bind no identifiers, so every identifier referenced is
-    /// free.
+    /// free. A subtree occurring in several places is walked once.
     #[must_use]
     pub fn free_identifiers(&self) -> HashSet<Identifier> {
-        let mut free = HashSet::new();
-        let mut pending = vec![self];
-        while let Some(expression) = pending.pop() {
-            if let ExpressionKind::Identifier(identifier) = expression.kind() {
-                free.insert(identifier.clone());
-            }
-            pending.extend(expression.children());
-        }
-        free
+        let mut collector = FreeIdentifierCollector::default();
+        let mut cx = PassContext::new_standalone(FREE_IDENTIFIERS_PASS_NAME.to_owned());
+        let Ok(()) = walk_tree(&mut collector, self, TraversalOrder::Pre, &mut cx);
+        collector.free
     }
 
     /// Replace every reference to a mapped identifier with its replacement,
@@ -458,11 +589,37 @@ impl Expression {
     /// where it refers to an unmapped identifier, `other` must refer to the
     /// same identifier, and that identifier must not be an image of
     /// `renaming`. Under the empty renaming this is structural equality.
+    ///
+    /// A pair of subtrees met again at another place of the two trees is
+    /// compared once, so two DAGs compare in time linear in their distinct
+    /// nodes.
     #[must_use]
     pub fn is_alpha_equivalent_under(&self, other: &Expression, renaming: &AlphaRenaming) -> bool {
         is_tree_equal(self, other, renaming.is_empty(), &|left, right| {
             renaming.are_identifiers_alpha_equivalent(left, right)
         })
+    }
+
+    /// Return the direct children in visiting order, as
+    /// [`children`](Self::children) does, in an iterator type a walk can
+    /// keep in its frames.
+    fn iterate_children(&self) -> Children<'_> {
+        match self.kind() {
+            ExpressionKind::Unary(node) => {
+                Children::Contiguous(std::slice::from_ref(&node.operand).iter())
+            }
+            ExpressionKind::Binary(node) => Children::Contiguous(node.operands.iter()),
+            ExpressionKind::Piecewise(node) => Children::Piecewise {
+                cases: node.cases.iter(),
+                front_value: None,
+                back_condition: None,
+                otherwise: Some(&node.otherwise),
+            },
+            ExpressionKind::Call(node) => Children::Contiguous(node.arguments.iter()),
+            ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {
+                Children::Contiguous(std::slice::Iter::default())
+            }
+        }
     }
 
     /// Return the number of children, the length of
@@ -528,38 +685,15 @@ impl PartialEq for Expression {
 impl Eq for Expression {}
 
 impl Hash for Expression {
+    /// Feed the structural digest of the tree to `state`.
+    ///
+    /// The digest is computed bottom-up from each node's data and its
+    /// children's digests under a fixed-key hasher, so it depends on the
+    /// structure alone and agrees with `==`: equal trees digest alike
+    /// whatever they share, and a subtree occurring in several places is
+    /// digested once.
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let mut pending = vec![self];
-        while let Some(expression) = pending.pop() {
-            match expression.kind() {
-                ExpressionKind::Unary(node) => {
-                    state.write_u8(0);
-                    node.operation.hash(state);
-                }
-                ExpressionKind::Binary(node) => {
-                    state.write_u8(1);
-                    node.operation.hash(state);
-                }
-                ExpressionKind::Identifier(identifier) => {
-                    state.write_u8(2);
-                    identifier.hash(state);
-                }
-                ExpressionKind::Literal(value) => {
-                    state.write_u8(3);
-                    value.hash(state);
-                }
-                ExpressionKind::Piecewise(node) => {
-                    state.write_u8(4);
-                    state.write_usize(node.cases.len());
-                }
-                ExpressionKind::Call(node) => {
-                    state.write_u8(5);
-                    node.function_name.hash(state);
-                    state.write_usize(node.arguments.len());
-                }
-            }
-            pending.extend(expression.children().rev());
-        }
+        state.write_u64(compute_structural_digest(self));
     }
 }
 

@@ -5,7 +5,7 @@
 //! identities, the JSON round trip, renaming free identifiers, the laws
 //! of literal equality, canonical keys, the integer-bucket predicate, and
 //! text `Display`, and, over DAGs sharing their subtrees at random, that
-//! substitution answers as it does for an unshared copy.
+//! every analysis answers as it does for an unshared copy.
 //!
 //! Public API only (`fhy_core::symbolic::expression`).
 
@@ -23,9 +23,10 @@ use expression_support::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    AlphaRenaming, Expression, ExpressionBuildError, ExpressionKind, LiteralKind, LiteralValue,
-    build_piecewise,
+    AlphaRenaming, Expression, ExpressionBuildError, ExpressionKind, FunctionSort, LiteralKind,
+    LiteralValue, SortLookup, build_piecewise, validate_logical_operands, validate_predicate,
 };
+use fhy_core::symbolic::symbol_type::SymbolType;
 use hashing_support::hash_of;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -120,6 +121,50 @@ fn build_piecewise_strategy() -> BoxedStrategy<Expression> {
     )
         .prop_map(build_node)
         .boxed()
+}
+
+/// Result sorts for two of the generated call names: `f` returns a real,
+/// `g` a Boolean; no identifier is a native constant.
+#[derive(Debug)]
+struct TwoCallSorts;
+
+impl SortLookup for TwoCallSorts {
+    fn native_constant_sort(&self, _identifier: &Identifier) -> Option<FunctionSort> {
+        None
+    }
+
+    fn call_result_sort(&self, function_name: &str) -> Option<FunctionSort> {
+        match function_name {
+            "f" => Some(FunctionSort::Real),
+            "g" => Some(FunctionSort::Bool),
+            _ => None,
+        }
+    }
+}
+
+/// Return the substitution renaming the pool identifier at `from` to the
+/// one at `to`.
+fn build_pool_renaming(from: usize, to: usize) -> HashMap<Identifier, Expression> {
+    HashMap::from([(POOL[from].clone(), Expression::from(POOL[to].clone()))])
+}
+
+/// Return the injective renaming of the pool identifiers `permutation`
+/// describes, and the substitution performing it.
+fn build_pool_permutation(
+    permutation: [usize; 3],
+) -> (AlphaRenaming, HashMap<Identifier, Expression>) {
+    let pairs: HashMap<Identifier, Identifier> = permutation
+        .iter()
+        .enumerate()
+        .filter(|(from, to)| from != *to)
+        .map(|(from, to)| (POOL[from].clone(), POOL[*to].clone()))
+        .collect();
+    let substitution = pairs
+        .iter()
+        .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
+        .collect();
+    let renaming = AlphaRenaming::try_new(pairs).expect("a permutation is injective");
+    (renaming, substitution)
 }
 
 proptest! {
@@ -419,6 +464,76 @@ proptest! {
 }
 
 proptest! {
+    /// Test a DAG's free identifiers are those of its unshared copy.
+    #[test]
+    fn expression_free_identifiers_of_a_dag_are_those_of_its_unshared_copy(
+        dag in build_expression_dag_strategy(),
+    ) {
+        let copy = copy_deeply(&dag);
+
+        let free = dag.free_identifiers();
+
+        prop_assert_eq!(free, copy.free_identifiers());
+    }
+
+    /// Test a DAG equals its unshared copy both ways and hashes like it.
+    #[test]
+    fn expression_dag_equals_and_hashes_like_its_unshared_copy(
+        dag in build_expression_dag_strategy(),
+    ) {
+        let copy = copy_deeply(&dag);
+
+        prop_assert!(dag == copy, "a DAG differs from its unshared copy");
+        prop_assert!(copy == dag, "an unshared copy differs from its DAG");
+        prop_assert_eq!(hash_of(&dag), hash_of(&copy));
+    }
+
+    /// Test comparing a DAG answers as comparing unshared copies, against
+    /// another DAG and against the DAG with one identifier renamed, which
+    /// keeps the subtrees the renaming does not reach.
+    #[test]
+    fn expression_equality_of_dags_answers_as_for_their_unshared_copies(
+        dag in build_expression_dag_strategy(),
+        other in build_expression_dag_strategy(),
+        from in 0..POOL.len(),
+        to in 0..POOL.len(),
+    ) {
+        let renamed = dag
+            .substitute(&build_pool_renaming(from, to))
+            .expect("identifiers replace identifiers");
+        let copy = copy_deeply(&dag);
+
+        for right in [&other, &renamed] {
+            let right_copy = copy_deeply(right);
+            prop_assert_eq!(dag == *right, copy == right_copy);
+            prop_assert_eq!(*right == dag, right_copy == copy);
+            if dag == *right {
+                prop_assert_eq!(hash_of(&dag), hash_of(right));
+            }
+        }
+    }
+
+    /// Test renaming equivalence of DAGs answers as for unshared copies,
+    /// against the DAG renamed by the renaming and against another DAG.
+    #[test]
+    fn expression_alpha_equivalence_of_dags_answers_as_for_their_unshared_copies(
+        dag in build_expression_dag_strategy(),
+        other in build_expression_dag_strategy(),
+        permutation in select(POOL_PERMUTATIONS.to_vec()),
+    ) {
+        let (renaming, substitution) = build_pool_permutation(permutation);
+        let renamed = dag.substitute(&substitution).expect("identifiers replace identifiers");
+        let copy = copy_deeply(&dag);
+
+        prop_assert!(dag.is_alpha_equivalent_under(&renamed, &renaming));
+        for right in [&other, &renamed] {
+            prop_assert_eq!(
+                dag.is_alpha_equivalent_under(right, &renaming),
+                copy.is_alpha_equivalent_under(&copy_deeply(right), &renaming)
+            );
+        }
+    }
+
     /// Test substituting into a DAG gives what substituting into its
     /// unshared copy gives, the same tree or the same refusal.
     #[test]
@@ -460,5 +575,37 @@ proptest! {
         let substituted = dag.substitute(&absent).expect("nothing is replaced");
 
         prop_assert!(Expression::ptr_eq(&substituted, &dag));
+    }
+
+    /// Test both screens answer for a DAG, with a DAG bound in the
+    /// environment, as for unshared copies of both.
+    #[test]
+    fn expression_screens_of_a_dag_answer_as_for_its_unshared_copy(
+        dag in build_expression_dag_strategy(),
+        bound in build_expression_dag_strategy(),
+        bound_index in 0..POOL.len(),
+        declared in prop::collection::vec(
+            select(vec![SymbolType::Int, SymbolType::Real, SymbolType::Bool]),
+            POOL.len(),
+        ),
+    ) {
+        let symbol_types: HashMap<Identifier, SymbolType> =
+            POOL.iter().cloned().zip(declared).collect();
+        let environment = HashMap::from([(POOL[bound_index].clone(), bound.clone())]);
+        let copy_environment =
+            HashMap::from([(POOL[bound_index].clone(), copy_deeply(&bound))]);
+        let copy = copy_deeply(&dag);
+
+        let operands = validate_logical_operands(&dag, &environment, &symbol_types, &TwoCallSorts);
+        let predicate = validate_predicate(&dag, &environment, &symbol_types, &TwoCallSorts);
+
+        prop_assert_eq!(
+            operands,
+            validate_logical_operands(&copy, &copy_environment, &symbol_types, &TwoCallSorts)
+        );
+        prop_assert_eq!(
+            predicate,
+            validate_predicate(&copy, &copy_environment, &symbol_types, &TwoCallSorts)
+        );
     }
 }

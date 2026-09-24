@@ -1,5 +1,6 @@
 //! Tests for the Boolean-position screens `validate_logical_operands` and
-//! `validate_predicate`, and for the error they report.
+//! `validate_predicate`, and for the error they report, over trees and over
+//! DAGs sharing their subtrees.
 //!
 //! Public API only (`fhy_core::symbolic::expression`). Calls and native
 //! constants take their sorts from a test-local [`SortLookup`] holding the
@@ -1128,6 +1129,148 @@ fn validate_logical_operands_takes_a_trait_object_lookup() {
 }
 
 // =============================================================================
+// Shared subtrees
+// =============================================================================
+
+/// The number of levels of the DAGs below: they have more than `2^64`
+/// occurrences, which no walk visiting every occurrence finishes.
+const DAG_LEVELS: usize = 64;
+
+/// Return `x(k+1) = xk && xk` from `x0 = leaf`, `levels` conjunctions deep,
+/// both operands of each conjunction one shared node.
+fn build_doubling_conjunction(leaf: &Expression, levels: usize) -> Expression {
+    let mut dag = leaf.clone();
+    for _ in 0..levels {
+        dag = Expression::new_binary(BinaryOperation::LogicalAnd, &dag, &dag);
+    }
+    dag
+}
+
+/// Return `x(k+1) = {xk if condition; xk otherwise}` from `x0 = leaf`,
+/// `levels` piecewise nodes deep, the value and the otherwise branch of
+/// each one shared node.
+fn build_doubling_piecewise(
+    condition: &Expression,
+    leaf: &Expression,
+    levels: usize,
+) -> Expression {
+    let mut dag = leaf.clone();
+    for _ in 0..levels {
+        dag = build_piecewise_or_panic([(condition, &dag)], &dag);
+    }
+    dag
+}
+
+/// Test both screens pass a doubling conjunction DAG over an undeclared
+/// identifier.
+#[rstest]
+#[case::logical_operands(Screen::LogicalOperands)]
+#[case::predicate(Screen::Predicate)]
+fn validate_passes_a_doubling_conjunction_dag(#[case] screen: Screen) {
+    let (_, p) = build_identifier("p");
+    let dag = build_doubling_conjunction(&p, DAG_LEVELS);
+
+    let result = screen.run(&dag);
+
+    assert!(result.is_ok(), "the Boolean DAG is refused");
+}
+
+/// Test both screens find a number beside a shared doubling conjunction
+/// DAG walked before it: `d && (d && 3)`.
+#[rstest]
+#[case::logical_operands(Screen::LogicalOperands)]
+#[case::predicate(Screen::Predicate)]
+fn validate_refuses_a_number_beside_a_shared_doubling_dag(#[case] screen: Screen) {
+    let (_, p) = build_identifier("p");
+    let dag = build_doubling_conjunction(&p, DAG_LEVELS);
+    let number = build_literal(3);
+    let parent = Expression::new_binary(BinaryOperation::LogicalAnd, &dag, &number);
+    let expression = Expression::new_binary(BinaryOperation::LogicalAnd, &dag, &parent);
+
+    let error = expect_refusal(screen.run(&expression));
+
+    assert!(Expression::ptr_eq(error.operand(), &number));
+    assert!(
+        error
+            .parent()
+            .is_some_and(|found| Expression::ptr_eq(found, &parent))
+    );
+    assert_eq!(
+        error.position(),
+        BooleanPosition::LogicalOperand {
+            operation: BinaryOperation::LogicalAnd
+        }
+    );
+}
+
+/// Test a doubling piecewise DAG whose leaf is a number is proven numeric
+/// as a predicate root and as a negated operand.
+#[test]
+fn validate_proves_a_doubling_piecewise_dag_numeric() {
+    let (_, q) = build_identifier("q");
+    let dag = build_doubling_piecewise(&q, &build_literal(1), DAG_LEVELS);
+    let negation = dag.logical_not();
+
+    let root_error = expect_refusal(Screen::Predicate.run(&dag));
+    let negated_error = expect_refusal(Screen::LogicalOperands.run(&negation));
+
+    assert!(Expression::ptr_eq(root_error.operand(), &dag));
+    assert_eq!(root_error.position(), BooleanPosition::PredicateRoot);
+    assert!(Expression::ptr_eq(negated_error.operand(), &dag));
+    assert_eq!(negated_error.position(), BooleanPosition::NegatedOperand);
+}
+
+/// Test a doubling piecewise DAG whose leaf is an undeclared identifier
+/// passes as a predicate, every branch of it sitting in a Boolean position.
+#[test]
+fn validate_predicate_passes_a_doubling_piecewise_dag_over_an_identifier() {
+    let (_, q) = build_identifier("q");
+    let (_, r) = build_identifier("r");
+    let dag = build_doubling_piecewise(&q, &r, DAG_LEVELS);
+
+    let result = Screen::Predicate.run(&dag);
+
+    assert!(result.is_ok(), "the Boolean piecewise DAG is refused");
+}
+
+/// Test an identifier occurring throughout a doubling DAG and bound to a
+/// DAG is screened through its bound value: a Boolean value passes, and a
+/// value with a number beside a shared subtree is refused there.
+#[test]
+fn validate_logical_operands_screens_a_bound_dag_at_a_shared_identifier() {
+    let (b, b_reference) = build_identifier("b");
+    let (_, p) = build_identifier("p");
+    let expression = build_doubling_conjunction(&b_reference, DAG_LEVELS);
+    let boolean = build_doubling_conjunction(&p, DAG_LEVELS);
+    let number = build_literal(3);
+    let parent = Expression::new_binary(BinaryOperation::LogicalAnd, &boolean, &number);
+    let numeric = Expression::new_binary(BinaryOperation::LogicalAnd, &boolean, &parent);
+    let sorts = BuiltinSorts::new();
+
+    let passed = Screen::LogicalOperands.run_with(
+        &expression,
+        &HashMap::from([(b.clone(), boolean.clone())]),
+        &HashMap::new(),
+        &sorts,
+    );
+    let refused = Screen::LogicalOperands.run_with(
+        &expression,
+        &HashMap::from([(b, numeric)]),
+        &HashMap::new(),
+        &sorts,
+    );
+
+    assert!(passed.is_ok(), "the Boolean binding is refused");
+    let error = expect_refusal(refused);
+    assert!(Expression::ptr_eq(error.operand(), &number));
+    assert!(
+        error
+            .parent()
+            .is_some_and(|found| Expression::ptr_eq(found, &parent))
+    );
+}
+
+// =============================================================================
 // Deep trees
 // =============================================================================
 
@@ -1190,4 +1333,27 @@ fn validate_logical_operands_negated_operand_parent_is_a_negation() {
         parent,
         &Expression::new_unary(UnaryOperation::LogicalNot, build_literal(3))
     );
+}
+
+/// Test both screens pass a doubling conjunction DAG
+/// [`SMALL_STACK_DEPTH`] levels deep, and prove a doubling piecewise DAG
+/// that deep over a number numeric, on a small thread stack.
+#[test]
+fn validate_walks_deep_doubling_dags_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, p) = build_identifier("p");
+        let conjunction = build_doubling_conjunction(&p, SMALL_STACK_DEPTH);
+        let piecewise = build_doubling_piecewise(&p, &build_literal(1), SMALL_STACK_DEPTH);
+
+        let operands_result = Screen::LogicalOperands.run(&conjunction);
+        let predicate_result = Screen::Predicate.run(&conjunction);
+        let root_error = expect_refusal(Screen::Predicate.run(&piecewise));
+
+        assert!(operands_result.is_ok(), "the Boolean DAG is refused");
+        assert!(
+            predicate_result.is_ok(),
+            "the Boolean predicate DAG is refused"
+        );
+        assert!(Expression::ptr_eq(root_error.operand(), &piecewise));
+    });
 }

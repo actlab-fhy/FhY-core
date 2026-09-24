@@ -44,6 +44,7 @@ pub use registry::{
     PassInfo, create_pass, register_pass, registered_passes, run_count, run_count_of,
     total_run_count,
 };
+pub(crate) use tree::BuildIdentityHasher;
 pub use tree::{
     RewritePass, RewriteTreeError, Rewriter, TraversalOrder, Tree, TreeVisitor, WalkPass,
     rewrite_tree, walk_tree,
