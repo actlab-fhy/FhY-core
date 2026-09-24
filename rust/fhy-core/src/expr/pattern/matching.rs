@@ -236,7 +236,6 @@ fn match_list(
 pub struct Pattern(Arc<PatternKind>);
 
 impl Pattern {
-    /// Wrap `kind`.
     fn from_kind(kind: PatternKind) -> Self {
         Self(Arc::new(kind))
     }
@@ -284,12 +283,6 @@ impl Pattern {
 
     /// Build the pattern matching every literal equal to `value` under
     /// [`LiteralValue`]'s equality.
-    ///
-    /// That equality compares the variant and the value: the integer `5`
-    /// matches the integer parsed from `"05"` but not the float `5.0` or the
-    /// decimal `5`, the integer `1` does not match the Boolean `true`, the
-    /// decimal parsed from `"1.5"` matches the one parsed from `"1.50"`, the
-    /// float `0.0` matches `-0.0`, and a NaN matches every NaN.
     #[must_use]
     pub fn literal(value: impl Into<LiteralValue>) -> Self {
         Self::from_kind(PatternKind::Literal(Some(value.into())))
@@ -686,9 +679,7 @@ impl MatchBindings {
     /// Create bindings that bind no capture.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Return whether no capture is bound.
@@ -737,7 +728,6 @@ impl MatchBindings {
         true
     }
 
-    /// Drop every capture bound after the first `len`.
     fn truncate(&mut self, len: usize) {
         self.entries.truncate(len);
     }

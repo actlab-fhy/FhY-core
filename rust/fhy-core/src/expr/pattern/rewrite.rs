@@ -1,15 +1,9 @@
 //! Rewrite rules and the bottom-up rewrite walk.
 //!
-//! A [`Rule`] is a rewrite tried at the root of one expression. A
-//! [`RewriteRule`] is the rule built from a [`Pattern`] and a rewrite that
-//! builds a replacement from the match's [`MatchBindings`], optionally behind
-//! guards and under a name; any other type can implement [`Rule`] itself.
-//! [`RewriteRule::apply`] tries one rule at the root of an expression;
-//! [`apply_rewrite_rules`] walks a whole tree bottom-up once, trying a list
-//! of rules at every node, and reports the rewritten tree, whether it
-//! differs from the input, and which rules fired.
-//! [`RewriteRuleApplier`](crate::expr::passes::RewriteRuleApplier) is the
-//! same walk as a compiler pass.
+//! A [`Rule`] is a rewrite tried at the root of one expression, and a
+//! [`RewriteRule`] is the rule built from a [`Pattern`] and a rewrite of its
+//! [`MatchBindings`], optionally guarded and named. [`apply_rewrite_rules`]
+//! walks a tree bottom-up once, trying a list of rules at every node.
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -145,7 +139,6 @@ struct RuleApplier<'r, R> {
 }
 
 impl<'r, R: Rule> RuleApplier<'r, R> {
-    /// Create the applier of `rules`.
     fn new(rules: &'r [R]) -> Self {
         Self {
             rules,
@@ -391,11 +384,11 @@ impl RewriteRule {
 
 impl Rule for RewriteRule {
     fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
-        RewriteRule::apply(self, expression)
+        Self::apply(self, expression)
     }
 
     fn name(&self) -> Option<&str> {
-        RewriteRule::name(self)
+        Self::name(self)
     }
 }
 
@@ -454,14 +447,11 @@ impl RewriteOutcome {
         self.output
     }
 
-    /// Return whether the rewritten tree is a different node from the input:
-    /// exactly when [`output`](Self::output) and the input are not
-    /// [`Expression::ptr_eq`].
+    /// Return whether the rewritten tree is a different node from the input,
+    /// as [`Expression::ptr_eq`] tells.
     ///
-    /// A tree in which no rule fired is unchanged, and a rule that returns
-    /// the node it was tried on does not fire, so no firing implies no
-    /// change. A rule that builds a fresh node equal to the one it matched
-    /// fires and counts as a change.
+    /// A walk in which no rule fired is unchanged. A rule that builds a
+    /// fresh node equal to the one it matched fires and counts as a change.
     #[must_use]
     pub fn is_changed(&self) -> bool {
         self.changed
@@ -575,23 +565,19 @@ impl Error for RewriteError {
 /// every node.
 ///
 /// Every node's children are rewritten first, in [`Expression::children`]
-/// order. A node with a rewritten child is rebuilt from the rewritten
-/// children, keeping the handles of the children no rule touched. The rules
-/// are then tried, in order, on the rebuilt node (or on the node itself when
-/// no child changed), and the first that fires replaces it. A rule fires
-/// when it returns a replacement other than the node it was tried on
-/// itself; a rule that declines or returns that node is not recorded, and
-/// the next rule is tried. A replacement is not rewritten again in the same
-/// pass. A node that occurs in several places is rewritten once and its
-/// result reused at every occurrence, so a tree sharing its subtrees costs
-/// time linear in its distinct nodes.
+/// order, and a node with a rewritten child is rebuilt around them. The
+/// rules are then tried in order on the resulting node, and the first that
+/// fires replaces it: a rule fires when it returns a replacement other than
+/// that node itself. A replacement is not rewritten again in the same pass.
+/// A node that occurs in several places is rewritten once and its result
+/// reused, so a tree sharing its subtrees costs time linear in its distinct
+/// nodes.
 ///
-/// When no rule fires anywhere, the output is a handle to `expression`
-/// itself; see [`RewriteOutcome::is_changed`] for the exact meaning of a
-/// change. A caller wanting a fixpoint repeats the call until the outcome
-/// is unchanged. That loop terminates for rules that return their input or
-/// a subterm of it, but not for a rule that keeps building a fresh node
-/// equal to the one it matched, which counts as a change every time.
+/// When no rule fires, the output is a handle to `expression` itself; see
+/// [`RewriteOutcome::is_changed`]. Repeating the call until the outcome is
+/// unchanged reaches a fixpoint for rules that return their input or a
+/// subterm of it, but never for a rule that keeps building a fresh node
+/// equal to the one it matched.
 ///
 /// The walk keeps its own work stack, so a tree of any depth rewrites within
 /// the default 2 MiB thread stack when the rules' patterns are shallow.
