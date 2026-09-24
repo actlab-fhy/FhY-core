@@ -106,8 +106,8 @@ fn build_plain_operands() -> [PlainOperand; 3] {
 // Unary builders
 // =============================================================================
 
-/// Test negation and the positive builder build unary nodes with their
-/// operation.
+/// Test negation, the positive builder and logical negation build unary
+/// nodes with their operation.
 #[rstest]
 #[case::negate(UnaryOperation::Negate)]
 #[case::positive(UnaryOperation::Positive)]
@@ -118,7 +118,7 @@ fn expression_unary_builders_produce_the_matching_unary_node(#[case] operation: 
     let built = match operation {
         UnaryOperation::Negate => -&operand,
         UnaryOperation::Positive => operand.positive(),
-        UnaryOperation::LogicalNot => operand.logical_not(),
+        UnaryOperation::LogicalNot => !&operand,
     };
 
     let ExpressionKind::Unary(node) = built.kind() else {
@@ -660,14 +660,31 @@ fn expression_logical_not_wraps_the_operand() {
     let operand = build_literal(true);
     let (identifier, reference) = build_identifier("a");
 
-    let negated = operand.logical_not();
+    let negated = !&operand;
     let negated_identifier = Expression::new_unary(UnaryOperation::LogicalNot, identifier);
 
     assert_eq!(
         negated,
         Expression::new_unary(UnaryOperation::LogicalNot, &operand)
     );
-    assert_eq!(negated_identifier, reference.logical_not());
+    assert_eq!(negated_identifier, !&reference);
+}
+
+/// Test `!` builds a logical negation over an owned or a borrowed
+/// expression, the borrowed operand shared rather than copied.
+#[test]
+fn expression_not_operator_builds_logical_not() {
+    let (_, p) = build_identifier("p");
+
+    let borrowed = !&p;
+    let owned = !p.clone();
+
+    let ExpressionKind::Unary(node) = borrowed.kind() else {
+        panic!("expected a unary node, got {borrowed:?}");
+    };
+    assert_eq!(node.operation(), UnaryOperation::LogicalNot);
+    assert!(Expression::ptr_eq(node.operand(), &p));
+    assert_eq!(owned, borrowed);
 }
 
 /// Test a conjunction keeps both bounds of `0 <= c <= 5`.

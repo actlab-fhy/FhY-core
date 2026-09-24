@@ -176,7 +176,7 @@ fn format_expression_default_options_write_symbolic_notation() {
 #[rstest]
 #[case::identifier(|| build_identifier("x").1)]
 #[case::sum(|| build_identifier("x").1 + 1)]
-#[case::logical_not(|| build_literal(true).logical_not())]
+#[case::logical_not(|| !build_literal(true))]
 #[case::piecewise(|| {
     build_piecewise([(build_identifier("p").1, 1)], build_literal(2.5))
         .expect("an identifier condition is accepted")
@@ -219,7 +219,7 @@ fn expression_display_writes_into_the_surrounding_format() {
 #[case::float(build_literal(4.5), "4.5")]
 #[case::decimal(build_decimal_literal("0.1"), "0.1")]
 #[case::identifier(build_identifier("baz").1, "baz")]
-#[case::logical_not(build_literal(true).logical_not(), "(!true)")]
+#[case::logical_not(!build_literal(true), "(!true)")]
 #[case::product(build_decimal_literal("3.14") * 10.5, "(3.14 * 10.5)")]
 fn format_expression_writes_symbolic_notation(
     #[case] expression: Expression,
@@ -539,7 +539,7 @@ fn format_expression_with_ids_reaches_every_node_kind() {
     let (x, x_reference) = build_identifier("x");
     let (y, y_reference) = build_identifier("y");
     let tree = build_piecewise(
-        [(p_reference.logical_not(), -&x_reference)],
+        [(!&p_reference, -&x_reference)],
         build_call("f", [&y_reference + &x_reference]).expect("a named call"),
     )
     .expect("a negation condition is accepted");

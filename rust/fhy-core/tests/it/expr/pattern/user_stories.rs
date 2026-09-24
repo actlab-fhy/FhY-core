@@ -136,7 +136,7 @@ fn subtraction_canonicalizer_rewrites_at_every_depth() {
 #[test]
 fn double_negation_peephole_collapses_an_inner_double_negation() {
     let (_, a) = build_identifier("a");
-    let expression = a.logical_not().logical_not();
+    let expression = !!&a;
 
     let outcome = rewrite(
         &expression,
@@ -153,7 +153,7 @@ fn double_negation_peephole_collapses_four_negations_in_one_walk() {
     let (_, a) = build_identifier("a");
     let mut expression = a.clone();
     for _ in 0..4 {
-        expression = expression.logical_not();
+        expression = !expression;
     }
     let rules = [build_double_application_rule(UnaryOperation::LogicalNot)];
 

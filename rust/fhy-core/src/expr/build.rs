@@ -7,18 +7,17 @@
 //! equality is built with [`Expression::equals`], never with `==`, which
 //! compares expressions structurally.
 //!
-//! The arithmetic operators `+ - * /` and unary `-` build binary and unary
-//! nodes, with an expression on either side of a binary operator and any
+//! The arithmetic operators `+ - * /`, unary `-` and logical `!` build
+//! binary and unary nodes, with an expression on either side of a binary operator and any
 //! operand on the other side; `/` is true division for every operand type.
 //! There is no `%`. The other operations are methods named after them:
 //! [`Expression::equals`], [`Expression::less`],
 //! [`Expression::floor_divide`], [`Expression::floor_mod`],
-//! [`Expression::power`],
-//! [`Expression::logical_not`], and so on.
+//! [`Expression::power`], and so on.
 //! [`build_logical_and`], [`build_logical_or`], [`build_piecewise`], and
 //! [`build_call`] build the nodes whose operand count varies.
 
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
 use num_bigint::BigInt;
 
@@ -278,12 +277,6 @@ impl Expression {
     pub fn positive(&self) -> Expression {
         Self::new_unary(UnaryOperation::Positive, self)
     }
-
-    /// Build the Boolean negation `!self`.
-    #[must_use]
-    pub fn logical_not(&self) -> Expression {
-        Self::new_unary(UnaryOperation::LogicalNot, self)
-    }
 }
 
 /// Implement one arithmetic operator trait for `Expression` and
@@ -367,6 +360,34 @@ impl Neg for &Expression {
     /// Build the arithmetic negation `-self`.
     fn neg(self) -> Expression {
         Expression::new_unary(UnaryOperation::Negate, self)
+    }
+}
+
+impl Not for Expression {
+    type Output = Expression;
+
+    /// Build the Boolean negation `!self`.
+    fn not(self) -> Expression {
+        Expression::new_unary(UnaryOperation::LogicalNot, self)
+    }
+}
+
+impl Not for &Expression {
+    type Output = Expression;
+
+    /// Build the Boolean negation `!self`, sharing the operand.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{Expression, UnaryOperation};
+    ///
+    /// let p = Expression::from(Identifier::new("p"));
+    /// assert_eq!(!&p, Expression::new_unary(UnaryOperation::LogicalNot, &p));
+    /// ```
+    fn not(self) -> Expression {
+        Expression::new_unary(UnaryOperation::LogicalNot, self)
     }
 }
 

@@ -172,7 +172,7 @@ impl Placement {
         match self {
             Self::AndLeft => build_and(operand, &build_literal(true)),
             Self::OrRight => build_or(&build_literal(false), operand),
-            Self::Negated => operand.logical_not(),
+            Self::Negated => !operand,
             Self::CaseCondition => {
                 build_piecewise_or_panic([(operand, &build_literal(1))], build_literal(2))
             }
@@ -227,7 +227,7 @@ fn validate_logical_operands_rejects_a_numeric_connective_operand(
 #[case::literal(build_literal(2))]
 #[case::negation(-build_literal(1))]
 fn validate_logical_operands_rejects_a_numeric_negated_operand(#[case] operand: Expression) {
-    let expression = operand.logical_not();
+    let expression = !&operand;
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
@@ -337,7 +337,7 @@ fn validate_logical_operands_rejects_a_piecewise_operand_with_one_numeric_branch
     let (_, x) = build_identifier("x");
     let mixed = build_piecewise_or_panic([(&x.greater(0), &value)], &otherwise);
 
-    let error = expect_refusal(Screen::LogicalOperands.run(&mixed.logical_not()));
+    let error = expect_refusal(Screen::LogicalOperands.run(&!&mixed));
 
     assert_refusal(&error, &build_literal(2), Some(&mixed), position);
 }
@@ -357,7 +357,7 @@ fn validate_logical_operands_reports_a_shared_branch_at_its_first_position() {
     )
     .expect("a valid piecewise");
 
-    let error = expect_refusal(Screen::LogicalOperands.run(&mixed.logical_not()));
+    let error = expect_refusal(Screen::LogicalOperands.run(&!&mixed));
 
     assert_refusal(
         &error,
@@ -385,7 +385,7 @@ fn validate_checks_every_case_condition_before_any_case_value(#[case] screen: Sc
     )
     .expect("a valid piecewise");
     let expression = match screen {
-        Screen::LogicalOperands => mixed.logical_not(),
+        Screen::LogicalOperands => !&mixed,
         Screen::Predicate => mixed.clone(),
     };
 
@@ -453,11 +453,11 @@ fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
 /// Test operands the screen cannot prove numeric pass.
 #[rstest]
 #[case::boolean_literals(build_and(&build_literal(true), &build_literal(false)))]
-#[case::boolean_literal_negation(build_literal(true).logical_not())]
+#[case::boolean_literal_negation(!build_literal(true))]
 #[case::unbound_identifiers(build_and(&build_identifier("p").1, &build_identifier("q").1))]
 #[case::comparisons({ let x = build_identifier("x").1; build_and(&x.greater(0), &x.less(5)) })]
 #[case::boolean_call(build_and(&build_call_or_panic("nand", &[build_literal(true), build_literal(true)]), &build_literal(true)))]
-#[case::nested_connective(build_and(&build_identifier("p").1.logical_not(), &build_literal(true)))]
+#[case::nested_connective(build_and(&!build_identifier("p").1, &build_literal(true)))]
 fn validate_logical_operands_accepts_an_operand_it_cannot_prove_numeric(
     #[case] expression: Expression,
 ) {
@@ -621,7 +621,7 @@ fn validate_logical_operands_does_not_walk_a_binding_of_a_constant() {
 
     let result = Screen::LogicalOperands.run_with(
         &expression,
-        &HashMap::from([(pi_identifier, build_literal(3).logical_not())]),
+        &HashMap::from([(pi_identifier, !build_literal(3))]),
         &HashMap::new(),
         &sorts,
     );
@@ -793,7 +793,7 @@ fn validate_logical_operands_screens_a_bound_piecewise_with_a_mixed_branch(
     let mixed = build_piecewise_or_panic([(&build_literal(false), &value)], &otherwise);
 
     let error = expect_refusal(Screen::LogicalOperands.run_with(
-        &reference.logical_not(),
+        &!&reference,
         &HashMap::from([(x, mixed.clone())]),
         &HashMap::new(),
         &BuiltinSorts::new(),
@@ -1010,7 +1010,7 @@ fn non_boolean_logical_operand_error_display_describes_the_position(
 ) {
     let number = -build_literal(7);
     let (expression, screen) = match position {
-        BooleanPosition::NegatedOperand => (number.logical_not(), Screen::LogicalOperands),
+        BooleanPosition::NegatedOperand => (!&number, Screen::LogicalOperands),
         BooleanPosition::LogicalOperand { .. } => (
             build_and(&number, &build_literal(true)),
             Screen::LogicalOperands,
@@ -1084,7 +1084,7 @@ fn non_boolean_logical_operand_error_display_writes_identifier_ids() {
 fn non_boolean_logical_operand_error_display_writes_a_deep_tree_on_a_small_stack() {
     run_on_small_stack(|| {
         let operand = build_deep_sum(&build_literal(0), SMALL_STACK_DEPTH);
-        let expression = operand.logical_not();
+        let expression = !&operand;
         let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
         let text = error.to_string();
@@ -1118,7 +1118,7 @@ fn no_registered_sorts_knows_nothing() {
 fn validate_logical_operands_takes_a_trait_object_lookup() {
     let sorts: Box<dyn SortLookup> = Box::new(BuiltinSorts::new());
     let call = build_call_or_panic("sqrt", &[build_literal(2.0)]);
-    let expression = call.logical_not();
+    let expression = !&call;
 
     let result = validate_logical_operands(&expression, &HashMap::new(), &HashMap::new(), &*sorts);
 
@@ -1206,7 +1206,7 @@ fn validate_refuses_a_number_beside_a_shared_doubling_dag(#[case] screen: Screen
 fn validate_proves_a_doubling_piecewise_dag_numeric() {
     let (_, q) = build_identifier("q");
     let dag = build_doubling_piecewise(&q, &build_literal(1), DAG_LEVELS);
-    let negation = dag.logical_not();
+    let negation = !&dag;
 
     let root_error = expect_refusal(Screen::Predicate.run(&dag));
     let negated_error = expect_refusal(Screen::LogicalOperands.run(&negation));
@@ -1306,7 +1306,7 @@ fn validate_proves_a_deep_piecewise_numeric_on_a_small_stack() {
         for _ in 0..SMALL_STACK_DEPTH {
             piecewise = build_piecewise_or_panic([(&p, build_literal(1))], piecewise);
         }
-        let negation = piecewise.logical_not();
+        let negation = !&piecewise;
 
         let negated_error = expect_refusal(Screen::LogicalOperands.run(&negation));
         let root_error = expect_refusal(Screen::Predicate.run(&piecewise));
@@ -1321,7 +1321,7 @@ fn validate_proves_a_deep_piecewise_numeric_on_a_small_stack() {
 /// Test the unary operation of a negated operand is a logical negation.
 #[test]
 fn validate_logical_operands_negated_operand_parent_is_a_negation() {
-    let expression = build_literal(3).logical_not();
+    let expression = !build_literal(3);
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 

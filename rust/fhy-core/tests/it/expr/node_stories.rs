@@ -668,7 +668,7 @@ fn expression_free_identifiers_of_piecewise_cover_every_branch() {
     let expression = build_piecewise_node_or_panic(
         vec![
             (c_reference.clone(), v_reference),
-            (c_reference.logical_not(), build_literal(1)),
+            (!&c_reference, build_literal(1)),
         ],
         o_reference,
     );
