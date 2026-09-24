@@ -21,7 +21,7 @@ use fhy_core::expr::builtins::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralValue,
-    Notation, UnaryOperation, build_piecewise,
+    LogicalOperation, Notation, UnaryOperation, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -143,26 +143,27 @@ fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expre
 /// `parameters`.
 fn build_expected_boolean_body(name: &str, parameters: &[Expression]) -> Expression {
     match (name, parameters) {
-        ("xor", [a, b]) => Expression::new_binary(
-            BinaryOperation::LogicalAnd,
-            Expression::new_binary(BinaryOperation::LogicalOr, a, b),
-            Expression::new_unary(
-                UnaryOperation::LogicalNot,
-                Expression::new_binary(BinaryOperation::LogicalAnd, a, b),
-            ),
+        ("xor", [a, b]) => Expression::new_logical(
+            LogicalOperation::And,
+            [
+                Expression::new_logical(LogicalOperation::Or, [a, b]),
+                Expression::new_unary(
+                    UnaryOperation::LogicalNot,
+                    Expression::new_logical(LogicalOperation::And, [a, b]),
+                ),
+            ],
         ),
         ("nand", [a, b]) => Expression::new_unary(
             UnaryOperation::LogicalNot,
-            Expression::new_binary(BinaryOperation::LogicalAnd, a, b),
+            Expression::new_logical(LogicalOperation::And, [a, b]),
         ),
         ("nor", [a, b]) => Expression::new_unary(
             UnaryOperation::LogicalNot,
-            Expression::new_binary(BinaryOperation::LogicalOr, a, b),
+            Expression::new_logical(LogicalOperation::Or, [a, b]),
         ),
-        ("implies", [a, b]) => Expression::new_binary(
-            BinaryOperation::LogicalOr,
-            Expression::new_unary(UnaryOperation::LogicalNot, a),
-            b,
+        ("implies", [a, b]) => Expression::new_logical(
+            LogicalOperation::Or,
+            [&Expression::new_unary(UnaryOperation::LogicalNot, a), b],
         ),
         ("iff", [a, b]) => Expression::new_binary(BinaryOperation::Equal, a, b),
         _ => panic!(
@@ -636,11 +637,11 @@ fn composed_function_body_is_the_documented_tree(
 #[case::xor(
     "xor",
     "((a || b) && (!(a && b)))",
-    "(logical_and (logical_or a b) (logical_not (logical_and a b)))"
+    "(and (or a b) (logical_not (and a b)))"
 )]
-#[case::nand("nand", "(!(a && b))", "(logical_not (logical_and a b))")]
-#[case::nor("nor", "(!(a || b))", "(logical_not (logical_or a b))")]
-#[case::implies("implies", "((!a) || b)", "(logical_or (logical_not a) b)")]
+#[case::nand("nand", "(!(a && b))", "(logical_not (and a b))")]
+#[case::nor("nor", "(!(a || b))", "(logical_not (or a b))")]
+#[case::implies("implies", "((!a) || b)", "(or (logical_not a) b)")]
 #[case::iff("iff", "(a == b)", "(equal a b)")]
 #[case::sigmoid(
     "sigmoid",

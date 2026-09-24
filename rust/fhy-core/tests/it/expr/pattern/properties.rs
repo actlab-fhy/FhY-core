@@ -324,7 +324,8 @@ fn build_mirroring_pattern(expression: &Expression) -> (Pattern, Vec<(String, Ex
     (pattern, captures)
 }
 
-/// Return the mirror of `node`, recording its leaves in `captures`.
+/// Return the mirror of `node`, recording its leaves, and each logical node
+/// as a leaf, in `captures`.
 fn mirror_node(node: &Expression, captures: &mut Vec<(String, Expression)>) -> Pattern {
     match node.kind() {
         ExpressionKind::Unary(unary) => Pattern::unary(
@@ -357,7 +358,9 @@ fn mirror_node(node: &Expression, captures: &mut Vec<(String, Expression)>) -> P
             let otherwise = mirror_node(piecewise.otherwise(), captures);
             Pattern::piecewise(Some(cases), otherwise).expect("a piecewise has cases")
         }
-        ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {
+        // No pattern shape describes a logical node, so the mirror captures
+        // it whole, as a leaf.
+        ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) | ExpressionKind::Logical(_) => {
             let name = format!("leaf_{}", captures.len());
             captures.push((name.clone(), node.clone()));
             Pattern::capture(&name, Pattern::wildcard()).expect("a non-empty capture name")

@@ -850,7 +850,7 @@ fn pattern_binary_rejects_another_operation() {
 #[case::add(BinaryOperation::Add)]
 #[case::multiply(BinaryOperation::Multiply)]
 #[case::power(BinaryOperation::Power)]
-#[case::logical_or(BinaryOperation::LogicalOr)]
+#[case::floor_mod(BinaryOperation::FloorMod)]
 #[case::greater_equal(BinaryOperation::GreaterEqual)]
 fn pattern_binary_without_operation_matches_every_operation(#[case] operation: BinaryOperation) {
     let pattern = Pattern::binary(None, Pattern::wildcard(), Pattern::wildcard());

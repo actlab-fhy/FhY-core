@@ -9,7 +9,7 @@ use crate::support::expression as expression_support;
 use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand,
-    LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or, build_piecewise,
+    LiteralValue, LogicalExpression, LogicalOperation, UnaryOperation, build_call, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -542,115 +542,161 @@ fn expression_div_operator_builds_true_division(#[case] build: fn() -> Expressio
 // Logical builders
 // =============================================================================
 
-/// Test the variadic logical builders fold three operands to the right,
-/// wrapping each bare identifier operand in a reference to it.
+/// Build the logical node of `operation` over `operands` through the
+/// builder named after it, `Expression::all` or `Expression::any`.
+fn build_through_named_builder(
+    operation: LogicalOperation,
+    operands: impl IntoIterator<Item = Expression>,
+) -> Expression {
+    match operation {
+        LogicalOperation::And => Expression::all(operands),
+        LogicalOperation::Or => Expression::any(operands),
+    }
+}
+
+/// Return the logical node `expression` refers to.
+fn expect_logical(expression: &Expression) -> &LogicalExpression {
+    let ExpressionKind::Logical(node) = expression.kind() else {
+        panic!("expected a logical node, got {expression:?}");
+    };
+    node
+}
+
+/// Test `all`, `any` and `new_logical` build one logical node over every
+/// operand in order, sharing each operand, whatever their number, and
+/// wrapping a bare identifier operand in a reference to it.
 #[rstest]
-#[case::and(BinaryOperation::LogicalAnd)]
-#[case::or(BinaryOperation::LogicalOr)]
-fn build_logical_folds_three_operands_to_the_right(#[case] operation: BinaryOperation) {
+fn expression_all_and_any_build_one_node_over_every_operand(
+    #[values(LogicalOperation::And, LogicalOperation::Or)] operation: LogicalOperation,
+    #[values(2, 3, 4, 7)] count: usize,
+) {
+    let operands: Vec<Expression> = (0..count)
+        .map(|index| build_identifier(&format!("p{index}")).1)
+        .collect();
+
+    let named = build_through_named_builder(operation, operands.iter().cloned());
+    let general = Expression::new_logical(operation, &operands);
+
+    let node = expect_logical(&named);
+    assert_eq!(node.operation(), operation);
+    assert_eq!(node.operands().len(), count);
+    for (operand, expected) in node.operands().iter().zip(&operands) {
+        assert!(Expression::ptr_eq(operand, expected));
+    }
+    assert_eq!(general, named);
+}
+
+/// Test a bare identifier operand becomes a reference to it.
+#[test]
+fn expression_all_wraps_identifier_operands_in_references() {
     let (first, first_reference) = build_identifier("a");
     let (second, second_reference) = build_identifier("b");
-    let (third, third_reference) = build_identifier("c");
-    let operands: [Identifier; 3] = [first, second, third];
 
-    let built = match operation {
-        BinaryOperation::LogicalAnd => build_logical_and(operands),
-        _ => build_logical_or(operands),
-    }
-    .expect("three operands");
-
-    let expected = Expression::new_binary(
-        operation,
-        &first_reference,
-        Expression::new_binary(operation, &second_reference, &third_reference),
-    );
-    assert_eq!(built, expected);
-}
-
-/// Test the variadic logical builders accept exactly two operands.
-#[rstest]
-#[case::and(BinaryOperation::LogicalAnd)]
-#[case::or(BinaryOperation::LogicalOr)]
-fn build_logical_accepts_two_operands(#[case] operation: BinaryOperation) {
-    let first = build_literal(true);
-    let second = build_literal(false);
-
-    let built = match operation {
-        BinaryOperation::LogicalAnd => build_logical_and([&first, &second]),
-        _ => build_logical_or([&first, &second]),
-    }
-    .expect("two operands");
-
-    assert_eq!(built, Expression::new_binary(operation, &first, &second));
-}
-
-/// Test the variadic logical builders refuse fewer than two operands,
-/// reporting the operation and the count.
-#[rstest]
-fn build_logical_rejects_fewer_than_two_operands(
-    #[values(BinaryOperation::LogicalAnd, BinaryOperation::LogicalOr)] operation: BinaryOperation,
-    #[values(0, 1)] count: usize,
-) {
-    let operands: Vec<Expression> = (0..count).map(|_| build_literal(true)).collect();
-
-    let result = match operation {
-        BinaryOperation::LogicalAnd => build_logical_and(operands),
-        _ => build_logical_or(operands),
-    };
+    let built = Expression::all([first, second]);
 
     assert_eq!(
-        result,
-        Err(ExpressionBuildError::TooFewLogicalOperands { operation, count })
+        expect_logical(&built).operands(),
+        [first_reference, second_reference]
     );
 }
 
-/// Test a conjunction of four operands folds to the right.
-#[test]
-fn build_logical_and_folds_four_operands_to_the_right() {
-    let operands = [
-        build_literal(true),
-        build_literal(false),
-        build_literal(true),
-        build_literal(false),
-    ];
-
-    let built = build_logical_and(operands.clone()).expect("four operands");
-
-    let and = BinaryOperation::LogicalAnd;
-    let expected = Expression::new_binary(
-        and,
-        &operands[0],
-        Expression::new_binary(
-            and,
-            &operands[1],
-            Expression::new_binary(and, &operands[2], &operands[3]),
-        ),
-    );
-    assert_eq!(built, expected);
-}
-
-/// Test `build_logical_and` and `build_logical_or` keep an existing
-/// expression given as the first operand as the outermost left operand, with
-/// the other operands folded to its right.
+/// Test `and` and `or` build the two-operand logical node over the receiver
+/// and their operand.
 #[rstest]
-#[case::and(BinaryOperation::LogicalAnd)]
-#[case::or(BinaryOperation::LogicalOr)]
-fn build_logical_includes_a_leading_expression(#[case] operation: BinaryOperation) {
-    let leading = build_literal(true);
-    let (second, third) = (build_literal(false), build_literal(true));
+#[case::and(LogicalOperation::And)]
+#[case::or(LogicalOperation::Or)]
+fn expression_and_and_or_build_a_two_operand_node(#[case] operation: LogicalOperation) {
+    let (_, p) = build_identifier("p");
+    let (_, q) = build_identifier("q");
 
     let built = match operation {
-        BinaryOperation::LogicalAnd => build_logical_and([&leading, &second, &third]),
-        _ => build_logical_or([&leading, &second, &third]),
-    }
-    .expect("three operands");
+        LogicalOperation::And => p.and(&q),
+        LogicalOperation::Or => p.or(&q),
+    };
 
-    let expected = Expression::new_binary(
-        operation,
-        &leading,
-        Expression::new_binary(operation, &second, &third),
-    );
-    assert_eq!(built, expected);
+    let node = expect_logical(&built);
+    assert_eq!(node.operation(), operation);
+    assert!(Expression::ptr_eq(&node.operands()[0], &p));
+    assert!(Expression::ptr_eq(&node.operands()[1], &q));
+}
+
+/// Test `all` of no operand is the literal `true`, `any` of none the literal
+/// `false`, and either of one operand that operand's own handle.
+#[rstest]
+fn expression_all_and_any_of_zero_or_one_operand(
+    #[values(LogicalOperation::And, LogicalOperation::Or)] operation: LogicalOperation,
+) {
+    let (_, p) = build_identifier("p");
+
+    let of_nothing = build_through_named_builder(operation, []);
+    let of_one = build_through_named_builder(operation, [p.clone()]);
+    let general_of_one = Expression::new_logical(operation, [&p]);
+
+    let identity = operation == LogicalOperation::And;
+    assert_eq!(of_nothing, build_literal(identity));
+    assert!(Expression::ptr_eq(&of_one, &p));
+    assert!(Expression::ptr_eq(&general_of_one, &p));
+}
+
+/// Test `all` of nothing is `true` and `any` of nothing is `false`.
+#[test]
+fn expression_all_and_any_of_nothing_are_true_and_false() {
+    let no_operands: [Expression; 0] = [];
+
+    let all = Expression::all(no_operands.clone());
+    let any = Expression::any(no_operands);
+
+    assert!(matches!(
+        all.kind(),
+        ExpressionKind::Literal(LiteralValue::Bool(true))
+    ));
+    assert!(matches!(
+        any.kind(),
+        ExpressionKind::Literal(LiteralValue::Bool(false))
+    ));
+}
+
+/// Test `all` of one operand returns that operand's handle, building no node.
+#[test]
+fn expression_all_of_one_operand_is_that_operand() {
+    let (_, p) = build_identifier("p");
+    let comparison = p.less(3);
+
+    let built = Expression::all([&comparison]);
+
+    assert!(Expression::ptr_eq(&built, &comparison));
+}
+
+/// Test `and` never splices a nested conjunction's operands into the new
+/// node: `x.and(y.and(z))` keeps the inner node as its second operand.
+#[test]
+fn expression_and_does_not_flatten_a_nested_conjunction() {
+    let (_, x) = build_identifier("x");
+    let (_, y) = build_identifier("y");
+    let (_, z) = build_identifier("z");
+    let inner = y.and(&z);
+
+    let built = x.and(&inner);
+
+    let node = expect_logical(&built);
+    assert_eq!(node.operands().len(), 2);
+    assert!(Expression::ptr_eq(&node.operands()[1], &inner));
+    assert_ne!(built, Expression::all([&x, &y, &z]));
+}
+
+/// Test `all` over ten thousand comparisons is one logical node with every
+/// comparison as an operand, not a chain ten thousand levels deep.
+#[test]
+fn expression_all_of_ten_thousand_comparisons_is_one_logical_node() {
+    let (_, x) = build_identifier("x");
+    let comparisons: Vec<Expression> = (0..10_000).map(|bound| x.less(bound)).collect();
+
+    let built = Expression::all(&comparisons);
+
+    let node = expect_logical(&built);
+    assert_eq!(node.operation(), LogicalOperation::And);
+    assert_eq!(node.operands().len(), 10_000);
+    assert_eq!(node.operands(), comparisons.as_slice());
 }
 
 /// Test logical negation builds a negation node, and wraps a bare
@@ -689,19 +735,16 @@ fn expression_not_operator_builds_logical_not() {
 
 /// Test a conjunction keeps both bounds of `0 <= c <= 5`.
 #[test]
-fn build_logical_and_keeps_both_bounds_of_a_range() {
+fn expression_all_keeps_both_bounds_of_a_range() {
     let (_, c) = build_identifier("c");
     let lower = Expression::new_binary(BinaryOperation::LessEqual, 0, &c);
     let upper = c.less_equal(5);
 
-    let conjunction = build_logical_and([&lower, &upper]).expect("two operands");
+    let conjunction = Expression::all([&lower, &upper]);
 
-    let ExpressionKind::Binary(node) = conjunction.kind() else {
-        panic!("expected a binary node, got {conjunction:?}");
-    };
-    assert_eq!(node.operation(), BinaryOperation::LogicalAnd);
-    assert_eq!(node.left(), &lower);
-    assert_eq!(node.right(), &upper);
+    let node = expect_logical(&conjunction);
+    assert_eq!(node.operation(), LogicalOperation::And);
+    assert_eq!(node.operands(), [lower, upper]);
 }
 
 // =============================================================================
@@ -885,10 +928,6 @@ fn build_call_rejects_an_empty_function_name() {
 #[case::empty_function_name(
     ExpressionBuildError::EmptyFunctionName,
     "a call expression needs a non-empty function name"
-)]
-#[case::too_few_operands(
-    ExpressionBuildError::TooFewLogicalOperands { operation: BinaryOperation::LogicalOr, count: 1 },
-    "logical_or requires at least two operands, but got 1"
 )]
 #[case::child_count(
     ExpressionBuildError::ChildCountMismatch { expected: 3, actual: 4 },

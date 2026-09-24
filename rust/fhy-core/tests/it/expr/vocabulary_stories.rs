@@ -1,5 +1,5 @@
 //! Tests for the symbolic vocabulary enums: `SymbolType`, `FunctionSort`,
-//! `UnaryOperation`, and `BinaryOperation`.
+//! `UnaryOperation`, `BinaryOperation`, and `LogicalOperation`.
 //!
 //! Public API only. Each enum is checked for its text forms (`as_str`,
 //! `symbol`, `Display`), its serialized form, and the strings its
@@ -11,8 +11,8 @@ use crate::support::expression as expression_support;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 
-use expression_support::{ALL_BINARY_OPERATIONS, ALL_UNARY_OPERATIONS};
-use fhy_core::expr::{BinaryOperation, FunctionSort, SymbolType, UnaryOperation};
+use expression_support::{ALL_BINARY_OPERATIONS, ALL_LOGICAL_OPERATIONS, ALL_UNARY_OPERATIONS};
+use fhy_core::expr::{BinaryOperation, FunctionSort, LogicalOperation, SymbolType, UnaryOperation};
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -309,8 +309,6 @@ fn unary_operation_accepts_exactly_its_three_wire_names() {
 #[case::floor_divide(BinaryOperation::FloorDivide, "floor_divide", "//")]
 #[case::floor_mod(BinaryOperation::FloorMod, "floor_mod", "%")]
 #[case::power(BinaryOperation::Power, "power", "**")]
-#[case::logical_and(BinaryOperation::LogicalAnd, "logical_and", "&&")]
-#[case::logical_or(BinaryOperation::LogicalOr, "logical_or", "||")]
 #[case::equal(BinaryOperation::Equal, "equal", "==")]
 #[case::not_equal(BinaryOperation::NotEqual, "not_equal", "!=")]
 #[case::less(BinaryOperation::Less, "less", "<")]
@@ -341,8 +339,6 @@ fn binary_operation_text_forms_are_the_wire_name_and_symbol(
 #[case::floor_divide(BinaryOperation::FloorDivide, "floor_divide")]
 #[case::floor_mod(BinaryOperation::FloorMod, "floor_mod")]
 #[case::power(BinaryOperation::Power, "power")]
-#[case::logical_and(BinaryOperation::LogicalAnd, "logical_and")]
-#[case::logical_or(BinaryOperation::LogicalOr, "logical_or")]
 #[case::equal(BinaryOperation::Equal, "equal")]
 #[case::not_equal(BinaryOperation::NotEqual, "not_equal")]
 #[case::less(BinaryOperation::Less, "less")]
@@ -378,10 +374,10 @@ fn binary_operation_deserialization_rejects_other_input(#[case] input: Value) {
     assert_deserialization_rejects::<BinaryOperation>(&input);
 }
 
-/// Test the binary operations are exactly their fifteen wire names on the
+/// Test the binary operations are exactly their thirteen wire names on the
 /// wire.
 #[test]
-fn binary_operation_accepts_exactly_its_fifteen_wire_names() {
+fn binary_operation_accepts_exactly_its_thirteen_wire_names() {
     let accepted = collect_accepted_wire_words::<BinaryOperation>();
 
     let expected = BTreeSet::from([
@@ -392,8 +388,6 @@ fn binary_operation_accepts_exactly_its_fifteen_wire_names() {
         "floor_divide",
         "floor_mod",
         "power",
-        "logical_and",
-        "logical_or",
         "equal",
         "not_equal",
         "less",
@@ -402,6 +396,59 @@ fn binary_operation_accepts_exactly_its_fifteen_wire_names() {
         "greater_equal",
     ]);
     assert_eq!(accepted, expected);
+}
+
+/// Test each logical operation's wire name, symbol, and display text.
+#[rstest]
+#[case::and(LogicalOperation::And, "and", "&&")]
+#[case::or(LogicalOperation::Or, "or", "||")]
+fn logical_operation_text_forms_are_the_wire_name_and_symbol(
+    #[case] operation: LogicalOperation,
+    #[case] expected_name: &str,
+    #[case] expected_symbol: &str,
+) {
+    let name = operation.as_str();
+    let symbol = operation.symbol();
+    let displayed = operation.to_string();
+
+    assert_eq!(name, expected_name);
+    assert_eq!(symbol, expected_symbol);
+    assert_eq!(displayed, expected_name);
+}
+
+/// Test a logical operation serializes as its wire name and deserializes
+/// from it.
+#[rstest]
+#[case::and(LogicalOperation::And, "and")]
+#[case::or(LogicalOperation::Or, "or")]
+fn logical_operation_serializes_as_the_wire_name(
+    #[case] operation: LogicalOperation,
+    #[case] expected: &str,
+) {
+    assert_serializes_as_string(&operation, expected);
+}
+
+/// Test logical operation deserialization refuses symbols, other casings,
+/// the old binary names, and non-string JSON.
+#[rstest]
+#[case::and_symbol(json!("&&"))]
+#[case::title_case(json!("And"))]
+#[case::upper_case(json!("OR"))]
+#[case::old_binary_name(json!("logical_and"))]
+#[case::other_connective(json!("xor"))]
+#[case::empty(json!(""))]
+#[case::integer(json!(1))]
+#[case::null(json!(null))]
+fn logical_operation_deserialization_rejects_other_input(#[case] input: Value) {
+    assert_deserialization_rejects::<LogicalOperation>(&input);
+}
+
+/// Test the logical operations are exactly `and` and `or` on the wire.
+#[test]
+fn logical_operation_accepts_exactly_its_two_wire_names() {
+    let accepted = collect_accepted_wire_words::<LogicalOperation>();
+
+    assert_eq!(accepted, BTreeSet::from(["and", "or"]));
 }
 
 /// Return the message deserializing the JSON string `word` as `T` fails with.
@@ -435,6 +482,10 @@ fn describe_rejected_word<T: DeserializeOwned + Debug>(word: &str) -> String {
     "invalid value: string \"plus\", expected a binary operation name such as add or \
      floor_divide"
 )]
+#[case::logical_operation(
+    describe_rejected_word::<LogicalOperation>("xor"),
+    "invalid value: string \"xor\", expected a logical operation name: and or or"
+)]
 fn vocabulary_rejection_names_the_word_and_the_expected_names(
     #[case] message: String,
     #[case] expected: &str,
@@ -443,7 +494,7 @@ fn vocabulary_rejection_names_the_word_and_the_expected_names(
 }
 
 /// Test no two operations of one kind share a symbol, so a table from symbol
-/// back to operation recovers every unary and every binary operation.
+/// back to operation recovers every unary, binary and logical operation.
 #[test]
 fn operation_symbols_invert_to_their_operations() {
     let unary_by_symbol: HashMap<&str, UnaryOperation> = ALL_UNARY_OPERATIONS
@@ -455,13 +506,22 @@ fn operation_symbols_invert_to_their_operations() {
         .map(|operation| (operation.symbol(), operation))
         .collect();
 
+    let logical_by_symbol: HashMap<&str, LogicalOperation> = ALL_LOGICAL_OPERATIONS
+        .into_iter()
+        .map(|operation| (operation.symbol(), operation))
+        .collect();
+
     assert_eq!(unary_by_symbol.len(), ALL_UNARY_OPERATIONS.len());
     assert_eq!(binary_by_symbol.len(), ALL_BINARY_OPERATIONS.len());
+    assert_eq!(logical_by_symbol.len(), ALL_LOGICAL_OPERATIONS.len());
     for operation in ALL_UNARY_OPERATIONS {
         assert_eq!(unary_by_symbol[operation.symbol()], operation);
     }
     for operation in ALL_BINARY_OPERATIONS {
         assert_eq!(binary_by_symbol[operation.symbol()], operation);
+    }
+    for operation in ALL_LOGICAL_OPERATIONS {
+        assert_eq!(logical_by_symbol[operation.symbol()], operation);
     }
 }
 

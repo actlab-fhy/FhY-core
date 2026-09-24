@@ -7,7 +7,7 @@ use fhy_core::expr::builtins::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, CallExpression, Decimal, Expression, ExpressionKind, IntoOperand,
-    LiteralValue, PiecewiseExpression, UnaryOperation, build_call, build_logical_and,
+    LiteralValue, LogicalOperation, PiecewiseExpression, UnaryOperation, build_call,
     build_piecewise,
 };
 use fhy_core::identifier::Identifier;
@@ -160,18 +160,13 @@ pub(crate) fn is_doubling_dag_over(dag: &Expression, leaf: &Expression, levels: 
     Expression::ptr_eq(node, leaf)
 }
 
-/// Return `leaf && (true && (true && ...))`, `depth` conjunctions deep, with
-/// `leaf` at the bottom of the right spine.
-///
-/// # Panics
-///
-/// Panics if a conjunction of two operands is refused.
+/// Return `true && (true && (... && leaf))`, `depth` two-operand
+/// conjunctions deep, with `leaf` at the bottom of the right spine.
 #[must_use]
 pub(crate) fn build_deep_conjunction(leaf: &Expression, depth: usize) -> Expression {
     let mut tree = leaf.clone();
     for _ in 0..depth {
-        tree = build_logical_and([build_literal(true), tree])
-            .expect("two operands make a conjunction");
+        tree = Expression::all([build_literal(true), tree]);
     }
     tree
 }
@@ -192,8 +187,19 @@ pub(crate) const ALL_UNARY_OPERATIONS: [UnaryOperation; 3] = [
     UnaryOperation::LogicalNot,
 ];
 
+/// Return the position of `operation` in [`ALL_UNARY_OPERATIONS`]; the
+/// exhaustive `match` fails to compile when a variant is added, so the list
+/// stays complete.
+const fn index_unary_operation(operation: UnaryOperation) -> usize {
+    match operation {
+        UnaryOperation::Negate => 0,
+        UnaryOperation::Positive => 1,
+        UnaryOperation::LogicalNot => 2,
+    }
+}
+
 /// Every binary operation, in declaration order.
-pub(crate) const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
+pub(crate) const ALL_BINARY_OPERATIONS: [BinaryOperation; 13] = [
     BinaryOperation::Add,
     BinaryOperation::Subtract,
     BinaryOperation::Multiply,
@@ -201,8 +207,6 @@ pub(crate) const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
     BinaryOperation::FloorDivide,
     BinaryOperation::FloorMod,
     BinaryOperation::Power,
-    BinaryOperation::LogicalAnd,
-    BinaryOperation::LogicalOr,
     BinaryOperation::Equal,
     BinaryOperation::NotEqual,
     BinaryOperation::Less,
@@ -210,6 +214,59 @@ pub(crate) const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
     BinaryOperation::Greater,
     BinaryOperation::GreaterEqual,
 ];
+
+/// Return the position of `operation` in [`ALL_BINARY_OPERATIONS`]; the
+/// exhaustive `match` fails to compile when a variant is added, so the list
+/// stays complete.
+const fn index_binary_operation(operation: BinaryOperation) -> usize {
+    match operation {
+        BinaryOperation::Add => 0,
+        BinaryOperation::Subtract => 1,
+        BinaryOperation::Multiply => 2,
+        BinaryOperation::Divide => 3,
+        BinaryOperation::FloorDivide => 4,
+        BinaryOperation::FloorMod => 5,
+        BinaryOperation::Power => 6,
+        BinaryOperation::Equal => 7,
+        BinaryOperation::NotEqual => 8,
+        BinaryOperation::Less => 9,
+        BinaryOperation::LessEqual => 10,
+        BinaryOperation::Greater => 11,
+        BinaryOperation::GreaterEqual => 12,
+    }
+}
+
+/// Every logical operation, in declaration order.
+pub(crate) const ALL_LOGICAL_OPERATIONS: [LogicalOperation; 2] =
+    [LogicalOperation::And, LogicalOperation::Or];
+
+/// Return the position of `operation` in [`ALL_LOGICAL_OPERATIONS`]; the
+/// exhaustive `match` fails to compile when a variant is added, so the list
+/// stays complete.
+const fn index_logical_operation(operation: LogicalOperation) -> usize {
+    match operation {
+        LogicalOperation::And => 0,
+        LogicalOperation::Or => 1,
+    }
+}
+
+const _: () = {
+    let mut index = 0;
+    while index < ALL_UNARY_OPERATIONS.len() {
+        assert!(index_unary_operation(ALL_UNARY_OPERATIONS[index]) == index);
+        index += 1;
+    }
+    let mut index = 0;
+    while index < ALL_BINARY_OPERATIONS.len() {
+        assert!(index_binary_operation(ALL_BINARY_OPERATIONS[index]) == index);
+        index += 1;
+    }
+    let mut index = 0;
+    while index < ALL_LOGICAL_OPERATIONS.len() {
+        assert!(index_logical_operation(ALL_LOGICAL_OPERATIONS[index]) == index);
+        index += 1;
+    }
+};
 
 /// Function names the generated calls use: every built-in function and two
 /// names no catalogue knows.
@@ -316,6 +373,7 @@ enum DagNodeSpecification {
     Literal(LiteralValue),
     Unary(UnaryOperation, prop::sample::Index),
     Binary(BinaryOperation, prop::sample::Index, prop::sample::Index),
+    Logical(LogicalOperation, Vec<prop::sample::Index>),
     Piecewise(
         Vec<(prop::sample::Index, prop::sample::Index)>,
         prop::sample::Index,
@@ -334,6 +392,11 @@ fn build_dag_node_specification_strategy() -> BoxedStrategy<DagNodeSpecification
         (select(ALL_BINARY_OPERATIONS.to_vec()), index(), index()).prop_map(
             |(operation, left, right)| DagNodeSpecification::Binary(operation, left, right)
         ),
+        (
+            select(ALL_LOGICAL_OPERATIONS.to_vec()),
+            prop::collection::vec(index(), 2..5)
+        )
+            .prop_map(|(operation, operands)| DagNodeSpecification::Logical(operation, operands)),
         (prop::collection::vec((index(), index()), 1..4), index())
             .prop_map(|(cases, otherwise)| DagNodeSpecification::Piecewise(cases, otherwise)),
         (
@@ -357,6 +420,9 @@ fn build_dag_node(specification: DagNodeSpecification, nodes: &[Expression]) -> 
         }
         DagNodeSpecification::Binary(operation, left, right) => {
             Expression::new_binary(operation, pick(left), pick(right))
+        }
+        DagNodeSpecification::Logical(operation, operands) => {
+            Expression::new_logical(operation, operands.into_iter().map(pick))
         }
         DagNodeSpecification::Piecewise(cases, otherwise) => {
             let cases = cases
@@ -397,7 +463,8 @@ pub(crate) fn build_expression_dag_strategy() -> BoxedStrategy<Expression> {
 }
 
 /// Return a strategy for trees over [`IDENTIFIER_POOL`] of every node kind:
-/// unary and binary nodes of every operation, piecewise nodes of one to
+/// unary and binary nodes of every operation, logical nodes of two to four
+/// operands, piecewise nodes of one to
 /// three cases, and calls of zero to three arguments to built-in and
 /// unknown functions, up to five levels deep. Float literals are finite
 /// unless `with_non_finite_floats` is set.
@@ -424,6 +491,11 @@ pub(crate) fn build_expression_strategy(with_non_finite_floats: bool) -> BoxedSt
                 .prop_map(|(operation, left, right)| Expression::new_binary(
                     operation, left, right
                 )),
+            (
+                select(ALL_LOGICAL_OPERATIONS.to_vec()),
+                prop::collection::vec(inner.clone(), 2..5)
+            )
+                .prop_map(|(operation, operands)| Expression::new_logical(operation, operands)),
             (
                 prop::collection::vec(
                     (inner.clone().prop_map(coerce_to_condition), inner.clone()),

@@ -19,9 +19,9 @@ use expression_support::{
     build_identifier, build_literal, build_piecewise_or_panic,
 };
 use fhy_core::expr::{
-    BinaryOperation, BooleanPosition, Expression, FunctionSort, NoRegisteredSorts,
-    NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation, build_logical_and,
-    build_logical_or, build_piecewise, validate_logical_operands, validate_predicate,
+    BooleanPosition, Expression, FunctionSort, LogicalOperation, NoRegisteredSorts,
+    NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation, build_piecewise,
+    validate_logical_operands, validate_predicate,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -148,12 +148,12 @@ fn assert_refusal(
 
 /// Return the conjunction `left && right`.
 fn build_and(left: &Expression, right: &Expression) -> Expression {
-    build_logical_and([left, right]).expect("two operands")
+    left.and(right)
 }
 
 /// Return the disjunction `left || right`.
 fn build_or(left: &Expression, right: &Expression) -> Expression {
-    build_logical_or([left, right]).expect("two operands")
+    left.or(right)
 }
 
 /// A way to put an operand in a Boolean position, with the position it
@@ -183,10 +183,12 @@ impl Placement {
     fn position(self) -> BooleanPosition {
         match self {
             Self::AndLeft => BooleanPosition::LogicalOperand {
-                operation: BinaryOperation::LogicalAnd,
+                operation: LogicalOperation::And,
+                operand_index: 0,
             },
             Self::OrRight => BooleanPosition::LogicalOperand {
-                operation: BinaryOperation::LogicalOr,
+                operation: LogicalOperation::Or,
+                operand_index: 1,
             },
             Self::Negated => BooleanPosition::NegatedOperand,
             Self::CaseCondition => BooleanPosition::CaseCondition { case_index: 0 },
@@ -201,16 +203,23 @@ impl Placement {
 /// Test a connective over a number is refused, naming the first numeric
 /// operand and the connective.
 #[rstest]
-#[case::and(build_and(&build_literal(2), &build_literal(4)), build_literal(2), BinaryOperation::LogicalAnd)]
-#[case::or(build_or(&build_literal(2), &build_literal(4)), build_literal(2), BinaryOperation::LogicalOr)]
-#[case::and_one_numeric_operand(build_and(&build_literal(true), &build_literal(4)), build_literal(4), BinaryOperation::LogicalAnd)]
-#[case::and_floats(build_and(&build_literal(1.5), &build_literal(2.5)), build_literal(1.5), BinaryOperation::LogicalAnd)]
-#[case::and_decimals(build_and(&build_decimal_literal("2"), &build_decimal_literal("4")), build_decimal_literal("2"), BinaryOperation::LogicalAnd)]
-#[case::and_arithmetic_operand(build_and(&(build_literal(1) + 2), &build_literal(true)), build_literal(1) + 2, BinaryOperation::LogicalAnd)]
+#[case::and(build_and(&build_literal(2), &build_literal(4)), build_literal(2), LogicalOperation::And, 0)]
+#[case::or(build_or(&build_literal(2), &build_literal(4)), build_literal(2), LogicalOperation::Or, 0)]
+#[case::and_one_numeric_operand(build_and(&build_literal(true), &build_literal(4)), build_literal(4), LogicalOperation::And, 1)]
+#[case::and_floats(build_and(&build_literal(1.5), &build_literal(2.5)), build_literal(1.5), LogicalOperation::And, 0)]
+#[case::and_decimals(build_and(&build_decimal_literal("2"), &build_decimal_literal("4")), build_decimal_literal("2"), LogicalOperation::And, 0)]
+#[case::and_arithmetic_operand(build_and(&(build_literal(1) + 2), &build_literal(true)), build_literal(1) + 2, LogicalOperation::And, 0)]
+#[case::last_of_four(
+    Expression::any([build_literal(true), build_literal(false), build_literal(true), build_literal(9)]),
+    build_literal(9),
+    LogicalOperation::Or,
+    3
+)]
 fn validate_logical_operands_rejects_a_numeric_connective_operand(
     #[case] expression: Expression,
     #[case] operand: Expression,
-    #[case] operation: BinaryOperation,
+    #[case] operation: LogicalOperation,
+    #[case] operand_index: usize,
 ) {
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
@@ -218,7 +227,45 @@ fn validate_logical_operands_rejects_a_numeric_connective_operand(
         &error,
         &operand,
         Some(&expression),
-        BooleanPosition::LogicalOperand { operation },
+        BooleanPosition::LogicalOperand {
+            operation,
+            operand_index,
+        },
+    );
+}
+
+/// Test the refusal of a number among many operands of one logical node
+/// names the operand's index within the node.
+#[rstest]
+#[case::first(0)]
+#[case::middle(2)]
+#[case::last(4)]
+fn validate_logical_operands_reports_the_operand_index_of_a_logical_operand(
+    #[case] numeric_index: usize,
+) {
+    let operands: Vec<Expression> = (0..5)
+        .map(|index| {
+            if index == numeric_index {
+                build_literal(7)
+            } else {
+                build_identifier(&format!("p{index}")).1
+            }
+        })
+        .collect();
+    let expression = Expression::all(&operands);
+
+    let error = expect_refusal(Screen::LogicalOperands.run(&expression));
+
+    assert!(Expression::ptr_eq(
+        error.operand(),
+        &operands[numeric_index]
+    ));
+    assert_eq!(
+        error.position(),
+        BooleanPosition::LogicalOperand {
+            operation: LogicalOperation::And,
+            operand_index: numeric_index,
+        }
     );
 }
 
@@ -248,7 +295,7 @@ fn validate_logical_operands_error_names_the_connective_and_the_operand() {
 
     assert_eq!(
         error.to_string(),
-        format!("(2 || 4) applies the Boolean connective logical_or to the operand 2, {ILL_TYPED}")
+        format!("(2 || 4) applies the Boolean connective or to the operand 2, {ILL_TYPED}")
     );
 }
 
@@ -267,7 +314,8 @@ fn validate_logical_operands_descends_past_the_root() {
         &build_literal(2),
         Some(&nested),
         BooleanPosition::LogicalOperand {
-            operation: BinaryOperation::LogicalAnd,
+            operation: LogicalOperation::And,
+            operand_index: 0,
         },
     );
 }
@@ -286,7 +334,8 @@ fn validate_logical_operands_checks_operands_before_descending() {
         &build_literal(4),
         Some(&expression),
         BooleanPosition::LogicalOperand {
-            operation: BinaryOperation::LogicalAnd,
+            operation: LogicalOperation::And,
+            operand_index: 1,
         },
     );
 }
@@ -305,7 +354,8 @@ fn validate_logical_operands_rejects_an_all_numeric_piecewise_operand() {
         &numeric,
         Some(&expression),
         BooleanPosition::LogicalOperand {
-            operation: BinaryOperation::LogicalAnd,
+            operation: LogicalOperation::And,
+            operand_index: 0,
         },
     );
 }
@@ -490,7 +540,8 @@ fn validate_logical_operands_screens_an_identifier_bound_to_a_number() {
         &p_reference,
         Some(&expression),
         BooleanPosition::LogicalOperand {
-            operation: BinaryOperation::LogicalAnd,
+            operation: LogicalOperation::And,
+            operand_index: 0,
         },
     );
 }
@@ -944,7 +995,8 @@ fn validate_predicate_still_screens_a_nested_boolean_position() {
         &build_literal(2),
         Some(&expression),
         BooleanPosition::LogicalOperand {
-            operation: BinaryOperation::LogicalAnd,
+            operation: LogicalOperation::And,
+            operand_index: 0,
         },
     );
 }
@@ -1000,7 +1052,7 @@ fn validate_predicate_accepts_a_bound_well_typed_boolean_piecewise() {
 /// Test the message for each position.
 #[rstest]
 #[case::negated(BooleanPosition::NegatedOperand)]
-#[case::logical(BooleanPosition::LogicalOperand { operation: BinaryOperation::LogicalAnd })]
+#[case::logical(BooleanPosition::LogicalOperand { operation: LogicalOperation::And, operand_index: 0 })]
 #[case::case_condition(BooleanPosition::CaseCondition { case_index: 0 })]
 #[case::case_value(BooleanPosition::CaseValue { case_index: 0 })]
 #[case::otherwise(BooleanPosition::Otherwise)]
@@ -1035,7 +1087,7 @@ fn non_boolean_logical_operand_error_display_describes_the_position(
             "(!(-7)) applies the Boolean connective logical_not to the operand (-7), {ILL_TYPED}"
         ),
         BooleanPosition::LogicalOperand { .. } => format!(
-            "((-7) && true) applies the Boolean connective logical_and to the operand (-7), \
+            "((-7) && true) applies the Boolean connective and to the operand (-7), \
              {ILL_TYPED}"
         ),
         BooleanPosition::CaseCondition { .. } => format!(
@@ -1138,7 +1190,7 @@ const DAG_LEVELS: usize = 64;
 fn build_doubling_conjunction(leaf: &Expression, levels: usize) -> Expression {
     let mut dag = leaf.clone();
     for _ in 0..levels {
-        dag = Expression::new_binary(BinaryOperation::LogicalAnd, &dag, &dag);
+        dag = dag.and(&dag);
     }
     dag
 }
@@ -1169,7 +1221,7 @@ fn validate_passes_a_doubling_conjunction_dag(#[case] screen: Screen) {
 
     let result = screen.run(&dag);
 
-    assert!(result.is_ok(), "the Boolean DAG is refused");
+    assert_eq!(result, Ok(()));
 }
 
 /// Test both screens find a number beside a shared doubling conjunction
@@ -1181,8 +1233,8 @@ fn validate_refuses_a_number_beside_a_shared_doubling_dag(#[case] screen: Screen
     let (_, p) = build_identifier("p");
     let dag = build_doubling_conjunction(&p, DAG_LEVELS);
     let number = build_literal(3);
-    let parent = Expression::new_binary(BinaryOperation::LogicalAnd, &dag, &number);
-    let expression = Expression::new_binary(BinaryOperation::LogicalAnd, &dag, &parent);
+    let parent = dag.and(&number);
+    let expression = dag.and(&parent);
 
     let error = expect_refusal(screen.run(&expression));
 
@@ -1195,7 +1247,8 @@ fn validate_refuses_a_number_beside_a_shared_doubling_dag(#[case] screen: Screen
     assert_eq!(
         error.position(),
         BooleanPosition::LogicalOperand {
-            operation: BinaryOperation::LogicalAnd
+            operation: LogicalOperation::And,
+            operand_index: 1,
         }
     );
 }
@@ -1227,7 +1280,7 @@ fn validate_predicate_passes_a_doubling_piecewise_dag_over_an_identifier() {
 
     let result = Screen::Predicate.run(&dag);
 
-    assert!(result.is_ok(), "the Boolean piecewise DAG is refused");
+    assert_eq!(result, Ok(()));
 }
 
 /// Test an identifier occurring throughout a doubling DAG and bound to a
@@ -1240,8 +1293,8 @@ fn validate_logical_operands_screens_a_bound_dag_at_a_shared_identifier() {
     let expression = build_doubling_conjunction(&b_reference, DAG_LEVELS);
     let boolean = build_doubling_conjunction(&p, DAG_LEVELS);
     let number = build_literal(3);
-    let parent = Expression::new_binary(BinaryOperation::LogicalAnd, &boolean, &number);
-    let numeric = Expression::new_binary(BinaryOperation::LogicalAnd, &boolean, &parent);
+    let parent = boolean.and(&number);
+    let numeric = boolean.and(&parent);
     let sorts = BuiltinSorts::new();
 
     let passed = Screen::LogicalOperands.run_with(
@@ -1257,7 +1310,7 @@ fn validate_logical_operands_screens_a_bound_dag_at_a_shared_identifier() {
         &sorts,
     );
 
-    assert!(passed.is_ok(), "the Boolean binding is refused");
+    assert_eq!(passed, Ok(()));
     let error = expect_refusal(refused);
     assert!(Expression::ptr_eq(error.operand(), &number));
     assert!(
@@ -1287,8 +1340,8 @@ fn validate_walks_a_deep_conjunction_on_a_small_stack() {
         let numeric_error = expect_refusal(Screen::LogicalOperands.run(&numeric));
         let predicate_error = expect_refusal(Screen::Predicate.run(&numeric));
 
-        assert!(boolean_result.is_ok(), "the Boolean conjunction is refused");
-        assert!(predicate_result.is_ok(), "the Boolean predicate is refused");
+        assert_eq!(boolean_result, Ok(()));
+        assert_eq!(predicate_result, Ok(()));
         assert!(Expression::ptr_eq(numeric_error.operand(), &number));
         assert!(Expression::ptr_eq(predicate_error.operand(), &number));
     });
@@ -1346,11 +1399,8 @@ fn validate_walks_deep_doubling_dags_on_a_small_stack() {
         let predicate_result = Screen::Predicate.run(&conjunction);
         let root_error = expect_refusal(Screen::Predicate.run(&piecewise));
 
-        assert!(operands_result.is_ok(), "the Boolean DAG is refused");
-        assert!(
-            predicate_result.is_ok(),
-            "the Boolean predicate DAG is refused"
-        );
+        assert_eq!(operands_result, Ok(()));
+        assert_eq!(predicate_result, Ok(()));
         assert!(Expression::ptr_eq(root_error.operand(), &piecewise));
     });
 }

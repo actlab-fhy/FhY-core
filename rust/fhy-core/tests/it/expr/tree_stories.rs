@@ -36,6 +36,7 @@ fn label_kind(expression: &Expression) -> String {
     match expression.kind() {
         ExpressionKind::Unary(node) => format!("unary {:?}", node.operation()),
         ExpressionKind::Binary(node) => format!("binary {:?}", node.operation()),
+        ExpressionKind::Logical(node) => format!("logical {:?}", node.operation()),
         ExpressionKind::Identifier(identifier) => format!("identifier {}", identifier.name_hint()),
         ExpressionKind::Literal(literal) => format!("literal {literal}"),
         ExpressionKind::Piecewise(_) => "piecewise".to_owned(),
@@ -367,9 +368,9 @@ fn rewrite_pass_rewrites_a_doubling_expression_dag_once_per_distinct_node() {
 
     assert_eq!(pass.rewriter().calls, levels + 1);
     let mut node = outcome.output();
-    for _ in 0..levels {
+    for level in 0..levels {
         let ExpressionKind::Binary(binary) = node.kind() else {
-            panic!("expected a sum, got {node:?}");
+            panic!("level {level} is not a sum");
         };
         assert!(Expression::ptr_eq(binary.left(), binary.right()));
         node = binary.left();

@@ -17,7 +17,7 @@ use crate::identifier::Identifier;
 
 use super::display::{FormatOptions, IdentifierStyle};
 use super::node::Expression;
-use super::operation::BinaryOperation;
+use super::operation::LogicalOperation;
 
 /// A node that could not be built because it would break a node invariant.
 ///
@@ -49,16 +49,6 @@ pub enum ExpressionBuildError {
     ///
     /// Displays as `a call expression needs a non-empty function name`.
     EmptyFunctionName,
-    /// A conjunction or disjunction was given fewer than two operands.
-    ///
-    /// Displays as `{operation} requires at least two operands, but got
-    /// {count}`, with the operation's wire name.
-    TooFewLogicalOperands {
-        /// [`BinaryOperation::LogicalAnd`] or [`BinaryOperation::LogicalOr`].
-        operation: BinaryOperation,
-        /// The number of operands given.
-        count: usize,
-    },
     /// A node was rebuilt from a child list whose length differs from its
     /// own child count.
     ///
@@ -83,10 +73,6 @@ impl fmt::Display for ExpressionBuildError {
             Self::EmptyFunctionName => {
                 f.write_str("a call expression needs a non-empty function name")
             }
-            Self::TooFewLogicalOperands { operation, count } => write!(
-                f,
-                "{operation} requires at least two operands, but got {count}"
-            ),
             Self::ChildCountMismatch { expected, actual } => write!(
                 f,
                 "rebuilding the node needs {expected} children, but got {actual}"
@@ -143,8 +129,10 @@ pub enum BooleanPosition {
     NegatedOperand,
     /// An operand of a conjunction or a disjunction.
     LogicalOperand {
-        /// [`BinaryOperation::LogicalAnd`] or [`BinaryOperation::LogicalOr`].
-        operation: BinaryOperation,
+        /// The conjunction or disjunction the operand belongs to.
+        operation: LogicalOperation,
+        /// The zero-based position of the operand among the node's operands.
+        operand_index: usize,
     },
     /// The condition of a piecewise case.
     CaseCondition {
@@ -249,7 +237,7 @@ impl fmt::Display for NonBooleanLogicalOperandError {
                 "{parent} applies the Boolean connective logical_not to the operand {operand}, \
                  {NUMBER}"
             ),
-            BooleanPosition::LogicalOperand { operation } => write!(
+            BooleanPosition::LogicalOperand { operation, .. } => write!(
                 f,
                 "{parent} applies the Boolean connective {operation} to the operand {operand}, \
                  {NUMBER}"

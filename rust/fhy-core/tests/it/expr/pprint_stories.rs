@@ -12,8 +12,8 @@ use expression_support::{
     build_decimal_literal, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue, Notation,
-    UnaryOperation, build_call, build_logical_and, build_piecewise,
+    BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue,
+    LogicalOperation, Notation, UnaryOperation, build_call, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -276,8 +276,6 @@ fn format_expression_writes_each_unary_operation(
 #[case::floor_divide(BinaryOperation::FloorDivide, "(x // 2)", "(floor_divide x 2)")]
 #[case::floor_mod(BinaryOperation::FloorMod, "(x % 2)", "(floor_mod x 2)")]
 #[case::power(BinaryOperation::Power, "(x ** 2)", "(power x 2)")]
-#[case::logical_and(BinaryOperation::LogicalAnd, "(x && 2)", "(logical_and x 2)")]
-#[case::logical_or(BinaryOperation::LogicalOr, "(x || 2)", "(logical_or x 2)")]
 #[case::equal(BinaryOperation::Equal, "(x == 2)", "(equal x 2)")]
 #[case::not_equal(BinaryOperation::NotEqual, "(x != 2)", "(not_equal x 2)")]
 #[case::less(BinaryOperation::Less, "(x < 2)", "(less x 2)")]
@@ -315,13 +313,14 @@ fn format_expression_parenthesizes_every_operation(
     assert_eq!(text, expected);
 }
 
-/// Test a conjunction of three operands prints its right fold.
+/// Test a logical node of three operands prints every operand, in order,
+/// in one pair of parentheses.
 #[test]
-fn format_expression_writes_a_folded_conjunction_as_nested_pairs() {
+fn format_expression_writes_a_logical_node_with_every_operand() {
     let (_, x) = build_identifier("x");
     let (_, y) = build_identifier("y");
     let (_, z) = build_identifier("z");
-    let conjunction = build_logical_and([x, y, z]).expect("three operands make a conjunction");
+    let conjunction = Expression::all([x, y, z]);
 
     let texts = (
         format_symbolic(&conjunction),
@@ -330,11 +329,34 @@ fn format_expression_writes_a_folded_conjunction_as_nested_pairs() {
 
     assert_eq!(
         texts,
-        (
-            "(x && (y && z))".to_owned(),
-            "(logical_and x (logical_and y z))".to_owned()
-        )
+        ("(x && y && z)".to_owned(), "(and x y z)".to_owned())
     );
+}
+
+/// Test a logical node is written with its operation's symbol between its
+/// operands in symbolic notation and with its name first in functional
+/// notation, and a nested one in its own parentheses.
+#[rstest]
+#[case::and_of_two(LogicalOperation::And, 2, "(p0 && p1)", "(and p0 p1)")]
+#[case::or_of_two(LogicalOperation::Or, 2, "(p0 || p1)", "(or p0 p1)")]
+#[case::or_of_four(LogicalOperation::Or, 4, "(p0 || p1 || p2 || p3)", "(or p0 p1 p2 p3)")]
+fn expression_display_writes_a_logical_node_in_both_notations(
+    #[case] operation: LogicalOperation,
+    #[case] count: usize,
+    #[case] symbolic: &str,
+    #[case] functional: &str,
+) {
+    let operands: Vec<Expression> = (0..count)
+        .map(|index| build_identifier(&format!("p{index}")).1)
+        .collect();
+    let node = Expression::new_logical(operation, operands);
+    let nested = Expression::any([node.clone(), build_literal(false)]);
+
+    let texts = (format_symbolic(&node), format_functional(&node));
+    let nested_text = format_symbolic(&nested);
+
+    assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
+    assert_eq!(nested_text, format!("({symbolic} || false)"));
 }
 
 // =============================================================================
@@ -909,7 +931,7 @@ impl DeepShape {
     fn expected_pieces(self) -> [(&'static str, &'static str); 2] {
         match self {
             Self::LeftSum => [("(", " + 1)"), ("(add ", " 1)")],
-            Self::RightConjunction => [("(true && ", ")"), ("(logical_and true ", ")")],
+            Self::RightConjunction => [("(true && ", ")"), ("(and true ", ")")],
             Self::Negation => [("(-", ")"), ("(negate ", ")")],
             Self::PiecewiseInOtherwise => [("{1 if p; ", " otherwise}"), ("(piecewise p 1 ", ")")],
             Self::PiecewiseInCondition => [("{1 if ", "; 0 otherwise}"), ("(piecewise ", " 1 0)")],

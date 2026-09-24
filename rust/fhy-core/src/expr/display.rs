@@ -19,8 +19,8 @@ use crate::identifier::Identifier;
 use crate::pass::{CompilerPass, PassContext, PassFailure};
 
 use super::node::{
-    BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
-    UnaryExpression,
+    BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
+    PiecewiseExpression, UnaryExpression,
 };
 
 /// One pending piece of output: a node still to print, or text to write.
@@ -108,6 +108,51 @@ fn schedule_binary<'a>(
                 Step::Write(")"),
             ],
         ),
+    }
+}
+
+/// Schedule the pieces of a logical node: `(a && b && c)` or
+/// `(and a b c)`.
+fn schedule_logical<'a>(
+    pending: &mut Vec<Step<'a>>,
+    node: &'a LogicalExpression,
+    notation: Notation,
+) {
+    let operation = node.operation();
+    let operands = node.operands();
+    match notation {
+        Notation::Symbolic => {
+            let (first, rest) = operands
+                .split_first()
+                .map_or((None, &[][..]), |(first, rest)| (Some(first), rest));
+            let listed = rest.iter().flat_map(|operand| {
+                [
+                    Step::Write(" "),
+                    Step::Write(operation.symbol()),
+                    Step::Write(" "),
+                    Step::Print(operand),
+                ]
+            });
+            schedule(
+                pending,
+                iter::once(Step::Write("("))
+                    .chain(first.map(Step::Print))
+                    .chain(listed)
+                    .chain(iter::once(Step::Write(")"))),
+            );
+        }
+        Notation::Functional => {
+            let listed = operands
+                .iter()
+                .flat_map(|operand| [Step::Write(" "), Step::Print(operand)]);
+            schedule(
+                pending,
+                [Step::Write("("), Step::Write(operation.as_str())]
+                    .into_iter()
+                    .chain(listed)
+                    .chain(iter::once(Step::Write(")"))),
+            );
+        }
     }
 }
 
@@ -343,6 +388,7 @@ fn print_node<'a>(
         ExpressionKind::Literal(value) => write!(f, "{value}")?,
         ExpressionKind::Unary(unary) => schedule_unary(pending, unary, notation),
         ExpressionKind::Binary(binary) => schedule_binary(pending, binary, notation),
+        ExpressionKind::Logical(logical) => schedule_logical(pending, logical, notation),
         ExpressionKind::Piecewise(piecewise) => schedule_piecewise(pending, piecewise, notation),
         ExpressionKind::Call(call) => schedule_call(pending, call, notation),
     }
@@ -350,20 +396,36 @@ fn print_node<'a>(
 }
 
 /// Write `expression` to `f` under `options`, from an explicit work stack.
+///
+/// With a `node_budget`, at most that many nodes are printed: every node
+/// met after the budget is spent is written as `..`, without scheduling
+/// its children, while the text already scheduled, such as the closing
+/// parentheses of the nodes printed, is still written.
 fn write_expression(
     expression: &Expression,
     options: FormatOptions,
+    node_budget: Option<usize>,
     f: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
+    let mut remaining = node_budget;
     let mut pending = vec![Step::Print(expression)];
     while let Some(step) = pending.pop() {
         match step {
             Step::Write(piece) => f.write_str(piece)?,
-            Step::Print(node) => print_node(node, options, f, &mut pending)?,
+            Step::Print(_) if remaining == Some(0) => f.write_str("..")?,
+            Step::Print(node) => {
+                if let Some(count) = &mut remaining {
+                    *count -= 1;
+                }
+                print_node(node, options, f, &mut pending)?;
+            }
         }
     }
     Ok(())
 }
+
+/// The most nodes `Debug` of an expression prints before it elides the rest.
+const DEBUG_NODE_BUDGET: usize = 1000;
 
 /// An expression rendered as text under [`FormatOptions`]; what
 /// [`Expression::display`] returns.
@@ -378,7 +440,7 @@ pub struct ExpressionDisplay<'a> {
 
 impl fmt::Display for ExpressionDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_expression(self.expression, self.options, f)
+        write_expression(self.expression, self.options, None, f)
     }
 }
 
@@ -393,6 +455,7 @@ impl Expression {
     /// |---|---|---|
     /// | unary | `(` symbol operand `)`: `(-x)`, `(+x)`, `(!p)` | `(negate x)`, `(positive x)`, `(logical_not p)` |
     /// | binary | `(left symbol right)`: `(x // 2)` | `(floor_divide x 2)` |
+    /// | logical | operands joined by the symbol: `(a && b && c)`, `(p \|\| q)` | `(and a b c)`, `(or p q)` |
     /// | piecewise | `{v0 if c0; v1 if c1; o otherwise}` | `(piecewise c0 v0 c1 v1 o)` |
     /// | call | `f(a, b)`, `f()` | `(f a b)`, `(f)` |
     ///
@@ -442,9 +505,29 @@ impl Expression {
 /// [`Expression::display`] writes it.
 ///
 /// A subtree occurring in several places is written at every occurrence, so
-/// the text of a DAG can be exponential in its depth.
+/// the text of a DAG can be exponential in its depth; `Debug` writes a
+/// bounded text for diagnostics.
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_expression(self, FormatOptions::default(), f)
+        write_expression(self, FormatOptions::default(), None, f)
+    }
+}
+
+/// A bounded text for diagnostics: `Expression(`, the functional notation
+/// with identifier ids, then `)`.
+///
+/// At most 1,000 nodes are printed; every subtree not yet printed after
+/// that is written as `..`, with the parentheses already opened still
+/// closed. So the text and the work are bounded whatever the depth of the
+/// tree or the sharing of a DAG, and writing it does not recurse; `{:#?}`
+/// writes the same. The text is not a stable format.
+impl fmt::Debug for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let options = FormatOptions::default()
+            .with_notation(Notation::Functional)
+            .with_identifier_style(IdentifierStyle::NameHintWithId);
+        f.write_str("Expression(")?;
+        write_expression(self, options, Some(DEBUG_NODE_BUDGET), f)?;
+        f.write_str(")")
     }
 }

@@ -31,6 +31,7 @@ const ALL_OPTIONS: [(Notation, IdentifierStyle); 4] = [
 struct InnerNodeCounts {
     unary: usize,
     binary: usize,
+    logical: usize,
     piecewise: usize,
     call: usize,
 }
@@ -44,6 +45,7 @@ fn count_inner_nodes(expression: &Expression) -> InnerNodeCounts {
         match node.kind() {
             ExpressionKind::Unary(_) => counts.unary += 1,
             ExpressionKind::Binary(_) => counts.binary += 1,
+            ExpressionKind::Logical(_) => counts.logical += 1,
             ExpressionKind::Piecewise(_) => counts.piecewise += 1,
             ExpressionKind::Call(_) => counts.call += 1,
             ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {}
@@ -72,8 +74,8 @@ proptest! {
 
         for (notation, identifiers) in ALL_OPTIONS {
             let options = FormatOptions::default()
-.with_notation(notation)
-.with_identifier_style(identifiers);
+                .with_notation(notation)
+                .with_identifier_style(identifiers);
             prop_assert_eq!(
                 restored.display(options).to_string(),
                 expression.display(options).to_string(),
@@ -89,7 +91,8 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         for notation in NOTATIONS {
-            let text = expression.display(FormatOptions::default().with_notation(notation)).to_string();
+            let options = FormatOptions::default().with_notation(notation);
+            let text = expression.display(options).to_string();
 
             for identifier in expression.free_identifiers() {
                 prop_assert!(
@@ -107,9 +110,10 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         for notation in NOTATIONS {
-            let text = expression.display(FormatOptions::default()
-.with_notation(notation)
-.with_identifier_style(IdentifierStyle::NameHintWithId)).to_string();
+            let options = FormatOptions::default()
+                .with_notation(notation)
+                .with_identifier_style(IdentifierStyle::NameHintWithId);
+            let text = expression.display(options).to_string();
 
             for identifier in expression.free_identifiers() {
                 let written = format!("{}::{}", identifier.name_hint(), identifier.id());
@@ -126,10 +130,11 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         for notation in NOTATIONS {
-            let with_ids = expression.display(FormatOptions::default()
-.with_notation(notation)
-.with_identifier_style(IdentifierStyle::NameHintWithId)).to_string();
-            let name_hints = expression.display(FormatOptions::default().with_notation(notation)).to_string();
+            let name_hint_options = FormatOptions::default().with_notation(notation);
+            let id_options =
+                name_hint_options.with_identifier_style(IdentifierStyle::NameHintWithId);
+            let with_ids = expression.display(id_options).to_string();
+            let name_hints = expression.display(name_hint_options).to_string();
 
             let stripped = POOL.iter().fold(with_ids, |text, identifier| {
                 text.replace(
@@ -149,9 +154,11 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         let counts = count_inner_nodes(&expression);
-        let inner_nodes = counts.unary + counts.binary + counts.piecewise + counts.call;
+        let inner_nodes =
+            counts.unary + counts.binary + counts.logical + counts.piecewise + counts.call;
+        let options = FormatOptions::default().with_notation(Notation::Functional);
 
-        let text = expression.display(FormatOptions::default().with_notation(Notation::Functional)).to_string();
+        let text = expression.display(options).to_string();
 
         prop_assert_eq!(count_occurrences(&text, '('), inner_nodes);
         prop_assert_eq!(count_occurrences(&text, ')'), inner_nodes);
@@ -159,15 +166,17 @@ proptest! {
     }
 
     /// Test symbolic notation writes one pair of parentheses per unary,
-    /// binary, and call node, and one pair of braces per piecewise node.
+    /// binary, logical, and call node, and one pair of braces per piecewise
+    /// node.
     #[test]
     fn format_expression_writes_one_bracket_pair_per_inner_node_symbolically(
         expression in build_expression_strategy(true),
     ) {
         let counts = count_inner_nodes(&expression);
-        let parenthesized = counts.unary + counts.binary + counts.call;
+        let parenthesized = counts.unary + counts.binary + counts.logical + counts.call;
+        let options = FormatOptions::default().with_notation(Notation::Symbolic);
 
-        let text = expression.display(FormatOptions::default().with_notation(Notation::Symbolic)).to_string();
+        let text = expression.display(options).to_string();
 
         prop_assert_eq!(count_occurrences(&text, '('), parenthesized);
         prop_assert_eq!(count_occurrences(&text, ')'), parenthesized);
@@ -186,8 +195,8 @@ proptest! {
 
         for (notation, identifiers) in ALL_OPTIONS {
             let options = FormatOptions::default()
-.with_notation(notation)
-.with_identifier_style(identifiers);
+                .with_notation(notation)
+                .with_identifier_style(identifiers);
             prop_assert_eq!(literal.display(options).to_string(), expected.as_str());
         }
     }

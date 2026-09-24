@@ -29,6 +29,10 @@ use hashing_support::hash_of;
 use proptest::prelude::*;
 use proptest::sample::select;
 
+/// A bound on the length of an expression's `Debug` text: it prints at most
+/// 1,000 nodes, each a few dozen characters at most in the generated trees.
+const DEBUG_TEXT_BOUND: usize = 256 << 10;
+
 /// Identifiers no generated tree refers to, the targets of renamings.
 static FRESH_POOL: LazyLock<[Identifier; 3]> = LazyLock::new(|| {
     [
@@ -497,6 +501,15 @@ proptest! {
 }
 
 proptest! {
+    /// Test `Debug` of any generated DAG, however many occurrences its
+    /// sharing makes, completes with a text of bounded length.
+    #[test]
+    fn expression_debug_is_bounded(dag in build_expression_dag_strategy()) {
+        let text = format!("{dag:?}");
+
+        prop_assert!(text.len() < DEBUG_TEXT_BOUND, "{} characters", text.len());
+    }
+
     /// Test a DAG's free identifiers are those of its unshared copy.
     #[test]
     fn expression_free_identifiers_of_a_dag_are_those_of_its_unshared_copy(

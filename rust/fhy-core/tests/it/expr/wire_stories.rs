@@ -325,6 +325,49 @@ fn expression_nested_piecewise_round_trips() {
     assert_eq!(restored, outer);
 }
 
+/// Test a logical node serializes to its type id, its operation's wire
+/// name and its operands in order, and decodes back.
+#[test]
+fn expression_logical_node_round_trips_through_its_wire_form() {
+    let (x, x_reference) = build_identifier("x");
+    let expression = Expression::any([x_reference.less(3), build_literal(true), x_reference]);
+    let x_wire = build_identifier_wire(&x);
+
+    let wire = encode(&expression);
+    let restored = decode(wire.clone()).expect("a valid payload");
+
+    let expected = json!({
+        "__type__": "logical_expression",
+        "__data__": {
+            "operation": "or",
+            "operands": [
+                {
+                    "__type__": "binary_expression",
+                    "__data__": {"operation": "less", "left": x_wire, "right": build_literal_wire(&json!(3))}
+                },
+                build_literal_wire(&json!(true)),
+                x_wire
+            ]
+        }
+    });
+    assert_eq!(wire, expected);
+    assert_eq!(restored, expression);
+}
+
+/// Test a conjunction of ten thousand comparisons, one logical node, round
+/// trips through JSON text, far beyond the nesting depth a right-folded
+/// chain of that many binary nodes would reach.
+#[test]
+fn expression_conjunction_of_ten_thousand_comparisons_round_trips_through_json_text() {
+    let (_, x) = build_identifier("x");
+    let conjunction = Expression::all((0..10_000).map(|bound| x.less(bound)));
+
+    let text = serde_json::to_string(&conjunction).expect("the expression serializes");
+    let restored: Expression = serde_json::from_str(&text).expect("the text deserializes");
+
+    assert_eq!(restored, conjunction);
+}
+
 /// Test a decoded identifier is the identifier that was encoded.
 #[test]
 fn expression_round_trip_restores_the_same_identifier() {
@@ -579,6 +622,26 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
     "__type__": "unary_expression",
     "__data__": {"operation": "negate", "operand": 5}
 }), "in `operand`: expected the fields of an expression as a map, got a number")]
+#[case::logical_with_one_operand(json!({
+    "__type__": "logical_expression",
+    "__data__": {"operation": "and", "operands": [build_literal_wire(&json!(true))]}
+}), "a logical node needs at least 2 operands, got 1")]
+#[case::logical_with_no_operand(json!({
+    "__type__": "logical_expression",
+    "__data__": {"operation": "or", "operands": []}
+}), "a logical node needs at least 2 operands, got 0")]
+#[case::unknown_logical_operation_name(json!({
+    "__type__": "logical_expression",
+    "__data__": {
+        "operation": "xor",
+        "operands": [build_literal_wire(&json!(true)), build_literal_wire(&json!(false))]
+    }
+}), "in `operation`: invalid value: string \"xor\", expected a logical operation name: and or \
+     or")]
+#[case::logical_operands_not_a_list(json!({
+    "__type__": "logical_expression",
+    "__data__": {"operation": "and", "operands": build_literal_wire(&json!(true))}
+}), "in `operands`: expected a list, got a map")]
 fn expression_deserialize_rejects_a_malformed_node(
     #[case] refused: Value,
     #[case] expected_message: &str,

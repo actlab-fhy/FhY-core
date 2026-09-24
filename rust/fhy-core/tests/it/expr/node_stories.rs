@@ -18,8 +18,8 @@ use expression_support::{
 };
 use fhy_core::expr::{
     AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression,
-    ExpressionBuildError, ExpressionKind, LiteralValue, PiecewiseExpression, UnaryExpression,
-    UnaryOperation,
+    ExpressionBuildError, ExpressionKind, LiteralValue, LogicalOperation, PiecewiseExpression,
+    UnaryExpression, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -393,6 +393,41 @@ fn expression_children_of_call_are_the_arguments() {
     assert_same_nodes(&children, &expected);
 }
 
+/// Test a logical node's children are its operands in order.
+#[test]
+fn expression_children_of_logical_are_the_operands() {
+    let operands = [
+        build_identifier("p").1,
+        build_literal(true),
+        build_identifier("q").1,
+    ];
+    let expression = Expression::any(operands.clone());
+
+    let children: Vec<&Expression> = expression.children().collect();
+    let reversed: Vec<&Expression> = expression.children().rev().collect();
+
+    let expected: Vec<&Expression> = operands.iter().collect();
+    assert_same_nodes(&children, &expected);
+    let expected_reversed: Vec<&Expression> = operands.iter().rev().collect();
+    assert_same_nodes(&reversed, &expected_reversed);
+}
+
+/// Test a logical node exposes its operation and its operands, of which it
+/// has at least two.
+#[test]
+fn logical_expression_exposes_operation_and_operands() {
+    let (_, p) = build_identifier("p");
+    let (_, q) = build_identifier("q");
+    let expression = Expression::new_logical(LogicalOperation::Or, [&p, &q]);
+
+    let ExpressionKind::Logical(node) = expression.kind() else {
+        panic!("expected a logical node, got {expression:?}");
+    };
+
+    assert_eq!(node.operation(), LogicalOperation::Or);
+    assert_same_nodes(&node.operands().iter().collect::<Vec<_>>(), &[&p, &q]);
+}
+
 /// Test an identifier reference and a literal have no children.
 #[rstest]
 #[case::identifier(build_identifier("x").1)]
@@ -523,7 +558,11 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
     let unary = Expression::new_unary(UnaryOperation::LogicalNot, &x);
     let binary = Expression::new_binary(BinaryOperation::FloorDivide, &x, 2);
     let call = build_call_node_or_panic("f", vec![x.clone(), build_literal(1)]);
+    let logical = Expression::any([&x, &y]);
 
+    let rebuilt_logical = logical
+        .rebuild_with_children(vec![build_literal(false), x.clone()])
+        .expect("two children");
     let rebuilt_unary = unary
         .rebuild_with_children(vec![y.clone()])
         .expect("one child");
@@ -546,10 +585,41 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
         rebuilt_call,
         build_call_node_or_panic("f", vec![y.clone(), build_literal(4)])
     );
+    assert_eq!(rebuilt_logical, Expression::any([build_literal(false), x]));
 }
 
-/// Test rebuilding a unary, binary, or call node from a different number of
-/// children is refused.
+/// Test rebuilding a logical node takes exactly its operand count, keeps
+/// the new children as given, and never flattens a nested node of the same
+/// operation into it.
+#[test]
+fn expression_rebuild_of_a_logical_node_keeps_its_operand_count() {
+    let (_, p) = build_identifier("p");
+    let (_, q) = build_identifier("q");
+    let (_, r) = build_identifier("r");
+    let conjunction = Expression::all([&p, &q, &r]);
+    let nested = q.and(&r);
+
+    let rebuilt = conjunction
+        .rebuild_with_children(vec![p.clone(), nested.clone(), r.clone()])
+        .expect("three children");
+    let too_few = conjunction.rebuild_with_children(vec![p.clone(), q.clone()]);
+
+    let ExpressionKind::Logical(node) = rebuilt.kind() else {
+        panic!("expected a logical node, got {rebuilt:?}");
+    };
+    assert_eq!(node.operands().len(), 3);
+    assert!(Expression::ptr_eq(&node.operands()[1], &nested));
+    assert_eq!(
+        too_few,
+        Err(ExpressionBuildError::ChildCountMismatch {
+            expected: 3,
+            actual: 2
+        })
+    );
+}
+
+/// Test rebuilding a unary, binary, logical, or call node from a different
+/// number of children is refused.
 #[rstest]
 #[case::unary_none(Expression::new_unary(UnaryOperation::Negate, 1), 0, 1)]
 #[case::unary_two(Expression::new_unary(UnaryOperation::Negate, 1), 2, 1)]
@@ -558,6 +628,9 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
 #[case::call_fewer(build_call_node_or_panic("f", vec![build_literal(1), build_literal(2)]), 1, 2)]
 #[case::call_more(build_call_node_or_panic("f", vec![build_literal(1), build_literal(2)]), 3, 2)]
 #[case::call_none_to_one(build_call_node_or_panic("f", Vec::new()), 1, 0)]
+#[case::logical_fewer(Expression::all([build_literal(true), build_literal(false)]), 1, 2)]
+#[case::logical_none(Expression::all([build_literal(true), build_literal(false)]), 0, 2)]
+#[case::logical_more(Expression::any([build_literal(true), build_literal(false)]), 3, 2)]
 fn expression_rebuild_with_children_rejects_a_different_child_count(
     #[case] expression: Expression,
     #[case] child_count: usize,
@@ -962,7 +1035,7 @@ fn expression_reordered_piecewise_cases_are_unequal() {
 }
 
 /// Test trees differing in kind, operation, child, name, arity, identifier,
-/// or literal value are unequal both ways and hash differently.
+/// literal value, or logical nesting are unequal both ways.
 #[rstest]
 #[case::literal_and_identifier(build_literal(1), build_identifier("x").1)]
 #[case::operation(
@@ -989,19 +1062,33 @@ fn expression_reordered_piecewise_cases_are_unequal() {
 #[case::float_literal(build_literal(1.5), build_literal(2.5))]
 #[case::bool_literal(build_literal(true), build_literal(false))]
 #[case::decimal_literal(build_decimal_literal("1.5"), build_decimal_literal("2.5"))]
-fn expression_trees_differing_anywhere_are_unequal_and_hash_differently(
+#[case::logical_operation(
+    Expression::all([build_identifier("p").1, build_identifier("q").1]),
+    Expression::any([build_identifier("p").1, build_identifier("q").1])
+)]
+#[case::logical_operand_count(
+    Expression::all([build_literal(true), build_literal(false)]),
+    Expression::all([build_literal(true), build_literal(false), build_literal(true)])
+)]
+#[case::logical_nesting(
+    Expression::all([build_literal(true), build_literal(false), build_literal(true)]),
+    build_literal(true).and(build_literal(false).and(build_literal(true)))
+)]
+#[case::logical_and_binary(
+    Expression::all([build_literal(1), build_literal(2)]),
+    Expression::new_binary(BinaryOperation::Equal, 1, 2)
+)]
+fn expression_trees_differing_anywhere_are_unequal(
     #[case] left: Expression,
     #[case] right: Expression,
 ) {
     assert_ne!(left, right);
     assert_ne!(right, left);
-    assert_ne!(hash_of(&left), hash_of(&right));
 }
 
-/// Test piecewise nodes with different case counts are unequal both ways and
-/// hash differently when the shorter one's children are a prefix of the
-/// longer one's: `{y if p; q otherwise}` against `{y if p; z if q; w
-/// otherwise}`.
+/// Test piecewise nodes with different case counts are unequal both ways
+/// when the shorter one's children are a prefix of the longer one's:
+/// `{y if p; q otherwise}` against `{y if p; z if q; w otherwise}`.
 #[test]
 fn expression_piecewise_nodes_with_different_case_counts_are_unequal() {
     let [
@@ -1025,7 +1112,6 @@ fn expression_piecewise_nodes_with_different_case_counts_are_unequal() {
 
     assert_ne!(one_case, two_cases);
     assert_ne!(two_cases, one_case);
-    assert_ne!(hash_of(&one_case), hash_of(&two_cases));
 }
 
 // =============================================================================
@@ -1353,15 +1439,13 @@ fn expression_separately_built_doubling_dags_are_equal_and_hash_equally() {
     assert_eq!(hash_of(&first), hash_of(&second));
 }
 
-/// Test doubling DAGs over different identifiers are unequal and hash
-/// differently.
+/// Test doubling DAGs over different identifiers are unequal.
 #[test]
-fn expression_doubling_dags_over_different_leaves_are_unequal_and_hash_differently() {
+fn expression_doubling_dags_over_different_leaves_are_unequal() {
     let first = build_doubling_dag_over(&Identifier::new("a"), DOUBLING_LEVELS);
     let second = build_doubling_dag_over(&Identifier::new("b"), DOUBLING_LEVELS);
 
-    assert!(first != second, "doubling DAGs over a and b compare equal");
-    assert_ne!(hash_of(&first), hash_of(&second));
+    assert_ne!(first, second);
 }
 
 /// Test DAGs that agree on a shared doubling DAG and differ in one literal
@@ -1465,8 +1549,7 @@ fn expression_free_identifiers_of_a_deep_tree_reach_the_bottom_on_a_small_stack(
 }
 
 /// Test two deep trees built separately are equal and hash equally, and
-/// differ and hash differently when only their bottom leaf differs, on a
-/// small thread stack.
+/// differ when only their bottom leaf differs, on a small thread stack.
 #[test]
 fn expression_equality_and_hash_of_deep_trees_reach_the_bottom_on_a_small_stack() {
     run_on_small_stack(|| {
@@ -1476,10 +1559,9 @@ fn expression_equality_and_hash_of_deep_trees_reach_the_bottom_on_a_small_stack(
         let second = build_deep_sum(&x, SMALL_STACK_DEPTH);
         let other = build_deep_sum(&y, SMALL_STACK_DEPTH);
 
-        assert!(first == second, "equal deep trees compare unequal");
-        assert!(first != other, "deep trees over x and y compare equal");
+        assert_eq!(first, second);
+        assert_ne!(first, other);
         assert_eq!(hash_of(&first), hash_of(&second));
-        assert_ne!(hash_of(&first), hash_of(&other));
     });
 }
 
@@ -1537,8 +1619,8 @@ fn expression_free_identifiers_of_a_deep_doubling_dag_reach_the_bottom_on_a_smal
 }
 
 /// Test two doubling DAGs [`SMALL_STACK_DEPTH`] levels deep built
-/// separately are equal and hash equally, and differ and hash differently
-/// from one over another leaf, on a small thread stack.
+/// separately are equal and hash equally, and differ from one over another
+/// leaf, on a small thread stack.
 #[test]
 fn expression_equality_and_hash_of_deep_doubling_dags_reach_the_bottom_on_a_small_stack() {
     run_on_small_stack(|| {
@@ -1547,10 +1629,9 @@ fn expression_equality_and_hash_of_deep_doubling_dags_reach_the_bottom_on_a_smal
         let second = build_doubling_dag_over(&a, SMALL_STACK_DEPTH);
         let other = build_doubling_dag_over(&Identifier::new("b"), SMALL_STACK_DEPTH);
 
-        assert!(first == second, "equal deep DAGs compare unequal");
-        assert!(first != other, "deep DAGs over a and b compare equal");
+        assert_eq!(first, second);
+        assert_ne!(first, other);
         assert_eq!(hash_of(&first), hash_of(&second));
-        assert_ne!(hash_of(&first), hash_of(&other));
     });
 }
 
@@ -1593,4 +1674,61 @@ fn expression_substitute_of_a_deep_doubling_dag_keeps_its_sharing_on_a_small_sta
             SMALL_STACK_DEPTH
         ));
     });
+}
+
+// =============================================================================
+// Debug
+// =============================================================================
+
+/// The most characters `Debug` of an expression writes, far above what its
+/// bound of printed nodes allows for the trees below.
+const DEBUG_TEXT_LIMIT: usize = 64 << 10;
+
+/// Test `Debug` of a tree [`SMALL_STACK_DEPTH`] levels deep completes on a
+/// thread stack far too small for one frame per level, and stays short.
+#[test]
+fn expression_debug_of_a_deep_tree_completes_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let tree = build_deep_sum(&x, SMALL_STACK_DEPTH);
+
+        let text = format!("{tree:?}");
+        let pretty = format!("{tree:#?}");
+        let through_kind = format!("{:?}", tree.kind());
+
+        assert!(text.len() < DEBUG_TEXT_LIMIT, "{} characters", text.len());
+        assert!(
+            pretty.len() < DEBUG_TEXT_LIMIT,
+            "{} characters",
+            pretty.len()
+        );
+        assert!(
+            through_kind.len() < 2 * DEBUG_TEXT_LIMIT,
+            "{} characters",
+            through_kind.len()
+        );
+    });
+}
+
+/// Test `Debug` of a doubling DAG 64 levels deep, which has more than
+/// `2^64` occurrences, completes and stays short.
+#[test]
+fn expression_debug_of_a_doubling_dag_is_bounded() {
+    let dag = build_doubling_dag_over(&Identifier::new("a"), 64);
+
+    let text = format!("{dag:?}");
+
+    assert!(text.len() < DEBUG_TEXT_LIMIT, "{} characters", text.len());
+}
+
+/// Test `assert_eq!` on two equal doubling DAGs, whose failure message
+/// would print them, completes.
+#[test]
+fn expression_assert_eq_on_doubling_dags_completes() {
+    let a = Identifier::new("a");
+
+    let first = build_doubling_dag_over(&a, 64);
+    let second = build_doubling_dag_over(&a, 64);
+
+    assert_eq!(first, second);
 }

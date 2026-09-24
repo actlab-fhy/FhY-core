@@ -37,7 +37,6 @@ use crate::identifier::Identifier;
 use super::build::{IntoOperand, build_call, build_piecewise};
 use super::literal::LiteralValue;
 use super::node::Expression;
-use super::operation::BinaryOperation;
 use super::sort::FunctionSort;
 
 /// Sorts of a function taking one real argument.
@@ -117,26 +116,22 @@ fn build_leaky_relu_body([x, slope]: &[Expression; 2]) -> Expression {
 
 /// `xor(a, b) = (a || b) && !(a && b)`.
 fn build_xor_body([a, b]: &[Expression; 2]) -> Expression {
-    Expression::new_binary(
-        BinaryOperation::LogicalAnd,
-        Expression::new_binary(BinaryOperation::LogicalOr, a, b),
-        !Expression::new_binary(BinaryOperation::LogicalAnd, a, b),
-    )
+    a.or(b).and(!a.and(b))
 }
 
 /// `nand(a, b) = !(a && b)`.
 fn build_nand_body([a, b]: &[Expression; 2]) -> Expression {
-    !Expression::new_binary(BinaryOperation::LogicalAnd, a, b)
+    !a.and(b)
 }
 
 /// `nor(a, b) = !(a || b)`.
 fn build_nor_body([a, b]: &[Expression; 2]) -> Expression {
-    !Expression::new_binary(BinaryOperation::LogicalOr, a, b)
+    !a.or(b)
 }
 
 /// `implies(a, b) = !a || b`.
 fn build_implies_body([a, b]: &[Expression; 2]) -> Expression {
-    Expression::new_binary(BinaryOperation::LogicalOr, !a, b)
+    (!a).or(b)
 }
 
 /// `iff(a, b) = a == b`.

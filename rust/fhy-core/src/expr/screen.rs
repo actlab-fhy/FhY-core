@@ -66,6 +66,7 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
                 ExpressionKind::Literal(literal) => !matches!(literal, LiteralValue::Bool(_)),
                 ExpressionKind::Unary(node) => node.operation().is_arithmetic(),
                 ExpressionKind::Binary(node) => node.operation().is_arithmetic(),
+                ExpressionKind::Logical(_) => false,
                 ExpressionKind::Call(node) => self
                     .sorts
                     .call_result_sort(node.function_name())
@@ -197,12 +198,14 @@ fn find_boolean_positions(
         ExpressionKind::Unary(node) if node.operation().is_logical_connective() => {
             vec![Some(BooleanPosition::NegatedOperand)]
         }
-        ExpressionKind::Binary(node) if node.operation().is_logical_connective() => {
-            let position = BooleanPosition::LogicalOperand {
-                operation: node.operation(),
-            };
-            vec![Some(position), Some(position)]
-        }
+        ExpressionKind::Logical(node) => (0..node.operands().len())
+            .map(|operand_index| {
+                Some(BooleanPosition::LogicalOperand {
+                    operation: node.operation(),
+                    operand_index,
+                })
+            })
+            .collect(),
         ExpressionKind::Piecewise(node) => {
             let mut positions = Vec::with_capacity(2 * node.cases().len() + 1);
             for case_index in 0..node.cases().len() {
@@ -304,10 +307,10 @@ impl SortLookup for NoRegisteredSorts {
 /// use std::collections::HashMap;
 ///
 /// use fhy_core::expr::{
-///     BooleanPosition, NoRegisteredSorts, build_logical_and, validate_logical_operands,
+///     BooleanPosition, Expression, NoRegisteredSorts, validate_logical_operands,
 /// };
 ///
-/// let ill_typed = build_logical_and([2, 4])?;
+/// let ill_typed = Expression::all([2, 4]);
 /// let error = validate_logical_operands(
 ///     &ill_typed,
 ///     &HashMap::new(),
@@ -316,7 +319,6 @@ impl SortLookup for NoRegisteredSorts {
 /// )
 /// .expect_err("a number under a conjunction is refused");
 /// assert!(matches!(error.position(), BooleanPosition::LogicalOperand { .. }));
-/// # Ok::<(), fhy_core::expr::ExpressionBuildError>(())
 /// ```
 pub fn validate_logical_operands<E, T, L>(
     expression: &Expression,

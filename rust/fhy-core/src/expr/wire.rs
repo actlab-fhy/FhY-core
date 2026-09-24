@@ -20,10 +20,11 @@ use crate::identifier::{Identifier, IdentifierWire};
 
 use super::literal::{Decimal, LiteralValue};
 use super::node::{
-    BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
-    UnaryExpression, validate_case_count, validate_condition_literal, validate_function_name,
+    BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
+    PiecewiseExpression, UnaryExpression, validate_case_count, validate_condition_literal,
+    validate_function_name,
 };
-use super::operation::{BinaryOperation, UnaryOperation};
+use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
 /// Key of the type id in a node's wire map.
 const TYPE_KEY: &str = "__type__";
@@ -36,6 +37,9 @@ const UNARY_TYPE_ID: &str = "unary_expression";
 
 /// Type id of a binary node.
 const BINARY_TYPE_ID: &str = "binary_expression";
+
+/// Type id of a logical node.
+const LOGICAL_TYPE_ID: &str = "logical_expression";
 
 /// Type id of an identifier reference.
 const IDENTIFIER_TYPE_ID: &str = "identifier_expression";
@@ -54,6 +58,7 @@ fn find_type_id(expression: &Expression) -> &'static str {
     match expression.kind() {
         ExpressionKind::Unary(_) => UNARY_TYPE_ID,
         ExpressionKind::Binary(_) => BINARY_TYPE_ID,
+        ExpressionKind::Logical(_) => LOGICAL_TYPE_ID,
         ExpressionKind::Identifier(_) => IDENTIFIER_TYPE_ID,
         ExpressionKind::Literal(_) => LITERAL_TYPE_ID,
         ExpressionKind::Piecewise(_) => PIECEWISE_TYPE_ID,
@@ -87,6 +92,12 @@ impl Serialize for NodeFields<'_> {
                 fields.serialize_field("operation", &node.operation())?;
                 fields.serialize_field("left", node.left())?;
                 fields.serialize_field("right", node.right())?;
+                fields.end()
+            }
+            ExpressionKind::Logical(node) => {
+                let mut fields = serializer.serialize_struct("LogicalExpression", 2)?;
+                fields.serialize_field("operation", &node.operation())?;
+                fields.serialize_field("operands", node.operands())?;
                 fields.end()
             }
             ExpressionKind::Identifier(identifier) => {
@@ -169,6 +180,7 @@ impl Serialize for LiteralWire<'_> {
 /// |---|---|
 /// | `unary_expression` | `operation` (wire name), `operand` |
 /// | `binary_expression` | `operation` (wire name), `left`, `right` |
+/// | `logical_expression` | `operation` (wire name), `operands` (list of at least two) |
 /// | `identifier_expression` | `identifier` (`{"id", "name_hint"}`) |
 /// | `literal_expression` | `value` |
 /// | `piecewise_expression` | `conditions` (list), `values` (list), `otherwise` |
@@ -192,8 +204,9 @@ impl Serialize for LiteralWire<'_> {
 /// a payload refused for its structure, an unknown type id, an unknown or
 /// missing field, an unknown operation name, a literal outside the literal
 /// grammar, piecewise condition and value lists of different lengths, an
-/// empty piecewise, a literal case condition other than a Boolean, or an
-/// empty function name leaves the identifier id counter untouched. Nested
+/// empty piecewise, a literal case condition other than a Boolean, a
+/// logical node of fewer than two operands, or an empty function name
+/// leaves the identifier id counter untouched. Nested
 /// levels are read before they are checked, which needs a self-describing
 /// format such as JSON.
 ///
@@ -221,6 +234,10 @@ enum PayloadNode {
         operation: BinaryOperation,
         left: Box<PayloadNode>,
         right: Box<PayloadNode>,
+    },
+    Logical {
+        operation: LogicalOperation,
+        operands: Vec<PayloadNode>,
     },
     Identifier(IdentifierWire),
     Literal(LiteralValue),
@@ -351,6 +368,28 @@ fn parse_piecewise(data: &Value) -> Result<PayloadNode, String> {
     })
 }
 
+/// Check a logical node's fields.
+fn parse_logical(data: &Value) -> Result<PayloadNode, String> {
+    let [operation, operands] = read_fields(data, "a logical node", ["operation", "operands"])?;
+    let operation = LogicalOperation::deserialize(operation)
+        .map_err(|error| add_field_context("operation", error))?;
+    let operands = read_list(operands, "operands")?;
+    if operands.len() < 2 {
+        return Err(format!(
+            "a logical node needs at least 2 operands, got {}",
+            operands.len()
+        ));
+    }
+    let operands = operands
+        .iter()
+        .map(|operand| parse_node(operand).map_err(|error| add_field_context("operands", error)))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PayloadNode::Logical {
+        operation,
+        operands,
+    })
+}
+
 /// Check a call's fields.
 fn parse_call(data: &Value) -> Result<PayloadNode, String> {
     let [function_name, arguments] = read_fields(data, "a call", ["function_name", "arguments"])?;
@@ -415,6 +454,7 @@ fn parse_node(value: &Value) -> Result<PayloadNode, String> {
                 .map(PayloadNode::Literal)
                 .map_err(|error| add_field_context("value", error))
         }
+        LOGICAL_TYPE_ID => parse_logical(data),
         PIECEWISE_TYPE_ID => parse_piecewise(data),
         CALL_TYPE_ID => parse_call(data),
         unknown => Err(format!("unknown expression type id `{unknown}`")),
@@ -437,6 +477,18 @@ fn build_node<E: de::Error>(node: PayloadNode) -> Result<Expression, E> {
             build_node(*left)?,
             build_node(*right)?,
         )),
+        PayloadNode::Logical {
+            operation,
+            operands,
+        } => {
+            let operands = operands
+                .into_iter()
+                .map(build_node)
+                .collect::<Result<Box<[_]>, E>>()?;
+            Expression::from_kind(ExpressionKind::Logical(LogicalExpression::new(
+                operation, operands,
+            )))
+        }
         PayloadNode::Identifier(identifier) => {
             Expression::from(Identifier::try_from(identifier).map_err(E::custom)?)
         }

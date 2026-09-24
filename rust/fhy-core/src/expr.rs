@@ -24,7 +24,7 @@ mod wire;
 mod wire_name;
 
 pub use alpha::AlphaRenaming;
-pub use build::{IntoOperand, build_call, build_logical_and, build_logical_or, build_piecewise};
+pub use build::{IntoOperand, build_call, build_piecewise};
 pub use display::{
     ExpressionDisplay, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation,
 };
@@ -33,10 +33,10 @@ pub use error::{
 };
 pub use literal::{Decimal, LiteralTextError, LiteralValue};
 pub use node::{
-    BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
-    UnaryExpression,
+    BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
+    PiecewiseExpression, UnaryExpression,
 };
-pub use operation::{BinaryOperation, UnaryOperation};
+pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 pub use registration::register_expression_passes;
 pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
 pub use sort::FunctionSort;

@@ -14,7 +14,7 @@
 //! rather than on the call stack, so they handle a tree of any depth. All but
 //! dropping handle a subtree that occurs in several places once, so they
 //! take time linear in the distinct nodes of a DAG, not in its occurrences.
-//! The derived `Debug` recurses once per tree level.
+//! `Debug` is iterative too, and bounded.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -30,7 +30,7 @@ use crate::tree::{
 use super::alpha::AlphaRenaming;
 use super::error::ExpressionBuildError;
 use super::literal::LiteralValue;
-use super::operation::{BinaryOperation, UnaryOperation};
+use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
 /// The children of a node, in visiting order, from either end.
 enum Children<'a> {
@@ -114,6 +114,7 @@ fn move_children(kind: ExpressionKind, pending: &mut Vec<Expression>) {
     match kind {
         ExpressionKind::Unary(node) => pending.push(node.operand),
         ExpressionKind::Binary(node) => pending.extend(node.operands),
+        ExpressionKind::Logical(node) => pending.extend(node.operands),
         ExpressionKind::Piecewise(node) => {
             for (condition, value) in node.cases {
                 pending.push(condition);
@@ -139,6 +140,9 @@ fn is_node_data_equal(
         }
         (ExpressionKind::Binary(left), ExpressionKind::Binary(right)) => {
             left.operation == right.operation
+        }
+        (ExpressionKind::Logical(left), ExpressionKind::Logical(right)) => {
+            left.operation == right.operation && left.operands.len() == right.operands.len()
         }
         (ExpressionKind::Identifier(left), ExpressionKind::Identifier(right)) => {
             identifiers_match(left, right)
@@ -192,8 +196,9 @@ fn is_tree_equal(
 }
 
 /// Feed the data of `expression`'s node, excluding its children, to
-/// `hasher`: a tag for its kind, then its operation, identifier, literal,
-/// case count, or function name and argument count.
+/// `hasher`: a tag for its kind, then its operation (and operand count for a
+/// logical node), identifier, literal, case count, or function name and
+/// argument count.
 fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
     match expression.kind() {
         ExpressionKind::Unary(node) => {
@@ -220,6 +225,11 @@ fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
             hasher.write_u8(5);
             node.function_name.hash(hasher);
             hasher.write_usize(node.arguments.len());
+        }
+        ExpressionKind::Logical(node) => {
+            hasher.write_u8(6);
+            node.operation.hash(hasher);
+            hasher.write_usize(node.operands.len());
         }
     }
 }
@@ -345,14 +355,18 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 /// Cloning bumps a reference count and shares the node. `==` and `Hash`
 /// compare trees structurally; [`ptr_eq`](Self::ptr_eq) compares handles.
 /// `Display` writes the text [`display`](Self::display) writes under the
-/// default options, and `Debug` shows the node structure.
+/// default options, a DAG's shared subtrees at every occurrence. `Debug`
+/// writes a bounded text for diagnostics: the functional notation with
+/// identifier ids, eliding everything after 1,000 nodes, so a failing
+/// `assert_eq!` on any expression prints in bounded time.
 ///
 /// Dropping, comparing, hashing, substituting into, collecting the free
-/// identifiers of, and screening a tree keep their pending nodes on the
-/// heap, so they handle a tree of any depth on any thread. All but dropping
-/// handle a subtree occurring in several places once, so a DAG such as
-/// `x(k+1) = xk + xk` costs time linear in its distinct nodes. `Debug`,
-/// serialization, and deserialization recurse once per tree level: a
+/// identifiers of, displaying, and screening a tree keep their pending
+/// nodes on the heap, so they handle a tree of any depth on any thread. All
+/// but dropping and displaying handle a subtree occurring in several places
+/// once, so a DAG such as `x(k+1) = xk + xk` costs time linear in its
+/// distinct nodes. Serialization and deserialization recurse once per tree
+/// level: a
 /// serialization round trip of a tree 4000 levels deep through `serde_json`
 /// values needs up to 32 MiB of stack in an unoptimized build and up to
 /// 8 MiB in an optimized one.
@@ -406,7 +420,7 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 /// let y = Expression::from(Identifier::new("y"));
 /// let ordered = x < y;
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Expression(Arc<ExpressionKind>);
 
 /// The node an [`Expression`] refers to, one variant per node kind.
@@ -416,6 +430,8 @@ pub enum ExpressionKind {
     Unary(UnaryExpression),
     /// A binary operation applied to two operands.
     Binary(BinaryExpression),
+    /// A conjunction or disjunction of two or more operands.
+    Logical(LogicalExpression),
     /// A reference to an identifier.
     Identifier(Identifier),
     /// A constant.
@@ -438,6 +454,18 @@ pub struct UnaryExpression {
 pub struct BinaryExpression {
     operation: BinaryOperation,
     operands: [Expression; 2],
+}
+
+/// A conjunction or disjunction of two or more operands, in order.
+///
+/// A logical node has at least two operands. It is built by
+/// [`Expression::all`], [`Expression::any`], [`Expression::new_logical`],
+/// [`Expression::and`] and [`Expression::or`], none of which splices the
+/// operands of a nested logical node into it.
+#[derive(Debug, Clone)]
+pub struct LogicalExpression {
+    operation: LogicalOperation,
+    operands: Box<[Expression]>,
 }
 
 /// A first-match-wins choice: the value of the first case whose condition
@@ -479,10 +507,10 @@ impl Expression {
     /// Return the direct children in visiting order.
     ///
     /// A unary node yields its operand; a binary node its left then its
-    /// right operand; a piecewise node each case's condition then value, in
-    /// case order, then its otherwise branch (`c0, v0, c1, v1, ...,
-    /// otherwise`); a call its arguments in order. An identifier or a
-    /// literal has no children.
+    /// right operand; a logical node its operands in order; a piecewise node
+    /// each case's condition then value, in case order, then its otherwise
+    /// branch (`c0, v0, c1, v1, ..., otherwise`); a call its arguments in
+    /// order. An identifier or a literal has no children.
     #[must_use]
     pub fn children(&self) -> impl DoubleEndedIterator<Item = &Expression> {
         self.iterate_children()
@@ -493,7 +521,10 @@ impl Expression {
     ///
     /// An identifier or a literal takes no children and returns a handle to
     /// itself. A piecewise rebuilt from `2n + 1` children has `n` cases; a
-    /// call keeps its function name.
+    /// call keeps its function name. A logical node takes exactly its own
+    /// operand count, so it keeps at least two operands, and keeps the
+    /// children as given, never flattening a nested logical node into
+    /// itself.
     ///
     /// # Errors
     ///
@@ -526,6 +557,9 @@ impl Expression {
                     })?;
                 Self::from(BinaryExpression::new(node.operation, left, right))
             }
+            ExpressionKind::Logical(node) => Self::from_kind(ExpressionKind::Logical(
+                LogicalExpression::new(node.operation, children.into_boxed_slice()),
+            )),
             ExpressionKind::Piecewise(_) => {
                 let mut children = children.into_iter();
                 let otherwise = children
@@ -614,6 +648,7 @@ impl Expression {
                 Children::Contiguous(std::slice::from_ref(&node.operand).iter())
             }
             ExpressionKind::Binary(node) => Children::Contiguous(node.operands.iter()),
+            ExpressionKind::Logical(node) => Children::Contiguous(node.operands.iter()),
             ExpressionKind::Piecewise(node) => Children::Piecewise {
                 cases: node.cases.iter(),
                 front_value: None,
@@ -634,9 +669,15 @@ impl Expression {
             ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => 0,
             ExpressionKind::Unary(_) => 1,
             ExpressionKind::Binary(_) => 2,
+            ExpressionKind::Logical(node) => node.operands.len(),
             ExpressionKind::Piecewise(node) => 2 * node.cases.len() + 1,
             ExpressionKind::Call(node) => node.arguments.len(),
         }
+    }
+
+    /// Wrap `kind` in a new handle.
+    pub(super) fn from_kind(kind: ExpressionKind) -> Self {
+        Self(Arc::new(kind))
     }
 }
 
@@ -797,6 +838,30 @@ impl BinaryExpression {
     #[must_use]
     pub fn right(&self) -> &Expression {
         &self.operands[1]
+    }
+}
+
+impl LogicalExpression {
+    /// Construct the logical node of `operation` over `operands`, which
+    /// number at least two: the builders, rebuilding and the wire decoder
+    /// ensure the count before calling.
+    pub(super) fn new(operation: LogicalOperation, operands: Box<[Expression]>) -> Self {
+        Self {
+            operation,
+            operands,
+        }
+    }
+
+    /// Return the operation.
+    #[must_use]
+    pub fn operation(&self) -> LogicalOperation {
+        self.operation
+    }
+
+    /// Return the operands in order; there are always at least two.
+    #[must_use]
+    pub fn operands(&self) -> &[Expression] {
+        &self.operands
     }
 }
 

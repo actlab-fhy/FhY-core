@@ -272,10 +272,6 @@ fn rewrite_rule_applier_rewrites_a_shared_subtree_once() {
 /// Test a doubling DAG 64 levels deep over `a + 0` is rewritten once per
 /// distinct node.
 #[test]
-#[expect(
-    clippy::manual_assert_eq,
-    reason = "Debug of a 64-level doubling DAG never finishes"
-)]
 fn rewrite_rule_applier_rewrites_a_doubling_dag_once_per_distinct_node() {
     let (_, a) = build_identifier("a");
     let dag = build_doubling_dag(&build_plus_zero(&a), 64);
@@ -283,7 +279,7 @@ fn rewrite_rule_applier_rewrites_a_doubling_dag_once_per_distinct_node() {
 
     let outcome = applier.execute(&dag).expect("no rule fails");
 
-    assert!(outcome.output() == &build_doubling_dag(&a, 64));
+    assert_eq!(outcome.output(), &build_doubling_dag(&a, 64));
     assert_eq!(applier.fired().len(), 1);
 }
 

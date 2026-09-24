@@ -13,9 +13,10 @@
 //! There is no `%`. The other operations are methods named after them:
 //! [`Expression::equals`], [`Expression::less`],
 //! [`Expression::floor_divide`], [`Expression::floor_mod`],
-//! [`Expression::power`], and so on.
-//! [`build_logical_and`], [`build_logical_or`], [`build_piecewise`], and
-//! [`build_call`] build the nodes whose operand count varies.
+//! [`Expression::power`], [`Expression::and`], and so on.
+//! [`Expression::all`], [`Expression::any`], [`Expression::new_logical`],
+//! [`build_piecewise`], and [`build_call`] build the nodes whose operand
+//! count varies.
 
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
@@ -26,9 +27,10 @@ use crate::identifier::Identifier;
 use super::error::ExpressionBuildError;
 use super::literal::LiteralValue;
 use super::node::{
-    BinaryExpression, CallExpression, Expression, PiecewiseExpression, UnaryExpression,
+    BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
+    PiecewiseExpression, UnaryExpression,
 };
-use super::operation::{BinaryOperation, UnaryOperation};
+use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
 /// The sealing supertrait of [`IntoOperand`], which carries the conversion.
 mod sealed {
@@ -42,29 +44,6 @@ mod sealed {
         /// Convert the value into the operand expression it stands for.
         fn into_expression(self) -> Expression;
     }
-}
-
-/// Fold `operands` to the right with the connective `operation`:
-/// `a op (b op (c op d))`.
-fn fold_logical_operands<I>(
-    operation: BinaryOperation,
-    operands: I,
-) -> Result<Expression, ExpressionBuildError>
-where
-    I: IntoIterator,
-    I::Item: IntoOperand,
-{
-    let mut operands: Vec<Expression> = operands
-        .into_iter()
-        .map(sealed::Sealed::into_expression)
-        .collect();
-    let count = operands.len();
-    let (Some(last), true) = (operands.pop(), count >= 2) else {
-        return Err(ExpressionBuildError::TooFewLogicalOperands { operation, count });
-    };
-    Ok(operands.into_iter().rev().fold(last, |folded, operand| {
-        Expression::new_binary(operation, operand, folded)
-    }))
 }
 
 /// A value usable as an operand of an expression builder.
@@ -203,6 +182,113 @@ impl Expression {
             left.into_expression(),
             right.into_expression(),
         ))
+    }
+
+    /// Build the conjunction or disjunction `operation` of `operands`.
+    ///
+    /// Of no operand, this is the literal `true` for
+    /// [`And`](LogicalOperation::And) and `false` for
+    /// [`Or`](LogicalOperation::Or). Of one operand, it is that operand's
+    /// handle, unchanged. Of two or more, it is one logical node over
+    /// exactly the given operands, in order. A logical operand of the same
+    /// operation is never flattened into the new node, so
+    /// `all([x, all([y, z])])` keeps its nested node.
+    ///
+    /// Build a large conjunction with one call over an iterator:
+    /// `acc = acc.and(c)` in a loop nests one level per step.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{Expression, ExpressionKind, LiteralValue, LogicalOperation};
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let bounds = Expression::new_logical(LogicalOperation::And, [x.greater_equal(0), x.less(10)]);
+    /// let ExpressionKind::Logical(node) = bounds.kind() else { panic!("a logical node") };
+    /// assert_eq!(node.operands().len(), 2);
+    ///
+    /// let nothing: [Expression; 0] = [];
+    /// assert_eq!(
+    ///     Expression::new_logical(LogicalOperation::Or, nothing),
+    ///     Expression::from(LiteralValue::from(false)),
+    /// );
+    /// assert!(Expression::ptr_eq(&Expression::new_logical(LogicalOperation::And, [&x]), &x));
+    /// ```
+    #[must_use]
+    pub fn new_logical<I>(operation: LogicalOperation, operands: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: IntoOperand,
+    {
+        let mut operands = operands.into_iter().map(sealed::Sealed::into_expression);
+        let Some(first) = operands.next() else {
+            let identity = match operation {
+                LogicalOperation::And => true,
+                LogicalOperation::Or => false,
+            };
+            return Self::from(LiteralValue::from(identity));
+        };
+        let Some(second) = operands.next() else {
+            return first;
+        };
+        let operands = [first, second].into_iter().chain(operands).collect();
+        Self::from_kind(ExpressionKind::Logical(LogicalExpression::new(
+            operation, operands,
+        )))
+    }
+
+    /// Build the conjunction of `operands`: the literal `true` of none,
+    /// the operand itself of one, and one [`And`](LogicalOperation::And)
+    /// node over all of them, in order and unflattened, of two or more; see
+    /// [`new_logical`](Self::new_logical).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{Expression, ExpressionKind};
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let bounded = Expression::all((0..100).map(|bound| x.less(bound)));
+    ///
+    /// let ExpressionKind::Logical(node) = bounded.kind() else { panic!("a logical node") };
+    /// assert_eq!(node.operands().len(), 100);
+    /// ```
+    #[must_use]
+    pub fn all<I>(operands: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: IntoOperand,
+    {
+        Self::new_logical(LogicalOperation::And, operands)
+    }
+
+    /// Build the disjunction of `operands`: the literal `false` of none,
+    /// the operand itself of one, and one [`Or`](LogicalOperation::Or) node
+    /// over all of them, in order and unflattened, of two or more; see
+    /// [`new_logical`](Self::new_logical).
+    #[must_use]
+    pub fn any<I>(operands: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: IntoOperand,
+    {
+        Self::new_logical(LogicalOperation::Or, operands)
+    }
+
+    /// Build the two-operand conjunction `self && other`, the same as
+    /// `Expression::all([self, other])`.
+    #[must_use]
+    pub fn and(&self, other: impl IntoOperand) -> Expression {
+        Self::all([self.clone(), other.into_expression()])
+    }
+
+    /// Build the two-operand disjunction `self || other`, the same as
+    /// `Expression::any([self, other])`.
+    #[must_use]
+    pub fn or(&self, other: impl IntoOperand) -> Expression {
+        Self::any([self.clone(), other.into_expression()])
     }
 
     /// Build the equality comparison `self == other`.
@@ -389,53 +475,6 @@ impl Not for &Expression {
     fn not(self) -> Expression {
         Expression::new_unary(UnaryOperation::LogicalNot, self)
     }
-}
-
-/// Build the conjunction of `operands`, folded to the right:
-/// `a && (b && (c && d))`.
-///
-/// # Errors
-///
-/// Returns [`ExpressionBuildError::TooFewLogicalOperands`] with the
-/// operand count if `operands` holds fewer than two operands.
-///
-/// # Examples
-///
-/// ```
-/// use fhy_core::identifier::Identifier;
-/// use fhy_core::expr::{BinaryOperation, Expression, build_logical_and};
-///
-/// let x = Expression::from(Identifier::new("x"));
-/// let bounded = build_logical_and([x.greater_equal(0), x.less(10)])?;
-/// let expected = Expression::new_binary(
-///     BinaryOperation::LogicalAnd,
-///     x.greater_equal(0),
-///     x.less(10),
-/// );
-/// assert_eq!(bounded, expected);
-/// # Ok::<(), fhy_core::expr::ExpressionBuildError>(())
-/// ```
-pub fn build_logical_and<I>(operands: I) -> Result<Expression, ExpressionBuildError>
-where
-    I: IntoIterator,
-    I::Item: IntoOperand,
-{
-    fold_logical_operands(BinaryOperation::LogicalAnd, operands)
-}
-
-/// Build the disjunction of `operands`, folded to the right:
-/// `a || (b || (c || d))`.
-///
-/// # Errors
-///
-/// Returns [`ExpressionBuildError::TooFewLogicalOperands`] with the
-/// operand count if `operands` holds fewer than two operands.
-pub fn build_logical_or<I>(operands: I) -> Result<Expression, ExpressionBuildError>
-where
-    I: IntoIterator,
-    I::Item: IntoOperand,
-{
-    fold_logical_operands(BinaryOperation::LogicalOr, operands)
 }
 
 /// Build a piecewise from `(condition, value)` cases in evaluation order and
