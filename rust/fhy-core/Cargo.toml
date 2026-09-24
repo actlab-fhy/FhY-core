@@ -1,6 +1,6 @@
 [package]
 name = "fhy-core"
-description = "Core utilities for the FhY compiler infrastructure."
+description = "Core IR building blocks for the FhY compiler: identifiers, interned tags, diagnostics, symbolic expressions, rewrite rules and a pass manager."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,18 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
+documentation = "https://docs.rs/fhy-core"
+keywords = ["compiler", "ir", "symbolic", "term-rewriting", "pass-manager"]
+categories = ["compilers", "data-structures"]
+# Ship the sources, the integration tests and their golden JSON; never the
+# Python corpus generators. Cargo.toml and Cargo.lock are always included.
+include = [
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/tests/golden/*.json",
+    "/README.md",
+    "/LICENSE",
+]
 
 [lib]
 name = "fhy_core"
