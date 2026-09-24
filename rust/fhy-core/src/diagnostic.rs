@@ -1,27 +1,21 @@
 //! Diagnostics, notes, and validation reports shared by every verifier.
 //!
-//! A [`Note`] is a self-contained, human-readable explanation. It holds no
-//! reference into the IR, so no transformation has to maintain it. Its
-//! [`NoteKind`] names the role of the explanation (a rationale, a
-//! suggestion, a neutral remark) so tooling can filter and group notes
-//! wherever they are attached. The kinds form an open, registry-backed
-//! vocabulary like [`crate::value_domain::ValueDomain`]: a layer registers
-//! the kinds it needs without changing this crate, and
-//! [`NoteKind::rationale`], [`NoteKind::suggestion`], [`NoteKind::remark`]
-//! and [`NoteKind::other`] return the four kinds shipped here. Call them
-//! rather than building a fresh kind with the same name hint. Identifiers
-//! compare by id, and a second `Identifier::new("other")` is a different
-//! key.
+//! A [`Note`] is a self-contained, human-readable explanation that holds no
+//! reference into the IR. Its [`NoteKind`] names the role of the
+//! explanation, such as a rationale or a suggestion, so tooling can filter
+//! and group notes. The kinds are an open [`DescribedTag`] vocabulary: a
+//! layer registers the kinds it needs, and [`NoteKind::rationale`],
+//! [`NoteKind::suggestion`], [`NoteKind::remark`] and [`NoteKind::other`]
+//! return the four shipped here.
 //!
 //! A [`Diagnostic`] is a note emitted by a named source at a
 //! [`DiagnosticLevel`], with optional detail. Build one with
 //! [`Diagnostic::error`], [`Diagnostic::warning`] or [`Diagnostic::info`],
 //! and attach a detail with [`Diagnostic::with_detail`]. A
-//! [`ValidationReport`] collects
-//! the diagnostics of a validation run, in emission order, together with
-//! optional per-source records, displays them one diagnostic per line,
-//! and escalates a report holding an error into a [`ValidationFailedError`]
-//! with [`ValidationReport::into_result`].
+//! [`ValidationReport`] collects the diagnostics of a validation run, in
+//! emission order, with optional per-source records, and
+//! [`ValidationReport::into_result`] escalates a report holding an error
+//! into a [`ValidationFailedError`].
 
 use std::borrow::Cow;
 use std::fmt;
@@ -81,11 +75,6 @@ const SHIPPED_NOTE_KINDS: [(ReservedIdentifier, &str); 4] = [
     (reserved::OTHER_NOTE_KIND, "Uncategorized note."),
 ];
 
-/// Build the kinds this module ships, in registration order.
-///
-/// The registry calls this once, on its first use, and keeps the instances
-/// it builds, so the shipped kinds stay canonical for the life of the
-/// process.
 fn create_default_note_kinds() -> Vec<NoteKind> {
     SHIPPED_NOTE_KINDS
         .iter()
@@ -201,9 +190,9 @@ impl DiagnosticLevel {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            DiagnosticLevel::Error => "error",
-            DiagnosticLevel::Warning => "warning",
-            DiagnosticLevel::Info => "info",
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Info => "info",
         }
     }
 }
@@ -387,7 +376,6 @@ impl<R> ValidationReport<R> {
         self.filter_level(DiagnosticLevel::Info)
     }
 
-    /// Return the diagnostics at `level`, in emission order.
     fn filter_level(&self, level: DiagnosticLevel) -> impl Iterator<Item = &Diagnostic> + '_ {
         self.diagnostics
             .iter()
@@ -499,9 +487,8 @@ mod tests {
     use crate::identifier::Identifier;
     use crate::interned::Interned;
 
-    /// Return the JSON payload of a note whose kind is named by the id `id`,
-    /// with `kind_trailing` appended inside the kind and `trailing` appended
-    /// after the kind.
+    /// Return the JSON payload of a note whose kind is named by `id`, with
+    /// `kind_trailing` appended inside the kind and `trailing` after it.
     fn encode_note_payload(id: u64, kind_trailing: &str, trailing: &str) -> String {
         format!(
             "{{\"message\":\"m\",\"kind\":{{\"name\":{{\"id\":{id},\"name_hint\":\"k{id}\"}},\
@@ -509,7 +496,6 @@ mod tests {
         )
     }
 
-    /// Test each shipped kind holds its fixed reserved id and name hint.
     #[rstest]
     #[case::rationale(NoteKind::rationale, 0, "rationale")]
     #[case::suggestion(NoteKind::suggestion, 1, "suggestion")]
@@ -596,8 +582,6 @@ mod tests {
         assert!(error.to_string().contains("zzz"), "{error}");
     }
 
-    /// Test a note and each shipped kind round-trip through postcard, a
-    /// format that is not self-describing.
     #[rstest]
     #[case::rationale(NoteKind::rationale)]
     #[case::other(NoteKind::other)]

@@ -2,11 +2,18 @@
 //!
 //! A [`DescribedTag`] is an open vocabulary entry: an [`Identifier`] name
 //! that is its identity, and a human-readable description that takes no part
-//! in equality, hashing or interning. Each vocabulary is a [`TagKind`] with
-//! its own process-wide registry, so the same identifier registered in two
-//! vocabularies names two independent tags. This crate ships two
-//! vocabularies, [`OpAttribute`](crate::op_attribute::OpAttribute) and
-//! [`NoteKind`](crate::diagnostic::NoteKind); the set is closed.
+//! in equality, hashing or interning. The first tag registered under a name
+//! stays canonical, and a later registration of that name returns it,
+//! dropping its own description.
+//!
+//! Each vocabulary is a [`TagKind`] with its own process-wide registry, so
+//! the same identifier registered in two vocabularies names two independent
+//! tags. This crate ships two vocabularies,
+//! [`OpAttribute`](crate::op_attribute::OpAttribute) and
+//! [`NoteKind`](crate::diagnostic::NoteKind); the set is closed. Use a
+//! vocabulary's shipped accessors rather than a fresh tag with the same name
+//! hint: identifiers compare by id, so a second
+//! `Identifier::new("commutative")` is a different key.
 //!
 //! A tag encodes as `{"name": <identifier>, "description": ..}`. Decoding a
 //! [`Canonical`] of it interns it.
@@ -106,7 +113,6 @@ impl<K: TagKind> DescribedTag<K> {
         Self::create(Identifier::reserved(entry), description)
     }
 
-    /// Build the tag without registering it.
     fn create(name: Identifier, description: impl Into<String>) -> Self {
         Self {
             name,
@@ -177,8 +183,8 @@ impl<K: TagKind> fmt::Display for DescribedTag<K> {
     }
 }
 
-/// Decodes a tag's payload and registers it: a payload naming a registered
-/// tag yields that tag, keeping its description.
+/// Decodes and registers a tag; a payload naming a registered tag yields
+/// that tag, with its own description.
 ///
 /// Only the handle decodes, so a decoded tag is always the registered one:
 ///
@@ -205,7 +211,6 @@ impl<'de, K: TagKind> Deserialize<'de> for Canonical<DescribedTag<K>> {
     }
 }
 
-/// The wire form of a [`DescribedTag`], decoded.
 #[derive(Deserialize)]
 #[serde(
     rename = "DescribedTag",
@@ -235,8 +240,8 @@ mod tests {
     use crate::op_attribute::OpAttribute;
     use crate::test_support::compute_hash;
 
-    /// Test one identifier registered as an attribute and as a note kind
-    /// names two independent tags, each seen only by its own registry.
+    /// Test that one identifier registered as an attribute and as a note
+    /// kind names two independent tags, each seen only by its own registry.
     #[test]
     fn attribute_and_note_kind_registries_are_independent() {
         let name = Identifier::new("in-both-vocabularies");
@@ -250,8 +255,6 @@ mod tests {
         assert_eq!(NoteKind::intern_registry().get(&name), Some(kind));
     }
 
-    /// Test an identifier registered in one vocabulary is unknown to the
-    /// other.
     #[test]
     fn a_tag_registered_in_one_vocabulary_is_unknown_to_the_other() {
         let name = Identifier::new("in-one-vocabulary");
@@ -261,7 +264,6 @@ mod tests {
         assert_eq!(NoteKind::intern_registry().get(&name), None);
     }
 
-    /// Test two tags with one name are equal whatever their descriptions.
     #[test]
     fn tags_with_the_same_name_are_equal_whatever_the_description() {
         let name = Identifier::new("equality-ignores-description");
@@ -272,7 +274,8 @@ mod tests {
         assert_eq!(second, first);
     }
 
-    /// Test two tags with one name hash equally whatever their descriptions.
+    /// Test that two tags with one name hash equally whatever their
+    /// descriptions.
     #[test]
     fn equal_tags_hash_equally() {
         let name = Identifier::new("hash-ignores-description");
@@ -282,14 +285,13 @@ mod tests {
         assert_eq!(compute_hash(&first), compute_hash(&second));
     }
 
-    /// Test a tag of either vocabulary displays as its name hint.
     #[test]
     fn display_renders_the_name_hint() {
         assert_eq!(OpAttribute::commutative().to_string(), "commutative");
         assert_eq!(NoteKind::rationale().to_string(), "rationale");
     }
 
-    /// Test `Debug` renders the vocabulary's name, the name and the
+    /// Test that `Debug` renders the vocabulary's name, the name and the
     /// description.
     #[test]
     fn debug_names_the_vocabulary() {

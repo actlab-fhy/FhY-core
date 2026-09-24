@@ -1,26 +1,11 @@
 //! Open, registry-backed semantic tags for compiler operations.
 //!
-//! Every layer of a compiler stack carries semantic attributes on its
-//! operations: algebraic properties such as commutativity and associativity,
-//! purity, elementwise application, and family-specific tags contributed by
-//! particular IRs. [`OpAttribute`] keeps that classification open, so a layer
-//! shares the generic attributes shipped here and contributes its own
-//! without changing this crate.
-//!
-//! An attribute is a free-standing tag: it depends on no operation type and is
-//! specialized for no layer. Each one is canonicalized by its [`Identifier`]
-//! through [`crate::interned`], so call the shipped accessors such as
-//! [`OpAttribute::commutative`] rather than building a fresh attribute with
-//! the same name hint. Identifiers
-//! compare by id, and a second `Identifier::new("commutative")` is a
-//! different key.
-//!
-//! A `description` is human-readable metadata. It takes no part in equality,
-//! hashing or interning: the first attribute registered under an identifier
-//! stays canonical, and a later registration of that name returns it,
-//! dropping its own description.
-//!
-//! [`Identifier`]: crate::identifier::Identifier
+//! [`OpAttribute`] is the [`DescribedTag`] vocabulary of operation
+//! properties, such as commutativity or purity. An attribute depends on no
+//! operation type, so every layer shares the attributes shipped here,
+//! [`OpAttribute::commutative`], [`OpAttribute::associative`],
+//! [`OpAttribute::pure`] and [`OpAttribute::elementwise`], and registers its
+//! own without changing this crate.
 
 use std::sync::LazyLock;
 
@@ -78,11 +63,6 @@ const SHIPPED_ATTRIBUTES: [(ReservedIdentifier, &str); 4] = [
     ),
 ];
 
-/// Build the attributes this module ships, in registration order.
-///
-/// The registry calls this once, on its first use, and keeps the instances
-/// it builds, so the shipped attributes stay canonical for the life of the
-/// process.
 fn create_default_attributes() -> Vec<OpAttribute> {
     SHIPPED_ATTRIBUTES
         .iter()
@@ -141,7 +121,6 @@ mod tests {
     use crate::identifier::{HasIdentifier, Identifier};
     use crate::interned::{Canonical, Interned};
 
-    /// Return every attribute this module ships as a default.
     fn list_default_attributes() -> [&'static Canonical<OpAttribute>; 4] {
         [
             OpAttribute::commutative(),
@@ -255,8 +234,6 @@ mod tests {
         assert_eq!(tags, expected);
     }
 
-    /// Test each shipped default attribute is the canonical entry for its
-    /// name.
     #[rstest]
     #[case::commutative(OpAttribute::commutative)]
     #[case::associative(OpAttribute::associative)]
@@ -273,7 +250,6 @@ mod tests {
         );
     }
 
-    /// Test each shipped attribute holds its fixed reserved id and name hint.
     #[rstest]
     #[case::commutative(OpAttribute::commutative, 16, "commutative")]
     #[case::associative(OpAttribute::associative, 17, "associative")]
@@ -301,7 +277,6 @@ mod tests {
         }
     }
 
-    /// Test each shipped default attribute carries a non-empty description.
     #[rstest]
     #[case::commutative(OpAttribute::commutative)]
     #[case::associative(OpAttribute::associative)]
@@ -401,8 +376,6 @@ mod tests {
         assert!(error.to_string().contains(expected_message), "{error}");
     }
 
-    /// Test an attribute round-trips through postcard, a format that is not
-    /// self-describing, back to its canonical handle.
     #[test]
     fn an_attribute_round_trips_through_postcard() {
         let attribute = OpAttribute::register(Identifier::new("postcard-round-trip"), "desc");
@@ -441,7 +414,6 @@ mod tests {
         assert_eq!(restored.description(), "ordinary");
     }
 
-    /// Test a payload naming its id twice is rejected.
     #[test]
     fn a_payload_with_a_duplicate_id_is_rejected() {
         let id = Identifier::new("duplicate-id").id();
