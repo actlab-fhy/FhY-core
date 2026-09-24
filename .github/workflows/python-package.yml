@@ -68,16 +68,70 @@ jobs:
         # fhy-core-py pulls in pyo3, so the workspace clippy run also checks
         # it; clippy only checks, so that costs no libpython.
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Integration Test Targets
+        # Every integration test shares the `it` binary. A test that needs a
+        # fresh process is its own single-test target and is listed here on
+        # purpose: id_cap_decode moves the global id counter to the cap.
+        run: |
+          expected="id_cap_decode it"
+          actual="$(cargo metadata --no-deps --format-version 1 --locked | python3 -c '
+          import json, sys
+          metadata = json.load(sys.stdin)
+          (package,) = [p for p in metadata["packages"] if p["name"] == "fhy-core"]
+          print(" ".join(sorted(t["name"] for t in package["targets"] if t["kind"] == ["test"])))
+          ')"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::fhy-core test targets are '$actual', expected '$expected'."
+            exit 1
+          fi
       - name: Unit, Integration & Doc Testing
         # pyo3 leaves libpython unlinked only when maturin sets
         # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
         # build links the runner's Python and the fhy-core-py test binaries
         # run.
         run: cargo test --workspace --locked --all-features
+      - name: Documentation
+        # Fresh docs, so the public-paths check below reads no stale page.
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          rm -rf target/doc
+          cargo doc --workspace --no-deps --locked
+      - name: Public Paths
+        # Each public item has exactly one path: no glob re-exports, no module
+        # re-exports another public module's item, and no item name appears
+        # under two paths.
+        run: |
+          globs="$(grep -rnE '^\s*pub use [^;]*\*' rust/fhy-core/src || true)"
+          if [[ -n "$globs" ]]; then
+            echo "::error::glob re-exports: $globs"
+            exit 1
+          fi
+          doc=target/doc/fhy_core
+          reexports="$(grep -l 'id="reexports"' $(find "$doc" -name index.html) || true)"
+          if [[ -n "$reexports" ]]; then
+            echo "::error::a module re-exports an item that already has a public path: $reexports"
+            exit 1
+          fi
+          duplicates="$(grep -oE 'href="[^"#]+\.html"' "$doc/all.html" | grep -v '"\.\./' \
+            | sed -E 's#^href="(.*/)?[a-z]+\.([A-Za-z0-9_]+)\.html"$#\2#' | sort | uniq -d)"
+          if [[ -n "$duplicates" ]]; then
+            echo "::error::items with more than one public path: $duplicates"
+            exit 1
+          fi
       - name: Packaging
         # Pack fhy-core, the only publishable workspace member, as crates.io
         # would receive it and build the library from it.
         run: cargo package --locked -p fhy-core
+      - name: Package Contents
+        # The include list ships Rust sources, tests and golden JSON only.
+        run: |
+          unexpected="$(cargo package --list --locked -p fhy-core | grep -Ev \
+            '^(Cargo\.toml(\.orig)?|Cargo\.lock|\.cargo_vcs_info\.json|README\.md|LICENSE|src/.+\.rs|tests/.+\.rs|tests/golden/[a-z_]+\.json)$' || true)"
+          if [[ -n "$unexpected" ]]; then
+            echo "::error::the package ships unexpected files: $unexpected"
+            exit 1
+          fi
       - name: Testing the Packaged Crate
         # cargo package only builds the library, so run the tests from the
         # packed crate as a consumer would get them.
