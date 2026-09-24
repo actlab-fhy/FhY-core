@@ -10,13 +10,13 @@ use crate::tree::NodeHandle;
 
 /// The diagnostics sink and analysis access of one pass run.
 ///
-/// A pass receives the context in each lifecycle hook. Diagnostics it
-/// reports carry the pass's name as their source and end up in the run's
+/// A pass receives the context in each lifecycle hook, and a validator in
+/// its check. Diagnostics it reports end up in the run's
 /// [`PassOutcome`](super::PassOutcome), or in the
 /// [`PassError`](super::PassError) if the run fails. Under a
 /// [`PassManager`](super::PassManager), analysis results are cached for the
-/// whole pipeline run; a pass executed on its own computes them afresh on
-/// every request.
+/// whole pipeline run, its verifier included; a pass executed on its own
+/// computes them afresh on every request.
 #[derive(Debug)]
 pub struct PassContext<'a> {
     pass_name: Cow<'static, str>,
@@ -82,9 +82,10 @@ impl<'a> PassContext<'a> {
     /// Return the result of the analysis `A` for `ir`.
     ///
     /// Under a [`PassManager`](super::PassManager) the result is cached per
-    /// node for the pipeline run and survives passes that preserve `A`.
-    /// Outside one, `A` runs on every call. `ir` may be the pass's input or
-    /// any other node.
+    /// node for the pipeline run, and a pass's output inherits it from the
+    /// pass's input when the pass preserves `A`. Outside one, `A` runs on
+    /// every call. `ir` may be the pass's input, its output, or any other
+    /// node.
     pub fn analysis<A, T>(&mut self, ir: &T) -> Arc<A::Output>
     where
         A: Analysis<T> + Default,

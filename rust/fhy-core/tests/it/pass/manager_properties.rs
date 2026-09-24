@@ -57,6 +57,9 @@ enum CacheStep {
     AddPreservingDouble(i64),
     /// Return the current node itself.
     Keep,
+    /// Derive a node with the value added, read [`DoubleAnalysis`] of that
+    /// output inside the run, and preserve nothing.
+    ComputeOnOutput(i64),
 }
 
 /// Generate one cache step.
@@ -66,6 +69,7 @@ fn generate_cache_step() -> impl Strategy<Value = CacheStep> {
         (-2_i64..=2).prop_map(CacheStep::Add),
         (-2_i64..=2).prop_map(CacheStep::AddPreservingDouble),
         Just(CacheStep::Keep),
+        (-2_i64..=2).prop_map(CacheStep::ComputeOnOutput),
     ]
 }
 
@@ -91,10 +95,36 @@ impl CompilerPass<BoxIr> for AddPreservingDouble {
     }
 }
 
+/// Derives a node with the value added, reads [`DoubleAnalysis`] of it in
+/// its run, and preserves nothing.
+struct ComputeOnOutput(i64);
+
+impl CompilerPass<BoxIr> for ComputeOnOutput {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+        let output = ir.derive(ir.value() + self.0);
+        cx.analysis::<DoubleAnalysis, _>(&output);
+        Ok(output)
+    }
+
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+        Ok(input.value() != output.value())
+    }
+
+    fn preserved_analyses(
+        &mut self,
+        _input: &BoxIr,
+        _output: &BoxIr,
+        _changed: bool,
+    ) -> Result<PreservedAnalyses, PassFailure> {
+        Ok(PreservedAnalyses::none())
+    }
+}
+
 /// The values [`DoubleAnalysis`] reads return and the number of times it
 /// runs, as the preservation contract prescribes for `steps` from `start`:
 /// a result is recomputed only after a change that does not preserve it,
-/// and is otherwise served from the cache, stale or not.
+/// and is otherwise served from the cache, stale or not; a result computed
+/// on a pass's output is kept, whatever the pass preserves.
 fn model_cache(start: i64, steps: &[CacheStep]) -> (Vec<i64>, usize) {
     let mut value = start;
     let mut cached = None;
@@ -117,6 +147,11 @@ fn model_cache(start: i64, steps: &[CacheStep]) -> (Vec<i64>, usize) {
             }
             CacheStep::AddPreservingDouble(delta) => value += delta,
             CacheStep::Keep => {}
+            CacheStep::ComputeOnOutput(delta) => {
+                value += delta;
+                runs += 1;
+                cached = Some(value * 2);
+            }
         }
     }
     (reads, runs)
@@ -217,6 +252,9 @@ proptest! {
                 }
                 CacheStep::Keep => {
                     manager.add_pass(ClosurePass::new(&name, |ir, _| Ok(ir.clone())));
+                }
+                CacheStep::ComputeOnOutput(delta) => {
+                    manager.add_pass(ComputeOnOutput(delta));
                 }
             }
         }

@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use super::analysis::AnalysisCache;
 use super::compiler_pass::{CompilerPass, PassFailure, run_check, short_type_name};
 use super::context::PassContext;
 use super::error::render_chain;
@@ -226,8 +227,9 @@ fn synthesize_silent_failure(validator_name: Cow<'static, str>, error: &PassFail
 ///
 /// Unlike a [`PassManager`](super::PassManager), validation never stops
 /// early: every validator runs, even after earlier ones reported errors or
-/// failed. Validators run on their own, so each computes the analyses it
-/// requests afresh.
+/// failed. Run on its own, each validator computes the analyses it requests
+/// afresh; as a pipeline's verifier, validators share the pipeline's
+/// analysis cache.
 pub struct ValidationManager<'p, I> {
     name: Identifier,
     validators: Vec<Box<dyn Validator<I> + 'p>>,
@@ -274,10 +276,30 @@ impl<'p, I> ValidationManager<'p, I> {
     /// followed by each of its sources, joined by `: `.
     #[must_use]
     pub fn validate(&mut self, ir: &I) -> ValidationReport<ValidatorRecord> {
+        self.run_validators(ir, None)
+    }
+
+    /// Run every validator over `ir` as [`validate`](Self::validate) does,
+    /// with their analyses cached in the pipeline cache `cache`.
+    pub(super) fn validate_in(
+        &mut self,
+        ir: &I,
+        cache: &mut AnalysisCache,
+    ) -> ValidationReport<ValidatorRecord> {
+        self.run_validators(ir, Some(cache))
+    }
+
+    /// Run every validator over `ir`, caching their analyses in `cache` when
+    /// one is given.
+    fn run_validators(
+        &mut self,
+        ir: &I,
+        mut cache: Option<&mut AnalysisCache>,
+    ) -> ValidationReport<ValidatorRecord> {
         let mut diagnostics = Vec::new();
         let mut records = Vec::with_capacity(self.validators.len());
         for validator in &mut self.validators {
-            let mut cx = PassContext::new(validator.name(), None);
+            let mut cx = PassContext::new(validator.name(), cache.as_deref_mut());
             let result = validator.validate(ir, &mut cx);
             let (validator_name, mut captured) = cx.into_parts();
             let failed = match result {

@@ -497,6 +497,117 @@ fn pass_context_analysis_caches_a_node_other_than_the_input() {
     assert_eq!(side.double_runs(), 1);
 }
 
+/// Test an analysis a pass computed on its own output is kept for the next
+/// pass, although the pass preserved nothing.
+#[test]
+fn pass_manager_keeps_results_computed_on_a_pass_output() {
+    let mut observed = Vec::new();
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(ClosurePass::new("tests.pm.compute_on_output", |ir, cx| {
+        let output = ir.derive(ir.value() + 1);
+        cx.analysis::<DoubleAnalysis, _>(&output);
+        Ok(output)
+    }));
+    manager.add_pass(ClosurePass::new("tests.pm.read_output", |ir, cx| {
+        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        Ok(ir.clone())
+    }));
+    let input = BoxIr::new(5);
+
+    manager.run(&input).expect("the run succeeds");
+    drop(manager);
+
+    assert_eq!(observed, [12]);
+    assert_eq!(input.double_runs(), 1);
+}
+
+/// Reports a change and preserves nothing, but returns its input itself.
+struct ClaimChangeKeepNode;
+
+impl CompilerPass<BoxIr> for ClaimChangeKeepNode {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+        Ok(ir.clone())
+    }
+
+    fn did_change(&mut self, _input: &BoxIr, _output: &BoxIr) -> Result<bool, PassFailure> {
+        Ok(true)
+    }
+}
+
+/// Test a pass whose output is its input node keeps that node's results,
+/// even when it reports a change and preserves nothing: a node cannot
+/// change, so its own results stay valid.
+#[test]
+fn pass_manager_keeps_results_of_an_output_that_is_its_input() {
+    let mut observed = Vec::new();
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(ClosurePass::new("tests.pm.seed", |ir, cx| {
+        cx.analysis::<DoubleAnalysis, _>(ir);
+        Ok(ir.clone())
+    }));
+    manager.add_pass(ClaimChangeKeepNode);
+    manager.add_pass(ClosurePass::new("tests.pm.reread", |ir, cx| {
+        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        Ok(ir.clone())
+    }));
+    let input = BoxIr::new(4);
+
+    manager.run(&input).expect("the run succeeds");
+    drop(manager);
+
+    assert_eq!(observed, [8]);
+    assert_eq!(input.double_runs(), 1);
+}
+
+/// Adds one, reads [`DoubleAnalysis`] of its output in its run, and
+/// declares [`DoubleAnalysis`] preserved.
+struct ComputeOnOutputPreservingDouble;
+
+impl CompilerPass<BoxIr> for ComputeOnOutputPreservingDouble {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+        let output = ir.derive(ir.value() + 1);
+        cx.analysis::<DoubleAnalysis, _>(&output);
+        Ok(output)
+    }
+
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+        Ok(input.value() != output.value())
+    }
+
+    fn preserved_analyses(
+        &mut self,
+        _input: &BoxIr,
+        _output: &BoxIr,
+        _changed: bool,
+    ) -> Result<PreservedAnalyses, PassFailure> {
+        Ok(PreservedAnalyses::none().preserve::<DoubleAnalysis>())
+    }
+}
+
+/// Test an output that already has a result of its own keeps it rather than
+/// inheriting its input's result, even for a preserved analysis.
+#[test]
+fn pass_manager_prefers_an_outputs_own_result_to_its_inputs() {
+    let mut observed = Vec::new();
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(ClosurePass::new("tests.pm.seed_input", |ir, cx| {
+        cx.analysis::<DoubleAnalysis, _>(ir);
+        Ok(ir.clone())
+    }));
+    manager.add_pass(ComputeOnOutputPreservingDouble);
+    manager.add_pass(ClosurePass::new("tests.pm.reread_output", |ir, cx| {
+        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        Ok(ir.clone())
+    }));
+    let input = BoxIr::new(3);
+
+    manager.run(&input).expect("the run succeeds");
+    drop(manager);
+
+    assert_eq!(observed, [8]);
+    assert_eq!(input.double_runs(), 2);
+}
+
 /// Test passes inside a fixpoint group see analyses of their current input.
 #[test]
 fn pass_context_analysis_serves_passes_inside_a_fixpoint_group() {
@@ -1241,6 +1352,63 @@ fn pass_manager_verifier_validates_changed_outputs_inside_a_group() {
     let record = expect_group_record(error.records().last().expect("the group's record"));
     assert_eq!(record.iterations(), 3);
     assert!(record.iteration_records()[2].pass_runs().is_empty());
+}
+
+/// Reads [`DoubleAnalysis`] of every node it validates.
+struct DoubleReadingCheck;
+
+impl Validator<BoxIr> for DoubleReadingCheck {
+    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        cx.analysis::<DoubleAnalysis, _>(ir);
+        Ok(())
+    }
+}
+
+/// Test the verifier reads analyses through the pipeline's cache: a result
+/// the verifier computed serves the passes, and one a pass computed serves
+/// the verifier.
+#[test]
+fn verifier_reads_the_pipeline_analysis_cache() {
+    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
+    verifier.add(DoubleReadingCheck);
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(ClosurePass::new("tests.pm.read_then_compute", |ir, cx| {
+        cx.analysis::<DoubleAnalysis, _>(ir);
+        let output = ir.derive(ir.value() + 1);
+        cx.analysis::<DoubleAnalysis, _>(&output);
+        Ok(output)
+    }));
+    manager.set_verifier(verifier);
+    let input = BoxIr::new(3);
+
+    manager.run(&input).expect("the run succeeds");
+
+    assert_eq!(input.double_runs(), 2);
+}
+
+/// Test every changed output is verified when it is produced, even a node
+/// the run verified before: passes `x -> y` and `y -> x` verify the input
+/// `x`, then `y`, then `x` again.
+#[test]
+fn pass_manager_verifies_every_changed_output_even_a_node_seen_before() {
+    let mut check = CountingCheck::default();
+    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
+    verifier.add(&mut check);
+    let x = BoxIr::new(1);
+    let y = x.derive(2);
+    let back = x.clone();
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(ClosurePass::new("tests.pm.to_y", move |_, _| Ok(y.clone())));
+    manager.add_pass(ClosurePass::new("tests.pm.back_to_x", move |_, _| {
+        Ok(back.clone())
+    }));
+    manager.set_verifier(verifier);
+
+    let result = manager.run(&x).expect("the run succeeds");
+    drop(manager);
+
+    assert!(result.output().is_same_node(&x));
+    assert_eq!(check.invocations, 3);
 }
 
 /// Test a verifier without validators accepts any IR.

@@ -8,7 +8,7 @@ use super::analysis::AnalysisCache;
 use super::compiler_pass::{CompilerPass, run_lifecycle};
 use super::context::PassContext;
 use super::error::{PassError, VerificationPoint};
-use super::preserved::{AnalysisId, PreservedAnalyses};
+use super::preserved::PreservedAnalyses;
 use super::validation::{ValidationManager, ValidatorRecord};
 use crate::diagnostic::{Diagnostic, Note, ValidationReport};
 use crate::identifier::{HasIdentifier, Identifier};
@@ -312,9 +312,6 @@ impl<I> fmt::Debug for PipelineItem<'_, I> {
     }
 }
 
-/// The key the verification report of a node is cached under.
-struct VerificationReportKey;
-
 /// Return the error for verification rejecting the IR at `point` with
 /// `report`, blaming the pass `pass_name`, whose run emitted `diagnostics`:
 /// they end with an error diagnostic whose message is the error's.
@@ -347,19 +344,14 @@ struct PipelineRun<'r, 'p, I> {
 }
 
 impl<I: NodeHandle> PipelineRun<'_, '_, I> {
-    /// Return the verifier's report on `ir` if it rejects `ir`, or `None`
-    /// without a verifier or when the report has no error.
+    /// Verify `ir`, returning the verifier's report if it rejects `ir`, or
+    /// `None` without a verifier or when the report has no error.
     ///
-    /// The report is cached for the node, so a node is verified at most once
-    /// per run while its results are cached.
+    /// The verifier's validators read analyses through the run's cache.
     fn find_rejection(&mut self, ir: &I) -> Option<ValidationReport<ValidatorRecord>> {
         let verifier = self.verifier.as_deref_mut()?;
-        let report =
-            self.cache
-                .get_or_insert_with(ir, AnalysisId::of::<VerificationReportKey>(), || {
-                    verifier.validate(ir)
-                });
-        report.has_errors().then(|| (*report).clone())
+        let report = verifier.validate_in(ir, &mut self.cache);
+        report.has_errors().then_some(report)
     }
 
     /// Run `pass` over `input`, verify its output if it changed, and carry
@@ -465,10 +457,13 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 ///
 /// A run feeds each item the IR the previous item produced and records every
 /// pass run. Analysis results are cached per node for the run: a pass's
-/// output inherits the cached results its
-/// [`CompilerPass::preserved_analyses`] preserves, and the cache is dropped
-/// when the run ends. With a verifier set, the run also verifies its input
-/// and every output a pass reports as changed.
+/// output gains the cached results of its input that its
+/// [`CompilerPass::preserved_analyses`] preserves, except for an analysis
+/// the output has a result of its own for. No result is dropped during the
+/// run, so a node keeps its own results whatever a pass reports, and the
+/// cache, with the node handles it holds, is dropped when the run ends.
+/// With a verifier set, the run also verifies its input and every output a
+/// pass reports as changed.
 ///
 /// # Examples
 ///
@@ -550,8 +545,11 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
     ///
     /// A run then validates its input once before the first pass, blaming
     /// that pass, and validates the output of every pass that reports a
-    /// change, blaming the pass that produced it. Unchanged IR is not
-    /// validated again within a run.
+    /// change when the pass produces it, blaming that pass, even when the
+    /// run validated the same node before. An output reported unchanged is
+    /// not validated. The verifier's validators read analyses through the
+    /// run's cache, so a result a pass computed serves them, and the
+    /// reverse.
     pub fn set_verifier(&mut self, verifier: ValidationManager<'p, I>) {
         self.verifier = Some(verifier);
     }

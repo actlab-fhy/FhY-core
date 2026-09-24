@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::preserved::{AnalysisId, PreservedAnalyses};
-use crate::tree::{NodeHandle, NodeIdentity};
+use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 
 /// A reusable computation over IR whose result a pass manager can cache.
 ///
@@ -44,21 +44,24 @@ fn find_cache_key<T: NodeHandle>(ir: &T) -> CacheKey {
     }
 }
 
+/// The results cached for one node, by analysis.
+type Results = HashMap<AnalysisId, CachedResult, BuildIdentityHasher>;
+
 /// The cached results for one node, together with a handle that keeps the
 /// node, and so its identity, alive while the bucket exists.
 #[derive(Debug)]
 struct Bucket {
     /// Never read: holding it is what keeps the node alive.
     _handle: Box<dyn Any + Send + Sync>,
-    results: HashMap<AnalysisId, CachedResult>,
+    results: Results,
 }
 
 impl Bucket {
-    /// Create the bucket for `ir` holding `results`.
-    fn new<T: NodeHandle>(ir: &T, results: HashMap<AnalysisId, CachedResult>) -> Self {
+    /// Create the empty bucket for `ir`.
+    fn new<T: NodeHandle>(ir: &T) -> Self {
         Self {
             _handle: Box::new(ir.clone()),
-            results,
+            results: Results::default(),
         }
     }
 }
@@ -67,10 +70,13 @@ impl Bucket {
 ///
 /// Each cached node's bucket holds a clone of the node's handle, so no other
 /// node can take over its identity while the cache holds results for it.
-/// Dropping the cache releases every handle.
+/// Nothing is removed while the run lasts: a node identity is an address,
+/// so releasing a node mid-run would let a new node reuse the address and
+/// inherit the results cached for the old one. Dropping the cache at the
+/// end of the run releases every handle.
 #[derive(Debug, Default)]
 pub(super) struct AnalysisCache {
-    buckets: HashMap<CacheKey, Bucket>,
+    buckets: HashMap<CacheKey, Bucket, BuildIdentityHasher>,
 }
 
 impl AnalysisCache {
@@ -91,7 +97,7 @@ impl AnalysisCache {
 
     /// Return the result cached for `ir` under `id`, computing it with
     /// `compute` and caching it on a miss.
-    pub(super) fn get_or_insert_with<T, V>(
+    fn get_or_insert_with<T, V>(
         &mut self,
         ir: &T,
         id: AnalysisId,
@@ -104,7 +110,7 @@ impl AnalysisCache {
         let bucket = self
             .buckets
             .entry(find_cache_key(ir))
-            .or_insert_with(|| Bucket::new(ir, HashMap::new()));
+            .or_insert_with(|| Bucket::new(ir));
         // The key's handle type and `id` fix the result type, so a cached
         // result always downcasts; one that did not would be recomputed and
         // replaced rather than served.
@@ -119,29 +125,14 @@ impl AnalysisCache {
         result
     }
 
-    /// Drop the results cached for `ir` that `preserved` does not preserve.
-    pub(super) fn invalidate<T: NodeHandle>(&mut self, ir: &T, preserved: &PreservedAnalyses) {
-        if preserved.preserves_all() {
-            return;
-        }
-        let key = find_cache_key(ir);
-        let Some(bucket) = self.buckets.get_mut(&key) else {
-            return;
-        };
-        bucket
-            .results
-            .retain(|id, _| preserved.is_id_preserved(*id));
-        if bucket.results.is_empty() {
-            self.buckets.remove(&key);
-        }
-    }
-
     /// Carry the results `preserved` preserves from `from` over to its
-    /// replacement `to`.
+    /// replacement `to`, merging them into what `to` has.
     ///
-    /// When both are the same node this is [`invalidate`](Self::invalidate).
-    /// Otherwise the bucket of `from` and any bucket of `to` are dropped, and
-    /// `to` receives the preserved results of `from`.
+    /// Nothing is removed. When both are the same node nothing changes: a
+    /// node cannot change, so its own results stay valid whatever a pass
+    /// reports. Otherwise `to` gains each preserved result of `from` for an
+    /// analysis it has no result of its own for, and `from` keeps its
+    /// results.
     pub(super) fn transfer<T: NodeHandle>(
         &mut self,
         from: &T,
@@ -151,17 +142,26 @@ impl AnalysisCache {
         let from_key = find_cache_key(from);
         let to_key = find_cache_key(to);
         if from_key == to_key {
-            self.invalidate(from, preserved);
             return;
         }
-        let from_bucket = self.buckets.remove(&from_key);
-        self.buckets.remove(&to_key);
-        let Some(Bucket { mut results, .. }) = from_bucket else {
+        let Some(from_bucket) = self.buckets.get(&from_key) else {
             return;
         };
-        results.retain(|id, _| preserved.is_id_preserved(*id));
-        if !results.is_empty() {
-            self.buckets.insert(to_key, Bucket::new(to, results));
+        let carried: Vec<(AnalysisId, CachedResult)> = from_bucket
+            .results
+            .iter()
+            .filter(|(id, _)| preserved.is_id_preserved(**id))
+            .map(|(id, result)| (*id, Arc::clone(result)))
+            .collect();
+        if carried.is_empty() {
+            return;
+        }
+        let to_bucket = self
+            .buckets
+            .entry(to_key)
+            .or_insert_with(|| Bucket::new(to));
+        for (id, result) in carried {
+            to_bucket.results.entry(id).or_insert(result);
         }
     }
 }
@@ -362,74 +362,23 @@ mod tests {
         assert_eq!(ir.handle_count(), 1);
     }
 
-    /// Test invalidating with the empty set drops every result.
+    /// Test transferring with the all-preserving set copies every result to
+    /// the replacement and leaves the replaced node's results in place.
     #[test]
-    fn analysis_cache_invalidate_with_none_drops_everything() {
-        let mut cache = AnalysisCache::new();
-        let ir = TestIr::new(3);
-        seed_both(&mut cache, &ir);
-
-        cache.invalidate(&ir, &PreservedAnalyses::none());
-        let handles_after_invalidate = ir.handle_count();
-        seed_both(&mut cache, &ir);
-
-        assert_eq!(handles_after_invalidate, 1);
-        assert_eq!((ir.double_runs(), ir.parity_runs()), (2, 2));
-    }
-
-    /// Test invalidating with the all-preserving set keeps everything.
-    #[test]
-    fn analysis_cache_invalidate_with_all_keeps_everything() {
-        let mut cache = AnalysisCache::new();
-        let ir = TestIr::new(3);
-        seed_both(&mut cache, &ir);
-
-        cache.invalidate(&ir, &PreservedAnalyses::all());
-        seed_both(&mut cache, &ir);
-
-        assert_eq!((ir.double_runs(), ir.parity_runs()), (1, 1));
-    }
-
-    /// Test invalidating keeps exactly the preserved results.
-    #[test]
-    fn analysis_cache_invalidate_keeps_only_preserved_results() {
-        let mut cache = AnalysisCache::new();
-        let ir = TestIr::new(3);
-        seed_both(&mut cache, &ir);
-
-        cache.invalidate(&ir, &PreservedAnalyses::none().preserve::<DoubleAnalysis>());
-        seed_both(&mut cache, &ir);
-
-        assert_eq!((ir.double_runs(), ir.parity_runs()), (1, 2));
-    }
-
-    /// Test invalidating a node without results caches nothing for it.
-    #[test]
-    fn analysis_cache_invalidate_of_an_uncached_node_holds_no_handle() {
-        let mut cache = AnalysisCache::new();
-        let ir = TestIr::new(3);
-
-        cache.invalidate(&ir, &PreservedAnalyses::all());
-
-        assert_eq!(ir.handle_count(), 1);
-    }
-
-    /// Test transferring with the all-preserving set moves every result to
-    /// the replacement and drops the replaced node's bucket.
-    #[test]
-    fn analysis_cache_transfer_moves_preserved_results() {
+    fn analysis_cache_transfer_copies_preserved_results() {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
         seed_both(&mut cache, &from);
 
         cache.transfer(&from, &to, &PreservedAnalyses::all());
-        let from_handles = from.handle_count();
         let transferred = *cache.get::<DoubleAnalysis, _>(&to);
+        seed_both(&mut cache, &from);
 
         assert_eq!(transferred, 6);
         assert_eq!(to.double_runs(), 0);
-        assert_eq!(from_handles, 1);
+        assert_eq!((from.double_runs(), from.parity_runs()), (1, 1));
+        assert_eq!(from.handle_count(), 2);
         assert_eq!(to.handle_count(), 2);
     }
 
@@ -450,9 +399,9 @@ mod tests {
         assert_eq!(to.double_runs(), 1);
     }
 
-    /// Test transferring moves exactly the preserved results.
+    /// Test transferring copies exactly the preserved results.
     #[test]
-    fn analysis_cache_transfer_moves_only_preserved_results() {
+    fn analysis_cache_transfer_copies_only_preserved_results() {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
@@ -469,9 +418,10 @@ mod tests {
         assert_eq!((to.parity_runs(), to.double_runs()), (0, 1));
     }
 
-    /// Test transferring replaces whatever the replacement had cached.
+    /// Test transferring merges into the replacement's results: it keeps the
+    /// results it has and gains those it lacks.
     #[test]
-    fn analysis_cache_transfer_replaces_the_replacements_results() {
+    fn analysis_cache_transfer_merges_into_the_replacements_results() {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
@@ -483,40 +433,54 @@ mod tests {
         let double = *cache.get::<DoubleAnalysis, _>(&to);
 
         assert_eq!(double, 6);
-        assert_eq!(to.parity_runs(), 2);
+        assert_eq!((to.parity_runs(), to.double_runs()), (1, 0));
     }
 
-    /// Test transferring from a node without results drops the replacement's
+    /// Test a result the replacement computed itself wins over the preserved
+    /// result of the node it replaces.
+    #[test]
+    fn analysis_cache_transfer_keeps_the_replacements_own_result() {
+        let mut cache = AnalysisCache::new();
+        let from = TestIr::new(3);
+        let to = TestIr::new(4);
+        cache.get::<DoubleAnalysis, _>(&from);
+        cache.get::<DoubleAnalysis, _>(&to);
+
+        cache.transfer(&from, &to, &PreservedAnalyses::all());
+        let double = *cache.get::<DoubleAnalysis, _>(&to);
+
+        assert_eq!(double, 8);
+        assert_eq!(to.double_runs(), 1);
+    }
+
+    /// Test transferring from a node without results keeps the replacement's
     /// results.
     #[test]
-    fn analysis_cache_transfer_from_an_uncached_node_drops_the_replacements_results() {
+    fn analysis_cache_transfer_from_an_uncached_node_keeps_the_replacements_results() {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
         cache.get::<DoubleAnalysis, _>(&to);
 
         cache.transfer(&from, &to, &PreservedAnalyses::all());
-        let to_handles = to.handle_count();
         cache.get::<DoubleAnalysis, _>(&to);
 
-        assert_eq!(to_handles, 1);
-        assert_eq!(to.double_runs(), 2);
+        assert_eq!(to.handle_count(), 2);
+        assert_eq!(from.handle_count(), 1);
+        assert_eq!(to.double_runs(), 1);
     }
 
-    /// Test transferring a node to itself invalidates what is not preserved.
+    /// Test transferring a node to itself keeps every result, whatever is
+    /// preserved.
     #[test]
-    fn analysis_cache_transfer_to_the_same_node_invalidates() {
+    fn analysis_cache_transfer_to_the_same_node_keeps_every_result() {
         let mut cache = AnalysisCache::new();
         let ir = TestIr::new(3);
         seed_both(&mut cache, &ir);
 
-        cache.transfer(
-            &ir,
-            &ir.clone(),
-            &PreservedAnalyses::none().preserve::<DoubleAnalysis>(),
-        );
+        cache.transfer(&ir, &ir.clone(), &PreservedAnalyses::none());
         seed_both(&mut cache, &ir);
 
-        assert_eq!((ir.double_runs(), ir.parity_runs()), (1, 2));
+        assert_eq!((ir.double_runs(), ir.parity_runs()), (1, 1));
     }
 }

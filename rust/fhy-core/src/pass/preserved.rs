@@ -92,8 +92,8 @@ enum Preservation {
 /// The analyses a pass run leaves valid for its output.
 ///
 /// A set either preserves every analysis or exactly the listed ones. A pass
-/// manager keeps the cached results of preserved analyses when it moves from
-/// a pass's input to its output, and drops the rest.
+/// manager carries the cached results of the preserved analyses from a
+/// pass's input over to its output; the output does not inherit the rest.
 ///
 /// # Examples
 ///
