@@ -322,10 +322,10 @@ needs an empty or controlled registry builds a local one.
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
 a fixed id in the crate-private reserved table. The counter, in Rust and in
-the Python fallback alike, issues fresh ids from 65,536 up to `ID_CAP`
-(2^63), and no id at or above `ID_CAP` is issued or decoded. A newly
-shipped identifier takes an unused id from the reserved table rather than
-drawing one from the counter.
+the Python fallback alike, issues fresh ids from 65,536 upward, and no
+payload id at or above `ID_CAP` (2^63) is decoded or restored, so no
+payload can exhaust the counter. A newly shipped identifier takes an unused
+id from the reserved table rather than drawing one from the counter.
 
 ### Serialization is plain serde
 

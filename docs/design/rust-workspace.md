@@ -7371,3 +7371,69 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   names the test crate and module path. Their expected strings change from
   `pass_infrastructure_core_stories::…` to `it::pass::core_stories::…` and
   `it::support::pass_ir::…`. No other test text changes.
+- **Step 1, F-001 regression (B1 §8.3):** the serde-level test that
+  decoding `2^63 - 1` leaves construction working runs in its own binary,
+  `tests/id_cap_decode.rs`, with one test, rather than in
+  `identifier::tests` with no isolation. Once the counter reaches `2^63`,
+  every fresh id is at or above the cap, so no fresh identifier sharing the
+  process can round-trip through serde; the lib and `it` binaries are full
+  of such round trips. The same binary covers the restore-first order of
+  F-032 for the shipped tags and the built-in parameters, so
+  `it::identifier_stories::shipped_identifiers_hold_their_reserved_ids`
+  does not restore `2^63 - 1` first. For the same reason the postcard
+  property `serde_round_trips_through_postcard_for_any_payload_id` decodes
+  only already-issued ids, not all of `0..ID_CAP`.
+- **Step 1, payload ids under `arbitrary_precision`:** `PayloadId` asks for
+  a `u64` as B1 §2.1 says. Until B2 removes `arbitrary_precision`,
+  `serde_json` rejects a negative, fractional or oversized number read
+  through a `serde_json::Value` with its own "invalid number", not the
+  range message. The nested-path identifier tests assert the exact message
+  for the paths that read the JSON text (bare text, note kind, op
+  attribute, value-domain parent) and only the error position for the
+  `serde_json::Value` and expression paths **[weakens, until B2]**;
+  `it::diagnostic_stories::note_decode_rejects_malformed_payloads` decodes
+  from text. The expression path is kept rather than dropped.
+- **Step 1, `IdentifierWire`:** it is `pub(crate)`, not private, so
+  `expr::wire` can keep checking a whole expression payload before it
+  restores any identifier until B3 replaces that wire format;
+  `IdentifierPayload` is gone. `wire.rs`'s `build_node` is now generic over
+  the serde error so a restore error needs no new `ExpressionBuildError`
+  variant.
+- **Step 1, wire structs:** `IdentifierWire`, the tag wire struct and the
+  value-domain level carry `#[serde(expecting = ...)]`, so errors say
+  "expected an identifier" or "expected a described tag" instead of naming
+  a private struct.
+- **Step 1, value-domain wire form (R-4):** a list of levels, root first
+  and the domain itself last, each `{"name": .., "description": ..}`. An
+  empty list is rejected with `invalid_length`. Each level registers as it
+  is read, so a conflict at one level leaves the levels before it
+  registered.
+- **Step 1, shipped defaults:** `DescribedTag::create_shipped` and
+  `described_tag::require_shipped` are `pub(crate)`, so each vocabulary
+  builds and looks up its defaults without touching `DescribedTag`'s
+  fields. The sealing trait lives in `pub(crate) mod sealed` with
+  `#[expect(unnameable_types)]`, because the vocabulary impls live in
+  `op_attribute` and `diagnostic`, not beside the trait.
+- **Step 1, `clear` on an unused registry:** it does nothing and does not
+  run `create_defaults`; the first use registers the defaults, which is the
+  state a clear restores.
+- **Step 1, test deletions not in B1 §8.1:** `tag_type_equivalence` and its
+  corpus go in the F-001 commit, because they used the removed public
+  `Identifier::restore`. In `it::payload_form_stories` (B2's file) the
+  identifier, tag, value-domain and note cases and
+  `a_refused_sequence_payload_registers_nothing` go, since derived decoders
+  accept the sequence form. The four tag-type stories B1 §8.4 names move to
+  `it::tag_type_stories`.
+- **Step 1, `decode.rs`:** `DeferredPayload` and `decode/buffered.rs` lost
+  their last users and are deleted; `Decode`, `deserialize_via_payload`
+  and `deserialize_map_only` remain for `expr::wire` and `provenance`.
+- **Step 1, Python:** the pinned ids of the built-in constants in
+  `tests/symbolic/expression/test_registry.py` move from 8-11 to
+  65,544-65,547 with the counter start. `_PythonIdCounter` takes a
+  `next_id` test seam. There is no `_create_reserved_identifier` and no
+  `None` entry in `EXPANDED_GOLDEN_CORPORA` (R-3).
+- **Step 1, `reserved_identifiers_take_no_id_from_the_counter`:** the two
+  anchors are retried until they are one id apart, since a parallel test
+  can draw an id between them; a reserved identifier that drew an id would
+  keep them at least two apart on every try.
+
