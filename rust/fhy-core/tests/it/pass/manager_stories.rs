@@ -724,7 +724,7 @@ fn pass_manager_verifier_rejects_invalid_input_blaming_the_first_pass() {
     assert_eq!(diagnostic.source(), "tests.pm.first");
     assert_eq!(
         diagnostic.detail(),
-        Some("[ERROR] NegativeValueCheck: negative value: -1")
+        Some("error[NegativeValueCheck]: negative value: -1")
     );
     assert!(!first_ran.get());
 }
@@ -846,7 +846,7 @@ fn pass_manager_verifier_blames_the_pass_that_produced_invalid_output() {
             (
                 DiagnosticLevel::Error,
                 message,
-                Some("[ERROR] NegativeValueCheck: negative value: -100")
+                Some("error[NegativeValueCheck]: negative value: -100")
             ),
         ]
     );

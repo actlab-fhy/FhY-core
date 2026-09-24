@@ -19,9 +19,9 @@
 //! and attach a detail with [`Diagnostic::with_detail`]. A
 //! [`ValidationReport`] collects
 //! the diagnostics of a validation run, in emission order, together with
-//! optional per-source records, renders them with
-//! [`ValidationReport::format`], and escalates a report holding an error
-//! into a [`ValidationFailedError`] with [`ValidationReport::into_result`].
+//! optional per-source records, displays them one diagnostic per line,
+//! and escalates a report holding an error into a [`ValidationFailedError`]
+//! with [`ValidationReport::into_result`].
 
 use std::borrow::Cow;
 use std::fmt;
@@ -316,9 +316,26 @@ impl Diagnostic {
     }
 }
 
-/// Text [`ValidationReport::format`] renders for a report without
-/// diagnostics.
-const EMPTY_REPORT_TEXT: &str = "No validation diagnostics.";
+/// Render `level[source]: message` with the message text alone, without
+/// the note kind, followed, when the detail is present and non-empty, by a
+/// second line `    detail: <detail>` indented by four spaces, as in
+/// `error[shape.check]: missing return`. Newlines inside the message or the
+/// detail are written as they are, and there is no trailing newline.
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}[{}]: {}",
+            self.level,
+            self.source,
+            self.message_text()
+        )?;
+        match self.detail() {
+            Some(detail) if !detail.is_empty() => write!(f, "\n    detail: {detail}"),
+            _ => Ok(()),
+        }
+    }
+}
 
 /// The diagnostics of a validation run, in emission order, with optional
 /// per-source records of type `R`.
@@ -379,35 +396,6 @@ impl<R> ValidationReport<R> {
         self.errors().next().is_some()
     }
 
-    /// Render every diagnostic for a human reader.
-    ///
-    /// A report without diagnostics renders as `No validation diagnostics.`.
-    /// Otherwise each diagnostic renders as `[LEVEL] source: message` with
-    /// the level in upper case and the message text without its note kind,
-    /// followed, when the detail is present and non-empty, by a line
-    /// `    detail: <detail>` indented by four spaces. Lines are joined by
-    /// `\n` with no trailing newline, and newlines inside a message or
-    /// detail are kept as they are.
-    #[must_use]
-    pub fn format(&self) -> String {
-        if self.diagnostics.is_empty() {
-            return EMPTY_REPORT_TEXT.to_owned();
-        }
-        let mut lines = Vec::with_capacity(self.diagnostics.len());
-        for diagnostic in &self.diagnostics {
-            lines.push(format!(
-                "[{}] {}: {}",
-                diagnostic.level.as_str().to_ascii_uppercase(),
-                diagnostic.source,
-                diagnostic.message_text()
-            ));
-            if let Some(detail) = diagnostic.detail().filter(|detail| !detail.is_empty()) {
-                lines.push(format!("    detail: {detail}"));
-            }
-        }
-        lines.join("\n")
-    }
-
     /// Return the report, or escalate it into an error if it has errors.
     ///
     /// # Errors
@@ -423,10 +411,48 @@ impl<R> ValidationReport<R> {
     }
 }
 
+/// Render each diagnostic's [`Display`](fmt::Display) in emission order,
+/// joined by `\n`, with no trailing newline. A report without diagnostics
+/// renders as the empty string, and the records are not rendered.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::diagnostic::{Diagnostic, Note, ValidationReport};
+///
+/// let report: ValidationReport = ValidationReport::new(
+///     vec![
+///         Diagnostic::error(Note::with_other_kind("missing return"), "shape.check")
+///             .with_detail("function foo() has no return statement"),
+///         Diagnostic::info(Note::with_other_kind("fyi"), "v3"),
+///     ],
+///     Vec::new(),
+/// );
+///
+/// assert_eq!(
+///     report.to_string(),
+///     "error[shape.check]: missing return\n    \
+///      detail: function foo() has no return statement\n\
+///      info[v3]: fyi"
+/// );
+/// ```
+impl<R> fmt::Display for ValidationReport<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, diagnostic) in self.diagnostics.iter().enumerate() {
+            if index > 0 {
+                f.write_str("\n")?;
+            }
+            write!(f, "{diagnostic}")?;
+        }
+        Ok(())
+    }
+}
+
 /// A [`ValidationReport`] that holds at least one error, escalated into an
 /// error.
 ///
-/// Its message is the report's [`ValidationReport::format`] text.
+/// Its message is a one-line summary counting the errors; display
+/// [`report`](Self::report) for the diagnostics themselves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationFailedError<R = ()> {
     report: ValidationReport<R>,
@@ -446,13 +472,19 @@ impl<R> ValidationFailedError<R> {
     }
 }
 
-/// Render the report's [`ValidationReport::format`] text.
+/// Render `validation failed with 1 error`, or `validation failed with <n>
+/// errors` for any other count of error diagnostics in the report.
 impl<R> fmt::Display for ValidationFailedError<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.report.format())
+        match self.report.errors().count() {
+            1 => f.write_str("validation failed with 1 error"),
+            count => write!(f, "validation failed with {count} errors"),
+        }
     }
 }
 
+/// The report is the error's data, not its cause, so
+/// [`source`](std::error::Error::source) is `None`.
 impl<R: fmt::Debug> std::error::Error for ValidationFailedError<R> {}
 
 #[cfg(test)]

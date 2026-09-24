@@ -568,15 +568,15 @@ fn validation_manager_report_formats_and_escalates_failures() {
     ]);
 
     let report = manager.validate(&BoxIr::new(0));
-    let rendered = report.format();
+    let rendered = report.to_string();
     let failure = report.into_result().expect_err("the report has errors");
 
     assert_eq!(
         rendered,
-        "[ERROR] tests.vm.e2e.missing_return: function foo() has no return\n    \
+        "error[tests.vm.e2e.missing_return]: function foo() has no return\n    \
          detail: foo @ line 17\n\
-         [WARNING] tests.vm.e2e.unused: x is unused\n\
-         [ERROR] tests.vm.e2e.shape: shape mismatch"
+         warning[tests.vm.e2e.unused]: x is unused\n\
+         error[tests.vm.e2e.shape]: shape mismatch"
     );
     assert_eq!(failure.report().errors().count(), 2);
 }

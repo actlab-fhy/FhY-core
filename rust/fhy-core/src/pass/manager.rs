@@ -337,7 +337,7 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
         let mut failure_diagnostics = diagnostics.to_vec();
         failure_diagnostics.push(
             Diagnostic::error(Note::with_other_kind(message.clone()), pass_name.to_owned())
-                .with_detail(report.format()),
+                .with_detail(report.to_string()),
         );
         Err(PassError::new_verification_failure(
             pass_name.to_owned(),

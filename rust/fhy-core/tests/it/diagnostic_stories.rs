@@ -461,9 +461,9 @@ fn diagnostic_equality_is_by_value() {
 // =============================================================================
 
 /// Test an empty report has no errors, no diagnostics of any level, and
-/// renders the placeholder text.
+/// displays as the empty text.
 #[test]
-fn empty_report_has_no_errors_and_formats_placeholder_text() {
+fn empty_report_has_no_errors_and_displays_as_empty_text() {
     let report = build_report(Vec::new());
 
     assert!(report.diagnostics().is_empty());
@@ -472,7 +472,7 @@ fn empty_report_has_no_errors_and_formats_placeholder_text() {
     assert_eq!(report.errors().count(), 0);
     assert_eq!(report.warnings().count(), 0);
     assert_eq!(report.infos().count(), 0);
-    assert_eq!(report.format(), "No validation diagnostics.");
+    assert_eq!(report.to_string(), "");
 }
 
 /// Test the level filters partition the diagnostics in emission order.
@@ -505,10 +505,41 @@ fn report_keeps_diagnostics_and_records_in_order() {
     assert_eq!(report.records(), &["pass-a", "pass-b", "pass-c"]);
 }
 
+/// Test a diagnostic displays as `level[source]: message`, with its
+/// detail on an indented second line, and without its note kind.
+#[rstest]
+#[case::error_with_detail(
+    build_detailed_diagnostic(
+        DiagnosticLevel::Error,
+        "missing return",
+        "shape.check",
+        "no return"
+    ),
+    "error[shape.check]: missing return\n    detail: no return"
+)]
+#[case::warning(
+    build_diagnostic(DiagnosticLevel::Warning, "unused", "scope.check"),
+    "warning[scope.check]: unused"
+)]
+#[case::info_with_a_kind(
+    Diagnostic::info(Note::new("tiled", NoteKind::rationale().clone()), "tiler"),
+    "info[tiler]: tiled"
+)]
+#[case::empty_detail(
+    build_detailed_diagnostic(DiagnosticLevel::Error, "m", "s", ""),
+    "error[s]: m"
+)]
+fn diagnostic_display_renders_level_source_message_and_detail(
+    #[case] diagnostic: Diagnostic,
+    #[case] expected: &str,
+) {
+    assert_eq!(diagnostic.to_string(), expected);
+}
+
 /// Test the full rendering: level, source and message on one line, an
 /// indented detail line, and no trailing newline.
 #[test]
-fn report_format_renders_level_source_message_and_detail() {
+fn report_display_renders_level_source_message_and_detail() {
     let report = build_report(vec![
         build_detailed_diagnostic(
             DiagnosticLevel::Error,
@@ -520,20 +551,58 @@ fn report_format_renders_level_source_message_and_detail() {
         build_diagnostic(DiagnosticLevel::Info, "fyi", "v3"),
     ]);
 
-    let rendered = report.format();
+    let rendered = report.to_string();
 
     assert_eq!(
         rendered,
-        "[ERROR] shape.check: missing return\n\
+        "error[shape.check]: missing return\n\
          \x20   detail: function foo() has no return statement\n\
-         [WARNING] scope.check: unused\n\
-         [INFO] v3: fyi"
+         warning[scope.check]: unused\n\
+         info[v3]: fyi"
     );
+}
+
+/// Test each diagnostic of a report is displayed on its own line, in
+/// emission order, as the diagnostic's own display.
+#[test]
+fn report_display_renders_each_diagnostic_on_its_own_line() {
+    let diagnostics = vec![
+        build_diagnostic(DiagnosticLevel::Info, "first", "a"),
+        build_detailed_diagnostic(DiagnosticLevel::Error, "second", "b", "why"),
+        build_diagnostic(DiagnosticLevel::Warning, "third", "c"),
+    ];
+    let expected = diagnostics
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let rendered = build_report(diagnostics).to_string();
+
+    assert_eq!(rendered, expected);
+}
+
+/// Test the levels are written in lowercase and no placeholder text stands
+/// in for an empty report.
+#[test]
+fn report_display_writes_lowercase_levels_without_a_placeholder() {
+    let report = build_report(vec![
+        build_diagnostic(DiagnosticLevel::Error, "e", "s"),
+        build_diagnostic(DiagnosticLevel::Warning, "w", "s"),
+        build_diagnostic(DiagnosticLevel::Info, "i", "s"),
+    ]);
+
+    let rendered = report.to_string();
+    let empty = build_report(Vec::new()).to_string();
+
+    assert_eq!(rendered, "error[s]: e\nwarning[s]: w\ninfo[s]: i");
+    assert!(!rendered.contains("ERROR"), "{rendered}");
+    assert_eq!(empty, "");
 }
 
 /// Test an empty detail is omitted, like an absent one.
 #[test]
-fn report_format_omits_an_empty_detail() {
+fn report_display_omits_an_empty_detail() {
     let report = build_report(vec![build_detailed_diagnostic(
         DiagnosticLevel::Error,
         "m",
@@ -541,12 +610,12 @@ fn report_format_omits_an_empty_detail() {
         "",
     )]);
 
-    assert_eq!(report.format(), "[ERROR] s: m");
+    assert_eq!(report.to_string(), "error[s]: m");
 }
 
 /// Test a detail of only whitespace is not empty and is rendered.
 #[test]
-fn report_format_keeps_a_whitespace_detail() {
+fn report_display_keeps_a_whitespace_detail() {
     let report = build_report(vec![build_detailed_diagnostic(
         DiagnosticLevel::Warning,
         "",
@@ -554,37 +623,37 @@ fn report_format_keeps_a_whitespace_detail() {
         " ",
     )]);
 
-    assert_eq!(report.format(), "[WARNING] : \n    detail:  ");
+    assert_eq!(report.to_string(), "warning[]: \n    detail:  ");
 }
 
 /// Test newlines inside messages and details are emitted as they are.
 #[test]
-fn report_format_keeps_embedded_newlines() {
+fn report_display_keeps_embedded_newlines() {
     let report = build_report(vec![
         build_diagnostic(DiagnosticLevel::Error, "m", "s"),
         build_detailed_diagnostic(DiagnosticLevel::Info, "i\nj", "t", "x\ny"),
     ]);
 
     assert_eq!(
-        report.format(),
-        "[ERROR] s: m\n[INFO] t: i\nj\n    detail: x\ny"
+        report.to_string(),
+        "error[s]: m\ninfo[t]: i\nj\n    detail: x\ny"
     );
 }
 
 /// Test the note kind never appears in the rendering.
 #[test]
-fn report_format_omits_the_note_kind() {
+fn report_display_omits_the_note_kind() {
     let report = build_report(vec![Diagnostic::info(
         Note::new("kinds are hidden", NoteKind::rationale().clone()),
         "s",
     )]);
 
-    assert_eq!(report.format(), "[INFO] s: kinds are hidden");
+    assert_eq!(report.to_string(), "info[s]: kinds are hidden");
 }
 
 /// Test braces in the text are rendered literally.
 #[test]
-fn report_format_renders_braces_literally() {
+fn report_display_renders_braces_literally() {
     let report = build_report(vec![build_detailed_diagnostic(
         DiagnosticLevel::Error,
         "dict {x} missing",
@@ -593,8 +662,8 @@ fn report_format_renders_braces_literally() {
     )]);
 
     assert_eq!(
-        report.format(),
-        "[ERROR] s: dict {x} missing\n    detail: {y}"
+        report.to_string(),
+        "error[s]: dict {x} missing\n    detail: {y}"
     );
 }
 
@@ -617,7 +686,7 @@ fn report_into_result_returns_a_report_without_errors(#[case] diagnostics: Vec<D
 }
 
 /// Test a report with an error escalates into an error that owns that very
-/// report and renders its text.
+/// report and displays a one-line summary.
 #[test]
 fn report_into_result_escalates_errors_with_the_report() {
     let report = build_report(vec![
@@ -633,14 +702,12 @@ fn report_into_result_escalates_errors_with_the_report() {
 
     assert_eq!(error.report(), &expected);
     assert_eq!(error.report().diagnostics().as_ptr(), storage);
-    assert_eq!(
-        error.to_string(),
-        "[WARNING] v.warn: careful\n[ERROR] v.explode: boom"
-    );
+    assert_eq!(error.to_string(), "validation failed with 1 error");
     assert_eq!(error.into_report(), expected);
 }
 
-/// Test the escalated error is a standard error with no underlying cause.
+/// Test the escalated error is a standard error with no underlying cause
+/// and a one-line message.
 #[test]
 fn validation_failed_error_is_a_standard_error() {
     let error = build_report(vec![build_diagnostic(DiagnosticLevel::Error, "boom", "v")])
@@ -650,7 +717,34 @@ fn validation_failed_error_is_a_standard_error() {
     let as_error: &dyn Error = &error;
 
     assert!(as_error.source().is_none());
-    assert_eq!(as_error.to_string(), "[ERROR] v: boom");
+    assert_eq!(as_error.to_string(), "validation failed with 1 error");
+}
+
+/// Test the escalated error summarizes the report in one line, counting
+/// only its errors, with the noun in the singular for one error.
+#[rstest]
+#[case::one_error(
+    vec![build_diagnostic(DiagnosticLevel::Error, "boom", "v")],
+    "validation failed with 1 error"
+)]
+#[case::three_errors_and_a_warning(
+    vec![
+        build_diagnostic(DiagnosticLevel::Error, "a", "v"),
+        build_diagnostic(DiagnosticLevel::Warning, "w", "v"),
+        build_detailed_diagnostic(DiagnosticLevel::Error, "b", "v", "why"),
+        build_diagnostic(DiagnosticLevel::Error, "c", "v"),
+    ],
+    "validation failed with 3 errors"
+)]
+fn validation_failed_error_displays_a_one_line_summary(
+    #[case] diagnostics: Vec<Diagnostic>,
+    #[case] expected: &str,
+) {
+    let error = build_report(diagnostics)
+        .into_result()
+        .expect_err("a report with an error fails");
+
+    assert_eq!(error.to_string(), expected);
 }
 
 /// Test an escalated error keeps the records of the report it owns.
@@ -688,16 +782,44 @@ fn a_failed_validation_run_is_reported_to_the_user() {
 
     let failure = report.into_result().expect_err("the run has an error");
 
+    assert_eq!(failure.to_string(), "validation failed with 1 error");
     assert_eq!(
-        failure.to_string(),
-        "[WARNING] tiling.check: prefer a smaller tile\n\
-         [ERROR] bounds.check: loop bound is negative\n\
+        failure.report().to_string(),
+        "warning[tiling.check]: prefer a smaller tile\n\
+         error[bounds.check]: loop bound is negative\n\
          \x20   detail: bound -1 in loop i"
     );
     assert_eq!(failure.report().errors().count(), 1);
     assert_eq!(
         failure.report().records(),
         &["tiling.check", "bounds.check"]
+    );
+}
+
+/// Test a verifier story: two checks report through the level builders,
+/// and the caller prints the failure's summary and then its report.
+#[test]
+fn a_verifier_reports_through_diagnostic_builders() {
+    let tiling = Diagnostic::warning(
+        Note::new("prefer a smaller tile", NoteKind::suggestion().clone()),
+        "tiling.check",
+    );
+    let bounds = Diagnostic::error(
+        Note::with_other_kind("loop bound is negative"),
+        "bounds.check",
+    )
+    .with_detail("bound -1 in loop i");
+    let report = build_report(vec![tiling, bounds]);
+
+    let failure = report.into_result().expect_err("the run has an error");
+    let printed = format!("{failure}\n{}", failure.report());
+
+    assert_eq!(
+        printed,
+        "validation failed with 1 error\n\
+         warning[tiling.check]: prefer a smaller tile\n\
+         error[bounds.check]: loop bound is negative\n\
+         \x20   detail: bound -1 in loop i"
     );
 }
 

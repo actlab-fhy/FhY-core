@@ -6,8 +6,6 @@
 //! unlabelled fusion in order, keep everything else whole), written
 //! independently of `fuse`'s own loop.
 
-use std::fmt::Write as _;
-
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, ValidationReport};
 use fhy_core::provenance::{
     CallSiteProvenance, FileProvenance, FusedProvenance, NamedProvenance, Position, Provenance,
@@ -411,37 +409,6 @@ fn arbitrary_report() -> impl Strategy<Value = ValidationReport<u32>> {
         .prop_map(|(diagnostics, records)| ValidationReport::new(diagnostics, records))
 }
 
-/// Return the rendering `ValidationReport::format` documents for
-/// `diagnostics`: a placeholder for none, and otherwise one `[LEVEL]
-/// source: message` line per diagnostic, followed by an indented detail line
-/// when the detail is present and non-empty, joined by newlines.
-fn render_report(diagnostics: &[Diagnostic]) -> String {
-    if diagnostics.is_empty() {
-        return "No validation diagnostics.".to_owned();
-    }
-    let mut text = String::new();
-    for (index, diagnostic) in diagnostics.iter().enumerate() {
-        if index > 0 {
-            text.push('\n');
-        }
-        let level = diagnostic.level().as_str().to_ascii_uppercase();
-        write!(
-            text,
-            "[{level}] {}: {}",
-            diagnostic.source(),
-            diagnostic.message().message()
-        )
-        .expect("writing to a string succeeds");
-        match diagnostic.detail() {
-            Some(detail) if !detail.is_empty() => {
-                write!(text, "\n    detail: {detail}").expect("writing to a string succeeds");
-            }
-            _ => {}
-        }
-    }
-    text
-}
-
 /// Return the diagnostics of `diagnostics` at `level`, in order.
 fn select_level(diagnostics: &[Diagnostic], level: DiagnosticLevel) -> Vec<&Diagnostic> {
     diagnostics
@@ -479,18 +446,56 @@ proptest! {
         );
     }
 
-    /// Test a report renders as its documented text, built here diagnostic
-    /// by diagnostic.
+    /// Test a report displays as its diagnostics' displays joined by
+    /// newlines, with no trailing newline.
     #[test]
-    fn report_format_writes_the_documented_text(report in arbitrary_report()) {
-        let text = report.format();
+    fn report_display_joins_the_diagnostic_displays(report in arbitrary_report()) {
+        let text = report.to_string();
 
-        prop_assert_eq!(text, render_report(report.diagnostics()));
+        let joined = report
+            .diagnostics()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        prop_assert_eq!(text, joined);
+    }
+
+    /// Test a diagnostic's display has a second, detail line exactly when its
+    /// detail is present and non-empty.
+    #[test]
+    fn every_diagnostic_display_has_a_detail_line_iff_the_detail_is_non_empty(
+        diagnostic in arbitrary_diagnostic(),
+    ) {
+        let text = diagnostic.to_string();
+
+        let head = format!(
+            "{}[{}]: {}",
+            diagnostic.level(),
+            diagnostic.source(),
+            diagnostic.message_text()
+        );
+        let expected = match diagnostic.detail().filter(|detail| !detail.is_empty()) {
+            Some(detail) => format!("{head}\n    detail: {detail}"),
+            None => head,
+        };
+        prop_assert_eq!(text, expected);
+    }
+
+    /// Test the failed-validation error's display is one line, whatever the
+    /// diagnostics' text holds.
+    #[test]
+    fn validation_failed_error_display_never_contains_a_newline(report in arbitrary_report()) {
+        let result = report.into_result();
+
+        if let Err(error) = result {
+            prop_assert!(!error.to_string().contains('\n'), "{}", error);
+        }
     }
 
     /// Test `into_result` fails exactly when the report has errors, and the
-    /// failure owns an equal report, records included, whose text it
-    /// renders.
+    /// failure owns an equal report, records included, and displays a
+    /// summary counting its errors.
     #[test]
     fn report_into_result_fails_iff_it_has_errors(report in arbitrary_report()) {
         let has_errors = report.has_errors();
@@ -505,7 +510,12 @@ proptest! {
             }
             Err(error) => {
                 prop_assert!(has_errors);
-                prop_assert_eq!(error.to_string(), expected.format());
+                let count = expected.errors().count();
+                let noun = if count == 1 { "error" } else { "errors" };
+                prop_assert_eq!(
+                    error.to_string(),
+                    format!("validation failed with {count} {noun}")
+                );
                 prop_assert_eq!(error.into_report(), expected);
             }
         }
