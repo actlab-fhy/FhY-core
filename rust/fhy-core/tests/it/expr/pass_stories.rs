@@ -21,12 +21,12 @@ use fhy_core::expr::passes::{
     ExpressionPrettyFormatter, RewriteRuleApplier, register_expression_passes,
 };
 use fhy_core::expr::pattern::{
-    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule,
+    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
     apply_rewrite_rules,
 };
 use fhy_core::expr::{
-    BinaryOperation, Expression, FormatOptions, IdentifierStyle, Notation, PiecewiseError,
-    RebuildError,
+    BinaryOperation, Expression, ExpressionKind, FormatOptions, IdentifierStyle, LiteralValue,
+    Notation, PiecewiseError, RebuildError,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
@@ -40,11 +40,10 @@ use pattern_support::{
 use rstest::rstest;
 
 /// The name the rule applier is registered under.
-const RULE_APPLIER_NAME: &str = "fhy_core.symbolic.expression.apply_rewrite_rules";
+const RULE_APPLIER_NAME: &str = RewriteRuleApplier::NAME;
 
 /// The description the rule applier is registered with.
-const RULE_APPLIER_DESCRIPTION: &str =
-    "Apply a sequence of rewrite rules bottom-up over an expression tree.";
+const RULE_APPLIER_DESCRIPTION: &str = RewriteRuleApplier::DESCRIPTION;
 
 /// Return `x + 0` for the reference `x`.
 fn build_plus_zero(x: &Expression) -> Expression {
@@ -244,7 +243,7 @@ fn rewrite_rule_applier_reports_each_named_firing() {
         .collect();
     let expected = (
         DiagnosticLevel::Info,
-        "Applied rewrite rule \"x + 0 -> x\".",
+        "applied rewrite rule \"x + 0 -> x\"",
         RULE_APPLIER_NAME,
     );
     assert_eq!(reported, [expected, expected]);
@@ -300,13 +299,22 @@ fn rewrite_rule_applier_rewrites_a_doubling_dag_once_per_distinct_node() {
 }
 
 /// Test the applier's name and description are the ones it is registered
-/// under, whether or not it is registered.
+/// under, whether or not it is registered, and are the stable registry key
+/// and text.
 #[test]
 fn rewrite_rule_applier_name_and_description_are_its_registered_ones() {
-    let applier = RewriteRuleApplier::new([]);
+    let applier = RewriteRuleApplier::<RewriteRule>::new([]);
 
-    assert_eq!(applier.name(), RULE_APPLIER_NAME);
-    assert_eq!(applier.description(), RULE_APPLIER_DESCRIPTION);
+    assert_eq!(applier.name(), RewriteRuleApplier::NAME);
+    assert_eq!(applier.description(), RewriteRuleApplier::DESCRIPTION);
+    assert_eq!(
+        RewriteRuleApplier::NAME,
+        "fhy_core.symbolic.expression.apply_rewrite_rules"
+    );
+    assert_eq!(
+        RewriteRuleApplier::DESCRIPTION,
+        "Apply a sequence of rewrite rules bottom-up over an expression tree."
+    );
 }
 
 /// Test the applier counts a change exactly when the output is a different
@@ -316,7 +324,7 @@ fn rewrite_rule_applier_did_change_compares_identity() {
     let (_, a) = build_identifier("a");
     let expression = &a + 1;
     let equal = &a + 1;
-    let mut applier = RewriteRuleApplier::new([]);
+    let mut applier = RewriteRuleApplier::<RewriteRule>::new([]);
 
     let same = applier.did_change(&expression, &expression.clone());
     let distinct = applier.did_change(&expression, &equal);
@@ -480,6 +488,49 @@ fn rewrite_rule_applier_converges_in_a_fixpoint_group_with_an_identity_rule() {
     assert_eq!(changes, [true, false]);
 }
 
+/// A native rule rewriting the literal `0` to `1`, named `0 -> 1`.
+#[derive(Debug, Clone, Copy)]
+struct ZeroToOne;
+
+impl Rule for ZeroToOne {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+        let is_zero = matches!(expression.kind(), ExpressionKind::Literal(value) if *value == LiteralValue::from(0));
+        Ok(is_zero.then(|| build_literal(1)))
+    }
+
+    fn name(&self) -> Option<&str> {
+        Some("0 -> 1")
+    }
+}
+
+/// Test the applier runs native rules, reporting their named firings, and
+/// runs in a pipeline.
+#[test]
+fn rewrite_rule_applier_runs_native_rules() {
+    let (_, a) = build_identifier("a");
+    let mut applier = RewriteRuleApplier::new([ZeroToOne]);
+    let mut manager = PassManager::default();
+    manager.add_pass(&mut applier);
+
+    let result = manager.run(&build_plus_zero(&a)).expect("no rule fails");
+    drop(manager);
+
+    assert_eq!(
+        result.output(),
+        &Expression::new_binary(BinaryOperation::Add, &a, 1)
+    );
+    assert_eq!(describe_fired(applier.fired()), [(0, Some("0 -> 1"))]);
+    let [PipelineRecord::Pass(record)] = result.records() else {
+        panic!("expected one pass record, got {:?}", result.records());
+    };
+    let messages: Vec<&str> = record
+        .diagnostics()
+        .iter()
+        .map(Diagnostic::message_text)
+        .collect();
+    assert_eq!(messages, ["applied rewrite rule \"0 -> 1\""]);
+}
+
 // =============================================================================
 // ExpressionPrettyFormatter
 // =============================================================================
@@ -596,4 +647,26 @@ fn register_expression_passes_registers_the_rule_applier() {
     let outcome = created.execute(&expression).expect("no rules, no failure");
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
+}
+
+/// Test registering the expression passes in two registries registers the
+/// rule applier in each, independently of the other.
+#[test]
+fn register_expression_passes_into_two_registries_is_independent() {
+    let mut first = PassRegistry::new();
+    let mut second = PassRegistry::new();
+
+    register_expression_passes(&mut first).expect("a fresh registry");
+    let untouched = second.info(RULE_APPLIER_NAME).is_none();
+    register_expression_passes(&mut second).expect("another fresh registry");
+
+    assert!(untouched);
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
+    for registry in [&first, &second] {
+        let created = registry
+            .create::<Expression, Expression>(RULE_APPLIER_NAME)
+            .expect("the rule applier is registered");
+        assert_eq!(created.name(), RULE_APPLIER_NAME);
+    }
 }

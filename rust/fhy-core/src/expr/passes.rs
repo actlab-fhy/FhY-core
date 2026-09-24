@@ -14,35 +14,31 @@ use crate::pass::{CompilerPass, PassContext, PassFailure, PassRegistrationError,
 
 use super::display::FormatOptions;
 use super::node::Expression;
-use super::pattern::{FiredRule, RewriteRule, RuleRun, run_rewrite_rules};
-
-/// The name of [`RewriteRuleApplier`], which it is registered under: a
-/// stable registry key, not a Rust path.
-const RULE_APPLIER_PASS_NAME: &str = "fhy_core.symbolic.expression.apply_rewrite_rules";
-
-/// The description of [`RewriteRuleApplier`].
-const RULE_APPLIER_PASS_DESCRIPTION: &str =
-    "Apply a sequence of rewrite rules bottom-up over an expression tree.";
+use super::pattern::{FiredRule, RewriteRule, Rule, RuleRun, run_rewrite_rules};
 
 /// A compiler pass applying a list of rewrite rules bottom-up over an
 /// expression, once per run.
 ///
-/// A run is [`apply_rewrite_rules`](super::pattern::apply_rewrite_rules)
-/// with the pass's rules: its output is the rewritten tree, and it changed
-/// the IR exactly when the output is a different node from the input
+/// The rules are of any one [`Rule`] type, [`RewriteRule`] by default; a
+/// list of `Box<dyn Rule + Send>` mixes rule types. A run is
+/// [`apply_rewrite_rules`](super::pattern::apply_rewrite_rules) with the
+/// pass's rules: its output is the rewritten tree, and it changed the IR
+/// exactly when the output is a different node from the input
 /// ([`Expression::ptr_eq`]); see
 /// [`RewriteOutcome::is_changed`](super::pattern::RewriteOutcome::is_changed).
-/// Each firing of a named rule reports an informational diagnostic, `Applied rewrite rule "<name>".`, the name
-/// escaped as `Debug` writes a string, and the firings of the last run are
-/// kept for [`fired`](Self::fired). A failing callback or a refused rebuild
-/// fails the run with the
-/// [`RewriteError`](super::pattern::RewriteError), which the resulting
-/// [`PassError`](crate::pass::PassError) holds as its
+/// Each firing of a named rule reports an informational diagnostic,
+/// `applied rewrite rule "<name>"`, the name escaped as `Debug` writes a
+/// string, and the firings of the last run are kept for
+/// [`fired`](Self::fired). A failing callback or a refused rebuild fails
+/// the run with the [`RewriteError`](super::pattern::RewriteError), which
+/// the resulting [`PassError`](crate::pass::PassError) holds as its
 /// [`source`](std::error::Error::source).
 ///
-/// The pass is named `fhy_core.symbolic.expression.apply_rewrite_rules`, a
-/// stable registry key rather than a Rust path, and
-/// [`register_expression_passes`] registers it under that name.
+/// The pass is named [`NAME`](Self::NAME),
+/// `fhy_core.symbolic.expression.apply_rewrite_rules`, a stable registry
+/// key rather than a Rust path, and [`register_expression_passes`]
+/// registers it under that name. An applier of no rules needs its rule
+/// type named, as `RewriteRuleApplier::<RewriteRule>::new([])`.
 ///
 /// # Examples
 ///
@@ -68,20 +64,30 @@ const RULE_APPLIER_PASS_DESCRIPTION: &str =
 /// assert_eq!(applier.fired().len(), 1);
 /// assert_eq!(
 ///     outcome.diagnostics()[0].message_text(),
-///     "Applied rewrite rule \"x * 1 -> x\"."
+///     "applied rewrite rule \"x * 1 -> x\""
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
-pub struct RewriteRuleApplier {
-    rules: Vec<RewriteRule>,
+pub struct RewriteRuleApplier<R = RewriteRule> {
+    rules: Vec<R>,
     fired: Vec<FiredRule>,
 }
 
 impl RewriteRuleApplier {
+    /// The name of the pass, which it is registered under: a stable
+    /// registry key, not a Rust path.
+    pub const NAME: &'static str = "fhy_core.symbolic.expression.apply_rewrite_rules";
+
+    /// The description of the pass.
+    pub const DESCRIPTION: &'static str =
+        "Apply a sequence of rewrite rules bottom-up over an expression tree.";
+}
+
+impl<R: Rule> RewriteRuleApplier<R> {
     /// Create the pass applying `rules`, tried in the order given.
     #[must_use]
-    pub fn new(rules: impl IntoIterator<Item = RewriteRule>) -> Self {
+    pub fn new(rules: impl IntoIterator<Item = R>) -> Self {
         Self {
             rules: rules.into_iter().collect(),
             fired: Vec::new(),
@@ -90,7 +96,7 @@ impl RewriteRuleApplier {
 
     /// Return the rules, in the order they are tried.
     #[must_use]
-    pub fn rules(&self) -> &[RewriteRule] {
+    pub fn rules(&self) -> &[R] {
         &self.rules
     }
 
@@ -104,13 +110,13 @@ impl RewriteRuleApplier {
     }
 }
 
-impl CompilerPass<Expression> for RewriteRuleApplier {
+impl<R: Rule> CompilerPass<Expression> for RewriteRuleApplier<R> {
     fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed(RULE_APPLIER_PASS_NAME)
+        Cow::Borrowed(RewriteRuleApplier::NAME)
     }
 
     fn description(&self) -> Cow<'static, str> {
-        Cow::Borrowed(RULE_APPLIER_PASS_DESCRIPTION)
+        Cow::Borrowed(RewriteRuleApplier::DESCRIPTION)
     }
 
     fn run(
@@ -120,7 +126,7 @@ impl CompilerPass<Expression> for RewriteRuleApplier {
     ) -> Result<Expression, PassFailure> {
         let RuleRun { output, fired } = run_rewrite_rules(ir, &self.rules);
         for name in fired.iter().filter_map(FiredRule::name) {
-            let message = format!("Applied rewrite rule {name:?}.");
+            let message = format!("applied rewrite rule {name:?}");
             cx.report_text(DiagnosticLevel::Info, message, None);
         }
         self.fired = fired;
@@ -187,11 +193,13 @@ impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
 
 /// Register the expression passes in `registry`.
 ///
-/// Registers [`RewriteRuleApplier`] under its name,
+/// Registers [`RewriteRuleApplier`] under its [`NAME`](RewriteRuleApplier::NAME),
 /// `fhy_core.symbolic.expression.apply_rewrite_rules`, and its
-/// description; [`PassRegistry::create`] then builds an applier with no
-/// rules. The name is a stable registry key, not a Rust path. Registering
-/// again in the same registry changes nothing.
+/// [`DESCRIPTION`](RewriteRuleApplier::DESCRIPTION);
+/// [`PassRegistry::create`] then builds an applier with no rules. The name
+/// is a stable registry key, not a Rust path. The passes are registered in
+/// `registry` only, so two registries hold independent registrations.
+/// Registering again in the same registry changes nothing.
 ///
 /// # Errors
 ///
@@ -218,7 +226,9 @@ impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
 pub fn register_expression_passes(
     registry: &mut PassRegistry,
 ) -> Result<(), PassRegistrationError> {
-    registry.register::<RewriteRuleApplier, Expression, Expression>(|| RewriteRuleApplier::new([]))
+    registry.register::<RewriteRuleApplier, Expression, Expression>(|| {
+        RewriteRuleApplier::<RewriteRule>::new([])
+    })
 }
 
 const _: () = {
