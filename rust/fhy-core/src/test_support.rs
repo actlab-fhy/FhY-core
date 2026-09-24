@@ -8,7 +8,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::identifier::Identifier;
-use crate::interned::InternOutcome;
 
 /// Distance above a freshly allocated id at which an id is unreachable by the
 /// identifiers the rest of the suite allocates while one test runs.
@@ -73,20 +72,4 @@ pub(crate) fn compute_hash<T: Hash>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
-}
-
-/// Return the value an intern handed back because its key was already
-/// taken.
-///
-/// # Panics
-///
-/// Panics if the intern registered the value instead.
-#[track_caller]
-pub(crate) fn take_discarded<T>(outcome: InternOutcome<T>) -> T {
-    match outcome {
-        InternOutcome::AlreadyCanonical { discarded, .. } => discarded,
-        InternOutcome::Registered(_) => {
-            panic!("expected the interned value to be discarded, but it was registered")
-        }
-    }
 }

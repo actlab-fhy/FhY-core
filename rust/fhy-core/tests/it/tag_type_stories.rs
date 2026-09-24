@@ -48,11 +48,10 @@ static IDEMPOTENT_NAME: LazyLock<Identifier> =
 /// same-name `OpAttribute` collapses into the existing entry.
 #[test]
 fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
-    let idempotent = OpAttribute::new(
+    let idempotent = OpAttribute::register(
         IDEMPOTENT_NAME.clone(),
         "Applying the op twice changes nothing.",
-    )
-    .into_canonical();
+    );
 
     let op = StoryOp::create([
         OpAttribute::commutative().clone(),
@@ -66,8 +65,7 @@ fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     assert!(op.has_tag(&idempotent));
     assert!(!op.has_tag(OpAttribute::associative()));
 
-    let same_name_again =
-        OpAttribute::new(IDEMPOTENT_NAME.clone(), "a different description").into_canonical();
+    let same_name_again = OpAttribute::register(IDEMPOTENT_NAME.clone(), "a different description");
     let op_with_repeat = StoryOp::create([
         OpAttribute::commutative().clone(),
         OpAttribute::pure().clone(),
@@ -93,24 +91,21 @@ static TOKEN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("doma
 /// none of them to a domain on an unrelated branch.
 #[test]
 fn a_three_level_domain_hierarchy_relates_its_levels() {
-    let tensor = ValueDomain::new(
+    let tensor = ValueDomain::register_child(
         TENSOR_NAME.clone(),
         "A tensor of concrete data.",
-        Some(ValueDomain::data().clone()),
+        ValueDomain::data(),
     )
-    .into_canonical();
-    let tile = ValueDomain::new(
-        TILE_NAME.clone(),
-        "A tile carved from a tensor.",
-        Some(tensor.clone()),
-    )
-    .into_canonical();
-    let token = ValueDomain::new(
+    .expect("the domain registers");
+    let tile =
+        ValueDomain::register_child(TILE_NAME.clone(), "A tile carved from a tensor.", &tensor)
+            .expect("the domain registers");
+    let token = ValueDomain::register_child(
         TOKEN_NAME.clone(),
         "A control token, unrelated to the data branch.",
-        Some(ValueDomain::address().clone()),
+        ValueDomain::address(),
     )
-    .into_canonical();
+    .expect("the domain registers");
 
     assert!(tile.is_subdomain_of(&tile));
     assert!(tile.is_subdomain_of(&tensor));
@@ -140,14 +135,14 @@ struct PersistedOp {
 /// with, since `==` on `Canonical` is identity.
 #[test]
 fn persisting_and_restoring_a_tagged_operation() {
-    let attribute = OpAttribute::new(PERSISTED_ATTRIBUTE_NAME.clone(), "a persisted attribute")
-        .into_canonical();
-    let domain = ValueDomain::new(
+    let attribute =
+        OpAttribute::register(PERSISTED_ATTRIBUTE_NAME.clone(), "a persisted attribute");
+    let domain = ValueDomain::register_child(
         PERSISTED_DOMAIN_NAME.clone(),
         "a persisted domain",
-        Some(ValueDomain::address().clone()),
+        ValueDomain::address(),
     )
-    .into_canonical();
+    .expect("the domain registers");
     let persisted = PersistedOp {
         attribute: attribute.clone(),
         domain: domain.clone(),
@@ -165,9 +160,9 @@ fn persisting_and_restoring_a_tagged_operation() {
 #[test]
 fn registering_a_known_attribute_keeps_the_first_description() {
     let name = Identifier::new("known-attribute-story");
-    let first = OpAttribute::new(name.clone(), "the first description").into_canonical();
+    let first = OpAttribute::register(name.clone(), "the first description");
 
-    let again = OpAttribute::new(name, "a later description").into_canonical();
+    let again = OpAttribute::register(name, "a later description");
 
     assert_eq!(again, first);
     assert_eq!(again.description(), "the first description");
@@ -209,12 +204,8 @@ fn a_decoded_domain_chain_registers_every_level() {
 #[test]
 fn a_decoded_domain_under_another_parent_is_rejected_and_the_canonical_domain_is_unchanged() {
     let name = Identifier::new("reparented-story-domain");
-    let canonical = ValueDomain::new(
-        name.clone(),
-        "under data",
-        Some(ValueDomain::data().clone()),
-    )
-    .into_canonical();
+    let canonical = ValueDomain::register_child(name.clone(), "under data", ValueDomain::data())
+        .expect("the domain registers");
     let payload = encode_domain(
         &name,
         "under address",
@@ -237,7 +228,8 @@ fn a_decoded_domain_under_another_parent_is_rejected_and_the_canonical_domain_is
 #[test]
 fn a_rejected_payload_leaves_the_canonical_domain_unchanged() {
     let name = Identifier::new("rejected-story-domain");
-    let canonical = ValueDomain::new(name.clone(), "registered", None).into_canonical();
+    let canonical =
+        ValueDomain::register_root(name.clone(), "registered").expect("the domain registers");
     let mut payload = encode_domain(&name, "rejected", &Value::Null);
     payload["unexpected"] = json!(1);
 

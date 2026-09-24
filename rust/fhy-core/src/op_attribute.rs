@@ -17,11 +17,10 @@
 //!
 //! A `description` is human-readable metadata. It takes no part in equality,
 //! hashing or interning: the first attribute registered under an identifier
-//! stays canonical, and a later one is handed back to its caller in
-//! [`InternOutcome::AlreadyCanonical`] instead of replacing it.
+//! stays canonical, and a later registration of that name returns it,
+//! dropping its own description.
 //!
 //! [`Identifier`]: crate::identifier::Identifier
-//! [`InternOutcome::AlreadyCanonical`]: crate::interned::InternOutcome::AlreadyCanonical
 
 use std::sync::LazyLock;
 
@@ -137,10 +136,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::identifier::{HasIdentifier, Identifier};
-    use crate::interned::{Canonical, InternOutcome, Interned};
+    use crate::interned::{Canonical, Interned};
     use crate::test_support::{
-        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids,
-        reserve_pinned_id, take_discarded,
+        has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
     };
 
     /// Return every attribute this module ships as a default.
@@ -156,7 +154,7 @@ mod tests {
     #[test]
     fn new_stores_the_name_and_description() {
         let name = Identifier::new("stores-name-and-description");
-        let attribute = OpAttribute::new(name.clone(), "an attribute").into_canonical();
+        let attribute = OpAttribute::register(name.clone(), "an attribute");
 
         assert_eq!(attribute.name(), &name);
         assert_eq!(attribute.description(), "an attribute");
@@ -165,7 +163,7 @@ mod tests {
     #[test]
     fn has_identifier_returns_the_name() {
         let name = Identifier::new("has-identifier");
-        let attribute = OpAttribute::new(name.clone(), "desc").into_canonical();
+        let attribute = OpAttribute::register(name.clone(), "desc");
 
         assert_eq!(attribute.identifier(), &name);
     }
@@ -173,37 +171,39 @@ mod tests {
     #[test]
     fn intern_key_is_the_name() {
         let name = Identifier::new("intern-key");
-        let attribute = OpAttribute::new(name.clone(), "desc").into_canonical();
+        let attribute = OpAttribute::register(name.clone(), "desc");
 
         assert_eq!(attribute.intern_key(), &name);
     }
 
     #[test]
-    fn new_keeps_the_first_attribute_canonical_for_a_repeated_name() {
+    fn register_keeps_the_first_attribute_for_a_repeated_name() {
         let name = Identifier::new("repeated-name");
-        let first = OpAttribute::new(name.clone(), "first").into_canonical();
+        let first = OpAttribute::register(name.clone(), "first");
 
-        let outcome = OpAttribute::new(name.clone(), "second");
+        let second = OpAttribute::register(name.clone(), "second");
 
-        assert!(!outcome.is_registered());
-        let InternOutcome::AlreadyCanonical {
-            canonical,
-            discarded,
-        } = &outcome
-        else {
-            panic!("expected the second attribute to lose the registration");
-        };
-        assert_eq!(canonical, &first);
-        assert_eq!(discarded.description(), "second");
+        assert_eq!(second, first);
+        assert_eq!(second.description(), "first");
         assert_eq!(OpAttribute::intern_registry().get(&name), Some(first));
+    }
+
+    #[test]
+    fn register_returns_the_first_attribute_for_a_known_name() {
+        let name = Identifier::new("known-name");
+        let first = OpAttribute::register(name.clone(), "first");
+
+        let again = OpAttribute::register(name, "first");
+
+        assert_eq!(again, first);
     }
 
     #[test]
     fn identifiers_sharing_a_name_hint_intern_separately() {
         let first_name = Identifier::new("dup");
         let second_name = Identifier::new("dup");
-        let first = OpAttribute::new(first_name.clone(), "a").into_canonical();
-        let second = OpAttribute::new(second_name.clone(), "b").into_canonical();
+        let first = OpAttribute::register(first_name.clone(), "a");
+        let second = OpAttribute::register(second_name.clone(), "b");
 
         assert_ne!(first, second);
         assert_eq!(OpAttribute::intern_registry().get(&first_name), Some(first));
@@ -214,30 +214,9 @@ mod tests {
     }
 
     #[test]
-    fn attributes_with_the_same_name_are_equal_whatever_the_description() {
-        let name = Identifier::new("equality-ignores-description");
-        let canonical = OpAttribute::new(name.clone(), "first description").into_canonical();
-
-        let other = take_discarded(OpAttribute::new(name, "second description"));
-
-        assert_eq!(*canonical, other);
-        assert_eq!(other, *canonical);
-    }
-
-    #[test]
-    fn equal_attributes_hash_equally() {
-        let name = Identifier::new("hash-ignores-description");
-        let canonical = OpAttribute::new(name.clone(), "first description").into_canonical();
-
-        let other = take_discarded(OpAttribute::new(name, "second description"));
-
-        assert_eq!(compute_hash(&*canonical), compute_hash(&other));
-    }
-
-    #[test]
     fn attributes_with_different_names_are_unequal() {
-        let left = OpAttribute::new(Identifier::new("a"), "desc").into_canonical();
-        let right = OpAttribute::new(Identifier::new("b"), "desc").into_canonical();
+        let left = OpAttribute::register(Identifier::new("a"), "desc");
+        let right = OpAttribute::register(Identifier::new("b"), "desc");
 
         assert_ne!(*left, *right);
     }
@@ -340,7 +319,7 @@ mod tests {
     fn an_attribute_encodes_as_its_name_and_description() {
         let id = reserve_pinned_id("encode-anchor");
         let name = Identifier::try_restore(id, "encoded").expect("the id is below the cap");
-        let attribute = OpAttribute::new(name, "a description").into_canonical();
+        let attribute = OpAttribute::register(name, "a description");
 
         let json = serde_json::to_string(&*attribute).unwrap();
 
@@ -355,7 +334,7 @@ mod tests {
 
     #[test]
     fn an_attribute_round_trips_through_json() {
-        let attribute = OpAttribute::new(Identifier::new("round-trip"), "desc").into_canonical();
+        let attribute = OpAttribute::register(Identifier::new("round-trip"), "desc");
 
         let json = serde_json::to_string(&*attribute).unwrap();
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
@@ -392,7 +371,7 @@ mod tests {
     #[test]
     fn decoding_a_divergent_description_keeps_the_canonical_one() {
         let name = Identifier::new("divergent-description");
-        let canonical = OpAttribute::new(name.clone(), "original description").into_canonical();
+        let canonical = OpAttribute::register(name.clone(), "original description");
         let json = format!(
             "{{\"name\":{{\"id\":{},\"name_hint\":\"{}\"}},\
              \"description\":\"divergent description\"}}",
@@ -404,17 +383,6 @@ mod tests {
 
         assert_eq!(restored, canonical);
         assert_eq!(restored.description(), "original description");
-    }
-
-    #[test]
-    fn new_reports_a_matching_duplicate_as_already_canonical() {
-        let name = Identifier::new("matching-description");
-        let canonical = OpAttribute::new(name.clone(), "matching").into_canonical();
-
-        let discarded = take_discarded(OpAttribute::new(name, "matching"));
-
-        assert_eq!(discarded.description(), canonical.description());
-        assert_eq!(discarded, *canonical);
     }
 
     /// Test a payload with an unknown field or without its description is
@@ -457,8 +425,7 @@ mod tests {
 
     #[test]
     fn debug_mentions_the_name_hint_and_description() {
-        let attribute =
-            OpAttribute::new(Identifier::new("debug-attribute"), "debug desc").into_canonical();
+        let attribute = OpAttribute::register(Identifier::new("debug-attribute"), "debug desc");
 
         let rendered = format!("{attribute:?}");
 

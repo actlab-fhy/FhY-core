@@ -17,9 +17,11 @@
 //!
 //! A `description` is human-readable metadata. It takes no part in equality,
 //! hashing or interning: the first domain registered under an identifier stays
-//! canonical, and a later one is handed back to its caller in
-//! [`InternOutcome::AlreadyCanonical`] instead of replacing it.
+//! canonical, and a later registration of that name returns it, dropping its
+//! own description. A name has one parent, so registering it again under a
+//! parent of another name is a [`ValueDomainConflict`].
 
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
@@ -50,21 +52,16 @@ pub struct ValueDomain {
 }
 
 impl ValueDomain {
-    /// Build the domain named `name` and register it as the canonical one for
-    /// that name.
+    /// Register the root domain named `name`, unless a domain of that name
+    /// is registered already, and return the canonical handle for that name.
     ///
-    /// `parent` is the domain's super-domain, or `None` for a root domain.
-    /// The domain keeps `parent` as given. A handle taken before a clear of
-    /// this type's registry, or from another registry, is not canonical, so
-    /// the domain's parent chain then holds a different instance than the
-    /// registry does for that name, as in the Python implementation.
-    /// Equality and [`is_subdomain_of`](Self::is_subdomain_of) compare
-    /// parents by value, so neither is affected.
+    /// The first registration wins: when `name` is already registered as a
+    /// root, the registered domain is returned and `description` is dropped.
     ///
-    /// The outcome carries the canonical handle either way. When `name` is
-    /// already taken the earlier domain stays canonical, and the one built
-    /// here comes back as the outcome's `discarded` value, so a caller that
-    /// cares about the dropped description or parent can see it.
+    /// # Errors
+    ///
+    /// Returns [`ValueDomainConflict`] if `name` is registered with a
+    /// parent.
     ///
     /// # Examples
     ///
@@ -72,22 +69,86 @@ impl ValueDomain {
     /// use fhy_core::identifier::Identifier;
     /// use fhy_core::value_domain::ValueDomain;
     ///
-    /// let tile = ValueDomain::new(
+    /// let token = ValueDomain::register_root(Identifier::new("token"), "A control token.")
+    ///     .expect("the name is fresh");
+    ///
+    /// assert_eq!(token.parent(), None);
+    /// assert!(!token.is_subdomain_of(ValueDomain::data()));
+    /// ```
+    pub fn register_root(
+        name: Identifier,
+        description: impl Into<String>,
+    ) -> Result<Canonical<ValueDomain>, ValueDomainConflict> {
+        Self::register(Self::create(name, description, None))
+    }
+
+    /// Register the domain named `name` as a child of `parent`, unless a
+    /// domain of that name is registered already, and return the canonical
+    /// handle for that name.
+    ///
+    /// The first registration wins: when `name` is already registered under
+    /// a parent of the same name, the registered domain is returned and
+    /// `description` is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValueDomainConflict`] if `name` is registered as a root or
+    /// under a parent of another name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::value_domain::ValueDomain;
+    ///
+    /// let tile = ValueDomain::register_child(
     ///     Identifier::new("tile"),
     ///     "A tile of concrete data.",
-    ///     Some(ValueDomain::data().clone()),
+    ///     ValueDomain::data(),
     /// )
-    /// .into_canonical();
+    /// .expect("the name is fresh");
     ///
     /// assert!(tile.is_subdomain_of(ValueDomain::data()));
     /// assert!(!ValueDomain::data().is_subdomain_of(&tile));
     /// ```
-    pub fn new(
+    pub fn register_child(
         name: Identifier,
         description: impl Into<String>,
-        parent: Option<Canonical<ValueDomain>>,
-    ) -> InternOutcome<Self> {
-        Self::intern_registry().intern(Self::create(name, description, parent))
+        parent: &Canonical<ValueDomain>,
+    ) -> Result<Canonical<ValueDomain>, ValueDomainConflict> {
+        Self::register(Self::create(name, description, Some(parent.clone())))
+    }
+
+    /// Register `domain` unless its name is registered already, and return
+    /// the canonical handle for the name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValueDomainConflict`] if the name is registered under a
+    /// parent of another name, or as a root when `domain` has a parent, or
+    /// the other way around.
+    fn register(domain: ValueDomain) -> Result<Canonical<ValueDomain>, ValueDomainConflict> {
+        match Self::intern_registry().intern(domain) {
+            InternOutcome::Registered(canonical) => Ok(canonical),
+            InternOutcome::AlreadyCanonical {
+                canonical,
+                discarded,
+            } => {
+                let registered_parent = canonical.parent().map(|parent| parent.name().clone());
+                let requested_parent = discarded.parent().map(|parent| parent.name().clone());
+                if registered_parent != requested_parent {
+                    return Err(ValueDomainConflict {
+                        name: discarded.name,
+                        registered_parent,
+                        requested_parent,
+                    });
+                }
+                // The first registration wins, so a different description
+                // given here is dropped.
+                // TODO: warn here once the log dependency is added
+                Ok(canonical)
+            }
+        }
     }
 
     /// Build the domain without registering it.
@@ -141,6 +202,63 @@ impl ValueDomain {
         }
     }
 }
+
+/// A value domain's name is already registered under another parent.
+///
+/// Registration keeps one parent per name, so registering a known name as a
+/// root, as a child of a parent of another name, or registering a known
+/// root as a child, is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ValueDomainConflict {
+    name: Identifier,
+    registered_parent: Option<Identifier>,
+    requested_parent: Option<Identifier>,
+}
+
+impl ValueDomainConflict {
+    /// Return the name of the domain that could not be registered.
+    #[must_use]
+    pub fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Return the name of the registered domain's parent, or `None` when it
+    /// is a root.
+    #[must_use]
+    pub fn registered_parent(&self) -> Option<&Identifier> {
+        self.registered_parent.as_ref()
+    }
+
+    /// Return the name of the parent the registration asked for, or `None`
+    /// when it asked for a root.
+    #[must_use]
+    pub fn requested_parent(&self) -> Option<&Identifier> {
+        self.requested_parent.as_ref()
+    }
+}
+
+/// Render the conflict on one line, for example ``value domain `tile` is
+/// already registered with parent `data`, not `address` ``.
+impl fmt::Display for ValueDomainConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "value domain `{}` is already registered with ",
+            self.name
+        )?;
+        match &self.registered_parent {
+            Some(parent) => write!(f, "parent `{parent}`")?,
+            None => f.write_str("no parent")?,
+        }
+        match &self.requested_parent {
+            Some(parent) => write!(f, ", not `{parent}`"),
+            None => f.write_str(", not as a root"),
+        }
+    }
+}
+
+impl std::error::Error for ValueDomainConflict {}
 
 impl Decode for ValueDomain {
     type Payload = ValueDomainPayload;
@@ -290,24 +408,26 @@ mod tests {
     use rstest::rstest;
 
     use crate::test_support::{
-        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids,
-        reserve_pinned_id, take_discarded,
+        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
     };
 
     /// Intern a root domain under a fresh name and return its handle.
     fn intern_root(name_hint: &str) -> Canonical<ValueDomain> {
-        ValueDomain::new(Identifier::new(name_hint), "root", None).into_canonical()
+        ValueDomain::register_root(Identifier::new(name_hint), "root")
+            .expect("the domain registers")
     }
 
     /// Intern a child of `parent` under a fresh name and return its handle.
     fn intern_child(name_hint: &str, parent: &Canonical<ValueDomain>) -> Canonical<ValueDomain> {
-        ValueDomain::new(Identifier::new(name_hint), "child", Some(parent.clone())).into_canonical()
+        ValueDomain::register_child(Identifier::new(name_hint), "child", parent)
+            .expect("the domain registers")
     }
 
     #[test]
     fn new_stores_the_name_description_and_absent_parent() {
         let name = Identifier::new("stores-name-and-description");
-        let domain = ValueDomain::new(name.clone(), "a domain", None).into_canonical();
+        let domain =
+            ValueDomain::register_root(name.clone(), "a domain").expect("the domain registers");
 
         assert_eq!(domain.name(), &name);
         assert_eq!(domain.description(), "a domain");
@@ -325,7 +445,8 @@ mod tests {
     #[test]
     fn has_identifier_returns_the_name() {
         let name = Identifier::new("has-identifier");
-        let domain = ValueDomain::new(name.clone(), "desc", None).into_canonical();
+        let domain =
+            ValueDomain::register_root(name.clone(), "desc").expect("the domain registers");
 
         assert_eq!(domain.identifier(), &name);
     }
@@ -333,37 +454,142 @@ mod tests {
     #[test]
     fn intern_key_is_the_name() {
         let name = Identifier::new("intern-key");
-        let domain = ValueDomain::new(name.clone(), "desc", None).into_canonical();
+        let domain =
+            ValueDomain::register_root(name.clone(), "desc").expect("the domain registers");
 
         assert_eq!(domain.intern_key(), &name);
     }
 
     #[test]
-    fn new_keeps_the_first_domain_canonical_for_a_repeated_name() {
+    fn register_root_of_a_known_root_returns_the_first_domain() {
         let name = Identifier::new("repeated-name");
-        let first = ValueDomain::new(name.clone(), "first", None).into_canonical();
+        let first = ValueDomain::register_root(name.clone(), "first").expect("the name is fresh");
 
-        let outcome = ValueDomain::new(name.clone(), "second", None);
+        let second = ValueDomain::register_root(name.clone(), "second")
+            .expect("the name is registered as a root");
 
-        assert!(!outcome.is_registered());
-        let InternOutcome::AlreadyCanonical {
-            canonical,
-            discarded,
-        } = &outcome
-        else {
-            panic!("expected the second domain to lose the registration");
-        };
-        assert_eq!(canonical, &first);
-        assert_eq!(discarded.description(), "second");
+        assert_eq!(second, first);
+        assert_eq!(second.description(), "first");
         assert_eq!(ValueDomain::intern_registry().get(&name), Some(first));
+    }
+
+    #[test]
+    fn register_child_of_a_known_child_under_the_same_parent_returns_the_first_domain() {
+        let name = Identifier::new("repeated-child");
+        let first = ValueDomain::register_child(name.clone(), "first", ValueDomain::data())
+            .expect("the name is fresh");
+
+        let second = ValueDomain::register_child(name, "second", ValueDomain::data())
+            .expect("the name is registered under the same parent");
+
+        assert_eq!(second, first);
+        assert_eq!(second.description(), "first");
+    }
+
+    #[test]
+    fn registering_a_known_name_under_another_parent_is_a_conflict() {
+        let name = Identifier::new("conflicting-child");
+        let canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
+            .expect("the name is fresh");
+
+        let conflict = ValueDomain::register_child(name.clone(), "desc", ValueDomain::address())
+            .expect_err("the name is registered under another parent");
+
+        assert_eq!(conflict.name(), &name);
+        assert_eq!(
+            conflict.registered_parent(),
+            Some(ValueDomain::data().name())
+        );
+        assert_eq!(
+            conflict.requested_parent(),
+            Some(ValueDomain::address().name())
+        );
+        assert_eq!(ValueDomain::intern_registry().get(&name), Some(canonical));
+    }
+
+    #[test]
+    fn registering_a_known_child_as_a_root_is_a_conflict() {
+        let name = Identifier::new("child-as-root");
+        let _canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
+            .expect("the name is fresh");
+
+        let conflict = ValueDomain::register_root(name, "desc").expect_err("the name has a parent");
+
+        assert_eq!(
+            conflict.registered_parent(),
+            Some(ValueDomain::data().name())
+        );
+        assert_eq!(conflict.requested_parent(), None);
+    }
+
+    #[test]
+    fn registering_a_known_root_as_a_child_is_a_conflict() {
+        let name = Identifier::new("root-as-child");
+        let _canonical =
+            ValueDomain::register_root(name.clone(), "desc").expect("the name is fresh");
+
+        let conflict = ValueDomain::register_child(name, "desc", ValueDomain::data())
+            .expect_err("the name is a root");
+
+        assert_eq!(conflict.registered_parent(), None);
+        assert_eq!(
+            conflict.requested_parent(),
+            Some(ValueDomain::data().name())
+        );
+    }
+
+    /// Test each form of a conflict displays on one line, naming the domain
+    /// and both parents.
+    #[rstest]
+    #[case::two_parents(
+        Some("data"),
+        Some("address"),
+        "value domain `tile` is already registered with parent `data`, not `address`"
+    )]
+    #[case::registered_root(
+        None,
+        Some("data"),
+        "value domain `tile` is already registered with no parent, not `data`"
+    )]
+    #[case::requested_root(
+        Some("data"),
+        None,
+        "value domain `tile` is already registered with parent `data`, not as a root"
+    )]
+    fn conflict_error_names_the_domain_and_both_parents(
+        #[case] registered_parent: Option<&str>,
+        #[case] requested_parent: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let conflict = ValueDomainConflict {
+            name: Identifier::new("tile"),
+            registered_parent: registered_parent.map(Identifier::new),
+            requested_parent: requested_parent.map(Identifier::new),
+        };
+
+        assert_eq!(conflict.to_string(), expected);
+    }
+
+    #[test]
+    fn conflict_error_is_a_std_error_without_a_source() {
+        let conflict = ValueDomainConflict {
+            name: Identifier::new("tile"),
+            registered_parent: None,
+            requested_parent: Some(Identifier::new("data")),
+        };
+        let error: &dyn std::error::Error = &conflict;
+
+        assert!(error.source().is_none());
     }
 
     #[test]
     fn identifiers_sharing_a_name_hint_intern_separately() {
         let first_name = Identifier::new("dup");
         let second_name = Identifier::new("dup");
-        let first = ValueDomain::new(first_name.clone(), "a", None).into_canonical();
-        let second = ValueDomain::new(second_name.clone(), "b", None).into_canonical();
+        let first =
+            ValueDomain::register_root(first_name.clone(), "a").expect("the domain registers");
+        let second =
+            ValueDomain::register_root(second_name.clone(), "b").expect("the domain registers");
 
         assert_ne!(first, second);
         assert_eq!(ValueDomain::intern_registry().get(&first_name), Some(first));
@@ -376,28 +602,28 @@ mod tests {
     #[test]
     fn domains_with_the_same_name_and_parent_are_equal() {
         let name = Identifier::new("equality-ignores-description");
-        let canonical = ValueDomain::new(name.clone(), "first description", None).into_canonical();
+        let first = ValueDomain::create(name.clone(), "first description", None);
+        let second = ValueDomain::create(name, "second description", None);
 
-        let other = take_discarded(ValueDomain::new(name, "second description", None));
-
-        assert_eq!(*canonical, other);
-        assert_eq!(other, *canonical);
+        assert_eq!(first, second);
+        assert_eq!(second, first);
     }
 
     #[test]
     fn equal_domains_hash_equally() {
         let name = Identifier::new("hash-ignores-description");
-        let canonical = ValueDomain::new(name.clone(), "first description", None).into_canonical();
+        let first = ValueDomain::create(name.clone(), "first description", None);
+        let second = ValueDomain::create(name, "second description", None);
 
-        let other = take_discarded(ValueDomain::new(name, "second description", None));
-
-        assert_eq!(compute_hash(&*canonical), compute_hash(&other));
+        assert_eq!(compute_hash(&first), compute_hash(&second));
     }
 
     #[test]
     fn domains_with_different_names_are_unequal() {
-        let left = ValueDomain::new(Identifier::new("a"), "desc", None).into_canonical();
-        let right = ValueDomain::new(Identifier::new("b"), "desc", None).into_canonical();
+        let left =
+            ValueDomain::register_root(Identifier::new("a"), "desc").expect("the domain registers");
+        let right =
+            ValueDomain::register_root(Identifier::new("b"), "desc").expect("the domain registers");
 
         assert_ne!(*left, *right);
     }
@@ -405,12 +631,10 @@ mod tests {
     #[test]
     fn domains_with_different_parents_are_unequal() {
         let name = Identifier::new("parent-differs");
-        let parented = ValueDomain::new(name.clone(), "desc", Some(ValueDomain::data().clone()))
-            .into_canonical();
+        let parented = ValueDomain::create(name.clone(), "desc", Some(ValueDomain::data().clone()));
+        let orphan = ValueDomain::create(name, "desc", None);
 
-        let orphan = take_discarded(ValueDomain::new(name, "desc", None));
-
-        assert_ne!(*parented, orphan);
+        assert_ne!(parented, orphan);
     }
 
     /// Test each shipped default domain is the canonical entry for its name.
@@ -569,7 +793,11 @@ mod tests {
             };
             let parent = parent_node.map(|node| resolve_node(node, &domains).clone());
             let name = Identifier::new(&format!("hierarchy-{index}"));
-            domains.push(ValueDomain::new(name, "generated", parent).into_canonical());
+            let domain = match parent {
+                None => ValueDomain::register_root(name, "generated"),
+                Some(parent) => ValueDomain::register_child(name, "generated", &parent),
+            };
+            domains.push(domain.expect("the name is fresh"));
             parents.push(parent_node);
         }
         (domains, parents)
@@ -642,7 +870,8 @@ mod tests {
     fn a_root_domain_encodes_with_a_null_parent() {
         let id = reserve_pinned_id("encode-anchor");
         let name = Identifier::try_restore(id, "encoded").expect("the id is below the cap");
-        let domain = ValueDomain::new(name, "a description", None).into_canonical();
+        let domain =
+            ValueDomain::register_root(name, "a description").expect("the domain registers");
 
         let json = serde_json::to_string(&*domain).unwrap();
 
@@ -660,11 +889,13 @@ mod tests {
         let parent_id = reserve_pinned_id("encode-parent-anchor");
         let parent_name =
             Identifier::try_restore(parent_id, "parent").expect("the id is below the cap");
-        let parent = ValueDomain::new(parent_name, "the parent", None).into_canonical();
+        let parent =
+            ValueDomain::register_root(parent_name, "the parent").expect("the domain registers");
         let child_id = reserve_pinned_id("encode-child-anchor");
         let child_name =
             Identifier::try_restore(child_id, "child").expect("the id is below the cap");
-        let child = ValueDomain::new(child_name, "the child", Some(parent)).into_canonical();
+        let child = ValueDomain::register_child(child_name, "the child", &parent)
+            .expect("the domain registers");
 
         let json = serde_json::to_string(&*child).unwrap();
 
@@ -729,8 +960,8 @@ mod tests {
     #[test]
     fn decoding_a_divergent_description_keeps_the_canonical_one() {
         let name = Identifier::new("divergent-description");
-        let canonical =
-            ValueDomain::new(name.clone(), "original description", None).into_canonical();
+        let canonical = ValueDomain::register_root(name.clone(), "original description")
+            .expect("the domain registers");
         let json = format!(
             "{{\"name\":{{\"id\":{},\"name_hint\":\"{}\"}},\
              \"description\":\"divergent description\",\"parent\":null}}",
@@ -747,8 +978,8 @@ mod tests {
     #[test]
     fn decoding_a_conflicting_parent_is_rejected() {
         let name = Identifier::new("conflicting-parent");
-        let canonical = ValueDomain::new(name.clone(), "desc", Some(ValueDomain::data().clone()))
-            .into_canonical();
+        let canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
+            .expect("the domain registers");
         let conflicting =
             ValueDomain::create(name.clone(), "desc", Some(ValueDomain::address().clone()));
         let json = serde_json::to_string(&conflicting).unwrap();
@@ -762,8 +993,8 @@ mod tests {
     #[test]
     fn decoding_a_dropped_parent_is_rejected() {
         let name = Identifier::new("dropped-parent");
-        let _canonical = ValueDomain::new(name.clone(), "desc", Some(ValueDomain::data().clone()))
-            .into_canonical();
+        let _canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
+            .expect("the domain registers");
         let json = serde_json::to_string(&ValueDomain::create(name, "desc", None)).unwrap();
 
         let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
@@ -774,9 +1005,8 @@ mod tests {
     #[test]
     fn decoding_a_divergent_description_under_a_matching_parent_keeps_the_canonical() {
         let name = Identifier::new("divergent-description-parented");
-        let canonical =
-            ValueDomain::new(name.clone(), "original", Some(ValueDomain::data().clone()))
-                .into_canonical();
+        let canonical = ValueDomain::register_child(name.clone(), "original", ValueDomain::data())
+            .expect("the domain registers");
         let divergent = ValueDomain::create(name, "divergent", Some(ValueDomain::data().clone()));
         let json = serde_json::to_string(&divergent).unwrap();
 
@@ -784,17 +1014,6 @@ mod tests {
 
         assert_eq!(restored, canonical);
         assert_eq!(restored.description(), "original");
-    }
-
-    #[test]
-    fn new_reports_a_matching_duplicate_as_already_canonical() {
-        let name = Identifier::new("matching-description");
-        let canonical = ValueDomain::new(name.clone(), "matching", None).into_canonical();
-
-        let discarded = take_discarded(ValueDomain::new(name, "matching", None));
-
-        assert_eq!(discarded.description(), canonical.description());
-        assert_eq!(discarded, *canonical);
     }
 
     /// Test a payload with an unknown field or without its parent is
@@ -990,8 +1209,8 @@ mod tests {
     fn a_conflicting_payload_restores_every_name_and_registers_its_fresh_parent() {
         let _counter = hold_id_counter();
         let name = Identifier::new("conflict-after-fresh-parent");
-        let canonical = ValueDomain::new(name.clone(), "desc", Some(ValueDomain::data().clone()))
-            .into_canonical();
+        let canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
+            .expect("the domain registers");
         let [parent] = reserve_far_ahead_ids("conflict-after-fresh-parent-anchor");
         let json = encode_domain_payload(name.id(), &encode_domain_payload(parent, "null", ""), "");
 
@@ -1008,11 +1227,9 @@ mod tests {
     fn a_payload_whose_parent_conflicts_registers_only_the_fresh_grandparent() {
         let _counter = hold_id_counter();
         let parent_name = Identifier::new("conflicting-middle");
-        let _canonical_parent = ValueDomain::new(
-            parent_name.clone(),
-            "desc",
-            Some(ValueDomain::data().clone()),
-        );
+        let _canonical_parent =
+            ValueDomain::register_child(parent_name.clone(), "desc", ValueDomain::data())
+                .expect("the name is fresh");
         let [outer, grandparent] = reserve_far_ahead_ids("conflicting-middle-anchor");
         let json = encode_domain_payload(
             outer,
@@ -1034,8 +1251,8 @@ mod tests {
 
     #[test]
     fn debug_mentions_the_name_hint_and_description() {
-        let domain =
-            ValueDomain::new(Identifier::new("debug-domain"), "debug desc", None).into_canonical();
+        let domain = ValueDomain::register_root(Identifier::new("debug-domain"), "debug desc")
+            .expect("the domain registers");
 
         let rendered = format!("{domain:?}");
 

@@ -14,7 +14,7 @@ use fhy_core::diagnostic::{
     Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationFailedError, ValidationReport,
 };
 use fhy_core::identifier::{HasIdentifier, Identifier};
-use fhy_core::interned::{Canonical, InternOutcome, Interned};
+use fhy_core::interned::{Canonical, Interned};
 use hashing_support::hash_of;
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -121,13 +121,11 @@ fn shipped_note_kinds_are_distinct(#[case] get_kind: DefaultKind, #[case] get_ot
 
 /// Test a caller registers a new kind without changing this crate.
 #[test]
-fn note_kind_new_registers_a_new_kind() {
+fn note_kind_register_registers_a_new_kind() {
     let name = Identifier::new("performance");
 
-    let outcome = NoteKind::new(name.clone(), "An optimization remark.");
+    let kind = NoteKind::register(name.clone(), "An optimization remark.");
 
-    assert!(outcome.is_registered());
-    let kind = outcome.into_canonical();
     assert_eq!(kind.name(), &name);
     assert_eq!(kind.identifier(), &name);
     assert_eq!(kind.intern_key(), &name);
@@ -135,35 +133,26 @@ fn note_kind_new_registers_a_new_kind() {
     assert_eq!(NoteKind::intern_registry().get(&name), Some(kind));
 }
 
-/// Test a second kind under a taken name loses the registration, compares
-/// equal to the canonical kind whatever its description, and hashes equally.
+/// Test registering a kind under a taken name returns the registered kind,
+/// which keeps its description and hashes as it did.
 #[test]
-fn note_kind_equality_ignores_description() {
+fn note_kind_register_keeps_the_first_kind_for_a_taken_name() {
     let name = Identifier::new("shared");
-    let first = NoteKind::new(name.clone(), "first description").into_canonical();
+    let first = NoteKind::register(name.clone(), "first description");
 
-    let outcome = NoteKind::new(name, "second description");
+    let second = NoteKind::register(name, "second description");
 
-    let InternOutcome::AlreadyCanonical {
-        canonical,
-        discarded,
-    } = outcome
-    else {
-        panic!("expected the second kind to lose the registration");
-    };
-    assert_eq!(canonical, first);
-    assert_eq!(canonical.description(), "first description");
-    assert_eq!(discarded.description(), "second description");
-    assert_eq!(discarded, *first);
-    assert_eq!(hash_of(&discarded), hash_of(&*first));
+    assert_eq!(second, first);
+    assert_eq!(second.description(), "first description");
+    assert_eq!(hash_of(&*second), hash_of(&*first));
 }
 
 /// Test kinds under distinct identifiers that share a name hint are
 /// distinct.
 #[test]
 fn note_kinds_sharing_a_name_hint_are_distinct() {
-    let first = NoteKind::new(Identifier::new("twin"), "a").into_canonical();
-    let second = NoteKind::new(Identifier::new("twin"), "b").into_canonical();
+    let first = NoteKind::register(Identifier::new("twin"), "a");
+    let second = NoteKind::register(Identifier::new("twin"), "b");
 
     assert_ne!(first, second);
     assert_ne!(*first, *second);
@@ -173,7 +162,7 @@ fn note_kinds_sharing_a_name_hint_are_distinct() {
 #[test]
 fn note_kind_encodes_as_name_and_description() {
     let name = Identifier::new("encoded-kind");
-    let kind = NoteKind::new(name.clone(), "a description").into_canonical();
+    let kind = NoteKind::register(name.clone(), "a description");
 
     let encoded = serde_json::to_value(&*kind).expect("kinds encode");
 
@@ -282,8 +271,7 @@ fn note_round_trips_each_shipped_kind(#[case] get_kind: DefaultKind) {
 /// Test a note tagged with a caller's kind round-trips.
 #[test]
 fn note_with_custom_kind_round_trips() {
-    let custom = NoteKind::new(Identifier::new("deprecation"), "A deprecated-usage remark.")
-        .into_canonical();
+    let custom = NoteKind::register(Identifier::new("deprecation"), "A deprecated-usage remark.");
     let note = Note::new("uses a deprecated builtin", custom.clone());
     let json = serde_json::to_string(&note).expect("notes encode");
 

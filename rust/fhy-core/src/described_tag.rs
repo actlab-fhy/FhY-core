@@ -69,13 +69,11 @@ pub struct DescribedTag<K: TagKind> {
 }
 
 impl<K: TagKind> DescribedTag<K> {
-    /// Build the tag named `name` and register it as the canonical one for
-    /// that name.
+    /// Register the tag named `name`, unless one is registered already, and
+    /// return the canonical handle for that name.
     ///
-    /// The outcome carries the canonical handle either way. When `name` is
-    /// already taken the earlier tag stays canonical, and the one built here
-    /// comes back as the outcome's `discarded` value, so a caller that cares
-    /// about the dropped description can see it.
+    /// The first registration wins: when `name` is already registered, the
+    /// registered tag is returned and `description` is dropped.
     ///
     /// # Examples
     ///
@@ -85,15 +83,23 @@ impl<K: TagKind> DescribedTag<K> {
     /// use fhy_core::op_attribute::OpAttribute;
     ///
     /// let name = Identifier::new("idempotent");
-    /// let attribute =
-    ///     OpAttribute::new(name.clone(), "Applying the op twice changes nothing.")
-    ///         .into_canonical();
+    /// let attribute = OpAttribute::register(name.clone(), "Applying the op twice changes nothing.");
+    /// let again = OpAttribute::register(name.clone(), "Another description.");
     ///
     /// assert_eq!(attribute.name(), &name);
+    /// assert_eq!(again.description(), "Applying the op twice changes nothing.");
     /// assert_eq!(OpAttribute::intern_registry().get(&name), Some(attribute));
     /// ```
-    pub fn new(name: Identifier, description: impl Into<String>) -> InternOutcome<Self> {
-        K::registry().intern(Self::create(name, description))
+    pub fn register(name: Identifier, description: impl Into<String>) -> Canonical<Self> {
+        match K::registry().intern(Self::create(name, description)) {
+            InternOutcome::Registered(canonical) => canonical,
+            InternOutcome::AlreadyCanonical { canonical, .. } => {
+                // The first registration wins, so a different description
+                // given here is dropped.
+                // TODO: warn here once the log dependency is added
+                canonical
+            }
+        }
     }
 
     /// Build the shipped tag `entry` names, for a vocabulary's defaults.
@@ -214,6 +220,7 @@ mod tests {
 
     use crate::diagnostic::NoteKind;
     use crate::op_attribute::OpAttribute;
+    use crate::test_support::compute_hash;
 
     /// Test one identifier registered as an attribute and as a note kind
     /// names two independent tags, each seen only by its own registry.
@@ -221,8 +228,8 @@ mod tests {
     fn attribute_and_note_kind_registries_are_independent() {
         let name = Identifier::new("in-both-vocabularies");
 
-        let attribute = OpAttribute::new(name.clone(), "an attribute").into_canonical();
-        let kind = NoteKind::new(name.clone(), "a note kind").into_canonical();
+        let attribute = OpAttribute::register(name.clone(), "an attribute");
+        let kind = NoteKind::register(name.clone(), "a note kind");
 
         assert_eq!(attribute.description(), "an attribute");
         assert_eq!(kind.description(), "a note kind");
@@ -236,9 +243,30 @@ mod tests {
     fn a_tag_registered_in_one_vocabulary_is_unknown_to_the_other() {
         let name = Identifier::new("in-one-vocabulary");
 
-        let _attribute = OpAttribute::new(name.clone(), "an attribute");
+        let _attribute = OpAttribute::register(name.clone(), "an attribute");
 
         assert_eq!(NoteKind::intern_registry().get(&name), None);
+    }
+
+    /// Test two tags with one name are equal whatever their descriptions.
+    #[test]
+    fn tags_with_the_same_name_are_equal_whatever_the_description() {
+        let name = Identifier::new("equality-ignores-description");
+        let first = OpAttribute::create(name.clone(), "first description");
+        let second = OpAttribute::create(name, "second description");
+
+        assert_eq!(first, second);
+        assert_eq!(second, first);
+    }
+
+    /// Test two tags with one name hash equally whatever their descriptions.
+    #[test]
+    fn equal_tags_hash_equally() {
+        let name = Identifier::new("hash-ignores-description");
+        let first = OpAttribute::create(name.clone(), "first description");
+        let second = OpAttribute::create(name, "second description");
+
+        assert_eq!(compute_hash(&first), compute_hash(&second));
     }
 
     /// Test a tag of either vocabulary displays as its name hint.
