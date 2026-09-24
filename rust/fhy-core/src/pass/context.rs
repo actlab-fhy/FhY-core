@@ -49,25 +49,34 @@ impl<'a> PassContext<'a> {
         self.pass_name.clone()
     }
 
-    /// Record the diagnostic `message` at `level`, with optional `detail`.
-    pub fn report(&mut self, level: DiagnosticLevel, message: Note, detail: Option<String>) {
-        let diagnostic = Diagnostic::new(level, message, self.pass_name.clone());
-        let diagnostic = match detail {
-            Some(detail) => diagnostic.with_detail(detail),
-            None => diagnostic,
-        };
+    /// Record `diagnostic` as given, its source included.
+    ///
+    /// Build it with [`Diagnostic::error`], [`Diagnostic::warning`] or
+    /// [`Diagnostic::info`], naming its source, and add a detail with
+    /// [`Diagnostic::with_detail`]; [`report_text`](Self::report_text)
+    /// records a text attributed to the running pass.
+    pub fn report(&mut self, diagnostic: Diagnostic) {
         self.diagnostics.push(diagnostic);
     }
 
-    /// Record the diagnostic with text `message` at `level`, with optional
-    /// `detail`, as a note of the uncategorized kind.
+    /// Record the diagnostic with text `message` at `level`, as a note of
+    /// the uncategorized kind attributed to the running pass, with optional
+    /// `detail`.
     pub fn report_text(
         &mut self,
         level: DiagnosticLevel,
         message: impl Into<String>,
         detail: Option<String>,
     ) {
-        self.report(level, Note::with_other_kind(message), detail);
+        let diagnostic = Diagnostic::new(
+            level,
+            Note::with_other_kind(message),
+            self.pass_name.clone(),
+        );
+        self.report(match detail {
+            Some(detail) => diagnostic.with_detail(detail),
+            None => diagnostic,
+        });
     }
 
     /// Return the result of the analysis `A` for `ir`.

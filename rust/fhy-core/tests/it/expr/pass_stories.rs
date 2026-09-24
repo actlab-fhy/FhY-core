@@ -26,8 +26,8 @@ use fhy_core::expr::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
-    CompilerPass, ExecutePass, FixpointIterationRecord, FixpointPassGroup, PassError, PassHook,
-    PassManager, PassRegistry, PipelineRecord, PreservedAnalyses,
+    CompilerPass, ExecutePass, FailureClass, FixpointIterationRecord, FixpointPassGroup, PassError,
+    PassErrorKind, PassHook, PassManager, PassRegistry, PipelineRecord, PreservedAnalyses,
 };
 use pattern_support::{
     ProbeError, build_capture, build_literal_pattern, build_x_plus_zero_rule,
@@ -333,8 +333,17 @@ fn rewrite_rule_applier_execute_fails_with_the_callback_error(
         .execute(&build_literal(5))
         .expect_err("the second rule fails");
 
-    assert!(error.is_execution_failure());
-    assert_eq!(error.failed_hook(), Some(PassHook::Run));
+    assert!(
+        matches!(
+            error.kind(),
+            PassErrorKind::Hook {
+                hook: PassHook::Run,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(error.class(), FailureClass::Execution);
     assert_eq!(error.pass_name(), Some(RULE_APPLIER_NAME));
     let RewriteError::Callback {
         rule_index,

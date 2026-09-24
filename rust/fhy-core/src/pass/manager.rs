@@ -7,10 +7,10 @@ use std::num::NonZeroUsize;
 use super::analysis::AnalysisCache;
 use super::compiler_pass::{CompilerPass, run_lifecycle};
 use super::context::PassContext;
-use super::error::PassError;
+use super::error::{PassError, VerificationPoint};
 use super::preserved::{AnalysisId, PreservedAnalyses};
-use super::validation::ValidationManager;
-use crate::diagnostic::{Diagnostic, Note};
+use super::validation::{ValidationManager, ValidatorRecord};
+use crate::diagnostic::{Diagnostic, Note, ValidationReport};
 use crate::identifier::{HasIdentifier, Identifier};
 use crate::tree::NodeHandle;
 
@@ -142,7 +142,11 @@ impl FixpointGroupRecord {
 }
 
 /// The record of one item of a pipeline.
+///
+/// More kinds of items may be added, so a `match` on a record needs a
+/// wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PipelineRecord {
     /// A single pass ran.
     Pass(PassRunRecord),
@@ -311,23 +315,21 @@ impl<I> fmt::Debug for PipelineItem<'_, I> {
 /// The key the verification report of a node is cached under.
 struct VerificationReportKey;
 
-/// Where verification looks at IR.
-#[derive(Debug, Clone, Copy)]
-enum VerificationPoint {
-    /// The pipeline's input, before its first pass.
-    Input,
-    /// A pass's changed output.
-    Output,
-}
-
-impl VerificationPoint {
-    /// Return the phrase that reports a rejection at this point.
-    fn describe_rejection(self) -> &'static str {
-        match self {
-            VerificationPoint::Input => "rejected input IR",
-            VerificationPoint::Output => "produced invalid output IR",
-        }
-    }
+/// Return the error for verification rejecting the IR at `point` with
+/// `report`, blaming the pass `pass_name`, whose run emitted `diagnostics`:
+/// they end with an error diagnostic whose message is the error's.
+fn build_verification_failure(
+    pass_name: Cow<'static, str>,
+    point: VerificationPoint,
+    report: ValidationReport<ValidatorRecord>,
+    mut diagnostics: Vec<Diagnostic>,
+) -> PassError {
+    let error = PassError::new_verification_failure(pass_name.clone(), point, report);
+    diagnostics.push(Diagnostic::error(
+        Note::with_other_kind(error.to_string()),
+        pass_name,
+    ));
+    error.with_diagnostics(diagnostics)
 }
 
 /// Return the name of the first pass `items` will run, if any.
@@ -345,45 +347,19 @@ struct PipelineRun<'r, 'p, I> {
 }
 
 impl<I: NodeHandle> PipelineRun<'_, '_, I> {
-    /// Verify `ir` at `point`, blaming the pass `pass_name`, whose run
-    /// emitted `diagnostics`.
+    /// Return the verifier's report on `ir` if it rejects `ir`, or `None`
+    /// without a verifier or when the report has no error.
     ///
     /// The report is cached for the node, so a node is verified at most once
     /// per run while its results are cached.
-    fn verify(
-        &mut self,
-        ir: &I,
-        point: VerificationPoint,
-        pass_name: Cow<'static, str>,
-        diagnostics: &[Diagnostic],
-    ) -> Result<(), PassError> {
-        let Some(verifier) = self.verifier.as_deref_mut() else {
-            return Ok(());
-        };
+    fn find_rejection(&mut self, ir: &I) -> Option<ValidationReport<ValidatorRecord>> {
+        let verifier = self.verifier.as_deref_mut()?;
         let report =
             self.cache
                 .get_or_insert_with(ir, AnalysisId::of::<VerificationReportKey>(), || {
                     verifier.validate(ir)
                 });
-        if !report.has_errors() {
-            return Ok(());
-        }
-        let message = format!(
-            "Pass \"{pass_name}\" {}: verification reported {} error(s).",
-            point.describe_rejection(),
-            report.errors().count()
-        );
-        let mut failure_diagnostics = diagnostics.to_vec();
-        failure_diagnostics.push(
-            Diagnostic::error(Note::with_other_kind(message.clone()), pass_name.clone())
-                .with_detail(report.to_string()),
-        );
-        Err(PassError::new_verification_failure(
-            pass_name,
-            message,
-            (*report).clone(),
-            failure_diagnostics,
-        ))
+        report.has_errors().then(|| (*report).clone())
     }
 
     /// Run `pass` over `input`, verify its output if it changed, and carry
@@ -394,15 +370,21 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
         input: &I,
     ) -> Result<(I, PassRunRecord), PassError> {
         let mut cx = PassContext::new(pass.name(), Some(&mut self.cache));
-        let result = run_lifecycle(pass, input, &mut cx)?;
+        let result = run_lifecycle(pass, input, &mut cx);
         let (pass_name, diagnostics) = cx.into_parts();
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => return Err(error.with_diagnostics(diagnostics)),
+        };
         if result.changed {
-            self.verify(
-                &result.output,
-                VerificationPoint::Output,
-                pass_name.clone(),
-                &diagnostics,
-            )?;
+            if let Some(report) = self.find_rejection(&result.output) {
+                return Err(build_verification_failure(
+                    pass_name,
+                    VerificationPoint::Output,
+                    report,
+                    diagnostics,
+                ));
+            }
         }
         self.cache
             .transfer(input, &result.output, &result.preserved);
@@ -417,23 +399,41 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
     }
 
     /// Run `group` from `input` until an iteration changes nothing or its
-    /// budget runs out.
+    /// budget runs out, returning the group's output or failure together
+    /// with its record.
+    ///
+    /// After a failing pass the record holds the iterations begun, the last
+    /// listing the runs that completed; after the budget runs out it holds
+    /// every iteration.
     fn run_fixpoint_group(
         &mut self,
         group: &mut FixpointPassGroup<'_, I>,
         input: I,
-    ) -> Result<(I, FixpointGroupRecord), PassError> {
+    ) -> (Result<I, PassError>, FixpointGroupRecord) {
         let mut current = input;
         let mut iteration_records = Vec::new();
         let mut converged = false;
-        for iteration in 1..=group.max_iterations.get() {
+        let mut failure = None;
+        'iterations: for iteration in 1..=group.max_iterations.get() {
             let mut changed = false;
             let mut pass_runs = Vec::with_capacity(group.passes.len());
             for pass in &mut group.passes {
-                let (output, record) = self.run_pass(pass.as_mut(), &current)?;
-                changed |= record.changed;
-                current = output;
-                pass_runs.push(record);
+                match self.run_pass(pass.as_mut(), &current) {
+                    Ok((output, record)) => {
+                        changed |= record.changed;
+                        current = output;
+                        pass_runs.push(record);
+                    }
+                    Err(error) => {
+                        iteration_records.push(FixpointIterationRecord {
+                            iteration,
+                            changed,
+                            pass_runs,
+                        });
+                        failure = Some(error);
+                        break 'iterations;
+                    }
+                }
             }
             iteration_records.push(FixpointIterationRecord {
                 iteration,
@@ -445,18 +445,19 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
                 break;
             }
         }
-        if !converged && group.fail_on_non_convergence {
-            return Err(PassError::new_non_convergence(format!(
-                "Fixpoint group \"{}\" did not converge in {} iterations.",
-                group.name, group.max_iterations
-            )));
-        }
+        let result = match failure {
+            Some(error) => Err(error),
+            None if !converged && group.fail_on_non_convergence => Err(
+                PassError::new_non_convergence(group.name.clone(), group.max_iterations),
+            ),
+            None => Ok(current),
+        };
         let record = FixpointGroupRecord {
             group_name: group.name.clone(),
             iteration_records,
             converged,
         };
-        Ok((current, record))
+        (result, record)
     }
 }
 
@@ -559,35 +560,48 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
     ///
     /// # Errors
     ///
-    /// Returns the [`PassError`] of the first pass that fails, a validation
-    /// failure carrying the report if verification rejects IR, and an
-    /// execution failure if a fixpoint group that fails on non-convergence
-    /// does not converge. The failure message then reads
-    /// `Fixpoint group "<name>" did not converge in <n> iterations.`.
+    /// Returns the [`PassError`] of the first pass that fails; a
+    /// [`Verification`](super::PassErrorKind::Verification) failure holding
+    /// the report if the verifier rejects IR; and a
+    /// [`NonConvergence`](super::PassErrorKind::NonConvergence) failure if a
+    /// fixpoint group that fails on non-convergence does not converge. The
+    /// error's [`records`](PassError::records) are those of the work
+    /// completed before the failure.
     pub fn run(&mut self, ir: &I) -> Result<PassManagerResult<I>, PassError> {
         let mut run = PipelineRun {
             cache: AnalysisCache::new(),
             verifier: self.verifier.as_mut(),
         };
         if let Some(first_pass_name) = find_first_pass_name(&self.items) {
-            run.verify(ir, VerificationPoint::Input, first_pass_name, &[])?;
+            if let Some(report) = run.find_rejection(ir) {
+                return Err(build_verification_failure(
+                    first_pass_name,
+                    VerificationPoint::Input,
+                    report,
+                    Vec::new(),
+                ));
+            }
         }
         let mut current = ir.clone();
         let mut records = Vec::with_capacity(self.items.len());
         for item in &mut self.items {
-            let record = match item {
-                PipelineItem::Pass(pass) => {
-                    let (output, record) = run.run_pass(pass.as_mut(), &current)?;
-                    current = output;
-                    PipelineRecord::Pass(record)
-                }
+            match item {
+                PipelineItem::Pass(pass) => match run.run_pass(pass.as_mut(), &current) {
+                    Ok((output, record)) => {
+                        current = output;
+                        records.push(PipelineRecord::Pass(record));
+                    }
+                    Err(error) => return Err(error.with_records(records)),
+                },
                 PipelineItem::FixpointGroup(group) => {
-                    let (output, record) = run.run_fixpoint_group(group, current)?;
-                    current = output;
-                    PipelineRecord::FixpointGroup(record)
+                    let (result, record) = run.run_fixpoint_group(group, current);
+                    records.push(PipelineRecord::FixpointGroup(record));
+                    match result {
+                        Ok(output) => current = output,
+                        Err(error) => return Err(error.with_records(records)),
+                    }
                 }
-            };
-            records.push(record);
+            }
         }
         Ok(PassManagerResult {
             output: current,

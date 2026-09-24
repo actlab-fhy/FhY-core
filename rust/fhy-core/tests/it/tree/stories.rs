@@ -14,11 +14,12 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::num::NonZeroUsize;
 
+use fhy_core::diagnostic::Diagnostic;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
-    Analysis, CompilerPass, ExecutePass, FixpointPassGroup, PassContext, PassError, PassHook,
-    PassManager, PassValidator, PipelineRecord, PreservedAnalyses, RewritePass, ValidationManager,
-    WalkPass,
+    Analysis, CompilerPass, ExecutePass, FailureClass, FixpointPassGroup, PassContext, PassError,
+    PassErrorKind, PassHook, PassManager, PassValidator, PipelineRecord, PreservedAnalyses,
+    RewritePass, ValidationManager, WalkPass,
 };
 use fhy_core::tree::{
     RewriteTreeError, Rewriter, TraversalOrder, TreeVisitor, rewrite_tree, walk_tree,
@@ -1209,8 +1210,17 @@ fn walk_pass_execute_fails_with_the_hook_error() {
     let result = pass.execute(&tree);
 
     let error = result.expect_err("the visit fails");
-    assert!(error.is_execution_failure());
-    assert_eq!(error.failed_hook(), Some(PassHook::Run));
+    assert!(
+        matches!(
+            error.kind(),
+            PassErrorKind::Hook {
+                hook: PassHook::Run,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(error.class(), FailureClass::Execution);
     let source = error.source().expect("the hook error is the source");
     assert_eq!(
         source.downcast_ref::<HookError>(),
@@ -1364,7 +1374,16 @@ fn rewrite_pass_execute_fails_with_the_rewrite_error() {
     let result = pass.execute(&build_leaf("leaf", 1));
 
     let error: PassError = result.expect_err("the rewrite fails");
-    assert_eq!(error.failed_hook(), Some(PassHook::Run));
+    assert!(
+        matches!(
+            error.kind(),
+            PassErrorKind::Hook {
+                hook: PassHook::Run,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
     let source = error.source().expect("the rewrite error is the source");
     let tree_error = source
         .downcast_ref::<RewriteTreeError<ToyTree, HookError>>()
@@ -1372,6 +1391,24 @@ fn rewrite_pass_execute_fails_with_the_rewrite_error() {
     assert!(
         matches!(tree_error, RewriteTreeError::Rewrite(HookError(message)) if message == "refused"),
         "got {tree_error:?}"
+    );
+}
+
+/// Test a failing rewrite pass records a diagnostic naming the rewriter's
+/// own error, which the transparent rewrite failure passes on.
+#[test]
+fn rewrite_pass_diagnostic_names_the_rewriters_error() {
+    let mut pass = RewritePass::new(ClosureRewriter::new(|_| {
+        Err(HookError("node leaf is refused".to_owned()))
+    }));
+
+    let error = pass
+        .execute(&build_leaf("leaf", 1))
+        .expect_err("the rewrite fails");
+
+    assert_eq!(
+        error.diagnostics().last().map(Diagnostic::message_text),
+        Some("pass \"ClosureRewriter\" failed in run: node leaf is refused")
     );
 }
 
@@ -1453,7 +1490,7 @@ fn pass_manager_verifies_a_rewrite_with_a_walk_pass() {
         .iter()
         .map(|record| match record {
             PipelineRecord::Pass(record) => record.is_changed(),
-            PipelineRecord::FixpointGroup(group) => panic!("unexpected group {group:?}"),
+            other => panic!("unexpected record {other:?}"),
         })
         .collect();
     assert_eq!(changes, [true]);

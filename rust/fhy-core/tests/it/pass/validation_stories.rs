@@ -375,7 +375,7 @@ fn validation_manager_keeps_a_structured_note() {
     impl Validator<BoxIr> for NoteValidator {
         fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
             let note = Note::new("structured-message", NoteKind::suggestion().clone());
-            cx.report(DiagnosticLevel::Error, note, None);
+            cx.report(Diagnostic::error(note, "NoteValidator"));
             Ok(())
         }
     }
@@ -419,7 +419,7 @@ fn validation_manager_records_a_failing_validator_and_runs_the_rest() {
     assert_eq!(
         errors,
         [
-            ("CrashInRun", "Pass \"CrashInRun\" failed run with crashed"),
+            ("CrashInRun", "pass \"CrashInRun\" failed in run: crashed"),
             ("tests.vm.after_crasher", "still-runs"),
         ]
     );
@@ -559,7 +559,7 @@ fn validation_manager_writes_the_cause_chain_of_a_silent_failure() {
         messages,
         [
             "validator \"tests.vm.silent_chain\" failed without reporting an error: \
-             Pass \"CrashInRun\" failed run with crashed: crashed"
+             pass \"CrashInRun\" failed in run: crashed"
         ]
     );
 }
@@ -576,7 +576,7 @@ fn validation_manager_records_a_validator_that_rejects_its_input() {
     let errors: Vec<_> = report.errors().map(Diagnostic::message_text).collect();
     assert_eq!(
         errors,
-        ["Pass \"RejectInput\" failed validate_input with rejected"]
+        ["pass \"RejectInput\" failed in validate_input: rejected"]
     );
     assert!(report.records()[0].is_failed());
 }

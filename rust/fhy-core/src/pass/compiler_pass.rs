@@ -5,17 +5,16 @@ use std::borrow::Cow;
 use std::error::Error;
 
 use super::context::PassContext;
-use super::error::{PassError, PassErrorClass, PassHook};
+use super::error::{PassError, PassHook, render_chain};
 use super::preserved::PreservedAnalyses;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 
 /// The error a pass hook returns.
 ///
 /// Boxed so that [`CompilerPass`] stays object-safe and one pipeline can hold
-/// passes whose own error types differ. A hook that returns a [`PassError`]
-/// of its own class (validation for the validation hooks, execution for the
-/// others, either for [`CompilerPass::run`]) hands it through unchanged; any
-/// other error is wrapped in a [`PassError`] naming the pass and the hook.
+/// passes whose own error types differ. The lifecycle wraps a hook's error
+/// in a [`PassError`] naming the pass and the hook, nesting it when it is a
+/// [`PassError`] itself, as a pass that runs another pass returns.
 pub type PassFailure = Box<dyn Error + Send + Sync + 'static>;
 
 /// Return whether `character` may appear in an identifier or a number.
@@ -488,42 +487,20 @@ pub(super) struct LifecycleResult<O> {
     pub(super) preserved: PreservedAnalyses,
 }
 
-/// Return the class of the failure `hook` reports.
-fn classify_hook(hook: PassHook) -> PassErrorClass {
-    match hook {
-        PassHook::ValidateInput | PassHook::ValidateOutput => PassErrorClass::Validation,
-        PassHook::Skip | PassHook::Run | PassHook::DidChange | PassHook::PreservedAnalyses => {
-            PassErrorClass::Execution
-        }
-    }
-}
-
-/// Return whether a [`PassError`] of `class` may leave `hook` unchanged:
-/// [`CompilerPass::run`] hands both classes through, every other hook only
-/// its own.
-fn is_passed_through(hook: PassHook, class: PassErrorClass) -> bool {
-    hook == PassHook::Run || classify_hook(hook) == class
-}
-
-/// Turn the error `failure` of `hook` into a [`PassError`], recording an
-/// error diagnostic in `cx` unless `failure` is handed through.
+/// Turn the error `failure` of `hook` into a [`PassError`], after recording
+/// an error diagnostic in `cx` naming the pass, the hook, and the failure's
+/// cause chain.
+///
+/// The error carries no diagnostics yet: the caller moves the context's
+/// diagnostics into it, or keeps them in the context.
 fn wrap_hook_failure(failure: PassFailure, hook: PassHook, cx: &mut PassContext<'_>) -> PassError {
-    let failure = match failure.downcast::<PassError>() {
-        Ok(error) if is_passed_through(hook, error.class()) => return *error,
-        Ok(error) => error as PassFailure,
-        Err(other) => other,
-    };
     let pass_name = cx.shared_pass_name();
-    let message = format!("Pass \"{pass_name}\" failed {hook} with {failure}");
-    cx.report_text(DiagnosticLevel::Error, message.clone(), None);
-    PassError::new_hook_failure(
-        classify_hook(hook),
-        pass_name,
-        hook,
-        message,
-        failure,
-        cx.diagnostics().to_vec(),
-    )
+    let message = format!(
+        "pass {pass_name:?} failed in {hook}: {}",
+        render_chain(failure.as_ref())
+    );
+    cx.report_text(DiagnosticLevel::Error, message, None);
+    PassError::from_hook_failure(pass_name, hook, failure)
 }
 
 /// Return the value of a hook's `result`, or its error as a [`PassError`].
@@ -538,7 +515,7 @@ fn guard_hook<T>(
 /// Run `pass` over `ir` through the guarded lifecycle, reporting into `cx`.
 ///
 /// A hook error becomes a [`PassError`] after an error diagnostic records
-/// it, unless it already is a [`PassError`] the hook may hand through.
+/// it; the diagnostics stay in `cx`.
 pub(super) fn run_lifecycle<I, O, P>(
     pass: &mut P,
     ir: &I,
@@ -613,20 +590,24 @@ pub trait ExecutePass<I, O>: CompilerPass<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns a validation failure if [`CompilerPass::validate_input`] or
-    /// [`CompilerPass::validate_output`] fails, and an execution failure if
-    /// any other hook fails. A hook's own [`PassError`] of the matching class
-    /// comes back unchanged; [`CompilerPass::run`] hands back a
-    /// [`PassError`] of either class unchanged.
+    /// Returns a [`PassError`] naming the pass and the hook if a hook fails:
+    /// a [`Hook`](super::PassErrorKind::Hook) failure holding the hook's
+    /// error, or a [`Nested`](super::PassErrorKind::Nested) one when the
+    /// hook returned a [`PassError`] of its own. The error holds the run's
+    /// diagnostics, ending with the error diagnostic recording the failure,
+    /// and no records.
     fn execute(&mut self, ir: &I) -> Result<PassOutcome<O>, PassError>;
 }
 
 impl<I, O, P: CompilerPass<I, O> + ?Sized> ExecutePass<I, O> for P {
     fn execute(&mut self, ir: &I) -> Result<PassOutcome<O>, PassError> {
         let mut cx = PassContext::new(self.name(), None);
-        let result = run_lifecycle(self, ir, &mut cx)?;
+        let result = run_lifecycle(self, ir, &mut cx);
         let (_, diagnostics) = cx.into_parts();
-        Ok(PassOutcome::new(result, diagnostics))
+        match result {
+            Ok(result) => Ok(PassOutcome::new(result, diagnostics)),
+            Err(error) => Err(error.with_diagnostics(diagnostics)),
+        }
     }
 }
 

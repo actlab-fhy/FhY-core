@@ -8,17 +8,20 @@
 use crate::support::pass_ir;
 
 use std::cell::{Cell, RefCell};
+use std::error::Error;
 use std::num::NonZeroUsize;
 
-use fhy_core::diagnostic::DiagnosticLevel;
+use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, ValidationReport};
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
-    CompilerPass, ExecutePass, FixpointGroupRecord, FixpointPassGroup, PassContext, PassFailure,
-    PassManager, PassRunRecord, PipelineRecord, PreservedAnalyses, ValidationManager, Validator,
+    CompilerPass, ExecutePass, FailureClass, FixpointGroupRecord, FixpointPassGroup, PassContext,
+    PassError, PassErrorKind, PassFailure, PassHook, PassManager, PassRunRecord, PipelineRecord,
+    PreservedAnalyses, ValidationManager, Validator, ValidatorRecord, VerificationPoint,
 };
 use pass_ir::{
     BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis, build_add_pass, build_identity_pass,
 };
+use rstest::rstest;
 
 // =============================================================================
 // Helpers
@@ -28,7 +31,7 @@ use pass_ir::{
 fn expect_pass_record(record: &PipelineRecord) -> &PassRunRecord {
     match record {
         PipelineRecord::Pass(pass) => pass,
-        PipelineRecord::FixpointGroup(group) => panic!("expected a pass record, got {group:?}"),
+        other => panic!("expected a pass record, got {other:?}"),
     }
 }
 
@@ -36,7 +39,7 @@ fn expect_pass_record(record: &PipelineRecord) -> &PassRunRecord {
 fn expect_group_record(record: &PipelineRecord) -> &FixpointGroupRecord {
     match record {
         PipelineRecord::FixpointGroup(group) => group,
-        PipelineRecord::Pass(pass) => panic!("expected a group record, got {pass:?}"),
+        other => panic!("expected a group record, got {other:?}"),
     }
 }
 
@@ -90,6 +93,35 @@ impl Validator<BoxIr> for CountingCheck {
     fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
         self.invocations += 1;
         Ok(())
+    }
+}
+
+/// Return the verification parts of `error`, failing the test for another
+/// failure.
+fn expect_verification_failure(
+    error: &PassError,
+) -> (&str, VerificationPoint, &ValidationReport<ValidatorRecord>) {
+    match error.kind() {
+        PassErrorKind::Verification {
+            pass_name,
+            point,
+            report,
+            ..
+        } => (pass_name, point, report),
+        _ => panic!("expected a verification failure, got {error:?}"),
+    }
+}
+
+/// Return the non-convergence parts of `error`, failing the test for
+/// another failure.
+fn expect_non_convergence(error: &PassError) -> (&Identifier, NonZeroUsize) {
+    match error.kind() {
+        PassErrorKind::NonConvergence {
+            group_name,
+            max_iterations,
+            ..
+        } => (group_name, max_iterations),
+        _ => panic!("expected a non-convergence failure, got {error:?}"),
     }
 }
 
@@ -216,11 +248,23 @@ fn pass_manager_stops_at_the_first_failing_pass() {
         .expect_err("the second pass fails");
     drop(manager);
 
-    assert_eq!(
-        error.to_string(),
-        "Pass \"tests.pm.failing\" failed run with broken"
+    assert!(
+        matches!(
+            error.kind(),
+            PassErrorKind::Hook {
+                pass_name: "tests.pm.failing",
+                hook: PassHook::Run,
+                ..
+            }
+        ),
+        "{error:?}"
     );
+    assert_eq!(error.class(), FailureClass::Execution);
     assert_eq!(error.pass_name(), Some("tests.pm.failing"));
+    assert_eq!(
+        collect_pass_names(error.records()),
+        ["tests.pm.before_failure"]
+    );
     assert!(!later_ran.get());
 }
 
@@ -622,16 +666,18 @@ fn fixpoint_group_fails_the_run_when_it_does_not_converge() {
         .run(&BoxIr::new(0))
         .expect_err("the group never converges");
 
-    assert_eq!(
-        error.to_string(),
-        "Fixpoint group \"flip-group\" did not converge in 3 iterations."
-    );
-    assert!(error.is_non_convergence());
-    assert!(error.is_execution_failure());
-    assert!(!error.is_validation_failure());
+    let (group_name, max_iterations) = expect_non_convergence(&error);
+    assert_eq!(group_name.name_hint(), "flip-group");
+    assert_eq!(max_iterations.get(), 3);
+    assert_eq!(error.class(), FailureClass::Execution);
     assert_eq!(error.pass_name(), None);
-    assert_eq!(error.failed_hook(), None);
     assert!(error.diagnostics().is_empty());
+    assert!(error.source().is_none());
+    let [PipelineRecord::FixpointGroup(record)] = error.records() else {
+        panic!("expected the group's record, got {:?}", error.records());
+    };
+    assert!(!record.is_converged());
+    assert_eq!(record.iterations(), 3);
 }
 
 /// Test a group allowed not to converge hands on the IR of its last
@@ -678,10 +724,12 @@ fn fixpoint_group_with_a_budget_of_one_needs_an_unchanged_first_iteration() {
 
     let result = converged.expect("an unchanged iteration converges");
     assert_eq!(expect_group_record(&result.records()[0]).iterations(), 1);
-    assert_eq!(
-        error.to_string(),
-        "Fixpoint group \"one-shot-add\" did not converge in 1 iterations."
-    );
+    let (group_name, max_iterations) = expect_non_convergence(&error);
+    assert_eq!(group_name.name_hint(), "one-shot-add");
+    assert_eq!(max_iterations.get(), 1);
+    let record = expect_group_record(error.records().last().expect("the group's record"));
+    assert!(!record.is_converged());
+    assert_eq!(record.iterations(), 1);
 }
 
 /// Test a group without passes converges in its first iteration.
@@ -744,6 +792,237 @@ fn fixpoint_pass_group_new_uses_the_default_configuration() {
 }
 
 // =============================================================================
+// Failures
+// =============================================================================
+
+/// Build the pass `name` that fails its run with `message` once the value
+/// reaches `limit`, and adds one below it.
+fn build_fail_at_pass(name: &str, limit: i64, message: &'static str) -> ClosurePass<'static> {
+    ClosurePass::new(name, move |ir, _| {
+        if ir.value() >= limit {
+            return Err(message.into());
+        }
+        Ok(ir.derive(ir.value() + 1))
+    })
+}
+
+/// Test a failed run's error holds the records of the items completed
+/// before the failure, in pipeline order, and none for the failing pass.
+#[test]
+fn failed_pipeline_error_keeps_the_completed_records() {
+    let mut group = build_group("settle-group", 5);
+    group.add_pass(build_identity_pass("tests.pm.settle"));
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(build_add_pass("tests.pm.first", 1));
+    manager.add_fixpoint_group(group);
+    manager.add_pass(build_fail_at_pass("tests.pm.fails", 0, "broken"));
+    manager.add_pass(build_add_pass("tests.pm.never", 1));
+
+    let error = manager
+        .run(&BoxIr::new(0))
+        .expect_err("the third item fails");
+
+    assert_eq!(error.records().len(), 2);
+    assert_eq!(
+        expect_pass_record(&error.records()[0]).pass_name(),
+        "tests.pm.first"
+    );
+    let group_record = expect_group_record(&error.records()[1]);
+    assert!(group_record.is_converged());
+    assert_eq!(error.pass_name(), Some("tests.pm.fails"));
+}
+
+/// Test a failure inside a fixpoint group ends the records with the group's
+/// partial record: the iterations begun, the last listing only the runs
+/// that completed, and the group not converged.
+#[test]
+fn failure_inside_a_fixpoint_group_records_the_partial_group() {
+    let mut group = build_group("failing-group", 5);
+    group.add_pass(build_add_pass("tests.pm.grow", 1));
+    group.add_pass(build_fail_at_pass("tests.pm.limit", 2, "too big"));
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(build_identity_pass("tests.pm.lead"));
+    manager.add_fixpoint_group(group);
+
+    let error = manager
+        .run(&BoxIr::new(0))
+        .expect_err("the second iteration fails");
+
+    assert_eq!(error.records().len(), 2);
+    let record = expect_group_record(&error.records()[1]);
+    assert_eq!(record.group_name().name_hint(), "failing-group");
+    assert!(!record.is_converged());
+    let runs: Vec<Vec<&str>> = record
+        .iteration_records()
+        .iter()
+        .map(|iteration| {
+            iteration
+                .pass_runs()
+                .iter()
+                .map(PassRunRecord::pass_name)
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            vec!["tests.pm.grow", "tests.pm.limit"],
+            vec!["tests.pm.grow"]
+        ]
+    );
+    assert!(record.iteration_records()[1].is_changed());
+    assert_eq!(
+        error.diagnostics().last().map(Diagnostic::message_text),
+        Some("pass \"tests.pm.limit\" failed in run: too big")
+    );
+}
+
+/// Test a non-convergence error is structured: the group's name and budget
+/// as fields, no pass name, no diagnostics, no source, the execution class,
+/// and the complete group record, one iteration per unit of the budget.
+#[test]
+fn non_convergence_error_is_structured() {
+    let mut group = build_group("oscillating", 4);
+    group.add_pass(build_flip_pass("tests.pm.oscillate"));
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(build_identity_pass("tests.pm.before"));
+    manager.add_fixpoint_group(group);
+
+    let error = manager
+        .run(&BoxIr::new(0))
+        .expect_err("the group never converges");
+
+    let (group_name, max_iterations) = expect_non_convergence(&error);
+    assert_eq!(group_name.name_hint(), "oscillating");
+    assert_eq!(max_iterations.get(), 4);
+    assert_eq!(error.class(), FailureClass::Execution);
+    assert_eq!(error.pass_name(), None);
+    assert!(error.diagnostics().is_empty());
+    assert!(error.source().is_none());
+    assert_eq!(error.records().len(), 2);
+    let record = expect_group_record(&error.records()[1]);
+    assert_eq!(record.iterations(), 4);
+    assert!(
+        record
+            .iteration_records()
+            .iter()
+            .all(|iteration| iteration.pass_runs().len() == 1 && iteration.is_changed())
+    );
+}
+
+/// Test a pass error from a pipeline a pass runs inside its run becomes a
+/// nested error of the outer pass, and the inner error keeps the inner
+/// pipeline's records.
+#[test]
+fn a_pass_error_from_a_nested_pipeline_is_nested_with_its_records() {
+    let mut manager = PassManager::new(Identifier::new("outer"));
+    manager.add_pass(ClosurePass::new("tests.pm.runs_inner", |ir, _| {
+        let mut inner = PassManager::new(Identifier::new("inner"));
+        inner.add_pass(build_add_pass("tests.pm.inner_add", 1));
+        inner.add_pass(build_fail_at_pass(
+            "tests.pm.inner_fails",
+            0,
+            "inner broken",
+        ));
+        let result = inner.run(ir)?;
+        Ok(result.into_output())
+    }));
+
+    let error = manager
+        .run(&BoxIr::new(0))
+        .expect_err("the inner pipeline fails");
+
+    let PassErrorKind::Nested {
+        pass_name,
+        hook,
+        inner,
+        ..
+    } = error.kind()
+    else {
+        panic!("expected a nested failure, got {error:?}");
+    };
+    assert_eq!((pass_name, hook), ("tests.pm.runs_inner", PassHook::Run));
+    assert_eq!(inner.pass_name(), Some("tests.pm.inner_fails"));
+    assert_eq!(collect_pass_names(inner.records()), ["tests.pm.inner_add"]);
+    assert!(error.records().is_empty());
+    assert_eq!(error.class(), FailureClass::Execution);
+}
+
+/// The pass error one pipeline run produces.
+#[derive(Debug, Clone, Copy)]
+enum PipelineFailure {
+    Hook,
+    Nested,
+    InputVerification,
+    OutputVerification,
+    NonConvergence,
+}
+
+/// Produce the pass error `failure` names.
+fn produce_pipeline_error(failure: PipelineFailure) -> PassError {
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    let input = match failure {
+        PipelineFailure::Hook => {
+            manager.add_pass(build_fail_at_pass("fold", 0, "broken"));
+            0
+        }
+        PipelineFailure::Nested => {
+            manager.add_pass(ClosurePass::new("fold", |ir, _| {
+                let inner =
+                    ClosurePass::new("inner", |_, _| Err("inner broken".into())).execute(ir)?;
+                Ok(inner.into_output())
+            }));
+            0
+        }
+        PipelineFailure::InputVerification => {
+            manager.add_pass(build_identity_pass("first"));
+            manager.set_verifier(build_negative_value_verifier());
+            -1
+        }
+        PipelineFailure::OutputVerification => {
+            manager.add_pass(build_add_pass("corrupt", -2));
+            manager.set_verifier(build_negative_value_verifier());
+            1
+        }
+        PipelineFailure::NonConvergence => {
+            let mut group = build_group("flip-group", 3);
+            group.add_pass(build_flip_pass("flip"));
+            manager.add_fixpoint_group(group);
+            0
+        }
+    };
+    manager
+        .run(&BoxIr::new(input))
+        .expect_err("the pipeline fails")
+}
+
+/// Test each kind of pass error renders its one-line message, which never
+/// repeats its source's text.
+#[rstest]
+#[case::hook(PipelineFailure::Hook, "pass \"fold\" failed in run")]
+#[case::nested(PipelineFailure::Nested, "pass \"fold\" failed in run")]
+#[case::input_verification(
+    PipelineFailure::InputVerification,
+    "verification rejected the input of pass \"first\" (errors: 1)"
+)]
+#[case::output_verification(
+    PipelineFailure::OutputVerification,
+    "verification rejected the output of pass \"corrupt\" (errors: 1)"
+)]
+#[case::non_convergence(
+    PipelineFailure::NonConvergence,
+    "fixpoint group \"flip-group\" did not converge (max iterations: 3)"
+)]
+fn pass_error_display_table(#[case] failure: PipelineFailure, #[case] expected: &str) {
+    let error = produce_pipeline_error(failure);
+
+    assert_eq!(error.to_string(), expected);
+    if let Some(source) = error.source() {
+        assert!(!expected.contains(&source.to_string()), "{source}");
+    }
+}
+
+// =============================================================================
 // Verification
 // =============================================================================
 
@@ -764,25 +1043,28 @@ fn pass_manager_verifier_rejects_invalid_input_blaming_the_first_pass() {
         .expect_err("the input is invalid");
     drop(manager);
 
-    let message = "Pass \"tests.pm.first\" rejected input IR: verification reported 1 error(s).";
-    assert_eq!(error.to_string(), message);
-    assert!(error.is_validation_failure());
-    assert_eq!(error.pass_name(), Some("tests.pm.first"));
-    assert_eq!(error.failed_hook(), None);
-    let report = error.verification_report().expect("the report is attached");
-    let errors: Vec<_> = report
-        .errors()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
-        .collect();
+    let (pass_name, point, report) = expect_verification_failure(&error);
+    assert_eq!(pass_name, "tests.pm.first");
+    assert_eq!(point, VerificationPoint::Input);
+    let errors: Vec<_> = report.errors().map(Diagnostic::message_text).collect();
     assert_eq!(errors, ["negative value: -1"]);
-    assert_eq!(error.diagnostics().len(), 1);
-    let diagnostic = &error.diagnostics()[0];
-    assert_eq!(diagnostic.level(), DiagnosticLevel::Error);
-    assert_eq!(diagnostic.message_text(), message);
-    assert_eq!(diagnostic.source(), "tests.pm.first");
+    assert_eq!(error.class(), FailureClass::Validation);
+    assert_eq!(error.pass_name(), Some("tests.pm.first"));
+    assert!(error.records().is_empty());
+    let message = error.to_string();
+    let diagnostics: Vec<_> = error
+        .diagnostics()
+        .iter()
+        .map(|d| (d.level(), d.source(), d.message_text(), d.detail()))
+        .collect();
     assert_eq!(
-        diagnostic.detail(),
-        Some("error[NegativeValueCheck]: negative value: -1")
+        diagnostics,
+        [(
+            DiagnosticLevel::Error,
+            "tests.pm.first",
+            message.as_str(),
+            None
+        )]
     );
     assert!(!first_ran.get());
 }
@@ -881,30 +1163,32 @@ fn pass_manager_verifier_blames_the_pass_that_produced_invalid_output() {
         .expect_err("the corrupt output is invalid");
     drop(manager);
 
-    let message =
-        "Pass \"tests.pm.corrupt\" produced invalid output IR: verification reported 1 error(s).";
-    assert_eq!(error.to_string(), message);
-    assert!(error.is_validation_failure());
-    assert_eq!(error.pass_name(), Some("tests.pm.corrupt"));
-    let report = error.verification_report().expect("the report is attached");
-    let errors: Vec<_> = report
-        .errors()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
-        .collect();
+    let (pass_name, point, report) = expect_verification_failure(&error);
+    assert_eq!(pass_name, "tests.pm.corrupt");
+    assert_eq!(point, VerificationPoint::Output);
+    let errors: Vec<_> = report.errors().map(Diagnostic::message_text).collect();
     assert_eq!(errors, ["negative value: -100"]);
+    assert_eq!(error.class(), FailureClass::Validation);
+    assert_eq!(error.pass_name(), Some("tests.pm.corrupt"));
+    assert_eq!(
+        collect_pass_names(error.records()),
+        ["tests.pm.first_clean"]
+    );
+    let message = error.to_string();
     let diagnostics: Vec<_> = error
         .diagnostics()
         .iter()
-        .map(|d| (d.level(), d.message_text(), d.detail()))
+        .map(|d| (d.level(), d.source(), d.message_text(), d.detail()))
         .collect();
     assert_eq!(
         diagnostics,
         [
-            (DiagnosticLevel::Info, "rewriting", None),
+            (DiagnosticLevel::Info, "tests.pm.corrupt", "rewriting", None),
             (
                 DiagnosticLevel::Error,
-                message,
-                Some("error[NegativeValueCheck]: negative value: -100")
+                "tests.pm.corrupt",
+                message.as_str(),
+                None
             ),
         ]
     );
@@ -950,10 +1234,13 @@ fn pass_manager_verifier_validates_changed_outputs_inside_a_group() {
         .run(&BoxIr::new(2))
         .expect_err("the third iteration goes negative");
 
-    assert_eq!(
-        error.to_string(),
-        "Pass \"tests.pm.descend\" produced invalid output IR: verification reported 1 error(s)."
-    );
+    let (pass_name, point, _) = expect_verification_failure(&error);
+    assert_eq!(pass_name, "tests.pm.descend");
+    assert_eq!(point, VerificationPoint::Output);
+    assert_eq!(error.class(), FailureClass::Validation);
+    let record = expect_group_record(error.records().last().expect("the group's record"));
+    assert_eq!(record.iterations(), 3);
+    assert!(record.iteration_records()[2].pass_runs().is_empty());
 }
 
 /// Test a verifier without validators accepts any IR.

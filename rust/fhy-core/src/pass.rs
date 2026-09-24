@@ -37,7 +37,7 @@ pub use adapters::{RewritePass, WalkPass};
 pub use analysis::Analysis;
 pub use compiler_pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome, short_type_name};
 pub use context::PassContext;
-pub use error::{PassError, PassHook};
+pub use error::{FailureClass, PassError, PassErrorKind, PassHook, VerificationPoint};
 pub use manager::{
     FixpointGroupRecord, FixpointIterationRecord, FixpointPassGroup, PassManager,
     PassManagerResult, PassRunRecord, PipelineRecord,

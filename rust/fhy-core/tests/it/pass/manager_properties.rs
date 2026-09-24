@@ -150,7 +150,7 @@ proptest! {
             .iter()
             .map(|record| match record {
                 PipelineRecord::Pass(pass) => pass.pass_name().to_owned(),
-                PipelineRecord::FixpointGroup(group) => format!("{group:?}"),
+                other => format!("{other:?}"),
             })
             .collect();
         drop(manager);

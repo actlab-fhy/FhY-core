@@ -16,10 +16,11 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
+use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind};
 use fhy_core::pass::{
-    AnalysisId, CompilerPass, CreatePassError, ExecutePass, PassContext, PassError, PassFailure,
-    PassHook, PassInfo, PassRegistrationError, PassRegistry, PreservedAnalyses,
+    AnalysisId, CompilerPass, CreatePassError, ExecutePass, FailureClass, PassContext, PassError,
+    PassErrorKind, PassFailure, PassHook, PassInfo, PassRegistrationError, PassRegistry,
+    PreservedAnalyses,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis};
@@ -227,19 +228,11 @@ enum InnerFailure {
     Execution,
 }
 
-/// The message of the failure `inner` produces.
-fn describe_inner_failure(inner: InnerFailure) -> &'static str {
+/// The class of the failure `inner` produces.
+fn classify_inner_failure(inner: InnerFailure) -> FailureClass {
     match inner {
-        InnerFailure::Validation => "Pass \"RejectInput\" failed validate_input with rejected",
-        InnerFailure::Execution => "Pass \"CrashInRun\" failed run with crashed",
-    }
-}
-
-/// The name of the pass that produces the failure `inner`.
-fn name_inner_pass(inner: InnerFailure) -> &'static str {
-    match inner {
-        InnerFailure::Validation => "RejectInput",
-        InnerFailure::Execution => "CrashInRun",
+        InnerFailure::Validation => FailureClass::Validation,
+        InnerFailure::Execution => FailureClass::Execution,
     }
 }
 
@@ -253,8 +246,10 @@ fn produce_inner_failure(inner: InnerFailure) -> PassError {
 }
 
 /// Returns a previously produced [`PassError`] from one hook, as a pass that
-/// runs another pass and propagates its failure does.
+/// runs another pass and propagates its failure does, after warning
+/// `handing over` from its run.
 struct HandOverPass {
+    name: &'static str,
     hook: PassHook,
     failure: Option<PassError>,
 }
@@ -262,9 +257,15 @@ struct HandOverPass {
 impl HandOverPass {
     /// Build the pass that hands over the failure `inner` from `hook`.
     fn new(hook: PassHook, inner: InnerFailure) -> Self {
+        Self::handing("HandOverPass", hook, produce_inner_failure(inner))
+    }
+
+    /// Build the pass `name` that hands over `failure` from `hook`.
+    fn handing(name: &'static str, hook: PassHook, failure: PassError) -> Self {
         Self {
+            name,
             hook,
-            failure: Some(produce_inner_failure(inner)),
+            failure: Some(failure),
         }
     }
 
@@ -280,6 +281,10 @@ impl HandOverPass {
 }
 
 impl CompilerPass<i64> for HandOverPass {
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed(self.name)
+    }
+
     fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
         self.check(PassHook::ValidateInput)
     }
@@ -289,7 +294,8 @@ impl CompilerPass<i64> for HandOverPass {
         Ok(None)
     }
 
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+        cx.report_text(DiagnosticLevel::Warning, "handing over", None);
         self.check(PassHook::Run)?;
         Ok(ir + 1)
     }
@@ -476,38 +482,55 @@ fn pass_hook_renders_the_method_name(#[case] hook: PassHook, #[case] expected: &
 }
 
 /// Test a hook error becomes a pass error of the hook's class that names the
-/// pass and the hook, keeps the hook's error as its source, and ends the
-/// diagnostics with an error recording the failure.
+/// pass and the hook, keeps the hook's error as its source, has no pipeline
+/// records, and ends the diagnostics with an error recording the failure
+/// and its cause.
 #[rstest]
-#[case::validate_input(PassHook::ValidateInput, true)]
-#[case::skip(PassHook::Skip, false)]
-#[case::run(PassHook::Run, false)]
-#[case::validate_output(PassHook::ValidateOutput, true)]
-#[case::did_change(PassHook::DidChange, false)]
-#[case::preserved_analyses(PassHook::PreservedAnalyses, false)]
+#[case::validate_input(PassHook::ValidateInput, FailureClass::Validation)]
+#[case::skip(PassHook::Skip, FailureClass::Execution)]
+#[case::run(PassHook::Run, FailureClass::Execution)]
+#[case::validate_output(PassHook::ValidateOutput, FailureClass::Validation)]
+#[case::did_change(PassHook::DidChange, FailureClass::Execution)]
+#[case::preserved_analyses(PassHook::PreservedAnalyses, FailureClass::Execution)]
 fn execute_wraps_a_hook_error_naming_the_pass_and_hook(
     #[case] hook: PassHook,
-    #[case] is_validation: bool,
+    #[case] class: FailureClass,
 ) {
-    let expected_message = format!("Pass \"FailingHookPass\" failed {hook} with {hook}-broken");
-
     let error = FailingHookPass { hook }
         .execute(&1)
         .expect_err("the hook fails");
 
-    assert_eq!(error.to_string(), expected_message);
+    let PassErrorKind::Hook {
+        pass_name,
+        hook: failed_hook,
+        source,
+        ..
+    } = error.kind()
+    else {
+        panic!("expected a hook failure, got {error:?}");
+    };
+    assert_eq!(pass_name, "FailingHookPass");
+    assert_eq!(failed_hook, hook);
+    assert_eq!(
+        source
+            .downcast_ref::<HookFailure>()
+            .map(ToString::to_string),
+        Some(format!("{hook}-broken"))
+    );
+    assert_eq!(error.class(), class);
     assert_eq!(error.pass_name(), Some("FailingHookPass"));
-    assert_eq!(error.failed_hook(), Some(hook));
-    assert_eq!(error.is_validation_failure(), is_validation);
-    assert_eq!(error.is_execution_failure(), !is_validation);
-    assert!(!error.is_non_convergence());
-    assert!(error.verification_report().is_none());
-    let source = error.source().expect("the hook's error is the source");
-    assert_eq!(source.to_string(), format!("{hook}-broken"));
-    assert!(source.downcast_ref::<HookFailure>().is_some(), "{source:?}");
+    assert!(error.records().is_empty());
+    let chained = error.source().expect("the hook's error is the source");
+    assert!(
+        chained.downcast_ref::<HookFailure>().is_some(),
+        "{chained:?}"
+    );
     let last = error.diagnostics().last().expect("an error diagnostic");
     assert_eq!(last.level(), DiagnosticLevel::Error);
-    assert_eq!(last.message_text(), expected_message);
+    assert_eq!(
+        last.message_text(),
+        format!("pass \"FailingHookPass\" failed in {hook}: {hook}-broken")
+    );
     assert_eq!(last.source(), "FailingHookPass");
     assert_eq!(last.detail(), None);
 }
@@ -561,72 +584,133 @@ fn execute_failure_keeps_the_diagnostics_emitted_before_it() {
             (DiagnosticLevel::Warning, "heads-up"),
             (
                 DiagnosticLevel::Error,
-                "Pass \"WarnThenCrash\" failed run with boom"
+                "pass \"WarnThenCrash\" failed in run: boom"
             ),
         ]
     );
 }
 
-/// Test a pass error of the class a hook may hand through leaves the run
-/// unchanged; `run` hands through both classes.
-#[rstest]
-#[case::validate_input(PassHook::ValidateInput, InnerFailure::Validation)]
-#[case::skip(PassHook::Skip, InnerFailure::Execution)]
-#[case::run_validation(PassHook::Run, InnerFailure::Validation)]
-#[case::run_execution(PassHook::Run, InnerFailure::Execution)]
-#[case::validate_output(PassHook::ValidateOutput, InnerFailure::Validation)]
-#[case::did_change(PassHook::DidChange, InnerFailure::Execution)]
-#[case::preserved_analyses(PassHook::PreservedAnalyses, InnerFailure::Execution)]
-fn execute_hands_a_matching_pass_error_through_unchanged(
-    #[case] hook: PassHook,
-    #[case] inner: InnerFailure,
-) {
-    let error = HandOverPass::new(hook, inner)
+/// Test a pass error a hook returns is nested, not handed through: the
+/// outer error names the outer pass and hook, keeps the outer pass's
+/// diagnostics ending with the error recording the failure, and has the
+/// inner error as its source.
+#[test]
+fn execute_nests_a_pass_error_keeping_the_outer_diagnostics() {
+    let error = HandOverPass::new(PassHook::Run, InnerFailure::Execution)
         .execute(&0)
-        .expect_err("the hook hands over a failure");
+        .expect_err("the run hands over a failure");
 
-    assert_eq!(error.to_string(), describe_inner_failure(inner));
+    let PassErrorKind::Nested {
+        pass_name,
+        hook,
+        inner,
+        ..
+    } = error.kind()
+    else {
+        panic!("expected a nested failure, got {error:?}");
+    };
+    assert_eq!((pass_name, hook), ("HandOverPass", PassHook::Run));
+    assert_eq!(inner.pass_name(), Some("CrashInRun"));
+    assert_eq!(error.pass_name(), Some("HandOverPass"));
+    let diagnostics: Vec<_> = error
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.level(),
+                diagnostic.source(),
+                diagnostic.message_text(),
+            )
+        })
+        .collect();
     assert_eq!(
-        error.is_validation_failure(),
-        matches!(inner, InnerFailure::Validation)
+        diagnostics,
+        [
+            (DiagnosticLevel::Warning, "HandOverPass", "handing over"),
+            (
+                DiagnosticLevel::Error,
+                "HandOverPass",
+                "pass \"HandOverPass\" failed in run: pass \"CrashInRun\" failed in run: crashed"
+            ),
+        ]
     );
-    assert_eq!(error.pass_name(), Some(name_inner_pass(inner)));
-    assert_eq!(error.diagnostics().len(), 1);
-    assert_eq!(
-        error.diagnostics()[0].message_text(),
-        describe_inner_failure(inner)
+    let source = error.source().expect("the inner error is the source");
+    assert!(
+        std::ptr::eq(
+            source.downcast_ref::<PassError>().expect("a pass error"),
+            inner
+        ),
+        "{source:?}"
     );
 }
 
-/// Test a pass error of the other class is wrapped like any hook error.
+/// Test a nested error's class is its hook's class, except under `run`,
+/// where it is the inner error's class.
 #[rstest]
-#[case::validate_input(PassHook::ValidateInput, InnerFailure::Execution, true)]
-#[case::validate_output(PassHook::ValidateOutput, InnerFailure::Execution, true)]
-#[case::skip(PassHook::Skip, InnerFailure::Validation, false)]
-#[case::did_change(PassHook::DidChange, InnerFailure::Validation, false)]
-fn execute_wraps_a_pass_error_of_the_other_class(
+#[case::validate_input_of_execution(PassHook::ValidateInput, InnerFailure::Execution)]
+#[case::validate_input_of_validation(PassHook::ValidateInput, InnerFailure::Validation)]
+#[case::skip_of_validation(PassHook::Skip, InnerFailure::Validation)]
+#[case::run_of_validation(PassHook::Run, InnerFailure::Validation)]
+#[case::run_of_execution(PassHook::Run, InnerFailure::Execution)]
+#[case::validate_output_of_execution(PassHook::ValidateOutput, InnerFailure::Execution)]
+#[case::did_change_of_validation(PassHook::DidChange, InnerFailure::Validation)]
+#[case::preserved_analyses_of_validation(PassHook::PreservedAnalyses, InnerFailure::Validation)]
+fn nested_pass_error_class_is_the_hooks_except_for_run(
     #[case] hook: PassHook,
     #[case] inner: InnerFailure,
-    #[case] is_validation: bool,
 ) {
-    let expected_message = format!(
-        "Pass \"HandOverPass\" failed {hook} with {}",
-        describe_inner_failure(inner)
-    );
+    let expected = match hook {
+        PassHook::Run => classify_inner_failure(inner),
+        PassHook::ValidateInput | PassHook::ValidateOutput => FailureClass::Validation,
+        _ => FailureClass::Execution,
+    };
 
     let error = HandOverPass::new(hook, inner)
         .execute(&0)
         .expect_err("the hook hands over a failure");
 
-    assert_eq!(error.to_string(), expected_message);
-    assert_eq!(error.is_validation_failure(), is_validation);
-    assert_eq!(error.pass_name(), Some("HandOverPass"));
-    assert_eq!(error.failed_hook(), Some(hook));
-    let source = error.source().expect("the handed-over error is the source");
-    let inner_error = source
-        .downcast_ref::<PassError>()
-        .expect("the source is the inner pass error");
-    assert_eq!(inner_error.to_string(), describe_inner_failure(inner));
+    assert!(
+        matches!(error.kind(), PassErrorKind::Nested { hook: nested_hook, .. } if nested_hook == hook),
+        "{error:?}"
+    );
+    assert_eq!(error.class(), expected);
+}
+
+/// Test walking the source chain of a three-deep nested error writes each
+/// cause exactly once: no error repeats its source's text.
+#[test]
+fn pass_error_chain_prints_each_cause_once() {
+    let innermost = produce_inner_failure(InnerFailure::Execution);
+    let middle = HandOverPass::handing("middle", PassHook::Run, innermost)
+        .execute(&0)
+        .expect_err("the middle pass hands over the failure");
+    let outer = HandOverPass::handing("outer", PassHook::Run, middle)
+        .execute(&0)
+        .expect_err("the outer pass hands over the failure");
+
+    let mut messages = vec![outer.to_string()];
+    let mut source = outer.source();
+    while let Some(cause) = source {
+        messages.push(cause.to_string());
+        source = cause.source();
+    }
+
+    assert_eq!(
+        messages,
+        [
+            "pass \"outer\" failed in run",
+            "pass \"middle\" failed in run",
+            "pass \"CrashInRun\" failed in run",
+            "crashed",
+        ]
+    );
+}
+
+/// Test a pass error is one pointer wide, so a `Result` carrying one stays
+/// small.
+#[test]
+fn pass_error_is_one_pointer_wide() {
+    assert_eq!(size_of::<PassError>(), size_of::<usize>());
 }
 
 // =============================================================================
@@ -674,20 +758,24 @@ fn report_text_keeps_the_detail_separate_from_the_message() {
     assert_eq!(diagnostic.detail(), Some("extra-context"));
 }
 
-/// Test `report` keeps a structured note as given.
+/// Test `report` records a diagnostic exactly as given: its structured
+/// note, its source, and its detail.
 #[test]
-fn report_keeps_a_structured_note() {
-    let note = Note::new("structured-message", NoteKind::rationale().clone());
-    let reported = note.clone();
+fn report_keeps_a_diagnostic_as_given() {
+    let diagnostic = Diagnostic::warning(
+        Note::new("structured-message", NoteKind::rationale().clone()),
+        "note.check",
+    )
+    .with_detail("extra-context");
+    let reported = diagnostic.clone();
     let mut pass = ClosurePass::new("note", move |ir, cx| {
-        cx.report(DiagnosticLevel::Error, reported.clone(), None);
+        cx.report(reported.clone());
         Ok(ir.clone())
     });
 
     let outcome = pass.execute(&BoxIr::new(0)).expect("the run succeeds");
 
-    assert_eq!(outcome.diagnostics()[0].message(), &note);
-    assert_eq!(outcome.diagnostics()[0].source(), "note");
+    assert_eq!(outcome.diagnostics(), [diagnostic]);
 }
 
 /// Test the context names the running pass and lists the diagnostics
