@@ -7678,3 +7678,55 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   lists became loops over `BuiltinFunction::iter()` (F-037), and the
   `find_*` lookups became `FromStr` refusal tables, so fewer test cases are
   reported; no assertion was dropped.
+
+- **Step 5 (B4), `CallbackError` (D-10):** with the plain alias, `?` on a
+  `Result<_, CallbackError>` converts into `Box<dyn Error + Send + Sync>`
+  but not into `Box<dyn Error>`: std has no `From` between the two boxes,
+  and the boxed error is not itself an `Error`. So the doc examples that
+  propagate one end in `Box<dyn Error + Send + Sync>`, and B4 §8.6's
+  `callback_error_converts_into_a_boxed_error` targets that box. B4 §2.4's
+  `new`, `inner`, `into_inner` and `downcast_ref` are the box's own
+  `From` and `downcast_ref`; `callback_error_new_from_text_displays_the_text`
+  is `callback_error_from_text_displays_the_text`.
+- **Step 5 (B4), `Capture`:** it holds an `Arc<str>` rather than an `Arc`
+  of a private name struct, one allocation instead of two. `new(&str)`
+  still allocates a fresh `Arc` every time, empty names included, so
+  identity is never shared by accident.
+- **Step 5 (B4), shapes for the new node kinds:** logical patterns are
+  `logical(operation, operands)`, `logical_any_operation(operands)`,
+  `logical_any_operands(operation)` and `any_logical()`; fewer than two
+  operand patterns match nothing, as a logical node has at least two. Call
+  patterns match a `Callee` by equality: `call(callee, arguments)`,
+  `call_any_arguments(callee)`, `call_any_callee(arguments)` (B4 §2.2's
+  `call_any_name`) and `any_call()`, each callee taking `impl Into<Callee>`
+  like `Expression::call`. The mirroring property now mirrors a logical
+  node with a logical pattern instead of capturing it whole (B3a's note).
+- **Step 5 (B4), D-11 over B4 §2.6 and §5.3:** `RewriteRule::new` keeps a
+  rewrite returning `Result<Expression, _>` and `new_partial` takes the
+  `Option` form, so the shared test rewrites stay `Ok(expression)` rather
+  than B4 §8's `Ok(Some(..))`. Guards run in the order added, so §8.3's
+  "the guard added last runs first" case is
+  `rewrite_rule_with_guard_runs_guards_in_the_order_added`, beside the
+  every-guard table `rewrite_rule_with_guard_requires_every_guard`.
+- **Step 5 (B4), seams:** the walk keeps B3b's `RuleRun` and
+  `run_rewrite_rules` (B4 §2.7 says `run_rules`), `pub(in crate::expr)`.
+  `match_into` is `pub(super)`; the trail operations `bind` and `truncate`
+  are private to `matching.rs`, their only user, and there is no `clear`.
+  A rule's name is converted to `Arc<str>` on its first firing or failure
+  in a walk and reused after that.
+- **Step 5 (B4), test changes beyond B4 §8:** the four `try_bind` literal
+  cases of another variant are folded into
+  `pattern_literal_and_repeated_capture_agree_on_literal_equality`, which
+  also gains `float_and_decimal` and `integer_and_decimal`.
+  `pattern_literal_rejects_an_unequal_literal` gains `nan_and_number`, so a
+  NaN rejection case remains after `nan_and_nan` moved to the matching
+  table. `pattern_predicate_captures_nothing` no longer uses `match_under`:
+  a predicate beside a capture binds only the capture. The deep-tree
+  `match_pattern_*` tests are renamed after `Pattern`, and every
+  `#[values]` node-kind list gains a logical node.
+- **Step 5 (B4), F-039 regression test:**
+  `apply_rewrite_rules_blames_the_right_rule_after_a_discarded_replacement`
+  passes before and after the identity hasher, since the blame map already
+  held its replacements; a refused child is always a direct replacement,
+  so the lookup never reaches a stale entry. It stays as the guard B4 §8.6
+  asks for.
