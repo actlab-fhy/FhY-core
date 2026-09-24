@@ -8,6 +8,7 @@ use crate::support::stack as stack_support;
 
 use expression_support::{
     build_call_or_panic, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
+    expect_binary,
 };
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, LiteralValue, PiecewiseError, RebuildError,
@@ -261,9 +262,7 @@ fn rewrite_pass_replaces_an_identifier_in_an_expression() {
         outcome.output(),
         &Expression::new_binary(BinaryOperation::Add, &y, &untouched)
     );
-    let ExpressionKind::Binary(node) = outcome.output().kind() else {
-        panic!("expected a binary node, got {:?}", outcome.output());
-    };
+    let node = expect_binary(outcome.output());
     assert!(Expression::ptr_eq(node.right(), &untouched));
 }
 

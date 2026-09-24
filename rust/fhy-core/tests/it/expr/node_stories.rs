@@ -12,12 +12,12 @@ use std::collections::{HashMap, HashSet};
 use expression_support::{
     build_call_or_panic, build_callee, build_decimal_literal, build_deep_sum, build_doubling_dag,
     build_identifier, build_literal, build_parsed_literal, build_piecewise_or_panic, copy_deeply,
+    expect_binary, expect_logical, expect_piecewise, expect_unary,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    AlphaRenaming, BinaryExpression, BinaryOperation, Expression, ExpressionKind, LiteralValue,
-    LogicalOperation, PiecewiseError, PiecewiseExpression, RebuildError, UnaryExpression,
-    UnaryOperation,
+    AlphaRenaming, BinaryOperation, Expression, ExpressionKind, LiteralValue, LogicalOperation,
+    PiecewiseError, RebuildError, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -41,27 +41,6 @@ fn is_doubling_dag_over(dag: &Expression, leaf: &Expression, levels: usize) -> b
         node = binary.left();
     }
     Expression::ptr_eq(node, leaf)
-}
-
-fn expect_unary(expression: &Expression) -> &UnaryExpression {
-    let ExpressionKind::Unary(node) = expression.kind() else {
-        panic!("expected a unary node, got {expression:?}");
-    };
-    node
-}
-
-fn expect_binary(expression: &Expression) -> &BinaryExpression {
-    let ExpressionKind::Binary(node) = expression.kind() else {
-        panic!("expected a binary node, got {expression:?}");
-    };
-    node
-}
-
-fn expect_piecewise(expression: &Expression) -> &PiecewiseExpression {
-    let ExpressionKind::Piecewise(node) = expression.kind() else {
-        panic!("expected a piecewise node, got {expression:?}");
-    };
-    node
 }
 
 /// Assert `actual` holds handles to exactly the nodes of `expected`, in order.
@@ -356,9 +335,7 @@ fn logical_expression_exposes_operation_and_operands() {
     let (_, q) = build_identifier("q");
     let expression = Expression::new_logical(LogicalOperation::Or, [&p, &q]);
 
-    let ExpressionKind::Logical(node) = expression.kind() else {
-        panic!("expected a logical node, got {expression:?}");
-    };
+    let node = expect_logical(&expression);
 
     assert_eq!(node.operation(), LogicalOperation::Or);
     assert_same_nodes(&node.operands().iter().collect::<Vec<_>>(), &[&p, &q]);
@@ -521,9 +498,7 @@ fn expression_rebuild_of_a_logical_node_keeps_its_operand_count() {
         .expect("three children");
     let too_few = conjunction.rebuild_with_children(vec![p, q]);
 
-    let ExpressionKind::Logical(node) = rebuilt.kind() else {
-        panic!("expected a logical node, got {rebuilt:?}");
-    };
+    let node = expect_logical(&rebuilt);
     assert_eq!(node.operands().len(), 3);
     assert!(Expression::ptr_eq(&node.operands()[1], &nested));
     assert_eq!(

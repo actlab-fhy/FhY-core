@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use expression_support::{
     build_callee, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
+    expect_binary, expect_piecewise, expect_unary,
 };
 use fhy_core::expr::pattern::{
     CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome,
@@ -507,9 +508,7 @@ fn apply_rewrite_rules_with_an_identity_rewrite_below_the_root_is_unchanged() {
     assert!(!outcome.is_changed());
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(outcome.fired().is_empty(), "fired {:?}", outcome.fired());
-    let ExpressionKind::Unary(node) = outcome.output().kind() else {
-        panic!("a negation at the root");
-    };
+    let node = expect_unary(outcome.output());
     assert!(Expression::ptr_eq(node.operand(), &x));
 }
 
@@ -578,9 +577,7 @@ fn apply_rewrite_rules_rewrites_a_subtree_and_rebuilds_its_parent() {
         outcome.output(),
         &Expression::new_binary(BinaryOperation::Multiply, &x, build_literal(2))
     );
-    let ExpressionKind::Binary(node) = outcome.output().kind() else {
-        panic!("a product at the root, got {:?}", outcome.output());
-    };
+    let node = expect_binary(outcome.output());
     assert!(Expression::ptr_eq(node.left(), &x));
     assert!(Expression::ptr_eq(node.right(), &sibling));
 }
@@ -678,9 +675,7 @@ fn apply_rewrite_rules_rewrites_inside_a_piecewise_branch() {
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
-    let ExpressionKind::Piecewise(node) = outcome.output().kind() else {
-        panic!("a piecewise at the root, got {:?}", outcome.output());
-    };
+    let node = expect_piecewise(outcome.output());
     assert!(Expression::ptr_eq(&node.cases()[0].0, &condition));
     assert!(Expression::ptr_eq(&node.cases()[0].1, &x));
     assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
@@ -763,9 +758,7 @@ fn apply_rewrite_rules_rewrites_a_shared_subtree_once() {
         describe_fired(outcome.fired()),
         vec![(0, Some("x + 0 -> x"))]
     );
-    let ExpressionKind::Binary(node) = outcome.output().kind() else {
-        panic!("expected a product, got {:?}", outcome.output());
-    };
+    let node = expect_binary(outcome.output());
     assert!(Expression::ptr_eq(node.left(), &x));
     assert!(Expression::ptr_eq(node.right(), &x));
 }
@@ -785,9 +778,7 @@ fn apply_rewrite_rules_rewrites_a_shared_leaf_once() {
         &Expression::new_binary(BinaryOperation::Add, build_literal(5), build_literal(5))
     );
     assert_eq!(describe_fired(outcome.fired()), vec![(0, None)]);
-    let ExpressionKind::Binary(node) = outcome.output().kind() else {
-        panic!("expected a sum, got {:?}", outcome.output());
-    };
+    let node = expect_binary(outcome.output());
     assert!(Expression::ptr_eq(node.left(), node.right()));
 }
 

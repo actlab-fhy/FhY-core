@@ -22,7 +22,8 @@ use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
 use expression_support::{
-    build_identifier, build_literal, build_piecewise_or_panic, expect_literal,
+    build_identifier, build_literal, build_piecewise_or_panic, expect_binary, expect_call,
+    expect_literal, expect_piecewise,
 };
 
 const COMPOSED_NAMES: [&str; 16] = [
@@ -241,9 +242,7 @@ fn collect_callees(expression: &Expression) -> Vec<Callee> {
 }
 
 fn find_right_literal(expression: &Expression) -> &LiteralValue {
-    let ExpressionKind::Binary(node) = expression.kind() else {
-        panic!("expected a binary node, got {expression:?}");
-    };
+    let node = expect_binary(expression);
     let ExpressionKind::Literal(literal) = node.right().kind() else {
         panic!("expected a literal right operand, got {:?}", node.right());
     };
@@ -601,9 +600,7 @@ fn composed_function_body_calls_only_builtin_functions() {
 fn composed_function_relu_passes_an_integer_zero_to_max() {
     let relu = find_composed("relu");
 
-    let ExpressionKind::Call(call) = relu.body().kind() else {
-        panic!("relu's body is a call, got {:?}", relu.body());
-    };
+    let call = expect_call(relu.body());
 
     assert_eq!(call.callee(), &Callee::Builtin(BuiltinFunction::Max));
     assert_eq!(expect_literal(&call.arguments()[1]), &LiteralValue::from(0));
@@ -614,9 +611,7 @@ fn composed_function_relu_passes_an_integer_zero_to_max() {
 fn composed_function_abs_compares_against_a_float_zero() {
     let abs = find_composed("abs");
 
-    let ExpressionKind::Piecewise(piecewise) = abs.body().kind() else {
-        panic!("abs's body is a piecewise, got {:?}", abs.body());
-    };
+    let piecewise = expect_piecewise(abs.body());
 
     let LiteralValue::Float(zero) = find_right_literal(&piecewise.cases()[0].0) else {
         panic!("abs compares against a float");
@@ -630,9 +625,7 @@ fn composed_function_abs_compares_against_a_float_zero() {
 fn composed_function_sign_yields_integer_literals() {
     let sign = find_composed("sign");
 
-    let ExpressionKind::Piecewise(piecewise) = sign.body().kind() else {
-        panic!("sign's body is a piecewise, got {:?}", sign.body());
-    };
+    let piecewise = expect_piecewise(sign.body());
 
     let condition_bits: Vec<Option<u64>> = piecewise
         .cases()

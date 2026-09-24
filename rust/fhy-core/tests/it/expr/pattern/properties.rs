@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
     ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_callee,
-    build_expression_strategy, build_literal_strategy, copy_deeply,
+    build_expression_strategy, build_literal_strategy, copy_deeply, expect_binary,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::pattern::{Capture, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules};
@@ -360,9 +360,7 @@ fn mirror_node(node: &Expression, captures: &mut Vec<(Capture, Expression)>) -> 
 /// Return the mirror of the children of the binary `root` under
 /// `operation`.
 fn mirror_binary_root_with(root: &Expression, operation: BinaryOperation) -> Pattern {
-    let ExpressionKind::Binary(binary) = root.kind() else {
-        panic!("a binary root, got {root:?}");
-    };
+    let binary = expect_binary(root);
     let mut captures = Vec::new();
     let left = mirror_node(binary.left(), &mut captures);
     let right = mirror_node(binary.right(), &mut captures);

@@ -6,12 +6,14 @@ use crate::support::expression as expression_support;
 
 use std::ops::{Add, Div, Mul, Sub};
 
-use expression_support::{build_identifier, build_literal};
+use expression_support::{
+    build_identifier, build_literal, expect_binary, expect_call, expect_logical, expect_piecewise,
+    expect_unary,
+};
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
     BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FunctionName, FunctionNameError,
-    LiteralValue, LogicalExpression, LogicalOperation, PiecewiseError, RebuildError,
-    UnaryOperation, UnknownNameError,
+    LiteralValue, LogicalOperation, PiecewiseError, RebuildError, UnaryOperation, UnknownNameError,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -116,9 +118,7 @@ fn expression_unary_builders_produce_the_matching_unary_node(#[case] operation: 
         UnaryOperation::LogicalNot => !&operand,
     };
 
-    let ExpressionKind::Unary(node) = built.kind() else {
-        panic!("expected a unary node, got {built:?}");
-    };
+    let node = expect_unary(&built);
     assert_eq!(node.operation(), operation);
     assert!(Expression::ptr_eq(node.operand(), &operand));
 }
@@ -162,9 +162,7 @@ fn expression_binary_builders_produce_the_matching_binary_node(
 
     let built = builder.apply(&left, &right);
 
-    let ExpressionKind::Binary(node) = built.kind() else {
-        panic!("expected a binary node, got {built:?}");
-    };
+    let node = expect_binary(&built);
     assert_eq!(node.operation(), builder.operation());
     assert!(Expression::ptr_eq(node.left(), &left));
     assert!(Expression::ptr_eq(node.right(), &right));
@@ -408,9 +406,7 @@ fn expression_new_unary_lifts_every_operand_type(#[case] lift: LiftOperand) {
 
     let (built, operand) = lift(&identifier, &reference);
 
-    let ExpressionKind::Unary(node) = built.kind() else {
-        panic!("expected a unary node, got {built:?}");
-    };
+    let node = expect_unary(&built);
     assert_eq!(
         find_literal_variant(node.operand()),
         find_literal_variant(&operand)
@@ -427,9 +423,7 @@ fn expression_new_binary_shares_a_borrowed_operand() {
 
     let built = Expression::new_binary(BinaryOperation::Less, &x, &x);
 
-    let ExpressionKind::Binary(node) = built.kind() else {
-        panic!("expected a binary node, got {built:?}");
-    };
+    let node = expect_binary(&built);
     assert!(Expression::ptr_eq(node.left(), &x));
     assert!(Expression::ptr_eq(node.right(), &x));
 }
@@ -468,9 +462,7 @@ fn expression_binary_builder_takes_a_parsed_text_operand(
 
     let built = build_literal(1) + parsed;
 
-    let ExpressionKind::Binary(node) = built.kind() else {
-        panic!("expected a binary node, got {built:?}");
-    };
+    let node = expect_binary(&built);
     let ExpressionKind::Literal(right) = node.right().kind() else {
         panic!("expected a literal right operand, got {:?}", node.right());
     };
@@ -489,9 +481,7 @@ fn expression_floor_mod_builds_a_floor_mod_node() {
 
     let built = x.floor_mod(3);
 
-    let ExpressionKind::Binary(node) = built.kind() else {
-        panic!("expected a binary node, got {built:?}");
-    };
+    let node = expect_binary(&built);
     assert_eq!(node.operation(), BinaryOperation::FloorMod);
     assert!(Expression::ptr_eq(node.left(), &x));
     assert_eq!(node.right(), &build_literal(3));
@@ -506,9 +496,7 @@ fn expression_floor_mod_builds_a_floor_mod_node() {
 fn expression_div_operator_builds_true_division(#[case] build: fn() -> Expression) {
     let built = build();
 
-    let ExpressionKind::Binary(node) = built.kind() else {
-        panic!("expected a binary node, got {built:?}");
-    };
+    let node = expect_binary(&built);
     assert_eq!(node.operation(), BinaryOperation::Divide);
 }
 
@@ -524,13 +512,6 @@ fn build_through_named_builder(
         LogicalOperation::And => Expression::all(operands),
         LogicalOperation::Or => Expression::any(operands),
     }
-}
-
-fn expect_logical(expression: &Expression) -> &LogicalExpression {
-    let ExpressionKind::Logical(node) = expression.kind() else {
-        panic!("expected a logical node, got {expression:?}");
-    };
-    node
 }
 
 /// Test `all`, `any` and `new_logical` build one logical node sharing every
@@ -669,9 +650,7 @@ fn expression_not_operator_builds_logical_not() {
     let borrowed = !&p;
     let owned = !p.clone();
 
-    let ExpressionKind::Unary(node) = borrowed.kind() else {
-        panic!("expected a unary node, got {borrowed:?}");
-    };
+    let node = expect_unary(&borrowed);
     assert_eq!(node.operation(), UnaryOperation::LogicalNot);
     assert!(Expression::ptr_eq(node.operand(), &p));
     assert_eq!(owned, borrowed);
@@ -701,9 +680,7 @@ fn expression_piecewise_wraps_expression_operands_directly() {
 
     let built = Expression::piecewise([(&condition, &value)], &otherwise).expect("one case");
 
-    let ExpressionKind::Piecewise(node) = built.kind() else {
-        panic!("expected a piecewise node, got {built:?}");
-    };
+    let node = expect_piecewise(&built);
     assert!(Expression::ptr_eq(&node.cases()[0].0, &condition));
     assert!(Expression::ptr_eq(&node.cases()[0].1, &value));
     assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
@@ -723,9 +700,7 @@ fn expression_piecewise_keeps_multiple_cases_in_declared_order() {
     )
     .expect("two cases");
 
-    let ExpressionKind::Piecewise(node) = built.kind() else {
-        panic!("expected a piecewise node, got {built:?}");
-    };
+    let node = expect_piecewise(&built);
     assert_eq!(node.cases().len(), 2);
     assert!(Expression::ptr_eq(&node.cases()[0].0, &first_condition));
     assert!(Expression::ptr_eq(&node.cases()[1].0, &second_condition));
@@ -780,9 +755,7 @@ fn expression_piecewise_keeps_explicit_boolean_literal_operands() {
     let built =
         Expression::piecewise([(build_literal(true), &value)], &otherwise).expect("one case");
 
-    let ExpressionKind::Piecewise(node) = built.kind() else {
-        panic!("expected a piecewise node, got {built:?}");
-    };
+    let node = expect_piecewise(&built);
     assert!(Expression::ptr_eq(&node.cases()[0].1, &value));
     assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
 }
@@ -794,9 +767,7 @@ fn expression_piecewise_accepts_an_equals_condition() {
     let built =
         Expression::piecewise([(x.equals(0), 7), (x.less_equal(0), 8)], 9).expect("two cases");
 
-    let ExpressionKind::Piecewise(node) = built.kind() else {
-        panic!("expected a piecewise node, got {built:?}");
-    };
+    let node = expect_piecewise(&built);
     assert_eq!(node.cases()[0].0, x.equals(0));
 }
 
@@ -806,9 +777,7 @@ fn expression_call_returns_a_call_with_callee_and_arguments() {
 
     let built = Expression::call(BuiltinFunction::Max, [&first, &second]);
 
-    let ExpressionKind::Call(node) = built.kind() else {
-        panic!("expected a call node, got {built:?}");
-    };
+    let node = expect_call(&built);
     assert_eq!(node.callee(), &Callee::Builtin(BuiltinFunction::Max));
     assert_eq!(node.callee().name(), "max");
     assert_eq!(node.arguments().len(), 2);
@@ -823,9 +792,7 @@ fn expression_call_supports_zero_arguments() {
 
     let built = Expression::call(nullary.clone(), Vec::<Expression>::new());
 
-    let ExpressionKind::Call(node) = built.kind() else {
-        panic!("expected a call node, got {built:?}");
-    };
+    let node = expect_call(&built);
     assert_eq!(node.callee(), &Callee::Named(nullary));
     assert!(node.arguments().is_empty());
 }

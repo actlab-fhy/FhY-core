@@ -4,8 +4,9 @@ use std::sync::LazyLock;
 
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Callee, Decimal, Expression, ExpressionKind, LiteralValue,
-    LogicalOperation, UnaryOperation,
+    BigInt, BinaryExpression, BinaryOperation, CallExpression, Callee, Decimal, Expression,
+    ExpressionKind, LiteralValue, LogicalExpression, LogicalOperation, PiecewiseExpression,
+    UnaryExpression, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use proptest::num::f64 as f64_class;
@@ -37,6 +38,51 @@ pub(crate) fn expect_literal(expression: &Expression) -> &LiteralValue {
         panic!("expected a literal, got {expression:?}");
     };
     literal
+}
+
+/// Return the unary node `expression` holds, failing the test otherwise.
+#[must_use]
+pub(crate) fn expect_unary(expression: &Expression) -> &UnaryExpression {
+    let ExpressionKind::Unary(node) = expression.kind() else {
+        panic!("expected an unary node, got {expression:?}");
+    };
+    node
+}
+
+/// Return the binary node `expression` holds, failing the test otherwise.
+#[must_use]
+pub(crate) fn expect_binary(expression: &Expression) -> &BinaryExpression {
+    let ExpressionKind::Binary(node) = expression.kind() else {
+        panic!("expected a binary node, got {expression:?}");
+    };
+    node
+}
+
+/// Return the logical node `expression` holds, failing the test otherwise.
+#[must_use]
+pub(crate) fn expect_logical(expression: &Expression) -> &LogicalExpression {
+    let ExpressionKind::Logical(node) = expression.kind() else {
+        panic!("expected a logical node, got {expression:?}");
+    };
+    node
+}
+
+/// Return the piecewise node `expression` holds, failing the test otherwise.
+#[must_use]
+pub(crate) fn expect_piecewise(expression: &Expression) -> &PiecewiseExpression {
+    let ExpressionKind::Piecewise(node) = expression.kind() else {
+        panic!("expected a piecewise node, got {expression:?}");
+    };
+    node
+}
+
+/// Return the call node `expression` holds, failing the test otherwise.
+#[must_use]
+pub(crate) fn expect_call(expression: &Expression) -> &CallExpression {
+    let ExpressionKind::Call(node) = expression.kind() else {
+        panic!("expected a call node, got {expression:?}");
+    };
+    node
 }
 
 /// Return the literal expression `LiteralValue::parse_text` reads from
