@@ -1,9 +1,4 @@
-//! Serialization of expressions as a flat node table.
-//!
-//! An expression serializes as the list of its distinct nodes in post-order,
-//! each child referred to by its index in the list, so neither encoding nor
-//! decoding recurses once per tree level, the serde nesting depth is the
-//! same for every tree, and a subtree a DAG shares is written once.
+//! Serialization of expressions as a flat table of their distinct nodes.
 
 use std::collections::HashMap;
 
@@ -81,14 +76,12 @@ enum WireNodeRef<'a> {
     },
 }
 
-/// The whole table as it is read.
 #[derive(Deserialize)]
 #[serde(rename = "Expression", deny_unknown_fields)]
 struct ExpressionWire {
     nodes: Vec<WireNode>,
 }
 
-/// Return the table index of the node at `position`.
 fn to_wire_index(position: usize) -> u64 {
     u64::try_from(position).unwrap_or(u64::MAX)
 }
@@ -128,7 +121,8 @@ fn build_wire_node(node: &Expression, children: Vec<u64>) -> WireNodeRef<'_> {
     }
 }
 
-/// One step of encoding: visit a node, or write it once its children are.
+/// One step of encoding: visit a node, or write it once its children are
+/// written.
 enum EncodeStep<'a> {
     Visit(&'a Expression),
     Write(&'a Expression, usize),
@@ -216,11 +210,8 @@ struct DecodedNodes {
 
 impl DecodedNodes {
     /// Return the decoded node at `child`, referred to by node `index`,
-    /// marking it referenced.
-    ///
-    /// # Errors
-    ///
-    /// Returns the message for a child that does not precede node `index`.
+    /// marking it referenced, or the message for a child that does not
+    /// precede node `index`.
     fn take_child(&mut self, index: usize, child: u64) -> Result<Expression, String> {
         let position = usize::try_from(child)
             .ok()
@@ -234,12 +225,6 @@ impl DecodedNodes {
         Ok(self.nodes[position].clone())
     }
 
-    /// Return the decoded nodes at `children`, referred to by node `index`.
-    ///
-    /// # Errors
-    ///
-    /// Returns the message for the first child that does not precede node
-    /// `index`.
     fn take_children(&mut self, index: usize, children: &[u64]) -> Result<Vec<Expression>, String> {
         children
             .iter()
@@ -248,13 +233,8 @@ impl DecodedNodes {
     }
 }
 
-/// Build the expression node `index` of the table describes.
-///
-/// # Errors
-///
-/// Returns the message for a child that does not precede the node, a
-/// logical node of fewer than two operands, a piecewise of no cases, or a
-/// piecewise case condition that is a literal other than a Boolean.
+/// Build the expression node `index` of the table describes, or the message
+/// refusing it.
 fn decode_node(
     decoded: &mut DecodedNodes,
     index: usize,
@@ -322,13 +302,8 @@ fn decode_node(
     Ok(Expression::from_kind(kind))
 }
 
-/// Build the expression a table describes: its last node, over the nodes
-/// before it.
-///
-/// # Errors
-///
-/// Returns the message for an empty table, for a node [`decode_node`]
-/// refuses, or for a node other than the root that no later node refers to.
+/// Build the expression a table describes, its last node, or the message
+/// refusing the table.
 fn decode_table(wire: ExpressionWire) -> Result<Expression, String> {
     let count = wire.nodes.len();
     if count == 0 {
