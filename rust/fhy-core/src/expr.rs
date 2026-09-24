@@ -11,11 +11,11 @@ pub mod pattern;
 
 mod alpha;
 mod build;
+mod display;
 mod error;
 mod literal;
 mod node;
 mod operation;
-mod pprint;
 mod registration;
 mod screen;
 mod sort;
@@ -25,6 +25,9 @@ mod wire_name;
 
 pub use alpha::AlphaRenaming;
 pub use build::{IntoOperand, build_call, build_logical_and, build_logical_or, build_piecewise};
+pub use display::{
+    ExpressionDisplay, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation,
+};
 pub use error::{
     BooleanPosition, ExpressionBuildError, NonBooleanLogicalOperandError, NonInjectiveRenamingError,
 };
@@ -34,9 +37,6 @@ pub use node::{
     UnaryExpression,
 };
 pub use operation::{BinaryOperation, UnaryOperation};
-pub use pprint::{
-    ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation, format_expression,
-};
 pub use registration::register_expression_passes;
 pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
 pub use sort::FunctionSort;

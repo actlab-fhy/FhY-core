@@ -15,9 +15,9 @@ use std::fmt;
 
 use crate::identifier::Identifier;
 
+use super::display::{FormatOptions, IdentifierStyle};
 use super::node::Expression;
 use super::operation::BinaryOperation;
-use super::pprint::{FormatOptions, IdentifierStyle, format_expression};
 
 /// A node that could not be built because it would break a node invariant.
 ///
@@ -169,7 +169,7 @@ pub enum BooleanPosition {
 /// Carries the offending operand, the node that puts it in a Boolean
 /// position (none for [`BooleanPosition::PredicateRoot`]), and the position
 /// itself. `Display` names the position and writes the parent and the
-/// operand as [`format_expression`] does in [`Notation::Symbolic`] with
+/// operand as [`Expression::display`] does in [`Notation::Symbolic`] with
 /// [`IdentifierStyle::NameHintWithId`], so a tree of any depth displays
 /// without exhausting the thread's stack:
 ///
@@ -190,7 +190,6 @@ pub enum BooleanPosition {
 /// followed in every case by `; the expression is ill-typed and no symbolic
 /// backend lowers it faithfully`.
 ///
-/// [`format_expression`]: super::format_expression
 /// [`Notation::Symbolic`]: super::Notation::Symbolic
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonBooleanLogicalOperandError {
@@ -238,11 +237,11 @@ impl fmt::Display for NonBooleanLogicalOperandError {
         const NUMBER: &str = "which provably denotes a number";
         let options =
             FormatOptions::default().with_identifier_style(IdentifierStyle::NameHintWithId);
-        let operand = format_expression(&self.operand, options);
+        let operand = self.operand.display(options);
         let parent = self
             .parent
             .as_ref()
-            .map(|parent| format_expression(parent, options))
+            .map(|parent| parent.display(options).to_string())
             .unwrap_or_default();
         match self.position {
             BooleanPosition::NegatedOperand => write!(

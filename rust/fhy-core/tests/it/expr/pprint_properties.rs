@@ -12,9 +12,7 @@ use crate::support::expression as expression_support;
 use expression_support::{
     IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
 };
-use fhy_core::expr::{
-    Expression, ExpressionKind, FormatOptions, IdentifierStyle, Notation, format_expression,
-};
+use fhy_core::expr::{Expression, ExpressionKind, FormatOptions, IdentifierStyle, Notation};
 use proptest::prelude::*;
 
 /// Both notations.
@@ -77,8 +75,8 @@ proptest! {
 .with_notation(notation)
 .with_identifier_style(identifiers);
             prop_assert_eq!(
-                format_expression(&restored, options),
-                format_expression(&expression, options),
+                restored.display(options).to_string(),
+                expression.display(options).to_string(),
                 "under {:?}", options
             );
         }
@@ -91,10 +89,7 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         for notation in NOTATIONS {
-            let text = format_expression(
-                &expression,
-                FormatOptions::default().with_notation(notation),
-            );
+            let text = expression.display(FormatOptions::default().with_notation(notation)).to_string();
 
             for identifier in expression.free_identifiers() {
                 prop_assert!(
@@ -112,12 +107,9 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         for notation in NOTATIONS {
-            let text = format_expression(
-                &expression,
-                FormatOptions::default()
+            let text = expression.display(FormatOptions::default()
 .with_notation(notation)
-.with_identifier_style(IdentifierStyle::NameHintWithId),
-            );
+.with_identifier_style(IdentifierStyle::NameHintWithId)).to_string();
 
             for identifier in expression.free_identifiers() {
                 let written = format!("{}::{}", identifier.name_hint(), identifier.id());
@@ -134,16 +126,10 @@ proptest! {
         expression in build_expression_strategy(true),
     ) {
         for notation in NOTATIONS {
-            let with_ids = format_expression(
-                &expression,
-                FormatOptions::default()
+            let with_ids = expression.display(FormatOptions::default()
 .with_notation(notation)
-.with_identifier_style(IdentifierStyle::NameHintWithId),
-            );
-            let name_hints = format_expression(
-                &expression,
-                FormatOptions::default().with_notation(notation),
-            );
+.with_identifier_style(IdentifierStyle::NameHintWithId)).to_string();
+            let name_hints = expression.display(FormatOptions::default().with_notation(notation)).to_string();
 
             let stripped = POOL.iter().fold(with_ids, |text, identifier| {
                 text.replace(
@@ -165,10 +151,7 @@ proptest! {
         let counts = count_inner_nodes(&expression);
         let inner_nodes = counts.unary + counts.binary + counts.piecewise + counts.call;
 
-        let text = format_expression(
-            &expression,
-            FormatOptions::default().with_notation(Notation::Functional),
-        );
+        let text = expression.display(FormatOptions::default().with_notation(Notation::Functional)).to_string();
 
         prop_assert_eq!(count_occurrences(&text, '('), inner_nodes);
         prop_assert_eq!(count_occurrences(&text, ')'), inner_nodes);
@@ -184,10 +167,7 @@ proptest! {
         let counts = count_inner_nodes(&expression);
         let parenthesized = counts.unary + counts.binary + counts.call;
 
-        let text = format_expression(
-            &expression,
-            FormatOptions::default().with_notation(Notation::Symbolic),
-        );
+        let text = expression.display(FormatOptions::default().with_notation(Notation::Symbolic)).to_string();
 
         prop_assert_eq!(count_occurrences(&text, '('), parenthesized);
         prop_assert_eq!(count_occurrences(&text, ')'), parenthesized);
@@ -208,7 +188,7 @@ proptest! {
             let options = FormatOptions::default()
 .with_notation(notation)
 .with_identifier_style(identifiers);
-            prop_assert_eq!(format_expression(&literal, options), expected.as_str());
+            prop_assert_eq!(literal.display(options).to_string(), expected.as_str());
         }
     }
 }

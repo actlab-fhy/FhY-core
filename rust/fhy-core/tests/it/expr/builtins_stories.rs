@@ -21,7 +21,7 @@ use fhy_core::expr::builtins::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralValue,
-    Notation, UnaryOperation, build_piecewise, format_expression,
+    Notation, UnaryOperation, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -660,14 +660,12 @@ fn composed_function_body_prints_as_its_documented_text(
 ) {
     let body = find_composed(name).body();
 
-    let symbolic = format_expression(
-        body,
-        FormatOptions::default().with_notation(Notation::Symbolic),
-    );
-    let functional = format_expression(
-        body,
-        FormatOptions::default().with_notation(Notation::Functional),
-    );
+    let symbolic = body
+        .display(FormatOptions::default().with_notation(Notation::Symbolic))
+        .to_string();
+    let functional = body
+        .display(FormatOptions::default().with_notation(Notation::Functional))
+        .to_string();
 
     assert_eq!(symbolic, expected_symbolic);
     assert_eq!(functional, expected_functional);

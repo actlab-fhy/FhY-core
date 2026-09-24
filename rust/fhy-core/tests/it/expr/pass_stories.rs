@@ -22,7 +22,7 @@ use fhy_core::expr::pattern::{
 };
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionBuildError, ExpressionPrettyFormatter, FormatOptions,
-    IdentifierStyle, Notation, format_expression, register_expression_passes,
+    IdentifierStyle, Notation, register_expression_passes,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
@@ -458,7 +458,7 @@ fn build_every_kind(x: &Expression) -> Expression {
     )
 }
 
-/// Test executing the formatter gives the text `format_expression` gives
+/// Test executing the formatter gives the text `Expression::display` gives
 /// under the same options.
 #[rstest]
 #[case::symbolic_name_hint(FormatOptions::default())]
@@ -471,7 +471,7 @@ fn build_every_kind(x: &Expression) -> Expression {
         .with_notation(Notation::Functional)
         .with_identifier_style(IdentifierStyle::NameHintWithId)
 )]
-fn expression_pretty_formatter_execute_matches_format_expression(#[case] options: FormatOptions) {
+fn expression_pretty_formatter_execute_matches_display(#[case] options: FormatOptions) {
     let (_, x) = build_identifier("x");
     let expression = build_every_kind(&x);
     let mut formatter = ExpressionPrettyFormatter::new(options);
@@ -480,7 +480,7 @@ fn expression_pretty_formatter_execute_matches_format_expression(#[case] options
         .execute(&expression)
         .expect("formatting cannot fail");
 
-    assert_eq!(outcome.output(), &format_expression(&expression, options));
+    assert_eq!(outcome.output(), &expression.display(options).to_string());
 }
 
 /// Test the default formatter writes symbolic notation without ids.

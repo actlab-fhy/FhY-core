@@ -344,8 +344,8 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 ///
 /// Cloning bumps a reference count and shares the node. `==` and `Hash`
 /// compare trees structurally; [`ptr_eq`](Self::ptr_eq) compares handles.
-/// There is no `Display`: the printer formats expressions, and `Debug`
-/// shows the node structure.
+/// `Display` writes the text [`display`](Self::display) writes under the
+/// default options, and `Debug` shows the node structure.
 ///
 /// Dropping, comparing, hashing, substituting into, collecting the free
 /// identifiers of, and screening a tree keep their pending nodes on the

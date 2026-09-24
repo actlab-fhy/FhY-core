@@ -13,7 +13,7 @@ use expression_support::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue, Notation,
-    UnaryOperation, build_call, build_logical_and, build_piecewise, format_expression,
+    UnaryOperation, build_call, build_logical_and, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -33,12 +33,16 @@ fn build_id_options(notation: Notation) -> FormatOptions {
 
 /// Return `expression` printed symbolically with name hints only.
 fn format_symbolic(expression: &Expression) -> String {
-    format_expression(expression, build_name_hint_options(Notation::Symbolic))
+    expression
+        .display(build_name_hint_options(Notation::Symbolic))
+        .to_string()
 }
 
 /// Return `expression` printed functionally with name hints only.
 fn format_functional(expression: &Expression) -> String {
-    format_expression(expression, build_name_hint_options(Notation::Functional))
+    expression
+        .display(build_name_hint_options(Notation::Functional))
+        .to_string()
 }
 
 /// Return the `name::id` text expected for `identifier` when ids are shown.
@@ -152,7 +156,7 @@ fn format_options_with_identifier_style_sets_only_the_style(#[case] style: Ident
 fn format_expression_default_options_write_name_hint_only() {
     let (_, name_only) = build_identifier("name_only");
 
-    let text = format_expression(&name_only, FormatOptions::default());
+    let text = name_only.display(FormatOptions::default()).to_string();
 
     assert_eq!(text, "name_only");
 }
@@ -162,9 +166,48 @@ fn format_expression_default_options_write_name_hint_only() {
 fn format_expression_default_options_write_symbolic_notation() {
     let sum = build_literal(1) + 2;
 
-    let text = format_expression(&sum, FormatOptions::default());
+    let text = sum.display(FormatOptions::default()).to_string();
 
     assert_eq!(text, "(1 + 2)");
+}
+
+/// Test an expression's own `Display` writes what its display under the
+/// default options writes.
+#[rstest]
+#[case::identifier(|| build_identifier("x").1)]
+#[case::sum(|| build_identifier("x").1 + 1)]
+#[case::logical_not(|| build_literal(true).logical_not())]
+#[case::piecewise(|| {
+    build_piecewise([(build_identifier("p").1, 1)], build_literal(2.5))
+        .expect("an identifier condition is accepted")
+})]
+#[case::call(|| build_call("f", [build_identifier("x").1, build_literal(1)]).expect("a named call"))]
+fn expression_display_equals_display_with_default_options(#[case] build: fn() -> Expression) {
+    let expression = build();
+
+    let own = expression.to_string();
+    let with_default_options = expression.display(FormatOptions::default()).to_string();
+
+    assert_eq!(own, with_default_options);
+}
+
+/// Test a display writes through the formatter it is given, so it composes
+/// with other text in one `format!` call.
+#[test]
+fn expression_display_writes_into_the_surrounding_format() {
+    let (_, x) = build_identifier("x");
+    let sum = &x + 1;
+
+    let text = format!(
+        "[{}|{sum}]",
+        sum.display(build_id_options(Notation::Functional))
+    );
+
+    let id = match x.kind() {
+        fhy_core::expr::ExpressionKind::Identifier(identifier) => identifier.id(),
+        _ => unreachable!("x is an identifier reference"),
+    };
+    assert_eq!(text, format!("[(add x::{id} 1)|(x + 1)]"));
 }
 
 // =============================================================================
@@ -432,7 +475,9 @@ fn format_expression_writes_int_float_and_decimal_one_alike() {
 fn format_expression_with_ids_writes_name_hint_and_id() {
     let (foo, reference) = build_identifier("foo");
 
-    let text = format_expression(&reference, build_id_options(Notation::Symbolic));
+    let text = reference
+        .display(build_id_options(Notation::Symbolic))
+        .to_string();
 
     assert_eq!(text, format!("foo::{}", foo.id()));
 }
@@ -443,7 +488,9 @@ fn format_expression_with_ids_applies_in_functional_notation() {
     let (x, reference) = build_identifier("x");
     let sum = &reference + 1;
 
-    let text = format_expression(&sum, build_id_options(Notation::Functional));
+    let text = sum
+        .display(build_id_options(Notation::Functional))
+        .to_string();
 
     assert_eq!(text, format!("(add {} 1)", write_name_hint_with_id(&x)));
 }
@@ -455,7 +502,9 @@ fn format_expression_with_ids_reaches_piecewise_conditions() {
     let piecewise =
         build_piecewise([(reference, 1)], 0).expect("an identifier condition is accepted");
 
-    let text = format_expression(&piecewise, build_id_options(Notation::Symbolic));
+    let text = piecewise
+        .display(build_id_options(Notation::Symbolic))
+        .to_string();
 
     assert_eq!(
         text,
@@ -472,7 +521,9 @@ fn format_expression_with_ids_reaches_call_arguments() {
     let (argument, reference) = build_identifier("arg");
     let call = build_call("nested_show_id", [reference]).expect("a named call");
 
-    let text = format_expression(&call, build_id_options(Notation::Symbolic));
+    let text = call
+        .display(build_id_options(Notation::Symbolic))
+        .to_string();
 
     assert_eq!(
         text,
@@ -499,8 +550,10 @@ fn format_expression_with_ids_reaches_every_node_kind() {
     );
 
     let texts = (
-        format_expression(&tree, build_id_options(Notation::Symbolic)),
-        format_expression(&tree, build_id_options(Notation::Functional)),
+        tree.display(build_id_options(Notation::Symbolic))
+            .to_string(),
+        tree.display(build_id_options(Notation::Functional))
+            .to_string(),
     );
 
     assert_eq!(
@@ -524,7 +577,9 @@ fn format_expression_tells_same_named_identifiers_apart_only_with_ids() {
 
     let texts = (
         format_symbolic(&difference),
-        format_expression(&difference, build_id_options(Notation::Symbolic)),
+        difference
+            .display(build_id_options(Notation::Symbolic))
+            .to_string(),
     );
 
     assert_eq!(
@@ -554,7 +609,9 @@ fn format_expression_writes_name_hints_raw(#[case] name_hint: &str) {
 
     let texts = (
         format_functional(&reference),
-        format_expression(&reference, build_id_options(Notation::Functional)),
+        reference
+            .display(build_id_options(Notation::Functional))
+            .to_string(),
     );
 
     assert_eq!(
@@ -894,5 +951,29 @@ fn format_expression_prints_a_deep_tree_on_a_small_stack(#[case] shape: DeepShap
             functional == expected[1],
             "functional text differs for {shape:?}"
         );
+    });
+}
+
+/// Test an expression's own `Display` of a tree [`SMALL_STACK_DEPTH`]
+/// levels deep completes on a thread stack far too small for one frame per
+/// level.
+#[rstest]
+#[case::left_sum(DeepShape::LeftSum)]
+#[case::right_conjunction(DeepShape::RightConjunction)]
+#[case::piecewise_in_condition(DeepShape::PiecewiseInCondition)]
+#[case::call_in_first_argument(DeepShape::CallInFirstArgument)]
+fn expression_display_of_a_deep_tree_completes_on_a_small_stack(#[case] shape: DeepShape) {
+    run_on_small_stack(move || {
+        let tree = shape.build();
+        let [(opening, closing), _] = shape.expected_pieces();
+        let expected = format!(
+            "{}x{}",
+            opening.repeat(SMALL_STACK_DEPTH),
+            closing.repeat(SMALL_STACK_DEPTH)
+        );
+
+        let text = tree.to_string();
+
+        assert!(text == expected, "text differs for {shape:?}");
     });
 }

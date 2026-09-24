@@ -1,15 +1,18 @@
 //! Text rendering of expressions in symbolic or functional notation.
 //!
-//! [`format_expression`] renders an [`Expression`] as text under
+//! [`Expression::display`] renders an [`Expression`] as text under
 //! [`FormatOptions`]: a [`Notation`] choosing between infix operator symbols
 //! and prefix operation names, and an [`IdentifierStyle`] choosing whether an
-//! identifier reference shows its id. [`ExpressionPrettyFormatter`] renders
-//! it as a compiler pass. Every unary and binary node is
+//! identifier reference shows its id. The [`ExpressionDisplay`] it returns
+//! implements [`Display`](fmt::Display), and `Expression`'s own `Display`
+//! uses the default options. [`ExpressionPrettyFormatter`] renders an
+//! expression as a compiler pass. Every unary and binary node is
 //! parenthesized, so the text shows the tree's shape exactly and needs no
 //! precedence rules. The text is meant for people: it is not parsed back,
 //! and distinct trees may print alike (the integer `1` and the float `1.0`,
 //! or two identifiers with the same name hint when ids are hidden).
 
+use std::fmt;
 use std::iter;
 
 use crate::identifier::Identifier;
@@ -33,14 +36,16 @@ fn schedule<'a>(pending: &mut Vec<Step<'a>>, steps: impl IntoIterator<Item = Ste
     pending[start..].reverse();
 }
 
-/// Write `identifier` to `text` in `style`.
-fn write_identifier(text: &mut String, identifier: &Identifier, style: IdentifierStyle) {
-    text.push_str(identifier.name_hint());
+/// Write `identifier` to `f` in `style`.
+fn write_identifier(
+    f: &mut fmt::Formatter<'_>,
+    identifier: &Identifier,
+    style: IdentifierStyle,
+) -> fmt::Result {
     match style {
-        IdentifierStyle::NameHint => {}
+        IdentifierStyle::NameHint => f.write_str(identifier.name_hint()),
         IdentifierStyle::NameHintWithId => {
-            text.push_str("::");
-            text.push_str(&identifier.id().to_string());
+            write!(f, "{}::{}", identifier.name_hint(), identifier.id())
         }
     }
 }
@@ -213,7 +218,7 @@ pub enum IdentifierStyle {
     NameHintWithId,
 }
 
-/// The options of [`format_expression`].
+/// The options of [`Expression::display`].
 ///
 /// The default is [`Notation::Symbolic`] with [`IdentifierStyle::NameHint`];
 /// [`with_notation`](Self::with_notation) and
@@ -269,7 +274,7 @@ impl FormatOptions {
 }
 
 /// A compiler pass formatting an expression as text under
-/// [`FormatOptions`], as [`format_expression`] does.
+/// [`FormatOptions`], as [`Expression::display`] does.
 ///
 /// Every run counts as a change, since its text output is never its input
 /// expression. The default formatter uses the default options.
@@ -313,7 +318,7 @@ impl ExpressionPrettyFormatter {
 
 impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
     fn run(&mut self, ir: &Expression, _cx: &mut PassContext<'_>) -> Result<String, PassFailure> {
-        Ok(format_expression(ir, self.options))
+        Ok(ir.display(self.options).to_string())
     }
 
     fn did_change(&mut self, input: &Expression, output: &String) -> Result<bool, PassFailure> {
@@ -322,78 +327,124 @@ impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
     }
 }
 
-/// Write a leaf `node` to `text`, or schedule the pieces of an inner `node`
+/// Write a leaf `node` to `f`, or schedule the pieces of an inner `node`
 /// on `pending`.
 fn print_node<'a>(
     node: &'a Expression,
     options: FormatOptions,
-    text: &mut String,
+    f: &mut fmt::Formatter<'_>,
     pending: &mut Vec<Step<'a>>,
-) {
+) -> fmt::Result {
     let notation = options.notation;
     match node.kind() {
         ExpressionKind::Identifier(identifier) => {
-            write_identifier(text, identifier, options.identifier_style);
+            write_identifier(f, identifier, options.identifier_style)?;
         }
-        ExpressionKind::Literal(value) => text.push_str(&value.to_string()),
+        ExpressionKind::Literal(value) => write!(f, "{value}")?,
         ExpressionKind::Unary(unary) => schedule_unary(pending, unary, notation),
         ExpressionKind::Binary(binary) => schedule_binary(pending, binary, notation),
         ExpressionKind::Piecewise(piecewise) => schedule_piecewise(pending, piecewise, notation),
         ExpressionKind::Call(call) => schedule_call(pending, call, notation),
     }
+    Ok(())
 }
 
-/// Render `expression` as text under `options`.
-///
-/// Each node is written as follows, in [`Notation::Symbolic`] and then in
-/// [`Notation::Functional`]:
-///
-/// | Node | Symbolic | Functional |
-/// |---|---|---|
-/// | unary | `(` symbol operand `)`: `(-x)`, `(+x)`, `(!p)` | `(negate x)`, `(positive x)`, `(logical_not p)` |
-/// | binary | `(left symbol right)`: `(x // 2)` | `(floor_divide x 2)` |
-/// | piecewise | `{v0 if c0; v1 if c1; o otherwise}` | `(piecewise c0 v0 c1 v1 o)` |
-/// | call | `f(a, b)`, `f()` | `(f a b)`, `(f)` |
-///
-/// The symbols and names are the operations'
-/// [`symbol`](super::BinaryOperation::symbol) and
-/// [`as_str`](super::BinaryOperation::as_str) texts. Cases are written in
-/// order, then the otherwise branch; arguments in order.
-///
-/// A literal is written as its [`Display`](std::fmt::Display) text in both
-/// notations (`true`, `-1`, `10000000000000000`, `NaN`, `1.5`); a unary
-/// node over a negative literal therefore reads `(--1)`. An identifier reference is
-/// written as its name hint, or as `name::id` under
-/// [`IdentifierStyle::NameHintWithId`], in both notations and with no
-/// quoting or escaping of the name hint.
-///
-/// Formatting does not recurse, so a tree of any depth formats without
-/// exhausting the thread's stack.
-///
-/// # Examples
-///
-/// ```
-/// use fhy_core::identifier::Identifier;
-/// use fhy_core::expr::{
-///     Expression, FormatOptions, Notation, format_expression,
-/// };
-///
-/// let x = Expression::from(Identifier::new("x"));
-/// let tree = (&x + 1) * 2;
-///
-/// assert_eq!(format_expression(&tree, FormatOptions::default()), "((x + 1) * 2)");
-/// let functional = FormatOptions::default().with_notation(Notation::Functional);
-/// assert_eq!(format_expression(&tree, functional), "(multiply (add x 1) 2)");
-/// ```
-#[must_use]
-pub fn format_expression(expression: &Expression, options: FormatOptions) -> String {
-    let mut text = String::new();
+/// Write `expression` to `f` under `options`, from an explicit work stack.
+fn write_expression(
+    expression: &Expression,
+    options: FormatOptions,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
     let mut pending = vec![Step::Print(expression)];
     while let Some(step) = pending.pop() {
         match step {
-            Step::Write(piece) => text.push_str(piece),
-            Step::Print(node) => print_node(node, options, &mut text, &mut pending),
+            Step::Write(piece) => f.write_str(piece)?,
+            Step::Print(node) => print_node(node, options, f, &mut pending)?,
         }
     }
-    text
+    Ok(())
+}
+
+/// An expression rendered as text under [`FormatOptions`]; what
+/// [`Expression::display`] returns.
+///
+/// Its [`Display`](fmt::Display) writes the text straight into the
+/// formatter, with no intermediate string per node.
+#[derive(Debug, Clone, Copy)]
+pub struct ExpressionDisplay<'a> {
+    expression: &'a Expression,
+    options: FormatOptions,
+}
+
+impl fmt::Display for ExpressionDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_expression(self.expression, self.options, f)
+    }
+}
+
+impl Expression {
+    /// Return the expression rendered as text under `options`, as a value
+    /// implementing [`Display`](fmt::Display).
+    ///
+    /// Each node is written as follows, in [`Notation::Symbolic`] and then
+    /// in [`Notation::Functional`]:
+    ///
+    /// | Node | Symbolic | Functional |
+    /// |---|---|---|
+    /// | unary | `(` symbol operand `)`: `(-x)`, `(+x)`, `(!p)` | `(negate x)`, `(positive x)`, `(logical_not p)` |
+    /// | binary | `(left symbol right)`: `(x // 2)` | `(floor_divide x 2)` |
+    /// | piecewise | `{v0 if c0; v1 if c1; o otherwise}` | `(piecewise c0 v0 c1 v1 o)` |
+    /// | call | `f(a, b)`, `f()` | `(f a b)`, `(f)` |
+    ///
+    /// The symbols and names are the operations'
+    /// [`symbol`](super::BinaryOperation::symbol) and
+    /// [`as_str`](super::BinaryOperation::as_str) texts. Cases are written
+    /// in order, then the otherwise branch; arguments in order.
+    ///
+    /// A literal is written as its [`Display`](fmt::Display) text in both
+    /// notations (`true`, `-1`, `10000000000000000`, `NaN`, `1.5`), so a
+    /// negative literal operand stays bare: `(-1 ** 2)` is the literal `-1`
+    /// raised to `2`, and `((-1) ** 2)` a negation raised to `2`, and a unary
+    /// node over a negative literal reads `(--1)`. An identifier reference is
+    /// written as its name hint, or as `name::id` under
+    /// [`IdentifierStyle::NameHintWithId`], in both notations and with no
+    /// quoting or escaping of the name hint.
+    ///
+    /// Writing does not recurse, so a tree of any depth displays without
+    /// exhausting the thread's stack. A subtree occurring in several places
+    /// is written at every occurrence, so the text of a DAG can be
+    /// exponential in its depth.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{Expression, FormatOptions, Notation};
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let tree = (&x + 1) * 2;
+    ///
+    /// assert_eq!(tree.display(FormatOptions::default()).to_string(), "((x + 1) * 2)");
+    /// let functional = FormatOptions::default().with_notation(Notation::Functional);
+    /// assert_eq!(tree.display(functional).to_string(), "(multiply (add x 1) 2)");
+    /// assert_eq!(tree.to_string(), "((x + 1) * 2)");
+    /// ```
+    #[must_use]
+    pub fn display(&self, options: FormatOptions) -> ExpressionDisplay<'_> {
+        ExpressionDisplay {
+            expression: self,
+            options,
+        }
+    }
+}
+
+/// The full text of the expression under the default [`FormatOptions`], as
+/// [`Expression::display`] writes it.
+///
+/// A subtree occurring in several places is written at every occurrence, so
+/// the text of a DAG can be exponential in its depth.
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_expression(self, FormatOptions::default(), f)
+    }
 }
