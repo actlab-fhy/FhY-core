@@ -1,14 +1,17 @@
 //! Rewrite rules and the bottom-up rewrite walk.
 //!
-//! A [`RewriteRule`] pairs a [`Pattern`] with a rewrite that builds a
-//! replacement from the match's [`MatchBindings`], optionally behind a guard
-//! and under a name. [`apply_rewrite_rule`] tries one rule at the root of an
-//! expression; [`apply_rewrite_rules`] walks a whole tree bottom-up once,
-//! trying a list of rules at every node, and reports the rewritten tree,
-//! whether it differs from the input, and which rules fired.
+//! A [`Rule`] is a rewrite tried at the root of one expression. A
+//! [`RewriteRule`] is the rule built from a [`Pattern`] and a rewrite that
+//! builds a replacement from the match's [`MatchBindings`], optionally behind
+//! guards and under a name; any other type can implement [`Rule`] itself.
+//! [`RewriteRule::apply`] tries one rule at the root of an expression;
+//! [`apply_rewrite_rules`] walks a whole tree bottom-up once, trying a list
+//! of rules at every node, and reports the rewritten tree, whether it
+//! differs from the input, and which rules fired.
 //! [`RewriteRuleApplier`](crate::expr::passes::RewriteRuleApplier) is the
 //! same walk as a compiler pass.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -19,11 +22,96 @@ use super::super::node::Expression;
 use super::matching::{CallbackError, MatchBindings, Pattern};
 use crate::tree::{NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree};
 
-/// A rewrite: the replacement built from a match's bindings.
-type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync>;
+/// A rewrite: the replacement built from a match's bindings, or `None` to
+/// decline.
+type RewriteFn =
+    Arc<dyn Fn(&MatchBindings) -> Result<Option<Expression>, CallbackError> + Send + Sync>;
 
 /// A guard: whether a rule may fire on a match's bindings.
 type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
+
+/// A rewrite tried at the root of one expression.
+///
+/// [`apply_rewrite_rules`] and
+/// [`RewriteRuleApplier`](crate::expr::passes::RewriteRuleApplier) take a
+/// list of any one rule type; a list of `Box<dyn Rule>` mixes rule types.
+/// [`RewriteRule`] is the rule built from a pattern; a rule that borrows
+/// context, or that needs no pattern, implements the trait on its own type.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashMap;
+///
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::expr::{Expression, ExpressionKind, LiteralValue};
+/// use fhy_core::expr::pattern::{CallbackError, Rule, apply_rewrite_rules};
+///
+/// /// Replaces each known identifier with its value.
+/// struct Substitute<'v>(&'v HashMap<Identifier, i64>);
+///
+/// impl Rule for Substitute<'_> {
+///     fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+///         let ExpressionKind::Identifier(identifier) = expression.kind() else {
+///             return Ok(None);
+///         };
+///         Ok(self.0.get(identifier).map(|value| Expression::from(LiteralValue::from(*value))))
+///     }
+/// }
+///
+/// let a = Identifier::new("a");
+/// let values = HashMap::from([(a.clone(), 2)]);
+///
+/// let outcome = apply_rewrite_rules(&(Expression::from(a) + 1), &[Substitute(&values)])?;
+///
+/// assert_eq!(outcome.output(), &(Expression::from(LiteralValue::from(2)) + 1));
+/// # Ok::<(), fhy_core::expr::pattern::RewriteError>(())
+/// ```
+pub trait Rule {
+    /// Return the replacement for `expression`, or `Ok(None)` to decline.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error to stop the walk trying the rule;
+    /// [`apply_rewrite_rules`] reports it as [`RewriteError::Callback`].
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError>;
+
+    /// Return the rule's name, used in firings and errors, or `None` for an
+    /// unnamed rule. By default, `None`.
+    fn name(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl<R: Rule + ?Sized> Rule for &R {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+        (**self).apply(expression)
+    }
+
+    fn name(&self) -> Option<&str> {
+        (**self).name()
+    }
+}
+
+impl<R: Rule + ?Sized> Rule for Box<R> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+        (**self).apply(expression)
+    }
+
+    fn name(&self) -> Option<&str> {
+        (**self).name()
+    }
+}
+
+impl<R: Rule + ?Sized> Rule for Arc<R> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+        (**self).apply(expression)
+    }
+
+    fn name(&self) -> Option<&str> {
+        (**self).name()
+    }
+}
 
 /// Return the position of the child that `error` refuses, or `None` when
 /// the error names no single child.
@@ -49,23 +137,34 @@ fn find_last_replaced_child<'e>(
 
 /// The rewriter behind [`apply_rewrite_rules`]: tries the rules in order at
 /// each node and records every firing.
-#[derive(Debug)]
-struct RuleApplier<'r> {
-    rules: &'r [RewriteRule],
+struct RuleApplier<'r, R> {
+    rules: &'r [R],
+    /// The name of each rule, converted on its first firing or failure.
+    names: Vec<OnceCell<Option<Arc<str>>>>,
     fired: Vec<FiredRule>,
     /// Each replacement a rule returned, by its identity, with the position
     /// of that rule. Holding the replacement keeps its identity unique.
     replacements: HashMap<NodeIdentity, (Expression, usize)>,
 }
 
-impl<'r> RuleApplier<'r> {
+impl<'r, R: Rule> RuleApplier<'r, R> {
     /// Create the applier of `rules`.
-    fn new(rules: &'r [RewriteRule]) -> Self {
+    fn new(rules: &'r [R]) -> Self {
         Self {
             rules,
+            names: rules.iter().map(|_| OnceCell::new()).collect(),
             fired: Vec::new(),
             replacements: HashMap::new(),
         }
+    }
+
+    /// Return the name of the rule at `rule_index`, shared by every firing
+    /// and error of the rule.
+    fn rule_name(&self, rule_index: usize) -> Option<Arc<str>> {
+        let rule = &self.rules[rule_index];
+        self.names[rule_index]
+            .get_or_init(|| rule.name().map(Arc::from))
+            .clone()
     }
 
     /// Return the position of the rule responsible for `rewritten`, which
@@ -112,7 +211,7 @@ impl<'r> RuleApplier<'r> {
     }
 }
 
-impl Rewriter<Expression> for RuleApplier<'_> {
+impl<R: Rule> Rewriter<Expression> for RuleApplier<'_, R> {
     type Error = RewriteError;
 
     fn rewrite(
@@ -121,16 +220,15 @@ impl Rewriter<Expression> for RuleApplier<'_> {
         _cx: &mut (),
     ) -> Result<Option<Expression>, RewriteError> {
         for (rule_index, rule) in self.rules.iter().enumerate() {
-            let replacement =
-                apply_rewrite_rule(rule, node).map_err(|source| RewriteError::Callback {
-                    rule_index,
-                    rule_name: rule.name.clone(),
-                    source,
-                })?;
+            let replacement = rule.apply(node).map_err(|source| RewriteError::Callback {
+                rule_index,
+                rule_name: self.rule_name(rule_index),
+                source,
+            })?;
             if let Some(expression) = replacement {
                 self.fired.push(FiredRule {
                     rule_index,
-                    name: rule.name.clone(),
+                    name: self.rule_name(rule_index),
                 });
                 self.replacements
                     .insert(expression.identity(), (expression.clone(), rule_index));
@@ -149,10 +247,7 @@ pub(in crate::expr) struct RuleRun {
 }
 
 /// Rewrite `expression` bottom-up once with `rules`.
-pub(in crate::expr) fn run_rewrite_rules(
-    expression: &Expression,
-    rules: &[RewriteRule],
-) -> RuleRun {
+pub(in crate::expr) fn run_rewrite_rules<R: Rule>(expression: &Expression, rules: &[R]) -> RuleRun {
     let mut applier = RuleApplier::new(rules);
     let output = rewrite_tree(&mut applier, expression, &mut ()).map_err(|error| match error {
         RewriteTreeError::Rewrite(error) => error,
@@ -164,7 +259,7 @@ pub(in crate::expr) fn run_rewrite_rules(
             let rule_index = applier.find_blamed_rule(&node, &children, &source);
             RewriteError::Rebuild {
                 rule_index,
-                rule_name: rules[rule_index].name.clone(),
+                rule_name: applier.rule_name(rule_index),
                 source,
             }
         }
@@ -179,17 +274,18 @@ pub(in crate::expr) fn run_rewrite_rules(
 /// and named.
 ///
 /// A rule fires on an expression when its pattern matches the expression at
-/// the root and its guard, if any, returns `Ok(true)` for the match's
-/// bindings; the rewrite then builds the replacement from those bindings.
-/// Cloning shares the callbacks. Rules have no equality: callbacks cannot
-/// be compared.
+/// the root, every guard returns `Ok(true)` for the match's bindings, and
+/// the rewrite returns a replacement. A rule built with
+/// [`new`](Self::new) always returns one; a rule built with
+/// [`new_partial`](Self::new_partial) may decline. Cloning shares the
+/// callbacks. Rules have no equality: callbacks cannot be compared.
 ///
 /// # Examples
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::expr::{BinaryOperation, Expression};
-/// use fhy_core::expr::pattern::{Capture, Pattern, RewriteRule, apply_rewrite_rule};
+/// use fhy_core::expr::pattern::{Capture, Pattern, RewriteRule};
 ///
 /// // `x + 0 -> x`
 /// let x = Capture::new("x");
@@ -198,7 +294,7 @@ pub(in crate::expr) fn run_rewrite_rules(
 ///     .with_name("x + 0 -> x");
 /// let a = Expression::from(Identifier::new("a"));
 ///
-/// let rewritten = apply_rewrite_rule(&rule, &(&a + 0))?;
+/// let rewritten = rule.apply(&(&a + 0))?;
 ///
 /// assert!(rewritten.is_some_and(|result| Expression::ptr_eq(&result, &a)));
 /// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
@@ -206,47 +302,57 @@ pub(in crate::expr) fn run_rewrite_rules(
 #[derive(Clone)]
 pub struct RewriteRule {
     pattern: Pattern,
+    guards: Vec<GuardFn>,
     rewrite: RewriteFn,
-    guard: Option<GuardFn>,
     name: Option<Arc<str>>,
 }
 
 impl RewriteRule {
     /// Build an unguarded, unnamed rule rewriting what `pattern` matches
-    /// with `rewrite`.
+    /// with `rewrite`, which always returns a replacement.
     #[must_use]
     pub fn new<F>(pattern: Pattern, rewrite: F) -> Self
     where
         F: Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync + 'static,
     {
+        Self::new_partial(pattern, move |bindings| rewrite(bindings).map(Some))
+    }
+
+    /// Build an unguarded, unnamed rule rewriting what `pattern` matches
+    /// with `rewrite`, which returns `Ok(None)` to decline.
+    #[must_use]
+    pub fn new_partial<F>(pattern: Pattern, rewrite: F) -> Self
+    where
+        F: Fn(&MatchBindings) -> Result<Option<Expression>, CallbackError> + Send + Sync + 'static,
+    {
         Self {
             pattern,
+            guards: Vec::new(),
             rewrite: Arc::new(rewrite),
-            guard: None,
             name: None,
         }
     }
 
-    /// Return this rule guarded by `guard`, replacing any earlier guard.
+    /// Return this rule with `guard` added after its other guards.
     ///
-    /// The guard runs after the pattern has matched, on the match's
-    /// bindings; the rule fires only when it returns `Ok(true)`.
+    /// The guards run after the pattern has matched, on the match's
+    /// bindings, in the order they were added; the rule fires only when
+    /// every guard returns `Ok(true)`, and the first that does not stops
+    /// the rest.
     #[must_use]
-    pub fn with_guard<G>(self, guard: G) -> Self
+    pub fn with_guard<G>(mut self, guard: G) -> Self
     where
         G: Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync + 'static,
     {
-        Self {
-            guard: Some(Arc::new(guard)),
-            ..self
-        }
+        self.guards.push(Arc::new(guard));
+        self
     }
 
     /// Return this rule named `name`, replacing any earlier name.
     #[must_use]
-    pub fn with_name(self, name: &str) -> Self {
+    pub fn with_name(self, name: impl Into<Arc<str>>) -> Self {
         Self {
-            name: Some(Arc::from(name)),
+            name: Some(name.into()),
             ..self
         }
     }
@@ -256,16 +362,48 @@ impl RewriteRule {
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
+
+    /// Try this rule once at the root of `expression` and return the
+    /// replacement, or `None` if the pattern does not match, a guard
+    /// refuses, or the rewrite declines.
+    ///
+    /// The pattern is matched first, the guards run in order only on a
+    /// match, and the rewrite only when every guard allows it.
+    /// Subexpressions are never tried.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`CallbackError`] of a failing predicate in the pattern,
+    /// of a guard, or of the rewrite, unchanged.
+    pub fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+        let Some(bindings) = self.pattern.matches(expression)? else {
+            return Ok(None);
+        };
+        for guard in &self.guards {
+            if !guard(&bindings)? {
+                return Ok(None);
+            }
+        }
+        (self.rewrite)(&bindings)
+    }
+}
+
+impl Rule for RewriteRule {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+        RewriteRule::apply(self, expression)
+    }
+
+    fn name(&self) -> Option<&str> {
+        RewriteRule::name(self)
+    }
 }
 
 impl fmt::Debug for RewriteRule {
-    /// Show the pattern, the name, and whether a guard is set; the
-    /// callbacks themselves are opaque.
+    /// Show the pattern and the name; the callbacks are opaque.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RewriteRule")
             .field("pattern", &self.pattern)
             .field("name", &self.name)
-            .field("has_guard", &self.guard.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -430,31 +568,6 @@ impl Error for RewriteError {
     }
 }
 
-/// Try `rule` once at the root of `expression` and return the rewrite, or
-/// `None` if the pattern does not match or the guard returns `Ok(false)`.
-///
-/// The pattern is matched first, the guard runs only on a match, and the
-/// rewrite only when the guard allows it. Subexpressions are never tried.
-///
-/// # Errors
-///
-/// Returns the [`CallbackError`] of a failing predicate in the pattern, of
-/// the guard, or of the rewrite, unchanged.
-pub fn apply_rewrite_rule(
-    rule: &RewriteRule,
-    expression: &Expression,
-) -> Result<Option<Expression>, CallbackError> {
-    let Some(bindings) = rule.pattern.matches(expression)? else {
-        return Ok(None);
-    };
-    if let Some(guard) = &rule.guard {
-        if !guard(&bindings)? {
-            return Ok(None);
-        }
-    }
-    (rule.rewrite)(&bindings).map(Some)
-}
-
 /// Rewrite `expression` bottom-up in one pass, trying `rules` in order at
 /// every node.
 ///
@@ -481,9 +594,9 @@ pub fn apply_rewrite_rule(
 /// naming its rule, and [`RewriteError::Rebuild`] if a node cannot be
 /// rebuilt from its rewritten children, naming the rule whose rewrite it
 /// refuses. The walk stops at the first error.
-pub fn apply_rewrite_rules(
+pub fn apply_rewrite_rules<R: Rule>(
     expression: &Expression,
-    rules: &[RewriteRule],
+    rules: &[R],
 ) -> Result<RewriteOutcome, RewriteError> {
     let RuleRun { output, fired } = run_rewrite_rules(expression, rules);
     let output = output?;

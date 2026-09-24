@@ -651,7 +651,8 @@ proptest! {
     /// Test an empty rule list returns the input itself, unchanged.
     #[test]
     fn apply_rewrite_rules_with_no_rules_is_the_identity(expression in build_expression_strategy(true)) {
-        let outcome = apply_rewrite_rules(&expression, &[]).expect("no rule to fail");
+        let outcome =
+            apply_rewrite_rules(&expression, &[] as &[RewriteRule]).expect("no rule to fail");
 
         prop_assert!(Expression::ptr_eq(outcome.output(), &expression));
         prop_assert!(!outcome.is_changed());

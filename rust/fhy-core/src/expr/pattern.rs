@@ -15,6 +15,6 @@ mod rewrite;
 
 pub use self::matching::{CallbackError, Capture, MatchBindings, Pattern};
 pub use self::rewrite::{
-    FiredRule, RewriteError, RewriteOutcome, RewriteRule, apply_rewrite_rule, apply_rewrite_rules,
+    FiredRule, RewriteError, RewriteOutcome, RewriteRule, Rule, apply_rewrite_rules,
 };
 pub(in crate::expr) use self::rewrite::{RuleRun, run_rewrite_rules};
