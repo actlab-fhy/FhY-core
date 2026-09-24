@@ -28,7 +28,6 @@ use tree_ir::{
     ClosureRewriter, HookError, RecordingVisitor, ToyRebuildError, ToyTree, WalkHook, build_chain,
     build_doubling_dag, build_frozen_node, build_hash_consing_node, build_keeping_rewriter,
     build_leaf, build_leaf_doubler, build_leaf_hiding_sharing, build_leaf_replacer, build_node,
-    run_with_pass_context,
 };
 
 // =============================================================================
@@ -1245,18 +1244,6 @@ fn walk_pass_hooks_report_into_the_run() {
     );
 }
 
-/// Test a skipped walk pass outputs unit.
-#[test]
-fn walk_pass_noop_output_is_unit() {
-    let mut pass = WalkPass::new(SilentVisitor, TraversalOrder::Pre);
-
-    let output = run_with_pass_context(|cx| {
-        CompilerPass::<ToyTree, ()>::noop_output(&mut pass, &build_small_tree(), cx)
-    });
-
-    assert_eq!(output.expect("a walk pass has a no-op output"), ());
-}
-
 /// Test a walk pass never reports a change.
 #[test]
 fn walk_pass_did_change_is_false() {
@@ -1363,21 +1350,6 @@ fn rewrite_pass_did_change_compares_identity() {
 
     assert!(changed_for_equal);
     assert!(!changed_for_itself);
-}
-
-/// Test a skipped rewrite pass outputs its input itself.
-#[test]
-fn rewrite_pass_noop_output_is_the_input() {
-    let mut pass = RewritePass::new(build_leaf_doubler());
-    let tree = build_leaf("leaf", 3);
-
-    let output = run_with_pass_context(|cx| pass.noop_output(&tree, cx));
-
-    assert!(
-        output
-            .expect("a rewrite pass has a no-op output")
-            .is_same_node(&tree)
-    );
 }
 
 /// Test a failing rewrite fails the rewrite pass's run with the rewrite

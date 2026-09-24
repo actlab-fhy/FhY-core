@@ -97,14 +97,9 @@ impl CompilerPass<i64> for RecordingPass {
         self.record(PassHook::ValidateInput)
     }
 
-    fn should_run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        self.record(PassHook::ShouldRun)?;
-        Ok(!self.skips)
-    }
-
-    fn noop_output(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        self.record(PassHook::NoopOutput)?;
-        Ok(*ir)
+    fn skip(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+        self.record(PassHook::Skip)?;
+        Ok(self.skips.then_some(*ir))
     }
 
     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
@@ -138,8 +133,7 @@ impl CompilerPass<i64> for RecordingPass {
     }
 }
 
-/// Fails in one hook with the error `<hook>-broken`; skips the run exactly
-/// when the failing hook is `noop_output`.
+/// Fails in one hook with the error `<hook>-broken`.
 struct FailingHookPass {
     hook: PassHook,
 }
@@ -159,14 +153,9 @@ impl CompilerPass<i64> for FailingHookPass {
         self.check(PassHook::ValidateInput)
     }
 
-    fn should_run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        self.check(PassHook::ShouldRun)?;
-        Ok(self.hook != PassHook::NoopOutput)
-    }
-
-    fn noop_output(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        self.check(PassHook::NoopOutput)?;
-        Ok(*ir)
+    fn skip(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+        self.check(PassHook::Skip)?;
+        Ok(None)
     }
 
     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
@@ -295,14 +284,9 @@ impl CompilerPass<i64> for HandOverPass {
         self.check(PassHook::ValidateInput)
     }
 
-    fn should_run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        self.check(PassHook::ShouldRun)?;
-        Ok(self.hook != PassHook::NoopOutput)
-    }
-
-    fn noop_output(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        self.check(PassHook::NoopOutput)?;
-        Ok(*ir)
+    fn skip(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+        self.check(PassHook::Skip)?;
+        Ok(None)
     }
 
     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
@@ -398,7 +382,7 @@ fn execute_calls_the_hooks_in_lifecycle_order() {
         pass.calls,
         [
             "validate_input",
-            "should_run",
+            "skip",
             "run",
             "validate_output",
             "did_change",
@@ -407,10 +391,10 @@ fn execute_calls_the_hooks_in_lifecycle_order() {
     );
 }
 
-/// Test a skipped run calls `noop_output` instead of `run` and asks for the
-/// analyses of an unchanged run.
+/// Test a skipped run calls no hook after `skip` but `preserved_analyses`,
+/// asking for the analyses of an unchanged run.
 #[test]
-fn execute_skipped_run_calls_noop_output_instead_of_run() {
+fn execute_skipped_run_calls_skip_instead_of_run() {
     let mut pass = RecordingPass {
         skips: true,
         ..RecordingPass::default()
@@ -422,27 +406,23 @@ fn execute_skipped_run_calls_noop_output_instead_of_run() {
         pass.calls,
         [
             "validate_input",
-            "should_run",
-            "noop_output",
+            "skip",
             "preserved_analyses(changed=false)",
         ]
     );
 }
 
-/// Test a skipped run outputs the no-op output unchanged, preserves every
-/// analysis, and keeps the diagnostics reported before the skip.
+/// Test a skipped run outputs the output `skip` supplied, unchanged and
+/// skipped, preserves every analysis, and keeps the diagnostics `skip`
+/// reported.
 #[test]
-fn execute_skipped_run_outputs_the_noop_output() {
+fn execute_skipped_run_outputs_the_skip_output() {
     struct SkippedPass;
 
     impl CompilerPass<i64> for SkippedPass {
-        fn should_run(&mut self, _ir: &i64, cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
+        fn skip(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
             cx.report_text(DiagnosticLevel::Info, "skip requested", None);
-            Ok(false)
-        }
-
-        fn noop_output(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-            Ok(ir + 100)
+            Ok(Some(ir + 100))
         }
 
         fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
@@ -465,41 +445,6 @@ fn execute_skipped_run_outputs_the_noop_output() {
     assert_eq!(outcome.diagnostics()[0].message_text(), "skip requested");
 }
 
-/// Test a pass without a no-op output fails a skipped run.
-#[test]
-fn execute_skipped_run_fails_without_a_noop_output() {
-    struct NoNoopPass;
-
-    impl CompilerPass<i64> for NoNoopPass {
-        fn should_run(
-            &mut self,
-            _ir: &i64,
-            _cx: &mut PassContext<'_>,
-        ) -> Result<bool, PassFailure> {
-            Ok(false)
-        }
-
-        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-            Ok(*ir)
-        }
-
-        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-            Ok(input != output)
-        }
-    }
-
-    let error = NoNoopPass
-        .execute(&0)
-        .expect_err("a skipped run needs a no-op output");
-
-    assert_eq!(
-        error.to_string(),
-        "Pass \"NoNoopPass\" failed noop_output with the pass has no no-op output"
-    );
-    assert!(error.is_execution_failure());
-    assert_eq!(error.failed_hook(), Some(PassHook::NoopOutput));
-}
-
 /// Test every run starts with no diagnostics, even on a reused pass.
 #[test]
 fn execute_starts_every_run_without_diagnostics() {
@@ -520,8 +465,7 @@ fn execute_starts_every_run_without_diagnostics() {
 /// Test `PassHook::as_str` and `Display` render the hook's method name.
 #[rstest]
 #[case::validate_input(PassHook::ValidateInput, "validate_input")]
-#[case::should_run(PassHook::ShouldRun, "should_run")]
-#[case::noop_output(PassHook::NoopOutput, "noop_output")]
+#[case::skip(PassHook::Skip, "skip")]
 #[case::run(PassHook::Run, "run")]
 #[case::validate_output(PassHook::ValidateOutput, "validate_output")]
 #[case::did_change(PassHook::DidChange, "did_change")]
@@ -536,8 +480,7 @@ fn pass_hook_renders_the_method_name(#[case] hook: PassHook, #[case] expected: &
 /// diagnostics with an error recording the failure.
 #[rstest]
 #[case::validate_input(PassHook::ValidateInput, true)]
-#[case::should_run(PassHook::ShouldRun, false)]
-#[case::noop_output(PassHook::NoopOutput, false)]
+#[case::skip(PassHook::Skip, false)]
 #[case::run(PassHook::Run, false)]
 #[case::validate_output(PassHook::ValidateOutput, true)]
 #[case::did_change(PassHook::DidChange, false)]
@@ -572,11 +515,11 @@ fn execute_wraps_a_hook_error_naming_the_pass_and_hook(
 /// Test a failing hook ends the run: no later hook is called.
 #[rstest]
 #[case::validate_input(PassHook::ValidateInput, &["validate_input"])]
-#[case::should_run(PassHook::ShouldRun, &["validate_input", "should_run"])]
-#[case::run(PassHook::Run, &["validate_input", "should_run", "run"])]
+#[case::skip(PassHook::Skip, &["validate_input", "skip"])]
+#[case::run(PassHook::Run, &["validate_input", "skip", "run"])]
 #[case::validate_output(
     PassHook::ValidateOutput,
-    &["validate_input", "should_run", "run", "validate_output"]
+    &["validate_input", "skip", "run", "validate_output"]
 )]
 fn execute_stops_at_the_first_failing_hook(#[case] hook: PassHook, #[case] expected: &[&str]) {
     let mut pass = RecordingPass {
@@ -628,8 +571,7 @@ fn execute_failure_keeps_the_diagnostics_emitted_before_it() {
 /// unchanged; `run` hands through both classes.
 #[rstest]
 #[case::validate_input(PassHook::ValidateInput, InnerFailure::Validation)]
-#[case::should_run(PassHook::ShouldRun, InnerFailure::Execution)]
-#[case::noop_output(PassHook::NoopOutput, InnerFailure::Execution)]
+#[case::skip(PassHook::Skip, InnerFailure::Execution)]
 #[case::run_validation(PassHook::Run, InnerFailure::Validation)]
 #[case::run_execution(PassHook::Run, InnerFailure::Execution)]
 #[case::validate_output(PassHook::ValidateOutput, InnerFailure::Validation)]
@@ -660,7 +602,7 @@ fn execute_hands_a_matching_pass_error_through_unchanged(
 #[rstest]
 #[case::validate_input(PassHook::ValidateInput, InnerFailure::Execution, true)]
 #[case::validate_output(PassHook::ValidateOutput, InnerFailure::Execution, true)]
-#[case::should_run(PassHook::ShouldRun, InnerFailure::Validation, false)]
+#[case::skip(PassHook::Skip, InnerFailure::Validation, false)]
 #[case::did_change(PassHook::DidChange, InnerFailure::Validation, false)]
 fn execute_wraps_a_pass_error_of_the_other_class(
     #[case] hook: PassHook,

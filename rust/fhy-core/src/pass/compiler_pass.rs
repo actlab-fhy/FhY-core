@@ -3,7 +3,6 @@
 use std::any::type_name;
 use std::borrow::Cow;
 use std::error::Error;
-use std::fmt;
 
 use super::context::PassContext;
 use super::error::{PassError, PassErrorClass, PassHook};
@@ -188,27 +187,15 @@ pub fn short_type_name<T: ?Sized>() -> Cow<'static, str> {
     shorten(type_name::<T>())
 }
 
-/// The error [`CompilerPass::noop_output`] returns by default.
-#[derive(Debug)]
-struct MissingNoopOutput;
-
-impl fmt::Display for MissingNoopOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the pass has no no-op output")
-    }
-}
-
-impl Error for MissingNoopOutput {}
-
 /// A compiler pass from IR of type `I` to IR of type `O`.
 ///
 /// A run goes through a fixed lifecycle, which [`ExecutePass::execute`] and
 /// the [`PassManager`](super::PassManager) drive:
 ///
 /// 1. [`validate_input`](Self::validate_input);
-/// 2. [`should_run`](Self::should_run); when it returns `false`, the run
-///    ends with [`noop_output`](Self::noop_output), unchanged, and the
-///    analyses from [`preserved_analyses`](Self::preserved_analyses);
+/// 2. [`skip`](Self::skip); when it returns an output, the run ends with
+///    that output, skipped and unchanged, and the analyses from
+///    [`preserved_analyses`](Self::preserved_analyses);
 /// 3. [`run`](Self::run);
 /// 4. [`validate_output`](Self::validate_output);
 /// 5. [`did_change`](Self::did_change);
@@ -270,27 +257,22 @@ pub trait CompilerPass<I, O = I> {
         Ok(())
     }
 
-    /// Return whether the pass runs on `ir`.
+    /// Decide whether to skip the run on `ir`: return the run's output to
+    /// skip it, or `None` to run the pass.
+    ///
+    /// A skipped run calls neither [`run`](Self::run) nor
+    /// [`validate_output`](Self::validate_output) nor
+    /// [`did_change`](Self::did_change): its output is unchanged, and
+    /// [`preserved_analyses`](Self::preserved_analyses) is asked with
+    /// `changed` false.
     ///
     /// # Errors
     ///
     /// Returns an error if the decision cannot be made. By default, the pass
     /// always runs.
-    fn should_run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
+    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, PassFailure> {
         let _ = (ir, cx);
-        Ok(true)
-    }
-
-    /// Return the output of a run that [`should_run`](Self::should_run)
-    /// skipped.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the pass has no output for a skipped run, which is
-    /// the default.
-    fn noop_output(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
-        let _ = (ir, cx);
-        Err(Box::new(MissingNoopOutput))
+        Ok(None)
     }
 
     /// Transform `ir`.
@@ -359,12 +341,8 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for &mut P {
         (**self).validate_input(ir, cx)
     }
 
-    fn should_run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        (**self).should_run(ir, cx)
-    }
-
-    fn noop_output(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
-        (**self).noop_output(ir, cx)
+    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, PassFailure> {
+        (**self).skip(ir, cx)
     }
 
     fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
@@ -408,12 +386,8 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for Box<P> {
         (**self).validate_input(ir, cx)
     }
 
-    fn should_run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        (**self).should_run(ir, cx)
-    }
-
-    fn noop_output(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
-        (**self).noop_output(ir, cx)
+    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, PassFailure> {
+        (**self).skip(ir, cx)
     }
 
     fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
@@ -485,8 +459,7 @@ impl<O> PassOutcome<O> {
     }
 
     /// Return whether the pass skipped the run: its output came from
-    /// [`CompilerPass::noop_output`], and [`CompilerPass::run`] was not
-    /// called.
+    /// [`CompilerPass::skip`], and [`CompilerPass::run`] was not called.
     #[must_use]
     pub fn is_skipped(&self) -> bool {
         self.skipped
@@ -519,11 +492,9 @@ pub(super) struct LifecycleResult<O> {
 fn classify_hook(hook: PassHook) -> PassErrorClass {
     match hook {
         PassHook::ValidateInput | PassHook::ValidateOutput => PassErrorClass::Validation,
-        PassHook::ShouldRun
-        | PassHook::NoopOutput
-        | PassHook::Run
-        | PassHook::DidChange
-        | PassHook::PreservedAnalyses => PassErrorClass::Execution,
+        PassHook::Skip | PassHook::Run | PassHook::DidChange | PassHook::PreservedAnalyses => {
+            PassErrorClass::Execution
+        }
     }
 }
 
@@ -577,8 +548,7 @@ where
     P: CompilerPass<I, O> + ?Sized,
 {
     guard_hook(pass.validate_input(ir, cx), PassHook::ValidateInput, cx)?;
-    if !guard_hook(pass.should_run(ir, cx), PassHook::ShouldRun, cx)? {
-        let output = guard_hook(pass.noop_output(ir, cx), PassHook::NoopOutput, cx)?;
+    if let Some(output) = guard_hook(pass.skip(ir, cx), PassHook::Skip, cx)? {
         let preserved = guard_hook(
             pass.preserved_analyses(ir, &output, false),
             PassHook::PreservedAnalyses,

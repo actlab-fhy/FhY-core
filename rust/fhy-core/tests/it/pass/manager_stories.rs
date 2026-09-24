@@ -238,12 +238,12 @@ struct AddOneUpTo {
 }
 
 impl CompilerPass<BoxIr> for AddOneUpTo {
-    fn should_run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        Ok(ir.value() <= self.limit)
-    }
-
-    fn noop_output(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
-        Ok(ir.clone())
+    fn skip(
+        &mut self,
+        ir: &BoxIr,
+        _cx: &mut PassContext<'_>,
+    ) -> Result<Option<BoxIr>, PassFailure> {
+        Ok((ir.value() > self.limit).then(|| ir.clone()))
     }
 
     fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {

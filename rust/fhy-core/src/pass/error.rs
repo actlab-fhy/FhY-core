@@ -13,10 +13,8 @@ use crate::diagnostic::{Diagnostic, ValidationReport};
 pub enum PassHook {
     /// [`CompilerPass::validate_input`](super::CompilerPass::validate_input).
     ValidateInput,
-    /// [`CompilerPass::should_run`](super::CompilerPass::should_run).
-    ShouldRun,
-    /// [`CompilerPass::noop_output`](super::CompilerPass::noop_output).
-    NoopOutput,
+    /// [`CompilerPass::skip`](super::CompilerPass::skip).
+    Skip,
     /// [`CompilerPass::run`](super::CompilerPass::run).
     Run,
     /// [`CompilerPass::validate_output`](super::CompilerPass::validate_output).
@@ -33,8 +31,7 @@ impl PassHook {
     pub fn as_str(self) -> &'static str {
         match self {
             PassHook::ValidateInput => "validate_input",
-            PassHook::ShouldRun => "should_run",
-            PassHook::NoopOutput => "noop_output",
+            PassHook::Skip => "skip",
             PassHook::Run => "run",
             PassHook::ValidateOutput => "validate_output",
             PassHook::DidChange => "did_change",

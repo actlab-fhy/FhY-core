@@ -272,8 +272,7 @@ impl FormatOptions {
 /// [`FormatOptions`], as [`format_expression`] does.
 ///
 /// Every run counts as a change, since its text output is never its input
-/// expression, and the pass has no output for a skipped run. The default
-/// formatter uses the default options.
+/// expression. The default formatter uses the default options.
 ///
 /// # Examples
 ///

@@ -95,11 +95,6 @@ where
         short_type_name::<V>()
     }
 
-    fn noop_output(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        let _ = (ir, cx);
-        Ok(())
-    }
-
     fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
         walk_tree(&mut self.visitor, ir, self.order, cx).map_err(Into::into)
     }
@@ -117,7 +112,7 @@ where
 /// every `C: ?Sized`.
 ///
 /// The run changed the IR exactly when its output is a different node from
-/// its input, and a skipped run outputs its input. It is named
+/// its input. It is named
 /// [`short_type_name::<R>()`](short_type_name), after its rewriter.
 ///
 /// # Examples
@@ -198,11 +193,6 @@ where
 {
     fn name(&self) -> Cow<'static, str> {
         short_type_name::<R>()
-    }
-
-    fn noop_output(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<N, PassFailure> {
-        let _ = cx;
-        Ok(ir.clone())
     }
 
     fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<N, PassFailure> {

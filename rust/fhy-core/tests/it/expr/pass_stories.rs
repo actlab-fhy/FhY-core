@@ -8,7 +8,6 @@
 
 use crate::support::expression as expression_support;
 use crate::support::pattern as pattern_support;
-use crate::support::tree_ir;
 
 use std::any::TypeId;
 
@@ -35,7 +34,6 @@ use pattern_support::{
     build_x_times_one_rule, expect_probe_error, rewrite_to_capture, rewrite_to_literal,
 };
 use rstest::rstest;
-use tree_ir::run_with_pass_context;
 
 /// The name the rule applier is registered under.
 const RULE_APPLIER_NAME: &str = "fhy_core.symbolic.expression.apply_rewrite_rules";
@@ -299,19 +297,6 @@ fn rewrite_rule_applier_name_and_description_are_its_registered_ones() {
     assert_eq!(applier.description(), RULE_APPLIER_DESCRIPTION);
 }
 
-/// Test a skipped run outputs the input itself.
-#[test]
-fn rewrite_rule_applier_noop_output_is_the_input() {
-    let (_, a) = build_identifier("a");
-    let expression = build_plus_zero(&a);
-    let mut applier = RewriteRuleApplier::new([build_x_plus_zero_rule()]);
-
-    let output = run_with_pass_context(|cx| applier.noop_output(&expression, cx))
-        .expect("the input is the no-op output");
-
-    assert!(Expression::ptr_eq(&output, &expression));
-}
-
 /// Test the applier counts a change exactly when the output is a different
 /// node, even an equal one.
 #[test]
@@ -534,17 +519,6 @@ fn expression_pretty_formatter_name_is_its_type_name() {
 
     assert_eq!(formatter.name(), "ExpressionPrettyFormatter");
     assert_eq!(formatter.description(), "ExpressionPrettyFormatter");
-}
-
-/// Test the formatter has no output for a skipped run.
-#[test]
-fn expression_pretty_formatter_has_no_noop_output() {
-    let mut formatter = ExpressionPrettyFormatter::default();
-
-    let result = run_with_pass_context(|cx| formatter.noop_output(&build_literal(1), cx));
-
-    let error = result.expect_err("a skipped formatting run has no output");
-    assert_eq!(error.to_string(), "the pass has no no-op output");
 }
 
 // =============================================================================

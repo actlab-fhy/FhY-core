@@ -443,9 +443,8 @@ impl Error for RewriteError {
 /// [`RewriteOutcome::is_changed`]. Each firing of a named rule reports an
 /// informational diagnostic, `Applied rewrite rule "<name>".`, the name
 /// escaped as `Debug` writes a string, and the firings of the last run are
-/// kept for [`fired`](Self::fired). A skipped run outputs its input. A
-/// failing callback or a refused rebuild fails the run with the
-/// [`RewriteError`], which the resulting
+/// kept for [`fired`](Self::fired). A failing callback or a refused rebuild
+/// fails the run with the [`RewriteError`], which the resulting
 /// [`PassError`](crate::pass::PassError) holds as its
 /// [`source`](Error::source).
 ///
@@ -530,14 +529,6 @@ impl CompilerPass<Expression> for RewriteRuleApplier {
 
     fn description(&self) -> Cow<'static, str> {
         Cow::Borrowed(RULE_APPLIER_PASS_DESCRIPTION)
-    }
-
-    fn noop_output(
-        &mut self,
-        ir: &Expression,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<Expression, PassFailure> {
-        Ok(ir.clone())
     }
 
     fn run(

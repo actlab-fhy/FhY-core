@@ -1,16 +1,14 @@
-//! A toy tree IR, recording visitors and rewriters over it, and a helper
-//! that lends a pass context to a test, for the tree traversal tests.
+//! A toy tree IR and recording visitors and rewriters over it, for the tree
+//! traversal tests.
 //!
 //! The visitor and the rewriter work under any traversal context, so one
 //! value serves a direct walk with `&mut ()` and a walk or rewrite pass.
 
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PassFailure};
 use fhy_core::tree::{NodeHandle, NodeIdentity, Rewriter, Tree, TreeVisitor};
 
 // =============================================================================
@@ -554,48 +552,4 @@ pub(crate) fn build_leaf_replacer(target: i64, replacement: i64) -> ClosureRewri
 #[must_use]
 pub(crate) fn build_keeping_rewriter() -> ClosureRewriter {
     ClosureRewriter::new(|_| Ok(None))
-}
-
-// =============================================================================
-// A pass context for direct traversal calls
-// =============================================================================
-
-/// The body a [`ContextLender`] runs.
-type LentBody<'a, T> = Box<dyn FnOnce(&mut PassContext<'_>) -> T + 'a>;
-
-/// A pass whose run hands its context to a closure and keeps the result.
-struct ContextLender<'a, T> {
-    body: Option<LentBody<'a, T>>,
-    result: Option<T>,
-}
-
-impl<T> CompilerPass<()> for ContextLender<'_, T> {
-    fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed("context-lender")
-    }
-
-    fn run(&mut self, _ir: &(), cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        let body = self.body.take().ok_or("the body runs once")?;
-        self.result = Some(body(cx));
-        Ok(())
-    }
-
-    fn did_change(&mut self, _input: &(), _output: &()) -> Result<bool, PassFailure> {
-        Ok(false)
-    }
-}
-
-/// Run `body` with the context of a standalone pass run and return its
-/// result.
-///
-/// # Panics
-///
-/// Panics if the lending pass fails, which it does not.
-pub(crate) fn run_with_pass_context<'a, T>(body: impl FnOnce(&mut PassContext<'_>) -> T + 'a) -> T {
-    let mut lender = ContextLender {
-        body: Some(Box::new(body)),
-        result: None,
-    };
-    lender.execute(&()).expect("the lending pass runs");
-    lender.result.expect("the lending pass ran the body")
 }
