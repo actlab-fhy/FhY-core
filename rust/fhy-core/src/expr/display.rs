@@ -1,17 +1,14 @@
 //! Text rendering of expressions in symbolic or functional notation.
 //!
-//! [`Expression::display`] renders an [`Expression`] as text under
-//! [`FormatOptions`]: a [`Notation`] choosing between infix operator symbols
-//! and prefix operation names, and an [`IdentifierStyle`] choosing whether an
-//! identifier reference shows its id. The [`ExpressionDisplay`] it returns
-//! implements [`Display`](fmt::Display), and `Expression`'s own `Display`
-//! uses the default options.
-//! [`ExpressionPrettyFormatter`](super::passes::ExpressionPrettyFormatter)
-//! renders an expression as a compiler pass. Every unary and binary node is
-//! parenthesized, so the text shows the tree's shape exactly and needs no
-//! precedence rules. The text is meant for people: it is not parsed back,
-//! and distinct trees may print alike (the integer `1` and the float `1.0`,
-//! or two identifiers with the same name hint when ids are hidden).
+//! [`Expression::display`] renders an [`Expression`] under [`FormatOptions`]:
+//! a [`Notation`] choosing between infix operator symbols and prefix
+//! operation names, and an [`IdentifierStyle`] choosing whether an identifier
+//! reference shows its id. `Expression`'s own `Display` uses the default
+//! options. Every unary and binary node is parenthesized, so the text shows
+//! the tree's shape without precedence rules. The text is meant for people:
+//! it is not parsed back, and distinct trees may print alike (the integer
+//! `1` and the float `1.0`, or two identifiers with the same name hint when
+//! ids are hidden).
 
 use std::fmt;
 use std::iter;
@@ -22,6 +19,9 @@ use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
     PiecewiseExpression, UnaryExpression,
 };
+
+/// The most nodes `Debug` of an expression prints before it elides the rest.
+const DEBUG_NODE_BUDGET: usize = 1000;
 
 /// One pending piece of output: a node still to print, or text to write.
 enum Step<'a> {
@@ -36,7 +36,6 @@ fn schedule<'a>(pending: &mut Vec<Step<'a>>, steps: impl IntoIterator<Item = Ste
     pending[start..].reverse();
 }
 
-/// Write `identifier` to `f` in `style`.
 fn write_identifier(
     f: &mut fmt::Formatter<'_>,
     identifier: &Identifier,
@@ -50,7 +49,6 @@ fn write_identifier(
     }
 }
 
-/// Schedule the pieces of a unary node.
 fn schedule_unary<'a>(pending: &mut Vec<Step<'a>>, node: &'a UnaryExpression, notation: Notation) {
     let operation = node.operation();
     match notation {
@@ -76,7 +74,6 @@ fn schedule_unary<'a>(pending: &mut Vec<Step<'a>>, node: &'a UnaryExpression, no
     }
 }
 
-/// Schedule the pieces of a binary node.
 fn schedule_binary<'a>(
     pending: &mut Vec<Step<'a>>,
     node: &'a BinaryExpression,
@@ -111,8 +108,6 @@ fn schedule_binary<'a>(
     }
 }
 
-/// Schedule the pieces of a logical node: `(a && b && c)` or
-/// `(and a b c)`.
 fn schedule_logical<'a>(
     pending: &mut Vec<Step<'a>>,
     node: &'a LogicalExpression,
@@ -156,8 +151,6 @@ fn schedule_logical<'a>(
     }
 }
 
-/// Schedule the pieces of a piecewise node: `{v0 if c0; ...; o otherwise}`
-/// or `(piecewise c0 v0 ... o)`.
 fn schedule_piecewise<'a>(
     pending: &mut Vec<Step<'a>>,
     node: &'a PiecewiseExpression,
@@ -207,7 +200,6 @@ fn schedule_piecewise<'a>(
     }
 }
 
-/// Schedule the pieces of a call: `f(a, b)` or `(f a b)`.
 fn schedule_call<'a>(pending: &mut Vec<Step<'a>>, node: &'a CallExpression, notation: Notation) {
     let arguments = node.arguments();
     match notation {
@@ -371,9 +363,6 @@ fn write_expression(
     }
     Ok(())
 }
-
-/// The most nodes `Debug` of an expression prints before it elides the rest.
-const DEBUG_NODE_BUDGET: usize = 1000;
 
 /// An expression rendered as text under [`FormatOptions`]; what
 /// [`Expression::display`] returns.
