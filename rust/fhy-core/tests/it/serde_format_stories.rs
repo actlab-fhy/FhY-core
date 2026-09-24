@@ -1,7 +1,7 @@
 //! Tests that every public `Serialize` type round-trips through JSON text
 //! and through postcard, a format that is not self-describing.
 //!
-//! Public API only. A decode that fails partway may leave the identifiers
+//! A decode that fails partway may leave the identifiers
 //! and canonical values it already read behind; the stories at the end pin
 //! that documented partial effect.
 
@@ -52,6 +52,25 @@ fn assert_round_trips<T: Serialize + DeserializeOwned + PartialEq + Debug>(value
     );
 }
 
+fn assert_each_round_trips<T: Serialize + DeserializeOwned + PartialEq + Debug>(
+    values: impl IntoIterator<Item = T>,
+) {
+    for value in values {
+        assert_round_trips(&value);
+    }
+}
+
+/// Assert every strict prefix of `bytes` fails to decode as a `T`.
+fn assert_every_prefix_fails<T: DeserializeOwned + Debug>(bytes: &[u8]) {
+    for length in 0..bytes.len() {
+        let result = postcard::from_bytes::<T>(&bytes[..length]);
+        assert!(
+            result.is_err(),
+            "a {length}-byte prefix decoded: {result:?}"
+        );
+    }
+}
+
 /// Build the position at `line` and `column`, which must both be non-zero.
 fn build_position(line: u64, column: u64) -> Position {
     Position::try_new(line, column).expect("line and column are non-zero")
@@ -79,7 +98,6 @@ fn build_nested_provenance() -> Provenance {
 // Diagnostic and provenance types
 // =============================================================================
 
-/// A function returning one of the shipped note kinds.
 type ShippedKind = fn() -> &'static Canonical<NoteKind>;
 
 /// Test a note of each shipped kind round-trips through both formats and
@@ -275,40 +293,26 @@ fn decimal_callee_and_function_name_round_trip_through_postcard() {
 /// formats.
 #[test]
 fn vocabulary_enums_round_trip_through_postcard() {
-    for symbol_type in [SymbolType::Real, SymbolType::Int, SymbolType::Bool] {
-        assert_round_trips(&symbol_type);
-    }
-    for sort in [
+    assert_each_round_trips([SymbolType::Real, SymbolType::Int, SymbolType::Bool]);
+    assert_each_round_trips([
         FunctionSort::Bool,
         FunctionSort::Nat,
         FunctionSort::Int,
         FunctionSort::Real,
-    ] {
-        assert_round_trips(&sort);
-    }
-    for operation in [
+    ]);
+    assert_each_round_trips([
         UnaryOperation::Negate,
         UnaryOperation::Positive,
         UnaryOperation::LogicalNot,
-    ] {
-        assert_round_trips(&operation);
-    }
-    for operation in [
+    ]);
+    assert_each_round_trips([
         BinaryOperation::Add,
         BinaryOperation::FloorMod,
         BinaryOperation::GreaterEqual,
-    ] {
-        assert_round_trips(&operation);
-    }
-    for operation in [LogicalOperation::And, LogicalOperation::Or] {
-        assert_round_trips(&operation);
-    }
-    for function in BuiltinFunction::iter() {
-        assert_round_trips(&function);
-    }
-    for constant in BuiltinConstant::iter() {
-        assert_round_trips(&constant);
-    }
+    ]);
+    assert_each_round_trips([LogicalOperation::And, LogicalOperation::Or]);
+    assert_each_round_trips(BuiltinFunction::iter());
+    assert_each_round_trips(BuiltinConstant::iter());
 }
 
 /// Test a DAG keeps its sharing through both formats: the subtree shared
@@ -452,18 +456,9 @@ fn truncated_postcard_bytes_are_an_error_not_a_panic() {
     let note = postcard::to_allocvec(&Note::with_other_kind("truncated")).expect("encodes");
     let expression = postcard::to_allocvec(&build_every_node_kind()).expect("encodes");
 
-    for length in 0..provenance.len() {
-        let result = postcard::from_bytes::<Provenance>(&provenance[..length]);
-        assert!(result.is_err(), "a {length}-byte prefix decoded");
-    }
-    for length in 0..note.len() {
-        let result = postcard::from_bytes::<Note>(&note[..length]);
-        assert!(result.is_err(), "a {length}-byte prefix decoded");
-    }
-    for length in 0..expression.len() {
-        let result = postcard::from_bytes::<Expression>(&expression[..length]);
-        assert!(result.is_err(), "a {length}-byte prefix decoded");
-    }
+    assert_every_prefix_fails::<Provenance>(&provenance);
+    assert_every_prefix_fails::<Note>(&note);
+    assert_every_prefix_fails::<Expression>(&expression);
 }
 
 /// Test a note decode that fails after reading its kind leaves that kind

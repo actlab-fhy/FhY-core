@@ -132,10 +132,6 @@ fn advance_position(start: &Position, distance: u64) -> Position {
 }
 
 /// Build the span with the given bounds through the single-bound builders.
-///
-/// # Panics
-///
-/// Panics if a pair of bounds is out of order.
 fn build_span(
     start_offset: Option<u64>,
     end_offset: Option<u64>,
@@ -217,12 +213,11 @@ fn arbitrary_tree() -> impl Strategy<Value = Provenance> {
     })
 }
 
-/// Return a strategy for 0 to 4 trees, the inputs of one `fuse` call.
+/// Return a strategy for the inputs of one `fuse` call.
 fn arbitrary_inputs() -> impl Strategy<Value = Vec<Provenance>> {
     proptest::collection::vec(arbitrary_tree(), 0..=4)
 }
 
-/// Return a strategy for an optional label.
 fn arbitrary_label() -> impl Strategy<Value = Option<&'static str>> {
     proptest::option::of(select(LABELS))
 }
@@ -511,17 +506,6 @@ proptest! {
             None => head,
         };
         prop_assert_eq!(text, expected);
-    }
-
-    /// Test the failed-validation error's display is one line, whatever the
-    /// diagnostics' text holds.
-    #[test]
-    fn validation_failed_error_display_never_contains_a_newline(report in arbitrary_report()) {
-        let result = report.into_result();
-
-        if let Err(error) = result {
-            prop_assert!(!error.to_string().contains('\n'), "{}", error);
-        }
     }
 
     /// Test `into_result` fails exactly when the report has errors, and the

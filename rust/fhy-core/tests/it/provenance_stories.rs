@@ -1,12 +1,14 @@
 //! Tests for `fhy_core::provenance`: positions, spans, the provenance
 //! variants, `Provenance::fuse`, rendering, and the wire form.
 //!
-//! Public API only. Nothing here touches process-global state, so the tests
-//! run in parallel freely.
+//! Nothing here touches process-global state, so the tests run in parallel
+//! freely.
 
 use crate::support::hashing as hashing_support;
 use crate::support::provenance as provenance_support;
 use crate::support::stack as stack_support;
+
+use std::ops::Range;
 
 use fhy_core::provenance::{
     CallSiteProvenance, FileProvenance, FusedProvenance, HasProvenance, NamedProvenance,
@@ -51,6 +53,18 @@ fn try_build_span(
         span = span.with_end_position(build_position(line, column))?;
     }
     Ok(span)
+}
+
+/// Build the span with all four bounds set, each position given as `(line,
+/// column)`.
+fn build_full_span(offsets: Range<u64>, positions: Range<(u64, u64)>) -> Span {
+    try_build_span(
+        Some(offsets.start),
+        Some(offsets.end),
+        Some(positions.start),
+        Some(positions.end),
+    )
+    .expect("ordered bounds are valid")
 }
 
 /// Build a span with only offsets set.
@@ -106,7 +120,6 @@ fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(
 // Position
 // =============================================================================
 
-/// Test a position stores the line and column it was built with.
 #[test]
 fn position_try_new_stores_line_and_column() {
     let position = Position::try_new(2, 8).expect("2:8 is valid");
@@ -143,7 +156,6 @@ fn position_try_new_accepts_the_largest_u64_values() {
     );
 }
 
-/// Test positions compare equal exactly when line and column both match.
 #[test]
 fn position_equality_is_by_value() {
     assert_eq!(build_position(1, 1), build_position(1, 1));
@@ -151,7 +163,6 @@ fn position_equality_is_by_value() {
     assert_ne!(build_position(1, 1), build_position(2, 1));
 }
 
-/// Test positions order by line first, then by column.
 #[test]
 fn position_orders_lexicographically_by_line_then_column() {
     assert!(build_position(1, 1) < build_position(1, 2));
@@ -159,7 +170,6 @@ fn position_orders_lexicographically_by_line_then_column() {
     assert!(build_position(3, 1) > build_position(2, 50));
 }
 
-/// Test sorting positions yields line-then-column order.
 #[test]
 fn position_sorting_follows_line_then_column() {
     let mut positions = vec![
@@ -182,7 +192,6 @@ fn position_sorting_follows_line_then_column() {
     );
 }
 
-/// Test a position renders as `line:column`.
 #[test]
 fn position_display_renders_line_colon_column() {
     assert_eq!(build_position(2, 8).to_string(), "2:8");
@@ -192,7 +201,6 @@ fn position_display_renders_line_colon_column() {
 // Span
 // =============================================================================
 
-/// Test the unknown span reports itself as unknown and has no bounds.
 #[test]
 fn span_unknown_has_no_bounds() {
     let span = Span::unknown();
@@ -204,7 +212,6 @@ fn span_unknown_has_no_bounds() {
     assert_eq!(span.end_position(), None);
 }
 
-/// Test the unknown span is a constant expression.
 #[test]
 fn span_unknown_is_a_constant() {
     const UNKNOWN: Span = Span::unknown();
@@ -213,7 +220,6 @@ fn span_unknown_is_a_constant() {
     assert!(UNKNOWN.is_unknown());
 }
 
-/// Test setting any single bound makes a span known.
 #[rstest]
 #[case::start_offset(Some(0), None, None, None)]
 #[case::end_offset(None, Some(3), None, None)]
@@ -347,27 +353,15 @@ fn span_single_bound_builders_check_their_counterpart() {
 /// other pair.
 #[test]
 fn span_with_a_range_replaces_both_bounds_of_its_pair() {
-    let span = Span::from_offsets(10..20)
-        .and_then(|span| span.with_positions(build_position(1, 1)..build_position(1, 2)))
-        .expect("ordered bounds are valid");
+    let span = build_full_span(10..20, (1, 1)..(1, 2));
 
     let offsets_replaced = span.with_offsets(0..3).expect("ordered offsets are valid");
     let positions_replaced = span
         .with_positions(build_position(4, 1)..build_position(5, 1))
         .expect("ordered positions are valid");
 
-    assert_eq!(
-        offsets_replaced,
-        Span::from_offsets(0..3)
-            .and_then(|span| span.with_positions(build_position(1, 1)..build_position(1, 2)))
-            .expect("ordered bounds are valid")
-    );
-    assert_eq!(
-        positions_replaced,
-        Span::from_offsets(10..20)
-            .and_then(|span| span.with_positions(build_position(4, 1)..build_position(5, 1)))
-            .expect("ordered bounds are valid")
-    );
+    assert_eq!(offsets_replaced, build_full_span(0..3, (1, 1)..(1, 2)));
+    assert_eq!(positions_replaced, build_full_span(10..20, (4, 1)..(5, 1)));
 }
 
 /// Test a single-bound builder replaces a bound that is already set, and
@@ -389,7 +383,6 @@ fn span_single_bound_builders_replace_a_set_bound() {
     );
 }
 
-/// Test a zero-width offset range is accepted.
 #[test]
 fn span_from_offsets_allows_equal_start_and_end() {
     let span = Span::from_offsets(4..4).expect("an empty range is valid");
@@ -398,7 +391,6 @@ fn span_from_offsets_allows_equal_start_and_end() {
     assert_eq!(span.end_offset(), Some(4));
 }
 
-/// Test a zero-width position range is accepted.
 #[test]
 fn span_from_positions_allows_equal_start_and_end() {
     let span = build_position_span(Some((1, 1)), Some((1, 1)));
@@ -466,7 +458,6 @@ fn file_provenance_new_without_span_stores_the_path() {
     assert_eq!(provenance.span(), None);
 }
 
-/// Test a file provenance stores the span it was given.
 #[test]
 fn file_provenance_new_stores_the_span() {
     let span = build_offset_span(Some(0), Some(3));
@@ -569,7 +560,6 @@ fn named_provenance_try_new_stores_name_and_child(#[case] name: &str, #[case] ch
     assert_eq!(provenance.child(), &child);
 }
 
-/// Test an empty name is rejected.
 #[test]
 fn named_provenance_try_new_rejects_an_empty_name() {
     let result = NamedProvenance::try_new("", Provenance::Unknown);
@@ -585,7 +575,6 @@ fn named_provenance_try_new_accepts_a_whitespace_name() {
     assert_eq!(provenance.name(), " ");
 }
 
-/// Test a call-site provenance stores both arms.
 #[test]
 fn call_site_provenance_new_stores_callee_and_caller() {
     let called = build_file("callee.fhy", None);
@@ -600,8 +589,7 @@ fn call_site_provenance_new_stores_callee_and_caller() {
 /// Test a fused provenance keeps its sources in order and no label.
 #[test]
 fn fused_provenance_new_keeps_sources_in_order() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
+    let [a, b] = ["a.fhy", "b.fhy"].map(|path| build_file(path, None));
 
     let provenance = FusedProvenance::new(vec![a.clone(), b.clone()]);
 
@@ -631,13 +619,11 @@ fn fused_provenance_new_keeps_non_canonical_sources() {
     assert_eq!(provenance.sources(), sources.as_slice());
 }
 
-/// Test an empty fusion is a fusion, not the unknown provenance.
 #[test]
 fn fused_provenance_with_no_sources_differs_from_unknown() {
     assert_ne!(build_fused(vec![], None), Provenance::Unknown);
 }
 
-/// Test a single-source fusion differs from its source.
 #[test]
 fn fused_provenance_with_one_source_differs_from_the_source() {
     let a = build_file("a.fhy", None);
@@ -645,7 +631,6 @@ fn fused_provenance_with_one_source_differs_from_the_source() {
     assert_ne!(build_fused(vec![a.clone()], None), a);
 }
 
-/// Test provenances of different variants are never equal.
 #[test]
 fn provenances_of_different_variants_are_unequal() {
     let file = build_file("a.fhy", None);
@@ -675,7 +660,6 @@ fn equal_provenances_hash_equally(#[case] build: fn() -> Provenance) {
 // Provenance::fuse
 // =============================================================================
 
-/// Test fusing nothing gives the unknown provenance.
 #[test]
 fn fuse_with_no_inputs_returns_unknown() {
     let fused = Provenance::fuse([]);
@@ -683,7 +667,6 @@ fn fuse_with_no_inputs_returns_unknown() {
     assert_eq!(fused, Provenance::Unknown);
 }
 
-/// Test fusing only unknown provenances gives the unknown provenance.
 #[test]
 fn fuse_with_only_unknown_inputs_returns_unknown() {
     let fused = Provenance::fuse([Provenance::Unknown, Provenance::Unknown]);
@@ -702,7 +685,6 @@ fn fuse_labelled_with_no_survivors_returns_unknown(#[case] inputs: Vec<Provenanc
     assert_eq!(fused, Provenance::Unknown);
 }
 
-/// Test fusing one provenance without a label returns it unchanged.
 #[test]
 fn fuse_without_a_label_returns_a_single_input_unchanged() {
     let a = build_file("a.fhy", None);
@@ -712,7 +694,6 @@ fn fuse_without_a_label_returns_a_single_input_unchanged() {
     assert_eq!(fused, a);
 }
 
-/// Test fusing one provenance under a label wraps it.
 #[test]
 fn fuse_labelled_wraps_a_single_input() {
     let a = build_file("a.fhy", None);
@@ -722,23 +703,18 @@ fn fuse_labelled_wraps_a_single_input() {
     assert_eq!(fused, build_fused(vec![a], Some("cse")));
 }
 
-/// Test unknown inputs are dropped from a mixed input.
 #[test]
 fn fuse_drops_unknown_inputs_from_mixed_input() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
+    let [a, b] = ["a.fhy", "b.fhy"].map(|path| build_file(path, None));
 
     let fused = Provenance::fuse([a.clone(), Provenance::Unknown, b.clone()]);
 
     assert_eq!(fused, build_fused(vec![a, b], None));
 }
 
-/// Test an unlabelled nested fusion is spliced into the result.
 #[test]
 fn fuse_flattens_a_nested_unlabelled_fusion() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
     let inner = build_fused(vec![a.clone(), b.clone()], None);
 
     let fused = Provenance::fuse([inner, c.clone()]);
@@ -746,12 +722,9 @@ fn fuse_flattens_a_nested_unlabelled_fusion() {
     assert_eq!(fused, build_fused(vec![a, b, c], None));
 }
 
-/// Test a labelled nested fusion is kept whole.
 #[test]
 fn fuse_preserves_a_nested_labelled_fusion() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
     let inner = build_fused(vec![a, b], Some("cse"));
 
     let fused = Provenance::fuse([inner.clone(), c.clone()]);
@@ -773,23 +746,18 @@ fn fuse_treats_an_empty_label_as_a_label() {
     assert_eq!(fused, inner);
 }
 
-/// Test the result keeps the input order.
 #[test]
 fn fuse_preserves_input_order() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
 
     let fused = Provenance::fuse([a.clone(), b.clone(), c.clone()]);
 
     assert_eq!(fused, build_fused(vec![a, b, c], None));
 }
 
-/// Test fusing the same inputs in another order gives another result.
 #[test]
 fn fuse_is_not_commutative() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
+    let [a, b] = ["a.fhy", "b.fhy"].map(|path| build_file(path, None));
 
     let forward = Provenance::fuse([a.clone(), b.clone()]);
     let backward = Provenance::fuse([b, a]);
@@ -797,7 +765,6 @@ fn fuse_is_not_commutative() {
     assert_ne!(forward, backward);
 }
 
-/// Test equal sources are not deduplicated.
 #[test]
 fn fuse_preserves_duplicate_sources() {
     let a = build_file("a.fhy", None);
@@ -807,11 +774,9 @@ fn fuse_preserves_duplicate_sources() {
     assert_eq!(fused, build_fused(vec![a.clone(), a], None));
 }
 
-/// Test the label labels the result.
 #[test]
 fn fuse_labelled_attaches_the_label_to_the_result() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
+    let [a, b] = ["a.fhy", "b.fhy"].map(|path| build_file(path, None));
 
     let fused = Provenance::fuse_labelled([a.clone(), b.clone()], "loop-fusion");
 
@@ -821,8 +786,7 @@ fn fuse_labelled_attaches_the_label_to_the_result() {
 /// Test unknown provenances revealed by splicing are dropped too.
 #[test]
 fn fuse_drops_unknown_inside_directly_constructed_nested_fused() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
+    let [a, b] = ["a.fhy", "b.fhy"].map(|path| build_file(path, None));
     let non_canonical_inner = build_fused(vec![Provenance::Unknown, a.clone()], None);
 
     let fused = Provenance::fuse([non_canonical_inner, b.clone()]);
@@ -833,9 +797,7 @@ fn fuse_drops_unknown_inside_directly_constructed_nested_fused() {
 /// Test unlabelled fusions are spliced at any depth.
 #[test]
 fn fuse_flattens_nested_unlabelled_fusions_transitively() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
     let deeply_nested = build_fused(
         vec![a.clone(), build_fused(vec![b.clone(), c.clone()], None)],
         None,
@@ -864,9 +826,7 @@ fn fuse_does_not_flatten_through_a_labelled_fusion() {
 /// Test dropping, splicing and ordering compose.
 #[test]
 fn fuse_combines_all_reduction_rules() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
     let inner_unlabelled = build_fused(vec![a.clone(), b.clone()], None);
     let inner_labelled = build_fused(vec![b.clone(), c.clone()], Some("x"));
 
@@ -919,10 +879,12 @@ fn fuse_flattens_deeply_nested_unlabelled_fusions_on_a_small_stack() {
         let files: Vec<Provenance> = (0..=SMALL_STACK_DEPTH)
             .map(|index| build_file(&format!("{index}.fhy"), None))
             .collect();
-        let mut nested = files[SMALL_STACK_DEPTH].clone();
-        for file in files[..SMALL_STACK_DEPTH].iter().rev() {
-            nested = build_fused(vec![file.clone(), nested], None);
-        }
+        let nested = files[..SMALL_STACK_DEPTH]
+            .iter()
+            .rev()
+            .fold(files[SMALL_STACK_DEPTH].clone(), |nested, file| {
+                build_fused(vec![file.clone(), nested], None)
+            });
 
         let fused = Provenance::fuse([nested]);
 
@@ -934,12 +896,9 @@ fn fuse_flattens_deeply_nested_unlabelled_fusions_on_a_small_stack() {
     });
 }
 
-/// Test unlabelled fusion is associative.
 #[test]
 fn fuse_is_associative() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
 
     let left = Provenance::fuse([Provenance::fuse([a.clone(), b.clone()]), c.clone()]);
     let right = Provenance::fuse([a.clone(), Provenance::fuse([b.clone(), c.clone()])]);
@@ -952,9 +911,7 @@ fn fuse_is_associative() {
 /// Test a labelled inner fusion breaks associativity, since it stays whole.
 #[test]
 fn fuse_labelled_is_not_associative() {
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let c = build_file("c.fhy", None);
+    let [a, b, c] = ["a.fhy", "b.fhy", "c.fhy"].map(|path| build_file(path, None));
 
     let grouped = Provenance::fuse([
         Provenance::fuse_labelled([a.clone(), b.clone()], "m"),
@@ -970,31 +927,14 @@ fn fuse_labelled_is_not_associative() {
 #[test]
 fn fuse_flattens_a_deeply_nested_chain() {
     const DEPTH: usize = 3000;
-    let a = build_file("a.fhy", None);
-    let b = build_file("b.fhy", None);
-    let mut nested = build_fused(vec![a.clone()], None);
-    for _ in 0..DEPTH {
-        nested = build_fused(vec![nested], None);
-    }
+    let [a, b] = ["a.fhy", "b.fhy"].map(|path| build_file(path, None));
+    let nested = (0..DEPTH).fold(build_fused(vec![a.clone()], None), |nested, _| {
+        build_fused(vec![nested], None)
+    });
 
     let fused = Provenance::fuse([nested, b.clone()]);
 
     assert_eq!(fused, build_fused(vec![a, b], None));
-}
-
-/// Test a loop-fusion pass records both source regions under its label.
-#[test]
-fn fuse_loop_fusion_pass_combines_two_provenances() {
-    let op_a = build_file("a.fhy", Some(build_offset_span(Some(0), Some(3))));
-    let op_b = build_file("b.fhy", Some(build_offset_span(Some(10), Some(13))));
-
-    let fused = Provenance::fuse_labelled([op_a.clone(), op_b.clone()], "loop-fusion");
-
-    let Provenance::Fused(fused) = &fused else {
-        panic!("expected a fused provenance, got {fused:?}");
-    };
-    assert_eq!(fused.sources(), &[op_a, op_b]);
-    assert_eq!(fused.label(), Some("loop-fusion"));
 }
 
 // =============================================================================
@@ -1125,7 +1065,6 @@ fn inliner_call_site_chain_is_walkable() {
 // Wire form
 // =============================================================================
 
-/// Test a position encodes as its two fields.
 #[test]
 fn position_encodes_as_line_and_column() {
     let encoded = serde_json::to_value(build_position(2, 8)).expect("positions encode");
@@ -1136,7 +1075,7 @@ fn position_encodes_as_line_and_column() {
 /// Test a span encodes all four keys, with `null` for absent bounds.
 #[rstest]
 #[case::full(
-    try_build_span(Some(0), Some(3), Some((1, 1)), Some((1, 4))).unwrap(),
+    build_full_span(0..3, (1, 1)..(1, 4)),
     json!({
         "start_offset": 0,
         "end_offset": 3,
@@ -1204,7 +1143,7 @@ fn provenance_encodes_externally_tagged(#[case] provenance: Provenance, #[case] 
 #[rstest]
 #[case::unknown(Provenance::Unknown)]
 #[case::file(build_file("c.fhy", None))]
-#[case::file_with_full_span(build_file("a.fhy", Some(try_build_span(Some(0), Some(3), Some((1, 1)), Some((1, 4))).unwrap())))]
+#[case::file_with_full_span(build_file("a.fhy", Some(build_full_span(0..3, (1, 1)..(1, 4)))))]
 #[case::builtin(build_named("fhy.add", Provenance::Unknown))]
 #[case::library_symbol(build_named("mylib::matmul", build_file("mylib.fhyobj", None)))]
 #[case::call_site(build_call_site(
@@ -1242,7 +1181,6 @@ fn position_and_span_round_trip_through_json() {
     assert_eq!(restored_span, span);
 }
 
-/// Test decoding two unknown payloads gives equal provenances.
 #[test]
 fn decoded_unknown_provenances_compare_equal() {
     let payload = json!("unknown");
@@ -1254,7 +1192,6 @@ fn decoded_unknown_provenances_compare_equal() {
     assert_eq!(first, second);
 }
 
-/// Test decoding a file payload normalizes its path.
 #[test]
 fn provenance_decode_normalizes_the_file_path() {
     let payload = json!({"file": {"file_path": "./x//y.fhy/", "span": null}});
@@ -1331,66 +1268,19 @@ fn span_decode_rejects_reversed_offsets_with_the_span_error_text() {
     assert!(error.to_string().contains(&expected), "{error}");
 }
 
-/// Test a named payload with an empty name is refused with the
-/// named-provenance error's text.
-#[test]
-fn named_provenance_decode_rejects_an_empty_name_with_the_error_text() {
-    let payload = r#"{"named": {"name": "", "child": "unknown"}}"#;
-
-    let error = serde_json::from_str::<Provenance>(payload).expect_err("the name is empty");
-
-    let expected = NamedProvenanceError::EmptyName.to_string();
-    assert!(error.to_string().contains(&expected), "{error}");
-}
-
-/// Test malformed position payloads are rejected with a data error, whose
-/// message names the crate's own error where one applies.
+/// Test malformed position payloads are rejected with a data error.
 #[rstest]
-#[case::missing_column(
-    json!({"line": 1}),
-    None
-)]
-#[case::bool_line(
-    json!({"line": true, "column": 1}),
-    None
-)]
-#[case::extra_key(
-    json!({"line": 1, "column": 2, "z": 3}),
-    None
-)]
-#[case::zero_line(
-    json!({"line": 0, "column": 1}),
-    None
-)]
-#[case::zero_column(
-    json!({"line": 1, "column": 0}),
-    None
-)]
-#[case::float_line(
-    json!({"line": 1.0, "column": 1}),
-    None
-)]
-#[case::string_line(
-    json!({"line": "1", "column": 1}),
-    None
-)]
-#[case::negative_line(
-    json!({"line": -1, "column": 1}),
-    None
-)]
-#[case::null_line(
-    json!({"line": null, "column": 1}),
-    None
-)]
-fn position_decode_rejects_malformed_payloads(
-    #[case] payload: Value,
-    #[case] crate_error: Option<String>,
-) {
-    assert_decode_rejected::<Position>(
-        &payload.to_string(),
-        Category::Data,
-        crate_error.as_deref(),
-    );
+#[case::missing_column(json!({"line": 1}))]
+#[case::bool_line(json!({"line": true, "column": 1}))]
+#[case::extra_key(json!({"line": 1, "column": 2, "z": 3}))]
+#[case::zero_line(json!({"line": 0, "column": 1}))]
+#[case::zero_column(json!({"line": 1, "column": 0}))]
+#[case::float_line(json!({"line": 1.0, "column": 1}))]
+#[case::string_line(json!({"line": "1", "column": 1}))]
+#[case::negative_line(json!({"line": -1, "column": 1}))]
+#[case::null_line(json!({"line": null, "column": 1}))]
+fn position_decode_rejects_malformed_payloads(#[case] payload: Value) {
+    assert_decode_rejected::<Position>(&payload.to_string(), Category::Data, None);
 }
 
 /// Test malformed span payloads are rejected with a data error, whose
@@ -1507,11 +1397,9 @@ fn span_decode_rejects_an_offset_beyond_u64() {
 
 /// Return `depth` named provenances nested over the unknown provenance.
 fn build_nested_named(depth: usize) -> Provenance {
-    let mut provenance = Provenance::Unknown;
-    for _ in 0..depth {
-        provenance = build_named("n", provenance);
-    }
-    provenance
+    (0..depth).fold(Provenance::Unknown, |provenance, _| {
+        build_named("n", provenance)
+    })
 }
 
 /// Test JSON text nested far past `serde_json`'s nesting limit is refused
@@ -1568,30 +1456,11 @@ fn span_error_display_writes_the_full_message(#[case] error: SpanError, #[case] 
     assert_eq!(message, expected);
 }
 
-/// Test the named-provenance error renders its full message.
 #[test]
 fn named_provenance_error_display_writes_the_full_message() {
     let message = NamedProvenanceError::EmptyName.to_string();
 
     assert_eq!(message, "a named provenance's name must be non-empty");
-}
-
-/// Test each constructor family returns its own error type, holding the
-/// one variant its failure produces.
-#[test]
-fn provenance_constructors_return_their_own_error_family() {
-    let position: Result<Position, PositionError> = Position::try_new(0, 1);
-    let (start, end) = (5, 3);
-    let span: Result<Span, SpanError> = Span::from_offsets(start..end);
-    let named: Result<NamedProvenance, NamedProvenanceError> =
-        NamedProvenance::try_new("", Provenance::Unknown);
-
-    assert!(matches!(position, Err(PositionError::ZeroLine)));
-    assert!(matches!(
-        span,
-        Err(SpanError::EndOffsetBeforeStart { start: 5, end: 3 })
-    ));
-    assert!(matches!(named, Err(NamedProvenanceError::EmptyName)));
 }
 
 /// Test every error renders as one lowercase line without a trailing

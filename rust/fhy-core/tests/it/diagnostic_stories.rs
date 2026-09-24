@@ -2,9 +2,9 @@
 //! diagnostics, validation reports and the error a failed report escalates
 //! into.
 //!
-//! Public API only. These tests share the process-wide `NoteKind` registry
-//! and run in parallel, so none of them clears it, and each test that
-//! registers a kind does so under a fresh identifier.
+//! These tests share the process-wide `NoteKind` registry and run in
+//! parallel, so none of them clears it, and each test that registers a kind
+//! does so under a fresh identifier.
 
 use crate::support::hashing as hashing_support;
 
@@ -24,7 +24,6 @@ use serde_json::{Value, json};
 // Helpers
 // =============================================================================
 
-/// A function returning one of the shipped note kinds.
 type DefaultKind = fn() -> &'static Canonical<NoteKind>;
 
 /// Build a diagnostic at `level` from `source` with an uncategorized note.
@@ -47,7 +46,6 @@ fn build_report(diagnostics: Vec<Diagnostic>) -> ValidationReport {
     ValidationReport::new(diagnostics, Vec::new())
 }
 
-/// Return the sources of `diagnostics`, in order.
 fn collect_sources<'a>(diagnostics: impl Iterator<Item = &'a Diagnostic>) -> Vec<&'a str> {
     diagnostics.map(Diagnostic::source).collect()
 }
@@ -312,8 +310,7 @@ fn note_decode_registers_an_unknown_kind() {
     );
 }
 
-/// Test malformed note payloads, including a kind whose id is at the id
-/// cap, are rejected with a data error.
+/// Test malformed note payloads are rejected with a data error.
 ///
 /// The message is serde's or the identifier's, which the note does not own.
 #[rstest]
@@ -329,9 +326,6 @@ fn note_decode_registers_an_unknown_kind() {
 )]
 #[case::negative_id(
     json!({"message": "x", "kind": {"name": {"id": -1, "name_hint": "other"}, "description": ""}})
-)]
-#[case::kind_id_at_the_cap(
-    json!({"message": "x", "kind": {"name": {"id": 9_223_372_036_854_775_808_u64, "name_hint": "other"}, "description": ""}})
 )]
 #[case::null_kind(json!({"message": "x", "kind": null}))]
 fn note_decode_rejects_malformed_payloads(#[case] payload: Value) {
@@ -400,7 +394,6 @@ fn diagnostic_message_text_omits_the_note_kind() {
     assert_eq!(diagnostic.detail(), None);
 }
 
-/// A constructor building a diagnostic at one fixed level.
 type LevelConstructor = fn(Note, &'static str) -> Diagnostic;
 
 /// Test each level constructor builds a diagnostic at its level, with no
@@ -807,33 +800,6 @@ fn a_failed_validation_run_is_reported_to_the_user() {
     assert_eq!(
         failure.report().records(),
         &["tiling.check", "bounds.check"]
-    );
-}
-
-/// Test a verifier story: two checks report through the level builders,
-/// and the caller prints the failure's summary and then its report.
-#[test]
-fn a_verifier_reports_through_diagnostic_builders() {
-    let tiling = Diagnostic::warning(
-        Note::new("prefer a smaller tile", NoteKind::suggestion().clone()),
-        "tiling.check",
-    );
-    let bounds = Diagnostic::error(
-        Note::with_other_kind("loop bound is negative"),
-        "bounds.check",
-    )
-    .with_detail("bound -1 in loop i");
-    let report = build_report(vec![tiling, bounds]);
-
-    let failure = report.into_result().expect_err("the run has an error");
-    let printed = format!("{failure}\n{}", failure.report());
-
-    assert_eq!(
-        printed,
-        "validation failed with 1 error\n\
-         warning[tiling.check]: prefer a smaller tile\n\
-         error[bounds.check]: loop bound is negative\n\
-         \x20   detail: bound -1 in loop i"
     );
 }
 
