@@ -1,8 +1,7 @@
-//! Property tests for `fhy_core::pass::PassManager`: run
-//! order, fixpoint termination, and the analysis cache's preservation
-//! contract.
+//! Property tests for `fhy_core::pass::PassManager`: run order, fixpoint
+//! termination, and the analysis cache's preservation contract.
 //!
-//! Public API only; nothing here reads process-global state.
+//! Nothing here reads process-global state.
 
 use crate::support::pass_ir;
 
@@ -61,8 +60,7 @@ enum CacheStep {
     ComputeOnOutput(i64),
 }
 
-/// Generate one cache step.
-fn generate_cache_step() -> impl Strategy<Value = CacheStep> {
+fn arbitrary_cache_step() -> impl Strategy<Value = CacheStep> {
     prop_oneof![
         Just(CacheStep::Read),
         (-2_i64..=2).prop_map(CacheStep::Add),
@@ -233,7 +231,7 @@ proptest! {
     #[test]
     fn pass_manager_cache_honors_the_preservation_contract(
         start in -5_i64..=5,
-        steps in prop::collection::vec(generate_cache_step(), 0..12),
+        steps in prop::collection::vec(arbitrary_cache_step(), 0..12),
     ) {
         let reads = Mutex::new(Vec::new());
         let mut manager = PassManager::new(Identifier::new("pipeline"));

@@ -1,9 +1,9 @@
-//! Tests for `fhy_core::pass::PassManager` and
-//! `FixpointPassGroup`: pipeline order, records, the per-run analysis cache,
-//! fixpoint iteration, and opt-in verification.
+//! Tests for `fhy_core::pass::PassManager` and `FixpointPassGroup`: pipeline
+//! order, records, the per-run analysis cache, fixpoint iteration, and opt-in
+//! verification.
 //!
-//! Public API only. Analyses count their runs in counters the toy IR nodes
-//! carry, so nothing here reads process-global state.
+//! Analyses count their runs in counters the toy IR nodes carry, so nothing
+//! here reads process-global state.
 
 use crate::support::pass_ir;
 
@@ -38,6 +38,25 @@ fn build_add_pass(name: &str, delta: i64) -> ClosurePass<'static> {
 #[must_use]
 fn build_identity_pass(name: &str) -> ClosurePass<'static> {
     ClosurePass::new(name, |ir, _| Ok(ir.clone()))
+}
+
+/// Build the pass `name` that computes [`DoubleAnalysis`] of its input and
+/// returns the input.
+#[must_use]
+fn build_double_computing_pass(name: &str) -> ClosurePass<'static> {
+    ClosurePass::new(name, |ir, cx| {
+        cx.analysis::<DoubleAnalysis>(ir);
+        Ok(ir.clone())
+    })
+}
+
+/// Build the pass `name` that pushes [`DoubleAnalysis`] of its input onto
+/// `observed` and returns the input.
+fn build_double_observing_pass<'a>(name: &str, observed: &'a mut Vec<i64>) -> ClosurePass<'a> {
+    ClosurePass::new(name, move |ir, cx| {
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
+        Ok(ir.clone())
+    })
 }
 
 /// Return the pass record of a pipeline record, failing the test otherwise.
@@ -136,6 +155,13 @@ fn expect_non_convergence(error: &PassError) -> (&Identifier, NonZeroUsize) {
         } => (group_name, max_iterations),
         _ => panic!("expected a non-convergence failure, got {error:?}"),
     }
+}
+
+/// Build the verifier that runs `check`.
+fn build_counting_verifier(check: &mut CountingCheck) -> ValidationManager<'_, BoxIr> {
+    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
+    verifier.add(check);
+    verifier
 }
 
 /// Build the verifier that rejects negative values.
@@ -429,14 +455,11 @@ fn pass_context_analysis_is_cached_within_a_managed_pass() {
 fn pass_context_analysis_is_reused_across_an_unchanged_pass() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_pass(ClosurePass::new("tests.pm.compute", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    }));
-    manager.add_pass(ClosurePass::new("tests.pm.read_again", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_computing_pass("tests.pm.compute"));
+    manager.add_pass(build_double_observing_pass(
+        "tests.pm.read_again",
+        &mut observed,
+    ));
     let input = BoxIr::new(5);
 
     manager.run(&input).expect("the run succeeds");
@@ -456,10 +479,10 @@ fn pass_context_analysis_follows_an_unchanged_pass_to_its_new_node() {
         cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.derive(ir.value()))
     }));
-    manager.add_pass(ClosurePass::new("tests.pm.read_copy", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_observing_pass(
+        "tests.pm.read_copy",
+        &mut observed,
+    ));
     let input = BoxIr::new(5);
 
     manager.run(&input).expect("the run succeeds");
@@ -475,15 +498,12 @@ fn pass_context_analysis_follows_an_unchanged_pass_to_its_new_node() {
 fn pass_context_analysis_recomputes_after_a_changing_pass() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_pass(ClosurePass::new("tests.pm.seed", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_computing_pass("tests.pm.seed"));
     manager.add_pass(build_add_pass("tests.pm.mutate", 1));
-    manager.add_pass(ClosurePass::new("tests.pm.reread", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_observing_pass(
+        "tests.pm.reread",
+        &mut observed,
+    ));
     let input = BoxIr::new(5);
 
     manager.run(&input).expect("the run succeeds");
@@ -557,10 +577,10 @@ fn pass_manager_keeps_results_computed_on_a_pass_output() {
         cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }));
-    manager.add_pass(ClosurePass::new("tests.pm.read_output", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_observing_pass(
+        "tests.pm.read_output",
+        &mut observed,
+    ));
     let input = BoxIr::new(5);
 
     manager.run(&input).expect("the run succeeds");
@@ -590,15 +610,12 @@ impl CompilerPass<BoxIr> for ClaimChangeKeepNode {
 fn pass_manager_keeps_results_of_an_output_that_is_its_input() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_pass(ClosurePass::new("tests.pm.seed", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_computing_pass("tests.pm.seed"));
     manager.add_pass(ClaimChangeKeepNode);
-    manager.add_pass(ClosurePass::new("tests.pm.reread", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_observing_pass(
+        "tests.pm.reread",
+        &mut observed,
+    ));
     let input = BoxIr::new(4);
 
     manager.run(&input).expect("the run succeeds");
@@ -639,15 +656,12 @@ impl CompilerPass<BoxIr> for ComputeOnOutputPreservingDouble {
 fn pass_manager_prefers_an_outputs_own_result_to_its_inputs() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_pass(ClosurePass::new("tests.pm.seed_input", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_computing_pass("tests.pm.seed_input"));
     manager.add_pass(ComputeOnOutputPreservingDouble);
-    manager.add_pass(ClosurePass::new("tests.pm.reread_output", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_observing_pass(
+        "tests.pm.reread_output",
+        &mut observed,
+    ));
     let input = BoxIr::new(3);
 
     manager.run(&input).expect("the run succeeds");
@@ -679,10 +693,7 @@ fn pass_context_analysis_serves_passes_inside_a_fixpoint_group() {
 #[test]
 fn pass_manager_starts_every_run_with_an_empty_cache() {
     let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_pass(ClosurePass::new("tests.pm.read", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_computing_pass("tests.pm.read"));
     let input = BoxIr::new(1);
 
     manager.run(&input).expect("the first run succeeds");
@@ -695,10 +706,7 @@ fn pass_manager_starts_every_run_with_an_empty_cache() {
 /// computes analyses afresh there.
 #[test]
 fn borrowed_pass_runs_standalone_after_a_managed_run() {
-    let mut pass = ClosurePass::new("tests.pm.state_check", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    });
+    let mut pass = build_double_computing_pass("tests.pm.state_check");
     let managed_input = BoxIr::new(5);
     let standalone_input = BoxIr::new(7);
 
@@ -719,10 +727,7 @@ fn borrowed_pass_runs_standalone_after_a_managed_run() {
 #[test]
 fn pass_manager_run_releases_every_cached_handle() {
     let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_pass(ClosurePass::new("tests.pm.read_input", |ir, cx| {
-        cx.analysis::<DoubleAnalysis>(ir);
-        Ok(ir.clone())
-    }));
+    manager.add_pass(build_double_computing_pass("tests.pm.read_input"));
     manager.add_pass(PreserveDoubleOnly);
     manager.add_pass(ClosurePass::new("tests.pm.read_output", |ir, cx| {
         cx.analysis::<ParityAnalysis>(ir);
@@ -811,33 +816,6 @@ fn fixpoint_group_runs_its_passes_in_order_each_iteration() {
             ],
         ]
     );
-}
-
-/// Test a group that fails on non-convergence fails the run when its budget
-/// runs out.
-#[test]
-fn fixpoint_group_fails_the_run_when_it_does_not_converge() {
-    let mut group = build_group("flip-group", 3);
-    group.add_pass(build_flip_pass("tests.pm.flip"));
-    let mut manager = PassManager::new(Identifier::new("pipeline"));
-    manager.add_fixpoint_group(group);
-
-    let error = manager
-        .run(&BoxIr::new(0))
-        .expect_err("the group never converges");
-
-    let (group_name, max_iterations) = expect_non_convergence(&error);
-    assert_eq!(group_name.name_hint(), "flip-group");
-    assert_eq!(max_iterations.get(), 3);
-    assert_eq!(error.class(), FailureClass::Execution);
-    assert_eq!(error.pass_name(), None);
-    assert!(error.diagnostics().is_empty());
-    assert!(error.source().is_none());
-    let [PipelineRecord::FixpointGroup(record)] = error.records() else {
-        panic!("expected the group's record, got {:?}", error.records());
-    };
-    assert!(!record.is_converged());
-    assert_eq!(record.iterations(), 3);
 }
 
 /// Test a group allowed not to converge hands on the IR of its last
@@ -1037,9 +1015,10 @@ fn failure_inside_a_fixpoint_group_records_the_partial_group() {
     );
 }
 
-/// Test a non-convergence error is structured: the group's name and budget
-/// as fields, no pass name, no diagnostics, no source, the execution class,
-/// and the complete group record, one iteration per unit of the budget.
+/// Test a group that fails on non-convergence fails the run when its budget
+/// runs out, with a structured error: the group's name and budget as fields,
+/// no pass name, no diagnostics, no source, the execution class, and the
+/// complete unconverged group record, one iteration per unit of the budget.
 #[test]
 fn non_convergence_error_is_structured() {
     let mut group = build_group("oscillating", 4);
@@ -1061,6 +1040,7 @@ fn non_convergence_error_is_structured() {
     assert!(error.source().is_none());
     assert_eq!(error.records().len(), 2);
     let record = expect_group_record(&error.records()[1]);
+    assert!(!record.is_converged());
     assert_eq!(record.iterations(), 4);
     assert!(
         record
@@ -1252,11 +1232,9 @@ fn pass_manager_verifier_blames_the_first_pass_of_a_leading_group() {
 #[test]
 fn pass_manager_verifier_skips_a_pipeline_without_passes() {
     let mut check = CountingCheck::default();
-    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
-    verifier.add(&mut check);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_fixpoint_group(build_group("empty-group", 2));
-    manager.set_verifier(verifier);
+    manager.set_verifier(build_counting_verifier(&mut check));
 
     let result = manager.run(&BoxIr::new(-1)).expect("nothing is verified");
     drop(manager);
@@ -1269,12 +1247,10 @@ fn pass_manager_verifier_skips_a_pipeline_without_passes() {
 #[test]
 fn pass_manager_verifier_validates_unchanged_ir_once() {
     let mut check = CountingCheck::default();
-    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
-    verifier.add(&mut check);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(build_identity_pass("tests.pm.identity_a"));
     manager.add_pass(build_identity_pass("tests.pm.identity_b"));
-    manager.set_verifier(verifier);
+    manager.set_verifier(build_counting_verifier(&mut check));
 
     manager.run(&BoxIr::new(0)).expect("the run succeeds");
     drop(manager);
@@ -1286,13 +1262,11 @@ fn pass_manager_verifier_validates_unchanged_ir_once() {
 #[test]
 fn pass_manager_verifier_validates_each_changed_output() {
     let mut check = CountingCheck::default();
-    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
-    verifier.add(&mut check);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(build_add_pass("tests.pm.increment", 1));
     manager.add_pass(build_identity_pass("tests.pm.keep"));
     manager.add_pass(build_add_pass("tests.pm.increment_again", 1));
-    manager.set_verifier(verifier);
+    manager.set_verifier(build_counting_verifier(&mut check));
 
     manager.run(&BoxIr::new(0)).expect("the run succeeds");
     drop(manager);
@@ -1441,8 +1415,6 @@ fn verifier_reads_the_pipeline_analysis_cache() {
 #[test]
 fn pass_manager_verifies_every_changed_output_even_a_node_seen_before() {
     let mut check = CountingCheck::default();
-    let mut verifier = ValidationManager::new(Identifier::new("verifier"));
-    verifier.add(&mut check);
     let x = BoxIr::new(1);
     let y = x.derive(2);
     let back = x.clone();
@@ -1451,7 +1423,7 @@ fn pass_manager_verifies_every_changed_output_even_a_node_seen_before() {
     manager.add_pass(ClosurePass::new("tests.pm.back_to_x", move |_, _| {
         Ok(back.clone())
     }));
-    manager.set_verifier(verifier);
+    manager.set_verifier(build_counting_verifier(&mut check));
 
     let result = manager.run(&x).expect("the run succeeds");
     drop(manager);

@@ -2,8 +2,7 @@
 //! hook-error wrapping and pass-through, the pass context, preserved analyses,
 //! analysis ids, node identities, pass names, and the pass registry.
 //!
-//! Public API only. Every registry is a local value, so no test shares
-//! state with another.
+//! Every registry is a local value, so no test shares state with another.
 
 use crate::support::pass_ir;
 
@@ -369,7 +368,6 @@ fn execute_of_an_unchanged_run_preserves_every_analysis() {
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::all());
 }
 
-/// Test `into_output` hands back the output.
 #[test]
 fn pass_outcome_into_output_returns_the_output() {
     let outcome = Increment.execute(&41).expect("the run succeeds");
@@ -377,7 +375,6 @@ fn pass_outcome_into_output_returns_the_output() {
     assert_eq!(outcome.into_output(), 42);
 }
 
-/// Test a run calls the hooks in lifecycle order.
 #[test]
 fn execute_calls_the_hooks_in_lifecycle_order() {
     let mut pass = RecordingPass::default();
@@ -848,7 +845,6 @@ impl Analysis for Beta {
     }
 }
 
-/// Test an analysis runs over its own IR type.
 #[test]
 fn analysis_runs_over_its_ir_type() {
     assert_eq!((Alpha.run(&3), Beta.run(&3)), (3, -3));
@@ -866,7 +862,6 @@ fn preserved_analyses_all_preserves_every_analysis() {
     assert_eq!(all.preserved_ids().count(), 0);
 }
 
-/// Test the empty set preserves nothing.
 #[test]
 fn preserved_analyses_none_preserves_nothing() {
     let none = PreservedAnalyses::none();
@@ -892,7 +887,6 @@ fn preserve_adds_one_analysis_and_leaves_the_original_unchanged() {
     assert!(!updated.preserves_all());
 }
 
-/// Test preserving on the all-preserving set keeps it all-preserving.
 #[test]
 fn preserve_on_all_keeps_all() {
     let preserved = PreservedAnalyses::all()
@@ -902,7 +896,6 @@ fn preserve_on_all_keeps_all() {
     assert_eq!(preserved, PreservedAnalyses::all());
 }
 
-/// Test preserving an analysis twice equals preserving it once.
 #[test]
 fn preserve_twice_equals_preserve_once() {
     let once = PreservedAnalyses::none().preserve::<DoubleAnalysis>();
@@ -912,7 +905,6 @@ fn preserve_twice_equals_preserve_once() {
     assert_eq!(twice, once);
 }
 
-/// Test preserving by id equals preserving by type.
 #[test]
 fn preserve_id_equals_preserve_by_type() {
     let by_id = PreservedAnalyses::none().preserve_id(AnalysisId::of::<DoubleAnalysis>());
@@ -974,7 +966,6 @@ fn analysis_id_display_is_the_type_name() {
     );
 }
 
-/// Test analysis ids order by type name.
 #[test]
 fn analysis_id_orders_by_type_name() {
     assert!(AnalysisId::of::<Alpha>() < AnalysisId::of::<Beta>());
@@ -985,7 +976,6 @@ fn analysis_id_orders_by_type_name() {
 // Node identities
 // =============================================================================
 
-/// Test clones of one `Arc` share an identity.
 #[test]
 fn node_identity_of_arc_is_shared_by_clones() {
     let node = Arc::new(3_i64);
@@ -1108,8 +1098,9 @@ fn borrowed_and_boxed_passes_forward_their_name_and_description() {
 #[test]
 fn borrowed_pass_forwards_every_hook_and_keeps_its_state() {
     let mut pass = RecordingPass::default();
+    let mut borrowed = &mut pass;
 
-    let outcome = pass.execute(&0).expect("the run succeeds");
+    let outcome = ExecutePass::execute(&mut borrowed, &0).expect("the run succeeds");
 
     assert_eq!(*outcome.output(), 1);
     assert_eq!(pass.calls.len(), 6);
@@ -1231,7 +1222,6 @@ fn create_and_run(registry: &PassRegistry, name: &str, ir: i64) -> i64 {
     pass.execute(&ir).expect("the run succeeds").into_output()
 }
 
-/// Test a new registry holds nothing.
 #[test]
 fn registry_new_is_empty() {
     let registry = PassRegistry::new();
@@ -1311,7 +1301,6 @@ fn registry_register_builds_one_instance_to_read_its_name() {
     assert_eq!(builds.load(Ordering::SeqCst), 2);
 }
 
-/// Test `create` refuses a name nothing is registered under.
 #[test]
 fn registry_create_rejects_an_unknown_name() {
     let registry = build_registry();

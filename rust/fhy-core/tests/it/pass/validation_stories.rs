@@ -1,8 +1,8 @@
-//! Tests for `fhy_core::pass::ValidationManager`: collect-all
-//! validation, failing validators, passes run as validators, and the
-//! aggregated report and its per-validator records.
+//! Tests for `fhy_core::pass::ValidationManager`: collect-all validation,
+//! failing validators, passes run as validators, and the aggregated report
+//! and its per-validator records.
 //!
-//! Public API only; nothing here reads process-global state.
+//! Nothing here reads process-global state.
 
 use crate::support::pass_ir;
 
@@ -711,8 +711,8 @@ fn validation_manager_propagates_a_validator_panic() {
     let _report = manager.validate(&BoxIr::new(0));
 }
 
-/// Test a record's diagnostics come from the report it belongs to, and a
-/// validator reached through a borrow or a box keeps its name.
+/// Test a validator reached through a borrow or a box keeps its name and
+/// its check.
 #[test]
 fn borrowed_and_boxed_validators_forward_their_name_and_check() {
     let mut scripted =
