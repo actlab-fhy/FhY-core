@@ -1,10 +1,10 @@
 //! Tests for building expressions: the operand types, the operator
 //! overloads, the operation-named builder methods, the variadic builders,
 //! and the build errors.
-//!
-//! Public API only (`fhy_core::expr`).
 
 use crate::support::expression as expression_support;
+
+use std::ops::{Add, Div, Mul, Sub};
 
 use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::builtins::BuiltinFunction;
@@ -36,7 +36,6 @@ enum BinaryBuilder {
 }
 
 impl BinaryBuilder {
-    /// Return the operation the builder applies.
     fn operation(self) -> BinaryOperation {
         match self {
             Self::Add => BinaryOperation::Add,
@@ -55,7 +54,6 @@ impl BinaryBuilder {
         }
     }
 
-    /// Apply the builder to `left` and `right`.
     fn apply(self, left: &Expression, right: impl Into<Expression>) -> Expression {
         match self {
             Self::Add => left + right,
@@ -84,7 +82,6 @@ enum PlainOperand {
 }
 
 impl PlainOperand {
-    /// Return the expression the operand stands for.
     fn to_expression(&self) -> Expression {
         match self {
             Self::Integer(value) => build_literal(*value),
@@ -94,8 +91,6 @@ impl PlainOperand {
     }
 }
 
-/// Return the three plain operand kinds: an integer, a float, and an
-/// identifier.
 fn build_plain_operands() -> [PlainOperand; 3] {
     [
         PlainOperand::Integer(10),
@@ -108,8 +103,6 @@ fn build_plain_operands() -> [PlainOperand; 3] {
 // Unary builders
 // =============================================================================
 
-/// Test negation, the positive builder and logical negation build unary
-/// nodes with their operation.
 #[rstest]
 #[case::negate(UnaryOperation::Negate)]
 #[case::positive(UnaryOperation::Positive)]
@@ -130,8 +123,6 @@ fn expression_unary_builders_produce_the_matching_unary_node(#[case] operation: 
     assert!(Expression::ptr_eq(node.operand(), &operand));
 }
 
-/// Test negating an owned expression builds the same node as negating a
-/// borrowed one.
 #[test]
 fn expression_negation_of_owned_and_borrowed_expressions_agree() {
     let (_, x) = build_identifier("x");
@@ -147,8 +138,6 @@ fn expression_negation_of_owned_and_borrowed_expressions_agree() {
 // Binary builders
 // =============================================================================
 
-/// Test each binary builder, over two expressions, builds the binary node
-/// with its operation.
 #[rstest]
 fn expression_binary_builders_produce_the_matching_binary_node(
     #[values(
@@ -181,8 +170,6 @@ fn expression_binary_builders_produce_the_matching_binary_node(
     assert!(Expression::ptr_eq(node.right(), &right));
 }
 
-/// Test each binary builder wraps a plain right operand in the expression it
-/// stands for.
 #[rstest]
 fn expression_binary_builders_promote_a_plain_right_operand(
     #[values(
@@ -218,7 +205,7 @@ fn expression_binary_builders_promote_a_plain_right_operand(
 
 /// Test each arithmetic operator wraps a plain left operand in the
 /// expression it stands for; floor division, floor modulo and
-/// exponentiation take one through `new_binary`.
+/// exponentiation, which have no operator, take one through `new_binary`.
 #[rstest]
 fn expression_arithmetic_builders_promote_a_plain_left_operand(
     #[values(
@@ -288,76 +275,64 @@ fn expression_reflected_operators_accept_every_left_operand_type(#[case] build: 
     assert_eq!(built, expected);
 }
 
-/// Build `left op right` with each arithmetic operator `+ - * /`, for an
-/// owned and a borrowed expression `right`, each paired with the node
-/// `new_binary` builds from the same operands. `left` is evaluated once per
-/// use.
-macro_rules! build_with_every_operator {
-    ($left:expr, $right:expr) => {{
-        let right: &Expression = $right;
-        vec![
-            (
-                $left + right,
-                Expression::new_binary(BinaryOperation::Add, $left, right),
-            ),
-            (
-                $left + right.clone(),
-                Expression::new_binary(BinaryOperation::Add, $left, right),
-            ),
-            (
-                $left - right,
-                Expression::new_binary(BinaryOperation::Subtract, $left, right),
-            ),
-            (
-                $left - right.clone(),
-                Expression::new_binary(BinaryOperation::Subtract, $left, right),
-            ),
-            (
-                $left * right,
-                Expression::new_binary(BinaryOperation::Multiply, $left, right),
-            ),
-            (
-                $left * right.clone(),
-                Expression::new_binary(BinaryOperation::Multiply, $left, right),
-            ),
-            (
-                $left / right,
-                Expression::new_binary(BinaryOperation::Divide, $left, right),
-            ),
-            (
-                $left / right.clone(),
-                Expression::new_binary(BinaryOperation::Divide, $left, right),
-            ),
-        ]
-    }};
+/// Return `left op right` for each arithmetic operator `+ - * /` and an
+/// owned and a borrowed `right`, each paired with the node `new_binary`
+/// builds from the same operands.
+fn build_with_every_operator<L>(left: L, right: &Expression) -> Vec<(Expression, Expression)>
+where
+    L: Clone
+        + Into<Expression>
+        + for<'a> Add<&'a Expression, Output = Expression>
+        + for<'a> Sub<&'a Expression, Output = Expression>
+        + for<'a> Mul<&'a Expression, Output = Expression>
+        + for<'a> Div<&'a Expression, Output = Expression>
+        + Add<Expression, Output = Expression>
+        + Sub<Expression, Output = Expression>
+        + Mul<Expression, Output = Expression>
+        + Div<Expression, Output = Expression>,
+{
+    let [add, subtract, multiply, divide] = [
+        BinaryOperation::Add,
+        BinaryOperation::Subtract,
+        BinaryOperation::Multiply,
+        BinaryOperation::Divide,
+    ]
+    .map(|operation| Expression::new_binary(operation, left.clone(), right));
+    vec![
+        (left.clone() + right, add.clone()),
+        (left.clone() + right.clone(), add),
+        (left.clone() - right, subtract.clone()),
+        (left.clone() - right.clone(), subtract),
+        (left.clone() * right, multiply.clone()),
+        (left.clone() * right.clone(), multiply),
+        (left.clone() / right, divide.clone()),
+        (left / right.clone(), divide),
+    ]
 }
 
 /// Build every arithmetic operator's node from one left operand type and a
 /// reference, each paired with the node `new_binary` builds.
 type BuildWithEveryOperator = fn(&Expression) -> Vec<(Expression, Expression)>;
 
-/// Test every non-expression operand type is accepted on the left of every
-/// arithmetic operator, the same types that convert `Into<Expression>` on
-/// the right, with an owned or a borrowed expression on the right.
+/// Test every non-expression operand type that converts `Into<Expression>`
+/// is accepted on the left of every arithmetic operator, with an owned or a
+/// borrowed expression on the right.
 #[rstest]
-#[case::i64(|x: &Expression| build_with_every_operator!(3_i64, x))]
-#[case::i32(|x: &Expression| build_with_every_operator!(3_i32, x))]
-#[case::i128(|x: &Expression| build_with_every_operator!(3_i128, x))]
-#[case::u32(|x: &Expression| build_with_every_operator!(3_u32, x))]
-#[case::u64(|x: &Expression| build_with_every_operator!(3_u64, x))]
-#[case::usize(|x: &Expression| build_with_every_operator!(3_usize, x))]
-#[case::big_integer(|x: &Expression| build_with_every_operator!(build_big_operand(), x))]
-#[case::f64(|x: &Expression| build_with_every_operator!(2.5_f64, x))]
-#[case::owned_identifier(|x: &Expression| {
-    let y = Identifier::new("y");
-    build_with_every_operator!(y.clone(), x)
-})]
+#[case::i64(|x: &Expression| build_with_every_operator(3_i64, x))]
+#[case::i32(|x: &Expression| build_with_every_operator(3_i32, x))]
+#[case::i128(|x: &Expression| build_with_every_operator(3_i128, x))]
+#[case::u32(|x: &Expression| build_with_every_operator(3_u32, x))]
+#[case::u64(|x: &Expression| build_with_every_operator(3_u64, x))]
+#[case::usize(|x: &Expression| build_with_every_operator(3_usize, x))]
+#[case::big_integer(|x: &Expression| build_with_every_operator(build_big_operand(), x))]
+#[case::f64(|x: &Expression| build_with_every_operator(2.5_f64, x))]
+#[case::owned_identifier(|x: &Expression| build_with_every_operator(Identifier::new("y"), x))]
 #[case::borrowed_identifier(|x: &Expression| {
     let y = Identifier::new("y");
-    build_with_every_operator!(&y, x)
+    build_with_every_operator(&y, x)
 })]
 #[case::literal_value(|x: &Expression| {
-    build_with_every_operator!(LiteralValue::parse_text("1.50").expect("a decimal text"), x)
+    build_with_every_operator(LiteralValue::parse_text("1.50").expect("a decimal text"), x)
 })]
 fn expression_arithmetic_operators_accept_every_operand_type_on_the_left(
     #[case] build: BuildWithEveryOperator,
@@ -376,13 +351,10 @@ fn expression_arithmetic_operators_accept_every_operand_type_on_the_left(
 /// to it, paired with the expression that operand stands for.
 type LiftOperand = fn(&Identifier, &Expression) -> (Expression, Expression);
 
-/// Return the big integer the big-integer operand case lifts.
 fn build_big_operand() -> BigInt {
     "-100000000000000000000".parse().expect("digits")
 }
 
-/// Return the literal variant of `expression`, or `None` if it is not a
-/// literal.
 fn find_literal_variant(expression: &Expression) -> Option<std::mem::Discriminant<LiteralValue>> {
     match expression.kind() {
         ExpressionKind::Literal(literal) => Some(std::mem::discriminant(literal)),
@@ -391,7 +363,7 @@ fn find_literal_variant(expression: &Expression) -> Option<std::mem::Discriminan
 }
 
 /// Test every operand type lifts to the expression it stands for, a literal
-/// operand keeping its variant.
+/// keeping its variant.
 #[rstest]
 #[case::owned_expression(|_: &Identifier, reference: &Expression| (
     Expression::new_unary(UnaryOperation::Negate, reference.clone()),
@@ -431,7 +403,7 @@ fn find_literal_variant(expression: &Expression) -> Option<std::mem::Discriminan
     build_literal(build_big_operand()),
 ))]
 #[case::f64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7.5_f64), build_literal(7.5)))]
-fn expression_new_binary_lifts_every_operand_type(#[case] lift: LiftOperand) {
+fn expression_new_unary_lifts_every_operand_type(#[case] lift: LiftOperand) {
     let (identifier, reference) = build_identifier("x");
 
     let (built, operand) = lift(&identifier, &reference);
@@ -449,7 +421,6 @@ fn expression_new_binary_lifts_every_operand_type(#[case] lift: LiftOperand) {
     );
 }
 
-/// Test a borrowed expression operand is shared, not copied.
 #[test]
 fn expression_new_binary_shares_a_borrowed_operand() {
     let (_, x) = build_identifier("x");
@@ -463,7 +434,6 @@ fn expression_new_binary_shares_a_borrowed_operand() {
     assert!(Expression::ptr_eq(node.right(), &x));
 }
 
-/// Test `new_binary` wraps an integer and a float operand in literals.
 #[test]
 fn expression_new_binary_constructs_with_literal_coercion() {
     let built = Expression::new_binary(BinaryOperation::Add, 1, 2.5);
@@ -473,7 +443,6 @@ fn expression_new_binary_constructs_with_literal_coercion() {
     assert_eq!(built, expected);
 }
 
-/// Test `new_unary` wraps a number in a literal.
 #[test]
 fn expression_new_unary_constructs_with_literal_coercion() {
     let built = Expression::new_unary(UnaryOperation::Negate, 5);
@@ -514,8 +483,6 @@ fn expression_binary_builder_takes_a_parsed_text_operand(
     assert_eq!(right.to_string(), expected_display);
 }
 
-/// Test `floor_mod` builds the floor-modulo node over the receiver and its
-/// operand, promoting a plain operand.
 #[test]
 fn expression_floor_mod_builds_a_floor_mod_node() {
     let (_, x) = build_identifier("x");
@@ -530,8 +497,7 @@ fn expression_floor_mod_builds_a_floor_mod_node() {
     assert_eq!(node.right(), &build_literal(3));
 }
 
-/// Test `/` builds true division whatever the operand types, integers
-/// included, never floor division.
+/// Test `/` builds true division, never floor division, even over integers.
 #[rstest]
 #[case::integers(|| build_literal(7) / 4)]
 #[case::integer_on_the_left(|| 7 / build_literal(4))]
@@ -550,8 +516,6 @@ fn expression_div_operator_builds_true_division(#[case] build: fn() -> Expressio
 // Logical builders
 // =============================================================================
 
-/// Build the logical node of `operation` over `operands` through the
-/// builder named after it, `Expression::all` or `Expression::any`.
 fn build_through_named_builder(
     operation: LogicalOperation,
     operands: impl IntoIterator<Item = Expression>,
@@ -562,7 +526,6 @@ fn build_through_named_builder(
     }
 }
 
-/// Return the logical node `expression` refers to.
 fn expect_logical(expression: &Expression) -> &LogicalExpression {
     let ExpressionKind::Logical(node) = expression.kind() else {
         panic!("expected a logical node, got {expression:?}");
@@ -570,9 +533,8 @@ fn expect_logical(expression: &Expression) -> &LogicalExpression {
     node
 }
 
-/// Test `all`, `any` and `new_logical` build one logical node over every
-/// operand in order, sharing each operand, whatever their number, and
-/// wrapping a bare identifier operand in a reference to it.
+/// Test `all`, `any` and `new_logical` build one logical node sharing every
+/// operand, in order.
 #[rstest]
 fn expression_all_and_any_build_one_node_over_every_operand(
     #[values(LogicalOperation::And, LogicalOperation::Or)] operation: LogicalOperation,
@@ -594,7 +556,6 @@ fn expression_all_and_any_build_one_node_over_every_operand(
     assert_eq!(general, named);
 }
 
-/// Test a bare identifier operand becomes a reference to it.
 #[test]
 fn expression_all_wraps_identifier_operands_in_references() {
     let (first, first_reference) = build_identifier("a");
@@ -608,8 +569,6 @@ fn expression_all_wraps_identifier_operands_in_references() {
     );
 }
 
-/// Test `and` and `or` build the two-operand logical node over the receiver
-/// and their operand.
 #[rstest]
 #[case::and(LogicalOperation::And)]
 #[case::or(LogicalOperation::Or)]
@@ -646,25 +605,6 @@ fn expression_all_and_any_of_zero_or_one_operand(
     assert!(Expression::ptr_eq(&general_of_one, &p));
 }
 
-/// Test `all` of nothing is `true` and `any` of nothing is `false`.
-#[test]
-fn expression_all_and_any_of_nothing_are_true_and_false() {
-    let no_operands: [Expression; 0] = [];
-
-    let all = Expression::all(no_operands.clone());
-    let any = Expression::any(no_operands);
-
-    assert!(matches!(
-        all.kind(),
-        ExpressionKind::Literal(LiteralValue::Bool(true))
-    ));
-    assert!(matches!(
-        any.kind(),
-        ExpressionKind::Literal(LiteralValue::Bool(false))
-    ));
-}
-
-/// Test `all` of one operand returns that operand's handle, building no node.
 #[test]
 fn expression_all_of_one_operand_is_that_operand() {
     let (_, p) = build_identifier("p");
@@ -675,8 +615,6 @@ fn expression_all_of_one_operand_is_that_operand() {
     assert!(Expression::ptr_eq(&built, &comparison));
 }
 
-/// Test `and` never splices a nested conjunction's operands into the new
-/// node: `x.and(y.and(z))` keeps the inner node as its second operand.
 #[test]
 fn expression_and_does_not_flatten_a_nested_conjunction() {
     let (_, x) = build_identifier("x");
@@ -692,8 +630,6 @@ fn expression_and_does_not_flatten_a_nested_conjunction() {
     assert_ne!(built, Expression::all([&x, &y, &z]));
 }
 
-/// Test `all` over ten thousand comparisons is one logical node with every
-/// comparison as an operand, not a chain ten thousand levels deep.
 #[test]
 fn expression_all_of_ten_thousand_comparisons_is_one_logical_node() {
     let (_, x) = build_identifier("x");
@@ -759,7 +695,6 @@ fn expression_all_keeps_both_bounds_of_a_range() {
 // Piecewise and call builders
 // =============================================================================
 
-/// Test the piecewise builder keeps expression operands as they are.
 #[test]
 fn expression_piecewise_wraps_expression_operands_directly() {
     let (condition, value, otherwise) = (build_literal(true), build_literal(1), build_literal(2));
@@ -774,7 +709,6 @@ fn expression_piecewise_wraps_expression_operands_directly() {
     assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
 }
 
-/// Test the piecewise builder keeps several cases in order.
 #[test]
 fn expression_piecewise_keeps_multiple_cases_in_declared_order() {
     let (first_condition, second_condition) = (build_literal(true), build_literal(false));
@@ -820,7 +754,6 @@ fn expression_piecewise_coerces_identifiers_and_numbers() {
     assert_eq!(with_numbers, expected_numbers);
 }
 
-/// Test the piecewise builder refuses a number as a case condition.
 #[test]
 fn expression_piecewise_rejects_a_numeric_condition() {
     let result = Expression::piecewise([(1, 5)], 10);
@@ -831,7 +764,6 @@ fn expression_piecewise_rejects_a_numeric_condition() {
     );
 }
 
-/// Test the piecewise builder refuses no cases.
 #[test]
 fn expression_piecewise_rejects_zero_cases() {
     let result = Expression::piecewise(Vec::<(Expression, Expression)>::new(), 0);
@@ -855,7 +787,6 @@ fn expression_piecewise_keeps_explicit_boolean_literal_operands() {
     assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
 }
 
-/// Test an equality built with `equals` is a valid case condition.
 #[test]
 fn expression_piecewise_accepts_an_equals_condition() {
     let (_, x) = build_identifier("x");
@@ -869,7 +800,6 @@ fn expression_piecewise_accepts_an_equals_condition() {
     assert_eq!(node.cases()[0].0, x.equals(0));
 }
 
-/// Test the call builder carries the callee and the argument nodes.
 #[test]
 fn expression_call_returns_a_call_with_callee_and_arguments() {
     let (first, second) = (build_literal(1), build_literal(2));
@@ -886,7 +816,7 @@ fn expression_call_returns_a_call_with_callee_and_arguments() {
     assert!(Expression::ptr_eq(&node.arguments()[1], &second));
 }
 
-/// Test the call builder accepts zero arguments and a named callee.
+/// Test the call builder accepts zero arguments with a named callee.
 #[test]
 fn expression_call_supports_zero_arguments() {
     let nullary = FunctionName::try_new("nullary").expect("a user function name");
@@ -900,7 +830,6 @@ fn expression_call_supports_zero_arguments() {
     assert!(node.arguments().is_empty());
 }
 
-/// Test the call builder wraps identifier and number arguments.
 #[test]
 fn expression_call_coerces_identifiers_and_numbers() {
     let (x, x_reference) = build_identifier("x");
@@ -933,7 +862,6 @@ fn callee_from_str_resolves_builtin_names(#[case] name: &str, #[case] expected: 
     assert_eq!(callee.to_string(), name);
 }
 
-/// Test parsing an empty callee name is refused.
 #[test]
 fn callee_from_str_refuses_an_empty_name() {
     let result = "".parse::<Callee>();
@@ -978,9 +906,8 @@ fn function_name_try_new_rejects_empty_and_builtin_names(
 // Conversions
 // =============================================================================
 
-/// Test each number type converts into the integer or float literal of its
-/// value, and an identifier or expression, owned or borrowed, into the node
-/// it stands for.
+/// Test each number type and a literal value convert into the literal
+/// expression of their value.
 #[rstest]
 #[case::i32(Expression::from(-3_i32), build_literal(LiteralValue::Int(BigInt::from(-3))))]
 #[case::i64(Expression::from(-3_i64), build_literal(LiteralValue::Int(BigInt::from(-3))))]
@@ -1034,7 +961,6 @@ fn expression_from_a_borrowed_identifier_or_expression_builds_its_node() {
 // Build errors
 // =============================================================================
 
-/// Test each piecewise error's message.
 #[rstest]
 #[case::no_cases(PiecewiseError::NoCases, "piecewise has no cases")]
 #[case::condition_literal(
@@ -1067,7 +993,6 @@ fn rebuild_error_display_describes_the_failure(
     assert_eq!(message, expected);
 }
 
-/// Test each function-name error's message.
 #[rstest]
 #[case::empty(FunctionNameError::Empty, "function name is empty")]
 #[case::builtin(
@@ -1083,7 +1008,6 @@ fn function_name_error_display_describes_the_failure(
     assert_eq!(message, expected);
 }
 
-/// Test the unknown-name error's message names the enum and the name.
 #[test]
 fn unknown_name_error_display_describes_the_failure() {
     let error: UnknownNameError = "plus"
