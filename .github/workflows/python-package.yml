@@ -8,7 +8,8 @@
 # equivalence tests) run only on release gates (PRs -> main) and manual
 # dispatch — never on dev PRs.
 #
-# The rust and rust-msrv jobs cover the crate directly: the Python jobs only
+# The rust and rust-msrv jobs cover the crate directly, and the deny job checks
+# its dependency graph with cargo-deny (deny.toml): the Python jobs only
 # compile it as an extension module and reach it through the identifier
 # bindings. The tests job also checks the golden corpora those crate tests
 # replay against the Python generators that record them
@@ -139,6 +140,27 @@ jobs:
           tar -xzf target/package/fhy-core-*.crate -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP"/fhy-core-*/
           cargo test --locked
+
+  deny:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Licenses, Bans & Sources
+        # deny.toml: every dependency permissively licensed, from crates.io,
+        # with no wildcard version requirement.
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources
+      - name: Security Advisories
+        # A new RustSec advisory against an existing dependency must be seen,
+        # but it should not block unrelated pull requests, so this step warns
+        # rather than fails the job.
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
 
   rust-msrv:
     runs-on: "ubuntu-latest"
@@ -295,7 +317,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, rust, rust-msrv, tests, property, golden-expanded]
+    needs: [style, rust, rust-msrv, deny, tests, property, golden-expanded]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -303,7 +325,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          required=(style rust rust-msrv tests)
+          required=(style rust rust-msrv deny tests)
           # Conditional jobs skip on dev PRs, so skipped is fine for them;
           # any other result besides success is not.
           conditional=(property golden-expanded)

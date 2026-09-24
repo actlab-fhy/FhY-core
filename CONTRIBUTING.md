@@ -251,6 +251,17 @@ PyO3 binding crate `fhy-core-py`. That version is a promise to the crate's
 consumers, so `.cargo/config.toml` has the resolver fall back to dependency
 releases that build on it and `cargo update` keeps `Cargo.lock` within it.
 
+The `deny` job runs [cargo-deny](https://embarkstudios.github.io/cargo-deny/)
+against `deny.toml`, and `ci-ok` requires it. Every dependency must be under
+one of the allowed permissive licenses, come from crates.io, and have no
+wildcard version requirement. A known RustSec advisory against a dependency
+shows as a warning on the job rather than failing it. Run the same checks
+locally with `cargo deny check` (`cargo install cargo-deny --locked`); a new
+license or an ignored advisory goes into `deny.toml` with its reason.
+Dependabot (`.github/dependabot.yml`) opens a weekly pull request against
+`dev` for Cargo and GitHub Actions updates, with minor and patch updates
+grouped into one pull request per ecosystem.
+
 The Rust equivalence tests replay golden corpora under `rust/fhy-core/tests/golden/`,
 each recorded from the Python implementation by the `generate_*.py` script
 beside it. `tests/test_golden_corpora.py` reruns every generator in a fresh
