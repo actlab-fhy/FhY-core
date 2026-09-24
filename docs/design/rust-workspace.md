@@ -7491,3 +7491,59 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   `PassContext::report` keeps its `Option<String>` detail. With a
   `Cow<'static, str>` source, the manager and the validation pipeline pass
   `pass_name.to_owned()` and `validator_name.to_owned()`.
+
+- **Step 3, commit order:** the `skip` hook and the `Validator` trait
+  (F-022) land before the `PassError` rework (F-014). With `Nested`, a
+  pass run as a validator always records its error diagnostic, so the
+  silent-failure path is reachable only through a direct `Validator`;
+  landing `Validator` first keeps every commit's tests meaningful.
+- **Step 3, `ContextLender`:** B5 §8.2 deletes it with F-008. It is deleted
+  one commit later, with `skip`, because the `noop_output` tests called
+  the hook directly through it until then.
+- **Step 3, `PassContext::report` (R-9):** it records the `Diagnostic` as
+  given, source included; it does not overwrite the source with the pass
+  name. `report_text(level, message, detail)` keeps its `Option` detail
+  (B5 §2.4 "unchanged") and attributes the text to the running pass.
+- **Step 3, verification diagnostic (R-9):** its message is the error's
+  one-line `Display` and it has no detail; the report is reached through
+  `PassErrorKind::Verification`. B5 §8.5's `detail().is_some()` checks
+  assert `None` instead.
+- **Step 3, registry tests under D-13:** `registry_allows_aliases_without_renaming_the_pass`
+  is void (no aliases). Two same-named types from two modules both key
+  under `"Fold"`, so the second registration is `NameTaken`
+  (`same_named_pass_types_in_two_modules_take_one_name`), and
+  `pass_registries_are_independent_values` registers them in two
+  registries. `pass_registry_does_not_change_pass_names` becomes
+  `pass_registry_keys_a_pass_by_its_own_name`. Registration builds one
+  instance to read the name, so `register_pass_does_not_call_the_factory`
+  becomes `registry_register_builds_one_instance_to_read_its_name`. The
+  factory is expected to build instances that share that name.
+- **Step 3, R-6:** there is no `verified` flag in the cache buckets.
+  `pass_manager_verifies_each_node_once_per_run` (B5 §8.10, 2 validations)
+  becomes `pass_manager_verifies_every_changed_output_even_a_node_seen_before`
+  (3 validations).
+- **Step 3, merge-only transfer:** `AnalysisCache::invalidate` has no
+  caller left and is deleted with its four unit tests; the transfer unit
+  tests pin the merge semantics. `get_or_insert_with` is private.
+- **Step 3, `AnalysisId::of`:** bounded by `A: Analysis`, like `preserve`
+  and `is_preserved` (D-14; B5 had the marker). Test marker types that
+  were plain structs implement `Analysis`.
+- **Step 3, `RewriteTreeError::Rebuild`:** being `#[non_exhaustive]`, it
+  cannot be built outside the crate, so
+  `rewrite_tree_error_describes_a_refused_rebuild` gets its error from a
+  refused rebuild.
+- **Step 3, `PassValidator`:** its `PassError` carries no diagnostics; they
+  stay in the validator's context and so in the report, which is why no
+  silent-failure diagnostic is added for it. `ValidatorRecord` stores the
+  start and end of its slice rather than a `Range`.
+- **Step 3, `short_type_name`:** a nominal type (a path with at most one
+  trailing generic list) is shortened without allocating. Other names go
+  through a scratch buffer and are still returned borrowed when the result
+  is one contiguous piece, as for `fn(i32) -> i32`.
+- **Step 3, layering:** `tree`'s rustdoc names the pass adapters in plain
+  code text, not intra-doc links, so a grep for `crate::pass` in `tree`
+  finds nothing.
+- **Step 3, B4's F-009 side:** `RuleApplier` still records a firing whose
+  rewrite returns the matched node; only the tree no longer counts it as a
+  change. `pattern/rewrite_stories.rs` and `pattern/properties.rs` flip
+  their two identity-rewrite pins accordingly.

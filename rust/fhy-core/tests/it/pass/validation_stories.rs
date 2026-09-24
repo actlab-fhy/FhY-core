@@ -79,6 +79,22 @@ impl Validator<BoxIr> for ScriptedValidator {
     }
 }
 
+/// The script as a pass, so a [`PassValidator`] can run it: the run performs
+/// the script.
+impl CompilerPass<BoxIr, ()> for ScriptedValidator {
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed(self.name)
+    }
+
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        self.validate(ir, cx)
+    }
+
+    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
+        Ok(false)
+    }
+}
+
 /// Build the step that reports `message` at `level` without detail.
 fn report(level: DiagnosticLevel, message: &'static str) -> Step {
     Step::Report {
@@ -403,7 +419,10 @@ fn validation_manager_keeps_a_structured_note() {
 #[test]
 fn validation_manager_records_a_failing_validator_and_runs_the_rest() {
     let mut manager = ValidationManager::new(Identifier::new("validation"));
-    manager.add(PassValidator::new(CrashInRun));
+    manager.add(PassValidator::new(ScriptedValidator::new(
+        "tests.vm.crasher",
+        vec![Step::Fail("internal boom")],
+    )));
     manager.add(ScriptedValidator::reporting(
         "tests.vm.after_crasher",
         DiagnosticLevel::Error,
@@ -419,7 +438,10 @@ fn validation_manager_records_a_failing_validator_and_runs_the_rest() {
     assert_eq!(
         errors,
         [
-            ("CrashInRun", "pass \"CrashInRun\" failed in run: crashed"),
+            (
+                "tests.vm.crasher",
+                "pass \"tests.vm.crasher\" failed in run: internal boom"
+            ),
             ("tests.vm.after_crasher", "still-runs"),
         ]
     );
@@ -431,17 +453,18 @@ fn validation_manager_records_a_failing_validator_and_runs_the_rest() {
     assert_eq!(failed, [true, false]);
 }
 
-/// Test the diagnostics a validator emitted before failing are kept.
+/// Test the diagnostics a pass run as a validator emitted before failing
+/// are kept, followed by the error recording the failure.
 #[test]
 fn validation_manager_keeps_the_diagnostics_a_validator_emitted_before_failing() {
-    let mut manager = build_manager([ScriptedValidator::new(
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(PassValidator::new(ScriptedValidator::new(
         "tests.vm.report_then_crash",
         vec![
             report(DiagnosticLevel::Warning, "heads-up"),
-            report(DiagnosticLevel::Info, "fyi"),
             Step::Fail("kaboom"),
         ],
-    )]);
+    )));
 
     let report = manager.validate(&BoxIr::new(0));
 
@@ -449,15 +472,13 @@ fn validation_manager_keeps_the_diagnostics_a_validator_emitted_before_failing()
         collect_levels_and_messages(report.diagnostics()),
         [
             (DiagnosticLevel::Warning, "heads-up"),
-            (DiagnosticLevel::Info, "fyi"),
             (
                 DiagnosticLevel::Error,
-                "validator \"tests.vm.report_then_crash\" failed without reporting an error: \
-                 kaboom"
+                "pass \"tests.vm.report_then_crash\" failed in run: kaboom"
             ),
         ]
     );
-    assert_eq!(report.records()[0].diagnostics_in(&report).len(), 3);
+    assert_eq!(report.records()[0].diagnostics_in(&report).len(), 2);
     assert!(report.records()[0].is_failed());
 }
 
