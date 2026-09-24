@@ -1,4 +1,5 @@
-//! The symbolic expression tree, its builders, and the analyses over it.
+//! The symbolic expression tree, its builders, the analyses over it, and
+//! the compiler passes over it.
 //!
 //! Integer literals of any size hold a [`BigInt`], re-exported here from
 //! `num-bigint`, so building and reading them needs no direct dependency
@@ -14,6 +15,7 @@ mod literal;
 mod node;
 mod operation;
 mod pprint;
+mod registration;
 mod screen;
 mod sort;
 mod wire;
@@ -29,7 +31,10 @@ pub use node::{
     UnaryExpression,
 };
 pub use operation::{BinaryOperation, UnaryOperation};
-pub use pprint::{FormatOptions, IdentifierStyle, Notation, format_expression};
+pub use pprint::{
+    ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation, format_expression,
+};
+pub use registration::register_expression_passes;
 pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
 pub use sort::FunctionSort;
 
