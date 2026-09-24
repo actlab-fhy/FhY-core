@@ -216,7 +216,7 @@ pub struct FixpointPassGroup<'p, I> {
     name: Identifier,
     max_iterations: NonZeroUsize,
     fail_on_non_convergence: bool,
-    passes: Vec<Box<dyn CompilerPass<I> + 'p>>,
+    passes: Vec<Box<dyn CompilerPass<I> + Send + 'p>>,
 }
 
 impl<'p, I> FixpointPassGroup<'p, I> {
@@ -253,7 +253,10 @@ impl<'p, I> FixpointPassGroup<'p, I> {
     }
 
     /// Append `pass` to the group.
-    pub fn add_pass(&mut self, pass: impl CompilerPass<I> + 'p) {
+    ///
+    /// The pass is `Send`, so the group and its pipeline can move to another
+    /// thread.
+    pub fn add_pass(&mut self, pass: impl CompilerPass<I> + Send + 'p) {
         self.passes.push(Box::new(pass));
     }
 
@@ -298,7 +301,7 @@ impl<I> fmt::Debug for FixpointPassGroup<'_, I> {
 
 /// One item of a pipeline.
 enum PipelineItem<'p, I> {
-    Pass(Box<dyn CompilerPass<I> + 'p>),
+    Pass(Box<dyn CompilerPass<I> + Send + 'p>),
     FixpointGroup(FixpointPassGroup<'p, I>),
 }
 
@@ -465,6 +468,10 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 /// With a verifier set, the run also verifies its input and every output a
 /// pass reports as changed.
 ///
+/// A pipeline stores its passes and its verifier's validators as `Send`, so
+/// it is `Send` whatever its IR type and can be built on one thread and run
+/// on another. It is not `Sync`: a run needs `&mut self`.
+///
 /// # Examples
 ///
 /// ```
@@ -530,8 +537,9 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
 
     /// Append `pass` to the pipeline.
     ///
-    /// Pass `&mut pass` to keep the pass and read its state after a run.
-    pub fn add_pass(&mut self, pass: impl CompilerPass<I> + 'p) {
+    /// Pass `&mut pass` to keep the pass and read its state after a run. The
+    /// pass is `Send`, so the pipeline can move to another thread.
+    pub fn add_pass(&mut self, pass: impl CompilerPass<I> + Send + 'p) {
         self.items.push(PipelineItem::Pass(Box::new(pass)));
     }
 
@@ -631,3 +639,15 @@ impl<I> fmt::Debug for PassManager<'_, I> {
             .finish()
     }
 }
+
+/// Pipelines, fixpoint groups and verifiers are `Send` for every IR type,
+/// even one that is not `Send` itself.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    const fn assert_pipelines_are_send<I>() {
+        assert_send::<PassManager<'static, I>>();
+        assert_send::<FixpointPassGroup<'static, I>>();
+        assert_send::<ValidationManager<'static, I>>();
+    }
+    assert_pipelines_are_send::<std::rc::Rc<()>>();
+};

@@ -696,7 +696,8 @@ fn validation_manager_propagates_a_validator_panic() {
 fn borrowed_and_boxed_validators_forward_their_name_and_check() {
     let mut scripted =
         ScriptedValidator::reporting("tests.vm.borrowed", DiagnosticLevel::Info, "i");
-    let boxed: Box<dyn Validator<BoxIr>> = Box::new(ScriptedValidator::clean("tests.vm.boxed"));
+    let boxed: Box<dyn Validator<BoxIr> + Send> =
+        Box::new(ScriptedValidator::clean("tests.vm.boxed"));
     let mut manager = ValidationManager::new(Identifier::new("validation"));
     manager.add(&mut scripted);
     manager.add(boxed);

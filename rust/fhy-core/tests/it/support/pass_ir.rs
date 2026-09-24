@@ -117,7 +117,7 @@ impl Analysis for ParityAnalysis {
 
 /// The hook of a [`ClosurePass`].
 pub(crate) type RunHook<'a> =
-    Box<dyn FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + 'a>;
+    Box<dyn FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + Send + 'a>;
 
 /// A pass over the toy IR named explicitly, whose run is a closure and which
 /// reports a change exactly when the output holds a different value.
@@ -130,7 +130,7 @@ impl<'a> ClosurePass<'a> {
     /// Build the pass `name` whose run is `run`.
     pub(crate) fn new(
         name: &str,
-        run: impl FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + 'a,
+        run: impl FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + Send + 'a,
     ) -> Self {
         Self {
             name: name.to_owned(),

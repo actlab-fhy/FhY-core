@@ -232,7 +232,7 @@ fn synthesize_silent_failure(validator_name: Cow<'static, str>, error: &PassFail
 /// analysis cache.
 pub struct ValidationManager<'p, I> {
     name: Identifier,
-    validators: Vec<Box<dyn Validator<I> + 'p>>,
+    validators: Vec<Box<dyn Validator<I> + Send + 'p>>,
 }
 
 impl<'p, I> ValidationManager<'p, I> {
@@ -254,8 +254,9 @@ impl<'p, I> ValidationManager<'p, I> {
     /// Append `validator` to the pipeline.
     ///
     /// Pass `&mut validator` to keep the validator and read its state after
-    /// a validation.
-    pub fn add(&mut self, validator: impl Validator<I> + 'p) {
+    /// a validation. The validator is `Send`, so the pipeline can move to
+    /// another thread.
+    pub fn add(&mut self, validator: impl Validator<I> + Send + 'p) {
         self.validators.push(Box::new(validator));
     }
 

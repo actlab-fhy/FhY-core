@@ -6,9 +6,8 @@
 
 use crate::support::pass_ir;
 
-use std::cell::RefCell;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
@@ -164,7 +163,7 @@ proptest! {
     fn pass_manager_runs_passes_in_the_order_added(
         indices in prop::collection::vec(0_usize..5, 1..=5),
     ) {
-        let recorder = RefCell::new(Vec::new());
+        let recorder = Mutex::new(Vec::new());
         let expected: Vec<String> = indices
             .iter()
             .map(|index| format!("tests.prop.recording_{index}"))
@@ -174,7 +173,10 @@ proptest! {
             let recorder = &recorder;
             let recorded_name = name.clone();
             manager.add_pass(ClosurePass::new(name, move |ir, _| {
-                recorder.borrow_mut().push(recorded_name.clone());
+                recorder
+                    .lock()
+                    .expect("no test thread panicked")
+                    .push(recorded_name.clone());
                 Ok(ir.clone())
             }));
         }
@@ -190,7 +192,10 @@ proptest! {
             .collect();
         drop(manager);
 
-        prop_assert_eq!(recorder.into_inner(), expected.clone());
+        prop_assert_eq!(
+            recorder.into_inner().expect("no test thread panicked"),
+            expected.clone()
+        );
         prop_assert_eq!(record_names, expected);
     }
 
@@ -230,7 +235,7 @@ proptest! {
         start in -5_i64..=5,
         steps in prop::collection::vec(generate_cache_step(), 0..12),
     ) {
-        let reads = RefCell::new(Vec::new());
+        let reads = Mutex::new(Vec::new());
         let mut manager = PassManager::new(Identifier::new("pipeline"));
         for (index, step) in steps.iter().enumerate() {
             let name = format!("tests.prop.step_{index}");
@@ -238,7 +243,10 @@ proptest! {
                 CacheStep::Read => {
                     let reads = &reads;
                     manager.add_pass(ClosurePass::new(&name, move |ir, cx| {
-                        reads.borrow_mut().push(*cx.analysis::<DoubleAnalysis>(ir));
+                        reads
+                            .lock()
+                            .expect("no test thread panicked")
+                            .push(*cx.analysis::<DoubleAnalysis>(ir));
                         Ok(ir.clone())
                     }));
                 }
@@ -264,7 +272,10 @@ proptest! {
         manager.run(&input).expect("the run succeeds");
         drop(manager);
 
-        prop_assert_eq!(reads.into_inner(), expected_reads);
+        prop_assert_eq!(
+            reads.into_inner().expect("no test thread panicked"),
+            expected_reads
+        );
         prop_assert_eq!(input.double_runs(), expected_runs);
     }
 }

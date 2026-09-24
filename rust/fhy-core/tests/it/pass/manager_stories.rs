@@ -7,16 +7,19 @@
 
 use crate::support::pass_ir;
 
-use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::num::NonZeroUsize;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, ValidationReport};
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
     CompilerPass, ExecutePass, FailureClass, FixpointGroupRecord, FixpointPassGroup, PassContext,
-    PassError, PassErrorKind, PassFailure, PassHook, PassManager, PassRunRecord, PipelineRecord,
-    PreservedAnalyses, ValidationManager, Validator, ValidatorRecord, VerificationPoint,
+    PassError, PassErrorKind, PassFailure, PassHook, PassManager, PassRegistry, PassRunRecord,
+    PipelineRecord, PreservedAnalyses, ValidationManager, Validator, ValidatorRecord,
+    VerificationPoint,
 };
 use pass_ir::{
     BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis, build_add_pass, build_identity_pass,
@@ -232,14 +235,14 @@ fn pass_run_record_holds_a_specific_preservation_set() {
 /// Test the pipeline stops at the first failing pass and returns its error.
 #[test]
 fn pass_manager_stops_at_the_first_failing_pass() {
-    let later_ran = Cell::new(false);
+    let later_ran = AtomicBool::new(false);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(build_add_pass("tests.pm.before_failure", 1));
     manager.add_pass(ClosurePass::new("tests.pm.failing", |_, _| {
         Err("broken".into())
     }));
     manager.add_pass(ClosurePass::new("tests.pm.after_failure", |ir, _| {
-        later_ran.set(true);
+        later_ran.store(true, Ordering::SeqCst);
         Ok(ir.clone())
     }));
 
@@ -265,7 +268,7 @@ fn pass_manager_stops_at_the_first_failing_pass() {
         collect_pass_names(error.records()),
         ["tests.pm.before_failure"]
     );
-    assert!(!later_ran.get());
+    assert!(!later_ran.load(Ordering::SeqCst));
 }
 
 /// Skips its run on a value above its limit, and adds one otherwise.
@@ -331,6 +334,38 @@ fn pass_manager_without_items_counts_no_run() {
 
     assert_eq!(result.pass_runs().count(), 0);
     assert_eq!(result.run_count(), 0);
+}
+
+/// Assert `T` is `Send`.
+fn assert_send<T: Send>() {}
+
+/// Assert `T` is `Send` and `Sync`.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// Test pipelines, fixpoint groups, verifiers and registries are `Send`,
+/// whatever their IR, and a pipeline built on one thread runs on another.
+#[test]
+fn pipelines_are_send() {
+    assert_send::<PassManager<'static, BoxIr>>();
+    assert_send::<FixpointPassGroup<'static, BoxIr>>();
+    assert_send::<ValidationManager<'static, BoxIr>>();
+    assert_send::<PassManager<'static, std::rc::Rc<()>>>();
+    assert_send_sync::<PassRegistry>();
+    let mut group = build_group("moved-group", 5);
+    group.add_pass(build_decrement_to_zero_pass("tests.pm.moved_decrement"));
+    let mut manager = PassManager::new(Identifier::new("moved"));
+    manager.add_pass(build_add_pass("tests.pm.moved_add", 2));
+    manager.add_fixpoint_group(group);
+    manager.set_verifier(build_negative_value_verifier());
+
+    let output = thread::spawn(move || {
+        let result = manager.run(&BoxIr::new(1)).expect("the run succeeds");
+        (result.output().value(), result.run_count())
+    })
+    .join()
+    .expect("the pipeline thread does not panic");
+
+    assert_eq!(output, (0, 5));
 }
 
 /// Test the pipeline's name is its identifier.
@@ -478,10 +513,11 @@ fn pass_manager_carries_only_preserved_analyses_to_a_changed_output() {
 #[test]
 fn pass_context_analysis_caches_a_node_other_than_the_input() {
     let side = BoxIr::new(21);
-    let observed = RefCell::new(Vec::new());
+    let observed = Mutex::new(Vec::new());
     let read_side = |ir: &BoxIr, cx: &mut PassContext<'_>| {
         observed
-            .borrow_mut()
+            .lock()
+            .expect("no test thread panicked")
             .push(*cx.analysis::<DoubleAnalysis>(&side));
         Ok(ir.clone())
     };
@@ -493,7 +529,10 @@ fn pass_context_analysis_caches_a_node_other_than_the_input() {
     manager.run(&BoxIr::new(0)).expect("the run succeeds");
     drop(manager);
 
-    assert_eq!(observed.into_inner(), [42, 42]);
+    assert_eq!(
+        observed.into_inner().expect("no test thread panicked"),
+        [42, 42]
+    );
     assert_eq!(side.double_runs(), 1);
 }
 
@@ -1141,10 +1180,10 @@ fn pass_error_display_table(#[case] failure: PipelineFailure, #[case] expected: 
 /// blaming the first pass.
 #[test]
 fn pass_manager_verifier_rejects_invalid_input_blaming_the_first_pass() {
-    let first_ran = Cell::new(false);
+    let first_ran = AtomicBool::new(false);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.first", |ir, _| {
-        first_ran.set(true);
+        first_ran.store(true, Ordering::SeqCst);
         Ok(ir.clone())
     }));
     manager.set_verifier(build_negative_value_verifier());
@@ -1177,7 +1216,7 @@ fn pass_manager_verifier_rejects_invalid_input_blaming_the_first_pass() {
             None
         )]
     );
-    assert!(!first_ran.get());
+    assert!(!first_ran.load(Ordering::SeqCst));
 }
 
 /// Test input verification blames the first pass of a leading fixpoint
@@ -1256,7 +1295,7 @@ fn pass_manager_verifier_validates_each_changed_output() {
 /// passes do not run.
 #[test]
 fn pass_manager_verifier_blames_the_pass_that_produced_invalid_output() {
-    let last_ran = Cell::new(false);
+    let last_ran = AtomicBool::new(false);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(build_add_pass("tests.pm.first_clean", 1));
     manager.add_pass(ClosurePass::new("tests.pm.corrupt", |ir, cx| {
@@ -1264,7 +1303,7 @@ fn pass_manager_verifier_blames_the_pass_that_produced_invalid_output() {
         Ok(ir.derive(-100))
     }));
     manager.add_pass(ClosurePass::new("tests.pm.last_clean", |ir, _| {
-        last_ran.set(true);
+        last_ran.store(true, Ordering::SeqCst);
         Ok(ir.derive(ir.value() + 1))
     }));
     manager.set_verifier(build_negative_value_verifier());
@@ -1303,7 +1342,7 @@ fn pass_manager_verifier_blames_the_pass_that_produced_invalid_output() {
             ),
         ]
     );
-    assert!(!last_ran.get());
+    assert!(!last_ran.load(Ordering::SeqCst));
 }
 
 /// Changes the value to -5 but reports no change.
