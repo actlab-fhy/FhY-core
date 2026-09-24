@@ -18,8 +18,8 @@ use expression_support::{
     expect_binary, expect_piecewise, expect_unary,
 };
 use fhy_core::expr::pattern::{
-    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome,
-    RewriteRule, Rule, apply_rewrite_rules,
+    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
+    apply_rewrite_rules,
 };
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, PiecewiseError, RebuildError, UnaryOperation,
@@ -32,12 +32,6 @@ use pattern_support::{
 };
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
-
-/// Rewrite `expression` with `rules` of any rule type, failing the test if
-/// the walk fails.
-fn rewrite_with<R: Rule>(expression: &Expression, rules: &[R]) -> RewriteOutcome {
-    apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
-}
 
 /// Rewrite `expression` with `rules` until a walk reports no change, and
 /// return the result with the number of walks.
@@ -445,7 +439,7 @@ fn rewrite_rule_apply_operates_at_the_root_only() {
 fn apply_rewrite_rules_with_no_rules_returns_the_input_itself() {
     let expression = build_literal(5);
 
-    let outcome = rewrite(&expression, &[]);
+    let outcome = rewrite::<RewriteRule>(&expression, &[]);
 
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
@@ -937,8 +931,8 @@ fn apply_rewrite_rules_accepts_rules_by_reference_and_by_arc() {
     let (_, x) = build_identifier("x");
     let rule = build_x_plus_zero_rule();
 
-    let by_reference = rewrite_with(&build_plus_zero(&x), &[&rule]);
-    let by_arc = rewrite_with(&build_plus_zero(&x), &[Arc::new(rule)]);
+    let by_reference = rewrite(&build_plus_zero(&x), &[&rule]);
+    let by_arc = rewrite(&build_plus_zero(&x), &[Arc::new(rule)]);
 
     assert!(Expression::ptr_eq(by_reference.output(), &x));
     assert!(Expression::ptr_eq(by_arc.output(), &x));

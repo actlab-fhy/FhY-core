@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 
 use fhy_core::expr::pattern::{
-    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteOutcome, RewriteRule,
+    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteOutcome, RewriteRule, Rule,
     apply_rewrite_rules,
 };
 use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
@@ -33,12 +33,13 @@ pub(crate) fn expect_probe_error(error: &CallbackError) -> &ProbeError {
         .unwrap_or_else(|| panic!("expected a ProbeError, got {error:?}"))
 }
 
-/// Rewrite `expression` with `rules`, failing the test if the walk fails.
+/// Rewrite `expression` with `rules` of any rule type, failing the test if
+/// the walk fails.
 ///
 /// # Panics
 ///
 /// Panics if a rule's callback or rebuild fails.
-pub(crate) fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> RewriteOutcome {
+pub(crate) fn rewrite<R: Rule>(expression: &Expression, rules: &[R]) -> RewriteOutcome {
     apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
 
