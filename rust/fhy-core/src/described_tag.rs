@@ -118,7 +118,9 @@ macro_rules! define_described_tag {
             fn build_from_payload<E: ::serde::de::Error>(
                 payload: Self::Payload,
             ) -> ::std::result::Result<Self, E> {
-                Ok(Self::create(payload.name.restore(), payload.description))
+                let name = $crate::identifier::Identifier::try_from(payload.name)
+                    .map_err(E::custom)?;
+                Ok(Self::create(name, payload.description))
             }
         }
 
@@ -139,7 +141,7 @@ macro_rules! define_described_tag {
         #[derive(::serde::Deserialize)]
         #[serde(rename = $wire_name, deny_unknown_fields)]
         pub(crate) struct $Payload {
-            name: $crate::identifier::IdentifierPayload,
+            name: $crate::identifier::IdentifierWire,
             description: ::std::string::String,
         }
 

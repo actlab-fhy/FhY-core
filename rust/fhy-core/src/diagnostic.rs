@@ -407,11 +407,10 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::identifier::{IdSpaceExhausted, Identifier, try_allocate_id};
+    use crate::identifier::Identifier;
     use crate::interned::Interned;
     use crate::test_support::{
-        RegistryGuard, assert_isolated_test_passes, has_counter_passed, hold_id_counter,
-        is_isolated_run, reserve_far_ahead_ids,
+        RegistryGuard, has_counter_passed, hold_id_counter, reserve_far_ahead_ids,
     };
 
     /// Serializes the test that clears the process-wide registry against the
@@ -556,38 +555,5 @@ mod tests {
 
         assert!(error.to_string().contains("zzz"), "{error}");
         assert!(!has_counter_passed(id));
-    }
-
-    /// Check that the shipped kinds survive a decode that exhausts the id
-    /// counter before the registry's first use. Only meaningful in the child
-    /// process that
-    /// [`decoding_the_largest_id_as_the_first_use_keeps_the_shipped_kinds`]
-    /// starts.
-    #[test]
-    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
-    fn decoding_the_largest_id_as_the_first_use_keeps_the_shipped_kinds_in_isolation() {
-        if !is_isolated_run() {
-            return;
-        }
-        let json = format!(
-            "{{\"name\":{{\"id\":{},\"name_hint\":\"last\"}},\"description\":\"d\"}}",
-            u64::MAX - 1
-        );
-
-        let restored: Canonical<NoteKind> =
-            serde_json::from_str(&json).expect("u64::MAX - 1 is valid");
-
-        assert_eq!(restored.name().id(), u64::MAX - 1);
-        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
-        assert_eq!(get_other_note_kind().name().name_hint(), "other");
-        assert_eq!(get_rationale_note_kind().name().name_hint(), "rationale");
-    }
-
-    #[test]
-    fn decoding_the_largest_id_as_the_first_use_keeps_the_shipped_kinds() {
-        assert_isolated_test_passes(
-            "diagnostic::tests::\
-             decoding_the_largest_id_as_the_first_use_keeps_the_shipped_kinds_in_isolation",
-        );
     }
 }

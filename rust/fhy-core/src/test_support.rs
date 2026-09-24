@@ -59,41 +59,6 @@ pub(crate) fn has_counter_passed(id: u64) -> bool {
     Identifier::new("counter-probe").id() > id
 }
 
-/// Environment variable that marks a child process running one isolated
-/// test.
-const ISOLATED_TEST_VARIABLE: &str = "FHY_CORE_ISOLATED_TEST";
-
-/// Return whether this process is the child [`assert_isolated_test_passes`]
-/// started.
-///
-/// An isolated test is `#[ignore]`d and returns early unless this holds, so
-/// a plain `--ignored` run skips its effect on process-global state.
-pub(crate) fn is_isolated_run() -> bool {
-    std::env::var_os(ISOLATED_TEST_VARIABLE).is_some()
-}
-
-/// Run the ignored test at `test_path` alone in a child process of the test
-/// binary and check that it passed, so its effect on process-global state
-/// (an exhausted id counter, a registry's first use) stays in that child.
-///
-/// `test_path` is the test's full path within the crate, such as
-/// `"identifier::tests::some_test"`.
-pub(crate) fn assert_isolated_test_passes(test_path: &str) {
-    let test_binary = std::env::current_exe().expect("the test binary has a path");
-    let output = std::process::Command::new(test_binary)
-        .args([test_path, "--exact", "--ignored", "--test-threads=1"])
-        .env(ISOLATED_TEST_VARIABLE, "1")
-        .output()
-        .expect("the test binary runs");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.contains("1 passed"),
-        "isolated test {test_path} failed:\n{stdout}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 /// Compile-time check that `T` can be shared and sent across threads, for use
 /// in a `const _: () = { ... };` item.
 pub(crate) const fn assert_send_sync<T: Send + Sync>() {}

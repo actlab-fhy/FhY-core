@@ -553,66 +553,70 @@ def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
 # =============================================================================
 # Id space bound
 #
-# Ids are unsigned 64-bit integers under both backends. The largest id an
-# identifier can hold is `2**64 - 2`: no identifier ever holds `2**64 - 1`,
-# so deserialization rejects it, and once `2**64 - 2` is issued or restored
-# the counter cannot advance without wrapping, so construction raises
-# `RuntimeError`.
+# Ids are unsigned 64-bit integers under both backends. A payload id must lie
+# below the cap `2**63`, so no payload can raise the counter past `2**63` and
+# exhaust the id space: fresh ids above the cap stay available.
 # =============================================================================
 
 
 @pytest.mark.parametrize(
     "id_value",
-    [2**64 - 1, 2**64, 2**64 + 1, 2**200],
-    ids=["two-pow-64-minus-one", "two-pow-64", "just-above-two-pow-64", "two-pow-200"],
+    [2**63, 2**63 + 1, 2**64 - 1, 2**64, 2**200],
+    ids=[
+        "two-pow-63",
+        "just-above-two-pow-63",
+        "two-pow-64-minus-one",
+        "two-pow-64",
+        "two-pow-200",
+    ],
 )
-def test_deserialize_id_of_2_pow_64_minus_1_or_more_raises_value_error(
+def test_deserialize_id_at_or_above_2_pow_63_raises_value_error(
     id_value: int,
 ) -> None:
-    """Test deserializing an `id` of `2**64 - 1` or more raises a value error."""
+    """Test deserializing an `id` of `2**63` or more raises a value error."""
     with pytest.raises(
         DeserializationValueError,
-        match=r'"Identifier"\. Expected a non-negative integer below 2\*\*64 - 1',
+        match=r'"Identifier"\. Expected a non-negative integer below 2\*\*63',
     ):
         Identifier.deserialize_from_dict({"id": id_value, "name_hint": "x"})
 
 
-def test_rejected_deserialization_of_2_pow_64_minus_1_leaves_the_counter() -> None:
-    """Test rejecting the id `2**64 - 1` does not advance the counter."""
+def test_rejected_deserialization_of_2_pow_63_leaves_the_counter() -> None:
+    """Test rejecting the id `2**63` does not advance the counter."""
     base = Identifier("anchor").id
     with pytest.raises(DeserializationValueError):
-        Identifier.deserialize_from_dict({"id": 2**64 - 1, "name_hint": "x"})
+        Identifier.deserialize_from_dict({"id": 2**63, "name_hint": "x"})
 
     assert Identifier("next").id == base + 1
 
 
-_EXHAUST_THEN_CONSTRUCT_PROGRAM = (
+_DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM = (
     "import fhy_core\n"
     "from fhy_core.identifier import Identifier\n"
+    "from fhy_core.serialization import DeserializationValueError\n"
     "print(fhy_core.RUST_BACKEND_SELECTED, flush=True)\n"
     "largest = Identifier.deserialize_from_dict("
-    "{'id': 2**64 - 2, 'name_hint': 'largest'})\n"
+    "{'id': 2**63 - 1, 'name_hint': 'largest'})\n"
     "print(largest.id, flush=True)\n"
-    "for _ in range(2):\n"
-    "    try:\n"
-    "        Identifier('beyond')\n"
-    "    except RuntimeError as error:\n"
-    "        print(f'{type(error).__name__}: {error}', flush=True)\n"
+    "print(Identifier('first').id, Identifier('second').id, flush=True)\n"
+    "try:\n"
+    "    Identifier.deserialize_from_dict({'id': 2**63, 'name_hint': 'cap'})\n"
+    "except DeserializationValueError as error:\n"
+    "    print(type(error).__name__, flush=True)\n"
 )
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
 @pytest.mark.parametrize("backend", ["rust", "python"])
-def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
+def test_deserializing_the_largest_payload_id_leaves_construction_working(
     backend: str,
 ) -> None:
-    """Test construction raises `RuntimeError` once `2**64 - 2` has been issued.
+    """Test a payload id of `2**63 - 1` leaves fresh ids to construct.
 
-    The child process deserializes the largest issuable id, which leaves the
-    counter at `2**64 - 1`, and then tries to construct two more identifiers.
-    Both backends raise the same catchable error, and a failed construction
-    leaves the counter exhausted rather than wrapped. The child reports the
+    The child process deserializes the largest payload id, which leaves the
+    counter at `2**63`, constructs two identifiers, which take the next two
+    ids, and then fails to deserialize the cap itself. The child reports the
     backend it selected, so a stale extension that falls back to Python
     cannot pass as the Rust case.
     """
@@ -620,7 +624,7 @@ def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
         pytest.importorskip("fhy_core._rs")
 
     completed = subprocess.run(
-        [sys.executable, "-c", _EXHAUST_THEN_CONSTRUCT_PROGRAM],
+        [sys.executable, "-c", _DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM],
         env=build_backend_environment("0" if backend == "rust" else "1"),
         capture_output=True,
         text=True,
@@ -630,9 +634,9 @@ def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
         str(backend == "rust"),
-        str(2**64 - 2),
-        "RuntimeError: identifier id space exhausted",
-        "RuntimeError: identifier id space exhausted",
+        str(2**63 - 1),
+        f"{2**63} {2**63 + 1}",
+        "DeserializationValueError",
     ]
 
 

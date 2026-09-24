@@ -104,14 +104,21 @@ def test_counter_advance_does_not_rewind(counter: _Counter) -> None:
     assert counter.allocate() == last + 1
 
 
-def test_counter_advancing_past_the_largest_64_bit_id_raises_runtime_error(
-    counter: _Counter,
+@pytest.mark.parametrize("identifier_id", [2**63, 2**64 - 1])
+def test_counter_advancing_past_an_id_at_or_above_the_cap_raises_overflow_error(
+    counter: _Counter, identifier_id: int
 ) -> None:
-    """Test advancing past `2**64 - 1` raises `RuntimeError`, counter unchanged."""
+    """Test advancing past an id in `[2**63, 2**64)` raises, counter unchanged."""
     base = counter.allocate()
 
-    with pytest.raises(RuntimeError, match=r"^identifier id space exhausted$"):
-        counter.advance_past(2**64 - 1)
+    with pytest.raises(
+        OverflowError,
+        match=(
+            f"^identifier id {identifier_id} is at or above the cap "
+            "9223372036854775808$"
+        ),
+    ):
+        counter.advance_past(identifier_id)
 
     assert counter.allocate() == base + 1
 
@@ -127,7 +134,11 @@ def test_counter_advancing_past_the_largest_64_bit_id_raises_runtime_error(
 def test_counter_advancing_past_an_id_outside_64_bits_raises_overflow_error(
     counter: _Counter, identifier_id: int, message: str
 ) -> None:
-    """Test advancing past an id outside `[0, 2**64)` raises, counter unchanged."""
+    """Test advancing past an id outside `[0, 2**64)` raises, counter unchanged.
+
+    PyO3 rejects these before the Rust counter sees them, with its own
+    messages, which the Python counter matches.
+    """
     base = counter.allocate()
 
     with pytest.raises(OverflowError, match=f"^{re.escape(message)}"):
@@ -139,11 +150,10 @@ def test_counter_advancing_past_an_id_outside_64_bits_raises_overflow_error(
 def test_python_counter_issues_the_largest_id_then_fails() -> None:
     """Test the Python counter issues `2**64 - 2` and then refuses to allocate.
 
-    The Rust counter is process-global, so its equivalent runs in a
-    subprocess in the identifier tests.
+    The Rust counter is process-global, and no payload can raise it past
+    `2**63`, so its equivalent is a unit test of the Rust counter.
     """
-    python_counter = _create_python_counter()
-    python_counter.advance_past(2**64 - 3)
+    python_counter = _PythonIdCounter(next_id=2**64 - 2)
 
     largest = python_counter.allocate()
 

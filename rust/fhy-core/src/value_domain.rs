@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::decode::{self, Decode, DeferredPayload};
-use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload, reserved};
+use crate::identifier::{HasIdentifier, Identifier, IdentifierWire, reserved};
 use crate::interned::{
     Canonical, InternOutcome, InternRegistry, Interned, intern_decoded, require_default,
 };
@@ -155,7 +155,7 @@ impl Decode for ValueDomain {
     /// Returns an error if a nested level is malformed or conflicts with the
     /// canonical instance for its name.
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        let name = payload.name.restore();
+        let name = Identifier::try_from(payload.name).map_err(E::custom)?;
         let parent = match payload.parent {
             None => None,
             Some(parent) => Some(intern_decoded(parent.decode("parent")?)?),
@@ -188,7 +188,7 @@ impl<'de> Deserialize<'de> for ValueDomain {
 #[derive(Deserialize)]
 #[serde(rename = "ValueDomain", deny_unknown_fields)]
 pub(crate) struct ValueDomainPayload {
-    name: IdentifierPayload,
+    name: IdentifierWire,
     description: String,
     // `serde` lets an `Option` field be missing and decode as `None`, but the
     // Python payload always carries `parent`. Naming a `deserialize_with`
@@ -287,10 +287,9 @@ mod tests {
     use proptest::prelude::*;
     use rstest::rstest;
 
-    use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
-        RegistryGuard, assert_isolated_test_passes, compute_hash, has_counter_passed,
-        hold_id_counter, is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id, take_discarded,
+        RegistryGuard, compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids,
+        reserve_pinned_id, take_discarded,
     };
 
     /// Serializes the tests that clear the process-wide registry against the
@@ -756,7 +755,7 @@ mod tests {
     fn a_root_domain_encodes_with_a_null_parent() {
         let _guard = REGISTRY_GUARD.hold();
         let id = reserve_pinned_id("encode-anchor");
-        let name = Identifier::restore(id, "encoded".to_string());
+        let name = Identifier::try_restore(id, "encoded").expect("the id is below the cap");
         let domain = ValueDomain::new(name, "a description", None).into_canonical();
 
         let json = serde_json::to_string(&*domain).unwrap();
@@ -774,10 +773,12 @@ mod tests {
     fn a_child_domain_encodes_its_parent_inline() {
         let _guard = REGISTRY_GUARD.hold();
         let parent_id = reserve_pinned_id("encode-parent-anchor");
-        let parent_name = Identifier::restore(parent_id, "parent".to_string());
+        let parent_name =
+            Identifier::try_restore(parent_id, "parent").expect("the id is below the cap");
         let parent = ValueDomain::new(parent_name, "the parent", None).into_canonical();
         let child_id = reserve_pinned_id("encode-child-anchor");
-        let child_name = Identifier::restore(child_id, "child".to_string());
+        let child_name =
+            Identifier::try_restore(child_id, "child").expect("the id is below the cap");
         let child = ValueDomain::new(child_name, "the child", Some(parent)).into_canonical();
 
         let json = serde_json::to_string(&*child).unwrap();
@@ -952,7 +953,8 @@ mod tests {
     /// Return the domain registered under the id `id`, restoring `id` to
     /// look it up, so call it only after checking the counter.
     fn find_registered(id: u64) -> Option<Canonical<ValueDomain>> {
-        ValueDomain::intern_registry().get(&Identifier::restore(id, String::new()))
+        ValueDomain::intern_registry()
+            .get(&Identifier::try_restore(id, "").expect("the id is below the cap"))
     }
 
     #[test]
@@ -1078,7 +1080,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("an id from 0 to 18446744073709551614"),
+                .contains("an id from 0 to 9223372036854775807"),
             "{error}"
         );
         assert!(has_counter_passed(outer));
@@ -1171,74 +1173,5 @@ mod tests {
 
         assert!(rendered.contains("debug-domain"), "{rendered}");
         assert!(rendered.contains("debug desc"), "{rendered}");
-    }
-
-    /// Check that the shipped defaults survive a decode that exhausts the id
-    /// counter before the registry's first use. Only meaningful in the child
-    /// process that
-    /// [`decoding_the_largest_id_as_the_first_use_keeps_the_defaults`]
-    /// starts.
-    #[test]
-    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
-    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation() {
-        if !is_isolated_run() {
-            return;
-        }
-        let json = encode_domain_payload(u64::MAX - 1, "null", "");
-
-        let restored: Canonical<ValueDomain> =
-            serde_json::from_str(&json).expect("u64::MAX - 1 is valid");
-
-        assert_eq!(restored.name().id(), u64::MAX - 1);
-        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
-        assert_eq!(get_data_domain().name().name_hint(), "data");
-        assert_eq!(get_address_domain().name().name_hint(), "address");
-    }
-
-    #[test]
-    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults() {
-        assert_isolated_test_passes(
-            "value_domain::tests::\
-             decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation",
-        );
-    }
-
-    /// Check that a bare domain whose name exhausts the id counter still
-    /// decodes and interns its parent when that parent is the registry's
-    /// first use. Only meaningful in the child process that
-    /// [`decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults`]
-    /// starts.
-    #[test]
-    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
-    fn decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults_in_isolation() {
-        if !is_isolated_run() {
-            return;
-        }
-        let parent_id = u64::MAX - 2;
-        let json = encode_domain_payload(
-            u64::MAX - 1,
-            &encode_domain_payload(parent_id, "null", ""),
-            "",
-        );
-
-        let restored: ValueDomain = serde_json::from_str(&json).expect("u64::MAX - 1 is valid");
-
-        assert_eq!(restored.name().id(), u64::MAX - 1);
-        let parent = restored.parent().expect("the payload names a parent");
-        assert_eq!(parent.name().id(), parent_id);
-        assert_eq!(
-            ValueDomain::intern_registry().get(parent.name()).as_ref(),
-            Some(parent)
-        );
-        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
-        assert_eq!(get_data_domain().name().name_hint(), "data");
-    }
-
-    #[test]
-    fn decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults() {
-        assert_isolated_test_passes(
-            "value_domain::tests::\
-             decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults_in_isolation",
-        );
     }
 }

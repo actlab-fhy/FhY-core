@@ -39,11 +39,6 @@ EXPANDED_GOLDEN_CORPORA = {
         rust_test="interned_equivalence",
         variable="FHY_INTERNED_CORPUS",
     ),
-    "generate_tag_type_cases.py": ExpandedGoldenCorpus(
-        options="--seed 7 --random-count 2000 --max-ops 40 --slots s0,s1,s2,s3,s4",
-        rust_test="tag_type_equivalence",
-        variable="FHY_TAG_TYPE_CORPUS",
-    ),
 }
 
 

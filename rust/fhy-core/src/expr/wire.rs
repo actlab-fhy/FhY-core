@@ -16,9 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 
 use crate::decode::{self, Decode};
-use crate::identifier::IdentifierPayload;
+use crate::identifier::{Identifier, IdentifierWire};
 
-use super::error::ExpressionBuildError;
 use super::literal::{LiteralKind, LiteralValue};
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
@@ -225,7 +224,7 @@ enum PayloadNode {
         left: Box<PayloadNode>,
         right: Box<PayloadNode>,
     },
-    Identifier(IdentifierPayload),
+    Identifier(IdentifierWire),
     Literal(LiteralValue),
     Piecewise {
         cases: Vec<(PayloadNode, PayloadNode)>,
@@ -405,7 +404,7 @@ fn parse_node(value: &Value) -> Result<PayloadNode, String> {
         }
         IDENTIFIER_TYPE_ID => {
             let [identifier] = read_fields(data, "an identifier reference", ["identifier"])?;
-            IdentifierPayload::deserialize(identifier)
+            IdentifierWire::deserialize(identifier)
                 .map(PayloadNode::Identifier)
                 .map_err(|error| add_field_context("identifier", error))
         }
@@ -423,7 +422,7 @@ fn parse_node(value: &Value) -> Result<PayloadNode, String> {
 
 /// Build the expression a checked node describes, restoring its
 /// identifiers.
-fn build_node(node: PayloadNode) -> Result<Expression, ExpressionBuildError> {
+fn build_node<E: de::Error>(node: PayloadNode) -> Result<Expression, E> {
     Ok(match node {
         PayloadNode::Unary { operation, operand } => {
             Expression::from(UnaryExpression::new(operation, build_node(*operand)?))
@@ -437,17 +436,18 @@ fn build_node(node: PayloadNode) -> Result<Expression, ExpressionBuildError> {
             build_node(*left)?,
             build_node(*right)?,
         )),
-        PayloadNode::Identifier(identifier) => Expression::from(identifier.restore()),
+        PayloadNode::Identifier(identifier) => {
+            Expression::from(Identifier::try_from(identifier).map_err(E::custom)?)
+        }
         PayloadNode::Literal(value) => Expression::from(value),
         PayloadNode::Piecewise { cases, otherwise } => {
             let cases = cases
                 .into_iter()
                 .map(|(condition, value)| Ok((build_node(condition)?, build_node(value)?)))
-                .collect::<Result<Vec<_>, ExpressionBuildError>>()?;
-            Expression::from(PiecewiseExpression::try_new(
-                cases,
-                build_node(*otherwise)?,
-            )?)
+                .collect::<Result<Vec<_>, E>>()?;
+            Expression::from(
+                PiecewiseExpression::try_new(cases, build_node(*otherwise)?).map_err(E::custom)?,
+            )
         }
         PayloadNode::Call {
             function_name,
@@ -456,8 +456,8 @@ fn build_node(node: PayloadNode) -> Result<Expression, ExpressionBuildError> {
             let arguments = arguments
                 .into_iter()
                 .map(build_node)
-                .collect::<Result<Vec<_>, _>>()?;
-            Expression::from(CallExpression::try_new(&function_name, arguments)?)
+                .collect::<Result<Vec<_>, E>>()?;
+            Expression::from(CallExpression::try_new(&function_name, arguments).map_err(E::custom)?)
         }
     })
 }
@@ -479,7 +479,7 @@ impl Decode for Expression {
     /// Never fails on a payload that decoded, whose node invariants were
     /// all checked while decoding it.
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        build_node(payload.0).map_err(E::custom)
+        build_node(payload.0)
     }
 }
 

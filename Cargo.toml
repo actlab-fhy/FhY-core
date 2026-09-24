@@ -24,6 +24,8 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 num-bigint = "0.5"
 num-traits = "0.2"
 proptest = "1"
+# The non-self-describing format the serialization round-trip tests use.
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 rstest = "0.27"
 fhy-core = { path = "rust/fhy-core" }
 

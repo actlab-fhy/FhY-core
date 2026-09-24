@@ -24,7 +24,6 @@ use serde_json::{Value, json};
 /// The types whose payload form is under test.
 #[derive(Debug, Clone, Copy)]
 enum PayloadType {
-    Identifier,
     OpAttribute,
     CanonicalOpAttribute,
     ValueDomain,
@@ -54,13 +53,6 @@ impl PayloadType {
     /// another case registered.
     fn build_map_and_sequence(self) -> (Value, Value) {
         match self {
-            Self::Identifier => {
-                let identifier = Identifier::new("sequence-identifier");
-                (
-                    json!({"id": identifier.id(), "name_hint": "sequence-identifier"}),
-                    json!([identifier.id(), "sequence-identifier"]),
-                )
-            }
             Self::OpAttribute | Self::CanonicalOpAttribute => {
                 let name = build_identifier_payload("sequence-attribute");
                 (
@@ -145,7 +137,6 @@ impl PayloadType {
     fn decode(self, payload: &Value) -> Result<(), String> {
         let text = payload.to_string();
         match self {
-            Self::Identifier => decode_text::<Identifier>(&text),
             Self::OpAttribute => decode_text::<OpAttribute>(&text),
             Self::CanonicalOpAttribute => decode_text::<Canonical<OpAttribute>>(&text),
             Self::ValueDomain => decode_text::<ValueDomain>(&text),
@@ -171,7 +162,6 @@ fn decode_text<T: DeserializeOwned + Debug>(text: &str) -> Result<(), String> {
 /// Test a payload given as a sequence of its field values is refused, while
 /// the map form of the same values decodes.
 #[rstest]
-#[case::identifier(PayloadType::Identifier)]
 #[case::op_attribute(PayloadType::OpAttribute)]
 #[case::canonical_op_attribute(PayloadType::CanonicalOpAttribute)]
 #[case::value_domain(PayloadType::ValueDomain)]

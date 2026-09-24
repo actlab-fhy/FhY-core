@@ -9,10 +9,11 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use fhy_core::identifier::Identifier;
-use fhy_core::interned::Canonical;
+use fhy_core::interned::{Canonical, Interned};
 use fhy_core::op_attribute::{OpAttribute, get_associative, get_commutative, get_pure};
 use fhy_core::value_domain::{ValueDomain, get_address_domain, get_data_domain};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 /// A stand-in for a compiler op, carrying the semantic tags attached to it.
 struct StoryOp {
@@ -157,4 +158,92 @@ fn persisting_and_restoring_a_tagged_operation() {
 
     assert_eq!(restored.attribute, attribute);
     assert_eq!(restored.domain, domain);
+}
+
+/// Test registering an attribute under a name already registered keeps the
+/// first attribute and its description.
+#[test]
+fn registering_a_known_attribute_keeps_the_first_description() {
+    let name = Identifier::new("known-attribute-story");
+    let first = OpAttribute::new(name.clone(), "the first description").into_canonical();
+
+    let again = OpAttribute::new(name, "a later description").into_canonical();
+
+    assert_eq!(again, first);
+    assert_eq!(again.description(), "the first description");
+}
+
+/// Return the payload of the domain `name` under the payload `parent`.
+fn encode_domain(name: &Identifier, description: &str, parent: &Value) -> Value {
+    json!({
+        "name": {"id": name.id(), "name_hint": name.name_hint()},
+        "description": description,
+        "parent": parent,
+    })
+}
+
+/// Test decoding a chain of three domains no registry knows registers every
+/// level, each under the level above it.
+#[test]
+fn a_decoded_domain_chain_registers_every_level() {
+    let names = ["chain-story-root", "chain-story-middle", "chain-story-leaf"].map(Identifier::new);
+    let root = encode_domain(&names[0], "root", &Value::Null);
+    let middle = encode_domain(&names[1], "middle", &root);
+    let leaf = encode_domain(&names[2], "leaf", &middle);
+
+    let decoded: Canonical<ValueDomain> = serde_json::from_value(leaf).expect("the chain decodes");
+
+    let registered = names.each_ref().map(|name| {
+        ValueDomain::intern_registry()
+            .get(name)
+            .expect("every level is registered")
+    });
+    assert_eq!(decoded, registered[2]);
+    assert_eq!(registered[0].parent(), None);
+    assert_eq!(registered[1].parent(), Some(&registered[0]));
+    assert_eq!(registered[2].parent(), Some(&registered[1]));
+}
+
+/// Test decoding a registered domain under a different parent is rejected,
+/// and the registered domain keeps its parent and description.
+#[test]
+fn a_decoded_domain_under_another_parent_is_rejected_and_the_canonical_domain_is_unchanged() {
+    let name = Identifier::new("reparented-story-domain");
+    let canonical = ValueDomain::new(name.clone(), "under data", Some(get_data_domain().clone()))
+        .into_canonical();
+    let payload = encode_domain(
+        &name,
+        "under address",
+        &serde_json::to_value(get_address_domain()).expect("the domain encodes"),
+    );
+
+    let result = serde_json::from_value::<Canonical<ValueDomain>>(payload);
+
+    assert!(result.is_err(), "the reparented domain decoded");
+    let registered = ValueDomain::intern_registry()
+        .get(&name)
+        .expect("the domain stays registered");
+    assert_eq!(registered, canonical);
+    assert_eq!(registered.parent(), Some(get_data_domain()));
+    assert_eq!(registered.description(), "under data");
+}
+
+/// Test a payload rejected for its structure leaves the registered domain of
+/// its name as it was.
+#[test]
+fn a_rejected_payload_leaves_the_canonical_domain_unchanged() {
+    let name = Identifier::new("rejected-story-domain");
+    let canonical = ValueDomain::new(name.clone(), "registered", None).into_canonical();
+    let mut payload = encode_domain(&name, "rejected", &Value::Null);
+    payload["unexpected"] = json!(1);
+
+    let result = serde_json::from_value::<Canonical<ValueDomain>>(payload);
+
+    assert!(result.is_err(), "the malformed payload decoded");
+    let registered = ValueDomain::intern_registry()
+        .get(&name)
+        .expect("the domain stays registered");
+    assert_eq!(registered, canonical);
+    assert_eq!(registered.description(), "registered");
+    assert_eq!(registered.parent(), None);
 }

@@ -94,11 +94,11 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::identifier::{HasIdentifier, IdSpaceExhausted, Identifier, try_allocate_id};
+    use crate::identifier::{HasIdentifier, Identifier};
     use crate::interned::{Canonical, InternOutcome, Interned};
     use crate::test_support::{
-        RegistryGuard, assert_isolated_test_passes, compute_hash, has_counter_passed,
-        hold_id_counter, is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id, take_discarded,
+        RegistryGuard, compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids,
+        reserve_pinned_id, take_discarded,
     };
 
     /// Serializes the test that clears the process-wide registry against the
@@ -329,7 +329,7 @@ mod tests {
     fn an_attribute_encodes_as_its_name_and_description() {
         let _guard = REGISTRY_GUARD.hold();
         let id = reserve_pinned_id("encode-anchor");
-        let name = Identifier::restore(id, "encoded".to_string());
+        let name = Identifier::try_restore(id, "encoded").expect("the id is below the cap");
         let attribute = OpAttribute::new(name, "a description").into_canonical();
 
         let json = serde_json::to_string(&*attribute).unwrap();
@@ -462,71 +462,5 @@ mod tests {
 
         assert!(rendered.contains("debug-attribute"), "{rendered}");
         assert!(rendered.contains("debug desc"), "{rendered}");
-    }
-
-    /// Return the JSON payload of an attribute named with the largest
-    /// issuable id, which exhausts the id counter when restored.
-    fn encode_largest_id_payload() -> String {
-        format!(
-            "{{\"name\":{{\"id\":{},\"name_hint\":\"largest\"}},\"description\":\"desc\"}}",
-            u64::MAX - 1
-        )
-    }
-
-    /// Check that the shipped defaults survive a decode that exhausts the id
-    /// counter before the registry's first use. Only meaningful in the child
-    /// process that
-    /// [`decoding_the_largest_id_as_the_first_use_keeps_the_defaults`]
-    /// starts.
-    #[test]
-    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
-    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation() {
-        if !is_isolated_run() {
-            return;
-        }
-
-        let restored: Canonical<OpAttribute> =
-            serde_json::from_str(&encode_largest_id_payload()).expect("u64::MAX - 1 is valid");
-
-        assert_eq!(restored.name().id(), u64::MAX - 1);
-        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
-        assert_eq!(get_commutative().name().name_hint(), "commutative");
-        assert_eq!(get_elementwise().name().name_hint(), "elementwise");
-    }
-
-    #[test]
-    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults() {
-        assert_isolated_test_passes(
-            "op_attribute::tests::\
-             decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation",
-        );
-    }
-
-    /// Check that decoding a bare attribute, which interns nothing, still
-    /// leaves the shipped defaults buildable after it exhausts the id
-    /// counter. Only meaningful in the child process that
-    /// [`decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults`]
-    /// starts.
-    #[test]
-    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
-    fn decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults_in_isolation() {
-        if !is_isolated_run() {
-            return;
-        }
-
-        let restored: OpAttribute =
-            serde_json::from_str(&encode_largest_id_payload()).expect("u64::MAX - 1 is valid");
-
-        assert_eq!(restored.name().id(), u64::MAX - 1);
-        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
-        assert_eq!(get_pure().name().name_hint(), "pure");
-    }
-
-    #[test]
-    fn decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults() {
-        assert_isolated_test_passes(
-            "op_attribute::tests::\
-             decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults_in_isolation",
-        );
     }
 }

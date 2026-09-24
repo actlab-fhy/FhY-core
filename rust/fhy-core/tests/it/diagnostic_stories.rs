@@ -347,7 +347,7 @@ fn note_decode_registers_an_unknown_kind() {
 )]
 #[case::negative_id(
     json!({"message": "x", "kind": {"name": {"id": -1, "name_hint": "other"}, "description": ""}}),
-    "in `kind`: invalid value: integer `-1`, expected an id from 0 to 18446744073709551614"
+    "in `kind`: invalid value: integer `-1`, expected an id from 0 to 9223372036854775807"
 )]
 #[case::null_kind(json!({"message": "x", "kind": null}), "invalid type: null, expected a map")]
 fn note_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
