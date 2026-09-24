@@ -11,9 +11,10 @@ nox.options.sessions = ["lint", "type_check", "tests", "coverage"]
 
 PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 ROOT = pathlib.Path(__file__).parent
-# The golden-corpus generators are the Rust port's equivalence oracle, so they
-# pass the same lint and type gates as the package.
-SOURCES = ["src", "tests", "rust/fhy-core/tests/golden"]
+# The golden-corpus generators are the Rust port's equivalence oracle, and the
+# benchmarks back each class's switch to Rust, so both pass the same lint and
+# type gates as the package.
+SOURCES = ["src", "tests", "benchmarks", "rust/fhy-core/tests/golden"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"

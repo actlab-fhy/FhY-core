@@ -289,6 +289,36 @@ small changes to the source and checks that some test fails. Each targeted
 module has its own config under `cosmic-ray/`; run one with
 `uv run nox -s mutation -- <module>` (the module defaults to `lattice`).
 
+## Benchmarks
+
+`benchmarks/` holds [pytest-benchmark](https://pytest-benchmark.readthedocs.io/)
+benchmarks of the public API's hot paths, grouped by concept, with shared
+fixtures in `benchmarks/conftest.py`. They use the public API only, so the
+same benchmark measures a class before and after it switches to Rust. The
+opt-in `benchmark` session runs them on one backend per session, like
+`tests`, and is neither a default session nor a CI job. Compare the two
+backends through the JSON results each session writes:
+
+```bash
+uv run nox -s "benchmark-3.12(backend='python')"
+uv run nox -s "benchmark-3.12(backend='rust')"
+uv run --group bench pytest-benchmark compare --group-by=name --columns=median \
+    .benchmarks/3.12-python.json .benchmarks/3.12-rust.json
+```
+
+Each session also saves its run under `.benchmarks/storage/<backend>/`
+(gitignored), so `-- --benchmark-compare` compares a run with the previous
+one on the same backend. The machine's load moves the numbers, so compare
+runs made back to back on the same machine.
+
+A class's benchmark must be run on both backends before it switches and
+again after, per `docs/design/python-switch.md`. A class without a
+benchmark gets one in `benchmarks/` first, covering construction,
+attribute access, `==`, `hash` and the module's main operations. The
+slice records the numbers behind its pattern choice, and a switch that
+makes a hot path slower either changes pattern or is recorded as an
+accepted cost.
+
 ## Porting to Rust
 
 *FhY* Core is moving to Rust one module at a time. The Rust code is a
@@ -361,12 +391,12 @@ affected types document this; decoding is not ordered to prevent it.
   at the same time.
 - Benchmark before deleting. Measure the module's hot paths (construction,
   equality, hashing, attribute access, and whatever the module does most)
-  on both backends with a throwaway script, and delete the script once the
-  decision is made. When the Rust-backed version is at most 10% slower
-  than the Python one on every measured path, delete the pure-Python
-  implementation. When it is more than 10% slower on any path, usually
-  because every call crosses into the extension, the maintainer decides
-  whether to keep the Python class. A kept class moves only the parts that
+  on both backends with the `benchmark` session (see "Benchmarks"). When
+  the Rust-backed version is at most 10% slower than the Python one on
+  every measured path, delete the pure-Python implementation. When it is
+  more than 10% slower on any path, usually because every call crosses
+  into the extension, the maintainer decides whether to keep the Python
+  class. A kept class moves only the parts that
   gain from Rust and says why in its module docstring.
   `fhy_core.identifier` is the example: `Identifier` stays in Python and
   only its id counter runs in Rust.
