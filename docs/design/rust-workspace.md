@@ -7437,3 +7437,57 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   can draw an id between them; a reserved identifier that drew an id would
   keep them at least two apart on every try.
 
+- **Step 2, F-012 not done:** `arbitrary_precision` stays on. Turning it
+  off breaks `expr::wire`: big-integer literals as JSON integers, float
+  tokens beyond `f64`, and the expression JSON round-trip properties (7
+  tests). B3 removes it together with its BigInt-as-decimal-string wire
+  format. B3 also moves `serde_json` to `[dev-dependencies]` (`expr::wire`
+  is its last `src` user), drops the workspace manifest comment and the
+  `lib.rs` `arbitrary_precision` paragraph, restores B1's weakened
+  nested-path message checks, and adds B2 §8.3's two F-012 regression
+  tests to `it::serde_format_stories`. Those tests fail while the feature
+  is on.
+- **Step 2, `decode.rs`:** only `deserialize_map_only` and `MapOnly` are
+  left, for `expr::wire`. `Decode` and `deserialize_via_payload` are gone,
+  and `ExpressionPayload` is now private. B3 deletes the file.
+  `it::payload_form_stories` keeps only its two expression cases, since
+  map-only decoding is still `expr::wire`'s behavior, instead of being
+  deleted as B2 §8.1 says. B3 deletes it with the wire format.
+- **Step 2, `python_text.rs`:** the exact decimal normalization,
+  `format_normalized_decimal` and the shared positional and scientific
+  writers move to `expr/literal/decimal.rs`. `format_float_repr` and
+  `format_bool` move to `expr/literal/python_repr.rs`. All are private to
+  `literal`, and the tests move unchanged. Literal `Display` and
+  `canonical_key` still write the Python text. B3 switches them to Rust
+  formatting, deletes `python_repr.rs`, and decides the decimal notation.
+- **Step 2, D-16:** the leading `//` is kept. So B2 §8.1's four
+  normalization case changes and §8.3's
+  `file_provenance_collapses_leading_separators_to_one_root` are void, and
+  `file_provenance_keeps_paths_that_normalize_differently_apart` still
+  asserts `//a` and `/a` differ.
+- **Step 2, F-038:** B1 already deleted the isolation harness, so B2 §5.6
+  and its three `test_support` tests are void.
+- **Step 2, decode error categories:** where a provenance is expected,
+  `serde_json` classifies a JSON value that is neither a string nor a map,
+  and a second variant key, as `Category::Syntax`, not `Data`. So
+  `assert_decode_rejected` takes the expected category, and those three
+  cases (`two_top_level_keys`, `null_caller`, `not_a_map`) expect `Syntax`.
+- **Step 2, zero positions:** `Position` decodes through serde's
+  `NonZeroU64` (B2 §2.2). A zero line or column therefore gets serde's
+  message, and the `zero_line`, `zero_column` and `invalid_position`
+  rejection cases check only the category, not `PositionError`'s text as
+  B2 §8.1's list of crate-invariant cases implies.
+- **Step 2, `diagnostic.rs` unit tests:** B1 had already replaced the nine
+  tests B2 §8.2 deletes with characterizations of the derived decode and a
+  postcard round trip. They are kept.
+- **Step 2, not in B2's scope now:** `it::serde_format_stories` leaves out
+  B3's types (`Expression`, sorts, operations) and the big-integer
+  decimal-string test. The `vocabulary_stories` change in B2 §8.1 depends
+  on B3's `FromStr`. Both are left to B3. The postcard dependency keeps
+  B1's `features = ["alloc"]` rather than `use-std`. CONTRIBUTING's
+  serialization rule was already rewritten in step 0.2.
+- **Step 2, pass call sites (R-9):** `manager.rs` keeps the report text as
+  the verification failure's detail, now `report.to_string()`.
+  `PassContext::report` keeps its `Option<String>` detail. With a
+  `Cow<'static, str>` source, the manager and the validation pipeline pass
+  `pass_name.to_owned()` and `validator_name.to_owned()`.
