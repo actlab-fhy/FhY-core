@@ -7613,3 +7613,68 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
 - **Step 4 (B3a), kept for B3b:** the `From<UnaryExpression>` and sibling
   impls and `expression_from_node_struct_rewraps_the_node` stay (its `%`
   becomes `floor_mod`); `FloorMod`'s symbol stays `%`.
+
+- **Step 4 (B3b), F-025 text forms:** one crate-private macro,
+  `impl_name_text!` in `operation.rs`, gives each vocabulary enum its
+  `Display` (the `as_str` text, or `name` for the two built-in enums, which
+  B3 §3.10 names `name`) and a `FromStr` that parses through the derived
+  `Deserialize` into `UnknownNameError`. The five closed enums are checked
+  from `tests/it` over exhaustive-`match`-guarded lists; `BuiltinFunction`
+  and `BuiltinConstant` are `#[non_exhaustive]`, so the agreement test uses
+  their `iter()`, which the `builtins.rs` unit test guards. The interim
+  envelope wire tests expected serde's derive text for one commit, until
+  the node table replaced them.
+- **Step 4 (B3b), F-024 details:** `FunctionName` rejects built-in
+  *function* names only; a constant's name such as `pi` is a valid user
+  function name. The composed-function builder no longer ties the
+  parameter count to the sorts through a const generic; the unit test
+  `composed_functions_lead_the_catalogue_in_order` checks it instead. The
+  `From<UnaryExpression>` and sibling impls go with their test, as B3 §3.1
+  says. The test helpers `build_call_or_panic`/`build_call_node_or_panic`
+  keep their names and now parse the callee, so a built-in's name gives a
+  `Callee::Builtin`. With built-in sorts from the catalogue, the screen
+  stories' `BuiltinSorts` keeps only the constants; named-call cases use a
+  local `NamedSorts`, which the trait-object test now boxes, since `sqrt`
+  no longer consults the lookup.
+- **Step 4 (B3b), F-023 memo:** `NumericMemo` maps `(NodeIdentity,
+  is_bound_here)` to the answer for piecewise nodes and bound identifiers,
+  one map per `check_*` call. Case values in Boolean position are still
+  judged once each by the walk, so the counting test allows `2 × 2000`
+  lookups (it sees about that; without the shared memo, 2,003,000).
+  `BooleanPosition` and `NonBooleanLogicalOperandError` stay in `error.rs`
+  rather than `screen.rs` (B3 §2); their public paths are unchanged.
+- **Step 4 (B3b), float wire form (R-16):** a float decodes through
+  `f64::from_str`, so any text it reads is accepted: `"1e400"` reads as
+  infinity and `"infinity"` or `"+1.5"` decode too. B3 §5.6's "float
+  literal is not finite" decode check and serialization error are void, and
+  §8.3's `1e400` adversarial case becomes a JSON number where the string
+  belongs (`{"float": 1.5}`, classified) and an unreadable text
+  (`"invalid float literal \"abc\""`). A NaN's sign and payload are not
+  kept: every NaN writes `"NaN"`, as NaN literals already compare equal.
+- **Step 4 (B3b), node table:** the private shapes are `WireNode` (decode)
+  and its borrowed twin `WireNodeRef` (encode), variant for variant, so the
+  postcard variant indices agree. `LiteralValue` gets public serde derives
+  (B3 §3.5) with `serialize_with`/`deserialize_with` rather than `with`
+  modules, so the float serializer takes `&T: Display` and no
+  `trivially_copy_pass_by_ref` expectation is needed. The decoder's
+  piecewise checks reuse `node.rs`'s `validate_case_count` and
+  `validate_condition_literal`, mapped to the §5.6 messages.
+  `IdentifierWire` is private again. The 100,000-level sum, the
+  10,000-comparison conjunction and the 64-level doubling DAG round trips
+  run through both formats in `it::serde_format_stories` rather than in
+  `wire_stories`, which keeps the shapes, the literal grammar and the
+  refusals.
+- **Step 4 (B3b), F-012:** `arbitrary_precision` is gone from the
+  workspace, `serde_json` is a dev-dependency of `fhy-core`, and postcard
+  keeps B1's `features = ["alloc"]`. Both regression tests were checked to
+  fail with the feature turned back on.
+- **Step 4 (B3b), R-1:** `RewriteRuleApplier` moves into `expr::passes`
+  with `register_expression_passes`, which builds it, so `pattern` no
+  longer imports `crate::pass`; `pattern::rewrite` exposes `RuleRun` and
+  `run_rewrite_rules` as `pub(in crate::expr)` for the pass. B4 owns any
+  further change to the applier. Its tests stay in
+  `tests/it/expr/pass_stories.rs` with the new paths.
+- **Step 4 (B3b), test counts:** the built-in stories' 16-name `#[values]`
+  lists became loops over `BuiltinFunction::iter()` (F-037), and the
+  `find_*` lookups became `FromStr` refusal tables, so fewer test cases are
+  reported; no assertion was dropped.
