@@ -1,8 +1,6 @@
 //! End-to-end scenarios composing the pattern API the way a caller would:
 //! build a rule set, rewrite a tree with it (or walk a tree matching a
 //! pattern by hand), and check the resulting tree.
-//!
-//! Public API only (`fhy_core::expr::pattern`).
 
 use crate::support::expression as expression_support;
 use crate::support::pattern as pattern_support;
@@ -52,70 +50,6 @@ fn build_algebraic_rule_set() -> Vec<RewriteRule> {
     ]
 }
 
-/// Collect every subexpression of `expression` that `pattern` matches, with
-/// its bindings, in pre-order.
-fn collect_matching_subexpressions(
-    pattern: &Pattern,
-    expression: &Expression,
-) -> Vec<(Expression, MatchBindings)> {
-    let mut collected = Vec::new();
-    let mut pending = vec![expression.clone()];
-    while let Some(node) = pending.pop() {
-        if let Some(bindings) = pattern.matches(&node).expect("no predicate fails") {
-            collected.push((node.clone(), bindings));
-        }
-        let children: Vec<Expression> = node.children().cloned().collect();
-        pending.extend(children.into_iter().rev());
-    }
-    collected
-}
-
-// =============================================================================
-// A local algebraic simplifier
-// =============================================================================
-
-/// Test the four-rule simplifier reduces `((a + 0) * 1) - ((a + 0) * 1)`,
-/// built from one shared subtree, to `0` in one walk, simplifying the shared
-/// subtree once.
-#[test]
-fn algebraic_simplifier_collapses_nested_neutral_operations() {
-    let (_, a) = build_identifier("a");
-    let subtree = Expression::new_binary(BinaryOperation::Multiply, &a + 0, 1);
-    let expression = Expression::new_binary(BinaryOperation::Subtract, &subtree, &subtree);
-
-    let outcome = rewrite(&expression, &build_algebraic_rule_set());
-
-    assert_eq!(outcome.output(), &build_literal(0));
-    let fired_names: Vec<Option<&str>> = outcome.fired().iter().map(|fired| fired.name()).collect();
-    assert_eq!(
-        fired_names,
-        vec![Some("x + 0 -> x"), Some("x * 1 -> x"), Some("x - x -> 0")]
-    );
-}
-
-/// Test the simplifier returns an input no rule matches as itself.
-#[test]
-fn algebraic_simplifier_leaves_non_matching_input_unchanged() {
-    let (_, a) = build_identifier("a");
-    let expression = &a * 2;
-
-    let outcome = rewrite(&expression, &build_algebraic_rule_set());
-
-    assert!(Expression::ptr_eq(outcome.output(), &expression));
-    assert!(!outcome.is_changed());
-}
-
-/// Test the `0 + x` rule fires alongside the `x + 0` rule.
-#[test]
-fn algebraic_simplifier_handles_a_left_zero_addend() {
-    let (_, a) = build_identifier("a");
-    let expression = Expression::new_binary(BinaryOperation::Add, 0, &a);
-
-    let outcome = rewrite(&expression, &build_algebraic_rule_set());
-
-    assert!(Expression::ptr_eq(outcome.output(), &a));
-}
-
 /// Return the normalizer `c + x -> x + c` for a literal `c` and an `x` that
 /// is not one, which returns a sum already in that form as it is.
 fn build_literal_last_normalizer() -> RewriteRule {
@@ -145,9 +79,69 @@ fn build_literal_last_normalizer() -> RewriteRule {
     .with_name("c + x -> x + c")
 }
 
-/// Test the simplifier with a normalizer that returns sums already normal
-/// as they are reaches a fixpoint in a caller-driven loop: the normalizer
-/// fires only where it changes a sum, so the loop stops once nothing does.
+/// Collect every subexpression of `expression` that `pattern` matches, with
+/// its bindings, in pre-order.
+fn collect_matching_subexpressions(
+    pattern: &Pattern,
+    expression: &Expression,
+) -> Vec<(Expression, MatchBindings)> {
+    let mut collected = Vec::new();
+    let mut pending = vec![expression.clone()];
+    while let Some(node) = pending.pop() {
+        pending.extend(node.children().rev().cloned());
+        if let Some(bindings) = pattern.matches(&node).expect("no predicate fails") {
+            collected.push((node, bindings));
+        }
+    }
+    collected
+}
+
+// =============================================================================
+// A local algebraic simplifier
+// =============================================================================
+
+/// Test the four-rule simplifier reduces `((a + 0) * 1) - ((a + 0) * 1)`,
+/// built from one shared subtree, to `0` in one walk, simplifying the shared
+/// subtree once.
+#[test]
+fn algebraic_simplifier_collapses_nested_neutral_operations() {
+    let (_, a) = build_identifier("a");
+    let subtree = Expression::new_binary(BinaryOperation::Multiply, &a + 0, 1);
+    let expression = Expression::new_binary(BinaryOperation::Subtract, &subtree, &subtree);
+
+    let outcome = rewrite(&expression, &build_algebraic_rule_set());
+
+    assert_eq!(outcome.output(), &build_literal(0));
+    let fired_names: Vec<Option<&str>> = outcome.fired().iter().map(|fired| fired.name()).collect();
+    assert_eq!(
+        fired_names,
+        vec![Some("x + 0 -> x"), Some("x * 1 -> x"), Some("x - x -> 0")]
+    );
+}
+
+#[test]
+fn algebraic_simplifier_leaves_non_matching_input_unchanged() {
+    let (_, a) = build_identifier("a");
+    let expression = &a * 2;
+
+    let outcome = rewrite(&expression, &build_algebraic_rule_set());
+
+    assert!(Expression::ptr_eq(outcome.output(), &expression));
+    assert!(!outcome.is_changed());
+}
+
+#[test]
+fn algebraic_simplifier_handles_a_left_zero_addend() {
+    let (_, a) = build_identifier("a");
+    let expression = Expression::new_binary(BinaryOperation::Add, 0, &a);
+
+    let outcome = rewrite(&expression, &build_algebraic_rule_set());
+
+    assert!(Expression::ptr_eq(outcome.output(), &a));
+}
+
+/// Test a caller-driven loop reaches a fixpoint: the normalizer fires only
+/// where it changes a sum, so the loop stops once nothing does.
 #[test]
 fn algebraic_simplifier_with_a_normalizing_rule_reaches_a_fixpoint() {
     let (_, a) = build_identifier("a");
@@ -225,7 +219,6 @@ fn subtraction_canonicalizer_rewrites_at_every_depth() {
 // A double-negation peephole
 // =============================================================================
 
-/// Test the peephole simplifies `!(!a)` to `a`.
 #[test]
 fn double_negation_peephole_collapses_an_inner_double_negation() {
     let (_, a) = build_identifier("a");
@@ -244,10 +237,7 @@ fn double_negation_peephole_collapses_an_inner_double_negation() {
 #[test]
 fn double_negation_peephole_collapses_four_negations_in_one_walk() {
     let (_, a) = build_identifier("a");
-    let mut expression = a.clone();
-    for _ in 0..4 {
-        expression = !expression;
-    }
+    let expression = !!!!&a;
     let rules = [build_double_application_rule(UnaryOperation::LogicalNot)];
 
     let once = rewrite(&expression, &rules);
@@ -282,7 +272,7 @@ fn negation_expander_needs_a_walk_per_expansion() {
 // A subtree finder built on Pattern::matches
 // =============================================================================
 
-/// Test `Pattern::matches` drives a read-only walk collecting every `x + 0`
+/// Test a read-only walk on `Pattern::matches` collects every `x + 0`
 /// subtree with its capture.
 #[test]
 fn pattern_matches_powers_a_manual_subtree_finder() {

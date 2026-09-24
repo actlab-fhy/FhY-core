@@ -1,17 +1,10 @@
-//! Property tests for pattern matching and the rewrite walk.
-//!
-//! Covers a pattern mirroring a tree's exact shape (it matches the tree and
-//! binds each leaf capture to that leaf, in leaf order), the wildcard,
-//! agreement of `is_match` with `matches`, a mirror whose root operation is
-//! swapped, a capture repeated across both operands, literal patterns
-//! agreeing with capture unification, the bindings failed matches leave,
-//! the empty rule list as the identity, a semantics-preserving rule set
-//! checked against a reference evaluator and for firing once per wrap, the
-//! link between firings and handle identity, and what counts as a change.
-//!
-//! Public API only (`fhy_core::expr::pattern`).
+//! Property tests for pattern matching and the rewrite walk: patterns
+//! mirroring generated trees, repeated captures and literal patterns, the
+//! bindings a failed match leaves, and value-preserving rules checked
+//! against a reference evaluator of numeric trees.
 
 use crate::support::expression as expression_support;
+use crate::support::pattern as pattern_support;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,13 +15,12 @@ use expression_support::{
     build_expression_strategy, build_literal_strategy, copy_deeply,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
-use fhy_core::expr::pattern::{
-    CallbackError, Capture, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules,
-};
+use fhy_core::expr::pattern::{Capture, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules};
 use fhy_core::expr::{
     BinaryOperation, Callee, Expression, ExpressionKind, LiteralValue, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
+use pattern_support::rewrite_to_capture;
 use proptest::prelude::*;
 use proptest::sample::select;
 
@@ -50,7 +42,6 @@ const NUMERIC_BINARY_OPERATIONS: [BinaryOperation; 3] = [
 const NUMERIC_DIVISION_OPERATIONS: [BinaryOperation; 2] =
     [BinaryOperation::FloorDivide, BinaryOperation::FloorMod];
 
-/// The divisors of the division operations.
 const NONZERO_DIVISORS: [i64; 16] = [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 6, 7, 8];
 
 /// The built-in functions of the numeric fragment, each the identity on an
@@ -70,7 +61,6 @@ enum Wrap {
     DoubleNegate,
 }
 
-/// Return `expression` wrapped by `wrap`.
 fn apply_wrap(expression: Expression, wrap: Wrap) -> Expression {
     match wrap {
         Wrap::None => expression,
@@ -269,23 +259,16 @@ fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i
     }
 }
 
-/// Return the expression `bindings` binds to `x`.
-fn rewrite_to_x(bindings: &MatchBindings, x: &Capture) -> Result<Expression, CallbackError> {
-    bindings
-        .get(x)
-        .cloned()
-        .ok_or_else(|| CallbackError::from("`x` is unbound"))
-}
-
 /// Return the rules `x + 0 -> x`, `x * 1 -> x` and `-(-x) -> x`, each
 /// counting its firings in `fire_count`.
 fn build_neutral_rules(fire_count: &Arc<AtomicUsize>) -> Vec<RewriteRule> {
     let x = Capture::new("x");
-    let counting_rewrite = |fire_count: &Arc<AtomicUsize>| {
-        let (fire_count, x) = (Arc::clone(fire_count), x.clone());
+    let counting_rewrite = || {
+        let fire_count = Arc::clone(fire_count);
+        let rewrite = rewrite_to_capture(&x);
         move |bindings: &MatchBindings| {
             fire_count.fetch_add(1, Ordering::SeqCst);
-            rewrite_to_x(bindings, &x)
+            rewrite(bindings)
         }
     };
     vec![
@@ -295,7 +278,7 @@ fn build_neutral_rules(fire_count: &Arc<AtomicUsize>) -> Vec<RewriteRule> {
                 Pattern::capture(&x),
                 Pattern::literal(0),
             ),
-            counting_rewrite(fire_count),
+            counting_rewrite(),
         )
         .with_name("x + 0 -> x"),
         RewriteRule::new(
@@ -304,7 +287,7 @@ fn build_neutral_rules(fire_count: &Arc<AtomicUsize>) -> Vec<RewriteRule> {
                 Pattern::capture(&x),
                 Pattern::literal(1),
             ),
-            counting_rewrite(fire_count),
+            counting_rewrite(),
         )
         .with_name("x * 1 -> x"),
         RewriteRule::new(
@@ -312,7 +295,7 @@ fn build_neutral_rules(fire_count: &Arc<AtomicUsize>) -> Vec<RewriteRule> {
                 UnaryOperation::Negate,
                 Pattern::unary(UnaryOperation::Negate, Pattern::capture(&x)),
             ),
-            counting_rewrite(fire_count),
+            counting_rewrite(),
         )
         .with_name("-(-x) -> x"),
     ]
@@ -400,7 +383,6 @@ enum PatternShape {
     Alternatives(Vec<PatternShape>),
 }
 
-/// The number of captures a generated pattern picks from.
 const CAPTURE_POOL_SIZE: usize = 4;
 
 /// Return a strategy for pattern shapes of alternatives and captures over
@@ -545,8 +527,6 @@ proptest! {
         }
     }
 
-    /// Test a mirror whose root operation is swapped for another does not
-    /// match.
     #[test]
     fn mirror_pattern_with_another_root_operation_does_not_match(
         (root, alternate) in build_binary_root_strategy()
@@ -639,7 +619,6 @@ proptest! {
         prop_assert_eq!(outer_bound, vec![&fallback]);
     }
 
-    /// Test an empty rule list returns the input itself, unchanged.
     #[test]
     fn apply_rewrite_rules_with_no_rules_is_the_identity(expression in build_expression_strategy(true)) {
         let outcome =
@@ -717,17 +696,14 @@ proptest! {
         );
     }
 
-    /// Test a rule rewriting every literal to itself never fires and never
-    /// changes the tree: the output is the input itself.
+    /// Test a rule rewriting every literal to itself never fires and returns
+    /// the input itself.
     #[test]
     fn identity_rewrite_never_fires_and_keeps_the_input(
         expression in build_expression_strategy(true)
     ) {
         let x = Capture::new("x");
-        let rule = RewriteRule::new(Pattern::any_literal().captured_as(&x), {
-            let x = x.clone();
-            move |bindings| rewrite_to_x(bindings, &x)
-        });
+        let rule = RewriteRule::new(Pattern::any_literal().captured_as(&x), rewrite_to_capture(&x));
 
         let outcome = apply_rewrite_rules(&expression, &[rule]).expect("no callback fails");
 

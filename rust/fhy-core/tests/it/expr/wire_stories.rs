@@ -3,12 +3,11 @@
 //! values, JSON text and postcard, and the tables a decode refuses. The
 //! round trips of deep trees, large logical nodes and DAGs through both
 //! formats are in `serde_format_stories`.
-//!
-//! Public API only (`fhy_core::expr`, `fhy_core::identifier`).
 
 use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use expression_support::{
@@ -26,27 +25,22 @@ use stack_support::run_on_stack;
 /// Stack size of the threads the deep round trips and decodes run on.
 const WIRE_STACK_BYTES: usize = 256 << 10;
 
-/// Serialize `expression` to a JSON value.
 fn encode(expression: &Expression) -> Value {
     serde_json::to_value(expression).expect("the expression serializes")
 }
 
-/// Deserialize an expression from a JSON value.
 fn decode(value: Value) -> Result<Expression, serde_json::Error> {
     serde_json::from_value(value)
 }
 
-/// Return the table holding `nodes`, in order.
 fn build_table(nodes: impl IntoIterator<Item = Value>) -> Value {
     json!({"nodes": nodes.into_iter().collect::<Vec<_>>()})
 }
 
-/// Return the table node of a literal whose wire form is `value`.
 fn build_literal_node(value: &Value) -> Value {
     json!({"literal": value})
 }
 
-/// Return the table node of a reference to `identifier`.
 fn build_identifier_node(identifier: &Identifier) -> Value {
     json!({"identifier": {"id": identifier.id(), "name_hint": identifier.name_hint()}})
 }
@@ -135,7 +129,6 @@ fn expression_serializes_every_node_kind_in_its_wire_shape() {
     assert_eq!(decode(wire).expect("its own table decodes"), expression);
 }
 
-/// Test the fields of each node are written in declaration order.
 #[test]
 fn expression_serializes_fields_in_declaration_order() {
     let (_, x) = build_identifier("x");
@@ -158,8 +151,6 @@ fn expression_serializes_fields_in_declaration_order() {
     }
 }
 
-/// Test the operation of each unary, binary and logical node is written as
-/// its wire name.
 #[test]
 fn expression_serializes_operations_by_wire_name() {
     let (_, x) = build_identifier("x");
@@ -269,7 +260,6 @@ fn expression_float_literal_round_trips_exactly(#[case] value: f64) {
     }
 }
 
-/// Test a decimal string reads back as the normalized decimal it spells.
 #[rstest]
 #[case::trailing_zeros("1.50", "1.5")]
 #[case::leading_zeros("007", "7")]
@@ -310,7 +300,6 @@ fn expression_piecewise_round_trips_through_a_json_value() {
     assert_eq!(restored, expression);
 }
 
-/// Test a piecewise round-trips through JSON text.
 #[test]
 fn expression_piecewise_round_trips_through_json_text() {
     let expression = Expression::piecewise([(build_literal(true), build_literal(1))], 0)
@@ -322,7 +311,6 @@ fn expression_piecewise_round_trips_through_json_text() {
     assert_eq!(restored, expression);
 }
 
-/// Test a piecewise nested in another round-trips.
 #[test]
 fn expression_nested_piecewise_round_trips() {
     let inner =
@@ -356,7 +344,6 @@ fn expression_logical_node_round_trips_through_its_wire_form() {
     assert_eq!(restored, expression);
 }
 
-/// Test a decoded identifier is the identifier that was encoded.
 #[test]
 fn expression_round_trip_restores_the_same_identifier() {
     let (x, reference) = build_identifier("x");
@@ -365,10 +352,7 @@ fn expression_round_trip_restores_the_same_identifier() {
     let restored = decode(encode(&expression)).expect("a valid table");
 
     assert_eq!(restored, expression);
-    assert_eq!(
-        restored.free_identifiers().into_iter().collect::<Vec<_>>(),
-        vec![x]
-    );
+    assert_eq!(restored.free_identifiers(), HashSet::from([x]));
 }
 
 // =============================================================================
@@ -490,9 +474,9 @@ fn expression_deserialize_rejects_an_invalid_named_callee(
     assert_refused(&table, expected_message);
 }
 
-/// Test tables of the wrong shape, an unknown node kind, field or name, or
-/// a value of the wrong type, are refused as data errors; their text is
-/// serde's, so it is not pinned.
+/// Test tables with an unknown node kind, field or name, or a value of the
+/// wrong type, are refused as data errors; their text is serde's, so it is
+/// not pinned.
 #[rstest]
 #[case::unknown_node_kind(build_table([json!({"ternary": {"condition": 0}})]))]
 #[case::unknown_field(build_table([
@@ -518,7 +502,7 @@ fn expression_deserialize_rejects_an_invalid_named_callee(
 ]))]
 #[case::identifier_without_name_hint(build_table([json!({"identifier": {"id": 1}})]))]
 #[case::node_not_a_map(build_table([json!(5)]))]
-fn expression_deserialize_rejects_an_unknown_node_kind(#[case] table: Value) {
+fn expression_deserialize_rejects_a_misshapen_table(#[case] table: Value) {
     let error = decode(table.clone()).expect_err("the table is refused");
 
     assert!(error.is_data(), "a data error for {table}: {error}");
@@ -553,8 +537,6 @@ fn expression_million_node_chain_decodes_on_a_small_stack() {
     assert_eq!(depth, NODES - 1);
 }
 
-/// Test every strict prefix of an encoded expression is a postcard error,
-/// not a panic.
 #[test]
 fn expression_truncated_postcard_bytes_are_an_error_not_a_panic() {
     let (_, x) = build_identifier("x");
@@ -572,7 +554,6 @@ fn expression_truncated_postcard_bytes_are_an_error_not_a_panic() {
     }
 }
 
-/// Test a postcard table whose child index is out of range is refused.
 #[test]
 fn expression_postcard_index_out_of_range_is_refused() {
     let negation = -build_literal(1);
@@ -586,8 +567,6 @@ fn expression_postcard_index_out_of_range_is_refused() {
     assert!(result.is_err(), "an index out of range decoded");
 }
 
-/// Test decoding a table of unary and binary nodes rebuilds the operations
-/// given.
 #[test]
 fn expression_decode_rebuilds_the_operations_given() {
     let table = build_table([
