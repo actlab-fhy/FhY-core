@@ -1,27 +1,25 @@
-//! Process-globally unique, named compiler symbol.
+//! Process-globally unique, named compiler symbols.
 //!
-//! Two [`Identifier`] instances are equal iff they share the same `id`;
-//! `name_hint` is a debugging aid and is not consulted by equality or
-//! hashing. Ids are drawn from a single process-global, monotonically
-//! increasing counter and are never reused.
+//! Two [`Identifier`]s are equal iff they share the same id; the name hint
+//! is a debugging aid that equality and hashing ignore. Ids come from one
+//! process-global, monotonically increasing counter and are never reused.
 //!
 //! The ids `0..RESERVED_ID_COUNT` are reserved: the identifiers this crate
 //! ships (its note kinds, op attributes and value domains) hold fixed ids
 //! from that block, the same in every process, and the counter issues fresh
 //! ids from [`RESERVED_ID_COUNT`] upward.
 //!
-//! Construction and deserialization share the same counter: a deserialized
-//! id can never collide with a subsequently constructed id, regardless of
-//! interleaving across threads. Deserializing an id greater than or equal to
-//! the next-to-be-issued value advances the counter past it.
+//! Construction and deserialization share the counter, so a deserialized id
+//! never collides with a later constructed one, whatever the interleaving
+//! across threads: deserializing an id at or past the next one to be issued
+//! advances the counter past it.
 //!
-//! Ids are `u64`s. A payload id, one read from a serialized identifier or
-//! handed to [`try_advance_counter_past`], must lie below [`ID_CAP`]
-//! (`2^63`), so no payload can raise the counter above `ID_CAP` and leave
-//! it too few ids: exhausting the counter takes `2^63` fresh identifiers.
-//! Fresh ids may exceed the cap. A payload id outside `0..ID_CAP`, however
-//! large or negative, is rejected with the range it must lie in, wherever
-//! the identifier is nested, and leaves the counter unchanged.
+//! A payload id, one read from a serialized identifier or handed to
+//! [`try_advance_counter_past`], must lie below [`ID_CAP`] (`2^63`), so
+//! exhausting the counter always takes `2^63` fresh identifiers. Fresh ids
+//! may exceed the cap. A payload id outside `0..ID_CAP` is rejected with the
+//! range it must lie in, wherever the identifier is nested, and leaves the
+//! counter unchanged.
 
 use std::error::Error;
 use std::fmt;
@@ -29,7 +27,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::de::{self, Deserializer, Unexpected, Visitor};
-use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod reserved;
@@ -52,7 +49,6 @@ pub const RESERVED_ID_COUNT: u64 = 65_536;
 /// Matches the Python implementation: `fhy_core.identifier._ID_CAP`.
 pub const ID_CAP: u64 = 1 << 63;
 
-/// The process-global, monotonically-increasing id counter.
 static NEXT_ID: AtomicU64 = AtomicU64::new(RESERVED_ID_COUNT);
 
 /// Error for an id counter that cannot advance without wrapping.
@@ -102,11 +98,6 @@ impl Error for IdOutOfRange {}
 struct PayloadId(u64);
 
 impl PayloadId {
-    /// Check `id` against the cap.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`IdOutOfRange`] if `id` is at or above [`ID_CAP`].
     fn new(id: u64) -> Result<Self, IdOutOfRange> {
         if id < ID_CAP {
             Ok(Self(id))
@@ -123,13 +114,12 @@ impl PayloadId {
 
 /// Process-globally unique, named compiler symbol.
 ///
-/// Cloning an `Identifier` is cheap: `name_hint` is stored behind an
-/// [`Arc<str>`] so clones share the underlying string.
+/// Cloning is cheap: clones share the name hint's string.
 ///
 /// An identifier serializes as `{"id": .., "name_hint": ..}`. Deserializing
 /// one reads that shape, rejects an id at or above [`ID_CAP`], and advances
 /// the global counter past the id it restores.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(try_from = "IdentifierWire")]
 pub struct Identifier {
     id: u64,
@@ -234,11 +224,8 @@ pub fn try_advance_counter_past(id: u64) -> Result<(), IdOutOfRange> {
 
 /// Return `counter`'s current value and advance it by one.
 ///
-/// # Errors
-///
-/// Returns [`IdSpaceExhausted`], leaving `counter` unchanged, instead of
-/// wrapping when `counter` is at `u64::MAX`, since a wrapped counter would
-/// re-issue live ids.
+/// At `u64::MAX` this fails and leaves `counter` unchanged instead of
+/// wrapping, since a wrapped counter would re-issue live ids.
 fn take_next_id(counter: &AtomicU64) -> Result<u64, IdSpaceExhausted> {
     counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next_id| {
@@ -247,13 +234,6 @@ fn take_next_id(counter: &AtomicU64) -> Result<u64, IdSpaceExhausted> {
         .map_err(|_exhausted_value| IdSpaceExhausted)
 }
 
-/// Advance `counter` to at least `id + 1`, leaving it unchanged when it is
-/// already past `id`.
-///
-/// # Errors
-///
-/// Returns [`IdOutOfRange`], leaving `counter` unchanged, if `id` is at or
-/// above [`ID_CAP`].
 fn advance_past(counter: &AtomicU64, id: u64) -> Result<(), IdOutOfRange> {
     let id = PayloadId::new(id)?;
     counter.fetch_max(id.successor(), Ordering::Relaxed);
@@ -286,23 +266,9 @@ impl fmt::Debug for Identifier {
     }
 }
 
-impl Serialize for Identifier {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_struct("Identifier", 2)?;
-        state.serialize_field("id", &self.id)?;
-        state.serialize_field("name_hint", &*self.name_hint)?;
-        state.end()
-    }
-}
-
-/// Decodes a payload id, checked against [`ID_CAP`].
-///
-/// It asks the format for a `u64`, so it also reads formats that are not
-/// self-describing. An integer outside `0..ID_CAP` is reported as out of
-/// range with the range it must lie in, and anything else as the wrong type.
+/// Asks the format for a `u64`, so non-self-describing formats decode too.
+/// An integer outside `0..ID_CAP` is reported as out of range with the
+/// range it must lie in, and anything else as the wrong type.
 impl<'de> Deserialize<'de> for PayloadId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -312,7 +278,6 @@ impl<'de> Deserialize<'de> for PayloadId {
     }
 }
 
-/// Visitor accepting the integers `0..ID_CAP` as a [`PayloadId`].
 struct PayloadIdVisitor;
 
 impl Visitor<'_> for PayloadIdVisitor {
@@ -336,11 +301,10 @@ impl Visitor<'_> for PayloadIdVisitor {
     }
 }
 
-/// The wire form of an [`Identifier`], decoded but not yet restored.
+/// The decoded wire form of an [`Identifier`].
 ///
-/// Decoding one checks its fields and rejects an id at or above [`ID_CAP`]
-/// without touching the global counter; converting it into an
-/// [`Identifier`] restores the id.
+/// Decoding it rejects an id at or above [`ID_CAP`] without touching the
+/// counter; converting it into an [`Identifier`] restores the id.
 #[derive(Deserialize)]
 #[serde(
     rename = "Identifier",
@@ -355,12 +319,6 @@ struct IdentifierWire {
 impl TryFrom<IdentifierWire> for Identifier {
     type Error = IdOutOfRange;
 
-    /// Restore the identifier, advancing the global counter past its id.
-    ///
-    /// # Errors
-    ///
-    /// Never fails in practice: decoding the wire form checked its id
-    /// against the cap.
     fn try_from(wire: IdentifierWire) -> Result<Self, IdOutOfRange> {
         Self::try_restore(wire.id.0, &wire.name_hint)
     }
@@ -383,7 +341,12 @@ mod tests {
     use proptest::prelude::*;
     use rstest::rstest;
 
+    use crate::diagnostic::Note;
+    use crate::expr::Expression;
+    use crate::interned::Canonical;
+    use crate::op_attribute::OpAttribute;
     use crate::test_support::{assert_send_sync, compute_hash};
+    use crate::value_domain::ValueDomain;
 
     #[test]
     fn new_identifiers_get_increasing_ids() {
@@ -402,7 +365,6 @@ mod tests {
         assert_eq!(compute_hash(&a), compute_hash(&b));
     }
 
-    /// Test that a new identifier keeps its name hint as given, ASCII or not.
     #[rstest]
     #[case::ascii("test_name")]
     #[case::latin("é")]
@@ -414,7 +376,6 @@ mod tests {
         assert_eq!(identifier.name_hint(), name_hint);
     }
 
-    /// Test that Display writes the name hint verbatim.
     #[rstest]
     #[case::plain("my_name")]
     #[case::empty("")]
@@ -463,7 +424,6 @@ mod tests {
         assert!(next.id() > stale_id);
     }
 
-    /// Test that serde writes the id and name hint and reads both back.
     #[rstest]
     #[case::plain("roundtrip")]
     #[case::empty("")]
@@ -486,7 +446,6 @@ mod tests {
         assert_eq!(restored.name_hint(), name_hint);
     }
 
-    /// Test that serde accepts the smallest id, zero.
     #[test]
     fn serde_accepts_the_zero_id() {
         let restored: Identifier =
@@ -496,8 +455,6 @@ mod tests {
         assert_eq!(restored.name_hint(), "x");
     }
 
-    /// Test that serde rejects a payload whose fields are missing, unknown or
-    /// of the wrong type.
     #[rstest]
     #[case::missing_id("{\"name_hint\":\"x\"}", "missing field `id`")]
     #[case::missing_name_hint("{\"id\":0}", "missing field `name_hint`")]
@@ -524,7 +481,6 @@ mod tests {
     }
 
     proptest! {
-        /// Test that serde round-trips an identifier whatever its name hint.
         #[test]
         fn serde_round_trip_preserves_any_name_hint(name_hint in any::<String>()) {
             let original = Identifier::new(&name_hint);
@@ -539,9 +495,8 @@ mod tests {
 
     proptest! {
         /// Test that an identifier with any already-issued id and any name
-        /// hint round-trips through postcard, a format that is not
-        /// self-describing. Only issued ids are decoded, so the counter never
-        /// moves.
+        /// hint round-trips through postcard. Only issued ids are decoded, so
+        /// the counter never moves.
         #[test]
         fn serde_round_trips_through_postcard_for_any_payload_id(
             raw_id in any::<u64>(),
@@ -744,12 +699,6 @@ mod tests {
         /// Decode an identifier payload with the id token `id` along this
         /// path, returning the error text.
         fn decode_error(self, id: &str) -> String {
-            use crate::diagnostic::Note;
-            use crate::expr::Expression;
-            use crate::interned::Canonical;
-            use crate::op_attribute::OpAttribute;
-            use crate::value_domain::ValueDomain;
-
             let identifier = format!("{{\"id\":{id},\"name_hint\":\"x\"}}");
             let error = match self {
                 Self::Text => serde_json::from_str::<Identifier>(&identifier).map(drop),
@@ -1028,7 +977,6 @@ mod tests {
         panic!("the anchors were never one id apart: {deltas:?}");
     }
 
-    /// Test a reserved identifier holds its table entry's id and name hint.
     #[test]
     fn a_reserved_identifier_holds_its_entry() {
         let identifier = Identifier::reserved(reserved::ADDRESS_DOMAIN);
@@ -1037,7 +985,6 @@ mod tests {
         assert_eq!(identifier.name_hint(), "address");
     }
 
-    /// Minimal type exercising the [`HasIdentifier`] trait.
     struct NamedThing {
         identifier: Identifier,
     }

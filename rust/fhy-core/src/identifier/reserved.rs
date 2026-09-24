@@ -22,17 +22,15 @@ pub(crate) struct ReservedIdentifier {
 }
 
 impl ReservedIdentifier {
-    /// Create an entry. Private, so only this table mints entries.
+    /// Private, so only this table mints entries.
     const fn new(id: u64, name_hint: &'static str) -> Self {
         Self { id, name_hint }
     }
 
-    /// Return the entry's fixed id.
     pub(crate) const fn id(self) -> u64 {
         self.id
     }
 
-    /// Return the name hint shipped with the entry.
     pub(crate) const fn name_hint(self) -> &'static str {
         self.name_hint
     }
@@ -69,23 +67,21 @@ pub(crate) const DATA_DOMAIN: ReservedIdentifier = ReservedIdentifier::new(32, "
 /// The value domain of addresses.
 pub(crate) const ADDRESS_DOMAIN: ReservedIdentifier = ReservedIdentifier::new(33, "address");
 
-/// Every entry of the table, checked at compile time.
-const TABLE: &[ReservedIdentifier] = &[
-    RATIONALE_NOTE_KIND,
-    SUGGESTION_NOTE_KIND,
-    REMARK_NOTE_KIND,
-    OTHER_NOTE_KIND,
-    COMMUTATIVE,
-    ASSOCIATIVE,
-    PURE,
-    ELEMENTWISE,
-    DATA_DOMAIN,
-    ADDRESS_DOMAIN,
-];
-
-/// Fail the build unless every id in `table` is below [`RESERVED_ID_COUNT`]
-/// and no two entries share an id.
-const fn assert_table_is_valid(table: &[ReservedIdentifier]) {
+// Fails the build unless every id lies below `RESERVED_ID_COUNT` and no two
+// entries share an id.
+const _: () = {
+    let table = [
+        RATIONALE_NOTE_KIND,
+        SUGGESTION_NOTE_KIND,
+        REMARK_NOTE_KIND,
+        OTHER_NOTE_KIND,
+        COMMUTATIVE,
+        ASSOCIATIVE,
+        PURE,
+        ELEMENTWISE,
+        DATA_DOMAIN,
+        ADDRESS_DOMAIN,
+    ];
     let mut index = 0;
     while index < table.len() {
         assert!(
@@ -102,6 +98,4 @@ const fn assert_table_is_valid(table: &[ReservedIdentifier]) {
         }
         index += 1;
     }
-}
-
-const _: () = assert_table_is_valid(TABLE);
+};
