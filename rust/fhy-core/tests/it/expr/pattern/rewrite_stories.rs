@@ -1210,6 +1210,44 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition()
     );
 }
 
+/// Test a failing rebuild still blames the rule that rewrote the refused
+/// condition after an earlier replacement was thrown away: `5 -> 6` fires
+/// inside the first value, `-x -> 0` then discards its replacement, and
+/// `c -> 1` rewrites the second condition, which the piecewise refuses.
+#[test]
+fn apply_rewrite_rules_blames_the_right_rule_after_a_discarded_replacement() {
+    let (c_identifier, c) = build_identifier("c");
+    let five_to_six =
+        RewriteRule::new(Pattern::literal(5), rewrite_to_literal(6)).with_name("5 -> 6");
+    let negation_to_zero = RewriteRule::new(
+        Pattern::unary(UnaryOperation::Negate, Pattern::wildcard()),
+        rewrite_to_literal(0),
+    )
+    .with_name("-x -> 0");
+    let c_to_one = RewriteRule::new(Pattern::identifier(c_identifier), rewrite_to_literal(1))
+        .with_name("c -> 1");
+    let expression = Expression::piecewise(
+        [
+            (build_literal(true), -build_literal(5)),
+            (c, build_literal(7)),
+        ],
+        build_literal(8),
+    )
+    .expect("a valid piecewise");
+
+    let result = apply_rewrite_rules(&expression, &[five_to_six, negation_to_zero, c_to_one]);
+
+    let error = result.expect_err("the rebuild fails");
+    assert_eq!(
+        expect_rebuild_error(&error),
+        (
+            2,
+            Some("c -> 1"),
+            &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 1 })
+        )
+    );
+}
+
 /// Test each rewrite error displays its documented message.
 #[rstest]
 #[case::unnamed_callback(build_callback_failure(2, None), "rewrite rule 2 failed")]

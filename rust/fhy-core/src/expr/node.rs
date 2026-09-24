@@ -523,6 +523,18 @@ impl Expression {
         self.iterate_children()
     }
 
+    /// Return the position in [`children`](Self::children) order of the
+    /// child that `error` refuses, or `None` when the error names no single
+    /// child.
+    pub(crate) fn refused_child_index(error: &RebuildError) -> Option<usize> {
+        let RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index }) =
+            error
+        else {
+            return None;
+        };
+        case_index.checked_mul(2)
+    }
+
     /// Build a node of the same kind and operation from new children, given
     /// in [`children`](Self::children) order.
     ///

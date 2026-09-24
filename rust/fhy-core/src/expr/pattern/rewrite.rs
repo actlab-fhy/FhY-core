@@ -17,10 +17,12 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use super::super::error::{PiecewiseError, RebuildError};
+use super::super::error::RebuildError;
 use super::super::node::Expression;
 use super::matching::{CallbackError, MatchBindings, Pattern};
-use crate::tree::{NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree};
+use crate::tree::{
+    BuildIdentityHasher, NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree,
+};
 
 /// A rewrite: the replacement built from a match's bindings, or `None` to
 /// decline.
@@ -117,16 +119,6 @@ impl<R: Rule + ?Sized> Rule for Arc<R> {
     }
 }
 
-/// Return the position of the child that `error` refuses, or `None` when
-/// the error names no single child.
-fn find_refused_child_index(error: &RebuildError) -> Option<usize> {
-    let RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index }) = error
-    else {
-        return None;
-    };
-    case_index.checked_mul(2)
-}
-
 /// Return the last child in `rewritten` that is not the node in the same
 /// position of `originals`, paired with that original.
 fn find_last_replaced_child<'e>(
@@ -147,8 +139,9 @@ struct RuleApplier<'r, R> {
     names: Vec<OnceCell<Option<Arc<str>>>>,
     fired: Vec<FiredRule>,
     /// Each replacement a rule returned, by its identity, with the position
-    /// of that rule. Holding the replacement keeps its identity unique.
-    replacements: HashMap<NodeIdentity, (Expression, usize)>,
+    /// of that rule; read only to blame a refused rebuild. Holding the
+    /// replacement keeps its identity unique for the whole walk.
+    replacements: HashMap<NodeIdentity, (Expression, usize), BuildIdentityHasher>,
 }
 
 impl<'r, R: Rule> RuleApplier<'r, R> {
@@ -158,7 +151,7 @@ impl<'r, R: Rule> RuleApplier<'r, R> {
             rules,
             names: rules.iter().map(|_| OnceCell::new()).collect(),
             fired: Vec::new(),
-            replacements: HashMap::new(),
+            replacements: HashMap::default(),
         }
     }
 
@@ -204,7 +197,7 @@ impl<'r, R: Rule> RuleApplier<'r, R> {
         children: &[Expression],
         error: &RebuildError,
     ) -> usize {
-        let refused_child = find_refused_child_index(error)
+        let refused_child = Expression::refused_child_index(error)
             .and_then(|index| Some((node.children().nth(index)?, children.get(index)?)))
             .filter(|(original, rewritten)| !Expression::ptr_eq(original, rewritten));
         refused_child
