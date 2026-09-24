@@ -34,8 +34,8 @@ use fhy_core::pass::{
     PassErrorKind, PassHook, PassManager, PassRegistry, PipelineRecord, PreservedAnalyses,
 };
 use pattern_support::{
-    ProbeError, build_plus_zero, build_x_plus_zero_rule, build_x_times_one_rule, describe_fired,
-    expect_probe_error, rewrite_to_capture, rewrite_to_literal,
+    ProbeError, build_identity_rule, build_plus_zero, build_x_plus_zero_rule,
+    build_x_times_one_rule, describe_fired, expect_probe_error, rewrite_to_literal,
 };
 use rstest::rstest;
 
@@ -63,13 +63,6 @@ fn build_move_zero_right_rule() -> RewriteRule {
         },
     )
     .with_name("0 + x -> x + 0")
-}
-
-/// Return the rule rewriting any node to itself through a capture, named
-/// `x -> x`.
-fn build_identity_rule() -> RewriteRule {
-    let x = Capture::new("x");
-    RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x)).with_name("x -> x")
 }
 
 /// Return the rewrite error a failed rule-applier run carries as its

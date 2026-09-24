@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
     build_call_or_panic, build_callee, build_decimal_literal, build_deep_sum, build_identifier,
-    build_literal,
+    build_literal, build_parsed_literal,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::pattern::{CallbackError, Capture, MatchBindings, Pattern};
@@ -58,12 +58,6 @@ fn match_infallibly(pattern: &Pattern, expression: &Expression) -> Option<MatchB
 fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchBindings {
     match_infallibly(pattern, expression)
         .unwrap_or_else(|| panic!("{pattern:?} does not match {expression:?}"))
-}
-
-/// Return the literal expression `LiteralValue::parse_text` reads from
-/// `text`.
-fn build_parsed_literal(text: &str) -> Expression {
-    build_literal(LiteralValue::parse_text(text).expect("the text is a literal text"))
 }
 
 /// Return the captures `bindings` binds, in binding order.

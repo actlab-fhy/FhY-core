@@ -39,6 +39,17 @@ pub(crate) fn expect_literal(expression: &Expression) -> &LiteralValue {
     literal
 }
 
+/// Return the literal expression `LiteralValue::parse_text` reads from
+/// `text`.
+///
+/// # Panics
+///
+/// Panics if `text` is outside the literal grammar.
+#[must_use]
+pub(crate) fn build_parsed_literal(text: &str) -> Expression {
+    build_literal(LiteralValue::parse_text(text).expect("the text is a literal text"))
+}
+
 /// Return a decimal literal expression holding the value of the numeric
 /// text `text`, an integer text included.
 ///

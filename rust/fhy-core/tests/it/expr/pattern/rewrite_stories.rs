@@ -27,7 +27,7 @@ use fhy_core::expr::{
 };
 use fhy_core::identifier::Identifier;
 use pattern_support::{
-    ProbeError, build_plus_zero, build_x_minus_x_rule, build_x_plus_zero_rule,
+    ProbeError, build_identity_rule, build_plus_zero, build_x_minus_x_rule, build_x_plus_zero_rule,
     build_x_times_one_rule, describe_fired, expect_probe_error, rewrite, rewrite_to_capture,
     rewrite_to_literal,
 };
@@ -44,12 +44,6 @@ fn rewrite_root(rule: &RewriteRule, expression: &Expression) -> Option<Expressio
 /// `value`.
 fn build_constant_rule(value: i64) -> RewriteRule {
     RewriteRule::new(Pattern::wildcard(), rewrite_to_literal(value))
-}
-
-/// Return the rule rewriting any node to itself through a capture.
-fn build_identity_rule() -> RewriteRule {
-    let x = Capture::new("x");
-    RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x)).with_name("x -> x")
 }
 
 /// Return a guard failing with a [`ProbeError`].

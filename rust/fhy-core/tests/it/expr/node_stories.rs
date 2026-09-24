@@ -12,8 +12,8 @@ use crate::support::stack as stack_support;
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    build_callee, build_decimal_literal, build_deep_sum, build_doubling_dag, build_identifier,
-    build_literal, build_piecewise_or_panic, copy_deeply,
+    build_call_or_panic, build_callee, build_decimal_literal, build_deep_sum, build_doubling_dag,
+    build_identifier, build_literal, build_parsed_literal, build_piecewise_or_panic, copy_deeply,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
@@ -25,17 +25,6 @@ use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
-
-/// Return the call `Expression::call` builds of the function named
-/// `function_name` (see [`build_callee`]) with `arguments`, given as a list.
-///
-/// # Panics
-///
-/// Panics if `function_name` is empty.
-#[must_use]
-fn build_call_node_or_panic(function_name: &str, arguments: Vec<Expression>) -> Expression {
-    Expression::call(build_callee(function_name), arguments)
-}
 
 /// Return whether `dag` is a doubling DAG `levels` additions deep over the
 /// node `leaf`, both operands of each addition one shared node.
@@ -54,12 +43,6 @@ fn is_doubling_dag_over(dag: &Expression, leaf: &Expression, levels: usize) -> b
         node = binary.left();
     }
     Expression::ptr_eq(node, leaf)
-}
-
-/// Return the literal expression `LiteralValue::parse_text` reads from
-/// `text`.
-fn build_parsed_literal(text: &str) -> Expression {
-    build_literal(LiteralValue::parse_text(text).expect("the text is a literal text"))
 }
 
 /// Return the unary node `expression` refers to.
@@ -410,7 +393,7 @@ fn expression_children_of_single_case_piecewise_are_condition_value_otherwise() 
 #[test]
 fn expression_children_of_call_are_the_arguments() {
     let arguments = [build_literal(1), build_literal(2), build_literal(3)];
-    let expression = build_call_node_or_panic("select3", arguments.to_vec());
+    let expression = build_call_or_panic("select3", arguments.to_vec());
 
     let children: Vec<&Expression> = expression.children().collect();
 
@@ -580,7 +563,7 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
     let (_, y) = build_identifier("y");
     let unary = Expression::new_unary(UnaryOperation::LogicalNot, &x);
     let binary = Expression::new_binary(BinaryOperation::FloorDivide, &x, 2);
-    let call = build_call_node_or_panic("f", vec![x.clone(), build_literal(1)]);
+    let call = build_call_or_panic("f", vec![x.clone(), build_literal(1)]);
     let logical = Expression::any([&x, &y]);
 
     let rebuilt_logical = logical
@@ -606,7 +589,7 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
     );
     assert_eq!(
         rebuilt_call,
-        build_call_node_or_panic("f", vec![y.clone(), build_literal(4)])
+        build_call_or_panic("f", vec![y.clone(), build_literal(4)])
     );
     assert_eq!(rebuilt_logical, Expression::any([build_literal(false), x]));
 }
@@ -648,9 +631,9 @@ fn expression_rebuild_of_a_logical_node_keeps_its_operand_count() {
 #[case::unary_two(Expression::new_unary(UnaryOperation::Negate, 1), 2, 1)]
 #[case::binary_one(Expression::new_binary(BinaryOperation::Add, 1, 2), 1, 2)]
 #[case::binary_three(Expression::new_binary(BinaryOperation::Add, 1, 2), 3, 2)]
-#[case::call_fewer(build_call_node_or_panic("f", vec![build_literal(1), build_literal(2)]), 1, 2)]
-#[case::call_more(build_call_node_or_panic("f", vec![build_literal(1), build_literal(2)]), 3, 2)]
-#[case::call_none_to_one(build_call_node_or_panic("f", Vec::new()), 1, 0)]
+#[case::call_fewer(build_call_or_panic("f", vec![build_literal(1), build_literal(2)]), 1, 2)]
+#[case::call_more(build_call_or_panic("f", vec![build_literal(1), build_literal(2)]), 3, 2)]
+#[case::call_none_to_one(build_call_or_panic("f", Vec::<Expression>::new()), 1, 0)]
 #[case::logical_fewer(Expression::all([build_literal(true), build_literal(false)]), 1, 2)]
 #[case::logical_none(Expression::all([build_literal(true), build_literal(false)]), 0, 2)]
 #[case::logical_more(Expression::any([build_literal(true), build_literal(false)]), 3, 2)]
@@ -790,7 +773,7 @@ fn expression_free_identifiers_walk_into_a_unary_operand() {
 fn expression_free_identifiers_of_call_is_the_union_over_arguments() {
     let (x, x_reference) = build_identifier("x");
     let (y, y_reference) = build_identifier("y");
-    let expression = build_call_node_or_panic("f", vec![x_reference, y_reference]);
+    let expression = build_call_or_panic("f", vec![x_reference, y_reference]);
 
     let free = expression.free_identifiers();
 
@@ -971,7 +954,7 @@ fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
 fn expression_substitute_with_empty_map_yields_an_equal_tree() {
     let (_, x) = build_identifier("x");
     let expression = build_piecewise_or_panic(
-        vec![(x.less(3), build_call_node_or_panic("f", vec![-&x]))],
+        vec![(x.less(3), build_call_or_panic("f", vec![-&x]))],
         x.power(2),
     );
 
@@ -993,7 +976,7 @@ fn expression_substitute_with_empty_map_yields_an_equal_tree() {
 #[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
 #[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
 #[case::piecewise(|| build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
-#[case::call(|| build_call_node_or_panic("max", vec![build_literal(1), build_literal(2)]))]
+#[case::call(|| build_call_or_panic("max", vec![build_literal(1), build_literal(2)]))]
 fn expression_separately_built_equal_trees_are_equal_but_distinct(
     #[case] build: fn() -> Expression,
 ) {
@@ -1042,7 +1025,7 @@ fn expression_references_to_distinct_identifiers_are_unequal() {
 #[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
 #[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
 #[case::piecewise(|| build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
-#[case::call(|| build_call_node_or_panic("max", vec![build_literal(1), build_literal(2)]))]
+#[case::call(|| build_call_or_panic("max", vec![build_literal(1), build_literal(2)]))]
 fn expression_set_of_equal_trees_keeps_one_member(#[case] build: fn() -> Expression) {
     let first = build();
     let second = build();
@@ -1116,8 +1099,8 @@ fn expression_reordered_piecewise_cases_are_unequal() {
     Expression::new_binary(BinaryOperation::Add, 1, 2),
     Expression::new_binary(BinaryOperation::Add, 2, 1)
 )]
-#[case::function_name(build_call_node_or_panic("f", vec![build_literal(1)]), build_call_node_or_panic("g", vec![build_literal(1)]))]
-#[case::arity(build_call_node_or_panic("f", vec![build_literal(1)]), build_call_node_or_panic("f", vec![build_literal(1), build_literal(1)]))]
+#[case::function_name(build_call_or_panic("f", vec![build_literal(1)]), build_call_or_panic("g", vec![build_literal(1)]))]
+#[case::arity(build_call_or_panic("f", vec![build_literal(1)]), build_call_or_panic("f", vec![build_literal(1), build_literal(1)]))]
 #[case::otherwise(build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)), build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(2)))]
 #[case::unary_and_binary(
     Expression::new_unary(UnaryOperation::Negate, 1),
@@ -1349,7 +1332,7 @@ fn build_doubling_dag_over(identifier: &Identifier, levels: usize) -> Expression
 /// Return `(x < 3 ? f(-x) : x ** 2)` over the reference `x`.
 fn build_mixed_tree(x: &Expression) -> Expression {
     build_piecewise_or_panic(
-        vec![(x.less(3), build_call_node_or_panic("f", vec![-x]))],
+        vec![(x.less(3), build_call_or_panic("f", vec![-x]))],
         x.power(2),
     )
 }
@@ -1543,7 +1526,7 @@ fn expression_dags_differing_beside_a_shared_subtree_are_unequal(
 })]
 #[case::shared_call_arguments(|| {
     let shared = build_mixed_tree(&build_identifier("x").1);
-    build_call_node_or_panic("f", vec![shared.clone(), shared.clone(), shared])
+    build_call_or_panic("f", vec![shared.clone(), shared.clone(), shared])
 })]
 #[case::shared_literal(|| {
     let five = build_literal(5);

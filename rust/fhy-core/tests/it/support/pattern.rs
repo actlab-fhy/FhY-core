@@ -78,6 +78,14 @@ pub(crate) fn rewrite_to_literal(
     move |_| Ok(Expression::from(LiteralValue::from(value)))
 }
 
+/// Return the rule `x -> x`, named so, rewriting any node to itself through
+/// a capture.
+#[must_use]
+pub(crate) fn build_identity_rule() -> RewriteRule {
+    let x = Capture::new("x");
+    RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x)).with_name("x -> x")
+}
+
 /// Return the rule `x + 0 -> x`, named so.
 #[must_use]
 pub(crate) fn build_x_plus_zero_rule() -> RewriteRule {
