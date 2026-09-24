@@ -18,7 +18,7 @@ use crate::tree::NodeHandle;
 /// pass infrastructure.
 const DEFAULT_MAX_ITERATIONS: NonZeroUsize = NonZeroUsize::new(10).expect("ten is non-zero");
 
-/// The record of one pass run in a pipeline or a validation.
+/// The record of one pass run in a pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassRunRecord {
     pass_name: Cow<'static, str>,

@@ -14,7 +14,7 @@ use fhy_core::diagnostic::DiagnosticLevel;
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
     CompilerPass, ExecutePass, FixpointGroupRecord, FixpointPassGroup, PassContext, PassFailure,
-    PassManager, PassRunRecord, PipelineRecord, PreservedAnalyses, ValidationManager,
+    PassManager, PassRunRecord, PipelineRecord, PreservedAnalyses, ValidationManager, Validator,
 };
 use pass_ir::{
     BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis, build_add_pass, build_identity_pass,
@@ -67,8 +67,8 @@ fn build_group<'p>(name: &str, max_iterations: usize) -> FixpointPassGroup<'p, B
 /// Reports an error for every negative value.
 struct NegativeValueCheck;
 
-impl CompilerPass<BoxIr, ()> for NegativeValueCheck {
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+impl Validator<BoxIr> for NegativeValueCheck {
+    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
         if ir.value() < 0 {
             cx.report_text(
                 DiagnosticLevel::Error,
@@ -78,10 +78,6 @@ impl CompilerPass<BoxIr, ()> for NegativeValueCheck {
         }
         Ok(())
     }
-
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
-        Ok(false)
-    }
 }
 
 /// Counts the nodes it validates and reports nothing.
@@ -90,14 +86,10 @@ struct CountingCheck {
     invocations: usize,
 }
 
-impl CompilerPass<BoxIr, ()> for CountingCheck {
-    fn run(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+impl Validator<BoxIr> for CountingCheck {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
         self.invocations += 1;
         Ok(())
-    }
-
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
-        Ok(false)
     }
 }
 

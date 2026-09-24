@@ -581,6 +581,29 @@ where
     })
 }
 
+/// Check `ir` with `pass` through the part of its guarded lifecycle a
+/// validation runs, reporting into `cx`: validate the input, stop if the
+/// pass skips, run, and validate the output.
+pub(super) fn run_check<I, P>(
+    pass: &mut P,
+    ir: &I,
+    cx: &mut PassContext<'_>,
+) -> Result<(), PassError>
+where
+    P: CompilerPass<I, ()> + ?Sized,
+{
+    guard_hook(pass.validate_input(ir, cx), PassHook::ValidateInput, cx)?;
+    if guard_hook(pass.skip(ir, cx), PassHook::Skip, cx)?.is_some() {
+        return Ok(());
+    }
+    guard_hook(pass.run(ir, cx), PassHook::Run, cx)?;
+    guard_hook(
+        pass.validate_output(ir, &(), cx),
+        PassHook::ValidateOutput,
+        cx,
+    )
+}
+
 /// Standalone execution of a pass through its guarded lifecycle.
 ///
 /// Implemented for every [`CompilerPass`]. A standalone run computes each

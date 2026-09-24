@@ -5,8 +5,21 @@ use std::error::Error;
 use std::fmt;
 
 use super::compiler_pass::PassFailure;
-use super::manager::PassRunRecord;
+use super::validation::ValidatorRecord;
 use crate::diagnostic::{Diagnostic, ValidationReport};
+
+/// Return the message of `error` followed by the message of each of its
+/// sources, in order, joined by `: `.
+pub(super) fn render_chain(error: &(dyn Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
 
 /// A lifecycle hook of a [`CompilerPass`](super::CompilerPass).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,7 +82,7 @@ enum PassErrorKind {
     /// Verification rejected the IR a pass received or produced.
     Verification {
         pass_name: Cow<'static, str>,
-        report: Box<ValidationReport<PassRunRecord>>,
+        report: Box<ValidationReport<ValidatorRecord>>,
     },
     /// A fixpoint group used its iteration budget without converging.
     NonConvergence,
@@ -116,7 +129,7 @@ impl PassError {
     pub(super) fn new_verification_failure(
         pass_name: Cow<'static, str>,
         message: String,
-        report: ValidationReport<PassRunRecord>,
+        report: ValidationReport<ValidatorRecord>,
         diagnostics: Vec<Diagnostic>,
     ) -> Self {
         Self {
@@ -191,7 +204,7 @@ impl PassError {
     /// Return the verification report that rejected the IR, if verification
     /// failed.
     #[must_use]
-    pub fn verification_report(&self) -> Option<&ValidationReport<PassRunRecord>> {
+    pub fn verification_report(&self) -> Option<&ValidationReport<ValidatorRecord>> {
         match &self.kind {
             PassErrorKind::Verification { report, .. } => Some(report),
             PassErrorKind::Hook { .. } | PassErrorKind::NonConvergence => None,

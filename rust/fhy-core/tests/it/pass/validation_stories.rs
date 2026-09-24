@@ -1,5 +1,6 @@
 //! Tests for `fhy_core::pass::ValidationManager`: collect-all
-//! validation, failing validators, and the aggregated report.
+//! validation, failing validators, passes run as validators, and the
+//! aggregated report and its per-validator records.
 //!
 //! Public API only; nothing here reads process-global state.
 
@@ -7,11 +8,11 @@ use crate::support::pass_ir;
 
 use std::borrow::Cow;
 
-use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
+use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationReport};
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
-    CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PreservedAnalyses,
-    ValidationManager,
+    CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PassValidator,
+    ValidationManager, Validator, ValidatorRecord,
 };
 use pass_ir::{BoxIr, DoubleAnalysis};
 use rstest::rstest;
@@ -34,7 +35,7 @@ enum Step {
     HandOver(PassError),
 }
 
-/// A validator named explicitly that performs a script in its run.
+/// A validator named explicitly that performs a script.
 struct ScriptedValidator {
     name: &'static str,
     steps: Vec<Step>,
@@ -57,12 +58,12 @@ impl ScriptedValidator {
     }
 }
 
-impl CompilerPass<BoxIr, ()> for ScriptedValidator {
+impl Validator<BoxIr> for ScriptedValidator {
     fn name(&self) -> Cow<'static, str> {
         Cow::Borrowed(self.name)
     }
 
-    fn run(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
         for step in self.steps.drain(..) {
             match step {
                 Step::Report {
@@ -75,10 +76,6 @@ impl CompilerPass<BoxIr, ()> for ScriptedValidator {
             }
         }
         Ok(())
-    }
-
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
-        Ok(false)
     }
 }
 
@@ -140,9 +137,7 @@ fn produce_execution_failure() -> PassError {
 }
 
 /// Return the level and text of every diagnostic.
-fn collect_levels_and_messages(
-    diagnostics: &[fhy_core::diagnostic::Diagnostic],
-) -> Vec<(DiagnosticLevel, &str)> {
+fn collect_levels_and_messages(diagnostics: &[Diagnostic]) -> Vec<(DiagnosticLevel, &str)> {
     diagnostics
         .iter()
         .map(|diagnostic| (diagnostic.level(), diagnostic.message_text()))
@@ -158,6 +153,15 @@ fn build_manager<'p>(
         manager.add(validator);
     }
     manager
+}
+
+/// Return the validator name of every record of `report`.
+fn collect_validator_names(report: &ValidationReport<ValidatorRecord>) -> Vec<&str> {
+    report
+        .records()
+        .iter()
+        .map(ValidatorRecord::validator_name)
+        .collect()
 }
 
 // =============================================================================
@@ -183,23 +187,15 @@ fn validation_manager_runs_every_validator_after_errors() {
 
     let report = manager.validate(&BoxIr::new(0));
 
-    let names: Vec<_> = report
-        .records()
-        .iter()
-        .map(fhy_core::pass::PassRunRecord::pass_name)
-        .collect();
     assert_eq!(
-        names,
+        collect_validator_names(&report),
         [
             "tests.vm.first_error",
             "tests.vm.second_error",
             "tests.vm.third_clean"
         ]
     );
-    let errors: Vec<_> = report
-        .errors()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
-        .collect();
+    let errors: Vec<_> = report.errors().map(Diagnostic::message_text).collect();
     assert_eq!(errors, ["first-error-msg", "second-error-msg"]);
 }
 
@@ -240,18 +236,9 @@ fn validation_manager_aggregates_mixed_severity_levels() {
 
     let report = manager.validate(&BoxIr::new(0));
 
-    let infos: Vec<_> = report
-        .infos()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
-        .collect();
-    let warnings: Vec<_> = report
-        .warnings()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
-        .collect();
-    let errors: Vec<_> = report
-        .errors()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
-        .collect();
+    let infos: Vec<_> = report.infos().map(Diagnostic::message_text).collect();
+    let warnings: Vec<_> = report.warnings().map(Diagnostic::message_text).collect();
+    let errors: Vec<_> = report.errors().map(Diagnostic::message_text).collect();
     assert_eq!(
         (infos, warnings, errors),
         (vec!["note-me"], vec!["watch-me"], vec!["fix-me"])
@@ -271,12 +258,10 @@ fn validation_manager_returns_a_clean_report_when_every_validator_is_clean() {
 
     assert!(!report.has_errors());
     assert!(report.diagnostics().is_empty());
-    let names: Vec<_> = report
-        .records()
-        .iter()
-        .map(fhy_core::pass::PassRunRecord::pass_name)
-        .collect();
-    assert_eq!(names, ["tests.vm.clean_a", "tests.vm.clean_b"]);
+    assert_eq!(
+        collect_validator_names(&report),
+        ["tests.vm.clean_a", "tests.vm.clean_b"]
+    );
 }
 
 /// Test a pipeline without validators yields an empty report.
@@ -315,26 +300,71 @@ fn validation_manager_keeps_every_diagnostic_of_one_validator_in_order() {
     assert_eq!(collect_levels_and_messages(report.diagnostics()), expected);
     assert_eq!(report.records().len(), 1);
     assert_eq!(
-        collect_levels_and_messages(report.records()[0].diagnostics()),
+        collect_levels_and_messages(report.records()[0].diagnostics_in(&report)),
         expected
     );
 }
 
-/// Test each record reports an unchanged run that preserved every analysis.
+/// Test each record names its validator, says it did not fail, and holds
+/// its diagnostics.
 #[test]
-fn validation_manager_records_each_validator_as_unchanged_and_preserving_all() {
-    let mut manager = build_manager([ScriptedValidator::reporting(
-        "tests.vm.record_warn",
-        DiagnosticLevel::Warning,
-        "msg",
-    )]);
+fn validation_manager_records_each_validator_with_its_diagnostics() {
+    let mut manager = build_manager([
+        ScriptedValidator::reporting("tests.vm.record_warn", DiagnosticLevel::Warning, "msg"),
+        ScriptedValidator::clean("tests.vm.record_clean"),
+    ]);
 
     let report = manager.validate(&BoxIr::new(0));
 
-    let record = &report.records()[0];
-    assert!(!record.is_changed());
-    assert_eq!(record.preserved_analyses(), &PreservedAnalyses::all());
-    assert_eq!(record.diagnostics().len(), 1);
+    let records = report.records();
+    assert_eq!(records[0].validator_name(), "tests.vm.record_warn");
+    assert!(!records[0].is_failed());
+    assert_eq!(
+        collect_levels_and_messages(records[0].diagnostics_in(&report)),
+        [(DiagnosticLevel::Warning, "msg")]
+    );
+    assert!(!records[1].is_failed());
+    assert!(records[1].diagnostics_in(&report).is_empty());
+}
+
+/// Test the report holds every diagnostic once, and the records' slices of
+/// it partition it in order.
+#[test]
+fn validation_report_stores_each_diagnostic_once() {
+    let mut manager = build_manager([
+        ScriptedValidator::new(
+            "tests.vm.two",
+            vec![
+                report(DiagnosticLevel::Info, "one"),
+                report(DiagnosticLevel::Error, "two"),
+            ],
+        ),
+        ScriptedValidator::clean("tests.vm.none"),
+        ScriptedValidator::new("tests.vm.failing", vec![Step::Fail("boom")]),
+        ScriptedValidator::reporting("tests.vm.last", DiagnosticLevel::Warning, "three"),
+    ]);
+
+    let report = manager.validate(&BoxIr::new(0));
+
+    let concatenated: Vec<&Diagnostic> = report
+        .records()
+        .iter()
+        .flat_map(|record| record.diagnostics_in(&report))
+        .collect();
+    let all: Vec<&Diagnostic> = report.diagnostics().iter().collect();
+    assert_eq!(concatenated.len(), all.len());
+    assert!(
+        concatenated
+            .iter()
+            .zip(&all)
+            .all(|(left, right)| std::ptr::eq(*left, *right))
+    );
+    let sizes: Vec<_> = report
+        .records()
+        .iter()
+        .map(|record| record.diagnostics_in(&report).len())
+        .collect();
+    assert_eq!(sizes, [2, 0, 1, 1]);
 }
 
 /// Test a structured note reaches the report unchanged.
@@ -342,15 +372,11 @@ fn validation_manager_records_each_validator_as_unchanged_and_preserving_all() {
 fn validation_manager_keeps_a_structured_note() {
     struct NoteValidator;
 
-    impl CompilerPass<BoxIr, ()> for NoteValidator {
-        fn run(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    impl Validator<BoxIr> for NoteValidator {
+        fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
             let note = Note::new("structured-message", NoteKind::suggestion().clone());
             cx.report(DiagnosticLevel::Error, note, None);
             Ok(())
-        }
-
-        fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
-            Ok(false)
         }
     }
     let mut manager = ValidationManager::new(Identifier::new("validation"));
@@ -359,10 +385,7 @@ fn validation_manager_keeps_a_structured_note() {
     let report = manager.validate(&BoxIr::new(0));
 
     assert_eq!(
-        report
-            .errors()
-            .next()
-            .map(fhy_core::diagnostic::Diagnostic::message),
+        report.errors().next().map(Diagnostic::message),
         Some(&Note::new(
             "structured-message",
             NoteKind::suggestion().clone()
@@ -374,18 +397,18 @@ fn validation_manager_keeps_a_structured_note() {
 // Failing validators
 // =============================================================================
 
-/// Test a validator whose run fails leaves the error diagnostic that records
-/// the failure, and the validators after it still run.
+/// Test a pass run as a validator whose run fails leaves the error
+/// diagnostic that records the failure, is recorded as failed, and the
+/// validators after it still run.
 #[test]
 fn validation_manager_records_a_failing_validator_and_runs_the_rest() {
-    let mut manager = build_manager([
-        ScriptedValidator::new("tests.vm.crasher", vec![Step::Fail("internal boom")]),
-        ScriptedValidator::reporting(
-            "tests.vm.after_crasher",
-            DiagnosticLevel::Error,
-            "still-runs",
-        ),
-    ]);
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(PassValidator::new(CrashInRun));
+    manager.add(ScriptedValidator::reporting(
+        "tests.vm.after_crasher",
+        DiagnosticLevel::Error,
+        "still-runs",
+    ));
 
     let report = manager.validate(&BoxIr::new(0));
 
@@ -396,14 +419,16 @@ fn validation_manager_records_a_failing_validator_and_runs_the_rest() {
     assert_eq!(
         errors,
         [
-            (
-                "tests.vm.crasher",
-                "Pass \"tests.vm.crasher\" failed run with internal boom"
-            ),
+            ("CrashInRun", "Pass \"CrashInRun\" failed run with crashed"),
             ("tests.vm.after_crasher", "still-runs"),
         ]
     );
-    assert_eq!(report.records().len(), 2);
+    let failed: Vec<_> = report
+        .records()
+        .iter()
+        .map(ValidatorRecord::is_failed)
+        .collect();
+    assert_eq!(failed, [true, false]);
 }
 
 /// Test the diagnostics a validator emitted before failing are kept.
@@ -413,6 +438,7 @@ fn validation_manager_keeps_the_diagnostics_a_validator_emitted_before_failing()
         "tests.vm.report_then_crash",
         vec![
             report(DiagnosticLevel::Warning, "heads-up"),
+            report(DiagnosticLevel::Info, "fyi"),
             Step::Fail("kaboom"),
         ],
     )]);
@@ -423,16 +449,19 @@ fn validation_manager_keeps_the_diagnostics_a_validator_emitted_before_failing()
         collect_levels_and_messages(report.diagnostics()),
         [
             (DiagnosticLevel::Warning, "heads-up"),
+            (DiagnosticLevel::Info, "fyi"),
             (
                 DiagnosticLevel::Error,
-                "Pass \"tests.vm.report_then_crash\" failed run with kaboom"
+                "validator \"tests.vm.report_then_crash\" failed without reporting an error: \
+                 kaboom"
             ),
         ]
     );
-    assert_eq!(report.records()[0].diagnostics().len(), 2);
+    assert_eq!(report.records()[0].diagnostics_in(&report).len(), 3);
+    assert!(report.records()[0].is_failed());
 }
 
-/// Test a validator that reported an error and then handed over a pass
+/// Test a validator that reported an error and then failed with a pass
 /// error keeps just its own diagnostics, and the pipeline continues.
 #[rstest]
 #[case::execution(produce_execution_failure())]
@@ -464,39 +493,21 @@ fn validation_manager_adds_nothing_when_a_failing_validator_reported_an_error(
             (DiagnosticLevel::Warning, "still-here"),
         ]
     );
-    let names: Vec<_> = report
-        .records()
-        .iter()
-        .map(fhy_core::pass::PassRunRecord::pass_name)
-        .collect();
     assert_eq!(
-        names,
+        collect_validator_names(&report),
         ["tests.vm.reported_then_failed", "tests.vm.after_reported"]
     );
 }
 
 /// Test a validator that fails without reporting an error gains one naming
-/// the failure's class and message.
-#[rstest]
-#[case::validation(
-    produce_validation_failure(),
-    "Validator \"tests.vm.silent\" raised \"validation failure\" without reporting a \
-     diagnostic: Pass \"RejectInput\" failed validate_input with rejected"
-)]
-#[case::execution(
-    produce_execution_failure(),
-    "Validator \"tests.vm.silent\" raised \"execution failure\" without reporting a \
-     diagnostic: Pass \"CrashInRun\" failed run with crashed"
-)]
-fn validation_manager_adds_an_error_for_a_validator_that_fails_silently(
-    #[case] failure: PassError,
-    #[case] expected: &str,
-) {
+/// the validator and the failure's cause chain.
+#[test]
+fn validation_manager_adds_an_error_for_a_validator_that_fails_silently() {
     let mut manager = build_manager([ScriptedValidator::new(
         "tests.vm.silent",
         vec![
             report(DiagnosticLevel::Warning, "only-a-warning"),
-            Step::HandOver(failure),
+            Step::Fail("internal boom"),
         ],
     )]);
 
@@ -516,28 +527,187 @@ fn validation_manager_adds_an_error_for_a_validator_that_fails_silently(
                 "only-a-warning",
                 None
             ),
-            (DiagnosticLevel::Error, "tests.vm.silent", expected, None),
+            (
+                DiagnosticLevel::Error,
+                "tests.vm.silent",
+                "validator \"tests.vm.silent\" failed without reporting an error: internal boom",
+                None
+            ),
         ]
     );
-    assert_eq!(report.records()[0].diagnostics().len(), 2);
+    assert_eq!(report.records()[0].diagnostics_in(&report).len(), 2);
+    assert!(report.records()[0].is_failed());
 }
 
-/// Test a validator whose own input check fails records that failure.
+/// Test the silent-failure error walks the failure's cause chain, writing
+/// each cause once.
 #[test]
-fn validation_manager_records_a_validator_that_rejects_its_input() {
-    let mut manager = ValidationManager::new(Identifier::new("validation"));
-    manager.add(RejectInput);
+fn validation_manager_writes_the_cause_chain_of_a_silent_failure() {
+    let mut manager = build_manager([ScriptedValidator::new(
+        "tests.vm.silent_chain",
+        vec![Step::HandOver(produce_execution_failure())],
+    )]);
 
     let report = manager.validate(&BoxIr::new(0));
 
-    let errors: Vec<_> = report
-        .errors()
-        .map(fhy_core::diagnostic::Diagnostic::message_text)
+    let messages: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .map(Diagnostic::message_text)
         .collect();
+    assert_eq!(
+        messages,
+        [
+            "validator \"tests.vm.silent_chain\" failed without reporting an error: \
+             Pass \"CrashInRun\" failed run with crashed: crashed"
+        ]
+    );
+}
+
+/// Test a pass run as a validator whose input check fails records that
+/// failure.
+#[test]
+fn validation_manager_records_a_validator_that_rejects_its_input() {
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(PassValidator::new(RejectInput));
+
+    let report = manager.validate(&BoxIr::new(0));
+
+    let errors: Vec<_> = report.errors().map(Diagnostic::message_text).collect();
     assert_eq!(
         errors,
         ["Pass \"RejectInput\" failed validate_input with rejected"]
     );
+    assert!(report.records()[0].is_failed());
+}
+
+/// Checks a value through the pass hooks a validation runs, recording them.
+#[derive(Default)]
+struct HookRecordingCheck {
+    calls: Vec<&'static str>,
+    skips: bool,
+}
+
+impl CompilerPass<BoxIr, ()> for HookRecordingCheck {
+    fn validate_input(
+        &mut self,
+        _ir: &BoxIr,
+        _cx: &mut PassContext<'_>,
+    ) -> Result<(), PassFailure> {
+        self.calls.push("validate_input");
+        Ok(())
+    }
+
+    fn skip(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<Option<()>, PassFailure> {
+        self.calls.push("skip");
+        Ok(self.skips.then_some(()))
+    }
+
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        self.calls.push("run");
+        if ir.value() < 0 {
+            cx.report_text(DiagnosticLevel::Error, "negative", None);
+        }
+        Ok(())
+    }
+
+    fn validate_output(
+        &mut self,
+        _input: &BoxIr,
+        _output: &(),
+        _cx: &mut PassContext<'_>,
+    ) -> Result<(), PassFailure> {
+        self.calls.push("validate_output");
+        Ok(())
+    }
+
+    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
+        self.calls.push("did_change");
+        Ok(false)
+    }
+}
+
+/// Test a pass runs as a validator: named after the pass, its hooks up to
+/// `validate_output` run, and its diagnostics reach the report.
+#[test]
+fn pass_validator_runs_a_pass_as_a_validator() {
+    let mut check = HookRecordingCheck::default();
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(PassValidator::new(&mut check));
+
+    let names: Vec<_> = manager.validator_names().collect();
+    let report = manager.validate(&BoxIr::new(-1));
+    drop(manager);
+
+    assert_eq!(names, ["HookRecordingCheck"]);
+    assert_eq!(
+        check.calls,
+        ["validate_input", "skip", "run", "validate_output"]
+    );
+    assert_eq!(
+        collect_levels_and_messages(report.diagnostics()),
+        [(DiagnosticLevel::Error, "negative")]
+    );
+    assert_eq!(report.records()[0].validator_name(), "HookRecordingCheck");
+    assert!(!report.records()[0].is_failed());
+}
+
+/// Test a pass run as a validator that skips ends the check there.
+#[test]
+fn pass_validator_ends_the_check_at_a_skip() {
+    let mut validator = PassValidator::new(HookRecordingCheck {
+        skips: true,
+        ..HookRecordingCheck::default()
+    });
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(&mut validator);
+
+    let report = manager.validate(&BoxIr::new(-1));
+    drop(manager);
+
+    assert!(report.diagnostics().is_empty());
+    assert_eq!(validator.pass().calls, ["validate_input", "skip"]);
+    assert_eq!(validator.pass_mut().calls.len(), 2);
+    assert_eq!(validator.into_pass().calls.len(), 2);
+}
+
+/// Panics in its check.
+struct PanickingValidator;
+
+impl Validator<BoxIr> for PanickingValidator {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        panic!("the validator panics");
+    }
+}
+
+/// Test a panic in a validator propagates: validation does not catch it.
+#[test]
+#[should_panic(expected = "the validator panics")]
+fn validation_manager_propagates_a_validator_panic() {
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(PanickingValidator);
+
+    let _report = manager.validate(&BoxIr::new(0));
+}
+
+/// Test a record's diagnostics come from the report it belongs to, and a
+/// validator reached through a borrow or a box keeps its name.
+#[test]
+fn borrowed_and_boxed_validators_forward_their_name_and_check() {
+    let mut scripted =
+        ScriptedValidator::reporting("tests.vm.borrowed", DiagnosticLevel::Info, "i");
+    let boxed: Box<dyn Validator<BoxIr>> = Box::new(ScriptedValidator::clean("tests.vm.boxed"));
+    let mut manager = ValidationManager::new(Identifier::new("validation"));
+    manager.add(&mut scripted);
+    manager.add(boxed);
+
+    let report = manager.validate(&BoxIr::new(0));
+
+    assert_eq!(
+        collect_validator_names(&report),
+        ["tests.vm.borrowed", "tests.vm.boxed"]
+    );
+    assert_eq!(report.diagnostics().len(), 1);
 }
 
 // =============================================================================
@@ -592,7 +762,7 @@ fn validation_manager_validator_names_lists_validators_in_order() {
     ]);
 
     assert_eq!(
-        manager.validator_names(),
+        manager.validator_names().collect::<Vec<_>>(),
         ["tests.vm.add_first", "tests.vm.add_second"]
     );
 }
@@ -615,7 +785,7 @@ fn validation_manager_default_is_an_empty_pipeline_named_validation_pipeline() {
     let manager: ValidationManager<'_, BoxIr> = ValidationManager::default();
 
     assert_eq!(manager.name().name_hint(), "validation-pipeline");
-    assert!(manager.validator_names().is_empty());
+    assert_eq!(manager.validator_names().count(), 0);
 }
 
 /// Test validators compute analyses afresh on every request.
@@ -623,15 +793,11 @@ fn validation_manager_default_is_an_empty_pipeline_named_validation_pipeline() {
 fn validation_manager_runs_validators_without_an_analysis_cache() {
     struct TwiceReading;
 
-    impl CompilerPass<BoxIr, ()> for TwiceReading {
-        fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    impl Validator<BoxIr> for TwiceReading {
+        fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
             cx.analysis::<DoubleAnalysis, _>(ir);
             cx.analysis::<DoubleAnalysis, _>(ir);
             Ok(())
-        }
-
-        fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
-            Ok(false)
         }
     }
     let mut manager = ValidationManager::new(Identifier::new("validation"));
@@ -651,15 +817,11 @@ fn validation_manager_validates_afresh_on_every_call() {
         runs: usize,
     }
 
-    impl CompilerPass<BoxIr, ()> for CountingWarner {
-        fn run(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    impl Validator<BoxIr> for CountingWarner {
+        fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
             self.runs += 1;
             cx.report_text(DiagnosticLevel::Warning, "again", None);
             Ok(())
-        }
-
-        fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
-            Ok(false)
         }
     }
     let mut warner = CountingWarner { runs: 0 };

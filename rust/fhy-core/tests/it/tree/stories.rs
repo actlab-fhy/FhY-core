@@ -17,7 +17,8 @@ use std::num::NonZeroUsize;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
     Analysis, CompilerPass, ExecutePass, FixpointPassGroup, PassContext, PassError, PassHook,
-    PassManager, PipelineRecord, PreservedAnalyses, RewritePass, ValidationManager, WalkPass,
+    PassManager, PassValidator, PipelineRecord, PreservedAnalyses, RewritePass, ValidationManager,
+    WalkPass,
 };
 use fhy_core::tree::{
     RewriteTreeError, Rewriter, TraversalOrder, TreeVisitor, rewrite_tree, walk_tree,
@@ -1436,7 +1437,7 @@ fn pass_manager_verifies_a_rewrite_with_a_walk_pass() {
     let tree = build_node("root", &[&build_leaf("a", 1), &build_leaf("b", 2)]);
     let mut walk_pass = WalkPass::new(RecordingVisitor::new(), TraversalOrder::Post);
     let mut verifier = ValidationManager::new(Identifier::new("tree-verifier"));
-    verifier.add(&mut walk_pass);
+    verifier.add(PassValidator::new(&mut walk_pass));
     let mut manager = PassManager::new(Identifier::new("tree-pipeline"));
     manager.add_pass(RewritePass::new(build_leaf_replacer(1, 10)));
     manager.set_verifier(verifier);

@@ -9,8 +9,9 @@
 //! pipeline caches analysis results per node for the length of one run,
 //! keyed by the [`NodeIdentity`](crate::tree::NodeIdentity) a
 //! [`NodeHandle`](crate::tree::NodeHandle) reports, and can verify
-//! the IR between passes with a [`ValidationManager`], which runs validation
-//! passes collect-all into one report.
+//! the IR between passes with a [`ValidationManager`], which runs
+//! [`Validator`]s collect-all into one report. [`PassValidator`] runs a pass
+//! as a validator.
 //!
 //! Hook errors become a [`PassError`] naming the pass and the hook. A pass
 //! is named by [`CompilerPass::name`], by default
@@ -43,4 +44,4 @@ pub use manager::{
 };
 pub use preserved::{AnalysisId, PreservedAnalyses};
 pub use registry::{CreatePassError, PassInfo, PassRegistrationError, PassRegistry};
-pub use validation::ValidationManager;
+pub use validation::{PassValidator, ValidationManager, Validator, ValidatorRecord};
