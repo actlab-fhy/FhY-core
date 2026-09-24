@@ -1,11 +1,7 @@
-//! Property tests for printing expressions.
-//!
-//! Covers a JSON round trip printing identically, every free identifier's
-//! name hint (and id, when shown) appearing in the text, ids changing only
-//! the identifier references, one bracket pair per inner node, and a literal
-//! printing as its `Display` text.
-//!
-//! Public API only (`fhy_core::expr`).
+//! Property tests for printing expressions: a JSON round trip printing
+//! identically, every free identifier's name hint (and id, when shown)
+//! appearing in the text, ids changing only the identifier references, one
+//! bracket pair per inner node, and a literal printing as its `Display` text.
 
 use crate::support::expression as expression_support;
 
@@ -15,10 +11,8 @@ use expression_support::{
 use fhy_core::expr::{Expression, ExpressionKind, FormatOptions, IdentifierStyle, Notation};
 use proptest::prelude::*;
 
-/// Both notations.
 const NOTATIONS: [Notation; 2] = [Notation::Symbolic, Notation::Functional];
 
-/// Every option combination.
 const ALL_OPTIONS: [(Notation, IdentifierStyle); 4] = [
     (Notation::Symbolic, IdentifierStyle::NameHint),
     (Notation::Symbolic, IdentifierStyle::NameHintWithId),
@@ -26,7 +20,6 @@ const ALL_OPTIONS: [(Notation, IdentifierStyle); 4] = [
     (Notation::Functional, IdentifierStyle::NameHintWithId),
 ];
 
-/// The number of inner nodes of a tree, by kind.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct InnerNodeCounts {
     unary: usize,
@@ -55,7 +48,12 @@ fn count_inner_nodes(expression: &Expression) -> InnerNodeCounts {
     counts
 }
 
-/// Return how many times `character` occurs in `text`.
+fn build_options((notation, identifiers): (Notation, IdentifierStyle)) -> FormatOptions {
+    FormatOptions::default()
+        .with_notation(notation)
+        .with_identifier_style(identifiers)
+}
+
 fn count_occurrences(text: &str, character: char) -> usize {
     text.chars()
         .filter(|&candidate| candidate == character)
@@ -63,8 +61,8 @@ fn count_occurrences(text: &str, character: char) -> usize {
 }
 
 proptest! {
-    /// Test a tree read back from its JSON form prints exactly as the
-    /// original under every option combination.
+    /// Test a tree read back from its JSON form prints as the original under
+    /// every option combination.
     #[test]
     fn format_expression_of_a_json_round_trip_is_unchanged(
         expression in build_expression_strategy(true),
@@ -72,10 +70,7 @@ proptest! {
         let json = serde_json::to_string(&expression).expect("every tree serializes");
         let restored: Expression = serde_json::from_str(&json).expect("its own JSON decodes");
 
-        for (notation, identifiers) in ALL_OPTIONS {
-            let options = FormatOptions::default()
-                .with_notation(notation)
-                .with_identifier_style(identifiers);
+        for options in ALL_OPTIONS.map(build_options) {
             prop_assert_eq!(
                 restored.display(options).to_string(),
                 expression.display(options).to_string(),
@@ -84,8 +79,6 @@ proptest! {
         }
     }
 
-    /// Test every free identifier's name hint appears in the text written
-    /// with name hints, in both notations.
     #[test]
     fn format_expression_writes_every_free_identifier_name_hint(
         expression in build_expression_strategy(true),
@@ -103,8 +96,6 @@ proptest! {
         }
     }
 
-    /// Test every free identifier appears as `name::id` in the text written
-    /// with ids, in both notations.
     #[test]
     fn format_expression_writes_every_free_identifier_with_its_id(
         expression in build_expression_strategy(true),
@@ -147,8 +138,8 @@ proptest! {
         }
     }
 
-    /// Test functional notation writes one pair of parentheses per inner
-    /// node and none for a leaf.
+    /// Test functional notation writes one pair of parentheses per inner node
+    /// and no braces.
     #[test]
     fn format_expression_writes_one_parenthesis_pair_per_inner_node_functionally(
         expression in build_expression_strategy(true),
@@ -193,10 +184,7 @@ proptest! {
         let expected = value.to_string();
         let literal = Expression::from(value);
 
-        for (notation, identifiers) in ALL_OPTIONS {
-            let options = FormatOptions::default()
-                .with_notation(notation)
-                .with_identifier_style(identifiers);
+        for options in ALL_OPTIONS.map(build_options) {
             prop_assert_eq!(literal.display(options).to_string(), expected.as_str());
         }
     }

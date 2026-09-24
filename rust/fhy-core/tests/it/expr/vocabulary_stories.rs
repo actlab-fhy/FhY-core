@@ -1,10 +1,10 @@
 //! Tests for the symbolic vocabulary enums: `SymbolType`, `FunctionSort`,
 //! `UnaryOperation`, `BinaryOperation`, and `LogicalOperation`.
 //!
-//! Public API only. Each enum is checked for its text forms (`as_str`,
-//! `symbol`, `Display`, `FromStr`), its serialized form, and the strings its
-//! deserialization and parsing refuse; the stories at the end use the enums
-//! the way an expression payload or a function signature does.
+//! Each enum is checked for its text forms (`as_str`, `symbol`, `Display`,
+//! `FromStr`), its serialized form, and the strings it refuses; the stories
+//! at the end use the enums the way an expression payload or a function
+//! signature does.
 
 use crate::support::expression as expression_support;
 
@@ -131,7 +131,6 @@ fn assert_deserialization_rejects<T: DeserializeOwned + Debug>(input: &Value) {
     );
 }
 
-/// Return the candidate wire words that deserialize as `T`.
 fn collect_accepted_wire_words<T: DeserializeOwned>() -> BTreeSet<&'static str> {
     CANDIDATE_WIRE_WORDS
         .into_iter()
@@ -139,7 +138,6 @@ fn collect_accepted_wire_words<T: DeserializeOwned>() -> BTreeSet<&'static str> 
         .collect()
 }
 
-/// Test each symbol type's text is its lowercase value name.
 #[rstest]
 #[case::real(SymbolType::Real, "real")]
 #[case::int(SymbolType::Int, "int")]
@@ -153,7 +151,6 @@ fn symbol_type_as_str_is_the_lowercase_value(
     assert_eq!(text, expected);
 }
 
-/// Test a symbol type displays as its value text.
 #[rstest]
 #[case::real(SymbolType::Real, "real")]
 #[case::int(SymbolType::Int, "int")]
@@ -164,8 +161,6 @@ fn symbol_type_display_writes_the_value(#[case] symbol_type: SymbolType, #[case]
     assert_eq!(text, expected);
 }
 
-/// Test a symbol type serializes as its value string and deserializes from
-/// it.
 #[rstest]
 #[case::real(SymbolType::Real, "real")]
 #[case::int(SymbolType::Int, "int")]
@@ -177,8 +172,6 @@ fn symbol_type_serializes_as_the_value_string(
     assert_serializes_as_string(&symbol_type, expected);
 }
 
-/// Test symbol type deserialization refuses other casings, other words, and
-/// non-string JSON.
 #[rstest]
 #[case::upper_case(json!("REAL"))]
 #[case::title_case(json!("Int"))]
@@ -194,8 +187,8 @@ fn symbol_type_deserialization_rejects_other_input(#[case] input: Value) {
     assert_deserialization_rejects::<SymbolType>(&input);
 }
 
-/// Test the symbol types are exactly `real`, `int`, and `bool`: those three
-/// texts, each accepted on the wire, and no other candidate word.
+/// Test the symbol types list exactly `real`, `int`, and `bool`, and the wire
+/// accepts no other candidate word.
 #[test]
 fn symbol_type_has_exactly_the_real_int_bool_values() {
     let listed: BTreeSet<&str> = ALL_SYMBOL_TYPES
@@ -209,7 +202,6 @@ fn symbol_type_has_exactly_the_real_int_bool_values() {
     assert_eq!(accepted, expected);
 }
 
-/// Test each function sort's text is its lowercase member name.
 #[rstest]
 #[case::bool(FunctionSort::Bool, "bool")]
 #[case::nat(FunctionSort::Nat, "nat")]
@@ -221,7 +213,6 @@ fn function_sort_as_str_is_the_lowercase_name(#[case] sort: FunctionSort, #[case
     assert_eq!(text, expected);
 }
 
-/// Test a function sort displays as its value text.
 #[rstest]
 #[case::bool(FunctionSort::Bool, "bool")]
 #[case::nat(FunctionSort::Nat, "nat")]
@@ -233,8 +224,6 @@ fn function_sort_display_writes_the_value(#[case] sort: FunctionSort, #[case] ex
     assert_eq!(text, expected);
 }
 
-/// Test a function sort serializes as its value string and deserializes from
-/// it.
 #[rstest]
 #[case::bool(FunctionSort::Bool, "bool")]
 #[case::nat(FunctionSort::Nat, "nat")]
@@ -247,8 +236,6 @@ fn function_sort_serializes_as_the_value_string(
     assert_serializes_as_string(&sort, expected);
 }
 
-/// Test function sort deserialization refuses other casings, other words,
-/// and non-string JSON.
 #[rstest]
 #[case::upper_case(json!("BOOL"))]
 #[case::title_case(json!("Nat"))]
@@ -264,8 +251,8 @@ fn function_sort_deserialization_rejects_other_input(#[case] input: Value) {
     assert_deserialization_rejects::<FunctionSort>(&input);
 }
 
-/// Test the function sorts are exactly `bool`, `nat`, `int`, and `real`:
-/// those four texts, each accepted on the wire, and no other candidate word.
+/// Test the function sorts list exactly `bool`, `nat`, `int`, and `real`, and
+/// the wire accepts no other candidate word.
 #[test]
 fn function_sort_has_exactly_the_bool_nat_int_real_members() {
     let listed: BTreeSet<&str> = ALL_FUNCTION_SORTS
@@ -279,7 +266,6 @@ fn function_sort_has_exactly_the_bool_nat_int_real_members() {
     assert_eq!(accepted, expected);
 }
 
-/// Test each unary operation's wire name, symbol, and display text.
 #[rstest]
 #[case::negate(UnaryOperation::Negate, "negate", "-")]
 #[case::positive(UnaryOperation::Positive, "positive", "+")]
@@ -298,8 +284,6 @@ fn unary_operation_text_forms_are_the_wire_name_and_symbol(
     assert_eq!(displayed, expected_name);
 }
 
-/// Test a unary operation serializes as its wire name and deserializes from
-/// it.
 #[rstest]
 #[case::negate(UnaryOperation::Negate, "negate")]
 #[case::positive(UnaryOperation::Positive, "positive")]
@@ -311,8 +295,6 @@ fn unary_operation_serializes_as_the_wire_name(
     assert_serializes_as_string(&operation, expected);
 }
 
-/// Test unary operation deserialization refuses symbols, other casings,
-/// binary operation names, and non-string JSON.
 #[rstest]
 #[case::symbol(json!("-"))]
 #[case::not_symbol(json!("!"))]
@@ -328,8 +310,6 @@ fn unary_operation_deserialization_rejects_other_input(#[case] input: Value) {
     assert_deserialization_rejects::<UnaryOperation>(&input);
 }
 
-/// Test the unary operations are exactly `negate`, `positive`, and
-/// `logical_not` on the wire.
 #[test]
 fn unary_operation_accepts_exactly_its_three_wire_names() {
     let accepted = collect_accepted_wire_words::<UnaryOperation>();
@@ -340,7 +320,6 @@ fn unary_operation_accepts_exactly_its_three_wire_names() {
     );
 }
 
-/// Test each binary operation's wire name, symbol, and display text.
 #[rstest]
 #[case::add(BinaryOperation::Add, "add", "+")]
 #[case::subtract(BinaryOperation::Subtract, "subtract", "-")]
@@ -369,8 +348,6 @@ fn binary_operation_text_forms_are_the_wire_name_and_symbol(
     assert_eq!(displayed, expected_name);
 }
 
-/// Test a binary operation serializes as its wire name and deserializes from
-/// it.
 #[rstest]
 #[case::add(BinaryOperation::Add, "add")]
 #[case::subtract(BinaryOperation::Subtract, "subtract")]
@@ -392,8 +369,6 @@ fn binary_operation_serializes_as_the_wire_name(
     assert_serializes_as_string(&operation, expected);
 }
 
-/// Test binary operation deserialization refuses symbols, other casings,
-/// other spellings, unary operation names, and non-string JSON.
 #[rstest]
 #[case::plus_symbol(json!("+"))]
 #[case::floor_divide_symbol(json!("//"))]
@@ -414,8 +389,6 @@ fn binary_operation_deserialization_rejects_other_input(#[case] input: Value) {
     assert_deserialization_rejects::<BinaryOperation>(&input);
 }
 
-/// Test the binary operations are exactly their thirteen wire names on the
-/// wire.
 #[test]
 fn binary_operation_accepts_exactly_its_thirteen_wire_names() {
     let accepted = collect_accepted_wire_words::<BinaryOperation>();
@@ -438,7 +411,6 @@ fn binary_operation_accepts_exactly_its_thirteen_wire_names() {
     assert_eq!(accepted, expected);
 }
 
-/// Test each logical operation's wire name, symbol, and display text.
 #[rstest]
 #[case::and(LogicalOperation::And, "and", "&&")]
 #[case::or(LogicalOperation::Or, "or", "||")]
@@ -456,8 +428,6 @@ fn logical_operation_text_forms_are_the_wire_name_and_symbol(
     assert_eq!(displayed, expected_name);
 }
 
-/// Test a logical operation serializes as its wire name and deserializes
-/// from it.
 #[rstest]
 #[case::and(LogicalOperation::And, "and")]
 #[case::or(LogicalOperation::Or, "or")]
@@ -468,8 +438,6 @@ fn logical_operation_serializes_as_the_wire_name(
     assert_serializes_as_string(&operation, expected);
 }
 
-/// Test logical operation deserialization refuses symbols, other casings,
-/// the old binary names, and non-string JSON.
 #[rstest]
 #[case::and_symbol(json!("&&"))]
 #[case::title_case(json!("And"))]
@@ -483,7 +451,6 @@ fn logical_operation_deserialization_rejects_other_input(#[case] input: Value) {
     assert_deserialization_rejects::<LogicalOperation>(&input);
 }
 
-/// Test the logical operations are exactly `and` and `or` on the wire.
 #[test]
 fn logical_operation_accepts_exactly_its_two_wire_names() {
     let accepted = collect_accepted_wire_words::<LogicalOperation>();
@@ -505,8 +472,8 @@ where
     assert_eq!(error.to_string(), expected);
 }
 
-/// Test each vocabulary's `FromStr` refuses an unknown word with its own
-/// error, which names the word and the enum.
+/// Test each vocabulary's `FromStr` refuses an unknown word with an error
+/// naming the word and the enum.
 #[test]
 fn vocabulary_from_str_refuses_an_unknown_word_naming_it() {
     assert_from_str_refuses::<SymbolType>("float", "unknown symbol type `float`");
@@ -546,10 +513,9 @@ where
     }
 }
 
-/// Test `as_str`, `Display`, serde and `FromStr` agree for every variant of
-/// every vocabulary enum, over lists whose completeness an exhaustive
-/// `match` guards; the built-in enums are `#[non_exhaustive]`, so their
-/// lists are their own catalogue iterators, which a unit test guards.
+/// Test the text forms agree for every variant of every vocabulary enum. An
+/// exhaustive `match` guards the operation and sort lists; the
+/// `#[non_exhaustive]` built-in enums use their catalogue iterators.
 #[test]
 fn vocabulary_as_str_display_serde_and_from_str_agree_for_every_variant() {
     let functions: Vec<BuiltinFunction> = BuiltinFunction::iter().collect();
@@ -564,36 +530,29 @@ fn vocabulary_as_str_display_serde_and_from_str_agree_for_every_variant() {
     assert_text_forms_agree(&constants, BuiltinConstant::name);
 }
 
-/// Test no two operations of one kind share a symbol, so a table from symbol
-/// back to operation recovers every unary, binary and logical operation.
+/// Assert a table from symbol back to operation recovers every one of
+/// `operations`.
+fn assert_symbols_invert<T>(operations: &[T], symbol: fn(T) -> &'static str)
+where
+    T: Copy + PartialEq + Debug,
+{
+    let by_symbol: HashMap<&str, T> = operations
+        .iter()
+        .map(|&operation| (symbol(operation), operation))
+        .collect();
+
+    assert_eq!(by_symbol.len(), operations.len());
+    for &operation in operations {
+        assert_eq!(by_symbol[symbol(operation)], operation);
+    }
+}
+
+/// Test no two operations of one kind share a symbol.
 #[test]
 fn operation_symbols_invert_to_their_operations() {
-    let unary_by_symbol: HashMap<&str, UnaryOperation> = ALL_UNARY_OPERATIONS
-        .into_iter()
-        .map(|operation| (operation.symbol(), operation))
-        .collect();
-    let binary_by_symbol: HashMap<&str, BinaryOperation> = ALL_BINARY_OPERATIONS
-        .into_iter()
-        .map(|operation| (operation.symbol(), operation))
-        .collect();
-
-    let logical_by_symbol: HashMap<&str, LogicalOperation> = ALL_LOGICAL_OPERATIONS
-        .into_iter()
-        .map(|operation| (operation.symbol(), operation))
-        .collect();
-
-    assert_eq!(unary_by_symbol.len(), ALL_UNARY_OPERATIONS.len());
-    assert_eq!(binary_by_symbol.len(), ALL_BINARY_OPERATIONS.len());
-    assert_eq!(logical_by_symbol.len(), ALL_LOGICAL_OPERATIONS.len());
-    for operation in ALL_UNARY_OPERATIONS {
-        assert_eq!(unary_by_symbol[operation.symbol()], operation);
-    }
-    for operation in ALL_BINARY_OPERATIONS {
-        assert_eq!(binary_by_symbol[operation.symbol()], operation);
-    }
-    for operation in ALL_LOGICAL_OPERATIONS {
-        assert_eq!(logical_by_symbol[operation.symbol()], operation);
-    }
+    assert_symbols_invert(&ALL_UNARY_OPERATIONS, UnaryOperation::symbol);
+    assert_symbols_invert(&ALL_BINARY_OPERATIONS, BinaryOperation::symbol);
+    assert_symbols_invert(&ALL_LOGICAL_OPERATIONS, LogicalOperation::symbol);
 }
 
 /// A payload carrying one value of each vocabulary, as an expression or
@@ -628,7 +587,6 @@ fn vocabulary_payload_round_trips_through_wire_json_text() {
     assert_eq!(encoded, wire_text);
 }
 
-/// Test a payload naming an operation by its symbol is refused as a whole.
 #[test]
 fn vocabulary_payload_rejects_an_operation_named_by_symbol() {
     let input = json!({"unary": "!", "binary": "//", "sort": "nat", "symbol_type": "bool"});
@@ -636,7 +594,6 @@ fn vocabulary_payload_rejects_an_operation_named_by_symbol() {
     assert_deserialization_rejects::<VocabularyPayload>(&input);
 }
 
-/// Test a function signature renders from the sorts' display text.
 #[test]
 fn function_sort_display_renders_a_signature() {
     let parameters = [FunctionSort::Real, FunctionSort::Int, FunctionSort::Nat];

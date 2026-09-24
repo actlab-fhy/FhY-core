@@ -2,8 +2,6 @@
 //! every node kind and operation, literal and identifier text, identifier
 //! ids, piecewise and call layout, shared subtrees, and trees thousands of
 //! levels deep printed on a small thread stack.
-//!
-//! Public API only (`fhy_core::expr`).
 
 use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
@@ -20,12 +18,6 @@ use fhy_core::identifier::Identifier;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
-/// Return the options writing `notation` with name hints only.
-fn build_name_hint_options(notation: Notation) -> FormatOptions {
-    FormatOptions::default().with_notation(notation)
-}
-
-/// Return the options writing `notation` with identifier ids.
 fn build_id_options(notation: Notation) -> FormatOptions {
     FormatOptions::default()
         .with_notation(notation)
@@ -35,15 +27,20 @@ fn build_id_options(notation: Notation) -> FormatOptions {
 /// Return `expression` printed symbolically with name hints only.
 fn format_symbolic(expression: &Expression) -> String {
     expression
-        .display(build_name_hint_options(Notation::Symbolic))
+        .display(FormatOptions::default().with_notation(Notation::Symbolic))
         .to_string()
 }
 
 /// Return `expression` printed functionally with name hints only.
 fn format_functional(expression: &Expression) -> String {
     expression
-        .display(build_name_hint_options(Notation::Functional))
+        .display(FormatOptions::default().with_notation(Notation::Functional))
         .to_string()
+}
+
+/// Return `expression` printed in `notation` with identifier ids.
+fn format_with_ids(expression: &Expression, notation: Notation) -> String {
+    expression.display(build_id_options(notation)).to_string()
 }
 
 /// Return the `name::id` text expected for `identifier` when ids are shown.
@@ -61,11 +58,7 @@ fn build_over_x_and_y(build: impl FnOnce(&Expression, &Expression) -> Expression
 
 /// Return `-(-(-leaf))`, `depth` negations deep.
 fn build_deep_negation(leaf: &Expression, depth: usize) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = -tree;
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| -tree)
 }
 
 /// Return `{1 if condition; {1 if condition; ... leaf otherwise} otherwise}`,
@@ -75,48 +68,39 @@ fn build_deep_piecewise_in_otherwise(
     leaf: &Expression,
     depth: usize,
 ) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = Expression::piecewise([(condition, build_literal(1))], tree)
-            .expect("an identifier condition is accepted");
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| {
+        Expression::piecewise([(condition, build_literal(1))], tree)
+            .expect("an identifier condition is accepted")
+    })
 }
 
 /// Return `{1 if {1 if ... leaf ...; 0 otherwise}; 0 otherwise}`, `depth`
 /// piecewise nodes deep along the case conditions.
 fn build_deep_piecewise_in_condition(leaf: &Expression, depth: usize) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = Expression::piecewise([(tree, build_literal(1))], build_literal(0))
-            .expect("a piecewise condition is accepted");
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| {
+        Expression::piecewise([(tree, build_literal(1))], build_literal(0))
+            .expect("a piecewise condition is accepted")
+    })
 }
 
 /// Return `f(1, f(1, ... leaf))`, `depth` calls deep along the last argument.
 fn build_deep_call_in_last_argument(leaf: &Expression, depth: usize) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = Expression::call(build_callee("f"), [build_literal(1), tree]);
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| {
+        Expression::call(build_callee("f"), [build_literal(1), tree])
+    })
 }
 
 /// Return `f(f(... leaf, 2), 2)`, `depth` calls deep along the first argument.
 fn build_deep_call_in_first_argument(leaf: &Expression, depth: usize) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = Expression::call(build_callee("f"), [tree, build_literal(2)]);
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| {
+        Expression::call(build_callee("f"), [tree, build_literal(2)])
+    })
 }
 
 // =============================================================================
 // Options
 // =============================================================================
 
-/// Test the default options are symbolic notation with name hints only.
 #[test]
 fn format_options_default_is_symbolic_with_name_hints() {
     let default = FormatOptions::default();
@@ -125,7 +109,6 @@ fn format_options_default_is_symbolic_with_name_hints() {
     assert_eq!(default.identifier_style(), IdentifierStyle::NameHint);
 }
 
-/// Test `with_notation` sets the notation and keeps the identifier style.
 #[rstest]
 #[case::symbolic(Notation::Symbolic)]
 #[case::functional(Notation::Functional)]
@@ -138,8 +121,6 @@ fn format_options_with_notation_sets_only_the_notation(#[case] notation: Notatio
     assert_eq!(options.identifier_style(), IdentifierStyle::NameHintWithId);
 }
 
-/// Test `with_identifier_style` sets the identifier style and keeps the
-/// notation.
 #[rstest]
 #[case::name_hint(IdentifierStyle::NameHint)]
 #[case::name_hint_with_id(IdentifierStyle::NameHintWithId)]
@@ -152,7 +133,6 @@ fn format_options_with_identifier_style_sets_only_the_style(#[case] style: Ident
     assert_eq!(options.notation(), Notation::Functional);
 }
 
-/// Test the default options write an identifier as its name hint alone.
 #[test]
 fn format_expression_default_options_write_name_hint_only() {
     let (_, name_only) = build_identifier("name_only");
@@ -162,7 +142,6 @@ fn format_expression_default_options_write_name_hint_only() {
     assert_eq!(text, "name_only");
 }
 
-/// Test the default options write a binary node with its operator symbol.
 #[test]
 fn format_expression_default_options_write_symbolic_notation() {
     let sum = build_literal(1) + 2;
@@ -172,8 +151,6 @@ fn format_expression_default_options_write_symbolic_notation() {
     assert_eq!(text, "(1 + 2)");
 }
 
-/// Test an expression's own `Display` writes what its display under the
-/// default options writes.
 #[rstest]
 #[case::identifier(|| build_identifier("x").1)]
 #[case::sum(|| build_identifier("x").1 + 1)]
@@ -192,11 +169,9 @@ fn expression_display_equals_display_with_default_options(#[case] build: fn() ->
     assert_eq!(own, with_default_options);
 }
 
-/// Test a display writes through the formatter it is given, so it composes
-/// with other text in one `format!` call.
 #[test]
 fn expression_display_writes_into_the_surrounding_format() {
-    let (_, x) = build_identifier("x");
+    let (x_identifier, x) = build_identifier("x");
     let sum = &x + 1;
 
     let text = format!(
@@ -204,18 +179,13 @@ fn expression_display_writes_into_the_surrounding_format() {
         sum.display(build_id_options(Notation::Functional))
     );
 
-    let id = match x.kind() {
-        fhy_core::expr::ExpressionKind::Identifier(identifier) => identifier.id(),
-        _ => unreachable!("x is an identifier reference"),
-    };
-    assert_eq!(text, format!("[(add x::{id} 1)|(x + 1)]"));
+    assert_eq!(text, format!("[(add x::{} 1)|(x + 1)]", x_identifier.id()));
 }
 
 // =============================================================================
 // Notations
 // =============================================================================
 
-/// Test symbolic notation writes literals, identifiers, and operator nodes.
 #[rstest]
 #[case::float(build_literal(4.5), "4.5")]
 #[case::decimal(build_decimal_literal("0.1"), "0.1")]
@@ -231,8 +201,6 @@ fn format_expression_writes_symbolic_notation(
     assert_eq!(text, expected);
 }
 
-/// Test functional notation writes literals, identifiers, and prefix
-/// operation names.
 #[rstest]
 #[case::integer(build_literal(5), "5")]
 #[case::identifier(build_identifier("test_identifier").1, "test_identifier")]
@@ -248,8 +216,6 @@ fn format_expression_writes_functional_notation(
     assert_eq!(text, expected);
 }
 
-/// Test every unary operation is written with its symbol, and with its
-/// name in functional notation.
 #[rstest]
 #[case::negate(UnaryOperation::Negate, "(-x)", "(negate x)")]
 #[case::positive(UnaryOperation::Positive, "(+x)", "(positive x)")]
@@ -267,8 +233,6 @@ fn format_expression_writes_each_unary_operation(
     assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
 }
 
-/// Test every binary operation is written infix with its symbol, and prefix
-/// with its name in functional notation.
 #[rstest]
 #[case::add(BinaryOperation::Add, "(x + 2)", "(add x 2)")]
 #[case::subtract(BinaryOperation::Subtract, "(x - 2)", "(subtract x 2)")]
@@ -296,8 +260,8 @@ fn format_expression_writes_each_binary_operation(
     assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
 }
 
-/// Test every unary and binary node is parenthesized, so the text shows how
-/// operations nest without any precedence or associativity rule.
+/// Test every unary and binary node is parenthesized, so the text shows the
+/// nesting without precedence or associativity rules.
 #[rstest]
 #[case::sum_of_product(build_over_x_and_y(|x, y| x + (y * 2)), "(x + (y * 2))")]
 #[case::product_of_sum(build_over_x_and_y(|x, y| (x + y) * 2), "((x + y) * 2)")]
@@ -314,8 +278,6 @@ fn format_expression_parenthesizes_every_operation(
     assert_eq!(text, expected);
 }
 
-/// Test a logical node of three operands prints every operand, in order,
-/// in one pair of parentheses.
 #[test]
 fn format_expression_writes_a_logical_node_with_every_operand() {
     let (_, x) = build_identifier("x");
@@ -334,9 +296,8 @@ fn format_expression_writes_a_logical_node_with_every_operand() {
     );
 }
 
-/// Test a logical node is written with its operation's symbol between its
-/// operands in symbolic notation and with its name first in functional
-/// notation, and a nested one in its own parentheses.
+/// Test a logical node prints in both notations, and in its own parentheses
+/// when nested.
 #[rstest]
 #[case::and_of_two(LogicalOperation::And, 2, "(p0 && p1)", "(and p0 p1)")]
 #[case::or_of_two(LogicalOperation::Or, 2, "(p0 || p1)", "(or p0 p1)")]
@@ -364,7 +325,6 @@ fn expression_display_writes_a_logical_node_in_both_notations(
 // Literals
 // =============================================================================
 
-/// Test a literal is written as its `Display` text, in both notations.
 #[rstest]
 #[case::true_value(LiteralValue::from(true), "true")]
 #[case::false_value(LiteralValue::from(false), "false")]
@@ -403,8 +363,6 @@ fn format_expression_writes_a_literal_as_its_display_text(
     assert_eq!(texts, (expected.to_owned(), expected.to_owned()));
 }
 
-/// Test a unary operation over a negative literal writes the literal's sign
-/// after the operator's.
 #[rstest]
 #[case::negate(UnaryOperation::Negate, "(--1)", "(negate -1)")]
 #[case::positive(UnaryOperation::Positive, "(+-1)", "(positive -1)")]
@@ -474,7 +432,6 @@ fn format_expression_writes_a_negative_literal_operand_bare(
     assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
 }
 
-/// Test the unequal integer, float and decimal literals of one print alike.
 #[test]
 fn format_expression_writes_int_float_and_decimal_one_alike() {
     let integer = build_literal(1);
@@ -492,42 +449,32 @@ fn format_expression_writes_int_float_and_decimal_one_alike() {
 // Identifiers
 // =============================================================================
 
-/// Test showing ids writes an identifier as its name hint, two colons, and
-/// its id.
 #[test]
 fn format_expression_with_ids_writes_name_hint_and_id() {
     let (foo, reference) = build_identifier("foo");
 
-    let text = reference
-        .display(build_id_options(Notation::Symbolic))
-        .to_string();
+    let text = format_with_ids(&reference, Notation::Symbolic);
 
     assert_eq!(text, format!("foo::{}", foo.id()));
 }
 
-/// Test showing ids applies in functional notation too.
 #[test]
 fn format_expression_with_ids_applies_in_functional_notation() {
     let (x, reference) = build_identifier("x");
     let sum = &reference + 1;
 
-    let text = sum
-        .display(build_id_options(Notation::Functional))
-        .to_string();
+    let text = format_with_ids(&sum, Notation::Functional);
 
     assert_eq!(text, format!("(add {} 1)", write_name_hint_with_id(&x)));
 }
 
-/// Test showing ids reaches an identifier nested in a piecewise condition.
 #[test]
 fn format_expression_with_ids_reaches_piecewise_conditions() {
     let (condition, reference) = build_identifier("cond");
     let piecewise =
         Expression::piecewise([(reference, 1)], 0).expect("an identifier condition is accepted");
 
-    let text = piecewise
-        .display(build_id_options(Notation::Symbolic))
-        .to_string();
+    let text = format_with_ids(&piecewise, Notation::Symbolic);
 
     assert_eq!(
         text,
@@ -538,15 +485,12 @@ fn format_expression_with_ids_reaches_piecewise_conditions() {
     );
 }
 
-/// Test showing ids reaches an identifier nested in call arguments.
 #[test]
 fn format_expression_with_ids_reaches_call_arguments() {
     let (argument, reference) = build_identifier("arg");
     let call = Expression::call(build_callee("nested_show_id"), [reference]);
 
-    let text = call
-        .display(build_id_options(Notation::Symbolic))
-        .to_string();
+    let text = format_with_ids(&call, Notation::Symbolic);
 
     assert_eq!(
         text,
@@ -554,8 +498,6 @@ fn format_expression_with_ids_reaches_call_arguments() {
     );
 }
 
-/// Test showing ids reaches every identifier of a tree holding every node
-/// kind, in both notations.
 #[test]
 fn format_expression_with_ids_reaches_every_node_kind() {
     let (p, p_reference) = build_identifier("p");
@@ -573,10 +515,8 @@ fn format_expression_with_ids_reaches_every_node_kind() {
     );
 
     let texts = (
-        tree.display(build_id_options(Notation::Symbolic))
-            .to_string(),
-        tree.display(build_id_options(Notation::Functional))
-            .to_string(),
+        format_with_ids(&tree, Notation::Symbolic),
+        format_with_ids(&tree, Notation::Functional),
     );
 
     assert_eq!(
@@ -590,8 +530,6 @@ fn format_expression_with_ids_reaches_every_node_kind() {
     );
 }
 
-/// Test two identifiers sharing a name hint print alike under name hints and
-/// apart when ids are shown.
 #[test]
 fn format_expression_tells_same_named_identifiers_apart_only_with_ids() {
     let (first, first_reference) = build_identifier("x");
@@ -600,9 +538,7 @@ fn format_expression_tells_same_named_identifiers_apart_only_with_ids() {
 
     let texts = (
         format_symbolic(&difference),
-        difference
-            .display(build_id_options(Notation::Symbolic))
-            .to_string(),
+        format_with_ids(&difference, Notation::Symbolic),
     );
 
     assert_eq!(
@@ -618,8 +554,8 @@ fn format_expression_tells_same_named_identifiers_apart_only_with_ids() {
     );
 }
 
-/// Test a name hint is written raw, without quoting or escaping, with and
-/// without its id.
+/// Test a name hint is written without quoting or escaping, with and without
+/// its id.
 #[rstest]
 #[case::space("a b")]
 #[case::colons("m::n")]
@@ -632,9 +568,7 @@ fn format_expression_writes_name_hints_raw(#[case] name_hint: &str) {
 
     let texts = (
         format_functional(&reference),
-        reference
-            .display(build_id_options(Notation::Functional))
-            .to_string(),
+        format_with_ids(&reference, Notation::Functional),
     );
 
     assert_eq!(
@@ -650,8 +584,6 @@ fn format_expression_writes_name_hints_raw(#[case] name_hint: &str) {
 // Piecewise
 // =============================================================================
 
-/// Test a one-case piecewise is written as its case then its otherwise
-/// branch, in braces.
 #[test]
 fn format_expression_writes_single_case_piecewise_in_braces() {
     let piecewise = Expression::piecewise([(LiteralValue::from(true), 1)], 2)
@@ -662,8 +594,6 @@ fn format_expression_writes_single_case_piecewise_in_braces() {
     assert_eq!(text, "{1 if true; 2 otherwise}");
 }
 
-/// Test a multi-case piecewise writes every case in order, then the
-/// otherwise branch.
 #[test]
 fn format_expression_writes_every_piecewise_case_then_otherwise() {
     let piecewise = Expression::piecewise(
@@ -680,7 +610,6 @@ fn format_expression_writes_every_piecewise_case_then_otherwise() {
     assert_eq!(text, "{1 if true; 2 if false; 3 otherwise}");
 }
 
-/// Test functional notation writes a piecewise as `(piecewise c v o)`.
 #[test]
 fn format_expression_writes_piecewise_functionally() {
     let piecewise = Expression::piecewise([(LiteralValue::from(true), 1)], 2)
@@ -691,8 +620,6 @@ fn format_expression_writes_piecewise_functionally() {
     assert_eq!(text, "(piecewise true 1 2)");
 }
 
-/// Test functional notation lists every condition and value pair, then the
-/// otherwise branch.
 #[test]
 fn format_expression_writes_multi_case_piecewise_functionally() {
     let piecewise = Expression::piecewise(
@@ -709,8 +636,6 @@ fn format_expression_writes_multi_case_piecewise_functionally() {
     assert_eq!(text, "(piecewise true 1 false 2 3)");
 }
 
-/// Test symbolic notation writes a case's value before its condition and
-/// functional notation its condition first.
 #[test]
 fn format_expression_orders_piecewise_case_parts_per_notation() {
     let (_, p) = build_identifier("p");
@@ -730,8 +655,6 @@ fn format_expression_orders_piecewise_case_parts_per_notation() {
     );
 }
 
-/// Test a piecewise of 120 cases writes every case in order in both
-/// notations.
 #[test]
 fn format_expression_writes_a_wide_piecewise_in_order() {
     const CASE_COUNT: i64 = 120;
@@ -761,7 +684,6 @@ fn format_expression_writes_a_wide_piecewise_in_order() {
     assert_eq!(texts, (expected_symbolic, expected_functional));
 }
 
-/// Test a piecewise nested in a case value is written in place.
 #[test]
 fn format_expression_writes_nested_piecewise_inside_a_case_value() {
     let inner = Expression::piecewise([(LiteralValue::from(false), 1)], 2)
@@ -778,8 +700,6 @@ fn format_expression_writes_nested_piecewise_inside_a_case_value() {
 // Calls
 // =============================================================================
 
-/// Test a call is written as its name and its arguments in parentheses,
-/// separated by a comma and a space.
 #[test]
 fn format_expression_writes_call_with_arguments() {
     let call = Expression::call(build_callee("max"), [1, 2]);
@@ -789,7 +709,6 @@ fn format_expression_writes_call_with_arguments() {
     assert_eq!(text, "max(1, 2)");
 }
 
-/// Test a call without arguments is written with empty parentheses.
 #[test]
 fn format_expression_writes_zero_argument_call_with_empty_parentheses() {
     let call = Expression::call(build_callee("noargs"), Vec::<Expression>::new());
@@ -799,8 +718,6 @@ fn format_expression_writes_zero_argument_call_with_empty_parentheses() {
     assert_eq!(text, "noargs()");
 }
 
-/// Test functional notation writes a call as its name and arguments in one
-/// pair of parentheses.
 #[test]
 fn format_expression_writes_call_functionally() {
     let call = Expression::call(build_callee("max"), [1, 2]);
@@ -810,8 +727,6 @@ fn format_expression_writes_call_functionally() {
     assert_eq!(text, "(max 1 2)");
 }
 
-/// Test functional notation writes a call without arguments as its name in
-/// parentheses.
 #[test]
 fn format_expression_writes_zero_argument_call_functionally() {
     let call = Expression::call(build_callee("f"), Vec::<Expression>::new());
@@ -821,7 +736,6 @@ fn format_expression_writes_zero_argument_call_functionally() {
     assert_eq!(text, "(f)");
 }
 
-/// Test a call nested in an argument is written in place.
 #[test]
 fn format_expression_writes_nested_call_in_argument_position() {
     let inner = Expression::call(build_callee("min"), [1, 2]);
@@ -836,7 +750,6 @@ fn format_expression_writes_nested_call_in_argument_position() {
 // Shared subtrees and composed bodies
 // =============================================================================
 
-/// Test a subtree shared by several positions is written at each of them.
 #[test]
 fn format_expression_writes_a_shared_subtree_at_every_occurrence() {
     let (_, x) = build_identifier("x");
@@ -896,6 +809,16 @@ fn format_expression_writes_the_sign_body() {
 // Deep trees
 // =============================================================================
 
+/// Return `opening` [`SMALL_STACK_DEPTH`] times, the leaf `x`, then `closing`
+/// as many times.
+fn repeat_around_leaf((opening, closing): (&str, &str)) -> String {
+    format!(
+        "{}x{}",
+        opening.repeat(SMALL_STACK_DEPTH),
+        closing.repeat(SMALL_STACK_DEPTH)
+    )
+}
+
 /// The spines along which the deep-tree tests nest a node kind.
 #[derive(Debug, Clone, Copy)]
 enum DeepShape {
@@ -943,8 +866,8 @@ impl DeepShape {
     }
 }
 
-/// Test a tree [`SMALL_STACK_DEPTH`] levels deep prints in both
-/// notations on a thread stack far too small for one frame per level.
+/// Test a tree [`SMALL_STACK_DEPTH`] levels deep prints in both notations on a
+/// stack far too small for one frame per level.
 #[rstest]
 #[case::left_sum(DeepShape::LeftSum)]
 #[case::right_conjunction(DeepShape::RightConjunction)]
@@ -956,13 +879,7 @@ impl DeepShape {
 fn format_expression_prints_a_deep_tree_on_a_small_stack(#[case] shape: DeepShape) {
     run_on_small_stack(move || {
         let tree = shape.build();
-        let expected = shape.expected_pieces().map(|(opening, closing)| {
-            format!(
-                "{}x{}",
-                opening.repeat(SMALL_STACK_DEPTH),
-                closing.repeat(SMALL_STACK_DEPTH)
-            )
-        });
+        let expected = shape.expected_pieces().map(repeat_around_leaf);
 
         let symbolic = format_symbolic(&tree);
         let functional = format_functional(&tree);
@@ -978,9 +895,8 @@ fn format_expression_prints_a_deep_tree_on_a_small_stack(#[case] shape: DeepShap
     });
 }
 
-/// Test an expression's own `Display` of a tree [`SMALL_STACK_DEPTH`]
-/// levels deep completes on a thread stack far too small for one frame per
-/// level.
+/// Test an expression's own `Display` of a tree [`SMALL_STACK_DEPTH`] levels
+/// deep completes on a stack far too small for one frame per level.
 #[rstest]
 #[case::left_sum(DeepShape::LeftSum)]
 #[case::right_conjunction(DeepShape::RightConjunction)]
@@ -989,12 +905,7 @@ fn format_expression_prints_a_deep_tree_on_a_small_stack(#[case] shape: DeepShap
 fn expression_display_of_a_deep_tree_completes_on_a_small_stack(#[case] shape: DeepShape) {
     run_on_small_stack(move || {
         let tree = shape.build();
-        let [(opening, closing), _] = shape.expected_pieces();
-        let expected = format!(
-            "{}x{}",
-            opening.repeat(SMALL_STACK_DEPTH),
-            closing.repeat(SMALL_STACK_DEPTH)
-        );
+        let expected = repeat_around_leaf(shape.expected_pieces()[0]);
 
         let text = tree.to_string();
 

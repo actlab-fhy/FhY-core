@@ -2,12 +2,10 @@
 //!
 //! Covers the free-identifier law of substitution, structural equality as an
 //! equivalence consistent with hashing, rebuilding and substituting as
-//! identities, the JSON round trip, renaming free identifiers, the laws
-//! of literal equality and hashing, literal normalization and `Display`,
-//! and, over DAGs sharing their subtrees at random, that
-//! every analysis answers as it does for an unshared copy.
-//!
-//! Public API only (`fhy_core::expr`).
+//! identities, the wire round trips, renaming free identifiers, the laws of
+//! literal equality and hashing, literal normalization and `Display`, and,
+//! over DAGs sharing their subtrees at random, that every analysis answers
+//! as it does for an unshared copy.
 
 use crate::support::expression as expression_support;
 use crate::support::hashing as hashing_support;
@@ -98,12 +96,10 @@ const POOL_PERMUTATIONS: [[usize; 3]; 5] = [[1, 0, 2], [2, 1, 0], [0, 2, 1], [1,
 /// Return a strategy for piecewise trees over integer and Boolean literals,
 /// with a piecewise at the root.
 fn build_piecewise_strategy() -> BoxedStrategy<Expression> {
-    /// Build a piecewise from drawn cases, coercing each condition.
     fn build_node((cases, otherwise): (Vec<(Expression, Expression)>, Expression)) -> Expression {
-        let cases: Vec<(Expression, Expression)> = cases
+        let cases = cases
             .into_iter()
-            .map(|(condition, value)| (coerce_to_condition(condition), value))
-            .collect();
+            .map(|(condition, value)| (coerce_to_condition(condition), value));
         Expression::piecewise(cases, otherwise).expect("conditions are coerced")
     }
 
@@ -141,10 +137,50 @@ impl SortLookup for TwoCallSorts {
     }
 }
 
-/// Return the substitution renaming the pool identifier at `from` to the
-/// one at `to`.
 fn build_pool_renaming(from: usize, to: usize) -> HashMap<Identifier, Expression> {
     HashMap::from([(POOL[from].clone(), Expression::from(POOL[to].clone()))])
+}
+
+/// Return the substitution mapping each pool identifier at an index of
+/// `domain` to the replacement at the same position.
+fn build_pool_substitution(
+    domain: &[usize],
+    replacements: Vec<Expression>,
+) -> HashMap<Identifier, Expression> {
+    domain
+        .iter()
+        .zip(replacements)
+        .map(|(&index, replacement)| (POOL[index].clone(), replacement))
+        .collect()
+}
+
+/// Return the pairs renaming each pool identifier to the one at its index in
+/// `permutation`, fixed points left out.
+fn build_pool_permutation_pairs(permutation: [usize; 3]) -> HashMap<Identifier, Identifier> {
+    permutation
+        .iter()
+        .enumerate()
+        .filter(|(from, to)| from != *to)
+        .map(|(from, &to)| (POOL[from].clone(), POOL[to].clone()))
+        .collect()
+}
+
+/// Return the substitution replacing each identifier `pairs` renames by a
+/// reference to its new identifier.
+fn build_renaming_substitution(
+    pairs: &HashMap<Identifier, Identifier>,
+) -> HashMap<Identifier, Expression> {
+    pairs
+        .iter()
+        .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
+        .collect()
+}
+
+fn invert_pairs(pairs: &HashMap<Identifier, Identifier>) -> HashMap<Identifier, Identifier> {
+    pairs
+        .iter()
+        .map(|(from, to)| (to.clone(), from.clone()))
+        .collect()
 }
 
 /// Return the injective renaming of the pool identifiers `permutation`
@@ -152,16 +188,8 @@ fn build_pool_renaming(from: usize, to: usize) -> HashMap<Identifier, Expression
 fn build_pool_permutation(
     permutation: [usize; 3],
 ) -> (AlphaRenaming, HashMap<Identifier, Expression>) {
-    let pairs: HashMap<Identifier, Identifier> = permutation
-        .iter()
-        .enumerate()
-        .filter(|(from, to)| from != *to)
-        .map(|(from, to)| (POOL[from].clone(), POOL[*to].clone()))
-        .collect();
-    let substitution = pairs
-        .iter()
-        .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
-        .collect();
+    let pairs = build_pool_permutation_pairs(permutation);
+    let substitution = build_renaming_substitution(&pairs);
     let renaming = AlphaRenaming::try_new(pairs).expect("a permutation is injective");
     (renaming, substitution)
 }
@@ -174,24 +202,23 @@ fn collect_sharing(expression: &Expression) -> Vec<Vec<usize>> {
     let mut pattern = Vec::new();
     let mut pending = vec![expression];
     while let Some(node) = pending.pop() {
-        let mut first_positions = Vec::new();
-        for child in node.children() {
-            let position = seen
-                .iter()
-                .position(|earlier| Expression::ptr_eq(earlier, child))
-                .unwrap_or_else(|| {
-                    seen.push(child);
-                    pending.push(child);
-                    seen.len() - 1
-                });
-            first_positions.push(position);
-        }
+        let first_positions = node
+            .children()
+            .map(|child| {
+                seen.iter()
+                    .position(|earlier| Expression::ptr_eq(earlier, child))
+                    .unwrap_or_else(|| {
+                        seen.push(child);
+                        pending.push(child);
+                        seen.len() - 1
+                    })
+            })
+            .collect();
         pattern.push(first_positions);
     }
     pattern
 }
 
-/// The most distinct nodes a generated expression DAG has.
 const MAX_DAG_NODES: usize = 12;
 
 /// How one node of a generated expression DAG is built from the nodes
@@ -210,7 +237,6 @@ enum DagNodeSpecification {
     Call(Callee, Vec<prop::sample::Index>),
 }
 
-/// Return a strategy for the specification of one DAG node of any kind.
 fn build_dag_node_specification_strategy() -> BoxedStrategy<DagNodeSpecification> {
     let index = any::<prop::sample::Index>;
     prop_oneof![
@@ -269,11 +295,6 @@ fn build_dag_node(specification: DagNodeSpecification, nodes: &[Expression]) -> 
 /// [`MAX_DAG_NODES`] distinct nodes of every kind, built with the node
 /// constructors. The first node is an identifier reference, and every child
 /// of a later node is any earlier node, so a node may occur many times.
-///
-/// # Panics
-///
-/// The strategy panics while generating if a node is refused, which the
-/// coerced case conditions rule out.
 fn build_expression_dag_strategy() -> BoxedStrategy<Expression> {
     (
         0..POOL.len(),
@@ -282,8 +303,7 @@ fn build_expression_dag_strategy() -> BoxedStrategy<Expression> {
         .prop_map(|(first, specifications)| {
             let mut nodes = vec![Expression::from(POOL[first].clone())];
             for specification in specifications {
-                let node = build_dag_node(specification, &nodes);
-                nodes.push(node);
+                nodes.push(build_dag_node(specification, &nodes));
             }
             nodes.pop().expect("at least the first node")
         })
@@ -307,11 +327,7 @@ proptest! {
             2,
         ),
     ) {
-        let substitution: HashMap<Identifier, Expression> = domain
-            .iter()
-            .zip(replacements)
-            .map(|(index, replacement)| (POOL[*index].clone(), replacement))
-            .collect();
+        let substitution = build_pool_substitution(&domain, replacements);
         let is_refused = does_substitution_break_a_condition(&expression, &substitution);
         let free_before = expression.free_identifiers();
         let mut expected: HashSet<Identifier> = free_before
@@ -344,8 +360,8 @@ proptest! {
     }
 
     /// Test a tree equals, and is equivalent under the empty renaming to,
-    /// itself and a copy sharing no node with it, NaN literals included,
-    /// and the two hash equally.
+    /// itself and an unshared copy, NaN literals included, and the two hash
+    /// equally.
     #[test]
     fn expression_equality_is_reflexive_and_agrees_with_hash(
         expression in build_expression_strategy(true),
@@ -358,8 +374,7 @@ proptest! {
         prop_assert!(expression.is_alpha_equivalent_under(&copy, &AlphaRenaming::default()));
     }
 
-    /// Test equality and equivalence under the empty renaming answer alike
-    /// in both directions.
+    /// Test equality and equivalence under the empty renaming are symmetric.
     #[test]
     fn expression_equality_is_symmetric(
         left in build_expression_strategy(true),
@@ -380,7 +395,6 @@ proptest! {
         );
     }
 
-    /// Test rebuilding a node from its own children yields an equal tree.
     #[test]
     fn expression_rebuild_with_own_children_is_an_identity(
         expression in build_expression_strategy(true),
@@ -392,7 +406,6 @@ proptest! {
         prop_assert_eq!(rebuilt.expect("a node's own children rebuild it"), expression);
     }
 
-    /// Test substituting with an empty map yields an equal tree.
     #[test]
     fn expression_substitute_with_empty_map_is_an_identity(
         expression in build_expression_strategy(true),
@@ -402,8 +415,7 @@ proptest! {
         prop_assert_eq!(substituted.expect("nothing to refuse"), expression);
     }
 
-    /// Test a JSON round trip yields an equal tree, non-finite floats
-    /// included.
+    /// Test a JSON round trip yields an equal tree, non-finite floats included.
     #[test]
     fn expression_json_round_trip_is_an_identity(expression in build_expression_strategy(true)) {
         let wire = serde_json::to_value(&expression).expect("every tree serializes");
@@ -413,7 +425,6 @@ proptest! {
         prop_assert_eq!(restored, expression);
     }
 
-    /// Test re-encoding a decoded tree reproduces the same JSON text.
     #[test]
     fn expression_json_text_is_stable_across_a_round_trip(
         expression in build_expression_strategy(true),
@@ -426,7 +437,6 @@ proptest! {
         prop_assert_eq!(re_encoded, text);
     }
 
-    /// Test a postcard round trip of a DAG yields an equal DAG.
     #[test]
     fn expression_round_trips_through_postcard(dag in build_expression_dag_strategy()) {
         let bytes = postcard::to_allocvec(&dag).expect("every DAG serializes");
@@ -455,7 +465,6 @@ proptest! {
         }
     }
 
-    /// Test a random piecewise tree survives a JSON round trip.
     #[test]
     fn expression_piecewise_tree_round_trips_through_json(expression in build_piecewise_strategy()) {
         let text = serde_json::to_string(&expression).expect("finite trees serialize");
@@ -475,14 +484,9 @@ proptest! {
     ) {
         let pairs: HashMap<Identifier, Identifier> =
             POOL.iter().cloned().zip(FRESH_POOL.iter().cloned()).collect();
-        let inverse_pairs: HashMap<Identifier, Identifier> =
-            pairs.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
-        let substitution: HashMap<Identifier, Expression> = pairs
-            .iter()
-            .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
-            .collect();
+        let substitution = build_renaming_substitution(&pairs);
+        let inverse = AlphaRenaming::try_new(invert_pairs(&pairs)).expect("the pools are distinct");
         let renaming = AlphaRenaming::try_new(pairs).expect("the pools are distinct");
-        let inverse = AlphaRenaming::try_new(inverse_pairs).expect("the pools are distinct");
         let renamed = expression.substitute(&substitution).expect("identifiers replace identifiers");
 
         let under_renaming = expression.is_alpha_equivalent_under(&renamed, &renaming);
@@ -507,24 +511,15 @@ proptest! {
         expression in build_expression_strategy(false),
         permutation in select(POOL_PERMUTATIONS.to_vec()),
     ) {
-        let pairs: HashMap<Identifier, Identifier> = permutation
-            .iter()
-            .enumerate()
-            .filter(|(from, to)| from != *to)
-            .map(|(from, to)| (POOL[from].clone(), POOL[*to].clone()))
-            .collect();
-        let inverse_pairs: HashMap<Identifier, Identifier> =
-            pairs.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
-        let substitution: HashMap<Identifier, Expression> = pairs
-            .iter()
-            .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
-            .collect();
+        let pairs = build_pool_permutation_pairs(permutation);
+        let substitution = build_renaming_substitution(&pairs);
         let is_fixed = expression
             .free_identifiers()
             .iter()
             .all(|identifier| !pairs.contains_key(identifier));
+        let inverse =
+            AlphaRenaming::try_new(invert_pairs(&pairs)).expect("a permutation is injective");
         let renaming = AlphaRenaming::try_new(pairs).expect("a permutation is injective");
-        let inverse = AlphaRenaming::try_new(inverse_pairs).expect("a permutation is injective");
         let renamed = expression.substitute(&substitution).expect("identifiers replace identifiers");
 
         let under_renaming = expression.is_alpha_equivalent_under(&renamed, &renaming);
@@ -535,7 +530,7 @@ proptest! {
         prop_assert_eq!(expression == renamed, is_fixed);
     }
 
-    /// Test an integer and its digit text, zero-padded or not, are the same
+    /// Test an integer's digit text, zero-padded or not, parses as the same
     /// integer literal.
     #[test]
     fn literal_value_parse_text_of_digits_equals_the_integer(
@@ -554,7 +549,6 @@ proptest! {
         prop_assert_eq!(&integer, &from_padded);
     }
 
-    /// Test appending zeros after the decimal point keeps the decimal.
     #[test]
     fn literal_value_decimal_ignores_trailing_zeros(
         base in "[0-9]{1,6}\\.[0-9]{0,6}|\\.[0-9]{1,6}",
@@ -589,9 +583,9 @@ proptest! {
         }
     }
 
-    /// Test equality over literals of every kind and size is an equivalence
-    /// agreeing with hashing: reflexive (NaN included), symmetric,
-    /// transitive, and equal literals of one variant hash equally.
+    /// Test equality over literals of every kind and size is reflexive (NaN
+    /// included), symmetric and transitive, and equal literals share a variant
+    /// and a hash.
     #[test]
     fn literal_value_equality_is_an_equivalence_agreeing_with_hash(
         left in build_literal_strategy(true),
@@ -611,8 +605,6 @@ proptest! {
         }
     }
 
-    /// Test an integer or a decimal displays as text that parses back to an
-    /// equal literal of the same variant.
     #[test]
     fn literal_value_display_parses_back_to_an_equal_int_or_decimal(
         text in "[0-9]{1,40}(\\.[0-9]{0,40})?|\\.[0-9]{1,40}",
@@ -637,8 +629,6 @@ proptest! {
         prop_assert_eq!(integer, reparsed_integer);
     }
 
-    /// Test reading a decimal's `Display` text gives back the same decimal,
-    /// for decimals of any length and point position.
     #[test]
     fn decimal_from_str_of_display_is_identity(
         text in "[0-9]{1,60}(\\.[0-9]{0,60})?|\\.[0-9]{1,60}",
@@ -661,7 +651,6 @@ proptest! {
         prop_assert!(text.len() < DEBUG_TEXT_BOUND, "{} characters", text.len());
     }
 
-    /// Test a DAG's free identifiers are those of its unshared copy.
     #[test]
     fn expression_free_identifiers_of_a_dag_are_those_of_its_unshared_copy(
         dag in build_expression_dag_strategy(),
@@ -673,7 +662,6 @@ proptest! {
         prop_assert_eq!(free, copy.free_identifiers());
     }
 
-    /// Test a DAG equals its unshared copy both ways and hashes like it.
     #[test]
     fn expression_dag_equals_and_hashes_like_its_unshared_copy(
         dag in build_expression_dag_strategy(),
@@ -711,7 +699,7 @@ proptest! {
     }
 
     /// Test renaming equivalence of DAGs answers as for unshared copies,
-    /// against the DAG renamed by the renaming and against another DAG.
+    /// against the renamed DAG and against another DAG.
     #[test]
     fn expression_alpha_equivalence_of_dags_answers_as_for_their_unshared_copies(
         dag in build_expression_dag_strategy(),
@@ -731,8 +719,6 @@ proptest! {
         }
     }
 
-    /// Test substituting into a DAG gives what substituting into its
-    /// unshared copy gives, the same tree or the same refusal.
     #[test]
     fn expression_substitute_into_a_dag_answers_as_for_its_unshared_copy(
         dag in build_expression_dag_strategy(),
@@ -745,19 +731,13 @@ proptest! {
             2,
         ),
     ) {
-        let substitution: HashMap<Identifier, Expression> = domain
-            .iter()
-            .zip(replacements)
-            .map(|(index, replacement)| (POOL[*index].clone(), replacement))
-            .collect();
+        let substitution = build_pool_substitution(&domain, replacements);
 
         let substituted = dag.substitute(&substitution);
 
         prop_assert_eq!(substituted, copy_deeply(&dag).substitute(&substitution));
     }
 
-    /// Test substituting for identifiers a DAG does not refer to returns the
-    /// DAG itself.
     #[test]
     fn expression_substitute_replacing_nothing_returns_the_dag_itself(
         dag in build_expression_dag_strategy(),
@@ -801,13 +781,7 @@ proptest! {
         let operands = dag_screen.check_logical_operands(&dag);
         let predicate = dag_screen.check_predicate(&dag);
 
-        prop_assert_eq!(
-            operands,
-            copy_screen.check_logical_operands(&copy)
-        );
-        prop_assert_eq!(
-            predicate,
-            copy_screen.check_predicate(&copy)
-        );
+        prop_assert_eq!(operands, copy_screen.check_logical_operands(&copy));
+        prop_assert_eq!(predicate, copy_screen.check_predicate(&copy));
     }
 }
