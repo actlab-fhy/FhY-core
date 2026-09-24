@@ -5,7 +5,7 @@
 //! `fhy_core::pass`, and trees too deep or too shared for a recursive
 //! traversal.
 //!
-//! Public API only, over the toy tree of `support/tree_ir.rs`.
+//! The tests run over the toy tree of `support/tree_ir.rs`.
 
 use crate::support::stack as stack_support;
 use crate::support::tree_ir;
@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::num::NonZeroUsize;
 
-use fhy_core::diagnostic::Diagnostic;
+use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel};
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
     Analysis, CompilerPass, ExecutePass, FailureClass, FixpointPassGroup, PassContext, PassError,
@@ -40,11 +40,7 @@ use tree_ir::{
 /// at the bottom.
 #[must_use]
 fn build_chain(name: &str, leaf: &ToyTree, depth: usize) -> ToyTree {
-    let mut chain = leaf.clone();
-    for _ in 0..depth {
-        chain = build_node(name, &[&chain]);
-    }
-    chain
+    (0..depth).fold(leaf.clone(), |chain, _| build_node(name, &[&chain]))
 }
 
 /// Build the DAG `x_0 = leaf`, `x_{k+1} = name(x_k, x_k)`, and return
@@ -52,11 +48,7 @@ fn build_chain(name: &str, leaf: &ToyTree, depth: usize) -> ToyTree {
 /// node occurrences.
 #[must_use]
 fn build_doubling_dag(name: &str, leaf: &ToyTree, levels: usize) -> ToyTree {
-    let mut dag = leaf.clone();
-    for _ in 0..levels {
-        dag = build_node(name, &[&dag, &dag]);
-    }
-    dag
+    (0..levels).fold(leaf.clone(), |dag, _| build_node(name, &[&dag, &dag]))
 }
 
 /// Return a rewriter that doubles the integer of every leaf.
@@ -88,7 +80,6 @@ fn build_small_tree() -> ToyTree {
     build_node("root", &[&left, &right])
 }
 
-/// Walk `root` with `visitor` in `order`, returning the walk's result.
 fn walk(
     visitor: &mut RecordingVisitor,
     root: &ToyTree,
@@ -97,7 +88,6 @@ fn walk(
     walk_tree(visitor, root, order, &mut ())
 }
 
-/// Rewrite `root` with `rewriter`, returning the rewrite's result.
 fn rewrite(
     rewriter: &mut ClosureRewriter,
     root: &ToyTree,
@@ -105,7 +95,6 @@ fn rewrite(
     rewrite_tree(rewriter, root, &mut ())
 }
 
-/// Rewrite `root` with `rewriter`, failing the test if the rewrite fails.
 fn rewrite_or_panic(rewriter: &mut ClosureRewriter, root: &ToyTree) -> ToyTree {
     rewrite(rewriter, root).expect("the rewrite succeeds")
 }
@@ -115,14 +104,7 @@ fn rewrite_or_panic(rewriter: &mut ClosureRewriter, root: &ToyTree) -> ToyTree {
 fn list_events(hooks_and_names: &[(WalkHook, &str)]) -> Vec<String> {
     hooks_and_names
         .iter()
-        .map(|(hook, name)| {
-            let label = match hook {
-                WalkHook::Before => "before",
-                WalkHook::Visit => "visit",
-                WalkHook::After => "after",
-            };
-            format!("{label}:{name}")
-        })
+        .map(|(hook, name)| format!("{}:{name}", hook.label()))
         .collect()
 }
 
@@ -163,7 +145,7 @@ impl TreeVisitor<ToyTree, PassContext<'_>> for ReportingVisitor {
 
     fn visit(&mut self, node: &ToyTree, cx: &mut PassContext<'_>) -> Result<(), HookError> {
         cx.report_text(
-            fhy_core::diagnostic::DiagnosticLevel::Info,
+            DiagnosticLevel::Info,
             format!("visited {}", node.name()),
             None,
         );
@@ -317,7 +299,6 @@ fn walk_tree_brackets_every_node_in_post_order() {
     );
 }
 
-/// Test the traversal order defaults to pre-order.
 #[test]
 fn traversal_order_defaults_to_pre_order() {
     let order = TraversalOrder::default();
@@ -340,7 +321,6 @@ fn walk_tree_runs_the_bracketing_hooks_around_a_default_visit() {
     );
 }
 
-/// Test a shared node is walked at each of its occurrences.
 #[test]
 fn walk_tree_walks_a_shared_node_at_each_occurrence() {
     let shared = build_node("shared", &[&build_leaf("leaf", 1)]);
@@ -416,7 +396,6 @@ fn walk_tree_prunes_only_the_children_of_a_pruned_node(
     assert_eq!(visitor.events(), list_events(expected));
 }
 
-/// Test pruning the root walks the root alone.
 #[test]
 fn walk_tree_pruning_the_root_walks_the_root_alone() {
     let mut visitor = RecordingVisitor::new().with_pruned("root");
@@ -525,7 +504,6 @@ fn walk_tree_stops_at_the_first_failing_hook(
 // rewrite_tree: identity
 // =============================================================================
 
-/// Test a rewriter that keeps every node returns the root itself.
 #[rstest]
 #[case::leaf(build_leaf("leaf", 5))]
 #[case::unary(build_node("unary", &[&build_leaf("leaf", 3)]))]
@@ -562,17 +540,6 @@ fn rewrite_tree_keeping_every_node_returns_the_root_itself(#[case] tree: ToyTree
 fn rewrite_tree_returns_an_untouched_childless_node_itself() {
     let tree = build_frozen_node("list", &[]);
     let mut rewriter = build_leaf_replacer(9, 0);
-
-    let output = rewrite_or_panic(&mut rewriter, &tree);
-
-    assert!(output.is_same_node(&tree));
-}
-
-/// Test a rewriter returning `None` for the root returns the root itself.
-#[test]
-fn rewrite_tree_returns_the_root_when_the_rewriter_keeps_it() {
-    let tree = build_leaf("leaf", 3);
-    let mut rewriter = build_leaf_replacer(4, 0);
 
     let output = rewrite_or_panic(&mut rewriter, &tree);
 
@@ -619,7 +586,6 @@ fn rewrite_tree_rewrites_the_leaves_under_a_node(#[case] tree: ToyTree, #[case] 
     assert_eq!(output, expected);
 }
 
-/// Test a rewriter may replace a node by its own child.
 #[test]
 fn rewrite_tree_replaces_a_node_by_its_child() {
     let operand = build_leaf("operand", 7);
@@ -632,7 +598,6 @@ fn rewrite_tree_replaces_a_node_by_its_child() {
     assert!(output.is_same_node(&operand));
 }
 
-/// Test a rewriter may replace an inner node by a new leaf.
 #[test]
 fn rewrite_tree_replaces_an_inner_node_by_a_leaf() {
     let tree = build_node("pair", &[&build_leaf("a", 1), &build_leaf("b", 2)]);
@@ -804,7 +769,6 @@ fn rewrite_tree_shows_the_parent_its_rewritten_children(
     assert!(!parent.is_same_node(&tree));
 }
 
-/// Test the rewriter sees an unchanged parent as the input node itself.
 #[test]
 fn rewrite_tree_shows_an_unchanged_parent_as_itself() {
     let tree = build_node("pair", &[&build_leaf("a", 1), &build_leaf("b", 2)]);
@@ -857,7 +821,6 @@ fn rewrite_tree_rewrites_a_shared_subtree_once() {
     );
 }
 
-/// Test an untouched shared subtree keeps its handle at every occurrence.
 #[test]
 fn rewrite_tree_keeps_an_untouched_shared_subtree_at_every_occurrence() {
     let shared = build_node("shared", &[&build_leaf("leaf", 1)]);
@@ -871,8 +834,6 @@ fn rewrite_tree_keeps_an_untouched_shared_subtree_at_every_occurrence() {
     assert_eq!(output.child(1), &build_leaf("other", 20));
 }
 
-/// Test a node reporting itself unshared is rewritten at each of its
-/// occurrences.
 #[test]
 fn rewrite_tree_rewrites_a_node_reporting_itself_unshared_at_each_occurrence() {
     let hidden = build_leaf_hiding_sharing("hidden", 1);
@@ -1231,7 +1192,6 @@ fn walk_pass_execute_walks_the_input_unchanged(
     assert_eq!(pass.visitor().list_names(WalkHook::Visit), expected);
 }
 
-/// Test a walk pass over a visitor overriding no hook outputs unit.
 #[test]
 fn walk_pass_with_default_hooks_outputs_unit() {
     let mut pass = WalkPass::new(SilentVisitor, TraversalOrder::Pre);
@@ -1277,7 +1237,6 @@ fn walk_pass_execute_fails_with_the_hook_error() {
     );
 }
 
-/// Test a walk pass's hooks report into the run's diagnostics.
 #[test]
 fn walk_pass_hooks_report_into_the_run() {
     let mut pass = WalkPass::new(ReportingVisitor, TraversalOrder::Pre);
@@ -1300,7 +1259,6 @@ fn walk_pass_hooks_report_into_the_run() {
     );
 }
 
-/// Test a walk pass never reports a change.
 #[test]
 fn walk_pass_did_change_is_false() {
     let mut pass = WalkPass::new(SilentVisitor, TraversalOrder::Pre);

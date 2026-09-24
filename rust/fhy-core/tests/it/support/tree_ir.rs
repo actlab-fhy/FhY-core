@@ -16,7 +16,7 @@ use fhy_core::tree::{NodeHandle, NodeIdentity, Rewriter, Tree, TreeVisitor};
 // =============================================================================
 
 /// One immutable node of the toy tree.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ToyNode {
     name: String,
     value: i64,
@@ -82,10 +82,8 @@ pub(crate) fn build_leaf_hiding_sharing(name: &str, value: i64) -> ToyTree {
     ToyTree(Arc::new(ToyNode {
         name: name.to_owned(),
         value,
-        children: Vec::new(),
-        is_frozen: false,
         hides_sharing: true,
-        hash_conses: false,
+        ..ToyNode::default()
     }))
 }
 
@@ -96,11 +94,9 @@ pub(crate) fn build_leaf_hiding_sharing(name: &str, value: i64) -> ToyTree {
 pub(crate) fn build_hash_consing_node(name: &str, children: &[&ToyTree]) -> ToyTree {
     ToyTree(Arc::new(ToyNode {
         name: name.to_owned(),
-        value: 0,
         children: children.iter().map(|&child| child.clone()).collect(),
-        is_frozen: false,
-        hides_sharing: false,
         hash_conses: true,
+        ..ToyNode::default()
     }))
 }
 
@@ -140,7 +136,7 @@ impl ToyTree {
 
     /// Return the node's children, in order.
     #[must_use]
-    pub(crate) fn child_nodes(&self) -> &[ToyTree] {
+    pub(crate) fn child_nodes(&self) -> &[Self] {
         &self.0.children
     }
 
@@ -150,7 +146,7 @@ impl ToyTree {
     ///
     /// Panics if the node has no child at `index`.
     #[must_use]
-    pub(crate) fn child(&self, index: usize) -> &ToyTree {
+    pub(crate) fn child(&self, index: usize) -> &Self {
         &self.0.children[index]
     }
 
@@ -163,7 +159,7 @@ impl ToyTree {
     /// Return this node with `value` in place of its integer, sharing its
     /// children.
     #[must_use]
-    pub(crate) fn with_value(&self, value: i64) -> ToyTree {
+    pub(crate) fn with_value(&self, value: i64) -> Self {
         build_toy_node(
             &self.0.name,
             value,
@@ -206,14 +202,9 @@ impl ToyTree {
 
     /// Return a copy of the tree sharing no node, with one node per
     /// occurrence.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the copy walk does not end with exactly the copied root,
-    /// which it always does.
     #[must_use]
-    pub(crate) fn copy_unshared(&self) -> ToyTree {
-        let mut results: Vec<ToyTree> = Vec::new();
+    pub(crate) fn copy_unshared(&self) -> Self {
+        let mut results: Vec<Self> = Vec::new();
         let mut steps = vec![(self, false)];
         while let Some((node, is_exit)) = steps.pop() {
             if is_exit {
@@ -349,8 +340,9 @@ pub(crate) enum WalkHook {
 }
 
 impl WalkHook {
-    /// Return the event label of the hook.
-    fn label(self) -> &'static str {
+    /// Return the label of the hook in the recorded events.
+    #[must_use]
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Before => "before",
             Self::Visit => "visit",

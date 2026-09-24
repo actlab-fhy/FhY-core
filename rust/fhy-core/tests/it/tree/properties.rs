@@ -4,8 +4,6 @@
 //! nothing changed, the memoized rewrite of a DAG equals the rewrite of its
 //! unshared copy for a pure rewriter, and a walk brackets every occurrence
 //! with balanced hooks in pre- or post-order.
-//!
-//! Public API only.
 
 use crate::support::tree_ir;
 
@@ -28,7 +26,7 @@ const MAX_CHILDREN: usize = 3;
 /// Return a strategy for DAGs of up to [`MAX_NODES`] distinct nodes, named
 /// `n0`, `n1`, ..., each of whose children is any earlier node, so a node
 /// may occur several times.
-fn build_dag_strategy() -> impl Strategy<Value = ToyTree> {
+fn arbitrary_dag() -> impl Strategy<Value = ToyTree> {
     prop::collection::vec(
         (
             0_i64..6,
@@ -110,7 +108,7 @@ proptest! {
     /// Test a rewrite that keeps every node returns the root itself and
     /// sees each distinct node once.
     #[test]
-    fn rewrite_tree_keeping_every_node_returns_the_root(dag in build_dag_strategy()) {
+    fn rewrite_tree_keeping_every_node_returns_the_root(dag in arbitrary_dag()) {
         let mut rewriter = build_keeping_rewriter();
 
         let output = rewrite_tree(&mut rewriter, &dag, &mut ()).expect("no rewrite fails");
@@ -122,7 +120,7 @@ proptest! {
     /// Test a rewrite that returns every node itself returns the root
     /// itself and sees each distinct node once, as itself.
     #[test]
-    fn rewrite_tree_with_an_identity_rewriter_returns_the_root(dag in build_dag_strategy()) {
+    fn rewrite_tree_with_an_identity_rewriter_returns_the_root(dag in arbitrary_dag()) {
         let mut rewriter = ClosureRewriter::new(|node| Ok(Some(node.clone())));
 
         let output = rewrite_tree(&mut rewriter, &dag, &mut ()).expect("no rewrite fails");
@@ -138,7 +136,7 @@ proptest! {
     /// doubled leaf holds a non-zero value.
     #[test]
     fn rewrite_tree_output_is_the_root_iff_nothing_changed(
-        dag in build_dag_strategy(),
+        dag in arbitrary_dag(),
         doubled in prop::collection::hash_set(0..MAX_NODES, 0..=MAX_NODES),
     ) {
         let doubled_names: HashSet<String> =
@@ -166,7 +164,7 @@ proptest! {
     /// copy's rewrite sees each occurrence.
     #[test]
     fn rewrite_tree_of_a_dag_equals_the_rewrite_of_its_unshared_copy(
-        dag in build_dag_strategy()
+        dag in arbitrary_dag()
     ) {
         let copy = dag.copy_unshared();
         let mut dag_rewriter = build_pure_rewriter();
@@ -187,7 +185,7 @@ proptest! {
     /// and visits in the requested order.
     #[test]
     fn walk_tree_brackets_every_occurrence_in_order(
-        dag in build_dag_strategy(),
+        dag in arbitrary_dag(),
         order in select(vec![TraversalOrder::Pre, TraversalOrder::Post]),
     ) {
         let mut visitor = RecordingVisitor::new();
