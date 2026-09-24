@@ -20,8 +20,8 @@ use fhy_core::expr::pattern::{
     apply_rewrite_rule, apply_rewrite_rules,
 };
 use fhy_core::expr::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, UnaryOperation, build_call,
-    build_piecewise,
+    BinaryOperation, Expression, ExpressionKind, PiecewiseError, RebuildError, UnaryOperation,
+    build_call, build_piecewise,
 };
 use pattern_support::{
     ProbeError, build_capture, build_literal_pattern, build_x_minus_x_rule, build_x_plus_zero_rule,
@@ -73,7 +73,7 @@ fn fail_rewrite(_: &MatchBindings) -> Result<Expression, CallbackError> {
 
 /// Return the build error inside `error`, with the responsible rule's index
 /// and name.
-fn expect_rebuild_error(error: &RewriteError) -> (usize, Option<&str>, &ExpressionBuildError) {
+fn expect_rebuild_error(error: &RewriteError) -> (usize, Option<&str>, &RebuildError) {
     let RewriteError::Rebuild {
         rule_index,
         rule_name,
@@ -882,7 +882,7 @@ fn apply_rewrite_rules_reports_a_failing_rebuild_with_its_rule() {
         (
             1,
             Some("true -> 1"),
-            &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+            &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
         )
     );
 }
@@ -912,7 +912,7 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_the_refused_condition() {
         (
             0,
             Some("false -> 1"),
-            &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
+            &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 1 })
         )
     );
 }
@@ -942,7 +942,7 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition()
         (
             1,
             Some("true -> 1"),
-            &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
+            &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 1 })
         )
     );
 }
@@ -969,7 +969,7 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition()
     RewriteError::Rebuild {
         rule_index: 1,
         rule_name: None,
-        source: ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 },
+        source: RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }),
     },
     "rebuilding a node after rewrite rule 1 failed"
 )]
@@ -977,7 +977,7 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition()
     RewriteError::Rebuild {
         rule_index: 0,
         rule_name: Some(String::from("true -> 1")),
-        source: ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 },
+        source: RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }),
     },
     "rebuilding a node after rewrite rule 0 (true -> 1) failed"
 )]
@@ -1010,7 +1010,8 @@ fn rewrite_error_callback_source_is_the_callback_error() {
 /// Test a rebuild failure's source is the build error.
 #[test]
 fn rewrite_error_rebuild_source_is_the_build_error() {
-    let build_error = ExpressionBuildError::NonBooleanConditionLiteral { case_index: 3 };
+    let build_error =
+        RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 3 });
     let error = RewriteError::Rebuild {
         rule_index: 0,
         rule_name: None,
@@ -1019,10 +1020,7 @@ fn rewrite_error_rebuild_source_is_the_build_error() {
 
     let source = error.source().expect("a rebuild failure has a source");
 
-    assert_eq!(
-        source.downcast_ref::<ExpressionBuildError>(),
-        Some(&build_error)
-    );
+    assert_eq!(source.downcast_ref::<RebuildError>(), Some(&build_error));
 }
 
 // =============================================================================

@@ -17,9 +17,9 @@ use expression_support::{
     is_doubling_dag_over,
 };
 use fhy_core::expr::{
-    AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression,
-    ExpressionBuildError, ExpressionKind, LiteralValue, LogicalOperation, PiecewiseExpression,
-    UnaryExpression, UnaryOperation,
+    AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression, ExpressionKind,
+    FunctionNameError, LiteralValue, LogicalOperation, PiecewiseError, PiecewiseExpression,
+    RebuildError, UnaryExpression, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -171,7 +171,7 @@ fn piecewise_expression_try_new_rejects_zero_cases() {
     let result = PiecewiseExpression::try_new(Vec::new(), build_literal(0));
 
     assert!(
-        matches!(result, Err(ExpressionBuildError::EmptyPiecewise)),
+        matches!(result, Err(PiecewiseError::NoCases)),
         "got {result:?}"
     );
 }
@@ -208,7 +208,7 @@ fn piecewise_expression_try_new_rejects_non_boolean_literal_condition(
     assert!(
         matches!(
             result,
-            Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 })
+            Err(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
         ),
         "got {result:?}"
     );
@@ -229,7 +229,7 @@ fn piecewise_expression_try_new_names_the_first_non_boolean_condition() {
     assert!(
         matches!(
             result,
-            Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index: 2 })
+            Err(PiecewiseError::NonBooleanConditionLiteral { case_index: 2 })
         ),
         "got {result:?}"
     );
@@ -283,7 +283,7 @@ fn call_expression_try_new_rejects_empty_function_name() {
     let result = CallExpression::try_new("", vec![build_literal(1)]);
 
     assert!(
-        matches!(result, Err(ExpressionBuildError::EmptyFunctionName)),
+        matches!(result, Err(FunctionNameError::Empty)),
         "got {result:?}"
     );
 }
@@ -521,7 +521,7 @@ fn expression_rebuild_with_children_rejects_piecewise_child_count(#[case] child_
 
     assert_eq!(
         result,
-        Err(ExpressionBuildError::ChildCountMismatch {
+        Err(RebuildError::ChildCount {
             expected: 3,
             actual: child_count
         })
@@ -545,7 +545,9 @@ fn expression_rebuild_with_children_rejects_numeric_piecewise_condition() {
 
     assert_eq!(
         result,
-        Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 })
+        Err(RebuildError::Piecewise(
+            PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }
+        ))
     );
 }
 
@@ -611,7 +613,7 @@ fn expression_rebuild_of_a_logical_node_keeps_its_operand_count() {
     assert!(Expression::ptr_eq(&node.operands()[1], &nested));
     assert_eq!(
         too_few,
-        Err(ExpressionBuildError::ChildCountMismatch {
+        Err(RebuildError::ChildCount {
             expected: 3,
             actual: 2
         })
@@ -642,11 +644,54 @@ fn expression_rebuild_with_children_rejects_a_different_child_count(
 
     assert_eq!(
         result,
-        Err(ExpressionBuildError::ChildCountMismatch {
+        Err(RebuildError::ChildCount {
             expected,
             actual: child_count
         })
     );
+}
+
+/// Test a rebuild refused by the piecewise it builds reports the piecewise
+/// error as its source, and its own message does not repeat it, so the
+/// chain of messages names each failure once.
+#[test]
+fn rebuild_error_display_does_not_repeat_its_source() {
+    let expression = build_piecewise_node_or_panic(
+        vec![(build_identifier("c").1, build_literal(1))],
+        build_literal(0),
+    );
+
+    let error = expression
+        .rebuild_with_children(vec![build_literal(7), build_literal(1), build_literal(0)])
+        .expect_err("a numeric condition is refused");
+    let mut chain = vec![error.to_string()];
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        chain.push(cause.to_string());
+        source = cause.source();
+    }
+
+    assert_eq!(
+        chain,
+        [
+            "invalid piecewise",
+            "condition of piecewise case 0 is a non-boolean literal"
+        ]
+    );
+    assert_eq!(
+        std::error::Error::source(&error).and_then(|cause| cause.downcast_ref::<PiecewiseError>()),
+        Some(&PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
+    );
+}
+
+/// Test a child-count refusal has no source.
+#[test]
+fn rebuild_error_child_count_has_no_source() {
+    let error = build_literal(1)
+        .rebuild_with_children(vec![build_literal(2)])
+        .expect_err("a leaf takes no children");
+
+    assert!(std::error::Error::source(&error).is_none());
 }
 
 /// Test rebuilding a leaf from no children returns a handle to the leaf.
@@ -668,7 +713,7 @@ fn expression_rebuild_with_children_of_leaf_rejects_children(#[case] leaf: Expre
 
     assert_eq!(
         result,
-        Err(ExpressionBuildError::ChildCountMismatch {
+        Err(RebuildError::ChildCount {
             expected: 0,
             actual: 1
         })
@@ -896,7 +941,7 @@ fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
 
     assert_eq!(
         result,
-        Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 })
+        Err(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
     );
 }
 

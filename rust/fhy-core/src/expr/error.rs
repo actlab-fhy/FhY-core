@@ -1,7 +1,9 @@
 //! Errors raised while building, comparing, or screening expressions.
 //!
-//! [`ExpressionBuildError`] reports a node that could not be built because
-//! its operands or its child list break a node invariant.
+//! [`PiecewiseError`] reports a piecewise that could not be built because it
+//! breaks a piecewise invariant, [`RebuildError`] a node that could not be
+//! rebuilt from new children, and [`FunctionNameError`] a call name that
+//! could not be accepted.
 //! [`NonInjectiveRenamingError`] reports a free-identifier renaming that
 //! sends two identifiers to one image.
 //! [`NonBooleanLogicalOperandError`] reports a Boolean position that holds
@@ -19,69 +21,128 @@ use super::display::{FormatOptions, IdentifierStyle};
 use super::node::Expression;
 use super::operation::LogicalOperation;
 
-/// A node that could not be built because it would break a node invariant.
+/// A piecewise that could not be built because it would break a piecewise
+/// invariant: at least one case, and no case condition that is a literal
+/// other than a Boolean.
 ///
 /// # Examples
 ///
 /// ```
-/// use fhy_core::expr::{ExpressionBuildError, build_piecewise, Expression};
+/// use fhy_core::expr::{Expression, PiecewiseError, build_piecewise};
 ///
 /// let no_cases: Vec<(Expression, Expression)> = Vec::new();
 /// let result = build_piecewise(no_cases, 0);
-/// assert_eq!(result, Err(ExpressionBuildError::EmptyPiecewise));
+/// assert_eq!(result, Err(PiecewiseError::NoCases));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ExpressionBuildError {
-    /// A piecewise expression was given no cases.
+pub enum PiecewiseError {
+    /// The piecewise was given no cases.
     ///
-    /// Displays as `a piecewise expression needs at least one case`.
-    EmptyPiecewise,
-    /// A piecewise case condition is a literal that is not a Boolean.
+    /// Displays as `piecewise has no cases`.
+    NoCases,
+    /// A case condition is a literal that is not a Boolean.
     ///
-    /// Displays as `piecewise case {case_index} condition literal must be a
-    /// boolean`.
+    /// Displays as `condition of piecewise case {case_index} is a
+    /// non-boolean literal`.
     NonBooleanConditionLiteral {
-        /// The zero-based index of the offending case.
+        /// The zero-based index of the first offending case.
         case_index: usize,
-    },
-    /// A call expression was given an empty function name.
-    ///
-    /// Displays as `a call expression needs a non-empty function name`.
-    EmptyFunctionName,
-    /// A node was rebuilt from a child list whose length differs from its
-    /// own child count.
-    ///
-    /// Displays as `rebuilding the node needs {expected} children, but got
-    /// {actual}`.
-    ChildCountMismatch {
-        /// The number of children the node has.
-        expected: usize,
-        /// The number of children given.
-        actual: usize,
     },
 }
 
-impl fmt::Display for ExpressionBuildError {
+impl fmt::Display for PiecewiseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyPiecewise => f.write_str("a piecewise expression needs at least one case"),
+            Self::NoCases => f.write_str("piecewise has no cases"),
             Self::NonBooleanConditionLiteral { case_index } => write!(
                 f,
-                "piecewise case {case_index} condition literal must be a boolean"
-            ),
-            Self::EmptyFunctionName => {
-                f.write_str("a call expression needs a non-empty function name")
-            }
-            Self::ChildCountMismatch { expected, actual } => write!(
-                f,
-                "rebuilding the node needs {expected} children, but got {actual}"
+                "condition of piecewise case {case_index} is a non-boolean literal"
             ),
         }
     }
 }
 
-impl Error for ExpressionBuildError {}
+impl Error for PiecewiseError {}
+
+/// A node that could not be rebuilt from new children.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::expr::{Expression, LiteralValue, RebuildError};
+///
+/// let leaf = Expression::from(LiteralValue::from(1));
+/// let result = leaf.rebuild_with_children(vec![leaf.clone()]);
+/// assert_eq!(result, Err(RebuildError::ChildCount { expected: 0, actual: 1 }));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RebuildError {
+    /// The number of children differs from the node's own child count.
+    ///
+    /// Displays as `expected {expected} children, got {actual}`.
+    ChildCount {
+        /// The number of children the node has.
+        expected: usize,
+        /// The number of children given.
+        actual: usize,
+    },
+    /// The new children make an invalid piecewise.
+    ///
+    /// Displays as `invalid piecewise`; the [`PiecewiseError`] is the
+    /// [`source`](Error::source).
+    Piecewise(PiecewiseError),
+}
+
+impl fmt::Display for RebuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ChildCount { expected, actual } => {
+                write!(f, "expected {expected} children, got {actual}")
+            }
+            Self::Piecewise(_) => f.write_str("invalid piecewise"),
+        }
+    }
+}
+
+impl Error for RebuildError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ChildCount { .. } => None,
+            Self::Piecewise(error) => Some(error),
+        }
+    }
+}
+
+/// A call function name that could not be accepted.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::expr::{FunctionNameError, build_call};
+///
+/// let result = build_call("", [1]);
+/// assert_eq!(result, Err(FunctionNameError::Empty));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FunctionNameError {
+    /// The name is empty.
+    ///
+    /// Displays as `function name is empty`.
+    Empty,
+}
+
+impl fmt::Display for FunctionNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("function name is empty"),
+        }
+    }
+}
+
+impl Error for FunctionNameError {}
 
 /// A free-identifier renaming that sends two identifiers to one image.
 ///

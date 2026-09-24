@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::identifier::Identifier;
 
-use super::super::error::ExpressionBuildError;
+use super::super::error::{FunctionNameError, PiecewiseError, RebuildError};
 use super::super::literal::{LiteralTextError, LiteralValue};
 use super::super::node::{Expression, ExpressionKind};
 use super::super::operation::{BinaryOperation, UnaryOperation};
@@ -636,9 +636,26 @@ impl Error for CallbackError {
     }
 }
 
-impl From<ExpressionBuildError> for CallbackError {
-    /// Wrap a refused node build, so a rewrite can use `?` on the builders.
-    fn from(error: ExpressionBuildError) -> Self {
+impl From<PiecewiseError> for CallbackError {
+    /// Wrap a refused piecewise, so a rewrite can use `?` on the piecewise
+    /// builder.
+    fn from(error: PiecewiseError) -> Self {
+        Self(Box::new(error))
+    }
+}
+
+impl From<RebuildError> for CallbackError {
+    /// Wrap a refused rebuild, so a rewrite can use `?` on
+    /// [`Expression::rebuild_with_children`].
+    fn from(error: RebuildError) -> Self {
+        Self(Box::new(error))
+    }
+}
+
+impl From<FunctionNameError> for CallbackError {
+    /// Wrap a refused function name, so a rewrite can use `?` on the call
+    /// builder.
+    fn from(error: FunctionNameError) -> Self {
         Self(Box::new(error))
     }
 }

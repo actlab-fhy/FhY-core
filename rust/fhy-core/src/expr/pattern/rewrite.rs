@@ -14,7 +14,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use super::super::error::ExpressionBuildError;
+use super::super::error::{PiecewiseError, RebuildError};
 use super::super::node::Expression;
 use super::matching::{CallbackError, MatchBindings, Pattern, match_pattern};
 use crate::diagnostic::DiagnosticLevel;
@@ -37,8 +37,9 @@ const RULE_APPLIER_PASS_DESCRIPTION: &str =
 
 /// Return the position of the child that `error` refuses, or `None` when
 /// the error names no single child.
-fn find_refused_child_index(error: &ExpressionBuildError) -> Option<usize> {
-    let ExpressionBuildError::NonBooleanConditionLiteral { case_index } = error else {
+fn find_refused_child_index(error: &RebuildError) -> Option<usize> {
+    let RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index }) = error
+    else {
         return None;
     };
     case_index.checked_mul(2)
@@ -108,7 +109,7 @@ impl<'r> RuleApplier<'r> {
         &self,
         node: &Expression,
         children: &[Expression],
-        error: &ExpressionBuildError,
+        error: &RebuildError,
     ) -> usize {
         let refused_child = find_refused_child_index(error)
             .and_then(|index| Some((node.children().nth(index)?, children.get(index)?)))
@@ -377,18 +378,18 @@ pub enum RewriteError {
     /// a Boolean.
     ///
     /// The rule named is the one that rewrote the refused child, or, when
-    /// the build error names no single child, the rule responsible for the
+    /// the rebuild error names no single child, the rule responsible for the
     /// last rewritten child. Displays as `rebuilding a node after rewrite
     /// rule {rule_index} failed`, or as `rebuilding a node after rewrite
-    /// rule {rule_index} ({rule_name}) failed` for a named rule; the build
+    /// rule {rule_index} ({rule_name}) failed` for a named rule; the rebuild
     /// error is the [`source`](Error::source).
     Rebuild {
         /// The position of the responsible rule in the rule list.
         rule_index: usize,
         /// The name of the responsible rule, or `None` for an unnamed rule.
         rule_name: Option<String>,
-        /// The build error.
-        source: ExpressionBuildError,
+        /// The rebuild error.
+        source: RebuildError,
     },
 }
 

@@ -8,8 +8,9 @@ use crate::support::expression as expression_support;
 
 use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand,
-    LiteralValue, LogicalExpression, LogicalOperation, UnaryOperation, build_call, build_piecewise,
+    BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, IntoOperand,
+    LiteralValue, LogicalExpression, LogicalOperation, PiecewiseError, RebuildError,
+    UnaryOperation, build_call, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -818,7 +819,7 @@ fn build_piecewise_rejects_a_numeric_condition() {
 
     assert_eq!(
         result,
-        Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 })
+        Err(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
     );
 }
 
@@ -827,7 +828,7 @@ fn build_piecewise_rejects_a_numeric_condition() {
 fn build_piecewise_rejects_zero_cases() {
     let result = build_piecewise(Vec::<(Expression, Expression)>::new(), 0);
 
-    assert_eq!(result, Err(ExpressionBuildError::EmptyPiecewise));
+    assert_eq!(result, Err(PiecewiseError::NoCases));
 }
 
 /// Test Boolean literal value and otherwise operands pass through as given.
@@ -908,36 +909,69 @@ fn build_call_coerces_identifiers_and_numbers() {
 fn build_call_rejects_an_empty_function_name() {
     let result = build_call("", [1]);
 
-    assert_eq!(result, Err(ExpressionBuildError::EmptyFunctionName));
+    assert_eq!(result, Err(FunctionNameError::Empty));
 }
 
 // =============================================================================
 // Build errors
 // =============================================================================
 
-/// Test each build error's message.
+/// Test each piecewise error's message.
 #[rstest]
-#[case::empty_piecewise(
-    ExpressionBuildError::EmptyPiecewise,
-    "a piecewise expression needs at least one case"
-)]
+#[case::no_cases(PiecewiseError::NoCases, "piecewise has no cases")]
 #[case::condition_literal(
-    ExpressionBuildError::NonBooleanConditionLiteral { case_index: 2 },
-    "piecewise case 2 condition literal must be a boolean"
+    PiecewiseError::NonBooleanConditionLiteral { case_index: 2 },
+    "condition of piecewise case 2 is a non-boolean literal"
 )]
-#[case::empty_function_name(
-    ExpressionBuildError::EmptyFunctionName,
-    "a call expression needs a non-empty function name"
-)]
-#[case::child_count(
-    ExpressionBuildError::ChildCountMismatch { expected: 3, actual: 4 },
-    "rebuilding the node needs 3 children, but got 4"
-)]
-fn expression_build_error_display_describes_the_failure(
-    #[case] error: ExpressionBuildError,
+fn piecewise_error_display_describes_the_failure(
+    #[case] error: PiecewiseError,
     #[case] expected: &str,
 ) {
     let message = error.to_string();
 
     assert_eq!(message, expected);
+}
+
+/// Test each rebuild error's message, which names the piecewise failure
+/// only through its source.
+#[rstest]
+#[case::child_count(
+    RebuildError::ChildCount { expected: 3, actual: 4 },
+    "expected 3 children, got 4"
+)]
+#[case::piecewise(RebuildError::Piecewise(PiecewiseError::NoCases), "invalid piecewise")]
+fn rebuild_error_display_describes_the_failure(
+    #[case] error: RebuildError,
+    #[case] expected: &str,
+) {
+    let message = error.to_string();
+
+    assert_eq!(message, expected);
+}
+
+/// Test the function-name error's message.
+#[test]
+fn function_name_error_display_describes_the_failure() {
+    let message = FunctionNameError::Empty.to_string();
+
+    assert_eq!(message, "function name is empty");
+}
+
+/// Test each refusal of the piecewise builder is a piecewise error of the
+/// variant naming its cause.
+#[test]
+fn expression_piecewise_errors_are_piecewise_errors() {
+    let no_cases = build_piecewise(Vec::<(Expression, Expression)>::new(), 0);
+    let numeric_condition = build_piecewise([(build_literal(true), 1), (build_literal(2), 3)], 0);
+
+    let causes = [no_cases, numeric_condition].map(|result| match result {
+        Err(PiecewiseError::NoCases) => "no cases".to_owned(),
+        Err(PiecewiseError::NonBooleanConditionLiteral { case_index }) => {
+            format!("condition {case_index}")
+        }
+        Err(other) => format!("another piecewise error: {other}"),
+        Ok(expression) => format!("built {expression}"),
+    });
+
+    assert_eq!(causes, ["no cases", "condition 1"].map(str::to_owned));
 }

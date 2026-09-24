@@ -28,7 +28,7 @@ use crate::tree::{
 };
 
 use super::alpha::AlphaRenaming;
-use super::error::ExpressionBuildError;
+use super::error::{FunctionNameError, PiecewiseError, RebuildError};
 use super::literal::LiteralValue;
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
@@ -99,8 +99,8 @@ impl DoubleEndedIterator for Children<'_> {
 
 /// Return the error for rebuilding a node of `expected` children from
 /// `actual` children.
-fn build_child_count_mismatch(expected: usize, actual: usize) -> ExpressionBuildError {
-    ExpressionBuildError::ChildCountMismatch { expected, actual }
+fn build_child_count_mismatch(expected: usize, actual: usize) -> RebuildError {
+    RebuildError::ChildCount { expected, actual }
 }
 
 /// Return the placeholder a node's kind is replaced with while its
@@ -528,14 +528,15 @@ impl Expression {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpressionBuildError::ChildCountMismatch`] if the number of
-    /// children differs from the node's own child count, and
-    /// [`ExpressionBuildError::NonBooleanConditionLiteral`] if a new
-    /// piecewise case condition is a literal other than a Boolean.
+    /// Returns [`RebuildError::ChildCount`] if the number of children
+    /// differs from the node's own child count, and
+    /// [`RebuildError::Piecewise`] holding
+    /// [`PiecewiseError::NonBooleanConditionLiteral`] if a new piecewise
+    /// case condition is a literal other than a Boolean.
     pub fn rebuild_with_children(
         &self,
         children: Vec<Expression>,
-    ) -> Result<Expression, ExpressionBuildError> {
+    ) -> Result<Expression, RebuildError> {
         let expected = self.count_children();
         let actual = children.len();
         if actual != expected {
@@ -569,7 +570,10 @@ impl Expression {
                 while let (Some(condition), Some(value)) = (children.next(), children.next()) {
                     cases.push((condition, value));
                 }
-                Self::from(PiecewiseExpression::try_new(cases, otherwise)?)
+                Self::from(
+                    PiecewiseExpression::try_new(cases, otherwise)
+                        .map_err(RebuildError::Piecewise)?,
+                )
             }
             ExpressionKind::Call(node) => Self::from(CallExpression {
                 function_name: Arc::clone(&node.function_name),
@@ -606,17 +610,24 @@ impl Expression {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpressionBuildError::NonBooleanConditionLiteral`] if a
+    /// Returns [`PiecewiseError::NonBooleanConditionLiteral`] if a
     /// replacement puts a literal other than a Boolean in a piecewise case
     /// condition.
     pub fn substitute<S: BuildHasher>(
         &self,
         replacements: &HashMap<Identifier, Expression, S>,
-    ) -> Result<Expression, ExpressionBuildError> {
+    ) -> Result<Expression, PiecewiseError> {
         let mut substitution = Substitution { replacements };
         rewrite_tree(&mut substitution, self, &mut ()).map_err(|error| match error {
             RewriteTreeError::Rewrite(never) => match never {},
-            RewriteTreeError::Rebuild { source, .. } => source,
+            RewriteTreeError::Rebuild {
+                source: RebuildError::Piecewise(error),
+                ..
+            } => error,
+            RewriteTreeError::Rebuild {
+                source: RebuildError::ChildCount { .. },
+                ..
+            } => unreachable!("the tree walk rebuilds a node from exactly its own children"),
         })
     }
 
@@ -755,13 +766,13 @@ impl NodeHandle for Expression {
 /// [`Expression::rebuild_with_children`]; a node is shared while it has more
 /// than one handle.
 impl Tree for Expression {
-    type RebuildError = ExpressionBuildError;
+    type RebuildError = RebuildError;
 
     fn children(&self) -> impl Iterator<Item = &Self> {
         Expression::children(self)
     }
 
-    fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, ExpressionBuildError> {
+    fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, RebuildError> {
         Expression::rebuild_with_children(self, children)
     }
 
@@ -872,10 +883,10 @@ impl LogicalExpression {
 ///
 /// # Errors
 ///
-/// Returns [`ExpressionBuildError::EmptyPiecewise`] if `case_count` is zero.
-pub(super) fn validate_case_count(case_count: usize) -> Result<(), ExpressionBuildError> {
+/// Returns [`PiecewiseError::NoCases`] if `case_count` is zero.
+pub(super) fn validate_case_count(case_count: usize) -> Result<(), PiecewiseError> {
     if case_count == 0 {
-        return Err(ExpressionBuildError::EmptyPiecewise);
+        return Err(PiecewiseError::NoCases);
     }
     Ok(())
 }
@@ -888,14 +899,14 @@ pub(super) fn validate_case_count(case_count: usize) -> Result<(), ExpressionBui
 ///
 /// # Errors
 ///
-/// Returns [`ExpressionBuildError::NonBooleanConditionLiteral`] naming
+/// Returns [`PiecewiseError::NonBooleanConditionLiteral`] naming
 /// `case_index` if `condition` is not a Boolean.
 pub(super) fn validate_condition_literal(
     case_index: usize,
     condition: &LiteralValue,
-) -> Result<(), ExpressionBuildError> {
+) -> Result<(), PiecewiseError> {
     if !matches!(condition, LiteralValue::Bool(_)) {
-        return Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index });
+        return Err(PiecewiseError::NonBooleanConditionLiteral { case_index });
     }
     Ok(())
 }
@@ -907,11 +918,10 @@ pub(super) fn validate_condition_literal(
 ///
 /// # Errors
 ///
-/// Returns [`ExpressionBuildError::EmptyFunctionName`] if `function_name` is
-/// empty.
-pub(super) fn validate_function_name(function_name: &str) -> Result<(), ExpressionBuildError> {
+/// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
+pub(super) fn validate_function_name(function_name: &str) -> Result<(), FunctionNameError> {
     if function_name.is_empty() {
-        return Err(ExpressionBuildError::EmptyFunctionName);
+        return Err(FunctionNameError::Empty);
     }
     Ok(())
 }
@@ -922,13 +932,13 @@ impl PiecewiseExpression {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpressionBuildError::EmptyPiecewise`] if `cases` is empty,
-    /// and [`ExpressionBuildError::NonBooleanConditionLiteral`] naming the
+    /// Returns [`PiecewiseError::NoCases`] if `cases` is empty, and
+    /// [`PiecewiseError::NonBooleanConditionLiteral`] naming the
     /// first case whose condition is a literal other than a Boolean.
     pub fn try_new(
         cases: Vec<(Expression, Expression)>,
         otherwise: Expression,
-    ) -> Result<Self, ExpressionBuildError> {
+    ) -> Result<Self, PiecewiseError> {
         validate_case_count(cases.len())?;
         for (case_index, (condition, _)) in cases.iter().enumerate() {
             if let ExpressionKind::Literal(literal) = condition.kind() {
@@ -959,12 +969,11 @@ impl CallExpression {
     ///
     /// # Errors
     ///
-    /// Returns [`ExpressionBuildError::EmptyFunctionName`] if
-    /// `function_name` is empty.
+    /// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
     pub fn try_new(
         function_name: &str,
         arguments: Vec<Expression>,
-    ) -> Result<Self, ExpressionBuildError> {
+    ) -> Result<Self, FunctionNameError> {
         validate_function_name(function_name)?;
         Ok(Self {
             function_name: Arc::from(function_name),

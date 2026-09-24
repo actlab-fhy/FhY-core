@@ -24,7 +24,7 @@ use num_bigint::BigInt;
 
 use crate::identifier::Identifier;
 
-use super::error::ExpressionBuildError;
+use super::error::{FunctionNameError, PiecewiseError};
 use super::literal::LiteralValue;
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
@@ -482,13 +482,13 @@ impl Not for &Expression {
 ///
 /// # Errors
 ///
-/// Returns [`ExpressionBuildError::EmptyPiecewise`] if `cases` is empty, and
-/// [`ExpressionBuildError::NonBooleanConditionLiteral`] naming the first
+/// Returns [`PiecewiseError::NoCases`] if `cases` is empty, and
+/// [`PiecewiseError::NonBooleanConditionLiteral`] naming the first
 /// case whose condition is a literal other than a Boolean.
 pub fn build_piecewise<C, V, O>(
     cases: impl IntoIterator<Item = (C, V)>,
     otherwise: O,
-) -> Result<Expression, ExpressionBuildError>
+) -> Result<Expression, PiecewiseError>
 where
     C: IntoOperand,
     V: IntoOperand,
@@ -505,9 +505,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`ExpressionBuildError::EmptyFunctionName`] if `function_name` is
-/// empty.
-pub fn build_call<I>(function_name: &str, arguments: I) -> Result<Expression, ExpressionBuildError>
+/// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
+pub fn build_call<I>(function_name: &str, arguments: I) -> Result<Expression, FunctionNameError>
 where
     I: IntoIterator,
     I::Item: IntoOperand,

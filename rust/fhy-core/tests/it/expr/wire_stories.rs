@@ -15,8 +15,8 @@ use expression_support::{
     build_identifier, build_literal,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
-    UnaryOperation, build_call, build_piecewise,
+    BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, LiteralValue,
+    PiecewiseError, UnaryOperation, build_call, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -658,7 +658,7 @@ fn expression_deserialize_rejects_a_malformed_node(
         "__type__": "piecewise_expression",
         "__data__": {"conditions": [], "values": [], "otherwise": ahead}
     }),
-    ExpressionBuildError::EmptyPiecewise
+    PiecewiseError::NoCases.to_string()
 )]
 #[case::numeric_condition(
     |ahead: Value| json!({
@@ -669,7 +669,7 @@ fn expression_deserialize_rejects_a_malformed_node(
             "otherwise": build_literal_wire(&json!(0))
         }
     }),
-    ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
+    PiecewiseError::NonBooleanConditionLiteral { case_index: 1 }.to_string()
 )]
 #[case::text_condition(
     |ahead: Value| json!({
@@ -680,20 +680,20 @@ fn expression_deserialize_rejects_a_malformed_node(
             "otherwise": ahead
         }
     }),
-    ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+    PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }.to_string()
 )]
 #[case::empty_function_name(
     |ahead: Value| json!({
         "__type__": "call_expression",
         "__data__": {"function_name": "", "arguments": [ahead]}
     }),
-    ExpressionBuildError::EmptyFunctionName
+    FunctionNameError::Empty.to_string()
 )]
 fn expression_deserialize_rejects_a_node_its_constructor_refuses(
     #[case] build_refused: fn(Value) -> Value,
-    #[case] expected: ExpressionBuildError,
+    #[case] expected: String,
 ) {
-    assert_refused_before_any_restore(build_refused, &expected.to_string());
+    assert_refused_before_any_restore(build_refused, &expected);
 }
 
 /// Test a piecewise nested below a sum is refused for a numeric condition,
@@ -713,7 +713,7 @@ fn expression_deserialize_rejects_a_nested_numeric_condition() {
     );
     let expected = format!(
         "in `right`: {}",
-        ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+        PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }
     );
 
     assert_refused_before_any_restore(|_| nested, &expected);

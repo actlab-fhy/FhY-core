@@ -29,7 +29,8 @@ pub use display::{
     ExpressionDisplay, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation,
 };
 pub use error::{
-    BooleanPosition, ExpressionBuildError, NonBooleanLogicalOperandError, NonInjectiveRenamingError,
+    BooleanPosition, FunctionNameError, NonBooleanLogicalOperandError, NonInjectiveRenamingError,
+    PiecewiseError, RebuildError,
 };
 pub use literal::{Decimal, LiteralTextError, LiteralValue};
 pub use node::{

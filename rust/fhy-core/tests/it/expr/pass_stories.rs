@@ -21,8 +21,8 @@ use fhy_core::expr::pattern::{
     RewriteRuleApplier, apply_rewrite_rules,
 };
 use fhy_core::expr::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionPrettyFormatter, FormatOptions,
-    IdentifierStyle, Notation, register_expression_passes,
+    BinaryOperation, Expression, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle,
+    Notation, PiecewiseError, RebuildError, register_expression_passes,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
@@ -379,7 +379,7 @@ fn rewrite_rule_applier_execute_fails_with_the_rebuild_error() {
     assert_eq!(rule_name.as_deref(), Some("c -> 1"));
     assert_eq!(
         source,
-        &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+        &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
     );
     let levels: Vec<DiagnosticLevel> = error.diagnostics().iter().map(Diagnostic::level).collect();
     assert_eq!(levels, [DiagnosticLevel::Info, DiagnosticLevel::Error]);

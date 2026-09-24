@@ -20,9 +20,8 @@ use expression_support::{
     build_literal_strategy, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expr::{
-    AlphaRenaming, Decimal, Expression, ExpressionBuildError, ExpressionKind, FunctionSort,
-    LiteralValue, SortLookup, SymbolType, build_piecewise, validate_logical_operands,
-    validate_predicate,
+    AlphaRenaming, Decimal, Expression, ExpressionKind, FunctionSort, LiteralValue, PiecewiseError,
+    SortLookup, SymbolType, build_piecewise, validate_logical_operands, validate_predicate,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -214,7 +213,7 @@ proptest! {
             Err(error) => {
                 prop_assert!(is_refused, "refused with {:?}", error);
                 prop_assert!(
-                    matches!(error, ExpressionBuildError::NonBooleanConditionLiteral { .. }),
+                    matches!(error, PiecewiseError::NonBooleanConditionLiteral { .. }),
                     "refused with {:?}",
                     error
                 );

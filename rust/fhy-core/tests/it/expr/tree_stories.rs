@@ -10,7 +10,7 @@ use crate::support::stack as stack_support;
 
 use expression_support::{build_call_or_panic, build_deep_sum, build_identifier, build_literal};
 use fhy_core::expr::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
+    BinaryOperation, Expression, ExpressionKind, LiteralValue, PiecewiseError, RebuildError,
     UnaryOperation, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
@@ -206,7 +206,7 @@ fn expression_tree_rebuild_refuses_a_wrong_child_count() {
 
     assert_eq!(
         result.expect_err("the child count is wrong"),
-        ExpressionBuildError::ChildCountMismatch {
+        RebuildError::ChildCount {
             expected: 1,
             actual: 0
         }
@@ -328,7 +328,7 @@ fn rewrite_tree_reports_a_refused_expression_rebuild() {
     assert_eq!(children[0], build_literal(1));
     assert_eq!(
         source,
-        &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+        &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
     );
 }
 

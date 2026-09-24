@@ -21,8 +21,8 @@ use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
-    UnaryOperation, build_piecewise,
+    BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, LiteralValue,
+    PiecewiseError, RebuildError, UnaryOperation, build_piecewise,
 };
 use hashing_support::hash_of;
 use pattern_support::{
@@ -1734,18 +1734,33 @@ fn callback_error_source_is_the_wrapped_errors_source() {
     );
 }
 
-/// Test a refused node build converts into a callback error wrapping it.
+/// Test each refused node build converts into a callback error wrapping it.
 #[test]
-fn callback_error_from_expression_build_error_wraps_it() {
-    let build_error = ExpressionBuildError::EmptyFunctionName;
+fn callback_error_from_a_build_error_wraps_it() {
+    let piecewise_error = PiecewiseError::NoCases;
+    let rebuild_error = RebuildError::ChildCount {
+        expected: 2,
+        actual: 1,
+    };
+    let name_error = FunctionNameError::Empty;
 
-    let error = CallbackError::from(build_error.clone());
+    let from_piecewise = CallbackError::from(piecewise_error);
+    let from_rebuild = CallbackError::from(rebuild_error.clone());
+    let from_name = CallbackError::from(name_error);
 
     assert_eq!(
-        error.inner().downcast_ref::<ExpressionBuildError>(),
-        Some(&build_error)
+        from_piecewise.inner().downcast_ref::<PiecewiseError>(),
+        Some(&piecewise_error)
     );
-    assert_eq!(error.to_string(), build_error.to_string());
+    assert_eq!(
+        from_rebuild.inner().downcast_ref::<RebuildError>(),
+        Some(&rebuild_error)
+    );
+    assert_eq!(
+        from_name.inner().downcast_ref::<FunctionNameError>(),
+        Some(&name_error)
+    );
+    assert_eq!(from_piecewise.to_string(), piecewise_error.to_string());
 }
 
 /// Test a refused literal text converts into a callback error wrapping it.
