@@ -1,7 +1,7 @@
 //! User-story tests for `fhy_core::interned`, modeling a MOGA-style
 //! `ResourceKind` tag with builtin canonical constants.
 //!
-//! Public API only. These tests share `ResourceKind`'s process-wide registry
+//! These tests share `ResourceKind`'s process-wide registry
 //! and run in parallel, so none of them clears it, and a test that needs an
 //! unseen key uses one named after the test.
 
@@ -23,7 +23,7 @@ impl Interned for ResourceKind {
         &self.name
     }
 
-    fn intern_registry() -> &'static InternRegistry<ResourceKind> {
+    fn intern_registry() -> &'static InternRegistry<Self> {
         static REGISTRY: InternRegistry<ResourceKind> =
             InternRegistry::with_defaults(create_builtin_kinds);
         &REGISTRY
@@ -79,8 +79,6 @@ fn resource_kind_reconstruction_returns_the_builtin_constant() {
     assert_eq!(reconstructed.description, MEMORY.description);
 }
 
-/// Test interning a brand-new kind makes it the canonical instance for its
-/// key.
 #[test]
 fn resource_kind_new_kind_becomes_canonical() {
     let key = "resource_kind_new_kind_becomes_canonical";

@@ -1,9 +1,9 @@
 //! User-story tests for `fhy_core::identifier`: fresh ids, and the fixed ids
 //! of the identifiers this crate ships.
 //!
-//! Public API only. These tests share the process-global id counter with
-//! every other test in the binary, so they only compare ids they allocated
-//! themselves or the fixed reserved ids, and decode only ids already issued.
+//! These tests share the process-global id counter with every other test in
+//! the binary, so they only compare ids they allocated themselves or the fixed
+//! reserved ids, and decode only ids already issued.
 
 use std::collections::HashSet;
 
@@ -15,14 +15,11 @@ use fhy_core::op_attribute::OpAttribute;
 use fhy_core::value_domain::ValueDomain;
 use serde_json::json;
 
-/// Test the reserved block holds the ids `0..65_536`.
 #[test]
 fn the_reserved_block_holds_65536_ids() {
     assert_eq!(RESERVED_ID_COUNT, 65_536);
 }
 
-/// Test identifiers created with one name hint are distinct: a name hint
-/// never decides an identifier's id.
 #[test]
 fn identifiers_created_with_one_name_hint_are_distinct() {
     let first = Identifier::new("accumulator");
@@ -62,7 +59,6 @@ fn composed_function_parameters_are_pairwise_distinct_and_unaliased() {
     }
 }
 
-/// Test fresh identifiers never take an id from the reserved block.
 #[test]
 fn fresh_identifiers_are_never_reserved() {
     let ids: Vec<u64> = (0..1_000).map(|_| Identifier::new("fresh").id()).collect();

@@ -1,13 +1,12 @@
 //! User-story tests for `fhy_core::op_attribute` and `fhy_core::value_domain`.
 //!
-//! Public API only. These tests share the process-wide `OpAttribute` and
-//! `ValueDomain` registries, which are append-only, and each story registers
-//! identifiers of its own.
+//! These tests share the process-wide `OpAttribute` and `ValueDomain`
+//! registries, which are append-only, and each story registers identifiers of
+//! its own.
 
 use crate::support::stack as stack_support;
 
 use std::collections::HashSet;
-use std::sync::LazyLock;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, Interned};
@@ -31,27 +30,22 @@ impl StoryOp {
         }
     }
 
-    /// Return whether the op carries `tag`.
     fn has_tag(&self, tag: &Canonical<OpAttribute>) -> bool {
         self.tags.contains(tag)
     }
 
-    /// Return how many distinct tags the op carries.
     fn count_tags(&self) -> usize {
         self.tags.len()
     }
 }
 
-/// Name of the layer-specific attribute this story registers for itself.
-static IDEMPOTENT_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new("tagging-story-idempotent"));
-
 /// Test an op's tag set holds shipped and layer-registered attributes, and a
 /// same-name `OpAttribute` collapses into the existing entry.
 #[test]
 fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
+    let idempotent_name = Identifier::new("tagging-story-idempotent");
     let idempotent = OpAttribute::register(
-        IDEMPOTENT_NAME.clone(),
+        idempotent_name.clone(),
         "Applying the op twice changes nothing.",
     );
 
@@ -67,26 +61,16 @@ fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     assert!(op.has_tag(&idempotent));
     assert!(!op.has_tag(OpAttribute::associative()));
 
-    let same_name_again = OpAttribute::register(IDEMPOTENT_NAME.clone(), "a different description");
+    let same_name_again = OpAttribute::register(idempotent_name, "a different description");
     let op_with_repeat = StoryOp::create([
         OpAttribute::commutative().clone(),
         OpAttribute::pure().clone(),
-        idempotent.clone(),
+        idempotent,
         same_name_again,
     ]);
 
     assert_eq!(op_with_repeat.count_tags(), 3);
 }
-
-/// Name of this story's middle-tier domain, a child of `ValueDomain::data()`.
-static TENSOR_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-tensor"));
-
-/// Name of this story's leaf domain, a child of the tensor domain.
-static TILE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-tile"));
-
-/// Name of this story's domain on an unrelated branch, a child of
-/// `ValueDomain::address()`.
-static TOKEN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-token"));
 
 /// Test a three-level domain hierarchy registered under `ValueDomain::data()`
 /// relates each level to its ancestors via `is_subdomain_of`, and relates
@@ -94,16 +78,19 @@ static TOKEN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("doma
 #[test]
 fn a_three_level_domain_hierarchy_relates_its_levels() {
     let tensor = ValueDomain::register_child(
-        TENSOR_NAME.clone(),
+        Identifier::new("domain-story-tensor"),
         "A tensor of concrete data.",
         ValueDomain::data(),
     )
     .expect("the domain registers");
-    let tile =
-        ValueDomain::register_child(TILE_NAME.clone(), "A tile carved from a tensor.", &tensor)
-            .expect("the domain registers");
+    let tile = ValueDomain::register_child(
+        Identifier::new("domain-story-tile"),
+        "A tile carved from a tensor.",
+        &tensor,
+    )
+    .expect("the domain registers");
     let token = ValueDomain::register_child(
-        TOKEN_NAME.clone(),
+        Identifier::new("domain-story-token"),
         "A control token, unrelated to the data branch.",
         ValueDomain::address(),
     )
@@ -117,14 +104,6 @@ fn a_three_level_domain_hierarchy_relates_its_levels() {
     assert!(!token.is_subdomain_of(ValueDomain::data()));
 }
 
-/// Name of the attribute this story persists.
-static PERSISTED_ATTRIBUTE_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new("persistence-story-attribute"));
-
-/// Name of the domain this story persists, a child of `ValueDomain::address()`.
-static PERSISTED_DOMAIN_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new("persistence-story-domain"));
-
 /// A tagged operation as it would be written to and read back from storage.
 #[derive(Serialize, Deserialize)]
 struct PersistedOp {
@@ -137,10 +116,12 @@ struct PersistedOp {
 /// with.
 #[test]
 fn persisting_and_restoring_a_tagged_operation() {
-    let attribute =
-        OpAttribute::register(PERSISTED_ATTRIBUTE_NAME.clone(), "a persisted attribute");
+    let attribute = OpAttribute::register(
+        Identifier::new("persistence-story-attribute"),
+        "a persisted attribute",
+    );
     let domain = ValueDomain::register_child(
-        PERSISTED_DOMAIN_NAME.clone(),
+        Identifier::new("persistence-story-domain"),
         "a persisted domain",
         ValueDomain::address(),
     )
@@ -186,6 +167,16 @@ fn encode_chain(levels: &[(&Identifier, &str)]) -> Value {
         .map(|&(name, description)| Level { name, description })
         .collect();
     serde_json::to_value(levels).expect("the chain encodes")
+}
+
+fn build_deep_levels(names: &[Identifier]) -> Vec<Level<'_>> {
+    names
+        .iter()
+        .map(|name| Level {
+            name,
+            description: "deep",
+        })
+        .collect()
 }
 
 /// Test decoding a chain of three domains no registry knows registers every
@@ -262,28 +253,14 @@ fn a_rejected_payload_leaves_the_canonical_domain_unchanged() {
 /// level: the chain is encoded flat and decoded one level at a time.
 #[test]
 fn value_domain_decodes_a_deep_chain_on_a_small_stack() {
-    let json_names: Vec<Identifier> = (0..SMALL_STACK_DEPTH)
-        .map(|_| Identifier::new("deep-json-level"))
-        .collect();
-    let postcard_names: Vec<Identifier> = (0..SMALL_STACK_DEPTH)
-        .map(|_| Identifier::new("deep-postcard-level"))
-        .collect();
-    let json_levels: Vec<Level<'_>> = json_names
-        .iter()
-        .map(|name| Level {
-            name,
-            description: "deep",
-        })
-        .collect();
-    let postcard_levels: Vec<Level<'_>> = postcard_names
-        .iter()
-        .map(|name| Level {
-            name,
-            description: "deep",
-        })
-        .collect();
-    let json = serde_json::to_string(&json_levels).expect("the chain encodes");
-    let bytes = postcard::to_allocvec(&postcard_levels).expect("the chain encodes");
+    let [json_names, postcard_names] = ["deep-json-level", "deep-postcard-level"].map(|hint| {
+        (0..SMALL_STACK_DEPTH)
+            .map(|_| Identifier::new(hint))
+            .collect::<Vec<_>>()
+    });
+    let json = serde_json::to_string(&build_deep_levels(&json_names)).expect("the chain encodes");
+    let bytes =
+        postcard::to_allocvec(&build_deep_levels(&postcard_names)).expect("the chain encodes");
 
     let (json_leaf, postcard_leaf) = run_on_small_stack(move || {
         let from_json: Canonical<ValueDomain> =
