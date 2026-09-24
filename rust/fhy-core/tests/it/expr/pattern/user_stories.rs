@@ -9,7 +9,7 @@ use crate::support::pattern as pattern_support;
 
 use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::pattern::{Capture, MatchBindings, Pattern, RewriteRule};
-use fhy_core::expr::{BinaryOperation, Expression, UnaryOperation};
+use fhy_core::expr::{BinaryOperation, Expression, ExpressionKind, UnaryOperation};
 use pattern_support::{
     build_double_application_rule, build_x_minus_x_rule, build_x_plus_zero_rule,
     build_x_times_one_rule, build_zero_plus_x_rule, rewrite,
@@ -88,6 +88,73 @@ fn algebraic_simplifier_handles_a_left_zero_addend() {
     let outcome = rewrite(&expression, &build_algebraic_rule_set());
 
     assert!(Expression::ptr_eq(outcome.output(), &a));
+}
+
+/// Return the normalizer `c + x -> x + c` for a literal `c` and an `x` that
+/// is not one, which returns a sum already in that form as it is.
+fn build_literal_last_normalizer() -> RewriteRule {
+    let (left, right, sum) = (
+        Capture::new("left"),
+        Capture::new("right"),
+        Capture::new("sum"),
+    );
+    let pattern = Pattern::binary(
+        BinaryOperation::Add,
+        Pattern::capture(&left),
+        Pattern::capture(&right),
+    )
+    .captured_as(&sum);
+    RewriteRule::new(pattern, move |bindings| {
+        let is_literal =
+            |capture: &Capture| matches!(bindings[capture].kind(), ExpressionKind::Literal(_));
+        if is_literal(&left) && !is_literal(&right) {
+            return Ok(Expression::new_binary(
+                BinaryOperation::Add,
+                &bindings[&right],
+                &bindings[&left],
+            ));
+        }
+        Ok(bindings[&sum].clone())
+    })
+    .with_name("c + x -> x + c")
+}
+
+/// Test the simplifier with a normalizer that returns sums already normal
+/// as they are reaches a fixpoint in a caller-driven loop: the normalizer
+/// fires only where it changes a sum, so the loop stops once nothing does.
+#[test]
+fn algebraic_simplifier_with_a_normalizing_rule_reaches_a_fixpoint() {
+    let (_, a) = build_identifier("a");
+    let (_, b) = build_identifier("b");
+    let expression = Expression::new_binary(
+        BinaryOperation::Add,
+        Expression::new_binary(
+            BinaryOperation::Multiply,
+            Expression::new_binary(BinaryOperation::Add, 0, &a),
+            1,
+        ),
+        Expression::new_binary(BinaryOperation::Add, 2, &b),
+    );
+    let mut rules = vec![build_literal_last_normalizer()];
+    rules.extend(build_algebraic_rule_set());
+    let mut current = expression;
+    let mut walks = 0;
+
+    loop {
+        let outcome = rewrite(&current, &rules);
+        walks += 1;
+        assert!(walks < 10, "the fixpoint loop does not stop");
+        if !outcome.is_changed() {
+            break;
+        }
+        current = outcome.into_output();
+    }
+
+    assert_eq!(
+        current,
+        Expression::new_binary(BinaryOperation::Add, &a, &b + 2)
+    );
+    assert_eq!(walks, 3);
 }
 
 // =============================================================================

@@ -15,7 +15,9 @@ use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use expression_support::{build_callee, build_deep_sum, build_identifier, build_literal};
+use expression_support::{
+    build_callee, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
+};
 use fhy_core::expr::pattern::{
     CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome,
     RewriteRule, Rule, apply_rewrite_rules,
@@ -152,6 +154,17 @@ fn rewrite_rule_new_matches_with_the_given_pattern(
     let rewritten = rewrite_root(&rule, &expression);
 
     assert_eq!(rewritten, expected);
+}
+
+/// Test a rule whose rewrite returns the expression it was tried on
+/// declines.
+#[test]
+fn rewrite_rule_apply_returning_its_input_declines() {
+    let expression = build_literal(5);
+
+    let rewritten = rewrite_root(&build_identity_rule(), &expression);
+
+    assert_eq!(rewritten, None);
 }
 
 /// Test a rule's name is the last one given.
@@ -466,8 +479,8 @@ fn apply_rewrite_rules_reports_a_change_when_a_rule_fires() {
     assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
 }
 
-/// Test a rule firing at the root and returning the root itself leaves the
-/// tree unchanged, although it fired.
+/// Test a rule returning the root itself does not fire, and leaves the
+/// tree unchanged.
 #[test]
 fn apply_rewrite_rules_with_an_identity_rewrite_at_the_root_is_unchanged() {
     let expression = build_literal(5);
@@ -476,27 +489,59 @@ fn apply_rewrite_rules_with_an_identity_rewrite_at_the_root_is_unchanged() {
 
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
-    assert_eq!(describe_fired(&outcome), vec![(0, Some("x -> x"))]);
+    assert!(outcome.fired().is_empty(), "fired {:?}", outcome.fired());
 }
 
-/// Test a rule firing below the root and returning the node it matched
-/// changes nothing either: the root is not rebuilt, and the output is the
-/// input itself.
+/// Test a rule returning the node it matched below the root does not fire
+/// either: the root is not rebuilt, the output is the input itself, and the
+/// operand keeps its handle.
 #[test]
 fn apply_rewrite_rules_with_an_identity_rewrite_below_the_root_is_unchanged() {
     let (_, x) = build_identifier("x");
     let expression = -&x;
-    let x = Capture::new("x");
+    let captured = Capture::new("x");
     let rule = RewriteRule::new(
-        Pattern::any_identifier().captured_as(&x),
-        rewrite_to_capture(&x),
+        Pattern::any_identifier().captured_as(&captured),
+        rewrite_to_capture(&captured),
     );
 
     let outcome = rewrite(&expression, &[rule]);
 
     assert!(!outcome.is_changed());
     assert!(Expression::ptr_eq(outcome.output(), &expression));
-    assert_eq!(describe_fired(&outcome), vec![(0, None)]);
+    assert!(outcome.fired().is_empty(), "fired {:?}", outcome.fired());
+    let ExpressionKind::Unary(node) = outcome.output().kind() else {
+        panic!("a negation at the root");
+    };
+    assert!(Expression::ptr_eq(node.operand(), &x));
+}
+
+/// Test a rule returning the node it matched gives way to the next rule.
+#[test]
+fn apply_rewrite_rules_tries_the_next_rule_after_an_identity_rewrite() {
+    let (_, a) = build_identifier("a");
+
+    let outcome = rewrite(
+        &build_plus_zero(&a),
+        &[build_identity_rule(), build_x_plus_zero_rule()],
+    );
+
+    assert!(Expression::ptr_eq(outcome.output(), &a));
+    assert_eq!(describe_fired(&outcome), [(1, Some("x + 0 -> x"))]);
+}
+
+/// Test an identity rule over a doubling DAG 64 levels deep leaves it
+/// unchanged, without a firing.
+#[test]
+fn apply_rewrite_rules_with_an_identity_rule_on_a_doubling_dag_is_unchanged() {
+    let (_, x) = build_identifier("x");
+    let dag = build_doubling_dag(&build_plus_zero(&x), 64);
+
+    let outcome = rewrite(&dag, &[build_identity_rule()]);
+
+    assert!(Expression::ptr_eq(outcome.output(), &dag));
+    assert!(!outcome.is_changed());
+    assert!(outcome.fired().is_empty());
 }
 
 /// Test `into_output` gives the rewritten tree.
@@ -772,9 +817,9 @@ fn apply_rewrite_rules_rewrites_a_doubling_dag_once_per_distinct_node() {
 
     assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
     let mut node = outcome.output();
-    for _ in 0..levels {
+    for level in 0..levels {
         let ExpressionKind::Binary(product) = node.kind() else {
-            panic!("expected a product, got {node:?}");
+            panic!("level {level} is not a product");
         };
         assert!(Expression::ptr_eq(product.left(), product.right()));
         node = product.left();
@@ -976,6 +1021,30 @@ fn apply_rewrite_rules_supports_a_caller_driven_fixpoint() {
     }
 
     assert!(Expression::ptr_eq(&current, &x));
+    assert_eq!(walks, 2);
+}
+
+/// Test a caller-driven fixpoint stops when a rule returns its input
+/// wherever it matches: the identity rule never fires, so the walk reports
+/// a change only while `x + 0 -> x` fires.
+#[test]
+fn apply_rewrite_rules_caller_driven_fixpoint_terminates_with_an_identity_rule() {
+    let (_, a) = build_identifier("a");
+    let rules = [build_identity_rule(), build_x_plus_zero_rule()];
+    let mut current = build_plus_zero(&build_plus_zero(&a));
+    let mut walks = 0;
+
+    loop {
+        let outcome = rewrite(&current, &rules);
+        walks += 1;
+        assert!(walks < 10, "the fixpoint loop does not stop");
+        if !outcome.is_changed() {
+            break;
+        }
+        current = outcome.into_output();
+    }
+
+    assert!(Expression::ptr_eq(&current, &a));
     assert_eq!(walks, 2);
 }
 

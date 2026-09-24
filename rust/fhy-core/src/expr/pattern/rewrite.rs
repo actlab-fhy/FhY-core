@@ -70,6 +70,10 @@ type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send 
 pub trait Rule {
     /// Return the replacement for `expression`, or `Ok(None)` to decline.
     ///
+    /// Returning a handle to `expression` itself ([`Expression::ptr_eq`])
+    /// means the same as declining: the walk records no firing and tries
+    /// the next rule.
+    ///
     /// # Errors
     ///
     /// Returns an error to stop the walk trying the rule;
@@ -225,7 +229,9 @@ impl<R: Rule> Rewriter<Expression> for RuleApplier<'_, R> {
                 rule_name: self.rule_name(rule_index),
                 source,
             })?;
-            if let Some(expression) = replacement {
+            if let Some(expression) =
+                replacement.filter(|expression| !Expression::ptr_eq(expression, node))
+            {
                 self.fired.push(FiredRule {
                     rule_index,
                     name: self.rule_name(rule_index),
@@ -365,7 +371,8 @@ impl RewriteRule {
 
     /// Try this rule once at the root of `expression` and return the
     /// replacement, or `None` if the pattern does not match, a guard
-    /// refuses, or the rewrite declines.
+    /// refuses, or the rewrite declines or returns `expression` itself
+    /// ([`Expression::ptr_eq`]).
     ///
     /// The pattern is matched first, the guards run in order only on a
     /// match, and the rewrite only when every guard allows it.
@@ -384,7 +391,8 @@ impl RewriteRule {
                 return Ok(None);
             }
         }
-        (self.rewrite)(&bindings)
+        let replacement = (self.rewrite)(&bindings)?;
+        Ok(replacement.filter(|replacement| !Expression::ptr_eq(replacement, expression)))
     }
 }
 
@@ -456,9 +464,10 @@ impl RewriteOutcome {
     /// exactly when [`output`](Self::output) and the input are not
     /// [`Expression::ptr_eq`].
     ///
-    /// A tree in which no rule fired is unchanged. A rule that fires and
-    /// returns the node it matched, at the root or below it, leaves that
-    /// node unchanged too, so no ancestor is rebuilt on its account.
+    /// A tree in which no rule fired is unchanged, and a rule that returns
+    /// the node it was tried on does not fire, so no firing implies no
+    /// change. A rule that builds a fresh node equal to the one it matched
+    /// fires and counts as a change.
     #[must_use]
     pub fn is_changed(&self) -> bool {
         self.changed
@@ -575,15 +584,20 @@ impl Error for RewriteError {
 /// order. A node with a rewritten child is rebuilt from the rewritten
 /// children, keeping the handles of the children no rule touched. The rules
 /// are then tried, in order, on the rebuilt node (or on the node itself when
-/// no child changed), and the first that fires replaces it. A replacement is
-/// not rewritten again in the same pass; a caller wanting a fixpoint repeats
-/// the call until the outcome is unchanged. A node that occurs in several
-/// places is rewritten once and its result reused at every occurrence, so a
-/// tree sharing its subtrees costs time linear in its distinct nodes.
+/// no child changed), and the first that fires replaces it. A rule fires
+/// when it returns a replacement other than the node it was tried on
+/// itself; a rule that declines or returns that node is not recorded, and
+/// the next rule is tried. A replacement is not rewritten again in the same
+/// pass. A node that occurs in several places is rewritten once and its
+/// result reused at every occurrence, so a tree sharing its subtrees costs
+/// time linear in its distinct nodes.
 ///
-/// When no rule fires anywhere, or every rule that fires returns the node it
-/// matched, the output is a handle to `expression` itself. See [`RewriteOutcome::is_changed`] for the exact meaning of a
-/// change.
+/// When no rule fires anywhere, the output is a handle to `expression`
+/// itself; see [`RewriteOutcome::is_changed`] for the exact meaning of a
+/// change. A caller wanting a fixpoint repeats the call until the outcome
+/// is unchanged. That loop terminates for rules that return their input or
+/// a subterm of it, but not for a rule that keeps building a fresh node
+/// equal to the one it matched, which counts as a change every time.
 ///
 /// The walk keeps its own work stack, so a tree of any depth rewrites within
 /// the default 2 MiB thread stack when the rules' patterns are shallow.

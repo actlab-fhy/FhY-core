@@ -501,15 +501,6 @@ fn build_operand_pair_strategy() -> impl Strategy<Value = (Expression, Expressio
     ]
 }
 
-/// Return the number of literal leaves in `expression`, counting each
-/// occurrence.
-fn count_literal_leaves(expression: &Expression) -> usize {
-    match expression.kind() {
-        ExpressionKind::Literal(_) => 1,
-        _ => expression.children().map(count_literal_leaves).sum(),
-    }
-}
-
 proptest! {
     /// Test a pattern mirroring a tree matches it and binds each leaf
     /// capture to a handle to that leaf, in leaf order.
@@ -726,11 +717,10 @@ proptest! {
         );
     }
 
-    /// Test a rule rewriting every literal to itself fires once per literal
-    /// occurrence and never changes the tree: the output is the input
-    /// itself.
+    /// Test a rule rewriting every literal to itself never fires and never
+    /// changes the tree: the output is the input itself.
     #[test]
-    fn identity_rewrite_never_changes_the_tree(
+    fn identity_rewrite_never_fires_and_keeps_the_input(
         expression in build_expression_strategy(true)
     ) {
         let x = Capture::new("x");
@@ -738,11 +728,10 @@ proptest! {
             let x = x.clone();
             move |bindings| rewrite_to_x(bindings, &x)
         });
-        let literal_count = count_literal_leaves(&expression);
 
         let outcome = apply_rewrite_rules(&expression, &[rule]).expect("no callback fails");
 
-        prop_assert_eq!(outcome.fired().len(), literal_count);
+        prop_assert!(outcome.fired().is_empty(), "fired {:?}", outcome.fired());
         prop_assert!(!outcome.is_changed());
         prop_assert!(Expression::ptr_eq(outcome.output(), &expression));
     }

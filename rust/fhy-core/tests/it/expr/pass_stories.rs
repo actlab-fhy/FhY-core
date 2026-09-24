@@ -79,6 +79,13 @@ fn build_move_zero_right_rule() -> RewriteRule {
     .with_name("0 + x -> x + 0")
 }
 
+/// Return the rule rewriting any node to itself through a capture, named
+/// `x -> x`.
+fn build_identity_rule() -> RewriteRule {
+    let x = Capture::new("x");
+    RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x)).with_name("x -> x")
+}
+
 /// Return the rewrite error a failed rule-applier run carries as its
 /// source.
 fn expect_rewrite_error(error: &PassError) -> &RewriteError {
@@ -167,20 +174,23 @@ fn rewrite_rule_applier_execute_reports_a_change_when_a_rule_fires() {
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::none());
 }
 
-/// Test a rule firing at the root and returning the root itself leaves the
-/// input unchanged.
+/// Test a rule returning the root itself does not fire: the input is
+/// unchanged, with no firing and no diagnostic.
 #[test]
 fn rewrite_rule_applier_execute_with_an_identity_rewrite_at_the_root_is_unchanged() {
     let expression = build_literal(5);
-    let x = Capture::new("x");
-    let rule = RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x));
-    let mut applier = RewriteRuleApplier::new([rule]);
+    let mut applier = RewriteRuleApplier::new([build_identity_rule()]);
 
     let outcome = applier.execute(&expression).expect("no rule fails");
 
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
-    assert_eq!(describe_fired(applier.fired()), [(0, None)]);
+    assert!(applier.fired().is_empty(), "fired {:?}", applier.fired());
+    assert!(
+        outcome.diagnostics().is_empty(),
+        "{:?}",
+        outcome.diagnostics()
+    );
 }
 
 /// Test the applier's firings are those of its last run: none before the
@@ -438,6 +448,36 @@ fn rewrite_rule_applier_converges_in_a_fixpoint_pass_group() {
         .map(FixpointIterationRecord::is_changed)
         .collect();
     assert_eq!(changes, [true, true, false]);
+}
+
+/// Test the applier converges in a fixpoint group whose rules include one
+/// returning its input: that rule never fires, so the second iteration
+/// changes nothing.
+#[test]
+fn rewrite_rule_applier_converges_in_a_fixpoint_group_with_an_identity_rule() {
+    let (_, a) = build_identifier("a");
+    let expression = build_plus_zero(&build_plus_zero(&a));
+    let mut group = FixpointPassGroup::new(Identifier::new("simplify"));
+    group.add_pass(RewriteRuleApplier::new([
+        build_identity_rule(),
+        build_x_plus_zero_rule(),
+    ]));
+    let mut manager = PassManager::default();
+    manager.add_fixpoint_group(group);
+
+    let result = manager.run(&expression).expect("the group converges");
+
+    assert!(Expression::ptr_eq(result.output(), &a));
+    let [PipelineRecord::FixpointGroup(record)] = result.records() else {
+        panic!("expected one group record, got {:?}", result.records());
+    };
+    assert!(record.is_converged());
+    let changes: Vec<bool> = record
+        .iteration_records()
+        .iter()
+        .map(FixpointIterationRecord::is_changed)
+        .collect();
+    assert_eq!(changes, [true, false]);
 }
 
 // =============================================================================
