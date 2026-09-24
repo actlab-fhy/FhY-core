@@ -136,7 +136,6 @@ mod tests {
 
     use crate::identifier::{HasIdentifier, Identifier};
     use crate::interned::{Canonical, Interned};
-    use crate::test_support::reserve_pinned_id;
 
     /// Return every attribute this module ships as a default.
     fn list_default_attributes() -> [&'static Canonical<OpAttribute>; 4] {
@@ -314,8 +313,8 @@ mod tests {
 
     #[test]
     fn an_attribute_encodes_as_its_name_and_description() {
-        let id = reserve_pinned_id("encode-anchor");
-        let name = Identifier::try_restore(id, "encoded").expect("the id is below the cap");
+        let name = Identifier::new("encoded");
+        let id = name.id();
         let attribute = OpAttribute::register(name, "a description");
 
         let json = serde_json::to_string(&*attribute).unwrap();
@@ -350,7 +349,7 @@ mod tests {
 
     #[test]
     fn decoding_an_unregistered_name_registers_the_decoded_attribute() {
-        let id = reserve_pinned_id("unregistered-decode-anchor");
+        let id = Identifier::new("unregistered-decode").id();
         let json = format!(
             "{{\"name\":{{\"id\":{id},\"name_hint\":\"never-registered\"}},\
              \"description\":\"fresh from decode\"}}"
@@ -359,10 +358,8 @@ mod tests {
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(restored.description(), "fresh from decode");
-        assert_eq!(
-            OpAttribute::intern_registry().get(restored.name()),
-            Some(restored)
-        );
+        let registered = OpAttribute::intern_registry().get(restored.name());
+        assert!(registered.is_some_and(|registered| Canonical::ptr_eq(&registered, &restored)));
     }
 
     #[test]
@@ -391,7 +388,7 @@ mod tests {
         #[case] fields_after_the_name: &str,
         #[case] expected_message: &str,
     ) {
-        let id = reserve_pinned_id("malformed-payload-anchor");
+        let id = Identifier::new("malformed-payload").id();
         let json =
             format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"x\"}}{fields_after_the_name}}}");
 
