@@ -1,529 +1,381 @@
-//! Serialization of expressions in their wire shape.
+//! Serialization of expressions as a flat node table.
 //!
-//! Decoding reads the whole payload into a JSON value, checks it into an
-//! [`ExpressionPayload`] with every identifier still unrestored, and only
-//! then builds the expression, restoring the identifiers, so a refused
-//! payload leaves the identifier id counter untouched.
+//! An expression serializes as the list of its distinct nodes in post-order,
+//! each child referred to by its index in the list, so neither encoding nor
+//! decoding recurses once per tree level, the serde nesting depth is the
+//! same for every tree, and a subtree a DAG shares is written once.
 
-use std::fmt;
-use std::str::FromStr;
+use std::collections::HashMap;
 
-use num_bigint::BigInt;
-use num_traits::ToPrimitive;
 use serde::de::{self, Deserializer};
-use serde::ser::{self, SerializeSeq, SerializeStruct, Serializer};
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value};
 
-use crate::decode;
-use crate::identifier::{Identifier, IdentifierWire};
+use crate::identifier::Identifier;
+use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
-use super::callee::{Callee, FunctionNameError};
-use super::literal::{Decimal, LiteralValue};
+use super::callee::Callee;
+use super::literal::LiteralValue;
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
     PiecewiseExpression, UnaryExpression, validate_case_count, validate_condition_literal,
 };
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
-/// Key of the type id in a node's wire map.
-const TYPE_KEY: &str = "__type__";
-
-/// Key of the fields in a node's wire map.
-const DATA_KEY: &str = "__data__";
-
-/// Type id of a unary node.
-const UNARY_TYPE_ID: &str = "unary_expression";
-
-/// Type id of a binary node.
-const BINARY_TYPE_ID: &str = "binary_expression";
-
-/// Type id of a logical node.
-const LOGICAL_TYPE_ID: &str = "logical_expression";
-
-/// Type id of an identifier reference.
-const IDENTIFIER_TYPE_ID: &str = "identifier_expression";
-
-/// Type id of a literal.
-const LITERAL_TYPE_ID: &str = "literal_expression";
-
-/// Type id of a piecewise node.
-const PIECEWISE_TYPE_ID: &str = "piecewise_expression";
-
-/// Type id of a call.
-const CALL_TYPE_ID: &str = "call_expression";
-
-/// Return the wire type id of `expression`'s node kind.
-fn find_type_id(expression: &Expression) -> &'static str {
-    match expression.kind() {
-        ExpressionKind::Unary(_) => UNARY_TYPE_ID,
-        ExpressionKind::Binary(_) => BINARY_TYPE_ID,
-        ExpressionKind::Logical(_) => LOGICAL_TYPE_ID,
-        ExpressionKind::Identifier(_) => IDENTIFIER_TYPE_ID,
-        ExpressionKind::Literal(_) => LITERAL_TYPE_ID,
-        ExpressionKind::Piecewise(_) => PIECEWISE_TYPE_ID,
-        ExpressionKind::Call(_) => CALL_TYPE_ID,
-    }
-}
-
-/// The `__data__` fields of a node.
-struct NodeFields<'a>(&'a Expression);
-
-/// A literal's `value` field.
-struct LiteralWire<'a>(&'a LiteralValue);
-
-/// A piecewise's `conditions` field or its `values` field.
-struct CaseColumn<'a> {
-    cases: &'a [(Expression, Expression)],
-    is_condition: bool,
-}
-
-impl Serialize for NodeFields<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.0.kind() {
-            ExpressionKind::Unary(node) => {
-                let mut fields = serializer.serialize_struct("UnaryExpression", 2)?;
-                fields.serialize_field("operation", &node.operation())?;
-                fields.serialize_field("operand", node.operand())?;
-                fields.end()
-            }
-            ExpressionKind::Binary(node) => {
-                let mut fields = serializer.serialize_struct("BinaryExpression", 3)?;
-                fields.serialize_field("operation", &node.operation())?;
-                fields.serialize_field("left", node.left())?;
-                fields.serialize_field("right", node.right())?;
-                fields.end()
-            }
-            ExpressionKind::Logical(node) => {
-                let mut fields = serializer.serialize_struct("LogicalExpression", 2)?;
-                fields.serialize_field("operation", &node.operation())?;
-                fields.serialize_field("operands", node.operands())?;
-                fields.end()
-            }
-            ExpressionKind::Identifier(identifier) => {
-                let mut fields = serializer.serialize_struct("IdentifierExpression", 1)?;
-                fields.serialize_field("identifier", identifier)?;
-                fields.end()
-            }
-            ExpressionKind::Literal(value) => {
-                let mut fields = serializer.serialize_struct("LiteralExpression", 1)?;
-                fields.serialize_field("value", &LiteralWire(value))?;
-                fields.end()
-            }
-            ExpressionKind::Piecewise(node) => {
-                let mut fields = serializer.serialize_struct("PiecewiseExpression", 3)?;
-                fields.serialize_field(
-                    "conditions",
-                    &CaseColumn {
-                        cases: node.cases(),
-                        is_condition: true,
-                    },
-                )?;
-                fields.serialize_field(
-                    "values",
-                    &CaseColumn {
-                        cases: node.cases(),
-                        is_condition: false,
-                    },
-                )?;
-                fields.serialize_field("otherwise", node.otherwise())?;
-                fields.end()
-            }
-            ExpressionKind::Call(node) => {
-                let mut fields = serializer.serialize_struct("CallExpression", 2)?;
-                fields.serialize_field("function_name", node.callee().name())?;
-                fields.serialize_field("arguments", node.arguments())?;
-                fields.end()
-            }
-        }
-    }
-}
-
-impl Serialize for CaseColumn<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut column = serializer.serialize_seq(Some(self.cases.len()))?;
-        for (condition, value) in self.cases {
-            column.serialize_element(if self.is_condition { condition } else { value })?;
-        }
-        column.end()
-    }
-}
-
-impl Serialize for LiteralWire<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.0 {
-            LiteralValue::Bool(value) => serializer.serialize_bool(*value),
-            LiteralValue::Int(value) => {
-                if let Some(small) = value.to_i64() {
-                    serializer.serialize_i64(small)
-                } else if let Some(unsigned) = value.to_u64() {
-                    serializer.serialize_u64(unsigned)
-                } else {
-                    Number::from_str(&value.to_string())
-                        .map_err(ser::Error::custom)?
-                        .serialize(serializer)
-                }
-            }
-            LiteralValue::Float(value) if value.is_finite() => serializer.serialize_f64(*value),
-            LiteralValue::Float(value) => Err(ser::Error::custom(format_args!(
-                "the float literal {value} has no wire form"
-            ))),
-            LiteralValue::Decimal(value) => serializer.collect_str(value),
-        }
-    }
-}
-
-/// Every node serializes as a two-key map `{"__type__": <type id>,
-/// "__data__": <fields>}`, with these type ids and fields, in this order:
-///
-/// | Type id | Fields |
-/// |---|---|
-/// | `unary_expression` | `operation` (wire name), `operand` |
-/// | `binary_expression` | `operation` (wire name), `left`, `right` |
-/// | `logical_expression` | `operation` (wire name), `operands` (list of at least two) |
-/// | `identifier_expression` | `identifier` (`{"id", "name_hint"}`) |
-/// | `literal_expression` | `value` |
-/// | `piecewise_expression` | `conditions` (list), `values` (list), `otherwise` |
-/// | `call_expression` | `function_name`, `arguments` (list) |
-///
-/// A literal's `value` is a JSON Boolean, an integer of any size written as
-/// a JSON integer, a float written as a JSON float, or a decimal written as
-/// a string holding its `Display` text. Deserializing reads an integer token
-/// as an integer literal and a float token as a float literal, never the one
-/// as the other, and a string in the literal grammar as a decimal.
-///
-/// An integer in the `i64` range serializes through `serialize_i64`, and
-/// one above it up to `u64::MAX` through `serialize_u64`. Any other integer
-/// serializes as a `serde_json` arbitrary-precision number, which only
-/// `serde_json` writes as an integer; another format receives it as a
-/// struct under `serde_json`'s private number token, holding the decimal
-/// digits as a string. A NaN or infinite float literal has no JSON form and
-/// fails to serialize.
-///
-/// Deserializing checks the whole payload before it restores any identifier:
-/// a payload refused for its structure, an unknown type id, an unknown or
-/// missing field, an unknown operation name, a literal outside the literal
-/// grammar, piecewise condition and value lists of different lengths, an
-/// empty piecewise, a literal case condition other than a Boolean, a
-/// logical node of fewer than two operands, or an empty function name
-/// leaves the identifier id counter untouched. Nested
-/// levels are read before they are checked, which needs a self-describing
-/// format such as JSON.
-///
-/// Serializing and deserializing recurse once per tree level; see
-/// [`Expression`] for the stack a deep tree needs and for the nesting limit
-/// `serde_json` puts on decoding JSON text, which refuses a chain of more
-/// than 62 unary or binary nodes over a leaf.
-impl Serialize for Expression {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut wrapper = serializer.serialize_struct("Expression", 2)?;
-        wrapper.serialize_field(TYPE_KEY, find_type_id(self))?;
-        wrapper.serialize_field(DATA_KEY, &NodeFields(self))?;
-        wrapper.end()
-    }
-}
-
-/// One checked node of an expression payload, with its identifiers still
-/// unrestored.
-enum PayloadNode {
+/// A node of the table as it is read: its data, and its children by index.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum WireNode {
     Unary {
         operation: UnaryOperation,
-        operand: Box<PayloadNode>,
+        operand: u64,
     },
     Binary {
         operation: BinaryOperation,
-        left: Box<PayloadNode>,
-        right: Box<PayloadNode>,
+        left: u64,
+        right: u64,
     },
     Logical {
         operation: LogicalOperation,
-        operands: Vec<PayloadNode>,
+        operands: Vec<u64>,
     },
-    Identifier(IdentifierWire),
+    Identifier(Identifier),
     Literal(LiteralValue),
     Piecewise {
-        cases: Vec<(PayloadNode, PayloadNode)>,
-        otherwise: Box<PayloadNode>,
+        cases: Vec<(u64, u64)>,
+        otherwise: u64,
     },
     Call {
         callee: Callee,
-        arguments: Vec<PayloadNode>,
+        arguments: Vec<u64>,
     },
 }
 
-/// A whole expression payload, checked but not yet built.
+/// A node of the table as it is written, borrowing its data from the
+/// expression: the twin of [`WireNode`], variant for variant.
+#[derive(Serialize)]
+#[serde(rename = "WireNode", rename_all = "snake_case")]
+enum WireNodeRef<'a> {
+    Unary {
+        operation: UnaryOperation,
+        operand: u64,
+    },
+    Binary {
+        operation: BinaryOperation,
+        left: u64,
+        right: u64,
+    },
+    Logical {
+        operation: LogicalOperation,
+        operands: Vec<u64>,
+    },
+    Identifier(&'a Identifier),
+    Literal(&'a LiteralValue),
+    Piecewise {
+        cases: Vec<(u64, u64)>,
+        otherwise: u64,
+    },
+    Call {
+        callee: &'a Callee,
+        arguments: Vec<u64>,
+    },
+}
+
+/// The whole table as it is read.
+#[derive(Deserialize)]
+#[serde(rename = "Expression", deny_unknown_fields)]
+struct ExpressionWire {
+    nodes: Vec<WireNode>,
+}
+
+/// Return the table index of the node at `position`.
+fn to_wire_index(position: usize) -> u64 {
+    u64::try_from(position).unwrap_or(u64::MAX)
+}
+
+/// Build the table node of `node` whose children are at `children`, in
+/// [`Expression::children`] order.
+fn build_wire_node(node: &Expression, children: Vec<u64>) -> WireNodeRef<'_> {
+    let child = |position: usize| children.get(position).copied().unwrap_or(u64::MAX);
+    match node.kind() {
+        ExpressionKind::Unary(unary) => WireNodeRef::Unary {
+            operation: unary.operation(),
+            operand: child(0),
+        },
+        ExpressionKind::Binary(binary) => WireNodeRef::Binary {
+            operation: binary.operation(),
+            left: child(0),
+            right: child(1),
+        },
+        ExpressionKind::Logical(logical) => WireNodeRef::Logical {
+            operation: logical.operation(),
+            operands: children,
+        },
+        ExpressionKind::Identifier(identifier) => WireNodeRef::Identifier(identifier),
+        ExpressionKind::Literal(literal) => WireNodeRef::Literal(literal),
+        ExpressionKind::Piecewise(_) => {
+            let otherwise = children.last().copied().unwrap_or(u64::MAX);
+            let cases = children
+                .chunks_exact(2)
+                .map(|case| (case[0], case[1]))
+                .collect();
+            WireNodeRef::Piecewise { cases, otherwise }
+        }
+        ExpressionKind::Call(call) => WireNodeRef::Call {
+            callee: call.callee(),
+            arguments: children,
+        },
+    }
+}
+
+/// One step of encoding: visit a node, or write it once its children are.
+enum EncodeStep<'a> {
+    Visit(&'a Expression),
+    Write(&'a Expression, usize),
+}
+
+/// Return the table of `root`: each distinct node once, in post-order of
+/// first visit, the root last.
 ///
-/// Decoding one restores no identifier.
-struct ExpressionPayload(PayloadNode);
-
-/// Return a short name for the kind of JSON value `value` is.
-fn describe_value(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "a Boolean",
-        Value::Number(_) => "a number",
-        Value::String(_) => "a string",
-        Value::Array(_) => "a list",
-        Value::Object(_) => "a map",
-    }
-}
-
-/// Prefix `message` with the field it came from.
-fn add_field_context(field: &str, message: impl fmt::Display) -> String {
-    format!("in `{field}`: {message}")
-}
-
-/// Return the values of exactly the fields `names` of the map `value`, in
-/// order, refusing a missing or an unknown field.
-fn read_fields<'a, const N: usize>(
-    value: &'a Value,
-    owner: &str,
-    names: [&str; N],
-) -> Result<[&'a Value; N], String> {
-    let Value::Object(map) = value else {
-        return Err(format!(
-            "expected the fields of {owner} as a map, got {}",
-            describe_value(value)
-        ));
-    };
-    if let Some(unknown) = map.keys().find(|key| !names.contains(&key.as_str())) {
-        return Err(format!("unknown field `{unknown}` in {owner}"));
-    }
-    let mut fields = [&Value::Null; N];
-    for (field, name) in fields.iter_mut().zip(names) {
-        *field = map
-            .get(name)
-            .ok_or_else(|| format!("missing field `{name}` in {owner}"))?;
-    }
-    Ok(fields)
-}
-
-/// Check the list in `field` of `value` and return its items.
-fn read_list<'a>(value: &'a Value, field: &str) -> Result<&'a [Value], String> {
-    match value {
-        Value::Array(items) => Ok(items),
-        other => Err(add_field_context(
-            field,
-            format_args!("expected a list, got {}", describe_value(other)),
-        )),
-    }
-}
-
-/// Check a literal's `value` field.
-fn parse_literal_value(value: &Value) -> Result<LiteralValue, String> {
-    match value {
-        Value::Bool(flag) => Ok(LiteralValue::from(*flag)),
-        Value::Number(number) => {
-            let token = number.to_string();
-            if token.contains(['.', 'e', 'E']) {
-                number
-                    .as_f64()
-                    .map(LiteralValue::from)
-                    .ok_or_else(|| format!("the float {token} does not fit an f64"))
-            } else {
-                BigInt::parse_bytes(token.as_bytes(), 10)
-                    .map(LiteralValue::from)
-                    .ok_or_else(|| format!("the integer {token} is malformed"))
+/// Only a node that may be shared is looked up by identity, since a node
+/// with one handle is reached once.
+fn encode_nodes(root: &Expression) -> Vec<WireNodeRef<'_>> {
+    let mut nodes: Vec<WireNodeRef<'_>> = Vec::new();
+    let mut written: HashMap<NodeIdentity, u64, BuildIdentityHasher> = HashMap::default();
+    let mut indices: Vec<u64> = Vec::new();
+    let mut pending = vec![EncodeStep::Visit(root)];
+    while let Some(step) = pending.pop() {
+        match step {
+            EncodeStep::Visit(node) => {
+                if let Some(&index) = node
+                    .is_shared()
+                    .then(|| written.get(&node.identity()))
+                    .flatten()
+                {
+                    indices.push(index);
+                    continue;
+                }
+                let children: Vec<&Expression> = node.children().collect();
+                pending.push(EncodeStep::Write(node, children.len()));
+                pending.extend(children.into_iter().rev().map(EncodeStep::Visit));
+            }
+            EncodeStep::Write(node, child_count) => {
+                let children = indices.split_off(indices.len() - child_count);
+                let index = to_wire_index(nodes.len());
+                nodes.push(build_wire_node(node, children));
+                if node.is_shared() {
+                    written.insert(node.identity(), index);
+                }
+                indices.push(index);
             }
         }
-        Value::String(text) => text
-            .parse::<Decimal>()
-            .map(LiteralValue::Decimal)
-            .map_err(|error| error.to_string()),
-        other => Err(format!(
-            "expected a Boolean, a number, or a numeric text as a literal value, got {}",
-            describe_value(other)
+    }
+    nodes
+}
+
+/// An expression serializes as a table of its distinct nodes,
+/// `{"nodes": [..]}`, in post-order of first visit with the root last.
+/// Each node refers to its children by their indices in the table, which
+/// always precede its own:
+///
+/// | Node | Wire form |
+/// |---|---|
+/// | unary | `{"unary": {"operation": "negate", "operand": i}}` |
+/// | binary | `{"binary": {"operation": "add", "left": i, "right": j}}` |
+/// | logical | `{"logical": {"operation": "and", "operands": [i, j, ..]}}` |
+/// | identifier | `{"identifier": {"id": 41, "name_hint": "x"}}` |
+/// | literal | `{"literal": {"int": "1"}}`, see [`LiteralValue`] |
+/// | piecewise | `{"piecewise": {"cases": [[c0, v0], ..], "otherwise": i}}` |
+/// | call | `{"call": {"callee": {"builtin": "max"}, "arguments": [i, ..]}}`, or `{"named": "f"}` as the callee |
+///
+/// So `x + 1`, with `x` of id 41, serializes as
+/// `{"nodes":[{"identifier":{"id":41,"name_hint":"x"}},{"literal":{"int":"1"}},{"binary":{"operation":"add","left":0,"right":1}}]}`.
+///
+/// A node shared by several parents is written once, and decoding shares
+/// it again, so a DAG such as `x(k+1) = xk + xk` serializes in space and
+/// time linear in its distinct nodes. Neither direction recurses once per
+/// tree level, and the serde nesting depth is the same for every tree, so
+/// a tree of any depth round-trips through any format on a small stack.
+/// Serialization never fails for a well-formed serializer: every literal,
+/// NaN and the infinities included, has a wire form.
+impl Serialize for Expression {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let nodes = encode_nodes(self);
+        let mut table = serializer.serialize_struct("Expression", 1)?;
+        table.serialize_field("nodes", &nodes)?;
+        table.end()
+    }
+}
+
+/// The decoded nodes of a table, by index, and whether each one is
+/// referenced by a later node.
+struct DecodedNodes {
+    nodes: Vec<Expression>,
+    is_referenced: Vec<bool>,
+}
+
+impl DecodedNodes {
+    /// Return the decoded node at `child`, referred to by node `index`,
+    /// marking it referenced.
+    ///
+    /// # Errors
+    ///
+    /// Returns the message for a child that does not precede node `index`.
+    fn take_child(&mut self, index: usize, child: u64) -> Result<Expression, String> {
+        let position = usize::try_from(child)
+            .ok()
+            .filter(|&position| position < index);
+        let Some(position) = position else {
+            return Err(format!(
+                "node {index} refers to node {child}, which does not precede it"
+            ));
+        };
+        self.is_referenced[position] = true;
+        Ok(self.nodes[position].clone())
+    }
+
+    /// Return the decoded nodes at `children`, referred to by node `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the message for the first child that does not precede node
+    /// `index`.
+    fn take_children(&mut self, index: usize, children: &[u64]) -> Result<Vec<Expression>, String> {
+        children
+            .iter()
+            .map(|&child| self.take_child(index, child))
+            .collect()
+    }
+}
+
+/// Build the expression node `index` of the table describes.
+///
+/// # Errors
+///
+/// Returns the message for a child that does not precede the node, a
+/// logical node of fewer than two operands, a piecewise of no cases, or a
+/// piecewise case condition that is a literal other than a Boolean.
+fn decode_node(
+    decoded: &mut DecodedNodes,
+    index: usize,
+    node: WireNode,
+) -> Result<Expression, String> {
+    let kind = match node {
+        WireNode::Unary { operation, operand } => ExpressionKind::Unary(UnaryExpression::new(
+            operation,
+            decoded.take_child(index, operand)?,
         )),
-    }
-}
-
-/// Check a piecewise's fields.
-fn parse_piecewise(data: &Value) -> Result<PayloadNode, String> {
-    let [conditions, values, otherwise] =
-        read_fields(data, "a piecewise", ["conditions", "values", "otherwise"])?;
-    let conditions = read_list(conditions, "conditions")?;
-    let values = read_list(values, "values")?;
-    if conditions.len() != values.len() {
-        return Err(format!(
-            "a piecewise has {} conditions but {} values",
-            conditions.len(),
-            values.len()
-        ));
-    }
-    validate_case_count(conditions.len()).map_err(|error| error.to_string())?;
-    let mut cases = Vec::with_capacity(conditions.len());
-    for (case_index, (condition, value)) in conditions.iter().zip(values).enumerate() {
-        let condition =
-            parse_node(condition).map_err(|error| add_field_context("conditions", error))?;
-        if let PayloadNode::Literal(literal) = &condition {
-            validate_condition_literal(case_index, literal).map_err(|error| error.to_string())?;
-        }
-        let value = parse_node(value).map_err(|error| add_field_context("values", error))?;
-        cases.push((condition, value));
-    }
-    let otherwise = parse_node(otherwise).map_err(|error| add_field_context("otherwise", error))?;
-    Ok(PayloadNode::Piecewise {
-        cases,
-        otherwise: Box::new(otherwise),
-    })
-}
-
-/// Check a logical node's fields.
-fn parse_logical(data: &Value) -> Result<PayloadNode, String> {
-    let [operation, operands] = read_fields(data, "a logical node", ["operation", "operands"])?;
-    let operation = LogicalOperation::deserialize(operation)
-        .map_err(|error| add_field_context("operation", error))?;
-    let operands = read_list(operands, "operands")?;
-    if operands.len() < 2 {
-        return Err(format!(
-            "a logical node needs at least 2 operands, got {}",
-            operands.len()
-        ));
-    }
-    let operands = operands
-        .iter()
-        .map(|operand| parse_node(operand).map_err(|error| add_field_context("operands", error)))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(PayloadNode::Logical {
-        operation,
-        operands,
-    })
-}
-
-/// Check a call's fields.
-fn parse_call(data: &Value) -> Result<PayloadNode, String> {
-    let [function_name, arguments] = read_fields(data, "a call", ["function_name", "arguments"])?;
-    let Value::String(function_name) = function_name else {
-        return Err(add_field_context(
-            "function_name",
-            format_args!("expected a string, got {}", describe_value(function_name)),
-        ));
-    };
-    let callee: Callee = function_name
-        .parse()
-        .map_err(|error: FunctionNameError| error.to_string())?;
-    let arguments = read_list(arguments, "arguments")?
-        .iter()
-        .map(|argument| parse_node(argument).map_err(|error| add_field_context("arguments", error)))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(PayloadNode::Call { callee, arguments })
-}
-
-/// Check the node the wire map `value` describes, and its whole subtree.
-fn parse_node(value: &Value) -> Result<PayloadNode, String> {
-    let [type_id, data] = read_fields(value, "an expression", [TYPE_KEY, DATA_KEY])?;
-    let Value::String(type_id) = type_id else {
-        return Err(format!(
-            "expected the expression type id as a string, got {}",
-            describe_value(type_id)
-        ));
-    };
-    match type_id.as_str() {
-        UNARY_TYPE_ID => {
-            let [operation, operand] = read_fields(data, "a unary node", ["operation", "operand"])?;
-            Ok(PayloadNode::Unary {
-                operation: UnaryOperation::deserialize(operation)
-                    .map_err(|error| add_field_context("operation", error))?,
-                operand: Box::new(
-                    parse_node(operand).map_err(|error| add_field_context("operand", error))?,
-                ),
-            })
-        }
-        BINARY_TYPE_ID => {
-            let [operation, left, right] =
-                read_fields(data, "a binary node", ["operation", "left", "right"])?;
-            Ok(PayloadNode::Binary {
-                operation: BinaryOperation::deserialize(operation)
-                    .map_err(|error| add_field_context("operation", error))?,
-                left: Box::new(parse_node(left).map_err(|error| add_field_context("left", error))?),
-                right: Box::new(
-                    parse_node(right).map_err(|error| add_field_context("right", error))?,
-                ),
-            })
-        }
-        IDENTIFIER_TYPE_ID => {
-            let [identifier] = read_fields(data, "an identifier reference", ["identifier"])?;
-            IdentifierWire::deserialize(identifier)
-                .map(PayloadNode::Identifier)
-                .map_err(|error| add_field_context("identifier", error))
-        }
-        LITERAL_TYPE_ID => {
-            let [literal] = read_fields(data, "a literal", ["value"])?;
-            parse_literal_value(literal)
-                .map(PayloadNode::Literal)
-                .map_err(|error| add_field_context("value", error))
-        }
-        LOGICAL_TYPE_ID => parse_logical(data),
-        PIECEWISE_TYPE_ID => parse_piecewise(data),
-        CALL_TYPE_ID => parse_call(data),
-        unknown => Err(format!("unknown expression type id `{unknown}`")),
-    }
-}
-
-/// Build the expression a checked node describes, restoring its
-/// identifiers.
-fn build_node<E: de::Error>(node: PayloadNode) -> Result<Expression, E> {
-    Ok(match node {
-        PayloadNode::Unary { operation, operand } => Expression::from_kind(ExpressionKind::Unary(
-            UnaryExpression::new(operation, build_node(*operand)?),
-        )),
-        PayloadNode::Binary {
+        WireNode::Binary {
             operation,
             left,
             right,
-        } => Expression::from_kind(ExpressionKind::Binary(BinaryExpression::new(
+        } => ExpressionKind::Binary(BinaryExpression::new(
             operation,
-            build_node(*left)?,
-            build_node(*right)?,
-        ))),
-        PayloadNode::Logical {
+            decoded.take_child(index, left)?,
+            decoded.take_child(index, right)?,
+        )),
+        WireNode::Logical {
             operation,
             operands,
         } => {
-            let operands = operands
-                .into_iter()
-                .map(build_node)
-                .collect::<Result<Box<[_]>, E>>()?;
-            Expression::from_kind(ExpressionKind::Logical(LogicalExpression::new(
-                operation, operands,
-            )))
-        }
-        PayloadNode::Identifier(identifier) => {
-            Expression::from(Identifier::try_from(identifier).map_err(E::custom)?)
-        }
-        PayloadNode::Literal(value) => Expression::from(value),
-        PayloadNode::Piecewise { cases, otherwise } => {
-            let cases = cases
-                .into_iter()
-                .map(|(condition, value)| Ok((build_node(condition)?, build_node(value)?)))
-                .collect::<Result<Vec<_>, E>>()?;
-            Expression::from_kind(ExpressionKind::Piecewise(
-                PiecewiseExpression::try_new(cases, build_node(*otherwise)?).map_err(E::custom)?,
+            if operands.len() < 2 {
+                return Err(format!(
+                    "logical node {index} has {} operands, expected at least 2",
+                    operands.len()
+                ));
+            }
+            let operands = decoded.take_children(index, &operands)?;
+            ExpressionKind::Logical(LogicalExpression::new(
+                operation,
+                operands.into_boxed_slice(),
             ))
         }
-        PayloadNode::Call { callee, arguments } => {
-            let arguments = arguments
-                .into_iter()
-                .map(build_node)
-                .collect::<Result<Vec<_>, E>>()?;
-            Expression::from_kind(ExpressionKind::Call(CallExpression::new(callee, arguments)))
+        WireNode::Identifier(identifier) => ExpressionKind::Identifier(identifier),
+        WireNode::Literal(literal) => ExpressionKind::Literal(literal),
+        WireNode::Piecewise { cases, otherwise } => {
+            if validate_case_count(cases.len()).is_err() {
+                return Err(format!("piecewise node {index} has no cases"));
+            }
+            let mut decoded_cases = Vec::with_capacity(cases.len());
+            for (case_index, (condition, value)) in cases.into_iter().enumerate() {
+                let condition = decoded.take_child(index, condition)?;
+                if let ExpressionKind::Literal(literal) = condition.kind() {
+                    validate_condition_literal(case_index, literal).map_err(|_refused| {
+                        format!(
+                            "condition of case {case_index} of piecewise node {index} is a \
+                             non-boolean literal"
+                        )
+                    })?;
+                }
+                decoded_cases.push((condition, decoded.take_child(index, value)?));
+            }
+            let otherwise = decoded.take_child(index, otherwise)?;
+            let piecewise = PiecewiseExpression::try_new(decoded_cases, otherwise)
+                .map_err(|error| format!("piecewise node {index}: {error}"))?;
+            ExpressionKind::Piecewise(piecewise)
         }
-    })
+        WireNode::Call { callee, arguments } => {
+            let arguments = decoded.take_children(index, &arguments)?;
+            ExpressionKind::Call(CallExpression::new(callee, arguments))
+        }
+    };
+    Ok(Expression::from_kind(kind))
 }
 
-impl<'de> Deserialize<'de> for ExpressionPayload {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = Value::deserialize(deserializer)?;
-        parse_node(&value).map(Self).map_err(de::Error::custom)
+/// Build the expression a table describes: its last node, over the nodes
+/// before it.
+///
+/// # Errors
+///
+/// Returns the message for an empty table, for a node [`decode_node`]
+/// refuses, or for a node other than the root that no later node refers to.
+fn decode_table(wire: ExpressionWire) -> Result<Expression, String> {
+    let count = wire.nodes.len();
+    if count == 0 {
+        return Err("expression payload has no nodes".to_owned());
     }
+    let mut decoded = DecodedNodes {
+        nodes: Vec::with_capacity(count),
+        is_referenced: Vec::with_capacity(count),
+    };
+    for (index, node) in wire.nodes.into_iter().enumerate() {
+        let expression = decode_node(&mut decoded, index, node)?;
+        decoded.nodes.push(expression);
+        decoded.is_referenced.push(false);
+    }
+    if let Some(unreferenced) = decoded.is_referenced[..count - 1]
+        .iter()
+        .position(|&is_referenced| !is_referenced)
+    {
+        return Err(format!("node {unreferenced} is not referenced"));
+    }
+    decoded
+        .nodes
+        .pop()
+        .ok_or_else(|| "expression payload has no nodes".to_owned())
 }
 
-/// Deserialize the wire shape written by the [`Serialize`] implementation,
-/// in its map form only, checking the whole payload before restoring any
-/// identifier.
+/// Deserialize the node table the [`Serialize`] implementation writes,
+/// sharing every node that more than one later node refers to.
+///
+/// The table is refused, with a one-line message, when it is empty
+/// (`expression payload has no nodes`), when a node refers to a node that
+/// does not precede it (`node {i} refers to node {j}, which does not
+/// precede it`), when a logical node has fewer than two operands (`logical
+/// node {i} has {n} operands, expected at least 2`), when a piecewise node
+/// has no cases (`piecewise node {i} has no cases`), when a piecewise case
+/// condition is a literal other than a Boolean (`condition of case {c} of
+/// piecewise node {i} is a non-boolean literal`), or when a node other than
+/// the root is referred to by no later node (`node {i} is not referenced`).
+/// A literal or a callee is refused as [`LiteralValue`] and
+/// [`FunctionName`](super::FunctionName) describe; an unknown node kind or
+/// field with serde's own error.
+///
+/// Each identifier advances the identifier id counter past its id as it is
+/// read, so a table refused later may already have advanced it.
 impl<'de> Deserialize<'de> for Expression {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let payload: ExpressionPayload = decode::deserialize_map_only(deserializer)?;
-        build_node(payload.0)
+        let wire = ExpressionWire::deserialize(deserializer)?;
+        decode_table(wire).map_err(de::Error::custom)
     }
 }

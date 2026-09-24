@@ -347,7 +347,7 @@ impl Visitor<'_> for PayloadIdVisitor {
     expecting = "an identifier",
     deny_unknown_fields
 )]
-pub(crate) struct IdentifierWire {
+struct IdentifierWire {
     id: PayloadId,
     name_hint: String,
 }
@@ -776,7 +776,7 @@ mod tests {
                     .map(drop)
                 }
                 Self::Expression => serde_json::from_str::<Expression>(&format!(
-                    "{{\"__type__\":\"identifier_expression\",\"__data__\":{{\"identifier\":{identifier}}}}}"
+                    "{{\"nodes\":[{{\"identifier\":{identifier}}}]}}"
                 ))
                 .map(drop),
             }
@@ -784,51 +784,13 @@ mod tests {
             error.to_string()
         }
 
-        /// Return the text the error along this path starts with, before the
-        /// identifier's own message.
-        fn describe_prefix(self) -> &'static str {
-            match self {
-                Self::Text
-                | Self::Value
-                | Self::NoteKind
-                | Self::OpAttribute
-                | Self::ValueDomainParent => "",
-                Self::Expression => "in `identifier`: ",
-            }
-        }
-
-        /// Return whether a number reaches the identifier's decode as the
-        /// JSON text wrote it.
-        ///
-        /// Along the other paths it passes through a `serde_json::Value`
-        /// first. With `serde_json`'s `arbitrary_precision` feature on, such
-        /// a number reaches the decode as its digits, so a negative,
-        /// fractional or oversized id is still rejected there, but with
-        /// `serde_json`'s own message.
-        fn reads_numbers_exactly(self) -> bool {
-            matches!(
-                self,
-                Self::Text | Self::NoteKind | Self::OpAttribute | Self::ValueDomainParent
-            )
-        }
-
-        /// Assert the error along this path for the id token `id` is
-        /// `expected`, or, where [`reads_numbers_exactly`] does not hold, is
-        /// at least reported from the identifier's position.
-        ///
-        /// [`reads_numbers_exactly`]: Self::reads_numbers_exactly
+        /// Assert the error along this path for the id token `id` starts
+        /// with `expected`: every path reports the identifier's own message,
+        /// with nothing before it.
         fn assert_rejected_with(self, id: &str, expected: &str) {
             let message = self.decode_error(id);
 
-            let expected = format!("{}{expected}", self.describe_prefix());
-            if self.reads_numbers_exactly() {
-                assert!(message.starts_with(&expected), "{self:?}: {message}");
-            } else {
-                assert!(
-                    message.starts_with(self.describe_prefix()),
-                    "{self:?}: {message}"
-                );
-            }
+            assert!(message.starts_with(expected), "{self:?}: {message}");
         }
     }
 
@@ -848,13 +810,10 @@ mod tests {
         path: IdentifierPath,
         #[values("9223372036854775808", "9223372036854775809", "18446744073709551615")] id: &str,
     ) {
-        let message = path.decode_error(id);
+        let expected =
+            format!("invalid value: integer `{id}`, expected an id from 0 to 9223372036854775807");
 
-        let expected = format!(
-            "{}invalid value: integer `{id}`, expected an id from 0 to 9223372036854775807",
-            path.describe_prefix()
-        );
-        assert!(message.starts_with(&expected), "{path:?}: {message}");
+        path.assert_rejected_with(id, &expected);
     }
 
     /// Test that serde rejects an integer beyond `u64`, which a format reads

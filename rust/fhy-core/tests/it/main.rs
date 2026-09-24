@@ -10,7 +10,6 @@ mod expr;
 mod identifier_stories;
 mod interned;
 mod pass;
-mod payload_form_stories;
 mod provenance_diagnostic_properties;
 mod provenance_stories;
 mod serde_format_stories;

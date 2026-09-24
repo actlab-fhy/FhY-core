@@ -365,22 +365,10 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 /// nodes on the heap, so they handle a tree of any depth on any thread. All
 /// but dropping and displaying handle a subtree occurring in several places
 /// once, so a DAG such as `x(k+1) = xk + xk` costs time linear in its
-/// distinct nodes. Serialization and deserialization recurse once per tree
-/// level: a
-/// serialization round trip of a tree 4000 levels deep through `serde_json`
-/// values needs up to 32 MiB of stack in an unoptimized build and up to
-/// 8 MiB in an optimized one.
-///
-/// Decoding JSON text is also capped by `serde_json`'s nesting limit: its
-/// text deserializer refuses input nested more than 127 JSON levels deep
-/// with a `recursion limit exceeded` error. A tree level takes two JSON
-/// levels, or three below a piecewise case or a call argument, which sit in
-/// lists, so `serde_json::from_str` decodes a chain of at most 62 unary or
-/// binary nodes over a leaf. A `serde_json::Value` parsed from text meets the
-/// same limit. A caller needing deeper trees can enable `serde_json`'s
-/// `unbounded_depth` feature and decode through a `serde_json::Deserializer`
-/// after calling its `disable_recursion_limit`, on a thread with a stack
-/// large enough for the recursion above.
+/// distinct nodes. Serialization writes, and deserialization reads, a flat
+/// table of the distinct nodes (see the [`Serialize`](serde::Serialize)
+/// impl), so neither recurses per tree level either, and a DAG's sharing
+/// survives the round trip.
 ///
 /// # Examples
 ///
@@ -879,8 +867,7 @@ impl LogicalExpression {
 
 /// Check a piecewise with `case_count` cases has at least one.
 ///
-/// The constructor and the wire decoder share this check, so a payload is
-/// refused for the same reason before any of its identifiers is restored.
+/// The constructor and the wire decoder share this check.
 ///
 /// # Errors
 ///
@@ -895,8 +882,7 @@ pub(super) fn validate_case_count(case_count: usize) -> Result<(), PiecewiseErro
 /// Check the literal condition of the piecewise case at `case_index` is a
 /// Boolean.
 ///
-/// The constructor and the wire decoder share this check, so a payload is
-/// refused for the same reason before any of its identifiers is restored.
+/// The constructor and the wire decoder share this check.
 ///
 /// # Errors
 ///

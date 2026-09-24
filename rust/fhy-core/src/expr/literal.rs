@@ -9,6 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 use num_bigint::{BigInt, Sign};
+use serde::{Deserialize, Serialize};
 
 pub use self::decimal::Decimal;
 use self::decimal::is_ascii_digit_run;
@@ -35,6 +36,16 @@ use super::sort::FunctionSort;
 /// `100`, `0.5`). So unequal literals may display alike: `1`, `1.0` and the
 /// decimal `1` all display as `1`.
 ///
+/// Serializes externally tagged by the lowercase variant name, every number
+/// as a string: `{"bool": true}`, `{"int": "-12"}` with the decimal digits
+/// of any integer, `{"float": "1.5"}` with the text `{}` writes for the
+/// `f64` (`"NaN"`, `"inf"` and `"-inf"` included, so every float literal
+/// serializes in every format), and `{"decimal": "1.5"}` with the decimal's
+/// `Display` text. Deserializing reads an integer string only in the form
+/// `-?(0|[1-9][0-9]*)`, other than `"-0"`, a float string through
+/// [`f64::from_str`](std::str::FromStr), and a decimal string through the
+/// literal grammar of [`Decimal`]'s `FromStr`.
+///
 /// # Examples
 ///
 /// ```
@@ -49,15 +60,28 @@ use super::sort::FunctionSort;
 /// assert_ne!(LiteralValue::from(1), LiteralValue::from(1.0));
 /// # Ok::<(), fhy_core::expr::LiteralTextError>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LiteralValue {
     /// A Boolean.
     Bool(bool),
     /// An integer of any size.
-    Int(BigInt),
+    Int(
+        #[serde(
+            serialize_with = "serialize_display_text",
+            deserialize_with = "integer_text::deserialize"
+        )]
+        BigInt,
+    ),
     /// A binary floating-point number: any `f64`, NaN and the infinities
     /// included.
-    Float(f64),
+    Float(
+        #[serde(
+            serialize_with = "serialize_display_text",
+            deserialize_with = "float_text::deserialize"
+        )]
+        f64,
+    ),
     /// An exact, normalized decimal.
     Decimal(Decimal),
 }
@@ -237,3 +261,84 @@ impl fmt::Display for LiteralTextError {
 }
 
 impl Error for LiteralTextError {}
+
+/// Serialize `value` as the string its `Display` writes: the decimal digits
+/// of an integer, or the shortest text that reads back as a float.
+fn serialize_display_text<T: fmt::Display, S: serde::Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(value)
+}
+
+/// The wire form of an integer literal: its decimal digits as a string.
+mod integer_text {
+    use std::fmt;
+
+    use num_bigint::BigInt;
+    use serde::de::{self, Deserializer, Visitor};
+
+    /// Return whether `text` is the canonical decimal text of an integer:
+    /// `-?(0|[1-9][0-9]*)`, other than `-0`.
+    fn is_canonical_integer_text(text: &str) -> bool {
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        let is_digit_run = !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit());
+        is_digit_run && (digits == "0" || !digits.starts_with('0')) && text != "-0"
+    }
+
+    /// The visitor reading the canonical decimal text of an integer.
+    struct IntegerTextVisitor;
+
+    impl Visitor<'_> for IntegerTextVisitor {
+        type Value = BigInt;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("the decimal digits of an integer as a string")
+        }
+
+        fn visit_str<E: de::Error>(self, text: &str) -> Result<BigInt, E> {
+            let parsed = is_canonical_integer_text(text)
+                .then(|| BigInt::parse_bytes(text.as_bytes(), 10))
+                .flatten();
+            parsed.ok_or_else(|| E::custom(format_args!("invalid integer literal {text:?}")))
+        }
+    }
+
+    /// Read an integer from the canonical decimal text of it.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BigInt, D::Error> {
+        deserializer.deserialize_str(IntegerTextVisitor)
+    }
+}
+
+/// The wire form of a float literal: the text `{}` writes for it, which
+/// `f64::from_str` reads back to the same value.
+mod float_text {
+    use std::fmt;
+    use std::num::ParseFloatError;
+
+    use serde::de::{self, Deserializer, Visitor};
+
+    /// The visitor reading a float from its text.
+    struct FloatTextVisitor;
+
+    impl Visitor<'_> for FloatTextVisitor {
+        type Value = f64;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("the text of a float as a string")
+        }
+
+        fn visit_str<E: de::Error>(self, text: &str) -> Result<f64, E> {
+            text.parse().map_err(|_refused: ParseFloatError| {
+                E::custom(format_args!("invalid float literal {text:?}"))
+            })
+        }
+    }
+
+    /// Read a float from its text through `f64::from_str`.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        deserializer.deserialize_str(FloatTextVisitor)
+    }
+}

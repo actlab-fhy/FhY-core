@@ -67,9 +67,9 @@ proptest! {
     /// original under every option combination.
     #[test]
     fn format_expression_of_a_json_round_trip_is_unchanged(
-        expression in build_expression_strategy(false),
+        expression in build_expression_strategy(true),
     ) {
-        let json = serde_json::to_string(&expression).expect("a finite tree serializes");
+        let json = serde_json::to_string(&expression).expect("every tree serializes");
         let restored: Expression = serde_json::from_str(&json).expect("its own JSON decodes");
 
         for (notation, identifiers) in ALL_OPTIONS {

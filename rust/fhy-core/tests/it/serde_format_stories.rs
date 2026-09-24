@@ -7,7 +7,19 @@
 
 use std::fmt::Debug;
 
+use crate::support::expression as expression_support;
+use crate::support::stack as stack_support;
+
+use expression_support::{
+    build_callee, build_decimal_literal, build_deep_sum, build_doubling_dag, build_identifier,
+    build_literal,
+};
 use fhy_core::diagnostic::{Note, NoteKind};
+use fhy_core::expr::builtins::{BuiltinConstant, BuiltinFunction};
+use fhy_core::expr::{
+    BigInt, BinaryOperation, Callee, Decimal, Expression, ExpressionKind, FunctionName,
+    FunctionSort, LiteralValue, LogicalOperation, SymbolType, UnaryOperation,
+};
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, Interned};
 use fhy_core::op_attribute::OpAttribute;
@@ -17,8 +29,10 @@ use fhy_core::provenance::{
 };
 use fhy_core::value_domain::ValueDomain;
 use rstest::rstest;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use stack_support::run_on_stack;
 
 // =============================================================================
 // Helpers
@@ -205,15 +219,249 @@ fn value_domain_with_a_parent_chain_round_trips_through_postcard() {
 }
 
 // =============================================================================
+// Expression types
+// =============================================================================
+
+/// Build an expression using every node kind, every literal kind, a
+/// built-in and a named call, and a subtree shared by two parents.
+fn build_every_node_kind() -> Expression {
+    let (_, x) = build_identifier("postcard-x");
+    let big: BigInt = "-123456789012345678901234567890".parse().expect("digits");
+    let shared = &x + big;
+    let call = Expression::call(
+        BuiltinFunction::Max,
+        [
+            shared.clone(),
+            Expression::call(build_callee("softplus"), [build_literal(f64::NAN)]),
+        ],
+    );
+    Expression::piecewise(
+        [
+            (x.less(build_decimal_literal("1.50")), -&shared),
+            (Expression::any([!x.equals(0), build_literal(true)]), call),
+        ],
+        build_literal(u64::MAX).floor_mod(2.5),
+    )
+    .expect("a valid piecewise")
+}
+
+/// Test an expression using every node kind round-trips through both
+/// formats.
+#[test]
+fn expression_of_every_node_kind_round_trips_through_postcard() {
+    assert_round_trips(&build_every_node_kind());
+}
+
+/// Test every literal kind, big integers beyond both `u64` and `i64::MIN`
+/// and the non-finite floats included, round-trips through both formats.
+#[rstest]
+#[case::boolean(LiteralValue::from(true))]
+#[case::integer(LiteralValue::from(-7))]
+#[case::above_u64(LiteralValue::from("18446744073709551616".parse::<BigInt>().unwrap()))]
+#[case::below_i64(LiteralValue::from("-9223372036854775809".parse::<BigInt>().unwrap()))]
+#[case::float(LiteralValue::from(0.1))]
+#[case::negative_zero(LiteralValue::from(-0.0))]
+#[case::infinity(LiteralValue::from(f64::INFINITY))]
+#[case::nan(LiteralValue::from(f64::NAN))]
+#[case::decimal(LiteralValue::parse_text("0.001").unwrap())]
+fn literal_value_round_trips_through_postcard(#[case] literal: LiteralValue) {
+    assert_round_trips(&literal);
+    assert_round_trips(&Expression::from(literal));
+}
+
+/// Test a decimal, a callee of each kind and a function name round-trip
+/// through both formats.
+#[test]
+fn decimal_callee_and_function_name_round_trip_through_postcard() {
+    let decimal: Decimal = "12.3400".parse().expect("a decimal text");
+    let name = FunctionName::try_new("softplus").expect("a user function name");
+
+    assert_round_trips(&decimal);
+    assert_round_trips(&name);
+    assert_round_trips(&Callee::Named(name));
+    assert_round_trips(&Callee::Builtin(BuiltinFunction::ClampSymmetric));
+}
+
+/// Test every variant of every vocabulary enum round-trips through both
+/// formats.
+#[test]
+fn vocabulary_enums_round_trip_through_postcard() {
+    for symbol_type in [SymbolType::Real, SymbolType::Int, SymbolType::Bool] {
+        assert_round_trips(&symbol_type);
+    }
+    for sort in [
+        FunctionSort::Bool,
+        FunctionSort::Nat,
+        FunctionSort::Int,
+        FunctionSort::Real,
+    ] {
+        assert_round_trips(&sort);
+    }
+    for operation in [
+        UnaryOperation::Negate,
+        UnaryOperation::Positive,
+        UnaryOperation::LogicalNot,
+    ] {
+        assert_round_trips(&operation);
+    }
+    for operation in [
+        BinaryOperation::Add,
+        BinaryOperation::FloorMod,
+        BinaryOperation::GreaterEqual,
+    ] {
+        assert_round_trips(&operation);
+    }
+    for operation in [LogicalOperation::And, LogicalOperation::Or] {
+        assert_round_trips(&operation);
+    }
+    for function in BuiltinFunction::iter() {
+        assert_round_trips(&function);
+    }
+    for constant in BuiltinConstant::iter() {
+        assert_round_trips(&constant);
+    }
+}
+
+/// Test a DAG keeps its sharing through both formats: the subtree shared
+/// by two parents decodes as one node.
+#[test]
+fn expression_dag_keeps_its_sharing_through_postcard() {
+    let (_, x) = build_identifier("postcard-shared");
+    let shared = &x * 2;
+    let dag = Expression::all([shared.less(1), shared.greater(0)]);
+
+    let text = serde_json::to_string(&dag).expect("the DAG encodes as JSON");
+    let from_json: Expression = serde_json::from_str(&text).expect("the JSON text decodes");
+    let bytes = postcard::to_allocvec(&dag).expect("the DAG encodes as postcard");
+    let from_postcard: Expression = postcard::from_bytes(&bytes).expect("the bytes decode");
+
+    for restored in [&from_json, &from_postcard] {
+        let ExpressionKind::Logical(conjunction) = restored.kind() else {
+            panic!("the root is a conjunction");
+        };
+        let [
+            ExpressionKind::Binary(less),
+            ExpressionKind::Binary(greater),
+        ] = [
+            conjunction.operands()[0].kind(),
+            conjunction.operands()[1].kind(),
+        ]
+        else {
+            panic!("both operands are comparisons");
+        };
+        assert!(Expression::ptr_eq(less.left(), greater.left()));
+        assert_eq!(restored, &dag);
+    }
+}
+
+/// Test a sum 100,000 levels deep round-trips through JSON text and
+/// postcard on a 256 KiB stack: neither direction recurses per level.
+#[test]
+fn expression_deep_sum_round_trips_through_json_text_on_a_small_stack() {
+    run_on_stack(256 << 10, || {
+        let (_, x) = build_identifier("postcard-deep");
+        let tree = build_deep_sum(&x, 100_000);
+
+        assert_round_trips(&tree);
+    });
+}
+
+/// Test a conjunction of ten thousand comparisons, one logical node,
+/// round-trips through JSON text and postcard.
+#[test]
+fn expression_conjunction_of_ten_thousand_comparisons_round_trips_through_json_text() {
+    let (_, x) = build_identifier("postcard-bounded");
+    let conjunction = Expression::all((0..10_000).map(|bound| x.less(bound)));
+
+    assert_round_trips(&conjunction);
+}
+
+/// Test a doubling DAG 64 levels deep, with more than `2^64` occurrences,
+/// encodes as its 65 distinct nodes and decodes sharing both operands of
+/// every level, in JSON and postcard.
+#[test]
+fn expression_wire_encodes_a_doubling_dag_once_per_distinct_node() {
+    const LEVELS: usize = 64;
+    let (_, x) = build_identifier("postcard-doubling");
+    let dag = build_doubling_dag(&x, LEVELS);
+
+    let wire = serde_json::to_value(&dag).expect("the DAG encodes as JSON");
+    let from_json: Expression = serde_json::from_value(wire.clone()).expect("the table decodes");
+    let bytes = postcard::to_allocvec(&dag).expect("the DAG encodes as postcard");
+    let from_postcard: Expression = postcard::from_bytes(&bytes).expect("the bytes decode");
+
+    assert_eq!(wire["nodes"].as_array().map(Vec::len), Some(LEVELS + 1));
+    for restored in [&from_json, &from_postcard] {
+        let mut node = restored;
+        for level in 0..LEVELS {
+            let ExpressionKind::Binary(sum) = node.kind() else {
+                panic!("level {level} is not a sum");
+            };
+            assert!(
+                Expression::ptr_eq(sum.left(), sum.right()),
+                "level {level} does not share its operands"
+            );
+            node = sum.left();
+        }
+        assert_eq!(node, &x);
+        assert_eq!(restored, &dag);
+    }
+}
+
+/// Test a big integer literal serializes in JSON as the decimal string of
+/// its digits.
+#[test]
+fn a_big_integer_literal_serializes_as_a_decimal_string_in_json() {
+    let big: BigInt = "1000000000000000000000000000000".parse().expect("digits");
+
+    let text = serde_json::to_string(&LiteralValue::from(big)).expect("the literal encodes");
+
+    assert_eq!(text, r#"{"int":"1000000000000000000000000000000"}"#);
+}
+
+// =============================================================================
+// Builds that include fhy-core
+// =============================================================================
+
+/// Test JSON numbers compare by value in a build that includes this crate:
+/// no `serde_json` feature leaks from it that keeps a number's text.
+#[test]
+fn serde_json_numbers_compare_by_value_in_a_build_with_fhy_core() {
+    let short: Value = serde_json::from_str("1.0").expect("a JSON number");
+    let long: Value = serde_json::from_str("1.00").expect("a JSON number");
+
+    assert_eq!(short, long);
+}
+
+/// A dependent crate's untagged number, which a buffering decoder reads.
+#[derive(Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+enum UntaggedNumber {
+    Float(f64),
+}
+
+/// Test a dependent crate's untagged float decodes in a build that
+/// includes this crate: no `serde_json` feature leaks from it that turns a
+/// buffered number into a map.
+#[test]
+fn a_dependent_untagged_float_decodes_in_a_build_with_fhy_core() {
+    let decoded: UntaggedNumber = serde_json::from_str("1.5").expect("an untagged float");
+
+    assert_eq!(decoded, UntaggedNumber::Float(1.5));
+}
+
+// =============================================================================
 // Adversarial input
 // =============================================================================
 
-/// Test every strict prefix of an encoded nested provenance and of an
-/// encoded note decodes to an error rather than a panic.
+/// Test every strict prefix of an encoded nested provenance, of an encoded
+/// note and of an encoded expression decodes to an error rather than a
+/// panic.
 #[test]
 fn truncated_postcard_bytes_are_an_error_not_a_panic() {
     let provenance = postcard::to_allocvec(&build_nested_provenance()).expect("encodes");
     let note = postcard::to_allocvec(&Note::with_other_kind("truncated")).expect("encodes");
+    let expression = postcard::to_allocvec(&build_every_node_kind()).expect("encodes");
 
     for length in 0..provenance.len() {
         let result = postcard::from_bytes::<Provenance>(&provenance[..length]);
@@ -221,6 +469,10 @@ fn truncated_postcard_bytes_are_an_error_not_a_panic() {
     }
     for length in 0..note.len() {
         let result = postcard::from_bytes::<Note>(&note[..length]);
+        assert!(result.is_err(), "a {length}-byte prefix decoded");
+    }
+    for length in 0..expression.len() {
+        let result = postcard::from_bytes::<Expression>(&expression[..length]);
         assert!(result.is_err(), "a {length}-byte prefix decoded");
     }
 }

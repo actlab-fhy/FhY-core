@@ -9,6 +9,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use num_bigint::BigInt;
+use serde::de::{self, Deserializer, Visitor};
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::LiteralTextError;
 
@@ -78,7 +80,8 @@ fn split_decimal_text(text: &str) -> Option<(&str, &str)> {
 /// exponent and without leading or trailing zeros: `1.5`, `100` for
 /// `"100.0"`, `0.001`, `0`, and `0.5` for `".5"`. The text is at most one
 /// character longer than the text the decimal was parsed from, and reads
-/// back as the same decimal.
+/// back as the same decimal. A decimal serializes as that text and
+/// deserializes from any text [`FromStr`] reads.
 ///
 /// # Examples
 ///
@@ -158,6 +161,36 @@ impl fmt::Display for Decimal {
         let digits = self.coefficient.to_string();
         let point = self.exponent + convert_count_to_exponent(digits.len());
         write_positional(&digits, point, f)
+    }
+}
+
+/// Serializes as the [`Display`](fmt::Display) text.
+impl Serialize for Decimal {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+/// The visitor reading a decimal from a text in the literal grammar.
+struct DecimalTextVisitor;
+
+impl Visitor<'_> for DecimalTextVisitor {
+    type Value = Decimal;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("the text of a decimal as a string")
+    }
+
+    fn visit_str<E: de::Error>(self, text: &str) -> Result<Decimal, E> {
+        text.parse().map_err(E::custom)
+    }
+}
+
+/// Deserializes from a string in the literal grammar, as
+/// [`FromStr`](std::str::FromStr) parses it.
+impl<'de> Deserialize<'de> for Decimal {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(DecimalTextVisitor)
     }
 }
 

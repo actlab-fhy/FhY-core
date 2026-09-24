@@ -164,6 +164,31 @@ fn build_pool_permutation(
     (renaming, substitution)
 }
 
+/// Return, for every node of `expression` in pre-order, which pairs of its
+/// children, and of its children and the children before it in the walk,
+/// are one node: the sharing pattern a round trip must keep.
+fn collect_sharing(expression: &Expression) -> Vec<Vec<usize>> {
+    let mut seen: Vec<&Expression> = Vec::new();
+    let mut pattern = Vec::new();
+    let mut pending = vec![expression];
+    while let Some(node) = pending.pop() {
+        let mut first_positions = Vec::new();
+        for child in node.children() {
+            let position = seen
+                .iter()
+                .position(|earlier| Expression::ptr_eq(earlier, child))
+                .unwrap_or_else(|| {
+                    seen.push(child);
+                    pending.push(child);
+                    seen.len() - 1
+                });
+            first_positions.push(position);
+        }
+        pattern.push(first_positions);
+    }
+    pattern
+}
+
 proptest! {
     /// Test substitution is refused exactly when it puts a literal other
     /// than a Boolean in a piecewise case condition, and otherwise removes
@@ -276,10 +301,11 @@ proptest! {
         prop_assert_eq!(substituted.expect("nothing to refuse"), expression);
     }
 
-    /// Test a JSON round trip yields an equal tree.
+    /// Test a JSON round trip yields an equal tree, non-finite floats
+    /// included.
     #[test]
-    fn expression_json_round_trip_is_an_identity(expression in build_expression_strategy(false)) {
-        let wire = serde_json::to_value(&expression).expect("finite trees serialize");
+    fn expression_json_round_trip_is_an_identity(expression in build_expression_strategy(true)) {
+        let wire = serde_json::to_value(&expression).expect("every tree serializes");
 
         let restored: Expression = serde_json::from_value(wire).expect("the wire form decodes");
 
@@ -289,14 +315,43 @@ proptest! {
     /// Test re-encoding a decoded tree reproduces the same JSON text.
     #[test]
     fn expression_json_text_is_stable_across_a_round_trip(
-        expression in build_expression_strategy(false),
+        expression in build_expression_strategy(true),
     ) {
-        let text = serde_json::to_string(&expression).expect("finite trees serialize");
+        let text = serde_json::to_string(&expression).expect("every tree serializes");
         let restored: Expression = serde_json::from_str(&text).expect("the text decodes");
 
-        let re_encoded = serde_json::to_string(&restored).expect("finite trees serialize");
+        let re_encoded = serde_json::to_string(&restored).expect("every tree serializes");
 
         prop_assert_eq!(re_encoded, text);
+    }
+
+    /// Test a postcard round trip of a DAG yields an equal DAG.
+    #[test]
+    fn expression_round_trips_through_postcard(dag in build_expression_dag_strategy()) {
+        let bytes = postcard::to_allocvec(&dag).expect("every DAG serializes");
+
+        let restored: Expression = postcard::from_bytes(&bytes).expect("the bytes decode");
+
+        prop_assert_eq!(restored, dag);
+    }
+
+    /// Test a JSON and a postcard round trip of a DAG keep its structure
+    /// and its sharing: wherever two children of the input's nodes are one
+    /// node, the output's are one node, and nowhere else.
+    #[test]
+    fn expression_wire_round_trip_preserves_structure_and_sharing(
+        dag in build_expression_dag_strategy(),
+    ) {
+        let text = serde_json::to_string(&dag).expect("every DAG serializes");
+        let from_text: Expression = serde_json::from_str(&text).expect("the text decodes");
+        let bytes = postcard::to_allocvec(&dag).expect("every DAG serializes");
+        let from_bytes: Expression = postcard::from_bytes(&bytes).expect("the bytes decode");
+
+        let expected = collect_sharing(&dag);
+        for restored in [&from_text, &from_bytes] {
+            prop_assert_eq!(restored, &dag);
+            prop_assert_eq!(collect_sharing(restored), expected.clone());
+        }
     }
 
     /// Test a random piecewise tree survives a JSON round trip.
