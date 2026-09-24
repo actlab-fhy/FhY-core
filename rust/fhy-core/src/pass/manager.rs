@@ -3,7 +3,7 @@
 use std::fmt;
 use std::num::NonZeroUsize;
 
-use super::analysis::{AnalysisCache, NodeHandle};
+use super::analysis::AnalysisCache;
 use super::compiler_pass::{CompilerPass, run_lifecycle};
 use super::context::PassContext;
 use super::error::PassError;
@@ -11,6 +11,7 @@ use super::preserved::{AnalysisId, PreservedAnalyses};
 use super::validation::ValidationManager;
 use crate::diagnostic::{Diagnostic, Note};
 use crate::identifier::{HasIdentifier, Identifier};
+use crate::tree::NodeHandle;
 
 /// The iteration budget of a new [`FixpointPassGroup`], as in the Python
 /// pass infrastructure.
@@ -430,9 +431,8 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 /// use std::sync::Arc;
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass::{
-///     CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure, PassManager,
-/// };
+/// use fhy_core::pass::{CompilerPass, PassContext, PassFailure, PassManager};
+/// use fhy_core::tree::{NodeHandle, NodeIdentity};
 ///
 /// #[derive(Clone, Debug)]
 /// struct Value(Arc<i64>);

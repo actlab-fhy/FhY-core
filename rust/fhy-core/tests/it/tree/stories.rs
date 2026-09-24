@@ -1,7 +1,9 @@
-//! Tests for the tree traversals of `fhy_core::pass`: the walk hooks and their
-//! order, pruning, failing hooks, the bottom-up memoized rewrite and the
-//! handles it keeps, failing rewrites and rebuilds, the walk and rewrite
-//! passes, and trees too deep or too shared for a recursive traversal.
+//! Tests for the tree traversals of `fhy_core::tree`: the walk hooks and their
+//! order, pruning, failing hooks, the traversal context, the bottom-up
+//! memoized rewrite and the handles it keeps, what counts as a change,
+//! failing rewrites and rebuilds, the walk and rewrite passes of
+//! `fhy_core::pass`, and trees too deep or too shared for a recursive
+//! traversal.
 //!
 //! Public API only, over the toy tree of `support/tree_ir.rs`.
 
@@ -9,20 +11,24 @@ use crate::support::stack as stack_support;
 use crate::support::tree_ir;
 
 use std::error::Error;
+use std::num::NonZeroUsize;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
-    Analysis, CompilerPass, ExecutePass, PassContext, PassError, PassHook, PassManager,
-    PipelineRecord, PreservedAnalyses, RewritePass, RewriteTreeError, Rewriter, TraversalOrder,
-    TreeVisitor, ValidationManager, WalkPass, register_pass, rewrite_tree, run_count, run_count_of,
-    walk_tree,
+    Analysis, CompilerPass, ExecutePass, FixpointPassGroup, PassContext, PassError, PassHook,
+    PassManager, PipelineRecord, PreservedAnalyses, RewritePass, ValidationManager, WalkPass,
+    register_pass, run_count, run_count_of,
+};
+use fhy_core::tree::{
+    RewriteTreeError, Rewriter, TraversalOrder, TreeVisitor, rewrite_tree, walk_tree,
 };
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 use tree_ir::{
     ClosureRewriter, HookError, RecordingVisitor, ToyRebuildError, ToyTree, WalkHook, build_chain,
-    build_doubling_dag, build_frozen_node, build_keeping_rewriter, build_leaf, build_leaf_doubler,
-    build_leaf_hiding_sharing, build_leaf_replacer, build_node, run_with_pass_context,
+    build_doubling_dag, build_frozen_node, build_hash_consing_node, build_keeping_rewriter,
+    build_leaf, build_leaf_doubler, build_leaf_hiding_sharing, build_leaf_replacer, build_node,
+    run_with_pass_context,
 };
 
 // =============================================================================
@@ -43,7 +49,7 @@ fn walk(
     root: &ToyTree,
     order: TraversalOrder,
 ) -> Result<(), HookError> {
-    run_with_pass_context(|cx| walk_tree(visitor, root, order, cx))
+    walk_tree(visitor, root, order, &mut ())
 }
 
 /// Rewrite `root` with `rewriter`, returning the rewrite's result.
@@ -51,7 +57,7 @@ fn rewrite(
     rewriter: &mut ClosureRewriter,
     root: &ToyTree,
 ) -> Result<ToyTree, RewriteTreeError<ToyTree, HookError>> {
-    run_with_pass_context(|cx| rewrite_tree(rewriter, root, cx))
+    rewrite_tree(rewriter, root, &mut ())
 }
 
 /// Rewrite `root` with `rewriter`, failing the test if the rewrite fails.
@@ -84,12 +90,12 @@ struct BracketVisitor {
 impl TreeVisitor<ToyTree> for BracketVisitor {
     type Error = HookError;
 
-    fn before_visit(&mut self, node: &ToyTree, _cx: &mut PassContext<'_>) -> Result<(), HookError> {
+    fn before_visit(&mut self, node: &ToyTree, _cx: &mut ()) -> Result<(), HookError> {
         self.events.push(format!("before:{}", node.name()));
         Ok(())
     }
 
-    fn after_visit(&mut self, node: &ToyTree, _cx: &mut PassContext<'_>) -> Result<(), HookError> {
+    fn after_visit(&mut self, node: &ToyTree, _cx: &mut ()) -> Result<(), HookError> {
         self.events.push(format!("after:{}", node.name()));
         Ok(())
     }
@@ -99,7 +105,7 @@ impl TreeVisitor<ToyTree> for BracketVisitor {
 #[derive(Debug, Default)]
 struct SilentVisitor;
 
-impl TreeVisitor<ToyTree> for SilentVisitor {
+impl<C: ?Sized> TreeVisitor<ToyTree, C> for SilentVisitor {
     type Error = HookError;
 }
 
@@ -107,7 +113,7 @@ impl TreeVisitor<ToyTree> for SilentVisitor {
 #[derive(Debug, Default)]
 struct ReportingVisitor;
 
-impl TreeVisitor<ToyTree> for ReportingVisitor {
+impl TreeVisitor<ToyTree, PassContext<'_>> for ReportingVisitor {
     type Error = HookError;
 
     fn visit(&mut self, node: &ToyTree, cx: &mut PassContext<'_>) -> Result<(), HookError> {
@@ -124,7 +130,7 @@ impl TreeVisitor<ToyTree> for ReportingVisitor {
 #[derive(Debug, Default)]
 struct NameProbeVisitor;
 
-impl TreeVisitor<ToyTree> for NameProbeVisitor {
+impl<C: ?Sized> TreeVisitor<ToyTree, C> for NameProbeVisitor {
     type Error = HookError;
 }
 
@@ -132,7 +138,7 @@ impl TreeVisitor<ToyTree> for NameProbeVisitor {
 #[derive(Debug, Default)]
 struct RegisteredProbeVisitor;
 
-impl TreeVisitor<ToyTree> for RegisteredProbeVisitor {
+impl<C: ?Sized> TreeVisitor<ToyTree, C> for RegisteredProbeVisitor {
     type Error = HookError;
 }
 
@@ -140,7 +146,7 @@ impl TreeVisitor<ToyTree> for RegisteredProbeVisitor {
 #[derive(Debug)]
 struct CountProbeVisitor;
 
-impl TreeVisitor<ToyTree> for CountProbeVisitor {
+impl<C: ?Sized> TreeVisitor<ToyTree, C> for CountProbeVisitor {
     type Error = HookError;
 }
 
@@ -150,7 +156,7 @@ struct CountingVisitor {
     counts: Vec<usize>,
 }
 
-impl TreeVisitor<ToyTree> for CountingVisitor {
+impl TreeVisitor<ToyTree, PassContext<'_>> for CountingVisitor {
     type Error = HookError;
 
     fn visit(&mut self, node: &ToyTree, cx: &mut PassContext<'_>) -> Result<(), HookError> {
@@ -164,14 +170,10 @@ impl TreeVisitor<ToyTree> for CountingVisitor {
 #[derive(Debug, Default)]
 struct NameProbeRewriter;
 
-impl Rewriter<ToyTree> for NameProbeRewriter {
+impl<C: ?Sized> Rewriter<ToyTree, C> for NameProbeRewriter {
     type Error = HookError;
 
-    fn rewrite(
-        &mut self,
-        _node: &ToyTree,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<Option<ToyTree>, HookError> {
+    fn rewrite(&mut self, _node: &ToyTree, _cx: &mut C) -> Result<Option<ToyTree>, HookError> {
         Ok(None)
     }
 }
@@ -197,6 +199,7 @@ fn expect_rebuild_failure(
         node,
         children,
         source,
+        ..
     } = error
     else {
         panic!("expected a rebuild failure, got {error:?}");
@@ -299,8 +302,7 @@ fn walk_tree_runs_the_bracketing_hooks_around_a_default_visit() {
     let tree = build_node("root", &[&build_leaf("child", 1)]);
     let mut visitor = BracketVisitor::default();
 
-    run_with_pass_context(|cx| walk_tree(&mut visitor, &tree, TraversalOrder::Pre, cx))
-        .expect("no hook fails");
+    walk_tree(&mut visitor, &tree, TraversalOrder::Pre, &mut ()).expect("no hook fails");
 
     assert_eq!(
         visitor.events,
@@ -645,19 +647,79 @@ fn rewrite_tree_keeps_a_deep_untouched_subtree() {
     assert!(output.child(1).is_same_node(&deep));
 }
 
-/// Test a rewriter returning a node itself for a child still counts as a
-/// change: the parent is rebuilt, equal to the input but a new node.
+/// Test a rewriter returning every node itself changes nothing: no parent
+/// is rebuilt, and the output is the input itself.
 #[test]
-fn rewrite_tree_rebuilds_the_parent_of_a_child_returned_as_itself() {
+fn rewrite_tree_counts_a_node_returned_as_itself_as_unchanged() {
     let leaf = build_leaf("leaf", 1);
     let tree = build_node("unary", &[&leaf]);
     let mut rewriter = ClosureRewriter::new(|node| Ok(Some(node.clone())));
 
     let output = rewrite_or_panic(&mut rewriter, &tree);
 
-    assert!(!output.is_same_node(&tree));
-    assert_eq!(output, tree);
-    assert!(output.child(0).is_same_node(&leaf));
+    assert!(output.is_same_node(&tree));
+    assert_eq!(rewriter.list_seen_names(), ["leaf", "unary"]);
+    assert!(rewriter.seen()[1].is_same_node(&tree));
+}
+
+/// Test a rewriter that returns the original parent after its children
+/// changed reverts the change: the output is the input itself.
+#[test]
+fn rewrite_tree_counts_a_reverted_node_as_unchanged() {
+    let tree = build_node("unary", &[&build_leaf("leaf", 1)]);
+    let original = tree.clone();
+    let mut rewriter = ClosureRewriter::new(move |node| {
+        Ok(Some(if node.name() == "unary" {
+            original.clone()
+        } else {
+            node.with_value(node.value() * 2)
+        }))
+    });
+
+    let output = rewrite_or_panic(&mut rewriter, &tree);
+
+    assert!(output.is_same_node(&tree));
+    let rebuilt = &rewriter.seen()[1];
+    assert!(!rebuilt.is_same_node(&tree));
+    assert_eq!(rebuilt.child(0), &build_leaf("leaf", 2));
+}
+
+/// Test a reverted child is no change for its parent: the parent is not
+/// rebuilt, and the output is the input itself.
+#[test]
+fn rewrite_tree_does_not_rebuild_the_parent_of_a_reverted_child() {
+    let leaf = build_leaf("leaf", 1);
+    let tree = build_frozen_node("frozen", &[&build_node("unary", &[&leaf])]);
+    let reverted = tree.child(0).clone();
+    let mut rewriter = ClosureRewriter::new(move |node| {
+        Ok(match node.name() {
+            "unary" => Some(reverted.clone()),
+            "leaf" => Some(node.with_value(5)),
+            _ => None,
+        })
+    });
+
+    let output = rewrite_or_panic(&mut rewriter, &tree);
+
+    assert!(output.is_same_node(&tree));
+}
+
+/// Test a rebuild that returns the node itself, as a hash-consing IR does
+/// for children equal to its own, counts as no change.
+#[test]
+fn rewrite_tree_counts_a_rebuild_returning_the_node_itself_as_unchanged() {
+    let tree = build_hash_consing_node("interned", &[&build_leaf("a", 1), &build_leaf("b", 2)]);
+    let mut rewriter = ClosureRewriter::new(|node| {
+        Ok(node
+            .child_nodes()
+            .is_empty()
+            .then(|| node.with_value(node.value())))
+    });
+
+    let output = rewrite_or_panic(&mut rewriter, &tree);
+
+    assert!(output.is_same_node(&tree));
+    assert!(rewriter.seen()[2].is_same_node(&tree));
 }
 
 // =============================================================================
@@ -887,8 +949,8 @@ fn rewrite_tree_stops_at_a_refused_rebuild() {
     assert_eq!(rewriter.list_seen_names(), ["a"]);
 }
 
-/// Test each rewrite failure displays its message and exposes its cause as
-/// the source.
+/// Test a rewrite failure is transparent: it displays the rewriter's error
+/// and passes on that error's source, here none.
 #[test]
 fn rewrite_tree_error_describes_a_failing_rewrite() {
     let error: RewriteTreeError<ToyTree, HookError> =
@@ -896,11 +958,27 @@ fn rewrite_tree_error_describes_a_failing_rewrite() {
 
     let message = error.to_string();
 
-    assert_eq!(message, "rewriting a node failed");
-    let source = error.source().expect("a rewrite failure has a source");
+    assert_eq!(message, "inner");
+    assert!(error.source().is_none());
+}
+
+/// Test a rewrite failure passes on the source of the rewriter's error.
+#[test]
+fn rewrite_tree_error_passes_on_the_source_of_the_rewriters_error() {
+    let error: RewriteTreeError<ToyTree, PassError> = RewriteTreeError::Rewrite(
+        WalkPass::new(
+            RecordingVisitor::new().with_failure(WalkHook::Visit, "leaf"),
+            TraversalOrder::Pre,
+        )
+        .execute(&build_leaf("leaf", 1))
+        .expect_err("the visit fails"),
+    );
+
+    let source = error.source().expect("the pass error has a source");
+
     assert_eq!(
         source.downcast_ref::<HookError>(),
-        Some(&HookError("inner".to_owned()))
+        Some(&HookError("visit:leaf failed".to_owned()))
     );
 }
 
@@ -911,11 +989,12 @@ fn rewrite_tree_error_describes_a_refused_rebuild() {
     let refusal = ToyRebuildError::Frozen {
         name: "frozen".to_owned(),
     };
-    let error: RewriteTreeError<ToyTree, HookError> = RewriteTreeError::Rebuild {
-        node: build_frozen_node("frozen", &[]),
-        children: Vec::new(),
-        source: refusal.clone(),
-    };
+    let mut rewriter = build_leaf_doubler();
+    let error = rewrite(
+        &mut rewriter,
+        &build_frozen_node("frozen", &[&build_leaf("a", 1)]),
+    )
+    .expect_err("the rebuild is refused");
 
     let message = error.to_string();
 
@@ -925,6 +1004,124 @@ fn rewrite_tree_error_describes_a_refused_rebuild() {
     );
     let source = error.source().expect("a rebuild failure has a source");
     assert_eq!(source.downcast_ref::<ToyRebuildError>(), Some(&refusal));
+}
+
+// =============================================================================
+// The traversal context
+// =============================================================================
+
+/// Counts the leaves it visits, needing no context.
+#[derive(Debug, Default)]
+struct LeafCounter {
+    leaves: usize,
+}
+
+impl TreeVisitor<ToyTree> for LeafCounter {
+    type Error = HookError;
+
+    fn visit(&mut self, node: &ToyTree, _cx: &mut ()) -> Result<(), HookError> {
+        if node.child_nodes().is_empty() {
+            self.leaves += 1;
+        }
+        Ok(())
+    }
+}
+
+/// Negates every leaf, needing no context.
+#[derive(Debug, Default)]
+struct LeafNegator;
+
+impl Rewriter<ToyTree> for LeafNegator {
+    type Error = HookError;
+
+    fn rewrite(&mut self, node: &ToyTree, _cx: &mut ()) -> Result<Option<ToyTree>, HookError> {
+        Ok(node
+            .child_nodes()
+            .is_empty()
+            .then(|| node.with_value(-node.value())))
+    }
+}
+
+/// Logs the name of every node it visits or rewrites into its context, and
+/// doubles every leaf.
+#[derive(Debug, Default)]
+struct LoggingTraversal;
+
+impl TreeVisitor<ToyTree, Vec<String>> for LoggingTraversal {
+    type Error = HookError;
+
+    fn visit(&mut self, node: &ToyTree, log: &mut Vec<String>) -> Result<(), HookError> {
+        log.push(format!("visit:{}", node.name()));
+        Ok(())
+    }
+}
+
+impl Rewriter<ToyTree, Vec<String>> for LoggingTraversal {
+    type Error = HookError;
+
+    fn rewrite(
+        &mut self,
+        node: &ToyTree,
+        log: &mut Vec<String>,
+    ) -> Result<Option<ToyTree>, HookError> {
+        log.push(format!("rewrite:{}", node.name()));
+        Ok(node
+            .child_nodes()
+            .is_empty()
+            .then(|| node.with_value(node.value() * 2)))
+    }
+}
+
+/// Test a visitor and a rewriter written without a context run with the
+/// unit context, outside any pass.
+#[test]
+fn walk_tree_and_rewrite_tree_run_without_a_pass_context() {
+    let tree = build_small_tree();
+    let mut counter = LeafCounter::default();
+    let mut negator = LeafNegator;
+
+    walk_tree(&mut counter, &tree, TraversalOrder::Pre, &mut ()).expect("no hook fails");
+    let output = rewrite_tree(&mut negator, &tree, &mut ()).expect("no rewrite fails");
+
+    assert_eq!(counter.leaves, 2);
+    assert_eq!(
+        output,
+        build_node(
+            "root",
+            &[
+                &build_node("left", &[&build_leaf("left_leaf", -1)]),
+                &build_leaf("right", -2)
+            ]
+        )
+    );
+}
+
+/// Test the walk and the rewrite hand the caller's context to every hook,
+/// in hook order, and leave it otherwise untouched.
+#[test]
+fn rewrite_tree_threads_a_caller_chosen_context() {
+    let tree = build_small_tree();
+    let mut traversal = LoggingTraversal;
+    let mut log = vec!["start".to_owned()];
+
+    walk_tree(&mut traversal, &tree, TraversalOrder::Post, &mut log).expect("no hook fails");
+    let output = rewrite_tree(&mut traversal, &tree, &mut log).expect("no rewrite fails");
+
+    assert_eq!(
+        log,
+        [
+            "start",
+            "visit:left_leaf",
+            "visit:left",
+            "visit:right",
+            "visit:root",
+            "rewrite:left_leaf",
+            "rewrite:left",
+            "rewrite:right",
+            "rewrite:root",
+        ]
+    );
+    assert_eq!(output.child(1), &build_leaf("right", 4));
 }
 
 // =============================================================================
@@ -1344,6 +1541,29 @@ fn pass_manager_verifies_a_rewrite_with_a_walk_pass() {
         walk_pass.visitor().list_names(WalkHook::Visit),
         ["a", "b", "root", "a", "b", "root"]
     );
+}
+
+/// Test a fixpoint group of a rewrite pass that returns every node itself
+/// converges in its first iteration: the pass changes nothing.
+#[test]
+fn fixpoint_group_of_an_identity_rewrite_pass_converges() {
+    let tree = build_small_tree();
+    let mut group = FixpointPassGroup::new(Identifier::new("identity-group"))
+        .with_max_iterations(NonZeroUsize::new(3).expect("positive"));
+    group.add_pass(RewritePass::new(ClosureRewriter::new(|node| {
+        Ok(Some(node.clone()))
+    })));
+    let mut manager = PassManager::new(Identifier::new("tree-pipeline"));
+    manager.add_fixpoint_group(group);
+
+    let result = manager.run(&tree).expect("the group converges");
+
+    assert!(result.output().is_same_node(&tree));
+    let Some(PipelineRecord::FixpointGroup(record)) = result.records().first() else {
+        panic!("expected a group record, got {:?}", result.records());
+    };
+    assert!(record.is_converged());
+    assert_eq!(record.iterations(), 1);
 }
 
 /// Test a walk pass reads analyses of the node it walks through its

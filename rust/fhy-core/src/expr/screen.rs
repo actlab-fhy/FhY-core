@@ -5,7 +5,7 @@ use std::hash::BuildHasher;
 
 use crate::expr::SymbolType;
 use crate::identifier::Identifier;
-use crate::pass::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
+use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
 use super::error::{BooleanPosition, NonBooleanLogicalOperandError};
 use super::literal::LiteralKind;

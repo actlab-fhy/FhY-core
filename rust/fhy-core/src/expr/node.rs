@@ -22,22 +22,15 @@ use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::identifier::Identifier;
-use crate::pass::{
-    BuildIdentityHasher, NodeHandle, NodeIdentity, PassContext, RewriteTreeError, Rewriter,
-    TraversalOrder, Tree, TreeVisitor, rewrite_tree, walk_tree,
+use crate::tree::{
+    BuildIdentityHasher, NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, TraversalOrder,
+    Tree, TreeVisitor, rewrite_tree, walk_tree,
 };
 
 use super::alpha::AlphaRenaming;
 use super::error::ExpressionBuildError;
 use super::literal::{LiteralKind, LiteralValue};
 use super::operation::{BinaryOperation, UnaryOperation};
-
-/// The name of the pass context substitution runs its rewrite in.
-const SUBSTITUTION_PASS_NAME: &str = "substitute";
-
-/// The name of the pass context free-identifier collection runs its walk
-/// in.
-const FREE_IDENTIFIERS_PASS_NAME: &str = "free_identifiers";
 
 /// The children of a node, in visiting order, from either end.
 enum Children<'a> {
@@ -310,7 +303,7 @@ struct FreeIdentifierCollector {
 impl TreeVisitor<Expression> for FreeIdentifierCollector {
     type Error = Infallible;
 
-    fn visit(&mut self, node: &Expression, _cx: &mut PassContext<'_>) -> Result<(), Infallible> {
+    fn visit(&mut self, node: &Expression, _cx: &mut ()) -> Result<(), Infallible> {
         self.is_first_visit =
             !node.is_shared() || self.visited_shared_nodes.insert(node.identity());
         if self.is_first_visit {
@@ -338,7 +331,7 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
     fn rewrite(
         &mut self,
         node: &Expression,
-        _cx: &mut PassContext<'_>,
+        _cx: &mut (),
     ) -> Result<Option<Expression>, Infallible> {
         let ExpressionKind::Identifier(identifier) = node.kind() else {
             return Ok(None);
@@ -546,8 +539,7 @@ impl Expression {
     #[must_use]
     pub fn free_identifiers(&self) -> HashSet<Identifier> {
         let mut collector = FreeIdentifierCollector::default();
-        let mut cx = PassContext::new_standalone(FREE_IDENTIFIERS_PASS_NAME.to_owned());
-        let Ok(()) = walk_tree(&mut collector, self, TraversalOrder::Pre, &mut cx);
+        let Ok(()) = walk_tree(&mut collector, self, TraversalOrder::Pre, &mut ());
         collector.free
     }
 
@@ -558,8 +550,9 @@ impl Expression {
     /// a mapped identifier becomes a handle to the same replacement node
     /// ([`ptr_eq`](Self::ptr_eq) with it). Only the nodes above a replaced
     /// reference are rebuilt: every subtree without one is returned as a
-    /// handle to itself, so substituting a map that replaces nothing returns
-    /// a handle to this expression. A subtree occurring in several places is
+    /// handle to itself, so substituting a map that replaces nothing, or
+    /// maps identifiers only to handles of their own references, returns a
+    /// handle to this expression. A subtree occurring in several places is
     /// substituted into once and its result reused at every occurrence, so
     /// the result shares its subtrees as this expression does, and the work
     /// is linear in the distinct nodes.
@@ -574,8 +567,7 @@ impl Expression {
         replacements: &HashMap<Identifier, Expression, S>,
     ) -> Result<Expression, ExpressionBuildError> {
         let mut substitution = Substitution { replacements };
-        let mut cx = PassContext::new_standalone(SUBSTITUTION_PASS_NAME.to_owned());
-        rewrite_tree(&mut substitution, self, &mut cx).map_err(|error| match error {
+        rewrite_tree(&mut substitution, self, &mut ()).map_err(|error| match error {
             RewriteTreeError::Rewrite(never) => match never {},
             RewriteTreeError::Rebuild { source, .. } => source,
         })

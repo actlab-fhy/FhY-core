@@ -14,10 +14,8 @@ use fhy_core::expr::{
     UnaryOperation, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
-use fhy_core::pass::{
-    ExecutePass, NodeHandle, PassContext, RewritePass, RewriteTreeError, Rewriter, TraversalOrder,
-    Tree, TreeVisitor, WalkPass,
-};
+use fhy_core::pass::{ExecutePass, RewritePass, WalkPass};
+use fhy_core::tree::{NodeHandle, RewriteTreeError, Rewriter, TraversalOrder, Tree, TreeVisitor};
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 // =============================================================================
@@ -45,10 +43,10 @@ fn label_kind(expression: &Expression) -> String {
     }
 }
 
-impl TreeVisitor<Expression> for KindRecorder {
+impl<C: ?Sized> TreeVisitor<Expression, C> for KindRecorder {
     type Error = Never;
 
-    fn visit(&mut self, node: &Expression, _cx: &mut PassContext<'_>) -> Result<(), Never> {
+    fn visit(&mut self, node: &Expression, _cx: &mut C) -> Result<(), Never> {
         self.kinds.push(label_kind(node));
         Ok(())
     }
@@ -60,10 +58,10 @@ struct VisitCounter {
     count: usize,
 }
 
-impl TreeVisitor<Expression> for VisitCounter {
+impl<C: ?Sized> TreeVisitor<Expression, C> for VisitCounter {
     type Error = Never;
 
-    fn visit(&mut self, _node: &Expression, _cx: &mut PassContext<'_>) -> Result<(), Never> {
+    fn visit(&mut self, _node: &Expression, _cx: &mut C) -> Result<(), Never> {
         self.count += 1;
         Ok(())
     }
@@ -90,14 +88,10 @@ impl IdentifierReplacer {
     }
 }
 
-impl Rewriter<Expression> for IdentifierReplacer {
+impl<C: ?Sized> Rewriter<Expression, C> for IdentifierReplacer {
     type Error = Never;
 
-    fn rewrite(
-        &mut self,
-        node: &Expression,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<Option<Expression>, Never> {
+    fn rewrite(&mut self, node: &Expression, _cx: &mut C) -> Result<Option<Expression>, Never> {
         self.calls += 1;
         Ok(match node.kind() {
             ExpressionKind::Identifier(identifier) if identifier == &self.target => {
@@ -112,14 +106,10 @@ impl Rewriter<Expression> for IdentifierReplacer {
 #[derive(Debug, Default)]
 struct TrueToOne;
 
-impl Rewriter<Expression> for TrueToOne {
+impl<C: ?Sized> Rewriter<Expression, C> for TrueToOne {
     type Error = Never;
 
-    fn rewrite(
-        &mut self,
-        node: &Expression,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<Option<Expression>, Never> {
+    fn rewrite(&mut self, node: &Expression, _cx: &mut C) -> Result<Option<Expression>, Never> {
         Ok(match node.kind() {
             ExpressionKind::Literal(literal) if literal == &LiteralValue::from(true) => {
                 Some(build_literal(1))
@@ -328,6 +318,7 @@ fn rewrite_tree_reports_a_refused_expression_rebuild() {
         node,
         children,
         source,
+        ..
     } = tree_error
     else {
         panic!("expected a rebuild failure, got {tree_error:?}");

@@ -568,28 +568,23 @@ proptest! {
         );
     }
 
-    /// Test a rule rewriting every literal to itself keeps the tree equal,
-    /// fires once per literal occurrence, and changes the tree exactly when
-    /// it fired below the root.
+    /// Test a rule rewriting every literal to itself fires once per literal
+    /// occurrence and never changes the tree: the output is the input
+    /// itself.
     #[test]
-    fn identity_rewrite_changes_exactly_trees_it_fires_below_the_root(
+    fn identity_rewrite_never_changes_the_tree(
         expression in build_expression_strategy(true)
     ) {
         let rule = RewriteRule::new(
             Pattern::capture("x", Pattern::literal(None)).expect("a non-empty capture name"),
             rewrite_to_x,
         );
-        let is_literal_root = matches!(expression.kind(), ExpressionKind::Literal(_));
         let literal_count = count_literal_leaves(&expression);
 
         let outcome = apply_rewrite_rules(&expression, &[rule]).expect("no callback fails");
 
-        prop_assert_eq!(outcome.output(), &expression);
         prop_assert_eq!(outcome.fired().len(), literal_count);
-        prop_assert_eq!(outcome.is_changed(), !is_literal_root && literal_count > 0);
-        prop_assert_eq!(
-            outcome.is_changed(),
-            !Expression::ptr_eq(outcome.output(), &expression)
-        );
+        prop_assert!(!outcome.is_changed());
+        prop_assert!(Expression::ptr_eq(outcome.output(), &expression));
     }
 }

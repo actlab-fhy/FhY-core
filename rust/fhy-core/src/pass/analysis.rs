@@ -1,79 +1,12 @@
-//! Node identity, reusable analyses, and the identity-keyed analysis cache a
-//! pass manager keeps for one run.
+//! Reusable analyses and the identity-keyed analysis cache a pass manager
+//! keeps for one run.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::preserved::{AnalysisId, PreservedAnalyses};
-
-/// The opaque identity of a live IR node.
-///
-/// Two identities are equal only when they come from handles to the same
-/// node while that node is alive. Once every handle to a node is dropped, a
-/// later node may receive the same identity; a holder that needs an identity
-/// to stay unique keeps a handle alive alongside it.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeIdentity(usize);
-
-impl NodeIdentity {
-    /// Return the identity of the allocation `node` points to.
-    ///
-    /// Clones of one [`Arc`] share an identity; two separately allocated
-    /// `Arc`s have different identities while both are alive.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    ///
-    /// use fhy_core::pass::NodeIdentity;
-    ///
-    /// let node = Arc::new(5);
-    /// let alias = Arc::clone(&node);
-    /// let other = Arc::new(5);
-    ///
-    /// assert_eq!(NodeIdentity::of_arc(&node), NodeIdentity::of_arc(&alias));
-    /// assert_ne!(NodeIdentity::of_arc(&node), NodeIdentity::of_arc(&other));
-    /// ```
-    #[must_use]
-    pub fn of_arc<T: ?Sized>(node: &Arc<T>) -> Self {
-        Self(Arc::as_ptr(node).cast::<()>().addr())
-    }
-}
-
-/// A cheap-to-clone handle to an immutable IR node with a stable identity.
-///
-/// Pipeline IR and every IR an analysis is cached for is a node handle.
-/// Cloning a handle must not copy the node: a clone reports the same
-/// [`identity`](Self::identity), and the node cannot change while any
-/// handle to it is alive, so a result computed for one handle holds for
-/// every clone.
-///
-/// # Examples
-///
-/// ```
-/// use std::sync::Arc;
-///
-/// use fhy_core::pass::{NodeHandle, NodeIdentity};
-///
-/// #[derive(Clone)]
-/// struct Module(Arc<Vec<String>>);
-///
-/// impl NodeHandle for Module {
-///     fn identity(&self) -> NodeIdentity {
-///         NodeIdentity::of_arc(&self.0)
-///     }
-/// }
-///
-/// let module = Module(Arc::new(vec!["main".to_owned()]));
-/// assert_eq!(module.identity(), module.clone().identity());
-/// ```
-pub trait NodeHandle: Clone + Send + Sync + 'static {
-    /// Return the identity of the node this handle points to.
-    #[must_use]
-    fn identity(&self) -> NodeIdentity;
-}
+use crate::tree::{NodeHandle, NodeIdentity};
 
 /// A reusable computation over IR whose result a pass manager can cache.
 ///

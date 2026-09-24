@@ -17,19 +17,14 @@ use super::super::error::ExpressionBuildError;
 use super::super::node::Expression;
 use super::matching::{CallbackError, MatchBindings, Pattern, match_pattern};
 use crate::diagnostic::DiagnosticLevel;
-use crate::pass::{
-    CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure, RewriteTreeError, Rewriter,
-    rewrite_tree,
-};
+use crate::pass::{CompilerPass, PassContext, PassFailure};
+use crate::tree::{NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree};
 
 /// A rewrite: the replacement built from a match's bindings.
 type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync>;
 
 /// A guard: whether a rule may fire on a match's bindings.
 type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
-
-/// The name of the pass context the rewrite walk runs in.
-const REWRITE_WALK_PASS_NAME: &str = "apply_rewrite_rules";
 
 /// The name of [`RewriteRuleApplier`], which it is registered under.
 const RULE_APPLIER_PASS_NAME: &str = "fhy_core.symbolic.expression.apply_rewrite_rules";
@@ -130,7 +125,7 @@ impl Rewriter<Expression> for RuleApplier<'_> {
     fn rewrite(
         &mut self,
         node: &Expression,
-        _cx: &mut PassContext<'_>,
+        _cx: &mut (),
     ) -> Result<Option<Expression>, RewriteError> {
         for (rule_index, rule) in self.rules.iter().enumerate() {
             let replacement =
@@ -160,15 +155,10 @@ struct RuleRun {
     fired: Vec<FiredRule>,
 }
 
-/// Rewrite `expression` bottom-up once with `rules`, in the pass context
-/// `cx`.
-fn run_rewrite_rules(
-    expression: &Expression,
-    rules: &[RewriteRule],
-    cx: &mut PassContext<'_>,
-) -> RuleRun {
+/// Rewrite `expression` bottom-up once with `rules`.
+fn run_rewrite_rules(expression: &Expression, rules: &[RewriteRule]) -> RuleRun {
     let mut applier = RuleApplier::new(rules);
-    let output = rewrite_tree(&mut applier, expression, cx).map_err(|error| match error {
+    let output = rewrite_tree(&mut applier, expression, &mut ()).map_err(|error| match error {
         RewriteTreeError::Rewrite(error) => error,
         RewriteTreeError::Rebuild {
             node,
@@ -344,11 +334,9 @@ impl RewriteOutcome {
     /// exactly when [`output`](Self::output) and the input are not
     /// [`Expression::ptr_eq`].
     ///
-    /// A tree in which no rule fired is unchanged. A rule firing at the root
-    /// and returning the root itself leaves the tree unchanged too; a rule
-    /// firing below the root always rebuilds the root, even when it returns
-    /// the node it matched, so the tree is changed although it is
-    /// structurally equal to the input.
+    /// A tree in which no rule fired is unchanged. A rule that fires and
+    /// returns the node it matched, at the root or below it, leaves that
+    /// node unchanged too, so no ancestor is rebuilt on its account.
     #[must_use]
     pub fn is_changed(&self) -> bool {
         self.changed
@@ -555,7 +543,7 @@ impl CompilerPass<Expression> for RewriteRuleApplier {
         ir: &Expression,
         cx: &mut PassContext<'_>,
     ) -> Result<Expression, PassFailure> {
-        let RuleRun { output, fired } = run_rewrite_rules(ir, &self.rules, cx);
+        let RuleRun { output, fired } = run_rewrite_rules(ir, &self.rules);
         for name in fired.iter().filter_map(FiredRule::name) {
             let message = format!("Applied rewrite rule {name:?}.");
             cx.report_text(DiagnosticLevel::Info, message, None);
@@ -607,8 +595,8 @@ pub fn apply_rewrite_rule(
 /// places is rewritten once and its result reused at every occurrence, so a
 /// tree sharing its subtrees costs time linear in its distinct nodes.
 ///
-/// When no rule fires anywhere, the output is a handle to `expression`
-/// itself. See [`RewriteOutcome::is_changed`] for the exact meaning of a
+/// When no rule fires anywhere, or every rule that fires returns the node it
+/// matched, the output is a handle to `expression` itself. See [`RewriteOutcome::is_changed`] for the exact meaning of a
 /// change.
 ///
 /// The walk keeps its own work stack, so a tree of any depth rewrites within
@@ -624,8 +612,7 @@ pub fn apply_rewrite_rules(
     expression: &Expression,
     rules: &[RewriteRule],
 ) -> Result<RewriteOutcome, RewriteError> {
-    let mut cx = PassContext::new_standalone(REWRITE_WALK_PASS_NAME.to_owned());
-    let RuleRun { output, fired } = run_rewrite_rules(expression, rules, &mut cx);
+    let RuleRun { output, fired } = run_rewrite_rules(expression, rules);
     let output = output?;
     let changed = !Expression::ptr_eq(&output, expression);
     Ok(RewriteOutcome {

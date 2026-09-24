@@ -3,8 +3,9 @@
 
 use std::sync::Arc;
 
-use super::analysis::{Analysis, AnalysisCache, NodeHandle};
+use super::analysis::{Analysis, AnalysisCache};
 use crate::diagnostic::{Diagnostic, DiagnosticLevel, Note};
+use crate::tree::NodeHandle;
 
 /// The diagnostics sink and analysis access of one pass run.
 ///
@@ -31,12 +32,6 @@ impl<'a> PassContext<'a> {
             diagnostics: Vec::new(),
             analyses,
         }
-    }
-
-    /// Create the context for a run of the pass `pass_name` outside a
-    /// pipeline, which computes every analysis afresh.
-    pub(crate) fn new_standalone(pass_name: String) -> Self {
-        Self::new(pass_name, None)
     }
 
     /// Return the pass name and the diagnostics, consuming the context.

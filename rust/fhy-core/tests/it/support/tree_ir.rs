@@ -1,15 +1,16 @@
 //! A toy tree IR, recording visitors and rewriters over it, and a helper
 //! that lends a pass context to a test, for the tree traversal tests.
+//!
+//! The visitor and the rewriter work under any traversal context, so one
+//! value serves a direct walk with `&mut ()` and a walk or rewrite pass.
 
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use fhy_core::pass::{
-    CompilerPass, ExecutePass, NodeHandle, NodeIdentity, PassContext, PassFailure, Rewriter, Tree,
-    TreeVisitor,
-};
+use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PassFailure};
+use fhy_core::tree::{NodeHandle, NodeIdentity, Rewriter, Tree, TreeVisitor};
 
 // =============================================================================
 // The toy tree
@@ -23,6 +24,7 @@ pub(crate) struct ToyNode {
     children: Vec<ToyTree>,
     is_frozen: bool,
     hides_sharing: bool,
+    hash_conses: bool,
 }
 
 /// A handle to a toy tree node: a name, an integer, and ordered children.
@@ -70,6 +72,7 @@ fn build_toy_node(name: &str, value: i64, children: Vec<ToyTree>, is_frozen: boo
         children,
         is_frozen,
         hides_sharing: false,
+        hash_conses: false,
     }))
 }
 
@@ -83,6 +86,22 @@ pub(crate) fn build_leaf_hiding_sharing(name: &str, value: i64) -> ToyTree {
         children: Vec::new(),
         is_frozen: false,
         hides_sharing: true,
+        hash_conses: false,
+    }))
+}
+
+/// Build the inner node `name`, holding zero, over `children`, whose rebuild
+/// around children equal to its own returns the node itself, as a
+/// hash-consing IR does.
+#[must_use]
+pub(crate) fn build_hash_consing_node(name: &str, children: &[&ToyTree]) -> ToyTree {
+    ToyTree(Arc::new(ToyNode {
+        name: name.to_owned(),
+        value: 0,
+        children: children.iter().map(|&child| child.clone()).collect(),
+        is_frozen: false,
+        hides_sharing: false,
+        hash_conses: true,
     }))
 }
 
@@ -315,6 +334,9 @@ impl Tree for ToyTree {
                 actual: children.len(),
             });
         }
+        if self.0.hash_conses && children == self.child_nodes() {
+            return Ok(self.clone());
+        }
         Ok(build_toy_node(self.name(), self.value(), children, false))
     }
 }
@@ -427,18 +449,18 @@ impl RecordingVisitor {
     }
 }
 
-impl TreeVisitor<ToyTree> for RecordingVisitor {
+impl<C: ?Sized> TreeVisitor<ToyTree, C> for RecordingVisitor {
     type Error = HookError;
 
-    fn before_visit(&mut self, node: &ToyTree, _cx: &mut PassContext<'_>) -> Result<(), HookError> {
+    fn before_visit(&mut self, node: &ToyTree, _cx: &mut C) -> Result<(), HookError> {
         self.record(WalkHook::Before, node)
     }
 
-    fn visit(&mut self, node: &ToyTree, _cx: &mut PassContext<'_>) -> Result<(), HookError> {
+    fn visit(&mut self, node: &ToyTree, _cx: &mut C) -> Result<(), HookError> {
         self.record(WalkHook::Visit, node)
     }
 
-    fn after_visit(&mut self, node: &ToyTree, _cx: &mut PassContext<'_>) -> Result<(), HookError> {
+    fn after_visit(&mut self, node: &ToyTree, _cx: &mut C) -> Result<(), HookError> {
         self.record(WalkHook::After, node)
     }
 
@@ -497,14 +519,10 @@ impl fmt::Debug for ClosureRewriter {
     }
 }
 
-impl Rewriter<ToyTree> for ClosureRewriter {
+impl<C: ?Sized> Rewriter<ToyTree, C> for ClosureRewriter {
     type Error = HookError;
 
-    fn rewrite(
-        &mut self,
-        node: &ToyTree,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<Option<ToyTree>, HookError> {
+    fn rewrite(&mut self, node: &ToyTree, _cx: &mut C) -> Result<Option<ToyTree>, HookError> {
         self.seen.push(node.clone());
         (self.rewrite)(node)
     }

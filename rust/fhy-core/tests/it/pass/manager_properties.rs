@@ -12,9 +12,10 @@ use std::sync::Arc;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
-    CompilerPass, FixpointPassGroup, NodeHandle, NodeIdentity, PassContext, PassFailure,
-    PassManager, PipelineRecord, PreservedAnalyses,
+    CompilerPass, FixpointPassGroup, PassContext, PassFailure, PassManager, PipelineRecord,
+    PreservedAnalyses,
 };
+use fhy_core::tree::{NodeHandle, NodeIdentity};
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis};
 use proptest::prelude::*;
 

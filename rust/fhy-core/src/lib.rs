@@ -47,6 +47,7 @@ pub mod interned;
 pub mod op_attribute;
 pub mod pass;
 pub mod provenance;
+pub mod tree;
 pub mod value_domain;
 
 mod decode;

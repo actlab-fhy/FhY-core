@@ -20,10 +20,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
 use fhy_core::pass::{
-    AnalysisId, CompilerPass, ExecutePass, NodeHandle, NodeIdentity, PassContext, PassError,
-    PassFailure, PassHook, PreservedAnalyses, create_pass, register_pass, registered_passes,
-    run_count, run_count_of,
+    AnalysisId, CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PassHook,
+    PreservedAnalyses, create_pass, register_pass, registered_passes, run_count, run_count_of,
 };
+use fhy_core::tree::{NodeHandle, NodeIdentity};
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis};
 use rstest::rstest;
 

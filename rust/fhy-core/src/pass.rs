@@ -7,7 +7,8 @@
 //! runs on its own with [`ExecutePass::execute`], or in a [`PassManager`]
 //! pipeline, possibly repeated to a fixpoint in a [`FixpointPassGroup`]. A
 //! pipeline caches analysis results per node for the length of one run,
-//! keyed by the [`NodeIdentity`] a [`NodeHandle`] reports, and can verify
+//! keyed by the [`NodeIdentity`](crate::tree::NodeIdentity) a
+//! [`NodeHandle`](crate::tree::NodeHandle) reports, and can verify
 //! the IR between passes with a [`ValidationManager`], which runs validation
 //! passes collect-all into one report.
 //!
@@ -17,10 +18,10 @@
 //! ([`run_count`], [`run_count_of`], [`total_run_count`]) count every pass
 //! run that was not skipped.
 //!
-//! Tree-shaped IR ([`Tree`]) adds two traversals: [`walk_tree`] drives a
-//! [`TreeVisitor`], and [`rewrite_tree`] drives a [`Rewriter`];
-//! [`WalkPass`] and [`RewritePass`] turn them into passes.
+//! [`WalkPass`] and [`RewritePass`] turn the traversals of
+//! [`crate::tree`] into passes.
 
+mod adapters;
 mod analysis;
 mod compiler_pass;
 mod context;
@@ -28,10 +29,10 @@ mod error;
 mod manager;
 mod preserved;
 mod registry;
-mod tree;
 mod validation;
 
-pub use analysis::{Analysis, NodeHandle, NodeIdentity};
+pub use adapters::{RewritePass, WalkPass};
+pub use analysis::Analysis;
 pub use compiler_pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome};
 pub use context::PassContext;
 pub use error::{PassError, PassHook, PassRegistrationError};
@@ -43,10 +44,5 @@ pub use preserved::{AnalysisId, PreservedAnalyses};
 pub use registry::{
     PassInfo, create_pass, register_pass, registered_passes, run_count, run_count_of,
     total_run_count,
-};
-pub(crate) use tree::BuildIdentityHasher;
-pub use tree::{
-    RewritePass, RewriteTreeError, Rewriter, TraversalOrder, Tree, TreeVisitor, WalkPass,
-    rewrite_tree, walk_tree,
 };
 pub use validation::ValidationManager;

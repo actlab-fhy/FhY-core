@@ -407,23 +407,19 @@ fn apply_rewrite_rules_with_an_identity_rewrite_at_the_root_is_unchanged() {
 }
 
 /// Test a rule firing below the root and returning the node it matched
-/// rebuilds the root: the output is changed, though structurally equal.
+/// changes nothing either: the root is not rebuilt, and the output is the
+/// input itself.
 #[test]
-fn apply_rewrite_rules_with_an_identity_rewrite_below_the_root_is_changed() {
+fn apply_rewrite_rules_with_an_identity_rewrite_below_the_root_is_unchanged() {
     let (_, x) = build_identifier("x");
     let expression = -&x;
     let rule = RewriteRule::new(build_capture_of_identifier("x"), rewrite_to_capture("x"));
 
     let outcome = rewrite(&expression, &[rule]);
 
-    assert!(outcome.is_changed());
-    assert!(!Expression::ptr_eq(outcome.output(), &expression));
-    assert_eq!(outcome.output(), &expression);
+    assert!(!outcome.is_changed());
+    assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert_eq!(describe_fired(&outcome), vec![(0, None)]);
-    let ExpressionKind::Unary(node) = outcome.output().kind() else {
-        panic!("a negation at the root, got {:?}", outcome.output());
-    };
-    assert!(Expression::ptr_eq(node.operand(), &x));
 }
 
 /// Return the pattern capturing any identifier reference under `name`.
