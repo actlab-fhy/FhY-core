@@ -49,6 +49,7 @@ property = ["hypothesis", {include-group = "test"}]
 lint = ["ruff"]
 type = ["ty", "mypy", {include-group = "property"}]
 mutation = ["cosmic-ray", {include-group = "property"}]
+bench = ["pytest-benchmark"]
 dev = [
    {include-group = "test"},
    {include-group = "property"},

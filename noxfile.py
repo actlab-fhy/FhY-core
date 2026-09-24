@@ -17,6 +17,8 @@ SOURCES = ["src", "tests", "rust/fhy-core/tests/golden"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
+# Where the benchmark session saves its runs (gitignored).
+BENCHMARK_DIRECTORY = ROOT / ".benchmarks"
 # The integration-test binary the expanded replays run in.
 RUST_TEST_TARGET = "it"
 # `cargo test` summary of a run that replayed one expanded corpus.
@@ -159,6 +161,36 @@ def property(session: nox.Session, backend: str) -> None:
         "property",
         *session.posargs,
         env={"HYPOTHESIS_PROFILE": "thorough"},
+    )
+
+
+@nox.session(python=PYTHONS)
+@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
+def benchmark(session: nox.Session, backend: str) -> None:
+    """Run the pytest-benchmark benchmarks under ``benchmarks/`` on one backend.
+
+    Opt-in: neither a default session nor a CI job. As in ``tests``, the
+    session fails before benchmarking unless the package reports the backend
+    it was asked for. Every run is saved under
+    ``.benchmarks/storage/<backend>/``, so passing ``--benchmark-compare``
+    compares a run with the previous one on the same backend, and the run's
+    results are also written to ``.benchmarks/<python>-<backend>.json`` for
+    comparing the two backends with ``pytest-benchmark compare``.
+    """
+    _sync(session, "bench", "test")
+    _select_backend(session, backend)
+    session.run(
+        "pytest",
+        "benchmarks",
+        "--benchmark-only",
+        # pytest-benchmark disables itself under pytest-xdist, which the
+        # configured addopts turn on with `-n auto`.
+        "-n",
+        "0",
+        "--benchmark-autosave",
+        f"--benchmark-storage={BENCHMARK_DIRECTORY / 'storage' / backend}",
+        f"--benchmark-json={BENCHMARK_DIRECTORY / f'{session.python}-{backend}.json'}",
+        *session.posargs,
     )
 
 

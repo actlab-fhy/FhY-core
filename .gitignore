@@ -54,6 +54,7 @@ cover/
 *.sqlite-journal
 *.sqlite-wal
 mutation-report.html
+.benchmarks/
 
 # Translations
 *.mo
