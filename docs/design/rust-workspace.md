@@ -7341,3 +7341,33 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
 - **Keywords and categories** in 2.5 are proposals.
 
 ---
+
+## Implementation notes
+
+- **Step 0.1 (R-7):** the `#[expect(clippy::manual_assert_eq, ...)]` sits
+  on the test function. On the `assert!` statement itself clippy still
+  reports the lint and the expectation goes unfulfilled.
+- **Step 0.3 and 0.4 (R-24):** the modules take the `foo.rs` + `foo/`
+  layout, so B6 §2.2's `src/expr/mod.rs` and `src/expr/pattern/mod.rs`
+  are `src/expr.rs` and `src/expr/pattern.rs`, and `src/pass/mod.rs` is
+  `src/pass.rs`. The private `pass_infrastructure/pass.rs` becomes
+  `src/pass/compiler_pass.rs` now rather than in B5, because `pass::pass`
+  trips `clippy::module_inception` (B5 §2.1 names the file the same way).
+- **Step 0.5 (D-18):** `tests/it` uses the same layout: `it/support.rs`,
+  `it/interned.rs`, `it/expr.rs`, `it/expr/pattern.rs`, `it/pass.rs` and
+  `it/tree.rs` next to their directories, instead of the `mod.rs` files
+  that B6 §5.2's target layout shows.
+- **Step 0.5, dead helpers:** with every helper `pub(crate)`, `dead_code`
+  reports nothing. Each §5.2 candidate is still used inside its own helper
+  file, so no helper is deleted.
+- **Step 0.5, one-user helpers:** not moved. 21 helpers have exactly one user
+  module (for example `support::pattern`'s `build_alternatives`,
+  `expect_match` and `match_infallibly`, and `support::tree_ir`'s
+  `build_chain`). Step 0.5 was kept to a pure move, and the batch that owns
+  each file's content can move a helper when it edits that file. Step 6
+  checks that none is left.
+- **Step 0.5, type-name assertions:** six tests in
+  `it/pass/core_stories.rs` compare `std::any::type_name` output, which
+  names the test crate and module path. Their expected strings change from
+  `pass_infrastructure_core_stories::…` to `it::pass::core_stories::…` and
+  `it::support::pass_ir::…`. No other test text changes.
