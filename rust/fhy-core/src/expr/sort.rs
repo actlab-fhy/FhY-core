@@ -1,10 +1,4 @@
 //! The value sorts of built-in function parameters and results.
-//!
-//! A [`FunctionSort`] is the coarse mathematical classification of a
-//! function's parameter or result. The numeric sorts form the containment
-//! chain `Nat < Int < Real`; `Bool` is a separate branch, compatible with no
-//! numeric sort. Its text form is the lowercase sort name (`"bool"`,
-//! `"nat"`, `"int"`, `"real"`), which is also its serialized form.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +6,11 @@ use super::operation::impl_name_text;
 
 /// The coarse mathematical sort of a function parameter or result.
 ///
-/// Serializes as its [`as_str`](Self::as_str) text, and deserializes, like
-/// [`FromStr`](std::str::FromStr) parses, only from exactly that text: any
-/// other string, including a differently cased one, is refused.
+/// The numeric sorts form the containment chain `Nat < Int < Real`; `Bool`
+/// is a separate branch, compatible with no numeric sort.
+///
+/// Serializes as its [`as_str`](Self::as_str) text, and deserializes and
+/// parses with [`FromStr`](std::str::FromStr) only from exactly that text.
 ///
 /// # Examples
 ///

@@ -1,24 +1,20 @@
 //! Operand conversions, operator overloads, and the expression builders.
 //!
 //! Every builder takes its operands as `impl Into<Expression>`: an
-//! expression (owned or borrowed, a borrowed one sharing its node), an
-//! identifier (owned or borrowed, wrapped in an identifier reference), a
-//! [`LiteralValue`], or a number (`i32`, `i64`, `i128`, `u32`, `u64`,
-//! `usize`, [`BigInt`] or `f64`, wrapped in a literal). A `bool` is not an
-//! operand: a Boolean constant is written [`Expression::literal`]`(true)`,
-//! and an equality is built with [`Expression::equals`], never with `==`,
-//! which compares expressions structurally.
+//! expression (owned, or borrowed to share its node), an identifier (owned
+//! or borrowed), a [`LiteralValue`], or a number (`i32`, `i64`, `i128`,
+//! `u32`, `u64`, `usize`, [`BigInt`] or `f64`). A `bool` is not an operand: a
+//! Boolean constant is built with [`Expression::literal`], and an equality
+//! with [`Expression::equals`], never with `==`, which compares expressions
+//! structurally.
 //!
-//! The arithmetic operators `+ - * /`, unary `-` and logical `!` build
-//! binary and unary nodes, with an expression on either side of a binary
-//! operator and any operand on the other side; `/` is true division for
-//! every operand type. There is no `%`. The other operations are methods
-//! named after them: [`Expression::equals`], [`Expression::less`],
-//! [`Expression::floor_divide`], [`Expression::floor_mod`],
-//! [`Expression::power`], [`Expression::and`], and so on.
-//! [`Expression::all`], [`Expression::any`], [`Expression::new_logical`],
-//! [`Expression::piecewise`], and [`Expression::call`] build the nodes whose
-//! operand count varies.
+//! The operators `+ - * /`, unary `-` and `!` build binary and unary nodes,
+//! with an expression on at least one side of a binary operator; `/` is true
+//! division for every operand type, and there is no `%`. The other
+//! operations are methods named after them, such as [`Expression::less`] and
+//! [`Expression::floor_mod`]. [`Expression::all`], [`Expression::any`],
+//! [`Expression::new_logical`], [`Expression::piecewise`], and
+//! [`Expression::call`] build the nodes whose operand count varies.
 
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
@@ -247,10 +243,9 @@ impl Expression {
         )))
     }
 
-    /// Build the conjunction of `operands`: the literal `true` of none,
-    /// the operand itself of one, and one [`And`](LogicalOperation::And)
-    /// node over all of them, in order and unflattened, of two or more; see
-    /// [`new_logical`](Self::new_logical).
+    /// Build the conjunction of `operands`, as
+    /// [`new_logical`](Self::new_logical) builds it for
+    /// [`And`](LogicalOperation::And).
     ///
     /// # Examples
     ///
@@ -273,10 +268,9 @@ impl Expression {
         Self::new_logical(LogicalOperation::And, operands)
     }
 
-    /// Build the disjunction of `operands`: the literal `false` of none,
-    /// the operand itself of one, and one [`Or`](LogicalOperation::Or) node
-    /// over all of them, in order and unflattened, of two or more; see
-    /// [`new_logical`](Self::new_logical).
+    /// Build the disjunction of `operands`, as
+    /// [`new_logical`](Self::new_logical) builds it for
+    /// [`Or`](LogicalOperation::Or).
     #[must_use]
     pub fn any<I>(operands: I) -> Self
     where

@@ -1,9 +1,4 @@
 //! The value kind a symbolic identifier ranges over.
-//!
-//! [`SymbolType`] declares whether an identifier in a symbolic expression
-//! stands for a real number, an integer, or a Boolean. Its text form is the
-//! lowercase value name (`"real"`, `"int"`, `"bool"`), which is also its
-//! serialized form.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,9 +6,8 @@ use super::operation::impl_name_text;
 
 /// The value kind a symbolic identifier ranges over.
 ///
-/// Serializes as its [`as_str`](Self::as_str) text, and deserializes, like
-/// [`FromStr`](std::str::FromStr) parses, only from exactly that text: any
-/// other string, including a differently cased one, is refused.
+/// Serializes as its [`as_str`](Self::as_str) text, and deserializes and
+/// parses with [`FromStr`](std::str::FromStr) only from exactly that text.
 ///
 /// # Examples
 ///

@@ -1,13 +1,11 @@
 //! Unary, binary and logical expression operations.
 //!
-//! [`UnaryOperation`], [`BinaryOperation`] and [`LogicalOperation`] name the
-//! operation of a unary, binary or logical expression node. Each operation
-//! has two text forms: its wire
-//! name ([`as_str`](BinaryOperation::as_str), such as `"floor_divide"`),
-//! which is also its serialized form and its [`Display`](std::fmt::Display)
-//! text, and its operator symbol ([`symbol`](BinaryOperation::symbol), such
-//! as `"//"`), which the symbolic notation of the printer uses. Within each
-//! enum, no two operations share a wire name or a symbol.
+//! Each operation has two text forms: its wire name
+//! ([`as_str`](BinaryOperation::as_str), such as `"floor_divide"`), which is
+//! also its serialized form and its [`Display`](std::fmt::Display) text, and
+//! its operator symbol ([`symbol`](BinaryOperation::symbol), such as `"//"`),
+//! which the symbolic notation of the printer uses. Within each enum, no two
+//! operations share a wire name or a symbol.
 
 use std::error::Error;
 use std::fmt;
@@ -111,9 +109,9 @@ pub(crate) use impl_name_text;
 
 /// The operation of a unary expression.
 ///
-/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes,
-/// like [`FromStr`](std::str::FromStr) parses, only from exactly that text: a symbol, a
-/// differently cased name, or any other string is refused.
+/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes
+/// and parses with [`FromStr`](std::str::FromStr) only from exactly that
+/// text, so a symbol or a differently cased name is refused.
 ///
 /// # Examples
 ///
@@ -156,8 +154,7 @@ impl UnaryOperation {
         }
     }
 
-    /// Return whether the operation is arithmetic, so its result is a number:
-    /// true for [`Negate`](Self::Negate) and [`Positive`](Self::Positive).
+    /// Return whether the operation is arithmetic, so its result is a number.
     #[must_use]
     pub(crate) fn is_arithmetic(self) -> bool {
         match self {
@@ -166,8 +163,7 @@ impl UnaryOperation {
         }
     }
 
-    /// Return whether the operation is a Boolean connective over its operand:
-    /// true for [`LogicalNot`](Self::LogicalNot) only.
+    /// Return whether the operation is a Boolean connective over its operand.
     #[must_use]
     pub(crate) fn is_logical_connective(self) -> bool {
         match self {
@@ -181,9 +177,9 @@ impl_name_text!(UnaryOperation, "unary operation");
 
 /// The operation of a binary expression.
 ///
-/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes,
-/// like [`FromStr`](std::str::FromStr) parses, only from exactly that text: a symbol, a
-/// differently cased name, or any other string is refused.
+/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes
+/// and parses with [`FromStr`](std::str::FromStr) only from exactly that
+/// text, so a symbol or a differently cased name is refused.
 ///
 /// # Examples
 ///
@@ -273,11 +269,7 @@ impl BinaryOperation {
         }
     }
 
-    /// Return whether the operation is arithmetic, so its result is a number:
-    /// true for [`Add`](Self::Add), [`Subtract`](Self::Subtract),
-    /// [`Multiply`](Self::Multiply), [`Divide`](Self::Divide),
-    /// [`FloorDivide`](Self::FloorDivide), [`FloorMod`](Self::FloorMod), and
-    /// [`Power`](Self::Power).
+    /// Return whether the operation is arithmetic, so its result is a number.
     #[must_use]
     pub(crate) fn is_arithmetic(self) -> bool {
         match self {
@@ -303,9 +295,9 @@ impl_name_text!(BinaryOperation, "binary operation");
 /// The operation of a logical expression: a conjunction or a disjunction of
 /// two or more operands.
 ///
-/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes,
-/// like [`FromStr`](std::str::FromStr) parses, only from exactly that text: a symbol, a
-/// differently cased name, or any other string is refused.
+/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes
+/// and parses with [`FromStr`](std::str::FromStr) only from exactly that
+/// text, so a symbol or a differently cased name is refused.
 ///
 /// # Examples
 ///
@@ -354,8 +346,6 @@ mod tests {
 
     use super::*;
 
-    /// Test the arithmetic unary operations are classified as arithmetic and
-    /// not as connectives, and logical negation the other way round.
     #[rstest]
     #[case::negate(UnaryOperation::Negate, true, false)]
     #[case::positive(UnaryOperation::Positive, true, false)]
@@ -378,8 +368,6 @@ mod tests {
         );
     }
 
-    /// Test the seven arithmetic binary operations are arithmetic and the
-    /// six comparisons are not.
     #[rstest]
     #[case::add(BinaryOperation::Add, true)]
     #[case::subtract(BinaryOperation::Subtract, true)]
@@ -406,7 +394,6 @@ mod tests {
         );
     }
 
-    /// Test the logical operations' wire names and symbols are distinct.
     #[rstest]
     #[case::and(LogicalOperation::And, "and", "&&")]
     #[case::or(LogicalOperation::Or, "or", "||")]
