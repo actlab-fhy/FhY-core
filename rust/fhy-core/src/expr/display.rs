@@ -5,8 +5,9 @@
 //! and prefix operation names, and an [`IdentifierStyle`] choosing whether an
 //! identifier reference shows its id. The [`ExpressionDisplay`] it returns
 //! implements [`Display`](fmt::Display), and `Expression`'s own `Display`
-//! uses the default options. [`ExpressionPrettyFormatter`] renders an
-//! expression as a compiler pass. Every unary and binary node is
+//! uses the default options.
+//! [`ExpressionPrettyFormatter`](super::passes::ExpressionPrettyFormatter)
+//! renders an expression as a compiler pass. Every unary and binary node is
 //! parenthesized, so the text shows the tree's shape exactly and needs no
 //! precedence rules. The text is meant for people: it is not parsed back,
 //! and distinct trees may print alike (the integer `1` and the float `1.0`,
@@ -16,7 +17,6 @@ use std::fmt;
 use std::iter;
 
 use crate::identifier::Identifier;
-use crate::pass::{CompilerPass, PassContext, PassFailure};
 
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
@@ -315,60 +315,6 @@ impl FormatOptions {
     #[must_use]
     pub fn identifier_style(&self) -> IdentifierStyle {
         self.identifier_style
-    }
-}
-
-/// A compiler pass formatting an expression as text under
-/// [`FormatOptions`], as [`Expression::display`] does.
-///
-/// Every run counts as a change, since its text output is never its input
-/// expression. The default formatter uses the default options.
-///
-/// # Examples
-///
-/// ```
-/// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass::ExecutePass;
-/// use fhy_core::expr::{
-///     Expression, ExpressionPrettyFormatter, FormatOptions, Notation,
-/// };
-///
-/// let x = Expression::from(Identifier::new("x"));
-/// let options = FormatOptions::default().with_notation(Notation::Functional);
-/// let mut formatter = ExpressionPrettyFormatter::new(options);
-///
-/// let outcome = formatter.execute(&(&x + 1))?;
-///
-/// assert_eq!(outcome.output(), "(add x 1)");
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct ExpressionPrettyFormatter {
-    options: FormatOptions,
-}
-
-impl ExpressionPrettyFormatter {
-    /// Create the pass formatting under `options`.
-    #[must_use]
-    pub fn new(options: FormatOptions) -> Self {
-        Self { options }
-    }
-
-    /// Return the options the pass formats under.
-    #[must_use]
-    pub fn options(&self) -> FormatOptions {
-        self.options
-    }
-}
-
-impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
-    fn run(&mut self, ir: &Expression, _cx: &mut PassContext<'_>) -> Result<String, PassFailure> {
-        Ok(ir.display(self.options).to_string())
-    }
-
-    fn did_change(&mut self, input: &Expression, output: &String) -> Result<bool, PassFailure> {
-        let _ = (input, output);
-        Ok(true)
     }
 }
 

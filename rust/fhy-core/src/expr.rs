@@ -7,6 +7,7 @@
 //! on that crate.
 
 pub mod builtins;
+pub mod passes;
 pub mod pattern;
 
 mod alpha;
@@ -17,7 +18,6 @@ mod error;
 mod literal;
 mod node;
 mod operation;
-mod registration;
 mod screen;
 mod sort;
 mod symbol_type;
@@ -25,9 +25,7 @@ mod wire;
 
 pub use alpha::AlphaRenaming;
 pub use callee::{Callee, FunctionName, FunctionNameError};
-pub use display::{
-    ExpressionDisplay, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation,
-};
+pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
 pub use error::{
     BooleanPosition, NonBooleanLogicalOperandError, NonInjectiveRenamingError, PiecewiseError,
     RebuildError,
@@ -38,7 +36,6 @@ pub use node::{
     PiecewiseExpression, UnaryExpression,
 };
 pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation, UnknownNameError};
-pub use registration::register_expression_passes;
 pub use screen::{BooleanScreen, Environment, NoRegisteredSorts, SortLookup, SymbolTypes};
 pub use sort::FunctionSort;
 pub use symbol_type::SymbolType;

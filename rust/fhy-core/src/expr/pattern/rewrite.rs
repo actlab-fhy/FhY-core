@@ -6,9 +6,9 @@
 //! expression; [`apply_rewrite_rules`] walks a whole tree bottom-up once,
 //! trying a list of rules at every node, and reports the rewritten tree,
 //! whether it differs from the input, and which rules fired.
-//! [`RewriteRuleApplier`] is the same walk as a compiler pass.
+//! [`RewriteRuleApplier`](crate::expr::passes::RewriteRuleApplier) is the
+//! same walk as a compiler pass.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -17,8 +17,6 @@ use std::sync::Arc;
 use super::super::error::{PiecewiseError, RebuildError};
 use super::super::node::Expression;
 use super::matching::{CallbackError, MatchBindings, Pattern, match_pattern};
-use crate::diagnostic::DiagnosticLevel;
-use crate::pass::{CompilerPass, PassContext, PassFailure};
 use crate::tree::{NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree};
 
 /// A rewrite: the replacement built from a match's bindings.
@@ -26,14 +24,6 @@ type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError>
 
 /// A guard: whether a rule may fire on a match's bindings.
 type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
-
-/// The name of [`RewriteRuleApplier`], which it is registered under: a
-/// stable registry key, not a Rust path.
-const RULE_APPLIER_PASS_NAME: &str = "fhy_core.symbolic.expression.apply_rewrite_rules";
-
-/// The description of [`RewriteRuleApplier`].
-const RULE_APPLIER_PASS_DESCRIPTION: &str =
-    "Apply a sequence of rewrite rules bottom-up over an expression tree.";
 
 /// Return the position of the child that `error` refuses, or `None` when
 /// the error names no single child.
@@ -153,13 +143,16 @@ impl Rewriter<Expression> for RuleApplier<'_> {
 
 /// A finished rewrite walk: the rewritten tree or the failure that ended
 /// the walk, and the firings up to its end.
-struct RuleRun {
-    output: Result<Expression, RewriteError>,
-    fired: Vec<FiredRule>,
+pub(in crate::expr) struct RuleRun {
+    pub(in crate::expr) output: Result<Expression, RewriteError>,
+    pub(in crate::expr) fired: Vec<FiredRule>,
 }
 
 /// Rewrite `expression` bottom-up once with `rules`.
-fn run_rewrite_rules(expression: &Expression, rules: &[RewriteRule]) -> RuleRun {
+pub(in crate::expr) fn run_rewrite_rules(
+    expression: &Expression,
+    rules: &[RewriteRule],
+) -> RuleRun {
     let mut applier = RuleApplier::new(rules);
     let output = rewrite_tree(&mut applier, expression, &mut ()).map_err(|error| match error {
         RewriteTreeError::Rewrite(error) => error,
@@ -435,122 +428,6 @@ impl Error for RewriteError {
     }
 }
 
-/// A compiler pass applying a list of rewrite rules bottom-up over an
-/// expression, once per run.
-///
-/// A run is [`apply_rewrite_rules`] with the pass's rules: its output is the
-/// rewritten tree, and it changed the IR exactly when the output is a
-/// different node from the input ([`Expression::ptr_eq`]); see
-/// [`RewriteOutcome::is_changed`]. Each firing of a named rule reports an
-/// informational diagnostic, `Applied rewrite rule "<name>".`, the name
-/// escaped as `Debug` writes a string, and the firings of the last run are
-/// kept for [`fired`](Self::fired). A failing callback or a refused rebuild
-/// fails the run with the [`RewriteError`], which the resulting
-/// [`PassError`](crate::pass::PassError) holds as its
-/// [`source`](Error::source).
-///
-/// The pass is named `fhy_core.symbolic.expression.apply_rewrite_rules`,
-/// and [`register_expression_passes`](super::super::register_expression_passes)
-/// registers it under that name.
-///
-/// # Examples
-///
-/// ```
-/// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass::ExecutePass;
-/// use fhy_core::expr::pattern::{
-///     CallbackError, Pattern, RewriteRule, RewriteRuleApplier,
-/// };
-/// use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
-///
-/// // `x * 1 -> x`
-/// let rule = RewriteRule::new(
-///     Pattern::binary(
-///         Some(BinaryOperation::Multiply),
-///         Pattern::capture("x", Pattern::wildcard())?,
-///         Pattern::literal(Some(LiteralValue::from(1))),
-///     ),
-///     |bindings| {
-///         bindings
-///             .get("x")
-///             .cloned()
-///             .ok_or_else(|| CallbackError::new("`x` is unbound"))
-///     },
-/// )
-/// .with_name("x * 1 -> x");
-/// let a = Expression::from(Identifier::new("a"));
-/// let mut applier = RewriteRuleApplier::new([rule]);
-///
-/// let outcome = applier.execute(&(&a * 1))?;
-///
-/// assert!(Expression::ptr_eq(outcome.output(), &a));
-/// assert!(outcome.is_changed());
-/// assert_eq!(applier.fired().len(), 1);
-/// assert_eq!(
-///     outcome.diagnostics()[0].message_text(),
-///     "Applied rewrite rule \"x * 1 -> x\"."
-/// );
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[derive(Debug, Clone)]
-pub struct RewriteRuleApplier {
-    rules: Vec<RewriteRule>,
-    fired: Vec<FiredRule>,
-}
-
-impl RewriteRuleApplier {
-    /// Create the pass applying `rules`, tried in the order given.
-    #[must_use]
-    pub fn new(rules: impl IntoIterator<Item = RewriteRule>) -> Self {
-        Self {
-            rules: rules.into_iter().collect(),
-            fired: Vec::new(),
-        }
-    }
-
-    /// Return the rules, in the order they are tried.
-    #[must_use]
-    pub fn rules(&self) -> &[RewriteRule] {
-        &self.rules
-    }
-
-    /// Return the firings of the last run, in the order of
-    /// [`RewriteOutcome::fired`]: empty before the first run, and those
-    /// before the failure after a failed run.
-    #[must_use]
-    pub fn fired(&self) -> &[FiredRule] {
-        &self.fired
-    }
-}
-
-impl CompilerPass<Expression> for RewriteRuleApplier {
-    fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed(RULE_APPLIER_PASS_NAME)
-    }
-
-    fn description(&self) -> Cow<'static, str> {
-        Cow::Borrowed(RULE_APPLIER_PASS_DESCRIPTION)
-    }
-
-    fn run(
-        &mut self,
-        ir: &Expression,
-        cx: &mut PassContext<'_>,
-    ) -> Result<Expression, PassFailure> {
-        let RuleRun { output, fired } = run_rewrite_rules(ir, &self.rules);
-        for name in fired.iter().filter_map(FiredRule::name) {
-            let message = format!("Applied rewrite rule {name:?}.");
-            cx.report_text(DiagnosticLevel::Info, message, None);
-        }
-        self.fired = fired;
-        output.map_err(|error| Box::new(error) as PassFailure)
-    }
-
-    fn did_change(&mut self, input: &Expression, output: &Expression) -> Result<bool, PassFailure> {
-        Ok(!Expression::ptr_eq(input, output))
-    }
-}
-
 /// Try `rule` once at the root of `expression` and return the rewrite, or
 /// `None` if the pattern does not match or the guard returns `Ok(false)`.
 ///
@@ -618,7 +495,6 @@ pub fn apply_rewrite_rules(
 
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<RewriteRuleApplier>();
     assert_send_sync::<RewriteRule>();
     assert_send_sync::<RewriteOutcome>();
     assert_send_sync::<RewriteError>();

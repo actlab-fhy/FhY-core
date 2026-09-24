@@ -1,4 +1,5 @@
-//! Tests for the expression passes: `RewriteRuleApplier`, which applies
+//! Tests for the expression passes of `fhy_core::expr::passes`:
+//! `RewriteRuleApplier`, which applies
 //! rewrite rules bottom-up, `ExpressionPrettyFormatter`, which formats an
 //! expression as text, and `register_expression_passes`, which registers the
 //! rule applier by name. Each runs standalone, and the rule applier also in
@@ -16,13 +17,16 @@ use expression_support::{
     build_piecewise_or_panic,
 };
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel};
+use fhy_core::expr::passes::{
+    ExpressionPrettyFormatter, RewriteRuleApplier, register_expression_passes,
+};
 use fhy_core::expr::pattern::{
     CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule,
-    RewriteRuleApplier, apply_rewrite_rules,
+    apply_rewrite_rules,
 };
 use fhy_core::expr::{
-    BinaryOperation, Expression, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle,
-    Notation, PiecewiseError, RebuildError, register_expression_passes,
+    BinaryOperation, Expression, FormatOptions, IdentifierStyle, Notation, PiecewiseError,
+    RebuildError,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
