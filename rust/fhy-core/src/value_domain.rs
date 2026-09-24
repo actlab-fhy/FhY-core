@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::decode::{self, Decode, DeferredPayload};
-use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
+use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload, reserved};
 use crate::interned::{
     Canonical, InternOutcome, InternRegistry, Interned, intern_decoded, require_default,
 };
@@ -149,8 +149,6 @@ impl Decode for ValueDomain {
     ///
     /// Restore the name, then check, build and intern the parent level.
     /// Python likewise restores the name before decoding the parent.
-    /// Restoring the name creates the shipped defaults first if they do not
-    /// exist yet, as Python's exist from import, before any id is restored.
     ///
     /// # Errors
     ///
@@ -235,11 +233,12 @@ impl Hash for ValueDomain {
 }
 
 /// Name of the domain returned by [`get_data_domain`].
-static DATA_DOMAIN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("data"));
+static DATA_DOMAIN_NAME: LazyLock<Identifier> =
+    LazyLock::new(|| Identifier::reserved(reserved::DATA_DOMAIN));
 
 /// Name of the domain returned by [`get_address_domain`].
 static ADDRESS_DOMAIN_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new_unscoped("address"));
+    LazyLock::new(|| Identifier::reserved(reserved::ADDRESS_DOMAIN));
 
 /// Build the domains this module ships, in registration order.
 ///
@@ -267,13 +266,6 @@ static DATA_DOMAIN: LazyLock<Canonical<ValueDomain>> =
 
 static ADDRESS_DOMAIN: LazyLock<Canonical<ValueDomain>> =
     LazyLock::new(|| require_default(&*ADDRESS_DOMAIN_NAME));
-
-/// Create the shipped domains, and their names, if this is their first use.
-pub(crate) fn initialize_shipped_domains() {
-    for domain in [&DATA_DOMAIN, &ADDRESS_DOMAIN] {
-        LazyLock::force(domain);
-    }
-}
 
 /// Return the domain for concrete data values flowing through the IR.
 #[must_use]
@@ -448,6 +440,20 @@ mod tests {
             ValueDomain::intern_registry().get(default.name()),
             Some(default.clone())
         );
+    }
+
+    /// Test each shipped domain holds its fixed reserved id and name hint.
+    #[rstest]
+    #[case::data(get_data_domain, 32, "data")]
+    #[case::address(get_address_domain, 33, "address")]
+    fn a_shipped_domain_holds_its_reserved_id(
+        #[case] get_default: fn() -> &'static Canonical<ValueDomain>,
+        #[case] id: u64,
+        #[case] name_hint: &str,
+    ) {
+        let name = get_default().name();
+
+        assert_eq!((name.id(), name.name_hint()), (id, name_hint));
     }
 
     #[test]

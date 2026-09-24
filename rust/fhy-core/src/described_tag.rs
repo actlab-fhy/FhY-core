@@ -14,8 +14,8 @@
 /// the struct name its decode errors report, the noun the generated
 /// documentation calls a value, the documentation of `new`, and each shipped
 /// default: its getter and the documentation of that getter, the statics that
-/// hold it and its name, and its name hint and description. Defaults are
-/// registered in the order they are listed.
+/// hold it and its name, and the reserved-table entry that names it and its
+/// description. Defaults are registered in the order they are listed.
 ///
 /// The type encodes as `{"name": <identifier>, "description": ..}`. Its
 /// decode checks every field before it restores the name, then builds the
@@ -29,11 +29,11 @@ macro_rules! define_described_tag {
         noun $noun:literal;
         $(#[$new_meta:meta])*
         fn new;
-        shipped by $create_defaults:ident, initialized by $initialize:ident {
+        shipped by $create_defaults:ident {
             $(
                 $(#[$getter_meta:meta])*
                 fn $getter:ident => $STATIC:ident, $NAME:ident =
-                    ($name_hint:literal, $description:literal);
+                    ($reserved:ident, $description:literal);
             )+
         }
     ) => {
@@ -124,9 +124,6 @@ macro_rules! define_described_tag {
 
         /// Decoding checks every field of the payload before it restores the
         /// name, so a rejected payload leaves the id counter untouched.
-        /// Restoring the name of an accepted payload creates the shipped
-        /// defaults first if they do not exist yet, so their names draw ids
-        /// before the payload's name can exhaust the counter.
         impl<'de> ::serde::Deserialize<'de> for $Type {
             fn deserialize<D: ::serde::Deserializer<'de>>(
                 deserializer: D,
@@ -152,7 +149,9 @@ macro_rules! define_described_tag {
             )]
             static $NAME: ::std::sync::LazyLock<$crate::identifier::Identifier> =
                 ::std::sync::LazyLock::new(|| {
-                    $crate::identifier::Identifier::new_unscoped($name_hint)
+                    $crate::identifier::Identifier::reserved(
+                        $crate::identifier::reserved::$reserved,
+                    )
                 });
 
             static $STATIC: ::std::sync::LazyLock<$crate::interned::Canonical<$Type>> =
@@ -175,13 +174,6 @@ macro_rules! define_described_tag {
             ::std::vec![$($Type::create($NAME.clone(), $description)),+]
         }
 
-        /// Create the shipped defaults, and their names, if this is their
-        /// first use.
-        pub(crate) fn $initialize() {
-            for default in [$(&$STATIC),+] {
-                ::std::sync::LazyLock::force(default);
-            }
-        }
     };
 }
 

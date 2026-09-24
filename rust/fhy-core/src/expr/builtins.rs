@@ -275,12 +275,6 @@ fn create_composed_functions() -> [ComposedFunction; 16] {
 static COMPOSED_FUNCTIONS: LazyLock<[ComposedFunction; 16]> =
     LazyLock::new(create_composed_functions);
 
-/// Build the composed functions, and their parameters, if this is their first
-/// use.
-pub(crate) fn initialize_composed_functions() {
-    LazyLock::force(&COMPOSED_FUNCTIONS);
-}
-
 /// The native function signatures, in catalogue order.
 static NATIVE_FUNCTIONS: [NativeFunctionSignature; 19] = [
     NativeFunctionSignature::create("exp", FunctionSort::Real),

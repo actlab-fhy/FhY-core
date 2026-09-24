@@ -7,6 +7,7 @@
 
 mod diagnostic_stories;
 mod expr;
+mod identifier_stories;
 mod interned;
 mod pass;
 mod payload_form_stories;

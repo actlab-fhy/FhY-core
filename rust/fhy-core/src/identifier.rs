@@ -5,14 +5,15 @@
 //! hashing. Ids are drawn from a single process-global, monotonically
 //! increasing counter and are never reused.
 //!
+//! The ids `0..RESERVED_ID_COUNT` are reserved: the identifiers this crate
+//! ships (its note kinds, op attributes and value domains) hold fixed ids
+//! from that block, the same in every process, and the counter issues fresh
+//! ids from [`RESERVED_ID_COUNT`] upward.
+//!
 //! Construction and deserialization share the same counter: a deserialized
 //! id can never collide with a subsequently constructed id, regardless of
 //! interleaving across threads. Deserializing an id greater than or equal to
-//! the next-to-be-issued value advances the counter past it. Before any
-//! restored id advances the counter, every identifier the crate's shipped
-//! statics hold (the shipped note kinds, op attributes, value domains and
-//! composed built-in functions) is created, so a restored id near the end of
-//! the id space never leaves them without ids.
+//! the next-to-be-issued value advances the counter past it.
 //!
 //! Ids are `u64`s, so the largest id this module ever issues is
 //! `u64::MAX - 1`, and the counter never wraps to reissue a live id. Once
@@ -34,10 +35,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Number;
 
 use crate::decode::{self, Decode};
-use crate::shipped::initialize_shipped_statics;
+
+pub(crate) mod reserved;
+
+use reserved::ReservedIdentifier;
+
+/// Number of ids reserved for the identifiers this crate ships.
+///
+/// Ids `0..RESERVED_ID_COUNT` are the fixed ids of the shipped identifiers,
+/// and the counter issues fresh ids from `RESERVED_ID_COUNT` upward.
+///
+/// Matches the Python implementation: `fhy_core.identifier._RESERVED_ID_COUNT`.
+pub const RESERVED_ID_COUNT: u64 = 65_536;
 
 /// The process-global, monotonically-increasing id counter.
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_ID: AtomicU64 = AtomicU64::new(RESERVED_ID_COUNT);
 
 /// Error for an id counter that cannot advance without wrapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,14 +116,25 @@ impl Identifier {
     /// Construct an identifier whose id always comes from the global
     /// counter, even inside a deterministic-identifier scope.
     ///
-    /// For identifiers held by this crate's shipped statics, which are created
-    /// on first use: a scope must never hand a test identifier the id of a
-    /// shipped constant.
+    /// For the parameters of the built-in composed functions, which are
+    /// created on first use: a scope must never hand a test identifier the id
+    /// of a built-in parameter.
     #[must_use]
     pub(crate) fn new_unscoped(name_hint: &str) -> Self {
         Self {
             id: allocate_id(),
             name_hint: Arc::from(name_hint),
+        }
+    }
+
+    /// Return the shipped identifier `entry` names, with its fixed id.
+    ///
+    /// Draws nothing from the counter, which never issues a reserved id.
+    #[must_use]
+    pub(crate) fn reserved(entry: ReservedIdentifier) -> Self {
+        Self {
+            id: entry.id(),
+            name_hint: Arc::from(entry.name_hint()),
         }
     }
 
@@ -185,17 +208,11 @@ pub(crate) fn advance_counter_past(id: u64) {
 /// Serves callers that store ids themselves, such as language bindings: it
 /// advances the same counter [`Identifier::new`] draws from.
 ///
-/// Every shipped static that holds an identifier, such as the note kind
-/// [`get_other_note_kind`](crate::diagnostic::get_other_note_kind) returns,
-/// is created first if it does not exist yet, so its identifiers draw ids
-/// below `id` however few ids `id` leaves.
-///
 /// # Errors
 ///
 /// Returns [`IdSpaceExhausted`], leaving the counter unchanged, if `id` is
 /// `u64::MAX`, since the counter cannot advance past it.
 pub fn try_advance_counter_past(id: u64) -> Result<(), IdSpaceExhausted> {
-    initialize_shipped_statics();
     advance_past(&NEXT_ID, id)
 }
 
@@ -999,6 +1016,37 @@ mod tests {
             observed.windows(2).all(|pair| pair[0] <= pair[1]),
             "counter observed to decrease: {observed:?}"
         );
+    }
+
+    /// Test building a reserved identifier draws no id from the counter:
+    /// between two fresh anchors, two reserved identifiers leave the anchors
+    /// one id apart. A test running in parallel can draw an id between the
+    /// anchors, so the check is retried; a reserved identifier that drew an
+    /// id would leave the anchors at least two ids apart on every try.
+    #[test]
+    fn reserved_identifiers_take_no_id_from_the_counter() {
+        let mut deltas = Vec::new();
+        for _ in 0..1_000 {
+            let before = Identifier::new("reserved-anchor").id();
+            let first = Identifier::reserved(reserved::COMMUTATIVE);
+            let second = Identifier::reserved(reserved::COMMUTATIVE);
+            let after = Identifier::new("reserved-anchor").id();
+            assert_eq!((first.id(), second.id()), (16, 16));
+            deltas.push(after - before);
+            if after - before == 1 {
+                return;
+            }
+        }
+        panic!("the anchors were never one id apart: {deltas:?}");
+    }
+
+    /// Test a reserved identifier holds its table entry's id and name hint.
+    #[test]
+    fn a_reserved_identifier_holds_its_entry() {
+        let identifier = Identifier::reserved(reserved::ADDRESS_DOMAIN);
+
+        assert_eq!(identifier.id(), 33);
+        assert_eq!(identifier.name_hint(), "address");
     }
 
     /// Minimal type exercising the [`HasIdentifier`] trait.

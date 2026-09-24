@@ -72,22 +72,22 @@ define_described_tag! {
     /// ```
     fn new;
 
-    shipped by create_default_note_kinds, initialized by initialize_shipped_note_kinds {
+    shipped by create_default_note_kinds {
         /// Return the kind for notes that explain why a decision, transformation,
         /// or result occurred.
         fn get_rationale_note_kind => RATIONALE, RATIONALE_NAME =
-            ("rationale", "Explains why a decision, transformation, or result occurred.");
+            (RATIONALE_NOTE_KIND, "Explains why a decision, transformation, or result occurred.");
 
         /// Return the kind for notes that suggest a fix or course of action.
         fn get_suggestion_note_kind => SUGGESTION, SUGGESTION_NAME =
-            ("suggestion", "A suggested fix or course of action.");
+            (SUGGESTION_NOTE_KIND, "A suggested fix or course of action.");
 
         /// Return the kind for neutral informational notes.
         fn get_remark_note_kind => REMARK, REMARK_NAME =
-            ("remark", "A neutral informational observation.");
+            (REMARK_NOTE_KIND, "A neutral informational observation.");
 
         /// Return the kind for uncategorized notes.
-        fn get_other_note_kind => OTHER, OTHER_NAME = ("other", "Uncategorized note.");
+        fn get_other_note_kind => OTHER, OTHER_NAME = (OTHER_NOTE_KIND, "Uncategorized note.");
     }
 }
 
@@ -449,6 +449,22 @@ mod tests {
             NoteKind::intern_registry().get(shipped.name()),
             Some(shipped.clone())
         );
+    }
+
+    /// Test each shipped kind holds its fixed reserved id and name hint.
+    #[rstest]
+    #[case::rationale(get_rationale_note_kind, 0, "rationale")]
+    #[case::suggestion(get_suggestion_note_kind, 1, "suggestion")]
+    #[case::remark(get_remark_note_kind, 2, "remark")]
+    #[case::other(get_other_note_kind, 3, "other")]
+    fn a_shipped_kind_holds_its_reserved_id(
+        #[case] get_shipped: fn() -> &'static Canonical<NoteKind>,
+        #[case] id: u64,
+        #[case] name_hint: &str,
+    ) {
+        let name = get_shipped().name();
+
+        assert_eq!((name.id(), name.name_hint()), (id, name_hint));
     }
 
     #[test]

@@ -252,7 +252,7 @@ def test_python_counter_allocates_only_while_holding_its_lock() -> None:
 
     allocated = [checked.counter.allocate() for _ in range(3)]
 
-    assert allocated == [0, 1, 2]
+    assert allocated == [65_536, 65_537, 65_538]
     assert checked.unlocked_accesses == []
     assert {"read", "write"} <= set(checked.locked_accesses)
     assert not checked.lock.is_held
@@ -266,13 +266,13 @@ def test_python_counter_advances_only_while_holding_its_lock() -> None:
     """
     checked = _create_lock_checked_counter()
 
-    checked.counter.advance_past(10)
-    checked.counter.advance_past(5)
+    checked.counter.advance_past(65_546)
+    checked.counter.advance_past(65_541)
 
     assert checked.unlocked_accesses == []
     assert {"read", "write"} <= set(checked.locked_accesses)
     assert not checked.lock.is_held
-    assert checked.counter.allocate() == 11
+    assert checked.counter.allocate() == 65_547
 
 
 # =============================================================================
@@ -711,13 +711,15 @@ def test_deserialize_then_construct_avoids_collision() -> None:
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_fresh_process_issues_ids_upward_from_zero() -> None:
-    """Test a fresh process issues ids contiguously upward from zero.
+def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
+    """Test a fresh process issues ids contiguously upward from `65_536`.
 
-    The smallest id alive after package initialization is zero (or, when
-    initialization constructs no identifier, the first construction gets
-    zero), every such id lies below the first id a caller constructs, and
-    the construction after that advances the counter by exactly one.
+    Ids below `65_536` are reserved for the identifiers the Rust extension
+    ships, so the counter starts there on both backends. The smallest id
+    alive after package initialization is `65_536` (or, when initialization
+    constructs no identifier, the first construction gets it), every such id
+    lies below the first id a caller constructs, and the construction after
+    that advances the counter by exactly one.
     """
     output = subprocess.check_output(
         [
@@ -737,9 +739,14 @@ def test_fresh_process_issues_ids_upward_from_zero() -> None:
     ).strip()
     first_id, second_id, *import_time_ids = (int(part) for part in output.split())
 
-    assert min(import_time_ids, default=first_id) == 0
+    assert min(import_time_ids, default=first_id) == 65_536
     assert all(identifier_id < first_id for identifier_id in import_time_ids)
     assert second_id == first_id + 1
+
+
+def test_python_counter_starts_at_the_reserved_block() -> None:
+    """Test a fresh pure-Python counter issues `65_536` first."""
+    assert _PythonIdCounter().allocate() == 65_536
 
 
 # =============================================================================

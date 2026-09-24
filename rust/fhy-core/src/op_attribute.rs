@@ -65,25 +65,25 @@ define_described_tag! {
     /// ```
     fn new;
 
-    shipped by create_default_attributes, initialized by initialize_shipped_attributes {
+    shipped by create_default_attributes {
         /// Return the attribute for ops whose output is invariant under operand swap.
         fn get_commutative => COMMUTATIVE, COMMUTATIVE_NAME =
-            ("commutative", "Op output is invariant under operand swap.");
+            (COMMUTATIVE, "Op output is invariant under operand swap.");
 
         /// Return the attribute for ops that compose associatively across
         /// applications.
         fn get_associative => ASSOCIATIVE, ASSOCIATIVE_NAME =
-            ("associative", "Op composes associatively across applications.");
+            (ASSOCIATIVE, "Op composes associatively across applications.");
 
         /// Return the attribute for ops that have no side effects and produce
         /// deterministic outputs.
         fn get_pure => PURE, PURE_NAME =
-            ("pure", "Op has no side effects and produces deterministic outputs.");
+            (PURE, "Op has no side effects and produces deterministic outputs.");
 
         /// Return the attribute for ops that act independently on each element of
         /// their operands.
         fn get_elementwise => ELEMENTWISE, ELEMENTWISE_NAME =
-            ("elementwise", "Op acts independently on each element of its operands.");
+            (ELEMENTWISE, "Op acts independently on each element of its operands.");
     }
 }
 
@@ -260,6 +260,22 @@ mod tests {
             OpAttribute::intern_registry().get(default.name()),
             Some(default.clone())
         );
+    }
+
+    /// Test each shipped attribute holds its fixed reserved id and name hint.
+    #[rstest]
+    #[case::commutative(get_commutative, 16, "commutative")]
+    #[case::associative(get_associative, 17, "associative")]
+    #[case::pure(get_pure, 18, "pure")]
+    #[case::elementwise(get_elementwise, 19, "elementwise")]
+    fn a_shipped_attribute_holds_its_reserved_id(
+        #[case] get_default: fn() -> &'static Canonical<OpAttribute>,
+        #[case] id: u64,
+        #[case] name_hint: &str,
+    ) {
+        let name = get_default().name();
+
+        assert_eq!((name.id(), name.name_hint()), (id, name_hint));
     }
 
     #[test]

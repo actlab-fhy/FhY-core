@@ -21,6 +21,7 @@ from collections.abc import Callable
 from threading import Lock
 from typing import (
     Any,
+    Final,
     Protocol,
     TypedDict,
     TypeGuard,
@@ -41,6 +42,10 @@ from .serialization import (
 from .traits.equality import EqualMixin
 from .traits.frozen import FrozenMixin
 
+# Ids below this are reserved for the identifiers the Rust extension ships, so
+# the counter starts here. Matches the Rust implementation:
+# `fhy_core::identifier::RESERVED_ID_COUNT`.
+_RESERVED_ID_COUNT: Final[int] = 65_536
 _ID_SPACE_SIZE = 2**64
 _EXHAUSTED_COUNTER_VALUE = _ID_SPACE_SIZE - 1
 _ID_SPACE_EXHAUSTED_MESSAGE = "identifier id space exhausted"
@@ -81,15 +86,23 @@ def _is_utf8_encodable(text: str) -> bool:
 class _PythonIdCounter:
     """Lock-protected id counter that never wraps.
 
-    Behaves like the Rust extension's counter: ids are in ``[0, 2**64)``,
-    and the largest id issued is ``2**64 - 2``. Allocating once the counter
-    has reached ``2**64 - 1``, or advancing past ``2**64 - 1``, raises
-    ``RuntimeError`` and leaves the counter unchanged.
+    Behaves like the Rust extension's counter: it starts at ``65_536``,
+    above the ids reserved for shipped identifiers, ids are in
+    ``[0, 2**64)``, and the largest id issued is ``2**64 - 2``. Allocating
+    once the counter has reached ``2**64 - 1``, or advancing past
+    ``2**64 - 1``, raises ``RuntimeError`` and leaves the counter unchanged.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, next_id: int = _RESERVED_ID_COUNT) -> None:
+        """Create a counter whose first allocation returns ``next_id``.
+
+        Args:
+            next_id: The first id to issue. Tests set it to reach the end of
+                the id space; the process-global counter keeps the default.
+
+        """
         self._lock = Lock()
-        self._next_id = 0
+        self._next_id = next_id
 
     def allocate(self) -> int:
         """Return the next id and advance the counter past it.
@@ -152,7 +165,9 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     Two ``Identifier`` instances are equal iff they share the same ``id``;
     ``name_hint`` is a debugging aid and is not consulted by ``__eq__`` or
     ``__hash__``. Ids are drawn from a single process-global,
-    monotonically-increasing counter and are never reused.
+    monotonically-increasing counter and are never reused. The ids
+    ``0..65_536`` are reserved for the identifiers the Rust extension ships,
+    so the counter starts at ``65_536`` on both backends.
 
     Construction and deserialization are thread-safe and share the same
     counter: a deserialized id cannot collide with a subsequently
