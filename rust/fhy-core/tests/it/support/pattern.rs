@@ -4,10 +4,10 @@ use std::error::Error;
 use std::fmt;
 
 use fhy_core::expr::pattern::{
-    CallbackError, Capture, MatchBindings, Pattern, RewriteOutcome, RewriteRule,
+    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteOutcome, RewriteRule,
     apply_rewrite_rules,
 };
-use fhy_core::expr::{BinaryOperation, Expression, LiteralValue, UnaryOperation};
+use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
 
 /// An error a test callback fails with, recognizable after propagation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,32 +33,6 @@ pub(crate) fn expect_probe_error(error: &CallbackError) -> &ProbeError {
         .unwrap_or_else(|| panic!("expected a ProbeError, got {error:?}"))
 }
 
-/// Match `pattern` against `expression` and return the result, failing the
-/// test if a predicate fails.
-///
-/// # Panics
-///
-/// Panics if a predicate in `pattern` fails.
-#[must_use]
-pub(crate) fn match_infallibly(
-    pattern: &Pattern,
-    expression: &Expression,
-) -> Option<MatchBindings> {
-    pattern.matches(expression).expect("no predicate fails")
-}
-
-/// Match `pattern` against `expression` and return the bindings, failing the
-/// test if it does not match.
-///
-/// # Panics
-///
-/// Panics if a predicate fails or `pattern` does not match.
-#[must_use]
-pub(crate) fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchBindings {
-    match_infallibly(pattern, expression)
-        .unwrap_or_else(|| panic!("{pattern:?} does not match {expression:?}"))
-}
-
 /// Rewrite `expression` with `rules`, failing the test if the walk fails.
 ///
 /// # Panics
@@ -66,6 +40,21 @@ pub(crate) fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchB
 /// Panics if a rule's callback or rebuild fails.
 pub(crate) fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> RewriteOutcome {
     apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
+}
+
+/// Return `x + 0` for the reference `x`.
+#[must_use]
+pub(crate) fn build_plus_zero(x: &Expression) -> Expression {
+    Expression::new_binary(BinaryOperation::Add, x, 0)
+}
+
+/// Return the `(rule index, name)` of every firing in `fired`.
+#[must_use]
+pub(crate) fn describe_fired(fired: &[FiredRule]) -> Vec<(usize, Option<&str>)> {
+    fired
+        .iter()
+        .map(|firing| (firing.rule_index(), firing.name()))
+        .collect()
 }
 
 /// Return a rewrite returning the expression bound to `capture`, failing
@@ -104,21 +93,6 @@ pub(crate) fn build_x_plus_zero_rule() -> RewriteRule {
     .with_name("x + 0 -> x")
 }
 
-/// Return the rule `0 + x -> x`, named so.
-#[must_use]
-pub(crate) fn build_zero_plus_x_rule() -> RewriteRule {
-    let x = Capture::new("x");
-    RewriteRule::new(
-        Pattern::binary(
-            BinaryOperation::Add,
-            Pattern::literal(0),
-            Pattern::capture(&x),
-        ),
-        rewrite_to_capture(&x),
-    )
-    .with_name("0 + x -> x")
-}
-
 /// Return the rule `x * 1 -> x`, named so.
 #[must_use]
 pub(crate) fn build_x_times_one_rule() -> RewriteRule {
@@ -147,15 +121,4 @@ pub(crate) fn build_x_minus_x_rule() -> RewriteRule {
         rewrite_to_literal(0),
     )
     .with_name("x - x -> 0")
-}
-
-/// Return the rule collapsing `operation(operation(x))` to `x`.
-#[must_use]
-pub(crate) fn build_double_application_rule(operation: UnaryOperation) -> RewriteRule {
-    let x = Capture::new("x");
-    RewriteRule::new(
-        Pattern::unary(operation, Pattern::unary(operation, Pattern::capture(&x))),
-        rewrite_to_capture(&x),
-    )
-    .with_name("op(op(x)) -> x")
 }

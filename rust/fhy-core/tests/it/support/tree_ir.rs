@@ -17,7 +17,7 @@ use fhy_core::tree::{NodeHandle, NodeIdentity, Rewriter, Tree, TreeVisitor};
 
 /// One immutable node of the toy tree.
 #[derive(Debug)]
-pub(crate) struct ToyNode {
+struct ToyNode {
     name: String,
     value: i64,
     children: Vec<ToyTree>,
@@ -123,29 +123,6 @@ pub(crate) fn build_node(name: &str, children: &[&ToyTree]) -> ToyTree {
 pub(crate) fn build_frozen_node(name: &str, children: &[&ToyTree]) -> ToyTree {
     let children = children.iter().map(|&child| child.clone()).collect();
     build_toy_node(name, 0, children, true)
-}
-
-/// Build a chain `depth` nodes above `leaf`, each named `name` with `leaf`
-/// at the bottom.
-#[must_use]
-pub(crate) fn build_chain(name: &str, leaf: &ToyTree, depth: usize) -> ToyTree {
-    let mut chain = leaf.clone();
-    for _ in 0..depth {
-        chain = build_node(name, &[&chain]);
-    }
-    chain
-}
-
-/// Build the DAG `x_0 = leaf`, `x_{k+1} = name(x_k, x_k)`, and return
-/// `x_levels`, which has `levels + 1` distinct nodes and `2^(levels + 1) - 1`
-/// node occurrences.
-#[must_use]
-pub(crate) fn build_doubling_dag(name: &str, leaf: &ToyTree, levels: usize) -> ToyTree {
-    let mut dag = leaf.clone();
-    for _ in 0..levels {
-        dag = build_node(name, &[&dag, &dag]);
-    }
-    dag
 }
 
 impl ToyTree {
@@ -473,7 +450,7 @@ impl<C: ?Sized> TreeVisitor<ToyTree, C> for RecordingVisitor {
 // =============================================================================
 
 /// The rewrite of a [`ClosureRewriter`].
-pub(crate) type RewriteHook = Box<dyn FnMut(&ToyTree) -> Result<Option<ToyTree>, HookError> + Send>;
+type RewriteHook = Box<dyn FnMut(&ToyTree) -> Result<Option<ToyTree>, HookError> + Send>;
 
 /// A rewriter whose rewrite is a closure, recording every node it is asked
 /// to rewrite.
@@ -525,27 +502,6 @@ impl<C: ?Sized> Rewriter<ToyTree, C> for ClosureRewriter {
         self.seen.push(node.clone());
         (self.rewrite)(node)
     }
-}
-
-/// Return a rewriter that doubles the integer of every leaf.
-#[must_use]
-pub(crate) fn build_leaf_doubler() -> ClosureRewriter {
-    ClosureRewriter::new(|node| {
-        Ok(node
-            .child_nodes()
-            .is_empty()
-            .then(|| node.with_value(node.value() * 2)))
-    })
-}
-
-/// Return a rewriter that replaces every leaf holding `target` by a leaf of
-/// the same name holding `replacement`.
-#[must_use]
-pub(crate) fn build_leaf_replacer(target: i64, replacement: i64) -> ClosureRewriter {
-    ClosureRewriter::new(move |node| {
-        Ok((node.child_nodes().is_empty() && node.value() == target)
-            .then(|| node.with_value(replacement)))
-    })
 }
 
 /// Return a rewriter that keeps every node.

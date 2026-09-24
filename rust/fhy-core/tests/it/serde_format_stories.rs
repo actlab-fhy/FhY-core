@@ -8,6 +8,7 @@
 use std::fmt::Debug;
 
 use crate::support::expression as expression_support;
+use crate::support::provenance as provenance_support;
 use crate::support::stack as stack_support;
 
 use expression_support::{
@@ -23,11 +24,9 @@ use fhy_core::expr::{
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, Interned};
 use fhy_core::op_attribute::OpAttribute;
-use fhy_core::provenance::{
-    CallSiteProvenance, FileProvenance, FusedProvenance, NamedProvenance, Position, Provenance,
-    Span,
-};
+use fhy_core::provenance::{CallSiteProvenance, FusedProvenance, Position, Provenance, Span};
 use fhy_core::value_domain::ValueDomain;
+use provenance_support::{build_file, build_named};
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -56,16 +55,6 @@ fn assert_round_trips<T: Serialize + DeserializeOwned + PartialEq + Debug>(value
 /// Build the position at `line` and `column`, which must both be non-zero.
 fn build_position(line: u64, column: u64) -> Position {
     Position::try_new(line, column).expect("line and column are non-zero")
-}
-
-/// Build the file provenance for `path` over `span`.
-fn build_file(path: &str, span: Option<Span>) -> Provenance {
-    Provenance::File(FileProvenance::new(path, span))
-}
-
-/// Build the named provenance `name` over `child`.
-fn build_named(name: &str, child: Provenance) -> Provenance {
-    Provenance::Named(NamedProvenance::try_new(name, child).expect("name is non-empty"))
 }
 
 /// Build a provenance using every variant: a labelled fusion of a named

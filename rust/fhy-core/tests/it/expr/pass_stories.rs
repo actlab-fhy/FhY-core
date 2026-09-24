@@ -21,7 +21,7 @@ use fhy_core::expr::passes::{
     ExpressionPrettyFormatter, RewriteRuleApplier, register_expression_passes,
 };
 use fhy_core::expr::pattern::{
-    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
+    CallbackError, Capture, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
     apply_rewrite_rules,
 };
 use fhy_core::expr::{
@@ -34,8 +34,8 @@ use fhy_core::pass::{
     PassErrorKind, PassHook, PassManager, PassRegistry, PipelineRecord, PreservedAnalyses,
 };
 use pattern_support::{
-    ProbeError, build_x_plus_zero_rule, build_x_times_one_rule, expect_probe_error,
-    rewrite_to_capture, rewrite_to_literal,
+    ProbeError, build_plus_zero, build_x_plus_zero_rule, build_x_times_one_rule, describe_fired,
+    expect_probe_error, rewrite_to_capture, rewrite_to_literal,
 };
 use rstest::rstest;
 
@@ -44,19 +44,6 @@ const RULE_APPLIER_NAME: &str = RewriteRuleApplier::NAME;
 
 /// The description the rule applier is registered with.
 const RULE_APPLIER_DESCRIPTION: &str = RewriteRuleApplier::DESCRIPTION;
-
-/// Return `x + 0` for the reference `x`.
-fn build_plus_zero(x: &Expression) -> Expression {
-    Expression::new_binary(BinaryOperation::Add, x, 0)
-}
-
-/// Return the `(rule index, name)` of every firing in `fired`.
-fn describe_fired(fired: &[FiredRule]) -> Vec<(usize, Option<&str>)> {
-    fired
-        .iter()
-        .map(|firing| (firing.rule_index(), firing.name()))
-        .collect()
-}
 
 /// Return the rule `0 + x -> x + 0`, named so, whose output the rule
 /// `x + 0 -> x` rewrites only in a later run.

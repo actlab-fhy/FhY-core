@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
-    DEEP_TREE_DEPTH, PATTERN_MATCH_STACK_BYTES, build_call_or_panic, build_callee,
-    build_decimal_literal, build_deep_sum, build_identifier, build_literal,
+    build_call_or_panic, build_callee, build_decimal_literal, build_deep_sum, build_identifier,
+    build_literal,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::pattern::{CallbackError, Capture, MatchBindings, Pattern};
@@ -25,9 +25,40 @@ use fhy_core::expr::{
     LiteralTextError, LiteralValue, LogicalOperation, PiecewiseError, RebuildError, UnaryOperation,
 };
 use hashing_support::hash_of;
-use pattern_support::{ProbeError, expect_match, expect_probe_error, match_infallibly};
+use pattern_support::{ProbeError, expect_probe_error};
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack, run_on_stack};
+
+/// Depth of the deep trees and patterns the operations documented as
+/// recursive are run over, on a stack sized for that recursion.
+const DEEP_TREE_DEPTH: usize = 4000;
+
+/// Stack size for matching a pattern [`DEEP_TREE_DEPTH`] levels deep, which
+/// recurses once per pattern level.
+const PATTERN_MATCH_STACK_BYTES: usize = 16 << 20;
+
+/// Match `pattern` against `expression` and return the result, failing the
+/// test if a predicate fails.
+///
+/// # Panics
+///
+/// Panics if a predicate in `pattern` fails.
+#[must_use]
+fn match_infallibly(pattern: &Pattern, expression: &Expression) -> Option<MatchBindings> {
+    pattern.matches(expression).expect("no predicate fails")
+}
+
+/// Match `pattern` against `expression` and return the bindings, failing the
+/// test if it does not match.
+///
+/// # Panics
+///
+/// Panics if a predicate fails or `pattern` does not match.
+#[must_use]
+fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchBindings {
+    match_infallibly(pattern, expression)
+        .unwrap_or_else(|| panic!("{pattern:?} does not match {expression:?}"))
+}
 
 /// Return the literal expression `LiteralValue::parse_text` reads from
 /// `text`.

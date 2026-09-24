@@ -11,9 +11,35 @@ use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::pattern::{Capture, MatchBindings, Pattern, RewriteRule};
 use fhy_core::expr::{BinaryOperation, Expression, ExpressionKind, UnaryOperation};
 use pattern_support::{
-    build_double_application_rule, build_x_minus_x_rule, build_x_plus_zero_rule,
-    build_x_times_one_rule, build_zero_plus_x_rule, rewrite,
+    build_x_minus_x_rule, build_x_plus_zero_rule, build_x_times_one_rule, rewrite,
+    rewrite_to_capture,
 };
+
+/// Return the rule `0 + x -> x`, named so.
+#[must_use]
+fn build_zero_plus_x_rule() -> RewriteRule {
+    let x = Capture::new("x");
+    RewriteRule::new(
+        Pattern::binary(
+            BinaryOperation::Add,
+            Pattern::literal(0),
+            Pattern::capture(&x),
+        ),
+        rewrite_to_capture(&x),
+    )
+    .with_name("0 + x -> x")
+}
+
+/// Return the rule collapsing `operation(operation(x))` to `x`.
+#[must_use]
+fn build_double_application_rule(operation: UnaryOperation) -> RewriteRule {
+    let x = Capture::new("x");
+    RewriteRule::new(
+        Pattern::unary(operation, Pattern::unary(operation, Pattern::capture(&x))),
+        rewrite_to_capture(&x),
+    )
+    .with_name("op(op(x)) -> x")
+}
 
 /// Return the four algebraic simplifications `x + 0 -> x`, `0 + x -> x`,
 /// `x * 1 -> x`, and `x - x -> 0`.

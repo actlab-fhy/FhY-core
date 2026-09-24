@@ -15,14 +15,14 @@ use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 /// Analysis run counts shared by a node and every node derived from it.
 #[derive(Debug, Default)]
-pub(crate) struct AnalysisRunCounters {
+struct AnalysisRunCounters {
     double: AtomicUsize,
     parity: AtomicUsize,
 }
 
 /// One immutable node of the toy IR.
 #[derive(Debug)]
-pub(crate) struct BoxNode {
+struct BoxNode {
     value: i64,
     counters: Arc<AnalysisRunCounters>,
 }
@@ -116,7 +116,7 @@ impl Analysis for ParityAnalysis {
 }
 
 /// The hook of a [`ClosurePass`].
-pub(crate) type RunHook<'a> =
+type RunHook<'a> =
     Box<dyn FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + Send + 'a>;
 
 /// A pass over the toy IR named explicitly, whose run is a closure and which
@@ -159,16 +159,4 @@ impl CompilerPass<BoxIr> for ClosurePass<'_> {
     fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
         Ok(input.value() != output.value())
     }
-}
-
-/// Build the pass `name` that adds `delta` to the value.
-#[must_use]
-pub(crate) fn build_add_pass(name: &str, delta: i64) -> ClosurePass<'static> {
-    ClosurePass::new(name, move |ir, _| Ok(ir.derive(ir.value() + delta)))
-}
-
-/// Build the pass `name` that returns its input unchanged.
-#[must_use]
-pub(crate) fn build_identity_pass(name: &str) -> ClosurePass<'static> {
-    ClosurePass::new(name, |ir, _| Ok(ir.clone()))
 }

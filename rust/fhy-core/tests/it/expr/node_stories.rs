@@ -12,9 +12,8 @@ use crate::support::stack as stack_support;
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    build_call_node_or_panic, build_callee, build_decimal_literal, build_deep_sum,
-    build_doubling_dag, build_identifier, build_literal, build_piecewise_node_or_panic,
-    copy_deeply, is_doubling_dag_over,
+    build_callee, build_decimal_literal, build_deep_sum, build_doubling_dag, build_identifier,
+    build_literal, build_piecewise_node_or_panic, copy_deeply,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
@@ -26,6 +25,36 @@ use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
+
+/// Return the call `Expression::call` builds of the function named
+/// `function_name` (see [`build_callee`]) with `arguments`, given as a list.
+///
+/// # Panics
+///
+/// Panics if `function_name` is empty.
+#[must_use]
+fn build_call_node_or_panic(function_name: &str, arguments: Vec<Expression>) -> Expression {
+    Expression::call(build_callee(function_name), arguments)
+}
+
+/// Return whether `dag` is a doubling DAG `levels` additions deep over the
+/// node `leaf`, both operands of each addition one shared node.
+#[must_use]
+fn is_doubling_dag_over(dag: &Expression, leaf: &Expression, levels: usize) -> bool {
+    let mut node = dag;
+    for _ in 0..levels {
+        let ExpressionKind::Binary(binary) = node.kind() else {
+            return false;
+        };
+        if binary.operation() != BinaryOperation::Add
+            || !Expression::ptr_eq(binary.left(), binary.right())
+        {
+            return false;
+        }
+        node = binary.left();
+    }
+    Expression::ptr_eq(node, leaf)
+}
 
 /// Return the literal expression `LiteralValue::parse_text` reads from
 /// `text`.

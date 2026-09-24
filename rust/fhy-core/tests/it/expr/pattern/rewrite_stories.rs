@@ -27,30 +27,17 @@ use fhy_core::expr::{
 };
 use fhy_core::identifier::Identifier;
 use pattern_support::{
-    ProbeError, build_x_minus_x_rule, build_x_plus_zero_rule, build_x_times_one_rule,
-    expect_probe_error, rewrite, rewrite_to_capture, rewrite_to_literal,
+    ProbeError, build_plus_zero, build_x_minus_x_rule, build_x_plus_zero_rule,
+    build_x_times_one_rule, describe_fired, expect_probe_error, rewrite, rewrite_to_capture,
+    rewrite_to_literal,
 };
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
-
-/// Return `x + 0` for the reference `x`.
-fn build_plus_zero(x: &Expression) -> Expression {
-    Expression::new_binary(BinaryOperation::Add, x, build_literal(0))
-}
 
 /// Apply `rule` at the root of `expression`, failing the test if a callback
 /// fails.
 fn rewrite_root(rule: &RewriteRule, expression: &Expression) -> Option<Expression> {
     rule.apply(expression).expect("no callback fails")
-}
-
-/// Return the `(rule index, name)` of every firing.
-fn describe_fired(outcome: &RewriteOutcome) -> Vec<(usize, Option<&str>)> {
-    outcome
-        .fired()
-        .iter()
-        .map(|fired| (fired.rule_index(), fired.name()))
-        .collect()
 }
 
 /// Return an unnamed rule rewriting every expression to the literal
@@ -476,7 +463,10 @@ fn apply_rewrite_rules_reports_a_change_when_a_rule_fires() {
     let outcome = rewrite(&build_plus_zero(&x), &[build_x_plus_zero_rule()]);
 
     assert!(outcome.is_changed());
-    assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
+    assert_eq!(
+        describe_fired(outcome.fired()),
+        vec![(0, Some("x + 0 -> x"))]
+    );
 }
 
 /// Test a rule returning the root itself does not fire, and leaves the
@@ -527,7 +517,7 @@ fn apply_rewrite_rules_tries_the_next_rule_after_an_identity_rewrite() {
     );
 
     assert!(Expression::ptr_eq(outcome.output(), &a));
-    assert_eq!(describe_fired(&outcome), [(1, Some("x + 0 -> x"))]);
+    assert_eq!(describe_fired(outcome.fired()), [(1, Some("x + 0 -> x"))]);
 }
 
 /// Test an identity rule over a doubling DAG 64 levels deep leaves it
@@ -604,7 +594,7 @@ fn apply_rewrite_rules_uses_the_first_rule_that_fires() {
     let outcome = rewrite(&build_literal(0), &[build_constant_rule(101), later]);
 
     assert_eq!(outcome.output(), &build_literal(101));
-    assert_eq!(describe_fired(&outcome), vec![(0, None)]);
+    assert_eq!(describe_fired(outcome.fired()), vec![(0, None)]);
     assert_eq!(later_calls.load(Ordering::SeqCst), 0);
 }
 
@@ -616,7 +606,7 @@ fn apply_rewrite_rules_tries_the_next_rule_after_a_refusing_guard() {
     let outcome = rewrite(&build_literal(0), &[refused, build_constant_rule(202)]);
 
     assert_eq!(outcome.output(), &build_literal(202));
-    assert_eq!(describe_fired(&outcome), vec![(1, None)]);
+    assert_eq!(describe_fired(outcome.fired()), vec![(1, None)]);
 }
 
 /// Test nested simplifications collapse in one bottom-up walk, the child's
@@ -637,7 +627,7 @@ fn apply_rewrite_rules_walks_bottom_up_in_one_pass() {
 
     assert!(Expression::ptr_eq(outcome.output(), &x));
     assert_eq!(
-        describe_fired(&outcome),
+        describe_fired(outcome.fired()),
         vec![(0, Some("x + 0 -> x")), (1, Some("x * 1 -> x"))]
     );
 }
@@ -772,7 +762,10 @@ fn apply_rewrite_rules_rewrites_a_shared_subtree_once() {
         outcome.output(),
         &Expression::new_binary(BinaryOperation::Multiply, &x, &x)
     );
-    assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
+    assert_eq!(
+        describe_fired(outcome.fired()),
+        vec![(0, Some("x + 0 -> x"))]
+    );
     let ExpressionKind::Binary(node) = outcome.output().kind() else {
         panic!("expected a product, got {:?}", outcome.output());
     };
@@ -794,7 +787,7 @@ fn apply_rewrite_rules_rewrites_a_shared_leaf_once() {
         outcome.output(),
         &Expression::new_binary(BinaryOperation::Add, build_literal(5), build_literal(5))
     );
-    assert_eq!(describe_fired(&outcome), vec![(0, None)]);
+    assert_eq!(describe_fired(outcome.fired()), vec![(0, None)]);
     let ExpressionKind::Binary(node) = outcome.output().kind() else {
         panic!("expected a sum, got {:?}", outcome.output());
     };
@@ -815,7 +808,10 @@ fn apply_rewrite_rules_rewrites_a_doubling_dag_once_per_distinct_node() {
 
     let outcome = rewrite(&dag, &[build_x_plus_zero_rule()]);
 
-    assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
+    assert_eq!(
+        describe_fired(outcome.fired()),
+        vec![(0, Some("x + 0 -> x"))]
+    );
     let mut node = outcome.output();
     for level in 0..levels {
         let ExpressionKind::Binary(product) = node.kind() else {
@@ -925,7 +921,7 @@ fn apply_rewrite_rules_accepts_a_native_rule_borrowing_its_context() {
         outcome.output(),
         &Expression::new_binary(BinaryOperation::Add, build_literal(3), &b)
     );
-    assert_eq!(describe_fired(&outcome), [(0, Some("substitute"))]);
+    assert_eq!(describe_fired(outcome.fired()), [(0, Some("substitute"))]);
 }
 
 /// Test a list of boxed rules mixes native and pattern rules, tried in
@@ -943,7 +939,7 @@ fn apply_rewrite_rules_accepts_a_mixed_list_of_boxed_rules() {
 
     assert_eq!(outcome.output(), &build_literal(5));
     assert_eq!(
-        describe_fired(&outcome),
+        describe_fired(outcome.fired()),
         [(0, Some("substitute")), (1, Some("x + 0 -> x"))]
     );
 }
@@ -960,7 +956,7 @@ fn apply_rewrite_rules_accepts_rules_by_reference_and_by_arc() {
 
     assert!(Expression::ptr_eq(by_reference.output(), &x));
     assert!(Expression::ptr_eq(by_arc.output(), &x));
-    assert_eq!(describe_fired(&by_arc), [(0, Some("x + 0 -> x"))]);
+    assert_eq!(describe_fired(by_arc.fired()), [(0, Some("x + 0 -> x"))]);
 }
 
 /// Rewrite `expression` with `rules` of any rule type, failing the test if
@@ -994,7 +990,7 @@ fn apply_rewrite_rules_tries_the_next_rule_after_a_declining_rewrite() {
     let outcome = rewrite(&build_literal(0), &[declining, build_constant_rule(202)]);
 
     assert_eq!(outcome.output(), &build_literal(202));
-    assert_eq!(describe_fired(&outcome), [(1, None)]);
+    assert_eq!(describe_fired(outcome.fired()), [(1, None)]);
 }
 
 // =============================================================================

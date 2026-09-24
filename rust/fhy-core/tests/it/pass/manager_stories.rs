@@ -21,14 +21,24 @@ use fhy_core::pass::{
     PipelineRecord, PreservedAnalyses, ValidationManager, Validator, ValidatorRecord,
     VerificationPoint,
 };
-use pass_ir::{
-    BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis, build_add_pass, build_identity_pass,
-};
+use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis};
 use rstest::rstest;
 
 // =============================================================================
 // Helpers
 // =============================================================================
+
+/// Build the pass `name` that adds `delta` to the value.
+#[must_use]
+fn build_add_pass(name: &str, delta: i64) -> ClosurePass<'static> {
+    ClosurePass::new(name, move |ir, _| Ok(ir.derive(ir.value() + delta)))
+}
+
+/// Build the pass `name` that returns its input unchanged.
+#[must_use]
+fn build_identity_pass(name: &str) -> ClosurePass<'static> {
+    ClosurePass::new(name, |ir, _| Ok(ir.clone()))
+}
 
 /// Return the pass record of a pipeline record, failing the test otherwise.
 fn expect_pass_record(record: &PipelineRecord) -> &PassRunRecord {

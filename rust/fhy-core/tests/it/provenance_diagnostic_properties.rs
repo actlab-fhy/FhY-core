@@ -7,13 +7,15 @@
 //! unlabelled fusion in order, keep everything else whole), written
 //! independently of `fuse`'s own loop.
 
+use crate::support::provenance as provenance_support;
+
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, ValidationReport};
 use fhy_core::provenance::{
-    CallSiteProvenance, FileProvenance, FusedProvenance, NamedProvenance, Position, Provenance,
-    Span,
+    CallSiteProvenance, FileProvenance, FusedProvenance, Position, Provenance, Span,
 };
 use proptest::prelude::*;
 use proptest::sample::select;
+use provenance_support::{build_file, build_named};
 
 /// File paths the strategies draw from: spellings that normalize to one
 /// another, absolute paths, the `//` root, the empty path and the
@@ -46,16 +48,6 @@ const NAMES: &[&str] = &["n", "fhy.add", " "];
 
 /// Largest fusion depth the tree strategy builds.
 const MAXIMUM_TREE_DEPTH: u32 = 3;
-
-/// Build the file provenance for `path` over `span`.
-fn build_file(path: &str, span: Option<Span>) -> Provenance {
-    Provenance::File(FileProvenance::new(path, span))
-}
-
-/// Build the named provenance `name` over `child`.
-fn build_named(name: &str, child: Provenance) -> Provenance {
-    Provenance::Named(NamedProvenance::try_new(name, child).expect("names are non-empty"))
-}
 
 /// Fuse `inputs` with `Provenance::fuse_labelled` under `label` when one is
 /// given, and with `Provenance::fuse` otherwise.

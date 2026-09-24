@@ -5,7 +5,7 @@ use std::thread;
 
 /// Stack size of the thread the operations documented as iterative run on
 /// over a deeply nested value.
-pub(crate) const SMALL_STACK_BYTES: usize = 128 << 10;
+const SMALL_STACK_BYTES: usize = 128 << 10;
 
 /// Nesting depth of the values the operations documented as iterative run
 /// over on a [`SMALL_STACK_BYTES`] stack: under two bytes of stack per

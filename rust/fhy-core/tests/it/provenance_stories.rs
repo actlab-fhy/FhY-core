@@ -5,6 +5,7 @@
 //! run in parallel freely.
 
 use crate::support::hashing as hashing_support;
+use crate::support::provenance as provenance_support;
 use crate::support::stack as stack_support;
 
 use fhy_core::provenance::{
@@ -12,6 +13,7 @@ use fhy_core::provenance::{
     NamedProvenanceError, Position, PositionError, Provenance, Span, SpanError,
 };
 use hashing_support::hash_of;
+use provenance_support::{build_file, build_named};
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde_json::error::Category;
@@ -59,21 +61,6 @@ fn build_offset_span(start_offset: Option<u64>, end_offset: Option<u64>) -> Span
 /// Build a span with only positions set, each given as `(line, column)`.
 fn build_position_span(start: Option<(u64, u64)>, end: Option<(u64, u64)>) -> Span {
     try_build_span(None, None, start, end).expect("positions are ordered")
-}
-
-/// Build the file provenance for `path` with no span.
-fn build_file(path: &str) -> Provenance {
-    Provenance::File(FileProvenance::new(path, None))
-}
-
-/// Build the file provenance for `path` over `span`.
-fn build_file_with_span(path: &str, span: Span) -> Provenance {
-    Provenance::File(FileProvenance::new(path, Some(span)))
-}
-
-/// Build the named provenance `name` over `child`.
-fn build_named(name: &str, child: Provenance) -> Provenance {
-    Provenance::Named(NamedProvenance::try_new(name, child).expect("name is non-empty"))
 }
 
 /// Build the call-site provenance of `called` at `call_site`.
@@ -574,7 +561,7 @@ fn file_provenance_without_span_differs_from_unknown_span() {
 /// unknown provenance and for a library symbol over its file.
 #[rstest]
 #[case::builtin("fhy.add", Provenance::Unknown)]
-#[case::library_symbol("mylib::matmul", build_file("mylib.fhyobj"))]
+#[case::library_symbol("mylib::matmul", build_file("mylib.fhyobj", None))]
 fn named_provenance_try_new_stores_name_and_child(#[case] name: &str, #[case] child: Provenance) {
     let provenance = NamedProvenance::try_new(name, child.clone()).expect("name is non-empty");
 
@@ -601,8 +588,8 @@ fn named_provenance_try_new_accepts_a_whitespace_name() {
 /// Test a call-site provenance stores both arms.
 #[test]
 fn call_site_provenance_new_stores_callee_and_caller() {
-    let called = build_file("callee.fhy");
-    let call_site = build_file("caller.fhy");
+    let called = build_file("callee.fhy", None);
+    let call_site = build_file("caller.fhy", None);
 
     let provenance = CallSiteProvenance::new(called.clone(), call_site.clone());
 
@@ -613,8 +600,8 @@ fn call_site_provenance_new_stores_callee_and_caller() {
 /// Test a fused provenance keeps its sources in order and no label.
 #[test]
 fn fused_provenance_new_keeps_sources_in_order() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
 
     let provenance = FusedProvenance::new(vec![a.clone(), b.clone()]);
 
@@ -626,7 +613,7 @@ fn fused_provenance_new_keeps_sources_in_order() {
 /// given.
 #[test]
 fn fused_provenance_labelled_stores_the_label() {
-    let sources = vec![Provenance::Unknown, build_file("a.fhy")];
+    let sources = vec![Provenance::Unknown, build_file("a.fhy", None)];
 
     let provenance = FusedProvenance::labelled(sources.clone(), "loop-fusion");
 
@@ -653,7 +640,7 @@ fn fused_provenance_with_no_sources_differs_from_unknown() {
 /// Test a single-source fusion differs from its source.
 #[test]
 fn fused_provenance_with_one_source_differs_from_the_source() {
-    let a = build_file("a.fhy");
+    let a = build_file("a.fhy", None);
 
     assert_ne!(build_fused(vec![a.clone()], None), a);
 }
@@ -661,7 +648,7 @@ fn fused_provenance_with_one_source_differs_from_the_source() {
 /// Test provenances of different variants are never equal.
 #[test]
 fn provenances_of_different_variants_are_unequal() {
-    let file = build_file("a.fhy");
+    let file = build_file("a.fhy", None);
     let named = build_named("a.fhy", Provenance::Unknown);
     let call_site = build_call_site(Provenance::Unknown, Provenance::Unknown);
 
@@ -672,10 +659,10 @@ fn provenances_of_different_variants_are_unequal() {
 
 /// Test equal provenances of every variant hash equally.
 #[rstest]
-#[case::file(|| build_file_with_span("a.fhy", build_offset_span(Some(0), Some(3))))]
+#[case::file(|| build_file("a.fhy", Some(build_offset_span(Some(0), Some(3)))))]
 #[case::named(|| build_named("fhy.add", Provenance::Unknown))]
-#[case::call_site(|| build_call_site(build_file("a.fhy"), build_file("b.fhy")))]
-#[case::fused(|| build_fused(vec![build_file("a.fhy")], Some("cse")))]
+#[case::call_site(|| build_call_site(build_file("a.fhy", None), build_file("b.fhy", None)))]
+#[case::fused(|| build_fused(vec![build_file("a.fhy", None)], Some("cse")))]
 fn equal_provenances_hash_equally(#[case] build: fn() -> Provenance) {
     let first = build();
     let second = build();
@@ -718,7 +705,7 @@ fn fuse_labelled_with_no_survivors_returns_unknown(#[case] inputs: Vec<Provenanc
 /// Test fusing one provenance without a label returns it unchanged.
 #[test]
 fn fuse_without_a_label_returns_a_single_input_unchanged() {
-    let a = build_file("a.fhy");
+    let a = build_file("a.fhy", None);
 
     let fused = Provenance::fuse([a.clone()]);
 
@@ -728,7 +715,7 @@ fn fuse_without_a_label_returns_a_single_input_unchanged() {
 /// Test fusing one provenance under a label wraps it.
 #[test]
 fn fuse_labelled_wraps_a_single_input() {
-    let a = build_file("a.fhy");
+    let a = build_file("a.fhy", None);
 
     let fused = Provenance::fuse_labelled([a.clone()], "cse");
 
@@ -738,8 +725,8 @@ fn fuse_labelled_wraps_a_single_input() {
 /// Test unknown inputs are dropped from a mixed input.
 #[test]
 fn fuse_drops_unknown_inputs_from_mixed_input() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
 
     let fused = Provenance::fuse([a.clone(), Provenance::Unknown, b.clone()]);
 
@@ -749,9 +736,9 @@ fn fuse_drops_unknown_inputs_from_mixed_input() {
 /// Test an unlabelled nested fusion is spliced into the result.
 #[test]
 fn fuse_flattens_a_nested_unlabelled_fusion() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
     let inner = build_fused(vec![a.clone(), b.clone()], None);
 
     let fused = Provenance::fuse([inner, c.clone()]);
@@ -762,9 +749,9 @@ fn fuse_flattens_a_nested_unlabelled_fusion() {
 /// Test a labelled nested fusion is kept whole.
 #[test]
 fn fuse_preserves_a_nested_labelled_fusion() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
     let inner = build_fused(vec![a, b], Some("cse"));
 
     let fused = Provenance::fuse([inner.clone(), c.clone()]);
@@ -776,7 +763,10 @@ fn fuse_preserves_a_nested_labelled_fusion() {
 /// whole.
 #[test]
 fn fuse_treats_an_empty_label_as_a_label() {
-    let inner = build_fused(vec![build_file("a.fhy"), build_file("b.fhy")], Some(""));
+    let inner = build_fused(
+        vec![build_file("a.fhy", None), build_file("b.fhy", None)],
+        Some(""),
+    );
 
     let fused = Provenance::fuse([inner.clone()]);
 
@@ -786,9 +776,9 @@ fn fuse_treats_an_empty_label_as_a_label() {
 /// Test the result keeps the input order.
 #[test]
 fn fuse_preserves_input_order() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
 
     let fused = Provenance::fuse([a.clone(), b.clone(), c.clone()]);
 
@@ -798,8 +788,8 @@ fn fuse_preserves_input_order() {
 /// Test fusing the same inputs in another order gives another result.
 #[test]
 fn fuse_is_not_commutative() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
 
     let forward = Provenance::fuse([a.clone(), b.clone()]);
     let backward = Provenance::fuse([b, a]);
@@ -810,7 +800,7 @@ fn fuse_is_not_commutative() {
 /// Test equal sources are not deduplicated.
 #[test]
 fn fuse_preserves_duplicate_sources() {
-    let a = build_file("a.fhy");
+    let a = build_file("a.fhy", None);
 
     let fused = Provenance::fuse([a.clone(), a.clone()]);
 
@@ -820,8 +810,8 @@ fn fuse_preserves_duplicate_sources() {
 /// Test the label labels the result.
 #[test]
 fn fuse_labelled_attaches_the_label_to_the_result() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
 
     let fused = Provenance::fuse_labelled([a.clone(), b.clone()], "loop-fusion");
 
@@ -831,8 +821,8 @@ fn fuse_labelled_attaches_the_label_to_the_result() {
 /// Test unknown provenances revealed by splicing are dropped too.
 #[test]
 fn fuse_drops_unknown_inside_directly_constructed_nested_fused() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
     let non_canonical_inner = build_fused(vec![Provenance::Unknown, a.clone()], None);
 
     let fused = Provenance::fuse([non_canonical_inner, b.clone()]);
@@ -843,9 +833,9 @@ fn fuse_drops_unknown_inside_directly_constructed_nested_fused() {
 /// Test unlabelled fusions are spliced at any depth.
 #[test]
 fn fuse_flattens_nested_unlabelled_fusions_transitively() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
     let deeply_nested = build_fused(
         vec![a.clone(), build_fused(vec![b.clone(), c.clone()], None)],
         None,
@@ -859,8 +849,11 @@ fn fuse_flattens_nested_unlabelled_fusions_transitively() {
 /// Test splicing stops at a labelled fusion, even deep inside.
 #[test]
 fn fuse_does_not_flatten_through_a_labelled_fusion() {
-    let a = build_file("a.fhy");
-    let labeled_inner = build_fused(vec![build_file("b.fhy"), build_file("c.fhy")], Some("cse"));
+    let a = build_file("a.fhy", None);
+    let labeled_inner = build_fused(
+        vec![build_file("b.fhy", None), build_file("c.fhy", None)],
+        Some("cse"),
+    );
     let outer_unlabelled = build_fused(vec![a.clone(), labeled_inner.clone()], None);
 
     let fused = Provenance::fuse([outer_unlabelled]);
@@ -871,9 +864,9 @@ fn fuse_does_not_flatten_through_a_labelled_fusion() {
 /// Test dropping, splicing and ordering compose.
 #[test]
 fn fuse_combines_all_reduction_rules() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
     let inner_unlabelled = build_fused(vec![a.clone(), b.clone()], None);
     let inner_labelled = build_fused(vec![b.clone(), c.clone()], Some("x"));
 
@@ -892,7 +885,7 @@ fn fuse_combines_all_reduction_rules() {
 /// bare.
 #[test]
 fn fuse_unwraps_a_single_source_found_by_splicing() {
-    let a = build_file("a.fhy");
+    let a = build_file("a.fhy", None);
     let nested = build_fused(vec![build_fused(vec![a.clone()], None)], None);
 
     let fused = Provenance::fuse([nested]);
@@ -906,10 +899,10 @@ fn fuse_unwraps_a_single_source_found_by_splicing() {
 fn fuse_does_not_look_inside_named_or_call_site_children() {
     let named = build_named(
         "n",
-        build_fused(vec![Provenance::Unknown, build_file("a.fhy")], None),
+        build_fused(vec![Provenance::Unknown, build_file("a.fhy", None)], None),
     );
     let call_site = build_call_site(
-        build_fused(vec![build_file("a.fhy")], None),
+        build_fused(vec![build_file("a.fhy", None)], None),
         Provenance::Unknown,
     );
 
@@ -924,7 +917,7 @@ fn fuse_does_not_look_inside_named_or_call_site_children() {
 fn fuse_flattens_deeply_nested_unlabelled_fusions_on_a_small_stack() {
     run_on_small_stack(|| {
         let files: Vec<Provenance> = (0..=SMALL_STACK_DEPTH)
-            .map(|index| build_file(&format!("{index}.fhy")))
+            .map(|index| build_file(&format!("{index}.fhy"), None))
             .collect();
         let mut nested = files[SMALL_STACK_DEPTH].clone();
         for file in files[..SMALL_STACK_DEPTH].iter().rev() {
@@ -944,9 +937,9 @@ fn fuse_flattens_deeply_nested_unlabelled_fusions_on_a_small_stack() {
 /// Test unlabelled fusion is associative.
 #[test]
 fn fuse_is_associative() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
 
     let left = Provenance::fuse([Provenance::fuse([a.clone(), b.clone()]), c.clone()]);
     let right = Provenance::fuse([a.clone(), Provenance::fuse([b.clone(), c.clone()])]);
@@ -959,9 +952,9 @@ fn fuse_is_associative() {
 /// Test a labelled inner fusion breaks associativity, since it stays whole.
 #[test]
 fn fuse_labelled_is_not_associative() {
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
-    let c = build_file("c.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
+    let c = build_file("c.fhy", None);
 
     let grouped = Provenance::fuse([
         Provenance::fuse_labelled([a.clone(), b.clone()], "m"),
@@ -977,8 +970,8 @@ fn fuse_labelled_is_not_associative() {
 #[test]
 fn fuse_flattens_a_deeply_nested_chain() {
     const DEPTH: usize = 3000;
-    let a = build_file("a.fhy");
-    let b = build_file("b.fhy");
+    let a = build_file("a.fhy", None);
+    let b = build_file("b.fhy", None);
     let mut nested = build_fused(vec![a.clone()], None);
     for _ in 0..DEPTH {
         nested = build_fused(vec![nested], None);
@@ -992,8 +985,8 @@ fn fuse_flattens_a_deeply_nested_chain() {
 /// Test a loop-fusion pass records both source regions under its label.
 #[test]
 fn fuse_loop_fusion_pass_combines_two_provenances() {
-    let op_a = build_file_with_span("a.fhy", build_offset_span(Some(0), Some(3)));
-    let op_b = build_file_with_span("b.fhy", build_offset_span(Some(10), Some(13)));
+    let op_a = build_file("a.fhy", Some(build_offset_span(Some(0), Some(3))));
+    let op_b = build_file("b.fhy", Some(build_offset_span(Some(10), Some(13))));
 
     let fused = Provenance::fuse_labelled([op_a.clone(), op_b.clone()], "loop-fusion");
 
@@ -1011,23 +1004,23 @@ fn fuse_loop_fusion_pass_combines_two_provenances() {
 /// Test every rendering rule of the provenance variants.
 #[rstest]
 #[case::unknown(Provenance::Unknown, "<unknown>")]
-#[case::file_without_span(build_file("a.fhy"), "a.fhy")]
-#[case::file_with_unknown_span(build_file_with_span("a.fhy", Span::unknown()), "a.fhy")]
+#[case::file_without_span(build_file("a.fhy", None), "a.fhy")]
+#[case::file_with_unknown_span(build_file("a.fhy", Some(Span::unknown())), "a.fhy")]
 #[case::file_with_offset_span(
-    build_file_with_span("a.fhy", build_offset_span(Some(0), Some(3))),
+    build_file("a.fhy", Some(build_offset_span(Some(0), Some(3)))),
     "a.fhy:@0-3"
 )]
 #[case::file_with_position_span(
-    build_file_with_span("a.fhy", build_position_span(Some((1, 1)), Some((1, 4)))),
+    build_file("a.fhy", Some(build_position_span(Some((1, 1)), Some((1, 4))))),
     "a.fhy:1:1-1:4"
 )]
 #[case::file_renders_the_normalized_path(
-    build_file_with_span("./x//y.fhy", build_offset_span(Some(0), Some(3))),
+    build_file("./x//y.fhy", Some(build_offset_span(Some(0), Some(3)))),
     "x/y.fhy:@0-3"
 )]
 #[case::named_with_unknown_child(build_named("fhy.add", Provenance::Unknown), "fhy.add")]
 #[case::named_with_known_child(
-    build_named("mylib::matmul", build_file("mylib.fhyobj")),
+    build_named("mylib::matmul", build_file("mylib.fhyobj", None)),
     "mylib::matmul (mylib.fhyobj)"
 )]
 #[case::named_with_empty_fusion_child(
@@ -1035,26 +1028,26 @@ fn fuse_loop_fusion_pass_combines_two_provenances() {
     "empty-fusion (fused[])"
 )]
 #[case::call_site(
-    build_call_site(build_file("callee.fhy"), build_file("caller.fhy")),
+    build_call_site(build_file("callee.fhy", None), build_file("caller.fhy", None)),
     "callee.fhy at caller.fhy"
 )]
 #[case::call_site_chain(
     build_call_site(
-        build_call_site(build_file("a.fhy"), build_file("b.fhy")),
-        build_file("c.fhy")
+        build_call_site(build_file("a.fhy", None), build_file("b.fhy", None)),
+        build_file("c.fhy", None)
     ),
     "a.fhy at b.fhy at c.fhy"
 )]
 #[case::fused_without_label(
-    build_fused(vec![build_file("a.fhy"), build_file("b.fhy")], None),
+    build_fused(vec![build_file("a.fhy", None), build_file("b.fhy", None)], None),
     "fused[a.fhy, b.fhy]"
 )]
-#[case::fused_with_label(build_fused(vec![build_file("a.fhy")], Some("loop-fusion")), "loop-fusion[a.fhy]")]
+#[case::fused_with_label(build_fused(vec![build_file("a.fhy", None)], Some("loop-fusion")), "loop-fusion[a.fhy]")]
 #[case::fused_recurses_into_sources(
     build_fused(
         vec![
-            build_fused(vec![build_file("a.fhy"), build_file("b.fhy")], Some("cse")),
-            build_file("c.fhy"),
+            build_fused(vec![build_file("a.fhy", None), build_file("b.fhy", None)], Some("cse")),
+            build_file("c.fhy", None),
         ],
         None,
     ),
@@ -1062,7 +1055,7 @@ fn fuse_loop_fusion_pass_combines_two_provenances() {
 )]
 #[case::fused_with_no_sources(build_fused(vec![], None), "fused[]")]
 #[case::fused_with_empty_label(
-    build_fused(vec![build_file("a.fhy"), build_file("b.fhy")], Some("")),
+    build_fused(vec![build_file("a.fhy", None), build_file("b.fhy", None)], Some("")),
     "[a.fhy, b.fhy]"
 )]
 fn provenance_display_renders_each_variant(#[case] provenance: Provenance, #[case] expected: &str) {
@@ -1089,7 +1082,7 @@ impl HasProvenance for StoryNode {
 #[test]
 fn merging_two_nodes_fuses_their_provenances() {
     let left = StoryNode {
-        provenance: build_file_with_span("kernel.fhy", build_offset_span(Some(0), Some(4))),
+        provenance: build_file("kernel.fhy", Some(build_offset_span(Some(0), Some(4)))),
     };
     let right = StoryNode {
         provenance: build_named("fhy.add", Provenance::Unknown),
@@ -1111,9 +1104,9 @@ fn merging_two_nodes_fuses_their_provenances() {
 /// Test an inliner's chain of call sites exposes every arm.
 #[test]
 fn inliner_call_site_chain_is_walkable() {
-    let inner = build_file("inner.fhy");
-    let middle = build_file("middle.fhy");
-    let outer = build_file("outer.fhy");
+    let inner = build_file("inner.fhy", None);
+    let middle = build_file("middle.fhy", None);
+    let outer = build_file("outer.fhy", None);
 
     let chain = CallSiteProvenance::new(
         build_call_site(inner.clone(), middle.clone()),
@@ -1168,7 +1161,7 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
 #[rstest]
 #[case::unknown(Provenance::Unknown, json!("unknown"))]
 #[case::file(
-    build_file_with_span("./a//b.fhy", build_offset_span(Some(0), Some(3))),
+    build_file("./a//b.fhy", Some(build_offset_span(Some(0), Some(3)))),
     json!({
         "file": {
             "file_path": "a/b.fhy",
@@ -1177,7 +1170,7 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
     })
 )]
 #[case::file_without_span(
-    build_file("c.fhy"),
+    build_file("c.fhy", None),
     json!({"file": {"file_path": "c.fhy", "span": null}})
 )]
 #[case::named(
@@ -1185,7 +1178,7 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
     json!({"named": {"name": "lib", "child": "unknown"}})
 )]
 #[case::call_site(
-    build_call_site(build_file("a.fhy"), Provenance::Unknown),
+    build_call_site(build_file("a.fhy", None), Provenance::Unknown),
     json!({
         "call_site": {
             "callee": {"file": {"file_path": "a.fhy", "span": null}},
@@ -1210,23 +1203,20 @@ fn provenance_encodes_externally_tagged(#[case] provenance: Provenance, #[case] 
 /// Test every variant round-trips through JSON text.
 #[rstest]
 #[case::unknown(Provenance::Unknown)]
-#[case::file(build_file("c.fhy"))]
-#[case::file_with_full_span(build_file_with_span(
-    "a.fhy",
-    try_build_span(Some(0), Some(3), Some((1, 1)), Some((1, 4))).unwrap(),
-))]
+#[case::file(build_file("c.fhy", None))]
+#[case::file_with_full_span(build_file("a.fhy", Some(try_build_span(Some(0), Some(3), Some((1, 1)), Some((1, 4))).unwrap())))]
 #[case::builtin(build_named("fhy.add", Provenance::Unknown))]
-#[case::library_symbol(build_named("mylib::matmul", build_file("mylib.fhyobj")))]
+#[case::library_symbol(build_named("mylib::matmul", build_file("mylib.fhyobj", None)))]
 #[case::call_site(build_call_site(
-    build_file_with_span("a.fhy", build_offset_span(Some(0), Some(10))),
-    build_file("b.fhy"),
+    build_file("a.fhy", Some(build_offset_span(Some(0), Some(10)))),
+    build_file("b.fhy", None),
 ))]
 #[case::inlined_call_site(build_call_site(
-    build_named("inlined", build_file("a.fhy")),
-    build_file("b.fhy"),
+    build_named("inlined", build_file("a.fhy", None)),
+    build_file("b.fhy", None),
 ))]
-#[case::fused(build_fused(vec![build_file("a.fhy"), build_file("b.fhy")], None))]
-#[case::fused_with_label(build_fused(vec![build_file("a.fhy")], Some("loop-fusion")))]
+#[case::fused(build_fused(vec![build_file("a.fhy", None), build_file("b.fhy", None)], None))]
+#[case::fused_with_label(build_fused(vec![build_file("a.fhy", None)], Some("loop-fusion")))]
 fn provenance_round_trips_through_json(#[case] provenance: Provenance) {
     let json = serde_json::to_string(&provenance).expect("provenances encode");
 
@@ -1271,7 +1261,7 @@ fn provenance_decode_normalizes_the_file_path() {
 
     let decoded: Provenance = serde_json::from_value(payload).expect("valid payload");
 
-    assert_eq!(decoded, build_file("x/y.fhy"));
+    assert_eq!(decoded, build_file("x/y.fhy", None));
 }
 
 /// Test a file provenance written with an unnormalized path, in either
@@ -1325,7 +1315,7 @@ fn file_and_fused_decode_read_a_missing_option_as_absent() {
     let fused: Provenance =
         serde_json::from_str(r#"{"fused": {"sources": []}}"#).expect("the fusion decodes");
 
-    assert_eq!(file, build_file("a.fhy"));
+    assert_eq!(file, build_file("a.fhy", None));
     assert_eq!(fused, build_fused(vec![], None));
 }
 

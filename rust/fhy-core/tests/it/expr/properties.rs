@@ -16,12 +16,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use expression_support::{
-    IDENTIFIER_POOL as POOL, build_expression_dag_strategy, build_expression_strategy,
-    build_literal_strategy, coerce_to_condition, copy_deeply,
+    ALL_BINARY_OPERATIONS, ALL_LOGICAL_OPERATIONS, ALL_UNARY_OPERATIONS, CALLEES,
+    IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
+    build_piecewise_node_or_panic, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expr::{
-    AlphaRenaming, BooleanScreen, Decimal, Expression, ExpressionKind, FunctionName, FunctionSort,
-    LiteralValue, PiecewiseError, SortLookup, SymbolType,
+    AlphaRenaming, BinaryOperation, BooleanScreen, Callee, Decimal, Expression, ExpressionKind,
+    FunctionName, FunctionSort, LiteralValue, LogicalOperation, PiecewiseError, SortLookup,
+    SymbolType, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -187,6 +189,106 @@ fn collect_sharing(expression: &Expression) -> Vec<Vec<usize>> {
         pattern.push(first_positions);
     }
     pattern
+}
+
+/// The most distinct nodes a generated expression DAG has.
+const MAX_DAG_NODES: usize = 12;
+
+/// How one node of a generated expression DAG is built from the nodes
+/// before it, each child picked by an index into them.
+#[derive(Debug, Clone)]
+enum DagNodeSpecification {
+    Identifier(usize),
+    Literal(LiteralValue),
+    Unary(UnaryOperation, prop::sample::Index),
+    Binary(BinaryOperation, prop::sample::Index, prop::sample::Index),
+    Logical(LogicalOperation, Vec<prop::sample::Index>),
+    Piecewise(
+        Vec<(prop::sample::Index, prop::sample::Index)>,
+        prop::sample::Index,
+    ),
+    Call(Callee, Vec<prop::sample::Index>),
+}
+
+/// Return a strategy for the specification of one DAG node of any kind.
+fn build_dag_node_specification_strategy() -> BoxedStrategy<DagNodeSpecification> {
+    let index = any::<prop::sample::Index>;
+    prop_oneof![
+        (0..POOL.len()).prop_map(DagNodeSpecification::Identifier),
+        build_literal_strategy(false).prop_map(DagNodeSpecification::Literal),
+        (select(ALL_UNARY_OPERATIONS.to_vec()), index())
+            .prop_map(|(operation, operand)| DagNodeSpecification::Unary(operation, operand)),
+        (select(ALL_BINARY_OPERATIONS.to_vec()), index(), index()).prop_map(
+            |(operation, left, right)| DagNodeSpecification::Binary(operation, left, right)
+        ),
+        (
+            select(ALL_LOGICAL_OPERATIONS.to_vec()),
+            prop::collection::vec(index(), 2..5)
+        )
+            .prop_map(|(operation, operands)| DagNodeSpecification::Logical(operation, operands)),
+        (prop::collection::vec((index(), index()), 1..4), index())
+            .prop_map(|(cases, otherwise)| DagNodeSpecification::Piecewise(cases, otherwise)),
+        (
+            select(CALLEES.clone()),
+            prop::collection::vec(index(), 0..4)
+        )
+            .prop_map(|(callee, arguments)| DagNodeSpecification::Call(callee, arguments)),
+    ]
+    .boxed()
+}
+
+/// Build the node `specification` describes over the earlier `nodes`, of
+/// which there is at least one.
+fn build_dag_node(specification: DagNodeSpecification, nodes: &[Expression]) -> Expression {
+    let pick = |index: prop::sample::Index| nodes[index.index(nodes.len())].clone();
+    match specification {
+        DagNodeSpecification::Identifier(index) => Expression::from(POOL[index].clone()),
+        DagNodeSpecification::Literal(value) => Expression::from(value),
+        DagNodeSpecification::Unary(operation, operand) => {
+            Expression::new_unary(operation, pick(operand))
+        }
+        DagNodeSpecification::Binary(operation, left, right) => {
+            Expression::new_binary(operation, pick(left), pick(right))
+        }
+        DagNodeSpecification::Logical(operation, operands) => {
+            Expression::new_logical(operation, operands.into_iter().map(pick))
+        }
+        DagNodeSpecification::Piecewise(cases, otherwise) => {
+            let cases = cases
+                .into_iter()
+                .map(|(condition, value)| (coerce_to_condition(pick(condition)), pick(value)))
+                .collect();
+            build_piecewise_node_or_panic(cases, pick(otherwise))
+        }
+        DagNodeSpecification::Call(callee, arguments) => {
+            Expression::call(callee, arguments.into_iter().map(pick))
+        }
+    }
+}
+
+/// Return a strategy for expression DAGs over [`POOL`] of up to
+/// [`MAX_DAG_NODES`] distinct nodes of every kind, built with the node
+/// constructors. The first node is an identifier reference, and every child
+/// of a later node is any earlier node, so a node may occur many times.
+///
+/// # Panics
+///
+/// The strategy panics while generating if a node is refused, which the
+/// coerced case conditions rule out.
+fn build_expression_dag_strategy() -> BoxedStrategy<Expression> {
+    (
+        0..POOL.len(),
+        prop::collection::vec(build_dag_node_specification_strategy(), 0..MAX_DAG_NODES),
+    )
+        .prop_map(|(first, specifications)| {
+            let mut nodes = vec![Expression::from(POOL[first].clone())];
+            for specification in specifications {
+                let node = build_dag_node(specification, &nodes);
+                nodes.push(node);
+            }
+            nodes.pop().expect("at least the first node")
+        })
+        .boxed()
 }
 
 proptest! {

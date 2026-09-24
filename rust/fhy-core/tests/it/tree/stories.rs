@@ -27,14 +27,58 @@ use fhy_core::tree::{
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 use tree_ir::{
-    ClosureRewriter, HookError, RecordingVisitor, ToyRebuildError, ToyTree, WalkHook, build_chain,
-    build_doubling_dag, build_frozen_node, build_hash_consing_node, build_keeping_rewriter,
-    build_leaf, build_leaf_doubler, build_leaf_hiding_sharing, build_leaf_replacer, build_node,
+    ClosureRewriter, HookError, RecordingVisitor, ToyRebuildError, ToyTree, WalkHook,
+    build_frozen_node, build_hash_consing_node, build_keeping_rewriter, build_leaf,
+    build_leaf_hiding_sharing, build_node,
 };
 
 // =============================================================================
 // Helpers
 // =============================================================================
+
+/// Build a chain `depth` nodes above `leaf`, each named `name` with `leaf`
+/// at the bottom.
+#[must_use]
+fn build_chain(name: &str, leaf: &ToyTree, depth: usize) -> ToyTree {
+    let mut chain = leaf.clone();
+    for _ in 0..depth {
+        chain = build_node(name, &[&chain]);
+    }
+    chain
+}
+
+/// Build the DAG `x_0 = leaf`, `x_{k+1} = name(x_k, x_k)`, and return
+/// `x_levels`, which has `levels + 1` distinct nodes and `2^(levels + 1) - 1`
+/// node occurrences.
+#[must_use]
+fn build_doubling_dag(name: &str, leaf: &ToyTree, levels: usize) -> ToyTree {
+    let mut dag = leaf.clone();
+    for _ in 0..levels {
+        dag = build_node(name, &[&dag, &dag]);
+    }
+    dag
+}
+
+/// Return a rewriter that doubles the integer of every leaf.
+#[must_use]
+fn build_leaf_doubler() -> ClosureRewriter {
+    ClosureRewriter::new(|node| {
+        Ok(node
+            .child_nodes()
+            .is_empty()
+            .then(|| node.with_value(node.value() * 2)))
+    })
+}
+
+/// Return a rewriter that replaces every leaf holding `target` by a leaf of
+/// the same name holding `replacement`.
+#[must_use]
+fn build_leaf_replacer(target: i64, replacement: i64) -> ClosureRewriter {
+    ClosureRewriter::new(move |node| {
+        Ok((node.child_nodes().is_empty() && node.value() == target)
+            .then(|| node.with_value(replacement)))
+    })
+}
 
 /// Build `root(left(left_leaf), right)`.
 fn build_small_tree() -> ToyTree {
