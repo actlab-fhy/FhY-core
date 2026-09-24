@@ -11,8 +11,9 @@
 //! library symbol, are compositions of these variants rather than new ones.
 //!
 //! A transformation that combines several objects combines their provenances
-//! with [`Provenance::fuse`], which drops unknown inputs and splices in the
-//! sources of unlabelled fusions. A fusion that `fuse` builds therefore never
+//! with [`Provenance::fuse`], or [`Provenance::fuse_labelled`] to name the
+//! transformation, which drop unknown inputs and splice in the sources of
+//! unlabelled fusions. A fusion that either builds therefore never
 //! lists an unknown provenance or an unlabelled fusion among its own
 //! sources; labelled fusions and the other variants are kept whole, whatever
 //! they contain.
@@ -25,6 +26,7 @@
 use std::fmt;
 use std::hash::Hash;
 use std::num::NonZeroU64;
+use std::ops::Range;
 use std::sync::Arc;
 
 use serde::ser::SerializeStruct;
@@ -46,8 +48,8 @@ impl Position {
     ///
     /// # Errors
     ///
-    /// Returns [`ProvenanceError::ZeroLine`] if `line` is zero, and otherwise
-    /// [`ProvenanceError::ZeroColumn`] if `column` is zero.
+    /// Returns [`PositionError::ZeroLine`] if `line` is zero, and otherwise
+    /// [`PositionError::ZeroColumn`] if `column` is zero.
     ///
     /// # Examples
     ///
@@ -57,11 +59,11 @@ impl Position {
     /// let position = Position::try_new(2, 8)?;
     ///
     /// assert_eq!(position.to_string(), "2:8");
-    /// # Ok::<(), fhy_core::provenance::ProvenanceError>(())
+    /// # Ok::<(), fhy_core::provenance::PositionError>(())
     /// ```
-    pub fn try_new(line: u64, column: u64) -> Result<Self, ProvenanceError> {
-        let line = NonZeroU64::new(line).ok_or(ProvenanceError::ZeroLine)?;
-        let column = NonZeroU64::new(column).ok_or(ProvenanceError::ZeroColumn)?;
+    pub fn try_new(line: u64, column: u64) -> Result<Self, PositionError> {
+        let line = NonZeroU64::new(line).ok_or(PositionError::ZeroLine)?;
+        let column = NonZeroU64::new(column).ok_or(PositionError::ZeroColumn)?;
         Ok(Self { line, column })
     }
 
@@ -114,8 +116,23 @@ impl<'de> Deserialize<'de> for Position {
 
 /// A range in a source text given by byte offsets, positions, or both.
 ///
-/// Each of the four bounds is optional. The offsets and the positions are
-/// never checked against each other.
+/// Each of the four bounds is optional. When both offsets are set the end
+/// is at or after the start, and likewise for the positions; the offsets
+/// and the positions are never checked against each other. Start from
+/// [`Span::unknown`], [`Span::from_offsets`] or [`Span::from_positions`],
+/// and set the other bounds with the `with_*` builders.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::provenance::{Position, Span};
+///
+/// let span = Span::from_offsets(0..3)?
+///     .with_positions(Position::try_new(1, 1)?..Position::try_new(1, 4)?)?;
+///
+/// assert_eq!(span.to_string(), "1:1-1:4");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     start_offset: Option<u64>,
@@ -125,68 +142,141 @@ pub struct Span {
 }
 
 impl Span {
-    /// Create the span with the given bounds.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProvenanceError::EndOffsetBeforeStartOffset`] if both offsets
-    /// are set and `end_offset < start_offset`, and otherwise
-    /// [`ProvenanceError::EndPositionBeforeStartPosition`] if both positions
-    /// are set and `end_position < start_position`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fhy_core::provenance::{Position, Span};
-    ///
-    /// let span = Span::try_new(
-    ///     Some(0),
-    ///     Some(3),
-    ///     Some(Position::try_new(1, 1)?),
-    ///     Some(Position::try_new(1, 4)?),
-    /// )?;
-    ///
-    /// assert_eq!(span.to_string(), "1:1-1:4");
-    /// # Ok::<(), fhy_core::provenance::ProvenanceError>(())
-    /// ```
-    pub fn try_new(
-        start_offset: Option<u64>,
-        end_offset: Option<u64>,
-        start_position: Option<Position>,
-        end_position: Option<Position>,
-    ) -> Result<Self, ProvenanceError> {
-        if let (Some(start_offset), Some(end_offset)) = (start_offset, end_offset) {
-            if end_offset < start_offset {
-                return Err(ProvenanceError::EndOffsetBeforeStartOffset {
-                    start_offset,
-                    end_offset,
-                });
-            }
-        }
-        if let (Some(start_position), Some(end_position)) = (start_position, end_position) {
-            if end_position < start_position {
-                return Err(ProvenanceError::EndPositionBeforeStartPosition {
-                    start_position,
-                    end_position,
-                });
-            }
-        }
-        Ok(Self {
-            start_offset,
-            end_offset,
-            start_position,
-            end_position,
-        })
-    }
-
     /// Return the span with no bounds at all.
     #[must_use]
-    pub fn unknown() -> Self {
+    pub const fn unknown() -> Self {
         Self {
             start_offset: None,
             end_offset: None,
             start_position: None,
             end_position: None,
+        }
+    }
+
+    /// Create the span from `offsets.start` to `offsets.end`, with no
+    /// positions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndOffsetBeforeStart`] if `offsets.end <
+    /// offsets.start`. An empty range is accepted.
+    pub fn from_offsets(offsets: Range<u64>) -> Result<Self, SpanError> {
+        Self::unknown().with_offsets(offsets)
+    }
+
+    /// Create the span from `positions.start` to `positions.end`, with no
+    /// offsets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndPositionBeforeStart`] if `positions.end <
+    /// positions.start`. An empty range is accepted.
+    pub fn from_positions(positions: Range<Position>) -> Result<Self, SpanError> {
+        Self::unknown().with_positions(positions)
+    }
+
+    /// Return the span with both offsets replaced by `offsets.start` and
+    /// `offsets.end`, keeping the positions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndOffsetBeforeStart`] if `offsets.end <
+    /// offsets.start`.
+    pub fn with_offsets(self, offsets: Range<u64>) -> Result<Self, SpanError> {
+        Self {
+            start_offset: Some(offsets.start),
+            end_offset: Some(offsets.end),
+            ..self
+        }
+        .check_order()
+    }
+
+    /// Return the span with both positions replaced by `positions.start` and
+    /// `positions.end`, keeping the offsets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndPositionBeforeStart`] if `positions.end <
+    /// positions.start`.
+    pub fn with_positions(self, positions: Range<Position>) -> Result<Self, SpanError> {
+        Self {
+            start_position: Some(positions.start),
+            end_position: Some(positions.end),
+            ..self
+        }
+        .check_order()
+    }
+
+    /// Return the span with its start offset replaced by `offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndOffsetBeforeStart`] if the end offset is set
+    /// and precedes `offset`.
+    pub fn with_start_offset(self, offset: u64) -> Result<Self, SpanError> {
+        Self {
+            start_offset: Some(offset),
+            ..self
+        }
+        .check_order()
+    }
+
+    /// Return the span with its end offset replaced by `offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndOffsetBeforeStart`] if the start offset is
+    /// set and `offset` precedes it.
+    pub fn with_end_offset(self, offset: u64) -> Result<Self, SpanError> {
+        Self {
+            end_offset: Some(offset),
+            ..self
+        }
+        .check_order()
+    }
+
+    /// Return the span with its start position replaced by `position`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndPositionBeforeStart`] if the end position is
+    /// set and precedes `position`.
+    pub fn with_start_position(self, position: Position) -> Result<Self, SpanError> {
+        Self {
+            start_position: Some(position),
+            ..self
+        }
+        .check_order()
+    }
+
+    /// Return the span with its end position replaced by `position`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpanError::EndPositionBeforeStart`] if the start position
+    /// is set and `position` precedes it.
+    pub fn with_end_position(self, position: Position) -> Result<Self, SpanError> {
+        Self {
+            end_position: Some(position),
+            ..self
+        }
+        .check_order()
+    }
+
+    /// Return the span if each pair of bounds that is fully set is in
+    /// order, checking the offsets first.
+    fn check_order(self) -> Result<Self, SpanError> {
+        match (self.start_offset, self.end_offset) {
+            (Some(start), Some(end)) if end < start => {
+                return Err(SpanError::EndOffsetBeforeStart { start, end });
+            }
+            _ => {}
+        }
+        match (self.start_position, self.end_position) {
+            (Some(start), Some(end)) if end < start => {
+                Err(SpanError::EndPositionBeforeStart { start, end })
+            }
+            _ => Ok(self),
         }
     }
 
@@ -283,16 +373,17 @@ struct SpanPayload {
 
 /// Decode the four-key span dict. Every key must be present (`null` for an
 /// absent bound) and no other key may appear; the bounds are then checked as
-/// in [`Span::try_new`].
+/// in the builders.
 impl<'de> Deserialize<'de> for Span {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let payload: SpanPayload = deserialize_map_only(deserializer)?;
-        Span::try_new(
-            payload.start_offset,
-            payload.end_offset,
-            payload.start_position,
-            payload.end_position,
-        )
+        Span {
+            start_offset: payload.start_offset,
+            end_offset: payload.end_offset,
+            start_position: payload.start_position,
+            end_position: payload.end_position,
+        }
+        .check_order()
         .map_err(de::Error::custom)
     }
 }
@@ -346,23 +437,22 @@ pub enum Provenance {
 }
 
 impl Provenance {
-    /// Combine `provenances` into one provenance, keeping their order.
+    /// Combine `provenances` into one unlabelled provenance, keeping their
+    /// order.
     ///
     /// The inputs are flattened first: every [`Provenance::Unknown`] is
-    /// dropped, and an unlabelled [`FusedProvenance`] (one whose metadata is
-    /// `None`) is replaced by its sources, at any depth. A labelled fusion,
-    /// even one labelled with the empty string, and every other variant are
-    /// kept whole. Equal inputs are not deduplicated.
+    /// dropped, and an unlabelled [`FusedProvenance`] is replaced by its
+    /// sources, at any depth. A labelled fusion, even one labelled with the
+    /// empty string, and every other variant are kept whole. Equal inputs
+    /// are not deduplicated.
     ///
-    /// When nothing survives the result is [`Provenance::Unknown`], whatever
-    /// `metadata` is. When exactly one input survives and `metadata` is
-    /// `None`, the result is that input. Otherwise the result is a
-    /// [`FusedProvenance`] of the survivors labelled with `metadata`.
+    /// When nothing survives the result is [`Provenance::Unknown`], when
+    /// exactly one input survives it is that input, and otherwise it is an
+    /// unlabelled [`FusedProvenance`] of the survivors.
     ///
     /// [`Provenance::Unknown`] is therefore an identity for `fuse`, and
-    /// without metadata `fuse` is associative. The flattening walks an
-    /// explicit stack, so deeply nested unlabelled fusions do not exhaust the
-    /// call stack.
+    /// `fuse` is associative. The flattening walks an explicit stack, so
+    /// deeply nested unlabelled fusions do not exhaust the call stack.
     ///
     /// # Examples
     ///
@@ -372,24 +462,55 @@ impl Provenance {
     /// let a = Provenance::File(FileProvenance::new("a.fhy", None));
     /// let b = Provenance::File(FileProvenance::new("b.fhy", None));
     ///
-    /// let fused = Provenance::fuse([a, Provenance::Unknown, b], Some("loop-fusion"));
+    /// let fused = Provenance::fuse([a.clone(), Provenance::Unknown, b]);
+    ///
+    /// assert_eq!(fused.to_string(), "fused[a.fhy, b.fhy]");
+    /// assert_eq!(Provenance::fuse([a.clone()]), a);
+    /// ```
+    #[must_use]
+    pub fn fuse(provenances: impl IntoIterator<Item = Provenance>) -> Provenance {
+        let flat = flatten_fusion_inputs(provenances);
+        match <[Provenance; 1]>::try_from(flat) {
+            Ok([single]) => single,
+            Err(flat) if flat.is_empty() => Provenance::Unknown,
+            Err(flat) => Provenance::Fused(FusedProvenance::new(flat)),
+        }
+    }
+
+    /// Combine `provenances` into one provenance labelled `label`, keeping
+    /// their order.
+    ///
+    /// The inputs are flattened as in [`Provenance::fuse`]. When nothing
+    /// survives the result is [`Provenance::Unknown`]; otherwise it is a
+    /// [`FusedProvenance`] of the survivors labelled `label`, even for a
+    /// single survivor. The empty string is a label.
+    ///
+    /// [`Provenance::Unknown`] is an identity for `fuse_labelled` too, but
+    /// it is not associative: a labelled result nested in another fusion is
+    /// kept whole.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::provenance::{FileProvenance, Provenance};
+    ///
+    /// let a = Provenance::File(FileProvenance::new("a.fhy", None));
+    /// let b = Provenance::File(FileProvenance::new("b.fhy", None));
+    ///
+    /// let fused = Provenance::fuse_labelled([a, Provenance::Unknown, b], "loop-fusion");
     ///
     /// assert_eq!(fused.to_string(), "loop-fusion[a.fhy, b.fhy]");
     /// ```
     #[must_use]
-    pub fn fuse(
+    pub fn fuse_labelled(
         provenances: impl IntoIterator<Item = Provenance>,
-        metadata: Option<&str>,
+        label: impl Into<String>,
     ) -> Provenance {
         let flat = flatten_fusion_inputs(provenances);
-        match <[Provenance; 1]>::try_from(flat) {
-            Ok([single]) if metadata.is_none() => single,
-            Err(flat) if flat.is_empty() => Provenance::Unknown,
-            Ok(single) => Provenance::Fused(FusedProvenance::new(
-                Vec::from(single),
-                metadata.map(str::to_owned),
-            )),
-            Err(flat) => Provenance::Fused(FusedProvenance::new(flat, metadata.map(str::to_owned))),
+        if flat.is_empty() {
+            Provenance::Unknown
+        } else {
+            Provenance::Fused(FusedProvenance::labelled(flat, label))
         }
     }
 
@@ -418,7 +539,7 @@ fn flatten_fusion_inputs(provenances: impl IntoIterator<Item = Provenance>) -> V
     while let Some(provenance) = pending.pop() {
         match provenance {
             Provenance::Unknown => {}
-            Provenance::Fused(fused) if fused.metadata.is_none() => {
+            Provenance::Fused(fused) if fused.label.is_none() => {
                 pending.extend(fused.sources.into_vec().into_iter().rev());
             }
             survivor => flat.push(survivor),
@@ -449,7 +570,7 @@ impl fmt::Display for Provenance {
                 write!(f, "{} at {}", call_site.callee(), call_site.caller())
             }
             Provenance::Fused(fused) => {
-                f.write_str(fused.metadata().unwrap_or("fused"))?;
+                f.write_str(fused.label().unwrap_or("fused"))?;
                 f.write_str("[")?;
                 for (index, source) in fused.sources.iter().enumerate() {
                     if index > 0 {
@@ -528,7 +649,7 @@ impl Serialize for Provenance {
                 "__data__",
                 &FusedFields {
                     sources: &fused.sources,
-                    metadata: fused.metadata(),
+                    metadata: fused.label(),
                 },
             )?,
         }
@@ -609,9 +730,10 @@ impl<'de> Deserialize<'de> for Provenance {
             ProvenancePayload::CallSite(call_site) => {
                 Provenance::CallSite(CallSiteProvenance::new(call_site.callee, call_site.caller))
             }
-            ProvenancePayload::Fused(fused) => {
-                Provenance::Fused(FusedProvenance::new(fused.sources, fused.metadata))
-            }
+            ProvenancePayload::Fused(fused) => Provenance::Fused(FusedProvenance {
+                sources: fused.sources.into_boxed_slice(),
+                label: fused.metadata,
+            }),
         })
     }
 }
@@ -708,11 +830,15 @@ impl NamedProvenance {
     ///
     /// # Errors
     ///
-    /// Returns [`ProvenanceError::EmptyName`] if `name` is empty.
-    pub fn try_new(name: impl Into<String>, child: Provenance) -> Result<Self, ProvenanceError> {
+    /// Returns [`NamedProvenanceError::EmptyName`] if `name` is empty. A
+    /// name of only whitespace is not empty.
+    pub fn try_new(
+        name: impl Into<String>,
+        child: Provenance,
+    ) -> Result<Self, NamedProvenanceError> {
         let name = name.into();
         if name.is_empty() {
-            return Err(ProvenanceError::EmptyName);
+            return Err(NamedProvenanceError::EmptyName);
         }
         Ok(Self {
             name,
@@ -770,22 +896,32 @@ impl CallSiteProvenance {
 
 /// Several provenances combined by a transformation, with an optional label.
 ///
-/// The constructor keeps its sources as given: it accepts no sources, a
-/// single unlabelled source, and nested unknown or unlabelled sources. Use
-/// [`Provenance::fuse`] to build the flat form.
+/// The constructors keep their sources as given: they accept no sources, a
+/// single source, and nested unknown or unlabelled sources. Use
+/// [`Provenance::fuse`] or [`Provenance::fuse_labelled`] to build the flat
+/// form.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FusedProvenance {
     sources: Box<[Provenance]>,
-    metadata: Option<String>,
+    label: Option<String>,
 }
 
 impl FusedProvenance {
-    /// Create the fusion of `sources`, in order, labelled with `metadata`.
+    /// Create the unlabelled fusion of `sources`, in order.
     #[must_use]
-    pub fn new(sources: Vec<Provenance>, metadata: Option<String>) -> Self {
+    pub fn new(sources: Vec<Provenance>) -> Self {
         Self {
             sources: sources.into_boxed_slice(),
-            metadata,
+            label: None,
+        }
+    }
+
+    /// Create the fusion of `sources`, in order, labelled `label`.
+    #[must_use]
+    pub fn labelled(sources: Vec<Provenance>, label: impl Into<String>) -> Self {
+        Self {
+            sources: sources.into_boxed_slice(),
+            label: Some(label.into()),
         }
     }
 
@@ -797,8 +933,8 @@ impl FusedProvenance {
 
     /// Return the label, or `None` for an unlabelled fusion.
     #[must_use]
-    pub fn metadata(&self) -> Option<&str> {
-        self.metadata.as_deref()
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 }
 
@@ -809,57 +945,82 @@ pub trait HasProvenance {
     fn provenance(&self) -> &Provenance;
 }
 
-/// A position, span, or named provenance was built from invalid parts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A [`Position`] was built from a zero line or column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ProvenanceError {
-    /// A position's line was zero; lines start at 1.
+pub enum PositionError {
+    /// The line was zero; lines start at 1.
     ZeroLine,
-    /// A position's column was zero; columns start at 1.
+    /// The column was zero; columns start at 1.
     ZeroColumn,
-    /// A span's end offset preceded its start offset.
-    EndOffsetBeforeStartOffset {
+}
+
+impl fmt::Display for PositionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PositionError::ZeroLine => f.write_str("a position's line must be at least 1"),
+            PositionError::ZeroColumn => f.write_str("a position's column must be at least 1"),
+        }
+    }
+}
+
+impl std::error::Error for PositionError {}
+
+/// A [`Span`] was given a pair of bounds out of order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SpanError {
+    /// The end offset preceded the start offset.
+    EndOffsetBeforeStart {
         /// The offset the span was to start at.
-        start_offset: u64,
+        start: u64,
         /// The offset the span was to end at.
-        end_offset: u64,
+        end: u64,
     },
-    /// A span's end position preceded its start position.
-    EndPositionBeforeStartPosition {
+    /// The end position preceded the start position.
+    EndPositionBeforeStart {
         /// The position the span was to start at.
-        start_position: Position,
+        start: Position,
         /// The position the span was to end at.
-        end_position: Position,
+        end: Position,
     },
-    /// A named provenance was given an empty name.
+}
+
+impl fmt::Display for SpanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SpanError::EndOffsetBeforeStart { start, end } => {
+                write!(
+                    f,
+                    "a span's end offset {end} precedes its start offset {start}"
+                )
+            }
+            SpanError::EndPositionBeforeStart { start, end } => write!(
+                f,
+                "a span's end position {end} precedes its start position {start}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SpanError {}
+
+/// A [`NamedProvenance`] was given an empty name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NamedProvenanceError {
+    /// The name was empty.
     EmptyName,
 }
 
-impl fmt::Display for ProvenanceError {
+impl fmt::Display for NamedProvenanceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProvenanceError::ZeroLine => f.write_str("a position's line must be at least 1"),
-            ProvenanceError::ZeroColumn => f.write_str("a position's column must be at least 1"),
-            ProvenanceError::EndOffsetBeforeStartOffset {
-                start_offset,
-                end_offset,
-            } => write!(
-                f,
-                "a span's end offset {end_offset} precedes its start offset {start_offset}"
-            ),
-            ProvenanceError::EndPositionBeforeStartPosition {
-                start_position,
-                end_position,
-            } => write!(
-                f,
-                "a span's end position {end_position} precedes its start position \
-                 {start_position}"
-            ),
-            ProvenanceError::EmptyName => {
+            NamedProvenanceError::EmptyName => {
                 f.write_str("a named provenance's name must be non-empty")
             }
         }
     }
 }
 
-impl std::error::Error for ProvenanceError {}
+impl std::error::Error for NamedProvenanceError {}

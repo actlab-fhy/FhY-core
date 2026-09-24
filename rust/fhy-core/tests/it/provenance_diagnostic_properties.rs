@@ -58,6 +58,15 @@ fn build_named(name: &str, child: Provenance) -> Provenance {
     Provenance::Named(NamedProvenance::try_new(name, child).expect("names are non-empty"))
 }
 
+/// Fuse `inputs` with `Provenance::fuse_labelled` under `label` when one is
+/// given, and with `Provenance::fuse` otherwise.
+fn fuse_with(inputs: Vec<Provenance>, label: Option<&str>) -> Provenance {
+    match label {
+        Some(label) => Provenance::fuse_labelled(inputs, label),
+        None => Provenance::fuse(inputs),
+    }
+}
+
 /// Return the flattened source list `Provenance::fuse` documents for
 /// `inputs`: unknown provenances dropped and unlabelled fusions spliced in
 /// order at any depth.
@@ -66,7 +75,7 @@ fn flatten_sources(inputs: &[Provenance]) -> Vec<Provenance> {
     for input in inputs {
         match input {
             Provenance::Unknown => {}
-            Provenance::Fused(fused) if fused.metadata().is_none() => {
+            Provenance::Fused(fused) if fused.label().is_none() => {
                 flat.extend(flatten_sources(fused.sources()));
             }
             other => flat.push(other.clone()),
@@ -81,7 +90,7 @@ fn has_reducible_sources(provenance: &Provenance) -> bool {
     match provenance {
         Provenance::Fused(fused) => fused.sources().iter().any(|source| {
             matches!(source, Provenance::Unknown)
-                || matches!(source, Provenance::Fused(inner) if inner.metadata().is_none())
+                || matches!(source, Provenance::Fused(inner) if inner.label().is_none())
         }),
         _ => false,
     }
@@ -131,6 +140,39 @@ fn advance_position(start: &Position, distance: u64) -> Position {
     Position::try_new(line, column).expect("non-zero")
 }
 
+/// Build the span with the given bounds through the single-bound builders.
+///
+/// # Panics
+///
+/// Panics if a pair of bounds is out of order.
+fn build_span(
+    start_offset: Option<u64>,
+    end_offset: Option<u64>,
+    start_position: Option<Position>,
+    end_position: Option<Position>,
+) -> Span {
+    let mut span = Span::unknown();
+    if let Some(offset) = start_offset {
+        span = span
+            .with_start_offset(offset)
+            .expect("a lone bound is valid");
+    }
+    if let Some(offset) = end_offset {
+        span = span.with_end_offset(offset).expect("offsets are ordered");
+    }
+    if let Some(position) = start_position {
+        span = span
+            .with_start_position(position)
+            .expect("a lone bound is valid");
+    }
+    if let Some(position) = end_position {
+        span = span
+            .with_end_position(position)
+            .expect("positions are ordered");
+    }
+    span
+}
+
 /// Return a strategy for spans mixing unknown, one-sided and two-sided
 /// offset bounds with unknown, one-sided and two-sided position bounds,
 /// with small and huge values.
@@ -143,8 +185,7 @@ fn arbitrary_span() -> impl Strategy<Value = Span> {
     )
         .prop_map(
             |((start_offset, end_offset), (start_position, end_position))| {
-                Span::try_new(start_offset, end_offset, start_position, end_position)
-                    .expect("bounds are ordered")
+                build_span(start_offset, end_offset, start_position, end_position)
             },
         )
 }
@@ -172,7 +213,10 @@ fn arbitrary_tree() -> impl Strategy<Value = Provenance> {
                 proptest::option::of(select(LABELS)),
             )
                 .prop_map(|(sources, label)| {
-                    Provenance::Fused(FusedProvenance::new(sources, label.map(str::to_owned)))
+                    Provenance::Fused(match label {
+                        Some(label) => FusedProvenance::labelled(sources, label),
+                        None => FusedProvenance::new(sources),
+                    })
                 }),
             1 => (select(NAMES), inner.clone()).prop_map(|(name, child)| build_named(name, child)),
             1 => (inner.clone(), inner).prop_map(|(callee, caller)| {
@@ -188,7 +232,7 @@ fn arbitrary_inputs() -> impl Strategy<Value = Vec<Provenance>> {
 }
 
 /// Return a strategy for an optional label.
-fn arbitrary_metadata() -> impl Strategy<Value = Option<&'static str>> {
+fn arbitrary_label() -> impl Strategy<Value = Option<&'static str>> {
     proptest::option::of(select(LABELS))
 }
 
@@ -217,19 +261,19 @@ proptest! {
 }
 
 proptest! {
-    /// Test `fuse` equals the reference flattening, collapsing to the unknown
-    /// provenance for no survivors and to the bare survivor for one survivor
-    /// without metadata.
+    /// Test `fuse` and `fuse_labelled` equal the reference flattening,
+    /// collapsing to the unknown provenance for no survivors and, without a
+    /// label, to the bare survivor for one survivor.
     #[test]
     fn fuse_result_equals_the_flattened_input(
         inputs in arbitrary_inputs(),
-        metadata in arbitrary_metadata(),
+        label in arbitrary_label(),
     ) {
         let flat = flatten_sources(&inputs);
 
-        let result = Provenance::fuse(inputs, metadata);
+        let result = fuse_with(inputs, label);
 
-        match (flat.as_slice(), metadata) {
+        match (flat.as_slice(), label) {
             ([], _) => prop_assert_eq!(result, Provenance::Unknown),
             ([single], None) => prop_assert_eq!(&result, single),
             _ => {
@@ -237,30 +281,30 @@ proptest! {
                     return Err(TestCaseError::fail(format!("expected a fusion, got {result:?}")));
                 };
                 prop_assert_eq!(fused.sources(), flat.as_slice());
-                prop_assert_eq!(fused.metadata(), metadata);
+                prop_assert_eq!(fused.label(), label);
                 prop_assert!(!has_reducible_sources(&result));
             }
         }
     }
 
-    /// Test fusing `fuse`'s own output alone, without metadata, changes
-    /// nothing.
+    /// Test fusing the output of `fuse` or `fuse_labelled` alone, without a
+    /// label, changes nothing.
     #[test]
     fn fuse_is_idempotent_on_its_own_output(
         inputs in arbitrary_inputs(),
-        metadata in arbitrary_metadata(),
+        label in arbitrary_label(),
     ) {
-        let result = Provenance::fuse(inputs, metadata);
+        let result = fuse_with(inputs, label);
 
-        let refused = Provenance::fuse([result.clone()], None);
+        let refused = Provenance::fuse([result.clone()]);
 
         prop_assert_eq!(refused, result);
     }
 
-    /// Test fusing already-fused groups without metadata equals fusing all
+    /// Test fusing already-fused groups without a label equals fusing all
     /// of their inputs at once.
     #[test]
-    fn fuse_is_associative_without_metadata(
+    fn fuse_is_associative(
         first in arbitrary_inputs(),
         second in arbitrary_inputs(),
         third in arbitrary_inputs(),
@@ -268,16 +312,13 @@ proptest! {
         let all: Vec<Provenance> =
             first.iter().chain(&second).chain(&third).cloned().collect();
 
-        let grouped = Provenance::fuse(
-            [
-                Provenance::fuse(first, None),
-                Provenance::fuse(second, None),
-                Provenance::fuse(third, None),
-            ],
-            None,
-        );
+        let grouped = Provenance::fuse([
+            Provenance::fuse(first),
+            Provenance::fuse(second),
+            Provenance::fuse(third),
+        ]);
 
-        prop_assert_eq!(grouped, Provenance::fuse(all, None));
+        prop_assert_eq!(grouped, Provenance::fuse(all));
     }
 
     /// Test inserting the unknown provenance anywhere among the inputs does
@@ -286,14 +327,14 @@ proptest! {
     fn fuse_treats_unknown_as_an_identity(
         inputs in arbitrary_inputs(),
         index in any::<prop::sample::Index>(),
-        metadata in arbitrary_metadata(),
+        label in arbitrary_label(),
     ) {
         let mut with_unknown = inputs.clone();
         with_unknown.insert(index.index(inputs.len() + 1), Provenance::Unknown);
 
-        let expected = Provenance::fuse(inputs, metadata);
+        let expected = fuse_with(inputs, label);
 
-        prop_assert_eq!(Provenance::fuse(with_unknown, metadata), expected);
+        prop_assert_eq!(fuse_with(with_unknown, label), expected);
     }
 
     /// Test every provenance tree round-trips through JSON text.
@@ -352,7 +393,11 @@ fn arbitrary_diagnostic() -> impl Strategy<Value = Diagnostic> {
         proptest::option::of(arbitrary_text(0..=20)),
     )
         .prop_map(|(level, message, source, detail)| {
-            Diagnostic::new(level, Note::with_other_kind(message), source, detail)
+            let diagnostic = Diagnostic::new(level, Note::with_other_kind(message), source);
+            match detail {
+                Some(detail) => diagnostic.with_detail(detail),
+                None => diagnostic,
+            }
         })
 }
 
@@ -379,11 +424,7 @@ fn render_report(diagnostics: &[Diagnostic]) -> String {
         if index > 0 {
             text.push('\n');
         }
-        let level = match diagnostic.level() {
-            DiagnosticLevel::Error => "ERROR",
-            DiagnosticLevel::Warning => "WARNING",
-            DiagnosticLevel::Info => "INFO",
-        };
+        let level = diagnostic.level().as_str().to_ascii_uppercase();
         write!(
             text,
             "[{level}] {}: {}",

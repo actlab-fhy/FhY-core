@@ -21,12 +21,7 @@ fn synthesize_silent_failure(validator_name: &str, error: &PassError) -> Diagnos
     let message = format!(
         "Validator \"{validator_name}\" raised \"{kind}\" without reporting a diagnostic: {error}"
     );
-    Diagnostic::new(
-        DiagnosticLevel::Error,
-        Note::with_other_kind(message),
-        validator_name,
-        None,
-    )
+    Diagnostic::error(Note::with_other_kind(message), validator_name.to_owned())
 }
 
 /// A sequence of validation passes whose diagnostics aggregate into one

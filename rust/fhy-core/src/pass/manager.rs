@@ -9,7 +9,7 @@ use super::context::PassContext;
 use super::error::PassError;
 use super::preserved::{AnalysisId, PreservedAnalyses};
 use super::validation::ValidationManager;
-use crate::diagnostic::{Diagnostic, DiagnosticLevel, Note};
+use crate::diagnostic::{Diagnostic, Note};
 use crate::identifier::{HasIdentifier, Identifier};
 
 /// The iteration budget of a new [`FixpointPassGroup`], as in the Python
@@ -335,12 +335,10 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
             report.errors().count()
         );
         let mut failure_diagnostics = diagnostics.to_vec();
-        failure_diagnostics.push(Diagnostic::new(
-            DiagnosticLevel::Error,
-            Note::with_other_kind(message.clone()),
-            pass_name,
-            Some(report.format()),
-        ));
+        failure_diagnostics.push(
+            Diagnostic::error(Note::with_other_kind(message.clone()), pass_name.to_owned())
+                .with_detail(report.format()),
+        );
         Err(PassError::new_verification_failure(
             pass_name.to_owned(),
             message,

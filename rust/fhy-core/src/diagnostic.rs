@@ -14,12 +14,16 @@
 //! key.
 //!
 //! A [`Diagnostic`] is a note emitted by a named source at a
-//! [`DiagnosticLevel`], with optional detail. A [`ValidationReport`] collects
+//! [`DiagnosticLevel`], with optional detail. Build one with
+//! [`Diagnostic::error`], [`Diagnostic::warning`] or [`Diagnostic::info`],
+//! and attach a detail with [`Diagnostic::with_detail`]. A
+//! [`ValidationReport`] collects
 //! the diagnostics of a validation run, in emission order, together with
 //! optional per-source records, renders them with
 //! [`ValidationReport::format`], and escalates a report holding an error
 //! into a [`ValidationFailedError`] with [`ValidationReport::into_result`].
 
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::LazyLock;
 
@@ -175,8 +179,10 @@ impl fmt::Display for Note {
 
 /// Severity of a [`Diagnostic`].
 ///
-/// Levels have no order; compare them for equality.
+/// Levels have no order; compare them for equality. More levels may be
+/// added, so a `match` on a level needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DiagnosticLevel {
     /// A problem that fails validation.
     Error,
@@ -206,31 +212,76 @@ impl fmt::Display for DiagnosticLevel {
 }
 
 /// A note emitted at a level by a named source, with optional detail.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note};
+///
+/// let note = Note::with_other_kind("loop bound is negative");
+///
+/// let diagnostic = Diagnostic::error(note, "bounds.check").with_detail("bound -1 in loop i");
+///
+/// assert_eq!(diagnostic.level(), DiagnosticLevel::Error);
+/// assert_eq!(diagnostic.source(), "bounds.check");
+/// assert_eq!(diagnostic.detail(), Some("bound -1 in loop i"));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Diagnostic {
     level: DiagnosticLevel,
     message: Note,
-    source: String,
+    source: Cow<'static, str>,
     detail: Option<String>,
 }
 
 impl Diagnostic {
     /// Create the diagnostic `message` emitted by `source` at `level`, with
-    /// supplementary `detail`.
+    /// no detail.
     ///
-    /// `source` identifies the emitter, typically a pass name.
+    /// `source` identifies the emitter, typically a pass name. A `&'static
+    /// str` is stored without copying.
     #[must_use]
     pub fn new(
         level: DiagnosticLevel,
         message: Note,
-        source: impl Into<String>,
-        detail: Option<String>,
+        source: impl Into<Cow<'static, str>>,
     ) -> Self {
         Self {
             level,
             message,
             source: source.into(),
-            detail,
+            detail: None,
+        }
+    }
+
+    /// Create the diagnostic `message` emitted by `source` at
+    /// [`DiagnosticLevel::Error`], with no detail.
+    #[must_use]
+    pub fn error(message: Note, source: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(DiagnosticLevel::Error, message, source)
+    }
+
+    /// Create the diagnostic `message` emitted by `source` at
+    /// [`DiagnosticLevel::Warning`], with no detail.
+    #[must_use]
+    pub fn warning(message: Note, source: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(DiagnosticLevel::Warning, message, source)
+    }
+
+    /// Create the diagnostic `message` emitted by `source` at
+    /// [`DiagnosticLevel::Info`], with no detail.
+    #[must_use]
+    pub fn info(message: Note, source: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(DiagnosticLevel::Info, message, source)
+    }
+
+    /// Return the diagnostic with its detail replaced by `detail`, stored as
+    /// given, the empty string included.
+    #[must_use]
+    pub fn with_detail(self, detail: impl Into<String>) -> Self {
+        Self {
+            detail: Some(detail.into()),
+            ..self
         }
     }
 

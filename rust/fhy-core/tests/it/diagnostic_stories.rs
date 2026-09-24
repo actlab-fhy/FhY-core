@@ -28,7 +28,7 @@ type DefaultKind = fn() -> &'static Canonical<NoteKind>;
 
 /// Build a diagnostic at `level` from `source` with an uncategorized note.
 fn build_diagnostic(level: DiagnosticLevel, message: &str, source: &str) -> Diagnostic {
-    Diagnostic::new(level, Note::with_other_kind(message), source, None)
+    Diagnostic::new(level, Note::with_other_kind(message), source.to_owned())
 }
 
 /// Build a diagnostic at `level` from `source` carrying `detail`.
@@ -38,12 +38,7 @@ fn build_detailed_diagnostic(
     source: &str,
     detail: &str,
 ) -> Diagnostic {
-    Diagnostic::new(
-        level,
-        Note::with_other_kind(message),
-        source,
-        Some(detail.to_owned()),
-    )
+    build_diagnostic(level, message, source).with_detail(detail)
 }
 
 /// Build a report holding `diagnostics` and no records.
@@ -374,12 +369,7 @@ fn diagnostic_level_as_str_is_the_lowercase_name(
 fn diagnostic_new_stores_every_field() {
     let note = Note::new("missing return", NoteKind::rationale().clone());
 
-    let diagnostic = Diagnostic::new(
-        DiagnosticLevel::Warning,
-        note.clone(),
-        "shape.check",
-        Some("function foo()".to_owned()),
-    );
+    let diagnostic = Diagnostic::warning(note.clone(), "shape.check").with_detail("function foo()");
 
     assert_eq!(diagnostic.level(), DiagnosticLevel::Warning);
     assert_eq!(diagnostic.message(), &note);
@@ -390,15 +380,57 @@ fn diagnostic_new_stores_every_field() {
 /// Test the message text is the note's message without its kind.
 #[test]
 fn diagnostic_message_text_omits_the_note_kind() {
-    let diagnostic = Diagnostic::new(
-        DiagnosticLevel::Info,
-        Note::new("tiled", NoteKind::rationale().clone()),
-        "tiler",
-        None,
-    );
+    let diagnostic = Diagnostic::info(Note::new("tiled", NoteKind::rationale().clone()), "tiler");
 
     assert_eq!(diagnostic.message_text(), "tiled");
     assert_eq!(diagnostic.detail(), None);
+}
+
+/// A constructor building a diagnostic at one fixed level.
+type LevelConstructor = fn(Note, &'static str) -> Diagnostic;
+
+/// Test each level constructor builds a diagnostic at its level, with no
+/// detail, equal to the one `new` builds at that level.
+#[rstest]
+#[case::error(Diagnostic::error, DiagnosticLevel::Error)]
+#[case::warning(Diagnostic::warning, DiagnosticLevel::Warning)]
+#[case::info(Diagnostic::info, DiagnosticLevel::Info)]
+fn diagnostic_level_constructors_set_the_level(
+    #[case] construct: LevelConstructor,
+    #[case] level: DiagnosticLevel,
+) {
+    let note = Note::with_other_kind("m");
+
+    let diagnostic = construct(note.clone(), "checker");
+
+    assert_eq!(diagnostic.level(), level);
+    assert_eq!(diagnostic.message(), &note);
+    assert_eq!(diagnostic.source(), "checker");
+    assert_eq!(diagnostic.detail(), None);
+    assert_eq!(diagnostic, Diagnostic::new(level, note, "checker"));
+}
+
+/// Test `with_detail` replaces any earlier detail and stores the empty
+/// string as given.
+#[test]
+fn diagnostic_with_detail_replaces_the_detail() {
+    let diagnostic = Diagnostic::error(Note::with_other_kind("m"), "s").with_detail("first");
+
+    let replaced = diagnostic.clone().with_detail("second");
+    let emptied = diagnostic.with_detail("");
+
+    assert_eq!(replaced.detail(), Some("second"));
+    assert_eq!(emptied.detail(), Some(""));
+}
+
+/// Test a source given as an owned string is kept as given.
+#[test]
+fn diagnostic_source_accepts_an_owned_string() {
+    let source = format!("{}.check", "shape");
+
+    let diagnostic = Diagnostic::info(Note::with_other_kind("m"), source);
+
+    assert_eq!(diagnostic.source(), "shape.check");
 }
 
 /// Test diagnostics compare by value and equal ones hash equally.
@@ -542,11 +574,9 @@ fn report_format_keeps_embedded_newlines() {
 /// Test the note kind never appears in the rendering.
 #[test]
 fn report_format_omits_the_note_kind() {
-    let report = build_report(vec![Diagnostic::new(
-        DiagnosticLevel::Info,
+    let report = build_report(vec![Diagnostic::info(
         Note::new("kinds are hidden", NoteKind::rationale().clone()),
         "s",
-        None,
     )]);
 
     assert_eq!(report.format(), "[INFO] s: kinds are hidden");
@@ -643,18 +673,15 @@ fn validation_failed_error_keeps_the_report_records() {
 #[test]
 fn a_failed_validation_run_is_reported_to_the_user() {
     let diagnostics = vec![
-        Diagnostic::new(
-            DiagnosticLevel::Warning,
+        Diagnostic::warning(
             Note::new("prefer a smaller tile", NoteKind::suggestion().clone()),
             "tiling.check",
-            None,
         ),
-        Diagnostic::new(
-            DiagnosticLevel::Error,
+        Diagnostic::error(
             Note::with_other_kind("loop bound is negative"),
             "bounds.check",
-            Some("bound -1 in loop i".to_owned()),
-        ),
+        )
+        .with_detail("bound -1 in loop i"),
     ];
     let report: ValidationReport<&str> =
         ValidationReport::new(diagnostics, vec!["tiling.check", "bounds.check"]);

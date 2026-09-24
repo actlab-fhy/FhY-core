@@ -46,7 +46,11 @@ impl<'a> PassContext<'a> {
 
     /// Record the diagnostic `message` at `level`, with optional `detail`.
     pub fn report(&mut self, level: DiagnosticLevel, message: Note, detail: Option<String>) {
-        let diagnostic = Diagnostic::new(level, message, self.pass_name.clone(), detail);
+        let diagnostic = Diagnostic::new(level, message, self.pass_name.clone());
+        let diagnostic = match detail {
+            Some(detail) => diagnostic.with_detail(detail),
+            None => diagnostic,
+        };
         self.diagnostics.push(diagnostic);
     }
 
