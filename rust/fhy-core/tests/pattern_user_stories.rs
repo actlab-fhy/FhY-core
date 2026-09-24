@@ -52,7 +52,8 @@ fn collect_matching_subexpressions(
 // =============================================================================
 
 /// Test the four-rule simplifier reduces `((a + 0) * 1) - ((a + 0) * 1)`,
-/// built from one shared subtree, to `0` in one walk.
+/// built from one shared subtree, to `0` in one walk, simplifying the shared
+/// subtree once.
 #[test]
 fn algebraic_simplifier_collapses_nested_neutral_operations() {
     let (_, a) = build_identifier("a");
@@ -65,13 +66,7 @@ fn algebraic_simplifier_collapses_nested_neutral_operations() {
     let fired_names: Vec<Option<&str>> = outcome.fired().iter().map(|fired| fired.name()).collect();
     assert_eq!(
         fired_names,
-        vec![
-            Some("x + 0 -> x"),
-            Some("x * 1 -> x"),
-            Some("x + 0 -> x"),
-            Some("x * 1 -> x"),
-            Some("x - x -> 0"),
-        ]
+        vec![Some("x + 0 -> x"), Some("x * 1 -> x"), Some("x - x -> 0")]
     );
 }
 

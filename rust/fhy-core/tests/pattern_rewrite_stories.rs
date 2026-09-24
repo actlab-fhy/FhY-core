@@ -1,7 +1,8 @@
 //! Tests for rewrite rules and the rewrite walk: firing one rule at the
 //! root, the bottom-up single pass, rule priority, guards, which handles the
-//! walk keeps, what counts as a change, the record of fired rules, failing
-//! callbacks and rebuilds, and trees thousands of levels deep.
+//! walk keeps, shared subtrees, what counts as a change, the record of fired
+//! rules, failing callbacks and rebuilds, and trees thousands of levels
+//! deep.
 //!
 //! Public API only (`fhy_core::symbolic::expression::pattern`).
 
@@ -648,9 +649,10 @@ fn apply_rewrite_rules_collapses_a_long_chain_in_one_walk() {
     assert_eq!(outcome.fired().len(), 8);
 }
 
-/// Test a subtree occurring twice is rewritten at each occurrence.
+/// Test a subtree occurring twice is rewritten once, its rewrite reused at
+/// both occurrences and its firing recorded once.
 #[test]
-fn apply_rewrite_rules_rewrites_a_shared_subtree_at_each_occurrence() {
+fn apply_rewrite_rules_rewrites_a_shared_subtree_once() {
     let (_, x) = build_identifier("x");
     let shared = build_plus_zero(&x);
     let expression = Expression::new_binary(BinaryOperation::Multiply, &shared, &shared);
@@ -661,10 +663,59 @@ fn apply_rewrite_rules_rewrites_a_shared_subtree_at_each_occurrence() {
         outcome.output(),
         &Expression::new_binary(BinaryOperation::Multiply, &x, &x)
     );
+    assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
+    let ExpressionKind::Binary(node) = outcome.output().kind() else {
+        panic!("expected a product, got {:?}", outcome.output());
+    };
+    assert!(Expression::ptr_eq(node.left(), &x));
+    assert!(Expression::ptr_eq(node.right(), &x));
+}
+
+/// Test a leaf occurring twice is rewritten once and both occurrences
+/// become one replacement node.
+#[test]
+fn apply_rewrite_rules_rewrites_a_shared_leaf_once() {
+    let zero = build_literal(0);
+    let expression = Expression::new_binary(BinaryOperation::Add, &zero, &zero);
+    let zero_to_five = RewriteRule::new(build_literal_pattern(0), rewrite_to_literal(5));
+
+    let outcome = rewrite(&expression, &[zero_to_five]);
+
     assert_eq!(
-        describe_fired(&outcome),
-        vec![(0, Some("x + 0 -> x")), (0, Some("x + 0 -> x"))]
+        outcome.output(),
+        &Expression::new_binary(BinaryOperation::Add, build_literal(5), build_literal(5))
     );
+    assert_eq!(describe_fired(&outcome), vec![(0, None)]);
+    let ExpressionKind::Binary(node) = outcome.output().kind() else {
+        panic!("expected a sum, got {:?}", outcome.output());
+    };
+    assert!(Expression::ptr_eq(node.left(), node.right()));
+}
+
+/// Test the DAG `x_0 = x + 0`, `x_{k+1} = x_k * x_k` with 64 levels, which
+/// has 2^64 occurrences of `x + 0`, is rewritten with one firing into a DAG
+/// sharing its nodes the same way.
+#[test]
+fn apply_rewrite_rules_rewrites_a_doubling_dag_once_per_distinct_node() {
+    let levels = 64;
+    let (_, x) = build_identifier("x");
+    let mut dag = build_plus_zero(&x);
+    for _ in 0..levels {
+        dag = Expression::new_binary(BinaryOperation::Multiply, &dag, &dag);
+    }
+
+    let outcome = rewrite(&dag, &[build_x_plus_zero_rule()]);
+
+    assert_eq!(describe_fired(&outcome), vec![(0, Some("x + 0 -> x"))]);
+    let mut node = outcome.output();
+    for _ in 0..levels {
+        let ExpressionKind::Binary(product) = node.kind() else {
+            panic!("expected a product, got {node:?}");
+        };
+        assert!(Expression::ptr_eq(product.left(), product.right()));
+        node = product.left();
+    }
+    assert!(Expression::ptr_eq(node, &x));
 }
 
 /// Test rules are tried on nodes in walk order: children before their
@@ -868,6 +919,36 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_the_refused_condition() {
         (
             0,
             Some("false -> 1"),
+            &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
+        )
+    );
+}
+
+/// Test a failing rebuild names the rule that rewrote the refused
+/// condition when the condition is a shared node rewritten at an earlier
+/// occurrence, not the rule that fired last.
+#[test]
+fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition() {
+    let six_to_seven =
+        RewriteRule::new(build_literal_pattern(6), rewrite_to_literal(7)).with_name("6 -> 7");
+    let true_to_one =
+        RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1)).with_name("true -> 1");
+    let (_, x) = build_identifier("x");
+    let shared_true = build_literal(true);
+    let expression = build_piecewise(
+        [(&x, &shared_true), (&shared_true, &build_literal(6))],
+        build_literal(8),
+    )
+    .expect("a valid piecewise");
+
+    let result = apply_rewrite_rules(&expression, &[six_to_seven, true_to_one]);
+
+    let error = result.expect_err("the rebuild fails");
+    assert_eq!(
+        expect_rebuild_error(&error),
+        (
+            1,
+            Some("true -> 1"),
             &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
         )
     );

@@ -547,6 +547,28 @@ proptest! {
         prop_assert_eq!(outcome.is_changed(), fired != 0);
     }
 
+    /// Test the no-op rules rewrite a tree sharing a subtree like its
+    /// unshared copy, firing on the shared subtree once where the copy fires
+    /// on each of its three occurrences.
+    #[test]
+    fn neutral_rules_rewrite_a_shared_subtree_like_its_unshared_copy(
+        (_, wrapped) in build_wrapped_numeric_tree_strategy()
+    ) {
+        let shared = build_call("f", [wrapped.clone(), &wrapped + &wrapped]).expect("a named call");
+        let unshared = copy_deeply(&shared);
+        let rules = build_neutral_rules(&Arc::new(AtomicUsize::new(0)));
+
+        let alone = apply_rewrite_rules(&wrapped, &rules).expect("no callback fails");
+        let shared_outcome = apply_rewrite_rules(&shared, &rules).expect("no callback fails");
+        let unshared_outcome = apply_rewrite_rules(&unshared, &rules).expect("no callback fails");
+
+        prop_assert_eq!(shared_outcome.output(), unshared_outcome.output());
+        prop_assert_eq!(
+            unshared_outcome.fired().len() - shared_outcome.fired().len(),
+            2 * alone.fired().len()
+        );
+    }
+
     /// Test a rule rewriting every literal to itself keeps the tree equal,
     /// fires once per literal occurrence, and changes the tree exactly when
     /// it fired below the root.

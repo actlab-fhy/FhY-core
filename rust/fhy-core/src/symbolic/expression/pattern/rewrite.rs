@@ -7,6 +7,7 @@
 //! trying a list of rules at every node, and reports the rewritten tree,
 //! whether it differs from the input, and which rules fired.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -14,6 +15,9 @@ use std::sync::Arc;
 use super::super::error::ExpressionBuildError;
 use super::super::node::Expression;
 use super::core::{CallbackError, MatchBindings, Pattern, match_pattern};
+use crate::pass_infrastructure::{
+    NodeHandle, NodeIdentity, PassContext, RewriteTreeError, Rewriter, rewrite_tree,
+};
 
 /// A rewrite: the replacement built from a match's bindings.
 type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync>;
@@ -21,135 +25,122 @@ type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError>
 /// A guard: whether a rule may fire on a match's bindings.
 type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
 
-/// A node the walk replaced, and the position of the rule responsible for
-/// it: the rule that fired on it, or, for a node only rebuilt around
-/// rewritten children, the rule responsible for its last rewritten child.
-struct Rewrite {
-    expression: Expression,
-    rule_index: usize,
-}
+/// The name of the pass context the rewrite walk runs in.
+const REWRITE_WALK_PASS_NAME: &str = "apply_rewrite_rules";
 
-/// One node of the rewrite walk: the node, its children, and the rewrites
-/// of the children visited so far (`None` for a child left as it was).
-struct WalkFrame {
-    node: Expression,
-    children: Vec<Expression>,
-    rewritten_children: Vec<Option<Rewrite>>,
-}
-
-impl WalkFrame {
-    /// Start visiting `node`.
-    fn new(node: &Expression) -> Self {
-        let children: Vec<Expression> = node.children().cloned().collect();
-        Self {
-            node: node.clone(),
-            rewritten_children: Vec::with_capacity(children.len()),
-            children,
-        }
-    }
-
-    /// Return the next child to visit, or `None` once every child is
-    /// rewritten.
-    fn next_child(&self) -> Option<Expression> {
-        self.children.get(self.rewritten_children.len()).cloned()
-    }
-}
-
-/// Return the position of the rule responsible for the child that `error`
-/// refuses, or `None` when the error names no rewritten child.
-fn find_refused_child_rule(
-    error: &ExpressionBuildError,
-    rewritten_children: &[Option<Rewrite>],
-) -> Option<usize> {
+/// Return the position of the child that `error` refuses, or `None` when
+/// the error names no single child.
+fn find_refused_child_index(error: &ExpressionBuildError) -> Option<usize> {
     let ExpressionBuildError::NonBooleanConditionLiteral { case_index } = error else {
         return None;
     };
-    let condition_index = case_index.checked_mul(2)?;
-    rewritten_children
-        .get(condition_index)?
-        .as_ref()
-        .map(|rewrite| rewrite.rule_index)
+    case_index.checked_mul(2)
 }
 
-/// Build the error for a rebuild refused with `source`, blaming rule
-/// `rule_index` of `rules`.
-fn build_rebuild_error(
-    rules: &[RewriteRule],
-    rule_index: usize,
-    source: ExpressionBuildError,
-) -> RewriteError {
-    RewriteError::Rebuild {
-        rule_index,
-        rule_name: rules[rule_index].name().map(str::to_owned),
-        source,
+/// Return the last child in `rewritten` that is not the node in the same
+/// position of `originals`, paired with that original.
+fn find_last_replaced_child<'e>(
+    originals: impl Iterator<Item = &'e Expression>,
+    rewritten: impl Iterator<Item = &'e Expression>,
+) -> Option<(&'e Expression, &'e Expression)> {
+    originals
+        .zip(rewritten)
+        .filter(|(original, rewritten)| !Expression::ptr_eq(original, rewritten))
+        .last()
+}
+
+/// The rewriter behind [`apply_rewrite_rules`]: tries the rules in order at
+/// each node and records every firing.
+#[derive(Debug)]
+struct RuleApplier<'r> {
+    rules: &'r [RewriteRule],
+    fired: Vec<FiredRule>,
+    /// Each replacement a rule returned, by its identity, with the position
+    /// of that rule. Holding the replacement keeps its identity unique.
+    replacements: HashMap<NodeIdentity, (Expression, usize)>,
+}
+
+impl<'r> RuleApplier<'r> {
+    /// Create the applier of `rules`.
+    fn new(rules: &'r [RewriteRule]) -> Self {
+        Self {
+            rules,
+            fired: Vec::new(),
+            replacements: HashMap::new(),
+        }
+    }
+
+    /// Return the position of the rule responsible for `rewritten`, which
+    /// took the place of `original`: the rule that returned it, or, for a
+    /// node rebuilt around rewritten children, the rule responsible for its
+    /// last rewritten child.
+    fn find_responsible_rule<'e>(
+        &self,
+        mut original: &'e Expression,
+        mut rewritten: &'e Expression,
+    ) -> Option<usize> {
+        loop {
+            if let Some((_, rule_index)) = self.replacements.get(&rewritten.identity()) {
+                return Some(*rule_index);
+            }
+            (original, rewritten) =
+                find_last_replaced_child(original.children(), rewritten.children())?;
+        }
+    }
+
+    /// Return the position of the rule to blame for `node` refusing to be
+    /// rebuilt from `children` with `error`: the rule responsible for the
+    /// refused child, else for the last rewritten child, else the rule that
+    /// fired last.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no rule fired, which a refused rebuild rules out: a node is
+    /// rebuilt only around a child some rule rewrote.
+    fn find_blamed_rule(
+        &self,
+        node: &Expression,
+        children: &[Expression],
+        error: &ExpressionBuildError,
+    ) -> usize {
+        let refused_child = find_refused_child_index(error)
+            .and_then(|index| Some((node.children().nth(index)?, children.get(index)?)))
+            .filter(|(original, rewritten)| !Expression::ptr_eq(original, rewritten));
+        refused_child
+            .or_else(|| find_last_replaced_child(node.children(), children.iter()))
+            .and_then(|(original, rewritten)| self.find_responsible_rule(original, rewritten))
+            .or_else(|| self.fired.last().map(FiredRule::rule_index))
+            .expect("a node is rebuilt only after a rule fired")
     }
 }
 
-/// Finish a node whose children are all rewritten: rebuild it if a child
-/// changed, then try `rules` on it in order, recording a firing in
-/// `fired`. Return the replacement, or `None` when the node stays as it
-/// was.
-fn finish_node(
-    frame: WalkFrame,
-    rules: &[RewriteRule],
-    fired: &mut Vec<FiredRule>,
-) -> Result<Option<Rewrite>, RewriteError> {
-    let WalkFrame {
-        node,
-        children,
-        rewritten_children,
-    } = frame;
-    let last_rule_index = rewritten_children
-        .iter()
-        .rev()
-        .flatten()
-        .map(|rewrite| rewrite.rule_index)
-        .next();
-    let rebuilt = match last_rule_index {
-        Some(last_rule_index) => {
-            let merged = rewritten_children
-                .iter()
-                .zip(children)
-                .map(|(rewritten, original)| {
-                    rewritten
-                        .as_ref()
-                        .map_or(original, |rewrite| rewrite.expression.clone())
-                })
-                .collect();
-            let expression = node.rebuild_with_children(merged).map_err(|source| {
-                let rule_index = find_refused_child_rule(&source, &rewritten_children)
-                    .unwrap_or(last_rule_index);
-                build_rebuild_error(rules, rule_index, source)
-            })?;
-            Some(Rewrite {
-                expression,
-                rule_index: last_rule_index,
-            })
+impl Rewriter<Expression> for RuleApplier<'_> {
+    type Error = RewriteError;
+
+    fn rewrite(
+        &mut self,
+        node: &Expression,
+        _cx: &mut PassContext<'_>,
+    ) -> Result<Option<Expression>, RewriteError> {
+        for (rule_index, rule) in self.rules.iter().enumerate() {
+            let replacement =
+                apply_rewrite_rule(rule, node).map_err(|source| RewriteError::Callback {
+                    rule_index,
+                    rule_name: rule.name().map(str::to_owned),
+                    source,
+                })?;
+            if let Some(expression) = replacement {
+                self.fired.push(FiredRule {
+                    rule_index,
+                    name: rule.name.clone(),
+                });
+                self.replacements
+                    .insert(expression.identity(), (expression.clone(), rule_index));
+                return Ok(Some(expression));
+            }
         }
-        None => None,
-    };
-    let visited = rebuilt
-        .as_ref()
-        .map_or(&node, |rewrite| &rewrite.expression);
-    for (rule_index, rule) in rules.iter().enumerate() {
-        let replacement =
-            apply_rewrite_rule(rule, visited).map_err(|source| RewriteError::Callback {
-                rule_index,
-                rule_name: rule.name().map(str::to_owned),
-                source,
-            })?;
-        if let Some(expression) = replacement {
-            fired.push(FiredRule {
-                rule_index,
-                name: rule.name.clone(),
-            });
-            return Ok(Some(Rewrite {
-                expression,
-                rule_index,
-            }));
-        }
+        Ok(None)
     }
-    Ok(rebuilt)
 }
 
 /// A pattern paired with a rewrite of what it matches, optionally guarded
@@ -318,7 +309,9 @@ impl RewriteOutcome {
     }
 
     /// Return every firing in walk order: children before their parent, and
-    /// children in [`Expression::children`] order.
+    /// children in [`Expression::children`] order. A node that occurs in
+    /// several places is rewritten once, so a firing on it is recorded once,
+    /// at its first occurrence.
     #[must_use]
     pub fn fired(&self) -> &[FiredRule] {
         &self.fired
@@ -439,8 +432,9 @@ pub fn apply_rewrite_rule(
 /// are then tried, in order, on the rebuilt node (or on the node itself when
 /// no child changed), and the first that fires replaces it. A replacement is
 /// not rewritten again in the same pass; a caller wanting a fixpoint repeats
-/// the call until the outcome is unchanged. A subtree that occurs in several
-/// places is rewritten at each occurrence.
+/// the call until the outcome is unchanged. A node that occurs in several
+/// places is rewritten once and its result reused at every occurrence, so a
+/// tree sharing its subtrees costs time linear in its distinct nodes.
 ///
 /// When no rule fires anywhere, the output is a handle to `expression`
 /// itself. See [`RewriteOutcome::is_changed`] for the exact meaning of a
@@ -459,27 +453,30 @@ pub fn apply_rewrite_rules(
     expression: &Expression,
     rules: &[RewriteRule],
 ) -> Result<RewriteOutcome, RewriteError> {
-    let mut fired = Vec::new();
-    let mut ancestors: Vec<WalkFrame> = Vec::new();
-    let mut current = WalkFrame::new(expression);
-    loop {
-        if let Some(child) = current.next_child() {
-            ancestors.push(std::mem::replace(&mut current, WalkFrame::new(&child)));
-            continue;
-        }
-        let rewritten = finish_node(current, rules, &mut fired)?;
-        let Some(mut parent) = ancestors.pop() else {
-            let output = rewritten.map_or_else(|| expression.clone(), |rewrite| rewrite.expression);
-            let changed = !Expression::ptr_eq(&output, expression);
-            return Ok(RewriteOutcome {
-                output,
-                changed,
-                fired,
+    let mut applier = RuleApplier::new(rules);
+    let mut cx = PassContext::new_standalone(REWRITE_WALK_PASS_NAME.to_owned());
+    let output = match rewrite_tree(&mut applier, expression, &mut cx) {
+        Ok(output) => output,
+        Err(RewriteTreeError::Rewrite(error)) => return Err(error),
+        Err(RewriteTreeError::Rebuild {
+            node,
+            children,
+            source,
+        }) => {
+            let rule_index = applier.find_blamed_rule(&node, &children, &source);
+            return Err(RewriteError::Rebuild {
+                rule_index,
+                rule_name: rules[rule_index].name().map(str::to_owned),
+                source,
             });
-        };
-        parent.rewritten_children.push(rewritten);
-        current = parent;
-    }
+        }
+    };
+    let changed = !Expression::ptr_eq(&output, expression);
+    Ok(RewriteOutcome {
+        output,
+        changed,
+        fired: applier.fired,
+    })
 }
 
 const _: () = {

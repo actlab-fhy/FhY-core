@@ -33,6 +33,12 @@ impl<'a> PassContext<'a> {
         }
     }
 
+    /// Create the context for a run of the pass `pass_name` outside a
+    /// pipeline, which computes every analysis afresh.
+    pub(crate) fn new_standalone(pass_name: String) -> Self {
+        Self::new(pass_name, None)
+    }
+
     /// Return the pass name and the diagnostics, consuming the context.
     pub(super) fn into_parts(self) -> (String, Vec<Diagnostic>) {
         (self.pass_name, self.diagnostics)
