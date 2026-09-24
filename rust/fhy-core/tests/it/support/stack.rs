@@ -35,17 +35,11 @@ where
     }
 }
 
-/// Run `body` on a new thread with a [`SMALL_STACK_BYTES`] stack and return
-/// its result, re-raising its panic if it panics.
+/// Run `body` as [`run_on_stack`] does, on a [`SMALL_STACK_BYTES`] stack.
 ///
 /// `body` should build, use, and drop its deep values on that thread and
 /// return nothing deep. A failing assertion there must not format a deep
 /// value with `Debug`, which recurses once per level.
-///
-/// # Panics
-///
-/// Panics if the thread cannot be spawned, and with `body`'s panic if
-/// `body` panics.
 pub(crate) fn run_on_small_stack<T, F>(body: F) -> T
 where
     T: Send + 'static,
