@@ -303,25 +303,21 @@ impl<'p, I> ValidationManager<'p, I> {
             let mut cx = PassContext::new(validator.name(), cache.as_deref_mut());
             let result = validator.validate(ir, &mut cx);
             let (validator_name, mut captured) = cx.into_parts();
-            let failed = match result {
-                Ok(()) => false,
-                Err(error) => {
-                    let reported_error = captured
-                        .iter()
-                        .any(|diagnostic| diagnostic.level() == DiagnosticLevel::Error);
-                    if !reported_error {
-                        captured.push(synthesize_silent_failure(validator_name.clone(), &error));
-                    }
-                    true
+            if let Err(error) = &result {
+                let reported_error = captured
+                    .iter()
+                    .any(|diagnostic| diagnostic.level() == DiagnosticLevel::Error);
+                if !reported_error {
+                    captured.push(synthesize_silent_failure(validator_name.clone(), error));
                 }
-            };
+            }
             let first_diagnostic = diagnostics.len();
             diagnostics.append(&mut captured);
             records.push(ValidatorRecord {
                 validator_name,
                 first_diagnostic,
                 end_diagnostic: diagnostics.len(),
-                failed,
+                failed: result.is_err(),
             });
         }
         ValidationReport::new(diagnostics, records)

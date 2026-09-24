@@ -66,7 +66,7 @@ impl PassInfo {
 
     /// Return whether this registration is of the pass type, input type and
     /// output type `other` is.
-    fn has_identity_of(&self, other: &PassInfo) -> bool {
+    fn has_identity_of(&self, other: &Self) -> bool {
         (self.pass_type_id, self.input_type_id, self.output_type_id)
             == (
                 other.pass_type_id,
@@ -98,8 +98,7 @@ fn is_blank(text: &str) -> bool {
 /// Registering a pass type binds its factory to the pass's own
 /// [`CompilerPass::name`] and [`CompilerPass::description`], read from one
 /// instance the factory builds, so [`create`](Self::create) can build a pass
-/// from its name. Registration never changes any pass's name. Each registry
-/// is an independent value; the crate keeps no registry of its own.
+/// from its name.
 ///
 /// # Examples
 ///
@@ -234,19 +233,17 @@ impl PassRegistry {
                 name: name.to_owned(),
             });
         };
-        match registration
+        let build = registration
             .factory
             .downcast_ref::<BoxedPassFactory<I, O>>()
-        {
-            Some(build) => Ok(build()),
-            None => Err(CreatePassError::IrTypeMismatch {
+            .ok_or_else(|| CreatePassError::IrTypeMismatch {
                 name: name.to_owned(),
                 registered_input: registration.info.input_type_name,
                 registered_output: registration.info.output_type_name,
                 requested_input: type_name::<I>(),
                 requested_output: type_name::<O>(),
-            }),
-        }
+            })?;
+        Ok(build())
     }
 
     /// Return the metadata of the pass registered under `name`, if any.

@@ -28,23 +28,6 @@ pub struct PassRunRecord {
 }
 
 impl PassRunRecord {
-    /// Create the record of a run of the pass `pass_name`.
-    pub(super) fn new(
-        pass_name: Cow<'static, str>,
-        changed: bool,
-        skipped: bool,
-        diagnostics: Vec<Diagnostic>,
-        preserved: PreservedAnalyses,
-    ) -> Self {
-        Self {
-            pass_name,
-            changed,
-            skipped,
-            diagnostics,
-            preserved,
-        }
-    }
-
     /// Return the name of the pass that ran.
     #[must_use]
     pub fn pass_name(&self) -> &str {
@@ -198,8 +181,6 @@ impl<I> PassManagerResult<I> {
 
     /// Return the number of pass runs the pipeline made, not counting the
     /// runs a pass skipped.
-    ///
-    /// The count covers this run only; nothing is counted across runs.
     #[must_use]
     pub fn run_count(&self) -> usize {
         self.pass_runs().filter(|run| !run.skipped).count()
@@ -308,8 +289,8 @@ enum PipelineItem<'p, I> {
 impl<I> fmt::Debug for PipelineItem<'_, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PipelineItem::Pass(pass) => f.debug_tuple("Pass").field(&pass.name()).finish(),
-            PipelineItem::FixpointGroup(group) => fmt::Debug::fmt(group, f),
+            Self::Pass(pass) => f.debug_tuple("Pass").field(&pass.name()).finish(),
+            Self::FixpointGroup(group) => fmt::Debug::fmt(group, f),
         }
     }
 }
@@ -382,13 +363,13 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
         }
         self.cache
             .transfer(input, &result.output, &result.preserved);
-        let record = PassRunRecord::new(
+        let record = PassRunRecord {
             pass_name,
-            result.changed,
-            result.skipped,
+            changed: result.changed,
+            skipped: result.skipped,
             diagnostics,
-            result.preserved,
-        );
+            preserved: result.preserved,
+        };
         Ok((result.output, record))
     }
 
@@ -408,32 +389,25 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
         let mut iteration_records = Vec::new();
         let mut converged = false;
         let mut failure = None;
-        'iterations: for iteration in 1..=group.max_iterations.get() {
+        for iteration in 1..=group.max_iterations.get() {
             let mut changed = false;
             let mut pass_runs = Vec::with_capacity(group.passes.len());
-            for pass in &mut group.passes {
-                match self.run_pass(pass.as_mut(), &current) {
-                    Ok((output, record)) => {
-                        changed |= record.changed;
-                        current = output;
-                        pass_runs.push(record);
-                    }
-                    Err(error) => {
-                        iteration_records.push(FixpointIterationRecord {
-                            iteration,
-                            changed,
-                            pass_runs,
-                        });
-                        failure = Some(error);
-                        break 'iterations;
-                    }
-                }
-            }
+            let iteration_result = group.passes.iter_mut().try_for_each(|pass| {
+                let (output, record) = self.run_pass(pass.as_mut(), &current)?;
+                changed |= record.changed;
+                current = output;
+                pass_runs.push(record);
+                Ok(())
+            });
             iteration_records.push(FixpointIterationRecord {
                 iteration,
                 changed,
                 pass_runs,
             });
+            if let Err(error) = iteration_result {
+                failure = Some(error);
+                break;
+            }
             if !changed {
                 converged = true;
                 break;
@@ -459,17 +433,15 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 ///
 /// A run feeds each item the IR the previous item produced and records every
 /// pass run. Analysis results are cached per node for the run: a pass's
-/// output gains the cached results of its input that its
-/// [`CompilerPass::preserved_analyses`] preserves, except for an analysis
-/// the output has a result of its own for. No result is dropped during the
-/// run, so a node keeps its own results whatever a pass reports, and the
-/// cache, with the node handles it holds, is dropped when the run ends.
-/// With a verifier set, the run also verifies its input and every output a
-/// pass reports as changed.
+/// output gains the cached results its [`CompilerPass::preserved_analyses`]
+/// preserves from its input, unless it has a result of its own for that
+/// analysis. No result is dropped before the run ends, when the cache and
+/// the node handles it holds are dropped. With a
+/// [verifier](Self::set_verifier) set, the run also verifies its input and
+/// every output a pass reports as changed.
 ///
 /// A pipeline stores its passes and its verifier's validators as `Send`, so
-/// it is `Send` whatever its IR type and can be built on one thread and run
-/// on another. It is not `Sync`: a run needs `&mut self`.
+/// it is `Send` whatever its IR type.
 ///
 /// # Examples
 ///
@@ -550,13 +522,11 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
     /// Verify the IR of every run with `verifier`, replacing any verifier set
     /// before.
     ///
-    /// A run then validates its input once before the first pass, blaming
-    /// that pass, and validates the output of every pass that reports a
-    /// change when the pass produces it, blaming that pass, even when the
-    /// run validated the same node before. An output reported unchanged is
-    /// not validated. The verifier's validators read analyses through the
-    /// run's cache, so a result a pass computed serves them, and the
-    /// reverse.
+    /// A run then validates its input before the first pass, blaming that
+    /// pass, and the output of every pass that reports a change, blaming the
+    /// pass that produced it, even when it validated the same node before.
+    /// The verifier's validators share the run's analysis cache with the
+    /// passes.
     pub fn set_verifier(&mut self, verifier: ValidationManager<'p, I>) {
         self.verifier = Some(verifier);
     }
