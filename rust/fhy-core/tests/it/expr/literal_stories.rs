@@ -1,8 +1,6 @@
 //! Tests for literal values: their variants, the text grammar and its
 //! normalization, equality and hashing, `Display`, and the sorts a literal
 //! has.
-//!
-//! Public API only (`fhy_core::expr`).
 
 use crate::support::hashing as hashing_support;
 
@@ -10,7 +8,6 @@ use fhy_core::expr::{BigInt, Decimal, FunctionSort, LiteralTextError, LiteralVal
 use hashing_support::hash_of;
 use rstest::rstest;
 
-/// Parse `text` as a literal, failing the test if it is refused.
 fn parse_literal(text: &str) -> LiteralValue {
     LiteralValue::parse_text(text).expect("the text is a literal text")
 }
@@ -32,7 +29,6 @@ fn build_sample_literal(spec: &str) -> LiteralValue {
 // Variants
 // =============================================================================
 
-/// Test an integer literal keeps the integer it was built from.
 #[rstest]
 #[case::zero(0)]
 #[case::five(5)]
@@ -46,32 +42,20 @@ fn literal_value_from_integer_keeps_the_integer(#[case] value: i64) {
     assert!(matches!(&literal, LiteralValue::Int(stored) if *stored == BigInt::from(value)));
 }
 
-/// Test every primitive integer type builds the integer literal of its
-/// value.
 #[test]
 fn literal_value_from_every_integer_type_builds_an_integer() {
     let literals = [
-        LiteralValue::from(-7_i32),
-        LiteralValue::from(-7_i64),
-        LiteralValue::from(-7_i128),
-        LiteralValue::from(7_u32),
-        LiteralValue::from(7_u64),
-        LiteralValue::from(7_usize),
-        LiteralValue::from(i128::MAX),
-        LiteralValue::from(u64::MAX),
-    ];
-    let expected = [
-        BigInt::from(-7),
-        BigInt::from(-7),
-        BigInt::from(-7),
-        BigInt::from(7),
-        BigInt::from(7),
-        BigInt::from(7),
-        BigInt::from(i128::MAX),
-        BigInt::from(u64::MAX),
+        (LiteralValue::from(-7_i32), BigInt::from(-7)),
+        (LiteralValue::from(-7_i64), BigInt::from(-7)),
+        (LiteralValue::from(-7_i128), BigInt::from(-7)),
+        (LiteralValue::from(7_u32), BigInt::from(7)),
+        (LiteralValue::from(7_u64), BigInt::from(7)),
+        (LiteralValue::from(7_usize), BigInt::from(7)),
+        (LiteralValue::from(i128::MAX), BigInt::from(i128::MAX)),
+        (LiteralValue::from(u64::MAX), BigInt::from(u64::MAX)),
     ];
 
-    for (literal, expected) in literals.iter().zip(&expected) {
+    for (literal, expected) in &literals {
         assert!(
             matches!(literal, LiteralValue::Int(stored) if stored == expected),
             "{literal:?} holds {expected}"
@@ -107,7 +91,6 @@ fn literal_value_from_float_keeps_the_float(#[case] value: f64) {
     assert_eq!(stored.to_bits(), value.to_bits());
 }
 
-/// Test a NaN float literal keeps a NaN.
 #[test]
 fn literal_value_from_nan_keeps_a_nan() {
     let literal = LiteralValue::from(f64::NAN);
@@ -115,7 +98,6 @@ fn literal_value_from_nan_keeps_a_nan() {
     assert!(matches!(literal, LiteralValue::Float(stored) if stored.is_nan()));
 }
 
-/// Test a Boolean literal keeps the Boolean.
 #[rstest]
 #[case::true_value(true)]
 #[case::false_value(false)]
@@ -144,9 +126,8 @@ fn literal_value_parse_text_normalizes_integer_text(#[case] text: &str, #[case] 
     );
 }
 
-/// Test a decimal text parses to the normalized decimal it spells, in every
-/// accepted shape: coefficient without trailing zeros, and exponent `0` for
-/// zero.
+/// Test a decimal text of every accepted shape parses to its normalized
+/// decimal: no trailing zeros in the coefficient, and exponent `0` for zero.
 #[rstest]
 #[case::pi_ish("3.14", 314, -2)]
 #[case::trailing_zero("1.50", 15, -1)]
@@ -188,8 +169,7 @@ fn literal_value_parse_text_normalizes_spelling() {
     assert_eq!(hundred.to_string(), "100");
 }
 
-/// Test a text outside the integer and decimal grammar is refused, and the
-/// error names the text.
+/// Test a text outside the grammar is refused with an error naming the text.
 #[rstest]
 #[case::word("not_a_number")]
 #[case::infinity("inf")]
@@ -218,7 +198,6 @@ fn literal_value_parse_text_rejects_text_outside_the_grammar(#[case] text: &str)
     assert_eq!(error.text(), text);
 }
 
-/// Test the grammar error writes the refused text quoted.
 #[test]
 fn literal_text_error_display_names_the_text() {
     let error: LiteralTextError = LiteralValue::parse_text("1e10").expect_err("an exponent");
@@ -233,7 +212,6 @@ fn literal_text_error_display_names_the_text() {
 // Equality and hashing
 // =============================================================================
 
-/// Test two integers with different values are unequal in both directions.
 #[test]
 fn literal_value_differs_when_values_differ() {
     let smaller = LiteralValue::from(5);
@@ -272,7 +250,6 @@ fn literal_value_differs_across_bool_int_and_float(#[case] left: &str, #[case] r
     assert_ne!(right, left);
 }
 
-/// Test an integer equals an integer text of the same value.
 #[rstest]
 #[case::zero(0, "0")]
 #[case::one(1, "1")]
@@ -289,7 +266,6 @@ fn literal_value_integer_equals_integer_text(#[case] integer: i64, #[case] text:
     assert_eq!(left.to_string(), right.to_string());
 }
 
-/// Test integer texts spelling one value differently are equal.
 #[rstest]
 #[case::leading_zero("5", "05")]
 #[case::zero_forms("00", "0")]
@@ -310,7 +286,6 @@ fn literal_value_integer_texts_with_distinct_spelling_are_equal(
     assert_eq!(left.to_string(), right.to_string());
 }
 
-/// Test decimal texts spelling one decimal differently are equal.
 #[rstest]
 #[case::trailing_zero("1.5", "1.50")]
 #[case::trailing_zero_after_leading_zero("0.1", "0.10")]
@@ -336,7 +311,6 @@ fn literal_value_decimal_texts_with_distinct_spelling_are_equal(
 /// Test literals of different variants are unequal even when their numbers
 /// agree.
 #[rstest]
-#[case::decimal_text_and_float("t:1.5", "f:1.5")]
 #[case::exact_decimal_and_float_approximation("t:0.1", "f:0.1")]
 #[case::integer_text_and_decimal_text("t:5", "t:5.0")]
 #[case::integer_and_decimal_text("i:5", "t:5.0")]
@@ -344,16 +318,6 @@ fn literal_value_decimal_texts_with_distinct_spelling_are_equal(
 fn literal_value_differs_across_buckets(#[case] left: &str, #[case] right: &str) {
     let left = build_sample_literal(left);
     let right = build_sample_literal(right);
-
-    assert_ne!(left, right);
-    assert_ne!(right, left);
-}
-
-/// Test two decimals differing only in their thirtieth digit stay unequal.
-#[test]
-fn literal_value_decimals_differing_in_the_thirtieth_digit_are_unequal() {
-    let left = parse_literal(&format!("1.{}1", "0".repeat(28)));
-    let right = parse_literal(&format!("1.{}2", "0".repeat(28)));
 
     assert_ne!(left, right);
     assert_ne!(right, left);
@@ -456,7 +420,6 @@ fn literal_value_equality_over_every_variant_is_an_equivalence_agreeing_with_has
     assert!(violations.is_empty(), "{violations:#?}");
 }
 
-/// Test equal literals hash equally.
 #[rstest]
 #[case::integer_and_text("i:5", "t:05")]
 #[case::decimal_spellings("t:1.5", "t:1.50")]
@@ -484,8 +447,6 @@ fn literal_value_equal_literals_hash_equally(#[case] left: &str, #[case] right: 
     "t:1.00000000000000000000000000002"
 )]
 #[case::integer_and_float("i:5", "f:5.0")]
-#[case::integer_text_and_decimal_text("t:5", "t:5.0")]
-#[case::float_and_decimal_text("f:1.5", "t:1.5")]
 fn literal_value_distinct_literals_are_unequal(#[case] left: &str, #[case] right: &str) {
     let left = build_sample_literal(left);
     let right = build_sample_literal(right);
@@ -585,7 +546,6 @@ fn decimal_from_str_accepts_exactly_the_literal_grammar(
 // Sorts
 // =============================================================================
 
-/// Test the Boolean sort accepts both Booleans.
 #[rstest]
 #[case::true_value(true)]
 #[case::false_value(false)]
@@ -595,7 +555,6 @@ fn function_sort_bool_accepts_boolean_literals(#[case] value: bool) {
     assert!(FunctionSort::Bool.accepts_literal(&literal));
 }
 
-/// Test the Boolean sort rejects every number.
 #[rstest]
 #[case::zero("i:0")]
 #[case::one("i:1")]
@@ -611,7 +570,6 @@ fn function_sort_bool_rejects_numeric_literals(#[case] spec: &str) {
     assert!(!FunctionSort::Bool.accepts_literal(&literal));
 }
 
-/// Test the natural sort accepts non-negative integers, parsed or built.
 #[rstest]
 #[case::zero("i:0")]
 #[case::one("i:1")]
@@ -625,7 +583,6 @@ fn function_sort_nat_accepts_non_negative_integers(#[case] spec: &str) {
     assert!(FunctionSort::Nat.accepts_literal(&literal));
 }
 
-/// Test the natural sort rejects negative integers.
 #[rstest]
 #[case::minus_one(-1)]
 #[case::minus_hundred(-100)]
@@ -635,7 +592,6 @@ fn function_sort_nat_rejects_negative_integers(#[case] value: i64) {
     assert!(!FunctionSort::Nat.accepts_literal(&literal));
 }
 
-/// Test the natural sort rejects Booleans.
 #[rstest]
 #[case::true_value(true)]
 #[case::false_value(false)]
@@ -657,7 +613,6 @@ fn function_sort_nat_rejects_floats(#[case] spec: &str) {
     assert!(!FunctionSort::Nat.accepts_literal(&literal));
 }
 
-/// Test the integer sort accepts every integer, parsed or built.
 #[rstest]
 #[case::zero("i:0")]
 #[case::one("i:1")]
@@ -671,7 +626,6 @@ fn function_sort_int_accepts_integers(#[case] spec: &str) {
     assert!(FunctionSort::Int.accepts_literal(&literal));
 }
 
-/// Test the integer sort rejects Booleans.
 #[rstest]
 #[case::true_value(true)]
 #[case::false_value(false)]
@@ -709,7 +663,6 @@ fn function_sort_real_accepts_numbers(#[case] spec: &str) {
     assert!(FunctionSort::Real.accepts_literal(&literal));
 }
 
-/// Test the real sort rejects Booleans.
 #[rstest]
 #[case::true_value(true)]
 #[case::false_value(false)]

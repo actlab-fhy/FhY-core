@@ -2,13 +2,13 @@
 //! children and rebuilds seen through `Tree`, and the tree walk, the
 //! memoized rewrite, and the walk and rewrite passes over expressions,
 //! including trees too deep or too shared for a recursive traversal.
-//!
-//! Public API only.
 
 use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
-use expression_support::{build_call_or_panic, build_deep_sum, build_identifier, build_literal};
+use expression_support::{
+    build_call_or_panic, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
+};
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, LiteralValue, PiecewiseError, RebuildError,
     UnaryOperation,
@@ -22,16 +22,8 @@ use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 // Helpers
 // =============================================================================
 
-/// The error the test visitors and rewriters never return.
 type Never = std::convert::Infallible;
 
-/// Records the kind of every expression it visits.
-#[derive(Debug, Default)]
-struct KindRecorder {
-    kinds: Vec<String>,
-}
-
-/// Return a short label of `expression`'s node kind.
 fn label_kind(expression: &Expression) -> String {
     match expression.kind() {
         ExpressionKind::Unary(node) => format!("unary {:?}", node.operation()),
@@ -44,6 +36,11 @@ fn label_kind(expression: &Expression) -> String {
     }
 }
 
+#[derive(Debug, Default)]
+struct KindRecorder {
+    kinds: Vec<String>,
+}
+
 impl<C: ?Sized> TreeVisitor<Expression, C> for KindRecorder {
     type Error = Never;
 
@@ -53,7 +50,6 @@ impl<C: ?Sized> TreeVisitor<Expression, C> for KindRecorder {
     }
 }
 
-/// Counts the expressions it visits.
 #[derive(Debug, Default)]
 struct VisitCounter {
     count: usize,
@@ -78,8 +74,6 @@ struct IdentifierReplacer {
 }
 
 impl IdentifierReplacer {
-    /// Create the rewriter replacing references to `target` by
-    /// `replacement`.
     fn new(target: &Identifier, replacement: &Expression) -> Self {
         Self {
             target: target.clone(),
@@ -103,7 +97,6 @@ impl<C: ?Sized> Rewriter<Expression, C> for IdentifierReplacer {
     }
 }
 
-/// Rewrites the literal `true` to the literal `1`.
 #[derive(Debug, Default)]
 struct TrueToOne;
 
@@ -124,7 +117,6 @@ impl<C: ?Sized> Rewriter<Expression, C> for TrueToOne {
 // NodeHandle and Tree
 // =============================================================================
 
-/// Test clones of an expression share its identity.
 #[test]
 fn expression_identity_is_shared_by_clones() {
     let (_, x) = build_identifier("x");
@@ -135,7 +127,6 @@ fn expression_identity_is_shared_by_clones() {
     assert_eq!(identity, expression.clone().identity());
 }
 
-/// Test two separately built equal expressions have different identities.
 #[test]
 fn expression_identity_differs_between_equal_nodes() {
     let (_, x) = build_identifier("x");
@@ -146,8 +137,6 @@ fn expression_identity_differs_between_equal_nodes() {
     assert_ne!(first.identity(), second.identity());
 }
 
-/// Test an expression is shared exactly while another handle to its node
-/// exists.
 #[test]
 fn expression_is_shared_exactly_while_another_handle_exists() {
     let expression = Expression::new_unary(UnaryOperation::Negate, build_literal(1));
@@ -165,12 +154,10 @@ fn expression_is_shared_exactly_while_another_handle_exists() {
     assert!(alias.is_shared());
 }
 
-/// Test the tree children of an expression are its own children, in their
-/// order.
 #[test]
 fn expression_tree_children_are_the_expression_children() {
     let (_, x) = build_identifier("x");
-    let expression = Expression::piecewise([(x.clone(), build_literal(1))], build_literal(2))
+    let expression = Expression::piecewise([(x, build_literal(1))], build_literal(2))
         .expect("a valid piecewise");
 
     let tree_children: Vec<&Expression> = Tree::children(&expression).collect();
@@ -182,8 +169,6 @@ fn expression_tree_children_are_the_expression_children() {
     }
 }
 
-/// Test a tree rebuild of an expression builds the node around the new
-/// children.
 #[test]
 fn expression_tree_rebuild_uses_the_new_children() {
     let (_, x) = build_identifier("x");
@@ -195,8 +180,6 @@ fn expression_tree_rebuild_uses_the_new_children() {
     assert_eq!(rebuilt, Expression::new_unary(UnaryOperation::Negate, &y));
 }
 
-/// Test a tree rebuild of an expression refuses a child list of the wrong
-/// length.
 #[test]
 fn expression_tree_rebuild_refuses_a_wrong_child_count() {
     let (_, x) = build_identifier("x");
@@ -217,7 +200,6 @@ fn expression_tree_rebuild_refuses_a_wrong_child_count() {
 // Walks
 // =============================================================================
 
-/// Test a walk pass visits an expression's nodes in pre-order.
 #[test]
 fn walk_pass_visits_an_expression_in_pre_order() {
     let (_, a) = build_identifier("a");
@@ -285,7 +267,6 @@ fn rewrite_pass_replaces_an_identifier_in_an_expression() {
     assert!(Expression::ptr_eq(node.right(), &untouched));
 }
 
-/// Test a rewrite pass that touches nothing returns the expression itself.
 #[test]
 fn rewrite_pass_keeps_an_expression_it_does_not_touch() {
     let (x_identifier, _) = build_identifier("x");
@@ -359,10 +340,7 @@ fn rewrite_pass_rewrites_a_doubling_expression_dag_once_per_distinct_node() {
     let levels = 64;
     let (a_identifier, a) = build_identifier("a");
     let (_, b) = build_identifier("b");
-    let mut dag = a.clone();
-    for _ in 0..levels {
-        dag = &dag + &dag;
-    }
+    let dag = build_doubling_dag(&a, levels);
     let mut pass = RewritePass::new(IdentifierReplacer::new(&a_identifier, &b));
 
     let outcome = pass.execute(&dag).expect("no rewrite fails");

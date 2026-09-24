@@ -1,7 +1,7 @@
-//! Stories for the built-in catalogue in `fhy_core::expr::builtins`: the
+//! Tests for the built-in catalogue in `fhy_core::expr::builtins`: the
 //! function and constant enums and their catalogue order, lookups by name,
 //! the declared sorts, the constant values, the parameters, and the exact
-//! composed bodies and their printed text. Public API only.
+//! composed bodies and their printed text.
 //!
 //! Expected bodies are built with the node constructors
 //! (`Expression::new_binary`, `Expression::piecewise`, ...), not the
@@ -54,7 +54,6 @@ const NATIVE_CONSTANT_NAMES: [&str; 4] = ["pi", "e", "inf", "nan"];
 /// Number of parameters across all composed functions.
 const TOTAL_PARAMETER_COUNT: usize = 27;
 
-/// Return the composed built-in named `name`, failing the test if absent.
 fn find_composed(name: &str) -> &'static ComposedFunction {
     name.parse::<BuiltinFunction>()
         .ok()
@@ -62,19 +61,12 @@ fn find_composed(name: &str) -> &'static ComposedFunction {
         .unwrap_or_else(|| panic!("{name} is a composed built-in"))
 }
 
-/// Return every composed built-in in catalogue order.
 fn collect_composed() -> Vec<&'static ComposedFunction> {
     BuiltinFunction::iter()
         .filter_map(BuiltinFunction::composed)
         .collect()
 }
 
-/// Return a call of the built-in `function` with `arguments`.
-fn build_builtin_call(function: BuiltinFunction, arguments: Vec<Expression>) -> Expression {
-    Expression::call(function, arguments)
-}
-
-/// Return a reference expression to each parameter of `function`, in order.
 fn build_parameter_references(function: &ComposedFunction) -> Vec<Expression> {
     function
         .parameters()
@@ -84,8 +76,6 @@ fn build_parameter_references(function: &ComposedFunction) -> Vec<Expression> {
         .collect()
 }
 
-/// Return the documented body of the composed built-in `name` over
-/// `parameters`, the references to its parameters in order.
 fn build_expected_body(name: &str, parameters: &[Expression]) -> Expression {
     match name {
         "max" | "min" | "abs" | "sign" | "leaky_relu" => {
@@ -96,8 +86,6 @@ fn build_expected_body(name: &str, parameters: &[Expression]) -> Expression {
     }
 }
 
-/// Return the documented piecewise body of `max`, `min`, `abs`, `sign` or
-/// `leaky_relu` over `parameters`.
 fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expression {
     let zero_float = build_literal(0.0);
     match (name, parameters) {
@@ -149,8 +137,6 @@ fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expre
     }
 }
 
-/// Return the documented body of the Boolean connective `name` over
-/// `parameters`.
 fn build_expected_boolean_body(name: &str, parameters: &[Expression]) -> Expression {
     match (name, parameters) {
         ("xor", [a, b]) => Expression::new_logical(
@@ -183,45 +169,41 @@ fn build_expected_boolean_body(name: &str, parameters: &[Expression]) -> Express
     }
 }
 
-/// Return the documented body, built from calls and arithmetic, of `clamp`,
-/// `clamp_symmetric`, `relu`, `sigmoid`, `silu` or `gelu` over `parameters`.
 fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expression {
     let one_float = build_literal(1.0);
     match (name, parameters) {
-        ("clamp", [x, lo, hi]) => build_builtin_call(
+        ("clamp", [x, lo, hi]) => Expression::call(
             BuiltinFunction::Min,
-            vec![
-                build_builtin_call(BuiltinFunction::Max, vec![x.clone(), lo.clone()]),
+            [
+                Expression::call(BuiltinFunction::Max, [x.clone(), lo.clone()]),
                 hi.clone(),
             ],
         ),
-        ("clamp_symmetric", [x, bound]) => build_builtin_call(
+        ("clamp_symmetric", [x, bound]) => Expression::call(
             BuiltinFunction::Clamp,
-            vec![
+            [
                 x.clone(),
                 Expression::new_unary(UnaryOperation::Negate, bound),
                 bound.clone(),
             ],
         ),
-        ("relu", [x]) => {
-            build_builtin_call(BuiltinFunction::Max, vec![x.clone(), build_literal(0)])
-        }
+        ("relu", [x]) => Expression::call(BuiltinFunction::Max, [x.clone(), build_literal(0)]),
         ("sigmoid", [x]) => Expression::new_binary(
             BinaryOperation::Divide,
             &one_float,
             Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                build_builtin_call(
+                Expression::call(
                     BuiltinFunction::Exp,
-                    vec![Expression::new_unary(UnaryOperation::Negate, x)],
+                    [Expression::new_unary(UnaryOperation::Negate, x)],
                 ),
             ),
         ),
         ("silu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
             x,
-            build_builtin_call(BuiltinFunction::Sigmoid, vec![x.clone()]),
+            Expression::call(BuiltinFunction::Sigmoid, [x]),
         ),
         ("gelu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
@@ -229,12 +211,12 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
             Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                build_builtin_call(
+                Expression::call(
                     BuiltinFunction::Erf,
-                    vec![Expression::new_binary(
+                    [Expression::new_binary(
                         BinaryOperation::Divide,
                         x,
-                        build_builtin_call(BuiltinFunction::Sqrt, vec![build_literal(2.0)]),
+                        Expression::call(BuiltinFunction::Sqrt, [build_literal(2.0)]),
                     )],
                 ),
             ),
@@ -246,7 +228,6 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
     }
 }
 
-/// Return the callees of every call node in `expression`.
 fn collect_callees(expression: &Expression) -> Vec<Callee> {
     let mut callees = Vec::new();
     let mut pending = vec![expression];
@@ -259,7 +240,6 @@ fn collect_callees(expression: &Expression) -> Vec<Callee> {
     callees
 }
 
-/// Return the literal operand of a binary node, failing the test otherwise.
 fn find_right_literal(expression: &Expression) -> &LiteralValue {
     let ExpressionKind::Binary(node) = expression.kind() else {
         panic!("expected a binary node, got {expression:?}");
@@ -270,8 +250,6 @@ fn find_right_literal(expression: &Expression) -> &LiteralValue {
     literal
 }
 
-/// Return the ids of every composed function's parameters, in catalogue
-/// order, each paired with its function's name.
 fn collect_parameter_ids() -> Vec<(BuiltinFunction, Vec<u64>)> {
     collect_composed()
         .into_iter()
@@ -316,7 +294,6 @@ fn native_functions_lists_the_native_builtins_in_catalogue_order() {
     assert_eq!(trailing, NATIVE_FUNCTION_NAMES);
 }
 
-/// Test the constants are `pi`, `e`, `inf`, `nan` in that order.
 #[test]
 fn native_constants_lists_the_builtin_constants_in_catalogue_order() {
     let names: Vec<&str> = BuiltinConstant::iter().map(BuiltinConstant::name).collect();
@@ -325,8 +302,6 @@ fn native_constants_lists_the_builtin_constants_in_catalogue_order() {
     assert_eq!(names, NATIVE_CONSTANT_NAMES);
 }
 
-/// Test no name appears twice across the functions and constants, and every
-/// name parses back to its own variant.
 #[test]
 fn builtin_names_are_unique_and_round_trip_through_from_str() {
     let names: Vec<&str> = BuiltinFunction::iter()
@@ -348,8 +323,7 @@ fn builtin_names_are_unique_and_round_trip_through_from_str() {
     }
 }
 
-/// Test each composed built-in's definition is the one for its own variant,
-/// the same entry on every lookup.
+/// Test a lookup by name finds the composed entry of the same variant.
 #[test]
 fn builtin_function_composed_returns_the_listed_entry() {
     for (function, name) in BuiltinFunction::iter().zip(COMPOSED_NAMES) {
@@ -366,23 +340,7 @@ fn builtin_function_composed_returns_the_listed_entry() {
     }
 }
 
-/// Test exactly the native built-ins have no composed definition.
-#[test]
-fn builtin_function_composed_is_none_exactly_for_natives() {
-    let composed: Vec<&str> = BuiltinFunction::iter()
-        .filter(|function| function.composed().is_some())
-        .map(BuiltinFunction::name)
-        .collect();
-    let native: Vec<&str> = BuiltinFunction::iter()
-        .filter(|function| function.composed().is_none())
-        .map(BuiltinFunction::name)
-        .collect();
-
-    assert_eq!(composed, COMPOSED_NAMES);
-    assert_eq!(native, NATIVE_FUNCTION_NAMES);
-}
-
-/// Test a name no built-in function has is refused by `FromStr`, naming it.
+/// Test `FromStr` refuses a name no built-in function has, naming it.
 #[rstest]
 #[case::constant("pi")]
 #[case::empty("")]
@@ -403,7 +361,6 @@ fn builtin_function_from_str_refuses_other_names(#[case] name: &str) {
     );
 }
 
-/// Test a name no built-in constant has is refused by `FromStr`.
 #[rstest]
 #[case::native_function("sqrt")]
 #[case::composed_function("max")]
@@ -421,8 +378,6 @@ fn builtin_constant_from_str_refuses_other_names(#[case] name: &str) {
     );
 }
 
-/// Test each composed built-in declares its documented parameter names,
-/// parameter sorts, and result sort.
 #[rstest]
 #[case::max("max", &["a", "b"], &[FunctionSort::Real, FunctionSort::Real], FunctionSort::Real)]
 #[case::min("min", &["a", "b"], &[FunctionSort::Real, FunctionSort::Real], FunctionSort::Real)]
@@ -511,7 +466,6 @@ fn native_function_declares_its_documented_signature(
     assert_eq!(function.result_sort(), result_sort);
 }
 
-/// Test each built-in constant is real.
 #[test]
 fn native_constant_is_real() {
     for constant in BuiltinConstant::iter() {
@@ -519,8 +473,6 @@ fn native_constant_is_real() {
     }
 }
 
-/// Test the finite and infinite constants hold exactly their documented
-/// values.
 #[rstest]
 #[case::pi(BuiltinConstant::Pi, std::f64::consts::PI)]
 #[case::e(BuiltinConstant::E, std::f64::consts::E)]
@@ -555,8 +507,6 @@ fn composed_function_body_is_the_documented_tree() {
     }
 }
 
-/// Test each composed body prints, with identifiers by name hint, as its
-/// documented symbolic and functional text.
 #[rstest]
 #[case::max("max", "{a if (a > b); b otherwise}", "(piecewise (greater a b) a b)")]
 #[case::min("min", "{a if (a < b); b otherwise}", "(piecewise (less a b) a b)")]
@@ -620,8 +570,6 @@ fn composed_function_body_prints_as_its_documented_text(
     assert_eq!(functional, expected_functional);
 }
 
-/// Test each composed body refers to every one of its parameters and to no
-/// other identifier.
 #[test]
 fn composed_function_body_refers_to_exactly_its_parameters() {
     for function in collect_composed() {
@@ -632,7 +580,6 @@ fn composed_function_body_refers_to_exactly_its_parameters() {
     }
 }
 
-/// Test every call in a composed body is a `Callee::Builtin`.
 #[test]
 fn composed_function_body_calls_only_builtin_functions() {
     for function in collect_composed() {
@@ -650,7 +597,6 @@ fn composed_function_body_calls_only_builtin_functions() {
     }
 }
 
-/// Test `relu` passes an integer zero, not a float zero, to `max`.
 #[test]
 fn composed_function_relu_passes_an_integer_zero_to_max() {
     let relu = find_composed("relu");
@@ -660,13 +606,10 @@ fn composed_function_relu_passes_an_integer_zero_to_max() {
     };
 
     assert_eq!(call.callee(), &Callee::Builtin(BuiltinFunction::Max));
-    assert!(matches!(
-        expect_literal(&call.arguments()[1]),
-        LiteralValue::Int(zero) if *zero == BigInt::from(0)
-    ));
+    assert_eq!(expect_literal(&call.arguments()[1]), &LiteralValue::from(0));
 }
 
-/// Test `abs` compares its argument against a positive float zero.
+/// Test `abs` compares against a positive float zero.
 #[test]
 fn composed_function_abs_compares_against_a_float_zero() {
     let abs = find_composed("abs");
@@ -739,8 +682,6 @@ fn composed_function_parameters_are_distinct_across_the_catalogue() {
     );
 }
 
-/// Test repeated lookups return the same definitions with the same
-/// parameters.
 #[test]
 fn composed_functions_returns_the_same_table_on_every_call() {
     let first = collect_composed();
@@ -754,8 +695,6 @@ fn composed_functions_returns_the_same_table_on_every_call() {
     assert_eq!(collect_parameter_ids(), first_ids);
 }
 
-/// Test threads reading the catalogue concurrently all see one set of
-/// parameters.
 #[test]
 fn composed_functions_agrees_across_threads() {
     let handles: Vec<_> = (0..8)
@@ -776,12 +715,10 @@ fn composed_functions_agrees_across_threads() {
     }
 }
 
-/// Test a freshly created identifier never equals a catalogue parameter of
-/// the same name.
 #[test]
 fn composed_function_parameters_differ_from_new_identifiers() {
-    let (fresh_x, _) = build_identifier("x");
-    let (fresh_a, _) = build_identifier("a");
+    let fresh_x = Identifier::new("x");
+    let fresh_a = Identifier::new("a");
 
     let parameters: Vec<&Identifier> = collect_composed()
         .into_iter()
@@ -851,22 +788,20 @@ fn composed_function_max_of_min_inlines_to_a_nested_clamp() {
     let inner_min = build_piecewise_or_panic(
         vec![(
             Expression::new_binary(BinaryOperation::Less, &value, &high),
-            value.clone(),
+            value,
         )],
         high,
     );
     let expected = build_piecewise_or_panic(
         vec![(
             Expression::new_binary(BinaryOperation::Greater, &low, &inner_min),
-            low.clone(),
+            low,
         )],
         inner_min,
     );
     assert_eq!(inlined, expected);
 }
 
-/// Test a piecewise built for a guarded fast path keeps the guard, the fast
-/// path, and the fallback in place.
 #[test]
 fn build_piecewise_guards_a_fast_path_with_a_fallback() {
     let (_, x) = build_identifier("x");
