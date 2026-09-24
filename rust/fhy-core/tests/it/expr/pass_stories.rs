@@ -1,11 +1,7 @@
-//! Tests for the expression passes of `fhy_core::expr::passes`:
-//! `RewriteRuleApplier`, which applies
-//! rewrite rules bottom-up, `ExpressionPrettyFormatter`, which formats an
-//! expression as text, and `register_expression_passes`, which registers the
-//! rule applier by name. Each runs standalone, and the rule applier also in
-//! a pipeline and a fixpoint group.
-//!
-//! Public API only.
+//! Tests for the expression passes of `fhy_core::expr::passes`: the rule
+//! applier `RewriteRuleApplier`, standalone, in a pipeline and in a fixpoint
+//! group; the formatter `ExpressionPrettyFormatter`; and the registration
+//! `register_expression_passes`.
 
 use crate::support::expression as expression_support;
 use crate::support::pattern as pattern_support;
@@ -39,12 +35,6 @@ use pattern_support::{
 };
 use rstest::rstest;
 
-/// The name the rule applier is registered under.
-const RULE_APPLIER_NAME: &str = RewriteRuleApplier::NAME;
-
-/// The description the rule applier is registered with.
-const RULE_APPLIER_DESCRIPTION: &str = RewriteRuleApplier::DESCRIPTION;
-
 /// Return the rule `0 + x -> x + 0`, named so, whose output the rule
 /// `x + 0 -> x` rewrites only in a later run.
 fn build_move_zero_right_rule() -> RewriteRule {
@@ -65,8 +55,6 @@ fn build_move_zero_right_rule() -> RewriteRule {
     .with_name("0 + x -> x + 0")
 }
 
-/// Return the rewrite error a failed rule-applier run carries as its
-/// source.
 fn expect_rewrite_error(error: &PassError) -> &RewriteError {
     std::error::Error::source(error)
         .and_then(|source| source.downcast_ref::<RewriteError>())
@@ -83,11 +71,35 @@ fn build_refused_condition(c: &Identifier) -> (Expression, RewriteRule) {
     (expression, rule)
 }
 
+/// Run `rules` in a fixpoint group over `expression`, assert the group
+/// converges, and return the output and whether each iteration changed it.
+fn run_in_fixpoint_group(
+    rules: [RewriteRule; 2],
+    expression: &Expression,
+) -> (Expression, Vec<bool>) {
+    let mut group = FixpointPassGroup::new(Identifier::new("simplify"));
+    group.add_pass(RewriteRuleApplier::new(rules));
+    let mut manager = PassManager::default();
+    manager.add_fixpoint_group(group);
+
+    let result = manager.run(expression).expect("the group converges");
+
+    let [PipelineRecord::FixpointGroup(record)] = result.records() else {
+        panic!("expected one group record, got {:?}", result.records());
+    };
+    assert!(record.is_converged());
+    let changes = record
+        .iteration_records()
+        .iter()
+        .map(FixpointIterationRecord::is_changed)
+        .collect();
+    (result.output().clone(), changes)
+}
+
 // =============================================================================
 // RewriteRuleApplier
 // =============================================================================
 
-/// Test the applier keeps the rules it was built with, in order.
 #[test]
 fn rewrite_rule_applier_rules_are_the_rules_it_was_built_with() {
     let applier = RewriteRuleApplier::new([build_x_plus_zero_rule(), build_x_times_one_rule()]);
@@ -137,8 +149,7 @@ fn rewrite_rule_applier_execute_without_a_firing_returns_the_input_unchanged() {
     assert!(applier.fired().is_empty());
 }
 
-/// Test a run in which a rule fires reports a change and preserves no
-/// analysis.
+/// Test a run in which a rule fires preserves no analysis.
 #[test]
 fn rewrite_rule_applier_execute_reports_a_change_when_a_rule_fires() {
     let (_, a) = build_identifier("a");
@@ -224,12 +235,11 @@ fn rewrite_rule_applier_reports_each_named_firing() {
     let expected = (
         DiagnosticLevel::Info,
         "applied rewrite rule \"x + 0 -> x\"",
-        RULE_APPLIER_NAME,
+        RewriteRuleApplier::NAME,
     );
     assert_eq!(reported, [expected, expected]);
 }
 
-/// Test a firing of an unnamed rule reports nothing.
 #[test]
 fn rewrite_rule_applier_does_not_report_unnamed_firings() {
     let rule = RewriteRule::new(Pattern::wildcard(), rewrite_to_literal(0));
@@ -278,9 +288,8 @@ fn rewrite_rule_applier_rewrites_a_doubling_dag_once_per_distinct_node() {
     assert_eq!(applier.fired().len(), 1);
 }
 
-/// Test the applier's name and description are the ones it is registered
-/// under, whether or not it is registered, and are the stable registry key
-/// and text.
+/// Test the applier's name and description are its registry key and text,
+/// unregistered too.
 #[test]
 fn rewrite_rule_applier_name_and_description_are_its_registered_ones() {
     let applier = RewriteRuleApplier::<RewriteRule>::new([]);
@@ -344,7 +353,7 @@ fn rewrite_rule_applier_execute_fails_with_the_callback_error(
         "{error:?}"
     );
     assert_eq!(error.class(), FailureClass::Execution);
-    assert_eq!(error.pass_name(), Some(RULE_APPLIER_NAME));
+    assert_eq!(error.pass_name(), Some(RewriteRuleApplier::NAME));
     let rewrite_error = expect_rewrite_error(&error);
     let RewriteError::Callback { source, .. } = rewrite_error else {
         panic!("expected a callback failure, got {error:?}");
@@ -399,7 +408,7 @@ fn rewrite_rule_applier_runs_in_a_pass_manager() {
     let [PipelineRecord::Pass(record)] = result.records() else {
         panic!("expected one pass record, got {:?}", result.records());
     };
-    assert_eq!(record.pass_name(), RULE_APPLIER_NAME);
+    assert_eq!(record.pass_name(), RewriteRuleApplier::NAME);
     assert!(record.is_changed());
     assert_eq!(record.diagnostics().len(), 2);
     assert_eq!(
@@ -415,26 +424,13 @@ fn rewrite_rule_applier_runs_in_a_pass_manager() {
 fn rewrite_rule_applier_converges_in_a_fixpoint_pass_group() {
     let (_, a) = build_identifier("a");
     let expression = Expression::new_binary(BinaryOperation::Add, 0, &a);
-    let mut group = FixpointPassGroup::new(Identifier::new("simplify"));
-    group.add_pass(RewriteRuleApplier::new([
-        build_move_zero_right_rule(),
-        build_x_plus_zero_rule(),
-    ]));
-    let mut manager = PassManager::default();
-    manager.add_fixpoint_group(group);
 
-    let result = manager.run(&expression).expect("the group converges");
+    let (output, changes) = run_in_fixpoint_group(
+        [build_move_zero_right_rule(), build_x_plus_zero_rule()],
+        &expression,
+    );
 
-    assert!(Expression::ptr_eq(result.output(), &a));
-    let [PipelineRecord::FixpointGroup(record)] = result.records() else {
-        panic!("expected one group record, got {:?}", result.records());
-    };
-    assert!(record.is_converged());
-    let changes: Vec<bool> = record
-        .iteration_records()
-        .iter()
-        .map(FixpointIterationRecord::is_changed)
-        .collect();
+    assert!(Expression::ptr_eq(&output, &a));
     assert_eq!(changes, [true, true, false]);
 }
 
@@ -445,26 +441,13 @@ fn rewrite_rule_applier_converges_in_a_fixpoint_pass_group() {
 fn rewrite_rule_applier_converges_in_a_fixpoint_group_with_an_identity_rule() {
     let (_, a) = build_identifier("a");
     let expression = build_plus_zero(&build_plus_zero(&a));
-    let mut group = FixpointPassGroup::new(Identifier::new("simplify"));
-    group.add_pass(RewriteRuleApplier::new([
-        build_identity_rule(),
-        build_x_plus_zero_rule(),
-    ]));
-    let mut manager = PassManager::default();
-    manager.add_fixpoint_group(group);
 
-    let result = manager.run(&expression).expect("the group converges");
+    let (output, changes) = run_in_fixpoint_group(
+        [build_identity_rule(), build_x_plus_zero_rule()],
+        &expression,
+    );
 
-    assert!(Expression::ptr_eq(result.output(), &a));
-    let [PipelineRecord::FixpointGroup(record)] = result.records() else {
-        panic!("expected one group record, got {:?}", result.records());
-    };
-    assert!(record.is_converged());
-    let changes: Vec<bool> = record
-        .iteration_records()
-        .iter()
-        .map(FixpointIterationRecord::is_changed)
-        .collect();
+    assert!(Expression::ptr_eq(&output, &a));
     assert_eq!(changes, [true, false]);
 }
 
@@ -515,7 +498,6 @@ fn rewrite_rule_applier_runs_native_rules() {
 // ExpressionPrettyFormatter
 // =============================================================================
 
-/// Return a tree with every node kind over the identifier `x`.
 fn build_every_kind(x: &Expression) -> Expression {
     build_piecewise_or_panic(
         [(x.less(3), build_call_or_panic("f", [-x, build_literal(1)]))],
@@ -548,7 +530,6 @@ fn expression_pretty_formatter_execute_matches_display(#[case] options: FormatOp
     assert_eq!(outcome.output(), &expression.display(options).to_string());
 }
 
-/// Test the default formatter writes symbolic notation without ids.
 #[test]
 fn expression_pretty_formatter_default_formats_symbolically_without_ids() {
     let (_, x) = build_identifier("x");
@@ -562,7 +543,6 @@ fn expression_pretty_formatter_default_formats_symbolically_without_ids() {
     assert_eq!(formatter.options(), FormatOptions::default());
 }
 
-/// Test the formatter keeps the options it was built with.
 #[test]
 fn expression_pretty_formatter_options_are_the_options_it_was_built_with() {
     let options = FormatOptions::default().with_notation(Notation::Functional);
@@ -586,7 +566,7 @@ fn expression_pretty_formatter_execute_reports_a_change() {
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::none());
 }
 
-/// Test the formatter is named after its type and described by its name.
+/// Test the formatter's name and description are both its type name.
 #[test]
 fn expression_pretty_formatter_name_is_its_type_name() {
     let formatter = ExpressionPrettyFormatter::default();
@@ -606,7 +586,6 @@ fn expression_pretty_formatter_name_is_its_type_name() {
 fn register_expression_passes_registers_the_rule_applier() {
     let (_, a) = build_identifier("a");
     let expression = build_plus_zero(&a);
-
     let mut registry = PassRegistry::new();
 
     let first = register_expression_passes(&mut registry);
@@ -615,29 +594,28 @@ fn register_expression_passes_registers_the_rule_applier() {
     assert_eq!(first, Ok(()));
     assert_eq!(second, Ok(()));
     assert_eq!(registry.len(), 1);
-    let info = registry.info(RULE_APPLIER_NAME).expect("registered");
-    assert_eq!(info.description(), RULE_APPLIER_DESCRIPTION);
+    let info = registry.info(RewriteRuleApplier::NAME).expect("registered");
+    assert_eq!(info.description(), RewriteRuleApplier::DESCRIPTION);
     assert_eq!(info.pass_type_id(), TypeId::of::<RewriteRuleApplier>());
     assert_eq!(info.input_type_id(), TypeId::of::<Expression>());
     assert_eq!(info.output_type_id(), TypeId::of::<Expression>());
     let mut created = registry
-        .create::<Expression, Expression>(RULE_APPLIER_NAME)
+        .create::<Expression, Expression>(RewriteRuleApplier::NAME)
         .expect("the rule applier is registered");
-    assert_eq!(created.name(), RULE_APPLIER_NAME);
+    assert_eq!(created.name(), RewriteRuleApplier::NAME);
     let outcome = created.execute(&expression).expect("no rules, no failure");
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
 }
 
-/// Test registering the expression passes in two registries registers the
-/// rule applier in each, independently of the other.
 #[test]
+
 fn register_expression_passes_into_two_registries_is_independent() {
     let mut first = PassRegistry::new();
     let mut second = PassRegistry::new();
 
     register_expression_passes(&mut first).expect("a fresh registry");
-    let untouched = second.info(RULE_APPLIER_NAME).is_none();
+    let untouched = second.info(RewriteRuleApplier::NAME).is_none();
     register_expression_passes(&mut second).expect("another fresh registry");
 
     assert!(untouched);
@@ -645,8 +623,8 @@ fn register_expression_passes_into_two_registries_is_independent() {
     assert_eq!(second.len(), 1);
     for registry in [&first, &second] {
         let created = registry
-            .create::<Expression, Expression>(RULE_APPLIER_NAME)
+            .create::<Expression, Expression>(RewriteRuleApplier::NAME)
             .expect("the rule applier is registered");
-        assert_eq!(created.name(), RULE_APPLIER_NAME);
+        assert_eq!(created.name(), RewriteRuleApplier::NAME);
     }
 }
