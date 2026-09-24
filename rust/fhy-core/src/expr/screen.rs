@@ -149,7 +149,7 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
             {
                 return Err(NonBooleanLogicalOperandError::new(
                     operand.clone(),
-                    Some(node.expression.clone()),
+                    node.expression.clone(),
                     position,
                 ));
             }
@@ -176,8 +176,7 @@ fn rank_checking_order(position: BooleanPosition) -> u8 {
     match position {
         BooleanPosition::NegatedOperand
         | BooleanPosition::LogicalOperand { .. }
-        | BooleanPosition::CaseCondition { .. }
-        | BooleanPosition::PredicateRoot => 0,
+        | BooleanPosition::CaseCondition { .. } => 0,
         BooleanPosition::CaseValue { .. } => 1,
         BooleanPosition::Otherwise => 2,
     }
@@ -318,7 +317,7 @@ impl SortLookup for NoRegisteredSorts {
 ///     &NoRegisteredSorts,
 /// )
 /// .expect_err("a number under a conjunction is refused");
-/// assert!(matches!(error.position(), BooleanPosition::LogicalOperand { .. }));
+/// assert!(matches!(error.parent(), Some((_, BooleanPosition::LogicalOperand { .. }))));
 /// ```
 pub fn validate_logical_operands<E, T, L>(
     expression: &Expression,
@@ -349,10 +348,9 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`NonBooleanLogicalOperandError`] with
-/// [`BooleanPosition::PredicateRoot`](super::BooleanPosition::PredicateRoot)
-/// if the root provably denotes a number, and otherwise for the first
-/// Boolean position whose operand provably denotes a number.
+/// Returns [`NonBooleanLogicalOperandError`] with no parent if the root
+/// provably denotes a number, and otherwise for the first Boolean position
+/// whose operand provably denotes a number.
 pub fn validate_predicate<E, T, L>(
     expression: &Expression,
     environment: &HashMap<Identifier, Expression, E>,
@@ -370,10 +368,8 @@ where
         sorts,
     };
     if context.is_provably_numeric(expression, true) {
-        return Err(NonBooleanLogicalOperandError::new(
+        return Err(NonBooleanLogicalOperandError::new_predicate_root(
             expression.clone(),
-            None,
-            BooleanPosition::PredicateRoot,
         ));
     }
     context.find_numeric_operand(expression, true)

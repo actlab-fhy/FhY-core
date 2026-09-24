@@ -17,7 +17,6 @@ use std::fmt;
 
 use crate::identifier::Identifier;
 
-use super::display::{FormatOptions, IdentifierStyle};
 use super::node::Expression;
 use super::operation::LogicalOperation;
 
@@ -183,6 +182,11 @@ impl fmt::Display for NonInjectiveRenamingError {
 impl Error for NonInjectiveRenamingError {}
 
 /// Where a Boolean position sits relative to the node that imposes it.
+///
+/// `Display` writes the phrase naming the position: `the operand of a
+/// logical not`, `operand {operand_index} of a logical {and|or}`, `the
+/// condition of piecewise case {case_index}`, `the value of piecewise case
+/// {case_index}`, or `the otherwise branch of a piecewise`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BooleanPosition {
@@ -209,55 +213,56 @@ pub enum BooleanPosition {
     /// The otherwise branch of a piecewise that itself sits in a Boolean
     /// position.
     Otherwise,
-    /// The root of an expression used as a predicate.
-    PredicateRoot,
+}
+
+impl fmt::Display for BooleanPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NegatedOperand => f.write_str("the operand of a logical not"),
+            Self::LogicalOperand {
+                operation,
+                operand_index,
+            } => write!(f, "operand {operand_index} of a logical {operation}"),
+            Self::CaseCondition { case_index } => {
+                write!(f, "the condition of piecewise case {case_index}")
+            }
+            Self::CaseValue { case_index } => write!(f, "the value of piecewise case {case_index}"),
+            Self::Otherwise => f.write_str("the otherwise branch of a piecewise"),
+        }
+    }
 }
 
 /// A Boolean position holding an operand that provably denotes a number.
 ///
-/// Carries the offending operand, the node that puts it in a Boolean
-/// position (none for [`BooleanPosition::PredicateRoot`]), and the position
-/// itself. `Display` names the position and writes the parent and the
-/// operand as [`Expression::display`] does in [`Notation::Symbolic`] with
-/// [`IdentifierStyle::NameHintWithId`], so a tree of any depth displays
-/// without exhausting the thread's stack:
-///
-/// - negated operand: `{parent} applies the Boolean connective logical_not
-///   to the operand {operand}, which provably denotes a number`
-/// - conjunction or disjunction operand: `{parent} applies the Boolean
-///   connective {operation} to the operand {operand}, which provably
-///   denotes a number`, with the operation's wire name
-/// - case condition: `{parent} takes {operand} as the condition of case
-///   {case_index}, which provably denotes a number`
-/// - case value: `{parent} takes {operand} as the value of case
-///   {case_index}, which provably denotes a number`
-/// - otherwise branch: `{parent} takes {operand} as its otherwise branch,
-///   which provably denotes a number`
-/// - predicate root: `{operand} is used as a predicate but provably
-///   denotes a number`
-///
-/// followed in every case by `; the expression is ill-typed and no symbolic
-/// backend lowers it faithfully`.
-///
-/// [`Notation::Symbolic`]: super::Notation::Symbolic
+/// Carries the offending operand and, unless the operand is the root of a
+/// predicate, the node that puts it in a Boolean position together with the
+/// position within that node. `Display` is one short line that writes no
+/// expression: `{position} provably denotes a number but sits in a boolean
+/// position`, with the position's phrase (see [`BooleanPosition`]), or `the
+/// predicate provably denotes a number` for a predicate root. A caller
+/// wanting the expressions in a message writes
+/// [`operand`](Self::operand) and [`parent`](Self::parent) with
+/// [`Expression::display`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonBooleanLogicalOperandError {
     operand: Expression,
-    parent: Option<Expression>,
-    position: BooleanPosition,
+    parent: Option<(Expression, BooleanPosition)>,
 }
 
 impl NonBooleanLogicalOperandError {
     /// Construct the error for `operand` at `position` under `parent`.
-    pub(super) fn new(
-        operand: Expression,
-        parent: Option<Expression>,
-        position: BooleanPosition,
-    ) -> Self {
+    pub(super) fn new(operand: Expression, parent: Expression, position: BooleanPosition) -> Self {
         Self {
             operand,
-            parent,
-            position,
+            parent: Some((parent, position)),
+        }
+    }
+
+    /// Construct the error for `operand` as the root of a predicate.
+    pub(super) fn new_predicate_root(operand: Expression) -> Self {
+        Self {
+            operand,
+            parent: None,
         }
     }
 
@@ -267,62 +272,26 @@ impl NonBooleanLogicalOperandError {
         &self.operand
     }
 
-    /// Return the node that puts the operand in a Boolean position, or
-    /// `None` when the operand is the root of a predicate.
+    /// Return the node that puts the operand in a Boolean position, and
+    /// where the operand sits in it; `None` exactly when the operand is the
+    /// root of a predicate.
     #[must_use]
-    pub fn parent(&self) -> Option<&Expression> {
-        self.parent.as_ref()
-    }
-
-    /// Return where the operand sits relative to its parent.
-    #[must_use]
-    pub fn position(&self) -> BooleanPosition {
-        self.position
+    pub fn parent(&self) -> Option<(&Expression, BooleanPosition)> {
+        self.parent
+            .as_ref()
+            .map(|(parent, position)| (parent, *position))
     }
 }
 
 impl fmt::Display for NonBooleanLogicalOperandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const NUMBER: &str = "which provably denotes a number";
-        let options =
-            FormatOptions::default().with_identifier_style(IdentifierStyle::NameHintWithId);
-        let operand = self.operand.display(options);
-        let parent = self
-            .parent
-            .as_ref()
-            .map(|parent| parent.display(options).to_string())
-            .unwrap_or_default();
-        match self.position {
-            BooleanPosition::NegatedOperand => write!(
+        match &self.parent {
+            Some((_, position)) => write!(
                 f,
-                "{parent} applies the Boolean connective logical_not to the operand {operand}, \
-                 {NUMBER}"
+                "{position} provably denotes a number but sits in a boolean position"
             ),
-            BooleanPosition::LogicalOperand { operation, .. } => write!(
-                f,
-                "{parent} applies the Boolean connective {operation} to the operand {operand}, \
-                 {NUMBER}"
-            ),
-            BooleanPosition::CaseCondition { case_index } => write!(
-                f,
-                "{parent} takes {operand} as the condition of case {case_index}, {NUMBER}"
-            ),
-            BooleanPosition::CaseValue { case_index } => write!(
-                f,
-                "{parent} takes {operand} as the value of case {case_index}, {NUMBER}"
-            ),
-            BooleanPosition::Otherwise => {
-                write!(
-                    f,
-                    "{parent} takes {operand} as its otherwise branch, {NUMBER}"
-                )
-            }
-            BooleanPosition::PredicateRoot => write!(
-                f,
-                "{operand} is used as a predicate but provably denotes a number"
-            ),
-        }?;
-        f.write_str("; the expression is ill-typed and no symbolic backend lowers it faithfully")
+            None => f.write_str("the predicate provably denotes a number"),
+        }
     }
 }
 

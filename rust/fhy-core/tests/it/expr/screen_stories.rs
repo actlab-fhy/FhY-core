@@ -15,8 +15,8 @@ use crate::support::stack as stack_support;
 use std::collections::HashMap;
 
 use expression_support::{
-    build_call_or_panic, build_decimal_literal, build_deep_conjunction, build_deep_sum,
-    build_identifier, build_literal, build_piecewise_or_panic,
+    build_call_or_panic, build_decimal_literal, build_deep_conjunction, build_identifier,
+    build_literal, build_piecewise_or_panic,
 };
 use fhy_core::expr::{
     BooleanPosition, Expression, FunctionSort, LogicalOperation, NoRegisteredSorts,
@@ -26,10 +26,6 @@ use fhy_core::expr::{
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
-
-/// The tail of every refusal message naming a parent node.
-const ILL_TYPED: &str = "which provably denotes a number; the expression is ill-typed and no \
-                         symbolic backend lowers it faithfully";
 
 /// Names of the real-valued built-in constants.
 const REAL_CONSTANT_NAMES: [&str; 4] = ["pi", "e", "inf", "nan"];
@@ -138,12 +134,28 @@ fn expect_refusal(
 fn assert_refusal(
     error: &NonBooleanLogicalOperandError,
     operand: &Expression,
-    parent: Option<&Expression>,
+    parent: &Expression,
     position: BooleanPosition,
 ) {
     assert_eq!(error.operand(), operand, "operand of {error:?}");
-    assert_eq!(error.parent(), parent, "parent of {error:?}");
-    assert_eq!(error.position(), position, "position of {error:?}");
+    assert_eq!(
+        error.parent(),
+        Some((parent, position)),
+        "parent of {error:?}"
+    );
+}
+
+/// Assert the refusal names `operand` as the root of a predicate, with no
+/// parent.
+fn assert_root_refusal(error: &NonBooleanLogicalOperandError, operand: &Expression) {
+    assert_eq!(error.operand(), operand, "operand of {error:?}");
+    assert_eq!(error.parent(), None, "parent of {error:?}");
+}
+
+/// Return the position of the refused operand within its parent, or `None`
+/// for a predicate root.
+fn find_position(error: &NonBooleanLogicalOperandError) -> Option<BooleanPosition> {
+    error.parent().map(|(_, position)| position)
 }
 
 /// Return the conjunction `left && right`.
@@ -226,7 +238,7 @@ fn validate_logical_operands_rejects_a_numeric_connective_operand(
     assert_refusal(
         &error,
         &operand,
-        Some(&expression),
+        &expression,
         BooleanPosition::LogicalOperand {
             operation,
             operand_index,
@@ -261,11 +273,11 @@ fn validate_logical_operands_reports_the_operand_index_of_a_logical_operand(
         &operands[numeric_index]
     ));
     assert_eq!(
-        error.position(),
-        BooleanPosition::LogicalOperand {
+        find_position(&error),
+        Some(BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: numeric_index,
-        }
+        })
     );
 }
 
@@ -281,21 +293,26 @@ fn validate_logical_operands_rejects_a_numeric_negated_operand(#[case] operand: 
     assert_refusal(
         &error,
         &operand,
-        Some(&expression),
+        &expression,
         BooleanPosition::NegatedOperand,
     );
 }
 
-/// Test the message names the connective node and the numeric operand.
+/// Test the refusal names the connective node and the numeric operand.
 #[test]
 fn validate_logical_operands_error_names_the_connective_and_the_operand() {
     let expression = build_or(&build_literal(2), &build_literal(4));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
-    assert_eq!(
-        error.to_string(),
-        format!("(2 || 4) applies the Boolean connective or to the operand 2, {ILL_TYPED}")
+    assert_refusal(
+        &error,
+        &build_literal(2),
+        &expression,
+        BooleanPosition::LogicalOperand {
+            operation: LogicalOperation::Or,
+            operand_index: 0,
+        },
     );
 }
 
@@ -312,7 +329,7 @@ fn validate_logical_operands_descends_past_the_root() {
     assert_refusal(
         &error,
         &build_literal(2),
-        Some(&nested),
+        &nested,
         BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: 0,
@@ -332,7 +349,7 @@ fn validate_logical_operands_checks_operands_before_descending() {
     assert_refusal(
         &error,
         &build_literal(4),
-        Some(&expression),
+        &expression,
         BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: 1,
@@ -352,7 +369,7 @@ fn validate_logical_operands_rejects_an_all_numeric_piecewise_operand() {
     assert_refusal(
         &error,
         &numeric,
-        Some(&expression),
+        &expression,
         BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: 0,
@@ -389,7 +406,7 @@ fn validate_logical_operands_rejects_a_piecewise_operand_with_one_numeric_branch
 
     let error = expect_refusal(Screen::LogicalOperands.run(&!&mixed));
 
-    assert_refusal(&error, &build_literal(2), Some(&mixed), position);
+    assert_refusal(&error, &build_literal(2), &mixed, position);
 }
 
 /// Test a branch shared by a case value and the otherwise branch is
@@ -412,7 +429,7 @@ fn validate_logical_operands_reports_a_shared_branch_at_its_first_position() {
     assert_refusal(
         &error,
         &shared,
-        Some(&mixed),
+        &mixed,
         BooleanPosition::CaseValue { case_index: 0 },
     );
 }
@@ -444,7 +461,7 @@ fn validate_checks_every_case_condition_before_any_case_value(#[case] screen: Sc
     assert_refusal(
         &error,
         &numeric_condition,
-        Some(&mixed),
+        &mixed,
         BooleanPosition::CaseCondition { case_index: 1 },
     );
 }
@@ -481,7 +498,7 @@ fn validate_logical_operands_rejects_a_numeric_result_call(
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
-    assert_refusal(&error, &call, Some(&expression), placement.position());
+    assert_refusal(&error, &call, &expression, placement.position());
 }
 
 /// Test a call nothing knows the sort of is not refused.
@@ -538,7 +555,7 @@ fn validate_logical_operands_screens_an_identifier_bound_to_a_number() {
     assert_refusal(
         &error,
         &p_reference,
-        Some(&expression),
+        &expression,
         BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: 0,
@@ -592,27 +609,25 @@ fn validate_logical_operands_rejects_a_numeric_piecewise_condition() {
     assert_refusal(
         &error,
         &condition,
-        Some(&expression),
+        &expression,
         BooleanPosition::CaseCondition { case_index: 0 },
     );
 }
 
-/// Test the message names the piecewise and its condition.
+/// Test the refusal names the piecewise and its condition.
 #[test]
 fn validate_logical_operands_error_names_the_piecewise_and_its_condition() {
-    let (x_identifier, x) = build_identifier("x");
+    let (_, x) = build_identifier("x");
     let condition = &x * 2;
     let expression = build_piecewise_or_panic([(&condition, &build_literal(5))], build_literal(0));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
-    let id = x_identifier.id();
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "{{5 if (x::{id} * 2); 0 otherwise}} takes (x::{id} * 2) as the condition of case 0, \
-             {ILL_TYPED}"
-        )
+    assert_refusal(
+        &error,
+        &condition,
+        &expression,
+        BooleanPosition::CaseCondition { case_index: 0 },
     );
 }
 
@@ -639,7 +654,7 @@ fn validate_logical_operands_rejects_a_native_constant_in_a_boolean_position(
         &sorts,
     ));
 
-    assert_refusal(&error, &constant, Some(&expression), placement.position());
+    assert_refusal(&error, &constant, &expression, placement.position());
 }
 
 /// Test a Boolean binding for a constant's identifier does not make it
@@ -733,7 +748,7 @@ fn validate_logical_operands_rejects_an_identifier_declared_numeric(
         &BuiltinSorts::new(),
     ));
 
-    assert_refusal(&error, &reference, Some(&expression), placement.position());
+    assert_refusal(&error, &reference, &expression, placement.position());
 }
 
 /// Test an identifier declared Boolean, or not declared, passes.
@@ -807,7 +822,7 @@ fn validate_logical_operands_screens_a_case_condition_bound_to_a_number() {
     assert_refusal(
         &error,
         &condition,
-        Some(&expression),
+        &expression,
         BooleanPosition::CaseCondition { case_index: 0 },
     );
 }
@@ -850,7 +865,7 @@ fn validate_logical_operands_screens_a_bound_piecewise_with_a_mixed_branch(
         &BuiltinSorts::new(),
     ));
 
-    assert_refusal(&error, &build_literal(1), Some(&mixed), position);
+    assert_refusal(&error, &build_literal(1), &mixed, position);
 }
 
 /// Test an identifier compared as a number may be bound to a numeric
@@ -889,7 +904,7 @@ fn validate_logical_operands_accepts_a_bound_piecewise_in_a_numeric_position() {
 fn validate_predicate_rejects_a_numeric_root(#[case] expression: Expression) {
     let error = expect_refusal(Screen::Predicate.run(&expression));
 
-    assert_refusal(&error, &expression, None, BooleanPosition::PredicateRoot);
+    assert_root_refusal(&error, &expression);
 }
 
 /// Test a native real constant as the root is refused.
@@ -901,7 +916,7 @@ fn validate_predicate_rejects_a_native_constant_root() {
     let error =
         expect_refusal(Screen::Predicate.run_with(&pi, &HashMap::new(), &HashMap::new(), &sorts));
 
-    assert_refusal(&error, &pi, None, BooleanPosition::PredicateRoot);
+    assert_root_refusal(&error, &pi);
 }
 
 /// Test a root piecewise has its branches screened: a numeric otherwise
@@ -916,7 +931,7 @@ fn validate_predicate_rejects_a_piecewise_root_with_a_numeric_branch() {
     assert_refusal(
         &error,
         &build_literal(2),
-        Some(&expression),
+        &expression,
         BooleanPosition::Otherwise,
     );
 }
@@ -935,7 +950,7 @@ fn validate_predicate_rejects_a_root_identifier_declared_numeric(#[case] symbol_
         &BuiltinSorts::new(),
     ));
 
-    assert_refusal(&error, &reference, None, BooleanPosition::PredicateRoot);
+    assert_root_refusal(&error, &reference);
 }
 
 /// Test a root identifier bound to a number is refused.
@@ -950,7 +965,7 @@ fn validate_predicate_rejects_a_root_identifier_bound_to_a_number() {
         &BuiltinSorts::new(),
     ));
 
-    assert_refusal(&error, &reference, None, BooleanPosition::PredicateRoot);
+    assert_root_refusal(&error, &reference);
 }
 
 /// Test a Boolean root, or one the screen cannot prove numeric, passes.
@@ -993,7 +1008,7 @@ fn validate_predicate_still_screens_a_nested_boolean_position() {
     assert_refusal(
         &error,
         &build_literal(2),
-        Some(&expression),
+        &expression,
         BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: 0,
@@ -1021,7 +1036,7 @@ fn validate_predicate_screens_a_bound_piecewise_with_a_mixed_branch() {
     assert_refusal(
         &error,
         &build_literal(1),
-        Some(&mixed),
+        &mixed,
         BooleanPosition::CaseValue { case_index: 0 },
     );
 }
@@ -1049,16 +1064,32 @@ fn validate_predicate_accepts_a_bound_well_typed_boolean_piecewise() {
 // The error and the empty lookup
 // =============================================================================
 
-/// Test the message for each position.
+/// Test the message for each position is one short line naming the
+/// position, never the expressions.
 #[rstest]
-#[case::negated(BooleanPosition::NegatedOperand)]
-#[case::logical(BooleanPosition::LogicalOperand { operation: LogicalOperation::And, operand_index: 0 })]
-#[case::case_condition(BooleanPosition::CaseCondition { case_index: 0 })]
-#[case::case_value(BooleanPosition::CaseValue { case_index: 0 })]
-#[case::otherwise(BooleanPosition::Otherwise)]
-#[case::predicate_root(BooleanPosition::PredicateRoot)]
+#[case::negated(
+    BooleanPosition::NegatedOperand,
+    "the operand of a logical not provably denotes a number but sits in a boolean position"
+)]
+#[case::logical(
+    BooleanPosition::LogicalOperand { operation: LogicalOperation::And, operand_index: 0 },
+    "operand 0 of a logical and provably denotes a number but sits in a boolean position"
+)]
+#[case::case_condition(
+    BooleanPosition::CaseCondition { case_index: 0 },
+    "the condition of piecewise case 0 provably denotes a number but sits in a boolean position"
+)]
+#[case::case_value(
+    BooleanPosition::CaseValue { case_index: 0 },
+    "the value of piecewise case 0 provably denotes a number but sits in a boolean position"
+)]
+#[case::otherwise(
+    BooleanPosition::Otherwise,
+    "the otherwise branch of a piecewise provably denotes a number but sits in a boolean position"
+)]
 fn non_boolean_logical_operand_error_display_describes_the_position(
     #[case] position: BooleanPosition,
+    #[case] expected: &str,
 ) {
     let number = -build_literal(7);
     let (expression, screen) = match position {
@@ -1079,81 +1110,66 @@ fn non_boolean_logical_operand_error_display_describes_the_position(
             build_piecewise_or_panic([(&build_literal(true), &build_literal(true))], &number),
             Screen::Predicate,
         ),
-        BooleanPosition::PredicateRoot => (number.clone(), Screen::Predicate),
-        _ => unreachable!("every position has a case"),
-    };
-    let expected = match position {
-        BooleanPosition::NegatedOperand => format!(
-            "(!(-7)) applies the Boolean connective logical_not to the operand (-7), {ILL_TYPED}"
-        ),
-        BooleanPosition::LogicalOperand { .. } => format!(
-            "((-7) && true) applies the Boolean connective and to the operand (-7), \
-             {ILL_TYPED}"
-        ),
-        BooleanPosition::CaseCondition { .. } => format!(
-            "{{true if (-7); true otherwise}} takes (-7) as the condition of case 0, {ILL_TYPED}"
-        ),
-        BooleanPosition::CaseValue { .. } => format!(
-            "{{(-7) if true; true otherwise}} takes (-7) as the value of case 0, {ILL_TYPED}"
-        ),
-        BooleanPosition::Otherwise => format!(
-            "{{true if true; (-7) otherwise}} takes (-7) as its otherwise branch, {ILL_TYPED}"
-        ),
-        BooleanPosition::PredicateRoot => String::from(
-            "(-7) is used as a predicate but provably denotes a number; the expression is \
-             ill-typed and no symbolic backend lowers it faithfully",
-        ),
         _ => unreachable!("every position has a case"),
     };
 
     let error = expect_refusal(screen.run(&expression));
 
-    assert_eq!(error.position(), position);
+    assert_eq!(find_position(&error), Some(position));
     assert_eq!(error.to_string(), expected);
 }
 
-/// Test the message renders identifiers with their ids, as `name::id`.
+/// Test the message for a predicate root, which has no parent.
 #[test]
-fn non_boolean_logical_operand_error_display_writes_identifier_ids() {
-    let (x_identifier, x) = build_identifier("x");
-    let expression = -&x;
+fn non_boolean_logical_operand_error_display_describes_a_predicate_root() {
+    let error = expect_refusal(Screen::Predicate.run(&-build_literal(7)));
 
-    let error = expect_refusal(Screen::Predicate.run(&expression));
-
-    let id = x_identifier.id();
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "(-x::{id}) is used as a predicate but provably denotes a number; the expression is \
-             ill-typed and no symbolic backend lowers it faithfully"
-        )
-    );
+    assert_eq!(error.to_string(), "the predicate provably denotes a number");
 }
 
-/// Test displaying a refusal whose parent and operand are
-/// [`SMALL_STACK_DEPTH`] levels deep completes on a small stack.
-#[test]
-fn non_boolean_logical_operand_error_display_writes_a_deep_tree_on_a_small_stack() {
-    run_on_small_stack(|| {
-        let operand = build_deep_sum(&build_literal(0), SMALL_STACK_DEPTH);
-        let expression = !&operand;
-        let error = expect_refusal(Screen::LogicalOperands.run(&expression));
+/// Test each Boolean position displays as the phrase naming it.
+#[rstest]
+#[case::negated(BooleanPosition::NegatedOperand, "the operand of a logical not")]
+#[case::and(
+    BooleanPosition::LogicalOperand { operation: LogicalOperation::And, operand_index: 2 },
+    "operand 2 of a logical and"
+)]
+#[case::or(
+    BooleanPosition::LogicalOperand { operation: LogicalOperation::Or, operand_index: 0 },
+    "operand 0 of a logical or"
+)]
+#[case::case_condition(
+    BooleanPosition::CaseCondition { case_index: 3 },
+    "the condition of piecewise case 3"
+)]
+#[case::case_value(BooleanPosition::CaseValue { case_index: 1 }, "the value of piecewise case 1")]
+#[case::otherwise(BooleanPosition::Otherwise, "the otherwise branch of a piecewise")]
+fn boolean_position_display_names_the_position(
+    #[case] position: BooleanPosition,
+    #[case] expected: &str,
+) {
+    let text = position.to_string();
 
-        let text = error.to_string();
+    assert_eq!(text, expected);
+}
 
-        let operand_text = format!(
-            "{}0{}",
-            "(".repeat(SMALL_STACK_DEPTH),
-            " + 1)".repeat(SMALL_STACK_DEPTH)
-        );
-        assert!(
-            text == format!(
-                "(!{operand_text}) applies the Boolean connective logical_not to the operand \
-                 {operand_text}, {ILL_TYPED}"
-            ),
-            "the message of the deep refusal differs"
-        );
-    });
+/// Test a refusal has no parent exactly when its operand is the root of a
+/// predicate: a numeric root under the predicate screen, and never under
+/// the operand screen.
+#[rstest]
+#[case::numeric_root(Screen::Predicate, build_literal(2), true)]
+#[case::negated_number(Screen::Predicate, !build_literal(2), false)]
+#[case::conjunction_of_numbers(Screen::Predicate, build_and(&build_literal(2), &build_literal(3)), false)]
+#[case::operands_screen(Screen::LogicalOperands, !build_literal(2), false)]
+fn screen_error_parent_is_none_only_at_a_predicate_root(
+    #[case] screen: Screen,
+    #[case] expression: Expression,
+    #[case] is_root: bool,
+) {
+    let error = expect_refusal(screen.run(&expression));
+
+    assert_eq!(error.parent().is_none(), is_root, "{error:?}");
+    assert_eq!(Expression::ptr_eq(error.operand(), &expression), is_root);
 }
 
 /// Test the empty lookup knows no constant and no function.
@@ -1239,13 +1255,10 @@ fn validate_refuses_a_number_beside_a_shared_doubling_dag(#[case] screen: Screen
     let error = expect_refusal(screen.run(&expression));
 
     assert!(Expression::ptr_eq(error.operand(), &number));
-    assert!(
-        error
-            .parent()
-            .is_some_and(|found| Expression::ptr_eq(found, &parent))
-    );
+    let (found, position) = error.parent().expect("a conjunction parents the number");
+    assert!(Expression::ptr_eq(found, &parent));
     assert_eq!(
-        error.position(),
+        position,
         BooleanPosition::LogicalOperand {
             operation: LogicalOperation::And,
             operand_index: 1,
@@ -1265,9 +1278,12 @@ fn validate_proves_a_doubling_piecewise_dag_numeric() {
     let negated_error = expect_refusal(Screen::LogicalOperands.run(&negation));
 
     assert!(Expression::ptr_eq(root_error.operand(), &dag));
-    assert_eq!(root_error.position(), BooleanPosition::PredicateRoot);
+    assert_eq!(find_position(&root_error), None);
     assert!(Expression::ptr_eq(negated_error.operand(), &dag));
-    assert_eq!(negated_error.position(), BooleanPosition::NegatedOperand);
+    assert_eq!(
+        find_position(&negated_error),
+        Some(BooleanPosition::NegatedOperand)
+    );
 }
 
 /// Test a doubling piecewise DAG whose leaf is an undeclared identifier
@@ -1316,7 +1332,7 @@ fn validate_logical_operands_screens_a_bound_dag_at_a_shared_identifier() {
     assert!(
         error
             .parent()
-            .is_some_and(|found| Expression::ptr_eq(found, &parent))
+            .is_some_and(|(found, _)| Expression::ptr_eq(found, &parent))
     );
 }
 
@@ -1365,9 +1381,12 @@ fn validate_proves_a_deep_piecewise_numeric_on_a_small_stack() {
         let root_error = expect_refusal(Screen::Predicate.run(&piecewise));
 
         assert!(Expression::ptr_eq(negated_error.operand(), &piecewise));
-        assert_eq!(negated_error.position(), BooleanPosition::NegatedOperand);
+        assert_eq!(
+            find_position(&negated_error),
+            Some(BooleanPosition::NegatedOperand)
+        );
         assert!(Expression::ptr_eq(root_error.operand(), &piecewise));
-        assert_eq!(root_error.position(), BooleanPosition::PredicateRoot);
+        assert_eq!(find_position(&root_error), None);
     });
 }
 
@@ -1378,11 +1397,12 @@ fn validate_logical_operands_negated_operand_parent_is_a_negation() {
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
-    let parent = error.parent().expect("a negation parents its operand");
+    let (parent, position) = error.parent().expect("a negation parents its operand");
     assert_eq!(
         parent,
         &Expression::new_unary(UnaryOperation::LogicalNot, build_literal(3))
     );
+    assert_eq!(position, BooleanPosition::NegatedOperand);
 }
 
 /// Test both screens pass a doubling conjunction DAG
