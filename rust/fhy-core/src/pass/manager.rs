@@ -14,8 +14,7 @@ use crate::diagnostic::{Diagnostic, Note, ValidationReport};
 use crate::identifier::{HasIdentifier, Identifier};
 use crate::tree::NodeHandle;
 
-/// The iteration budget of a new [`FixpointPassGroup`], as in the Python
-/// pass infrastructure.
+/// The iteration budget of a new [`FixpointPassGroup`].
 const DEFAULT_MAX_ITERATIONS: NonZeroUsize = NonZeroUsize::new(10).expect("ten is non-zero");
 
 /// The record of one pass run in a pipeline.
