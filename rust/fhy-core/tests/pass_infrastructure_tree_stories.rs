@@ -25,7 +25,7 @@ use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 use tree_ir::{
     ClosureRewriter, HookError, RecordingVisitor, ToyRebuildError, ToyTree, WalkHook, build_chain,
     build_doubling_dag, build_frozen_node, build_keeping_rewriter, build_leaf, build_leaf_doubler,
-    build_leaf_replacer, build_node, run_with_pass_context,
+    build_leaf_hiding_sharing, build_leaf_replacer, build_node, run_with_pass_context,
 };
 
 // =============================================================================
@@ -780,6 +780,27 @@ fn rewrite_tree_keeps_an_untouched_shared_subtree_at_every_occurrence() {
     assert!(output.child(0).is_same_node(&shared));
     assert!(output.child(2).is_same_node(&shared));
     assert_eq!(output.child(1), &build_leaf("other", 20));
+}
+
+/// Test a node reporting itself unshared is rewritten at each of its
+/// occurrences.
+#[test]
+fn rewrite_tree_rewrites_a_node_reporting_itself_unshared_at_each_occurrence() {
+    let hidden = build_leaf_hiding_sharing("hidden", 1);
+    let tree = build_node("root", &[&hidden, &hidden]);
+    let mut rewriter = build_leaf_doubler();
+
+    let output = rewrite_or_panic(&mut rewriter, &tree);
+
+    assert_eq!(rewriter.list_seen_names(), ["hidden", "hidden", "root"]);
+    assert_eq!(
+        output,
+        build_node(
+            "root",
+            &[&build_leaf("hidden", 2), &build_leaf("hidden", 2)]
+        )
+    );
+    assert!(!output.child(0).is_same_node(output.child(1)));
 }
 
 /// Test a DAG of 65 distinct nodes and 2^65 - 1 occurrences is rewritten

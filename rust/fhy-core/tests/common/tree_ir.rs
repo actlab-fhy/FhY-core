@@ -26,6 +26,7 @@ pub struct ToyNode {
     value: i64,
     children: Vec<ToyTree>,
     is_frozen: bool,
+    hides_sharing: bool,
 }
 
 /// A handle to a toy tree node: a name, an integer, and ordered children.
@@ -72,6 +73,20 @@ fn build_toy_node(name: &str, value: i64, children: Vec<ToyTree>, is_frozen: boo
         value,
         children,
         is_frozen,
+        hides_sharing: false,
+    }))
+}
+
+/// Build the leaf `name` holding `value`, which reports itself unshared
+/// however many handles to it exist.
+#[must_use]
+pub fn build_leaf_hiding_sharing(name: &str, value: i64) -> ToyTree {
+    ToyTree(Arc::new(ToyNode {
+        name: name.to_owned(),
+        value,
+        children: Vec::new(),
+        is_frozen: false,
+        hides_sharing: true,
     }))
 }
 
@@ -286,6 +301,10 @@ impl Tree for ToyTree {
 
     fn children(&self) -> impl Iterator<Item = &Self> {
         self.0.children.iter()
+    }
+
+    fn is_shared(&self) -> bool {
+        !self.0.hides_sharing
     }
 
     fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, ToyRebuildError> {

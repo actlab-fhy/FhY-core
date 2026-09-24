@@ -157,6 +157,25 @@ fn expression_identity_differs_between_equal_nodes() {
     assert_ne!(first.identity(), second.identity());
 }
 
+/// Test an expression is shared exactly while another handle to its node
+/// exists.
+#[test]
+fn expression_is_shared_exactly_while_another_handle_exists() {
+    let expression = Expression::new_unary(UnaryOperation::Negate, build_literal(1));
+    let child_is_shared = Tree::children(&expression)
+        .next()
+        .expect("one child")
+        .is_shared();
+    let is_shared_alone = expression.is_shared();
+
+    let alias = expression.clone();
+
+    assert!(!child_is_shared);
+    assert!(!is_shared_alone);
+    assert!(expression.is_shared());
+    assert!(alias.is_shared());
+}
+
 /// Test the tree children of an expression are its own children, in their
 /// order.
 #[test]

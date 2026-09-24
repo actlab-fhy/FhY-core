@@ -571,7 +571,8 @@ impl NodeHandle for Expression {
 }
 
 /// The tree view of an expression: [`Expression::children`] and
-/// [`Expression::rebuild_with_children`].
+/// [`Expression::rebuild_with_children`]; a node is shared while it has more
+/// than one handle.
 impl Tree for Expression {
     type RebuildError = ExpressionBuildError;
 
@@ -581,6 +582,10 @@ impl Tree for Expression {
 
     fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, ExpressionBuildError> {
         Expression::rebuild_with_children(self, children)
+    }
+
+    fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
     }
 }
 

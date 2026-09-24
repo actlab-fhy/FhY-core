@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use super::analysis::{NodeHandle, NodeIdentity};
 use super::context::PassContext;
@@ -34,6 +35,20 @@ pub trait Tree: NodeHandle {
     /// Returns an error if `children` does not fit the node, for example
     /// because it has the wrong length.
     fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, Self::RebuildError>;
+
+    /// Return whether handles to this node other than this one may exist.
+    ///
+    /// [`rewrite_tree`] remembers the result of every node that may be
+    /// shared, so each occurrence after the first reuses it; a node that is
+    /// not shared occurs once, and the rewrite skips remembering it. By
+    /// default every node may be shared. A handle type that can tell a node
+    /// has a single handle, such as by its reference count, answers `false`
+    /// for it to save the rewrite that bookkeeping. A node that answers
+    /// `false` although it occurs more than once is rewritten at each
+    /// occurrence.
+    fn is_shared(&self) -> bool {
+        true
+    }
 }
 
 /// Where [`walk_tree`] visits a node relative to its children.
@@ -166,6 +181,34 @@ pub trait Rewriter<N: Tree> {
     fn rewrite(&mut self, node: &N, cx: &mut PassContext<'_>) -> Result<Option<N>, Self::Error>;
 }
 
+/// Hashes a [`NodeIdentity`], an address, by one multiplication folded onto
+/// itself, which spreads its bits into both the high and the low bits of the
+/// hash.
+#[derive(Debug, Default, Clone, Copy)]
+struct IdentityHasher(u64);
+
+impl Hasher for IdentityHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        const MULTIPLIER: u64 = 0x9e37_79b9_7f4a_7c15;
+        let product = (self.0 ^ value).wrapping_mul(MULTIPLIER);
+        self.0 = product ^ (product >> 32);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
 /// A node of a rewrite whose children are being rewritten: the node, its
 /// children, and the results of the children rewritten so far (`None` for a
 /// child that stays as it was).
@@ -246,9 +289,10 @@ where
 ///
 /// A node the tree shares is rewritten once and its result reused at every
 /// occurrence, so the rewriter sees each distinct node once and a DAG costs
-/// time linear in its distinct nodes. When nothing changes, the result is a
-/// handle to `root` itself, and every subtree nothing changed in keeps its
-/// handle.
+/// time linear in its distinct nodes, provided [`Tree::is_shared`] answers
+/// `true` for every node that occurs more than once. When nothing changes,
+/// the result is a handle to `root` itself, and every subtree nothing
+/// changed in keeps its handle.
 ///
 /// # Errors
 ///
@@ -263,14 +307,20 @@ where
     N: Tree,
     R: Rewriter<N> + ?Sized,
 {
-    // Every original node stays alive through `root` while the rewrite runs,
-    // so its identity keys its result unambiguously.
-    let mut results: HashMap<NodeIdentity, Option<N>> = HashMap::new();
+    // The results of the shared nodes rewritten so far. Every original node
+    // stays alive through `root` while the rewrite runs, so its identity
+    // keys its result unambiguously.
+    let mut shared_results: HashMap<NodeIdentity, Option<N>, BuildHasherDefault<IdentityHasher>> =
+        HashMap::default();
     let mut ancestors: Vec<RewriteFrame<'_, N>> = Vec::new();
     let mut current = RewriteFrame::new(root);
     loop {
         if let Some(child) = current.next_child() {
-            if let Some(result) = results.get(&child.identity()) {
+            let known = child
+                .is_shared()
+                .then(|| shared_results.get(&child.identity()))
+                .flatten();
+            if let Some(result) = known {
                 current.results.push(result.clone());
             } else {
                 ancestors.push(std::mem::replace(&mut current, RewriteFrame::new(child)));
@@ -281,7 +331,9 @@ where
         let Some(mut parent) = ancestors.pop() else {
             return Ok(result.unwrap_or_else(|| root.clone()));
         };
-        results.insert(current.node.identity(), result.clone());
+        if current.node.is_shared() {
+            shared_results.insert(current.node.identity(), result.clone());
+        }
         parent.results.push(result);
         current = parent;
     }
