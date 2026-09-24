@@ -17,6 +17,8 @@ SOURCES = ["src", "tests", "rust/fhy-core/tests/golden"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
+# The integration-test binary the expanded replays run in.
+RUST_TEST_TARGET = "it"
 # `cargo test` summary of a run that replayed one expanded corpus.
 _EXPANDED_REPLAY_PASSED = re.compile(r"^test result: ok\. 1 passed;", re.MULTILINE)
 
@@ -25,18 +27,18 @@ class ExpandedGoldenCorpus(NamedTuple):
     """How to generate and replay one generator's expanded random corpus."""
 
     options: str
-    rust_test: str
+    test_filter: str
     variable: str
 
 
 # Expanded corpus settings for each generator under GOLDEN_DIRECTORY, keyed by
-# file name: the generator options (space-separated), the Rust test target
-# whose ignored test replays the corpus, and the variable that names the corpus
-# file for that test.
+# file name: the generator options (space-separated), the filter selecting the
+# ignored test in RUST_TEST_TARGET that replays the corpus, and the variable
+# that names the corpus file for that test.
 EXPANDED_GOLDEN_CORPORA = {
     "generate_interned_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 60 --keys a,b,c,d,e",
-        rust_test="interned_equivalence",
+        test_filter="interned::equivalence::",
         variable="FHY_INTERNED_CORPUS",
     ),
 }
@@ -211,9 +213,10 @@ def golden_expanded(session: nox.Session) -> None:
             "-p",
             "fhy-core",
             "--test",
-            corpus.rust_test,
+            RUST_TEST_TARGET,
             "--",
             "--ignored",
+            corpus.test_filter,
             env={corpus.variable: str(corpus_path)},
             external=True,
             silent=True,
@@ -222,10 +225,10 @@ def golden_expanded(session: nox.Session) -> None:
         # test that lost its `#[ignore]` would pass without a replay.
         if not isinstance(output, str) or not _EXPANDED_REPLAY_PASSED.search(output):
             session.error(
-                f"{corpus.rust_test} did not replay the expanded corpus in "
+                f"{corpus.test_filter} did not replay the expanded corpus in "
                 f"exactly one ignored test:\n{output}"
             )
-        session.log(f"{corpus.rust_test}: the expanded corpus replayed")
+        session.log(f"{corpus.test_filter}: the expanded corpus replayed")
 
 
 @nox.session

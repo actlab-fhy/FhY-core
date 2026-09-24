@@ -407,15 +407,8 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::identifier::Identifier;
     use crate::interned::Interned;
-    use crate::test_support::{
-        RegistryGuard, has_counter_passed, hold_id_counter, reserve_far_ahead_ids,
-    };
-
-    /// Serializes the test that clears the process-wide registry against the
-    /// tests that need their own entries to survive.
-    static REGISTRY_GUARD: RegistryGuard = RegistryGuard::new();
+    use crate::test_support::{has_counter_passed, hold_id_counter, reserve_far_ahead_ids};
 
     /// Return the JSON payload of a note whose kind is named by the id `id`,
     /// with `kind_trailing` appended inside the kind and `trailing` appended
@@ -425,29 +418,6 @@ mod tests {
             "{{\"message\":\"m\",\"kind\":{{\"name\":{{\"id\":{id},\"name_hint\":\"k{id}\"}},\
              \"description\":\"d{id}\"{kind_trailing}}}{trailing}}}"
         )
-    }
-
-    #[rstest]
-    #[case::rationale(get_rationale_note_kind)]
-    #[case::suggestion(get_suggestion_note_kind)]
-    #[case::remark(get_remark_note_kind)]
-    #[case::other(get_other_note_kind)]
-    fn clearing_the_registry_keeps_the_shipped_kinds_canonical(
-        #[case] get_shipped: fn() -> &'static Canonical<NoteKind>,
-    ) {
-        let _guard = REGISTRY_GUARD.hold_exclusively();
-        let name = Identifier::new("dropped-by-clear");
-        let dropped = NoteKind::new(name.clone(), "dropped").into_canonical();
-        assert_eq!(NoteKind::intern_registry().get(&name), Some(dropped));
-
-        NoteKind::intern_registry().clear();
-
-        assert_eq!(NoteKind::intern_registry().get(&name), None);
-        let shipped = get_shipped();
-        assert_eq!(
-            NoteKind::intern_registry().get(shipped.name()),
-            Some(shipped.clone())
-        );
     }
 
     /// Test each shipped kind holds its fixed reserved id and name hint.
@@ -468,7 +438,6 @@ mod tests {
 
     #[test]
     fn a_valid_note_restores_and_registers_its_kind() {
-        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("valid-note-anchor");
 
@@ -484,7 +453,6 @@ mod tests {
 
     #[test]
     fn a_note_rejected_for_a_trailing_unknown_field_restores_nothing() {
-        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("trailing-note-field-anchor");
 
@@ -497,7 +465,6 @@ mod tests {
 
     #[test]
     fn a_note_whose_kind_precedes_a_malformed_message_restores_nothing() {
-        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("kind-first-note-anchor");
         let json = format!(
@@ -513,7 +480,6 @@ mod tests {
 
     #[test]
     fn a_note_whose_kind_has_an_unknown_field_restores_nothing() {
-        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("kind-unknown-field-anchor");
 
@@ -526,7 +492,6 @@ mod tests {
 
     #[test]
     fn a_note_whose_kind_lacks_a_description_restores_nothing() {
-        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("kind-no-description-anchor");
         let json = format!(
@@ -544,7 +509,6 @@ mod tests {
 
     #[test]
     fn a_bare_note_kind_rejected_for_an_unknown_field_restores_nothing() {
-        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("bare-kind-anchor");
         let json = format!(

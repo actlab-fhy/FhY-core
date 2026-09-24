@@ -5,7 +5,7 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::identifier::Identifier;
 use crate::interned::InternOutcome;
@@ -73,31 +73,6 @@ pub(crate) fn compute_hash<T: Hash>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
-}
-
-/// Lock that serializes a test clearing a process-wide registry against the
-/// tests that need their own entries to survive.
-///
-/// Registering tests hold the read side; a clearing test holds the write
-/// side. Both sides recover from poisoning, so one failed test does not fail
-/// the rest.
-pub(crate) struct RegistryGuard(RwLock<()>);
-
-impl RegistryGuard {
-    /// Create an unheld guard.
-    pub(crate) const fn new() -> Self {
-        Self(RwLock::new(()))
-    }
-
-    /// Hold the registry alongside every other registering test.
-    pub(crate) fn hold(&self) -> RwLockReadGuard<'_, ()> {
-        self.0.read().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Hold the registry against every other test that uses this guard.
-    pub(crate) fn hold_exclusively(&self) -> RwLockWriteGuard<'_, ()> {
-        self.0.write().unwrap_or_else(PoisonError::into_inner)
-    }
 }
 
 /// Return the value an intern handed back because its key was already

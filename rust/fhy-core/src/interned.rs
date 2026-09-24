@@ -13,7 +13,8 @@
 //! one registry with no clear between them means iff their keys are equal.
 //!
 //! A registry may be created with default instances, which it registers the
-//! first time it is used and restores whenever it is cleared. A default
+//! first time it is used and restores whenever a registry the caller owns is
+//! cleared; a process-wide registry is never cleared. A default
 //! keeps its identity across clears, so a handle to a default taken before a
 //! clear still equals the handle taken after it.
 //!
@@ -40,6 +41,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// - Neither `intern_key` nor the key's `Hash` and `Eq` implementations
 ///   access the type's registry. The registry calls them while it holds its
 ///   lock.
+///
+/// The registry is process-wide and append-only for the life of the process:
+/// [`InternRegistry::clear`] needs an owned registry, so no code can clear
+/// it, and there is no per-session registry for the type. Every value a
+/// decode interns stays registered, so decoding untrusted payloads grows the
+/// registry without bound.
 ///
 /// # Examples
 ///
@@ -91,10 +98,10 @@ pub trait Interned: Sized + Send + Sync + 'static {
 /// and of every other registry.
 ///
 /// A registry suits small, long-lived vocabularies such as attributes and
-/// value domains. Every [`intern`](Self::intern) takes the write lock, even
-/// when the key is already registered, and an instance stays registered
-/// until a [`clear`](Self::clear), so a registry is not a hash-consing table
-/// for IR nodes.
+/// value domains. Every registration takes the write lock, and an instance
+/// stays registered until a [`clear`](Self::clear), which only a registry
+/// the caller owns allows, so a registry is not a hash-consing table for IR
+/// nodes.
 pub struct InternRegistry<T: Interned> {
     create_defaults: fn() -> Vec<T>,
     state: OnceLock<RwLock<RegistryState<T>>>,
@@ -170,23 +177,34 @@ impl<T: Interned> InternRegistry<T> {
     /// Register `value` as the canonical instance for its key, unless one is
     /// already registered.
     ///
+    /// A key that is already registered is found under the read lock, so
+    /// interns of registered keys run concurrently; only a registration takes
+    /// the write lock.
+    ///
     /// # Panics
     ///
     /// Panics if this is the registry's first use and `create_defaults`
     /// panics.
     pub fn intern(&self, value: T) -> InternOutcome<T> {
-        let mut state = self.write_state();
-        match state.entries.get(value.intern_key()) {
-            None => {
-                let key = value.intern_key().clone();
-                let instance = Arc::new(value);
-                state.entries.insert(key, Arc::clone(&instance));
-                InternOutcome::Registered(Canonical(instance))
-            }
-            Some(existing) => InternOutcome::AlreadyCanonical {
+        if let Some(existing) = self.read_state().entries.get(value.intern_key()) {
+            return InternOutcome::AlreadyCanonical {
                 canonical: Canonical(Arc::clone(existing)),
                 discarded: value,
+            };
+        }
+        // Another thread may register the key between the two locks, so the
+        // write path looks the key up again.
+        let mut state = self.write_state();
+        match state.entries.entry(value.intern_key().clone()) {
+            Entry::Occupied(existing) => InternOutcome::AlreadyCanonical {
+                canonical: Canonical(Arc::clone(existing.get())),
+                discarded: value,
             },
+            Entry::Vacant(slot) => {
+                let instance = Arc::new(value);
+                slot.insert(Arc::clone(&instance));
+                InternOutcome::Registered(Canonical(instance))
+            }
         }
     }
 
@@ -237,12 +255,54 @@ impl<T: Interned> InternRegistry<T> {
     /// instance that compares unequal to them. Defaults are registered again
     /// with the same identity they had before.
     ///
-    /// # Panics
+    /// Clearing takes `&mut self`, so only a registry the caller owns can be
+    /// cleared. A process-wide registry, reached through a shared
+    /// `&'static` reference, is append-only for the life of the process.
     ///
-    /// Panics if this is the registry's first use and `create_defaults`
-    /// panics.
-    pub fn clear(&self) {
-        self.write_state().restore_defaults();
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::interned::{InternRegistry, Interned};
+    ///
+    /// #[derive(Debug)]
+    /// struct Tag(String);
+    ///
+    /// impl Interned for Tag {
+    ///     type Key = String;
+    ///
+    ///     fn intern_key(&self) -> &String {
+    ///         &self.0
+    ///     }
+    ///
+    ///     fn intern_registry() -> &'static InternRegistry<Self> {
+    ///         static REGISTRY: InternRegistry<Tag> = InternRegistry::new();
+    ///         &REGISTRY
+    ///     }
+    /// }
+    ///
+    /// let mut registry = InternRegistry::<Tag>::new();
+    /// let _outcome = registry.intern(Tag("x".to_owned()));
+    ///
+    /// registry.clear();
+    ///
+    /// assert!(registry.get("x").is_none());
+    /// ```
+    ///
+    /// A process-wide registry cannot be cleared:
+    ///
+    /// ```compile_fail
+    /// use fhy_core::interned::Interned;
+    /// use fhy_core::op_attribute::OpAttribute;
+    ///
+    /// OpAttribute::intern_registry().clear();
+    /// ```
+    pub fn clear(&mut self) {
+        if let Some(state) = self.state.get_mut() {
+            state
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner)
+                .restore_defaults();
+        }
     }
 
     /// Return the registry's state, initializing it from `create_defaults`
@@ -473,8 +533,10 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::panic::{self, AssertUnwindSafe};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Condvar, Mutex};
     use std::thread;
+    use std::time::Duration;
 
     use proptest::prelude::*;
     use proptest::sample::select;
@@ -803,7 +865,7 @@ mod tests {
     fn with_defaults_runs_the_default_constructor_once() {
         let calls_before = DEFAULT_CALLS.load(Ordering::SeqCst);
 
-        let registry = InternRegistry::<Tag>::with_defaults(create_counted_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_counted_defaults);
         assert_eq!(DEFAULT_CALLS.load(Ordering::SeqCst), calls_before);
 
         let _first_get = registry.get("alpha");
@@ -848,7 +910,7 @@ mod tests {
     /// registered.
     #[test]
     fn clear_as_the_first_operation_keeps_defaults() {
-        let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
 
         registry.clear();
 
@@ -859,7 +921,7 @@ mod tests {
     /// Test `clear` unregisters instances that are not defaults.
     #[test]
     fn clear_unregisters_non_default_instances() {
-        let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
         let _setup = registry.intern(build_tag("gamma", "note"));
 
         registry.clear();
@@ -870,7 +932,7 @@ mod tests {
     /// Test `clear` keeps the identity of default instances.
     #[test]
     fn clear_keeps_the_identity_of_defaults() {
-        let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
         let before = registry.get("alpha").expect("alpha default is registered");
 
         registry.clear();
@@ -882,7 +944,7 @@ mod tests {
     /// Test interning after `clear` registers a fresh canonical instance.
     #[test]
     fn intern_after_clear_registers_a_new_canonical_instance() {
-        let registry = InternRegistry::<Tag>::new();
+        let mut registry = InternRegistry::<Tag>::new();
         let before = registry
             .intern(build_tag("alpha", "before"))
             .into_canonical();
@@ -898,7 +960,7 @@ mod tests {
     /// Test `clear` empties a registry that has no defaults.
     #[test]
     fn clear_empties_a_registry_without_defaults() {
-        let registry = InternRegistry::<Tag>::new();
+        let mut registry = InternRegistry::<Tag>::new();
         let _setup = registry.intern(build_tag("alpha", "note"));
 
         registry.clear();
@@ -1201,7 +1263,7 @@ mod tests {
         fn registry_matches_a_first_wins_model_for_any_operation_sequence(
             operations in prop::collection::vec(build_registry_operation_strategy(), 0..32),
         ) {
-            let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+            let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
             let defaults: HashMap<&str, Canonical<Tag>> = ["alpha", "beta"]
                 .into_iter()
                 .map(|key| (key, registry.get(key).expect("defaults are registered")))
@@ -1374,6 +1436,122 @@ mod tests {
                     .unwrap_or_else(|payload| panic::resume_unwind(payload));
             }
         });
+    }
+
+    /// Meeting point for the threads that hash a [`RendezvousKey`] once it
+    /// is armed.
+    #[derive(Debug, Default)]
+    struct Rendezvous {
+        armed: AtomicBool,
+        arrived: Mutex<usize>,
+        all_arrived: Condvar,
+        met: Mutex<Vec<bool>>,
+    }
+
+    impl Rendezvous {
+        /// Number of threads that must meet.
+        const PARTIES: usize = 2;
+
+        /// How long an arriving thread waits for the others.
+        const TIMEOUT: Duration = Duration::from_secs(5);
+
+        /// Arrive, wait for every party or the timeout, and record whether
+        /// every party arrived in time.
+        fn arrive(&self) {
+            let mut arrived = self.arrived.lock().unwrap_or_else(PoisonError::into_inner);
+            *arrived += 1;
+            self.all_arrived.notify_all();
+            let (arrived, timeout) = self
+                .all_arrived
+                .wait_timeout_while(arrived, Self::TIMEOUT, |arrived| *arrived < Self::PARTIES)
+                .unwrap_or_else(PoisonError::into_inner);
+            drop(arrived);
+            self.met
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(!timeout.timed_out());
+        }
+    }
+
+    /// Key whose `Hash`, once armed, waits for a second thread to hash it
+    /// too. Two interns of it can only both finish hashing in time if they
+    /// hold the registry's lock at the same time.
+    #[derive(Debug, Clone)]
+    struct RendezvousKey {
+        name: String,
+        rendezvous: Arc<Rendezvous>,
+    }
+
+    impl PartialEq for RendezvousKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name
+        }
+    }
+
+    impl Eq for RendezvousKey {}
+
+    impl Hash for RendezvousKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            if self.rendezvous.armed.load(Ordering::SeqCst) {
+                self.rendezvous.arrive();
+            }
+            self.name.hash(state);
+        }
+    }
+
+    struct RendezvousTag {
+        key: RendezvousKey,
+    }
+
+    impl Interned for RendezvousTag {
+        type Key = RendezvousKey;
+
+        fn intern_key(&self) -> &RendezvousKey {
+            &self.key
+        }
+
+        fn intern_registry() -> &'static InternRegistry<RendezvousTag> {
+            static REGISTRY: InternRegistry<RendezvousTag> = InternRegistry::new();
+            &REGISTRY
+        }
+    }
+
+    /// Test two interns of an already registered key look it up under the
+    /// read lock at the same time, rather than one after the other.
+    #[test]
+    fn interns_of_a_registered_key_share_the_read_lock() {
+        let registry = InternRegistry::<RendezvousTag>::new();
+        let key = RendezvousKey {
+            name: "shared".to_owned(),
+            rendezvous: Arc::default(),
+        };
+        let first = registry.intern(RendezvousTag { key: key.clone() });
+        assert!(first.is_registered());
+
+        key.rendezvous.armed.store(true, Ordering::SeqCst);
+        let outcomes: Vec<InternOutcome<RendezvousTag>> = thread::scope(|scope| {
+            let handles: Vec<_> = (0..Rendezvous::PARTIES)
+                .map(|_| scope.spawn(|| registry.intern(RendezvousTag { key: key.clone() })))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|payload| panic::resume_unwind(payload))
+                })
+                .collect()
+        });
+        key.rendezvous.armed.store(false, Ordering::SeqCst);
+
+        assert!(outcomes.iter().all(|outcome| !outcome.is_registered()));
+        let met = key
+            .rendezvous
+            .met
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        assert_eq!(met, vec![true; Rendezvous::PARTIES]);
     }
 
     /// Test the registry keeps working after a key's `Hash` implementation
