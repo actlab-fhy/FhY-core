@@ -15,8 +15,8 @@ use crate::support::stack as stack_support;
 use std::collections::HashMap;
 
 use expression_support::{
-    build_call_or_panic, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
-    build_piecewise_or_panic, build_text_literal,
+    build_call_or_panic, build_decimal_literal, build_deep_conjunction, build_deep_sum,
+    build_identifier, build_literal, build_piecewise_or_panic,
 };
 use fhy_core::expr::{
     BinaryOperation, BooleanPosition, Expression, FunctionSort, NoRegisteredSorts,
@@ -205,7 +205,7 @@ impl Placement {
 #[case::or(build_or(&build_literal(2), &build_literal(4)), build_literal(2), BinaryOperation::LogicalOr)]
 #[case::and_one_numeric_operand(build_and(&build_literal(true), &build_literal(4)), build_literal(4), BinaryOperation::LogicalAnd)]
 #[case::and_floats(build_and(&build_literal(1.5), &build_literal(2.5)), build_literal(1.5), BinaryOperation::LogicalAnd)]
-#[case::and_texts(build_and(&build_text_literal("2"), &build_text_literal("4")), build_text_literal("2"), BinaryOperation::LogicalAnd)]
+#[case::and_decimals(build_and(&build_decimal_literal("2"), &build_decimal_literal("4")), build_decimal_literal("2"), BinaryOperation::LogicalAnd)]
 #[case::and_arithmetic_operand(build_and(&(build_literal(1) + 2), &build_literal(true)), build_literal(1) + 2, BinaryOperation::LogicalAnd)]
 fn validate_logical_operands_rejects_a_numeric_connective_operand(
     #[case] expression: Expression,
@@ -830,7 +830,7 @@ fn validate_logical_operands_accepts_a_bound_piecewise_in_a_numeric_position() {
 #[rstest]
 #[case::int_literal(build_literal(2))]
 #[case::float_literal(build_literal(1.5))]
-#[case::decimal_text_literal(build_text_literal("2.5"))]
+#[case::decimal_literal(build_decimal_literal("2.5"))]
 #[case::arithmetic_node(build_literal(1) + 2)]
 #[case::negation(-build_literal(1))]
 #[case::integer_result_call(build_call_or_panic("floor", &[build_literal(1.5)]))]
@@ -1035,17 +1035,17 @@ fn non_boolean_logical_operand_error_display_describes_the_position(
             "(!(-7)) applies the Boolean connective logical_not to the operand (-7), {ILL_TYPED}"
         ),
         BooleanPosition::LogicalOperand { .. } => format!(
-            "((-7) && True) applies the Boolean connective logical_and to the operand (-7), \
+            "((-7) && true) applies the Boolean connective logical_and to the operand (-7), \
              {ILL_TYPED}"
         ),
         BooleanPosition::CaseCondition { .. } => format!(
-            "{{True if (-7); True otherwise}} takes (-7) as the condition of case 0, {ILL_TYPED}"
+            "{{true if (-7); true otherwise}} takes (-7) as the condition of case 0, {ILL_TYPED}"
         ),
         BooleanPosition::CaseValue { .. } => format!(
-            "{{(-7) if True; True otherwise}} takes (-7) as the value of case 0, {ILL_TYPED}"
+            "{{(-7) if true; true otherwise}} takes (-7) as the value of case 0, {ILL_TYPED}"
         ),
         BooleanPosition::Otherwise => format!(
-            "{{True if True; (-7) otherwise}} takes (-7) as its otherwise branch, {ILL_TYPED}"
+            "{{true if true; (-7) otherwise}} takes (-7) as its otherwise branch, {ILL_TYPED}"
         ),
         BooleanPosition::PredicateRoot => String::from(
             "(-7) is used as a predicate but provably denotes a number; the expression is \

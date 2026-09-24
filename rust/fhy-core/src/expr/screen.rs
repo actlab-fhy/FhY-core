@@ -8,7 +8,7 @@ use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
 use super::error::{BooleanPosition, NonBooleanLogicalOperandError};
-use super::literal::LiteralKind;
+use super::literal::LiteralValue;
 use super::node::{Expression, ExpressionKind};
 use super::sort::FunctionSort;
 
@@ -63,7 +63,7 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
                 continue;
             }
             let is_numeric = match expression.kind() {
-                ExpressionKind::Literal(literal) => !matches!(literal.kind(), LiteralKind::Bool(_)),
+                ExpressionKind::Literal(literal) => !matches!(literal, LiteralValue::Bool(_)),
                 ExpressionKind::Unary(node) => node.operation().is_arithmetic(),
                 ExpressionKind::Binary(node) => node.operation().is_arithmetic(),
                 ExpressionKind::Call(node) => self

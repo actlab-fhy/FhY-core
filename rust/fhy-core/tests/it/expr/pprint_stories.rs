@@ -9,7 +9,7 @@ use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
 use expression_support::{
-    build_deep_conjunction, build_deep_sum, build_identifier, build_literal, build_text_literal,
+    build_decimal_literal, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue, Notation,
@@ -174,10 +174,10 @@ fn format_expression_default_options_write_symbolic_notation() {
 /// Test symbolic notation writes literals, identifiers, and operator nodes.
 #[rstest]
 #[case::float(build_literal(4.5), "4.5")]
-#[case::decimal_text(build_text_literal("0.1"), "0.1")]
+#[case::decimal(build_decimal_literal("0.1"), "0.1")]
 #[case::identifier(build_identifier("baz").1, "baz")]
-#[case::logical_not(build_literal(true).logical_not(), "(!True)")]
-#[case::product(build_text_literal("3.14") * 10.5, "(3.14 * 10.5)")]
+#[case::logical_not(build_literal(true).logical_not(), "(!true)")]
+#[case::product(build_decimal_literal("3.14") * 10.5, "(3.14 * 10.5)")]
 fn format_expression_writes_symbolic_notation(
     #[case] expression: Expression,
     #[case] expected: &str,
@@ -298,37 +298,35 @@ fn format_expression_writes_a_folded_conjunction_as_nested_pairs() {
 // Literals
 // =============================================================================
 
-/// Test a literal is written as the value it was given, in both notations.
+/// Test a literal is written as its `Display` text, in both notations.
 #[rstest]
-#[case::true_value(LiteralValue::from(true), "True")]
-#[case::false_value(LiteralValue::from(false), "False")]
+#[case::true_value(LiteralValue::from(true), "true")]
+#[case::false_value(LiteralValue::from(false), "false")]
 #[case::zero(LiteralValue::from(0), "0")]
 #[case::negative_integer(LiteralValue::from(-1), "-1")]
 #[case::big_integer(
     LiteralValue::from(BigInt::from(10).pow(30)),
     "1000000000000000000000000000000"
 )]
-#[case::integral_float(LiteralValue::from(1.0), "1.0")]
+#[case::integral_float(LiteralValue::from(1.0), "1")]
 #[case::tenth(LiteralValue::from(0.1), "0.1")]
 #[case::third(LiteralValue::from(1.0 / 3.0), "0.3333333333333333")]
-#[case::largest_positional_float(LiteralValue::from(1e15), "1000000000000000.0")]
-#[case::scientific_large_float(LiteralValue::from(1e16), "1e+16")]
-#[case::scientific_long_mantissa(
-    LiteralValue::from(1.234_567_890_123_456_8e17),
-    "1.2345678901234568e+17"
-)]
-#[case::scientific_1e22(LiteralValue::from(1e22), "1e+22")]
-#[case::smallest_positional_float(LiteralValue::from(0.0001), "0.0001")]
-#[case::scientific_small_float(LiteralValue::from(1e-7), "1e-07")]
-#[case::negative_zero(LiteralValue::from(-0.0), "-0.0")]
-#[case::nan(LiteralValue::from(f64::NAN), "nan")]
+#[case::large_float(LiteralValue::from(1e15), "1000000000000000")]
+#[case::larger_float(LiteralValue::from(1e16), "10000000000000000")]
+#[case::long_mantissa(LiteralValue::from(1.234_567_890_123_456_8e17), "123456789012345680")]
+#[case::float_1e22(LiteralValue::from(1e22), "10000000000000000000000")]
+#[case::small_float(LiteralValue::from(0.0001), "0.0001")]
+#[case::smaller_float(LiteralValue::from(1e-7), "0.0000001")]
+#[case::negative_zero(LiteralValue::from(-0.0), "-0")]
+#[case::nan(LiteralValue::from(f64::NAN), "NaN")]
 #[case::infinity(LiteralValue::from(f64::INFINITY), "inf")]
 #[case::negative_infinity(LiteralValue::from(f64::NEG_INFINITY), "-inf")]
-#[case::padded_integer_text(LiteralValue::parse_text("05").expect("an integer text"), "05")]
-#[case::decimal_text_trailing_zero(LiteralValue::parse_text("1.50").expect("a decimal text"), "1.50")]
-#[case::decimal_text_no_whole_part(LiteralValue::parse_text(".5").expect("a decimal text"), ".5")]
-#[case::decimal_text_no_fraction(LiteralValue::parse_text("1.").expect("a decimal text"), "1.")]
-fn format_expression_writes_a_literal_as_given(
+#[case::padded_integer_text(LiteralValue::parse_text("05").expect("an integer text"), "5")]
+#[case::decimal_trailing_zero(LiteralValue::parse_text("1.50").expect("a decimal text"), "1.5")]
+#[case::decimal_no_whole_part(LiteralValue::parse_text(".5").expect("a decimal text"), "0.5")]
+#[case::decimal_no_fraction(LiteralValue::parse_text("1.").expect("a decimal text"), "1")]
+#[case::decimal_hundred(LiteralValue::parse_text("100.0").expect("a decimal text"), "100")]
+fn format_expression_writes_a_literal_as_its_display_text(
     #[case] value: LiteralValue,
     #[case] expected: &str,
 ) {
@@ -358,8 +356,8 @@ fn format_expression_writes_unary_of_negative_literal_with_two_signs(
 }
 
 /// Test a negative literal operand of a binary node is written bare, with
-/// its sign, as the Python printer writes it, so a negative literal base
-/// reads `(-1 ** 2)` while a negation of a positive base reads `((-1) ** 2)`.
+/// its sign, so a negative literal base reads `(-1 ** 2)` while a negation
+/// of a positive base reads `((-1) ** 2)`.
 #[rstest]
 #[case::subtract_negative_integer(
     || Expression::new_binary(BinaryOperation::Subtract, build_identifier("x").1, -1),
@@ -373,8 +371,8 @@ fn format_expression_writes_unary_of_negative_literal_with_two_signs(
 )]
 #[case::multiply_negative_zero(
     || Expression::new_binary(BinaryOperation::Multiply, build_identifier("x").1, -0.0),
-    "(x * -0.0)",
-    "(multiply x -0.0)"
+    "(x * -0)",
+    "(multiply x -0)"
 )]
 #[case::negative_literal_base(
     || Expression::new_binary(BinaryOperation::Power, -1, 2),
@@ -410,15 +408,18 @@ fn format_expression_writes_a_negative_literal_operand_bare(
     assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
 }
 
-/// Test an integer and the integer text of the same value print alike.
+/// Test the unequal integer, float and decimal literals of one print alike.
 #[test]
-fn format_expression_writes_integer_and_integer_text_alike() {
-    let integer = build_literal(5);
-    let text = build_text_literal("5");
+fn format_expression_writes_int_float_and_decimal_one_alike() {
+    let integer = build_literal(1);
+    let float = build_literal(1.0);
+    let decimal = build_decimal_literal("1.0");
 
-    let texts = (format_symbolic(&integer), format_symbolic(&text));
+    let texts = [&integer, &float, &decimal].map(format_symbolic);
 
-    assert_eq!(texts, ("5".to_owned(), "5".to_owned()));
+    assert_ne!(integer, float);
+    assert_ne!(integer, decimal);
+    assert_eq!(texts, ["1", "1", "1"].map(str::to_owned));
 }
 
 // =============================================================================
@@ -578,7 +579,7 @@ fn format_expression_writes_single_case_piecewise_in_braces() {
 
     let text = format_symbolic(&piecewise);
 
-    assert_eq!(text, "{1 if True; 2 otherwise}");
+    assert_eq!(text, "{1 if true; 2 otherwise}");
 }
 
 /// Test a multi-case piecewise writes every case in order, then the
@@ -596,7 +597,7 @@ fn format_expression_writes_every_piecewise_case_then_otherwise() {
 
     let text = format_symbolic(&piecewise);
 
-    assert_eq!(text, "{1 if True; 2 if False; 3 otherwise}");
+    assert_eq!(text, "{1 if true; 2 if false; 3 otherwise}");
 }
 
 /// Test functional notation writes a piecewise as `(piecewise c v o)`.
@@ -607,7 +608,7 @@ fn format_expression_writes_piecewise_functionally() {
 
     let text = format_functional(&piecewise);
 
-    assert_eq!(text, "(piecewise True 1 2)");
+    assert_eq!(text, "(piecewise true 1 2)");
 }
 
 /// Test functional notation lists every condition and value pair, then the
@@ -625,7 +626,7 @@ fn format_expression_writes_multi_case_piecewise_functionally() {
 
     let text = format_functional(&piecewise);
 
-    assert_eq!(text, "(piecewise True 1 False 2 3)");
+    assert_eq!(text, "(piecewise true 1 false 2 3)");
 }
 
 /// Test symbolic notation writes a case's value before its condition and
@@ -689,7 +690,7 @@ fn format_expression_writes_nested_piecewise_inside_a_case_value() {
 
     let text = format_symbolic(&outer);
 
-    assert_eq!(text, "{{1 if False; 2 otherwise} if True; 3 otherwise}");
+    assert_eq!(text, "{{1 if false; 2 otherwise} if true; 3 otherwise}");
 }
 
 // =============================================================================
@@ -779,8 +780,8 @@ fn format_expression_writes_the_gelu_body() {
     assert_eq!(
         texts,
         (
-            "((0.5 * x) * (1.0 + erf((x / sqrt(2.0)))))".to_owned(),
-            "(multiply (multiply 0.5 x) (add 1.0 (erf (divide x (sqrt 2.0)))))".to_owned(),
+            "((0.5 * x) * (1 + erf((x / sqrt(2)))))".to_owned(),
+            "(multiply (multiply 0.5 x) (add 1 (erf (divide x (sqrt 2)))))".to_owned(),
         )
     );
 }
@@ -804,8 +805,8 @@ fn format_expression_writes_the_sign_body() {
     assert_eq!(
         texts,
         (
-            "{1 if (x > 0.0); -1 if (x < 0.0); 0 otherwise}".to_owned(),
-            "(piecewise (greater x 0.0) 1 (less x 0.0) -1 0)".to_owned(),
+            "{1 if (x > 0); -1 if (x < 0); 0 otherwise}".to_owned(),
+            "(piecewise (greater x 0) 1 (less x 0) -1 0)".to_owned(),
         )
     );
 }
@@ -851,7 +852,7 @@ impl DeepShape {
     fn expected_pieces(self) -> [(&'static str, &'static str); 2] {
         match self {
             Self::LeftSum => [("(", " + 1)"), ("(add ", " 1)")],
-            Self::RightConjunction => [("(True && ", ")"), ("(logical_and True ", ")")],
+            Self::RightConjunction => [("(true && ", ")"), ("(logical_and true ", ")")],
             Self::Negation => [("(-", ")"), ("(negate ", ")")],
             Self::PiecewiseInOtherwise => [("{1 if p; ", " otherwise}"), ("(piecewise p 1 ", ")")],
             Self::PiecewiseInCondition => [("{1 if ", "; 0 otherwise}"), ("(piecewise ", " 1 0)")],

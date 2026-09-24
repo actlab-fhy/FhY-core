@@ -6,11 +6,10 @@
 
 use crate::support::expression as expression_support;
 
-use expression_support::{build_identifier, build_literal, build_text_literal};
+use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand,
-    LiteralKind, LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or,
-    build_piecewise,
+    LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -388,17 +387,17 @@ fn build_big_operand() -> BigInt {
     "-100000000000000000000".parse().expect("digits")
 }
 
-/// Return the literal kind of `expression`, or `None` if it is not a
+/// Return the literal variant of `expression`, or `None` if it is not a
 /// literal.
-fn find_literal_kind(expression: &Expression) -> Option<LiteralKind<'_>> {
+fn find_literal_variant(expression: &Expression) -> Option<std::mem::Discriminant<LiteralValue>> {
     match expression.kind() {
-        ExpressionKind::Literal(literal) => Some(literal.kind()),
+        ExpressionKind::Literal(literal) => Some(std::mem::discriminant(literal)),
         _ => None,
     }
 }
 
 /// Test every operand type lifts to the expression it stands for, a literal
-/// operand keeping its stored kind.
+/// operand keeping its variant.
 #[rstest]
 #[case::owned_expression(|_: &Identifier, reference: &Expression| (
     Expression::new_unary(UnaryOperation::Negate, reference.clone()),
@@ -425,7 +424,7 @@ fn find_literal_kind(expression: &Expression) -> Option<LiteralKind<'_>> {
         UnaryOperation::Negate,
         LiteralValue::parse_text("5").expect("an integer text"),
     ),
-    build_text_literal("5"),
+    build_literal(LiteralValue::parse_text("5").expect("an integer text")),
 ))]
 #[case::i64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i64), build_literal(7)))]
 #[case::i32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i32), build_literal(7)))]
@@ -444,8 +443,8 @@ fn expression_new_binary_lifts_every_operand_type(#[case] lift: LiftOperand) {
         panic!("expected a unary node, got {built:?}");
     };
     assert_eq!(
-        find_literal_kind(node.operand()),
-        find_literal_kind(&operand)
+        find_literal_variant(node.operand()),
+        find_literal_variant(&operand)
     );
     assert_eq!(
         built,
@@ -489,13 +488,15 @@ fn expression_new_unary_constructs_with_literal_coercion() {
 }
 
 /// Test a numeric text becomes an operand through an explicit literal value,
-/// keeping its spelling and its text kind.
+/// normalized: an integer text to its integer, a decimal text to its
+/// decimal, and the `Display` of either without the spelling.
 #[rstest]
-#[case::integer_text("5", LiteralKind::IntegerText("5"))]
-#[case::decimal_text("1.5", LiteralKind::DecimalText("1.5"))]
+#[case::integer_text("05", "int", "5")]
+#[case::decimal_text("1.50", "decimal", "1.5")]
 fn expression_binary_builder_takes_a_parsed_text_operand(
     #[case] text: &str,
-    #[case] expected: LiteralKind<'static>,
+    #[case] expected_variant: &str,
+    #[case] expected_display: &str,
 ) {
     let parsed = LiteralValue::parse_text(text).expect("a literal text");
 
@@ -507,8 +508,13 @@ fn expression_binary_builder_takes_a_parsed_text_operand(
     let ExpressionKind::Literal(right) = node.right().kind() else {
         panic!("expected a literal right operand, got {:?}", node.right());
     };
-    assert_eq!(right.kind(), expected);
-    assert_eq!(right.to_string(), text);
+    let variant = match right {
+        LiteralValue::Int(_) => "int",
+        LiteralValue::Decimal(_) => "decimal",
+        LiteralValue::Bool(_) | LiteralValue::Float(_) => "other",
+    };
+    assert_eq!(variant, expected_variant);
+    assert_eq!(right.to_string(), expected_display);
 }
 
 // =============================================================================
@@ -857,21 +863,4 @@ fn expression_build_error_display_describes_the_failure(
     let message = error.to_string();
 
     assert_eq!(message, expected);
-}
-
-/// Test a decimal text operand keeps its exact spelling in the tree.
-#[test]
-fn expression_text_operand_keeps_its_spelling() {
-    let (_, x) = build_identifier("x");
-
-    let built = &x * build_text_literal("0.10");
-
-    let ExpressionKind::Binary(node) = built.kind() else {
-        panic!("expected a binary node, got {built:?}");
-    };
-    assert_eq!(node.right(), &build_text_literal("0.1"));
-    let ExpressionKind::Literal(literal) = node.right().kind() else {
-        panic!("expected a literal, got {:?}", node.right());
-    };
-    assert_eq!(literal.to_string(), "0.10");
 }

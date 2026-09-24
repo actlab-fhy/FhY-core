@@ -7,8 +7,8 @@
 //! it as a compiler pass. Every unary and binary node is
 //! parenthesized, so the text shows the tree's shape exactly and needs no
 //! precedence rules. The text is meant for people: it is not parsed back,
-//! and distinct trees may print alike (the literal `5` and the literal text
-//! `"5"`, or two identifiers with the same name hint when ids are hidden).
+//! and distinct trees may print alike (the integer `1` and the float `1.0`,
+//! or two identifiers with the same name hint when ids are hidden).
 
 use std::iter;
 
@@ -361,8 +361,8 @@ fn print_node<'a>(
 /// order, then the otherwise branch; arguments in order.
 ///
 /// A literal is written as its [`Display`](std::fmt::Display) text in both
-/// notations (`True`, `-1`, `1e+16`, `nan`, `1.50`); a unary node over a
-/// negative literal therefore reads `(--1)`. An identifier reference is
+/// notations (`true`, `-1`, `10000000000000000`, `NaN`, `1.5`); a unary
+/// node over a negative literal therefore reads `(--1)`. An identifier reference is
 /// written as its name hint, or as `name::id` under
 /// [`IdentifierStyle::NameHintWithId`], in both notations and with no
 /// quoting or escaping of the name hint.

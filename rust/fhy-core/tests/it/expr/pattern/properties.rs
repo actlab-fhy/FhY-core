@@ -25,8 +25,7 @@ use fhy_core::expr::pattern::{
     match_pattern,
 };
 use fhy_core::expr::{
-    BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
-    build_call,
+    BinaryOperation, Expression, ExpressionKind, LiteralValue, UnaryOperation, build_call,
 };
 use fhy_core::identifier::Identifier;
 use proptest::prelude::*;
@@ -217,8 +216,8 @@ fn build_environment_strategy() -> impl Strategy<Value = HashMap<Identifier, i64
 /// for every `x`.
 fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i64>) -> i64 {
     match expression.kind() {
-        ExpressionKind::Literal(literal) => match literal.kind() {
-            LiteralKind::Int(value) => i64::try_from(value).expect("a 64-bit integer literal"),
+        ExpressionKind::Literal(literal) => match literal {
+            LiteralValue::Int(value) => i64::try_from(value).expect("a 64-bit integer literal"),
             other => panic!("a numeric tree holds only integers, got {other:?}"),
         },
         ExpressionKind::Identifier(identifier) => environment[identifier],

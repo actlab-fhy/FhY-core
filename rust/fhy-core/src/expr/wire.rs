@@ -18,7 +18,7 @@ use serde_json::{Number, Value};
 use crate::decode;
 use crate::identifier::{Identifier, IdentifierWire};
 
-use super::literal::{LiteralKind, LiteralValue};
+use super::literal::{Decimal, LiteralValue};
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
     UnaryExpression, validate_case_count, validate_condition_literal, validate_function_name,
@@ -140,9 +140,9 @@ impl Serialize for CaseColumn<'_> {
 
 impl Serialize for LiteralWire<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.0.kind() {
-            LiteralKind::Bool(value) => serializer.serialize_bool(value),
-            LiteralKind::Int(value) => {
+        match self.0 {
+            LiteralValue::Bool(value) => serializer.serialize_bool(*value),
+            LiteralValue::Int(value) => {
                 if let Some(small) = value.to_i64() {
                     serializer.serialize_i64(small)
                 } else if let Some(unsigned) = value.to_u64() {
@@ -153,13 +153,11 @@ impl Serialize for LiteralWire<'_> {
                         .serialize(serializer)
                 }
             }
-            LiteralKind::Float(value) if value.is_finite() => serializer.serialize_f64(value),
-            LiteralKind::Float(value) => Err(ser::Error::custom(format_args!(
+            LiteralValue::Float(value) if value.is_finite() => serializer.serialize_f64(*value),
+            LiteralValue::Float(value) => Err(ser::Error::custom(format_args!(
                 "the float literal {value} has no wire form"
             ))),
-            LiteralKind::IntegerText(text) | LiteralKind::DecimalText(text) => {
-                serializer.serialize_str(text)
-            }
+            LiteralValue::Decimal(value) => serializer.collect_str(value),
         }
     }
 }
@@ -177,10 +175,10 @@ impl Serialize for LiteralWire<'_> {
 /// | `call_expression` | `function_name`, `arguments` (list) |
 ///
 /// A literal's `value` is a JSON Boolean, an integer of any size written as
-/// a JSON integer, a float written as a JSON float, or an integer or decimal
-/// text written as a string. Deserializing reads an integer token as an
-/// integer literal and a float token as a float literal, never the one as
-/// the other.
+/// a JSON integer, a float written as a JSON float, or a decimal written as
+/// a string holding its `Display` text. Deserializing reads an integer token
+/// as an integer literal and a float token as a float literal, never the one
+/// as the other, and a string in the literal grammar as a decimal.
 ///
 /// An integer in the `i64` range serializes through `serialize_i64`, and
 /// one above it up to `u64::MAX` through `serialize_u64`. Any other integer
@@ -311,7 +309,10 @@ fn parse_literal_value(value: &Value) -> Result<LiteralValue, String> {
                     .ok_or_else(|| format!("the integer {token} is malformed"))
             }
         }
-        Value::String(text) => LiteralValue::parse_text(text).map_err(|error| error.to_string()),
+        Value::String(text) => text
+            .parse::<Decimal>()
+            .map(LiteralValue::Decimal)
+            .map_err(|error| error.to_string()),
         other => Err(format!(
             "expected a Boolean, a number, or a numeric text as a literal value, got {}",
             describe_value(other)

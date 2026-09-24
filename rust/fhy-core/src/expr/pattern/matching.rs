@@ -13,6 +13,7 @@
 //! Structural mismatches are not errors; only a predicate supplied by the
 //! caller can fail, with a [`CallbackError`].
 
+use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::fmt;
@@ -73,13 +74,27 @@ enum PatternKind {
 /// Return whether `expression` is a literal stored exactly as `value`, or
 /// any literal for `None`.
 ///
-/// Stored forms compare variant by variant with the raw values' `==`, so
-/// `0.0` equals `-0.0`, a NaN equals nothing, and texts compare verbatim.
+/// Literals compare variant by variant with the raw values' `==`, so `0.0`
+/// equals `-0.0` and a NaN equals nothing.
 fn match_literal(value: Option<&LiteralValue>, expression: &Expression) -> bool {
     let ExpressionKind::Literal(candidate) = expression.kind() else {
         return false;
     };
-    value.is_none_or(|wanted| wanted.kind() == candidate.kind())
+    value.is_none_or(|wanted| is_stored_alike(wanted, candidate))
+}
+
+/// Return whether `left` and `right` are the same variant with raw values
+/// equal under the value type's own `==`.
+fn is_stored_alike(left: &LiteralValue, right: &LiteralValue) -> bool {
+    match (left, right) {
+        (LiteralValue::Bool(left), LiteralValue::Bool(right)) => left == right,
+        (LiteralValue::Int(left), LiteralValue::Int(right)) => left == right,
+        (LiteralValue::Float(left), LiteralValue::Float(right)) => {
+            left.partial_cmp(right) == Some(Ordering::Equal)
+        }
+        (LiteralValue::Decimal(left), LiteralValue::Decimal(right)) => left == right,
+        _ => false,
+    }
 }
 
 /// Match each `(pattern, expression)` pair in order, threading `bindings`
@@ -170,14 +185,12 @@ impl Pattern {
     /// Build a pattern matching a literal: any literal for `None`, or a
     /// literal with exactly the stored form of `value`.
     ///
-    /// Exactly the stored form means the same [`LiteralKind`] variant and
-    /// an equal raw value, not literal equality: the integer `5` matches
-    /// neither the integer text `"5"` or `"05"` nor the float `5.0`, the
-    /// integer `1` does not match the Boolean `true`, the decimal text
-    /// `"1.5"` does not match `"1.50"`, the float `0.0` matches `-0.0`, and
-    /// a NaN value matches no literal at all.
-    ///
-    /// [`LiteralKind`]: crate::expr::LiteralKind
+    /// Exactly the stored form means the same [`LiteralValue`] variant and
+    /// an equal raw value: the integer `5` matches the integer parsed from
+    /// `"05"` but not the float `5.0` or the decimal `5`, the integer `1`
+    /// does not match the Boolean `true`, the decimal parsed from `"1.5"`
+    /// matches the one parsed from `"1.50"`, the float `0.0` matches `-0.0`,
+    /// and a NaN value matches no literal at all.
     #[must_use]
     pub fn literal(value: Option<LiteralValue>) -> Self {
         Self(PatternKind::Literal(value))

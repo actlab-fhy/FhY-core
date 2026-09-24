@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
-    DEEP_TREE_DEPTH, PATTERN_MATCH_STACK_BYTES, build_call_or_panic, build_deep_sum,
-    build_identifier, build_literal, build_text_literal,
+    DEEP_TREE_DEPTH, PATTERN_MATCH_STACK_BYTES, build_call_or_panic, build_decimal_literal,
+    build_deep_sum, build_identifier, build_literal,
 };
 use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
@@ -31,6 +31,12 @@ use pattern_support::{
 };
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack, run_on_stack};
+
+/// Return the literal expression `LiteralValue::parse_text` reads from
+/// `text`.
+fn build_parsed_literal(text: &str) -> Expression {
+    build_literal(LiteralValue::parse_text(text).expect("the text is a literal text"))
+}
 
 /// Return the bound names of `bindings` in binding order.
 fn collect_names(bindings: &MatchBindings) -> Vec<&str> {
@@ -206,9 +212,9 @@ fn match_bindings_try_bind_confirms_a_structurally_equal_compound() {
 }
 
 /// Test confirmation uses literal equality: `5` confirms a binding to the
-/// integer text `"05"`, and a NaN confirms a binding to a NaN.
+/// integer parsed from `"05"`, and a NaN confirms a binding to a NaN.
 #[rstest]
-#[case::integer_and_integer_text(build_text_literal("05"), build_literal(5))]
+#[case::integer_and_integer_text(build_parsed_literal("05"), build_literal(5))]
 #[case::nan_and_nan(build_literal(f64::NAN), build_literal(f64::NAN))]
 #[case::zero_and_negative_zero(build_literal(0.0), build_literal(-0.0))]
 fn match_bindings_try_bind_confirms_an_equal_literal_in_another_form(
@@ -223,12 +229,13 @@ fn match_bindings_try_bind_confirms_an_equal_literal_in_another_form(
     assert!(Expression::ptr_eq(expect_bound(&rebound, "x"), &first));
 }
 
-/// Test a literal of another bucket does not confirm a binding.
+/// Test a literal of another variant does not confirm a binding.
 #[rstest]
 #[case::integer_and_float(build_literal(1), build_literal(1.0))]
 #[case::integer_and_bool(build_literal(1), build_literal(true))]
-#[case::float_and_decimal_text(build_literal(1.5), build_text_literal("1.5"))]
-fn match_bindings_try_bind_refuses_a_literal_of_another_bucket(
+#[case::float_and_decimal(build_literal(1.5), build_decimal_literal("1.5"))]
+#[case::integer_and_decimal(build_literal(1), build_decimal_literal("1"))]
+fn match_bindings_try_bind_refuses_a_literal_of_another_variant(
     #[case] first: Expression,
     #[case] second: Expression,
 ) {
@@ -288,7 +295,7 @@ fn match_bindings_with_equal_content_are_equal_and_hash_equally() {
 #[test]
 fn match_bindings_equality_compares_expressions_structurally() {
     let left = bind(&MatchBindings::empty(), "x", &build_literal(5));
-    let right = bind(&MatchBindings::empty(), "x", &build_text_literal("05"));
+    let right = bind(&MatchBindings::empty(), "x", &build_parsed_literal("05"));
 
     assert_eq!(left, right);
     assert_eq!(hash_of(&left), hash_of(&right));
@@ -499,9 +506,10 @@ fn pattern_capture_repeated_over_different_operands_fails() {
 }
 
 /// Test a repeated capture over equal literals in different forms matches
-/// and keeps the first operand: `5 - "5"` and `NaN - NaN`.
+/// and keeps the first operand: `5` minus the integer parsed from `"05"`,
+/// and `NaN - NaN`.
 #[rstest]
-#[case::integer_and_integer_text(build_literal(5), build_text_literal("5"))]
+#[case::integer_and_integer_text(build_literal(5), build_parsed_literal("05"))]
 #[case::nan_and_nan(build_literal(f64::NAN), build_literal(f64::NAN))]
 fn pattern_capture_repeated_over_equal_literals_keeps_the_first(
     #[case] left: Expression,
@@ -553,14 +561,14 @@ fn pattern_capture_records_bindings_in_completion_order() {
 // Literal
 // =============================================================================
 
-/// Test a literal pattern without a value matches a literal of every stored
-/// form.
+/// Test a literal pattern without a value matches a literal of every
+/// variant.
 #[rstest]
 #[case::integer(build_literal(5))]
 #[case::float(build_literal(2.75))]
 #[case::boolean(build_literal(true))]
-#[case::integer_text(build_text_literal("05"))]
-#[case::decimal_text(build_text_literal("1.50"))]
+#[case::integer_text(build_parsed_literal("05"))]
+#[case::decimal(build_decimal_literal("1.50"))]
 #[case::nan(build_literal(f64::NAN))]
 fn pattern_literal_without_value_matches_every_literal(#[case] expression: Expression) {
     let bindings = match_infallibly(&Pattern::literal(None), &expression);
@@ -593,7 +601,8 @@ fn pattern_literal_rejects_non_literal_nodes(
     );
 }
 
-/// Test a literal pattern with a value matches a literal stored exactly so.
+/// Test a literal pattern with a value matches a literal of its variant and
+/// raw value, whatever text the two were parsed from.
 #[rstest]
 #[case::integer(LiteralValue::from(5), build_literal(5))]
 #[case::big_integer(
@@ -606,11 +615,24 @@ fn pattern_literal_rejects_non_literal_nodes(
 #[case::boolean(LiteralValue::from(false), build_literal(false))]
 #[case::integer_text(
     LiteralValue::parse_text("05").expect("a text"),
-    build_text_literal("05")
+    build_parsed_literal("05")
 )]
 #[case::decimal_text(
     LiteralValue::parse_text("1.50").expect("a text"),
-    build_text_literal("1.50")
+    build_decimal_literal("1.50")
+)]
+#[case::integer_and_integer_text(LiteralValue::from(5), build_parsed_literal("5"))]
+#[case::integer_text_and_integer(
+    LiteralValue::parse_text("5").expect("a text"),
+    build_literal(5)
+)]
+#[case::integer_texts_spelled_differently(
+    LiteralValue::parse_text("5").expect("a text"),
+    build_parsed_literal("05")
+)]
+#[case::decimal_texts_spelled_differently(
+    LiteralValue::parse_text("1.5").expect("a text"),
+    build_decimal_literal("1.50")
 )]
 fn pattern_literal_matches_an_exactly_stored_value(
     #[case] value: LiteralValue,
@@ -622,27 +644,15 @@ fn pattern_literal_matches_an_exactly_stored_value(
     assert!(bindings.is_empty());
 }
 
-/// Test a literal pattern with a value rejects a literal stored in another
-/// form or with another value, even an equal literal.
+/// Test a literal pattern with a value rejects a literal of another variant
+/// or with another raw value, even a NaN of an equal literal.
 #[rstest]
 #[case::other_integer(LiteralValue::from(5), build_literal(6))]
 #[case::integer_and_float(LiteralValue::from(5), build_literal(5.0))]
 #[case::integer_and_bool(LiteralValue::from(1), build_literal(true))]
 #[case::bool_and_integer(LiteralValue::from(true), build_literal(1))]
-#[case::integer_and_integer_text(LiteralValue::from(5), build_text_literal("5"))]
-#[case::integer_text_and_integer(
-    LiteralValue::parse_text("5").expect("a text"),
-    build_literal(5)
-)]
-#[case::integer_texts_spelled_differently(
-    LiteralValue::parse_text("5").expect("a text"),
-    build_text_literal("05")
-)]
-#[case::decimal_texts_spelled_differently(
-    LiteralValue::parse_text("1.5").expect("a text"),
-    build_text_literal("1.50")
-)]
-#[case::float_and_decimal_text(LiteralValue::from(1.5), build_text_literal("1.5"))]
+#[case::integer_and_decimal(LiteralValue::from(5), build_decimal_literal("5"))]
+#[case::float_and_decimal(LiteralValue::from(1.5), build_decimal_literal("1.5"))]
 #[case::nan_and_nan(LiteralValue::from(f64::NAN), build_literal(f64::NAN))]
 fn pattern_literal_rejects_another_stored_form(
     #[case] value: LiteralValue,

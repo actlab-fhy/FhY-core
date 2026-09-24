@@ -28,7 +28,7 @@ pub use build::{IntoOperand, build_call, build_logical_and, build_logical_or, bu
 pub use error::{
     BooleanPosition, ExpressionBuildError, NonBooleanLogicalOperandError, NonInjectiveRenamingError,
 };
-pub use literal::{LiteralKind, LiteralTextError, LiteralValue};
+pub use literal::{Decimal, LiteralTextError, LiteralValue};
 pub use node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
     UnaryExpression,
@@ -43,7 +43,7 @@ pub use sort::FunctionSort;
 pub use symbol_type::SymbolType;
 
 /// The arbitrary-precision signed integer an integer literal holds, as
-/// [`LiteralKind::Int`] shows it and as [`LiteralValue::from`] and the
+/// [`LiteralValue::Int`] holds it and as [`LiteralValue::from`] and the
 /// expression builders take it.
 ///
 /// This is `num_bigint::BigInt` itself, re-exported so that callers need
@@ -54,11 +54,11 @@ pub use symbol_type::SymbolType;
 /// # Examples
 ///
 /// ```
-/// use fhy_core::expr::{BigInt, LiteralKind, LiteralValue};
+/// use fhy_core::expr::{BigInt, LiteralValue};
 ///
 /// let big: BigInt = "100000000000000000000".parse().expect("digits");
 /// let literal = LiteralValue::from(big.clone());
 ///
-/// assert_eq!(literal.kind(), LiteralKind::Int(&big));
+/// assert!(matches!(literal, LiteralValue::Int(value) if value == big));
 /// ```
 pub use num_bigint::BigInt;

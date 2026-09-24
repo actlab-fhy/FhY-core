@@ -12,17 +12,25 @@ use crate::support::stack as stack_support;
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    build_call_node_or_panic, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
-    build_piecewise_node_or_panic, build_text_literal, copy_deeply, is_doubling_dag_over,
+    build_call_node_or_panic, build_decimal_literal, build_deep_sum, build_doubling_dag,
+    build_identifier, build_literal, build_piecewise_node_or_panic, copy_deeply,
+    is_doubling_dag_over,
 };
 use fhy_core::expr::{
     AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression,
-    ExpressionBuildError, ExpressionKind, PiecewiseExpression, UnaryExpression, UnaryOperation,
+    ExpressionBuildError, ExpressionKind, LiteralValue, PiecewiseExpression, UnaryExpression,
+    UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
+
+/// Return the literal expression `LiteralValue::parse_text` reads from
+/// `text`.
+fn build_parsed_literal(text: &str) -> Expression {
+    build_literal(LiteralValue::parse_text(text).expect("the text is a literal text"))
+}
 
 /// Return the unary node `expression` refers to.
 fn expect_unary(expression: &Expression) -> &UnaryExpression {
@@ -189,8 +197,8 @@ fn piecewise_expression_try_new_accepts_boolean_literal_condition(#[case] value:
 #[case::int_one(build_literal(1))]
 #[case::int_zero(build_literal(0))]
 #[case::float(build_literal(5.0))]
-#[case::integer_text(build_text_literal("5"))]
-#[case::decimal_text(build_text_literal("1.5"))]
+#[case::integer_text(build_parsed_literal("5"))]
+#[case::decimal(build_decimal_literal("1.5"))]
 fn piecewise_expression_try_new_rejects_non_boolean_literal_condition(
     #[case] condition: Expression,
 ) {
@@ -905,12 +913,12 @@ fn expression_set_of_equal_trees_keeps_one_member(#[case] build: fn() -> Express
     assert_eq!(set.len(), 1);
 }
 
-/// Test equal trees hash equally, literals compared by equivalence bucket.
+/// Test equal trees hash equally, literals compared by literal equality.
 #[test]
 fn expression_equal_trees_hash_equally() {
     let (_, x) = build_identifier("x");
     let first = &x + 5;
-    let second = &x + build_text_literal("05");
+    let second = &x + LiteralValue::parse_text("05").expect("an integer text");
     assert_eq!(first, second);
 
     assert_eq!(hash_of(&first), hash_of(&second));
@@ -918,7 +926,7 @@ fn expression_equal_trees_hash_equally() {
 
 /// Test literal expressions compare by literal equivalence.
 #[rstest]
-#[case::integer_and_text(build_literal(5), build_text_literal("05"), true)]
+#[case::integer_and_text(build_literal(5), build_parsed_literal("05"), true)]
 #[case::nan_payloads(
     build_literal(f64::NAN),
     build_literal(f64::from_bits(0xFFF8_0000_0000_0001)),
@@ -927,7 +935,8 @@ fn expression_equal_trees_hash_equally() {
 #[case::zeros(build_literal(0.0), build_literal(-0.0), true)]
 #[case::integer_and_float(build_literal(1), build_literal(1.0), false)]
 #[case::integer_and_bool(build_literal(1), build_literal(true), false)]
-#[case::decimal_and_float(build_text_literal("1.5"), build_literal(1.5), false)]
+#[case::decimal_and_float(build_decimal_literal("1.5"), build_literal(1.5), false)]
+#[case::decimal_and_integer(build_decimal_literal("1"), build_literal(1), false)]
 fn expression_literal_equality_follows_literal_equivalence(
     #[case] left: Expression,
     #[case] right: Expression,
@@ -979,7 +988,7 @@ fn expression_reordered_piecewise_cases_are_unequal() {
 #[case::integer_literal(build_literal(1), build_literal(2))]
 #[case::float_literal(build_literal(1.5), build_literal(2.5))]
 #[case::bool_literal(build_literal(true), build_literal(false))]
-#[case::decimal_text_literal(build_text_literal("1.5"), build_text_literal("2.5"))]
+#[case::decimal_literal(build_decimal_literal("1.5"), build_decimal_literal("2.5"))]
 fn expression_trees_differing_anywhere_are_unequal_and_hash_differently(
     #[case] left: Expression,
     #[case] right: Expression,

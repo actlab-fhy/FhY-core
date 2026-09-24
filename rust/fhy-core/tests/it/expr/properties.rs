@@ -3,8 +3,8 @@
 //! Covers the free-identifier law of substitution, structural equality as an
 //! equivalence consistent with hashing, rebuilding and substituting as
 //! identities, the JSON round trip, renaming free identifiers, the laws
-//! of literal equality, canonical keys, the integer-bucket predicate, and
-//! text `Display`, and, over DAGs sharing their subtrees at random, that
+//! of literal equality and hashing, literal normalization and `Display`,
+//! and, over DAGs sharing their subtrees at random, that
 //! every analysis answers as it does for an unshared copy.
 //!
 //! Public API only (`fhy_core::expr`).
@@ -20,7 +20,7 @@ use expression_support::{
     build_literal_strategy, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expr::{
-    AlphaRenaming, Expression, ExpressionBuildError, ExpressionKind, FunctionSort, LiteralKind,
+    AlphaRenaming, Decimal, Expression, ExpressionBuildError, ExpressionKind, FunctionSort,
     LiteralValue, SortLookup, SymbolType, build_piecewise, validate_logical_operands,
     validate_predicate,
 };
@@ -39,8 +39,8 @@ static FRESH_POOL: LazyLock<[Identifier; 3]> = LazyLock::new(|| {
 });
 
 /// Literal spellings drawn from a small value space, so that equal literals
-/// in different spellings and buckets are drawn often: `b:` Boolean, `i:`
-/// integer, `f:` float, `t:` text.
+/// in different spellings and variants are drawn often: `b:` Boolean, `i:`
+/// integer, `f:` float, `t:` parsed text.
 const LITERAL_SPELLINGS: [&str; 22] = [
     "b:true", "b:false", "i:0", "i:1", "i:5", "t:0", "t:00", "t:5", "t:05", "t:1", "f:0.0",
     "f:-0.0", "f:5.0", "f:1.0", "f:NaN", "f:-NaN", "t:5.0", "t:5.00", "t:05.", "t:1.0", "t:.0",
@@ -74,7 +74,7 @@ fn does_substitution_break_a_condition(
             substitution.get(identifier).is_some_and(|replacement| {
                 matches!(
                     replacement.kind(),
-                    ExpressionKind::Literal(literal) if !matches!(literal.kind(), LiteralKind::Bool(_))
+                    ExpressionKind::Literal(literal) if !matches!(literal, LiteralValue::Bool(_))
                 )
             })
         }),
@@ -380,42 +380,45 @@ proptest! {
         prop_assert_eq!(expression == renamed, is_fixed);
     }
 
-    /// Test an integer and its digit text, zero-padded or not, share a key.
+    /// Test an integer and its digit text, zero-padded or not, are the same
+    /// integer literal.
     #[test]
-    fn literal_value_canonical_key_agrees_for_integer_and_digit_text(
+    fn literal_value_parse_text_of_digits_equals_the_integer(
         value in prop_oneof![0_i64..=1000, 0_i64..=i64::MAX],
         padding in 0_usize..=5,
     ) {
-        let integer_key = LiteralValue::from(value).canonical_key();
+        let integer = LiteralValue::from(value);
         let text = value.to_string();
         let padded = format!("{}{text}", "0".repeat(padding));
 
-        let text_key = LiteralValue::parse_text(&text).expect("digits").canonical_key();
-        let padded_key = LiteralValue::parse_text(&padded).expect("digits").canonical_key();
+        let from_text = LiteralValue::parse_text(&text).expect("digits");
+        let from_padded = LiteralValue::parse_text(&padded).expect("digits");
 
-        prop_assert_eq!(&integer_key, &text_key);
-        prop_assert_eq!(&integer_key, &padded_key);
+        prop_assert!(matches!(from_padded, LiteralValue::Int(_)), "{:?}", from_padded);
+        prop_assert_eq!(&integer, &from_text);
+        prop_assert_eq!(&integer, &from_padded);
     }
 
-    /// Test appending zeros after the decimal point keeps the key.
+    /// Test appending zeros after the decimal point keeps the decimal.
     #[test]
-    fn literal_value_canonical_key_ignores_trailing_decimal_zeros(
+    fn literal_value_decimal_ignores_trailing_zeros(
         base in "[0-9]{1,6}\\.[0-9]{0,6}|\\.[0-9]{1,6}",
         extra_zeros in 0_usize..=5,
     ) {
         let padded = format!("{base}{}", "0".repeat(extra_zeros));
 
-        let base_key = LiteralValue::parse_text(&base).expect("a decimal text").canonical_key();
-        let padded_key = LiteralValue::parse_text(&padded).expect("a decimal text").canonical_key();
+        let base_literal = LiteralValue::parse_text(&base).expect("a decimal text");
+        let padded_literal = LiteralValue::parse_text(&padded).expect("a decimal text");
 
-        prop_assert_eq!(base_key, padded_key);
+        prop_assert!(matches!(padded_literal, LiteralValue::Decimal(_)), "{:?}", padded_literal);
+        prop_assert_eq!(&base_literal, &padded_literal);
+        prop_assert_eq!(base_literal.to_string(), padded_literal.to_string());
     }
 
-    /// Test two literals are equal exactly when their keys are, equal
-    /// literals hash equally, and the integer-bucket predicate agrees on
-    /// them.
+    /// Test equal literals are of one variant and hash equally, over a small
+    /// value space where equal literals are drawn often.
     #[test]
-    fn literal_value_equality_agrees_with_key_hash_and_bucket(
+    fn literal_value_equality_agrees_with_hash_and_variant(
         left in select(LITERAL_SPELLINGS.to_vec()),
         right in select(LITERAL_SPELLINGS.to_vec()),
     ) {
@@ -424,40 +427,72 @@ proptest! {
 
         let equal = left == right;
 
-        prop_assert_eq!(equal, left.canonical_key() == right.canonical_key());
+        prop_assert_eq!(equal, right == left);
         if equal {
             prop_assert_eq!(hash_of(&left), hash_of(&right));
-            prop_assert_eq!(left.is_integer_valued(), right.is_integer_valued());
+            prop_assert_eq!(std::mem::discriminant(&left), std::mem::discriminant(&right));
         }
     }
 
-    /// Test two literals of any kind and size are equal exactly when their
-    /// keys are, and equal literals hash equally.
+    /// Test equality over literals of every kind and size is an equivalence
+    /// agreeing with hashing: reflexive (NaN included), symmetric,
+    /// transitive, and equal literals of one variant hash equally.
     #[test]
-    fn literal_value_equality_agrees_with_key_and_hash_over_every_literal(
+    fn literal_value_equality_is_an_equivalence_agreeing_with_hash(
         left in build_literal_strategy(true),
         right in build_literal_strategy(true),
+        middle in build_literal_strategy(true),
     ) {
         let equal = left == right;
 
-        prop_assert_eq!(equal, left.canonical_key() == right.canonical_key());
         prop_assert_eq!(&left, &left.clone());
+        prop_assert_eq!(equal, right == left);
+        if equal && right == middle {
+            prop_assert_eq!(&left, &middle);
+        }
         if equal {
             prop_assert_eq!(hash_of(&left), hash_of(&right));
+            prop_assert_eq!(std::mem::discriminant(&left), std::mem::discriminant(&right));
         }
     }
 
-    /// Test a literal text displays as given and an integer displays as its
-    /// digits.
+    /// Test an integer or a decimal displays as text that parses back to an
+    /// equal literal of the same variant.
     #[test]
-    fn literal_value_display_writes_texts_verbatim_and_integers_as_digits(
-        text in "[0-9]{1,8}(\\.[0-9]{0,8})?|\\.[0-9]{1,8}",
-        integer in any::<i64>(),
+    fn literal_value_display_parses_back_to_an_equal_int_or_decimal(
+        text in "[0-9]{1,40}(\\.[0-9]{0,40})?|\\.[0-9]{1,40}",
+        integer in any::<u64>(),
     ) {
-        let text_literal = LiteralValue::parse_text(&text).expect("a literal text");
+        let decimal_or_int = LiteralValue::parse_text(&text).expect("a literal text");
+        let integer = LiteralValue::from(integer);
 
-        prop_assert_eq!(text_literal.to_string(), text);
-        prop_assert_eq!(LiteralValue::from(integer).to_string(), integer.to_string());
+        let reparsed = LiteralValue::parse_text(&decimal_or_int.to_string())
+            .expect("the display text is in the grammar");
+        let reparsed_integer = LiteralValue::parse_text(&integer.to_string())
+            .expect("the digits are in the grammar");
+
+        match (&decimal_or_int, &reparsed) {
+            (LiteralValue::Int(_), LiteralValue::Int(_)) => prop_assert_eq!(&decimal_or_int, &reparsed),
+            (LiteralValue::Decimal(decimal), _) => {
+                let reparsed_decimal: Decimal = decimal.to_string().parse().expect("a decimal text");
+                prop_assert_eq!(decimal, &reparsed_decimal);
+            }
+            _ => prop_assert!(false, "{:?} reparsed as {:?}", decimal_or_int, reparsed),
+        }
+        prop_assert_eq!(integer, reparsed_integer);
+    }
+
+    /// Test reading a decimal's `Display` text gives back the same decimal,
+    /// for decimals of any length and point position.
+    #[test]
+    fn decimal_from_str_of_display_is_identity(
+        text in "[0-9]{1,60}(\\.[0-9]{0,60})?|\\.[0-9]{1,60}",
+    ) {
+        let decimal: Decimal = text.parse().expect("a literal text");
+
+        let reread: Decimal = decimal.to_string().parse().expect("the display text is in the grammar");
+
+        prop_assert_eq!(reread, decimal);
     }
 }
 

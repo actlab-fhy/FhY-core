@@ -29,7 +29,7 @@ use crate::tree::{
 
 use super::alpha::AlphaRenaming;
 use super::error::ExpressionBuildError;
-use super::literal::{LiteralKind, LiteralValue};
+use super::literal::LiteralValue;
 use super::operation::{BinaryOperation, UnaryOperation};
 
 /// The children of a node, in visiting order, from either end.
@@ -106,7 +106,7 @@ fn build_child_count_mismatch(expected: usize, actual: usize) -> ExpressionBuild
 /// Return the placeholder a node's kind is replaced with while its
 /// children are moved out to be dropped.
 fn build_drop_placeholder() -> ExpressionKind {
-    ExpressionKind::Literal(LiteralValue::from_bool(false))
+    ExpressionKind::Literal(LiteralValue::Bool(false))
 }
 
 /// Move the children out of `kind` onto `pending`.
@@ -816,7 +816,7 @@ pub(super) fn validate_condition_literal(
     case_index: usize,
     condition: &LiteralValue,
 ) -> Result<(), ExpressionBuildError> {
-    if !matches!(condition.kind(), LiteralKind::Bool(_)) {
+    if !matches!(condition, LiteralValue::Bool(_)) {
         return Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index });
     }
     Ok(())

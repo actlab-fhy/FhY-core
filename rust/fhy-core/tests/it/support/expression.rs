@@ -6,7 +6,7 @@ use fhy_core::expr::builtins::{
     ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, CallExpression, Expression, ExpressionKind, IntoOperand, LiteralKind,
+    BigInt, BinaryOperation, CallExpression, Decimal, Expression, ExpressionKind, IntoOperand,
     LiteralValue, PiecewiseExpression, UnaryOperation, build_call, build_logical_and,
     build_piecewise,
 };
@@ -42,14 +42,17 @@ pub(crate) fn build_literal(value: impl Into<LiteralValue>) -> Expression {
     Expression::from(value.into())
 }
 
-/// Return a literal expression holding the numeric text `text`.
+/// Return a decimal literal expression holding the value of the numeric
+/// text `text`, an integer text included.
 ///
 /// # Panics
 ///
 /// Panics if `text` is outside the literal grammar.
 #[must_use]
-pub(crate) fn build_text_literal(text: &str) -> Expression {
-    Expression::from(LiteralValue::parse_text(text).expect("the text is a literal text"))
+pub(crate) fn build_decimal_literal(text: &str) -> Expression {
+    Expression::from(LiteralValue::Decimal(
+        text.parse::<Decimal>().expect("the text is a literal text"),
+    ))
 }
 
 /// Return the piecewise expression `build_piecewise` builds from `cases`
@@ -228,7 +231,7 @@ static CALL_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 #[must_use]
 pub(crate) fn coerce_to_condition(expression: Expression) -> Expression {
     match expression.kind() {
-        ExpressionKind::Literal(literal) if !matches!(literal.kind(), LiteralKind::Bool(_)) => {
+        ExpressionKind::Literal(literal) if !matches!(literal, LiteralValue::Bool(_)) => {
             Expression::from(LiteralValue::from(true))
         }
         _ => expression,
@@ -266,7 +269,8 @@ fn build_finite_float_strategy() -> impl Strategy<Value = f64> {
 }
 
 /// Return a strategy for literals of every kind: Booleans, small and
-/// big integers, floats, and integer and decimal texts, short and long.
+/// big integers, floats, and integers and decimals parsed from texts, short
+/// and long.
 /// Floats are finite unless `with_non_finite_floats` is set, in which case
 /// NaNs of both signs and both infinities are drawn too.
 ///

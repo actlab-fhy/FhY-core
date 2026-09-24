@@ -11,11 +11,11 @@ use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
 use expression_support::{
-    DEEP_TREE_DEPTH, SERIALIZATION_STACK_BYTES, build_deep_sum, build_identifier, build_literal,
-    build_text_literal,
+    DEEP_TREE_DEPTH, SERIALIZATION_STACK_BYTES, build_decimal_literal, build_deep_sum,
+    build_identifier, build_literal,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralKind,
+    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
     UnaryOperation, build_call, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
@@ -47,11 +47,11 @@ fn build_identifier_wire(identifier: &Identifier) -> Value {
 }
 
 /// Return the literal an expression refers to, failing the test otherwise.
-fn expect_literal(expression: &Expression) -> LiteralKind<'_> {
+fn expect_literal(expression: &Expression) -> &LiteralValue {
     let ExpressionKind::Literal(literal) = expression.kind() else {
         panic!("expected a literal, got {expression:?}");
     };
-    literal.kind()
+    literal
 }
 
 // =============================================================================
@@ -83,7 +83,7 @@ fn expression_serializes_every_node_kind_in_its_wire_shape() {
             [
                 x_reference.clone(),
                 build_literal(1.5),
-                build_text_literal("2.50"),
+                build_decimal_literal("2.50"),
             ],
         )
         .expect("a named call"),
@@ -107,7 +107,7 @@ fn expression_serializes_every_node_kind_in_its_wire_shape() {
                 "__type__": "call_expression",
                 "__data__": {
                     "function_name": "max",
-                    "arguments": [x_wire, build_literal_wire(&json!(1.5)), build_literal_wire(&json!("2.50"))]
+                    "arguments": [x_wire, build_literal_wire(&json!(1.5)), build_literal_wire(&json!("2.5"))]
                 }
             }
         }
@@ -157,8 +157,11 @@ fn expression_serializes_fields_in_declaration_order() {
 #[case::integer(build_literal(-5), json!(-5))]
 #[case::float(build_literal(2.0), json!(2.0))]
 #[case::negative_zero(build_literal(-0.0), json!(-0.0))]
-#[case::integer_text(build_text_literal("05"), json!("05"))]
-#[case::decimal_text(build_text_literal("1.50"), json!("1.50"))]
+#[case::integer_text(
+    build_literal(LiteralValue::parse_text("05").expect("an integer text")),
+    json!(5)
+)]
+#[case::decimal(build_decimal_literal("1.50"), json!("1.5"))]
 fn expression_literal_serializes_as_the_json_value_of_its_kind(
     #[case] expression: Expression,
     #[case] value: Value,
@@ -185,7 +188,7 @@ fn expression_literal_writes_a_big_integer_as_a_json_integer(#[case] digits: &st
         text,
         format!("{{\"__type__\":\"literal_expression\",\"__data__\":{{\"value\":{digits}}}}}")
     );
-    assert_eq!(expect_literal(&restored), LiteralKind::Int(&value));
+    assert!(matches!(expect_literal(&restored), LiteralValue::Int(restored) if *restored == value));
 }
 
 /// Test an integer token reads as an integer literal and a float token as a
@@ -200,8 +203,8 @@ fn expression_literal_keeps_the_json_number_kind(#[case] token: &str, #[case] ki
         serde_json::from_str(&build_literal_wire_text(token)).expect("the text deserializes");
 
     match (expect_literal(&restored), kind) {
-        (LiteralKind::Int(value), "int") => assert_eq!(value.to_string(), token),
-        (LiteralKind::Float(value), "float") => assert_eq!(value.to_bits(), 5.0_f64.to_bits()),
+        (LiteralValue::Int(value), "int") => assert_eq!(value.to_string(), token),
+        (LiteralValue::Float(value), "float") => assert_eq!(value.to_bits(), 5.0_f64.to_bits()),
         (actual, _) => panic!("expected a {kind} literal from {token}, got {actual:?}"),
     }
 }
@@ -238,24 +241,30 @@ fn expression_literal_reads_an_underflowing_float_token_as_a_signed_zero(
     let restored: Expression =
         serde_json::from_str(&build_literal_wire_text(token)).expect("the text deserializes");
 
-    let LiteralKind::Float(value) = expect_literal(&restored) else {
+    let LiteralValue::Float(value) = expect_literal(&restored) else {
         panic!("expected a float literal from {token}");
     };
     assert_eq!(value.to_bits(), expected.to_bits());
 }
 
-/// Test a text literal reads back with its spelling and bucket.
+/// Test a text literal reads back as the normalized decimal it spells,
+/// keeping no spelling.
 #[rstest]
-#[case::integer_text("05", LiteralKind::IntegerText("05"))]
-#[case::decimal_text("1.50", LiteralKind::DecimalText("1.50"))]
-#[case::bare_point(".5", LiteralKind::DecimalText(".5"))]
-fn expression_literal_reads_a_text_with_its_spelling(
+#[case::integer_text("05", 5, 0)]
+#[case::decimal_text("1.50", 15, -1)]
+#[case::bare_point(".5", 5, -1)]
+fn expression_literal_reads_a_text_as_a_normalized_decimal(
     #[case] text: &str,
-    #[case] expected: LiteralKind<'static>,
+    #[case] expected_coefficient: i64,
+    #[case] expected_exponent: i64,
 ) {
     let restored = decode(build_literal_wire(&json!(text))).expect("a valid payload");
 
-    assert_eq!(expect_literal(&restored), expected);
+    let LiteralValue::Decimal(decimal) = expect_literal(&restored) else {
+        panic!("expected a decimal from {text:?}, got {restored:?}");
+    };
+    assert_eq!(decimal.coefficient(), &BigInt::from(expected_coefficient));
+    assert_eq!(decimal.exponent(), expected_exponent);
 }
 
 /// Test a NaN or infinite float literal fails to serialize.

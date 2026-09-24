@@ -20,7 +20,7 @@ use fhy_core::expr::builtins::{
     list_native_functions,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralKind,
+    BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralValue,
     Notation, UnaryOperation, build_piecewise, format_expression,
 };
 use fhy_core::identifier::Identifier;
@@ -247,22 +247,22 @@ fn collect_call_names(expression: &Expression) -> Vec<String> {
 }
 
 /// Return the literal operand of a binary node, failing the test otherwise.
-fn find_right_literal(expression: &Expression) -> LiteralKind<'_> {
+fn find_right_literal(expression: &Expression) -> &LiteralValue {
     let ExpressionKind::Binary(node) = expression.kind() else {
         panic!("expected a binary node, got {expression:?}");
     };
     let ExpressionKind::Literal(literal) = node.right().kind() else {
         panic!("expected a literal right operand, got {:?}", node.right());
     };
-    literal.kind()
+    literal
 }
 
 /// Return the literal held by `expression`, failing the test otherwise.
-fn find_literal(expression: &Expression) -> LiteralKind<'_> {
+fn find_literal(expression: &Expression) -> &LiteralValue {
     let ExpressionKind::Literal(literal) = expression.kind() else {
         panic!("expected a literal, got {expression:?}");
     };
-    literal.kind()
+    literal
 }
 
 /// Return the ids of every composed function's parameters, in catalogue
@@ -613,13 +613,13 @@ fn composed_function_body_is_the_documented_tree(
 #[case::min("min", "{a if (a < b); b otherwise}", "(piecewise (less a b) a b)")]
 #[case::abs(
     "abs",
-    "{x if (x >= 0.0); (-x) otherwise}",
-    "(piecewise (greater_equal x 0.0) x (negate x))"
+    "{x if (x >= 0); (-x) otherwise}",
+    "(piecewise (greater_equal x 0) x (negate x))"
 )]
 #[case::sign(
     "sign",
-    "{1 if (x > 0.0); -1 if (x < 0.0); 0 otherwise}",
-    "(piecewise (greater x 0.0) 1 (less x 0.0) -1 0)"
+    "{1 if (x > 0); -1 if (x < 0); 0 otherwise}",
+    "(piecewise (greater x 0) 1 (less x 0) -1 0)"
 )]
 #[case::clamp("clamp", "min(max(x, lo), hi)", "(min (max x lo) hi)")]
 #[case::clamp_symmetric(
@@ -630,8 +630,8 @@ fn composed_function_body_is_the_documented_tree(
 #[case::relu("relu", "max(x, 0)", "(max x 0)")]
 #[case::leaky_relu(
     "leaky_relu",
-    "{x if (x > 0.0); (x * slope) otherwise}",
-    "(piecewise (greater x 0.0) x (multiply x slope))"
+    "{x if (x > 0); (x * slope) otherwise}",
+    "(piecewise (greater x 0) x (multiply x slope))"
 )]
 #[case::xor(
     "xor",
@@ -644,14 +644,14 @@ fn composed_function_body_is_the_documented_tree(
 #[case::iff("iff", "(a == b)", "(equal a b)")]
 #[case::sigmoid(
     "sigmoid",
-    "(1.0 / (1.0 + exp((-x))))",
-    "(divide 1.0 (add 1.0 (exp (negate x))))"
+    "(1 / (1 + exp((-x))))",
+    "(divide 1 (add 1 (exp (negate x))))"
 )]
 #[case::silu("silu", "(x * sigmoid(x))", "(multiply x (sigmoid x))")]
 #[case::gelu(
     "gelu",
-    "((0.5 * x) * (1.0 + erf((x / sqrt(2.0)))))",
-    "(multiply (multiply 0.5 x) (add 1.0 (erf (divide x (sqrt 2.0)))))"
+    "((0.5 * x) * (1 + erf((x / sqrt(2)))))",
+    "(multiply (multiply 0.5 x) (add 1 (erf (divide x (sqrt 2)))))"
 )]
 fn composed_function_body_prints_as_its_documented_text(
     #[case] name: &str,
@@ -751,10 +751,10 @@ fn composed_function_relu_passes_an_integer_zero_to_max() {
     };
 
     assert_eq!(call.function_name(), "max");
-    assert_eq!(
+    assert!(matches!(
         find_literal(&call.arguments()[1]),
-        LiteralKind::Int(&BigInt::from(0))
-    );
+        LiteralValue::Int(zero) if *zero == BigInt::from(0)
+    ));
 }
 
 /// Test `abs` compares its argument against a positive float zero.
@@ -766,7 +766,7 @@ fn composed_function_abs_compares_against_a_float_zero() {
         panic!("abs's body is a piecewise, got {:?}", abs.body());
     };
 
-    let LiteralKind::Float(zero) = find_right_literal(&piecewise.cases()[0].0) else {
+    let LiteralValue::Float(zero) = find_right_literal(&piecewise.cases()[0].0) else {
         panic!("abs compares against a float");
     };
     assert_eq!(zero.to_bits(), 0.0_f64.to_bits());
@@ -782,27 +782,31 @@ fn composed_function_sign_yields_integer_literals() {
         panic!("sign's body is a piecewise, got {:?}", sign.body());
     };
 
-    let conditions: Vec<LiteralKind<'_>> = piecewise
+    let condition_bits: Vec<Option<u64>> = piecewise
         .cases()
         .iter()
-        .map(|(condition, _)| find_right_literal(condition))
+        .map(|(condition, _)| match find_right_literal(condition) {
+            LiteralValue::Float(value) => Some(value.to_bits()),
+            _ => None,
+        })
         .collect();
-    let values: Vec<LiteralKind<'_>> = piecewise
+    let values: Vec<Option<&BigInt>> = piecewise
         .cases()
         .iter()
         .map(|(_, value)| find_literal(value))
         .chain([find_literal(piecewise.otherwise())])
+        .map(|literal| match literal {
+            LiteralValue::Int(value) => Some(value),
+            _ => None,
+        })
         .collect();
-    assert_eq!(
-        conditions,
-        [LiteralKind::Float(0.0), LiteralKind::Float(0.0)]
-    );
+    assert_eq!(condition_bits, [Some(0.0_f64.to_bits()); 2]);
     assert_eq!(
         values,
         [
-            LiteralKind::Int(&BigInt::from(1)),
-            LiteralKind::Int(&BigInt::from(-1)),
-            LiteralKind::Int(&BigInt::from(0)),
+            Some(&BigInt::from(1)),
+            Some(&BigInt::from(-1)),
+            Some(&BigInt::from(0)),
         ]
     );
 }
