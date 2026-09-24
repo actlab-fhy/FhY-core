@@ -5,6 +5,7 @@
 //! with the nodes derived from it, so a test observes how often an analysis
 //! ran across a whole pipeline without any process-global state.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -145,8 +146,8 @@ impl fmt::Debug for ClosurePass<'_> {
 }
 
 impl CompilerPass<BoxIr> for ClosurePass<'_> {
-    fn name(&self) -> String {
-        self.name.clone()
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Owned(self.name.clone())
     }
 
     fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {

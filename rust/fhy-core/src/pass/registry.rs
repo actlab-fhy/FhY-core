@@ -1,164 +1,110 @@
-//! The process-wide pass registry and run counters.
-//!
-//! Registration binds a name and a description to a pass type together with
-//! a factory that builds it, so [`create_pass`] can build a pass from its
-//! name. The registered name becomes the type's default
-//! [`CompilerPass::name`], which also keys its run counter. Every pass run
-//! that is not skipped by [`CompilerPass::should_run`] counts, whether or not
-//! the pass is registered.
+//! An owned registry of pass factories, looked up by pass name.
 
 use std::any::{Any, TypeId, type_name};
-use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
 
 use super::compiler_pass::CompilerPass;
-use super::error::PassRegistrationError;
 
 /// Metadata of a registered pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassInfo {
-    name: String,
-    description: String,
-    type_name: &'static str,
+    name: Cow<'static, str>,
+    description: Cow<'static, str>,
+    pass_type_id: TypeId,
+    input_type_id: TypeId,
+    output_type_id: TypeId,
+    pass_type_name: &'static str,
+    input_type_name: &'static str,
+    output_type_name: &'static str,
 }
 
 impl PassInfo {
-    /// Return the name the pass is registered under.
+    /// Return the name the pass is registered under: its
+    /// [`CompilerPass::name`].
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Return the registered description.
+    /// Return the registered description: the pass's
+    /// [`CompilerPass::description`].
     #[must_use]
     pub fn description(&self) -> &str {
         &self.description
     }
 
-    /// Return the full name of the registered pass type.
+    /// Return the type id of the registered pass type.
     #[must_use]
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
+    pub fn pass_type_id(&self) -> TypeId {
+        self.pass_type_id
+    }
+
+    /// Return the type id of the IR the registered pass takes.
+    #[must_use]
+    pub fn input_type_id(&self) -> TypeId {
+        self.input_type_id
+    }
+
+    /// Return the type id of the IR the registered pass produces.
+    #[must_use]
+    pub fn output_type_id(&self) -> TypeId {
+        self.output_type_id
+    }
+
+    /// Return the full name of the registered pass type, as
+    /// [`std::any::type_name`] writes it.
+    ///
+    /// The text is for messages only: `type_name` does not guarantee it
+    /// stays the same across compiler versions.
+    #[must_use]
+    pub fn pass_type_name(&self) -> &'static str {
+        self.pass_type_name
+    }
+
+    /// Return whether this registration is of the pass type, input type and
+    /// output type `other` is.
+    fn has_identity_of(&self, other: &PassInfo) -> bool {
+        (self.pass_type_id, self.input_type_id, self.output_type_id)
+            == (
+                other.pass_type_id,
+                other.input_type_id,
+                other.output_type_id,
+            )
     }
 }
 
 /// Builds a boxed pass from `I` to `O`.
-type BoxedPassFactory<I, O> = Box<dyn Fn() -> Box<dyn CompilerPass<I, O>> + Send + Sync>;
+type BoxedPassFactory<I, O> = Box<dyn Fn() -> Box<dyn CompilerPass<I, O> + Send> + Send + Sync>;
 
-/// A factory stored type-erased, recovered by downcasting to
-/// [`BoxedPassFactory`] for the requested IR types.
-type ErasedPassFactory = Arc<dyn Any + Send + Sync>;
-
-/// One registration.
+/// One registration: its metadata and its factory, stored type-erased and
+/// recovered by downcasting to [`BoxedPassFactory`] for the requested IR
+/// types.
 struct Registration {
     info: PassInfo,
-    /// Identifies the pass type together with its input and output types.
-    pass_type: (TypeId, TypeId, TypeId),
-    input_type_name: &'static str,
-    output_type_name: &'static str,
-    factory: ErasedPassFactory,
+    factory: Box<dyn Any + Send + Sync>,
 }
 
-/// The registrations and run counters of the process.
-#[derive(Default)]
-struct Registry {
-    registrations: BTreeMap<String, Registration>,
-    /// The latest name registered for each pass type, by type name.
-    names_by_type: HashMap<&'static str, String>,
-    run_counts: HashMap<String, u64>,
-    total_run_count: u64,
-}
-
-/// The registry of the process.
-static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(Mutex::default);
-
-/// Return whether Python's `str.isspace` holds for `character`, which
-/// also counts the four information separators U+001C to U+001F.
-fn is_python_whitespace(character: char) -> bool {
-    character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
-}
-
-/// Return whether `text` is empty or only whitespace, as Python's
-/// `not text.strip()` decides.
+/// Return whether `text` is empty or only whitespace, as
+/// [`char::is_whitespace`] decides.
 fn is_blank(text: &str) -> bool {
-    text.chars().all(is_python_whitespace)
+    text.chars().all(char::is_whitespace)
 }
 
-/// Return the last path segment of `type_name` without generic arguments,
-/// for example `Fold` for `my_crate::passes::Fold<i64>`.
-fn strip_type_path(type_name: &str) -> &str {
-    let without_generics = type_name.split('<').next().unwrap_or(type_name);
-    without_generics
-        .rsplit("::")
-        .next()
-        .unwrap_or(without_generics)
-}
-
-/// Take the registry's lock.
+/// An owned registry of pass factories, looked up by name.
 ///
-/// No code runs under the lock that can panic between two updates of one
-/// operation, so a poisoned lock holds a consistent registry and is
-/// recovered.
-fn lock_registry() -> MutexGuard<'static, Registry> {
-    REGISTRY.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Return the name the pass type `P` is registered under, or `None` if it is
-/// not registered.
-pub(super) fn find_registered_pass_name<P: ?Sized>() -> Option<String> {
-    lock_registry().names_by_type.get(type_name::<P>()).cloned()
-}
-
-/// Return the default name of the pass type `P`: its registered name, else
-/// the last segment of its type name without generic arguments.
-pub(super) fn find_default_pass_name<P: ?Sized>() -> String {
-    find_registered_pass_name::<P>().unwrap_or_else(|| strip_type_path(type_name::<P>()).to_owned())
-}
-
-/// Return the description registered for the pass type `P`, if it is
-/// registered.
-pub(super) fn find_registered_description<P: ?Sized>() -> Option<String> {
-    let registry = lock_registry();
-    let name = registry.names_by_type.get(type_name::<P>())?;
-    registry
-        .registrations
-        .get(name)
-        .map(|registration| registration.info.description.clone())
-}
-
-/// Count one run of the pass named `pass_name`.
-pub(super) fn record_run(pass_name: &str) {
-    let mut registry = lock_registry();
-    registry.total_run_count += 1;
-    if let Some(count) = registry.run_counts.get_mut(pass_name) {
-        *count += 1;
-    } else {
-        registry.run_counts.insert(pass_name.to_owned(), 1);
-    }
-}
-
-/// Register the pass type `P` from `I` to `O` under `name` with
-/// `description`, built by `factory`.
-///
-/// Registering the same pass type under the same name and description again
-/// changes nothing. After registration `name` is the type's default
-/// [`CompilerPass::name`] and `description` its default
-/// [`CompilerPass::description`]; a type registered under several names
-/// takes the latest.
-///
-/// # Errors
-///
-/// Returns an error, and leaves the registry unchanged, if `name` or
-/// `description` is empty or whitespace, if `name` is registered to a
-/// different pass type, or if `name` is registered to this pass type with a
-/// different description.
+/// Registering a pass type binds its factory to the pass's own
+/// [`CompilerPass::name`] and [`CompilerPass::description`], read from one
+/// instance the factory builds, so [`create`](Self::create) can build a pass
+/// from its name. Registration never changes any pass's name. Each registry
+/// is an independent value; the crate keeps no registry of its own.
 ///
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass::{
-///     CompilerPass, PassContext, PassFailure, create_pass, register_pass,
-/// };
+/// use fhy_core::pass::{CompilerPass, PassContext, PassFailure, PassRegistry};
 ///
 /// struct Negate;
 ///
@@ -172,134 +118,290 @@ pub(super) fn record_run(pass_name: &str) {
 ///     }
 /// }
 ///
-/// register_pass::<Negate, i64, i64>("docs.negate", "Negate an integer.", || Negate)?;
-/// let pass = create_pass::<i64, i64>("docs.negate")?;
+/// let mut registry = PassRegistry::new();
+/// registry.register::<Negate, i64, i64>(|| Negate)?;
+/// let pass = registry.create::<i64, i64>("Negate")?;
 ///
-/// assert_eq!(pass.name(), "docs.negate");
-/// assert_eq!(pass.description(), "Negate an integer.");
+/// assert_eq!(pass.name(), "Negate");
+/// assert_eq!(registry.len(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn register_pass<P, I, O>(
-    name: &str,
-    description: &str,
-    factory: impl Fn() -> P + Send + Sync + 'static,
-) -> Result<(), PassRegistrationError>
-where
-    P: CompilerPass<I, O> + 'static,
-    I: 'static,
-    O: 'static,
-{
-    if is_blank(name) {
-        return Err(PassRegistrationError::new(
-            "Pass name cannot be empty.".to_owned(),
-        ));
+#[derive(Default)]
+pub struct PassRegistry {
+    registrations: BTreeMap<Cow<'static, str>, Registration>,
+}
+
+impl PassRegistry {
+    /// Create an empty registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
-    if is_blank(description) {
-        return Err(PassRegistrationError::new(
-            "Pass description cannot be empty.".to_owned(),
-        ));
-    }
-    let pass_type = (TypeId::of::<P>(), TypeId::of::<I>(), TypeId::of::<O>());
-    let mut registry = lock_registry();
-    if let Some(existing) = registry.registrations.get(name) {
-        let info = &existing.info;
-        let message = if existing.pass_type != pass_type {
-            format!(
-                "Pass name \"{name}\" is already registered by {} with description {:?}.",
-                info.type_name, info.description
-            )
-        } else if info.description != description {
-            format!(
-                "Pass name \"{name}\" is already registered by {} with description {:?}; \
-                 refusing to overwrite with new description {description:?}.",
-                type_name::<P>(),
-                info.description
-            )
-        } else {
+
+    /// Register the pass type `P` from `I` to `O`, built by `factory`.
+    ///
+    /// The factory is called once here, and the instance it builds names the
+    /// registration: its [`CompilerPass::name`] is the key and its
+    /// [`CompilerPass::description`] the description. The factory should
+    /// build instances that share that name and description. A
+    /// registration's identity is its pass type together with `I` and `O`.
+    /// Registering the same identity under the same name and description
+    /// again changes nothing, and the new factory is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, and leaves the registry unchanged:
+    ///
+    /// - [`PassRegistrationError::EmptyName`] if the name is empty or only
+    ///   whitespace;
+    /// - [`PassRegistrationError::EmptyDescription`] if the description is;
+    /// - [`PassRegistrationError::NameTaken`] if the name is registered to a
+    ///   different identity, such as another pass type of the same name or
+    ///   the same pass over other IR types;
+    /// - [`PassRegistrationError::DescriptionConflict`] if the name is
+    ///   registered to this identity with a different description.
+    pub fn register<P, I, O>(
+        &mut self,
+        factory: impl Fn() -> P + Send + Sync + 'static,
+    ) -> Result<(), PassRegistrationError>
+    where
+        P: CompilerPass<I, O> + Send + 'static,
+        I: 'static,
+        O: 'static,
+    {
+        let (name, description) = {
+            let pass = factory();
+            (pass.name(), pass.description())
+        };
+        if is_blank(&name) {
+            return Err(PassRegistrationError::EmptyName);
+        }
+        if is_blank(&description) {
+            return Err(PassRegistrationError::EmptyDescription { name });
+        }
+        let info = PassInfo {
+            name,
+            description,
+            pass_type_id: TypeId::of::<P>(),
+            input_type_id: TypeId::of::<I>(),
+            output_type_id: TypeId::of::<O>(),
+            pass_type_name: type_name::<P>(),
+            input_type_name: type_name::<I>(),
+            output_type_name: type_name::<O>(),
+        };
+        if let Some(existing) = self.registrations.get(info.name()) {
+            let existing = &existing.info;
+            if !existing.has_identity_of(&info) {
+                return Err(PassRegistrationError::NameTaken {
+                    name: info.name,
+                    registered_pass_type_name: existing.pass_type_name,
+                });
+            }
+            if existing.description != info.description {
+                return Err(PassRegistrationError::DescriptionConflict {
+                    name: info.name,
+                    registered: existing.description.clone(),
+                    requested: info.description,
+                });
+            }
             return Ok(());
-        };
-        return Err(PassRegistrationError::new(message));
+        }
+        let build: BoxedPassFactory<I, O> =
+            Box::new(move || Box::new(factory()) as Box<dyn CompilerPass<I, O> + Send>);
+        self.registrations.insert(
+            info.name.clone(),
+            Registration {
+                info,
+                factory: Box::new(build),
+            },
+        );
+        Ok(())
     }
-    let build: BoxedPassFactory<I, O> =
-        Box::new(move || Box::new(factory()) as Box<dyn CompilerPass<I, O>>);
-    let registration = Registration {
-        info: PassInfo {
-            name: name.to_owned(),
-            description: description.to_owned(),
-            type_name: type_name::<P>(),
-        },
-        pass_type,
-        input_type_name: type_name::<I>(),
-        output_type_name: type_name::<O>(),
-        factory: Arc::new(build),
-    };
-    registry.registrations.insert(name.to_owned(), registration);
-    registry
-        .names_by_type
-        .insert(type_name::<P>(), name.to_owned());
-    Ok(())
-}
 
-/// Build a new instance of the pass registered under `name`.
-///
-/// # Errors
-///
-/// Returns an error if no pass is registered under `name`, or if the pass
-/// registered under it does not go from `I` to `O`.
-pub fn create_pass<I: 'static, O: 'static>(
-    name: &str,
-) -> Result<Box<dyn CompilerPass<I, O>>, PassRegistrationError> {
-    let (factory, input_type_name, output_type_name) = {
-        let registry = lock_registry();
-        let Some(registration) = registry.registrations.get(name) else {
-            return Err(PassRegistrationError::new(format!(
-                "Unknown pass \"{name}\"."
-            )));
+    /// Build a new instance of the pass registered under `name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreatePassError::UnknownPass`] if no pass is registered
+    /// under `name`, and [`CreatePassError::IrTypeMismatch`] if the pass
+    /// registered under it does not go from `I` to `O`.
+    pub fn create<I: 'static, O: 'static>(
+        &self,
+        name: &str,
+    ) -> Result<Box<dyn CompilerPass<I, O> + Send>, CreatePassError> {
+        let Some(registration) = self.registrations.get(name) else {
+            return Err(CreatePassError::UnknownPass {
+                name: name.to_owned(),
+            });
         };
-        (
-            Arc::clone(&registration.factory),
-            registration.input_type_name,
-            registration.output_type_name,
-        )
-    };
-    match factory.downcast_ref::<BoxedPassFactory<I, O>>() {
-        Some(build) => Ok(build()),
-        None => Err(PassRegistrationError::new(format!(
-            "Pass \"{name}\" takes {input_type_name} to {output_type_name}, not {} to {}.",
-            type_name::<I>(),
-            type_name::<O>()
-        ))),
+        match registration
+            .factory
+            .downcast_ref::<BoxedPassFactory<I, O>>()
+        {
+            Some(build) => Ok(build()),
+            None => Err(CreatePassError::IrTypeMismatch {
+                name: name.to_owned(),
+                registered_input: registration.info.input_type_name,
+                registered_output: registration.info.output_type_name,
+                requested_input: type_name::<I>(),
+                requested_output: type_name::<O>(),
+            }),
+        }
+    }
+
+    /// Return the metadata of the pass registered under `name`, if any.
+    #[must_use]
+    pub fn info(&self, name: &str) -> Option<&PassInfo> {
+        self.registrations
+            .get(name)
+            .map(|registration| &registration.info)
+    }
+
+    /// Return the metadata of every registration, ordered by name.
+    pub fn iter(&self) -> impl Iterator<Item = &PassInfo> + '_ {
+        self.registrations
+            .values()
+            .map(|registration| &registration.info)
+    }
+
+    /// Return the number of registrations.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.registrations.len()
+    }
+
+    /// Return whether nothing is registered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.registrations.is_empty()
     }
 }
 
-/// Return the metadata of every registered pass, by name.
-#[must_use]
-pub fn registered_passes() -> BTreeMap<String, PassInfo> {
-    lock_registry()
-        .registrations
-        .iter()
-        .map(|(name, registration)| (name.clone(), registration.info.clone()))
-        .collect()
+/// Render the metadata of every registration, ordered by name.
+impl fmt::Debug for PassRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
 }
 
-/// Return how many runs of the pass type `P` were counted, under its default
-/// name.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<PassRegistry>();
+};
+
+/// A pass registration that [`PassRegistry::register`] refused.
 ///
-/// A pass whose [`CompilerPass::name`] is overridden counts under that name;
-/// read it with [`run_count_of`].
-#[must_use]
-pub fn run_count<P: ?Sized>() -> u64 {
-    run_count_of(&find_default_pass_name::<P>())
+/// More variants may be added, so a `match` on one needs a wildcard arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PassRegistrationError {
+    /// The pass's name is empty or only whitespace, as
+    /// [`char::is_whitespace`] decides.
+    EmptyName,
+    /// The pass's description is empty or only whitespace.
+    #[non_exhaustive]
+    EmptyDescription {
+        /// The pass's name.
+        name: Cow<'static, str>,
+    },
+    /// The name is registered to a different pass type or to the same pass
+    /// type over other IR types.
+    #[non_exhaustive]
+    NameTaken {
+        /// The name.
+        name: Cow<'static, str>,
+        /// The full name of the pass type registered under it, for messages
+        /// only.
+        registered_pass_type_name: &'static str,
+    },
+    /// The name is registered to this pass type with a different
+    /// description.
+    #[non_exhaustive]
+    DescriptionConflict {
+        /// The name.
+        name: Cow<'static, str>,
+        /// The description it is registered with.
+        registered: Cow<'static, str>,
+        /// The description the refused registration has.
+        requested: Cow<'static, str>,
+    },
 }
 
-/// Return how many runs of passes named `name` were counted.
-#[must_use]
-pub fn run_count_of(name: &str) -> u64 {
-    lock_registry().run_counts.get(name).copied().unwrap_or(0)
+/// Render the refusal in one line, for example
+/// `pass name "fold" is already registered to another pass`.
+impl fmt::Display for PassRegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => f.write_str("pass name is blank"),
+            Self::EmptyDescription { name } => {
+                write!(f, "pass {name:?} has a blank description")
+            }
+            Self::NameTaken { name, .. } => {
+                write!(
+                    f,
+                    "pass name {name:?} is already registered to another pass"
+                )
+            }
+            Self::DescriptionConflict { name, .. } => write!(
+                f,
+                "pass {name:?} is already registered with a different description"
+            ),
+        }
+    }
 }
 
-/// Return how many pass runs were counted in the process.
-#[must_use]
-pub fn total_run_count() -> u64 {
-    lock_registry().total_run_count
+impl Error for PassRegistrationError {}
+
+/// A pass that [`PassRegistry::create`] cannot build.
+///
+/// More variants may be added, so a `match` on one needs a wildcard arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CreatePassError {
+    /// No pass is registered under the name.
+    #[non_exhaustive]
+    UnknownPass {
+        /// The name.
+        name: String,
+    },
+    /// The pass registered under the name goes between other IR types than
+    /// the requested ones.
+    ///
+    /// The type names are [`std::any::type_name`] output, for messages only.
+    #[non_exhaustive]
+    IrTypeMismatch {
+        /// The name.
+        name: String,
+        /// The IR type the registered pass takes.
+        registered_input: &'static str,
+        /// The IR type the registered pass produces.
+        registered_output: &'static str,
+        /// The requested input IR type.
+        requested_input: &'static str,
+        /// The requested output IR type.
+        requested_output: &'static str,
+    },
 }
+
+/// Render the failure in one line, for example
+/// `no pass is registered as "fold"`.
+impl fmt::Display for CreatePassError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownPass { name } => write!(f, "no pass is registered as {name:?}"),
+            Self::IrTypeMismatch {
+                name,
+                registered_input,
+                registered_output,
+                requested_input,
+                requested_output,
+            } => write!(
+                f,
+                "pass {name:?} takes {registered_input} to {registered_output}, \
+                 not {requested_input} to {requested_output}"
+            ),
+        }
+    }
+}
+
+impl Error for CreatePassError {}

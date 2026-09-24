@@ -1,6 +1,7 @@
 //! The context a pass run hands to every hook: the diagnostics sink and
 //! access to analyses.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::analysis::{Analysis, AnalysisCache};
@@ -18,7 +19,7 @@ use crate::tree::NodeHandle;
 /// every request.
 #[derive(Debug)]
 pub struct PassContext<'a> {
-    pass_name: String,
+    pass_name: Cow<'static, str>,
     diagnostics: Vec<Diagnostic>,
     analyses: Option<&'a mut AnalysisCache>,
 }
@@ -26,7 +27,10 @@ pub struct PassContext<'a> {
 impl<'a> PassContext<'a> {
     /// Create the context for a run of the pass `pass_name`, caching analyses
     /// in `analyses` when one is given.
-    pub(super) fn new(pass_name: String, analyses: Option<&'a mut AnalysisCache>) -> Self {
+    pub(super) fn new(
+        pass_name: Cow<'static, str>,
+        analyses: Option<&'a mut AnalysisCache>,
+    ) -> Self {
         Self {
             pass_name,
             diagnostics: Vec::new(),
@@ -35,8 +39,14 @@ impl<'a> PassContext<'a> {
     }
 
     /// Return the pass name and the diagnostics, consuming the context.
-    pub(super) fn into_parts(self) -> (String, Vec<Diagnostic>) {
+    pub(super) fn into_parts(self) -> (Cow<'static, str>, Vec<Diagnostic>) {
         (self.pass_name, self.diagnostics)
+    }
+
+    /// Return the name of the running pass as the diagnostics' source holds
+    /// it, without copying a borrowed name.
+    pub(super) fn shared_pass_name(&self) -> Cow<'static, str> {
+        self.pass_name.clone()
     }
 
     /// Record the diagnostic `message` at `level`, with optional `detail`.

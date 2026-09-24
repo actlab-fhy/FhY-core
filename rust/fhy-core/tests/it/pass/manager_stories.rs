@@ -158,6 +158,7 @@ fn pass_run_record_holds_the_outcome_of_the_run() {
     let changing = expect_pass_record(&result.records()[0]);
     assert_eq!(changing.pass_name(), "tests.pm.warn_and_add");
     assert!(changing.is_changed());
+    assert!(!changing.is_skipped());
     assert_eq!(changing.diagnostics().len(), 1);
     assert_eq!(changing.diagnostics()[0].message_text(), "careful");
     assert_eq!(changing.preserved_analyses(), &PreservedAnalyses::none());
@@ -229,6 +230,71 @@ fn pass_manager_stops_at_the_first_failing_pass() {
     );
     assert_eq!(error.pass_name(), Some("tests.pm.failing"));
     assert!(!later_ran.get());
+}
+
+/// Skips its run on a value above its limit, and adds one otherwise.
+struct AddOneUpTo {
+    limit: i64,
+}
+
+impl CompilerPass<BoxIr> for AddOneUpTo {
+    fn should_run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
+        Ok(ir.value() <= self.limit)
+    }
+
+    fn noop_output(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+        Ok(ir.clone())
+    }
+
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+        Ok(ir.derive(ir.value() + 1))
+    }
+
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+        Ok(input.value() != output.value())
+    }
+}
+
+/// Test the run statistics list every pass run in run order, groups
+/// flattened, and count the runs that were not skipped.
+#[test]
+fn pass_manager_run_count_excludes_skipped_runs() {
+    let mut group = build_group("capped-group", 10);
+    group.add_pass(AddOneUpTo { limit: 2 });
+    let mut manager = PassManager::new(Identifier::new("pipeline"));
+    manager.add_pass(AddOneUpTo { limit: 0 });
+    manager.add_fixpoint_group(group);
+    manager.add_pass(AddOneUpTo { limit: 0 });
+
+    let result = manager.run(&BoxIr::new(0)).expect("the run succeeds");
+
+    assert_eq!(result.output().value(), 3);
+    let runs: Vec<_> = result
+        .pass_runs()
+        .map(|run| (run.is_changed(), run.is_skipped()))
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            (true, false),
+            (true, false),
+            (true, false),
+            (false, true),
+            (false, true),
+        ]
+    );
+    assert_eq!(result.run_count(), 3);
+}
+
+/// Test a pipeline without items runs no pass.
+#[test]
+fn pass_manager_without_items_counts_no_run() {
+    let mut manager = PassManager::new(Identifier::new("empty"));
+
+    let result = manager.run(&BoxIr::new(0)).expect("the run succeeds");
+
+    assert_eq!(result.pass_runs().count(), 0);
+    assert_eq!(result.run_count(), 0);
 }
 
 /// Test the pipeline's name is its identifier.

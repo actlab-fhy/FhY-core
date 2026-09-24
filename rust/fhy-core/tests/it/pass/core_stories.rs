@@ -1,16 +1,14 @@
 //! Tests for standalone pass runs in `fhy_core::pass`: the guarded lifecycle,
 //! hook-error wrapping and pass-through, the pass context, preserved analyses,
-//! analysis ids, node identities, pass names, the registry, and the per-pass
-//! run counters.
+//! analysis ids, node identities, pass names, and the pass registry.
 //!
-//! Public API only. The registry and the run counters are process-wide and
-//! the tests run in parallel, so every test that registers a pass or reads a
-//! counter uses a pass type and names no other test uses. The process-wide
-//! total is tested in `pass_infrastructure_run_count_stories`, alone in its
-//! binary.
+//! Public API only. Every registry is a local value, so no test shares
+//! state with another.
 
 use crate::support::pass_ir;
 
+use std::any::{TypeId, type_name};
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -20,8 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
 use fhy_core::pass::{
-    AnalysisId, CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PassHook,
-    PreservedAnalyses, create_pass, register_pass, registered_passes, run_count, run_count_of,
+    AnalysisId, CompilerPass, CreatePassError, ExecutePass, PassContext, PassError, PassFailure,
+    PassHook, PassInfo, PassRegistrationError, PassRegistry, PreservedAnalyses,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis};
@@ -365,6 +363,7 @@ fn execute_returns_the_output_of_a_changing_run() {
 
     assert_eq!(*outcome.output(), 2);
     assert!(outcome.is_changed());
+    assert!(!outcome.is_skipped());
     assert!(outcome.diagnostics().is_empty());
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::none());
 }
@@ -459,6 +458,7 @@ fn execute_skipped_run_outputs_the_noop_output() {
 
     assert_eq!(*outcome.output(), 102);
     assert!(!outcome.is_changed());
+    assert!(outcome.is_skipped());
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::all());
     assert_eq!(outcome.diagnostics().len(), 1);
     assert_eq!(outcome.diagnostics()[0].level(), DiagnosticLevel::Info);
@@ -716,7 +716,7 @@ fn report_text_records_a_diagnostic_at_the_given_level(#[case] level: Diagnostic
 /// Test a detail is stored beside the message, not inside it.
 #[test]
 fn report_text_keeps_the_detail_separate_from_the_message() {
-    let mut pass = ClosurePass::new("tests.core.detail", |ir, cx| {
+    let mut pass = ClosurePass::new("detail", |ir, cx| {
         cx.report_text(
             DiagnosticLevel::Warning,
             "primary-message",
@@ -737,7 +737,7 @@ fn report_text_keeps_the_detail_separate_from_the_message() {
 fn report_keeps_a_structured_note() {
     let note = Note::new("structured-message", NoteKind::rationale().clone());
     let reported = note.clone();
-    let mut pass = ClosurePass::new("tests.core.note", move |ir, cx| {
+    let mut pass = ClosurePass::new("note", move |ir, cx| {
         cx.report(DiagnosticLevel::Error, reported.clone(), None);
         Ok(ir.clone())
     });
@@ -745,7 +745,7 @@ fn report_keeps_a_structured_note() {
     let outcome = pass.execute(&BoxIr::new(0)).expect("the run succeeds");
 
     assert_eq!(outcome.diagnostics()[0].message(), &note);
-    assert_eq!(outcome.diagnostics()[0].source(), "tests.core.note");
+    assert_eq!(outcome.diagnostics()[0].source(), "note");
 }
 
 /// Test the context names the running pass and lists the diagnostics
@@ -753,7 +753,7 @@ fn report_keeps_a_structured_note() {
 #[test]
 fn pass_context_exposes_the_pass_name_and_diagnostics_so_far() {
     let mut observed = Vec::new();
-    let mut pass = ClosurePass::new("tests.core.context_view", |ir, cx| {
+    let mut pass = ClosurePass::new("context_view", |ir, cx| {
         observed.push((cx.pass_name().to_owned(), cx.diagnostics().len()));
         cx.report_text(DiagnosticLevel::Info, "first", None);
         observed.push((cx.pass_name().to_owned(), cx.diagnostics().len()));
@@ -766,8 +766,8 @@ fn pass_context_exposes_the_pass_name_and_diagnostics_so_far() {
     assert_eq!(
         observed,
         [
-            ("tests.core.context_view".to_owned(), 0),
-            ("tests.core.context_view".to_owned(), 1),
+            ("context_view".to_owned(), 0),
+            ("context_view".to_owned(), 1),
         ]
     );
 }
@@ -776,7 +776,7 @@ fn pass_context_exposes_the_pass_name_and_diagnostics_so_far() {
 #[test]
 fn pass_context_analysis_recomputes_on_every_call_outside_a_manager() {
     let mut observed = Vec::new();
-    let mut pass = ClosurePass::new("tests.core.standalone_analysis", |ir, cx| {
+    let mut pass = ClosurePass::new("standalone_analysis", |ir, cx| {
         observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
         observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
         Ok(ir.clone())
@@ -974,21 +974,29 @@ impl<T> CompilerPass<i64> for GenericNamedPass<T> {
     }
 }
 
-/// Test an unregistered pass is named after its type without module path or
-/// generic arguments, and described by its name.
-#[test]
-fn name_defaults_to_the_type_name_without_path_or_generics() {
-    let generic = GenericNamedPass::<Vec<String>>(PhantomData);
-
-    assert_eq!(generic.name(), "GenericNamedPass");
-    assert_eq!(generic.description(), "GenericNamedPass");
-    assert_eq!(Increment.name(), "Increment");
+/// A pass over integers named and described explicitly.
+#[derive(Debug, Clone, Copy)]
+struct NamedPass {
+    name: &'static str,
+    description: &'static str,
 }
 
-/// Registered in `name_of_a_registered_pass_is_its_registered_name`.
-struct RegisteredNamePass;
+impl NamedPass {
+    /// Build the pass `name` described as `description`.
+    fn new(name: &'static str, description: &'static str) -> Self {
+        Self { name, description }
+    }
+}
 
-impl CompilerPass<i64> for RegisteredNamePass {
+impl CompilerPass<i64> for NamedPass {
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed(self.name)
+    }
+
+    fn description(&self) -> Cow<'static, str> {
+        Cow::Borrowed(self.description)
+    }
+
     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
         Ok(*ir)
     }
@@ -998,32 +1006,44 @@ impl CompilerPass<i64> for RegisteredNamePass {
     }
 }
 
-/// Test a registered pass takes its registered name and description, also
-/// through a borrow, a box, and a trait object.
+/// Test a pass that does not override its name is named after its type
+/// without module path or generic arguments, and described by its name.
 #[test]
-fn name_of_a_registered_pass_is_its_registered_name() {
-    register_pass::<RegisteredNamePass, i64, i64>(
-        "tests.core.registered_name",
-        "A pass with a registered name.",
-        || RegisteredNamePass,
-    )
-    .expect("the name is free");
-    let mut pass = RegisteredNamePass;
-    let boxed: Box<dyn CompilerPass<i64>> = Box::new(RegisteredNamePass);
+fn name_defaults_to_the_type_name_without_path_or_generics() {
+    let generic = GenericNamedPass::<Vec<String>>(PhantomData);
 
-    assert_eq!(pass.name(), "tests.core.registered_name");
-    assert_eq!(pass.description(), "A pass with a registered name.");
+    assert_eq!(generic.name(), "GenericNamedPass");
+    assert_eq!(generic.description(), "GenericNamedPass");
+    assert_eq!(Increment.name(), "Increment");
+    assert!(matches!(Increment.name(), Cow::Borrowed(_)));
+}
+
+/// Test the default name borrows from the type name, for a generic pass
+/// too, so naming a pass allocates nothing.
+#[test]
+fn default_pass_name_is_borrowed() {
+    let generic = GenericNamedPass::<Vec<String>>(PhantomData);
+
+    assert!(matches!(generic.name(), Cow::Borrowed("GenericNamedPass")));
+    assert!(matches!(
+        generic.description(),
+        Cow::Borrowed("GenericNamedPass")
+    ));
+}
+
+/// Test a borrowed pass, a boxed pass, and a trait object forward the
+/// pass's own name and description.
+#[test]
+fn borrowed_and_boxed_passes_forward_their_name_and_description() {
+    let mut pass = NamedPass::new("tests.named", "A named pass.");
+    let boxed: Box<dyn CompilerPass<i64>> = Box::new(pass);
+
     let borrowed = &mut pass;
-    assert_eq!(
-        CompilerPass::<i64>::name(&borrowed),
-        "tests.core.registered_name"
-    );
-    assert_eq!(
-        CompilerPass::<i64>::description(&borrowed),
-        "A pass with a registered name."
-    );
-    assert_eq!(boxed.name(), "tests.core.registered_name");
-    assert_eq!(boxed.description(), "A pass with a registered name.");
+
+    assert_eq!(CompilerPass::<i64>::name(&borrowed), "tests.named");
+    assert_eq!(CompilerPass::<i64>::description(&borrowed), "A named pass.");
+    assert_eq!(boxed.name(), "tests.named");
+    assert_eq!(boxed.description(), "A named pass.");
 }
 
 /// Test a borrowed pass runs through the borrow and keeps its state for the
@@ -1050,6 +1070,7 @@ fn boxed_pass_forwards_every_hook() {
 
     assert_eq!(*outcome.output(), 4);
     assert!(!outcome.is_changed());
+    assert!(outcome.is_skipped());
     assert_eq!(pass.name(), "RecordingPass");
 }
 
@@ -1057,13 +1078,13 @@ fn boxed_pass_forwards_every_hook() {
 // Registry
 // =============================================================================
 
-/// Registered in `create_pass_builds_a_new_instance_of_the_registered_pass`.
-#[derive(Default)]
-struct CreatablePass {
+/// Adds the number of its own runs to an integer.
+#[derive(Debug, Default)]
+struct StatefulIncrement {
     runs: i64,
 }
 
-impl CompilerPass<i64> for CreatablePass {
+impl CompilerPass<i64> for StatefulIncrement {
     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
         self.runs += 1;
         Ok(ir + self.runs)
@@ -1074,211 +1095,7 @@ impl CompilerPass<i64> for CreatablePass {
     }
 }
 
-/// Test `create_pass` builds a fresh instance of the registered pass on
-/// every call.
-#[test]
-fn create_pass_builds_a_new_instance_of_the_registered_pass() {
-    register_pass::<CreatablePass, i64, i64>(
-        "tests.core.creatable",
-        "Add the number of runs to an integer.",
-        CreatablePass::default,
-    )
-    .expect("the name is free");
-
-    let mut first = create_pass::<i64, i64>("tests.core.creatable").expect("registered");
-    let first_output = first.execute(&2).expect("the run succeeds").into_output();
-    let second_run = first.execute(&2).expect("the run succeeds").into_output();
-    let mut second = create_pass::<i64, i64>("tests.core.creatable").expect("registered");
-    let fresh_output = second.execute(&2).expect("the run succeeds").into_output();
-
-    assert_eq!((first_output, second_run, fresh_output), (3, 4, 3));
-    assert_eq!(first.name(), "tests.core.creatable");
-}
-
-/// Test `create_pass` refuses a name nothing is registered under.
-#[test]
-fn create_pass_rejects_an_unknown_name() {
-    let error = create_pass::<i64, i64>("tests.core.never_registered")
-        .err()
-        .expect("nothing is registered under the name");
-
-    assert_eq!(
-        error.to_string(),
-        "Unknown pass \"tests.core.never_registered\"."
-    );
-}
-
-/// Registered in `create_pass_rejects_other_ir_types`.
-struct IntegerOnlyPass;
-
-impl CompilerPass<i64> for IntegerOnlyPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test `create_pass` refuses a pass registered for other IR types.
-#[test]
-fn create_pass_rejects_other_ir_types() {
-    register_pass::<IntegerOnlyPass, i64, i64>(
-        "tests.core.integer_only",
-        "Pass over integers only.",
-        || IntegerOnlyPass,
-    )
-    .expect("the name is free");
-
-    let error = create_pass::<String, String>("tests.core.integer_only")
-        .err()
-        .expect("the pass takes integers");
-
-    assert_eq!(
-        error.to_string(),
-        "Pass \"tests.core.integer_only\" takes i64 to i64, not \
-         alloc::string::String to alloc::string::String."
-    );
-}
-
-/// Registered in `registered_passes_lists_a_registration`.
-struct ListedPass;
-
-impl CompilerPass<i64> for ListedPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test a registration shows up in the listing with its metadata.
-#[test]
-fn registered_passes_lists_a_registration() {
-    register_pass::<ListedPass, i64, i64>("tests.core.listed", "A listed pass.", || ListedPass)
-        .expect("the name is free");
-
-    let passes = registered_passes();
-
-    let info = passes.get("tests.core.listed").expect("listed");
-    assert_eq!(info.name(), "tests.core.listed");
-    assert_eq!(info.description(), "A listed pass.");
-    assert_eq!(info.type_name(), "it::pass::core_stories::ListedPass");
-}
-
-/// Registered in `register_pass_does_not_call_the_factory`.
-struct LazilyBuiltPass;
-
-impl CompilerPass<i64> for LazilyBuiltPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test registering a pass builds nothing; `create_pass` calls the factory.
-#[test]
-fn register_pass_does_not_call_the_factory() {
-    let builds = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&builds);
-
-    register_pass::<LazilyBuiltPass, i64, i64>("tests.core.lazy", "Built lazily.", move || {
-        counted.fetch_add(1, Ordering::SeqCst);
-        LazilyBuiltPass
-    })
-    .expect("the name is free");
-    let registered_builds = builds.load(Ordering::SeqCst);
-    let _pass = create_pass::<i64, i64>("tests.core.lazy").expect("registered");
-
-    assert_eq!(registered_builds, 0);
-    assert_eq!(builds.load(Ordering::SeqCst), 1);
-}
-
-/// Test an empty or blank name is refused.
-#[rstest]
-#[case::empty("")]
-#[case::spaces("   ")]
-#[case::tab_and_newline("\t\n")]
-#[case::information_separator("\u{1c}")]
-fn register_pass_rejects_an_empty_name(#[case] name: &str) {
-    let error = register_pass::<Increment, i64, i64>(name, "non-empty description", || Increment)
-        .expect_err("the name is blank");
-
-    assert_eq!(error.to_string(), "Pass name cannot be empty.");
-}
-
-/// Test an empty or blank description is refused, registering nothing.
-#[rstest]
-#[case::empty("tests.core.empty_description.empty", "")]
-#[case::spaces("tests.core.empty_description.spaces", "  ")]
-fn register_pass_rejects_an_empty_description(#[case] name: &str, #[case] description: &str) {
-    let error = register_pass::<Increment, i64, i64>(name, description, || Increment)
-        .expect_err("the description is blank");
-
-    assert_eq!(error.to_string(), "Pass description cannot be empty.");
-    assert!(!registered_passes().contains_key(name));
-}
-
-/// Owns `tests.core.taken` in
-/// `register_pass_rejects_a_name_taken_by_another_pass_type`.
-struct OwnerPass;
-
-impl CompilerPass<i64> for OwnerPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Tries to take `tests.core.taken` from [`OwnerPass`].
-struct IntruderPass;
-
-impl CompilerPass<i64> for IntruderPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test a name registered to one pass type is refused to another, leaving
-/// both types as they were.
-#[test]
-fn register_pass_rejects_a_name_taken_by_another_pass_type() {
-    register_pass::<OwnerPass, i64, i64>("tests.core.taken", "Owns the name.", || OwnerPass)
-        .expect("the name is free");
-
-    let error =
-        register_pass::<IntruderPass, i64, i64>("tests.core.taken", "Wants the name.", || {
-            IntruderPass
-        })
-        .expect_err("the name is taken");
-
-    assert_eq!(
-        error.to_string(),
-        "Pass name \"tests.core.taken\" is already registered by \
-         it::pass::core_stories::OwnerPass with description \"Owns the name.\"."
-    );
-    assert_eq!(
-        registered_passes()["tests.core.taken"].type_name(),
-        "it::pass::core_stories::OwnerPass"
-    );
-    assert_eq!(IntruderPass.name(), "IntruderPass");
-}
-
-/// A pass over two IR types, registered for one of them in
-/// `register_pass_rejects_a_name_taken_by_the_same_pass_over_other_ir_types`.
+/// A pass over two IR types.
 struct TwoIrPass;
 
 impl CompilerPass<i64> for TwoIrPass {
@@ -1301,350 +1118,443 @@ impl CompilerPass<String> for TwoIrPass {
     }
 }
 
-/// Test a name registered to a pass over some IR types is refused to the
-/// same pass over other IR types.
+/// Two pass types that share a name, from two modules.
+mod first {
+    use super::{CompilerPass, PassContext, PassFailure};
+
+    /// Adds one to an integer.
+    pub(super) struct Fold;
+
+    impl CompilerPass<i64> for Fold {
+        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+            Ok(ir + 1)
+        }
+
+        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+            Ok(input != output)
+        }
+    }
+}
+
+/// The second of the two same-named pass types.
+mod second {
+    use super::{CompilerPass, PassContext, PassFailure};
+
+    /// Adds two to an integer.
+    pub(super) struct Fold;
+
+    impl CompilerPass<i64> for Fold {
+        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+            Ok(ir + 2)
+        }
+
+        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+            Ok(input != output)
+        }
+    }
+}
+
+/// Return a registry holding `Increment` and `KeepInteger`.
+fn build_registry() -> PassRegistry {
+    let mut registry = PassRegistry::new();
+    registry
+        .register::<Increment, i64, i64>(|| Increment)
+        .expect("the name is free");
+    registry
+        .register::<KeepInteger, i64, i64>(|| KeepInteger)
+        .expect("the name is free");
+    registry
+}
+
+/// Create the pass registered as `name` over integers and run it on `ir`.
+fn create_and_run(registry: &PassRegistry, name: &str, ir: i64) -> i64 {
+    let mut pass = registry
+        .create::<i64, i64>(name)
+        .expect("the pass is registered");
+    pass.execute(&ir).expect("the run succeeds").into_output()
+}
+
+/// Test a new registry holds nothing.
 #[test]
-fn register_pass_rejects_a_name_taken_by_the_same_pass_over_other_ir_types() {
-    register_pass::<TwoIrPass, i64, i64>("tests.core.two_ir", "Over integers.", || TwoIrPass)
+fn registry_new_is_empty() {
+    let registry = PassRegistry::new();
+
+    assert!(registry.is_empty());
+    assert_eq!(registry.len(), 0);
+    assert_eq!(registry.iter().count(), 0);
+    assert!(registry.info("Increment").is_none());
+}
+
+/// Test a pass is registered under its own name and described by its own
+/// description, read from one instance its factory builds.
+#[test]
+fn pass_registry_keys_a_pass_by_its_own_name() {
+    let mut registry = PassRegistry::new();
+
+    registry
+        .register::<Increment, i64, i64>(|| Increment)
+        .expect("the name is free");
+    registry
+        .register::<NamedPass, i64, i64>(|| NamedPass::new("tests.named", "A named pass."))
         .expect("the name is free");
 
-    let error =
-        register_pass::<TwoIrPass, String, String>("tests.core.two_ir", "Over integers.", || {
-            TwoIrPass
-        })
-        .expect_err("the name is taken for other IR types");
-
+    let names: Vec<_> = registry.iter().map(PassInfo::name).collect();
+    assert_eq!(names, ["Increment", "tests.named"]);
     assert_eq!(
-        error.to_string(),
-        "Pass name \"tests.core.two_ir\" is already registered by \
-         it::pass::core_stories::TwoIrPass with description \"Over integers.\"."
+        registry.info("tests.named").map(PassInfo::description),
+        Some("A named pass.")
     );
-    assert_eq!(
-        create_pass::<i64, i64>("tests.core.two_ir").map(|pass| pass.name()),
-        Ok("tests.core.two_ir".to_owned())
+    let created = registry
+        .create::<i64, i64>("tests.named")
+        .expect("the pass is registered");
+    assert_eq!(created.name(), "tests.named");
+    assert_eq!(Increment.name(), "Increment");
+}
+
+/// Test `create` builds a fresh instance of the registered pass on every
+/// call.
+#[test]
+fn registry_create_builds_a_new_instance_each_call() {
+    let mut registry = PassRegistry::new();
+    registry
+        .register::<StatefulIncrement, i64, i64>(StatefulIncrement::default)
+        .expect("the name is free");
+
+    let mut first = registry
+        .create::<i64, i64>("StatefulIncrement")
+        .expect("the pass is registered");
+    let first_output = first.execute(&2).expect("the run succeeds").into_output();
+    let second_run = first.execute(&2).expect("the run succeeds").into_output();
+    let fresh_output = create_and_run(&registry, "StatefulIncrement", 2);
+
+    assert_eq!((first_output, second_run, fresh_output), (3, 4, 3));
+    assert_eq!(first.name(), "StatefulIncrement");
+}
+
+/// Test registering builds exactly one instance, to read its name and
+/// description, and `create` builds one more on every call.
+#[test]
+fn registry_register_builds_one_instance_to_read_its_name() {
+    let builds = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&builds);
+    let mut registry = PassRegistry::new();
+
+    registry
+        .register::<KeepInteger, i64, i64>(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            KeepInteger
+        })
+        .expect("the name is free");
+    let registered_builds = builds.load(Ordering::SeqCst);
+    let _pass = registry
+        .create::<i64, i64>("KeepInteger")
+        .expect("the pass is registered");
+
+    assert_eq!(registered_builds, 1);
+    assert_eq!(builds.load(Ordering::SeqCst), 2);
+}
+
+/// Test `create` refuses a name nothing is registered under.
+#[test]
+fn registry_create_rejects_an_unknown_name() {
+    let registry = build_registry();
+
+    let error = registry
+        .create::<i64, i64>("Fold")
+        .err()
+        .expect("nothing is registered as the name");
+
+    assert!(
+        matches!(&error, CreatePassError::UnknownPass { name, .. } if name == "Fold"),
+        "{error:?}"
     );
 }
 
-/// Registered twice in
-/// `register_pass_refuses_a_new_description_for_a_registered_pass`.
-struct MismatchPass;
+/// Test `create` refuses a pass registered for other IR types, naming both
+/// the registered and the requested types.
+#[test]
+fn registry_create_rejects_other_ir_types() {
+    let registry = build_registry();
 
-impl CompilerPass<i64> for MismatchPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
+    let error = registry
+        .create::<String, String>("KeepInteger")
+        .err()
+        .expect("the pass takes integers");
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
+    let CreatePassError::IrTypeMismatch {
+        name,
+        registered_input,
+        registered_output,
+        requested_input,
+        requested_output,
+        ..
+    } = &error
+    else {
+        panic!("expected an IR type mismatch, got {error:?}");
+    };
+    assert_eq!(name, "KeepInteger");
+    assert_eq!(
+        (*registered_input, *registered_output),
+        (type_name::<i64>(), type_name::<i64>())
+    );
+    assert_eq!(
+        (*requested_input, *requested_output),
+        (type_name::<String>(), type_name::<String>())
+    );
+}
+
+/// Test the registrations are listed in name order with their metadata and
+/// the pass and IR types.
+#[test]
+fn registry_iter_lists_registrations_by_name() {
+    let registry = build_registry();
+
+    let names: Vec<_> = registry.iter().map(PassInfo::name).collect();
+    let info = registry.info("KeepInteger").expect("registered");
+
+    assert_eq!(names, ["Increment", "KeepInteger"]);
+    assert_eq!(registry.len(), 2);
+    assert!(!registry.is_empty());
+    assert_eq!(info.name(), "KeepInteger");
+    assert_eq!(info.description(), "KeepInteger");
+    assert_eq!(info.pass_type_id(), TypeId::of::<KeepInteger>());
+    assert_eq!(info.input_type_id(), TypeId::of::<i64>());
+    assert_eq!(info.output_type_id(), TypeId::of::<i64>());
+    assert_eq!(info.pass_type_name(), type_name::<KeepInteger>());
+}
+
+/// Test a blank name is refused, registering nothing.
+#[rstest]
+#[case::empty("")]
+#[case::spaces("   ")]
+#[case::tab_and_newline("\t\n")]
+#[case::no_break_space("\u{a0}")]
+fn registry_register_rejects_a_blank_name(#[case] name: &'static str) {
+    let mut registry = PassRegistry::new();
+
+    let error = registry
+        .register::<NamedPass, i64, i64>(move || NamedPass::new(name, "A description."))
+        .expect_err("the name is blank");
+
+    assert_eq!(error, PassRegistrationError::EmptyName);
+    assert!(registry.is_empty());
+}
+
+/// Test a name of characters Rust does not count as whitespace is not
+/// blank, though Python's `str.isspace` counts the information separators.
+#[test]
+fn registry_register_accepts_a_name_rust_does_not_call_whitespace() {
+    let mut registry = PassRegistry::new();
+
+    registry
+        .register::<NamedPass, i64, i64>(|| NamedPass::new("\u{1c}", "A description."))
+        .expect("the name is not blank");
+
+    assert!(registry.info("\u{1c}").is_some());
+}
+
+/// Test a blank description is refused, registering nothing.
+#[rstest]
+#[case::empty("")]
+#[case::spaces("  ")]
+fn registry_register_rejects_a_blank_description(#[case] description: &'static str) {
+    let mut registry = PassRegistry::new();
+
+    let error = registry
+        .register::<NamedPass, i64, i64>(move || NamedPass::new("tests.named", description))
+        .expect_err("the description is blank");
+
+    assert!(
+        matches!(&error, PassRegistrationError::EmptyDescription { name, .. } if name == "tests.named"),
+        "{error:?}"
+    );
+    assert!(registry.is_empty());
+}
+
+/// Test a name registered to one pass type is refused to another pass type
+/// of the same name from another module, leaving the first registered.
+#[test]
+fn same_named_pass_types_in_two_modules_take_one_name() {
+    let mut registry = PassRegistry::new();
+    registry
+        .register::<first::Fold, i64, i64>(|| first::Fold)
+        .expect("the name is free");
+
+    let error = registry
+        .register::<second::Fold, i64, i64>(|| second::Fold)
+        .expect_err("the name is taken");
+
+    assert!(
+        matches!(
+            &error,
+            PassRegistrationError::NameTaken { name, registered_pass_type_name, .. }
+                if name == "Fold" && *registered_pass_type_name == type_name::<first::Fold>()
+        ),
+        "{error:?}"
+    );
+    assert_eq!(create_and_run(&registry, "Fold", 0), 1);
+    assert_eq!(registry.len(), 1);
+}
+
+/// Test a name registered to a pass over some IR types is refused to the
+/// same pass over other IR types.
+#[test]
+fn registry_register_rejects_a_name_taken_by_the_same_pass_over_other_ir_types() {
+    let mut registry = PassRegistry::new();
+    registry
+        .register::<TwoIrPass, i64, i64>(|| TwoIrPass)
+        .expect("the name is free");
+
+    let error = registry
+        .register::<TwoIrPass, String, String>(|| TwoIrPass)
+        .expect_err("the name is taken for other IR types");
+
+    assert!(
+        matches!(&error, PassRegistrationError::NameTaken { name, .. } if name == "TwoIrPass"),
+        "{error:?}"
+    );
+    assert_eq!(
+        registry.info("TwoIrPass").map(PassInfo::input_type_id),
+        Some(TypeId::of::<i64>())
+    );
 }
 
 /// Test registering a pass again with a new description is refused and
 /// keeps the original description.
 #[test]
-fn register_pass_refuses_a_new_description_for_a_registered_pass() {
-    register_pass::<MismatchPass, i64, i64>("tests.core.mismatch", "Original description.", || {
-        MismatchPass
-    })
-    .expect("the name is free");
+fn registry_register_refuses_a_new_description_for_a_registered_pass() {
+    let mut registry = PassRegistry::new();
+    registry
+        .register::<NamedPass, i64, i64>(|| NamedPass::new("tests.named", "Original."))
+        .expect("the name is free");
 
-    let error = register_pass::<MismatchPass, i64, i64>(
-        "tests.core.mismatch",
-        "A different description.",
-        || MismatchPass,
-    )
-    .expect_err("the description differs");
+    let error = registry
+        .register::<NamedPass, i64, i64>(|| NamedPass::new("tests.named", "Different."))
+        .expect_err("the description differs");
 
-    assert_eq!(
-        error.to_string(),
-        "Pass name \"tests.core.mismatch\" is already registered by \
-         it::pass::core_stories::MismatchPass with description \
-         \"Original description.\"; refusing to overwrite with new description \
-         \"A different description.\"."
+    assert!(
+        matches!(
+            &error,
+            PassRegistrationError::DescriptionConflict { name, registered, requested, .. }
+                if name == "tests.named" && registered == "Original." && requested == "Different."
+        ),
+        "{error:?}"
     );
     assert_eq!(
-        registered_passes()["tests.core.mismatch"].description(),
-        "Original description."
+        registry.info("tests.named").map(PassInfo::description),
+        Some("Original.")
     );
-    assert_eq!(MismatchPass.description(), "Original description.");
-}
-
-/// Registered twice in
-/// `register_pass_is_idempotent_for_the_same_pass_and_description`.
-struct IdempotentPass;
-
-impl CompilerPass<i64> for IdempotentPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
 }
 
 /// Test registering the same pass, name, and description again succeeds and
 /// changes nothing.
 #[test]
-fn register_pass_is_idempotent_for_the_same_pass_and_description() {
-    register_pass::<IdempotentPass, i64, i64>(
-        "tests.core.idempotent",
-        "Idempotent registration.",
-        || IdempotentPass,
-    )
-    .expect("the name is free");
-    let before = registered_passes()["tests.core.idempotent"].clone();
+fn registry_register_is_idempotent_for_the_same_pass_and_description() {
+    let mut registry = build_registry();
+    let before = registry.info("Increment").expect("registered").clone();
 
-    register_pass::<IdempotentPass, i64, i64>(
-        "tests.core.idempotent",
-        "Idempotent registration.",
-        || IdempotentPass,
-    )
-    .expect("the same registration is accepted again");
+    registry
+        .register::<Increment, i64, i64>(|| Increment)
+        .expect("the same registration is accepted again");
 
-    assert_eq!(registered_passes()["tests.core.idempotent"], before);
-    assert_eq!(before.type_name(), "it::pass::core_stories::IdempotentPass");
+    assert_eq!(registry.info("Increment"), Some(&before));
+    assert_eq!(registry.len(), 2);
 }
 
-/// Registered under two names in
-/// `register_pass_under_a_second_name_makes_it_the_default_name`.
-struct TwoNamePass;
-
-impl CompilerPass<i64> for TwoNamePass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test a pass registered under a second name takes that name and
-/// description, and both registrations stay listed.
+/// Test two registries are independent values: one name maps to different
+/// passes in each, and registering in one leaves the other unchanged.
 #[test]
-fn register_pass_under_a_second_name_makes_it_the_default_name() {
-    register_pass::<TwoNamePass, i64, i64>("tests.core.first_name", "First.", || TwoNamePass)
+fn pass_registries_are_independent_values() {
+    let mut first_registry = PassRegistry::new();
+    let mut second_registry = PassRegistry::new();
+
+    first_registry
+        .register::<first::Fold, i64, i64>(|| first::Fold)
         .expect("the name is free");
-    register_pass::<TwoNamePass, i64, i64>("tests.core.second_name", "Second.", || TwoNamePass)
+    second_registry
+        .register::<second::Fold, i64, i64>(|| second::Fold)
+        .expect("the name is free in the other registry");
+
+    assert_eq!(create_and_run(&first_registry, "Fold", 0), 1);
+    assert_eq!(create_and_run(&second_registry, "Fold", 0), 2);
+    assert_eq!(first_registry.len(), 1);
+}
+
+/// The registry error one registry operation produces.
+#[derive(Debug, Clone, Copy)]
+enum RegistrationFailure {
+    BlankName,
+    BlankDescription,
+    NameTaken,
+    DescriptionConflict,
+}
+
+/// Produce the registration error `failure` names.
+fn produce_registration_error(failure: RegistrationFailure) -> PassRegistrationError {
+    let mut registry = PassRegistry::new();
+    registry
+        .register::<NamedPass, i64, i64>(|| NamedPass::new("fold", "Folds."))
         .expect("the name is free");
-
-    let passes = registered_passes();
-
-    assert_eq!(TwoNamePass.name(), "tests.core.second_name");
-    assert_eq!(TwoNamePass.description(), "Second.");
-    assert!(passes.contains_key("tests.core.first_name"));
-    assert!(passes.contains_key("tests.core.second_name"));
-}
-
-// =============================================================================
-// Run counters
-// =============================================================================
-
-/// Counted in `run_count_counts_each_executed_run`.
-struct RunCountedPass;
-
-impl CompilerPass<i64> for RunCountedPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(ir + 1)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test every executed run counts under the pass's default name.
-#[test]
-fn run_count_counts_each_executed_run() {
-    let before = run_count::<RunCountedPass>();
-
-    RunCountedPass.execute(&0).expect("the run succeeds");
-    RunCountedPass.execute(&1).expect("the run succeeds");
-
-    assert_eq!(run_count::<RunCountedPass>(), before + 2);
-    assert_eq!(run_count_of("RunCountedPass"), before + 2);
-}
-
-/// Runs only on positive input; counted in `run_count_ignores_skipped_runs`.
-struct GatedPass;
-
-impl CompilerPass<i64> for GatedPass {
-    fn should_run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        Ok(*ir > 0)
-    }
-
-    fn noop_output(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(ir + 1)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test skipped runs do not count and executed runs do.
-#[test]
-fn run_count_ignores_skipped_runs() {
-    let before = run_count::<GatedPass>();
-
-    GatedPass.execute(&0).expect("the skipped run succeeds");
-    GatedPass.execute(&0).expect("the skipped run succeeds");
-    let after_skips = run_count::<GatedPass>();
-    GatedPass.execute(&1).expect("the run succeeds");
-    GatedPass.execute(&2).expect("the run succeeds");
-
-    assert_eq!(after_skips, before);
-    assert_eq!(run_count::<GatedPass>(), before + 2);
-}
-
-/// Fails in one hook under a name unique to that hook.
-struct CountedFailingPass {
-    inner: FailingHookPass,
-}
-
-impl CountedFailingPass {
-    /// Return the name the pass counts under.
-    fn counter_name(hook: PassHook) -> String {
-        format!("tests.core.counted_failure.{hook}")
-    }
-}
-
-impl CompilerPass<i64> for CountedFailingPass {
-    fn name(&self) -> String {
-        Self::counter_name(self.inner.hook)
-    }
-
-    fn validate_input(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        self.inner.validate_input(ir, cx)
-    }
-
-    fn should_run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<bool, PassFailure> {
-        self.inner.should_run(ir, cx)
-    }
-
-    fn noop_output(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        self.inner.noop_output(ir, cx)
-    }
-
-    fn run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        self.inner.run(ir, cx)
-    }
-
-    fn validate_output(
-        &mut self,
-        input: &i64,
-        output: &i64,
-        cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
-        self.inner.validate_output(input, output, cx)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        self.inner.did_change(input, output)
-    }
-
-    fn preserved_analyses(
-        &mut self,
-        input: &i64,
-        output: &i64,
-        changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
-        self.inner.preserved_analyses(input, output, changed)
-    }
-}
-
-/// Test a run counts once `run` is reached, even when it or a later hook
-/// fails, and not when an earlier hook fails.
-#[rstest]
-#[case::validate_input(PassHook::ValidateInput, 0)]
-#[case::should_run(PassHook::ShouldRun, 0)]
-#[case::noop_output(PassHook::NoopOutput, 0)]
-#[case::run(PassHook::Run, 2)]
-#[case::validate_output(PassHook::ValidateOutput, 2)]
-#[case::did_change(PassHook::DidChange, 2)]
-#[case::preserved_analyses(PassHook::PreservedAnalyses, 2)]
-fn run_count_counts_a_run_that_fails_after_it_started(
-    #[case] hook: PassHook,
-    #[case] expected: u64,
-) {
-    let mut pass = CountedFailingPass {
-        inner: FailingHookPass { hook },
+    let result = match failure {
+        RegistrationFailure::BlankName => {
+            registry.register::<NamedPass, i64, i64>(|| NamedPass::new(" ", "Folds."))
+        }
+        RegistrationFailure::BlankDescription => {
+            registry.register::<NamedPass, i64, i64>(|| NamedPass::new("fold", ""))
+        }
+        RegistrationFailure::NameTaken => registry
+            .register::<GenericNamedPass<()>, i64, i64>(|| GenericNamedPass(PhantomData))
+            .and_then(|()| {
+                registry
+                    .register::<GenericNamedPass<u8>, i64, i64>(|| GenericNamedPass(PhantomData))
+            }),
+        RegistrationFailure::DescriptionConflict => {
+            registry.register::<NamedPass, i64, i64>(|| NamedPass::new("fold", "Unfolds."))
+        }
     };
-
-    pass.execute(&1).expect_err("the hook fails");
-    pass.execute(&2).expect_err("the hook fails");
-
-    assert_eq!(
-        run_count_of(&CountedFailingPass::counter_name(hook)),
-        expected
-    );
+    result.expect_err("the registration is refused")
 }
 
-/// Registered in `run_count_counts_a_registered_pass_under_its_registered_name`.
-struct CountedRegisteredPass;
+/// Test each registration error renders its one-line message.
+#[rstest]
+#[case::blank_name(RegistrationFailure::BlankName, "pass name is blank")]
+#[case::blank_description(
+    RegistrationFailure::BlankDescription,
+    "pass \"fold\" has a blank description"
+)]
+#[case::name_taken(
+    RegistrationFailure::NameTaken,
+    "pass name \"GenericNamedPass\" is already registered to another pass"
+)]
+#[case::description_conflict(
+    RegistrationFailure::DescriptionConflict,
+    "pass \"fold\" is already registered with a different description"
+)]
+fn pass_registration_error_display_table(
+    #[case] failure: RegistrationFailure,
+    #[case] expected: &str,
+) {
+    let error = produce_registration_error(failure);
 
-impl CompilerPass<i64> for CountedRegisteredPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
+    assert_eq!(error.to_string(), expected);
+    assert!(error.source().is_none());
 }
 
-/// Test a registered pass counts under its registered name.
-#[test]
-fn run_count_counts_a_registered_pass_under_its_registered_name() {
-    register_pass::<CountedRegisteredPass, i64, i64>(
-        "tests.core.counted_registered",
-        "Counted under its registered name.",
-        || CountedRegisteredPass,
-    )
-    .expect("the name is free");
+/// Test each creation error renders its one-line message.
+#[rstest]
+#[case::unknown_pass("fold", "no pass is registered as \"fold\"")]
+#[case::ir_type_mismatch(
+    "Increment",
+    "pass \"Increment\" takes i64 to i64, not alloc::string::String to alloc::string::String"
+)]
+fn create_pass_error_display_table(#[case] name: &str, #[case] expected: &str) {
+    let registry = build_registry();
 
-    CountedRegisteredPass.execute(&0).expect("the run succeeds");
+    let error = registry
+        .create::<String, String>(name)
+        .err()
+        .expect("the pass cannot be created");
 
-    assert_eq!(run_count_of("tests.core.counted_registered"), 1);
-    assert_eq!(run_count::<CountedRegisteredPass>(), 1);
-    assert_eq!(run_count_of("CountedRegisteredPass"), 0);
-}
-
-/// Overrides its name; counted in
-/// `run_count_counts_an_overridden_name_under_that_name`.
-struct RenamedPass;
-
-impl CompilerPass<i64> for RenamedPass {
-    fn name(&self) -> String {
-        "tests.core.renamed".to_owned()
-    }
-
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
-        Ok(*ir)
-    }
-
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
-        Ok(input != output)
-    }
-}
-
-/// Test a pass that overrides its name counts under that name, not under its
-/// type's default name.
-#[test]
-fn run_count_counts_an_overridden_name_under_that_name() {
-    RenamedPass.execute(&0).expect("the run succeeds");
-
-    assert_eq!(run_count_of("tests.core.renamed"), 1);
-    assert_eq!(run_count::<RenamedPass>(), 0);
-}
-
-/// Test a name nothing ran under counts zero.
-#[test]
-fn run_count_of_an_unused_name_is_zero() {
-    assert_eq!(run_count_of("tests.core.never_ran"), 0);
+    assert_eq!(error.to_string(), expected);
+    assert!(error.source().is_none());
 }

@@ -1,5 +1,6 @@
 //! Collect-all validation pipelines.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use super::compiler_pass::{CompilerPass, run_lifecycle};
@@ -12,7 +13,7 @@ use crate::identifier::{HasIdentifier, Identifier};
 
 /// Return the error diagnostic for the validator `validator_name` that failed
 /// with `error` without reporting an error itself.
-fn synthesize_silent_failure(validator_name: &str, error: &PassError) -> Diagnostic {
+fn synthesize_silent_failure(validator_name: Cow<'static, str>, error: &PassError) -> Diagnostic {
     let kind = if error.is_validation_failure() {
         "validation failure"
     } else {
@@ -21,7 +22,7 @@ fn synthesize_silent_failure(validator_name: &str, error: &PassError) -> Diagnos
     let message = format!(
         "Validator \"{validator_name}\" raised \"{kind}\" without reporting a diagnostic: {error}"
     );
-    Diagnostic::error(Note::with_other_kind(message), validator_name.to_owned())
+    Diagnostic::error(Note::with_other_kind(message), validator_name)
 }
 
 /// A sequence of validation passes whose diagnostics aggregate into one
@@ -60,7 +61,10 @@ impl<'p, I> ValidationManager<'p, I> {
     /// Return the validators' names, in pipeline order.
     #[must_use]
     pub fn validator_names(&self) -> Vec<String> {
-        self.validators.iter().map(CompilerPass::name).collect()
+        self.validators
+            .iter()
+            .map(|validator| validator.name().into_owned())
+            .collect()
     }
 
     /// Run every validator over `ir` and return the aggregated report.
@@ -85,12 +89,13 @@ impl<'p, I> ValidationManager<'p, I> {
                     .iter()
                     .any(|diagnostic| diagnostic.level() == DiagnosticLevel::Error);
                 if !reported_error {
-                    captured.push(synthesize_silent_failure(&validator_name, &error));
+                    captured.push(synthesize_silent_failure(validator_name.clone(), &error));
                 }
             }
             diagnostics.extend(captured.iter().cloned());
             records.push(PassRunRecord::new(
                 validator_name,
+                false,
                 false,
                 captured,
                 PreservedAnalyses::all(),

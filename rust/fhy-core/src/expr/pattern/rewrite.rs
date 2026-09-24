@@ -8,6 +8,7 @@
 //! whether it differs from the input, and which rules fired.
 //! [`RewriteRuleApplier`] is the same walk as a compiler pass.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -26,7 +27,8 @@ type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError>
 /// A guard: whether a rule may fire on a match's bindings.
 type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
 
-/// The name of [`RewriteRuleApplier`], which it is registered under.
+/// The name of [`RewriteRuleApplier`], which it is registered under: a
+/// stable registry key, not a Rust path.
 const RULE_APPLIER_PASS_NAME: &str = "fhy_core.symbolic.expression.apply_rewrite_rules";
 
 /// The description of [`RewriteRuleApplier`].
@@ -522,12 +524,12 @@ impl RewriteRuleApplier {
 }
 
 impl CompilerPass<Expression> for RewriteRuleApplier {
-    fn name(&self) -> String {
-        RULE_APPLIER_PASS_NAME.to_owned()
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed(RULE_APPLIER_PASS_NAME)
     }
 
-    fn description(&self) -> String {
-        RULE_APPLIER_PASS_DESCRIPTION.to_owned()
+    fn description(&self) -> Cow<'static, str> {
+        Cow::Borrowed(RULE_APPLIER_PASS_DESCRIPTION)
     }
 
     fn noop_output(

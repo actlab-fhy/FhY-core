@@ -1,12 +1,13 @@
 //! The compiler-pass trait, its guarded lifecycle, and the outcome of a run.
 
+use std::any::type_name;
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 
 use super::context::PassContext;
 use super::error::{PassError, PassErrorClass, PassHook};
 use super::preserved::PreservedAnalyses;
-use super::registry;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 
 /// The error a pass hook returns.
@@ -17,6 +18,175 @@ use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 /// others, either for [`CompilerPass::run`]) hands it through unchanged; any
 /// other error is wrapped in a [`PassError`] naming the pass and the hook.
 pub type PassFailure = Box<dyn Error + Send + Sync + 'static>;
+
+/// Return whether `character` may appear in an identifier or a number.
+fn is_identifier_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+/// Return the segment of `path` a short name keeps: the last `::` segment,
+/// or the last two when the last is a `{{...}}` segment such as
+/// `{{closure}}`.
+fn keep_last_segment(path: &str) -> &str {
+    let mut segments = path.rmatch_indices("::");
+    let Some((last_separator, _)) = segments.next() else {
+        return path;
+    };
+    let last = &path[last_separator + 2..];
+    if !last.starts_with("{{") {
+        return last;
+    }
+    match segments.next() {
+        Some((separator, _)) => &path[separator + 2..],
+        None => path,
+    }
+}
+
+/// Return whether `name` is a nominal type: a path of identifier, `::` and
+/// `{{...}}` pieces, followed by at most one generic argument list that ends
+/// the name.
+fn is_nominal(name: &str) -> bool {
+    let (path, arguments) = name.split_at(name.find('<').unwrap_or(name.len()));
+    let is_path = !path.is_empty()
+        && !path.starts_with(':')
+        && path
+            .chars()
+            .all(|character| is_identifier_char(character) || "{}:".contains(character));
+    if !is_path {
+        return false;
+    }
+    let mut depth = 0_usize;
+    let mut previous = ' ';
+    for (position, character) in arguments.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' if previous != '-' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 && position + 1 != arguments.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        previous = character;
+    }
+    depth == 0
+}
+
+/// Return the characters of `name` outside every generic argument list,
+/// with their byte positions. A `>` that is part of `->` closes no list, and
+/// an unbalanced `<` drops the rest of the name.
+fn strip_generic_arguments(name: &str) -> Vec<(usize, char)> {
+    let mut kept = Vec::with_capacity(name.len());
+    let mut depth = 0_usize;
+    let mut previous = ' ';
+    for (position, character) in name.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' if previous != '-' && depth > 0 => depth -= 1,
+            _ if depth == 0 => kept.push((position, character)),
+            _ => {}
+        }
+        previous = character;
+    }
+    kept
+}
+
+/// Return the length of the path starting at `kept[start]`: identifier,
+/// `{{...}}` and `::` pieces, or 0 if no path starts there.
+fn measure_path(kept: &[(usize, char)], start: usize) -> usize {
+    let at = |index: usize| kept.get(index).map(|&(_, character)| character);
+    let mut end = start;
+    loop {
+        if at(end) == Some('{') && at(end + 1) == Some('{') {
+            end += 2;
+            while end < kept.len() && !(at(end) == Some('}') && at(end + 1) == Some('}')) {
+                end += 1;
+            }
+            end = (end + 2).min(kept.len());
+        } else {
+            while at(end).is_some_and(is_identifier_char) {
+                end += 1;
+            }
+        }
+        if at(end) == Some(':') && at(end + 1) == Some(':') {
+            end += 2;
+        } else {
+            return end - start;
+        }
+    }
+}
+
+/// Return `name` shortened as [`short_type_name`] describes, borrowed
+/// whenever the result is a contiguous slice of `name`.
+fn shorten(name: &'static str) -> Cow<'static, str> {
+    if is_nominal(name) {
+        let path = &name[..name.find('<').unwrap_or(name.len())];
+        return Cow::Borrowed(keep_last_segment(path));
+    }
+    let kept = strip_generic_arguments(name);
+    let mut pieces: Vec<(usize, usize)> = Vec::new();
+    let mut index = 0;
+    while index < kept.len() {
+        let length = measure_path(&kept, index).max(1);
+        let path: String = kept[index..index + length]
+            .iter()
+            .map(|&(_, character)| character)
+            .collect();
+        let skipped = path.chars().count() - keep_last_segment(&path).chars().count();
+        for &(position, character) in &kept[index + skipped..index + length] {
+            let end = position + character.len_utf8();
+            match pieces.last_mut() {
+                Some((_, last_end)) if *last_end == position => *last_end = end,
+                _ => pieces.push((position, end)),
+            }
+        }
+        index += length;
+    }
+    match pieces.as_slice() {
+        [] => Cow::Borrowed(""),
+        &[(start, end)] => Cow::Borrowed(&name[start..end]),
+        _ => Cow::Owned(
+            pieces
+                .iter()
+                .map(|&(start, end)| &name[start..end])
+                .collect(),
+        ),
+    }
+}
+
+/// Return the default pass name of the type `T`: its type name without
+/// module paths and generic arguments.
+///
+/// The name is [`std::any::type_name`] with every generic argument list
+/// `<...>` removed and every path `a::b::C` replaced by its last segment,
+/// keeping the last two segments when the last is a `{{...}}` segment such
+/// as `{{closure}}`. Everything else is kept, so `&mut my_crate::Fold` is
+/// `&mut Fold` and `(a::B, a::Fold<a::B>)` is `(B, Fold)`. The result
+/// borrows from the type name whenever it is one contiguous piece of it, so
+/// a nominal type, generic or not, is named without allocating.
+///
+/// `type_name` does not guarantee its output stays the same across compiler
+/// versions, so a pass whose name is part of a contract, such as a registry
+/// key or a diagnostic source something matches, overrides
+/// [`CompilerPass::name`] instead.
+///
+/// # Examples
+///
+/// ```
+/// use std::borrow::Cow;
+///
+/// use fhy_core::pass::short_type_name;
+///
+/// struct Fold<T>(T);
+///
+/// assert!(matches!(short_type_name::<Fold<Vec<u8>>>(), Cow::Borrowed("Fold")));
+/// assert_eq!(short_type_name::<(Fold<u8>, &mut u8)>(), "(Fold, &mut u8)");
+/// ```
+#[must_use]
+pub fn short_type_name<T: ?Sized>() -> Cow<'static, str> {
+    shorten(type_name::<T>())
+}
 
 /// The error [`CompilerPass::noop_output`] returns by default.
 #[derive(Debug)]
@@ -39,7 +209,7 @@ impl Error for MissingNoopOutput {}
 /// 2. [`should_run`](Self::should_run); when it returns `false`, the run
 ///    ends with [`noop_output`](Self::noop_output), unchanged, and the
 ///    analyses from [`preserved_analyses`](Self::preserved_analyses);
-/// 3. [`run`](Self::run), counted in the run counters before it is called;
+/// 3. [`run`](Self::run);
 /// 4. [`validate_output`](Self::validate_output);
 /// 5. [`did_change`](Self::did_change);
 /// 6. [`preserved_analyses`](Self::preserved_analyses).
@@ -73,22 +243,21 @@ impl Error for MissingNoopOutput {}
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait CompilerPass<I, O = I> {
-    /// Return the pass's name, the source of its diagnostics and the key of
-    /// its run counter.
+    /// Return the pass's name, the source of its diagnostics and its key in
+    /// a [`PassRegistry`](super::PassRegistry).
     ///
-    /// By default: the name the pass's type was registered under with
-    /// [`register_pass`](super::register_pass), else the type's name without
-    /// its module path and generic arguments.
-    fn name(&self) -> String {
-        registry::find_default_pass_name::<Self>()
+    /// By default: [`short_type_name::<Self>()`](short_type_name), the
+    /// type's name without module paths and generic arguments, borrowed
+    /// from the type name. Registering the pass never changes it.
+    fn name(&self) -> Cow<'static, str> {
+        short_type_name::<Self>()
     }
 
     /// Return a human-readable description of the pass.
     ///
-    /// By default: the description the pass's type was registered with, else
-    /// [`name`](Self::name).
-    fn description(&self) -> String {
-        registry::find_registered_description::<Self>().unwrap_or_else(|| self.name())
+    /// By default: [`name`](Self::name).
+    fn description(&self) -> Cow<'static, str> {
+        self.name()
     }
 
     /// Check the input before the pass runs.
@@ -178,11 +347,11 @@ pub trait CompilerPass<I, O = I> {
 /// Forward every hook to the borrowed pass, so a pipeline can run a pass its
 /// caller keeps and reads afterwards.
 impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for &mut P {
-    fn name(&self) -> String {
+    fn name(&self) -> Cow<'static, str> {
         (**self).name()
     }
 
-    fn description(&self) -> String {
+    fn description(&self) -> Cow<'static, str> {
         (**self).description()
     }
 
@@ -227,11 +396,11 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for &mut P {
 
 /// Forward every hook to the boxed pass.
 impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for Box<P> {
-    fn name(&self) -> String {
+    fn name(&self) -> Cow<'static, str> {
         (**self).name()
     }
 
-    fn description(&self) -> String {
+    fn description(&self) -> Cow<'static, str> {
         (**self).description()
     }
 
@@ -279,23 +448,21 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for Box<P> {
 pub struct PassOutcome<O> {
     output: O,
     changed: bool,
+    skipped: bool,
     diagnostics: Vec<Diagnostic>,
     preserved: PreservedAnalyses,
 }
 
 impl<O> PassOutcome<O> {
-    /// Create the outcome of a run that produced `output`.
-    fn new(
-        output: O,
-        changed: bool,
-        diagnostics: Vec<Diagnostic>,
-        preserved: PreservedAnalyses,
-    ) -> Self {
+    /// Create the outcome of a run that produced `result`, emitting
+    /// `diagnostics`.
+    fn new(result: LifecycleResult<O>, diagnostics: Vec<Diagnostic>) -> Self {
         Self {
-            output,
-            changed,
+            output: result.output,
+            changed: result.changed,
+            skipped: result.skipped,
             diagnostics,
-            preserved,
+            preserved: result.preserved,
         }
     }
 
@@ -317,6 +484,14 @@ impl<O> PassOutcome<O> {
         self.changed
     }
 
+    /// Return whether the pass skipped the run: its output came from
+    /// [`CompilerPass::noop_output`], and [`CompilerPass::run`] was not
+    /// called.
+    #[must_use]
+    pub fn is_skipped(&self) -> bool {
+        self.skipped
+    }
+
     /// Return the diagnostics the run emitted, in emission order.
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
@@ -336,6 +511,7 @@ impl<O> PassOutcome<O> {
 pub(super) struct LifecycleResult<O> {
     pub(super) output: O,
     pub(super) changed: bool,
+    pub(super) skipped: bool,
     pub(super) preserved: PreservedAnalyses,
 }
 
@@ -366,7 +542,7 @@ fn wrap_hook_failure(failure: PassFailure, hook: PassHook, cx: &mut PassContext<
         Ok(error) => error as PassFailure,
         Err(other) => other,
     };
-    let pass_name = cx.pass_name().to_owned();
+    let pass_name = cx.shared_pass_name();
     let message = format!("Pass \"{pass_name}\" failed {hook} with {failure}");
     cx.report_text(DiagnosticLevel::Error, message.clone(), None);
     PassError::new_hook_failure(
@@ -411,10 +587,10 @@ where
         return Ok(LifecycleResult {
             output,
             changed: false,
+            skipped: true,
             preserved,
         });
     }
-    registry::record_run(cx.pass_name());
     let output = guard_hook(pass.run(ir, cx), PassHook::Run, cx)?;
     guard_hook(
         pass.validate_output(ir, &output, cx),
@@ -430,6 +606,7 @@ where
     Ok(LifecycleResult {
         output,
         changed,
+        skipped: false,
         preserved,
     })
 }
@@ -456,11 +633,73 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> ExecutePass<I, O> for P {
         let mut cx = PassContext::new(self.name(), None);
         let result = run_lifecycle(self, ir, &mut cx)?;
         let (_, diagnostics) = cx.into_parts();
-        Ok(PassOutcome::new(
-            result.output,
-            result.changed,
-            diagnostics,
-            result.preserved,
-        ))
+        Ok(PassOutcome::new(result, diagnostics))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    /// Test a type name shortens to the documented default pass name, and
+    /// borrows exactly when the result is one piece of the type name.
+    #[rstest]
+    #[case::generic_nominal("my_crate::passes::Fold<i64>", "Fold", true)]
+    #[case::nominal("my_crate::Fold", "Fold", true)]
+    #[case::bare("Fold", "Fold", true)]
+    #[case::nested_generics("a::Fold<b::Pair<c::X, d::Y<e::Z>>>", "Fold", true)]
+    #[case::tuple("(main::a::B, main::a::Fold<main::a::B>)", "(B, Fold)", false)]
+    #[case::closure("main::main::{{closure}}", "main::{{closure}}", true)]
+    #[case::lone_closure("{{closure}}", "{{closure}}", true)]
+    #[case::reference("&mut main::a::B", "&mut B", false)]
+    #[case::boxed_closure("alloc::boxed::Box<dyn core::ops::function::Fn()>", "Box", true)]
+    #[case::boxed_function_returning(
+        "alloc::boxed::Box<dyn core::ops::function::Fn(i32) -> i32>",
+        "Box",
+        true
+    )]
+    #[case::array("[main::a::B; 2]", "[B; 2]", false)]
+    #[case::function_pointer("fn(i32) -> i32", "fn(i32) -> i32", true)]
+    #[case::qualified_path("<a::B as c::Tr>::X", "X", true)]
+    #[case::trait_object("dyn a::Tr", "dyn Tr", false)]
+    #[case::unit("()", "()", true)]
+    #[case::unicode("a::Ünïcode<b::Ç>", "Ünïcode", true)]
+    fn short_type_name_shortens_a_type_name(
+        #[case] name: &'static str,
+        #[case] expected: &str,
+        #[case] is_borrowed: bool,
+    ) {
+        let short = shorten(name);
+
+        assert_eq!(short, expected);
+        assert_eq!(matches!(short, Cow::Borrowed(_)), is_borrowed, "{short:?}");
+    }
+
+    /// Test unbalanced or odd type names shorten to a best-effort name
+    /// without panicking.
+    #[rstest]
+    #[case::unclosed("a::Fold<b::X", "Fold")]
+    #[case::extra_close("a::Fold>", "Fold>")]
+    #[case::dangling_separator("a::", "")]
+    #[case::only_separators("::::", "")]
+    #[case::unclosed_closure("a::{{clos", "a::{{clos")]
+    #[case::empty("", "")]
+    #[case::arrow_only("->", "->")]
+    fn short_type_name_handles_odd_names(#[case] name: &'static str, #[case] expected: &str) {
+        assert_eq!(shorten(name), expected);
+    }
+
+    /// Test the public function shortens the name of a real type.
+    #[test]
+    fn short_type_name_shortens_the_name_of_a_type() {
+        struct Fold<T>(T);
+
+        assert!(matches!(
+            short_type_name::<Fold<Vec<String>>>(),
+            Cow::Borrowed("Fold")
+        ));
+        assert_eq!(short_type_name::<&mut Fold<u8>>(), "&mut Fold");
     }
 }

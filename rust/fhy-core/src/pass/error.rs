@@ -1,5 +1,6 @@
-//! The errors a pass run and a pass registration return.
+//! The errors a pass run returns.
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 
@@ -64,13 +65,13 @@ enum PassErrorKind {
     /// A hook returned an error.
     Hook {
         class: PassErrorClass,
-        pass_name: String,
+        pass_name: Cow<'static, str>,
         hook: PassHook,
         source: PassFailure,
     },
     /// Verification rejected the IR a pass received or produced.
     Verification {
-        pass_name: String,
+        pass_name: Cow<'static, str>,
         report: Box<ValidationReport<PassRunRecord>>,
     },
     /// A fixpoint group used its iteration budget without converging.
@@ -95,7 +96,7 @@ impl PassError {
     /// `source`, reported as `message` after the pass emitted `diagnostics`.
     pub(super) fn new_hook_failure(
         class: PassErrorClass,
-        pass_name: String,
+        pass_name: Cow<'static, str>,
         hook: PassHook,
         message: String,
         source: PassFailure,
@@ -116,7 +117,7 @@ impl PassError {
     /// Create the error for verification rejecting IR around the pass
     /// `pass_name`, reported as `message` with the pass's `diagnostics`.
     pub(super) fn new_verification_failure(
-        pass_name: String,
+        pass_name: Cow<'static, str>,
         message: String,
         report: ValidationReport<PassRunRecord>,
         diagnostics: Vec<Diagnostic>,
@@ -226,26 +227,3 @@ impl Error for PassError {
         }
     }
 }
-
-/// A pass registration that the registry refused, or a lookup of a pass it
-/// cannot create.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PassRegistrationError {
-    message: String,
-}
-
-impl PassRegistrationError {
-    /// Create the error reported as `message`.
-    pub(super) fn new(message: String) -> Self {
-        Self { message }
-    }
-}
-
-/// Render the refusal message, for example `Unknown pass "fold".`.
-impl fmt::Display for PassRegistrationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for PassRegistrationError {}

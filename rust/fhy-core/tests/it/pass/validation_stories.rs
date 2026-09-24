@@ -5,6 +5,8 @@
 
 use crate::support::pass_ir;
 
+use std::borrow::Cow;
+
 use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
@@ -56,8 +58,8 @@ impl ScriptedValidator {
 }
 
 impl CompilerPass<BoxIr, ()> for ScriptedValidator {
-    fn name(&self) -> String {
-        self.name.to_owned()
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed(self.name)
     }
 
     fn run(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {

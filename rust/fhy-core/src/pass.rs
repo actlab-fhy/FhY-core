@@ -12,11 +12,12 @@
 //! the IR between passes with a [`ValidationManager`], which runs validation
 //! passes collect-all into one report.
 //!
-//! Hook errors become a [`PassError`] naming the pass and the hook. The
-//! process-wide registry ([`register_pass`], [`create_pass`],
-//! [`registered_passes`]) names pass types, and the run counters
-//! ([`run_count`], [`run_count_of`], [`total_run_count`]) count every pass
-//! run that was not skipped.
+//! Hook errors become a [`PassError`] naming the pass and the hook. A pass
+//! is named by [`CompilerPass::name`], by default
+//! [`short_type_name`] of its type. A [`PassRegistry`] is an owned value
+//! that builds passes by name, and a pipeline run reports its own run
+//! statistics in its [`PassManagerResult`]; the module keeps no global
+//! state.
 //!
 //! [`WalkPass`] and [`RewritePass`] turn the traversals of
 //! [`crate::tree`] into passes.
@@ -33,16 +34,13 @@ mod validation;
 
 pub use adapters::{RewritePass, WalkPass};
 pub use analysis::Analysis;
-pub use compiler_pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome};
+pub use compiler_pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome, short_type_name};
 pub use context::PassContext;
-pub use error::{PassError, PassHook, PassRegistrationError};
+pub use error::{PassError, PassHook};
 pub use manager::{
     FixpointGroupRecord, FixpointIterationRecord, FixpointPassGroup, PassManager,
     PassManagerResult, PassRunRecord, PipelineRecord,
 };
 pub use preserved::{AnalysisId, PreservedAnalyses};
-pub use registry::{
-    PassInfo, create_pass, register_pass, registered_passes, run_count, run_count_of,
-    total_run_count,
-};
+pub use registry::{CreatePassError, PassInfo, PassRegistrationError, PassRegistry};
 pub use validation::ValidationManager;

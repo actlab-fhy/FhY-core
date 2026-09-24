@@ -1,5 +1,6 @@
 //! Pass pipelines, fixpoint groups, and the records of a pipeline run.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroUsize;
 
@@ -20,8 +21,9 @@ const DEFAULT_MAX_ITERATIONS: NonZeroUsize = NonZeroUsize::new(10).expect("ten i
 /// The record of one pass run in a pipeline or a validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassRunRecord {
-    pass_name: String,
+    pass_name: Cow<'static, str>,
     changed: bool,
+    skipped: bool,
     diagnostics: Vec<Diagnostic>,
     preserved: PreservedAnalyses,
 }
@@ -29,14 +31,16 @@ pub struct PassRunRecord {
 impl PassRunRecord {
     /// Create the record of a run of the pass `pass_name`.
     pub(super) fn new(
-        pass_name: String,
+        pass_name: Cow<'static, str>,
         changed: bool,
+        skipped: bool,
         diagnostics: Vec<Diagnostic>,
         preserved: PreservedAnalyses,
     ) -> Self {
         Self {
             pass_name,
             changed,
+            skipped,
             diagnostics,
             preserved,
         }
@@ -52,6 +56,13 @@ impl PassRunRecord {
     #[must_use]
     pub fn is_changed(&self) -> bool {
         self.changed
+    }
+
+    /// Return whether the pass skipped the run, so
+    /// [`CompilerPass::run`] was not called.
+    #[must_use]
+    pub fn is_skipped(&self) -> bool {
+        self.skipped
     }
 
     /// Return the diagnostics the run emitted, in emission order.
@@ -139,7 +150,8 @@ pub enum PipelineRecord {
     FixpointGroup(FixpointGroupRecord),
 }
 
-/// The result of a pipeline run: the final IR and one record per item.
+/// The result of a pipeline run: the final IR, one record per item, and the
+/// run's statistics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassManagerResult<I> {
     output: I,
@@ -163,6 +175,31 @@ impl<I> PassManagerResult<I> {
     #[must_use]
     pub fn records(&self) -> &[PipelineRecord] {
         &self.records
+    }
+
+    /// Return the record of every pass run, in run order, with the runs of
+    /// each fixpoint group's iterations in place of the group.
+    pub fn pass_runs(&self) -> impl Iterator<Item = &PassRunRecord> + '_ {
+        self.records.iter().flat_map(|record| {
+            let (pass, group) = match record {
+                PipelineRecord::Pass(pass) => (Some(pass), None),
+                PipelineRecord::FixpointGroup(group) => (None, Some(group)),
+            };
+            let group_runs = group
+                .into_iter()
+                .flat_map(|group| &group.iteration_records)
+                .flat_map(|iteration| &iteration.pass_runs);
+            pass.into_iter().chain(group_runs)
+        })
+    }
+
+    /// Return the number of pass runs the pipeline made, not counting the
+    /// runs a pass skipped.
+    ///
+    /// The count covers this run only; nothing is counted across runs.
+    #[must_use]
+    pub fn run_count(&self) -> usize {
+        self.pass_runs().filter(|run| !run.skipped).count()
     }
 }
 
@@ -244,7 +281,8 @@ impl<I> HasIdentifier for FixpointPassGroup<'_, I> {
 /// Render the group's configuration and the names of its passes.
 impl<I> fmt::Debug for FixpointPassGroup<'_, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let pass_names: Vec<String> = self.passes.iter().map(CompilerPass::name).collect();
+        let pass_names: Vec<Cow<'static, str>> =
+            self.passes.iter().map(CompilerPass::name).collect();
         f.debug_struct("FixpointPassGroup")
             .field("name", &self.name)
             .field("max_iterations", &self.max_iterations)
@@ -293,7 +331,7 @@ impl VerificationPoint {
 }
 
 /// Return the name of the first pass `items` will run, if any.
-fn find_first_pass_name<I>(items: &[PipelineItem<'_, I>]) -> Option<String> {
+fn find_first_pass_name<I>(items: &[PipelineItem<'_, I>]) -> Option<Cow<'static, str>> {
     items.iter().find_map(|item| match item {
         PipelineItem::Pass(pass) => Some(pass.name()),
         PipelineItem::FixpointGroup(group) => group.passes.first().map(CompilerPass::name),
@@ -316,7 +354,7 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
         &mut self,
         ir: &I,
         point: VerificationPoint,
-        pass_name: &str,
+        pass_name: Cow<'static, str>,
         diagnostics: &[Diagnostic],
     ) -> Result<(), PassError> {
         let Some(verifier) = self.verifier.as_deref_mut() else {
@@ -337,11 +375,11 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
         );
         let mut failure_diagnostics = diagnostics.to_vec();
         failure_diagnostics.push(
-            Diagnostic::error(Note::with_other_kind(message.clone()), pass_name.to_owned())
+            Diagnostic::error(Note::with_other_kind(message.clone()), pass_name.clone())
                 .with_detail(report.to_string()),
         );
         Err(PassError::new_verification_failure(
-            pass_name.to_owned(),
+            pass_name,
             message,
             (*report).clone(),
             failure_diagnostics,
@@ -362,13 +400,19 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
             self.verify(
                 &result.output,
                 VerificationPoint::Output,
-                &pass_name,
+                pass_name.clone(),
                 &diagnostics,
             )?;
         }
         self.cache
             .transfer(input, &result.output, &result.preserved);
-        let record = PassRunRecord::new(pass_name, result.changed, diagnostics, result.preserved);
+        let record = PassRunRecord::new(
+            pass_name,
+            result.changed,
+            result.skipped,
+            diagnostics,
+            result.preserved,
+        );
         Ok((result.output, record))
     }
 
@@ -526,7 +570,7 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
             verifier: self.verifier.as_mut(),
         };
         if let Some(first_pass_name) = find_first_pass_name(&self.items) {
-            run.verify(ir, VerificationPoint::Input, &first_pass_name, &[])?;
+            run.verify(ir, VerificationPoint::Input, first_pass_name, &[])?;
         }
         let mut current = ir.clone();
         let mut records = Vec::with_capacity(self.items.len());

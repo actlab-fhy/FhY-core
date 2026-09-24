@@ -4,13 +4,13 @@
 //! rule applier by name. Each runs standalone, and the rule applier also in
 //! a pipeline and a fixpoint group.
 //!
-//! Public API only. The pass registry is process-wide and the tests run in
-//! parallel, so only `register_expression_passes_registers_the_rule_applier`
-//! registers a pass, and no test reads a run counter.
+//! Public API only.
 
 use crate::support::expression as expression_support;
 use crate::support::pattern as pattern_support;
 use crate::support::tree_ir;
+
+use std::any::TypeId;
 
 use expression_support::{
     build_call_or_panic, build_doubling_dag, build_identifier, build_literal,
@@ -28,7 +28,7 @@ use fhy_core::expr::{
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
     CompilerPass, ExecutePass, FixpointIterationRecord, FixpointPassGroup, PassError, PassHook,
-    PassManager, PipelineRecord, PreservedAnalyses, create_pass, registered_passes,
+    PassManager, PassRegistry, PipelineRecord, PreservedAnalyses,
 };
 use pattern_support::{
     ProbeError, build_capture, build_literal_pattern, build_x_plus_zero_rule,
@@ -559,20 +559,21 @@ fn register_expression_passes_registers_the_rule_applier() {
     let (_, a) = build_identifier("a");
     let expression = build_plus_zero(&a);
 
-    let first = register_expression_passes();
-    let second = register_expression_passes();
+    let mut registry = PassRegistry::new();
+
+    let first = register_expression_passes(&mut registry);
+    let second = register_expression_passes(&mut registry);
 
     assert_eq!(first, Ok(()));
     assert_eq!(second, Ok(()));
-    let passes = registered_passes();
-    let info = &passes[RULE_APPLIER_NAME];
+    assert_eq!(registry.len(), 1);
+    let info = registry.info(RULE_APPLIER_NAME).expect("registered");
     assert_eq!(info.description(), RULE_APPLIER_DESCRIPTION);
-    assert!(
-        info.type_name().ends_with("::RewriteRuleApplier"),
-        "{}",
-        info.type_name()
-    );
-    let mut created = create_pass::<Expression, Expression>(RULE_APPLIER_NAME)
+    assert_eq!(info.pass_type_id(), TypeId::of::<RewriteRuleApplier>());
+    assert_eq!(info.input_type_id(), TypeId::of::<Expression>());
+    assert_eq!(info.output_type_id(), TypeId::of::<Expression>());
+    let mut created = registry
+        .create::<Expression, Expression>(RULE_APPLIER_NAME)
         .expect("the rule applier is registered");
     assert_eq!(created.name(), RULE_APPLIER_NAME);
     let outcome = created.execute(&expression).expect("no rules, no failure");

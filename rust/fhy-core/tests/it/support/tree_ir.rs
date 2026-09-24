@@ -4,6 +4,7 @@
 //! The visitor and the rewriter work under any traversal context, so one
 //! value serves a direct walk with `&mut ()` and a walk or rewrite pass.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -569,8 +570,8 @@ struct ContextLender<'a, T> {
 }
 
 impl<T> CompilerPass<()> for ContextLender<'_, T> {
-    fn name(&self) -> String {
-        "context-lender".to_owned()
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed("context-lender")
     }
 
     fn run(&mut self, _ir: &(), cx: &mut PassContext<'_>) -> Result<(), PassFailure> {

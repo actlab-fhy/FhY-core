@@ -1,32 +1,32 @@
-//! Registration of the expression passes in the process-wide pass registry.
+//! Registration of the expression passes in a pass registry.
 
-use crate::pass::{CompilerPass, PassRegistrationError, register_pass};
+use crate::pass::{PassRegistrationError, PassRegistry};
 
 use super::node::Expression;
 use super::pattern::RewriteRuleApplier;
 
-/// Register the expression passes in the process-wide pass registry.
+/// Register the expression passes in `registry`.
 ///
 /// Registers [`RewriteRuleApplier`] under its name,
 /// `fhy_core.symbolic.expression.apply_rewrite_rules`, and its
-/// description; [`create_pass`](crate::pass::create_pass)
-/// then builds an applier with no rules. Registering again changes
-/// nothing.
+/// description; [`PassRegistry::create`] then builds an applier with no
+/// rules. The name is a stable registry key, not a Rust path. Registering
+/// again in the same registry changes nothing.
 ///
 /// # Errors
 ///
-/// Returns an error if another pass type is registered under one of the
-/// names.
+/// Returns an error if another pass is registered under one of the names.
 ///
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass::create_pass;
 /// use fhy_core::expr::{Expression, register_expression_passes};
+/// use fhy_core::pass::PassRegistry;
 ///
-/// register_expression_passes()?;
-/// let applier =
-///     create_pass::<Expression, Expression>("fhy_core.symbolic.expression.apply_rewrite_rules")?;
+/// let mut registry = PassRegistry::new();
+/// register_expression_passes(&mut registry)?;
+/// let applier = registry
+///     .create::<Expression, Expression>("fhy_core.symbolic.expression.apply_rewrite_rules")?;
 ///
 /// assert_eq!(
 ///     applier.description(),
@@ -34,11 +34,8 @@ use super::pattern::RewriteRuleApplier;
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn register_expression_passes() -> Result<(), PassRegistrationError> {
-    let applier = RewriteRuleApplier::new([]);
-    register_pass::<RewriteRuleApplier, Expression, Expression>(
-        &applier.name(),
-        &applier.description(),
-        || RewriteRuleApplier::new([]),
-    )
+pub fn register_expression_passes(
+    registry: &mut PassRegistry,
+) -> Result<(), PassRegistrationError> {
+    registry.register::<RewriteRuleApplier, Expression, Expression>(|| RewriteRuleApplier::new([]))
 }

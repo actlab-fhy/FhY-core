@@ -10,6 +10,7 @@
 use crate::support::stack as stack_support;
 use crate::support::tree_ir;
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::num::NonZeroUsize;
 
@@ -17,7 +18,6 @@ use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
     Analysis, CompilerPass, ExecutePass, FixpointPassGroup, PassContext, PassError, PassHook,
     PassManager, PipelineRecord, PreservedAnalyses, RewritePass, ValidationManager, WalkPass,
-    register_pass, run_count, run_count_of,
 };
 use fhy_core::tree::{
     RewriteTreeError, Rewriter, TraversalOrder, TreeVisitor, rewrite_tree, walk_tree,
@@ -131,22 +131,6 @@ impl TreeVisitor<ToyTree, PassContext<'_>> for ReportingVisitor {
 struct NameProbeVisitor;
 
 impl<C: ?Sized> TreeVisitor<ToyTree, C> for NameProbeVisitor {
-    type Error = HookError;
-}
-
-/// A visitor whose walk pass is registered, for the registered pass name.
-#[derive(Debug, Default)]
-struct RegisteredProbeVisitor;
-
-impl<C: ?Sized> TreeVisitor<ToyTree, C> for RegisteredProbeVisitor {
-    type Error = HookError;
-}
-
-/// A visitor whose run count only one test reads.
-#[derive(Debug)]
-struct CountProbeVisitor;
-
-impl<C: ?Sized> TreeVisitor<ToyTree, C> for CountProbeVisitor {
     type Error = HookError;
 }
 
@@ -1303,55 +1287,18 @@ fn walk_pass_exposes_its_visitor() {
     );
 }
 
-/// Test an unregistered walk pass is named after its visitor's type.
+/// Test a walk pass is named after its visitor's type, borrowing the name.
 #[test]
 fn walk_pass_is_named_after_its_visitor() {
     let pass = WalkPass::new(NameProbeVisitor, TraversalOrder::Pre);
 
     let name = CompilerPass::<ToyTree, ()>::name(&pass);
 
-    assert_eq!(name, "NameProbeVisitor");
+    assert!(matches!(name, Cow::Borrowed("NameProbeVisitor")));
     assert_eq!(
         CompilerPass::<ToyTree, ()>::description(&pass),
         "NameProbeVisitor"
     );
-}
-
-/// Test a registered walk pass takes its registered name and description,
-/// and counts its runs under that name.
-#[test]
-fn walk_pass_takes_its_registered_name() {
-    register_pass::<WalkPass<RegisteredProbeVisitor>, ToyTree, ()>(
-        "tree-stories.registered-walk",
-        "A registered walk.",
-        || WalkPass::new(RegisteredProbeVisitor, TraversalOrder::Pre),
-    )
-    .expect("the name is free");
-    let mut pass = WalkPass::new(RegisteredProbeVisitor, TraversalOrder::Pre);
-
-    pass.execute(&build_leaf("leaf", 1)).expect("no hook fails");
-
-    assert_eq!(
-        CompilerPass::<ToyTree, ()>::name(&pass),
-        "tree-stories.registered-walk"
-    );
-    assert_eq!(
-        CompilerPass::<ToyTree, ()>::description(&pass),
-        "A registered walk."
-    );
-    assert_eq!(run_count::<WalkPass<RegisteredProbeVisitor>>(), 1);
-}
-
-/// Test an unregistered walk pass's runs count under its visitor's name.
-#[test]
-fn walk_pass_counts_runs_under_its_visitor_name() {
-    let mut pass = WalkPass::new(CountProbeVisitor, TraversalOrder::Pre);
-
-    pass.execute(&build_leaf("leaf", 1)).expect("no hook fails");
-    pass.execute(&build_leaf("leaf", 1)).expect("no hook fails");
-
-    assert_eq!(run_count::<CountProbeVisitor>(), 2);
-    assert_eq!(run_count_of("CountProbeVisitor"), 2);
 }
 
 // =============================================================================
@@ -1495,14 +1442,15 @@ fn rewrite_pass_exposes_its_rewriter() {
     assert_eq!(rewriter.list_seen_names(), ["leaf"]);
 }
 
-/// Test an unregistered rewrite pass is named after its rewriter's type.
+/// Test a rewrite pass is named after its rewriter's type, borrowing the
+/// name.
 #[test]
 fn rewrite_pass_is_named_after_its_rewriter() {
     let pass = RewritePass::new(NameProbeRewriter);
 
     let name = CompilerPass::<ToyTree>::name(&pass);
 
-    assert_eq!(name, "NameProbeRewriter");
+    assert!(matches!(name, Cow::Borrowed("NameProbeRewriter")));
 }
 
 // =============================================================================
