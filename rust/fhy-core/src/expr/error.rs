@@ -1,14 +1,9 @@
 //! Errors raised while building, comparing, or screening expressions.
 //!
-//! [`PiecewiseError`] reports a piecewise that could not be built because it
-//! breaks a piecewise invariant, [`RebuildError`] a node that could not be
-//! rebuilt from new children.
-//! [`NonInjectiveRenamingError`] reports a free-identifier renaming that
-//! sends two identifiers to one image.
-//! [`NonBooleanLogicalOperandError`] reports a Boolean position that holds
-//! an operand provably denoting a number, as found by
-//! a [`BooleanScreen`](super::BooleanScreen); its
-//! [`BooleanPosition`] says where that operand sits.
+//! [`PiecewiseError`] and [`RebuildError`] refuse a node that would break an
+//! invariant, [`NonInjectiveRenamingError`] a renaming that is not
+//! injective, and [`NonBooleanLogicalOperandError`] a number that a
+//! [`BooleanScreen`](super::BooleanScreen) finds at a [`BooleanPosition`].
 
 use std::error::Error;
 use std::fmt;
@@ -124,7 +119,6 @@ pub struct NonInjectiveRenamingError {
 }
 
 impl NonInjectiveRenamingError {
-    /// Construct the error for the shared `image`.
     pub(super) fn new(image: Identifier) -> Self {
         Self { image }
     }
@@ -203,15 +197,14 @@ impl fmt::Display for BooleanPosition {
 
 /// A Boolean position holding an operand that provably denotes a number.
 ///
-/// Carries the offending operand and, unless the operand is the root of a
-/// predicate, the node that puts it in a Boolean position together with the
-/// position within that node. `Display` is one short line that writes no
-/// expression: `{position} provably denotes a number but sits in a boolean
-/// position`, with the position's phrase (see [`BooleanPosition`]), or `the
-/// predicate provably denotes a number` for a predicate root. A caller
-/// wanting the expressions in a message writes
-/// [`operand`](Self::operand) and [`parent`](Self::parent) with
-/// [`Expression::display`].
+/// Carries the offending operand and, unless it is the root of a predicate,
+/// the node that puts it in a Boolean position and the position within that
+/// node. `Display` is one line that writes no expression: `{position}
+/// provably denotes a number but sits in a boolean position`, with the
+/// position's phrase (see [`BooleanPosition`]), or `the predicate provably
+/// denotes a number` for a predicate root. Write [`operand`](Self::operand)
+/// and [`parent`](Self::parent) with [`Expression::display`] to show the
+/// expressions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonBooleanLogicalOperandError {
     operand: Expression,
@@ -219,7 +212,6 @@ pub struct NonBooleanLogicalOperandError {
 }
 
 impl NonBooleanLogicalOperandError {
-    /// Construct the error for `operand` at `position` under `parent`.
     pub(super) fn new(operand: Expression, parent: Expression, position: BooleanPosition) -> Self {
         Self {
             operand,

@@ -141,7 +141,6 @@ impl FunctionName {
 }
 
 impl fmt::Display for FunctionName {
-    /// Write the name.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -153,7 +152,6 @@ impl Serialize for FunctionName {
     }
 }
 
-/// The visitor accepting a string that [`FunctionName::try_new`] accepts.
 struct FunctionNameVisitor;
 
 impl Visitor<'_> for FunctionNameVisitor {
@@ -169,7 +167,6 @@ impl Visitor<'_> for FunctionNameVisitor {
 }
 
 impl<'de> Deserialize<'de> for FunctionName {
-    /// Decode a string and accept it through [`FunctionName::try_new`].
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_str(FunctionNameVisitor)
     }
