@@ -3,8 +3,6 @@
 //! walk keeps, shared subtrees, what counts as a change, the record of fired
 //! rules, failing callbacks and rebuilds, and trees thousands of levels
 //! deep.
-//!
-//! Public API only (`fhy_core::expr::pattern`).
 
 use crate::support::expression as expression_support;
 use crate::support::pattern as pattern_support;
@@ -34,6 +32,31 @@ use pattern_support::{
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
+/// Rewrite `expression` with `rules` of any rule type, failing the test if
+/// the walk fails.
+fn rewrite_with<R: Rule>(expression: &Expression, rules: &[R]) -> RewriteOutcome {
+    apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
+}
+
+/// Rewrite `expression` with `rules` until a walk reports no change, and
+/// return the result with the number of walks.
+fn rewrite_to_fixpoint(expression: &Expression, rules: &[RewriteRule]) -> (Expression, usize) {
+    let mut current = expression.clone();
+    for walks in 1..10 {
+        let outcome = rewrite(&current, rules);
+        if !outcome.is_changed() {
+            return (current, walks);
+        }
+        current = outcome.into_output();
+    }
+    panic!("the fixpoint loop does not stop");
+}
+
+/// Return `leaf` with `depth` additions of zero, each around the last.
+fn build_plus_zero_chain(leaf: &Expression, depth: usize) -> Expression {
+    (0..depth).fold(leaf.clone(), |expression, _| build_plus_zero(&expression))
+}
+
 /// Apply `rule` at the root of `expression`, failing the test if a callback
 /// fails.
 fn rewrite_root(rule: &RewriteRule, expression: &Expression) -> Option<Expression> {
@@ -46,12 +69,10 @@ fn build_constant_rule(value: i64) -> RewriteRule {
     RewriteRule::new(Pattern::wildcard(), rewrite_to_literal(value))
 }
 
-/// Return a guard failing with a [`ProbeError`].
 fn fail_guard(_: &MatchBindings) -> Result<bool, CallbackError> {
     Err(CallbackError::from(ProbeError("guard failed")))
 }
 
-/// Return a rewrite failing with a [`ProbeError`].
 fn fail_rewrite(_: &MatchBindings) -> Result<Expression, CallbackError> {
     Err(CallbackError::from(ProbeError("rewrite failed")))
 }
@@ -74,18 +95,29 @@ fn expect_callback_error(error: &RewriteError) -> (usize, Option<&str>, &Callbac
     (error.rule_index(), error.rule_name(), source)
 }
 
+/// Return `rule_index` rules that never fire followed by `last`, named
+/// `rule_name` if given.
+fn build_rules_ending_with(
+    rule_index: usize,
+    rule_name: Option<&str>,
+    last: RewriteRule,
+) -> Vec<RewriteRule> {
+    let last = match rule_name {
+        Some(name) => last.with_name(name),
+        None => last,
+    };
+    (0..rule_index)
+        .map(|_| RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0)))
+        .chain([last])
+        .collect()
+}
+
 /// Return the error of a walk over `5` in which the rule at `rule_index`,
 /// named `rule_name` if given, fails its rewrite, after rules that never
 /// fire.
 fn build_callback_failure(rule_index: usize, rule_name: Option<&str>) -> RewriteError {
-    let mut rules: Vec<RewriteRule> = (0..rule_index)
-        .map(|_| RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0)))
-        .collect();
     let failing = RewriteRule::new(Pattern::wildcard(), fail_rewrite);
-    rules.push(match rule_name {
-        Some(name) => failing.with_name(name),
-        None => failing,
-    });
+    let rules = build_rules_ending_with(rule_index, rule_name, failing);
     apply_rewrite_rules(&build_literal(5), &rules).expect_err("the last rule fails")
 }
 
@@ -93,14 +125,8 @@ fn build_callback_failure(rule_index: usize, rule_name: Option<&str>) -> Rewrite
 /// rule at `rule_index`, named `rule_name` if given, rewrites the condition
 /// to `1`, after rules that never fire.
 fn build_rebuild_failure(rule_index: usize, rule_name: Option<&str>) -> RewriteError {
-    let mut rules: Vec<RewriteRule> = (0..rule_index)
-        .map(|_| RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0)))
-        .collect();
     let true_to_one = RewriteRule::new(Pattern::literal(true), rewrite_to_literal(1));
-    rules.push(match rule_name {
-        Some(name) => true_to_one.with_name(name),
-        None => true_to_one,
-    });
+    let rules = build_rules_ending_with(rule_index, rule_name, true_to_one);
     let expression =
         Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(6))
             .expect("a valid piecewise");
@@ -122,7 +148,6 @@ fn rewrite_rule_new_is_unnamed() {
     assert_eq!(rewritten, Some(build_literal(0)));
 }
 
-/// Test a rule matches with the pattern it was built from.
 #[rstest]
 #[case::matching(build_literal(0), Some(build_literal(1)))]
 #[case::not_matching(build_literal(2), None)]
@@ -137,8 +162,6 @@ fn rewrite_rule_new_matches_with_the_given_pattern(
     assert_eq!(rewritten, expected);
 }
 
-/// Test a rule whose rewrite returns the expression it was tried on
-/// declines.
 #[test]
 fn rewrite_rule_apply_returning_its_input_declines() {
     let expression = build_literal(5);
@@ -148,7 +171,6 @@ fn rewrite_rule_apply_returning_its_input_declines() {
     assert_eq!(rewritten, None);
 }
 
-/// Test a rule's name is the last one given.
 #[test]
 fn rewrite_rule_with_name_replaces_an_earlier_name() {
     let rule = build_constant_rule(0)
@@ -206,7 +228,6 @@ fn rewrite_rule_with_guard_runs_guards_in_the_order_added() {
     );
 }
 
-/// Test a partial rule fires with the rewrite it returns.
 #[test]
 fn rewrite_rule_new_partial_fires_with_the_returned_rewrite() {
     let rule = RewriteRule::new_partial(Pattern::wildcard(), |_| Ok(Some(build_literal(7))));
@@ -323,7 +344,6 @@ fn rewrite_rule_apply_returns_none_when_the_guard_refuses() {
     assert_eq!(rewrite_calls.load(Ordering::SeqCst), 0);
 }
 
-/// Test a guard answering true lets the rule fire.
 #[test]
 fn rewrite_rule_apply_fires_when_the_guard_allows() {
     let (_, x) = build_identifier("x");
@@ -343,7 +363,6 @@ fn rewrite_rule_apply_fires_when_the_guard_allows() {
     assert!(rewritten.is_some_and(|result| Expression::ptr_eq(&result, &x)));
 }
 
-/// Test the guard receives the match's bindings.
 #[rstest]
 #[case::literal_operand(build_literal(3), true)]
 #[case::identifier_operand(build_identifier("y").1, false)]
@@ -368,7 +387,6 @@ fn rewrite_rule_apply_guard_sees_the_bindings(
     assert_eq!(rewritten.is_some(), expected_fire, "got {rewritten:?}");
 }
 
-/// Test a failing guard's error is returned unchanged.
 #[test]
 fn rewrite_rule_apply_returns_the_guard_error() {
     let rule = build_constant_rule(0).with_guard(fail_guard);
@@ -379,7 +397,6 @@ fn rewrite_rule_apply_returns_the_guard_error() {
     assert_eq!(expect_probe_error(&error), &ProbeError("guard failed"));
 }
 
-/// Test a failing rewrite's error is returned unchanged.
 #[test]
 fn rewrite_rule_apply_returns_the_rewrite_error() {
     let rule = RewriteRule::new(Pattern::wildcard(), fail_rewrite);
@@ -390,7 +407,6 @@ fn rewrite_rule_apply_returns_the_rewrite_error() {
     assert_eq!(expect_probe_error(&error), &ProbeError("rewrite failed"));
 }
 
-/// Test a failing predicate in the rule's pattern is returned unchanged.
 #[test]
 fn rewrite_rule_apply_returns_the_predicate_error() {
     let rule = RewriteRule::new(
@@ -404,7 +420,6 @@ fn rewrite_rule_apply_returns_the_predicate_error() {
     assert_eq!(expect_probe_error(&error), &ProbeError("predicate failed"));
 }
 
-/// Test a rule is tried at the root only.
 #[test]
 fn rewrite_rule_apply_operates_at_the_root_only() {
     let (_, x) = build_identifier("x");
@@ -436,7 +451,6 @@ fn apply_rewrite_rules_with_no_rules_returns_the_input_itself() {
     assert!(outcome.fired().is_empty());
 }
 
-/// Test a walk in which no rule fires returns the input itself, unchanged.
 #[test]
 fn apply_rewrite_rules_preserves_identity_when_no_rule_fires() {
     let (_, x) = build_identifier("x");
@@ -449,7 +463,6 @@ fn apply_rewrite_rules_preserves_identity_when_no_rule_fires() {
     assert!(outcome.fired().is_empty());
 }
 
-/// Test a walk in which a rule fires reports a change.
 #[test]
 fn apply_rewrite_rules_reports_a_change_when_a_rule_fires() {
     let (_, x) = build_identifier("x");
@@ -500,7 +513,6 @@ fn apply_rewrite_rules_with_an_identity_rewrite_below_the_root_is_unchanged() {
     assert!(Expression::ptr_eq(node.operand(), &x));
 }
 
-/// Test a rule returning the node it matched gives way to the next rule.
 #[test]
 fn apply_rewrite_rules_tries_the_next_rule_after_an_identity_rewrite() {
     let (_, a) = build_identifier("a");
@@ -528,7 +540,6 @@ fn apply_rewrite_rules_with_an_identity_rule_on_a_doubling_dag_is_unchanged() {
     assert!(outcome.fired().is_empty());
 }
 
-/// Test `into_output` gives the rewritten tree.
 #[test]
 fn rewrite_outcome_into_output_returns_the_rewritten_tree() {
     let (_, x) = build_identifier("x");
@@ -543,7 +554,6 @@ fn rewrite_outcome_into_output_returns_the_rewritten_tree() {
 // apply_rewrite_rules: where rules fire
 // =============================================================================
 
-/// Test a matching root is rewritten.
 #[test]
 fn apply_rewrite_rules_rewrites_at_the_root() {
     let (_, x) = build_identifier("x");
@@ -592,7 +602,6 @@ fn apply_rewrite_rules_uses_the_first_rule_that_fires() {
     assert_eq!(later_calls.load(Ordering::SeqCst), 0);
 }
 
-/// Test a rule whose guard refuses gives way to the next rule.
 #[test]
 fn apply_rewrite_rules_tries_the_next_rule_after_a_refusing_guard() {
     let refused = build_constant_rule(101).with_guard(|_| Ok(false));
@@ -646,7 +655,6 @@ fn apply_rewrite_rules_does_not_iterate_to_a_fixpoint() {
     assert_eq!(outcome.fired().len(), 1);
 }
 
-/// Test a parent is matched with its rewritten children.
 #[test]
 fn apply_rewrite_rules_matches_parents_against_rewritten_children() {
     let (_, x) = build_identifier("x");
@@ -678,7 +686,6 @@ fn apply_rewrite_rules_rewrites_inside_a_piecewise_branch() {
     assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
 }
 
-/// Test rules fire inside call arguments.
 #[test]
 fn apply_rewrite_rules_rewrites_inside_call_arguments() {
     let (_, x) = build_identifier("x");
@@ -690,7 +697,6 @@ fn apply_rewrite_rules_rewrites_inside_call_arguments() {
     assert_eq!(outcome.output(), &expected);
 }
 
-/// Test rules fire inside a unary operand.
 #[test]
 fn apply_rewrite_rules_rewrites_inside_a_unary_operand() {
     let (_, x) = build_identifier("x");
@@ -731,10 +737,7 @@ fn apply_rewrite_rules_repeated_capture_rule_skips_different_operands() {
 #[test]
 fn apply_rewrite_rules_collapses_a_long_chain_in_one_walk() {
     let (_, x) = build_identifier("x");
-    let mut expression = x.clone();
-    for _ in 0..8 {
-        expression = build_plus_zero(&expression);
-    }
+    let expression = build_plus_zero_chain(&x, 8);
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
@@ -938,25 +941,17 @@ fn apply_rewrite_rules_accepts_a_mixed_list_of_boxed_rules() {
     );
 }
 
-/// Test rules held by reference or by `Arc` rewrite like the rules
-/// themselves.
 #[test]
 fn apply_rewrite_rules_accepts_rules_by_reference_and_by_arc() {
     let (_, x) = build_identifier("x");
     let rule = build_x_plus_zero_rule();
 
     let by_reference = rewrite_with(&build_plus_zero(&x), &[&rule]);
-    let by_arc = rewrite_with(&build_plus_zero(&x), &[Arc::new(rule.clone())]);
+    let by_arc = rewrite_with(&build_plus_zero(&x), &[Arc::new(rule)]);
 
     assert!(Expression::ptr_eq(by_reference.output(), &x));
     assert!(Expression::ptr_eq(by_arc.output(), &x));
     assert_eq!(describe_fired(by_arc.fired()), [(0, Some("x + 0 -> x"))]);
-}
-
-/// Rewrite `expression` with `rules` of any rule type, failing the test if
-/// the walk fails.
-fn rewrite_with<R: Rule>(expression: &Expression, rules: &[R]) -> RewriteOutcome {
-    apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
 
 /// Test a failing native rule ends the walk with an error naming its
@@ -976,7 +971,6 @@ fn apply_rewrite_rules_reports_a_failing_native_rule() {
     );
 }
 
-/// Test a rule whose rewrite declines gives way to the next rule.
 #[test]
 fn apply_rewrite_rules_tries_the_next_rule_after_a_declining_rewrite() {
     let declining = RewriteRule::new_partial(Pattern::wildcard(), |_| Ok(None));
@@ -996,21 +990,11 @@ fn apply_rewrite_rules_tries_the_next_rule_after_a_declining_rewrite() {
 #[test]
 fn apply_rewrite_rules_supports_a_caller_driven_fixpoint() {
     let (_, x) = build_identifier("x");
-    let rules = [build_x_plus_zero_rule()];
-    let mut current = build_plus_zero(&build_plus_zero(&x));
-    let mut walks = 0;
+    let expression = build_plus_zero(&build_plus_zero(&x));
 
-    loop {
-        let outcome = rewrite(&current, &rules);
-        walks += 1;
-        assert!(walks < 10, "the fixpoint loop does not stop");
-        if !outcome.is_changed() {
-            break;
-        }
-        current = outcome.into_output();
-    }
+    let (fixpoint, walks) = rewrite_to_fixpoint(&expression, &[build_x_plus_zero_rule()]);
 
-    assert!(Expression::ptr_eq(&current, &x));
+    assert!(Expression::ptr_eq(&fixpoint, &x));
     assert_eq!(walks, 2);
 }
 
@@ -1020,21 +1004,14 @@ fn apply_rewrite_rules_supports_a_caller_driven_fixpoint() {
 #[test]
 fn apply_rewrite_rules_caller_driven_fixpoint_terminates_with_an_identity_rule() {
     let (_, a) = build_identifier("a");
-    let rules = [build_identity_rule(), build_x_plus_zero_rule()];
-    let mut current = build_plus_zero(&build_plus_zero(&a));
-    let mut walks = 0;
+    let expression = build_plus_zero(&build_plus_zero(&a));
 
-    loop {
-        let outcome = rewrite(&current, &rules);
-        walks += 1;
-        assert!(walks < 10, "the fixpoint loop does not stop");
-        if !outcome.is_changed() {
-            break;
-        }
-        current = outcome.into_output();
-    }
+    let (fixpoint, walks) = rewrite_to_fixpoint(
+        &expression,
+        &[build_identity_rule(), build_x_plus_zero_rule()],
+    );
 
-    assert!(Expression::ptr_eq(&current, &a));
+    assert!(Expression::ptr_eq(&fixpoint, &a));
     assert_eq!(walks, 2);
 }
 
@@ -1042,7 +1019,6 @@ fn apply_rewrite_rules_caller_driven_fixpoint_terminates_with_an_identity_rule()
 // apply_rewrite_rules: failures
 // =============================================================================
 
-/// Test a failing guard ends the walk with an error naming its rule.
 #[test]
 fn apply_rewrite_rules_reports_a_failing_guard_with_its_rule() {
     let failing = build_constant_rule(0)
@@ -1058,22 +1034,16 @@ fn apply_rewrite_rules_reports_a_failing_guard_with_its_rule() {
     assert_eq!(expect_probe_error(source), &ProbeError("guard failed"));
 }
 
-/// Test a failing rewrite ends the walk with an error naming its rule.
 #[test]
 fn apply_rewrite_rules_reports_a_failing_rewrite_with_its_rule() {
-    let failing = RewriteRule::new(Pattern::wildcard(), fail_rewrite);
+    let error = build_callback_failure(0, None);
 
-    let result = apply_rewrite_rules(&build_literal(5), &[failing]);
-
-    let error = result.expect_err("the rewrite fails");
     let (rule_index, rule_name, source) = expect_callback_error(&error);
     assert_eq!(rule_index, 0);
     assert_eq!(rule_name, None);
     assert_eq!(expect_probe_error(source), &ProbeError("rewrite failed"));
 }
 
-/// Test a failing predicate in a rule's pattern ends the walk with an error
-/// naming its rule.
 #[test]
 fn apply_rewrite_rules_reports_a_failing_predicate_with_its_rule() {
     let failing = RewriteRule::new(
@@ -1120,16 +1090,8 @@ fn apply_rewrite_rules_stops_at_the_first_failure() {
 /// rewrote the condition.
 #[test]
 fn apply_rewrite_rules_reports_a_failing_rebuild_with_its_rule() {
-    let never_firing = RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0));
-    let true_to_one =
-        RewriteRule::new(Pattern::literal(true), rewrite_to_literal(1)).with_name("true -> 1");
-    let expression =
-        Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(6))
-            .expect("a valid piecewise");
+    let error = build_rebuild_failure(1, Some("true -> 1"));
 
-    let result = apply_rewrite_rules(&expression, &[never_firing, true_to_one]);
-
-    let error = result.expect_err("the rebuild fails");
     assert_eq!(
         expect_rebuild_error(&error),
         (
@@ -1238,7 +1200,6 @@ fn apply_rewrite_rules_blames_the_right_rule_after_a_discarded_replacement() {
     );
 }
 
-/// Test each rewrite error displays its documented message.
 #[rstest]
 #[case::unnamed_callback(build_callback_failure(2, None), "rewrite rule 2 failed")]
 #[case::named_callback(
@@ -1262,7 +1223,6 @@ fn rewrite_error_display_describes_the_failure(
     assert_eq!(message, expected);
 }
 
-/// Test a rewrite error reports the index and name of its rule.
 #[rstest]
 #[case::unnamed_callback(build_callback_failure(2, None), 2, None)]
 #[case::named_callback(build_callback_failure(1, Some("fails")), 1, Some("fails"))]
@@ -1277,8 +1237,6 @@ fn rewrite_error_accessors_report_rule_index_and_name(
     assert_eq!(error.rule_name(), rule_name);
 }
 
-/// Test a callback failure's source is the error the caller's callback
-/// returned.
 #[test]
 fn rewrite_error_callback_source_is_the_callers_error() {
     let error = build_callback_failure(0, None);
@@ -1291,7 +1249,6 @@ fn rewrite_error_callback_source_is_the_callers_error() {
     );
 }
 
-/// Test a rebuild failure's source is the build error.
 #[test]
 fn rewrite_error_rebuild_source_is_the_build_error() {
     let error = build_rebuild_failure(0, None);
@@ -1351,10 +1308,7 @@ fn fired_rule_records_index_and_name_in_walk_order() {
 fn apply_rewrite_rules_collapses_a_deep_tree_on_a_small_stack() {
     run_on_small_stack(|| {
         let (_, x) = build_identifier("x");
-        let mut expression = x.clone();
-        for _ in 0..SMALL_STACK_DEPTH {
-            expression = build_plus_zero(&expression);
-        }
+        let expression = build_plus_zero_chain(&x, SMALL_STACK_DEPTH);
 
         let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
