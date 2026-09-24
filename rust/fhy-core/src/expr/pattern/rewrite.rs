@@ -17,7 +17,7 @@ use super::super::error::ExpressionBuildError;
 use super::super::node::Expression;
 use super::matching::{CallbackError, MatchBindings, Pattern, match_pattern};
 use crate::diagnostic::DiagnosticLevel;
-use crate::pass_infrastructure::{
+use crate::pass::{
     CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure, RewriteTreeError, Rewriter,
     rewrite_tree,
 };
@@ -456,7 +456,7 @@ impl Error for RewriteError {
 /// kept for [`fired`](Self::fired). A skipped run outputs its input. A
 /// failing callback or a refused rebuild fails the run with the
 /// [`RewriteError`], which the resulting
-/// [`PassError`](crate::pass_infrastructure::PassError) holds as its
+/// [`PassError`](crate::pass::PassError) holds as its
 /// [`source`](Error::source).
 ///
 /// The pass is named `fhy_core.symbolic.expression.apply_rewrite_rules`,
@@ -467,7 +467,7 @@ impl Error for RewriteError {
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass_infrastructure::ExecutePass;
+/// use fhy_core::pass::ExecutePass;
 /// use fhy_core::expr::pattern::{
 ///     CallbackError, Pattern, RewriteRule, RewriteRuleApplier,
 /// };

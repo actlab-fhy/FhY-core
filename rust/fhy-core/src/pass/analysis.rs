@@ -27,7 +27,7 @@ impl NodeIdentity {
     /// ```
     /// use std::sync::Arc;
     ///
-    /// use fhy_core::pass_infrastructure::NodeIdentity;
+    /// use fhy_core::pass::NodeIdentity;
     ///
     /// let node = Arc::new(5);
     /// let alias = Arc::clone(&node);
@@ -55,7 +55,7 @@ impl NodeIdentity {
 /// ```
 /// use std::sync::Arc;
 ///
-/// use fhy_core::pass_infrastructure::{NodeHandle, NodeIdentity};
+/// use fhy_core::pass::{NodeHandle, NodeIdentity};
 ///
 /// #[derive(Clone)]
 /// struct Module(Arc<Vec<String>>);

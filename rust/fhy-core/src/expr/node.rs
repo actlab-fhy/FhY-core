@@ -22,7 +22,7 @@ use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::identifier::Identifier;
-use crate::pass_infrastructure::{
+use crate::pass::{
     BuildIdentityHasher, NodeHandle, NodeIdentity, PassContext, RewriteTreeError, Rewriter,
     TraversalOrder, Tree, TreeVisitor, rewrite_tree, walk_tree,
 };

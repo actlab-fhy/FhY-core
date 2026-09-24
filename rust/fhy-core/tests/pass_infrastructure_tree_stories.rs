@@ -1,4 +1,4 @@
-//! Tests for the tree traversals of `fhy_core::pass_infrastructure`: the
+//! Tests for the tree traversals of `fhy_core::pass`: the
 //! walk hooks and their order, pruning, failing hooks, the bottom-up memoized
 //! rewrite and the handles it keeps, failing rewrites and rebuilds, the walk
 //! and rewrite passes, and trees too deep or too shared for a recursive
@@ -14,7 +14,7 @@ pub mod tree_ir;
 use std::error::Error;
 
 use fhy_core::identifier::Identifier;
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     Analysis, CompilerPass, ExecutePass, PassContext, PassError, PassHook, PassManager,
     PipelineRecord, PreservedAnalyses, RewritePass, RewriteTreeError, Rewriter, TraversalOrder,
     TreeVisitor, ValidationManager, WalkPass, register_pass, rewrite_tree, run_count, run_count_of,

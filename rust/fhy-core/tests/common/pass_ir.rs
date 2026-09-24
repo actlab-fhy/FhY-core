@@ -9,9 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fhy_core::pass_infrastructure::{
-    Analysis, CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure,
-};
+use fhy_core::pass::{Analysis, CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure};
 
 /// Analysis run counts shared by a node and every node derived from it.
 #[derive(Debug, Default)]

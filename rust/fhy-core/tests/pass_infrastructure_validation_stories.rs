@@ -1,4 +1,4 @@
-//! Tests for `fhy_core::pass_infrastructure::ValidationManager`: collect-all
+//! Tests for `fhy_core::pass::ValidationManager`: collect-all
 //! validation, failing validators, and the aggregated report.
 //!
 //! Public API only; nothing here reads process-global state.
@@ -8,7 +8,7 @@ pub mod pass_ir;
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note, get_suggestion_note_kind};
 use fhy_core::identifier::{HasIdentifier, Identifier};
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PreservedAnalyses,
     ValidationManager,
 };
@@ -185,7 +185,7 @@ fn validation_manager_runs_every_validator_after_errors() {
     let names: Vec<_> = report
         .records()
         .iter()
-        .map(fhy_core::pass_infrastructure::PassRunRecord::pass_name)
+        .map(fhy_core::pass::PassRunRecord::pass_name)
         .collect();
     assert_eq!(
         names,
@@ -273,7 +273,7 @@ fn validation_manager_returns_a_clean_report_when_every_validator_is_clean() {
     let names: Vec<_> = report
         .records()
         .iter()
-        .map(fhy_core::pass_infrastructure::PassRunRecord::pass_name)
+        .map(fhy_core::pass::PassRunRecord::pass_name)
         .collect();
     assert_eq!(names, ["tests.vm.clean_a", "tests.vm.clean_b"]);
 }
@@ -466,7 +466,7 @@ fn validation_manager_adds_nothing_when_a_failing_validator_reported_an_error(
     let names: Vec<_> = report
         .records()
         .iter()
-        .map(fhy_core::pass_infrastructure::PassRunRecord::pass_name)
+        .map(fhy_core::pass::PassRunRecord::pass_name)
         .collect();
     assert_eq!(
         names,

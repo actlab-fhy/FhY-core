@@ -13,8 +13,8 @@ use std::fmt;
 use std::hash::{BuildHasherDefault, Hasher};
 
 use super::analysis::{NodeHandle, NodeIdentity};
+use super::compiler_pass::{CompilerPass, PassFailure};
 use super::context::PassContext;
-use super::pass::{CompilerPass, PassFailure};
 use super::registry;
 
 /// An IR node handle whose node has an ordered list of children of the same
@@ -418,7 +418,7 @@ impl<N: Tree, E: Error + 'static> Error for RewriteTreeError<N, E> {
 /// use std::convert::Infallible;
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass_infrastructure::{
+/// use fhy_core::pass::{
 ///     CompilerPass, ExecutePass, PassContext, TraversalOrder, TreeVisitor, WalkPass,
 /// };
 /// use fhy_core::expr::Expression;
@@ -515,7 +515,7 @@ where
 /// use std::convert::Infallible;
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass_infrastructure::{ExecutePass, PassContext, RewritePass, Rewriter};
+/// use fhy_core::pass::{ExecutePass, PassContext, RewritePass, Rewriter};
 /// use fhy_core::expr::{Expression, ExpressionKind};
 ///
 /// /// Replaces `x` by `y`.

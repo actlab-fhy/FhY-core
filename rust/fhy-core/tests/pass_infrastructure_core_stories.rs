@@ -1,4 +1,4 @@
-//! Tests for standalone pass runs in `fhy_core::pass_infrastructure`: the
+//! Tests for standalone pass runs in `fhy_core::pass`: the
 //! guarded lifecycle, hook-error wrapping and pass-through, the pass
 //! context, preserved analyses, analysis ids, node identities, pass names,
 //! the registry, and the per-pass run counters.
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note, get_rationale_note_kind};
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     AnalysisId, CompilerPass, ExecutePass, NodeHandle, NodeIdentity, PassContext, PassError,
     PassFailure, PassHook, PreservedAnalyses, create_pass, register_pass, registered_passes,
     run_count, run_count_of,

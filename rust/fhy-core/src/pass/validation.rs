@@ -2,10 +2,10 @@
 
 use std::fmt;
 
+use super::compiler_pass::{CompilerPass, run_lifecycle};
 use super::context::PassContext;
 use super::error::PassError;
 use super::manager::PassRunRecord;
-use super::pass::{CompilerPass, run_lifecycle};
 use super::preserved::PreservedAnalyses;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel, Note, ValidationReport};
 use crate::identifier::{HasIdentifier, Identifier};

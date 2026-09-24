@@ -16,7 +16,7 @@ use fhy_core::expr::{
     UnaryOperation, build_piecewise,
 };
 use fhy_core::identifier::Identifier;
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     ExecutePass, NodeHandle, PassContext, RewritePass, RewriteTreeError, Rewriter, TraversalOrder,
     Tree, TreeVisitor, WalkPass,
 };

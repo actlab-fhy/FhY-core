@@ -29,7 +29,7 @@ use fhy_core::expr::{
     IdentifierStyle, Notation, format_expression, register_expression_passes,
 };
 use fhy_core::identifier::Identifier;
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     CompilerPass, ExecutePass, FixpointIterationRecord, FixpointPassGroup, PassError, PassHook,
     PassManager, PipelineRecord, PreservedAnalyses, create_pass, registered_passes,
 };

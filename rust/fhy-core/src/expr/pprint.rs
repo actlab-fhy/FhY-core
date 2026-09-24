@@ -13,7 +13,7 @@
 use std::iter;
 
 use crate::identifier::Identifier;
-use crate::pass_infrastructure::{CompilerPass, PassContext, PassFailure};
+use crate::pass::{CompilerPass, PassContext, PassFailure};
 
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
@@ -279,7 +279,7 @@ impl FormatOptions {
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass_infrastructure::ExecutePass;
+/// use fhy_core::pass::ExecutePass;
 /// use fhy_core::expr::{
 ///     Expression, ExpressionPrettyFormatter, FormatOptions, Notation,
 /// };

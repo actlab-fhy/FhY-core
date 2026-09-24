@@ -1,4 +1,4 @@
-//! Property tests for `fhy_core::pass_infrastructure::PassManager`: run
+//! Property tests for `fhy_core::pass::PassManager`: run
 //! order, fixpoint termination, and the analysis cache's preservation
 //! contract.
 //!
@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use fhy_core::identifier::Identifier;
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     CompilerPass, FixpointPassGroup, NodeHandle, NodeIdentity, PassContext, PassFailure,
     PassManager, PipelineRecord, PreservedAnalyses,
 };

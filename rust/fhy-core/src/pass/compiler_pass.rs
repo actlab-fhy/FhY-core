@@ -51,7 +51,7 @@ impl Error for MissingNoopOutput {}
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass_infrastructure::{CompilerPass, ExecutePass, PassContext, PassFailure};
+/// use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PassFailure};
 ///
 /// struct Increment;
 ///

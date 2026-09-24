@@ -1,4 +1,4 @@
-//! Property tests for the tree traversals of `fhy_core::pass_infrastructure`
+//! Property tests for the tree traversals of `fhy_core::pass`
 //! over toy DAGs, which share nodes at random: a rewrite that keeps every
 //! node returns the root, the memoized rewrite of a DAG equals the rewrite of
 //! its unshared copy for a pure rewriter, and a walk brackets every
@@ -9,7 +9,7 @@
 #[path = "common/tree_ir.rs"]
 pub mod tree_ir;
 
-use fhy_core::pass_infrastructure::{TraversalOrder, rewrite_tree, walk_tree};
+use fhy_core::pass::{TraversalOrder, rewrite_tree, walk_tree};
 use proptest::prelude::*;
 use proptest::sample::{Index, select};
 use tree_ir::{

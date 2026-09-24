@@ -22,23 +22,23 @@
 //! [`WalkPass`] and [`RewritePass`] turn them into passes.
 
 mod analysis;
+mod compiler_pass;
 mod context;
 mod error;
 mod manager;
-mod pass;
 mod preserved;
 mod registry;
 mod tree;
 mod validation;
 
 pub use analysis::{Analysis, NodeHandle, NodeIdentity};
+pub use compiler_pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome};
 pub use context::PassContext;
 pub use error::{PassError, PassHook, PassRegistrationError};
 pub use manager::{
     FixpointGroupRecord, FixpointIterationRecord, FixpointPassGroup, PassManager,
     PassManagerResult, PassRunRecord, PipelineRecord,
 };
-pub use pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome};
 pub use preserved::{AnalysisId, PreservedAnalyses};
 pub use registry::{
     PassInfo, create_pass, register_pass, registered_passes, run_count, run_count_of,

@@ -4,9 +4,9 @@ use std::fmt;
 use std::num::NonZeroUsize;
 
 use super::analysis::{AnalysisCache, NodeHandle};
+use super::compiler_pass::{CompilerPass, run_lifecycle};
 use super::context::PassContext;
 use super::error::PassError;
-use super::pass::{CompilerPass, run_lifecycle};
 use super::preserved::{AnalysisId, PreservedAnalyses};
 use super::validation::ValidationManager;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel, Note};
@@ -432,7 +432,7 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 /// use std::sync::Arc;
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass_infrastructure::{
+/// use fhy_core::pass::{
 ///     CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure, PassManager,
 /// };
 ///

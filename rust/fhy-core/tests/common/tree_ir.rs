@@ -10,7 +10,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     CompilerPass, ExecutePass, NodeHandle, NodeIdentity, PassContext, PassFailure, Rewriter, Tree,
     TreeVisitor,
 };

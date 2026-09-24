@@ -11,8 +11,8 @@ use std::any::{Any, TypeId, type_name};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
+use super::compiler_pass::CompilerPass;
 use super::error::PassRegistrationError;
-use super::pass::CompilerPass;
 
 /// Metadata of a registered pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,7 +156,7 @@ pub(super) fn record_run(pass_name: &str) {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass_infrastructure::{
+/// use fhy_core::pass::{
 ///     CompilerPass, PassContext, PassFailure, create_pass, register_pass,
 /// };
 ///

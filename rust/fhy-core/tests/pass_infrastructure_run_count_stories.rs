@@ -1,4 +1,4 @@
-//! Tests for `fhy_core::pass_infrastructure::total_run_count`.
+//! Tests for `fhy_core::pass::total_run_count`.
 //!
 //! The total counts every pass run in the process, so this binary holds a
 //! single test: no other test can run a pass while it reads the total.
@@ -6,9 +6,7 @@
 use std::error::Error;
 use std::fmt;
 
-use fhy_core::pass_infrastructure::{
-    CompilerPass, ExecutePass, PassContext, PassFailure, total_run_count,
-};
+use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PassFailure, total_run_count};
 
 /// The error [`TotalCountedPass`] fails with.
 #[derive(Debug)]

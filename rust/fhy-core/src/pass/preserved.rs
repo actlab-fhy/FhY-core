@@ -23,7 +23,7 @@ impl AnalysisId {
     /// # Examples
     ///
     /// ```
-    /// use fhy_core::pass_infrastructure::AnalysisId;
+    /// use fhy_core::pass::AnalysisId;
     ///
     /// struct Liveness;
     /// struct Dominance;
@@ -98,7 +98,7 @@ enum Preservation {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass_infrastructure::PreservedAnalyses;
+/// use fhy_core::pass::PreservedAnalyses;
 ///
 /// struct Liveness;
 /// struct Dominance;

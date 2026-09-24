@@ -1,6 +1,6 @@
 //! Registration of the expression passes in the process-wide pass registry.
 
-use crate::pass_infrastructure::{CompilerPass, PassRegistrationError, register_pass};
+use crate::pass::{CompilerPass, PassRegistrationError, register_pass};
 
 use super::node::Expression;
 use super::pattern::RewriteRuleApplier;
@@ -9,7 +9,7 @@ use super::pattern::RewriteRuleApplier;
 ///
 /// Registers [`RewriteRuleApplier`] under its name,
 /// `fhy_core.symbolic.expression.apply_rewrite_rules`, and its
-/// description; [`create_pass`](crate::pass_infrastructure::create_pass)
+/// description; [`create_pass`](crate::pass::create_pass)
 /// then builds an applier with no rules. Registering again changes
 /// nothing.
 ///
@@ -21,7 +21,7 @@ use super::pattern::RewriteRuleApplier;
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass_infrastructure::create_pass;
+/// use fhy_core::pass::create_pass;
 /// use fhy_core::expr::{Expression, register_expression_passes};
 ///
 /// register_expression_passes()?;

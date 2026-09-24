@@ -1,4 +1,4 @@
-//! Tests for `fhy_core::pass_infrastructure::PassManager` and
+//! Tests for `fhy_core::pass::PassManager` and
 //! `FixpointPassGroup`: pipeline order, records, the per-run analysis cache,
 //! fixpoint iteration, and opt-in verification.
 //!
@@ -13,7 +13,7 @@ use std::num::NonZeroUsize;
 
 use fhy_core::diagnostic::DiagnosticLevel;
 use fhy_core::identifier::{HasIdentifier, Identifier};
-use fhy_core::pass_infrastructure::{
+use fhy_core::pass::{
     CompilerPass, ExecutePass, FixpointGroupRecord, FixpointPassGroup, PassContext, PassFailure,
     PassManager, PassRunRecord, PipelineRecord, PreservedAnalyses, ValidationManager,
 };

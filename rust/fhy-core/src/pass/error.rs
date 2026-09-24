@@ -3,8 +3,8 @@
 use std::error::Error;
 use std::fmt;
 
+use super::compiler_pass::PassFailure;
 use super::manager::PassRunRecord;
-use super::pass::PassFailure;
 use crate::diagnostic::{Diagnostic, ValidationReport};
 
 /// A lifecycle hook of a [`CompilerPass`](super::CompilerPass).
