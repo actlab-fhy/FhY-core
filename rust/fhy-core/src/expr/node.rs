@@ -1,20 +1,10 @@
 //! The expression handle, its node kinds, and structural equality.
 //!
-//! An [`Expression`] is a cheap, clonable handle to an immutable node; a
-//! clone shares the node, so one subtree may appear in several places of
-//! one tree or of several trees. [`Expression::kind`] exposes the node as an
-//! [`ExpressionKind`] to match on. Equality and hashing are structural:
-//! two expressions are equal when they have the same shape, the same
-//! operations and callees, identifiers with the same ids, and
-//! equal literals (see [`LiteralValue`]). [`Expression::ptr_eq`] tells
-//! whether two handles share one node.
-//!
-//! Dropping, equality, hashing, alpha-equivalence, substitution and free
-//! identifier collection keep their pending nodes in a work list on the heap
-//! rather than on the call stack, so they handle a tree of any depth. All but
-//! dropping handle a subtree that occurs in several places once, so they
-//! take time linear in the distinct nodes of a DAG, not in its occurrences.
-//! `Debug` is iterative too, and bounded.
+//! An [`Expression`] is a cheap, clonable handle to an immutable node, which
+//! [`Expression::kind`] exposes as an [`ExpressionKind`] to match on. A clone
+//! shares the node, so one subtree may appear in several places. Equality and
+//! hashing are structural, and [`Expression::ptr_eq`] tells whether two
+//! handles share one node.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -33,9 +23,12 @@ use super::error::{PiecewiseError, RebuildError};
 use super::literal::LiteralValue;
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
+/// The childless kind a node is left holding while its children are moved
+/// out to be dropped.
+const DROP_PLACEHOLDER: ExpressionKind = ExpressionKind::Literal(LiteralValue::Bool(false));
+
 /// The children of a node, in visiting order, from either end.
 enum Children<'a> {
-    /// The children of a node that stores them contiguously.
     Contiguous(std::slice::Iter<'a, Expression>),
     /// The children of a piecewise: each case's condition then value, then
     /// the otherwise branch.
@@ -98,21 +91,13 @@ impl DoubleEndedIterator for Children<'_> {
     }
 }
 
-/// Return the error for rebuilding a node of `expected` children from
-/// `actual` children.
-fn build_child_count_mismatch(expected: usize, actual: usize) -> RebuildError {
-    RebuildError::ChildCount { expected, actual }
-}
-
-/// Return the placeholder a node's kind is replaced with while its
-/// children are moved out to be dropped.
-fn build_drop_placeholder() -> ExpressionKind {
-    ExpressionKind::Literal(LiteralValue::Bool(false))
-}
-
-/// Move the children out of `kind` onto `pending`.
-fn move_children(kind: ExpressionKind, pending: &mut Vec<Expression>) {
-    match kind {
+/// Move the children out of `expression`'s node onto `pending` if this is
+/// the node's last handle.
+fn move_children_of_last_handle(expression: &mut Expression, pending: &mut Vec<Expression>) {
+    let Some(kind) = Arc::get_mut(&mut expression.0) else {
+        return;
+    };
+    match std::mem::replace(kind, DROP_PLACEHOLDER) {
         ExpressionKind::Unary(node) => pending.push(node.operand),
         ExpressionKind::Binary(node) => pending.extend(node.operands),
         ExpressionKind::Logical(node) => pending.extend(node.operands),
@@ -196,9 +181,7 @@ fn is_tree_equal(
 }
 
 /// Feed the data of `expression`'s node, excluding its children, to
-/// `hasher`: a tag for its kind, then its operation (and operand count for a
-/// logical node), identifier, literal, case count, or callee and argument
-/// count.
+/// `hasher`, starting with a tag for its kind.
 fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
     match expression.kind() {
         ExpressionKind::Unary(node) => {
@@ -244,8 +227,6 @@ struct DigestFrame<'a> {
 }
 
 impl<'a> DigestFrame<'a> {
-    /// Start digesting `node`, whose children's digests will start at
-    /// `first_digest`.
     fn new(node: &'a Expression, first_digest: usize) -> Self {
         Self {
             node,
@@ -297,6 +278,18 @@ fn compute_structural_digest(root: &Expression) -> u64 {
         digests.push(digest);
         current = parent;
     }
+}
+
+/// Check the literal condition of the piecewise case at `case_index` is a
+/// Boolean; the constructor and the wire decoder share this check.
+pub(super) fn validate_condition_literal(
+    case_index: usize,
+    condition: &LiteralValue,
+) -> Result<(), PiecewiseError> {
+    if !matches!(condition, LiteralValue::Bool(_)) {
+        return Err(PiecewiseError::NonBooleanConditionLiteral { case_index });
+    }
+    Ok(())
 }
 
 /// The visitor behind [`Expression::free_identifiers`]: records every
@@ -399,7 +392,7 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 ///
 /// A `bool` does not convert into an expression, so a comparison result
 /// cannot stand in for a Boolean constant by accident; a Boolean literal is
-/// [`Expression::literal`]`(true)`:
+/// built with [`Expression::literal`]:
 ///
 /// ```compile_fail,E0277
 /// use fhy_core::expr::{Expression, UnaryOperation};
@@ -559,26 +552,25 @@ impl Expression {
     ) -> Result<Expression, RebuildError> {
         let expected = self.count_children();
         let actual = children.len();
+        let count_mismatch = || RebuildError::ChildCount { expected, actual };
         if actual != expected {
-            return Err(build_child_count_mismatch(expected, actual));
+            return Err(count_mismatch());
         }
         let rebuilt = match self.kind() {
             ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => self.clone(),
             ExpressionKind::Unary(node) => {
-                let [operand]: [Expression; 1] =
-                    children.try_into().map_err(|rejected: Vec<Expression>| {
-                        build_child_count_mismatch(1, rejected.len())
-                    })?;
+                let [operand]: [Self; 1] = children
+                    .try_into()
+                    .map_err(|_rejected: Vec<Self>| count_mismatch())?;
                 Self::from_kind(ExpressionKind::Unary(UnaryExpression::new(
                     node.operation,
                     operand,
                 )))
             }
             ExpressionKind::Binary(node) => {
-                let [left, right]: [Expression; 2] =
-                    children.try_into().map_err(|rejected: Vec<Expression>| {
-                        build_child_count_mismatch(2, rejected.len())
-                    })?;
+                let [left, right]: [Self; 2] = children
+                    .try_into()
+                    .map_err(|_rejected: Vec<Self>| count_mismatch())?;
                 Self::from_kind(ExpressionKind::Binary(BinaryExpression::new(
                     node.operation,
                     left,
@@ -590,9 +582,7 @@ impl Expression {
             )),
             ExpressionKind::Piecewise(_) => {
                 let mut children = children.into_iter();
-                let otherwise = children
-                    .next_back()
-                    .ok_or_else(|| build_child_count_mismatch(expected, actual))?;
+                let otherwise = children.next_back().ok_or_else(count_mismatch)?;
                 let mut cases = Vec::with_capacity(expected / 2);
                 while let (Some(condition), Some(value)) = (children.next(), children.next()) {
                     cases.push((condition, value));
@@ -721,14 +711,14 @@ impl Expression {
 impl From<Identifier> for Expression {
     /// Wrap an identifier in an identifier reference.
     fn from(identifier: Identifier) -> Self {
-        Self(Arc::new(ExpressionKind::Identifier(identifier)))
+        Self::from_kind(ExpressionKind::Identifier(identifier))
     }
 }
 
 impl From<LiteralValue> for Expression {
     /// Wrap a constant in a literal expression.
     fn from(value: LiteralValue) -> Self {
-        Self(Arc::new(ExpressionKind::Literal(value)))
+        Self::from_kind(ExpressionKind::Literal(value))
     }
 }
 
@@ -744,13 +734,8 @@ impl PartialEq for Expression {
 impl Eq for Expression {}
 
 impl Hash for Expression {
-    /// Feed the structural digest of the tree to `state`.
-    ///
-    /// The digest is computed bottom-up from each node's data and its
-    /// children's digests under a fixed-key hasher, so it depends on the
-    /// structure alone and agrees with `==`: equal trees digest alike
-    /// whatever they share, and a subtree occurring in several places is
-    /// digested once.
+    /// Feed the structural digest of the tree to `state`, so equal trees
+    /// hash alike whatever they share.
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(compute_structural_digest(self));
     }
@@ -771,11 +756,11 @@ impl Tree for Expression {
     type RebuildError = RebuildError;
 
     fn children(&self) -> impl Iterator<Item = &Self> {
-        Expression::children(self)
+        Self::children(self)
     }
 
     fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, RebuildError> {
-        Expression::rebuild_with_children(self, children)
+        Self::rebuild_with_children(self, children)
     }
 
     fn is_shared(&self) -> bool {
@@ -788,21 +773,10 @@ impl Drop for Expression {
     /// every node dropped with it onto a work list, so a deep tree drops
     /// without deep recursion.
     fn drop(&mut self) {
-        let Some(kind) = Arc::get_mut(&mut self.0) else {
-            return;
-        };
         let mut pending = Vec::new();
-        move_children(
-            std::mem::replace(kind, build_drop_placeholder()),
-            &mut pending,
-        );
+        move_children_of_last_handle(self, &mut pending);
         while let Some(mut expression) = pending.pop() {
-            if let Some(kind) = Arc::get_mut(&mut expression.0) {
-                move_children(
-                    std::mem::replace(kind, build_drop_placeholder()),
-                    &mut pending,
-                );
-            }
+            move_children_of_last_handle(&mut expression, &mut pending);
         }
     }
 }
@@ -878,39 +852,6 @@ impl LogicalExpression {
     }
 }
 
-/// Check a piecewise with `case_count` cases has at least one.
-///
-/// The constructor and the wire decoder share this check.
-///
-/// # Errors
-///
-/// Returns [`PiecewiseError::NoCases`] if `case_count` is zero.
-pub(super) fn validate_case_count(case_count: usize) -> Result<(), PiecewiseError> {
-    if case_count == 0 {
-        return Err(PiecewiseError::NoCases);
-    }
-    Ok(())
-}
-
-/// Check the literal condition of the piecewise case at `case_index` is a
-/// Boolean.
-///
-/// The constructor and the wire decoder share this check.
-///
-/// # Errors
-///
-/// Returns [`PiecewiseError::NonBooleanConditionLiteral`] naming
-/// `case_index` if `condition` is not a Boolean.
-pub(super) fn validate_condition_literal(
-    case_index: usize,
-    condition: &LiteralValue,
-) -> Result<(), PiecewiseError> {
-    if !matches!(condition, LiteralValue::Bool(_)) {
-        return Err(PiecewiseError::NonBooleanConditionLiteral { case_index });
-    }
-    Ok(())
-}
-
 impl PiecewiseExpression {
     /// Construct a piecewise from its `(condition, value)` cases, in
     /// evaluation order, and its otherwise branch; [`Expression::piecewise`]
@@ -925,7 +866,9 @@ impl PiecewiseExpression {
         cases: Vec<(Expression, Expression)>,
         otherwise: Expression,
     ) -> Result<Self, PiecewiseError> {
-        validate_case_count(cases.len())?;
+        if cases.is_empty() {
+            return Err(PiecewiseError::NoCases);
+        }
         for (case_index, (condition, _)) in cases.iter().enumerate() {
             if let ExpressionKind::Literal(literal) = condition.kind() {
                 validate_condition_literal(case_index, literal)?;

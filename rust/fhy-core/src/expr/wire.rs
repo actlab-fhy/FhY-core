@@ -18,7 +18,7 @@ use super::callee::Callee;
 use super::literal::LiteralValue;
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
-    PiecewiseExpression, UnaryExpression, validate_case_count, validate_condition_literal,
+    PiecewiseExpression, UnaryExpression, validate_condition_literal,
 };
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
@@ -293,7 +293,7 @@ fn decode_node(
         WireNode::Identifier(identifier) => ExpressionKind::Identifier(identifier),
         WireNode::Literal(literal) => ExpressionKind::Literal(literal),
         WireNode::Piecewise { cases, otherwise } => {
-            if validate_case_count(cases.len()).is_err() {
+            if cases.is_empty() {
                 return Err(format!("piecewise node {index} has no cases"));
             }
             let mut decoded_cases = Vec::with_capacity(cases.len());

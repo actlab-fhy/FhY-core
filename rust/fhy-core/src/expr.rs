@@ -40,14 +40,12 @@ pub use screen::{BooleanScreen, Environment, NoRegisteredSorts, SortLookup, Symb
 pub use sort::FunctionSort;
 pub use symbol_type::SymbolType;
 
-/// The arbitrary-precision signed integer an integer literal holds, as
-/// [`LiteralValue::Int`] holds it and as [`LiteralValue::from`] and the
-/// expression builders take it.
+/// The arbitrary-precision signed integer of an integer literal.
 ///
-/// This is `num_bigint::BigInt` itself, re-exported so that callers need
-/// no direct dependency on `num-bigint`. A caller that depends on a
-/// `num-bigint` release semver-compatible with this crate's (0.5) sees the
-/// same type under both paths.
+/// [`LiteralValue::Int`] holds it, and [`LiteralValue::from`] and the
+/// expression builders take it. This is `num_bigint::BigInt` itself, so a
+/// caller depending on a `num-bigint` release semver-compatible with this
+/// crate's (0.5) sees the same type under both paths.
 ///
 /// # Examples
 ///
