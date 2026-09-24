@@ -86,13 +86,13 @@ impl<'a> PassContext<'a> {
     /// pass's input when the pass preserves `A`. Outside one, `A` runs on
     /// every call. `ir` may be the pass's input, its output, or any other
     /// node.
-    pub fn analysis<A, T>(&mut self, ir: &T) -> Arc<A::Output>
+    pub fn analysis<A>(&mut self, ir: &A::Ir) -> Arc<A::Output>
     where
-        A: Analysis<T> + Default,
-        T: NodeHandle,
+        A: Analysis + Default,
+        A::Ir: NodeHandle,
     {
         match self.analyses.as_deref_mut() {
-            Some(cache) => cache.get::<A, T>(ir),
+            Some(cache) => cache.get::<A>(ir),
             None => Arc::new(A::default().run(ir)),
         }
     }

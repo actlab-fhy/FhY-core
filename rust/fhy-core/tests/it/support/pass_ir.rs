@@ -91,7 +91,8 @@ impl NodeHandle for BoxIr {
 #[derive(Debug, Default)]
 pub(crate) struct DoubleAnalysis;
 
-impl Analysis<BoxIr> for DoubleAnalysis {
+impl Analysis for DoubleAnalysis {
+    type Ir = BoxIr;
     type Output = i64;
 
     fn run(&self, ir: &BoxIr) -> i64 {
@@ -104,7 +105,8 @@ impl Analysis<BoxIr> for DoubleAnalysis {
 #[derive(Debug, Default)]
 pub(crate) struct ParityAnalysis;
 
-impl Analysis<BoxIr> for ParityAnalysis {
+impl Analysis for ParityAnalysis {
+    type Ir = BoxIr;
     type Output = i64;
 
     fn run(&self, ir: &BoxIr) -> i64 {

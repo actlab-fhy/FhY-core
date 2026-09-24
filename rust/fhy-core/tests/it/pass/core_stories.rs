@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind};
 use fhy_core::pass::{
-    AnalysisId, CompilerPass, CreatePassError, ExecutePass, FailureClass, PassContext, PassError,
-    PassErrorKind, PassFailure, PassHook, PassInfo, PassRegistrationError, PassRegistry,
+    Analysis, AnalysisId, CompilerPass, CreatePassError, ExecutePass, FailureClass, PassContext,
+    PassError, PassErrorKind, PassFailure, PassHook, PassInfo, PassRegistrationError, PassRegistry,
     PreservedAnalyses,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
@@ -807,8 +807,8 @@ fn pass_context_exposes_the_pass_name_and_diagnostics_so_far() {
 fn pass_context_analysis_recomputes_on_every_call_outside_a_manager() {
     let mut observed = Vec::new();
     let mut pass = ClosurePass::new("standalone_analysis", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     });
     let ir = BoxIr::new(5);
@@ -824,6 +824,36 @@ fn pass_context_analysis_recomputes_on_every_call_outside_a_manager() {
 // Preserved analyses and analysis ids
 // =============================================================================
 
+/// An analysis of integers named to sort first.
+struct Alpha;
+
+impl Analysis for Alpha {
+    type Ir = i64;
+    type Output = i64;
+
+    fn run(&self, ir: &i64) -> i64 {
+        *ir
+    }
+}
+
+/// An analysis of integers named to sort second.
+struct Beta;
+
+impl Analysis for Beta {
+    type Ir = i64;
+    type Output = i64;
+
+    fn run(&self, ir: &i64) -> i64 {
+        -ir
+    }
+}
+
+/// Test an analysis runs over its own IR type.
+#[test]
+fn analysis_runs_over_its_ir_type() {
+    assert_eq!((Alpha.run(&3), Beta.run(&3)), (3, -3));
+}
+
 /// Test the all-preserving set preserves every analysis and lists no ids.
 #[test]
 fn preserved_analyses_all_preserves_every_analysis() {
@@ -832,7 +862,7 @@ fn preserved_analyses_all_preserves_every_analysis() {
     assert!(all.preserves_all());
     assert!(all.is_preserved::<DoubleAnalysis>());
     assert!(all.is_preserved::<ParityAnalysis>());
-    assert!(all.is_id_preserved(AnalysisId::of::<String>()));
+    assert!(all.is_id_preserved(AnalysisId::of::<Alpha>()));
     assert_eq!(all.preserved_ids().count(), 0);
 }
 
@@ -940,16 +970,13 @@ fn analysis_id_distinguishes_analysis_types() {
 fn analysis_id_display_is_the_type_name() {
     assert_eq!(
         AnalysisId::of::<DoubleAnalysis>().to_string(),
-        "it::support::pass_ir::DoubleAnalysis"
+        type_name::<DoubleAnalysis>()
     );
 }
 
 /// Test analysis ids order by type name.
 #[test]
 fn analysis_id_orders_by_type_name() {
-    struct Alpha;
-    struct Beta;
-
     assert!(AnalysisId::of::<Alpha>() < AnalysisId::of::<Beta>());
     assert!(AnalysisId::of::<DoubleAnalysis>() < AnalysisId::of::<ParityAnalysis>());
 }

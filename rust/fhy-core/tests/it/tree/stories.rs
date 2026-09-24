@@ -146,7 +146,7 @@ impl TreeVisitor<ToyTree, PassContext<'_>> for CountingVisitor {
 
     fn visit(&mut self, node: &ToyTree, cx: &mut PassContext<'_>) -> Result<(), HookError> {
         self.counts
-            .push(*cx.analysis::<OccurrenceCountAnalysis, ToyTree>(node));
+            .push(*cx.analysis::<OccurrenceCountAnalysis>(node));
         Ok(())
     }
 }
@@ -167,7 +167,8 @@ impl<C: ?Sized> Rewriter<ToyTree, C> for NameProbeRewriter {
 #[derive(Debug, Default)]
 struct OccurrenceCountAnalysis;
 
-impl Analysis<ToyTree> for OccurrenceCountAnalysis {
+impl Analysis for OccurrenceCountAnalysis {
+    type Ir = ToyTree;
     type Output = usize;
 
     fn run(&self, ir: &ToyTree) -> usize {

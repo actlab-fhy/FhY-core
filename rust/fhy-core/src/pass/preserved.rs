@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use super::analysis::Analysis;
+
 /// The identity of an analysis type, keying cached results and preservation
 /// sets.
 ///
@@ -23,16 +25,26 @@ impl AnalysisId {
     /// # Examples
     ///
     /// ```
-    /// use fhy_core::pass::AnalysisId;
+    /// use fhy_core::pass::{Analysis, AnalysisId};
     ///
     /// struct Liveness;
     /// struct Dominance;
     ///
+    /// # impl Analysis for Liveness {
+    /// #     type Ir = ();
+    /// #     type Output = ();
+    /// #     fn run(&self, _ir: &()) {}
+    /// # }
+    /// # impl Analysis for Dominance {
+    /// #     type Ir = ();
+    /// #     type Output = ();
+    /// #     fn run(&self, _ir: &()) {}
+    /// # }
     /// assert_eq!(AnalysisId::of::<Liveness>(), AnalysisId::of::<Liveness>());
     /// assert_ne!(AnalysisId::of::<Liveness>(), AnalysisId::of::<Dominance>());
     /// ```
     #[must_use]
-    pub fn of<A: ?Sized + 'static>() -> Self {
+    pub fn of<A: Analysis>() -> Self {
         Self {
             type_id: TypeId::of::<A>(),
             type_name: type_name::<A>(),
@@ -98,11 +110,21 @@ enum Preservation {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass::PreservedAnalyses;
+/// use fhy_core::pass::{Analysis, PreservedAnalyses};
 ///
 /// struct Liveness;
 /// struct Dominance;
 ///
+/// # impl Analysis for Liveness {
+/// #     type Ir = ();
+/// #     type Output = ();
+/// #     fn run(&self, _ir: &()) {}
+/// # }
+/// # impl Analysis for Dominance {
+/// #     type Ir = ();
+/// #     type Output = ();
+/// #     fn run(&self, _ir: &()) {}
+/// # }
 /// let preserved = PreservedAnalyses::none().preserve::<Liveness>();
 ///
 /// assert!(preserved.is_preserved::<Liveness>());
@@ -133,9 +155,16 @@ impl PreservedAnalyses {
 
     /// Return this set with the analysis `A` preserved as well.
     ///
-    /// A set that preserves every analysis comes back unchanged.
+    /// A set that preserves every analysis comes back unchanged. Only an
+    /// [`Analysis`] can be preserved:
+    ///
+    /// ```compile_fail
+    /// use fhy_core::pass::PreservedAnalyses;
+    ///
+    /// let preserved = PreservedAnalyses::none().preserve::<String>();
+    /// ```
     #[must_use]
-    pub fn preserve<A: ?Sized + 'static>(self) -> Self {
+    pub fn preserve<A: Analysis>(self) -> Self {
         self.preserve_id(AnalysisId::of::<A>())
     }
 
@@ -152,7 +181,7 @@ impl PreservedAnalyses {
 
     /// Return whether the set preserves the analysis `A`.
     #[must_use]
-    pub fn is_preserved<A: ?Sized + 'static>(&self) -> bool {
+    pub fn is_preserved<A: Analysis>(&self) -> bool {
         self.is_id_preserved(AnalysisId::of::<A>())
     }
 

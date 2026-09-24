@@ -8,20 +8,71 @@ use std::sync::Arc;
 use super::preserved::{AnalysisId, PreservedAnalyses};
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 
-/// A reusable computation over IR whose result a pass manager can cache.
+/// A reusable computation over IR of type [`Ir`](Self::Ir) whose result a
+/// pass manager can cache.
 ///
 /// Passes obtain results through
 /// [`PassContext::analysis`](super::PassContext::analysis), which builds the
 /// analysis with [`Default`] and caches its result per node while the pass
-/// runs under a [`PassManager`](super::PassManager). An analysis cannot
-/// fail; one whose computation can fail makes the failure part of its
+/// runs under a [`PassManager`](super::PassManager). A type is an analysis
+/// of one IR type; a computation over several IR types is one analysis type
+/// per IR, such as a generic type. An analysis cannot fail; one whose
+/// computation can fail makes the failure part of its
 /// [`Output`](Self::Output).
-pub trait Analysis<T>: 'static {
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use fhy_core::pass::{Analysis, CompilerPass, ExecutePass, PassContext, PassFailure};
+/// use fhy_core::tree::{NodeHandle, NodeIdentity};
+///
+/// #[derive(Clone)]
+/// struct Value(Arc<i64>);
+///
+/// impl NodeHandle for Value {
+///     fn identity(&self) -> NodeIdentity {
+///         NodeIdentity::of_arc(&self.0)
+///     }
+/// }
+///
+/// #[derive(Default)]
+/// struct IsEven;
+///
+/// impl Analysis for IsEven {
+///     type Ir = Value;
+///     type Output = bool;
+///
+///     fn run(&self, ir: &Value) -> bool {
+///         *ir.0 % 2 == 0
+///     }
+/// }
+///
+/// struct HalveEven;
+///
+/// impl CompilerPass<Value> for HalveEven {
+///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, PassFailure> {
+///         Ok(if *cx.analysis::<IsEven>(ir) { Value(Arc::new(*ir.0 / 2)) } else { ir.clone() })
+///     }
+///
+///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, PassFailure> {
+///         Ok(input.0 != output.0)
+///     }
+/// }
+///
+/// assert_eq!(*HalveEven.execute(&Value(Arc::new(8)))?.output().0, 4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub trait Analysis: 'static {
+    /// The IR the analysis runs over.
+    type Ir;
+
     /// The result the analysis computes.
     type Output: Send + Sync + 'static;
 
     /// Compute the analysis result for `ir`.
-    fn run(&self, ir: &T) -> Self::Output;
+    fn run(&self, ir: &Self::Ir) -> Self::Output;
 }
 
 /// The key of one cached node: its identity and the handle type that
@@ -87,10 +138,10 @@ impl AnalysisCache {
 
     /// Return the result of the analysis `A` for `ir`, computing and caching
     /// it on a miss.
-    pub(super) fn get<A, T>(&mut self, ir: &T) -> Arc<A::Output>
+    pub(super) fn get<A>(&mut self, ir: &A::Ir) -> Arc<A::Output>
     where
-        A: Analysis<T> + Default,
-        T: NodeHandle,
+        A: Analysis + Default,
+        A::Ir: NodeHandle,
     {
         self.get_or_insert_with(ir, AnalysisId::of::<A>(), || A::default().run(ir))
     }
@@ -168,6 +219,7 @@ impl AnalysisCache {
 
 #[cfg(test)]
 mod tests {
+    use std::marker::PhantomData;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -229,7 +281,8 @@ mod tests {
     #[derive(Default)]
     struct DoubleAnalysis;
 
-    impl Analysis<TestIr> for DoubleAnalysis {
+    impl Analysis for DoubleAnalysis {
+        type Ir = TestIr;
         type Output = i64;
 
         fn run(&self, ir: &TestIr) -> i64 {
@@ -241,7 +294,8 @@ mod tests {
     #[derive(Default)]
     struct ParityAnalysis;
 
-    impl Analysis<TestIr> for ParityAnalysis {
+    impl Analysis for ParityAnalysis {
+        type Ir = TestIr;
         type Output = i64;
 
         fn run(&self, ir: &TestIr) -> i64 {
@@ -250,11 +304,18 @@ mod tests {
         }
     }
 
-    /// An analysis over both handle types, with a different output for each.
-    #[derive(Default)]
-    struct LabelAnalysis;
+    /// An analysis over either handle type, with a different output for
+    /// each.
+    struct LabelAnalysis<T>(PhantomData<T>);
 
-    impl Analysis<TestIr> for LabelAnalysis {
+    impl<T> Default for LabelAnalysis<T> {
+        fn default() -> Self {
+            Self(PhantomData)
+        }
+    }
+
+    impl Analysis for LabelAnalysis<TestIr> {
+        type Ir = TestIr;
         type Output = i64;
 
         fn run(&self, ir: &TestIr) -> i64 {
@@ -263,7 +324,8 @@ mod tests {
         }
     }
 
-    impl Analysis<AliasIr> for LabelAnalysis {
+    impl Analysis for LabelAnalysis<AliasIr> {
+        type Ir = AliasIr;
         type Output = String;
 
         fn run(&self, ir: &AliasIr) -> String {
@@ -274,8 +336,8 @@ mod tests {
 
     /// Seed `cache` with both counting analyses for `ir`.
     fn seed_both(cache: &mut AnalysisCache, ir: &TestIr) {
-        cache.get::<DoubleAnalysis, _>(ir);
-        cache.get::<ParityAnalysis, _>(ir);
+        cache.get::<DoubleAnalysis>(ir);
+        cache.get::<ParityAnalysis>(ir);
     }
 
     /// Test a result is computed on the first request and served from the
@@ -285,8 +347,8 @@ mod tests {
         let mut cache = AnalysisCache::new();
         let ir = TestIr::new(3);
 
-        let first = cache.get::<DoubleAnalysis, _>(&ir);
-        let second = cache.get::<DoubleAnalysis, _>(&ir.clone());
+        let first = cache.get::<DoubleAnalysis>(&ir);
+        let second = cache.get::<DoubleAnalysis>(&ir.clone());
 
         assert_eq!((*first, *second), (6, 6));
         assert!(Arc::ptr_eq(&first, &second));
@@ -304,22 +366,22 @@ mod tests {
         seed_both(&mut cache, &second);
         seed_both(&mut cache, &first);
 
-        assert_eq!(*cache.get::<ParityAnalysis, _>(&second), 0);
+        assert_eq!(*cache.get::<ParityAnalysis>(&second), 0);
         assert_eq!((first.double_runs(), first.parity_runs()), (1, 1));
         assert_eq!((second.double_runs(), second.parity_runs()), (1, 1));
     }
 
-    /// Test two handle types over one node never share results, even for the
-    /// same analysis.
+    /// Test two handle types over one node never share results, even for
+    /// analyses of one generic type.
     #[test]
     fn analysis_cache_separates_handle_types_over_one_node() {
         let mut cache = AnalysisCache::new();
         let ir = TestIr::new(5);
         let alias = AliasIr(Arc::clone(&ir.0));
 
-        let number = cache.get::<LabelAnalysis, _>(&ir);
-        let text = cache.get::<LabelAnalysis, _>(&alias);
-        let number_again = cache.get::<LabelAnalysis, _>(&ir);
+        let number = cache.get::<LabelAnalysis<TestIr>>(&ir);
+        let text = cache.get::<LabelAnalysis<AliasIr>>(&alias);
+        let number_again = cache.get::<LabelAnalysis<TestIr>>(&ir);
 
         assert_eq!(*number, 5);
         assert_eq!(*text, "alias 5");
@@ -330,16 +392,24 @@ mod tests {
     /// Test `get_or_insert_with` computes on a miss only.
     #[test]
     fn analysis_cache_get_or_insert_with_computes_on_a_miss_only() {
-        struct Marker;
+        struct Report;
+        impl Analysis for Report {
+            type Ir = TestIr;
+            type Output = String;
+
+            fn run(&self, _ir: &TestIr) -> String {
+                "report".to_owned()
+            }
+        }
         let mut cache = AnalysisCache::new();
         let ir = TestIr::new(1);
         let mut computations = 0;
 
-        let first = cache.get_or_insert_with(&ir, AnalysisId::of::<Marker>(), || {
+        let first = cache.get_or_insert_with(&ir, AnalysisId::of::<Report>(), || {
             computations += 1;
             "report".to_owned()
         });
-        let second = cache.get_or_insert_with(&ir, AnalysisId::of::<Marker>(), || {
+        let second = cache.get_or_insert_with(&ir, AnalysisId::of::<Report>(), || {
             computations += 1;
             "other".to_owned()
         });
@@ -354,7 +424,7 @@ mod tests {
         let mut cache = AnalysisCache::new();
         let ir = TestIr::new(1);
 
-        cache.get::<DoubleAnalysis, _>(&ir);
+        cache.get::<DoubleAnalysis>(&ir);
         let while_cached = ir.handle_count();
         drop(cache);
 
@@ -372,7 +442,7 @@ mod tests {
         seed_both(&mut cache, &from);
 
         cache.transfer(&from, &to, &PreservedAnalyses::all());
-        let transferred = *cache.get::<DoubleAnalysis, _>(&to);
+        let transferred = *cache.get::<DoubleAnalysis>(&to);
         seed_both(&mut cache, &from);
 
         assert_eq!(transferred, 6);
@@ -392,7 +462,7 @@ mod tests {
 
         cache.transfer(&from, &to, &PreservedAnalyses::none());
         let to_handles = to.handle_count();
-        let recomputed = *cache.get::<DoubleAnalysis, _>(&to);
+        let recomputed = *cache.get::<DoubleAnalysis>(&to);
 
         assert_eq!(to_handles, 1);
         assert_eq!(recomputed, 8);
@@ -413,8 +483,8 @@ mod tests {
             &PreservedAnalyses::none().preserve::<ParityAnalysis>(),
         );
 
-        assert_eq!(*cache.get::<ParityAnalysis, _>(&to), 1);
-        assert_eq!(*cache.get::<DoubleAnalysis, _>(&to), 8);
+        assert_eq!(*cache.get::<ParityAnalysis>(&to), 1);
+        assert_eq!(*cache.get::<DoubleAnalysis>(&to), 8);
         assert_eq!((to.parity_runs(), to.double_runs()), (0, 1));
     }
 
@@ -425,12 +495,12 @@ mod tests {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
-        cache.get::<DoubleAnalysis, _>(&from);
-        cache.get::<ParityAnalysis, _>(&to);
+        cache.get::<DoubleAnalysis>(&from);
+        cache.get::<ParityAnalysis>(&to);
 
         cache.transfer(&from, &to, &PreservedAnalyses::all());
-        cache.get::<ParityAnalysis, _>(&to);
-        let double = *cache.get::<DoubleAnalysis, _>(&to);
+        cache.get::<ParityAnalysis>(&to);
+        let double = *cache.get::<DoubleAnalysis>(&to);
 
         assert_eq!(double, 6);
         assert_eq!((to.parity_runs(), to.double_runs()), (1, 0));
@@ -443,11 +513,11 @@ mod tests {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
-        cache.get::<DoubleAnalysis, _>(&from);
-        cache.get::<DoubleAnalysis, _>(&to);
+        cache.get::<DoubleAnalysis>(&from);
+        cache.get::<DoubleAnalysis>(&to);
 
         cache.transfer(&from, &to, &PreservedAnalyses::all());
-        let double = *cache.get::<DoubleAnalysis, _>(&to);
+        let double = *cache.get::<DoubleAnalysis>(&to);
 
         assert_eq!(double, 8);
         assert_eq!(to.double_runs(), 1);
@@ -460,10 +530,10 @@ mod tests {
         let mut cache = AnalysisCache::new();
         let from = TestIr::new(3);
         let to = TestIr::new(4);
-        cache.get::<DoubleAnalysis, _>(&to);
+        cache.get::<DoubleAnalysis>(&to);
 
         cache.transfer(&from, &to, &PreservedAnalyses::all());
-        cache.get::<DoubleAnalysis, _>(&to);
+        cache.get::<DoubleAnalysis>(&to);
 
         assert_eq!(to.handle_count(), 2);
         assert_eq!(from.handle_count(), 1);

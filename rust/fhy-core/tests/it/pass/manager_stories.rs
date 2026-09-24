@@ -366,8 +366,8 @@ fn pass_context_analysis_is_cached_within_a_managed_pass() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.twice_read", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(5);
@@ -385,11 +385,11 @@ fn pass_context_analysis_is_reused_across_an_unchanged_pass() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.compute", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.add_pass(ClosurePass::new("tests.pm.read_again", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(5);
@@ -408,11 +408,11 @@ fn pass_context_analysis_follows_an_unchanged_pass_to_its_new_node() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.compute_then_copy", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.derive(ir.value()))
     }));
     manager.add_pass(ClosurePass::new("tests.pm.read_copy", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(5);
@@ -431,12 +431,12 @@ fn pass_context_analysis_recomputes_after_a_changing_pass() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.seed", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.add_pass(build_add_pass("tests.pm.mutate", 1));
     manager.add_pass(ClosurePass::new("tests.pm.reread", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(5);
@@ -454,14 +454,14 @@ fn pass_manager_carries_only_preserved_analyses_to_a_changed_output() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.seed_both", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
-        cx.analysis::<ParityAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
+        cx.analysis::<ParityAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.add_pass(PreserveDoubleOnly);
     manager.add_pass(ClosurePass::new("tests.pm.read_both", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
-        observed.push(*cx.analysis::<ParityAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
+        observed.push(*cx.analysis::<ParityAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(2);
@@ -482,7 +482,7 @@ fn pass_context_analysis_caches_a_node_other_than_the_input() {
     let read_side = |ir: &BoxIr, cx: &mut PassContext<'_>| {
         observed
             .borrow_mut()
-            .push(*cx.analysis::<DoubleAnalysis, _>(&side));
+            .push(*cx.analysis::<DoubleAnalysis>(&side));
         Ok(ir.clone())
     };
     let mut manager = PassManager::new(Identifier::new("pipeline"));
@@ -505,11 +505,11 @@ fn pass_manager_keeps_results_computed_on_a_pass_output() {
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.compute_on_output", |ir, cx| {
         let output = ir.derive(ir.value() + 1);
-        cx.analysis::<DoubleAnalysis, _>(&output);
+        cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }));
     manager.add_pass(ClosurePass::new("tests.pm.read_output", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(5);
@@ -542,12 +542,12 @@ fn pass_manager_keeps_results_of_an_output_that_is_its_input() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.seed", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.add_pass(ClaimChangeKeepNode);
     manager.add_pass(ClosurePass::new("tests.pm.reread", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(4);
@@ -566,7 +566,7 @@ struct ComputeOnOutputPreservingDouble;
 impl CompilerPass<BoxIr> for ComputeOnOutputPreservingDouble {
     fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
         let output = ir.derive(ir.value() + 1);
-        cx.analysis::<DoubleAnalysis, _>(&output);
+        cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }
 
@@ -591,12 +591,12 @@ fn pass_manager_prefers_an_outputs_own_result_to_its_inputs() {
     let mut observed = Vec::new();
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.seed_input", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.add_pass(ComputeOnOutputPreservingDouble);
     manager.add_pass(ClosurePass::new("tests.pm.reread_output", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.clone())
     }));
     let input = BoxIr::new(3);
@@ -614,7 +614,7 @@ fn pass_context_analysis_serves_passes_inside_a_fixpoint_group() {
     let mut observed = Vec::new();
     let mut group = build_group("read-then-decrement", 10);
     group.add_pass(ClosurePass::new("tests.pm.fixpoint_reader", |ir, cx| {
-        observed.push(*cx.analysis::<DoubleAnalysis, _>(ir));
+        observed.push(*cx.analysis::<DoubleAnalysis>(ir));
         Ok(ir.derive((ir.value() - 1).max(0)))
     }));
     let mut manager = PassManager::new(Identifier::new("pipeline"));
@@ -631,7 +631,7 @@ fn pass_context_analysis_serves_passes_inside_a_fixpoint_group() {
 fn pass_manager_starts_every_run_with_an_empty_cache() {
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.read", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     }));
     let input = BoxIr::new(1);
@@ -647,7 +647,7 @@ fn pass_manager_starts_every_run_with_an_empty_cache() {
 #[test]
 fn borrowed_pass_runs_standalone_after_a_managed_run() {
     let mut pass = ClosurePass::new("tests.pm.state_check", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     });
     let managed_input = BoxIr::new(5);
@@ -671,12 +671,12 @@ fn borrowed_pass_runs_standalone_after_a_managed_run() {
 fn pass_manager_run_releases_every_cached_handle() {
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.read_input", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.add_pass(PreserveDoubleOnly);
     manager.add_pass(ClosurePass::new("tests.pm.read_output", |ir, cx| {
-        cx.analysis::<ParityAnalysis, _>(ir);
+        cx.analysis::<ParityAnalysis>(ir);
         Ok(ir.clone())
     }));
     manager.set_verifier(build_negative_value_verifier());
@@ -1359,7 +1359,7 @@ struct DoubleReadingCheck;
 
 impl Validator<BoxIr> for DoubleReadingCheck {
     fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         Ok(())
     }
 }
@@ -1373,9 +1373,9 @@ fn verifier_reads_the_pipeline_analysis_cache() {
     verifier.add(DoubleReadingCheck);
     let mut manager = PassManager::new(Identifier::new("pipeline"));
     manager.add_pass(ClosurePass::new("tests.pm.read_then_compute", |ir, cx| {
-        cx.analysis::<DoubleAnalysis, _>(ir);
+        cx.analysis::<DoubleAnalysis>(ir);
         let output = ir.derive(ir.value() + 1);
-        cx.analysis::<DoubleAnalysis, _>(&output);
+        cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }));
     manager.set_verifier(verifier);

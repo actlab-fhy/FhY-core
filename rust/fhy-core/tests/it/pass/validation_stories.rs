@@ -795,8 +795,8 @@ fn validation_manager_runs_validators_without_an_analysis_cache() {
 
     impl Validator<BoxIr> for TwiceReading {
         fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-            cx.analysis::<DoubleAnalysis, _>(ir);
-            cx.analysis::<DoubleAnalysis, _>(ir);
+            cx.analysis::<DoubleAnalysis>(ir);
+            cx.analysis::<DoubleAnalysis>(ir);
             Ok(())
         }
     }

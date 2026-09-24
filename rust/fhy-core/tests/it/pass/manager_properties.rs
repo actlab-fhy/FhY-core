@@ -102,7 +102,7 @@ struct ComputeOnOutput(i64);
 impl CompilerPass<BoxIr> for ComputeOnOutput {
     fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
         let output = ir.derive(ir.value() + self.0);
-        cx.analysis::<DoubleAnalysis, _>(&output);
+        cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }
 
@@ -238,7 +238,7 @@ proptest! {
                 CacheStep::Read => {
                     let reads = &reads;
                     manager.add_pass(ClosurePass::new(&name, move |ir, cx| {
-                        reads.borrow_mut().push(*cx.analysis::<DoubleAnalysis, _>(ir));
+                        reads.borrow_mut().push(*cx.analysis::<DoubleAnalysis>(ir));
                         Ok(ir.clone())
                     }));
                 }
