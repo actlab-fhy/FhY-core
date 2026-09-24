@@ -209,48 +209,22 @@ impl Hasher for IdentityHasher {
     }
 }
 
-/// A node of a rewrite whose children are being rewritten: the node, its
-/// children, and the results of the children rewritten so far (`None` for a
-/// child that stays as it was).
+/// A node of a rewrite whose children are being rewritten, and where its
+/// children and their results start on the rewrite's shared stacks.
 struct RewriteFrame<'t, N> {
     node: &'t N,
-    children: Vec<&'t N>,
-    results: Vec<Option<N>>,
+    first_child: usize,
+    first_result: usize,
 }
 
-impl<'t, N: Tree> RewriteFrame<'t, N> {
-    /// Start rewriting `node`.
-    fn new(node: &'t N) -> Self {
-        let children: Vec<&'t N> = node.children().collect();
-        Self {
-            node,
-            results: Vec::with_capacity(children.len()),
-            children,
-        }
-    }
-
-    /// Return the next child to rewrite, or `None` once every child is
-    /// rewritten.
-    fn next_child(&self) -> Option<&'t N> {
-        self.children.get(self.results.len()).copied()
-    }
-
-    /// Return the node's children with each rewritten child in place of the
-    /// original.
-    fn merge_children(&self) -> Vec<N> {
-        self.children
-            .iter()
-            .zip(&self.results)
-            .map(|(&original, result)| result.as_ref().unwrap_or(original).clone())
-            .collect()
-    }
-}
-
-/// Finish a node whose children are all rewritten: rebuild it if a child
-/// changed, then ask `rewriter` for its replacement. Return the result, or
-/// `None` when the node stays as it was.
+/// Finish `node`, whose `children` are all rewritten to `results` (`None`
+/// for a child that stays as it was): rebuild it if a child changed, then
+/// ask `rewriter` for its replacement. Return the result, or `None` when the
+/// node stays as it was.
 fn finish_node<N, R>(
-    frame: &RewriteFrame<'_, N>,
+    node: &N,
+    children: &[&N],
+    results: &[Option<N>],
     rewriter: &mut R,
     cx: &mut PassContext<'_>,
 ) -> Result<Option<N>, RewriteTreeError<N, R::Error>>
@@ -258,20 +232,26 @@ where
     N: Tree,
     R: Rewriter<N> + ?Sized,
 {
-    let rebuilt = if frame.results.iter().any(Option::is_some) {
-        let rebuilt = frame
-            .node
-            .rebuild_with_children(frame.merge_children())
+    let merge_children = || -> Vec<N> {
+        children
+            .iter()
+            .zip(results)
+            .map(|(&original, result)| result.as_ref().unwrap_or(original).clone())
+            .collect()
+    };
+    let rebuilt = if results.iter().any(Option::is_some) {
+        let rebuilt = node
+            .rebuild_with_children(merge_children())
             .map_err(|source| RewriteTreeError::Rebuild {
-                node: frame.node.clone(),
-                children: frame.merge_children(),
+                node: node.clone(),
+                children: merge_children(),
                 source,
             })?;
         Some(rebuilt)
     } else {
         None
     };
-    let visited = rebuilt.as_ref().unwrap_or(frame.node);
+    let visited = rebuilt.as_ref().unwrap_or(node);
     let replacement = rewriter
         .rewrite(visited, cx)
         .map_err(RewriteTreeError::Rewrite)?;
@@ -312,29 +292,53 @@ where
     // keys its result unambiguously.
     let mut shared_results: HashMap<NodeIdentity, Option<N>, BuildHasherDefault<IdentityHasher>> =
         HashMap::default();
+    // The children of every node being rewritten, and the results of those
+    // rewritten so far, each node's in one contiguous run on top of its
+    // ancestors', so the walk allocates no list per node.
+    let mut child_stack: Vec<&N> = root.children().collect();
+    let mut result_stack: Vec<Option<N>> = Vec::new();
     let mut ancestors: Vec<RewriteFrame<'_, N>> = Vec::new();
-    let mut current = RewriteFrame::new(root);
+    let mut current = RewriteFrame {
+        node: root,
+        first_child: 0,
+        first_result: 0,
+    };
     loop {
-        if let Some(child) = current.next_child() {
+        let next_child = current.first_child + (result_stack.len() - current.first_result);
+        if let Some(&child) = child_stack.get(next_child) {
             let known = child
                 .is_shared()
                 .then(|| shared_results.get(&child.identity()))
                 .flatten();
             if let Some(result) = known {
-                current.results.push(result.clone());
+                result_stack.push(result.clone());
             } else {
-                ancestors.push(std::mem::replace(&mut current, RewriteFrame::new(child)));
+                let frame = RewriteFrame {
+                    node: child,
+                    first_child: child_stack.len(),
+                    first_result: result_stack.len(),
+                };
+                child_stack.extend(child.children());
+                ancestors.push(std::mem::replace(&mut current, frame));
             }
             continue;
         }
-        let result = finish_node(&current, rewriter, cx)?;
-        let Some(mut parent) = ancestors.pop() else {
+        let result = finish_node(
+            current.node,
+            &child_stack[current.first_child..],
+            &result_stack[current.first_result..],
+            rewriter,
+            cx,
+        )?;
+        child_stack.truncate(current.first_child);
+        result_stack.truncate(current.first_result);
+        let Some(parent) = ancestors.pop() else {
             return Ok(result.unwrap_or_else(|| root.clone()));
         };
         if current.node.is_shared() {
             shared_results.insert(current.node.identity(), result.clone());
         }
-        parent.results.push(result);
+        result_stack.push(result);
         current = parent;
     }
 }
