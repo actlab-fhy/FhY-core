@@ -489,11 +489,11 @@ fn file_provenance_new_stores_the_span() {
     assert_eq!(provenance.span(), Some(&span));
 }
 
-/// Test file paths are normalized as Python's `PurePosixPath` normalizes
-/// them, on every platform: `/` is the only separator, repeated separators
-/// and `.` components go, a trailing separator goes, the empty path becomes
-/// `.`, and `..`, `~`, a leading `//`, backslashes and drive letters stay.
-/// Each expected path is what `str(PurePosixPath(path))` returns.
+/// Test file paths are normalized lexically, the same on every platform:
+/// `/` is the only separator, repeated separators and `.` components go, a
+/// trailing separator goes, three or more leading separators become `/`,
+/// the empty path becomes `.`, and `..`, `~`, a root of exactly `//`,
+/// backslashes and drive letters stay.
 #[rstest]
 #[case::plain("a.fhy", "a.fhy")]
 #[case::leading_current_directory("./a", "a")]

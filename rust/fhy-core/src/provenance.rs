@@ -529,15 +529,15 @@ impl fmt::Display for Provenance {
     }
 }
 
-/// Return `path` normalized as Python's `PurePosixPath` normalizes it.
+/// Return `path` in its lexical normal form.
 ///
 /// `/` is the only separator; every other character, a backslash or a
 /// drive letter's colon included, is part of a component. Empty and `.`
 /// components are removed, which drops repeated and trailing separators,
-/// `..` components are kept, a leading `//` (exactly two separators) is kept
-/// while three or more leading separators become one, and a path with no
-/// root and no components becomes `.`. The result is the same on every
-/// platform.
+/// `..` components are kept, a root of exactly two separators (`//`) is
+/// kept while one or three or more leading separators become the root `/`,
+/// and a path with no root and no components becomes `.`. The result is the
+/// same on every platform, and normalizing twice changes nothing.
 fn normalize_file_path(path: &str) -> String {
     let root = if path.starts_with("//") && !path.starts_with("///") {
         "//"
@@ -560,14 +560,16 @@ fn normalize_file_path(path: &str) -> String {
 
 /// Provenance pointing at a region of a source file.
 ///
-/// The path is text stored in normalized form, as Python's `PurePosixPath`
-/// normalizes it on every platform: `/` is the only separator, repeated
-/// separators and `.` components are removed and a trailing separator is
-/// dropped, so `./a` and `a//b/` become `a` and `a/b`, and the empty path
-/// becomes `.`. A `..` component, `~`, a leading `//`, a backslash and a
-/// drive letter such as `C:` are kept as written, so `C:\src\a.fhy` is
-/// one component. Equality, hashing and [`Display`](fmt::Display) use the
-/// normalized text, so `//a` and `/a` differ.
+/// The path is text stored in a lexical normal form, the same on every
+/// platform: `/` is the only separator, repeated separators and `.`
+/// components are removed and a trailing separator is dropped, so `./a` and
+/// `a//b/` become `a` and `a/b`, and the empty path becomes `.`. A root of
+/// exactly two separators stays `//`, while three or more leading
+/// separators become `/`. A `..` component is never resolved, and `~`, a
+/// backslash and a drive letter such as `C:` are ordinary characters, so
+/// `C:\src\a.fhy` is one component. Equality, hashing and
+/// [`Display`](fmt::Display) use the normalized text, so `//a` and `/a`
+/// differ.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(from = "FileProvenanceData")]
 pub struct FileProvenance {

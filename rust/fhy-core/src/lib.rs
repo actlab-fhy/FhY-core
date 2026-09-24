@@ -50,7 +50,6 @@ pub mod provenance;
 pub mod value_domain;
 
 mod decode;
-mod python_text;
 
 #[cfg(test)]
 mod test_support;

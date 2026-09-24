@@ -1,16 +1,18 @@
 //! Literal values and their canonical equivalence keys.
 
+mod decimal;
+mod python_repr;
+
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use num_bigint::{BigInt, Sign};
 
-use crate::python_text::{
-    NormalizedDecimal, format_bool, format_float_repr, format_normalized_decimal,
-    is_ascii_digit_run, normalize_decimal_text,
+use self::decimal::{
+    NormalizedDecimal, format_normalized_decimal, is_ascii_digit_run, normalize_decimal_text,
 };
-
+use self::python_repr::{format_bool, format_float_repr};
 use super::sort::FunctionSort;
 
 /// The stored form of a literal, as the caller gave it.

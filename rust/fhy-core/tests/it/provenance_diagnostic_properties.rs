@@ -16,7 +16,7 @@ use proptest::prelude::*;
 use proptest::sample::select;
 
 /// File paths the strategies draw from: spellings that normalize to one
-/// another, absolute paths, the POSIX `//` root, the empty path and the
+/// another, absolute paths, the `//` root, the empty path and the
 /// root alone, backslashes, non-ASCII text, and characters JSON escapes.
 const FILE_PATHS: &[&str] = &[
     "a.fhy",
