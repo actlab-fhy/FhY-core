@@ -114,6 +114,61 @@ enum NumericStep<'a> {
     Combine(&'a Expression, bool, usize),
 }
 
+/// Return the rank of `position` in the order a node's Boolean-position
+/// operands are checked: every case condition, then every case value, then
+/// the otherwise branch; the ranks are stable within a kind of position.
+fn rank_checking_order(position: BooleanPosition) -> u8 {
+    match position {
+        BooleanPosition::NegatedOperand
+        | BooleanPosition::LogicalOperand { .. }
+        | BooleanPosition::CaseCondition { .. } => 0,
+        BooleanPosition::CaseValue { .. } => 1,
+        BooleanPosition::Otherwise => 2,
+    }
+}
+
+/// Return, for each child of `expression` in order, the Boolean position it
+/// sits in, if any.
+///
+/// The operands of a logical negation, conjunction, or disjunction and the
+/// conditions of a piecewise are Boolean positions; a piecewise's case
+/// values and otherwise branch are too when the piecewise itself sits in a
+/// Boolean position.
+fn find_boolean_positions(
+    expression: &Expression,
+    is_in_boolean_position: bool,
+) -> Vec<Option<BooleanPosition>> {
+    match expression.kind() {
+        ExpressionKind::Unary(node) if node.operation().is_logical_connective() => {
+            vec![Some(BooleanPosition::NegatedOperand)]
+        }
+        ExpressionKind::Logical(node) => (0..node.operands().len())
+            .map(|operand_index| {
+                Some(BooleanPosition::LogicalOperand {
+                    operation: node.operation(),
+                    operand_index,
+                })
+            })
+            .collect(),
+        ExpressionKind::Piecewise(node) => {
+            let mut positions = Vec::with_capacity(2 * node.cases().len() + 1);
+            for case_index in 0..node.cases().len() {
+                positions.push(Some(BooleanPosition::CaseCondition { case_index }));
+                positions.push(
+                    is_in_boolean_position.then_some(BooleanPosition::CaseValue { case_index }),
+                );
+            }
+            positions.push(is_in_boolean_position.then_some(BooleanPosition::Otherwise));
+            positions
+        }
+        ExpressionKind::Unary(_)
+        | ExpressionKind::Binary(_)
+        | ExpressionKind::Identifier(_)
+        | ExpressionKind::Literal(_)
+        | ExpressionKind::Call(_) => vec![None; expression.children().count()],
+    }
+}
+
 /// A screen refusing an operand that provably denotes a number in a Boolean
 /// position.
 ///
@@ -454,57 +509,6 @@ impl fmt::Debug for BooleanScreen<'_> {
     /// Write the type name only: the lookups need not implement `Debug`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BooleanScreen").finish_non_exhaustive()
-    }
-}
-
-/// Return the rank of `position` in the order a node's Boolean-position
-/// operands are checked: every case condition, then every case value, then
-/// the otherwise branch; the ranks are stable within a kind of position.
-fn rank_checking_order(position: BooleanPosition) -> u8 {
-    match position {
-        BooleanPosition::NegatedOperand
-        | BooleanPosition::LogicalOperand { .. }
-        | BooleanPosition::CaseCondition { .. } => 0,
-        BooleanPosition::CaseValue { .. } => 1,
-        BooleanPosition::Otherwise => 2,
-    }
-}
-
-/// Return, for each child of `expression` in order, the Boolean position it
-/// sits in, if any.
-///
-/// The operands of a logical negation, conjunction, or disjunction and the
-/// conditions of a piecewise are Boolean positions; a piecewise's case
-/// values and otherwise branch are too when the piecewise itself sits in a
-/// Boolean position.
-fn find_boolean_positions(
-    expression: &Expression,
-    is_in_boolean_position: bool,
-) -> Vec<Option<BooleanPosition>> {
-    match expression.kind() {
-        ExpressionKind::Unary(node) if node.operation().is_logical_connective() => {
-            vec![Some(BooleanPosition::NegatedOperand)]
-        }
-        ExpressionKind::Logical(node) => (0..node.operands().len())
-            .map(|operand_index| {
-                Some(BooleanPosition::LogicalOperand {
-                    operation: node.operation(),
-                    operand_index,
-                })
-            })
-            .collect(),
-        ExpressionKind::Piecewise(node) => {
-            let mut positions = Vec::with_capacity(2 * node.cases().len() + 1);
-            for case_index in 0..node.cases().len() {
-                positions.push(Some(BooleanPosition::CaseCondition { case_index }));
-                positions.push(
-                    is_in_boolean_position.then_some(BooleanPosition::CaseValue { case_index }),
-                );
-            }
-            positions.push(is_in_boolean_position.then_some(BooleanPosition::Otherwise));
-            positions
-        }
-        _ => vec![None; expression.children().count()],
     }
 }
 
