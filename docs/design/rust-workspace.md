@@ -1,6 +1,6 @@
 # Rust workspace hardening spec
 
-- **Status:** draft for sign-off.
+- **Status:** implemented at `6fdbe68` (`dev-rust`); signed off 2026-09-24.
 - **Base:** `dev-rust` at `412e234`.
 - **Audit:** `docs/audit/rust-workspace.md`, whose Decisions 1–13 and Triage
   this spec implements.
@@ -7730,3 +7730,51 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   held its replacements; a refused child is always a direct replacement,
   so the lookup never reaches a stale entry. It stays as the guard B4 §8.6
   asks for.
+
+- **Step 6 (B6), one-user helpers:** every `tests/it/support` helper with
+  a single user module moved into it, and helpers used only inside their
+  own support file became private. The three toy-tree constructors that
+  set a private node flag (`build_frozen_node`,
+  `build_leaf_hiding_sharing`, `build_hash_consing_node`) stay in
+  `support::tree_ir` although only `tree::stories` uses them: moving them
+  would widen `ToyNode`'s fields. The expression-DAG strategy moved to
+  `expr::properties` with its private parts, so `support::expression`'s
+  `CALLEES` is now `pub(crate)`.
+- **Step 6 (B6), F-037 leftovers:** `build_plus_zero` and `describe_fired`
+  (B4's) now live in `support::pattern`, `describe_fired` taking the
+  firings slice, and `build_file` and `build_named` (B2's) in a new
+  `support::provenance`, shared by `provenance_stories`,
+  `provenance_diagnostic_properties` and `serde_format_stories`;
+  `provenance_stories`' one-argument `build_file` and
+  `build_file_with_span` became `build_file(path, span)`.
+- **Step 6 (B6), test targets:** `it` and `id_cap_decode` are the only
+  integration test targets, and the CI check expects exactly those two.
+  `id_cap_decode` is a `tests/id_cap_decode.rs` file that Cargo discovers,
+  not a `[[test]]` block, so CONTRIBUTING describes it that way. The check
+  reads `cargo metadata` with `python3` instead of B6 §5.4's `jq`, so it
+  runs the same on a machine without `jq`.
+- **Step 6 (B6), CI:** the "Documentation" step removes `target/doc`
+  first, so a cached stale page cannot trip the "Public Paths" check, and
+  that check also greps `src` for a glob `pub use` (the no-globs rule),
+  which B6 §5.4's two rustdoc checks do not look for.
+- **Step 6 (B6), lints (D-18):** besides the nine enums the batches named,
+  `TraversalOrder` (B5: "stays exhaustive") and `InternOutcome` (B1:
+  unchanged, two closed outcomes) carry an `#[expect(clippy::exhaustive_enums)]`,
+  as do the two uninhabited markers `NoteKindVocabulary` and
+  `OpAttributeVocabulary`, and the unit struct `NoRegisteredSorts` one
+  for `exhaustive_structs`. `Notation` and `IdentifierStyle` became
+  `#[non_exhaustive]`, which B3 §3.8 specified but B3 had not applied.
+  `cargo_common_metadata` skips `fhy-core-py` (`publish = false`), and
+  `mod_module_files` has no hit.
+- **Step 6 (B6), `lib.rs`:** the module table lists `described_tag` and
+  orders the modules by their real dependencies: `diagnostic` and
+  `op_attribute` build on `described_tag`, so CONTRIBUTING's layer list
+  splits them into their own layer after it. The existing serialization
+  section stays after the process-global-state section.
+- **Step 6 (B6), READMEs:** both point to crates.io (`fhy-core = "0.2"`),
+  as B6 §5.5 and audit decision 9 say, although the first release has not
+  happened yet.
+- **Step 6 (B6), packaged-crate test:** run locally from an extracted copy
+  under `target/`, which needs an empty `[workspace]` appended to the
+  copy's manifest, since `target/` lies inside this workspace. CI extracts
+  to `$RUNNER_TEMP` and needs no change.

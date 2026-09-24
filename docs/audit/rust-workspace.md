@@ -1171,6 +1171,9 @@ small.
 
 ## Triage (2026-09-24)
 
+**Status:** implemented at `6fdbe68` on `dev-rust`, per
+`docs/design/rust-workspace.md`.
+
 - **Fix:** every finding except those below. This includes F-004 narrowed to
   decision 2, and the tag-type golden corpus removed under decision 3.
 - **Partly deferred:**
