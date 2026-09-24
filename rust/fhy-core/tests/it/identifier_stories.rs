@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use fhy_core::diagnostic::NoteKind;
-use fhy_core::expr::builtins::{ComposedFunction, list_composed_functions};
+use fhy_core::expr::builtins::{BuiltinFunction, ComposedFunction};
 use fhy_core::identifier::{Identifier, RESERVED_ID_COUNT};
 use fhy_core::interned::Canonical;
 use fhy_core::op_attribute::OpAttribute;
@@ -37,8 +37,8 @@ fn identifiers_created_with_one_name_hint_are_distinct() {
 /// hint as a parameter.
 #[test]
 fn composed_function_parameters_are_pairwise_distinct_and_unaliased() {
-    let parameters: Vec<Identifier> = list_composed_functions()
-        .iter()
+    let parameters: Vec<Identifier> = BuiltinFunction::iter()
+        .filter_map(BuiltinFunction::composed)
         .flat_map(ComposedFunction::parameters)
         .cloned()
         .collect();

@@ -2,12 +2,12 @@
 //! `validate_predicate`, and for the error they report, over trees and over
 //! DAGs sharing their subtrees.
 //!
-//! Public API only (`fhy_core::expr`). Calls and native constants take
-//! their sorts from a test-local [`SortLookup`] holding the sorts of the
-//! built-in functions and constants the tests name (`floor` returns an
-//! integer, `sqrt` a real, `nand` a Boolean; `pi`, `e`, `inf` and `nan` are
-//! real constants), so the tests exercise the same sorts a populated
-//! function registry reports.
+//! Public API only (`fhy_core::expr`). Calls of built-in functions take
+//! their result sorts from the catalogue (`floor` returns an integer, `sqrt`
+//! a real, `nand` a Boolean). Native constants take their sorts from a
+//! test-local [`SortLookup`] holding the real constants `pi`, `e`, `inf` and
+//! `nan`, so the tests exercise the same sorts a populated registry
+//! reports.
 
 use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
@@ -18,8 +18,9 @@ use expression_support::{
     build_call_or_panic, build_decimal_literal, build_deep_conjunction, build_identifier,
     build_literal, build_piecewise_or_panic,
 };
+use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    BooleanPosition, Expression, FunctionSort, LogicalOperation, NoRegisteredSorts,
+    BooleanPosition, Expression, FunctionName, FunctionSort, LogicalOperation, NoRegisteredSorts,
     NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation,
     validate_logical_operands, validate_predicate,
 };
@@ -30,8 +31,7 @@ use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 /// Names of the real-valued built-in constants.
 const REAL_CONSTANT_NAMES: [&str; 4] = ["pi", "e", "inf", "nan"];
 
-/// The sorts of the built-in functions and constants the tests name, plus
-/// any constants a test adds.
+/// The sorts of the built-in constants, plus any constants a test adds.
 #[derive(Debug)]
 struct BuiltinSorts {
     constants: HashMap<Identifier, FunctionSort>,
@@ -75,12 +75,18 @@ impl SortLookup for BuiltinSorts {
     fn native_constant_sort(&self, identifier: &Identifier) -> Option<FunctionSort> {
         self.constants.get(identifier).copied()
     }
+}
 
-    fn call_result_sort(&self, function_name: &str) -> Option<FunctionSort> {
-        match function_name {
-            "floor" => Some(FunctionSort::Int),
-            "sqrt" | "max" => Some(FunctionSort::Real),
-            "nand" => Some(FunctionSort::Bool),
+/// A lookup knowing the result sorts of the named functions `real_valued`
+/// (a real) and `predicate` (a Boolean), and no constant.
+#[derive(Debug)]
+struct NamedSorts;
+
+impl SortLookup for NamedSorts {
+    fn call_result_sort(&self, name: &FunctionName) -> Option<FunctionSort> {
+        match name.as_str() {
+            "real_valued" => Some(FunctionSort::Real),
+            "predicate" => Some(FunctionSort::Bool),
             _ => None,
         }
     }
@@ -501,10 +507,11 @@ fn validate_logical_operands_rejects_a_numeric_result_call(
     assert_refusal(&error, &call, &expression, placement.position());
 }
 
-/// Test a call nothing knows the sort of is not refused.
+/// Test a call of a named function nothing knows the sort of is not
+/// refused.
 #[test]
 fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
-    let call = build_call_or_panic("floor", &[build_literal(1.5)]);
+    let call = build_call_or_panic("f", &[build_literal(1.5)]);
     let expression = build_and(&call, &build_literal(true));
 
     let result = validate_logical_operands(
@@ -515,6 +522,63 @@ fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
     );
 
     assert_eq!(result, Ok(()));
+}
+
+/// Test a built-in function's catalogue result sort decides its call, with
+/// no lookup registering it: `floor(1.5) && true` is refused and
+/// `nand(true, true) && true` passes.
+#[test]
+fn validate_logical_operands_knows_builtin_result_sorts_without_a_lookup() {
+    let floor = Expression::call(BuiltinFunction::Floor, [1.5]);
+    let nand = Expression::call(
+        BuiltinFunction::Nand,
+        [build_literal(true), build_literal(true)],
+    );
+    let refused = build_and(&floor, &build_literal(true));
+    let accepted = build_and(&nand, &build_literal(true));
+
+    let refusal = validate_logical_operands(
+        &refused,
+        &HashMap::new(),
+        &HashMap::new(),
+        &NoRegisteredSorts,
+    );
+    let acceptance = validate_logical_operands(
+        &accepted,
+        &HashMap::new(),
+        &HashMap::new(),
+        &NoRegisteredSorts,
+    );
+
+    assert_refusal(
+        &expect_refusal(refusal),
+        &floor,
+        &refused,
+        BooleanPosition::LogicalOperand {
+            operation: LogicalOperation::And,
+            operand_index: 0,
+        },
+    );
+    assert_eq!(acceptance, Ok(()));
+}
+
+/// Test a named function's call is judged by the result sort the lookup
+/// reports for its name.
+#[rstest]
+#[case::real_result("real_valued", true)]
+#[case::boolean_result("predicate", false)]
+#[case::unknown("unknown", false)]
+fn validate_logical_operands_asks_the_lookup_for_a_named_call(
+    #[case] name: &str,
+    #[case] is_refused: bool,
+) {
+    let call = build_call_or_panic(name, &[build_literal(1)]);
+    let expression = !&call;
+
+    let result =
+        validate_logical_operands(&expression, &HashMap::new(), &HashMap::new(), &NamedSorts);
+
+    assert_eq!(result.is_err(), is_refused, "{result:?}");
 }
 
 /// Test operands the screen cannot prove numeric pass.
@@ -1178,7 +1242,9 @@ fn no_registered_sorts_knows_nothing() {
     let (x, _) = build_identifier("x");
 
     assert_eq!(NoRegisteredSorts.native_constant_sort(&x), None);
-    assert_eq!(NoRegisteredSorts.call_result_sort("floor"), None);
+    let f = FunctionName::try_new("f").expect("a user function name");
+
+    assert_eq!(NoRegisteredSorts.call_result_sort(&f), None);
 }
 
 /// Test the screens take a boxed lookup through a trait object.

@@ -11,8 +11,8 @@ use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
 use expression_support::{
-    DEEP_TREE_DEPTH, SERIALIZATION_STACK_BYTES, build_decimal_literal, build_deep_sum,
-    build_identifier, build_literal,
+    DEEP_TREE_DEPTH, SERIALIZATION_STACK_BYTES, build_callee, build_decimal_literal,
+    build_deep_sum, build_identifier, build_literal,
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, LiteralValue,
@@ -79,14 +79,13 @@ fn expression_serializes_every_node_kind_in_its_wire_shape() {
     let expression = Expression::piecewise(
         [(x_reference.less(3), -&x_reference)],
         Expression::call(
-            "max",
+            build_callee("max"),
             [
                 x_reference.clone(),
                 build_literal(1.5),
                 build_decimal_literal("2.50"),
             ],
-        )
-        .expect("a named call"),
+        ),
     )
     .expect("a valid piecewise");
 
@@ -121,7 +120,7 @@ fn expression_serializes_fields_in_declaration_order() {
     let (_, x) = build_identifier("x");
     let expression = Expression::piecewise(
         [(x.greater(0), -(&x + 1))],
-        Expression::call("f", [&x]).expect("a call"),
+        Expression::call(build_callee("f"), [&x]),
     )
     .expect("a valid piecewise");
 

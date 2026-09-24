@@ -220,7 +220,7 @@ fn schedule_call<'a>(pending: &mut Vec<Step<'a>>, node: &'a CallExpression, nota
             });
             schedule(
                 pending,
-                [Step::Write(node.function_name()), Step::Write("(")]
+                [Step::Write(node.callee().name()), Step::Write("(")]
                     .into_iter()
                     .chain(listed)
                     .chain(iter::once(Step::Write(")"))),
@@ -232,7 +232,7 @@ fn schedule_call<'a>(pending: &mut Vec<Step<'a>>, node: &'a CallExpression, nota
                 .flat_map(|argument| [Step::Write(" "), Step::Print(argument)]);
             schedule(
                 pending,
-                [Step::Write("("), Step::Write(node.function_name())]
+                [Step::Write("("), Step::Write(node.callee().name())]
                     .into_iter()
                     .chain(listed)
                     .chain(iter::once(Step::Write(")"))),

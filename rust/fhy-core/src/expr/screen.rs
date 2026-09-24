@@ -7,6 +7,7 @@ use crate::expr::SymbolType;
 use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
+use super::callee::{Callee, FunctionName};
 use super::error::{BooleanPosition, NonBooleanLogicalOperandError};
 use super::literal::LiteralValue;
 use super::node::{Expression, ExpressionKind};
@@ -67,10 +68,13 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
                 ExpressionKind::Unary(node) => node.operation().is_arithmetic(),
                 ExpressionKind::Binary(node) => node.operation().is_arithmetic(),
                 ExpressionKind::Logical(_) => false,
-                ExpressionKind::Call(node) => self
-                    .sorts
-                    .call_result_sort(node.function_name())
-                    .is_some_and(|sort| sort != FunctionSort::Bool),
+                ExpressionKind::Call(node) => match node.callee() {
+                    Callee::Builtin(function) => function.result_sort() != FunctionSort::Bool,
+                    Callee::Named(name) => self
+                        .sorts
+                        .call_result_sort(name)
+                        .is_some_and(|sort| sort != FunctionSort::Bool),
+                },
                 ExpressionKind::Piecewise(node) => {
                     pending.extend(node.cases().iter().map(|(_, value)| (value, is_bound_here)));
                     pending.push((node.otherwise(), is_bound_here));
@@ -220,35 +224,33 @@ fn find_boolean_positions(
     }
 }
 
-/// The sorts of registered native constants and function results.
+/// The sorts of registered native constants and of the results of named
+/// functions.
 ///
 /// The screens ask it for the sort of a native constant's canonical
-/// identifier and for the result sort of a called function.
+/// identifier and for the result sort of a called [`Callee::Named`]
+/// function; a built-in function's result sort comes from the catalogue
+/// ([`BuiltinFunction::result_sort`](super::builtins::BuiltinFunction::result_sort)).
+/// Both methods default to knowing nothing.
 pub trait SortLookup {
     /// Return the sort of the native constant `identifier` is the canonical
     /// identifier of, or `None` if it is no native constant's.
-    fn native_constant_sort(&self, identifier: &Identifier) -> Option<FunctionSort>;
-
-    /// Return the result sort of the function registered as
-    /// `function_name`, or `None` if no function is registered under it.
-    fn call_result_sort(&self, function_name: &str) -> Option<FunctionSort>;
-}
-
-/// A [`SortLookup`] that knows no native constant and no function.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct NoRegisteredSorts;
-
-impl SortLookup for NoRegisteredSorts {
-    /// Return `None`.
     fn native_constant_sort(&self, _identifier: &Identifier) -> Option<FunctionSort> {
         None
     }
 
-    /// Return `None`.
-    fn call_result_sort(&self, _function_name: &str) -> Option<FunctionSort> {
+    /// Return the result sort of the user function `name`, or `None` if no
+    /// function is registered under it.
+    fn call_result_sort(&self, _name: &FunctionName) -> Option<FunctionSort> {
         None
     }
 }
+
+/// A [`SortLookup`] that knows no native constant and no named function.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct NoRegisteredSorts;
+
+impl SortLookup for NoRegisteredSorts {}
 
 /// Check that no Boolean position in `expression` holds an operand that
 /// provably denotes a number.
@@ -268,8 +270,9 @@ impl SortLookup for NoRegisteredSorts {
 /// - a literal other than a Boolean;
 /// - a unary node other than a logical negation, or an arithmetic binary
 ///   node (`+ - * / // % **`);
-/// - a call whose result sort, as `sorts` reports it, is not
-///   [`FunctionSort::Bool`];
+/// - a call of a built-in function whose catalogue result sort is not
+///   [`FunctionSort::Bool`], or of a named function whose result sort, as
+///   `sorts` reports it, is not;
 /// - a piecewise whose every case value and otherwise branch provably
 ///   denotes a number;
 /// - an identifier `sorts` reports as a native constant of a sort other than
@@ -279,8 +282,8 @@ impl SortLookup for NoRegisteredSorts {
 /// - an unbound identifier `symbol_types` declares [`SymbolType::Int`] or
 ///   [`SymbolType::Real`].
 ///
-/// Anything else, such as an undeclared unbound identifier or a call `sorts`
-/// does not know, passes: the screen refuses what it can prove ill-typed,
+/// Anything else, such as an undeclared unbound identifier or a call of a
+/// named function `sorts` does not know, passes: the screen refuses what it can prove ill-typed,
 /// not everything it cannot prove well-typed.
 ///
 /// The walk is depth-first and pre-order: at each node the Boolean-position

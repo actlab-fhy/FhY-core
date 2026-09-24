@@ -1,17 +1,19 @@
-//! Operand coercion, operator overloads, and the expression builders.
+//! Operand conversions, operator overloads, and the expression builders.
 //!
-//! Every builder takes its operands as [`IntoOperand`]: an expression (owned
-//! or borrowed), an identifier (wrapped in an identifier reference), a
-//! [`LiteralValue`], or a number (wrapped in a literal). A `bool` is not an
-//! operand: a Boolean constant is written `LiteralValue::from(true)`, and an
-//! equality is built with [`Expression::equals`], never with `==`, which
-//! compares expressions structurally.
+//! Every builder takes its operands as `impl Into<Expression>`: an
+//! expression (owned or borrowed, a borrowed one sharing its node), an
+//! identifier (owned or borrowed, wrapped in an identifier reference), a
+//! [`LiteralValue`], or a number (`i32`, `i64`, `i128`, `u32`, `u64`,
+//! `usize`, [`BigInt`] or `f64`, wrapped in a literal). A `bool` is not an
+//! operand: a Boolean constant is written [`Expression::literal`]`(true)`,
+//! and an equality is built with [`Expression::equals`], never with `==`,
+//! which compares expressions structurally.
 //!
 //! The arithmetic operators `+ - * /`, unary `-` and logical `!` build
-//! binary and unary nodes, with an expression on either side of a binary operator and any
-//! operand on the other side; `/` is true division for every operand type.
-//! There is no `%`. The other operations are methods named after them:
-//! [`Expression::equals`], [`Expression::less`],
+//! binary and unary nodes, with an expression on either side of a binary
+//! operator and any operand on the other side; `/` is true division for
+//! every operand type. There is no `%`. The other operations are methods
+//! named after them: [`Expression::equals`], [`Expression::less`],
 //! [`Expression::floor_divide`], [`Expression::floor_mod`],
 //! [`Expression::power`], [`Expression::and`], and so on.
 //! [`Expression::all`], [`Expression::any`], [`Expression::new_logical`],
@@ -24,7 +26,8 @@ use num_bigint::BigInt;
 
 use crate::identifier::Identifier;
 
-use super::error::{FunctionNameError, PiecewiseError};
+use super::callee::Callee;
+use super::error::PiecewiseError;
 use super::literal::LiteralValue;
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
@@ -32,126 +35,36 @@ use super::node::{
 };
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
-/// The sealing supertrait of [`IntoOperand`], which carries the conversion.
-mod sealed {
-    use super::Expression;
+/// Implement `From<$number> for Expression` for each number type, building
+/// the literal the number converts to.
+macro_rules! impl_from_number {
+    ($($number:ty),*) => {
+        $(
+            impl From<$number> for Expression {
+                /// Wrap the number in a literal expression.
+                fn from(value: $number) -> Self {
+                    Self::from(LiteralValue::from(value))
+                }
+            }
+        )*
+    };
+}
 
-    #[expect(
-        unnameable_types,
-        reason = "the sealing supertrait is nameable only inside this module by design"
-    )]
-    pub trait Sealed {
-        /// Convert the value into the operand expression it stands for.
-        fn into_expression(self) -> Expression;
+impl_from_number!(i32, i64, i128, u32, u64, usize, BigInt, f64);
+
+impl From<&Identifier> for Expression {
+    /// Wrap a clone of the identifier in an identifier reference.
+    fn from(identifier: &Identifier) -> Self {
+        Self::from(identifier.clone())
     }
 }
 
-/// A value usable as an operand of an expression builder.
-///
-/// Implemented for [`Expression`] and `&Expression` (the node itself),
-/// [`Identifier`] and `&Identifier` (an identifier reference),
-/// [`LiteralValue`] (a literal), and `i64`, `i32`, `u32`, [`BigInt`] and
-/// `f64` (an integer or float literal). This trait is sealed: no other type
-/// implements it.
-///
-/// A `bool` is not an operand, so a comparison result cannot stand in for a
-/// Boolean constant by accident:
-///
-/// ```compile_fail,E0277
-/// use fhy_core::expr::{Expression, UnaryOperation};
-///
-/// let negated = Expression::new_unary(UnaryOperation::LogicalNot, true);
-/// ```
-///
-/// Nor is a string; a numeric text becomes an operand through
-/// [`LiteralValue::parse_text`]:
-///
-/// ```compile_fail,E0277
-/// use fhy_core::expr::{Expression, UnaryOperation};
-///
-/// let negated = Expression::new_unary(UnaryOperation::Negate, "1.5");
-/// ```
-pub trait IntoOperand: sealed::Sealed {}
-
-impl sealed::Sealed for Expression {
-    fn into_expression(self) -> Expression {
-        self
+impl From<&Expression> for Expression {
+    /// Return a handle sharing the node.
+    fn from(expression: &Expression) -> Self {
+        expression.clone()
     }
 }
-
-impl IntoOperand for Expression {}
-
-impl sealed::Sealed for &Expression {
-    fn into_expression(self) -> Expression {
-        self.clone()
-    }
-}
-
-impl IntoOperand for &Expression {}
-
-impl sealed::Sealed for Identifier {
-    fn into_expression(self) -> Expression {
-        Expression::from(self)
-    }
-}
-
-impl IntoOperand for Identifier {}
-
-impl sealed::Sealed for &Identifier {
-    fn into_expression(self) -> Expression {
-        Expression::from(self.clone())
-    }
-}
-
-impl IntoOperand for &Identifier {}
-
-impl sealed::Sealed for LiteralValue {
-    fn into_expression(self) -> Expression {
-        Expression::from(self)
-    }
-}
-
-impl IntoOperand for LiteralValue {}
-
-impl sealed::Sealed for i64 {
-    fn into_expression(self) -> Expression {
-        Expression::from(LiteralValue::from(self))
-    }
-}
-
-impl IntoOperand for i64 {}
-
-impl sealed::Sealed for i32 {
-    fn into_expression(self) -> Expression {
-        Expression::from(LiteralValue::from(i64::from(self)))
-    }
-}
-
-impl IntoOperand for i32 {}
-
-impl sealed::Sealed for u32 {
-    fn into_expression(self) -> Expression {
-        Expression::from(LiteralValue::from(i64::from(self)))
-    }
-}
-
-impl IntoOperand for u32 {}
-
-impl sealed::Sealed for BigInt {
-    fn into_expression(self) -> Expression {
-        Expression::from(LiteralValue::from(self))
-    }
-}
-
-impl IntoOperand for BigInt {}
-
-impl sealed::Sealed for f64 {
-    fn into_expression(self) -> Expression {
-        Expression::from(LiteralValue::from(self))
-    }
-}
-
-impl IntoOperand for f64 {}
 
 impl Expression {
     /// Build a unary node applying `operation` to `operand`.
@@ -166,22 +79,25 @@ impl Expression {
     /// assert_eq!(node.operation(), UnaryOperation::Negate);
     /// ```
     #[must_use]
-    pub fn new_unary(operation: UnaryOperation, operand: impl IntoOperand) -> Self {
-        Self::from(UnaryExpression::new(operation, operand.into_expression()))
+    pub fn new_unary(operation: UnaryOperation, operand: impl Into<Expression>) -> Self {
+        Self::from_kind(ExpressionKind::Unary(UnaryExpression::new(
+            operation,
+            operand.into(),
+        )))
     }
 
     /// Build a binary node applying `operation` to `left` and `right`.
     #[must_use]
     pub fn new_binary(
         operation: BinaryOperation,
-        left: impl IntoOperand,
-        right: impl IntoOperand,
+        left: impl Into<Expression>,
+        right: impl Into<Expression>,
     ) -> Self {
-        Self::from(BinaryExpression::new(
+        Self::from_kind(ExpressionKind::Binary(BinaryExpression::new(
             operation,
-            left.into_expression(),
-            right.into_expression(),
-        ))
+            left.into(),
+            right.into(),
+        )))
     }
 
     /// Build a piecewise from `(condition, value)` cases in evaluation order
@@ -213,48 +129,68 @@ impl Expression {
         otherwise: O,
     ) -> Result<Self, PiecewiseError>
     where
-        C: IntoOperand,
-        V: IntoOperand,
-        O: IntoOperand,
+        C: Into<Expression>,
+        V: Into<Expression>,
+        O: Into<Expression>,
     {
         let cases = cases
             .into_iter()
-            .map(|(condition, value)| (condition.into_expression(), value.into_expression()))
+            .map(|(condition, value)| (condition.into(), value.into()))
             .collect();
-        PiecewiseExpression::try_new(cases, otherwise.into_expression()).map(Self::from)
+        PiecewiseExpression::try_new(cases, otherwise.into())
+            .map(|node| Self::from_kind(ExpressionKind::Piecewise(node)))
     }
 
-    /// Build a call of `function_name` with `arguments` in order.
+    /// Build a call of `callee` with `arguments` in order.
     ///
-    /// Neither the name nor the argument count is checked against any
-    /// function catalogue.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
+    /// The callee is a [`BuiltinFunction`](super::builtins::BuiltinFunction)
+    /// or a [`FunctionName`](super::FunctionName), which is valid by
+    /// construction, so the call cannot be refused. The argument count is
+    /// not checked against a built-in function's arity.
     ///
     /// # Examples
     ///
     /// ```
     /// use fhy_core::identifier::Identifier;
-    /// use fhy_core::expr::{Expression, FunctionNameError};
+    /// use fhy_core::expr::builtins::BuiltinFunction;
+    /// use fhy_core::expr::{Callee, Expression};
     ///
     /// let x = Expression::from(Identifier::new("x"));
-    /// let call = Expression::call("max", [&x, &Expression::from(Identifier::new("y"))])?;
-    /// assert_eq!(call.to_string(), "max(x, y)");
-    /// assert_eq!(Expression::call("", [1]), Err(FunctionNameError::Empty));
-    /// # Ok::<(), FunctionNameError>(())
+    /// let y = Expression::from(Identifier::new("y"));
+    /// let larger = Expression::call(BuiltinFunction::Max, [&x, &y]);
+    /// assert_eq!(larger.to_string(), "max(x, y)");
+    ///
+    /// let custom = Expression::call("softplus".parse::<Callee>()?, [&x]);
+    /// assert_eq!(custom.to_string(), "softplus(x)");
+    /// # Ok::<(), fhy_core::expr::FunctionNameError>(())
     /// ```
-    pub fn call<I>(function_name: &str, arguments: I) -> Result<Self, FunctionNameError>
+    #[must_use]
+    pub fn call<I>(callee: impl Into<Callee>, arguments: I) -> Self
     where
         I: IntoIterator,
-        I::Item: IntoOperand,
+        I::Item: Into<Expression>,
     {
-        let arguments = arguments
-            .into_iter()
-            .map(sealed::Sealed::into_expression)
-            .collect();
-        CallExpression::try_new(function_name, arguments).map(Self::from)
+        let arguments = arguments.into_iter().map(Into::into).collect();
+        Self::from_kind(ExpressionKind::Call(CallExpression::new(
+            callee.into(),
+            arguments,
+        )))
+    }
+
+    /// Build the literal holding `value`, the explicit way to make one,
+    /// including a Boolean one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::expr::{Expression, ExpressionKind, LiteralValue};
+    ///
+    /// let truth = Expression::literal(true);
+    /// assert!(matches!(truth.kind(), ExpressionKind::Literal(LiteralValue::Bool(true))));
+    /// ```
+    #[must_use]
+    pub fn literal(value: impl Into<LiteralValue>) -> Self {
+        Self::from(value.into())
     }
 
     /// Build the conjunction or disjunction `operation` of `operands`.
@@ -292,15 +228,15 @@ impl Expression {
     pub fn new_logical<I>(operation: LogicalOperation, operands: I) -> Self
     where
         I: IntoIterator,
-        I::Item: IntoOperand,
+        I::Item: Into<Expression>,
     {
-        let mut operands = operands.into_iter().map(sealed::Sealed::into_expression);
+        let mut operands = operands.into_iter().map(Into::into);
         let Some(first) = operands.next() else {
             let identity = match operation {
                 LogicalOperation::And => true,
                 LogicalOperation::Or => false,
             };
-            return Self::from(LiteralValue::from(identity));
+            return Self::literal(identity);
         };
         let Some(second) = operands.next() else {
             return first;
@@ -332,7 +268,7 @@ impl Expression {
     pub fn all<I>(operands: I) -> Self
     where
         I: IntoIterator,
-        I::Item: IntoOperand,
+        I::Item: Into<Expression>,
     {
         Self::new_logical(LogicalOperation::And, operands)
     }
@@ -345,7 +281,7 @@ impl Expression {
     pub fn any<I>(operands: I) -> Self
     where
         I: IntoIterator,
-        I::Item: IntoOperand,
+        I::Item: Into<Expression>,
     {
         Self::new_logical(LogicalOperation::Or, operands)
     }
@@ -353,57 +289,57 @@ impl Expression {
     /// Build the two-operand conjunction `self && other`, the same as
     /// `Expression::all([self, other])`.
     #[must_use]
-    pub fn and(&self, other: impl IntoOperand) -> Expression {
-        Self::all([self.clone(), other.into_expression()])
+    pub fn and(&self, other: impl Into<Expression>) -> Expression {
+        Self::all([self.clone(), other.into()])
     }
 
     /// Build the two-operand disjunction `self || other`, the same as
     /// `Expression::any([self, other])`.
     #[must_use]
-    pub fn or(&self, other: impl IntoOperand) -> Expression {
-        Self::any([self.clone(), other.into_expression()])
+    pub fn or(&self, other: impl Into<Expression>) -> Expression {
+        Self::any([self.clone(), other.into()])
     }
 
     /// Build the equality comparison `self == other`.
     #[must_use]
-    pub fn equals(&self, other: impl IntoOperand) -> Expression {
+    pub fn equals(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::Equal, self, other)
     }
 
     /// Build the inequality comparison `self != other`.
     #[must_use]
-    pub fn not_equals(&self, other: impl IntoOperand) -> Expression {
+    pub fn not_equals(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::NotEqual, self, other)
     }
 
     /// Build the comparison `self < other`.
     #[must_use]
-    pub fn less(&self, other: impl IntoOperand) -> Expression {
+    pub fn less(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::Less, self, other)
     }
 
     /// Build the comparison `self <= other`.
     #[must_use]
-    pub fn less_equal(&self, other: impl IntoOperand) -> Expression {
+    pub fn less_equal(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::LessEqual, self, other)
     }
 
     /// Build the comparison `self > other`.
     #[must_use]
-    pub fn greater(&self, other: impl IntoOperand) -> Expression {
+    pub fn greater(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::Greater, self, other)
     }
 
     /// Build the comparison `self >= other`.
     #[must_use]
-    pub fn greater_equal(&self, other: impl IntoOperand) -> Expression {
+    pub fn greater_equal(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::GreaterEqual, self, other)
     }
 
     /// Build the floor division `self // other`: the quotient rounded
     /// toward negative infinity.
     #[must_use]
-    pub fn floor_divide(&self, other: impl IntoOperand) -> Expression {
+    pub fn floor_divide(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::FloorDivide, self, other)
     }
 
@@ -421,13 +357,13 @@ impl Expression {
     /// assert_eq!(x.floor_mod(3), Expression::new_binary(BinaryOperation::FloorMod, &x, 3));
     /// ```
     #[must_use]
-    pub fn floor_mod(&self, other: impl IntoOperand) -> Expression {
+    pub fn floor_mod(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::FloorMod, self, other)
     }
 
     /// Build the exponentiation `self ** other`.
     #[must_use]
-    pub fn power(&self, other: impl IntoOperand) -> Expression {
+    pub fn power(&self, other: impl Into<Expression>) -> Expression {
         Self::new_binary(BinaryOperation::Power, self, other)
     }
 
@@ -444,7 +380,7 @@ impl Expression {
 /// the right.
 macro_rules! impl_arithmetic_operator {
     ($operator:ident, $method:ident, $operation:expr, [$($left:ty),*]) => {
-        impl<R: IntoOperand> $operator<R> for Expression {
+        impl<R: Into<Expression>> $operator<R> for Expression {
             type Output = Expression;
 
             fn $method(self, right: R) -> Expression {
@@ -452,7 +388,7 @@ macro_rules! impl_arithmetic_operator {
             }
         }
 
-        impl<R: IntoOperand> $operator<R> for &Expression {
+        impl<R: Into<Expression>> $operator<R> for &Expression {
             type Output = Expression;
 
             fn $method(self, right: R) -> Expression {
@@ -491,12 +427,15 @@ macro_rules! impl_arithmetic_operators {
     };
 }
 
-// Every `IntoOperand` type other than `Expression` and `&Expression`, which
-// the generic impls cover.
+// Every type converting into an `Expression` other than `Expression` and
+// `&Expression`, which the generic impls cover.
 impl_arithmetic_operators!([
-    i64,
     i32,
+    i64,
+    i128,
     u32,
+    u64,
+    usize,
     BigInt,
     f64,
     Identifier,

@@ -2,11 +2,9 @@
 
 use std::sync::LazyLock;
 
-use fhy_core::expr::builtins::{
-    ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
-};
+use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Decimal, Expression, ExpressionKind, IntoOperand, LiteralValue,
+    BigInt, BinaryOperation, Callee, Decimal, Expression, ExpressionKind, LiteralValue,
     LogicalOperation, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
@@ -61,26 +59,42 @@ pub(crate) fn build_decimal_literal(text: &str) -> Expression {
 ///
 /// Panics if the builder refuses the parts.
 #[must_use]
-pub(crate) fn build_piecewise_or_panic<C: IntoOperand, V: IntoOperand, O: IntoOperand>(
+pub(crate) fn build_piecewise_or_panic<C, V, O>(
     cases: impl IntoIterator<Item = (C, V)>,
     otherwise: O,
-) -> Expression {
+) -> Expression
+where
+    C: Into<Expression>,
+    V: Into<Expression>,
+    O: Into<Expression>,
+{
     Expression::piecewise(cases, otherwise).expect("a valid piecewise")
 }
 
-/// Return the call `Expression::call` builds of `function_name` with
-/// `arguments`, failing the test if it is refused.
+/// Return the callee named `function_name`: the built-in function of that
+/// name, or else the user function of that name.
 ///
 /// # Panics
 ///
-/// Panics if the builder refuses the call.
+/// Panics if `function_name` is empty.
+#[must_use]
+pub(crate) fn build_callee(function_name: &str) -> Callee {
+    function_name.parse().expect("a non-empty function name")
+}
+
+/// Return the call `Expression::call` builds of the function named
+/// `function_name` (see [`build_callee`]) with `arguments`.
+///
+/// # Panics
+///
+/// Panics if `function_name` is empty.
 #[must_use]
 pub(crate) fn build_call_or_panic<I>(function_name: &str, arguments: I) -> Expression
 where
     I: IntoIterator,
-    I::Item: IntoOperand,
+    I::Item: Into<Expression>,
 {
-    Expression::call(function_name, arguments).expect("a named call")
+    Expression::call(build_callee(function_name), arguments)
 }
 
 /// Return the piecewise expression `Expression::piecewise` builds from
@@ -97,18 +111,18 @@ pub(crate) fn build_piecewise_node_or_panic(
     Expression::piecewise(cases, otherwise).expect("a valid piecewise")
 }
 
-/// Return the call `Expression::call` builds of `function_name` with
-/// `arguments`, given as a list, failing the test if it is refused.
+/// Return the call `Expression::call` builds of the function named
+/// `function_name` (see [`build_callee`]) with `arguments`, given as a list.
 ///
 /// # Panics
 ///
-/// Panics if the constructor refuses the call.
+/// Panics if `function_name` is empty.
 #[must_use]
 pub(crate) fn build_call_node_or_panic(
     function_name: &str,
     arguments: Vec<Expression>,
 ) -> Expression {
-    Expression::call(function_name, arguments).expect("a valid call")
+    Expression::call(build_callee(function_name), arguments)
 }
 
 /// Return `((leaf + 1) + 1) + ...`, `depth` additions deep.
@@ -263,18 +277,12 @@ const _: () = {
     }
 };
 
-/// Function names the generated calls use: every built-in function and two
-/// names no catalogue knows.
-static CALL_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    list_composed_functions()
-        .iter()
-        .map(ComposedFunction::name)
-        .chain(
-            list_native_functions()
-                .iter()
-                .map(NativeFunctionSignature::name),
-        )
-        .chain(["f", "g"])
+/// Callees the generated calls use: every built-in function and two named
+/// functions no catalogue knows.
+static CALLEES: LazyLock<Vec<Callee>> = LazyLock::new(|| {
+    BuiltinFunction::iter()
+        .map(Callee::from)
+        .chain(["f", "g"].map(build_callee))
         .collect()
 });
 
@@ -373,7 +381,7 @@ enum DagNodeSpecification {
         Vec<(prop::sample::Index, prop::sample::Index)>,
         prop::sample::Index,
     ),
-    Call(&'static str, Vec<prop::sample::Index>),
+    Call(Callee, Vec<prop::sample::Index>),
 }
 
 /// Return a strategy for the specification of one DAG node of any kind.
@@ -395,10 +403,10 @@ fn build_dag_node_specification_strategy() -> BoxedStrategy<DagNodeSpecification
         (prop::collection::vec((index(), index()), 1..4), index())
             .prop_map(|(cases, otherwise)| DagNodeSpecification::Piecewise(cases, otherwise)),
         (
-            select(CALL_NAMES.clone()),
+            select(CALLEES.clone()),
             prop::collection::vec(index(), 0..4)
         )
-            .prop_map(|(name, arguments)| DagNodeSpecification::Call(name, arguments)),
+            .prop_map(|(callee, arguments)| DagNodeSpecification::Call(callee, arguments)),
     ]
     .boxed()
 }
@@ -426,8 +434,8 @@ fn build_dag_node(specification: DagNodeSpecification, nodes: &[Expression]) -> 
                 .collect();
             build_piecewise_node_or_panic(cases, pick(otherwise))
         }
-        DagNodeSpecification::Call(name, arguments) => {
-            build_call_node_or_panic(name, arguments.into_iter().map(pick).collect())
+        DagNodeSpecification::Call(callee, arguments) => {
+            Expression::call(callee, arguments.into_iter().map(pick))
         }
     }
 }
@@ -440,7 +448,7 @@ fn build_dag_node(specification: DagNodeSpecification, nodes: &[Expression]) -> 
 /// # Panics
 ///
 /// The strategy panics while generating if a node is refused, which the
-/// coerced case conditions and the non-empty function names rule out.
+/// coerced case conditions rule out.
 pub(crate) fn build_expression_dag_strategy() -> BoxedStrategy<Expression> {
     (
         0..IDENTIFIER_POOL.len(),
@@ -467,7 +475,7 @@ pub(crate) fn build_expression_dag_strategy() -> BoxedStrategy<Expression> {
 /// # Panics
 ///
 /// The strategy panics while generating if a node is refused, which the
-/// coerced case conditions and the non-empty function names rule out.
+/// coerced case conditions rule out.
 pub(crate) fn build_expression_strategy(with_non_finite_floats: bool) -> BoxedStrategy<Expression> {
     let leaf = prop_oneof![
         (0..IDENTIFIER_POOL.len())
@@ -501,13 +509,8 @@ pub(crate) fn build_expression_strategy(with_non_finite_floats: bool) -> BoxedSt
                 .prop_map(|(cases, otherwise)| {
                     Expression::piecewise(cases, otherwise).expect("conditions are coerced")
                 }),
-            (
-                select(CALL_NAMES.clone()),
-                prop::collection::vec(inner, 0..4)
-            )
-                .prop_map(|(function_name, arguments)| {
-                    Expression::call(function_name, arguments).expect("a named call")
-                }),
+            (select(CALLEES.clone()), prop::collection::vec(inner, 0..4))
+                .prop_map(|(callee, arguments)| Expression::call(callee, arguments)),
         ]
     })
     .boxed()

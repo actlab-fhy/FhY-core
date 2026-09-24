@@ -17,14 +17,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
-    ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_expression_strategy,
-    copy_deeply,
+    ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_callee,
+    build_expression_strategy, copy_deeply,
 };
+use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules, does_pattern_match,
     match_pattern,
 };
-use fhy_core::expr::{BinaryOperation, Expression, ExpressionKind, LiteralValue, UnaryOperation};
+use fhy_core::expr::{
+    BinaryOperation, Callee, Expression, ExpressionKind, LiteralValue, UnaryOperation,
+};
 use fhy_core::identifier::Identifier;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -52,7 +55,11 @@ const NONZERO_DIVISORS: [i64; 16] = [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4,
 
 /// The built-in functions of the numeric fragment, each the identity on an
 /// integer.
-const INTEGER_RESULT_FUNCTIONS: [&str; 3] = ["floor", "ceil", "round"];
+const INTEGER_RESULT_FUNCTIONS: [BuiltinFunction; 3] = [
+    BuiltinFunction::Floor,
+    BuiltinFunction::Ceil,
+    BuiltinFunction::Round,
+];
 
 /// How a node of a numeric tree is wrapped in a value-preserving no-op.
 #[derive(Debug, Clone, Copy)]
@@ -183,13 +190,10 @@ fn build_wrapped_numeric_tree_strategy() -> BoxedStrategy<(Expression, Expressio
                 inner,
                 build_wrap_strategy()
             )
-                .prop_map(|(function_name, (plain, wrapped), wrap)| {
+                .prop_map(|(function, (plain, wrapped), wrap)| {
                     (
-                        Expression::call(function_name, [plain]).expect("a named call"),
-                        apply_wrap(
-                            Expression::call(function_name, [wrapped]).expect("a named call"),
-                            wrap,
-                        ),
+                        Expression::call(function, [plain]),
+                        apply_wrap(Expression::call(function, [wrapped]), wrap),
                     )
                 }),
         ]
@@ -251,7 +255,11 @@ fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i
                 other => panic!("a numeric tree has no {other:?}"),
             }
         }
-        ExpressionKind::Call(node) if INTEGER_RESULT_FUNCTIONS.contains(&node.function_name()) => {
+        ExpressionKind::Call(node)
+            if INTEGER_RESULT_FUNCTIONS
+                .iter()
+                .any(|function| node.callee() == &Callee::Builtin(*function)) =>
+        {
             let [argument] = node.arguments() else {
                 panic!("a numeric call takes one argument, got {node:?}");
             };
@@ -336,7 +344,7 @@ fn mirror_node(node: &Expression, captures: &mut Vec<(String, Expression)>) -> P
             Pattern::binary(Some(binary.operation()), left, right)
         }
         ExpressionKind::Call(call) => Pattern::call(
-            Some(call.function_name()),
+            Some(call.callee().name()),
             Some(
                 call.arguments()
                     .iter()
@@ -553,7 +561,7 @@ proptest! {
     fn neutral_rules_rewrite_a_shared_subtree_like_its_unshared_copy(
         (_, wrapped) in build_wrapped_numeric_tree_strategy()
     ) {
-        let shared = Expression::call("f", [wrapped.clone(), &wrapped + &wrapped]).expect("a named call");
+        let shared = Expression::call(build_callee("f"), [wrapped.clone(), &wrapped + &wrapped]);
         let unshared = copy_deeply(&shared);
         let rules = build_neutral_rules(&Arc::new(AtomicUsize::new(0)));
 

@@ -20,8 +20,8 @@ use expression_support::{
     build_literal_strategy, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expr::{
-    AlphaRenaming, Decimal, Expression, ExpressionKind, FunctionSort, LiteralValue, PiecewiseError,
-    SortLookup, SymbolType, validate_logical_operands, validate_predicate,
+    AlphaRenaming, Decimal, Expression, ExpressionKind, FunctionName, FunctionSort, LiteralValue,
+    PiecewiseError, SortLookup, SymbolType, validate_logical_operands, validate_predicate,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -130,12 +130,8 @@ fn build_piecewise_strategy() -> BoxedStrategy<Expression> {
 struct TwoCallSorts;
 
 impl SortLookup for TwoCallSorts {
-    fn native_constant_sort(&self, _identifier: &Identifier) -> Option<FunctionSort> {
-        None
-    }
-
-    fn call_result_sort(&self, function_name: &str) -> Option<FunctionSort> {
-        match function_name {
+    fn call_result_sort(&self, name: &FunctionName) -> Option<FunctionSort> {
+        match name.as_str() {
             "f" => Some(FunctionSort::Real),
             "g" => Some(FunctionSort::Bool),
             _ => None,

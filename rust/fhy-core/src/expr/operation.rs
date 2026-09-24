@@ -71,23 +71,30 @@ impl fmt::Display for UnknownNameError {
 
 impl Error for UnknownNameError {}
 
-/// Implement `Display`, writing the `as_str` text, and `FromStr`, parsing
-/// exactly that text through the derived `Deserialize`, for an enum;
-/// `$expected` names the enum in a refusal.
+/// Implement `Display`, writing the text the `$text` method returns
+/// (`as_str` by default), and `FromStr`, parsing exactly that text through
+/// the derived `Deserialize`, for an enum; `$expected` names the enum in a
+/// refusal.
 macro_rules! impl_name_text {
     ($Type:ty, $expected:literal) => {
+        $crate::expr::operation::impl_name_text!($Type, as_str, $expected);
+    };
+    ($Type:ty, $text:ident, $expected:literal) => {
         impl ::std::fmt::Display for $Type {
-            /// Write the [`as_str`](Self::as_str) text.
+            /// Write the
+            #[doc = concat!("[`", stringify!($text), "`](Self::", stringify!($text), ")")]
+            /// text.
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                f.write_str(self.as_str())
+                f.write_str(self.$text())
             }
         }
 
         impl ::std::str::FromStr for $Type {
             type Err = $crate::expr::UnknownNameError;
 
-            /// Parse the variant whose [`as_str`](Self::as_str) text is
-            /// exactly `text`.
+            /// Parse the variant whose
+            #[doc = concat!("[`", stringify!($text), "`](Self::", stringify!($text), ")")]
+            /// text is exactly `text`.
             ///
             /// # Errors
             ///

@@ -2,8 +2,7 @@
 //!
 //! [`PiecewiseError`] reports a piecewise that could not be built because it
 //! breaks a piecewise invariant, [`RebuildError`] a node that could not be
-//! rebuilt from new children, and [`FunctionNameError`] a call name that
-//! could not be accepted.
+//! rebuilt from new children.
 //! [`NonInjectiveRenamingError`] reports a free-identifier renaming that
 //! sends two identifiers to one image.
 //! [`NonBooleanLogicalOperandError`] reports a Boolean position that holds
@@ -113,35 +112,6 @@ impl Error for RebuildError {
         }
     }
 }
-
-/// A call function name that could not be accepted.
-///
-/// # Examples
-///
-/// ```
-/// use fhy_core::expr::{Expression, FunctionNameError};
-///
-/// let result = Expression::call("", [1]);
-/// assert_eq!(result, Err(FunctionNameError::Empty));
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum FunctionNameError {
-    /// The name is empty.
-    ///
-    /// Displays as `function name is empty`.
-    Empty,
-}
-
-impl fmt::Display for FunctionNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => f.write_str("function name is empty"),
-        }
-    }
-}
-
-impl Error for FunctionNameError {}
 
 /// A free-identifier renaming that sends two identifiers to one image.
 ///

@@ -11,6 +11,7 @@ pub mod pattern;
 
 mod alpha;
 mod build;
+mod callee;
 mod display;
 mod error;
 mod literal;
@@ -23,13 +24,13 @@ mod symbol_type;
 mod wire;
 
 pub use alpha::AlphaRenaming;
-pub use build::IntoOperand;
+pub use callee::{Callee, FunctionName, FunctionNameError};
 pub use display::{
     ExpressionDisplay, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation,
 };
 pub use error::{
-    BooleanPosition, FunctionNameError, NonBooleanLogicalOperandError, NonInjectiveRenamingError,
-    PiecewiseError, RebuildError,
+    BooleanPosition, NonBooleanLogicalOperandError, NonInjectiveRenamingError, PiecewiseError,
+    RebuildError,
 };
 pub use literal::{Decimal, LiteralTextError, LiteralValue};
 pub use node::{

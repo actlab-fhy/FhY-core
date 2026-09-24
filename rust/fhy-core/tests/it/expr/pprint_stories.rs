@@ -9,7 +9,8 @@ use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
 use expression_support::{
-    build_decimal_literal, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
+    build_callee, build_decimal_literal, build_deep_conjunction, build_deep_sum, build_identifier,
+    build_literal,
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue,
@@ -97,7 +98,7 @@ fn build_deep_piecewise_in_condition(leaf: &Expression, depth: usize) -> Express
 fn build_deep_call_in_last_argument(leaf: &Expression, depth: usize) -> Expression {
     let mut tree = leaf.clone();
     for _ in 0..depth {
-        tree = Expression::call("f", [build_literal(1), tree]).expect("a named call");
+        tree = Expression::call(build_callee("f"), [build_literal(1), tree]);
     }
     tree
 }
@@ -106,7 +107,7 @@ fn build_deep_call_in_last_argument(leaf: &Expression, depth: usize) -> Expressi
 fn build_deep_call_in_first_argument(leaf: &Expression, depth: usize) -> Expression {
     let mut tree = leaf.clone();
     for _ in 0..depth {
-        tree = Expression::call("f", [tree, build_literal(2)]).expect("a named call");
+        tree = Expression::call(build_callee("f"), [tree, build_literal(2)]);
     }
     tree
 }
@@ -181,7 +182,7 @@ fn format_expression_default_options_write_symbolic_notation() {
     Expression::piecewise([(build_identifier("p").1, 1)], build_literal(2.5))
         .expect("an identifier condition is accepted")
 })]
-#[case::call(|| Expression::call("f", [build_identifier("x").1, build_literal(1)]).expect("a named call"))]
+#[case::call(|| Expression::call(build_callee("f"), [build_identifier("x").1, build_literal(1)]))]
 fn expression_display_equals_display_with_default_options(#[case] build: fn() -> Expression) {
     let expression = build();
 
@@ -541,7 +542,7 @@ fn format_expression_with_ids_reaches_piecewise_conditions() {
 #[test]
 fn format_expression_with_ids_reaches_call_arguments() {
     let (argument, reference) = build_identifier("arg");
-    let call = Expression::call("nested_show_id", [reference]).expect("a named call");
+    let call = Expression::call(build_callee("nested_show_id"), [reference]);
 
     let text = call
         .display(build_id_options(Notation::Symbolic))
@@ -562,7 +563,7 @@ fn format_expression_with_ids_reaches_every_node_kind() {
     let (y, y_reference) = build_identifier("y");
     let tree = Expression::piecewise(
         [(!&p_reference, -&x_reference)],
-        Expression::call("f", [&y_reference + &x_reference]).expect("a named call"),
+        Expression::call(build_callee("f"), [&y_reference + &x_reference]),
     )
     .expect("a negation condition is accepted");
     let (p_text, x_text, y_text) = (
@@ -781,7 +782,7 @@ fn format_expression_writes_nested_piecewise_inside_a_case_value() {
 /// separated by a comma and a space.
 #[test]
 fn format_expression_writes_call_with_arguments() {
-    let call = Expression::call("max", [1, 2]).expect("a named call");
+    let call = Expression::call(build_callee("max"), [1, 2]);
 
     let text = format_symbolic(&call);
 
@@ -791,7 +792,7 @@ fn format_expression_writes_call_with_arguments() {
 /// Test a call without arguments is written with empty parentheses.
 #[test]
 fn format_expression_writes_zero_argument_call_with_empty_parentheses() {
-    let call = Expression::call("noargs", Vec::<Expression>::new()).expect("a named call");
+    let call = Expression::call(build_callee("noargs"), Vec::<Expression>::new());
 
     let text = format_symbolic(&call);
 
@@ -802,7 +803,7 @@ fn format_expression_writes_zero_argument_call_with_empty_parentheses() {
 /// pair of parentheses.
 #[test]
 fn format_expression_writes_call_functionally() {
-    let call = Expression::call("max", [1, 2]).expect("a named call");
+    let call = Expression::call(build_callee("max"), [1, 2]);
 
     let text = format_functional(&call);
 
@@ -813,7 +814,7 @@ fn format_expression_writes_call_functionally() {
 /// parentheses.
 #[test]
 fn format_expression_writes_zero_argument_call_functionally() {
-    let call = Expression::call("f", Vec::<Expression>::new()).expect("a named call");
+    let call = Expression::call(build_callee("f"), Vec::<Expression>::new());
 
     let text = format_functional(&call);
 
@@ -823,8 +824,8 @@ fn format_expression_writes_zero_argument_call_functionally() {
 /// Test a call nested in an argument is written in place.
 #[test]
 fn format_expression_writes_nested_call_in_argument_position() {
-    let inner = Expression::call("min", [1, 2]).expect("a named call");
-    let outer = Expression::call("max", [inner, build_literal(3)]).expect("a named call");
+    let inner = Expression::call(build_callee("min"), [1, 2]);
+    let outer = Expression::call(build_callee("max"), [inner, build_literal(3)]);
 
     let text = format_symbolic(&outer);
 
@@ -851,8 +852,8 @@ fn format_expression_writes_a_shared_subtree_at_every_occurrence() {
 #[test]
 fn format_expression_writes_the_gelu_body() {
     let (_, x) = build_identifier("x");
-    let root_two = Expression::call("sqrt", [2.0]).expect("a named call");
-    let error_function = Expression::call("erf", [&x / root_two]).expect("a named call");
+    let root_two = Expression::call(build_callee("sqrt"), [2.0]);
+    let error_function = Expression::call(build_callee("erf"), [&x / root_two]);
     let gelu = (0.5 * &x) * (1.0 + error_function);
 
     let texts = (format_symbolic(&gelu), format_functional(&gelu));

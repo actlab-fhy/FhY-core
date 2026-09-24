@@ -40,7 +40,7 @@ fn label_kind(expression: &Expression) -> String {
         ExpressionKind::Identifier(identifier) => format!("identifier {}", identifier.name_hint()),
         ExpressionKind::Literal(literal) => format!("literal {literal}"),
         ExpressionKind::Piecewise(_) => "piecewise".to_owned(),
-        ExpressionKind::Call(node) => format!("call {}", node.function_name()),
+        ExpressionKind::Call(node) => format!("call {}", node.callee()),
     }
 }
 

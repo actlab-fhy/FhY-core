@@ -13,6 +13,7 @@ use std::fmt::{self, Debug};
 use std::str::FromStr;
 
 use expression_support::{ALL_BINARY_OPERATIONS, ALL_LOGICAL_OPERATIONS, ALL_UNARY_OPERATIONS};
+use fhy_core::expr::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expr::{
     BinaryOperation, FunctionSort, LogicalOperation, SymbolType, UnaryOperation, UnknownNameError,
 };
@@ -516,6 +517,8 @@ fn vocabulary_from_str_refuses_an_unknown_word_naming_it() {
     assert_from_str_refuses::<BinaryOperation>("Add", "unknown binary operation `Add`");
     assert_from_str_refuses::<BinaryOperation>("+", "unknown binary operation `+`");
     assert_from_str_refuses::<UnaryOperation>("", "unknown unary operation ``");
+    assert_from_str_refuses::<BuiltinFunction>("softplus", "unknown built-in function `softplus`");
+    assert_from_str_refuses::<BuiltinConstant>("tau", "unknown built-in constant `tau`");
 }
 
 /// Assert every variant in `variants` has one text in every form: `as_str`,
@@ -545,14 +548,20 @@ where
 
 /// Test `as_str`, `Display`, serde and `FromStr` agree for every variant of
 /// every vocabulary enum, over lists whose completeness an exhaustive
-/// `match` guards.
+/// `match` guards; the built-in enums are `#[non_exhaustive]`, so their
+/// lists are their own catalogue iterators, which a unit test guards.
 #[test]
 fn vocabulary_as_str_display_serde_and_from_str_agree_for_every_variant() {
+    let functions: Vec<BuiltinFunction> = BuiltinFunction::iter().collect();
+    let constants: Vec<BuiltinConstant> = BuiltinConstant::iter().collect();
+
     assert_text_forms_agree(&ALL_SYMBOL_TYPES, SymbolType::as_str);
     assert_text_forms_agree(&ALL_FUNCTION_SORTS, FunctionSort::as_str);
     assert_text_forms_agree(&ALL_UNARY_OPERATIONS, UnaryOperation::as_str);
     assert_text_forms_agree(&ALL_BINARY_OPERATIONS, BinaryOperation::as_str);
     assert_text_forms_agree(&ALL_LOGICAL_OPERATIONS, LogicalOperation::as_str);
+    assert_text_forms_agree(&functions, BuiltinFunction::name);
+    assert_text_forms_agree(&constants, BuiltinConstant::name);
 }
 
 /// Test no two operations of one kind share a symbol, so a table from symbol

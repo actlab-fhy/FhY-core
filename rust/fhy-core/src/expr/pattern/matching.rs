@@ -22,7 +22,8 @@ use std::sync::Arc;
 
 use crate::identifier::Identifier;
 
-use super::super::error::{FunctionNameError, PiecewiseError, RebuildError};
+use super::super::callee::FunctionNameError;
+use super::super::error::{PiecewiseError, RebuildError};
 use super::super::literal::{LiteralTextError, LiteralValue};
 use super::super::node::{Expression, ExpressionKind};
 use super::super::operation::{BinaryOperation, UnaryOperation};
@@ -392,7 +393,7 @@ impl Pattern {
                 };
                 if function_name
                     .as_ref()
-                    .is_some_and(|wanted| **wanted != *node.function_name())
+                    .is_some_and(|wanted| **wanted != *node.callee().name())
                 {
                     return Ok(None);
                 }
@@ -653,8 +654,9 @@ impl From<RebuildError> for CallbackError {
 }
 
 impl From<FunctionNameError> for CallbackError {
-    /// Wrap a refused function name, so a rewrite can use `?` on the call
-    /// builder.
+    /// Wrap a refused function name, so a rewrite can use `?` on
+    /// [`FunctionName::try_new`](super::super::FunctionName::try_new) or on
+    /// parsing a [`Callee`](super::super::Callee).
     fn from(error: FunctionNameError) -> Self {
         Self(Box::new(error))
     }

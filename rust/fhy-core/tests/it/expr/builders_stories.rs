@@ -7,10 +7,11 @@
 use crate::support::expression as expression_support;
 
 use expression_support::{build_identifier, build_literal};
+use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, IntoOperand,
+    BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FunctionName, FunctionNameError,
     LiteralValue, LogicalExpression, LogicalOperation, PiecewiseError, RebuildError,
-    UnaryOperation,
+    UnaryOperation, UnknownNameError,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -55,7 +56,7 @@ impl BinaryBuilder {
     }
 
     /// Apply the builder to `left` and `right`.
-    fn apply(self, left: &Expression, right: impl IntoOperand) -> Expression {
+    fn apply(self, left: &Expression, right: impl Into<Expression>) -> Expression {
         match self {
             Self::Add => left + right,
             Self::Subtract => left - right,
@@ -287,7 +288,7 @@ fn expression_reflected_operators_accept_every_left_operand_type(#[case] build: 
     assert_eq!(built, expected);
 }
 
-/// Build `left op right` with each arithmetic operator `+ - * / %`, for an
+/// Build `left op right` with each arithmetic operator `+ - * /`, for an
 /// owned and a borrowed expression `right`, each paired with the node
 /// `new_binary` builds from the same operands. `left` is evaluated once per
 /// use.
@@ -336,12 +337,15 @@ macro_rules! build_with_every_operator {
 type BuildWithEveryOperator = fn(&Expression) -> Vec<(Expression, Expression)>;
 
 /// Test every non-expression operand type is accepted on the left of every
-/// arithmetic operator, the same types [`IntoOperand`] accepts on the
-/// right, with an owned or a borrowed expression on the right.
+/// arithmetic operator, the same types that convert `Into<Expression>` on
+/// the right, with an owned or a borrowed expression on the right.
 #[rstest]
 #[case::i64(|x: &Expression| build_with_every_operator!(3_i64, x))]
 #[case::i32(|x: &Expression| build_with_every_operator!(3_i32, x))]
+#[case::i128(|x: &Expression| build_with_every_operator!(3_i128, x))]
 #[case::u32(|x: &Expression| build_with_every_operator!(3_u32, x))]
+#[case::u64(|x: &Expression| build_with_every_operator!(3_u64, x))]
+#[case::usize(|x: &Expression| build_with_every_operator!(3_usize, x))]
 #[case::big_integer(|x: &Expression| build_with_every_operator!(build_big_operand(), x))]
 #[case::f64(|x: &Expression| build_with_every_operator!(2.5_f64, x))]
 #[case::owned_identifier(|x: &Expression| {
@@ -418,7 +422,10 @@ fn find_literal_variant(expression: &Expression) -> Option<std::mem::Discriminan
 ))]
 #[case::i64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i64), build_literal(7)))]
 #[case::i32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i32), build_literal(7)))]
+#[case::i128(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i128), build_literal(7)))]
 #[case::u32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_u32), build_literal(7)))]
+#[case::u64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_u64), build_literal(7)))]
+#[case::usize(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_usize), build_literal(7)))]
 #[case::big_integer(|_: &Identifier, _: &Expression| (
     Expression::new_unary(UnaryOperation::Negate, build_big_operand()),
     build_literal(build_big_operand()),
@@ -862,30 +869,34 @@ fn expression_piecewise_accepts_an_equals_condition() {
     assert_eq!(node.cases()[0].0, x.equals(0));
 }
 
-/// Test the call builder carries the name and the argument nodes.
+/// Test the call builder carries the callee and the argument nodes.
 #[test]
-fn expression_call_returns_a_call_with_name_and_arguments() {
+fn expression_call_returns_a_call_with_callee_and_arguments() {
     let (first, second) = (build_literal(1), build_literal(2));
 
-    let built = Expression::call("max", [&first, &second]).expect("a named call");
+    let built = Expression::call(BuiltinFunction::Max, [&first, &second]);
 
     let ExpressionKind::Call(node) = built.kind() else {
         panic!("expected a call node, got {built:?}");
     };
-    assert_eq!(node.function_name(), "max");
+    assert_eq!(node.callee(), &Callee::Builtin(BuiltinFunction::Max));
+    assert_eq!(node.callee().name(), "max");
     assert_eq!(node.arguments().len(), 2);
     assert!(Expression::ptr_eq(&node.arguments()[0], &first));
     assert!(Expression::ptr_eq(&node.arguments()[1], &second));
 }
 
-/// Test the call builder accepts zero arguments.
+/// Test the call builder accepts zero arguments and a named callee.
 #[test]
 fn expression_call_supports_zero_arguments() {
-    let built = Expression::call("nullary", Vec::<Expression>::new()).expect("a named call");
+    let nullary = FunctionName::try_new("nullary").expect("a user function name");
+
+    let built = Expression::call(nullary.clone(), Vec::<Expression>::new());
 
     let ExpressionKind::Call(node) = built.kind() else {
         panic!("expected a call node, got {built:?}");
     };
+    assert_eq!(node.callee(), &Callee::Named(nullary));
     assert!(node.arguments().is_empty());
 }
 
@@ -893,26 +904,130 @@ fn expression_call_supports_zero_arguments() {
 #[test]
 fn expression_call_coerces_identifiers_and_numbers() {
     let (x, x_reference) = build_identifier("x");
+    let f = FunctionName::try_new("f").expect("a user function name");
 
-    let with_identifier = Expression::call("f", [x]).expect("a named call");
-    let with_numbers = Expression::call("max", [1, 2]).expect("a named call");
+    let with_identifier = Expression::call(f.clone(), [x]);
+    let with_numbers = Expression::call(BuiltinFunction::Max, [1, 2]);
 
-    assert_eq!(
-        with_identifier,
-        Expression::call("f", [x_reference]).expect("a named call")
-    );
+    assert_eq!(with_identifier, Expression::call(f, [x_reference]));
     assert_eq!(
         with_numbers,
-        Expression::call("max", [build_literal(1), build_literal(2)]).expect("a named call")
+        Expression::call(BuiltinFunction::Max, [build_literal(1), build_literal(2)])
     );
 }
 
-/// Test the call builder refuses an empty function name.
+/// Test parsing a callee resolves a built-in function's name to the
+/// built-in and any other name to a named function.
+#[rstest]
+#[case::composed("max", Callee::Builtin(BuiltinFunction::Max))]
+#[case::native("log10", Callee::Builtin(BuiltinFunction::Log10))]
+#[case::snake_case("clamp_symmetric", Callee::Builtin(BuiltinFunction::ClampSymmetric))]
+#[case::user("softplus", Callee::Named(FunctionName::try_new("softplus").unwrap()))]
+#[case::other_case("Max", Callee::Named(FunctionName::try_new("Max").unwrap()))]
+#[case::constant("pi", Callee::Named(FunctionName::try_new("pi").unwrap()))]
+fn callee_from_str_resolves_builtin_names(#[case] name: &str, #[case] expected: Callee) {
+    let callee: Callee = name.parse().expect("a non-empty name");
+
+    assert_eq!(callee, expected);
+    assert_eq!(callee.name(), name);
+    assert_eq!(callee.to_string(), name);
+}
+
+/// Test parsing an empty callee name is refused.
 #[test]
-fn expression_call_rejects_an_empty_function_name() {
-    let result = Expression::call("", [1]);
+fn callee_from_str_refuses_an_empty_name() {
+    let result = "".parse::<Callee>();
 
     assert_eq!(result, Err(FunctionNameError::Empty));
+}
+
+/// Test a function name refuses every built-in function's name, naming the
+/// built-in.
+#[test]
+fn function_name_refuses_a_builtin_name() {
+    for function in BuiltinFunction::iter() {
+        let result = FunctionName::try_new(function.name());
+
+        assert_eq!(result, Err(FunctionNameError::Builtin(function)));
+    }
+}
+
+/// Test a function name refuses the empty name and every built-in name, and
+/// accepts any other name as given.
+#[rstest]
+#[case::empty("", Err(FunctionNameError::Empty))]
+#[case::builtin("sqrt", Err(FunctionNameError::Builtin(BuiltinFunction::Sqrt)))]
+#[case::user("f", Ok("f"))]
+#[case::spaced(" max", Ok(" max"))]
+fn function_name_try_new_rejects_empty_and_builtin_names(
+    #[case] name: &str,
+    #[case] expected: Result<&str, FunctionNameError>,
+) {
+    let result = FunctionName::try_new(name);
+
+    assert_eq!(
+        result.as_ref().map(FunctionName::as_str),
+        expected.as_deref()
+    );
+    if let Ok(accepted) = result {
+        assert_eq!(accepted.to_string(), name);
+    }
+}
+
+// =============================================================================
+// Conversions
+// =============================================================================
+
+/// Test each number type converts into the integer or float literal of its
+/// value, and an identifier or expression, owned or borrowed, into the node
+/// it stands for.
+#[rstest]
+#[case::i32(Expression::from(-3_i32), build_literal(LiteralValue::Int(BigInt::from(-3))))]
+#[case::i64(Expression::from(-3_i64), build_literal(LiteralValue::Int(BigInt::from(-3))))]
+#[case::i128(
+    Expression::from(i128::MIN),
+    build_literal(LiteralValue::Int(BigInt::from(i128::MIN)))
+)]
+#[case::u32(
+    Expression::from(u32::MAX),
+    build_literal(LiteralValue::Int(BigInt::from(u32::MAX)))
+)]
+#[case::u64(
+    Expression::from(u64::MAX),
+    build_literal(LiteralValue::Int(BigInt::from(u64::MAX)))
+)]
+#[case::usize(
+    Expression::from(7_usize),
+    build_literal(LiteralValue::Int(BigInt::from(7)))
+)]
+#[case::big_integer(
+    Expression::from(build_big_operand()),
+    build_literal(LiteralValue::Int(build_big_operand()))
+)]
+#[case::f64(
+    Expression::from(f64::NAN),
+    build_literal(LiteralValue::Float(f64::NAN))
+)]
+#[case::literal_value(Expression::literal(true), Expression::from(LiteralValue::Bool(true)))]
+fn expression_from_every_primitive_builds_its_literal(
+    #[case] built: Expression,
+    #[case] expected: Expression,
+) {
+    assert!(matches!(built.kind(), ExpressionKind::Literal(_)));
+    assert_eq!(built, expected);
+}
+
+/// Test a borrowed identifier converts into a reference to it, and a
+/// borrowed expression into a handle sharing its node.
+#[test]
+fn expression_from_a_borrowed_identifier_or_expression_builds_its_node() {
+    let (x, reference) = build_identifier("x");
+
+    let from_identifier = Expression::from(&x);
+    let from_expression = Expression::from(&reference);
+
+    assert_eq!(from_identifier, reference);
+    assert!(Expression::ptr_eq(&from_expression, &reference));
 }
 
 // =============================================================================
@@ -952,12 +1067,30 @@ fn rebuild_error_display_describes_the_failure(
     assert_eq!(message, expected);
 }
 
-/// Test the function-name error's message.
-#[test]
-fn function_name_error_display_describes_the_failure() {
-    let message = FunctionNameError::Empty.to_string();
+/// Test each function-name error's message.
+#[rstest]
+#[case::empty(FunctionNameError::Empty, "function name is empty")]
+#[case::builtin(
+    FunctionNameError::Builtin(BuiltinFunction::ClampSymmetric),
+    "function name `clamp_symmetric` is a built-in function"
+)]
+fn function_name_error_display_describes_the_failure(
+    #[case] error: FunctionNameError,
+    #[case] expected: &str,
+) {
+    let message = error.to_string();
 
-    assert_eq!(message, "function name is empty");
+    assert_eq!(message, expected);
+}
+
+/// Test the unknown-name error's message names the enum and the name.
+#[test]
+fn unknown_name_error_display_describes_the_failure() {
+    let error: UnknownNameError = "plus"
+        .parse::<BinaryOperation>()
+        .expect_err("no binary operation is named plus");
+
+    assert_eq!(error.to_string(), "unknown binary operation `plus`");
 }
 
 /// Test each refusal of the piecewise builder is a piecewise error of the

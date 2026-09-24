@@ -1,8 +1,7 @@
-//! Stories for the built-in catalogue in
-//! `fhy_core::expr::builtins`: the three tables and their
-//! order, lookups by name, the declared sorts, the constant values, the
-//! parameters, and the exact composed bodies and their printed text. Public
-//! API only.
+//! Stories for the built-in catalogue in `fhy_core::expr::builtins`: the
+//! function and constant enums and their catalogue order, lookups by name,
+//! the declared sorts, the constant values, the parameters, and the exact
+//! composed bodies and their printed text. Public API only.
 //!
 //! Expected bodies are built with the node constructors
 //! (`Expression::new_binary`, `Expression::piecewise`, ...), not the
@@ -14,21 +13,15 @@ use crate::support::expression as expression_support;
 use std::collections::{HashMap, HashSet};
 use std::thread;
 
-use fhy_core::expr::builtins::{
-    ComposedFunction, NativeConstantSpec, NativeFunctionSignature, find_composed_function,
-    find_native_constant, find_native_function, list_composed_functions, list_native_constants,
-    list_native_functions,
-};
+use fhy_core::expr::builtins::{BuiltinConstant, BuiltinFunction, ComposedFunction};
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralValue,
-    LogicalOperation, Notation, UnaryOperation,
+    BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FormatOptions, FunctionSort,
+    LiteralValue, LogicalOperation, Notation, UnaryOperation, UnknownNameError,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
-use expression_support::{
-    build_call_node_or_panic, build_identifier, build_literal, build_piecewise_node_or_panic,
-};
+use expression_support::{build_identifier, build_literal, build_piecewise_node_or_panic};
 
 const COMPOSED_NAMES: [&str; 16] = [
     "max",
@@ -61,7 +54,22 @@ const TOTAL_PARAMETER_COUNT: usize = 27;
 
 /// Return the composed built-in named `name`, failing the test if absent.
 fn find_composed(name: &str) -> &'static ComposedFunction {
-    find_composed_function(name).unwrap_or_else(|| panic!("{name} is a composed built-in"))
+    name.parse::<BuiltinFunction>()
+        .ok()
+        .and_then(BuiltinFunction::composed)
+        .unwrap_or_else(|| panic!("{name} is a composed built-in"))
+}
+
+/// Return every composed built-in in catalogue order.
+fn collect_composed() -> Vec<&'static ComposedFunction> {
+    BuiltinFunction::iter()
+        .filter_map(BuiltinFunction::composed)
+        .collect()
+}
+
+/// Return a call of the built-in `function` with `arguments`.
+fn build_builtin_call(function: BuiltinFunction, arguments: Vec<Expression>) -> Expression {
+    Expression::call(function, arguments)
 }
 
 /// Return a reference expression to each parameter of `function`, in order.
@@ -178,30 +186,32 @@ fn build_expected_boolean_body(name: &str, parameters: &[Expression]) -> Express
 fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expression {
     let one_float = build_literal(1.0);
     match (name, parameters) {
-        ("clamp", [x, lo, hi]) => build_call_node_or_panic(
-            "min",
+        ("clamp", [x, lo, hi]) => build_builtin_call(
+            BuiltinFunction::Min,
             vec![
-                build_call_node_or_panic("max", vec![x.clone(), lo.clone()]),
+                build_builtin_call(BuiltinFunction::Max, vec![x.clone(), lo.clone()]),
                 hi.clone(),
             ],
         ),
-        ("clamp_symmetric", [x, bound]) => build_call_node_or_panic(
-            "clamp",
+        ("clamp_symmetric", [x, bound]) => build_builtin_call(
+            BuiltinFunction::Clamp,
             vec![
                 x.clone(),
                 Expression::new_unary(UnaryOperation::Negate, bound),
                 bound.clone(),
             ],
         ),
-        ("relu", [x]) => build_call_node_or_panic("max", vec![x.clone(), build_literal(0)]),
+        ("relu", [x]) => {
+            build_builtin_call(BuiltinFunction::Max, vec![x.clone(), build_literal(0)])
+        }
         ("sigmoid", [x]) => Expression::new_binary(
             BinaryOperation::Divide,
             &one_float,
             Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                build_call_node_or_panic(
-                    "exp",
+                build_builtin_call(
+                    BuiltinFunction::Exp,
                     vec![Expression::new_unary(UnaryOperation::Negate, x)],
                 ),
             ),
@@ -209,7 +219,7 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
         ("silu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
             x,
-            build_call_node_or_panic("sigmoid", vec![x.clone()]),
+            build_builtin_call(BuiltinFunction::Sigmoid, vec![x.clone()]),
         ),
         ("gelu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
@@ -217,12 +227,12 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
             Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                build_call_node_or_panic(
-                    "erf",
+                build_builtin_call(
+                    BuiltinFunction::Erf,
                     vec![Expression::new_binary(
                         BinaryOperation::Divide,
                         x,
-                        build_call_node_or_panic("sqrt", vec![build_literal(2.0)]),
+                        build_builtin_call(BuiltinFunction::Sqrt, vec![build_literal(2.0)]),
                     )],
                 ),
             ),
@@ -234,17 +244,17 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
     }
 }
 
-/// Return the function names of every call node in `expression`.
-fn collect_call_names(expression: &Expression) -> Vec<String> {
-    let mut names = Vec::new();
+/// Return the callees of every call node in `expression`.
+fn collect_callees(expression: &Expression) -> Vec<Callee> {
+    let mut callees = Vec::new();
     let mut pending = vec![expression];
     while let Some(node) = pending.pop() {
         if let ExpressionKind::Call(call) = node.kind() {
-            names.push(call.function_name().to_owned());
+            callees.push(call.callee().clone());
         }
         pending.extend(node.children());
     }
-    names
+    callees
 }
 
 /// Return the literal operand of a binary node, failing the test otherwise.
@@ -268,179 +278,138 @@ fn find_literal(expression: &Expression) -> &LiteralValue {
 
 /// Return the ids of every composed function's parameters, in catalogue
 /// order, each paired with its function's name.
-fn collect_parameter_ids() -> Vec<(&'static str, Vec<u64>)> {
-    list_composed_functions()
-        .iter()
+fn collect_parameter_ids() -> Vec<(BuiltinFunction, Vec<u64>)> {
+    collect_composed()
+        .into_iter()
         .map(|function| {
             (
-                function.name(),
+                function.function(),
                 function.parameters().iter().map(Identifier::id).collect(),
             )
         })
         .collect()
 }
 
-/// Test the composed table lists the 16 composed built-ins in catalogue order.
+/// Test the composed built-ins lead the catalogue, in catalogue order.
 #[test]
 fn composed_functions_lists_the_composed_builtins_in_catalogue_order() {
-    let names: Vec<&str> = list_composed_functions()
-        .iter()
-        .map(ComposedFunction::name)
+    let names: Vec<&str> = collect_composed()
+        .into_iter()
+        .map(|function| function.function().name())
+        .collect();
+    let leading: Vec<&str> = BuiltinFunction::iter()
+        .take(COMPOSED_NAMES.len())
+        .map(BuiltinFunction::name)
         .collect();
 
     assert_eq!(names, COMPOSED_NAMES);
+    assert_eq!(leading, COMPOSED_NAMES);
 }
 
-/// Test the native table lists the 19 native built-ins in catalogue order.
+/// Test the native built-ins follow the composed ones, in catalogue order.
 #[test]
 fn native_functions_lists_the_native_builtins_in_catalogue_order() {
-    let names: Vec<&str> = list_native_functions()
-        .iter()
-        .map(NativeFunctionSignature::name)
+    let names: Vec<&str> = BuiltinFunction::iter()
+        .filter(|function| function.composed().is_none())
+        .map(BuiltinFunction::name)
+        .collect();
+    let trailing: Vec<&str> = BuiltinFunction::iter()
+        .skip(COMPOSED_NAMES.len())
+        .map(BuiltinFunction::name)
         .collect();
 
     assert_eq!(names, NATIVE_FUNCTION_NAMES);
+    assert_eq!(trailing, NATIVE_FUNCTION_NAMES);
 }
 
-/// Test the constant table lists `pi`, `e`, `inf`, `nan` in that order.
+/// Test the constants are `pi`, `e`, `inf`, `nan` in that order.
 #[test]
 fn native_constants_lists_the_builtin_constants_in_catalogue_order() {
-    let names: Vec<&str> = list_native_constants()
-        .iter()
-        .map(NativeConstantSpec::name)
-        .collect();
+    let names: Vec<&str> = BuiltinConstant::iter().map(BuiltinConstant::name).collect();
 
+    assert_eq!(BuiltinConstant::iter().len(), NATIVE_CONSTANT_NAMES.len());
     assert_eq!(names, NATIVE_CONSTANT_NAMES);
 }
 
-/// Test no name appears twice across the three tables.
+/// Test no name appears twice across the functions and constants, and every
+/// name parses back to its own variant.
 #[test]
-fn builtin_catalogue_names_are_unique_across_the_tables() {
-    let names: Vec<&str> = list_composed_functions()
-        .iter()
-        .map(ComposedFunction::name)
-        .chain(
-            list_native_functions()
-                .iter()
-                .map(NativeFunctionSignature::name),
-        )
-        .chain(list_native_constants().iter().map(NativeConstantSpec::name))
+fn builtin_names_are_unique_and_round_trip_through_from_str() {
+    let names: Vec<&str> = BuiltinFunction::iter()
+        .map(BuiltinFunction::name)
+        .chain(BuiltinConstant::iter().map(BuiltinConstant::name))
         .collect();
-
     let distinct: HashSet<&str> = names.iter().copied().collect();
 
+    assert_eq!(BuiltinFunction::iter().len(), 35);
     assert_eq!(names.len(), 39);
     assert_eq!(distinct.len(), names.len(), "a name repeats in {names:?}");
+    for function in BuiltinFunction::iter() {
+        assert_eq!(function.name().parse::<BuiltinFunction>(), Ok(function));
+        assert_eq!(function.to_string(), function.name());
+    }
+    for constant in BuiltinConstant::iter() {
+        assert_eq!(constant.name().parse::<BuiltinConstant>(), Ok(constant));
+        assert_eq!(constant.to_string(), constant.name());
+    }
 }
 
-/// Test each composed built-in is found by its name as the listed entry.
-#[rstest]
-fn find_composed_function_returns_the_listed_entry(
-    #[values(
-        "max",
-        "min",
-        "abs",
-        "sign",
-        "clamp",
-        "clamp_symmetric",
-        "relu",
-        "leaky_relu",
-        "xor",
-        "nand",
-        "nor",
-        "implies",
-        "iff",
-        "sigmoid",
-        "silu",
-        "gelu"
-    )]
-    name: &str,
-) {
-    let found = find_composed_function(name);
+/// Test each composed built-in's definition is the one for its own variant,
+/// the same entry on every lookup.
+#[test]
+fn builtin_function_composed_returns_the_listed_entry() {
+    for (function, name) in BuiltinFunction::iter().zip(COMPOSED_NAMES) {
+        let found = find_composed(name);
 
-    let listed = list_composed_functions()
-        .iter()
-        .find(|function| function.name() == name)
-        .unwrap_or_else(|| panic!("{name} is listed"));
-    let found = found.unwrap_or_else(|| panic!("{name} is found"));
-    assert_eq!(found.name(), name);
-    assert!(
-        std::ptr::eq(found, listed),
-        "{name} is not the listed entry"
-    );
+        let composed = function
+            .composed()
+            .unwrap_or_else(|| panic!("{name} is composed"));
+        assert_eq!(found.function(), function);
+        assert!(
+            std::ptr::eq(found, composed),
+            "{name} is not the listed entry"
+        );
+    }
 }
 
-/// Test each native built-in is found by its name as the listed entry.
-#[rstest]
-fn find_native_function_returns_the_listed_entry(
-    #[values(
-        "exp", "exp2", "log", "log2", "log10", "sqrt", "sin", "cos", "tan", "arcsin", "arccos",
-        "arctan", "sinh", "cosh", "tanh", "erf", "round", "floor", "ceil"
-    )]
-    name: &str,
-) {
-    let found = find_native_function(name);
+/// Test exactly the native built-ins have no composed definition.
+#[test]
+fn builtin_function_composed_is_none_exactly_for_natives() {
+    let composed: Vec<&str> = BuiltinFunction::iter()
+        .filter(|function| function.composed().is_some())
+        .map(BuiltinFunction::name)
+        .collect();
+    let native: Vec<&str> = BuiltinFunction::iter()
+        .filter(|function| function.composed().is_none())
+        .map(BuiltinFunction::name)
+        .collect();
 
-    let listed = list_native_functions()
-        .iter()
-        .find(|function| function.name() == name)
-        .unwrap_or_else(|| panic!("{name} is listed"));
-    let found = found.unwrap_or_else(|| panic!("{name} is found"));
-    assert_eq!(found.name(), name);
-    assert!(
-        std::ptr::eq(found, listed),
-        "{name} is not the listed entry"
-    );
+    assert_eq!(composed, COMPOSED_NAMES);
+    assert_eq!(native, NATIVE_FUNCTION_NAMES);
 }
 
-/// Test each built-in constant is found by its name as the listed entry.
+/// Test a name no built-in function has is refused by `FromStr`, naming it.
 #[rstest]
-fn find_native_constant_returns_the_listed_entry(#[values("pi", "e", "inf", "nan")] name: &str) {
-    let found = find_native_constant(name);
-
-    let listed = list_native_constants()
-        .iter()
-        .find(|constant| constant.name() == name)
-        .unwrap_or_else(|| panic!("{name} is listed"));
-    let found = found.unwrap_or_else(|| panic!("{name} is found"));
-    assert_eq!(found.name(), name);
-    assert!(
-        std::ptr::eq(found, listed),
-        "{name} is not the listed entry"
-    );
-}
-
-/// Test a name outside the composed table finds no composed function.
-#[rstest]
-#[case::native_function("exp")]
 #[case::constant("pi")]
 #[case::empty("")]
 #[case::other_case("Max")]
 #[case::trailing_space("max ")]
 #[case::prefix("ma")]
 #[case::extension("maximum")]
-#[case::unknown("softplus")]
-fn find_composed_function_rejects_other_names(#[case] name: &str) {
-    let found = find_composed_function(name);
-
-    assert!(found.is_none(), "{name:?} found {found:?}");
-}
-
-/// Test a name outside the native table finds no native function.
-#[rstest]
-#[case::composed_function("max")]
-#[case::constant("e")]
-#[case::empty("")]
-#[case::other_case("Exp")]
-#[case::leading_space(" exp")]
 #[case::other_spelling("asin")]
-fn find_native_function_rejects_other_names(#[case] name: &str) {
-    let found = find_native_function(name);
+#[case::unknown("softplus")]
+fn builtin_function_from_str_refuses_other_names(#[case] name: &str) {
+    let parsed = name.parse::<BuiltinFunction>();
 
-    assert!(found.is_none(), "{name:?} found {found:?}");
+    let error: UnknownNameError = parsed.expect_err("the name is no built-in function's");
+    assert_eq!(error.name(), name);
+    assert_eq!(
+        error.to_string(),
+        format!("unknown built-in function `{name}`")
+    );
 }
 
-/// Test a name outside the constant table finds no constant.
+/// Test a name no built-in constant has is refused by `FromStr`.
 #[rstest]
 #[case::native_function("sqrt")]
 #[case::composed_function("max")]
@@ -448,10 +417,14 @@ fn find_native_function_rejects_other_names(#[case] name: &str) {
 #[case::other_case("PI")]
 #[case::other_spelling("infinity")]
 #[case::other_case_nan("NaN")]
-fn find_native_constant_rejects_other_names(#[case] name: &str) {
-    let found = find_native_constant(name);
+fn builtin_constant_from_str_refuses_other_names(#[case] name: &str) {
+    let parsed = name.parse::<BuiltinConstant>();
 
-    assert!(found.is_none(), "{name:?} found {found:?}");
+    let error = parsed.expect_err("the name is no built-in constant's");
+    assert_eq!(
+        error.to_string(),
+        format!("unknown built-in constant `{name}`")
+    );
 }
 
 /// Test each composed built-in declares its documented parameter names,
@@ -507,8 +480,8 @@ fn composed_function_declares_its_documented_signature(
         .map(Identifier::name_hint)
         .collect();
     assert_eq!(names, parameter_names);
-    assert_eq!(function.parameter_sorts(), parameter_sorts);
-    assert_eq!(function.result_sort(), result_sort);
+    assert_eq!(function.function().parameter_sorts(), parameter_sorts);
+    assert_eq!(function.function().result_sort(), result_sort);
 }
 
 /// Test each native built-in takes one real argument and declares its
@@ -537,33 +510,32 @@ fn native_function_declares_its_documented_signature(
     #[case] name: &str,
     #[case] result_sort: FunctionSort,
 ) {
-    let function = find_native_function(name).unwrap_or_else(|| panic!("{name} is native"));
+    let function: BuiltinFunction = name.parse().expect("the name is a built-in function's");
 
+    assert!(function.composed().is_none(), "{name} is native");
     assert_eq!(function.parameter_sorts(), [FunctionSort::Real]);
     assert_eq!(function.result_sort(), result_sort);
 }
 
 /// Test each built-in constant is real.
-#[rstest]
-fn native_constant_is_real(#[values("pi", "e", "inf", "nan")] name: &str) {
-    let constant = find_native_constant(name).unwrap_or_else(|| panic!("{name} is a constant"));
-
-    assert_eq!(constant.sort(), FunctionSort::Real);
+#[test]
+fn native_constant_is_real() {
+    for constant in BuiltinConstant::iter() {
+        assert_eq!(constant.sort(), FunctionSort::Real, "{constant}");
+    }
 }
 
 /// Test the finite and infinite constants hold exactly their documented
 /// values.
 #[rstest]
-#[case::pi("pi", std::f64::consts::PI)]
-#[case::e("e", std::f64::consts::E)]
-#[case::inf("inf", f64::INFINITY)]
-fn native_constant_holds_its_exact_value(#[case] name: &str, #[case] expected: f64) {
-    let constant = find_native_constant(name).unwrap_or_else(|| panic!("{name} is a constant"));
-
+#[case::pi(BuiltinConstant::Pi, std::f64::consts::PI)]
+#[case::e(BuiltinConstant::E, std::f64::consts::E)]
+#[case::inf(BuiltinConstant::Inf, f64::INFINITY)]
+fn native_constant_holds_its_exact_value(#[case] constant: BuiltinConstant, #[case] expected: f64) {
     assert_eq!(
         constant.value().to_bits(),
         expected.to_bits(),
-        "{name} holds {}",
+        "{constant} holds {}",
         constant.value()
     );
 }
@@ -571,40 +543,22 @@ fn native_constant_holds_its_exact_value(#[case] name: &str, #[case] expected: f
 /// Test the `nan` constant holds the positive quiet NaN with no payload.
 #[test]
 fn native_constant_nan_holds_the_quiet_nan() {
-    let constant = find_native_constant("nan").expect("nan is a constant");
+    let constant: BuiltinConstant = "nan".parse().expect("nan is a constant");
 
     assert_eq!(constant.value().to_bits(), 0x7ff8_0000_0000_0000);
 }
 
 /// Test each composed built-in's body is exactly its documented tree over its
 /// own parameters, literal kinds included.
-#[rstest]
-fn composed_function_body_is_the_documented_tree(
-    #[values(
-        "max",
-        "min",
-        "abs",
-        "sign",
-        "clamp",
-        "clamp_symmetric",
-        "relu",
-        "leaky_relu",
-        "xor",
-        "nand",
-        "nor",
-        "implies",
-        "iff",
-        "sigmoid",
-        "silu",
-        "gelu"
-    )]
-    name: &str,
-) {
-    let function = find_composed(name);
+#[test]
+fn composed_function_body_is_the_documented_tree() {
+    for function in collect_composed() {
+        let name = function.function().name();
 
-    let expected = build_expected_body(name, &build_parameter_references(function));
+        let expected = build_expected_body(name, &build_parameter_references(function));
 
-    assert_eq!(function.body(), &expected);
+        assert_eq!(function.body(), &expected, "{name}");
+    }
 }
 
 /// Test each composed body prints, with identifiers by name hint, as its
@@ -674,70 +628,32 @@ fn composed_function_body_prints_as_its_documented_text(
 
 /// Test each composed body refers to every one of its parameters and to no
 /// other identifier.
-#[rstest]
-fn composed_function_body_refers_to_exactly_its_parameters(
-    #[values(
-        "max",
-        "min",
-        "abs",
-        "sign",
-        "clamp",
-        "clamp_symmetric",
-        "relu",
-        "leaky_relu",
-        "xor",
-        "nand",
-        "nor",
-        "implies",
-        "iff",
-        "sigmoid",
-        "silu",
-        "gelu"
-    )]
-    name: &str,
-) {
-    let function = find_composed(name);
+#[test]
+fn composed_function_body_refers_to_exactly_its_parameters() {
+    for function in collect_composed() {
+        let free = function.body().free_identifiers();
 
-    let free = function.body().free_identifiers();
-
-    let parameters: HashSet<Identifier> = function.parameters().iter().cloned().collect();
-    assert_eq!(free, parameters);
+        let parameters: HashSet<Identifier> = function.parameters().iter().cloned().collect();
+        assert_eq!(free, parameters, "{}", function.function());
+    }
 }
 
-/// Test every call in a composed body names a built-in function.
-#[rstest]
-fn composed_function_body_calls_only_builtin_functions(
-    #[values(
-        "max",
-        "min",
-        "abs",
-        "sign",
-        "clamp",
-        "clamp_symmetric",
-        "relu",
-        "leaky_relu",
-        "xor",
-        "nand",
-        "nor",
-        "implies",
-        "iff",
-        "sigmoid",
-        "silu",
-        "gelu"
-    )]
-    name: &str,
-) {
-    let function = find_composed(name);
+/// Test every call in a composed body is a `Callee::Builtin`.
+#[test]
+fn composed_function_body_calls_only_builtin_functions() {
+    for function in collect_composed() {
+        let callees = collect_callees(function.body());
 
-    let call_names = collect_call_names(function.body());
-
-    let unknown: Vec<&String> = call_names
-        .iter()
-        .filter(|called| {
-            find_composed_function(called).is_none() && find_native_function(called).is_none()
-        })
-        .collect();
-    assert!(unknown.is_empty(), "{name} calls non-built-ins {unknown:?}");
+        let named: Vec<&Callee> = callees
+            .iter()
+            .filter(|callee| !matches!(callee, Callee::Builtin(_)))
+            .collect();
+        assert!(
+            named.is_empty(),
+            "{} calls non-built-ins {named:?}",
+            function.function()
+        );
+    }
 }
 
 /// Test `relu` passes an integer zero, not a float zero, to `max`.
@@ -749,7 +665,7 @@ fn composed_function_relu_passes_an_integer_zero_to_max() {
         panic!("relu's body is a call, got {:?}", relu.body());
     };
 
-    assert_eq!(call.function_name(), "max");
+    assert_eq!(call.callee(), &Callee::Builtin(BuiltinFunction::Max));
     assert!(matches!(
         find_literal(&call.arguments()[1]),
         LiteralValue::Int(zero) if *zero == BigInt::from(0)
@@ -829,15 +745,18 @@ fn composed_function_parameters_are_distinct_across_the_catalogue() {
     );
 }
 
-/// Test repeated calls return the same table with the same parameters.
+/// Test repeated lookups return the same definitions with the same
+/// parameters.
 #[test]
 fn composed_functions_returns_the_same_table_on_every_call() {
-    let first = list_composed_functions();
+    let first = collect_composed();
     let first_ids = collect_parameter_ids();
 
-    let second = list_composed_functions();
+    let second = collect_composed();
 
-    assert!(std::ptr::eq(first, second), "the table was rebuilt");
+    for (first, second) in first.into_iter().zip(second) {
+        assert!(std::ptr::eq(first, second), "the table was rebuilt");
+    }
     assert_eq!(collect_parameter_ids(), first_ids);
 }
 
@@ -849,7 +768,7 @@ fn composed_functions_agrees_across_threads() {
         .map(|_| thread::spawn(collect_parameter_ids))
         .collect();
 
-    let observed: Vec<Vec<(&'static str, Vec<u64>)>> = handles
+    let observed: Vec<Vec<(BuiltinFunction, Vec<u64>)>> = handles
         .into_iter()
         .map(|handle| handle.join().expect("the reader thread finishes"))
         .collect();
@@ -870,8 +789,8 @@ fn composed_function_parameters_differ_from_new_identifiers() {
     let (fresh_x, _) = build_identifier("x");
     let (fresh_a, _) = build_identifier("a");
 
-    let parameters: Vec<&Identifier> = list_composed_functions()
-        .iter()
+    let parameters: Vec<&Identifier> = collect_composed()
+        .into_iter()
         .flat_map(ComposedFunction::parameters)
         .collect();
 

@@ -12,14 +12,15 @@ use crate::support::stack as stack_support;
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    build_call_node_or_panic, build_decimal_literal, build_deep_sum, build_doubling_dag,
-    build_identifier, build_literal, build_piecewise_node_or_panic, copy_deeply,
-    is_doubling_dag_over,
+    build_call_node_or_panic, build_callee, build_decimal_literal, build_deep_sum,
+    build_doubling_dag, build_identifier, build_literal, build_piecewise_node_or_panic,
+    copy_deeply, is_doubling_dag_over,
 };
+use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression, ExpressionKind,
-    FunctionNameError, LiteralValue, LogicalOperation, PiecewiseError, PiecewiseExpression,
-    RebuildError, UnaryExpression, UnaryOperation,
+    AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Callee, Expression,
+    ExpressionKind, FunctionName, FunctionNameError, LiteralValue, LogicalOperation,
+    PiecewiseError, PiecewiseExpression, RebuildError, UnaryExpression, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -262,15 +263,15 @@ fn expression_piecewise_accepts_non_literal_condition() {
     assert!(Expression::ptr_eq(&node.cases()[0].0, &flag));
 }
 
-/// Test a call exposes its function name and argument nodes in order.
+/// Test a call exposes its callee and argument nodes in order.
 #[test]
-fn call_expression_exposes_name_and_arguments() {
+fn call_expression_exposes_callee_and_arguments() {
     let (first, second) = (build_literal(1), build_literal(2));
 
-    let expression = Expression::call("max", [&first, &second]).expect("a valid call");
+    let expression = Expression::call(BuiltinFunction::Max, [&first, &second]);
     let node = expect_call(&expression);
 
-    assert_eq!(node.function_name(), "max");
+    assert_eq!(node.callee(), &Callee::Builtin(BuiltinFunction::Max));
     assert_same_nodes(
         &node.arguments().iter().collect::<Vec<_>>(),
         &[&first, &second],
@@ -280,47 +281,32 @@ fn call_expression_exposes_name_and_arguments() {
 /// Test a call may take no arguments.
 #[test]
 fn call_expression_accepts_zero_arguments() {
-    let expression = Expression::call("nullary", Vec::<Expression>::new()).expect("a valid call");
+    let expression = Expression::call(build_callee("nullary"), Vec::<Expression>::new());
     let node = expect_call(&expression);
 
-    assert_eq!(node.function_name(), "nullary");
+    assert_eq!(node.callee().name(), "nullary");
+    assert!(matches!(node.callee(), Callee::Named(_)));
     assert!(node.arguments().is_empty());
 }
 
-/// Test a call with an empty function name is refused.
+/// Test a function name refuses the empty name.
 #[test]
-fn expression_call_rejects_an_empty_function_name() {
-    let result = Expression::call("", [build_literal(1)]);
+fn function_name_try_new_rejects_an_empty_name() {
+    let result = FunctionName::try_new("");
 
-    assert!(
-        matches!(result, Err(FunctionNameError::Empty)),
-        "got {result:?}"
-    );
+    assert_eq!(result, Err(FunctionNameError::Empty));
 }
 
-/// Test wrapping a copy of each node struct back into an expression yields
-/// an equal tree.
+/// Test calls of different callees are unequal, even when they share a
+/// name's spelling up to case.
 #[test]
-fn expression_from_node_struct_rewraps_the_node() {
-    let (_, x) = build_identifier("x");
-    let unary = -&x;
-    let binary = x.floor_mod(3);
-    let piecewise =
-        build_piecewise_node_or_panic(vec![(x.less(0), build_literal(1))], build_literal(2));
-    let call = build_call_node_or_panic("f", vec![x.clone()]);
+fn call_expressions_of_different_callees_are_unequal() {
+    let builtin = Expression::call(BuiltinFunction::Max, [1]);
+    let named = Expression::call(build_callee("Max"), [1]);
+    let same = Expression::call(build_callee("max"), [1]);
 
-    let rewrapped_unary = Expression::from(expect_unary(&unary).clone());
-    let rewrapped_binary = Expression::from(expect_binary(&binary).clone());
-    let rewrapped_piecewise = Expression::from(expect_piecewise(&piecewise).clone());
-    let ExpressionKind::Call(call_node) = call.kind() else {
-        panic!("expected a call node, got {call:?}");
-    };
-    let rewrapped_call = Expression::from(call_node.clone());
-
-    assert_eq!(rewrapped_unary, unary);
-    assert_eq!(rewrapped_binary, binary);
-    assert_eq!(rewrapped_piecewise, piecewise);
-    assert_eq!(rewrapped_call, call);
+    assert_ne!(builtin, named);
+    assert_eq!(builtin, same);
 }
 
 // =============================================================================

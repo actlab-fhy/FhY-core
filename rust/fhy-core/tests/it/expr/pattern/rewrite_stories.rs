@@ -14,7 +14,7 @@ use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use expression_support::{build_deep_sum, build_identifier, build_literal};
+use expression_support::{build_callee, build_deep_sum, build_identifier, build_literal};
 use fhy_core::expr::pattern::{
     CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome, RewriteRule,
     apply_rewrite_rule, apply_rewrite_rules,
@@ -580,12 +580,11 @@ fn apply_rewrite_rules_rewrites_inside_a_piecewise_branch() {
 #[test]
 fn apply_rewrite_rules_rewrites_inside_call_arguments() {
     let (_, x) = build_identifier("x");
-    let expression =
-        Expression::call("f", [build_plus_zero(&x), build_literal(3)]).expect("a named call");
+    let expression = Expression::call(build_callee("f"), [build_plus_zero(&x), build_literal(3)]);
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
-    let expected = Expression::call("f", [x, build_literal(3)]).expect("a named call");
+    let expected = Expression::call(build_callee("f"), [x, build_literal(3)]);
     assert_eq!(outcome.output(), &expected);
 }
 
@@ -733,7 +732,7 @@ fn apply_rewrite_rules_visits_nodes_in_walk_order() {
     let piecewise =
         Expression::piecewise([(&c0, &v0), (&c1, &v1)], &otherwise).expect("a valid piecewise");
     let argument = build_literal(13);
-    let expression = Expression::call("f", [&piecewise, &argument]).expect("a named call");
+    let expression = Expression::call(build_callee("f"), [&piecewise, &argument]);
 
     let outcome = rewrite(&expression, &[rule]);
 

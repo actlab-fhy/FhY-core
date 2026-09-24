@@ -5,7 +5,7 @@
 //! one tree or of several trees. [`Expression::kind`] exposes the node as an
 //! [`ExpressionKind`] to match on. Equality and hashing are structural:
 //! two expressions are equal when they have the same shape, the same
-//! operations and call function names, identifiers with the same ids, and
+//! operations and callees, identifiers with the same ids, and
 //! equal literals (see [`LiteralValue`]). [`Expression::ptr_eq`] tells
 //! whether two handles share one node.
 //!
@@ -28,7 +28,8 @@ use crate::tree::{
 };
 
 use super::alpha::AlphaRenaming;
-use super::error::{FunctionNameError, PiecewiseError, RebuildError};
+use super::callee::Callee;
+use super::error::{PiecewiseError, RebuildError};
 use super::literal::LiteralValue;
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
@@ -152,8 +153,7 @@ fn is_node_data_equal(
             left.cases.len() == right.cases.len()
         }
         (ExpressionKind::Call(left), ExpressionKind::Call(right)) => {
-            left.function_name == right.function_name
-                && left.arguments.len() == right.arguments.len()
+            left.callee == right.callee && left.arguments.len() == right.arguments.len()
         }
         _ => false,
     }
@@ -197,8 +197,8 @@ fn is_tree_equal(
 
 /// Feed the data of `expression`'s node, excluding its children, to
 /// `hasher`: a tag for its kind, then its operation (and operand count for a
-/// logical node), identifier, literal, case count, or function name and
-/// argument count.
+/// logical node), identifier, literal, case count, or callee and argument
+/// count.
 fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
     match expression.kind() {
         ExpressionKind::Unary(node) => {
@@ -223,7 +223,7 @@ fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
         }
         ExpressionKind::Call(node) => {
             hasher.write_u8(5);
-            node.function_name.hash(hasher);
+            node.callee.hash(hasher);
             hasher.write_usize(node.arguments.len());
         }
         ExpressionKind::Logical(node) => {
@@ -409,6 +409,25 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 /// let remainder = Expression::from(Identifier::new("x")) % 3;
 /// ```
 ///
+/// A `bool` does not convert into an expression, so a comparison result
+/// cannot stand in for a Boolean constant by accident; a Boolean literal is
+/// [`Expression::literal`]`(true)`:
+///
+/// ```compile_fail,E0277
+/// use fhy_core::expr::{Expression, UnaryOperation};
+///
+/// let negated = Expression::new_unary(UnaryOperation::LogicalNot, true);
+/// ```
+///
+/// Nor does a string; a numeric text becomes a literal through
+/// [`LiteralValue::parse_text`]:
+///
+/// ```compile_fail,E0277
+/// use fhy_core::expr::{Expression, UnaryOperation};
+///
+/// let negated = Expression::new_unary(UnaryOperation::Negate, "1.5");
+/// ```
+///
 /// Expressions have no order: `<` does not compare them, and a comparison
 /// node is built with [`less`](Self::less) and its siblings.
 ///
@@ -438,7 +457,7 @@ pub enum ExpressionKind {
     Literal(LiteralValue),
     /// A first-match-wins choice among cases, with a fallback.
     Piecewise(PiecewiseExpression),
-    /// A named function applied to arguments.
+    /// A function applied to arguments.
     Call(CallExpression),
 }
 
@@ -479,13 +498,13 @@ pub struct PiecewiseExpression {
     otherwise: Expression,
 }
 
-/// A named function applied to argument expressions.
+/// A function applied to argument expressions: a built-in function or a
+/// named user function (see [`Callee`]).
 ///
-/// The function name is not empty. Neither the name nor the argument count is
-/// checked against any function catalogue.
+/// The argument count is not checked against a built-in function's arity.
 #[derive(Debug, Clone)]
 pub struct CallExpression {
-    function_name: Arc<str>,
+    callee: Callee,
     arguments: Box<[Expression]>,
 }
 
@@ -521,7 +540,7 @@ impl Expression {
     ///
     /// An identifier or a literal takes no children and returns a handle to
     /// itself. A piecewise rebuilt from `2n + 1` children has `n` cases; a
-    /// call keeps its function name. A logical node takes exactly its own
+    /// call keeps its callee. A logical node takes exactly its own
     /// operand count, so it keeps at least two operands, and keeps the
     /// children as given, never flattening a nested logical node into
     /// itself.
@@ -549,14 +568,21 @@ impl Expression {
                     children.try_into().map_err(|rejected: Vec<Expression>| {
                         build_child_count_mismatch(1, rejected.len())
                     })?;
-                Self::from(UnaryExpression::new(node.operation, operand))
+                Self::from_kind(ExpressionKind::Unary(UnaryExpression::new(
+                    node.operation,
+                    operand,
+                )))
             }
             ExpressionKind::Binary(node) => {
                 let [left, right]: [Expression; 2] =
                     children.try_into().map_err(|rejected: Vec<Expression>| {
                         build_child_count_mismatch(2, rejected.len())
                     })?;
-                Self::from(BinaryExpression::new(node.operation, left, right))
+                Self::from_kind(ExpressionKind::Binary(BinaryExpression::new(
+                    node.operation,
+                    left,
+                    right,
+                )))
             }
             ExpressionKind::Logical(node) => Self::from_kind(ExpressionKind::Logical(
                 LogicalExpression::new(node.operation, children.into_boxed_slice()),
@@ -570,15 +596,14 @@ impl Expression {
                 while let (Some(condition), Some(value)) = (children.next(), children.next()) {
                     cases.push((condition, value));
                 }
-                Self::from(
+                Self::from_kind(ExpressionKind::Piecewise(
                     PiecewiseExpression::try_new(cases, otherwise)
                         .map_err(RebuildError::Piecewise)?,
-                )
+                ))
             }
-            ExpressionKind::Call(node) => Self::from(CallExpression {
-                function_name: Arc::clone(&node.function_name),
-                arguments: children.into_boxed_slice(),
-            }),
+            ExpressionKind::Call(node) => Self::from_kind(ExpressionKind::Call(
+                CallExpression::new(node.callee.clone(), children),
+            )),
         };
         Ok(rebuilt)
     }
@@ -706,33 +731,9 @@ impl From<LiteralValue> for Expression {
     }
 }
 
-impl From<UnaryExpression> for Expression {
-    fn from(node: UnaryExpression) -> Self {
-        Self(Arc::new(ExpressionKind::Unary(node)))
-    }
-}
-
-impl From<BinaryExpression> for Expression {
-    fn from(node: BinaryExpression) -> Self {
-        Self(Arc::new(ExpressionKind::Binary(node)))
-    }
-}
-
-impl From<PiecewiseExpression> for Expression {
-    fn from(node: PiecewiseExpression) -> Self {
-        Self(Arc::new(ExpressionKind::Piecewise(node)))
-    }
-}
-
-impl From<CallExpression> for Expression {
-    fn from(node: CallExpression) -> Self {
-        Self(Arc::new(ExpressionKind::Call(node)))
-    }
-}
-
 impl PartialEq for Expression {
-    /// Compare structurally: same node kinds, operations and call function
-    /// names, identifiers with the same ids, equal literals, children equal
+    /// Compare structurally: same node kinds, operations and callees,
+    /// identifiers with the same ids, equal literals, children equal
     /// in order.
     fn eq(&self, other: &Self) -> bool {
         is_tree_equal(self, other, true, &|left, right| left == right)
@@ -911,21 +912,6 @@ pub(super) fn validate_condition_literal(
     Ok(())
 }
 
-/// Check a call's function name is not empty.
-///
-/// The constructor and the wire decoder share this check, so a payload is
-/// refused for the same reason before any of its identifiers is restored.
-///
-/// # Errors
-///
-/// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
-pub(super) fn validate_function_name(function_name: &str) -> Result<(), FunctionNameError> {
-    if function_name.is_empty() {
-        return Err(FunctionNameError::Empty);
-    }
-    Ok(())
-}
-
 impl PiecewiseExpression {
     /// Construct a piecewise from its `(condition, value)` cases, in
     /// evaluation order, and its otherwise branch; [`Expression::piecewise`]
@@ -966,27 +952,19 @@ impl PiecewiseExpression {
 }
 
 impl CallExpression {
-    /// Construct a call of `function_name` with `arguments` in order;
+    /// Construct a call of `callee` with `arguments` in order;
     /// [`Expression::call`] is the public way.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
-    pub(crate) fn try_new(
-        function_name: &str,
-        arguments: Vec<Expression>,
-    ) -> Result<Self, FunctionNameError> {
-        validate_function_name(function_name)?;
-        Ok(Self {
-            function_name: Arc::from(function_name),
+    pub(crate) fn new(callee: Callee, arguments: Vec<Expression>) -> Self {
+        Self {
+            callee,
             arguments: arguments.into_boxed_slice(),
-        })
+        }
     }
 
-    /// Return the function name.
+    /// Return the function the call applies.
     #[must_use]
-    pub fn function_name(&self) -> &str {
-        &self.function_name
+    pub fn callee(&self) -> &Callee {
+        &self.callee
     }
 
     /// Return the arguments in order.

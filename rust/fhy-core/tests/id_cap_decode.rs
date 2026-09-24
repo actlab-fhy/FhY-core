@@ -7,7 +7,7 @@
 //! them. Do not add a second test.
 
 use fhy_core::diagnostic::NoteKind;
-use fhy_core::expr::builtins::find_composed_function;
+use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::identifier::{ID_CAP, Identifier};
 use fhy_core::op_attribute::OpAttribute;
 use fhy_core::value_domain::ValueDomain;
@@ -32,7 +32,9 @@ fn deserializing_the_largest_payload_id_leaves_construction_working() {
     assert_eq!(NoteKind::other().name().id(), 3);
     assert_eq!(OpAttribute::commutative().name().id(), 16);
     assert_eq!(ValueDomain::data().name().id(), 32);
-    let gelu = find_composed_function("gelu").expect("gelu is a composed built-in");
+    let gelu = BuiltinFunction::Gelu
+        .composed()
+        .expect("gelu is a composed built-in");
     assert!(
         gelu.parameters()
             .iter()

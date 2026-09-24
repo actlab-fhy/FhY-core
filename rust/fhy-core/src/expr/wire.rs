@@ -18,11 +18,11 @@ use serde_json::{Number, Value};
 use crate::decode;
 use crate::identifier::{Identifier, IdentifierWire};
 
+use super::callee::{Callee, FunctionNameError};
 use super::literal::{Decimal, LiteralValue};
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
     PiecewiseExpression, UnaryExpression, validate_case_count, validate_condition_literal,
-    validate_function_name,
 };
 use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 
@@ -131,7 +131,7 @@ impl Serialize for NodeFields<'_> {
             }
             ExpressionKind::Call(node) => {
                 let mut fields = serializer.serialize_struct("CallExpression", 2)?;
-                fields.serialize_field("function_name", node.function_name())?;
+                fields.serialize_field("function_name", node.callee().name())?;
                 fields.serialize_field("arguments", node.arguments())?;
                 fields.end()
             }
@@ -246,7 +246,7 @@ enum PayloadNode {
         otherwise: Box<PayloadNode>,
     },
     Call {
-        function_name: String,
+        callee: Callee,
         arguments: Vec<PayloadNode>,
     },
 }
@@ -399,15 +399,14 @@ fn parse_call(data: &Value) -> Result<PayloadNode, String> {
             format_args!("expected a string, got {}", describe_value(function_name)),
         ));
     };
-    validate_function_name(function_name).map_err(|error| error.to_string())?;
+    let callee: Callee = function_name
+        .parse()
+        .map_err(|error: FunctionNameError| error.to_string())?;
     let arguments = read_list(arguments, "arguments")?
         .iter()
         .map(|argument| parse_node(argument).map_err(|error| add_field_context("arguments", error)))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(PayloadNode::Call {
-        function_name: function_name.clone(),
-        arguments,
-    })
+    Ok(PayloadNode::Call { callee, arguments })
 }
 
 /// Check the node the wire map `value` describes, and its whole subtree.
@@ -465,18 +464,18 @@ fn parse_node(value: &Value) -> Result<PayloadNode, String> {
 /// identifiers.
 fn build_node<E: de::Error>(node: PayloadNode) -> Result<Expression, E> {
     Ok(match node {
-        PayloadNode::Unary { operation, operand } => {
-            Expression::from(UnaryExpression::new(operation, build_node(*operand)?))
-        }
+        PayloadNode::Unary { operation, operand } => Expression::from_kind(ExpressionKind::Unary(
+            UnaryExpression::new(operation, build_node(*operand)?),
+        )),
         PayloadNode::Binary {
             operation,
             left,
             right,
-        } => Expression::from(BinaryExpression::new(
+        } => Expression::from_kind(ExpressionKind::Binary(BinaryExpression::new(
             operation,
             build_node(*left)?,
             build_node(*right)?,
-        )),
+        ))),
         PayloadNode::Logical {
             operation,
             operands,
@@ -498,19 +497,16 @@ fn build_node<E: de::Error>(node: PayloadNode) -> Result<Expression, E> {
                 .into_iter()
                 .map(|(condition, value)| Ok((build_node(condition)?, build_node(value)?)))
                 .collect::<Result<Vec<_>, E>>()?;
-            Expression::from(
+            Expression::from_kind(ExpressionKind::Piecewise(
                 PiecewiseExpression::try_new(cases, build_node(*otherwise)?).map_err(E::custom)?,
-            )
+            ))
         }
-        PayloadNode::Call {
-            function_name,
-            arguments,
-        } => {
+        PayloadNode::Call { callee, arguments } => {
             let arguments = arguments
                 .into_iter()
                 .map(build_node)
                 .collect::<Result<Vec<_>, E>>()?;
-            Expression::from(CallExpression::try_new(&function_name, arguments).map_err(E::custom)?)
+            Expression::from_kind(ExpressionKind::Call(CallExpression::new(callee, arguments)))
         }
     })
 }
