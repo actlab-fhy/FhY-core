@@ -8,11 +8,8 @@
 //! node once even when the tree shares it. Both keep their own work stack,
 //! so the depth of a tree is bounded by memory, not by the call stack.
 //!
-//! Both traversals hand a context of the caller's choosing to every hook: a
-//! `&mut C` that the traversal itself never reads. A visitor or rewriter
-//! that needs none implements the traits with the default `C = ()` and is
-//! called with `&mut ()`; the pass adapters of `fhy_core::pass` call theirs
-//! with the pass's context.
+//! Both traversals hand every hook a context `&mut C` of the caller's
+//! choosing, which they never read themselves.
 //!
 //! # Examples
 //!

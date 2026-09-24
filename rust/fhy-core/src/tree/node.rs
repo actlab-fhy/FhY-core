@@ -94,15 +94,14 @@ pub trait Tree: NodeHandle {
     fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, Self::RebuildError>;
 
     /// Return whether handles to this node other than this one may exist.
+    /// By default, `true`.
     ///
-    /// [`rewrite_tree`](super::rewrite_tree) remembers the result of every
-    /// node that may be shared, so each occurrence after the first reuses
-    /// it; a node that is not shared occurs once, and the rewrite skips
-    /// remembering it. By default every node may be shared. A handle type
-    /// that can tell a node has a single handle, such as by its reference
-    /// count, answers `false` for it to save the rewrite that bookkeeping. A
-    /// node that answers `false` although it occurs more than once is
-    /// rewritten at each occurrence.
+    /// [`rewrite_tree`](super::rewrite_tree) remembers the result of a
+    /// shared node for its later occurrences and skips that bookkeeping for
+    /// a node that is not shared. A handle type that can tell a node has a
+    /// single handle, such as by its reference count, may answer `false`
+    /// for it. A node that answers `false` although it occurs more than
+    /// once is rewritten at each occurrence.
     fn is_shared(&self) -> bool {
         true
     }

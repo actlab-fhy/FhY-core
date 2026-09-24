@@ -41,10 +41,9 @@ struct RewriteFrame<'t, N> {
     first_result: usize,
 }
 
-/// Finish `node`, whose `children` are all rewritten to `results` (`None`
-/// for a child that stays as it was): rebuild it if a child changed, then
-/// ask `rewriter` for its replacement. Return the result, or `None` when the
-/// node stays as it was, including when the result is `node` itself.
+/// Finish `node`, whose `children` are rewritten to `results` (`None` for
+/// an unchanged child): rebuild it if a child changed, then ask `rewriter`
+/// for its replacement. Return `None` when the result is `node` itself.
 fn finish_node<N, C, R>(
     node: &N,
     children: &[&N],
@@ -89,20 +88,17 @@ where
 /// every call of [`Rewriter::rewrite`].
 ///
 /// Every node's children are rewritten first, in [`Tree::children`] order.
-/// A node with a rewritten child is rebuilt from the rewritten children,
-/// keeping the handles of the children no rewrite touched, and
-/// [`Rewriter::rewrite`] then sees the rebuilt node (or the node itself when
-/// no child changed). A replacement is not rewritten again. A node whose
-/// result is the node itself, whether the rewriter or the rebuild returned
-/// it, counts as unchanged, so a node is rebuilt only when some child
-/// really changed.
+/// A node with a changed child is rebuilt around the rewritten children,
+/// and [`Rewriter::rewrite`] then sees the rebuilt node, or the node itself
+/// when no child changed. A replacement is not rewritten again. A result
+/// that is the original node itself, from the rewriter or the rebuild,
+/// counts as unchanged.
 ///
 /// A node the tree shares is rewritten once and its result reused at every
-/// occurrence, so the rewriter sees each distinct node once and a DAG costs
-/// time linear in its distinct nodes, provided [`Tree::is_shared`] answers
-/// `true` for every node that occurs more than once. The result is a handle
-/// to `root` itself exactly when no node changed, and every subtree nothing
-/// changed in keeps its handle. The rewrite itself never reads `cx`.
+/// occurrence, provided [`Tree::is_shared`] answers `true` for it, so a DAG
+/// costs time linear in its distinct nodes. Every subtree in which nothing
+/// changed keeps its handle, so the result is `root` itself exactly when
+/// nothing changed. The rewrite itself never reads `cx`.
 ///
 /// # Errors
 ///
