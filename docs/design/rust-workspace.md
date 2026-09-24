@@ -7547,3 +7547,69 @@ is manual, once, in step 6. Add a `pub use crate::tree::Tree;` to
   rewrite returns the matched node; only the tree no longer counts it as a
   change. `pattern/rewrite_stories.rs` and `pattern/properties.rs` flip
   their two identity-rewrite pins accordingly.
+
+- **Step 4 (B3a), scope and order:** B3 is split. B3a lands the literal
+  enum (F-026, F-013), `Expression::display` (F-015), `floor_mod` (F-010),
+  `!` (F-024's `Not` part), the n-ary `Logical` node and the bounded `Debug`
+  (F-003, D-5, R-7), the per-operation errors and the screen error
+  (F-014), and the associated builders (F-029). `BuiltinFunction`,
+  `Callee`, `FunctionName`, the `From` conversions, the serde derives and
+  `FromStr`, `BooleanScreen`, the flat node-list wire format, floats and
+  big integers as strings, the `arbitrary_precision` removal and
+  `expr::passes` are B3b's.
+- **Step 4 (B3a), decimal notation:** a decimal displays positionally
+  (B3 §5.3); `format_normalized_decimal` and the scientific writers go with
+  `python_repr.rs`. `Decimal` stores a `BigInt` coefficient, so its unit
+  tests compare `coefficient.to_string()` with the old digit strings.
+- **Step 4 (B3a), test helper:** B3 §8.1's `build_decimal_literal` always
+  builds a `Decimal`, integer texts included (`"5"` is the decimal 5). The
+  call sites that meant an integer text parse it with
+  `LiteralValue::parse_text` through a local `build_parsed_literal`.
+- **Step 4 (B3a), literal patterns:** until B4 decides, a literal pattern
+  matches the same variant with an equal raw value: floats by IEEE `==`
+  (`0.0` matches `-0.0`, a NaN matches nothing), integers and decimals by
+  value. Spellings no longer exist, so the pattern tests' "spelled
+  differently" cases move from the rejecting table to the matching one.
+- **Step 4 (B3a), interim wire form:** the envelope format stays for B3b
+  to replace. A decimal literal is written as a JSON string holding its
+  `Display` text, and a string decodes as a `Decimal`, never as an `Int`,
+  so round trips keep the variant. A logical node is
+  `{"__type__": "logical_expression", "__data__": {"operation": "and" |
+  "or", "operands": [...]}}`; fewer than two operands is refused with "a
+  logical node needs at least 2 operands, got {n}". `LogicalOperation`'s
+  serde goes through `impl_wire_name_traits` (expecting "a logical
+  operation name: and or or") until B3b's derive.
+- **Step 4 (B3a), `Expression::call`:** it keeps the `&str` name, so it
+  stays fallible and returns `FunctionNameError`, which has only `Empty`
+  for now; B3b adds `Builtin`, `FunctionName` and `Callee` and makes the
+  call infallible. `FunctionNameError` lives in `error.rs` until B3b
+  creates `callee.rs`.
+- **Step 4 (B3a), `substitute`:** it maps `RebuildError::ChildCount` to
+  `unreachable!`, because `rewrite_tree` rebuilds a node from exactly its
+  own children and `PiecewiseError` has no count variant. B3 §6 says
+  `substitute` maps no error to a panic; this is the one arm that would.
+- **Step 4 (B3a), non-exhaustive errors in tests:** `PiecewiseError` is
+  `#[non_exhaustive]`, so `expression_piecewise_errors_are_piecewise_errors`
+  (B3 §8.2) cannot match it without a wildcard arm from `tests/it`; it
+  maps each refusal through a match with a wildcard and asserts the
+  variants it gets.
+- **Step 4 (B3a), test names:** `BooleanScreen` is B3b's, so the new
+  screen tests of B3 §8.2/§8.3 are named after what exists:
+  `validate_logical_operands_reports_the_operand_index_of_a_logical_operand`
+  and `screen_error_parent_is_none_only_at_a_predicate_root`.
+- **Step 4 (B3a), screen message tests:** the tests that pinned the old
+  sentence now assert the refusal's operand, parent and position; the new
+  text is pinned once, in the position table, plus a predicate-root case
+  and a `BooleanPosition` display table.
+- **Step 4 (B3a), `Debug` tests:** the text is not pinned. The node tests
+  check a deep tree and a 64-level doubling DAG stay under 64 KiB, and the
+  `expression_debug_is_bounded` property checks every generated DAG stays
+  under 256 KiB. Two small-stack DAG tests in `node_stories` also switch
+  from `assert!(a == b)` to `assert_eq!`/`assert_ne!`, which the bounded
+  `Debug` makes safe.
+- **Step 4 (B3a), patterns over logical nodes:** there is no logical
+  pattern shape until B4, so the mirroring pattern property captures a
+  logical node whole, as a leaf, and a binary pattern never matches one.
+- **Step 4 (B3a), kept for B3b:** the `From<UnaryExpression>` and sibling
+  impls and `expression_from_node_struct_rewraps_the_node` stay (its `%`
+  becomes `floor_mod`); `FloorMod`'s symbol stays `%`.
