@@ -5,10 +5,9 @@ use pyo3::{PyErr, PyResult};
 
 /// Conversion of a core error into the Python exception the binding raises.
 ///
-/// A local trait, so the orphan rule allows implementing it for the core
-/// crate's error types; it forbids `From<CoreError> for PyErr`, since
-/// neither type is local. Each binding module implements it, next to its
-/// functions, for the core errors those functions raise.
+/// A local trait, because the orphan rule forbids `From<CoreError> for
+/// PyErr`. Each binding module implements it next to the functions that
+/// raise those errors.
 pub(crate) trait IntoPyErr {
     /// Return the Python exception for this error.
     fn into_py_err(self) -> PyErr;
@@ -17,10 +16,6 @@ pub(crate) trait IntoPyErr {
 /// `map_err` through [`IntoPyErr`] for any result whose error implements it.
 pub(crate) trait IntoPyResult<T> {
     /// Return the value, or the error converted with [`IntoPyErr`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the Python exception [`IntoPyErr`] gives for the error.
     fn into_py_result(self) -> PyResult<T>;
 }
 
