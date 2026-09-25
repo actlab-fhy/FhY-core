@@ -357,7 +357,7 @@ def test_real_param_bounded_construction_with_invalid_string_bounds_raises(
     than ``ParamError`` -- the failure is in expression construction, not in
     param-domain validation.
     """
-    with pytest.raises(ValueError, match="Invalid string-form literal expression"):
+    with pytest.raises(ValueError, match="invalid literal text"):
         param = factory()
         for name, args in ops:
             param = getattr(param, name)(*args)
@@ -536,7 +536,7 @@ def test_real_param_between_rejects_a_string_bound_outside_the_literal_grammar(
     lower_bound: float | str, upper_bound: float | str
 ) -> None:
     """Test a string bound the literal grammar refuses raises that literal's error."""
-    with pytest.raises(ValueError, match="Invalid string-form literal expression"):
+    with pytest.raises(ValueError, match="invalid literal text"):
         create_real_param_between(lower_bound, upper_bound)
 
 
