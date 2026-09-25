@@ -1727,7 +1727,7 @@ def test_a_new_expression_subclass_is_not_a_node_kind() -> None:
     """Test a Python subclass of `Expression` that is no node class cannot be built.
 
     The core's node kinds are closed (D-S4-1): a new kind of expression
-    cannot be added from Python, where the pure-Python backend derived a
+    cannot be added from Python, where the retired pure-Python core derived a
     new kind's equivalence from its dataclass fields.
     """
 
