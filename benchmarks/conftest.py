@@ -14,7 +14,6 @@ from typing import Any, ParamSpec, Protocol, TypeVar
 
 import pytest
 
-import fhy_core
 from fhy_core.diagnostic import (
     REMARK_NOTE_KIND,
     Diagnostic,
@@ -71,16 +70,6 @@ class Benchmark(Protocol):
         self, function: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs
     ) -> _T:
         """Time repeated calls of ``function`` and return one call's result."""
-
-
-def pytest_benchmark_update_machine_info(
-    config: pytest.Config, machine_info: dict[str, Any]
-) -> None:
-    """Record the backend the run measured in the saved benchmark data."""
-    _ = config
-    machine_info["fhy_core_backend"] = (
-        "rust" if fhy_core.RUST_BACKEND_SELECTED else "python"
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -25,23 +25,6 @@ from fhy_core.value_domain import (
     ValueDomain,
 )
 
-from .conftest import skip_on_rust_backend
-
-_SKIP_ON_RUST_CANONICAL_CONSTRUCTION = skip_on_rust_backend(
-    "D-S2-4: on the Rust backend, constructing a tag whose key is registered "
-    "returns the canonical instance itself"
-)
-_SKIP_ON_RUST_ONE_PARENT_PER_NAME = skip_on_rust_backend(
-    "D-S2-3: on the Rust backend a value domain's name decides its parent, so "
-    "constructing a registered name under another parent raises ValueError and "
-    "domains compare by name"
-)
-_SKIP_ON_RUST_APPEND_ONLY_REGISTRY = skip_on_rust_backend(
-    "D-S2-1: the Rust intern registries are append-only, so "
-    "clear_interned_registry and register_default_instances raise "
-    "NotImplementedError on the Rust backend"
-)
-
 # =============================================================================
 # Construction & traits
 # =============================================================================
@@ -96,17 +79,6 @@ def test_value_domain_blocks_attribute_mutation() -> None:
 # =============================================================================
 # Interning
 # =============================================================================
-
-
-@_SKIP_ON_RUST_CANONICAL_CONSTRUCTION
-def test_value_domain_first_constructed_with_key_is_canonical() -> None:
-    """Test `get_interned` returns the first instance registered under a name."""
-    name = Identifier("x")
-    first = ValueDomain(name, "first")
-    second = ValueDomain(name, "second")
-    canonical = ValueDomain.get_interned(name)
-    assert canonical is first
-    assert canonical is not second
 
 
 def test_value_domain_distinct_identifiers_intern_separately() -> None:
@@ -190,16 +162,6 @@ def test_value_domain_hash_ignores_description() -> None:
 def test_value_domain_unequal_when_names_differ() -> None:
     """Test instances with different `name`s compare unequal."""
     assert ValueDomain(Identifier("a"), "desc") != ValueDomain(Identifier("b"), "desc")
-
-
-@_SKIP_ON_RUST_ONE_PARENT_PER_NAME
-def test_value_domain_unequal_when_parents_differ() -> None:
-    """Test `__eq__` distinguishes domains with the same `name` but different
-    `parent`s, keeping equality aligned with structural equivalence."""
-    name = Identifier("child")
-    parented = ValueDomain(name, "desc", parent=DATA_DOMAIN)
-    orphan = ValueDomain(name, "desc")
-    assert parented != orphan
 
 
 # =============================================================================
@@ -417,41 +379,3 @@ def test_value_domain_deserialize_conflict_keeps_a_fresh_nested_parent() -> None
     fresh_parent = ValueDomain.get_interned(fresh_parent_name)
     assert fresh_parent is not None
     assert fresh_parent.description == "fresh parent"
-
-
-# =============================================================================
-# register_default_instances restores module-level canonicals
-# =============================================================================
-
-
-@_SKIP_ON_RUST_APPEND_ONLY_REGISTRY
-def test_clearing_registry_desyncs_module_level_constants_without_default_restore() -> (
-    None
-):
-    """Test clearing the registry desyncs the module-level constants."""
-    try:
-        ValueDomain.clear_interned_registry()
-        payload = DATA_DOMAIN.serialize_to_dict()
-        restored = ValueDomain.deserialize_from_dict(payload)
-        assert restored is not DATA_DOMAIN
-    finally:
-        ValueDomain.register_default_instances()
-
-
-@_SKIP_ON_RUST_APPEND_ONLY_REGISTRY
-def test_register_default_instances_restores_module_level_canonicals() -> None:
-    """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
-    try:
-        ValueDomain.clear_interned_registry()
-        ValueDomain.register_default_instances()
-
-        restored_data = ValueDomain.deserialize_from_dict(
-            DATA_DOMAIN.serialize_to_dict()
-        )
-        restored_address = ValueDomain.deserialize_from_dict(
-            ADDRESS_DOMAIN.serialize_to_dict()
-        )
-        assert restored_data is DATA_DOMAIN
-        assert restored_address is ADDRESS_DOMAIN
-    finally:
-        ValueDomain.register_default_instances()

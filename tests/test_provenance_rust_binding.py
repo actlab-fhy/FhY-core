@@ -1,13 +1,13 @@
 """Tests the Python interface of the Rust-backed provenance classes.
 
-On the Rust backend, ``Position``, ``Span``, ``Provenance`` and its five
-variant classes are thin Python subclasses of the ``fhy_core._rs`` classes
-over the Rust values (slice S3b of ``docs/design/python-switch.md``). Their
-behavioral suites run on both backends; this suite covers what the binding
-adds: the class hierarchy and the registration of the public classes,
-construction and its argument checks, path normalization, the dataclass
-reprs, equality and ordering, payloads and pickles checked against the
-pure-Python classes, frozen errors, and the recursion guard.
+``Position``, ``Span``, ``Provenance`` and its five variant classes are thin
+Python subclasses of the ``fhy_core._rs`` classes over the Rust values (slice
+S3b of ``docs/design/python-switch.md``). Their behavioral suites cover the
+provenance semantics; this suite covers what the binding adds: the class
+hierarchy and the registration of the public classes, construction and its
+argument checks, path normalization, the dataclass reprs, equality and
+ordering, the pinned payload text, pickles across processes, frozen errors,
+and the recursion guard.
 """
 
 import base64
@@ -46,12 +46,6 @@ from fhy_core.serialization import (
 from fhy_core.traits import EqualMixin, FrozenMixin, FrozenMutationError
 from fhy_core.utils.override import override
 
-from .conftest import build_backend_environment
-
-pytestmark = pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
-)
-
 _VARIANT_CLASSES = (
     UnknownProvenance,
     FileProvenance,
@@ -65,7 +59,7 @@ _PUBLIC_CLASSES = pytest.mark.parametrize(
     ids=lambda cls: cls.__name__,
 )
 
-# Builds one provenance of each shape, the same source text on both backends.
+# Builds one provenance of each shape, the same source text in every process.
 _BUILD_PROVENANCES_SOURCE = """
 from pathlib import Path
 from fhy_core.provenance import *
@@ -99,11 +93,10 @@ def _call(cls: Any, *arguments: Any, **keywords: Any) -> Any:
     return cls(*arguments, **keywords)
 
 
-def _run_python_on_the_python_backend(source: str, *, stdin: str = "") -> str:
-    """Run a program on the pure-Python backend and return its output."""
+def _run_python_in_a_fresh_process(source: str, *, stdin: str = "") -> str:
+    """Run a program in a fresh interpreter and return its output."""
     completed = subprocess.run(
         [sys.executable, "-c", source],
-        env=build_backend_environment("1"),
         input=stdin,
         capture_output=True,
         text=True,
@@ -457,7 +450,7 @@ def test_an_os_path_like_is_read_through_fspath() -> None:
 
 
 def test_reprs_match_the_dataclasses() -> None:
-    """Test each class renders as its pure-Python dataclass does."""
+    """Test each class renders in the dataclass `repr` form."""
     span = Span(0, 3, Position(1, 1), None)
     source = FileProvenance(Path("a.fhy"), span)
 
@@ -594,7 +587,7 @@ def test_provenances_round_trip_in_every_format(fmt: SerializationFormat) -> Non
 def test_malformed_payload_raises_the_python_structure_error(
     cls: type[Serializable], data: SerializedDict, owner: str
 ) -> None:
-    """Test a malformed payload raises the pure-Python structure error."""
+    """Test a malformed payload raises the framework's structure error."""
     with pytest.raises(DeserializationDictStructureError) as info:
         cls.deserialize_from_dict(data)
 
@@ -626,19 +619,91 @@ def test_decoding_a_file_payload_normalizes_its_path() -> None:
     assert provenance.file_path == Path("a/b")
 
 
-@pytest.mark.subprocess
-def test_payloads_match_the_python_backend() -> None:
-    """Test every shape serializes to the pure-Python backend's JSON text."""
-    rust_payloads = [provenance.to_json() for provenance in _build_provenances()]
+def _build_file_payload(file_path: str, span: SerializedDict) -> SerializedDict:
+    """Return the payload of a file provenance."""
+    return {
+        "__type__": "provenance.file",
+        "__data__": {"file_path": file_path, "span": span},
+    }
 
-    python_payloads = _run_python_on_the_python_backend(
-        _BUILD_PROVENANCES_SOURCE
-        + "import fhy_core, json\n"
-        + "assert not fhy_core.RUST_BACKEND_SELECTED\n"
-        + "print(json.dumps([provenance.to_json() for provenance in provenances]))\n"
-    )
 
-    assert json.loads(python_payloads) == rust_payloads
+def _build_fused_payload(
+    sources: list[SerializedDict], metadata: str | None
+) -> SerializedDict:
+    """Return the payload of a fused provenance."""
+    return {
+        "__type__": "provenance.fused",
+        "__data__": {"metadata": metadata, "sources": sources},
+    }
+
+
+_UNKNOWN_PAYLOAD: SerializedDict = {"__type__": "provenance.unknown", "__data__": {}}
+_SOURCE_PAYLOAD = _build_file_payload(
+    "a.fhy",
+    {
+        "start_offset": 0,
+        "end_offset": 3,
+        "start_position": {"line": 1, "column": 1},
+        "end_position": {"line": 1, "column": 4},
+    },
+)
+_OTHER_PAYLOAD = _build_file_payload(
+    "b/c.fhy",
+    {
+        "start_offset": 5,
+        "end_offset": None,
+        "start_position": None,
+        "end_position": None,
+    },
+)
+# The payload of each provenance `_build_provenances` returns, in order: the
+# wire format the pure-Python classes wrote, which the Rust-backed classes
+# keep (decision 4 of docs/design/python-switch.md).
+_EXPECTED_PAYLOADS: list[SerializedDict] = [
+    _UNKNOWN_PAYLOAD,
+    _SOURCE_PAYLOAD,
+    _OTHER_PAYLOAD,
+    _build_file_payload(
+        "d.fhy",
+        {
+            "start_offset": None,
+            "end_offset": None,
+            "start_position": None,
+            "end_position": None,
+        },
+    ),
+    {
+        "__type__": "provenance.named",
+        "__data__": {"name": "fhy.add", "child": _UNKNOWN_PAYLOAD},
+    },
+    {
+        "__type__": "provenance.named",
+        "__data__": {"name": "lib", "child": _SOURCE_PAYLOAD},
+    },
+    {
+        "__type__": "provenance.call_site",
+        "__data__": {
+            "callee": {
+                "__type__": "provenance.named",
+                "__data__": {"name": "inlined", "child": _SOURCE_PAYLOAD},
+            },
+            "caller": _OTHER_PAYLOAD,
+        },
+    },
+    _build_fused_payload([_SOURCE_PAYLOAD, _OTHER_PAYLOAD], None),
+    _build_fused_payload(
+        [_build_fused_payload([_SOURCE_PAYLOAD], "cse"), _UNKNOWN_PAYLOAD], ""
+    ),
+]
+
+
+def test_payloads_keep_the_pinned_json_text() -> None:
+    """Test every shape serializes to its pinned JSON text, keys sorted."""
+    payloads = [provenance.to_json() for provenance in _build_provenances()]
+
+    assert payloads == [
+        json.dumps(payload, sort_keys=True) for payload in _EXPECTED_PAYLOADS
+    ]
 
 
 # =============================================================================
@@ -790,20 +855,18 @@ def test_copies_are_equal_new_objects() -> None:
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickles_load_across_backends() -> None:
-    """Test provenances pickled on either backend load on the other one."""
+def test_pickles_load_across_processes() -> None:
+    """Test provenances pickled in one process load in another one."""
     provenances = _build_provenances()
-    rust_pickle = base64.b64encode(pickle.dumps(provenances)).decode("ascii")
+    this_process_pickle = base64.b64encode(pickle.dumps(provenances)).decode("ascii")
 
-    python_pickle = _run_python_on_the_python_backend(
+    fresh_process_pickle = _run_python_in_a_fresh_process(
         _BUILD_PROVENANCES_SOURCE
         + "import base64, pickle, sys\n"
-        + "import fhy_core\n"
-        + "assert not fhy_core.RUST_BACKEND_SELECTED\n"
         + "restored = pickle.loads(base64.b64decode(sys.stdin.read()))\n"
         + "assert restored == provenances\n"
         + "print(base64.b64encode(pickle.dumps(restored)).decode('ascii'))",
-        stdin=rust_pickle,
+        stdin=this_process_pickle,
     )
 
-    assert pickle.loads(base64.b64decode(python_pickle)) == provenances
+    assert pickle.loads(base64.b64decode(fresh_process_pickle)) == provenances

@@ -8,9 +8,7 @@ here and its output compared with the committed corpus outside the
 so differs between runs.
 
 The generators mutate process-global state (interned registries and the
-identifier counter), so each one runs in a fresh interpreter. That
-interpreter inherits this process's environment, so a corpus is checked on
-whichever backend the test run selected.
+identifier counter), so each one runs in a fresh interpreter.
 """
 
 import difflib

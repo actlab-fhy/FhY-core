@@ -1,20 +1,17 @@
 """Benchmarks of the expression tree's hot paths.
 
-They measure the expression API before and after it switched to the Rust
-core (S4). The switch gave expressions the Rust semantics on the Rust
-backend (decision D-S4-1 of ``docs/design/python-switch.md``): ``==`` and
-``hash`` are structural, literals are normalized, the logical connectives
-are one n-ary node, and the printed text is the core's. The pure-Python
-backend keeps the old semantics until it is retired, so no benchmark
-asserts a result whose value differs between the backends, and the
-helpers the switch affects are marked ``D-S4-1``:
+They measured the expression API before and after it switched to the Rust
+core (S4), which gave expressions the Rust semantics (decision D-S4-1 of
+``docs/design/python-switch.md``): ``==`` and ``hash`` are structural,
+literals are normalized, the logical connectives are one n-ary node, and
+the printed text is the core's. The benchmarks were written to run on the
+pure-Python implementation too, so they assert no result that D-S4-1
+changed, and the helpers the switch affected are marked ``D-S4-1``:
 
 - :func:`_build_conjunction` builds a conjunction, one n-ary
-  ``LogicalExpression`` on the Rust backend and a chain of binary nodes on
-  the pure-Python one;
-- :func:`_build_distinct_equal_trees` returns trees whose ``==`` is true
-  (structural) on the Rust backend and false (identity) on the pure-Python
-  one; the benchmarks time it without checking.
+  ``LogicalExpression``;
+- :func:`_build_distinct_equal_trees` returns trees whose ``==`` is
+  structural and true; the benchmarks time it without checking.
 """
 
 import operator
@@ -112,9 +109,9 @@ def _build_doubling_dag(identifier: Identifier, depth: int) -> Expression:
 def _build_distinct_equal_trees() -> tuple[Expression, Expression]:
     """Return two separately built, structurally equal small trees.
 
-    D-S4-1: on the Rust backend ``==`` of the two is structural and true;
-    on the pure-Python backend it is identity and false. The benchmarks
-    time the call and do not assert its result.
+    D-S4-1: ``==`` of the two is structural and true; it was identity and
+    false before the switch. The benchmarks time the call and do not
+    assert its result.
     """
     x = Identifier("x")
     return IdentifierExpression(x) + 1, IdentifierExpression(x) + 1
@@ -123,9 +120,8 @@ def _build_distinct_equal_trees() -> tuple[Expression, Expression]:
 def _build_conjunction(operands: Sequence[Expression]) -> Expression:
     """Return the conjunction of `operands`.
 
-    D-S4-1: on the Rust backend one n-ary ``LogicalExpression`` of all
-    the operands; on the pure-Python backend a right-folded chain of
-    binary ``LOGICAL_AND`` nodes.
+    D-S4-1: one n-ary ``LogicalExpression`` of all the operands; before
+    the switch it was a right-folded chain of binary ``LOGICAL_AND`` nodes.
     """
     return logical_and(*operands)
 

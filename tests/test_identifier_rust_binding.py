@@ -13,7 +13,6 @@ from typing import NamedTuple
 
 import pytest
 
-import fhy_core
 from fhy_core.identifier import (
     Identifier,
     _PythonIdCounter,  # the reference implementation of the Rust counter
@@ -167,26 +166,10 @@ def test_python_counter_issues_the_largest_id_then_fails() -> None:
 # =============================================================================
 
 
-@pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
-)
-def test_public_identifier_draws_ids_from_the_rust_counter_when_selected() -> None:
-    """Test the public class shares the Rust counter on the Rust backend."""
+def test_public_identifier_draws_ids_from_the_rust_counter() -> None:
+    """Test the public class shares the Rust counter."""
     first = Identifier("first")
     allocated = _RUST_COUNTER.allocate()
     second = Identifier("second")
 
     assert (allocated, second.id) == (first.id + 1, first.id + 2)
-
-
-@pytest.mark.skipif(
-    fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is selected"
-)
-def test_public_identifier_leaves_the_rust_counter_alone_when_unselected() -> None:
-    """Test the public class never draws from the Rust counter on the Python backend."""
-    before = _RUST_COUNTER.allocate()
-    Identifier("public")
-    Identifier.deserialize_from_dict({"id": before + 1000, "name_hint": "far"})
-    after = _RUST_COUNTER.allocate()
-
-    assert after == before + 1

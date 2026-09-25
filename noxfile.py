@@ -15,8 +15,6 @@ ROOT = pathlib.Path(__file__).parent
 # benchmarks back each class's switch to Rust, so both pass the same lint and
 # type gates as the package.
 SOURCES = ["src", "tests", "benchmarks", "rust/fhy-core/tests/golden"]
-# `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
-BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
 # Where the benchmark session saves its runs (gitignored).
 BENCHMARK_DIRECTORY = ROOT / ".benchmarks"
@@ -58,30 +56,10 @@ def _sync(session: nox.Session, *groups: str) -> None:
     )
 
 
-def _select_backend(session: nox.Session, backend: str) -> None:
-    """Select the session's backend and fail unless the package reports it."""
-    session.env["FHY_CORE_NO_EXTENSIONS"] = BACKEND_EXTENSION_SETTINGS[backend]
-    is_rust_expected = backend == "rust"
-    session.run(
-        "python",
-        "-c",
-        "import sys, fhy_core; "
-        f"sys.exit(None if fhy_core.RUST_BACKEND_SELECTED is {is_rust_expected} "
-        f"else 'expected RUST_BACKEND_SELECTED to be {is_rust_expected}')",
-    )
-
-
 @nox.session(python=PYTHONS)
-@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
-def tests(session: nox.Session, backend: str) -> None:
-    """Run the unit and integration test suite under coverage on one backend.
-
-    ``FHY_CORE_NO_EXTENSIONS`` selects the backend, and the session fails
-    before testing unless the package reports the backend it was asked for,
-    so an extension that silently fails to import cannot pass as a Rust run.
-    """
+def tests(session: nox.Session) -> None:
+    """Run the unit and integration test suite under coverage."""
     _sync(session, "test")
-    _select_backend(session, backend)
     # Start coverage inside pytest-xdist worker subprocesses.
     purelib = session.run(
         "python",
@@ -142,18 +120,13 @@ def coverage(session: nox.Session) -> None:
 
 
 @nox.session
-@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
-def property(session: nox.Session, backend: str) -> None:
-    """Run hypothesis-based property tests under the thorough profile on one backend.
+def property(session: nox.Session) -> None:
+    """Run hypothesis-based property tests under the thorough profile.
 
     This is the CI release gate (opt-in locally); it forces
     ``HYPOTHESIS_PROFILE=thorough`` regardless of the caller's environment.
-    As in ``tests``, the session fails before testing unless the package
-    reports the backend it was asked for, so the Rust run cannot silently skip
-    the tests that need the extension.
     """
     _sync(session, "property")
-    _select_backend(session, backend)
     # No success_codes override: exit 5 (nothing collected) must fail, so a
     # marker typo or a collection error cannot pass as a clean run.
     session.run(
@@ -166,20 +139,15 @@ def property(session: nox.Session, backend: str) -> None:
 
 
 @nox.session(python=PYTHONS)
-@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
-def benchmark(session: nox.Session, backend: str) -> None:
-    """Run the pytest-benchmark benchmarks under ``benchmarks/`` on one backend.
+def benchmark(session: nox.Session) -> None:
+    """Run the pytest-benchmark benchmarks under ``benchmarks/``.
 
-    Opt-in: neither a default session nor a CI job. As in ``tests``, the
-    session fails before benchmarking unless the package reports the backend
-    it was asked for. Every run is saved under
-    ``.benchmarks/storage/<backend>/``, so passing ``--benchmark-compare``
-    compares a run with the previous one on the same backend, and the run's
-    results are also written to ``.benchmarks/<python>-<backend>.json`` for
-    comparing the two backends with ``pytest-benchmark compare``.
+    Opt-in: neither a default session nor a CI job. Every run is saved under
+    ``.benchmarks/storage/``, so passing ``--benchmark-compare`` compares a
+    run with the previous one, and the run's results are also written to
+    ``.benchmarks/<python>.json`` for ``pytest-benchmark compare``.
     """
     _sync(session, "bench", "test")
-    _select_backend(session, backend)
     session.run(
         "pytest",
         "benchmarks",
@@ -189,8 +157,8 @@ def benchmark(session: nox.Session, backend: str) -> None:
         "-n",
         "0",
         "--benchmark-autosave",
-        f"--benchmark-storage={BENCHMARK_DIRECTORY / 'storage' / backend}",
-        f"--benchmark-json={BENCHMARK_DIRECTORY / f'{session.python}-{backend}.json'}",
+        f"--benchmark-storage={BENCHMARK_DIRECTORY / 'storage'}",
+        f"--benchmark-json={BENCHMARK_DIRECTORY / f'{session.python}.json'}",
         *session.posargs,
     )
 
@@ -203,7 +171,7 @@ def golden_expanded(session: nox.Session) -> None:
     review; each generator can also write a much larger random corpus, which
     its equivalence test replays in an ignored test that reads the corpus
     path from an environment variable. The session writes every expanded
-    corpus from the pure-Python oracle into a temporary directory and runs
+    corpus from its Python oracle into a temporary directory and runs
     the matching ignored test on it. It needs ``cargo`` on ``PATH`` and fails
     if a generator has no expanded settings in ``EXPANDED_GOLDEN_CORPORA``.
     """
@@ -219,7 +187,6 @@ def golden_expanded(session: nox.Session) -> None:
             "add them to EXPANDED_GOLDEN_CORPORA in noxfile.py"
         )
     _sync(session)
-    _select_backend(session, "python")
     # Absolute: `cargo test -p fhy-core` runs its test binaries with the
     # fhy-core crate directory as the working directory, not the repository
     # root nox itself runs from, so a relative corpus path would miss.

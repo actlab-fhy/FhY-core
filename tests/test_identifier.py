@@ -14,7 +14,6 @@ from typing import Any, NamedTuple
 
 import pytest
 
-import fhy_core
 from fhy_core import identifier as identifier_module
 from fhy_core.diagnostic import (
     OTHER_NOTE_KIND,
@@ -38,8 +37,6 @@ from fhy_core.serialization import (
 from fhy_core.traits import Equal, Frozen, FrozenMutationError, PartialEqual
 from fhy_core.utils.override import override
 from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN
-
-from .conftest import build_backend_environment
 
 # =============================================================================
 # Construction & ID generation
@@ -569,7 +566,7 @@ def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
 # =============================================================================
 # Id space bound
 #
-# Ids are unsigned 64-bit integers under both backends. A payload id must lie
+# Ids are unsigned 64-bit integers. A payload id must lie
 # below the cap `2**63`, so no payload can raise the counter past `2**63` and
 # exhaust the id space: fresh ids above the cap stay available.
 # =============================================================================
@@ -607,10 +604,8 @@ def test_rejected_deserialization_of_2_pow_63_leaves_the_counter() -> None:
 
 
 _DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM = (
-    "import fhy_core\n"
     "from fhy_core.identifier import Identifier\n"
     "from fhy_core.serialization import DeserializationValueError\n"
-    "print(fhy_core.RUST_BACKEND_SELECTED, flush=True)\n"
     "largest = Identifier.deserialize_from_dict("
     "{'id': 2**63 - 1, 'name_hint': 'largest'})\n"
     "print(largest.id, flush=True)\n"
@@ -624,24 +619,15 @@ _DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM = (
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-@pytest.mark.parametrize("backend", ["rust", "python"])
-def test_deserializing_the_largest_payload_id_leaves_construction_working(
-    backend: str,
-) -> None:
+def test_deserializing_the_largest_payload_id_leaves_construction_working() -> None:
     """Test a payload id of `2**63 - 1` leaves fresh ids to construct.
 
     The child process deserializes the largest payload id, which leaves the
     counter at `2**63`, constructs two identifiers, which take the next two
-    ids, and then fails to deserialize the cap itself. The child reports the
-    backend it selected, so a stale extension that falls back to Python
-    cannot pass as the Rust case.
+    ids, and then fails to deserialize the cap itself.
     """
-    if backend == "rust":
-        pytest.importorskip("fhy_core._rs")
-
     completed = subprocess.run(
         [sys.executable, "-c", _DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM],
-        env=build_backend_environment("0" if backend == "rust" else "1"),
         capture_output=True,
         text=True,
         check=False,
@@ -649,7 +635,6 @@ def test_deserializing_the_largest_payload_id_leaves_construction_working(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
-        str(backend == "rust"),
         str(2**63 - 1),
         f"{2**63} {2**63 + 1}",
         "DeserializationValueError",
@@ -735,7 +720,7 @@ def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
     """Test a fresh process issues ids contiguously upward from `65_536`.
 
     Ids below `65_536` are reserved for the identifiers the package ships,
-    so the counter starts there on both backends. Every id alive after
+    so the counter starts there. Every id alive after
     package initialization below `65_536` is a shipped identifier's reserved
     id, the smallest id the counter issued during initialization is `65_536`
     (or, when initialization constructs no identifier, the first
@@ -779,7 +764,7 @@ def test_python_counter_starts_at_the_reserved_block() -> None:
 # =============================================================================
 # Reserved ids of the shipped identifiers
 #
-# The shipped tags hold fixed ids from the reserved block on both backends
+# The shipped tags hold fixed ids from the reserved block
 # (decision D-S2-2 of docs/design/python-switch.md), from a table that must
 # match the Rust crate's `fhy_core::identifier::reserved` entry for entry.
 # =============================================================================
@@ -905,8 +890,8 @@ def test_identifier_rejects_name_hint_mutation_after_construction() -> None:
 def test_identifier_stores_its_id_and_name_hint_as_plain_values() -> None:
     """Test an identifier's state is its `int` id and `str` name hint alone.
 
-    No backend object is held, so reading the id and comparing or hashing
-    identifiers never leaves Python.
+    No extension object is held, so reading the id and comparing or
+    hashing identifiers never leaves Python.
     """
     identifier = Identifier("x")
 
@@ -956,25 +941,12 @@ class _GlobalRecordingUnpickler(pickle.Unpickler):
         return super().find_class(module_name, global_name)
 
 
-def _build_environment_for_the_other_backend() -> dict[str, str]:
-    """Return this process's environment, switched to the unselected backend.
-
-    Skips the calling test when this process runs on the pure-Python
-    backend and the Rust extension is not installed.
-    """
-    if fhy_core.RUST_BACKEND_SELECTED:
-        return build_backend_environment("1")
-    pytest.importorskip("fhy_core._rs")
-    return build_backend_environment(None)
-
-
-def _run_python_under_the_other_backend(
+def _run_python_in_a_fresh_process(
     source: str, *arguments: str, stdin: str | None = None
 ) -> list[str]:
-    """Run a program on the unselected backend and return its output words."""
+    """Run a program in a fresh interpreter and return its output words."""
     completed = subprocess.run(
         [sys.executable, "-c", source, *arguments],
-        env=_build_environment_for_the_other_backend(),
         input=stdin,
         capture_output=True,
         text=True,
@@ -1014,8 +986,8 @@ def test_pickle_round_trip_preserves_equality_and_frozen_state() -> None:
 def test_pickle_refers_to_no_class_but_the_public_identifier(protocol: int) -> None:
     """Test a pickled identifier holds plain data plus the public class only.
 
-    Only the public class appears in the pickle, so it loads under either
-    backend.
+    Only the public class appears in the pickle, so it loads in any process
+    that can import the package.
     """
     identifier = Identifier("plain")
     unpickler = _GlobalRecordingUnpickler(pickle.dumps(identifier, protocol))
@@ -1056,56 +1028,51 @@ def test_restoring_pickled_state_advances_the_global_id_counter() -> None:
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickle_written_under_this_backend_loads_under_the_other() -> None:
-    """Test a pickle from this backend restores, frozen, under the other one.
+def test_pickle_written_in_this_process_loads_in_a_fresh_one() -> None:
+    """Test a pickle from this process restores, frozen, in a fresh one.
 
-    Unpickling in the other process also advances that process's counter
+    Unpickling in the fresh process also advances that process's counter
     past the restored id.
     """
     far_id = Identifier("anchor").id + 1_000_000
     identifier = Identifier.deserialize_from_dict({"id": far_id, "name_hint": "far"})
     payload = base64.b64encode(pickle.dumps(identifier)).decode("ascii")
 
-    output = _run_python_under_the_other_backend(
+    output = _run_python_in_a_fresh_process(
         "import base64, pickle, sys\n"
-        "import fhy_core\n"
         "from fhy_core.identifier import Identifier\n"
         "restored = pickle.loads(base64.b64decode(sys.stdin.read()))\n"
-        "print(fhy_core.RUST_BACKEND_SELECTED, restored.id, restored.name_hint,\n"
-        "      restored.is_frozen, Identifier('after').id)",
+        "print(restored.id, restored.name_hint, restored.is_frozen,\n"
+        "      Identifier('after').id)",
         stdin=payload,
     )
 
-    other_backend, restored_id, name_hint, is_frozen, after_id = output
-    assert other_backend == str(not fhy_core.RUST_BACKEND_SELECTED)
+    restored_id, name_hint, is_frozen, after_id = output
     assert (int(restored_id), name_hint, is_frozen) == (far_id, "far", "True")
     assert int(after_id) > far_id
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickle_written_under_the_other_backend_loads_under_this_one() -> None:
-    """Test a pickle from the other backend restores, frozen, under this one.
+def test_pickle_written_in_a_fresh_process_loads_in_this_one() -> None:
+    """Test a pickle from a fresh process restores, frozen, in this one.
 
     Unpickling here also advances this process's counter past the restored
     id.
     """
     far_id = Identifier("anchor").id + 1_000_000
 
-    other_backend, payload = _run_python_under_the_other_backend(
+    (payload,) = _run_python_in_a_fresh_process(
         "import base64, pickle, sys\n"
-        "import fhy_core\n"
         "from fhy_core.identifier import Identifier\n"
         "identifier = Identifier.deserialize_from_dict(\n"
         "    {'id': int(sys.argv[1]), 'name_hint': 'far'}\n"
         ")\n"
-        "print(fhy_core.RUST_BACKEND_SELECTED,\n"
-        "      base64.b64encode(pickle.dumps(identifier)).decode('ascii'))",
+        "print(base64.b64encode(pickle.dumps(identifier)).decode('ascii'))",
         str(far_id),
     )
     restored = pickle.loads(base64.b64decode(payload))
 
-    assert other_backend == str(not fhy_core.RUST_BACKEND_SELECTED)
     assert isinstance(restored, Identifier)
     assert (restored.id, restored.name_hint) == (far_id, "far")
     assert restored.is_frozen

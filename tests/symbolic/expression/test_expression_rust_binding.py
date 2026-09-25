@@ -1,7 +1,7 @@
 """Tests for the Python interface over the Rust-backed expressions.
 
-On the Rust backend the expression classes are thin Python subclasses of
-``fhy_core._rs`` classes (pattern P2 of ``docs/design/python-switch.md``).
+The expression classes are thin Python subclasses of ``fhy_core._rs``
+classes (pattern P2 of ``docs/design/python-switch.md``).
 These tests cover what the binding adds around the core: the class
 structure and the public-class registration, argument checks, the child
 objects a node keeps, deep trees, and the protocols the classes stand in
@@ -13,7 +13,6 @@ import weakref
 
 import pytest
 
-import fhy_core
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
@@ -34,10 +33,6 @@ from fhy_core.symbolic.expression import (
     validate_logical_operands,
 )
 from fhy_core.traits import FrozenMixin, HasOperands, VisitableMixin
-
-pytestmark = pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_SELECTED, reason="covers the Rust backend's binding"
-)
 
 _NODE_CLASSES = [
     (UnaryExpression, _rs.UnaryExpression),

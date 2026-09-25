@@ -9,9 +9,9 @@
 # dispatch — never on dev PRs.
 #
 # The rust and rust-msrv jobs cover the crate directly, and the deny job checks
-# its dependency graph with cargo-deny (deny.toml): the Python jobs only
-# compile it as an extension module and reach it through the identifier
-# bindings. The tests job also checks the golden corpora those crate tests
+# its dependency graph with cargo-deny (deny.toml): the Python jobs build it
+# into the extension module the package requires and reach it only through
+# the Python API. The tests job also checks the golden corpora those crate tests
 # replay against the Python generators that record them
 # (tests/test_golden_corpora.py).
 # ci-ok aggregates the required jobs into one check.

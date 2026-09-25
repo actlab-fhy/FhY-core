@@ -8,13 +8,17 @@ submodule (``fhy_core.symbolic.param``, ``fhy_core.symbolic.expression``,
 ``import fhy_core`` (e.g. ``fhy_core.symbolic.param.create_integer_param``).
 Only the ownerless primitives used across every subsystem are re-exported at
 the top level.
+
+The package requires its compiled Rust extension, ``fhy_core._rs``: importing
+``fhy_core`` raises ``ImportError`` naming the cause when the extension is
+missing, fails to import, or does not match the installed package's version.
 """
 
 from importlib.metadata import version
-from typing import Final
 
+# Checks the required extension before any module imports it.
+from . import _extension  # isort: skip
 from . import (
-    _backend,
     diagnostic,
     error,
     identifier,
@@ -37,21 +41,7 @@ from .identifier import Identifier
 
 __version__ = version("fhy_core")
 
-RUST_BACKEND_SELECTED: Final[bool] = _backend.IS_RUST_BACKEND_SELECTED
-"""Whether this process runs on the Rust extension rather than pure Python.
-
-True exactly when the extension ``fhy_core._rs`` is installed, imports, has a
-``__version__`` matching the installed package's version, and is not disabled
-through the ``FHY_CORE_NO_EXTENSIONS`` environment variable. The extension's
-Cargo version is PEP 440-normalized before the comparison (``0.3.0-rc.1``
-matches ``0.3.0rc1``). The variable leaves the extension enabled when it is
-unset, empty, or one of ``0``, ``false``, ``no``, and ``off`` (case-insensitive,
-ignoring surrounding whitespace); any other value disables it. The value is
-fixed when the package is imported.
-"""
-
 __all__ = [
-    "RUST_BACKEND_SELECTED",
     "Identifier",
     "diagnostic",
     "error",

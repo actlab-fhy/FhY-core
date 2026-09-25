@@ -1,10 +1,10 @@
 """Tests the Python interface of the Rust-backed diagnostics.
 
-On the Rust backend, ``Note``, ``Diagnostic`` and ``ValidationReport`` are
-thin Python subclasses of the ``fhy_core._rs`` classes over the Rust values,
-and ``DiagnosticLevel`` converts by value at the boundary (slice S3 of
-``docs/design/python-switch.md``). Their behavioral suites run on both
-backends; this suite covers what the binding adds: construction and its
+``Note``, ``Diagnostic`` and ``ValidationReport`` are thin Python subclasses
+of the ``fhy_core._rs`` classes over the Rust values, and ``DiagnosticLevel``
+converts by value at the boundary (slice S3 of
+``docs/design/python-switch.md``). Their behavioral suites cover the
+diagnostics' semantics; this suite covers what the binding adds: construction and its
 argument checks, the dataclass reprs and ``format()`` text, equality,
 payloads and pickles, frozen errors, and the registration of the public
 classes.
@@ -46,12 +46,6 @@ from fhy_core.traits import (
     PartialEqualMixin,
 )
 from fhy_core.utils.override import override
-
-from .conftest import build_backend_environment
-
-pytestmark = pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
-)
 
 _PUBLIC_CLASSES = pytest.mark.parametrize(
     "cls", [Note, Diagnostic, ValidationReport], ids=lambda cls: cls.__name__
@@ -172,7 +166,7 @@ def test_note_rejects_arguments_of_the_wrong_type(
 
 
 def test_note_repr_and_str_match_the_dataclass() -> None:
-    """Test a note renders as the pure-Python dataclass does."""
+    """Test a note renders in the dataclass `repr` form."""
     note = Note("it's here", OTHER_NOTE_KIND)
 
     assert repr(note) == f'Note(message="it\'s here", kind={_OTHER_KIND_REPR})'
@@ -250,7 +244,7 @@ def test_note_payload_registers_a_new_kind() -> None:
 def test_malformed_note_payload_raises_the_python_structure_error(
     data: SerializedDict, owner: str
 ) -> None:
-    """Test a malformed payload raises the pure-Python structure error."""
+    """Test a malformed payload raises the framework's structure error."""
     with pytest.raises(DeserializationDictStructureError) as info:
         Note.deserialize_from_dict(data)
 
@@ -325,7 +319,7 @@ def test_diagnostic_rejects_arguments_of_the_wrong_type(
 
 
 def test_diagnostic_repr_matches_the_dataclass() -> None:
-    """Test a diagnostic renders as the pure-Python dataclass does."""
+    """Test a diagnostic renders in the dataclass `repr` form."""
     diagnostic = Diagnostic(DiagnosticLevel.ERROR, Note("m"), "s", "d")
 
     assert repr(diagnostic) == (
@@ -466,7 +460,7 @@ def test_report_with_an_unhashable_record_is_unhashable() -> None:
 
 
 def test_report_repr_matches_the_dataclass() -> None:
-    """Test a report renders as the pure-Python dataclass does."""
+    """Test a report renders in the dataclass `repr` form."""
     report = ValidationReport((), ("record",))
 
     assert repr(report) == "ValidationReport(diagnostics=(), records=('record',))"
@@ -556,11 +550,10 @@ def test_copies_are_equal_new_objects() -> None:
     assert copy.deepcopy(report) is not report
 
 
-def _run_python_on_the_python_backend(source: str, *, stdin: str) -> str:
-    """Run a program on the pure-Python backend and return its output."""
+def _run_python_in_a_fresh_process(source: str, *, stdin: str) -> str:
+    """Run a program in a fresh interpreter and return its output."""
     completed = subprocess.run(
         [sys.executable, "-c", source],
-        env=build_backend_environment("1"),
         input=stdin,
         capture_output=True,
         text=True,
@@ -571,21 +564,19 @@ def _run_python_on_the_python_backend(source: str, *, stdin: str) -> str:
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickles_load_across_backends() -> None:
-    """Test a report pickled on either backend loads on the other one."""
+def test_pickles_load_across_processes() -> None:
+    """Test a report pickled in one process loads in another one."""
     report = _build_mixed_report()
-    rust_pickle = base64.b64encode(pickle.dumps(report)).decode("ascii")
+    this_process_pickle = base64.b64encode(pickle.dumps(report)).decode("ascii")
 
-    python_pickle = _run_python_on_the_python_backend(
+    fresh_process_pickle = _run_python_in_a_fresh_process(
         "import base64, pickle, sys\n"
-        "import fhy_core\n"
         "from fhy_core.diagnostic import OTHER_NOTE_KIND\n"
-        "assert not fhy_core.RUST_BACKEND_SELECTED\n"
         "report = pickle.loads(base64.b64decode(sys.stdin.read()))\n"
         "assert report.diagnostics[0].message.kind is OTHER_NOTE_KIND\n"
         "assert type(report.diagnostics).__name__ == 'tuple'\n"
         "print(base64.b64encode(pickle.dumps(report)).decode('ascii'))",
-        stdin=rust_pickle,
+        stdin=this_process_pickle,
     )
 
-    assert pickle.loads(base64.b64decode(python_pickle)) == report
+    assert pickle.loads(base64.b64decode(fresh_process_pickle)) == report

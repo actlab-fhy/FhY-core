@@ -27,18 +27,6 @@ from fhy_core.serialization import (
 )
 from fhy_core.traits import Frozen, FrozenMutationError, Interned, StructuralEquivalence
 
-from .conftest import skip_on_rust_backend
-
-_SKIP_ON_RUST_CANONICAL_CONSTRUCTION = skip_on_rust_backend(
-    "D-S2-4: on the Rust backend, constructing a tag whose key is registered "
-    "returns the canonical instance itself"
-)
-_SKIP_ON_RUST_APPEND_ONLY_REGISTRY = skip_on_rust_backend(
-    "D-S2-1: the Rust intern registries are append-only, so "
-    "clear_interned_registry and register_default_instances raise "
-    "NotImplementedError on the Rust backend"
-)
-
 # =============================================================================
 # Construction & traits
 # =============================================================================
@@ -92,17 +80,6 @@ def test_op_attribute_blocks_attribute_mutation() -> None:
 # =============================================================================
 # Interning
 # =============================================================================
-
-
-@_SKIP_ON_RUST_CANONICAL_CONSTRUCTION
-def test_op_attribute_first_constructed_with_key_is_canonical() -> None:
-    """Test `get_interned` returns the first instance registered under a name."""
-    name = Identifier("x")
-    first = OpAttribute(name, "first")
-    second = OpAttribute(name, "second")
-    canonical = OpAttribute.get_interned(name)
-    assert canonical is first
-    assert canonical is not second
 
 
 def test_op_attribute_distinct_identifiers_intern_separately() -> None:
@@ -295,22 +272,3 @@ def test_op_attribute_deserialize_does_not_warn_when_descriptions_match(
     assert not any(
         "already canonical" in record.getMessage() for record in caplog.records
     )
-
-
-# =============================================================================
-# register_default_instances restores module-level canonicals
-# =============================================================================
-
-
-@_SKIP_ON_RUST_APPEND_ONLY_REGISTRY
-def test_register_default_instances_restores_module_level_op_attributes() -> None:
-    """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
-    try:
-        OpAttribute.clear_interned_registry()
-        OpAttribute.register_default_instances()
-
-        for canonical in (COMMUTATIVE, ASSOCIATIVE, PURE, ELEMENTWISE):
-            restored = OpAttribute.deserialize_from_dict(canonical.serialize_to_dict())
-            assert restored is canonical
-    finally:
-        OpAttribute.register_default_instances()

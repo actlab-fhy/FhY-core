@@ -1,11 +1,11 @@
 """Tests the Python interface of the Rust-backed interned tags.
 
-On the Rust backend, ``OpAttribute``, ``NoteKind`` and ``ValueDomain`` are
-thin Python subclasses of the ``fhy_core._rs`` classes over the Rust
-registries (slice S2 of ``docs/design/python-switch.md``). Their behavioral
-suites run on both backends; this suite covers what the binding adds:
-canonical identity, lookup, payloads and pickles, frozen errors, and the
-decisions D-S2-1, D-S2-3 and D-S2-4.
+``OpAttribute``, ``NoteKind`` and ``ValueDomain`` are thin Python subclasses
+of the ``fhy_core._rs`` classes over the Rust registries (slice S2 of
+``docs/design/python-switch.md``). Their behavioral suites cover the tags'
+semantics; this suite covers what the binding adds: canonical identity,
+lookup, payloads and pickles, frozen errors, and the decisions D-S2-1,
+D-S2-3 and D-S2-4.
 """
 
 import base64
@@ -46,12 +46,6 @@ from fhy_core.serialization import (
 from fhy_core.traits import FrozenMixin, FrozenMutationError, InternedMixin
 from fhy_core.utils.override import override
 from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain
-
-from .conftest import build_backend_environment
-
-pytestmark = pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
-)
 
 _Tag = OpAttribute | NoteKind | ValueDomain
 
@@ -244,7 +238,7 @@ def test_require_interned_raises_the_python_key_error(cls: type[_Tag]) -> None:
 
 @_TAG_CLASSES
 def test_serialize_to_dict_keeps_the_python_payload_shape(cls: type[_Tag]) -> None:
-    """Test the payload is the pure-Python classes' `serialize_to_dict` shape."""
+    """Test the payload keeps the Python `serialize_to_dict` shape."""
     name = Identifier("binding-payload-shape")
     tag = cls(name, "desc")
 
@@ -336,11 +330,7 @@ class _GlobalRecordingUnpickler(pickle.Unpickler):
 def test_pickle_refers_only_to_the_public_class(
     tag: _Tag, module_name: str, reserved_id: int, name_hint: str
 ) -> None:
-    """Test a pickle names the public class, never `fhy_core._rs`.
-
-    The pure-Python classes pickle the same way, so a pickle loads under
-    either backend.
-    """
+    """Test a pickle names the public class, never `fhy_core._rs`."""
     del reserved_id, name_hint
     unpickler = _GlobalRecordingUnpickler(pickle.dumps(tag))
 
@@ -351,11 +341,10 @@ def test_pickle_refers_only_to_the_public_class(
     ]
 
 
-def _run_python_on_the_python_backend(source: str, *, stdin: str | None = None) -> str:
-    """Run a program on the pure-Python backend and return its output."""
+def _run_python_in_a_fresh_process(source: str, *, stdin: str | None = None) -> str:
+    """Run a program in a fresh interpreter and return its output."""
     completed = subprocess.run(
         [sys.executable, "-c", source],
-        env=build_backend_environment("1"),
         input=stdin,
         capture_output=True,
         text=True,
@@ -366,9 +355,9 @@ def _run_python_on_the_python_backend(source: str, *, stdin: str | None = None) 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickles_of_shipped_tags_are_identical_on_both_backends() -> None:
-    """Test each shipped tag pickles to the same bytes on either backend (D-S2-2)."""
-    rust_pickles = [
+def test_pickles_of_shipped_tags_are_identical_in_every_process() -> None:
+    """Test each shipped tag pickles to the same bytes in a fresh process (D-S2-2)."""
+    this_process_pickles = [
         base64.b64encode(pickle.dumps(tag)).decode("ascii")
         for tag, _, _, _ in _SHIPPED_TAGS
     ]
@@ -377,11 +366,9 @@ def test_pickles_of_shipped_tags_are_identical_on_both_backends() -> None:
         for tag, module_name, reserved_id, name_hint in _SHIPPED_TAGS
     ]
 
-    python_pickles = _run_python_on_the_python_backend(
+    fresh_process_pickles = _run_python_in_a_fresh_process(
         "import base64, importlib, pickle, sys\n"
-        "import fhy_core\n"
         "from fhy_core.identifier import Identifier\n"
-        "assert not fhy_core.RUST_BACKEND_SELECTED\n"
         "for key in sys.stdin.read().split():\n"
         "    module_name, class_name, reserved_id, name_hint = key.split(':')\n"
         "    cls = getattr(importlib.import_module(module_name), class_name)\n"
@@ -393,34 +380,32 @@ def test_pickles_of_shipped_tags_are_identical_on_both_backends() -> None:
         stdin=" ".join(shipped_keys),
     ).split()
 
-    assert python_pickles == rust_pickles
+    assert fresh_process_pickles == this_process_pickles
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickle_of_a_new_domain_loads_under_the_python_backend() -> None:
-    """Test a domain chain pickled on the Rust backend loads on the Python one."""
+def test_pickle_of_a_new_domain_loads_in_a_fresh_process() -> None:
+    """Test a domain chain pickled in this process loads in a fresh one."""
     child = ValueDomain(Identifier("binding-pickled"), "child", parent=ADDRESS_DOMAIN)
     payload = base64.b64encode(pickle.dumps(child)).decode("ascii")
 
-    output = _run_python_on_the_python_backend(
+    output = _run_python_in_a_fresh_process(
         "import base64, pickle, sys\n"
-        "import fhy_core\n"
         "from fhy_core.value_domain import ADDRESS_DOMAIN\n"
         "child = pickle.loads(base64.b64decode(sys.stdin.read()))\n"
-        "print(fhy_core.RUST_BACKEND_SELECTED, child.name.id, child.description,\n"
-        "      child.parent is ADDRESS_DOMAIN)",
+        "print(child.name.id, child.description, child.parent is ADDRESS_DOMAIN)",
         stdin=payload,
     )
 
-    assert output.split() == ["False", str(child.name.id), "child", "True"]
+    assert output.split() == [str(child.name.id), "child", "True"]
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_pickle_from_the_python_backend_loads_as_the_canonical_tag() -> None:
-    """Test a pickle written on the Python backend loads as the canonical tag."""
-    payload = _run_python_on_the_python_backend(
+def test_pickle_from_a_fresh_process_loads_as_the_canonical_tag() -> None:
+    """Test a pickle written in a fresh process loads as the canonical tag."""
+    payload = _run_python_in_a_fresh_process(
         "import base64, pickle\n"
         "from fhy_core.op_attribute import PURE\n"
         "print(base64.b64encode(pickle.dumps(PURE)).decode('ascii'))"
@@ -436,7 +421,7 @@ def test_pickle_from_the_python_backend_loads_as_the_canonical_tag() -> None:
 
 @_TAG_CLASSES
 def test_malformed_payload_raises_the_python_structure_error(cls: type[_Tag]) -> None:
-    """Test a malformed payload raises the pure-Python classes' structure error."""
+    """Test a malformed payload raises the framework's structure error."""
     data: SerializedDict = {"name": 1, "description": "desc"}
     expected_structure: dict[str, Any] = {"name": dict, "description": str}
     if cls is ValueDomain:
@@ -594,7 +579,7 @@ def test_tags_of_different_classes_are_not_equivalent() -> None:
     ids=["OpAttribute", "NoteKind", "ValueDomain"],
 )
 def test_repr_matches_the_dataclass_repr(tag: _Tag, expected: str) -> None:
-    """Test `repr` renders as the pure-Python dataclasses' `repr` does."""
+    """Test `repr` renders in the dataclass `repr` form."""
     assert repr(tag) == expected
 
 
