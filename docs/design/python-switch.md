@@ -559,7 +559,8 @@ These are as in S2:
 
 S3 lands in two steps. S3a switches `DiagnosticLevel` (P1), `Note`,
 `Diagnostic` and `ValidationReport` (P2); `ValidationFailedError` stays a
-Python exception class. S3b, the provenance family, is still to do.
+Python exception class. S3b switches the provenance family; see "S3b
+status" below.
 
 S3a was implemented on 2026-09-24 in seven commits: the new benchmarks
 (6d0a28d), the public-class registration with S2's tags moved onto it
@@ -748,3 +749,275 @@ Choices the plan above left open, made while implementing S3a:
   its structure errors, `raise_if_failed`, the frozen errors and the
   `__orig_class__` carve-out, and pickles, including a round trip through
   a Python-backend subprocess.
+
+### S3b status
+
+S3b switches `Position`, `Span`, `Provenance` and its five variant
+classes to pattern P2, as a class hierarchy; `HasProvenance` stays a
+Python protocol. It was implemented on 2026-09-24 in seven commits: the
+new benchmarks (af5b1cd), the helpers shared with the diagnostics binding
+(653375b), the binding (f509ffd), the backend multiplexing (44b5596), the
+interface tests (9219e89), and a fix of a `str` regression the first
+benchmark run found (1babb93). The whole Python suite passes on both
+backends with no test skipped or changed; the only new skips are the new
+interface suite's, which runs on the Rust backend only.
+
+### S3b benchmarks (before and after)
+
+Median time per call, from `uv run --python 3.11 nox -s
+"benchmark-3.11(backend='python')" "benchmark-3.11(backend='rust')"`
+restricted with `-k "provenance or span or position"`, on the S0 machine
+with Python 3.11.13. "Before" is af5b1cd, which adds the field-read,
+`str`, `repr`, ordering and round-trip benchmarks to the S0 set; "after"
+is 1babb93. The machine was shared, with a load average of about 18, so
+each configuration ran three times, interleaved as in S3a, and the table
+lists the best of the three medians. Within a configuration the medians
+agreed to a few percent, but whole configurations were offset from each
+other: the "python before" and "python after" columns measure identical
+code throughout, and the "rust before" column, which also measures the
+dataclasses, is up to twice as fast as both. The field-read rows show it
+most, at 95 ns against 178 ns for the same dataclass read. So the ratio
+column overstates the cost of every cheap path; compare the "rust after"
+column with "python after" as well.
+
+| Benchmark | python before | rust before | python after | rust after | rust after / rust before |
+|---|--:|--:|--:|--:|--:|
+| `test_span_construction` | 15.4 µs | 13.2 µs | 15.7 µs | 1.51 µs | 0.11 |
+| `test_unknown_provenance_construction` | 3.73 µs | 3.10 µs | 3.69 µs | 319 ns | 0.10 |
+| `test_file_provenance_construction` | 4.39 µs | 4.20 µs | 4.32 µs | 1.01 µs | 0.24 |
+| `test_named_provenance_construction` | 4.50 µs | 3.86 µs | 4.55 µs | 724 ns | 0.19 |
+| `test_call_site_provenance_construction` | 4.40 µs | 3.74 µs | 4.43 µs | 785 ns | 0.21 |
+| `test_fused_provenance_construction` | 4.46 µs | 3.80 µs | 4.24 µs | 810 ns | 0.21 |
+| `test_provenance_eq[unknown]` | 237 ns | 167 ns | 221 ns | 191 ns | 1.15 |
+| `test_provenance_eq[file]` | 368 ns | 344 ns | 367 ns | 204 ns | 0.59 |
+| `test_provenance_eq[named]` | 571 ns | 582 ns | 562 ns | 228 ns | 0.39 |
+| `test_provenance_eq[call_site]` | 1.25 µs | 975 ns | 1.24 µs | 256 ns | 0.26 |
+| `test_provenance_eq[fused]` | 1.25 µs | 1.01 µs | 1.25 µs | 273 ns | 0.27 |
+| `test_provenance_hash[unknown]` | 254 ns | 193 ns | 249 ns | 219 ns | 1.13 |
+| `test_provenance_hash[file]` | 1.18 µs | 940 ns | 1.18 µs | 394 ns | 0.42 |
+| `test_provenance_hash[named]` | 1.38 µs | 1.08 µs | 1.37 µs | 431 ns | 0.40 |
+| `test_provenance_hash[call_site]` | 1.93 µs | 1.55 µs | 1.94 µs | 591 ns | 0.38 |
+| `test_provenance_hash[fused]` | 1.97 µs | 1.53 µs | 1.94 µs | 613 ns | 0.40 |
+| `test_provenance_fuse_of_two` | 7.06 µs | 6.26 µs | 7.27 µs | 1.18 µs | 0.19 |
+| `test_provenance_fuse_with_reductions` | 9.26 µs | 7.89 µs | 9.11 µs | 1.82 µs | 0.23 |
+| `test_position_construction` | 4.66 µs | 4.13 µs | 4.65 µs | 377 ns | 0.09 |
+| `test_position_attribute_access` | 177 ns | 96 ns | 178 ns | 198 ns | 2.06 |
+| `test_position_lt` | 370 ns | 201 ns | 367 ns | 181 ns | 0.90 |
+| `test_span_attribute_access` | 247 ns | 126 ns | 245 ns | 266 ns | 2.11 |
+| `test_span_str` | 1.36 µs | 752 ns | 1.41 µs | 705 ns | 0.94 |
+| `test_provenance_attribute_access[file]` | 178 ns | 95 ns | 175 ns | 190 ns | 2.00 |
+| `test_provenance_attribute_access[named]` | 188 ns | 95 ns | 188 ns | 201 ns | 2.12 |
+| `test_provenance_attribute_access[call_site]` | 175 ns | 95 ns | 177 ns | 200 ns | 2.12 |
+| `test_provenance_attribute_access[fused]` | 190 ns | 95 ns | 187 ns | 192 ns | 2.02 |
+| `test_provenance_str[unknown]` | 214 ns | 97 ns | 203 ns | 346 ns | 3.58 |
+| `test_provenance_str[file]` | 1.60 µs | 1.02 µs | 1.86 µs | 897 ns | 0.88 |
+| `test_provenance_str[named]` | 2.20 µs | 1.35 µs | 2.48 µs | 1.03 µs | 0.76 |
+| `test_provenance_str[call_site]` | 2.87 µs | 1.76 µs | 3.27 µs | 1.22 µs | 0.69 |
+| `test_provenance_str[fused]` | 3.36 µs | 2.14 µs | 3.86 µs | 1.32 µs | 0.62 |
+| `test_provenance_repr[unknown]` | 832 ns | 499 ns | 937 ns | 605 ns | 1.21 |
+| `test_provenance_repr[file]` | 4.55 µs | 2.85 µs | 5.13 µs | 4.14 µs | 1.45 |
+| `test_provenance_repr[named]` | 5.41 µs | 3.50 µs | 6.09 µs | 5.01 µs | 1.43 |
+| `test_provenance_repr[call_site]` | 7.89 µs | 5.15 µs | 9.02 µs | 7.47 µs | 1.45 |
+| `test_provenance_repr[fused]` | 8.51 µs | 5.50 µs | 9.80 µs | 8.23 µs | 1.50 |
+| `test_provenance_dict_round_trip[unknown]` | 8.40 µs | 5.48 µs | 9.65 µs | 3.70 µs | 0.68 |
+| `test_provenance_dict_round_trip[file]` | 65.8 µs | 46.5 µs | 76.5 µs | 34.1 µs | 0.73 |
+| `test_provenance_dict_round_trip[named]` | 94.9 µs | 66.4 µs | 107.6 µs | 59.9 µs | 0.90 |
+| `test_provenance_dict_round_trip[call_site]` | 137.8 µs | 137.9 µs | 157.4 µs | 86.8 µs | 0.63 |
+| `test_provenance_dict_round_trip[fused]` | 146.5 µs | 144.9 µs | 176.5 µs | 72.4 µs | 0.50 |
+
+Because of that offset, the same operations were also timed in one
+process: a Rust-backend interpreter loaded a second copy of the
+pure-Python classes (the module's Python branch, executed without type
+registration) and alternated the two implementations of each operation
+under `timeit`, seven rounds of 20,000 calls, keeping the best. Those
+ratios are the basis for the verdict:
+
+| Operation | dataclass | Rust-backed | ratio |
+|---|--:|--:|--:|
+| `Position(2, 5)` | 4.5 µs | 389 ns | 0.09 |
+| `Span(...)`, four bounds | 5.7 µs | 619 ns | 0.11 |
+| `NamedProvenance(...)` | 4.3 µs | 607 ns | 0.14 |
+| position fields | 176 ns | 176 ns | 1.00 |
+| span fields | 224 ns | 225 ns | 1.01 |
+| provenance fields (file, named, call site, fused) | 212–214 ns | 217–220 ns | 1.02–1.03 |
+| position `<` | 310 ns | 160 ns | 0.52 |
+| span `str` | 876 ns | 413 ns | 0.47 |
+| unknown `==`, `hash` | 162, 171 ns | 140, 163 ns | 0.86, 0.95 |
+| unknown `str` | 79 ns | 98 ns | 1.24 |
+| unknown `repr` | 799 ns | 403 ns | 0.50 |
+| file, named, call site, fused `==` | 1.5–2.8 µs | 202–250 ns | 0.09–0.13 |
+| file, named, call site, fused `hash` | 1.1–1.9 µs | 415–649 ns | 0.31–0.38 |
+| file, named, call site, fused `str` | 1.8–3.9 µs | 651 ns–1.0 µs | 0.27–0.36 |
+| file, named, call site, fused `repr` | 5.2–10.0 µs | 3.8–7.7 µs | 0.72–0.77 |
+| `Provenance.fuse` of two | 7.5 µs | 1.2 µs | 0.16 |
+
+(The provenance `==` rows compare two separately built trees; the nox
+benchmark compares trees that share their path and span objects, which
+the dataclass's tuple comparison short-cuts by identity.)
+
+Every hot path but one is faster on the Rust backend, or unchanged within
+noise, so no path needs a pattern change and provenance stays P2:
+
+- **Construction** drops by 4 to 10 times: a type check per argument and
+  a Rust value, with no dataclass `__init__`, `__post_init__`,
+  `FrozenMixin.__new__` or field-type bookkeeping. A file provenance's
+  benchmark includes reading the path's text, and a span's includes its
+  two positions.
+- **`==`, `hash`, `str` and `fuse`** run in Rust: 3 to 10 times faster on
+  the composite provenances.
+- **Field reads** cost what a dataclass's cost, since the variant classes
+  keep their field objects as struct members.
+- **`repr`** is somewhat faster: it still calls each field's `repr`, and
+  a `pathlib.Path`'s is Python code.
+- **The dict round trip** is 1.1 to 2 times faster: the envelope and the
+  derived decoding's `construct_from_fields` stay Python.
+
+**The one slower path: `str` of an unknown provenance**, 98 ns against
+79 ns. The dataclass's `__str__` is a Python function returning a
+constant; the Rust one returns one interned `str` (1babb93 cut it from
+about 3 times the dataclass's cost), and the rest is the cost of
+entering the extension. It is about 20 ns per call, on a path that
+renders no information; the maintainer may accept it as a recorded cost
+(CONTRIBUTING "Replacing a Python class") or give the public
+`UnknownProvenance` a Python `__str__` returning the constant.
+
+### S3b implementation notes
+
+Choices the plan above left open, made while implementing S3b:
+
+- **Core additions.** None. The binding uses the public API of
+  `fhy_core::provenance`: `Position::try_new`, the `Span` builders,
+  `FileProvenance::new`, `NamedProvenance::try_new`,
+  `CallSiteProvenance::new`, `FusedProvenance::new` and `labelled`, and
+  `Provenance`'s `Eq`, `Hash` and `Display`. It builds a span bound by
+  bound (`with_start_offset`, `with_end_offset`, then the positions), so
+  the core reports the pair out of order that the dataclass's
+  `__post_init__` reports first.
+- **`str` from the core's `Display`.** Unlike the diagnostics, the
+  provenance types' `Display` impls render exactly the Python text, and
+  their rustdoc specifies it, so `__str__` returns the core's rendering
+  instead of a second renderer in the binding. The suites of both backends
+  pin the text. The unknown provenance returns one interned `str`: the
+  first benchmark run measured the formatted `String` at several times
+  the dataclass's constant (1babb93).
+- **The hierarchy.** `_rs.Provenance` is a `#[pyclass(subclass, frozen)]`
+  base holding the Rust `Provenance` and the tree's depth, and implements
+  equality, hashing, the frozen members, `unknown` and `fuse`. Each variant
+  is an `#[pyclass(extends = PyProvenance, subclass, frozen)]` class
+  holding its field objects as `#[pyo3(get)]` `Py` members, which Python
+  reads as struct members, as S3a's classes do. The public classes are
+  `Provenance(_rs.Provenance, WrappedFamilySerializable, EqualMixin, ABC)`,
+  which keeps `__str__` abstract, and `X(_rs.X, Provenance)` for each
+  variant. That MRO puts the public `Provenance` between a variant's `_rs`
+  class and `_rs.Provenance`, so each variant's `_rs` class defines its
+  own `__str__`: one defined on `_rs.Provenance` would be shadowed by the
+  abstract stub. `_rs.Provenance` has no constructor, so `Provenance()`
+  raises `PyO3`'s `TypeError` ("No constructor defined") where the Python
+  backend raises the ABC's `TypeError`.
+- **The envelope comes from the Python mixin.** The public classes
+  inherit `serialize_to_dict` and `deserialize_from_dict` from
+  `WrappedFamilySerializable`, which writes and reads
+  `{"__type__": .., "__data__": ..}` and resolves the type id through the
+  Python registry, and the `_rs` classes implement only
+  `serialize_data_to_dict` and `deserialize_data_from_dict`. `Position`
+  and `Span` are plain `Serializable`s and implement both dict methods.
+  The data payloads are built from the field objects; a nested
+  serializable field is encoded by its own `serialize_to_dict`, as the
+  derived codec does. Decoding mirrors the derived path: the structure
+  check (`FieldShape` gained `Int`, `OptionalInt`, `OptionalStr` and
+  `PayloadList`), nested values decoded through the registered public
+  classes (`Position`, `Span`, and `Provenance` for children, as the
+  derived codecs decode through the annotated classes), then
+  `cls.construct_from_fields`, with a `ValueError` or `TypeError` outside
+  the serialization hierarchy wrapped as `DeserializationValueError` with
+  its message, in a new shared helper `construct_from_decoded_fields`.
+- **Parity check.** Besides the suites, a differential probe printed, on
+  each backend, the reprs, `str`, dict, JSON and binary payloads,
+  round-trips and pickles of every shape, `fuse` results with their debug
+  log lines, and every validation and malformed-payload error with its
+  class and message; the two outputs were identical. The new suite
+  compares the JSON payloads with a pure-Python-backend subprocess.
+- **No seed construction.** Provenance has no canonical identity, so each
+  class's own `__new__` is its constructor, and S2's seed and
+  `_new_canonical` pattern, which exists because a `PyO3` `#[new]` cannot
+  return an existing object, is not needed. The values the binding
+  creates in Rust, `unknown()` and `fuse`'s results, are built by calling
+  the registered public class.
+- **Registration and Rust-created children.** All eight classes register
+  their public class at import. In S3b, every child a provenance returns
+  (`child`, `callee`, `caller`, `sources`) is the Python object it was
+  built from, and nothing builds a provenance tree in Rust: the only
+  provenances built in Rust are `fuse`'s and `unknown()`'s results, whose
+  children are the inputs. As in S3a, the builder from a Rust
+  `Provenance` tree to the public classes arrives with the first slice
+  that produces trees in Rust, S4, and changes only Rust.
+- **`fuse` walks the Python objects.** It does not call the core's
+  `Provenance::fuse`. It walks the argument objects with the same explicit
+  stack and the same flattening rule, reading each object's Rust variant,
+  so a single survivor is returned itself and a fused result's sources
+  are the input objects, as in Python; no Python object is rebuilt (a
+  `pathlib.Path` alone costs about 1 µs); and the debug log reports
+  Python's counts, which the core does not expose. `metadata` becomes the
+  Rust label. The property tests of `fuse` run on both backends.
+- **File paths.** `file_path` may be a `str` or an `os.PathLike` whose
+  `__fspath__` returns a `str`; a `PurePath` is read through `str`. The
+  core normalizes the text; its rules match `pathlib.PurePosixPath`,
+  checked on Python 3.11 to 3.14 for every path of up to four tokens from
+  `a`, `b`, `/`, `.`, `..`, `~`, a space, a backslash and `C:`, and for
+  random longer ones. The field returns the given `PurePath` when its text
+  is already normal, so `provenance.file_path is path` holds for a
+  `Path`, as for the dataclass, and otherwise a new `pathlib.Path` of the
+  normal text. The dataclass stored whatever it was given, so a `str`
+  path now comes back as a `Path`, and `FileProvenance("a")` equals
+  `FileProvenance(Path("a"))`. A path whose text is not valid UTF-8 (a
+  surrogate-escaped name) raises `UnicodeEncodeError`, since the core
+  stores a `String`. On Windows, the core treats a backslash as an
+  ordinary character and compares case-sensitively, so a `WindowsPath`
+  does not normalize as `PureWindowsPath` does; CI runs POSIX only.
+- **Stricter arguments.** `__post_init__`'s errors keep their classes and
+  messages, in Python's check order. Beyond them, on the Rust backend: a
+  line, column or offset above `2**64 - 1` raises `OverflowError` (the
+  dataclasses accepted any `int`); a span's positions must be `Position`s
+  or `None`, a file provenance's span a `Span` or `None`, a name a `str`,
+  a child, callee, caller, source or `fuse` argument a `Provenance`, and
+  `metadata` a `str` or `None`. Each raises `TypeError` in S2's style
+  (`NamedProvenance child must be a Provenance, got NoneType.`). The
+  dataclasses accepted anything, and a span failed only when it compared
+  two positions of another class. `sources` may be any iterable and is
+  stored as a tuple.
+- **Equality and hashing.** `==` returns `NotImplemented` unless both
+  objects have exactly the same class, as a dataclass's does, and then
+  compares the Rust values. Below the top level, the Rust values compare
+  by variant, so a child of a user subclass of a variant equals the same
+  child of the variant itself, where the dataclasses compared the classes
+  at every level. Hashes come from `DefaultHasher`; equal values still
+  hash equally.
+- **Recursion guard.** Equality, hashing and `Display` recurse on the Rust
+  stack. Each provenance records its tree's depth, and those three raise
+  `RecursionError` when it exceeds `sys.getrecursionlimit()`, which the
+  binding reads only for trees deeper than 64 levels. The dataclasses
+  raise `RecursionError` near the same depth. Without the guard, `str` of
+  a 200,000-level chain crashed the interpreter with a segmentation
+  fault (measured with the recursion limit raised to let it through).
+  `repr`, payloads and pickles recurse through Python calls, which
+  Python's own limit guards, and deallocating such a chain is safe. With
+  a raised recursion limit, a tree deep enough can still overflow the
+  stack, as a C-level recursion in the dataclasses can.
+- **Pickles.** All eight classes pickle as a call of their class with
+  their fields, `(type(self), fields)`, on both backends; the pure-Python
+  dataclasses gained that `__reduce__`, as S3a's did. A pickle written by
+  an older version on the Python backend still loads there, but not on the
+  Rust backend.
+- **Dataclass machinery.** On the Rust backend the classes are not
+  dataclasses, so `dataclasses.fields`, `replace` and `asdict` do not
+  apply to them. Nothing in `src` uses them on provenance.
+- **Shared helpers.** The argument checks, dataclass equality, hashing and
+  iterable-to-tuple helpers of S3a's `diagnostic.rs` moved to a new
+  `rust/fhy-core-py/src/dataclass.rs`, which both bindings use (653375b).
+- **Tests.** No existing test was skipped or changed. The new
+  `tests/test_provenance_rust_binding.py` (102 tests, Rust backend only)
+  covers the hierarchy and registration, the argument checks and their
+  messages, path normalization, the reprs, equality, ordering and pattern
+  matching, the payload shapes and errors, `fuse`'s identity and log, the
+  recursion guard, the frozen errors, and pickles, including payloads and
+  pickles checked against a Python-backend subprocess.
