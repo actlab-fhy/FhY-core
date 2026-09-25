@@ -1000,8 +1000,8 @@ impl PyUnknownProvenance {
     }
 
     /// Render `<unknown>`.
-    fn __str__(slf: &Bound<'_, Self>) -> PyResult<String> {
-        PyProvenance::render(slf.as_super())
+    fn __str__<'py>(slf: &Bound<'py, Self>) -> Bound<'py, PyString> {
+        intern!(slf.py(), "<unknown>").clone()
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
