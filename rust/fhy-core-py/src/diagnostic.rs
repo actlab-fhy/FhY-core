@@ -392,9 +392,18 @@ impl PyNote {
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "Diagnostic")]
 pub(crate) struct PyDiagnostic {
     diagnostic: Diagnostic,
+    /// The severity's `DiagnosticLevel` member.
+    #[pyo3(get)]
+    level: Py<PyAny>,
     /// The Python object of the message, the `Note` it was built from.
     #[pyo3(get)]
     message: Py<PyAny>,
+    /// The source, the `str` the diagnostic was built from.
+    #[pyo3(get)]
+    source: Py<PyString>,
+    /// The detail, the `str` the diagnostic was built from, or `None`.
+    #[pyo3(get)]
+    detail: Py<PyAny>,
 }
 
 impl PyDiagnostic {
@@ -402,14 +411,6 @@ impl PyDiagnostic {
     fn public_class() -> &'static PublicClass {
         static PUBLIC_CLASS: PublicClass = PublicClass::new("Diagnostic");
         &PUBLIC_CLASS
-    }
-
-    /// Return the detail as a Python `str`, or `None`.
-    fn detail_to_python<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
-        match self.diagnostic.detail() {
-            Some(detail) => PyString::new(py, detail).into_any(),
-            None => py.None().into_bound(py),
-        }
     }
 }
 
@@ -429,6 +430,7 @@ impl PyDiagnostic {
         source: &Bound<'_, PyAny>,
         detail: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let py = level.py();
         let level = level_from_python(level)?;
         let note = match message.cast::<PyNote>() {
             Ok(note) => note.get().note.clone(),
@@ -441,36 +443,23 @@ impl PyDiagnostic {
                 )?);
             }
         };
-        let source = read_str(source, "Diagnostic", "source")?
-            .to_str()?
-            .to_owned();
-        let mut diagnostic = Diagnostic::new(level, note, source);
-        if let Some(detail) = detail.filter(|detail| !detail.is_none()) {
-            diagnostic =
-                diagnostic.with_detail(read_str(detail, "Diagnostic", "detail")?.to_str()?);
-        }
+        let source = read_str(source, "Diagnostic", "source")?;
+        let mut diagnostic = Diagnostic::new(level, note, source.to_str()?.to_owned());
+        let detail = match detail.filter(|detail| !detail.is_none()) {
+            Some(detail) => {
+                let detail = read_str(detail, "Diagnostic", "detail")?;
+                diagnostic = diagnostic.with_detail(detail.to_str()?);
+                detail.as_any().clone()
+            }
+            None => py.None().into_bound(py),
+        };
         Ok(Self {
             diagnostic,
+            level: level_to_python(py, level)?.unbind(),
             message: message.clone().unbind(),
+            source: source.clone().unbind(),
+            detail: detail.unbind(),
         })
-    }
-
-    /// The severity, a `DiagnosticLevel`.
-    #[getter]
-    fn level<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        level_to_python(py, self.diagnostic.level())
-    }
-
-    /// The name of whatever emitted the diagnostic.
-    #[getter]
-    fn source<'py>(&self, py: Python<'py>) -> Bound<'py, PyString> {
-        PyString::new(py, self.diagnostic.source())
-    }
-
-    /// The supplementary detail, or `None`.
-    #[getter]
-    fn detail<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
-        self.detail_to_python(py)
     }
 
     /// The underlying message text, without the kind prefix.
@@ -510,10 +499,10 @@ impl PyDiagnostic {
         Ok(format!(
             "{}(level={}, message={}, source={}, detail={})",
             slf.get_type().qualname()?,
-            this.level(py)?.repr()?,
+            this.level.bind(py).repr()?,
             this.message.bind(py).repr()?,
-            this.source(py).repr()?,
-            this.detail_to_python(py).repr()?,
+            this.source.bind(py).repr()?,
+            this.detail.bind(py).repr()?,
         ))
     }
 
@@ -535,10 +524,10 @@ impl PyDiagnostic {
         let arguments = PyTuple::new(
             py,
             [
-                this.level(py)?,
-                this.message.bind(py).clone(),
-                this.source(py).into_any(),
-                this.detail_to_python(py),
+                this.level.bind(py),
+                this.message.bind(py),
+                this.source.bind(py).as_any(),
+                this.detail.bind(py),
             ],
         )?;
         Ok((slf.get_type(), arguments))
