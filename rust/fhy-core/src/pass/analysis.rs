@@ -3,6 +3,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use super::preserved::{AnalysisId, PreservedAnalyses};
@@ -141,17 +142,44 @@ impl AnalysisCache {
         A: Analysis + Default,
         A::Ir: NodeHandle,
     {
-        self.get_or_insert_with(ir, AnalysisId::of::<A>(), || A::default().run(ir))
+        self.get_or_insert_with(ir, &AnalysisId::of::<A>(), || A::default().run(ir))
     }
 
     /// Return the result cached for `ir` under `id`, computing it with
     /// `compute` and caching it on a miss.
-    fn get_or_insert_with<T, V>(
+    pub(super) fn get_or_insert_with<T, V>(
         &mut self,
         ir: &T,
-        id: AnalysisId,
+        id: &AnalysisId,
         compute: impl FnOnce() -> V,
     ) -> Arc<V>
+    where
+        T: NodeHandle,
+        V: Send + Sync + 'static,
+    {
+        match self.cached(ir, id) {
+            Some(result) => result,
+            None => self.insert(ir, id, Arc::new(compute())),
+        }
+    }
+
+    /// Return the result of type `V` cached for `ir` under `id`, if any.
+    pub(super) fn cached<T, V>(&self, ir: &T, id: &AnalysisId) -> Option<Arc<V>>
+    where
+        T: NodeHandle,
+        V: Send + Sync + 'static,
+    {
+        let cached = self.buckets.get(&cache_key(ir))?.results.get(id)?;
+        Arc::clone(cached).downcast::<V>().ok()
+    }
+
+    /// Cache `result` for `ir` under `id` and return it, unless a result of
+    /// type `V` is cached there already, which is returned instead.
+    ///
+    /// The key's handle type and `id` fix the result type, so a result of
+    /// another type is only there if a caller broke that rule; it is
+    /// replaced rather than served.
+    pub(super) fn insert<T, V>(&mut self, ir: &T, id: &AnalysisId, result: Arc<V>) -> Arc<V>
     where
         T: NodeHandle,
         V: Send + Sync + 'static,
@@ -160,19 +188,19 @@ impl AnalysisCache {
             .buckets
             .entry(cache_key(ir))
             .or_insert_with(|| Bucket::new(ir));
-        // The key's handle type and `id` fix the result type, so a cached
-        // result always downcasts; one that did not would be recomputed and
-        // replaced rather than served.
-        if let Some(cached) = bucket.results.get(&id) {
-            if let Ok(result) = Arc::clone(cached).downcast::<V>() {
-                return result;
+        match bucket.results.entry(id.clone()) {
+            Entry::Occupied(mut entry) => match Arc::clone(entry.get()).downcast::<V>() {
+                Ok(cached) => cached,
+                Err(_other_type) => {
+                    entry.insert(Arc::clone(&result) as CachedResult);
+                    result
+                }
+            },
+            Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(&result) as CachedResult);
+                result
             }
         }
-        let result = Arc::new(compute());
-        bucket
-            .results
-            .insert(id, Arc::clone(&result) as CachedResult);
-        result
     }
 
     /// Carry the results `preserved` preserves from `from` over to its
@@ -200,8 +228,8 @@ impl AnalysisCache {
         let carried: Vec<(AnalysisId, CachedResult)> = from_bucket
             .results
             .iter()
-            .filter(|(id, _)| preserved.is_id_preserved(**id))
-            .map(|(id, result)| (*id, Arc::clone(result)))
+            .filter(|(id, _)| preserved.is_id_preserved(id))
+            .map(|(id, result)| (id.clone(), Arc::clone(result)))
             .collect();
         if carried.is_empty() {
             return;
@@ -404,11 +432,11 @@ mod tests {
         let ir = TestIr::new(1);
         let mut computations = 0;
 
-        let first = cache.get_or_insert_with(&ir, AnalysisId::of::<Report>(), || {
+        let first = cache.get_or_insert_with(&ir, &AnalysisId::of::<Report>(), || {
             computations += 1;
             "report".to_owned()
         });
-        let second = cache.get_or_insert_with(&ir, AnalysisId::of::<Report>(), || {
+        let second = cache.get_or_insert_with(&ir, &AnalysisId::of::<Report>(), || {
             computations += 1;
             "other".to_owned()
         });

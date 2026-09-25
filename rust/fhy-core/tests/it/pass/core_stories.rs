@@ -858,7 +858,7 @@ fn preserved_analyses_all_preserves_every_analysis() {
     assert!(all.preserves_all());
     assert!(all.is_preserved::<DoubleAnalysis>());
     assert!(all.is_preserved::<ParityAnalysis>());
-    assert!(all.is_id_preserved(AnalysisId::of::<Alpha>()));
+    assert!(all.is_id_preserved(&AnalysisId::of::<Alpha>()));
     assert_eq!(all.preserved_ids().count(), 0);
 }
 
@@ -868,7 +868,7 @@ fn preserved_analyses_none_preserves_nothing() {
 
     assert!(!none.preserves_all());
     assert!(!none.is_preserved::<DoubleAnalysis>());
-    assert!(!none.is_id_preserved(AnalysisId::of::<ParityAnalysis>()));
+    assert!(!none.is_id_preserved(&AnalysisId::of::<ParityAnalysis>()));
     assert_eq!(none.preserved_ids().count(), 0);
     assert_ne!(none, PreservedAnalyses::all());
 }
@@ -913,7 +913,7 @@ fn preserve_id_equals_preserve_by_type() {
         by_id,
         PreservedAnalyses::none().preserve::<DoubleAnalysis>()
     );
-    assert!(by_id.is_id_preserved(AnalysisId::of::<DoubleAnalysis>()));
+    assert!(by_id.is_id_preserved(&AnalysisId::of::<DoubleAnalysis>()));
 }
 
 /// Test the listed ids come out ordered by type name, whatever the order
@@ -924,7 +924,7 @@ fn preserved_ids_lists_the_ids_by_type_name() {
         .preserve::<ParityAnalysis>()
         .preserve::<DoubleAnalysis>();
 
-    let ids: Vec<_> = preserved.preserved_ids().collect();
+    let ids: Vec<_> = preserved.preserved_ids().cloned().collect();
 
     assert_eq!(
         ids,
@@ -992,6 +992,44 @@ fn node_identity_of_arc_differs_between_live_allocations() {
     let second = Arc::new(3_i64);
 
     assert_ne!(NodeIdentity::of_arc(&first), NodeIdentity::of_arc(&second));
+}
+
+/// Test the identity of a pointer is the identity of the allocation it
+/// points to, so an `Arc` and a raw pointer to its value agree.
+#[test]
+fn node_identity_of_ptr_agrees_with_of_arc() {
+    let node = Arc::new(3_i64);
+
+    assert_eq!(
+        NodeIdentity::of_ptr(Arc::as_ptr(&node)),
+        NodeIdentity::of_arc(&node)
+    );
+}
+
+#[test]
+fn node_identity_of_ptr_differs_between_live_objects() {
+    let first = Box::new(3_i64);
+    let second = Box::new(3_i64);
+
+    assert_ne!(
+        NodeIdentity::of_ptr(&raw const *first),
+        NodeIdentity::of_ptr(&raw const *second)
+    );
+}
+
+/// Test the identity of a wide pointer ignores its metadata: a slice, a
+/// trait object and a thin pointer to the same address share it.
+#[test]
+fn node_identity_of_ptr_ignores_pointer_metadata() {
+    let values = [1_i64, 2, 3];
+    let slice: *const [i64] = &raw const values;
+    let object: *const dyn fmt::Debug = &raw const values;
+
+    assert_eq!(
+        NodeIdentity::of_ptr(slice),
+        NodeIdentity::of_ptr(values.as_ptr())
+    );
+    assert_eq!(NodeIdentity::of_ptr(object), NodeIdentity::of_ptr(slice));
 }
 
 /// Test a node handle's clone reports the same identity and a derived node

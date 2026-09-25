@@ -38,7 +38,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
   - [x] N-S6-1 to N-S6-3 decided (2026-09-25; see "S6 resolutions")
   - [x] S6.1: pass-infrastructure benchmarks and baseline
-  - [ ] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
+  - [x] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
   - [ ] S6.3: the `ValidationReport` representation (D-S6-17)
   - [ ] S6.4: the pass binding
   - [ ] S6.5: the Python switch

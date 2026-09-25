@@ -5,6 +5,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::analysis::{Analysis, AnalysisCache};
+use super::detached::{DetachedAnalyses, Detachment};
+use super::preserved::AnalysisId;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel, Note};
 use crate::tree::NodeHandle;
 
@@ -92,6 +94,89 @@ impl<'a> PassContext<'a> {
             Some(cache) => cache.get::<A>(ir),
             None => Arc::new(A::default().run(ir)),
         }
+    }
+
+    /// Return the result cached for `ir` under `id`, computing it with
+    /// `compute` and caching it on a miss.
+    ///
+    /// This is [`analysis`](Self::analysis) for an analysis no Rust type
+    /// names, such as one a language binding defines at run time: `id`
+    /// names the analysis, usually through
+    /// [`AnalysisId::of_identifier`], and `compute` performs it. Results
+    /// are cached, preserved and carried to a pass's output as the results
+    /// of analysis types are, and outside a
+    /// [`PassManager`](super::PassManager) `compute` runs on every call.
+    ///
+    /// The caller keeps one computation, with one result type, per id. The
+    /// id of an analysis type reaches that type's cached result when `V` is
+    /// its output. A result cached under `id` with another type is
+    /// recomputed and replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::pass::{AnalysisId, CompilerPass, ExecutePass, PassContext, PassFailure};
+    /// use fhy_core::tree::{NodeHandle, NodeIdentity};
+    ///
+    /// #[derive(Clone)]
+    /// struct Value(Arc<i64>);
+    ///
+    /// impl NodeHandle for Value {
+    ///     fn identity(&self) -> NodeIdentity {
+    ///         NodeIdentity::of_arc(&self.0)
+    ///     }
+    /// }
+    ///
+    /// struct Negate(AnalysisId);
+    ///
+    /// impl CompilerPass<Value> for Negate {
+    ///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, PassFailure> {
+    ///         Ok(Value(cx.analysis_by_id(ir, &self.0, |ir| -*ir.0)))
+    ///     }
+    ///
+    ///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, PassFailure> {
+    ///         Ok(input.0 != output.0)
+    ///     }
+    /// }
+    ///
+    /// let mut pass = Negate(AnalysisId::of_identifier(&Identifier::new("negation")));
+    /// assert_eq!(*pass.execute(&Value(Arc::new(3)))?.output().0, -3);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn analysis_by_id<T, V>(
+        &mut self,
+        ir: &T,
+        id: &AnalysisId,
+        compute: impl FnOnce(&T) -> V,
+    ) -> Arc<V>
+    where
+        T: NodeHandle,
+        V: Send + Sync + 'static,
+    {
+        match self.analyses.as_deref_mut() {
+            Some(cache) => cache.get_or_insert_with(ir, id, || compute(ir)),
+            None => Arc::new(compute(ir)),
+        }
+    }
+
+    /// Call `callback` with an owned handle to the run's analyses, and
+    /// return what it returns.
+    ///
+    /// For code that must hold the analyses by value rather than borrow
+    /// this context. Under a [`PassManager`](super::PassManager), the run's
+    /// cache moves into the handle for the length of the call and back into
+    /// this context when `callback` returns or unwinds; outside one, the
+    /// handle computes every request afresh. A clone of the handle kept
+    /// after the call is expired. See [`DetachedAnalyses`].
+    pub fn with_detached_analyses<R>(
+        &mut self,
+        callback: impl FnOnce(&DetachedAnalyses) -> R,
+    ) -> R {
+        let detachment = Detachment::new(self.analyses.as_deref_mut());
+        callback(detachment.handle())
     }
 
     /// Return the diagnostics recorded so far, in emission order.

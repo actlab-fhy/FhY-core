@@ -34,7 +34,37 @@ impl NodeIdentity {
     /// ```
     #[must_use]
     pub fn of_arc<T: ?Sized>(node: &Arc<T>) -> Self {
-        Self(Arc::as_ptr(node).cast::<()>().addr())
+        Self::of_ptr(Arc::as_ptr(node))
+    }
+
+    /// Return the identity of the object `pointer` points to.
+    ///
+    /// For handles to objects this crate does not allocate, such as objects
+    /// of another language's runtime. The identity is the pointer's address,
+    /// without its metadata, so a wide pointer and a thin one to the same
+    /// address agree, and it agrees with [`of_arc`](Self::of_arc) for an
+    /// `Arc`'s value. The pointer is never dereferenced.
+    ///
+    /// The identity is unique only while the object is alive. A
+    /// [`NodeHandle`] that reports it keeps the object alive for as long as
+    /// the handle exists, for example by holding a strong reference to it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// use fhy_core::tree::NodeIdentity;
+    ///
+    /// let node = Arc::new(5);
+    /// let other = Box::new(5);
+    ///
+    /// assert_eq!(NodeIdentity::of_ptr(Arc::as_ptr(&node)), NodeIdentity::of_arc(&node));
+    /// assert_ne!(NodeIdentity::of_ptr(&raw const *other), NodeIdentity::of_arc(&node));
+    /// ```
+    #[must_use]
+    pub fn of_ptr<T: ?Sized>(pointer: *const T) -> Self {
+        Self(pointer.cast::<()>().addr())
     }
 }
 
