@@ -23,7 +23,7 @@ mod rs_module {
     use pyo3::prelude::*;
 
     #[pymodule_export]
-    use super::diagnostic::PyNoteKind;
+    use super::diagnostic::{PyDiagnostic, PyNote, PyNoteKind, PyValidationReport};
     #[pymodule_export]
     use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
     #[pymodule_export]
