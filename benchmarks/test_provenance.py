@@ -109,3 +109,78 @@ def test_provenance_fuse_with_reductions(
         UnknownProvenance(),
     )
     assert isinstance(fused, FusedProvenance)
+
+
+_PROVENANCE_FIELDS = {
+    "file": ("file_path", "span"),
+    "named": ("name", "child"),
+    "call_site": ("callee", "caller"),
+    "fused": ("sources", "metadata"),
+}
+
+
+def test_position_construction(benchmark: Benchmark) -> None:
+    """Benchmark constructing a position."""
+    benchmark(Position, 2, 5)
+
+
+def test_position_attribute_access(benchmark: Benchmark, span: Span) -> None:
+    """Benchmark reading a position's two fields."""
+    benchmark(operator.attrgetter("line", "column"), span.start_position)
+
+
+def test_position_lt(benchmark: Benchmark) -> None:
+    """Benchmark ordering two positions on the same line."""
+    assert benchmark(operator.lt, Position(2, 5), Position(2, 9))
+
+
+def test_span_attribute_access(benchmark: Benchmark, span: Span) -> None:
+    """Benchmark reading a span's four fields."""
+    benchmark(
+        operator.attrgetter(
+            "start_offset", "end_offset", "start_position", "end_position"
+        ),
+        span,
+    )
+
+
+def test_span_str(benchmark: Benchmark, span: Span) -> None:
+    """Benchmark rendering a span with positions."""
+    benchmark(str, span)
+
+
+@pytest.mark.parametrize("kind", list(_PROVENANCE_FIELDS))
+def test_provenance_attribute_access(
+    benchmark: Benchmark, provenances: dict[str, Provenance], kind: str
+) -> None:
+    """Benchmark reading the two fields of a provenance of one kind."""
+    benchmark(operator.attrgetter(*_PROVENANCE_FIELDS[kind]), provenances[kind])
+
+
+@_PROVENANCE_KINDS
+def test_provenance_str(
+    benchmark: Benchmark, provenances: dict[str, Provenance], kind: str
+) -> None:
+    """Benchmark rendering a provenance of one kind."""
+    benchmark(str, provenances[kind])
+
+
+@_PROVENANCE_KINDS
+def test_provenance_repr(
+    benchmark: Benchmark, provenances: dict[str, Provenance], kind: str
+) -> None:
+    """Benchmark the repr of a provenance of one kind."""
+    benchmark(repr, provenances[kind])
+
+
+@_PROVENANCE_KINDS
+def test_provenance_dict_round_trip(
+    benchmark: Benchmark, provenances: dict[str, Provenance], kind: str
+) -> None:
+    """Benchmark serializing a provenance of one kind to a dict and back."""
+    provenance = provenances[kind]
+
+    def round_trip() -> Provenance:
+        return Provenance.deserialize_from_dict(provenance.serialize_to_dict())
+
+    assert benchmark(round_trip) == provenance
