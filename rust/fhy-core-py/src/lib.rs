@@ -13,6 +13,7 @@ mod frozen;
 mod identifier;
 mod interned;
 mod op_attribute;
+mod public_class;
 mod serialization;
 mod value_domain;
 

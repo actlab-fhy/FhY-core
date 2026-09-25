@@ -354,11 +354,15 @@ statistics or caches, is an owned value that its user creates and passes
 explicitly. Where the Python API needs one shared instance, the binding
 holds it in the extension's module state. A new process-global `static`
 with interior mutability needs the maintainer's agreement and a line in
-this section. The binding crate keeps one such kind, agreed in slice S2 of
-`docs/design/python-switch.md`: each Rust-backed interned class's identity
-cache from canonical keys to their Python objects, which is append-only
-like the registry it mirrors. Tests never clear a process-global registry;
-a test that needs an empty or controlled registry builds a local one.
+this section. The binding crate keeps two such kinds, planned in slices
+S2 and S3 of `docs/design/python-switch.md`: each Rust-backed interned
+class's identity cache from canonical keys to their Python objects, which
+is append-only like the registry it mirrors, and each Rust-backed class's
+write-once slot for the public Python class that registers itself at
+import (`rust/fhy-core-py/src/public_class.rs`), so a value the binding
+builds from Rust is an instance of that class. Tests never clear a
+process-global registry; a test that needs an empty or controlled registry
+builds a local one.
 
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has

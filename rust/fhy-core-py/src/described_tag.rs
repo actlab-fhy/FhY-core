@@ -8,7 +8,10 @@
 //! Rust registry and returns the single Python object of the canonical tag
 //! (decision D-S2-4). The class's own `__new__` only builds an instance from
 //! a seed that `_new_canonical` creates, so no second Python object of a
-//! canonical tag can exist.
+//! canonical tag can exist. The public class registers itself with the
+//! class's `_register_public_class` at import, so a canonical tag the
+//! binding reaches from Rust, such as a note's kind, gets its Python object
+//! as an instance of the public class.
 //!
 //! Payloads keep the Python shape `{"name": {"id": .., "name_hint": ..},
 //! "description": ..}`, and every error matches the Python implementation's
@@ -63,22 +66,34 @@ macro_rules! define_described_tag_class {
                 &CACHE
             }
 
+            /// Return the public Python class registered for this class.
+            fn public_class() -> &'static $crate::public_class::PublicClass {
+                static PUBLIC_CLASS: $crate::public_class::PublicClass =
+                    $crate::public_class::PublicClass::new($py_name);
+                &PUBLIC_CLASS
+            }
+
             /// Return the Python object of the canonical `tag`, creating it
-            /// as an instance of `cls` if it has none yet.
+            /// if it has none yet as an instance of `cls`, or of the
+            /// registered public class when `cls` is `None`.
             ///
             /// The object holds `name` as its name when that is a Python
             /// identifier with the tag's name hint, and otherwise a Python
             /// identifier built from the tag's name.
             fn to_python<'py>(
-                cls: &Bound<'py, ::pyo3::types::PyType>,
+                py: Python<'py>,
+                cls: Option<&Bound<'py, ::pyo3::types::PyType>>,
                 tag: ::fhy_core::interned::Canonical<$tag>,
                 name: Option<&Bound<'py, PyAny>>,
             ) -> PyResult<Bound<'py, PyAny>> {
-                let py = cls.py();
                 let id = tag.name().id();
                 if let Some(object) = Self::identity_cache().get(py, id) {
                     return Ok(object);
                 }
+                let cls = match cls {
+                    Some(cls) => cls,
+                    None => Self::public_class().get(py)?,
+                };
                 let name = match name {
                     Some(name)
                         if name
@@ -113,8 +128,22 @@ macro_rules! define_described_tag_class {
             ) -> PyResult<(Bound<'py, PyAny>, ::fhy_core::interned::Canonical<$tag>)> {
                 let identifier = $crate::identifier::restore_identifier(name, $py_name, "name")?;
                 let tag = <$tag>::register(identifier, description.to_str()?);
-                let object = Self::to_python(cls, tag.clone(), Some(name))?;
+                let object = Self::to_python(cls.py(), Some(cls), tag.clone(), Some(name))?;
                 Ok((object, tag))
+            }
+
+            /// Return the payload `{"name": .., "description": ..}` of `tag`.
+            fn serialize_tag<'py>(
+                py: Python<'py>,
+                tag: &::fhy_core::interned::Canonical<$tag>,
+            ) -> PyResult<Bound<'py, ::pyo3::types::PyDict>> {
+                let payload = ::pyo3::types::PyDict::new(py);
+                payload.set_item(
+                    ::pyo3::intern!(py, "name"),
+                    $crate::identifier::serialize_identifier(py, tag.name())?,
+                )?;
+                payload.set_item(::pyo3::intern!(py, "description"), tag.description())?;
+                Ok(payload)
             }
 
             /// Build the canonical tag from decoded fields, warning when the
@@ -267,13 +296,7 @@ macro_rules! define_described_tag_class {
                 &self,
                 py: Python<'py>,
             ) -> PyResult<Bound<'py, ::pyo3::types::PyDict>> {
-                let payload = ::pyo3::types::PyDict::new(py);
-                payload.set_item(
-                    ::pyo3::intern!(py, "name"),
-                    $crate::identifier::serialize_identifier(py, self.tag.name())?,
-                )?;
-                payload.set_item(::pyo3::intern!(py, "description"), self.description.bind(py))?;
-                Ok(payload)
+                Self::serialize_tag(py, &self.tag)
             }
 
             /// Return the canonical tag for `key`, or `None` if none is
@@ -298,7 +321,7 @@ macro_rules! define_described_tag_class {
                     let Some(tag) = registry.get(&identifier) else {
                         return Ok(None);
                     };
-                    Self::to_python(cls, tag, Some(key))?
+                    Self::to_python(cls.py(), Some(cls), tag, Some(key))?
                 };
                 Ok(object.is_instance(cls)?.then_some(object))
             }
@@ -349,6 +372,15 @@ macro_rules! define_described_tag_class {
                 )?;
                 let name = $crate::identifier::deserialize_identifier(&name)?;
                 Self::construct(cls, &name, &description)
+            }
+
+            /// Register `cls` as the public class, whose instances the
+            /// binding builds for canonical tags it reaches from Rust.
+            ///
+            /// Raises `RuntimeError` if another public class is registered.
+            #[classmethod]
+            fn _register_public_class(cls: &Bound<'_, ::pyo3::types::PyType>) -> PyResult<()> {
+                Self::public_class().register(cls)
             }
 
             /// Raise `NotImplementedError`: the Rust registry is
