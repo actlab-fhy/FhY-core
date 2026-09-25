@@ -16,15 +16,18 @@
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyDict, PyString, PyTuple, PyType};
+use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationReport};
 use fhy_core::interned::Canonical;
 
+use crate::dataclass::{
+    build_argument_type_error, collect_tuple, compare_as_dataclass, hash_value, read_str,
+};
 use crate::described_tag::define_described_tag_class;
 use crate::frozen::build_frozen_mutation_error;
 use crate::public_class::PublicClass;
@@ -65,65 +68,6 @@ impl<'a, 'py> FromPyObject<'a, 'py> for OptionalArgument<'py> {
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         Ok(Self::Given(object.to_owned()))
     }
-}
-
-/// Return the `TypeError` for an argument `field` of `owner` that is not a
-/// `expected`.
-fn build_argument_type_error(
-    owner: &str,
-    field: &str,
-    expected: &str,
-    value: &Bound<'_, PyAny>,
-) -> PyResult<PyErr> {
-    Ok(PyTypeError::new_err(format!(
-        "{owner} {field} must be {expected}, got {}.",
-        value.get_type().name()?
-    )))
-}
-
-/// Return `value` as a `str`, or raise the `TypeError` naming `owner` and
-/// `field`.
-fn read_str<'a, 'py>(
-    value: &'a Bound<'py, PyAny>,
-    owner: &str,
-    field: &str,
-) -> PyResult<&'a Bound<'py, PyString>> {
-    match value.cast::<PyString>() {
-        Ok(value) => Ok(value),
-        Err(_not_a_str) => Err(build_argument_type_error(owner, field, "a str", value)?),
-    }
-}
-
-/// Return the hash of `value` from the standard hasher.
-///
-/// Equal values hash equally within a process, which is all Python needs;
-/// the hashes differ from the pure-Python classes' ones.
-fn hash_value(value: &impl Hash) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Return `NotImplemented` unless `other` is an instance of exactly the
-/// class of `object`, and otherwise whether `is_equal` holds for the two.
-///
-/// Matches the Python implementation: the `__eq__` a dataclass generates.
-fn compare_as_dataclass<'py, T, F>(
-    object: &Bound<'py, T>,
-    other: &Bound<'py, PyAny>,
-    is_equal: F,
-) -> PyResult<Bound<'py, PyAny>>
-where
-    T: pyo3::PyClass<Frozen = pyo3::pyclass::boolean_struct::True> + Sync,
-    F: FnOnce(&T, &T) -> PyResult<bool>,
-{
-    let py = object.py();
-    if !object.as_any().get_type().is(other.get_type()) {
-        return Ok(py.NotImplemented().into_bound(py));
-    }
-    let other = other.cast::<T>()?;
-    let is_equal = is_equal(object.get(), other.get())?;
-    Ok(PyBool::new(py, is_equal).to_owned().into_any())
 }
 
 // ---------------------------------------------------------------------------
@@ -550,18 +494,6 @@ impl PyDiagnostic {
 fn validation_failed_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     CLASS.import(py, MODULE, "ValidationFailedError")
-}
-
-/// Return the items of the iterable `values` as a tuple, `values` itself if
-/// it is a tuple.
-fn collect_tuple<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
-    if let Ok(values) = values.cast_exact::<PyTuple>() {
-        return Ok(values.clone());
-    }
-    PyTuple::new(
-        values.py(),
-        values.try_iter()?.collect::<PyResult<Vec<_>>>()?,
-    )
 }
 
 /// Render the diagnostics as `format()` does: one `[LEVEL] source:

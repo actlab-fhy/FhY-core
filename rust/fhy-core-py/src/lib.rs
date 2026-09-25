@@ -6,6 +6,7 @@
 //! one flat Python namespace: `PyO3` submodules are attributes, not
 //! importable packages.
 
+mod dataclass;
 mod described_tag;
 mod diagnostic;
 mod error;
