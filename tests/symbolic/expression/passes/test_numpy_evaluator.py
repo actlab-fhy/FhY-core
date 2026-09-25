@@ -1164,8 +1164,10 @@ def test_piecewise_with_object_dtype_condition_array_raises_during_evaluation() 
     )
     values = np.array([0, 1, 2], dtype=object)
 
-    with pytest.raises(PassExecutionError, match=r"(?i)boolean") as exception_info:
+    with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression_with_numpy(expression, {condition: values})
+
+    assert "boolean" in str(exception_info.value.__cause__).lower()
 
     assert isinstance(exception_info.value.__cause__, TypeError)
 

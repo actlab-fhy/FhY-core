@@ -117,6 +117,19 @@ def test_pass_manager_applies_analysis_preservation_and_invalidation() -> None:
     """Test that analysis cache transfer respects preserved analyses."""
     BoxDoubleAnalysis.runs = 0
     BoxParityAnalysis.runs = 0
+    observed: list[tuple[int, int]] = []
+
+    @register_pass("tests.pm.read_both", "Read both analyses of the IR.")
+    class ReadBothPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            observed.append(
+                (
+                    self.get_analysis(BoxDoubleAnalysis, ir),
+                    self.get_analysis(BoxParityAnalysis, ir),
+                )
+            )
+            return ir
 
     @register_pass(
         "tests.pm.preserve_double_only",
@@ -141,47 +154,63 @@ def test_pass_manager_applies_analysis_preservation_and_invalidation() -> None:
             )
 
     manager = PassManager[Box]()
+    manager.add_pass(ReadBothPass())
     manager.add_pass(PreserveDoubleOnlyPass())
-    input_ir = Box(2)
+    manager.add_pass(ReadBothPass())
 
-    assert manager.analysis_manager.get(BoxDoubleAnalysis, input_ir) == 4
-    assert manager.analysis_manager.get(BoxParityAnalysis, input_ir) == 0
-    assert BoxDoubleAnalysis.runs == 1
-    assert BoxParityAnalysis.runs == 1
+    result = manager.run(Box(2))
 
-    result = manager.run(input_ir)
-
-    assert manager.analysis_manager.get(BoxDoubleAnalysis, result.output) == 4
-    assert manager.analysis_manager.get(BoxParityAnalysis, result.output) == 1
+    # The preserved double result is carried to the new box, although it
+    # doubles the old value; the parity is computed afresh for the new box.
+    assert result.output == Box(3)
+    assert observed == [(4, 0), (4, 1)]
     assert BoxDoubleAnalysis.runs == 1
     assert BoxParityAnalysis.runs == 2
 
 
 def test_analysis_manager_does_not_cache_non_frozen_ir() -> None:
-    """Test that analysis manager skips caching for non-frozen IR."""
+    """Test that a pipeline run skips caching for non-frozen IR."""
     MutableBoxDoubleAnalysis.runs = 0
-    manager = PassManager[MutableBox]()
-    ir = MutableBox(3)
+    observed: list[int] = []
 
-    assert manager.analysis_manager.get(MutableBoxDoubleAnalysis, ir) == 6
-    assert manager.analysis_manager.get(MutableBoxDoubleAnalysis, ir) == 6
+    @register_pass("tests.pm.read_mutable_twice", "Read an analysis of mutable IR.")
+    class ReadTwicePass(CompilerPass[MutableBox, MutableBox]):
+        @override
+        def run_pass(self, ir: MutableBox) -> MutableBox:
+            observed.append(self.get_analysis(MutableBoxDoubleAnalysis, ir))
+            observed.append(self.get_analysis(MutableBoxDoubleAnalysis, ir))
+            return ir
+
+    manager = PassManager[MutableBox]()
+    manager.add_pass(ReadTwicePass())
+    manager.run(MutableBox(3))
+
+    assert observed == [6, 6]
     assert MutableBoxDoubleAnalysis.runs == 2
 
 
 def test_analysis_manager_does_not_block_ir_from_garbage_collection() -> None:
-    """Test that caching an analysis result does not pin the IR in memory.
+    """Test that caching an analysis result does not pin the IR after the run.
 
-    Public observation of the eviction-via-weakref contract: if the
-    cache held a strong reference to the IR, the weakref below would
-    still resolve after `gc.collect()`. The fact that it returns None
-    confirms the cache is not pinning the IR.
+    D-S6-8: a run's cache holds each cached node until the run ends, and
+    releases it then. If the cache outlived the run, the weakref below
+    would still resolve after `gc.collect()`.
     """
     BoxDoubleAnalysis.runs = 0
+
+    @register_pass("tests.pm.read_then_replace", "Read an analysis, return new IR.")
+    class ReadThenReplacePass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            return Box(ir.value + 1)
+
     manager = PassManager[Box]()
+    manager.add_pass(ReadThenReplacePass())
     ir = Box(3)
     weak_ir = weakref.ref(ir)
 
-    manager.analysis_manager.get(BoxDoubleAnalysis, ir)
+    manager.run(ir)
     assert weak_ir() is not None  # ir still alive while caller holds it
 
     del ir
@@ -254,8 +283,19 @@ def test_pass_manager_fixpoint_group_raises_on_non_convergence() -> None:
     fixpoint_group.add_pass(FlipBitPass())
     manager.add_fixpoint_group(fixpoint_group)
 
-    with pytest.raises(PassExecutionError):
+    with pytest.raises(PassExecutionError) as excinfo:
         manager.run(0)
+
+    assert str(excinfo.value) == (
+        'fixpoint group "flip-group" did not converge (max iterations: 3)'
+    )
+    assert excinfo.value.pass_name is None
+    assert excinfo.value.hook is None
+    (record,) = excinfo.value.records
+    assert isinstance(record, FixpointGroupRecord)
+    assert record.group_name is fixpoint_group.name
+    assert record.converged is False
+    assert record.iterations == 3
 
 
 def test_fixpoint_group_configuration_is_read_only() -> None:
@@ -274,8 +314,6 @@ def test_pass_manager_configuration_is_read_only() -> None:
 
     with pytest.raises(AttributeError):
         setattr(manager, "name", Identifier("other"))  # noqa: B010
-    with pytest.raises(AttributeError):
-        setattr(manager, "analysis_manager", manager.analysis_manager)  # noqa: B010
 
 
 def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
@@ -429,37 +467,36 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
     assert BoxDoubleAnalysis.runs == 2
 
 
-def test_bind_and_get_analysis_manager_are_public_accessors() -> None:
-    """Test that bind / unbind / get_analysis_manager expose the binding."""
+def test_get_analysis_manager_is_the_hook_view_of_the_run_cache() -> None:
+    """Test that `get_analysis_manager` returns the running hook's cache view.
+
+    D-S6-8: outside a run it returns `None`; during a hook it returns an
+    `AnalysisManager` whose `get` reads the same cache as `get_analysis`.
+    """
     BoxDoubleAnalysis.runs = 0
+    observed: list[int] = []
 
     @register_pass(
         "tests.pm.public_bind_accessors", "Identity pass for accessor testing."
     )
     class AccessorPass(CompilerPass[Box, Box]):
         @override
-        def get_noop_output(self, ir: Box) -> Box:
-            return ir
-
-        @override
         def run_pass(self, ir: Box) -> Box:
+            analysis_manager = self.get_analysis_manager()
+            assert isinstance(analysis_manager, AnalysisManager)
+            observed.append(analysis_manager.get(BoxDoubleAnalysis, ir))
+            observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
             return ir
 
     compiler_pass = AccessorPass()
     assert compiler_pass.get_analysis_manager() is None
 
     manager = PassManager[Box]()
-    compiler_pass.bind_analysis_manager(manager.analysis_manager)
-    assert compiler_pass.get_analysis_manager() is manager.analysis_manager
+    manager.add_pass(compiler_pass)
+    manager.run(Box(3))
 
-    # The pass now sees the manager's cache on get_analysis calls for the
-    # same IR instance (cache is keyed on object identity).
-    ir = Box(3)
-    compiler_pass.get_analysis(BoxDoubleAnalysis, ir)
-    compiler_pass.get_analysis(BoxDoubleAnalysis, ir)
+    assert observed == [6, 6]
     assert BoxDoubleAnalysis.runs == 1
-
-    compiler_pass.unbind_analysis_manager()
     assert compiler_pass.get_analysis_manager() is None
 
 
@@ -572,9 +609,9 @@ def test_pass_manager_add_pass_returns_none() -> None:
             return ir
 
     manager = PassManager[int]()
-    # The assertion pins the runtime contract that mypy already enforces
-    # statically; the `type: ignore` is intentional.
-    assert manager.add_pass(_NoChainA()) is None  # type: ignore[func-returns-value]
+    # The assertion pins the runtime contract that the return annotation
+    # states for type checkers.
+    assert manager.add_pass(_NoChainA()) is None
 
 
 def test_pass_manager_add_fixpoint_group_returns_none() -> None:
@@ -582,7 +619,7 @@ def test_pass_manager_add_fixpoint_group_returns_none() -> None:
     manager = PassManager[int]()
     group = FixpointPassGroup[int](name=Identifier("no-chain-group"), max_iterations=1)
 
-    assert manager.add_fixpoint_group(group) is None  # type: ignore[func-returns-value]
+    assert manager.add_fixpoint_group(group) is None
 
 
 def test_fixpoint_pass_group_add_pass_returns_none() -> None:
@@ -600,7 +637,7 @@ def test_fixpoint_pass_group_add_pass_returns_none() -> None:
 
     group = FixpointPassGroup[int](name=Identifier("no-chain-group"), max_iterations=1)
 
-    assert group.add_pass(_NoChainGroupPass()) is None  # type: ignore[func-returns-value]
+    assert group.add_pass(_NoChainGroupPass()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +729,7 @@ def test_pass_run_record_stores_preserved_analyses_directly() -> None:
 
     assert isinstance(record.preserved_analyses, PreservedAnalyses)
     assert record.preserved_analyses.preserve_all is True
+    assert record.skipped is False
 
 
 def test_pass_run_record_carries_specific_preservation_set() -> None:
@@ -768,30 +806,31 @@ def test_fixpoint_group_record_iterations_cannot_be_set() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_analysis_manager_falls_back_when_weakref_finalize_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that the manager runs uncached when finalizer registration fails.
+def test_analysis_of_ir_that_is_not_frozen_yet_is_computed_uncached() -> None:
+    """Test that a run computes analyses uncached for IR it cannot cache.
 
-    Simulates a non-weakreffable IR by patching the manager-module `weakref`
-    so that `weakref.finalize` raises `TypeError`. The contract: rather than
-    propagating the error, `AnalysisManager.get` falls back to uncached
-    execution.
+    D-S6-8: only a `Frozen` IR that is frozen is cached, so a `FrozenMixin`
+    object that is not frozen yet is analyzed afresh on every request, as
+    the IR whose finalizer could not be registered was before.
     """
     BoxDoubleAnalysis.runs = 0
 
-    def _raise_type_error(*_: Any, **__: Any) -> None:
-        raise TypeError("simulated non-weakreffable IR")
+    @dataclass
+    class UnfrozenBox(FrozenMixin):
+        value: int
 
-    monkeypatch.setattr(
-        "fhy_core.pass_infrastructure.manager.weakref.finalize", _raise_type_error
-    )
+    @register_pass("tests.pm.read_unfrozen_twice", "Read an analysis twice.")
+    class ReadTwicePass(CompilerPass[Any, Any]):
+        @override
+        def run_pass(self, ir: Any) -> Any:
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            return ir
 
-    manager = AnalysisManager[Box]()
-    ir = Box(4)
+    manager = PassManager[Any]()
+    manager.add_pass(ReadTwicePass())
+    manager.run(UnfrozenBox(4))
 
-    assert manager.get(BoxDoubleAnalysis, ir) == 8
-    assert manager.get(BoxDoubleAnalysis, ir) == 8
     # Two calls -> two runs because the IR could not be cached.
     assert BoxDoubleAnalysis.runs == 2
 
@@ -801,191 +840,288 @@ def test_analysis_manager_falls_back_when_weakref_finalize_raises(
 # ---------------------------------------------------------------------------
 
 
-def test_analysis_manager_clear_drops_cached_entries() -> None:
-    """Test that `clear(ir)` removes cached entries for that IR."""
+def _build_reading_pass(
+    name: str, *analyses: type[Analysis[Box, int]]
+) -> CompilerPass[Box, Box]:
+    """Return a registered identity pass that reads ``analyses`` of its input."""
+
+    @register_pass(name, f"Reads {len(analyses)} analyses of its input.")
+    class _ReadingPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            for analysis in analyses:
+                self.get_analysis(analysis, ir)
+            return ir
+
+    return _ReadingPass()
+
+
+def _build_replacing_pass(
+    name: str, preserved: PreservedAnalyses
+) -> CompilerPass[Box, Box]:
+    """Return a registered pass that returns a new box and preserves ``preserved``."""
+
+    @register_pass(name, "Returns a new box, preserving the given analyses.")
+    class _ReplacingPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            return Box(ir.value + 1)
+
+        @override
+        def get_preserved_analyses(
+            self, input_ir: Box, output: Box, *, changed: bool
+        ) -> PreservedAnalyses:
+            return preserved
+
+    return _ReplacingPass()
+
+
+def _build_returning_pass(
+    name: str, preserved: PreservedAnalyses
+) -> CompilerPass[Box, Box]:
+    """Return a registered pass that returns its input and preserves ``preserved``."""
+
+    @register_pass(name, "Returns its input, preserving the given analyses.")
+    class _ReturningPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            return ir
+
+        @override
+        def get_preserved_analyses(
+            self, input_ir: Box, output: Box, *, changed: bool
+        ) -> PreservedAnalyses:
+            return preserved
+
+    return _ReturningPass()
+
+
+def test_each_run_starts_with_an_empty_cache() -> None:
+    """Test that two runs of one pipeline over one IR each compute the analysis.
+
+    D-S6-8: the cache lives for one run, as a cleared manager's did.
+    """
     BoxDoubleAnalysis.runs = 0
-    manager = AnalysisManager[Box]()
+    manager = PassManager[Box]()
+    manager.add_pass(_build_reading_pass("tests.pm.cache.clear", BoxDoubleAnalysis))
     ir = Box(3)
 
-    assert manager.get(BoxDoubleAnalysis, ir) == 6
+    manager.run(ir)
     assert BoxDoubleAnalysis.runs == 1
 
-    manager.clear(ir)
-
-    assert manager.get(BoxDoubleAnalysis, ir) == 6
+    manager.run(ir)
     assert BoxDoubleAnalysis.runs == 2
 
 
-def test_analysis_manager_invalidate_with_none_drops_everything() -> None:
-    """Test that `invalidate(ir, PreservedAnalyses.none())` drops every entry."""
+def test_pass_returning_its_input_keeps_every_result_even_when_preserving_none() -> (
+    None
+):
+    """Test that a node never loses its own cached results within a run.
+
+    W-12 and D-S6-8: the transfer is merge-only, so a pass that returns its
+    input keeps the input's results whatever it preserves, where
+    ``invalidate(ir, PreservedAnalyses.none())`` dropped them.
+    """
     BoxDoubleAnalysis.runs = 0
     BoxParityAnalysis.runs = 0
-    manager = AnalysisManager[Box]()
-    ir = Box(3)
+    manager = PassManager[Box]()
+    manager.add_pass(
+        _build_reading_pass(
+            "tests.pm.cache.none.seed", BoxDoubleAnalysis, BoxParityAnalysis
+        )
+    )
+    manager.add_pass(
+        _build_returning_pass("tests.pm.cache.none.keep", PreservedAnalyses.none())
+    )
+    manager.add_pass(
+        _build_reading_pass(
+            "tests.pm.cache.none.reread", BoxDoubleAnalysis, BoxParityAnalysis
+        )
+    )
 
-    manager.get(BoxDoubleAnalysis, ir)
-    manager.get(BoxParityAnalysis, ir)
+    manager.run(Box(3))
+
     assert BoxDoubleAnalysis.runs == 1
     assert BoxParityAnalysis.runs == 1
 
-    manager.invalidate(ir, PreservedAnalyses.none())
 
-    manager.get(BoxDoubleAnalysis, ir)
-    manager.get(BoxParityAnalysis, ir)
-    assert BoxDoubleAnalysis.runs == 2
-    assert BoxParityAnalysis.runs == 2
-
-
-def test_analysis_manager_invalidate_with_preserve_all_keeps_everything() -> None:
-    """Test that `invalidate(ir, PreservedAnalyses.all())` is a no-op."""
+def test_pass_returning_its_input_and_preserving_all_keeps_every_result() -> None:
+    """Test that a pass returning its input and preserving all keeps the results."""
     BoxDoubleAnalysis.runs = 0
-    manager = AnalysisManager[Box]()
-    ir = Box(3)
+    manager = PassManager[Box]()
+    manager.add_pass(_build_reading_pass("tests.pm.cache.all.seed", BoxDoubleAnalysis))
+    manager.add_pass(
+        _build_returning_pass("tests.pm.cache.all.keep", PreservedAnalyses.all())
+    )
+    manager.add_pass(
+        _build_reading_pass("tests.pm.cache.all.reread", BoxDoubleAnalysis)
+    )
 
-    manager.get(BoxDoubleAnalysis, ir)
+    manager.run(Box(3))
+
     assert BoxDoubleAnalysis.runs == 1
 
-    manager.invalidate(ir, PreservedAnalyses.all())
 
-    manager.get(BoxDoubleAnalysis, ir)
-    assert BoxDoubleAnalysis.runs == 1
-
-
-def test_analysis_manager_invalidate_keeps_only_preserved_entries() -> None:
-    """Test that `invalidate` retains preserved entries and drops the rest."""
+def test_changing_pass_carries_only_its_preserved_results() -> None:
+    """Test that a pass that changes the IR carries only the preserved results."""
     BoxDoubleAnalysis.runs = 0
     BoxParityAnalysis.runs = 0
-    manager = AnalysisManager[Box]()
-    ir = Box(3)
+    manager = PassManager[Box]()
+    manager.add_pass(
+        _build_reading_pass(
+            "tests.pm.cache.some.seed", BoxDoubleAnalysis, BoxParityAnalysis
+        )
+    )
+    manager.add_pass(
+        _build_replacing_pass(
+            "tests.pm.cache.some.replace",
+            PreservedAnalyses.none().preserve(BoxDoubleAnalysis.get_analysis_name()),
+        )
+    )
+    manager.add_pass(
+        _build_reading_pass(
+            "tests.pm.cache.some.reread", BoxDoubleAnalysis, BoxParityAnalysis
+        )
+    )
 
-    manager.get(BoxDoubleAnalysis, ir)
-    manager.get(BoxParityAnalysis, ir)
+    manager.run(Box(3))
 
-    preserved = PreservedAnalyses.none().preserve(BoxDoubleAnalysis.get_analysis_name())
-    manager.invalidate(ir, preserved)
-
-    manager.get(BoxDoubleAnalysis, ir)
-    manager.get(BoxParityAnalysis, ir)
     # Double was preserved -> still 1 run total.
-    # Parity was dropped -> recomputed on the second `get`.
+    # Parity was not -> recomputed for the new box.
     assert BoxDoubleAnalysis.runs == 1
     assert BoxParityAnalysis.runs == 2
 
 
-def test_analysis_manager_transfer_moves_preserved_entries() -> None:
-    """Test that `transfer` moves preserved entries from one IR to another."""
+def test_changing_pass_preserving_all_carries_every_result() -> None:
+    """Test that the results move to a changed output that preserves all."""
     BoxDoubleAnalysis.runs = 0
-    manager = AnalysisManager[Box]()
-    from_ir = Box(3)
-    to_ir = Box(4)
+    manager = PassManager[Box]()
+    manager.add_pass(_build_reading_pass("tests.pm.cache.move.seed", BoxDoubleAnalysis))
+    manager.add_pass(
+        _build_replacing_pass("tests.pm.cache.move.replace", PreservedAnalyses.all())
+    )
+    manager.add_pass(
+        _build_reading_pass("tests.pm.cache.move.reread", BoxDoubleAnalysis)
+    )
 
-    manager.get(BoxDoubleAnalysis, from_ir)
-    assert BoxDoubleAnalysis.runs == 1
+    manager.run(Box(3))
 
-    manager.transfer(from_ir, to_ir, PreservedAnalyses.all())
-
-    manager.get(BoxDoubleAnalysis, to_ir)
     # The cached entry transferred; no recomputation despite the different IR.
     assert BoxDoubleAnalysis.runs == 1
 
 
-def test_analysis_manager_transfer_drops_when_not_preserved() -> None:
-    """Test that `transfer` with `PreservedAnalyses.none()` drops the entry."""
+def test_changing_pass_preserving_none_carries_no_result() -> None:
+    """Test that a changed output that preserves nothing is analyzed afresh."""
     BoxDoubleAnalysis.runs = 0
-    manager = AnalysisManager[Box]()
-    from_ir = Box(3)
-    to_ir = Box(4)
+    manager = PassManager[Box]()
+    manager.add_pass(_build_reading_pass("tests.pm.cache.drop.seed", BoxDoubleAnalysis))
+    manager.add_pass(
+        _build_replacing_pass("tests.pm.cache.drop.replace", PreservedAnalyses.none())
+    )
+    manager.add_pass(
+        _build_reading_pass("tests.pm.cache.drop.reread", BoxDoubleAnalysis)
+    )
 
-    manager.get(BoxDoubleAnalysis, from_ir)
-    assert BoxDoubleAnalysis.runs == 1
+    manager.run(Box(3))
 
-    manager.transfer(from_ir, to_ir, PreservedAnalyses.none())
-
-    manager.get(BoxDoubleAnalysis, to_ir)
     assert BoxDoubleAnalysis.runs == 2
 
 
 # ---------------------------------------------------------------------------
-# bind / unbind split. The `None` overload is gone.
+# The analysis view of a hook (D-S6-8 removed bind / unbind: a hook's
+# context carries the run's cache).
 # ---------------------------------------------------------------------------
 
 
-def test_bind_analysis_manager_rejects_none() -> None:
-    """Test that `bind_analysis_manager(None)` is no longer accepted."""
+def test_get_analysis_manager_raises_in_a_hook_without_a_context() -> None:
+    """Test that `did_change` cannot reach the run's analyses.
 
-    @register_pass("tests.pm.bind_rejects_none", "Identity pass for bind/unbind tests.")
-    class _BindRejectsNonePass(CompilerPass[Box, Box]):
-        @override
-        def get_noop_output(self, ir: Box) -> Box:
-            return ir
+    D-S6-4: the core runs `did_change` and `get_preserved_analyses` without
+    a context, so the view is refused there, and the hook fails.
+    """
 
-        @override
-        def run_pass(self, ir: Box) -> Box:
-            return ir
-
-    compiler_pass = _BindRejectsNonePass()
-
-    with pytest.raises(TypeError):
-        compiler_pass.bind_analysis_manager(None)  # type: ignore[arg-type]
-
-
-def test_unbind_analysis_manager_clears_binding() -> None:
-    """Test that `unbind_analysis_manager()` returns the pass to standalone mode."""
-
-    @register_pass("tests.pm.unbind", "Identity pass for unbind testing.")
-    class _UnbindPass(CompilerPass[Box, Box]):
-        @override
-        def get_noop_output(self, ir: Box) -> Box:
-            return ir
-
+    @register_pass("tests.pm.bind_rejects_none", "Reads the view in did_change.")
+    class _ViewInDidChangePass(CompilerPass[Box, Box]):
         @override
         def run_pass(self, ir: Box) -> Box:
             return ir
 
-    compiler_pass = _UnbindPass()
+        @override
+        def did_change(self, input_ir: Box, output: Box) -> bool:
+            self.get_analysis_manager()
+            return False
+
+    with pytest.raises(PassExecutionError) as excinfo:
+        _ViewInDidChangePass().execute(Box(0))
+
+    assert excinfo.value.hook == "did_change"
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "did_change" in str(excinfo.value.__cause__)
+
+
+def test_retained_analysis_manager_raises_after_its_hook() -> None:
+    """Test that a view kept past its hook raises instead of reaching the cache."""
+    retained: list[AnalysisManager[Box]] = []
+
+    @register_pass("tests.pm.unbind", "Keeps the view of its hook.")
+    class _RetainingPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            analysis_manager = self.get_analysis_manager()
+            assert analysis_manager is not None
+            retained.append(analysis_manager)
+            return ir
+
     manager = PassManager[Box]()
-    compiler_pass.bind_analysis_manager(manager.analysis_manager)
-    assert compiler_pass.get_analysis_manager() is manager.analysis_manager
+    manager.add_pass(_RetainingPass())
+    manager.run(Box(1))
 
-    compiler_pass.unbind_analysis_manager()
+    with pytest.raises(RuntimeError, match="expired"):
+        retained[0].get(BoxDoubleAnalysis, Box(1))
 
-    assert compiler_pass.get_analysis_manager() is None
 
+def test_get_analysis_manager_is_none_outside_a_run() -> None:
+    """Test that a pass outside a run has no analysis view, before and after runs."""
 
-def test_unbind_analysis_manager_is_idempotent() -> None:
-    """Test that calling `unbind_analysis_manager()` when unbound is a no-op."""
-
-    @register_pass("tests.pm.unbind_idempotent", "Identity pass for idempotent unbind.")
-    class _UnbindIdemPass(CompilerPass[Box, Box]):
-        @override
-        def get_noop_output(self, ir: Box) -> Box:
-            return ir
-
+    @register_pass("tests.pm.unbind_idempotent", "Identity pass for the view.")
+    class _ViewlessPass(CompilerPass[Box, Box]):
         @override
         def run_pass(self, ir: Box) -> Box:
             return ir
 
-    compiler_pass = _UnbindIdemPass()
-    compiler_pass.unbind_analysis_manager()  # already unbound; must not raise
+    compiler_pass = _ViewlessPass()
+    assert compiler_pass.get_analysis_manager() is None
+
+    compiler_pass.execute(Box(0))
 
     assert compiler_pass.get_analysis_manager() is None
 
 
-def test_analysis_manager_get_is_safe_under_concurrent_callers() -> None:
-    """Test concurrent ``get`` calls do not crash or produce inconsistent results."""
-    manager: AnalysisManager[Box] = AnalysisManager()
+def test_concurrent_runs_of_one_pipeline_are_independent() -> None:
+    """Test concurrent runs do not crash or produce inconsistent results.
+
+    D-S6-11: each run builds its own pipeline and cache, so runs of one
+    manager from many threads see only their own results.
+    """
     irs = [Box(i) for i in range(64)]
+
+    @register_pass("tests.pm.concurrent_reader", "Reads an analysis many times.")
+    class _ConcurrentReaderPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            for _ in range(20):
+                assert self.get_analysis(BoxDoubleAnalysis, ir) == ir.value * 2
+            return Box(self.get_analysis(BoxDoubleAnalysis, ir))
+
+    manager = PassManager[Box]()
+    manager.add_pass(_ConcurrentReaderPass())
 
     errors: list[BaseException] = []
     errors_lock = threading.Lock()
 
     def worker(ir: Box) -> int:
         try:
-            for _ in range(20):
-                manager.get(BoxDoubleAnalysis, ir)
-                manager.invalidate(ir, PreservedAnalyses.none())
-                manager.get(BoxDoubleAnalysis, ir)
-            value = manager.get(BoxDoubleAnalysis, ir)
+            value = manager.run(ir).output.value
             assert value == ir.value * 2
             return value
         except BaseException as exc:
@@ -1000,9 +1136,18 @@ def test_analysis_manager_get_is_safe_under_concurrent_callers() -> None:
 
 
 @pytest.mark.slow
-def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
-    """Test concurrent ``get`` and finalizer-driven eviction do not corrupt state."""
-    manager: AnalysisManager[Box] = AnalysisManager()
+def test_concurrent_runs_survive_garbage_collection_of_their_ir() -> None:
+    """Test concurrent runs and collection of their IR do not corrupt state."""
+
+    @register_pass("tests.pm.concurrent_gc_reader", "Reads an analysis of new IR.")
+    class _GcReaderPass(CompilerPass[Box, Box]):
+        @override
+        def run_pass(self, ir: Box) -> Box:
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            return Box(ir.value + 1)
+
+    manager = PassManager[Box]()
+    manager.add_pass(_GcReaderPass())
 
     errors: list[BaseException] = []
     errors_lock = threading.Lock()
@@ -1011,8 +1156,8 @@ def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
         try:
             for offset in range(50):
                 ir = Box(seed * 100 + offset)
-                manager.get(BoxDoubleAnalysis, ir)
-                # Drop the local reference; let the finalizer fire on GC.
+                manager.run(ir)
+                # Drop the local reference; let the IR be collected.
                 del ir
             gc.collect()
         except BaseException as exc:
@@ -1135,35 +1280,37 @@ def test_fixpoint_convergence_logs_info(
         record
         for record in caplog.records
         if record.levelno == logging.INFO
-        and record.funcName == "_run_fixpoint_group"
-        and "finished" in record.getMessage()
+        and "logging-dec-group finished" in record.getMessage()
         and "converged=True" in record.getMessage()
     ]
     assert finished_records, "expected INFO record on fixpoint convergence"
 
 
-def test_analysis_manager_logs_cache_hit_and_miss(
+def test_analysis_cache_logs_no_hit_or_miss_lines(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test AnalysisManager.get emits DEBUG records on hit and miss."""
+    """Test the run's cache logs no hit or miss lines.
+
+    D-S6-5: the cache is the Rust core's, which does not log; the pipeline
+    and pass lines stay.
+    """
 
     class HitMissAnalysis(Analysis[Box, int]):
         @override
         def run(self, ir: Box) -> int:
             return ir.value
 
-    am = AnalysisManager[Box]()
-    box = Box(value=11)
+    manager = PassManager[Box]()
+    manager.add_pass(
+        _build_reading_pass(
+            "tests.pm.logging.hit_miss", HitMissAnalysis, HitMissAnalysis
+        )
+    )
 
-    with caplog.at_level(logging.DEBUG, logger=_MANAGER_LOGGER):
-        am.get(HitMissAnalysis, box)
-        am.get(HitMissAnalysis, box)
+    with caplog.at_level(logging.DEBUG):
+        manager.run(Box(value=11))
 
-    miss_records = [
-        record for record in caplog.records if "cache miss" in record.getMessage()
-    ]
-    hit_records = [
-        record for record in caplog.records if "cache hit" in record.getMessage()
-    ]
-    assert miss_records, "expected cache miss DEBUG record"
-    assert hit_records, "expected cache hit DEBUG record"
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("cache hit" in message for message in messages)
+    assert not any("cache miss" in message for message in messages)
+    assert any("pass tests.pm.logging.hit_miss finished" in m for m in messages)

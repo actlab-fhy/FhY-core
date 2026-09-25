@@ -24,7 +24,6 @@ from fhy_core.pass_infrastructure import (
     PassExecutionError,
     PassManager,
     PassManagerResult,
-    PassRunRecord,
     ValidationManager,
     run_verification,
 )
@@ -109,19 +108,11 @@ def _warm_cache(benchmark: Benchmark, box: Box) -> int | None:
 def _run_count(result: PassManagerResult[Any]) -> int:
     """Return how many pass runs `result` records, none of them skipped.
 
-    N-S6-1: ``result.run_count()`` after S6, which replaces the global run
+    N-S6-1: ``result.run_count()`` since S6, which replaces the global run
     counters; before S6, the number of pass records, which is the run count
     when no pass skips.
     """
-    count = 0
-    for record in result.records:
-        if isinstance(record, PassRunRecord):
-            count += 1
-        elif isinstance(record, FixpointGroupRecord):
-            count += sum(
-                len(iteration.pass_runs) for iteration in record.iteration_records
-            )
-    return count
+    return result.run_count()
 
 
 # ---------------------------------------------------------------------------

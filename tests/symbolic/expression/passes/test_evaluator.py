@@ -29,11 +29,14 @@ from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    EntryLookupError,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     NativeFunction,
+    NativeResultSortError,
     PiecewiseExpression,
+    StringLiteralPrecisionError,
     UnaryExpression,
     UnaryOperation,
     call,
@@ -43,6 +46,7 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     register_native_function,
 )
+from fhy_core.symbolic.expression.passes.inline import FunctionArityError
 
 from ..conftest import mock_identifier
 
@@ -399,8 +403,10 @@ def test_evaluate_wraps_native_value_error_in_pass_execution_error(
 
     expression = CallExpression("test_eval_sqrt_neg", (LiteralExpression(-1.0),))
 
-    with pytest.raises(PassExecutionError, match="ValueError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         evaluate_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def _reciprocal(value: float) -> float:
@@ -415,8 +421,10 @@ def test_evaluate_wraps_native_zero_division_error_in_pass_execution_error(
 
     expression = CallExpression("test_eval_div_zero", (LiteralExpression(0.0),))
 
-    with pytest.raises(PassExecutionError, match="ZeroDivisionError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         evaluate_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, ZeroDivisionError)
 
 
 # =============================================================================
@@ -495,8 +503,10 @@ def test_evaluate_rejects_string_form_float_literal_argument(
 
     expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.1"),))
 
-    with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         evaluate_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, StringLiteralPrecisionError)
 
 
 @pytest.mark.parametrize(
@@ -521,8 +531,10 @@ def test_evaluate_coerces_decimal_literal_argument_like_its_text(
     expression = CallExpression("test_eval_decimal_coerce", (LiteralExpression(value),))
 
     if expected_result is None:
-        with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
+        with pytest.raises(PassExecutionError) as exc_info:
             evaluate_expression(expression)
+
+        assert isinstance(exc_info.value.__cause__, StringLiteralPrecisionError)
     else:
         result = evaluate_expression(expression)
         assert isinstance(result, LiteralExpression)
@@ -574,8 +586,10 @@ def test_evaluate_raises_for_unregistered_call_name() -> None:
     """Test a call to an unregistered name surfaces ``EntryLookupError``."""
     expression = CallExpression("test_eval_never_registered", (LiteralExpression(0),))
 
-    with pytest.raises(PassExecutionError, match="EntryLookupError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         evaluate_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, EntryLookupError)
 
 
 def test_evaluate_raises_for_call_to_native_constant(
@@ -586,8 +600,10 @@ def test_evaluate_raises_for_call_to_native_constant(
 
     expression = CallExpression("test_eval_constant_called", ())
 
-    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         evaluate_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, FunctionArityError)
 
 
 def test_evaluate_preserves_call_to_registered_function_unchanged(
@@ -629,5 +645,7 @@ def test_evaluate_raises_native_result_sort_error_for_wrong_return_type(
         "test_eval_wrong_return_sort", (LiteralExpression(0.0),)
     )
 
-    with pytest.raises(PassExecutionError, match="NativeResultSortError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         evaluate_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, NativeResultSortError)

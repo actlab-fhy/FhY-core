@@ -1494,7 +1494,7 @@ def test_sympy_to_expression_convert_implies_raises_not_implemented() -> None:
     """
     implies = sympy.Implies(sympy.Symbol("x_0"), sympy.Symbol("y_1"))
 
-    with pytest.raises(PassExecutionError, match=r"NotImplementedError") as exc_info:
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_sympy_expression_to_expression(implies)
 
     assert isinstance(exc_info.value.__cause__, NotImplementedError)
@@ -1647,7 +1647,7 @@ def test_single_branch_sympy_piecewise_with_non_true_condition_raises() -> None:
         (sympy.Integer(5), sympy.Symbol("flag_0")), evaluate=False
     )
 
-    with pytest.raises(PassExecutionError, match=r"PartialPiecewiseError") as exc_info:
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_sympy_expression_to_expression(sympy_expression)
 
     assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
@@ -1763,7 +1763,7 @@ def test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises() -> 
         (sympy.Integer(2), sympy.Symbol("flag_1")),
     )
 
-    with pytest.raises(PassExecutionError, match=r"PartialPiecewiseError") as exc_info:
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_sympy_expression_to_expression(sympy_expression)
 
     assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
@@ -1779,8 +1779,10 @@ def test_convert_call_expression_to_sympy_rejects_unresolved_call() -> None:
     """Test SymPy lowering rejects ``CallExpression`` (callers inline first)."""
     expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
 
-    with pytest.raises(PassExecutionError, match="TypeError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
 
 
 # =============================================================================

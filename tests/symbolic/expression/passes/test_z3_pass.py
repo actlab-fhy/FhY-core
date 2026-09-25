@@ -1150,8 +1150,10 @@ def test_convert_call_expression_to_z3_rejects_unresolved_call() -> None:
     """Test the z3 lowering rejects ``CallExpression`` (callers must inline first)."""
     expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
 
-    with pytest.raises(PassExecutionError, match="TypeError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_expression_to_z3_expression(expression, {})
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
 
 
 # =============================================================================

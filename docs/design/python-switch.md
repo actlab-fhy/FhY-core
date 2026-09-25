@@ -36,14 +36,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S5.5: pattern tests migrated, and the interface suite
   - [x] S5.6: benchmarks after, and docs
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
-  - S6 in progress: done S6.4 (the binding, `rust/fhy-core-py/src/pass/`) and S6.5 (the Python switch; 69 tests fail until they migrate); next S6.6, the migrated tests and the interface suite
+  - S6 in progress: done S6.4 (the binding, `rust/fhy-core-py/src/pass/`), S6.5 (the Python switch) and S6.6 (the migrated tests and `test_pass_infrastructure_rust_binding.py`; the suite is green); next S6.7, the benchmarks after and the docs
   - [x] N-S6-1 to N-S6-3 decided (2026-09-25; see "S6 resolutions")
   - [x] S6.1: pass-infrastructure benchmarks and baseline
   - [x] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
   - [x] S6.3: the `ValidationReport` representation (D-S6-17)
   - [x] S6.4: the pass binding
   - [x] S6.5: the Python switch
-  - [ ] S6.6: tests migrated, and the interface suite
+  - [x] S6.6: tests migrated, and the interface suite
   - [ ] S6.7: benchmarks after, and docs
 - Leftovers:
   - [x] the `ValidationReport` construction cost (S6.3)
