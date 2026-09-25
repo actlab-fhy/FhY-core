@@ -16,6 +16,7 @@ import pytest
 import fhy_core
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import SerializedDict
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -256,6 +257,51 @@ def test_a_shared_dag_is_compared_and_hashed_in_time_linear_in_its_nodes() -> No
     assert node == twin
     assert hash(node) == hash(twin)
     assert node != other
+
+
+def test_a_deep_payload_decodes_in_one_pass() -> None:
+    """Test decoding a payload deeper than the recursion limit.
+
+    The binding decodes an expression payload of its own shapes in one
+    pass with its pending nodes on the heap; the framework's per-node path
+    would recurse once per level.
+    """
+    x = Identifier("x")
+    tree: Expression = IdentifierExpression(x)
+    payload: SerializedDict = tree.serialize_to_dict()
+    for _ in range(5_000):
+        payload = {
+            "__type__": "unary_expression",
+            "__data__": {"operation": "negate", "operand": payload},
+        }
+        tree = -tree
+
+    assert Expression.deserialize_from_dict(payload) == tree
+
+
+def test_a_payload_the_fast_path_declines_raises_the_framework_error() -> None:
+    """Test a malformed payload still raises the serialization framework's error."""
+    from fhy_core.serialization import DeserializationValueError  # noqa: PLC0415
+
+    payload = {
+        "__type__": "binary_expression",
+        "__data__": {
+            "operation": "logical_and",
+            "left": LiteralExpression(True).serialize_to_dict(),
+            "right": LiteralExpression(False).serialize_to_dict(),
+        },
+    }
+
+    with pytest.raises(DeserializationValueError, match="a valid BinaryOperation"):
+        Expression.deserialize_from_dict(payload)  # type: ignore[arg-type]
+
+
+def test_decoding_through_a_node_class_refuses_another_kind() -> None:
+    """Test ``Node.deserialize_from_dict`` refuses a payload of another node kind."""
+    from fhy_core.serialization import SerializationError  # noqa: PLC0415
+
+    with pytest.raises(SerializationError, match="not a subclass"):
+        BinaryExpression.deserialize_from_dict(LiteralExpression(1).serialize_to_dict())
 
 
 # =============================================================================

@@ -40,6 +40,7 @@ use super::alpha::read_alpha_renaming;
 use super::literal::{literal_to_python, read_literal};
 use super::materialize::substitute;
 use super::operation::{PythonOperation, operation_from_python, operation_to_python};
+use super::payload::deserialize_expression_payload;
 use super::text::{render_formatted, render_repr};
 
 // ---------------------------------------------------------------------------
@@ -545,6 +546,20 @@ impl PyExpression {
         Ok(self
             .expression
             .is_alpha_equivalent_under(&other.get().expression, &renaming))
+    }
+
+    /// Return the expression of the envelope payload `data`, an instance
+    /// of `cls`.
+    ///
+    /// Decodes a payload of the expression classes' own shapes in one pass;
+    /// any other payload goes through `WrappedFamilySerializable`'s
+    /// decoding, which raises the serialization framework's errors.
+    #[classmethod]
+    fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        deserialize_expression_payload(cls, data)
     }
 
     /// Return `other` as an expression, as every operator and builder
