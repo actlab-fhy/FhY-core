@@ -1,9 +1,8 @@
 //! `PyO3` classes and functions for [`fhy_core::expression`]: the bases of
-//! `fhy_core.symbolic.expression.core`'s expression classes on the Rust
-//! backend (pattern P2, as a class hierarchy), and the Boolean-position
-//! screen.
+//! `fhy_core.symbolic.expression.core`'s expression classes (pattern P2, as a
+//! class hierarchy), and the Boolean-position screen.
 //!
-//! On the Rust backend the Python expression API takes the Rust core's
+//! The Python expression API takes the Rust core's
 //! semantics (decision D-S4-1 of `docs/design/python-switch.md`): `==` and
 //! `hash` are structural, literals are normalized, conjunctions and
 //! disjunctions are one n-ary `LogicalExpression`, built-in function names

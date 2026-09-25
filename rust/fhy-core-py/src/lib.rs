@@ -46,7 +46,7 @@ mod rs_module {
     use super::value_domain::PyValueDomain;
 
     /// Set the extension's `__version__` to the crate version, which the
-    /// package compares with its own before it selects the Rust backend.
+    /// package compares with its own when it is imported.
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module.add("__version__", env!("CARGO_PKG_VERSION"))

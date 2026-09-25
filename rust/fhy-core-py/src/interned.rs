@@ -75,9 +75,8 @@ impl IdentityCache {
 /// that the append-only Rust registries cannot support (decision D-S2-1).
 pub(crate) fn raise_registry_append_only(cls: &Bound<'_, PyType>, method: &str) -> PyResult<()> {
     Err(PyNotImplementedError::new_err(format!(
-        "{}.{method} is not supported on the Rust backend: the Rust intern \
-         registries are append-only, so a canonical instance is never removed \
-         or replaced.",
+        "{}.{method} is not supported: the Rust intern registries are \
+         append-only, so a canonical instance is never removed or replaced.",
         cls.name()?
     )))
 }

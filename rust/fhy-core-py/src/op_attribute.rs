@@ -1,5 +1,5 @@
 //! `PyO3` class for [`fhy_core::op_attribute`]: `fhy_core._rs.OpAttribute`,
-//! the base of `fhy_core.op_attribute.OpAttribute` on the Rust backend.
+//! the base of `fhy_core.op_attribute.OpAttribute`.
 
 use pyo3::prelude::*;
 

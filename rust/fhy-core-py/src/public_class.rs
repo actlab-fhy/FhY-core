@@ -1,6 +1,6 @@
 //! The public Python classes of the Rust-backed classes.
 //!
-//! On the Rust backend, each public class, such as
+//! Each public class, such as
 //! `fhy_core.diagnostic.NoteKind`, is a thin Python subclass of its `PyO3`
 //! class that mixes in Python protocols. A value the binding builds from
 //! Rust, with no call through a class at hand, such as the kind of a note,

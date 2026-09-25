@@ -38,7 +38,7 @@ pub(crate) fn read_str<'a, 'py>(
 /// Return the hash of `value` from the standard hasher.
 ///
 /// Equal values hash equally within a process, which is all Python needs;
-/// the hashes differ from the pure-Python classes' ones.
+/// the hashes differ from the ones the replaced dataclasses computed.
 pub(crate) fn hash_value(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);

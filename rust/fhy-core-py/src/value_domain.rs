@@ -1,6 +1,5 @@
 //! `PyO3` class for [`fhy_core::value_domain`]: `fhy_core._rs.ValueDomain`,
-//! the base of `fhy_core.value_domain.ValueDomain` on the Rust backend
-//! (pattern P2).
+//! the base of `fhy_core.value_domain.ValueDomain` (pattern P2).
 //!
 //! The class wraps the canonical Rust domain and caches the Python objects
 //! its attributes return, including its parent's single Python object. As

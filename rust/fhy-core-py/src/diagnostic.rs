@@ -1,15 +1,15 @@
 //! `PyO3` classes for [`fhy_core::diagnostic`]: `fhy_core._rs.NoteKind`,
 //! `Note`, `Diagnostic` and `ValidationReport`, the bases of the classes of
-//! the same names in `fhy_core.diagnostic` on the Rust backend (pattern P2).
+//! the same names in `fhy_core.diagnostic` (pattern P2).
 //!
 //! Each class wraps the Rust value. `DiagnosticLevel` stays a Python enum
 //! (pattern P1) and converts by value at the boundary. A report holds
 //! arbitrary Python objects as its records, so its class wraps a
 //! `ValidationReport<Py<PyAny>>`.
 //!
-//! The Python API is the one the pure-Python dataclasses have, with their
-//! reprs, their `format()` text, their payloads and their exceptions: the
-//! Rust core's `Display` text never reaches Python. The public classes
+//! The Python API is the one the retired pure-Python dataclasses had, with
+//! their reprs, their `format()` text, their payloads and their exceptions:
+//! the Rust core's `Display` text never reaches Python. The public classes
 //! register themselves with the binding at import, so a value the binding
 //! builds from Rust, such as a note's kind, is an instance of the public
 //! class.

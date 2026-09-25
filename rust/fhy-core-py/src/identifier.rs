@@ -92,8 +92,8 @@ pub(crate) fn read_identifier_id(object: &Bound<'_, PyAny>) -> PyResult<Option<u
 /// name hint.
 ///
 /// Restoring advances the Rust counter past the id, as deserialization does.
-/// That never changes the counter on the Rust backend, where every Python
-/// identifier's id was issued by, or already advanced, the same counter.
+/// That never changes the counter, since every Python identifier's id was
+/// issued by, or already advanced, the same counter.
 ///
 /// # Errors
 ///

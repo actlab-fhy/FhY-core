@@ -1,7 +1,6 @@
 //! The expression classes: `fhy_core._rs.Expression` and its seven node
 //! classes, the bases of the classes of the same names in
-//! `fhy_core.symbolic.expression.core` on the Rust backend (pattern P2, as
-//! a class hierarchy).
+//! `fhy_core.symbolic.expression.core` (pattern P2, as a class hierarchy).
 //!
 //! `Expression` holds the Rust [`Expression`] handle, the tuple of its
 //! children's Python objects in visiting order, and its structural hash,

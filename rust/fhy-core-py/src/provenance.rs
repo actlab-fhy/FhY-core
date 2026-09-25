@@ -1,7 +1,7 @@
 //! `PyO3` classes for [`fhy_core::provenance`]: `fhy_core._rs.Position`,
 //! `Span`, `Provenance` and its five variant classes, the bases of the
-//! classes of the same names in `fhy_core.provenance` on the Rust backend
-//! (pattern P2, as a class hierarchy).
+//! classes of the same names in `fhy_core.provenance` (pattern P2, as a class
+//! hierarchy).
 //!
 //! `Provenance` is a `#[pyclass(subclass)]` base that holds the Rust
 //! [`Provenance`], and each variant class extends it with the Python objects
@@ -10,10 +10,9 @@
 //! Rust value next to their field objects in the same way. Equality, hashing
 //! and `str` run on the Rust values.
 //!
-//! The Python API is the one the pure-Python dataclasses have, with their
-//! reprs, their validation errors, their payloads, including the
-//! `WrappedFamilySerializable` envelope that the public classes inherit, and
-//! pickles that load on either backend. The public classes register
+//! The Python API is the one the retired pure-Python dataclasses had, with
+//! their reprs, their validation errors and their payloads, including the
+//! `WrappedFamilySerializable` envelope that the public classes inherit. The public classes register
 //! themselves with the binding at import, so a provenance the binding builds
 //! in Rust, such as the result of `Provenance.fuse`, is an instance of the
 //! public class.
