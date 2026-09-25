@@ -1100,3 +1100,116 @@ shells around Python objects.
 4. **S4.4: retire the pure-Python backend** per D-S4-6, and update
    CONTRIBUTING, the README, CI and nox.
 5. **Benchmarks after,** recorded here.
+
+### S4.1 baseline (2026-09-25, 6faac85 plus the new benchmarks)
+
+`benchmarks/test_expression.py` covers the hot paths of the survey's
+benchmark gaps: construction per node kind and through the builders and
+operators, field reads and `isinstance` dispatch, `==`, `hash`,
+structural and alpha equivalence on a deep tree and on a shared DAG,
+`substitute`, free identifiers, `pformat_expression`, a `VisitablePass`
+walk, the Boolean-position screen, the dict, JSON and pickle round trips.
+The deep trees are 100 operations over four identifiers, mixing unary,
+binary, identifier and literal nodes; the shared DAG stacks 10 additions of
+a node to itself (11 distinct nodes, 2,047 occurrences).
+
+The benchmarks call only API that D-S4-1 keeps, and assert no result that
+D-S4-1 changes: `==` of two distinct, equal trees is timed but not checked
+(identity and false today, structural and true after S4.3). The one call
+whose node shape changes, building a conjunction, sits in one helper,
+`_build_conjunction`, marked `D-S4-1` for S4.3.
+
+Median time per call, from `uv run --python 3.11 nox -s
+"benchmark-3.11(backend='python')" "benchmark-3.11(backend='rust')" --
+-k test_expression` on the S0 machine with Python 3.11.13 and
+pytest-benchmark 5.3.0. The load average was 5 to 10, so each backend ran
+three times, interleaved, and the table lists the best of the three
+medians; every row's three medians agreed within 30%. The expression code
+is pure Python on both backends today, so the two columns measure the same
+code and their differences are noise.
+
+| Benchmark | python | rust |
+|---|--:|--:|
+| `test_identifier_expression_construction` | 894 ns | 861 ns |
+| `test_literal_expression_construction[int]` | 1.04 µs | 976 ns |
+| `test_literal_expression_construction[big_int]` | 1.02 µs | 980 ns |
+| `test_literal_expression_construction[float]` | 1.04 µs | 979 ns |
+| `test_literal_expression_construction[integer_text]` | 1.36 µs | 1.26 µs |
+| `test_literal_expression_construction[decimal_text]` | 1.60 µs | 1.49 µs |
+| `test_literal_expression_construction[bool]` | 1.03 µs | 965 ns |
+| `test_unary_expression_construction` | 1.06 µs | 1.01 µs |
+| `test_binary_expression_construction` | 1.17 µs | 1.12 µs |
+| `test_make_binary_expression` | 3.45 µs | 3.36 µs |
+| `test_logical_not_construction` | 1.69 µs | 1.67 µs |
+| `test_conjunction_construction` | 4.10 µs | 4.03 µs |
+| `test_piecewise_construction` | 7.66 µs | 7.47 µs |
+| `test_call_construction_of_a_builtin` | 4.62 µs | 4.53 µs |
+| `test_call_construction_of_a_user_function` | 4.64 µs | 4.58 µs |
+| `test_deep_tree_construction` | 323.8 µs | 309.9 µs |
+| `test_binary_operator_of_two_expressions[add]` | 2.18 µs | 2.15 µs |
+| `test_binary_operator_of_two_expressions[multiply]` | 2.18 µs | 2.14 µs |
+| `test_binary_operator_of_two_expressions[true_divide]` | 2.19 µs | 2.13 µs |
+| `test_binary_operator_of_two_expressions[floor_divide]` | 2.19 µs | 2.16 µs |
+| `test_binary_operator_of_two_expressions[modulo]` | 2.18 µs | 2.14 µs |
+| `test_binary_operator_of_two_expressions[power]` | 2.19 µs | 2.15 µs |
+| `test_binary_operator_of_two_expressions[less]` | 2.18 µs | 2.13 µs |
+| `test_binary_operator_of_two_expressions[greater_equal]` | 2.20 µs | 2.14 µs |
+| `test_binary_operator_of_two_expressions[equals]` | 2.13 µs | 2.11 µs |
+| `test_binary_operator_of_two_expressions[not_equals]` | 2.13 µs | 2.10 µs |
+| `test_add_operator_with_int` | 3.65 µs | 3.52 µs |
+| `test_reflected_subtract_operator_with_int` | 3.71 µs | 3.59 µs |
+| `test_unary_operator[neg]` | 1.75 µs | 1.72 µs |
+| `test_unary_operator[pos]` | 1.75 µs | 1.70 µs |
+| `test_node_attribute_access[unary]` | 85 ns | 85 ns |
+| `test_node_attribute_access[binary]` | 99 ns | 99 ns |
+| `test_node_attribute_access[identifier]` | 51 ns | 51 ns |
+| `test_node_attribute_access[literal]` | 51 ns | 51 ns |
+| `test_node_attribute_access[piecewise]` | 99 ns | 99 ns |
+| `test_node_attribute_access[call]` | 85 ns | 85 ns |
+| `test_isinstance_of_node_kind` | 42 ns | 42 ns |
+| `test_isinstance_dispatch_over_node_kinds` | 2.74 µs | 2.85 µs |
+| `test_eq_of_one_node` | 88 ns | 88 ns |
+| `test_eq_of_distinct_equal_trees` | 134 ns | 134 ns |
+| `test_eq_of_distinct_equal_deep_trees` | 137 ns | 137 ns |
+| `test_hash_of_small_tree` | 51 ns | 51 ns |
+| `test_hash_of_deep_tree` | 51 ns | 51 ns |
+| `test_dict_lookup_by_deep_tree` | 46 ns | 46 ns |
+| `test_structural_equivalence_of_deep_trees` | 2.22 ms | 2.23 ms |
+| `test_structural_equivalence_of_shared_dags` | 22.0 ms | 22.0 ms |
+| `test_alpha_equivalence_under_free_renaming_of_deep_trees` | 2.47 ms | 2.46 ms |
+| `test_substitute_in_deep_tree` | 246.9 µs | 244.3 µs |
+| `test_substitute_in_shared_dag` | 2.18 ms | 2.12 ms |
+| `test_free_identifiers_of_deep_tree` | 65.0 µs | 65.4 µs |
+| `test_pformat_expression_of_deep_tree[symbolic]` | 917.7 µs | 915.7 µs |
+| `test_pformat_expression_of_deep_tree[functional]` | 928.0 µs | 924.5 µs |
+| `test_pformat_expression_of_deep_tree[show_id]` | 903.1 µs | 915.9 µs |
+| `test_visitable_pass_walk_of_deep_tree` | 906.4 µs | 923.4 µs |
+| `test_validate_logical_operands_of_deep_conjunction` | 1.33 ms | 1.33 ms |
+| `test_validate_predicate_of_nested_piecewise` | 499.4 µs | 494.6 µs |
+| `test_validate_predicate_of_comparison` | 6.75 µs | 6.68 µs |
+| `test_serialize_to_dict_of_deep_tree` | 238.3 µs | 245.2 µs |
+| `test_deserialize_from_dict_of_deep_tree` | 44.8 ms | 45.8 ms |
+| `test_json_round_trip_of_deep_tree` | 45.8 ms | 46.8 ms |
+| `test_pickle_round_trip_of_deep_tree` | 532.4 µs | 524.3 µs |
+
+What the baseline shows for S4.3:
+
+- **Construction** costs 0.9 to 1.6 µs per node, and 3.5 to 7.7 µs through
+  a coercing builder or operator. A 100-deep tree takes about 0.3 ms.
+- **Field reads, `==` and `hash`** are at the interpreter's floor (50 to
+  140 ns): `==` and `hash` are identity today, so they do not depend on
+  the tree's size. On the Rust semantics both become structural; the deep
+  rows show what an uncached structural hash will be compared with.
+- **`isinstance` misses are slow.** A hit takes 42 ns, but the node
+  classes' metaclass is `typing._ProtocolMeta` (they inherit the
+  `HasOperands` protocol), whose `__instancecheck__` runs Python code for
+  a miss: about 560 ns each, measured with `timeit`. The dispatch cascade
+  over the six classes, as the passes dispatch, therefore takes 2.7 µs.
+  Pyclasses with an ordinary metaclass would answer a miss in tens of
+  nanoseconds.
+- **The whole-tree operations** are where Rust should win most: structural
+  and alpha equivalence of two deep trees take about 2.2 and 2.5 ms, of two
+  shared DAGs 22 ms (Python walks all 2,047 occurrences), `substitute`
+  0.25 ms (2.1 ms on the DAG), `pformat_expression` and the counting
+  visitor 0.9 ms, the screen of a 100-operand conjunction 1.3 ms, and
+  decoding a deep tree from a dict or JSON 45 ms.
