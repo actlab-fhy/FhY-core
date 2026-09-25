@@ -4,17 +4,31 @@ import base64
 import copy
 import io
 import pickle
+import re
 import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
 
 import fhy_core
 from fhy_core import identifier as identifier_module
-from fhy_core.identifier import Identifier, _PythonIdCounter, _ReservedIdentifier
+from fhy_core.diagnostic import (
+    OTHER_NOTE_KIND,
+    RATIONALE_NOTE_KIND,
+    REMARK_NOTE_KIND,
+    SUGGESTION_NOTE_KIND,
+)
+from fhy_core.identifier import (
+    Identifier,
+    _build_reserved_identifier,
+    _PythonIdCounter,
+    _ReservedIdentifier,
+)
+from fhy_core.op_attribute import ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, PURE
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -23,6 +37,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.traits import Equal, Frozen, FrozenMutationError, PartialEqual
 from fhy_core.utils.override import override
+from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN
 
 from .conftest import build_backend_environment
 
@@ -746,11 +761,7 @@ def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
     ).strip()
     first_id, second_id, *import_time_ids = (int(part) for part in output.split())
 
-    reserved_ids = {
-        value.id
-        for name, value in vars(identifier_module).items()
-        if name.startswith("_RESERVED_") and isinstance(value, _ReservedIdentifier)
-    }
+    reserved_ids = {entry.id for entry in _read_python_reserved_table().values()}
     issued_ids = [
         identifier_id for identifier_id in import_time_ids if identifier_id >= 65_536
     ]
@@ -763,6 +774,99 @@ def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
 def test_python_counter_starts_at_the_reserved_block() -> None:
     """Test a fresh pure-Python counter issues `65_536` first."""
     assert _PythonIdCounter().allocate() == 65_536
+
+
+# =============================================================================
+# Reserved ids of the shipped identifiers
+#
+# The shipped tags hold fixed ids from the reserved block on both backends
+# (decision D-S2-2 of docs/design/python-switch.md), from a table that must
+# match the Rust crate's `fhy_core::identifier::reserved` entry for entry.
+# =============================================================================
+
+_RUST_RESERVED_TABLE = (
+    Path(__file__).resolve().parents[1]
+    / "rust"
+    / "fhy-core"
+    / "src"
+    / "identifier"
+    / "reserved.rs"
+)
+_RUST_RESERVED_ENTRY = re.compile(
+    r"pub\(crate\) const (\w+): ReservedIdentifier\s*=\s*"
+    r'ReservedIdentifier::new\((\d+), "([^"]*)"\);'
+)
+_PYTHON_RESERVED_PREFIX = "_RESERVED_"
+
+
+def _read_python_reserved_table() -> dict[str, _ReservedIdentifier]:
+    """Return the Python reserved-id table, keyed by the Rust entry names."""
+    return {
+        name.removeprefix(_PYTHON_RESERVED_PREFIX): value
+        for name, value in vars(identifier_module).items()
+        if name.startswith(_PYTHON_RESERVED_PREFIX)
+        and isinstance(value, _ReservedIdentifier)
+    }
+
+
+def test_python_reserved_table_matches_the_rust_table() -> None:
+    """Test the Python reserved-id table holds exactly the Rust table's entries."""
+    rust_entries = {
+        name: _ReservedIdentifier(int(entry_id), name_hint)
+        for name, entry_id, name_hint in _RUST_RESERVED_ENTRY.findall(
+            _RUST_RESERVED_TABLE.read_text(encoding="utf-8")
+        )
+    }
+
+    assert rust_entries
+    assert _read_python_reserved_table() == rust_entries
+
+
+@pytest.mark.parametrize(
+    ("tag", "reserved_id", "name_hint"),
+    [
+        (RATIONALE_NOTE_KIND, 0, "rationale"),
+        (SUGGESTION_NOTE_KIND, 1, "suggestion"),
+        (REMARK_NOTE_KIND, 2, "remark"),
+        (OTHER_NOTE_KIND, 3, "other"),
+        (COMMUTATIVE, 16, "commutative"),
+        (ASSOCIATIVE, 17, "associative"),
+        (PURE, 18, "pure"),
+        (ELEMENTWISE, 19, "elementwise"),
+        (DATA_DOMAIN, 32, "data"),
+        (ADDRESS_DOMAIN, 33, "address"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_shipped_tag_holds_its_reserved_id(
+    tag: Any, reserved_id: int, name_hint: str
+) -> None:
+    """Test each shipped tag is named by its fixed reserved identifier."""
+    assert (tag.name.id, tag.name.name_hint) == (reserved_id, name_hint)
+    assert tag.serialize_to_dict()["name"] == {
+        "id": reserved_id,
+        "name_hint": name_hint,
+    }
+
+
+def test_build_reserved_identifier_draws_nothing_from_the_counter() -> None:
+    """Test building a reserved identifier leaves the id counter where it was."""
+    before = Identifier("before").id
+
+    reserved = _build_reserved_identifier(_ReservedIdentifier(40, "unassigned"))
+
+    assert (reserved.id, reserved.name_hint) == (40, "unassigned")
+    assert reserved.is_frozen
+    assert Identifier("after").id == before + 1
+
+
+@pytest.mark.parametrize("reserved_id", [-1, 65_536])
+def test_build_reserved_identifier_rejects_an_id_outside_the_block(
+    reserved_id: int,
+) -> None:
+    """Test a reserved identifier's id must lie in the reserved block."""
+    with pytest.raises(ValueError, match=r"must lie in \[0, 65536\)"):
+        _build_reserved_identifier(_ReservedIdentifier(reserved_id, "outside"))
 
 
 # =============================================================================
