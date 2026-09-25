@@ -222,6 +222,12 @@ fn level_to_python(py: Python<'_>, level: DiagnosticLevel) -> PyResult<Bound<'_,
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "Note")]
 pub(crate) struct PyNote {
     note: Note,
+    /// The message, the `str` the note was built from.
+    #[pyo3(get)]
+    message: Py<PyString>,
+    /// The single Python object of the note's canonical kind.
+    #[pyo3(get)]
+    kind: Py<PyAny>,
 }
 
 impl PyNote {
@@ -232,6 +238,9 @@ impl PyNote {
     }
 
     /// Return the canonical kind of the Python `kind`, a `NoteKind`.
+    ///
+    /// Every Python `NoteKind` is the single object of its canonical kind,
+    /// so the note can hold `kind` itself as its kind's object.
     fn read_kind(kind: &Bound<'_, PyAny>) -> PyResult<Canonical<NoteKind>> {
         match kind.cast::<PyNoteKind>() {
             Ok(kind) => Ok(kind.get().tag.clone()),
@@ -242,11 +251,6 @@ impl PyNote {
                 kind,
             )?),
         }
-    }
-
-    /// Return the Python object of the note's kind.
-    fn kind_to_python<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        PyNoteKind::to_python(py, None, self.note.kind().clone(), None)
     }
 }
 
@@ -260,24 +264,22 @@ impl PyNote {
     #[new]
     #[pyo3(signature = (message, kind = OptionalArgument::Omitted))]
     fn new(message: &Bound<'_, PyAny>, kind: OptionalArgument<'_>) -> PyResult<Self> {
-        let message = read_str(message, "Note", "message")?.to_str()?;
-        let note = match kind {
-            OptionalArgument::Omitted => Note::with_other_kind(message),
-            OptionalArgument::Given(kind) => Note::new(message, Self::read_kind(&kind)?),
+        let py = message.py();
+        let message = read_str(message, "Note", "message")?;
+        let text = message.to_str()?;
+        let (note, kind) = match kind {
+            OptionalArgument::Omitted => {
+                let note = Note::with_other_kind(text);
+                let kind = PyNoteKind::to_python(py, None, note.kind().clone(), None)?;
+                (note, kind)
+            }
+            OptionalArgument::Given(kind) => (Note::new(text, Self::read_kind(&kind)?), kind),
         };
-        Ok(Self { note })
-    }
-
-    /// The message text.
-    #[getter]
-    fn message<'py>(&self, py: Python<'py>) -> Bound<'py, PyString> {
-        PyString::new(py, self.note.message())
-    }
-
-    /// The note's kind.
-    #[getter]
-    fn kind<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.kind_to_python(py)
+        Ok(Self {
+            note,
+            message: message.clone().unbind(),
+            kind: kind.unbind(),
+        })
     }
 
     /// Always true: notes are immutable.
@@ -309,8 +311,8 @@ impl PyNote {
         Ok(format!(
             "{}(message={}, kind={})",
             slf.get_type().qualname()?,
-            PyString::new(py, this.note.message()).repr()?,
-            this.kind_to_python(py)?.repr()?,
+            this.message.bind(py).repr()?,
+            this.kind.bind(py).repr()?,
         ))
     }
 
@@ -338,7 +340,7 @@ impl PyNote {
     ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>)> {
         let py = slf.py();
         let this = slf.get();
-        let arguments = PyTuple::new(py, [this.message(py).into_any(), this.kind_to_python(py)?])?;
+        let arguments = PyTuple::new(py, [this.message.bind(py).as_any(), this.kind.bind(py)])?;
         Ok((slf.get_type(), arguments))
     }
 
