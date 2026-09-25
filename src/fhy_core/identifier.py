@@ -22,6 +22,7 @@ from threading import Lock
 from typing import (
     Any,
     Final,
+    NamedTuple,
     Protocol,
     TypedDict,
     TypeGuard,
@@ -42,8 +43,8 @@ from .serialization import (
 from .traits.equality import EqualMixin
 from .traits.frozen import FrozenMixin
 
-# Ids below this are reserved for the identifiers the Rust extension ships, so
-# the counter starts here. Matches the Rust implementation:
+# Ids below this are reserved for the identifiers the package ships, so the
+# counter starts here. Matches the Rust implementation:
 # `fhy_core::identifier::RESERVED_ID_COUNT`.
 _RESERVED_ID_COUNT: Final[int] = 65_536
 # Exclusive upper bound of a payload id, so no payload can raise the counter
@@ -57,6 +58,30 @@ _NEGATIVE_ID_MESSAGE = "can't convert negative int to unsigned"
 _OVERSIZED_ID_MESSAGE = "int too big to convert"
 # The message the Rust extension raises for an id in ``[2**63, 2**64)``.
 _ID_OUT_OF_RANGE_MESSAGE = f"identifier id {{}} is at or above the cap {_ID_CAP}"
+
+
+class _ReservedIdentifier(NamedTuple):
+    """The fixed id and name hint of one identifier the package ships."""
+
+    id: int
+    name_hint: str
+
+
+# The reserved-id table: the fixed ids of the identifiers the package ships,
+# so a shipped tag, and its payload, is the same in every process and on
+# either backend. Ids are grouped by family: note kinds in 0..16, op
+# attributes in 16..32 and value domains in 32..48. Matches the Rust
+# implementation: `fhy_core::identifier::reserved`, entry for entry.
+_RESERVED_RATIONALE_NOTE_KIND: Final = _ReservedIdentifier(0, "rationale")
+_RESERVED_SUGGESTION_NOTE_KIND: Final = _ReservedIdentifier(1, "suggestion")
+_RESERVED_REMARK_NOTE_KIND: Final = _ReservedIdentifier(2, "remark")
+_RESERVED_OTHER_NOTE_KIND: Final = _ReservedIdentifier(3, "other")
+_RESERVED_COMMUTATIVE: Final = _ReservedIdentifier(16, "commutative")
+_RESERVED_ASSOCIATIVE: Final = _ReservedIdentifier(17, "associative")
+_RESERVED_PURE: Final = _ReservedIdentifier(18, "pure")
+_RESERVED_ELEMENTWISE: Final = _ReservedIdentifier(19, "elementwise")
+_RESERVED_DATA_DOMAIN: Final = _ReservedIdentifier(32, "data")
+_RESERVED_ADDRESS_DOMAIN: Final = _ReservedIdentifier(33, "address")
 
 
 class _IdentifierData(TypedDict):
@@ -170,8 +195,10 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     ``name_hint`` is a debugging aid and is not consulted by ``__eq__`` or
     ``__hash__``. Ids are drawn from a single process-global,
     monotonically-increasing counter and are never reused. The ids
-    ``0..65_536`` are reserved for the identifiers the Rust extension ships,
-    so the counter starts at ``65_536`` on both backends.
+    ``0..65_536`` are reserved for the identifiers the package ships, such
+    as the shipped note kinds, op attributes and value domains, which hold
+    the same fixed ids on both backends, so the counter starts at ``65_536``
+    on both backends.
 
     Construction and deserialization are thread-safe and share the same
     counter: a deserialized id cannot collide with a subsequently
@@ -283,6 +310,35 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     @override
     def __repr__(self) -> str:
         return f"{self._name_hint}::{self._id}"
+
+
+def _build_reserved_identifier(entry: _ReservedIdentifier) -> Identifier:
+    """Return the shipped identifier ``entry`` names, with its fixed id.
+
+    Builds the identifier as deserialization does, but never touches the id
+    counter, which issues fresh ids only from ``65_536`` upward.
+
+    Args:
+        entry: An entry of the reserved-id table.
+
+    Returns:
+        The frozen identifier with the entry's id and name hint.
+
+    Raises:
+        ValueError: If the entry's id lies outside the reserved block
+            ``[0, 65_536)``.
+
+    """
+    if not 0 <= entry.id < _RESERVED_ID_COUNT:
+        raise ValueError(
+            f"Reserved identifier id must lie in [0, {_RESERVED_ID_COUNT}), "
+            f"got {entry.id}."
+        )
+    identifier = Identifier.__new__(Identifier)
+    identifier._id = entry.id
+    identifier._name_hint = entry.name_hint
+    identifier.freeze()
+    return identifier
 
 
 @runtime_checkable

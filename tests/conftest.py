@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import fhy_core
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.symbolic.expression import registry as _registry
@@ -20,6 +21,7 @@ __all__ = [
     "build_backend_environment",
     "mock_identifier",
     "run_counter_operations",
+    "skip_on_rust_backend",
 ]
 
 # The variable that selects the backend a freshly started interpreter imports.
@@ -77,6 +79,23 @@ def function_registry_snapshot() -> Iterator[None]:
         yield
     finally:
         _registry.set_registry_state_for_tests(snapshot)
+
+
+def skip_on_rust_backend(reason: str) -> pytest.MarkDecorator:
+    """Return a mark that skips a test when the Rust backend is selected.
+
+    For tests that pin behavior only the pure-Python backend has, by a
+    recorded decision of ``docs/design/python-switch.md``.
+
+    Args:
+        reason: Why the test does not apply on the Rust backend, naming the
+            decision.
+
+    Returns:
+        A ``skipif`` mark on ``fhy_core.RUST_BACKEND_SELECTED``.
+
+    """
+    return pytest.mark.skipif(fhy_core.RUST_BACKEND_SELECTED, reason=reason)
 
 
 def build_backend_environment(

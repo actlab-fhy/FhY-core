@@ -1131,10 +1131,10 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
 # Pinned built-in constant ids
 # =============================================================================
 
-# The id counter starts at 65_536, above the ids reserved for the Rust
-# extension's shipped identifiers, so import-time registration numbers the
-# constants from there.
-_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 65_544, "e": 65_545, "inf": 65_546, "nan": 65_547}
+# The id counter starts at 65_536, above the ids reserved for the shipped
+# identifiers. The shipped tags hold fixed reserved ids and draw nothing from
+# the counter, so import-time registration numbers the constants from 65_536.
+_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 65_536, "e": 65_537, "inf": 65_538, "nan": 65_539}
 
 
 def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:

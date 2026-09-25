@@ -25,6 +25,23 @@ from fhy_core.value_domain import (
     ValueDomain,
 )
 
+from .conftest import skip_on_rust_backend
+
+_SKIP_ON_RUST_CANONICAL_CONSTRUCTION = skip_on_rust_backend(
+    "D-S2-4: on the Rust backend, constructing a tag whose key is registered "
+    "returns the canonical instance itself"
+)
+_SKIP_ON_RUST_ONE_PARENT_PER_NAME = skip_on_rust_backend(
+    "D-S2-3: on the Rust backend a value domain's name decides its parent, so "
+    "constructing a registered name under another parent raises ValueError and "
+    "domains compare by name"
+)
+_SKIP_ON_RUST_APPEND_ONLY_REGISTRY = skip_on_rust_backend(
+    "D-S2-1: the Rust intern registries are append-only, so "
+    "clear_interned_registry and register_default_instances raise "
+    "NotImplementedError on the Rust backend"
+)
+
 # =============================================================================
 # Construction & traits
 # =============================================================================
@@ -81,6 +98,7 @@ def test_value_domain_blocks_attribute_mutation() -> None:
 # =============================================================================
 
 
+@_SKIP_ON_RUST_CANONICAL_CONSTRUCTION
 def test_value_domain_first_constructed_with_key_is_canonical() -> None:
     """Test `get_interned` returns the first instance registered under a name."""
     name = Identifier("x")
@@ -174,6 +192,7 @@ def test_value_domain_unequal_when_names_differ() -> None:
     assert ValueDomain(Identifier("a"), "desc") != ValueDomain(Identifier("b"), "desc")
 
 
+@_SKIP_ON_RUST_ONE_PARENT_PER_NAME
 def test_value_domain_unequal_when_parents_differ() -> None:
     """Test `__eq__` distinguishes domains with the same `name` but different
     `parent`s, keeping equality aligned with structural equivalence."""
@@ -405,6 +424,7 @@ def test_value_domain_deserialize_conflict_keeps_a_fresh_nested_parent() -> None
 # =============================================================================
 
 
+@_SKIP_ON_RUST_APPEND_ONLY_REGISTRY
 def test_clearing_registry_desyncs_module_level_constants_without_default_restore() -> (
     None
 ):
@@ -418,6 +438,7 @@ def test_clearing_registry_desyncs_module_level_constants_without_default_restor
         ValueDomain.register_default_instances()
 
 
+@_SKIP_ON_RUST_APPEND_ONLY_REGISTRY
 def test_register_default_instances_restores_module_level_canonicals() -> None:
     """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
     try:

@@ -13,7 +13,8 @@ from typing import Any, NamedTuple
 import pytest
 
 import fhy_core
-from fhy_core.identifier import Identifier, _PythonIdCounter
+from fhy_core import identifier as identifier_module
+from fhy_core.identifier import Identifier, _PythonIdCounter, _ReservedIdentifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -718,12 +719,14 @@ def test_deserialize_then_construct_avoids_collision() -> None:
 def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
     """Test a fresh process issues ids contiguously upward from `65_536`.
 
-    Ids below `65_536` are reserved for the identifiers the Rust extension
-    ships, so the counter starts there on both backends. The smallest id
-    alive after package initialization is `65_536` (or, when initialization
-    constructs no identifier, the first construction gets it), every such id
-    lies below the first id a caller constructs, and the construction after
-    that advances the counter by exactly one.
+    Ids below `65_536` are reserved for the identifiers the package ships,
+    so the counter starts there on both backends. Every id alive after
+    package initialization below `65_536` is a shipped identifier's reserved
+    id, the smallest id the counter issued during initialization is `65_536`
+    (or, when initialization constructs no identifier, the first
+    construction gets it), every such id lies below the first id a caller
+    constructs, and the construction after that advances the counter by
+    exactly one.
     """
     output = subprocess.check_output(
         [
@@ -743,7 +746,16 @@ def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
     ).strip()
     first_id, second_id, *import_time_ids = (int(part) for part in output.split())
 
-    assert min(import_time_ids, default=first_id) == 65_536
+    reserved_ids = {
+        value.id
+        for name, value in vars(identifier_module).items()
+        if name.startswith("_RESERVED_") and isinstance(value, _ReservedIdentifier)
+    }
+    issued_ids = [
+        identifier_id for identifier_id in import_time_ids if identifier_id >= 65_536
+    ]
+    assert set(import_time_ids) - set(issued_ids) <= reserved_ids
+    assert min(issued_ids, default=first_id) == 65_536
     assert all(identifier_id < first_id for identifier_id in import_time_ids)
     assert second_id == first_id + 1
 
