@@ -1381,3 +1381,438 @@ implemented):
    and an exponent would avoid the text, and the binding must decide what a
    negative `decimal.Decimal` becomes, since the core's `Decimal` is
    non-negative.
+
+### S4.3a status
+
+S4.3 lands in two steps. S4.3a switches the expression core onto the Rust
+implementation with the Rust semantics of D-S4-1 to D-S4-5 and migrates
+the expression package's own core tests; S4.3b migrates the consumers
+(the solver, types, constraints, params, the expression passes and
+patterns, the symbol table) and their tests, using the input list below.
+
+S4.3a was implemented on 2026-09-25 in eight commits: the binding
+(6c918b4), the Python switch with the import-time shims below (f755e0d),
+narrower stub types (a3fa4d7), the migrated strategies (340e468) and core
+tests (a6026e1), a one-pass payload decoder the first benchmark run
+called for (fc3c391), a fix of a registry-clearing test (5fa1bfd), and
+the benchmark helpers (bae95d0). As planned, the consumers' tests fail
+on the Rust backend where they rely on the old semantics, and the
+pure-Python backend fails the migrated tests; both are fixed in S4.3b and
+S4.4.
+
+State at bae95d0 on the Rust backend (`-m 'not slow'`): 5585 passed, 290
+failed, 7 skipped, 1 xfailed, and 192 errors, which are eight consumer
+test modules failing collection once per xdist worker. Of the migrated
+expression-package tests, 1,098 pass and 10 fail, each in a consumer
+bridge (listed below). On the pure-Python backend: 6332 passed, 242
+failed and 25 errors, all in the migrated tests and in property tests
+drawing from the migrated strategies. The Rust gate is green (fmt,
+clippy `-D warnings`, 2,630 tests, doc `-D warnings`, deny, `cargo +1.85
+check`); ruff check and format pass; mypy reports 53 errors, all in
+consumer modules and their tests.
+
+### S4.3a benchmarks (before and after)
+
+Median time per call, from `uv run --python 3.11 nox -s
+"benchmark-3.11(backend='rust')" -- -k test_expression`, on the S0
+machine with Python 3.11.13, at bae95d0. The load average was 3 to 5;
+the benchmarks ran three times and the table lists the best of the three
+medians. "Before" is the S4.1 baseline's Rust column, which measured the
+pure-Python classes. Every row's medians agreed within 30% except six
+sub-microsecond construction and operator rows (up to 1.6 times) and the
+small-tree hash (2.2 times).
+
+| Benchmark | before (S4.1) | after | after / before |
+|---|--:|--:|--:|
+| `test_identifier_expression_construction` | 861 ns | 449 ns | 0.52 |
+| `test_literal_expression_construction[int]` | 976 ns | 210 ns | 0.21 |
+| `test_literal_expression_construction[big_int]` | 980 ns | 705 ns | 0.72 |
+| `test_literal_expression_construction[float]` | 979 ns | 201 ns | 0.21 |
+| `test_literal_expression_construction[integer_text]` | 1.26 µs | 414 ns | 0.33 |
+| `test_literal_expression_construction[decimal_text]` | 1.49 µs | 770 ns | 0.52 |
+| `test_literal_expression_construction[bool]` | 965 ns | 202 ns | 0.21 |
+| `test_unary_expression_construction` | 1.01 µs | 283 ns | 0.28 |
+| `test_binary_expression_construction` | 1.12 µs | 315 ns | 0.28 |
+| `test_make_binary_expression` | 3.36 µs | 1.02 µs | 0.30 |
+| `test_logical_not_construction` | 1.67 µs | 653 ns | 0.39 |
+| `test_conjunction_construction` | 4.03 µs | 1.32 µs | 0.33 |
+| `test_piecewise_construction` | 7.47 µs | 2.05 µs | 0.27 |
+| `test_call_construction_of_a_builtin` | 4.53 µs | 1.42 µs | 0.31 |
+| `test_call_construction_of_a_user_function` | 4.58 µs | 4.06 µs | 0.89 |
+| `test_deep_tree_construction` | 309.9 µs | 79.9 µs | 0.26 |
+| `test_binary_operator_of_two_expressions[add]` | 2.15 µs | 378 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[multiply]` | 2.14 µs | 382 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[true_divide]` | 2.13 µs | 381 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[floor_divide]` | 2.16 µs | 382 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[modulo]` | 2.14 µs | 382 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[power]` | 2.15 µs | 388 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[less]` | 2.13 µs | 383 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[greater_equal]` | 2.14 µs | 389 ns | 0.18 |
+| `test_binary_operator_of_two_expressions[equals]` | 2.11 µs | 394 ns | 0.19 |
+| `test_binary_operator_of_two_expressions[not_equals]` | 2.10 µs | 387 ns | 0.18 |
+| `test_add_operator_with_int` | 3.52 µs | 875 ns | 0.25 |
+| `test_reflected_subtract_operator_with_int` | 3.59 µs | 926 ns | 0.26 |
+| `test_unary_operator[neg]` | 1.72 µs | 321 ns | 0.19 |
+| `test_unary_operator[pos]` | 1.70 µs | 316 ns | 0.19 |
+| `test_node_attribute_access[unary]` | 85 ns | 82 ns | 0.97 |
+| `test_node_attribute_access[binary]` | 99 ns | 95 ns | 0.96 |
+| `test_node_attribute_access[identifier]` | 51 ns | 49 ns | 0.96 |
+| `test_node_attribute_access[literal]` | 51 ns | 49 ns | 0.97 |
+| `test_node_attribute_access[piecewise]` | 99 ns | 95 ns | 0.96 |
+| `test_node_attribute_access[call]` | 85 ns | 82 ns | 0.97 |
+| `test_isinstance_of_node_kind` | 42 ns | 41 ns | 0.99 |
+| `test_isinstance_dispatch_over_node_kinds` | 2.85 µs | 919 ns | 0.32 |
+| `test_eq_of_one_node` | 88 ns | 68 ns | 0.77 |
+| `test_eq_of_distinct_equal_trees` | 134 ns | 210 ns | 1.56 |
+| `test_eq_of_distinct_equal_deep_trees` | 137 ns | 4.76 µs | 34.74 |
+| `test_hash_of_small_tree` | 51 ns | 69 ns | 1.34 |
+| `test_hash_of_deep_tree` | 51 ns | 151 ns | 2.96 |
+| `test_dict_lookup_by_deep_tree` | 46 ns | 63 ns | 1.38 |
+| `test_structural_equivalence_of_deep_trees` | 2.23 ms | 4.81 µs | 0.00 |
+| `test_structural_equivalence_of_shared_dags` | 22.0 ms | 648 ns | 0.00 |
+| `test_alpha_equivalence_under_free_renaming_of_deep_trees` | 2.46 ms | 8.95 µs | 0.00 |
+| `test_substitute_in_deep_tree` | 244.3 µs | 73.4 µs | 0.30 |
+| `test_substitute_in_shared_dag` | 2.12 ms | 8.60 µs | 0.00 |
+| `test_free_identifiers_of_deep_tree` | 65.4 µs | 10.1 µs | 0.15 |
+| `test_pformat_expression_of_deep_tree[symbolic]` | 915.7 µs | 8.72 µs | 0.01 |
+| `test_pformat_expression_of_deep_tree[functional]` | 924.5 µs | 7.98 µs | 0.01 |
+| `test_pformat_expression_of_deep_tree[show_id]` | 915.9 µs | 10.5 µs | 0.01 |
+| `test_visitable_pass_walk_of_deep_tree` | 923.4 µs | 291.0 µs | 0.32 |
+| `test_validate_logical_operands_of_deep_conjunction` | 1.33 ms | 77.2 µs | 0.06 |
+| `test_validate_predicate_of_nested_piecewise` | 494.6 µs | 17.3 µs | 0.04 |
+| `test_validate_predicate_of_comparison` | 6.68 µs | 1.52 µs | 0.23 |
+| `test_serialize_to_dict_of_deep_tree` | 245.2 µs | 113.8 µs | 0.46 |
+| `test_deserialize_from_dict_of_deep_tree` | 45.8 ms | 262.2 µs | 0.01 |
+| `test_json_round_trip_of_deep_tree` | 46.8 ms | 1.21 ms | 0.03 |
+| `test_pickle_round_trip_of_deep_tree` | 524.3 µs | 189.5 µs | 0.36 |
+
+What the numbers show:
+
+- **Construction** is 2 to 5 times faster: a node is a type check per
+  field, a Rust node and a children tuple. The operators, which coerce
+  through the registered public classes, are 4 to 5.5 times faster.
+  Constructing a call of a user function gains little (4.1 µs against
+  4.6 µs): the core parses a name that is not a built-in's through
+  `BuiltinFunction::from_str` twice (`Callee::from_str`, then
+  `FunctionName::try_new`), and each miss formats serde's "unknown
+  variant" message listing all 35 built-ins; see the proposals below.
+- **Field reads and a hit of `isinstance`** stay at the floor, since the
+  nodes keep their field objects as struct members. The dispatch cascade
+  over the node kinds is 3 times faster, because the classes' metaclass
+  is `ABCMeta` instead of `typing`'s protocol metaclass (see the notes).
+- **The whole-tree operations** are where Rust wins: structural and alpha
+  equivalence of two deep trees take 5 to 9 µs instead of 2.2 to 2.5 ms,
+  of two shared DAGs 0.65 µs instead of 22 ms; substitution is 3.3 times
+  faster on the deep tree and 250 times on the DAG; free identifiers 6.5
+  times; `pformat_expression` 90 to 115 times; the screen 4 to 29 times;
+  decoding a deep tree from a dict 175 times (after fc3c391; the first run
+  measured it unchanged at 44 ms, see the notes), from JSON 39 times; a
+  pickle round trip 2.8 times.
+- **The visitor walk** is 3.2 times faster, although it is Python code:
+  the children tuple is prebuilt and the dispatch suffix is cached.
+
+**Accepted costs of D-S4-1's structural `==` and `hash`**, for the
+maintainer to confirm (CONTRIBUTING "Replacing a Python class"):
+
+- `==` of two separately built equal trees compares them: 210 ns for a
+  small tree and 4.8 µs for the 100-level one, against 134 to 137 ns for
+  the identity comparison it replaces. The binding answers at once for
+  one shared node, and for two trees whose cached hashes differ.
+- `hash` is cached per node, but computed on the first call (the cost of
+  the structural digest, linear in the distinct nodes) and read through
+  the extension after that: 69 ns for a small tree, 151 ns for the deep
+  one, 63 ns for a dict lookup, against 46 to 51 ns for `object.__hash__`.
+
+### S4.3a implementation notes
+
+Choices the decisions left open, made while implementing S4.3a:
+
+- **Core additions: none.** The binding uses the public API of
+  `fhy_core::expression` as S4.2 left it, including the frame-based
+  `AlphaRenaming`. S4.2's proposals 1 (building calls by name) and 5
+  (decimals from text) hold as written, and proposals 2 to 4 are not
+  needed (the per-node hash cache lives in the binding). No Rust test was
+  added.
+- **The hierarchy.** `_rs.Expression` is a `#[pyclass(subclass, frozen)]`
+  base holding the Rust `Expression`, the tuple of its children's Python
+  objects in visiting order, and a lazily computed structural hash
+  (`OnceLock<u64>`). It implements equality, hashing, the operators,
+  `str`, `repr`, `accept`, `get_visit_method_suffix` (cached per class),
+  `get_visit_children`, free identifiers, substitution, structural and
+  alpha equivalence, whole-payload decoding and the frozen members. Each
+  of the seven node classes, `LogicalExpression` included, extends it
+  with its field objects as `#[pyo3(get)]` members and implements
+  `get_operands`, `rebuild_with_visit_children`, `__reduce__` and its data
+  payload. The public classes are `Expression(_rs.Expression,
+  WrappedFamilySerializable, AlphaEquivalenceMixin,
+  RewritableMixin["Expression"])` and `Node(_rs.Node, Expression)`; each
+  registers itself at import (S3's mechanism), and the binding builds
+  every node it creates through the registered class.
+- **No protocol metaclass.** `VisitableMixin` derives from the
+  `Visitable` protocol, so inheriting it made `typing._ProtocolMeta` the
+  classes' metaclass, whose `isinstance` misses run Python code (575 ns
+  each, measured). The classes register as virtual subclasses of
+  `VisitableMixin` and `FrozenMixin` instead, as S2/S3's did for
+  `FrozenMixin`, and no longer inherit `HasOperands`; the runtime
+  protocols (`HasOperands`, `Visitable`, `StructuralEquivalence`, `Term`)
+  still hold structurally. The metaclass is `ABCMeta`, from
+  `Serializable`.
+- **Child objects.** A node built from Python keeps the objects it was
+  given, so `node.left is left` holds and a field read is a struct-member
+  read. A tree the core builds (a substitution's result) is materialized
+  at once, top-down beside the input's objects: a result node that is the
+  handle of the input object at the same place, or of a replacement, is
+  that object, and any other node is built from its children's objects
+  through its public class; a node the core shares is built once. So
+  every Python node's children are always Python node objects whose Rust
+  handles are the Rust node's children, and a field read never builds an
+  object. The walks keep their pending nodes on the heap: a 20,000-level
+  tree compares, hashes, prints, substitutes and screens without
+  recursion, and a 200,000-level one deallocates (the Python subclasses'
+  trashcan bounds the recursion).
+- **Equality and hashing.** `==` and `!=` are structural against any
+  expression and `NotImplemented` against anything else, so an
+  expression never equals a Python value; a user subclass of a node class
+  compares by kind, as the core does. A node's hash is the core's
+  structural digest, computed on the first `hash` and cached.
+  `is_structurally_equivalent` is `==`, `is_alpha_equivalent` is `==`
+  (expressions bind nothing), and `is_alpha_equivalent_under` converts
+  the renaming (below). `bool(expression)` still raises `TypeError`, for
+  the chained-comparison trap.
+- **Literals.** `LiteralExpression` accepts a `bool`, an `int` (or a
+  subclass other than `bool`), a `float` (or a subclass), a finite
+  non-negative `decimal.Decimal`, or a `str` of the core's grammar (ASCII
+  digits with at most one decimal point, `LiteralValue::parse_text`).
+  `value` is the normalized `bool`, `int`, `float` or `decimal.Decimal`:
+  an exact `bool`, `int` or `float` is kept as given, anything else is
+  the conversion of the Rust value (`"05"` gives `5`, `"1.50"`
+  `Decimal("1.5")`, `"100.0"` `Decimal("1E+2")`). Unicode digits, which
+  Python's `\d` accepted, are refused, as the core refuses them.
+- **Negative decimals are refused.** The core's `Decimal` is
+  non-negative, because its literal grammar has no sign and a negative
+  number is the negation of a literal. `LiteralExpression` cannot return
+  a negation, so it raises `ValueError` for a negative `Decimal` (and for
+  a NaN or infinite one), and the message says to write the negation of
+  the literal of its magnitude; the coercing builders go through the
+  constructor and refuse it too. A negative zero is the decimal zero. A
+  `Decimal` reaches the core as its positional text (`format(d, "f")`)
+  through `Decimal::from_str`, and comes back as
+  `Decimal(f"{coefficient}E{exponent}")`.
+- **Operations.** `UnaryOperation`, `BinaryOperation` and the new
+  `LogicalOperation` stay Python `StrEnum`s (P1) whose values are the
+  Rust operations' names, so a member converts by value, a payload holds
+  the core's name, and a functional `pformat` prints `operation.value`.
+  `BinaryOperation.MODULO` keeps its name (D-S4-2) and takes the value
+  `"floor_mod"`; `LOGICAL_AND`/`LOGICAL_OR` are gone; `LogicalOperation`
+  is `AND = "and"`, `OR = "or"`. The binding keeps each enum's members in
+  a table, so converting is an index one way and an identity scan the
+  other; a constructor also accepts a value the enum maps to a member.
+- **Connectives.** `logical_and(*expressions)` and `logical_or(...)`
+  build one `LogicalExpression` over all their operands, coerced, never
+  flattening a nested one (the core's D-5), and keep refusing fewer than
+  two operands with `ValueError`, rather than taking the core's
+  `all`/`any` folding to a literal or to the lone operand, so they always
+  return a `LogicalExpression`; the instance methods do the same. No
+  `&`/`|` operator was added: Python never had one, and the core rejects
+  `BitAnd`/`BitOr` (B3 §7). `LogicalExpression(operation, operands)`
+  takes any iterable of at least two expressions.
+- **Calls.** `CallExpression(function_name, arguments)` parses the name
+  with `Callee::from_str`, so a built-in's name is the built-in (D-9) and
+  any other non-empty name a user function; `function_name` is the given
+  `str`. A new `is_builtin` property says which. Rebuilding a call takes
+  exactly its own argument count, as the core does, where Python took
+  any count.
+- **Text.** `str` is the core's `Display`; `repr` is the node's class
+  name around the core's bounded `Debug` body (the functional notation
+  with ids, eliding after 1,000 nodes), for example
+  `BinaryExpression((add x::7 1))`; `pformat_expression` calls the core's
+  `display` with the matching `FormatOptions`. `ExpressionPrettyFormatter`
+  stays a Python `VisitablePass` for subclasses and renders the same
+  text: it prints a literal as `str(literal)` and gained
+  `visit_logical_expression`; a property test checks it against the core
+  under every option.
+- **Errors**, through `IntoPyErr` with the core's messages:
+  `PiecewiseError`, `RebuildError` (a rebuild with the wrong child count,
+  which is also what a leaf given children raises now, instead of
+  `NotImplementedError`), `FunctionNameError`, `LiteralTextError` and
+  `NonInjectiveRenamingError` raise `ValueError`;
+  `NonBooleanLogicalOperandError` raises the Python class of that name
+  (`errors.py`, a `TypeError`), with the core's text followed by the
+  reprs of the operand and of the node taking it: `operand 0 of a logical
+  or provably denotes a number but sits in a boolean position:
+  LiteralExpression(2) in LogicalExpression((or 2 4))`, and `the
+  predicate provably denotes a number: ...` for a root. The binding's
+  own checks raise `TypeError` in S2's style for a field of the wrong
+  type (`UnaryExpression operand must be an Expression, got int.`), and
+  `ValueError` for unequal piecewise lengths and fewer than two logical
+  operands. The builders keep Python's texts for a bare `bool` (reworded,
+  since `expr == k` is now a structural comparison) and for an operand
+  that cannot be cast.
+- **Substitution** is the core's `substitute`, then the materializer. A
+  mapping that replaces no reference returns the expression itself;
+  every replaced reference is the replacement object itself. Keys that
+  are not `Identifier`s are ignored, and a value that is not an
+  expression raises `TypeError` only when its key occurs in the
+  expression, as before.
+- **Alpha renaming (D-S4-3) is converted at the boundary.** The Python
+  `fhy_core.term.AlphaRenaming` stays a Python value class: the term
+  package's binder machinery (`BinderMixin`, the derived equivalence
+  plan, `RegisteredFunction`, `Param`) builds, extends and consults it
+  per identifier, and is not ported. `is_alpha_equivalent_under` converts
+  it once per comparison, the free renaming through `try_new` and each
+  frame, outermost first, through `enter_binder`, and compares the two
+  trees in Rust; an empty renaming is plain equality. Python's
+  `are_identifiers_alpha_equivalent` follows the Rust rule since 5a7802c,
+  so a comparison answers alike either way. The cost is linear in the
+  renaming's size per comparison; backing the Python class by the Rust
+  one would instead cross the boundary on every `resolve` the binder
+  machinery makes.
+- **The screen (D-S4-4).** `validate_logical_operands` and
+  `validate_predicate` run the core's `BooleanScreen` with a
+  `RegistrySorts` adapter implementing `SortLookup`: a native constant's
+  sort comes from `try_get_native_constant_for_identifier`, called with
+  the Python identifier the trees hold (collected once from the
+  expression and the environment), and a named call's from
+  `try_get_registered_result_sort`, each cached per identifier or name
+  for the call; an error a lookup raises is raised after the screen. A
+  built-in call is judged by the core's catalogue (names are reserved);
+  a test checks that the catalogue agrees with the registry on every
+  built-in's result sort. An environment value must be an expression
+  (`TypeError` otherwise), and a declared sort a `SymbolType`.
+- **Payloads (D-S4-5).** The public classes inherit the envelope from
+  `WrappedFamilySerializable`, and each node class writes and reads its
+  data: `{"operation": "negate", "operand": ..}`, `{"operation":
+  "floor_mod", "left": .., "right": ..}`, `{"operation": "and",
+  "operands": [..]}` under the new `logical_expression` type id,
+  `{"identifier": {"id": .., "name_hint": ..}}`, `{"value": ..}`,
+  `{"conditions": [..], "values": [..], "otherwise": ..}` and
+  `{"function_name": .., "arguments": [..]}`. A literal's value is its
+  normalized `bool`, `int` or `float`, and a decimal is its positional
+  text with a decimal point (`"1.5"`, `"100.0"`), which the grammar reads
+  back as the same decimal rather than as an integer.
+  `_rs.Expression.deserialize_from_dict` decodes a payload of exactly
+  these shapes in one pass (fc3c391): the framework's per-node path
+  checks every node's whole nested payload, which is quadratic in the
+  depth, and measured 44 ms for 100 levels. Any other payload, and any
+  one a constructor refuses, goes through the framework's path, so which
+  payloads decode and how a malformed one fails are unchanged.
+- **Pickles** are a call of the node's class with its fields,
+  `(type(self), fields)`, as S3's are; a pickle written by the
+  pure-Python backend does not load on the Rust backend, as D-S4-5
+  allows.
+- **Python multiplexing.** The pure-Python implementation moved
+  unchanged to `symbolic/expression/_python_core.py`, which `core.py`
+  re-exports on the pure-Python backend and which S4.4 deletes; it gained
+  `LogicalOperation` and a `LogicalExpression` that refuses construction,
+  so the package imports on both backends. The Rust branch of `core.py`
+  defines the enums, the public classes, the builders, the screen
+  wrappers, and `build_literal_equivalence_key`/`is_integer_valued_literal`
+  over the normalized values (a `Decimal` is in the decimal bucket, so
+  the key still agrees with `==`). `LiteralType` gains `decimal.Decimal`.
+  `registry/` and `builtins.py` are unchanged: they build their bodies
+  with the Rust-backed nodes, so `xor`'s body is now
+  `((a || b) && (!(a && b)))` of `LogicalExpression`s.
+- **Type checkers see the Rust-backed API.** `core.py` branches on
+  `TYPE_CHECKING or IS_RUST_BACKEND_SELECTED`, the reverse of S2/S3's
+  convention: for expressions the Rust branch now describes the public
+  API, so mypy checks the consumers against it (53 errors, all in
+  consumers; S4.3b input). `_rs.pyi` types fields and results with the
+  public classes, imported from `core` (a stub may import cyclically),
+  declares `__setattr__`/`__delattr__` as `FrozenMixin` did, and narrows
+  each node's `rebuild_with_visit_children`.
+- **Import-time shims in consumers.** Five consumer modules built tables
+  of `BinaryOperation.LOGICAL_AND`/`LOGICAL_OR` at import time (the NumPy,
+  SymPy and Z3 bridges' operator tables, the solver's and the type
+  checker's connective sets), which made the whole package fail to import
+  on the Rust backend. They now build those entries only where the
+  members exist, with a comment; nothing else in the consumers changed.
+  S4.3b removes the shims when it gives the consumers `LogicalExpression`.
+- **Test identifiers.** The migrated tests use real `Identifier`s. The
+  shared pools of `tests/strategies/identifiers.py` hold real identifiers
+  with the same fixed ids, restored through
+  `Identifier.deserialize_from_dict`, so they stay deterministic; the
+  serialization pins' shared variable uses the fixed id 60000, in the
+  reserved range but clear of every shipped tag (its old id 0 is the
+  `rationale` note kind's). `mock_identifier` stays in `tests/conftest.py`
+  for the consumer tests.
+
+Tests migrated in S4.3a, all to the new semantics, none skipped:
+`tests/symbolic/expression/`: `test_core.py`, `test_piecewise_and_call.py`,
+`test_builtins.py`, `test_registry.py`, `test_pprint.py`,
+`test_pprint_properties.py`, `test_sort.py` (unchanged, passes),
+`test_term.py`, `test_cross_cutting.py`, `test_functions_stories.py`,
+`test_native_stories.py`, `test_core_properties.py` and
+`test_piecewise_properties.py`; `tests/symbolic/test_serialization_pins.py`
+(19 pinned type ids with `logical_expression`; the goldens were
+regenerated from the code and reviewed: the only changes are the shared
+variable's id and the new blob, and the `Param` goldens keep id 1, since
+they are compared by alpha equivalence);
+`tests/symbolic/test_pickle_round_trips_properties.py` (plain pickles
+now that no identifier is a mock, plus an expression round trip); the
+strategies `tests/strategies/expressions.py`, `structural_expressions.py`,
+`literals.py` and `identifiers.py`, and the expression parts of
+`tests/test_strategies_properties.py`. A new Rust-backend-only suite,
+`test_expression_rust_binding.py` (32 tests), covers the class structure
+and registration, argument checks, child objects, deep trees, payload
+decoding, and pickles.
+
+No test was deleted without a rewrite. These were renamed because they
+now pin the opposite behavior: `test_literal_expression_keeps_integer_shaped_string_as_str`
+and `..._keeps_float_shaped_string_as_str` (now `..._normalizes_...`),
+`test_binary_dunder_lifts_str_operand_on_right` (now also a `Decimal`),
+`test_distinct_expression_instances_are_unequal_under_eq` and
+`test_set_of_distinct_field_equal_expressions_keeps_both_members` (now
+equal, and one member), `test_piecewise_expression_hash_is_defined_and_follows_identity`
+(now structural), `test_module_level_logical_builder_folds_three_args_right_associatively`
+and `test_logical_and_right_folds_three_operands`/`_four_operands` and
+`test_logical_or_right_folds_three_operands` (now one n-ary node),
+`test_new_expression_subclass_derives_equivalence_without_registration`
+(now: the node kinds are closed, a Python subclass of `Expression` that
+is no node class cannot be built, and a subclass of a node class is that
+kind), and `test_exactly_eighteen_pinned_type_ids_are_covered` (now
+nineteen).
+
+Proposals (none is implemented):
+
+1. **Parse a user function's name without serde's error.**
+   `BuiltinFunction::from_str` goes through serde's `StrDeserializer`, so
+   every name that is not a built-in's formats "unknown variant, expected
+   one of" with all 35 names, twice per `Callee::from_str`. A `match` over
+   the names in `impl_name_text` would make a user call as cheap to build
+   as a built-in's (about 1.4 µs instead of 4.1 µs).
+2. **Structural `==` of distinct deep trees** could compare the cached
+   hashes first when only one is known, computing the other; it cannot
+   avoid the walk for equal trees.
+
+### S4.3b input: the consumers failing on the Rust backend
+
+From a Rust-backend run at bae95d0 (`-m 'not slow'`), grouped by the
+consumer whose code causes the failure; the counts are failing tests,
+and a module failing collection counts once. The pass-infrastructure
+`ERROR` log lines in the output are these failures' passes logging.
+
+| Cause (consumer module) | Tests failing | What fails |
+|---|--:|---|
+| `passes/z3.py`: no `visit_logical_expression` | about 190: `test_solver.py` 62, `param/test_param_intersection.py` 36, `constraint/test_constraint_system.py` 35, `param/test_sound_feasibility.py` 24, `param/test_tri_state_feasibility.py` 24, `param/test_subset_relations.py` 7, `test_strategies_properties.py` 6, `param/test_real_param.py` 4, `param/test_param_intersection_properties.py` 4, `param/test_number_subclass_values.py` 3, `test_solver_properties.py` 3, and 1 or 2 each in `constraint/test_bindings_evaluation.py`, `test_user_stories.py`, `test_constraint_system_properties.py`, `param/test_bound_int_param.py`, `test_dependent_param_story.py`, `test_feasibility.py`, `test_feasibility_properties.py`, `test_int_param.py`, `test_nat_param.py`, `test_param_multiplication.py` and `test_subset_relations_properties.py` | every conjunction the constraint systems and params build is a `LogicalExpression`, which the Z3 bridge's `VisitablePass` does not dispatch |
+| `passes/z3.py`, `passes/sympy.py`: literal lowering | `expression/test_cross_cutting.py` 9, `test_solver.py` 1, `test_solver_properties.py` 1, `constraint/test_bindings_evaluation.py` 1 | "Unsupported literal type: Decimal": a decimal literal's value is a `decimal.Decimal`, where it was a `str` |
+| `passes/numpy.py`: `LOGICAL_AND` read at call time | `test_solver_properties.py` 3, `test_strategies_properties.py` 2, and 1 each in `expression/test_piecewise_properties.py`, `passes/test_evaluator_properties.py`, `passes/test_inline_pass_properties.py`, `pattern/test_rewrite_properties.py` | `_evaluate_binary` compares with the removed members, and there is no `visit_logical_expression` |
+| `passes/sympy.py`: no logical node | `test_solver_properties.py` 1 | the SymPy bridge has no `visit_logical_expression`, and its lift builds binary connectives |
+| `types/checking/type_checker.py`, `body_type_checker.py` | `test_type_checker.py` 4, `test_type_checker_properties.py` 2, `test_strategies_properties.py` 3, `test_registry_body_sweep.py` 7, `test_builtin_bodies.py` 1 | no `LogicalExpression` case ("Unsupported expression type"), so the `xor`/`nand`/`nor`/`implies` bodies fail the body check and every sweep reports them; a `Decimal` literal is unsupported, and a string literal no longer reaches its refusal (it is a number now); `object.__setattr__` on a node raises `TypeError` ("can't apply this __setattr__"), where it could patch a dataclass |
+| `constraint/`: conjunction shape | `constraint/test_constraint_system.py` 11 | `convert_to_expression` of several members is a `LogicalExpression`, and the tests build `BinaryOperation.LOGICAL_AND` |
+| `param/`: decimal values | `param/test_real_param.py` 9, `param/test_sound_feasibility.py` 1 | a real param's string bounds are `Decimal` values now, so exact decimals beyond the float range and string-valued members no longer validate, and the old literal-grammar message (`Invalid string-form literal expression`) is now the core's (`invalid literal text ...`) |
+| `passes/evaluate.py` | `passes/test_evaluator.py` 1 | a string-form float argument is a `Decimal` literal now, which the evaluator folds instead of refusing |
+| Test modules reading `LOGICAL_AND`/`LOGICAL_OR` at import | 8 modules fail collection: `constraint/test_convert_to_expression.py`, `constraint/test_equation_constraint.py`, `passes/test_numpy_evaluator.py`, `passes/test_sympy_pass.py`, `passes/test_sympy_pass_properties.py`, `passes/test_z3_pass.py`, `types/checking/test_type_checker_booleans.py`, and `param/test_param_serialization_properties.py` (its module-level strategies run the Z3 bridge) | the tests themselves build the removed members |
+
+mypy's 53 errors are in `passes/sympy.py` (7), `passes/numpy.py` (2),
+`passes/native_lowering.py` (1), `types/checking/type_checker.py` (1),
+and eight consumer test modules (42): the removed members, and
+`LiteralExpression.value` now including `Decimal`. Not in the table,
+because nothing fails yet, but for S4.3b to check:
+`constraint/ordering.py` keys members by the class name and
+`operation.value` (`MODULO`'s value is now `"floor_mod"`, and a
+conjunction is a `LogicalExpression`), which orders `ConstraintSystem`
+members; `types/dispatch.py` recurses only into binary, unary and
+identifier nodes; `pattern/core.py` matches literals by stored type and
+connectives as `BinaryExpressionPattern`s; and consumers that detect a
+no-op rewrite by `is` get the same objects back only where the core
+kept the subtree.
