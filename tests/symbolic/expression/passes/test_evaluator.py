@@ -20,6 +20,7 @@ explicitly does **not** fold literal arithmetic — that remains a
 
 import math
 from collections.abc import Callable
+from decimal import Decimal
 
 import pytest
 
@@ -496,6 +497,36 @@ def test_evaluate_rejects_string_form_float_literal_argument(
 
     with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
         evaluate_expression(expression)
+
+
+@pytest.mark.parametrize(
+    "value, expected_result",
+    [
+        pytest.param(Decimal("4.1"), None, id="no-exact-binary-value"),
+        pytest.param(Decimal("4.0"), 2.0, id="exact-binary-value"),
+    ],
+)
+def test_evaluate_coerces_decimal_literal_argument_like_its_text(
+    function_registry_snapshot: None,
+    value: Decimal,
+    expected_result: float | None,
+) -> None:
+    """Test a ``Decimal``-valued literal argument coerces as its decimal text does.
+
+    A float-grammar string normalizes to a ``Decimal``, so a literal built
+    from the ``Decimal`` directly is the same literal: it folds when a
+    binary ``float`` equals it and is refused otherwise.
+    """
+    register_real_unary_native("test_eval_decimal_coerce", math.sqrt)
+    expression = CallExpression("test_eval_decimal_coerce", (LiteralExpression(value),))
+
+    if expected_result is None:
+        with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
+            evaluate_expression(expression)
+    else:
+        result = evaluate_expression(expression)
+        assert isinstance(result, LiteralExpression)
+        assert result.value == expected_result
 
 
 def test_evaluate_coerces_string_form_float_literal_with_exact_binary_value(

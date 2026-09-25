@@ -75,6 +75,7 @@ __all__ = [
     "evaluate_expression_with_numpy",
 ]
 
+import functools
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from immutabledict import immutabledict
@@ -94,6 +95,8 @@ from ..core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -142,22 +145,21 @@ _BINARY_UFUNC_NAMES: immutabledict[BinaryOperation, str] = immutabledict(
         BinaryOperation.FLOOR_DIVIDE: "floor_divide",
         BinaryOperation.MODULO: "mod",
         BinaryOperation.POWER: "power",
-        # The binary connectives exist on the pure-Python backend only; the
-        # Rust backend's are `LogicalExpression` nodes (decision D-S4-1).
-        **{
-            getattr(BinaryOperation, name): ufunc_name
-            for name, ufunc_name in (
-                ("LOGICAL_AND", "logical_and"),
-                ("LOGICAL_OR", "logical_or"),
-            )
-            if hasattr(BinaryOperation, name)
-        },
         BinaryOperation.EQUAL: "equal",
         BinaryOperation.NOT_EQUAL: "not_equal",
         BinaryOperation.LESS: "less",
         BinaryOperation.LESS_EQUAL: "less_equal",
         BinaryOperation.GREATER: "greater",
         BinaryOperation.GREATER_EQUAL: "greater_equal",
+    }
+)
+
+# Logical connective -> attribute name of the NumPy ufunc that lowers it; an
+# n-ary connective reduces its operands, in order, with the binary ufunc.
+_LOGICAL_UFUNC_NAMES: immutabledict[LogicalOperation, str] = immutabledict(
+    {
+        LogicalOperation.AND: "logical_and",
+        LogicalOperation.OR: "logical_or",
     }
 )
 
@@ -397,33 +399,36 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
 
         """
         operand = self.visit(expression.operand)
+        ufunc_name = _UNARY_UFUNC_NAMES[expression.operation]
         if expression.operation is UnaryOperation.LOGICAL_NOT:
-            self._raise_unless_boolean_connective_operand(operand, expression.operation)
-        ufunc = getattr(self._numpy, _UNARY_UFUNC_NAMES[expression.operation])
+            self._raise_unless_boolean_connective_operand(operand, ufunc_name)
+        ufunc = getattr(self._numpy, ufunc_name)
         return ufunc(operand)
 
     def visit_binary_expression(self, expression: BinaryExpression) -> Any:
-        """Apply the NumPy ufunc for a binary operation to its operands.
-
-        Raises:
-            NonBooleanLogicalOperandError: If the operation is
-                ``LOGICAL_AND`` or ``LOGICAL_OR`` and either operand's
-                lowered value is not boolean-dtyped.
-
-        """
+        """Apply the NumPy ufunc for a binary operation to its operands."""
         left = self.visit(expression.left)
         right = self.visit(expression.right)
-        if expression.operation in (
-            BinaryOperation.LOGICAL_AND,
-            BinaryOperation.LOGICAL_OR,
-        ):
-            self._raise_unless_boolean_connective_operand(left, expression.operation)
-            self._raise_unless_boolean_connective_operand(right, expression.operation)
         ufunc = getattr(self._numpy, _BINARY_UFUNC_NAMES[expression.operation])
         return ufunc(left, right)
 
+    def visit_logical_expression(self, expression: LogicalExpression) -> Any:
+        """Reduce the operands, in order, with the connective's NumPy ufunc.
+
+        Raises:
+            NonBooleanLogicalOperandError: If an operand's lowered value is
+                not boolean-dtyped.
+
+        """
+        ufunc_name = _LOGICAL_UFUNC_NAMES[expression.operation]
+        operands = [self.visit(operand) for operand in expression.operands]
+        for operand in operands:
+            self._raise_unless_boolean_connective_operand(operand, ufunc_name)
+        ufunc = getattr(self._numpy, ufunc_name)
+        return functools.reduce(ufunc, operands)
+
     def _raise_unless_boolean_connective_operand(
-        self, value: Any, operation: UnaryOperation | BinaryOperation
+        self, value: Any, connective_name: str
     ) -> None:
         """Raise unless a connective operand's lowered value is boolean-dtyped.
 
@@ -441,7 +446,7 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         if self._is_boolean_condition_value(value):
             return
         raise NonBooleanLogicalOperandError(
-            f"{operation.value} operand has dtype "
+            f"{connective_name} operand has dtype "
             f"{getattr(value, 'dtype', type(value))}, not boolean; the "
             "expression is ill-typed and NumPy would otherwise read it by "
             "truthiness."
@@ -662,8 +667,8 @@ def evaluate_expression_with_numpy(
             evaluation: this evaluator otherwise reads the environment
             before checking for a constant and would silently prefer the
             caller's bound value over the constant's.
-        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``, ``LOGICAL_OR``,
-            or ``LOGICAL_NOT`` operand, or a piecewise case condition,
+        NonBooleanLogicalOperandError: If a ``LogicalExpression`` or
+            ``LOGICAL_NOT`` operand, or a piecewise case condition,
             provably denotes a number. Raised directly, before any
             evaluation, from a static check over the inlined tree that
             reads a sort from each bound value's NumPy dtype (boolean,
@@ -689,8 +694,8 @@ def evaluate_expression_with_numpy(
               faithful representation for it. Inside a piecewise, only an
               element the selected branch returns raises; one produced by
               an unselected branch is discarded with its lane.
-            - :class:`NonBooleanLogicalOperandError`: a ``LOGICAL_AND``,
-              ``LOGICAL_OR``, or ``LOGICAL_NOT`` operand's lowered value
+            - :class:`NonBooleanLogicalOperandError`: a ``LogicalExpression``
+              or ``LOGICAL_NOT`` operand's lowered value
               is not boolean-dtyped, and the static check above could not
               prove it numeric ahead of evaluation.
             - ``TypeError``: a piecewise condition's lowered value is not

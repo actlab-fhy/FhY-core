@@ -13,6 +13,8 @@ __all__ = [
 import operator
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
+from decimal import Decimal
+from fractions import Fraction
 from typing import Any
 
 import z3  # type: ignore
@@ -34,10 +36,11 @@ from ..core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
-    is_integer_valued_literal,
     logical_and,
     logical_not,
     validate_logical_operands,
@@ -107,13 +110,6 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             BinaryOperation.FLOOR_DIVIDE: _z3_floor_divide,
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            # The binary connectives exist on the pure-Python backend only;
-            # the Rust backend's are `LogicalExpression` nodes (D-S4-1).
-            **{
-                getattr(BinaryOperation, name): connective
-                for name, connective in (("LOGICAL_AND", z3.And), ("LOGICAL_OR", z3.Or))
-                if hasattr(BinaryOperation, name)
-            },
             BinaryOperation.EQUAL: operator.eq,
             BinaryOperation.NOT_EQUAL: operator.ne,
             BinaryOperation.LESS: operator.lt,
@@ -122,6 +118,10 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             BinaryOperation.GREATER_EQUAL: operator.ge,
         }
     )
+
+    _LOGICAL_OPERATION_Z3_OPERATORS: immutabledict[
+        LogicalOperation, Callable[..., Any]
+    ] = immutabledict({LogicalOperation.AND: z3.And, LogicalOperation.OR: z3.Or})
 
     _symbol_types: immutabledict[Identifier, SymbolType]
     _identifier_to_z3_expression: dict[Identifier, z3.ExprRef]
@@ -144,6 +144,16 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             binary_expression.operation
         ]
         return operation_function(left, right)
+
+    def visit_logical_expression(
+        self, logical_expression: LogicalExpression
+    ) -> z3.ExprRef:
+        """Lower to one n-ary ``z3.And`` or ``z3.Or`` over the operands, in order."""
+        operands = [self.visit(operand) for operand in logical_expression.operands]
+        operation_function = self._LOGICAL_OPERATION_Z3_OPERATORS[
+            logical_expression.operation
+        ]
+        return operation_function(*operands)
 
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> z3.ExprRef:
         operand = self.visit(unary_expression.operand)
@@ -222,19 +232,18 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         contract names:
 
         - ``bool`` becomes a ``BoolVal``.
-        - An integer -- a Python ``int`` or an integer-grammar ``str`` --
-          becomes an ``IntVal``. Both are in one equivalence class, so
-          both have to reach Z3 in one sort; ``RealVal`` for the string
-          form would let the solver decide for one member of a class what
-          it refuses for another.
+        - An ``int`` becomes an ``IntVal``. An integer-grammar ``str`` is
+          normalized to the same ``int`` when the literal is built, so
+          both spellings reach Z3 in one sort.
         - A Python ``float`` is an IEEE-754 binary value, so it becomes
           the rational its bits denote, taken from
           ``float.as_integer_ratio``. Handing the ``float`` itself to
           ``z3.RealVal`` would instead reinterpret its shortest repr as
           exact decimal text, so ``0.1`` would reach the solver as
           ``1/10`` -- a different number from the one the literal stores.
-        - A float-grammar ``str`` is exact decimal, and ``RealVal`` reads
-          decimal text exactly, so the text goes to Z3 unconverted.
+        - A ``decimal.Decimal`` (the normalized form of a float-grammar
+          ``str``) is exact decimal, so it becomes the rational it denotes
+          exactly, taken from ``fractions.Fraction``.
 
         The SymPy bridge lowers each of those forms to the same value, so
         a single literal denotes the same number on both bridges. Past a
@@ -259,11 +268,9 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             return z3.IntVal(value)
         elif isinstance(value, float):
             return z3.RatVal(*value.as_integer_ratio())
-        elif isinstance(value, str):
-            if is_integer_valued_literal(value):
-                return z3.IntVal(int(value))
-            else:
-                return z3.RealVal(value)
+        elif isinstance(value, Decimal):
+            fraction = Fraction(value)
+            return z3.RatVal(fraction.numerator, fraction.denominator)
         else:
             raise TypeError(f"Unsupported literal type: {type(value)}")
 
@@ -361,8 +368,8 @@ def convert_expression_to_z3_expression(
         KeyError: If ``symbol_types`` is missing an entry for any
             identifier referenced by ``expression`` other than a native
             constant's canonical identifier.
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+        NonBooleanLogicalOperandError: If an operand of a ``LogicalExpression``
+            or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number, counting
             an identifier ``symbol_types`` declares INT or REAL. Screened
             after the ``symbol_types`` precondition, so a missing entry
@@ -437,7 +444,7 @@ def holds_for_all_free_assignments(
             identifier of ``expression`` other than a native constant's
             canonical identifier.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, or a piecewise case condition, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL, which Z3 has no faithful lowering for.
@@ -483,7 +490,7 @@ def _holds_for_all_free_assignments_with_reason(
             identifier of ``expression`` other than a native constant's
             canonical identifier.
         NonBooleanLogicalOperandError: If ``expression``'s root, or an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, or a piecewise case condition, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. Checked after the ``symbol_types``
@@ -566,7 +573,7 @@ def does_expression_imply(
         KeyError: If ``symbol_types`` is missing an entry for any
             identifier referenced by either expression.
         NonBooleanLogicalOperandError: If either expression's root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, or a piecewise case condition, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. The check runs over the conjunction the
@@ -645,7 +652,7 @@ def assert_holds_for_all_free_assignments(
             includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, or a piecewise case condition, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL.
@@ -697,7 +704,7 @@ def assert_expression_implies(
             includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
         NonBooleanLogicalOperandError: If either expression's root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, or a piecewise case condition, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL.

@@ -20,6 +20,8 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NativeConstantBindingError,
     NativeFunction,
     NonBooleanLogicalOperandError,
@@ -130,27 +132,27 @@ def test_evaluates_comparison_to_boolean_array(
 # Logical operators
 # =============================================================================
 
-LOGICAL_BINARY_CASES = [
-    (BinaryOperation.LOGICAL_AND, np.logical_and),
-    (BinaryOperation.LOGICAL_OR, np.logical_or),
+LOGICAL_CASES = [
+    (LogicalOperation.AND, np.logical_and),
+    (LogicalOperation.OR, np.logical_or),
 ]
 
 
 @pytest.mark.parametrize(
     "operation, reference",
-    LOGICAL_BINARY_CASES,
-    ids=[operation.value for operation, _ in LOGICAL_BINARY_CASES],
+    LOGICAL_CASES,
+    ids=[operation.value for operation, _ in LOGICAL_CASES],
 )
-def test_evaluates_logical_binary_elementwise(
-    operation: BinaryOperation, reference: Callable[[Any, Any], Any]
+def test_evaluates_logical_expression_elementwise(
+    operation: LogicalOperation, reference: Callable[[Any, Any], Any]
 ) -> None:
     """Test logical and/or evaluate elementwise over boolean arrays."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     left = np.array([True, True, False, False])
     right = np.array([True, False, True, False])
-    expression = BinaryExpression(
-        operation, IdentifierExpression(x), IdentifierExpression(y)
+    expression = LogicalExpression(
+        operation, (IdentifierExpression(x), IdentifierExpression(y))
     )
 
     result = evaluate_expression_with_numpy(expression, {x: left, y: right})
@@ -158,6 +160,33 @@ def test_evaluates_logical_binary_elementwise(
     assert isinstance(result, np.ndarray)
     assert result.dtype == np.bool_
     assert np.array_equal(result, reference(left, right))
+
+
+@pytest.mark.parametrize(
+    "operation, reference",
+    LOGICAL_CASES,
+    ids=[operation.value for operation, _ in LOGICAL_CASES],
+)
+def test_evaluates_three_operand_logical_expression_elementwise(
+    operation: LogicalOperation, reference: Callable[[Any, Any], Any]
+) -> None:
+    """Test an n-ary logical expression reduces all its operands elementwise."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    z = mock_identifier("z", 2)
+    first = np.array([True, True, True, True, False, False, False, False])
+    second = np.array([True, True, False, False, True, True, False, False])
+    third = np.array([True, False, True, False, True, False, True, False])
+    expression = LogicalExpression(
+        operation,
+        (IdentifierExpression(x), IdentifierExpression(y), IdentifierExpression(z)),
+    )
+
+    result = evaluate_expression_with_numpy(expression, {x: first, y: second, z: third})
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.bool_
+    assert np.array_equal(result, reference(reference(first, second), third))
 
 
 def test_evaluates_logical_not_elementwise() -> None:
@@ -199,8 +228,8 @@ def test_logical_and_of_two_int_literals_raises_directly() -> None:
     unscreened lowering would silently accept two ill-typed integer
     operands and hand back a `True`-valued answer that means nothing.
     """
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, LiteralExpression(2), LiteralExpression(4)
+    expression = LogicalExpression(
+        LogicalOperation.AND, (LiteralExpression(2), LiteralExpression(4))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -224,8 +253,8 @@ def test_logical_and_of_two_int_bound_identifiers_raises_directly() -> None:
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    expression = LogicalExpression(
+        LogicalOperation.AND, (IdentifierExpression(x), IdentifierExpression(y))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -236,8 +265,8 @@ def test_logical_and_of_two_float_arrays_raises_directly() -> None:
     """Test a float-dtype array binding under `logical_and` is refused."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    expression = LogicalExpression(
+        LogicalOperation.AND, (IdentifierExpression(x), IdentifierExpression(y))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -266,8 +295,8 @@ def test_logical_not_of_an_object_dtype_array_raises_as_a_runtime_backstop() -> 
 
 def test_logical_connectives_still_evaluate_boolean_literals() -> None:
     """Test bare Python bool literals under `logical_and`/`logical_not` still work."""
-    conjunction = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, LiteralExpression(True), LiteralExpression(False)
+    conjunction = LogicalExpression(
+        LogicalOperation.AND, (LiteralExpression(True), LiteralExpression(False))
     )
     negation = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
 
@@ -1120,7 +1149,9 @@ def test_piecewise_with_non_boolean_condition_array_raises() -> None:
     )
     values = np.array([0, 1, 2])
 
-    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="condition of piecewise case 0"
+    ):
         evaluate_expression_with_numpy(expression, {condition: values})
 
 

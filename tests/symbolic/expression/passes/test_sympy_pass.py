@@ -5,6 +5,7 @@ import itertools
 import logging
 import math
 from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from decimal import Decimal
 from typing import Any, NamedTuple, cast
 from unittest.mock import Mock
 
@@ -25,6 +26,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NativeConstantBindingError,
     NonBooleanLogicalOperandError,
     PartialPiecewiseError,
@@ -154,20 +157,35 @@ from ..conftest import mock_identifier
             sympy.Symbol("x_0") ** sympy.Integer(5),
         ),
         (
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(mock_identifier("x", 0)),
-                IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                ),
             ),
             sympy.Symbol("x_0") & sympy.Symbol("y_1"),
         ),
         (
-            BinaryExpression(
-                BinaryOperation.LOGICAL_OR,
-                IdentifierExpression(mock_identifier("x", 0)),
-                IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.OR,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                ),
             ),
             sympy.Symbol("x_0") | sympy.Symbol("y_1"),
+        ),
+        (
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                    IdentifierExpression(mock_identifier("z", 2)),
+                ),
+            ),
+            sympy.And(sympy.Symbol("x_0"), sympy.Symbol("y_1"), sympy.Symbol("z_2")),
         ),
         (
             BinaryExpression(
@@ -450,35 +468,61 @@ def test_substitute_sympy_variables_still_decides_a_well_defined_comparison() ->
         ),
         (
             sympy.And(sympy.Symbol("x_0"), sympy.Symbol("y_1"), evaluate=False),
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(mock_identifier("x", 0)),
-                IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                ),
             ),
         ),
         (
             sympy.Or(sympy.Symbol("x_0"), sympy.Symbol("y_1"), evaluate=False),
-            BinaryExpression(
-                BinaryOperation.LOGICAL_OR,
-                IdentifierExpression(mock_identifier("x", 0)),
-                IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.OR,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                ),
+            ),
+        ),
+        (
+            sympy.Or(
+                sympy.Symbol("x_0"),
+                sympy.Symbol("y_1"),
+                sympy.Symbol("z_2"),
+                evaluate=False,
+            ),
+            LogicalExpression(
+                LogicalOperation.OR,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                    IdentifierExpression(mock_identifier("z", 2)),
+                ),
             ),
         ),
         (
             sympy.Xor(sympy.Symbol("x_0"), sympy.Symbol("y_1"), evaluate=False),
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                BinaryExpression(
-                    BinaryOperation.LOGICAL_OR,
-                    IdentifierExpression(mock_identifier("x", 0)),
-                    IdentifierExpression(mock_identifier("y", 1)),
-                ),
-                UnaryExpression(
-                    UnaryOperation.LOGICAL_NOT,
-                    BinaryExpression(
-                        BinaryOperation.LOGICAL_AND,
-                        IdentifierExpression(mock_identifier("x", 0)),
-                        IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    LogicalExpression(
+                        LogicalOperation.OR,
+                        (
+                            IdentifierExpression(mock_identifier("x", 0)),
+                            IdentifierExpression(mock_identifier("y", 1)),
+                        ),
+                    ),
+                    UnaryExpression(
+                        UnaryOperation.LOGICAL_NOT,
+                        LogicalExpression(
+                            LogicalOperation.AND,
+                            (
+                                IdentifierExpression(mock_identifier("x", 0)),
+                                IdentifierExpression(mock_identifier("y", 1)),
+                            ),
+                        ),
                     ),
                 ),
             ),
@@ -1348,10 +1392,12 @@ def test_sympy_to_expression_convert_nor_lowers_to_not_or() -> None:
 
     expected = UnaryExpression(
         UnaryOperation.LOGICAL_NOT,
-        BinaryExpression(
-            BinaryOperation.LOGICAL_OR,
-            IdentifierExpression(mock_identifier("x", 0)),
-            IdentifierExpression(mock_identifier("y", 1)),
+        LogicalExpression(
+            LogicalOperation.OR,
+            (
+                IdentifierExpression(mock_identifier("x", 0)),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
         ),
     )
     assert result.is_structurally_equivalent(expected)
@@ -1373,10 +1419,12 @@ def test_sympy_to_expression_convert_nand_lowers_to_not_and() -> None:
 
     expected = UnaryExpression(
         UnaryOperation.LOGICAL_NOT,
-        BinaryExpression(
-            BinaryOperation.LOGICAL_AND,
-            IdentifierExpression(mock_identifier("x", 0)),
-            IdentifierExpression(mock_identifier("y", 1)),
+        LogicalExpression(
+            LogicalOperation.AND,
+            (
+                IdentifierExpression(mock_identifier("x", 0)),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
         ),
     )
     assert result.is_structurally_equivalent(expected)
@@ -1997,7 +2045,7 @@ def test_inlined_boolean_builtin_folds_through_the_sympy_bridge(
     """Test the composed Boolean built-ins still evaluate through the SymPy bridge.
 
     ``xor``, ``nand``, ``nor``, ``implies``, and ``iff`` have bodies built
-    out of ``LOGICAL_AND``/``LOGICAL_OR``/``LOGICAL_NOT``, so inlining one
+    out of ``LogicalExpression``/``LOGICAL_NOT``, so inlining one
     over Boolean arguments produces exactly the operand shape the numeric
     screen must leave alone. Each row pins the truth-table entry, so a
     lowering that merely fails to raise is not enough to pass.
@@ -2040,8 +2088,8 @@ def test_lifted_boolean_node_lowers_back_to_an_equivalent_sympy_boolean(
     """Test the lifters' output lowers back to a logically equivalent SymPy node.
 
     ``Xor``, ``Nor``, ``Nand``, and the n-ary ``And``/``Or`` rebuild all
-    lift to IR trees made of ``LOGICAL_AND``/``LOGICAL_OR``/
-    ``LOGICAL_NOT`` over Boolean operands. Lowering has to accept every
+    lift to IR trees made of ``LogicalExpression`` and ``LOGICAL_NOT``
+    nodes over Boolean operands. Lowering has to accept every
     shape the lifters can produce, or a round trip through the bridge
     would fail on the bridge's own output.
     """
@@ -2579,13 +2627,13 @@ def _create_piecewise_variables() -> _PiecewiseVariables:
 
 def _enumerate_assignments(
     variables: _PiecewiseVariables,
-) -> Iterator[dict[Identifier, LiteralType]]:
+) -> Iterator[dict[Identifier, bool | int]]:
     """Yield every assignment of ``variables`` the tabulating helpers evaluate at.
 
     ``x`` ranges over 0..2, ``y`` over 0..1, and each Boolean identifier
     over both truth values.
     """
-    domains: dict[Identifier, tuple[LiteralType, ...]] = {
+    domains: dict[Identifier, tuple[bool | int, ...]] = {
         variables.x.identifier: (0, 1, 2),
         variables.y.identifier: (0, 1),
         variables.b.identifier: (True, False),
@@ -4299,12 +4347,13 @@ def test_integer_lifts_as_an_integer_and_not_as_a_rational() -> None:
 def test_binary_exact_decimal_string_literal_round_trips_through_sympy_unchanged(
     text: str,
 ) -> None:
-    """Test a decimal string literal a binary float equals survives the round trip.
+    """Test a decimal literal a binary float equals survives the round trip.
 
-    Lowering reads the text as an exact rational, and lifting writes that
-    rational back as exact decimal text because a binary ``float`` equals
-    it, so the round trip lands in the float-decimal bucket it started in
-    rather than collapsing into the float-binary one.
+    The text normalizes to an exact ``Decimal``, lowering reads it as an
+    exact rational, and lifting writes that rational back as exact decimal
+    text because a binary ``float`` equals it, so the round trip lands in
+    the decimal bucket it started in rather than collapsing into the
+    float-binary one.
     """
     literal = LiteralExpression(text)
 
@@ -4314,7 +4363,7 @@ def test_binary_exact_decimal_string_literal_round_trips_through_sympy_unchanged
 
     assert result.is_structurally_equivalent(literal)
     assert isinstance(result, LiteralExpression)
-    assert type(result.value) is str
+    assert type(result.value) is Decimal
 
 
 @pytest.mark.parametrize(

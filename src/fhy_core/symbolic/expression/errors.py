@@ -101,7 +101,7 @@ class NativeResultSortError(RuntimeError):
 class NonBooleanLogicalOperandError(TypeError):
     """Raised when a Boolean position holds an operand that denotes a number.
 
-    ``LOGICAL_AND``, ``LOGICAL_OR``, and ``LOGICAL_NOT`` denote Boolean
+    ``LogicalExpression`` and ``LOGICAL_NOT`` denote Boolean
     connectives, and a piecewise case condition selects its branch by
     truth, so an operand that provably denotes a number -- a
     non-``bool`` literal, an arithmetic node, a piecewise whose every

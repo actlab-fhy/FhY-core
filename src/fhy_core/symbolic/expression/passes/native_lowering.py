@@ -5,19 +5,20 @@ and the NumPy evaluator (:mod:`fhy_core.symbolic.expression.passes.numpy`) turn
 expression-level literals and native-constant references into concrete
 Python numerics at the point they hand off to Python or NumPy. These
 helpers centralize that lowering so the two passes share one contract --
-in particular, the refusal to coerce a float-grammar string literal to a
-binary ``float`` that does not denote the same exact value.
+in particular, the refusal to coerce a decimal literal (a
+``decimal.Decimal`` value, which a float-grammar string literal normalizes
+to) to a binary ``float`` that does not denote the same exact value.
 
 The SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) does
 not lower through these helpers, and does not need the refusal: it has an
-exact target to convert into, so it lowers a float-grammar string to a
-``sympy.Rational`` carrying the literal's exact decimal value. The
-refusal here is about the destination, not about the string form -- a
-Python ``float`` is the only real number Python and NumPy arithmetic can
-hold, and no binary ``float`` equals ``0.1``, while ``0.5`` is one. The
-bridge's lifter asks :func:`is_decimal_text_exactly_binary`, the test the
-refusal applies, before it writes a rational as decimal text, so every
-string literal it emits is one these helpers accept.
+exact target to convert into, so it lowers a decimal literal to a
+``sympy.Rational`` carrying its exact value. The refusal here is about the
+destination, not about the literal -- a Python ``float`` is the only real
+number Python and NumPy arithmetic can hold, and no binary ``float``
+equals ``0.1``, while ``0.5`` is one. The bridge's lifter asks
+:func:`is_decimal_text_exactly_binary`, the test the refusal applies,
+before it writes a rational as decimal text, so every decimal literal it
+emits is one these helpers accept.
 """
 
 __all__ = [
@@ -35,7 +36,7 @@ from ..errors import StringLiteralPrecisionError
 from ..registry import try_get_native_constant_for_identifier
 
 
-def is_decimal_text_exactly_binary(text: str) -> bool:
+def is_decimal_text_exactly_binary(text: str | Decimal) -> bool:
     """Return whether some binary ``float`` equals decimal ``text`` exactly.
 
     ``float`` rounds the text to the nearest binary value, and both sides
@@ -46,7 +47,8 @@ def is_decimal_text_exactly_binary(text: str) -> bool:
     text of any length.
 
     Args:
-        text: Integer- or float-grammar decimal text.
+        text: Integer- or float-grammar decimal text, or a finite
+            ``Decimal``.
 
     Returns:
         Whether converting ``text`` to a ``float`` loses nothing.
@@ -56,15 +58,16 @@ def is_decimal_text_exactly_binary(text: str) -> bool:
 
 
 def coerce_literal_value(value: LiteralType) -> bool | int | float:
-    """Coerce a literal value to a Python numeric, rejecting lossy strings.
+    """Coerce a literal value to a Python numeric, rejecting lossy decimals.
 
-    ``bool`` / ``int`` / ``float`` values pass through unchanged.
-    Integer-grammar string literals convert exactly via ``int``.
-    A float-grammar string literal converts via ``float`` when that
-    binary value's exact decimal expansion equals the literal's exact
-    decimal value (for example ``"0.5"``); otherwise the conversion is
-    refused, since it would discard the precision the string form
-    exists to preserve (for example ``"0.1"``).
+    ``bool`` / ``int`` / ``float`` values pass through unchanged. A
+    decimal -- a ``Decimal``, the value a float-grammar string literal
+    normalizes to, or float-grammar text -- converts via ``float`` when
+    that binary value's exact decimal expansion equals the decimal's
+    exact value (for example ``Decimal("0.5")``); otherwise the
+    conversion is refused, since it would discard the precision the
+    decimal form exists to preserve (for example ``Decimal("0.1")``).
+    Integer-grammar text converts exactly via ``int``.
 
     Args:
         value: Literal value to coerce.
@@ -73,23 +76,30 @@ def coerce_literal_value(value: LiteralType) -> bool | int | float:
         The Python numeric value.
 
     Raises:
-        StringLiteralPrecisionError: If ``value`` is a float-grammar
-            string literal with no exact binary ``float`` equivalent.
+        StringLiteralPrecisionError: If ``value`` is a decimal with no
+            exact binary ``float`` equivalent.
 
     """
-    if not isinstance(value, str):
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    elif not isinstance(value, Decimal):
         return value
-    try:
-        return int(value)
-    except ValueError:
-        pass
     if is_decimal_text_exactly_binary(value):
         return float(value)
     raise StringLiteralPrecisionError(
-        f"cannot coerce string-form float literal {value!r} to a numeric "
-        f"value: no binary float equals its exact decimal value; use a "
-        f"float literal instead if binary-float semantics are intended."
+        f"cannot coerce decimal literal {_format_decimal_literal(value)} to a "
+        f"numeric value: no binary float equals its exact decimal value; use "
+        f"a float literal instead if binary-float semantics are intended."
     )
+
+
+def _format_decimal_literal(value: str | Decimal) -> str:
+    """Return a decimal literal's value as quoted positional text."""
+    text = value if isinstance(value, str) else format(value, "f")
+    return repr(text)
 
 
 def try_get_native_constant_value(

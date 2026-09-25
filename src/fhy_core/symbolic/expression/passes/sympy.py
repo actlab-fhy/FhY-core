@@ -12,6 +12,7 @@ __all__ = [
 import operator
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from decimal import Decimal
+from fractions import Fraction
 from typing import Any, ClassVar
 
 import sympy  # type: ignore
@@ -37,10 +38,11 @@ from ..core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
-    is_integer_valued_literal,
     validate_logical_operands,
 )
 from ..errors import (
@@ -823,37 +825,6 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             BinaryOperation.FLOOR_DIVIDE: lambda x, y: sympy.floor(x / y),
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            # ``sympy.And``/``sympy.Or``, not ``operator.and_``/``operator.or_``:
-            # the latter two are SymPy's ``&``/``|``, which are *bitwise* on
-            # ``sympy.Integer`` operands, so a numeric operand would fold to a
-            # numerically wrong literal instead of being refused. The sympy
-            # constructors reject a non-Boolean operand; the bridge screens for
-            # that shape before lowering so the refusal is this package's
-            # ``NonBooleanLogicalOperandError`` rather than SymPy's own error.
-            # A Boolean piecewise operand passes that screen but is still not
-            # a SymPy ``Boolean``, so it is rewritten as a Boolean first.
-            # The binary connectives exist on the pure-Python backend only;
-            # the Rust backend's are `LogicalExpression` nodes (D-S4-1).
-            **{
-                getattr(BinaryOperation, name): connective
-                for name, connective in (
-                    (
-                        "LOGICAL_AND",
-                        lambda x, y: sympy.And(
-                            _convert_piecewise_to_sympy_boolean(x),
-                            _convert_piecewise_to_sympy_boolean(y),
-                        ),
-                    ),
-                    (
-                        "LOGICAL_OR",
-                        lambda x, y: sympy.Or(
-                            _convert_piecewise_to_sympy_boolean(x),
-                            _convert_piecewise_to_sympy_boolean(y),
-                        ),
-                    ),
-                )
-                if hasattr(BinaryOperation, name)
-            },
             # SymPy compares a ``Piecewise`` with a Boolean as unequal on
             # sight, so a Boolean piecewise operand is rewritten as a Boolean
             # here too.
@@ -869,6 +840,31 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             BinaryOperation.GREATER_EQUAL: operator.ge,
         }
     )
+
+    # ``sympy.And``/``sympy.Or``, not ``operator.and_``/``operator.or_``: the
+    # latter two are SymPy's ``&``/``|``, which are *bitwise* on
+    # ``sympy.Integer`` operands, so a numeric operand would fold to a
+    # numerically wrong literal instead of being refused. The sympy
+    # constructors reject a non-Boolean operand; the bridge screens for that
+    # shape before lowering so the refusal is this package's
+    # ``NonBooleanLogicalOperandError`` rather than SymPy's own error. A
+    # Boolean piecewise operand passes that screen but is still not a SymPy
+    # ``Boolean``, so it is rewritten as a Boolean first.
+    _LOGICAL_OPERATION_SYMPY_OPERATORS: immutabledict[
+        LogicalOperation, Callable[..., Any]
+    ] = immutabledict({LogicalOperation.AND: sympy.And, LogicalOperation.OR: sympy.Or})
+
+    def visit_logical_expression(
+        self, logical_expression: LogicalExpression
+    ) -> sympy.logic.boolalg.Boolean:
+        """Lower to one n-ary ``sympy.And`` or ``sympy.Or`` over the operands."""
+        operands = [
+            _convert_piecewise_to_sympy_boolean(self.visit(operand))
+            for operand in logical_expression.operands
+        ]
+        return self._LOGICAL_OPERATION_SYMPY_OPERATORS[logical_expression.operation](
+            *operands
+        )
 
     def visit_binary_expression(
         self, binary_expression: BinaryExpression
@@ -962,18 +958,19 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         contract names:
 
         - ``bool`` becomes ``sympy.true``/``sympy.false``.
-        - An integer -- a Python ``int`` or an integer-grammar ``str`` --
-          becomes a ``sympy.Integer``. Both are in one equivalence class,
-          so both have to reach SymPy as one number kind.
+        - An ``int`` becomes a ``sympy.Integer``. An integer-grammar
+          ``str`` is normalized to the same ``int`` when the literal is
+          built, so both spellings reach SymPy as one number kind.
         - A Python ``float`` is an IEEE-754 binary value, and
           ``sympy.Float`` carries exactly that value. A non-finite one
           becomes ``oo``, ``-oo``, or ``nan``, which lift back as the
           registered ``inf``/``nan`` constants rather than as literals.
-        - A float-grammar ``str`` is exact decimal, so it becomes a
-          ``sympy.Rational`` built from the text, which is that decimal
-          exactly. ``sympy.Float`` would instead round the text to binary,
-          making ``"0.1" + "0.1" + "0.1" == "0.3"`` simplify to False for
-          the same reason the binary form does.
+        - A ``decimal.Decimal`` (the normalized form of a float-grammar
+          ``str``) is exact decimal, so it becomes the ``sympy.Rational``
+          it denotes exactly, taken from ``fractions.Fraction``.
+          ``sympy.Float`` would instead round it to binary, making
+          ``"0.1" + "0.1" + "0.1" == "0.3"`` simplify to False for the
+          same reason the binary form does.
 
         The Z3 bridge lowers each of those forms to the same value, so a
         single literal denotes the same number on both bridges. Past a
@@ -984,12 +981,11 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         for example, ``(1e16 + 1.0) == 1e16`` simplifies to ``True`` but
         the solver seam finds it ``False``.
 
-        A float-grammar string whose decimal value is a whole number
-        (``"2."``, ``"2.0"``) yields a ``sympy.Integer``, since
-        ``sympy.Rational`` normalizes a unit denominator away; lifting it
-        back therefore lands in the integer bucket rather than the
-        float-decimal one. An unsupported literal type raises
-        ``TypeError``.
+        A decimal whose value is a whole number (``"2."``, ``"2.0"``)
+        yields a ``sympy.Integer``, since ``sympy.Rational`` normalizes a
+        unit denominator away; lifting it back therefore lands in the
+        integer bucket rather than the decimal one. An unsupported literal
+        type raises ``TypeError``.
         """
         value = literal_expression.value
         if isinstance(value, bool):
@@ -998,10 +994,9 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             return sympy.Integer(value)
         if isinstance(value, float):
             return sympy.Float(value)
-        if isinstance(value, str):
-            if is_integer_valued_literal(value):
-                return sympy.Integer(int(value))
-            return sympy.Rational(value)
+        if isinstance(value, Decimal):
+            fraction = Fraction(value)
+            return sympy.Rational(fraction.numerator, fraction.denominator)
         raise TypeError(f"Unsupported literal type: {type(value)}")
 
     @staticmethod
@@ -1032,8 +1027,8 @@ def convert_expression_to_sympy_expression(
         SymPy expression.
 
     Raises:
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+        NonBooleanLogicalOperandError: If an operand of a ``LogicalExpression``
+            or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number.
 
     """
@@ -1173,7 +1168,7 @@ def substitute_sympy_expression_variables(
             constant's canonical identifier that is free in
             ``sympy_expression`` as a symbol.
         NonBooleanLogicalOperandError: If a replacement value in
-            ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``environment`` contains a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node whose operand, or a piecewise whose case
             condition, provably denotes a number.
         PassExecutionError: Wrapping the originating ``TypeError`` as
@@ -1390,39 +1385,49 @@ class SymPyToExpressionConverter(
         operand = self.convert(not_.args[0])
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, operand)
 
-    def _convert_and(self, and_: sympy.logic.boolalg.And) -> BinaryExpression:
-        return self._convert_commutative_and_associative_binary_operation(
-            BinaryOperation.LOGICAL_AND, and_
-        )
+    def _convert_and(self, and_: sympy.logic.boolalg.And) -> Expression:
+        return self._convert_connective(LogicalOperation.AND, and_)
 
-    def _convert_or(self, or_: sympy.logic.boolalg.Or) -> BinaryExpression:
-        return self._convert_commutative_and_associative_binary_operation(
-            BinaryOperation.LOGICAL_OR, or_
-        )
+    def _convert_or(self, or_: sympy.logic.boolalg.Or) -> Expression:
+        return self._convert_connective(LogicalOperation.OR, or_)
 
-    def _convert_xor(self, xor: sympy.logic.boolalg.Xor) -> BinaryExpression:
+    def _convert_xor(self, xor: sympy.logic.boolalg.Xor) -> LogicalExpression:
         left = self.convert(xor.args[0])
         right = self.convert(sympy.Xor(*xor.args[1:], evaluate=False))
-        return BinaryExpression(
-            BinaryOperation.LOGICAL_AND,
-            BinaryExpression(BinaryOperation.LOGICAL_OR, left, right),
-            UnaryExpression(
-                UnaryOperation.LOGICAL_NOT,
-                BinaryExpression(BinaryOperation.LOGICAL_AND, left, right),
+        return LogicalExpression(
+            LogicalOperation.AND,
+            (
+                LogicalExpression(LogicalOperation.OR, (left, right)),
+                UnaryExpression(
+                    UnaryOperation.LOGICAL_NOT,
+                    LogicalExpression(LogicalOperation.AND, (left, right)),
+                ),
             ),
         )
 
     def _convert_nor(self, nor: sympy.logic.boolalg.Nor) -> Expression:
-        or_statement = self._convert_commutative_and_associative_binary_operation(
-            BinaryOperation.LOGICAL_OR, nor
-        )
+        or_statement = self._convert_connective(LogicalOperation.OR, nor)
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, or_statement)
 
     def _convert_nand(self, nand: sympy.logic.boolalg.Nand) -> Expression:
-        and_statement = self._convert_commutative_and_associative_binary_operation(
-            BinaryOperation.LOGICAL_AND, nand
-        )
+        and_statement = self._convert_connective(LogicalOperation.AND, nand)
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, and_statement)
+
+    def _convert_connective(
+        self,
+        operation: LogicalOperation,
+        sympy_connective: sympy.logic.boolalg.BooleanFunction,
+    ) -> Expression:
+        """Lift an n-ary SymPy connective to one ``LogicalExpression``.
+
+        The operands keep SymPy's argument order. A connective of a single
+        argument, which only an unevaluated construction leaves, lifts as
+        that argument, since a ``LogicalExpression`` takes at least two.
+        """
+        operands = tuple(self.convert(argument) for argument in sympy_connective.args)
+        if len(operands) == 1:
+            return operands[0]
+        return LogicalExpression(operation, operands)
 
     def _convert_ite(self, ite: sympy.logic.boolalg.ITE) -> PiecewiseExpression:
         """Lift a boolean ``ITE`` to a total two-branch `PiecewiseExpression`.
@@ -1702,8 +1707,8 @@ def simplify_expression(
             identity to the constant's own value before any substitution
             runs, so the binding would otherwise be silently dropped
             rather than applied.
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+        NonBooleanLogicalOperandError: If an operand of a ``LogicalExpression``
+            or ``LOGICAL_NOT`` node, or a piecewise case
             condition, provably denotes a number, counting an operand
             ``environment`` binds to one. Simplification refuses the shape
             before lowering rather than letting SymPy's ``And``/``Or``

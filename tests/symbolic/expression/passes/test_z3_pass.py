@@ -23,6 +23,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NativeConstantLoweringError,
     NonBooleanLogicalOperandError,
     PiecewiseExpression,
@@ -195,30 +197,51 @@ pytestmark = pytest.mark.z3
             id="binary_power",
         ),
         pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(mock_identifier("x", 0)),
-                IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                ),
             ),
             {
                 mock_identifier("x", 0): SymbolType.BOOL,
                 mock_identifier("y", 1): SymbolType.BOOL,
             },
             z3.And(z3.Bool("x_0"), z3.Bool("y_1")),
-            id="binary_logical_and",
+            id="logical_and",
         ),
         pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_OR,
-                IdentifierExpression(mock_identifier("x", 0)),
-                IdentifierExpression(mock_identifier("y", 1)),
+            LogicalExpression(
+                LogicalOperation.OR,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                ),
             ),
             {
                 mock_identifier("x", 0): SymbolType.BOOL,
                 mock_identifier("y", 1): SymbolType.BOOL,
             },
             z3.Or(z3.Bool("x_0"), z3.Bool("y_1")),
-            id="binary_logical_or",
+            id="logical_or",
+        ),
+        pytest.param(
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("y", 1)),
+                    IdentifierExpression(mock_identifier("z", 2)),
+                ),
+            ),
+            {
+                mock_identifier("x", 0): SymbolType.BOOL,
+                mock_identifier("y", 1): SymbolType.BOOL,
+                mock_identifier("z", 2): SymbolType.BOOL,
+            },
+            z3.And(z3.Bool("x_0"), z3.Bool("y_1"), z3.Bool("z_2")),
+            id="three_operand_logical_and",
         ),
         pytest.param(
             BinaryExpression(
@@ -349,17 +372,19 @@ def test_symbol_type_maps_to_correct_z3_sort(
             id="equality_is_universally_valid",
         ),
         pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                BinaryExpression(
-                    BinaryOperation.LESS,
-                    IdentifierExpression(mock_identifier("x", 0)),
-                    IdentifierExpression(mock_identifier("N", 3)),
-                ),
-                BinaryExpression(
-                    BinaryOperation.GREATER,
-                    IdentifierExpression(mock_identifier("x", 0)),
-                    IdentifierExpression(mock_identifier("N", 3)),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
+                    BinaryExpression(
+                        BinaryOperation.LESS,
+                        IdentifierExpression(mock_identifier("x", 0)),
+                        IdentifierExpression(mock_identifier("N", 3)),
+                    ),
+                    BinaryExpression(
+                        BinaryOperation.GREATER,
+                        IdentifierExpression(mock_identifier("x", 0)),
+                        IdentifierExpression(mock_identifier("N", 3)),
+                    ),
                 ),
             ),
             {mock_identifier("x", 0)},
@@ -371,20 +396,22 @@ def test_symbol_type_maps_to_correct_z3_sort(
             id="contradictory_bounds_is_never_valid",
         ),
         pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                BinaryExpression(
-                    BinaryOperation.LESS,
-                    IdentifierExpression(mock_identifier("x", 0)),
-                    IdentifierExpression(mock_identifier("N", 3)),
-                ),
-                BinaryExpression(
-                    BinaryOperation.LESS,
-                    IdentifierExpression(mock_identifier("x", 0)),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (
                     BinaryExpression(
-                        BinaryOperation.SUBTRACT,
+                        BinaryOperation.LESS,
+                        IdentifierExpression(mock_identifier("x", 0)),
                         IdentifierExpression(mock_identifier("N", 3)),
-                        LiteralExpression(1),
+                    ),
+                    BinaryExpression(
+                        BinaryOperation.LESS,
+                        IdentifierExpression(mock_identifier("x", 0)),
+                        BinaryExpression(
+                            BinaryOperation.SUBTRACT,
+                            IdentifierExpression(mock_identifier("N", 3)),
+                            LiteralExpression(1),
+                        ),
                     ),
                 ),
             ),
@@ -750,17 +777,19 @@ def test_does_expression_imply_returns_false_when_a_counterexample_exists() -> N
 def test_does_expression_imply_holds_when_antecedent_is_false_everywhere() -> None:
     """Test ``False -> anything`` is True (vacuous truth from a false antecedent)."""
     x = mock_identifier("x", 0)
-    contradictory_antecedent = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(x),
-            LiteralExpression(10),
-        ),
-        BinaryExpression(
-            BinaryOperation.LESS,
-            IdentifierExpression(x),
-            LiteralExpression(5),
+    contradictory_antecedent = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x),
+                LiteralExpression(10),
+            ),
+            BinaryExpression(
+                BinaryOperation.LESS,
+                IdentifierExpression(x),
+                LiteralExpression(5),
+            ),
         ),
     )
     consequent = BinaryExpression(
@@ -808,15 +837,17 @@ def test_does_expression_imply_handles_two_variable_implication() -> None:
     """Test `does_expression_imply` over two variables: ``x == y && x > 0 -> y > 0``."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    antecedent = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
-        BinaryExpression(
-            BinaryOperation.EQUAL,
-            IdentifierExpression(x),
-            IdentifierExpression(y),
-        ),
-        BinaryExpression(
-            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    antecedent = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                IdentifierExpression(x),
+                IdentifierExpression(y),
+            ),
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+            ),
         ),
     )
     consequent = BinaryExpression(

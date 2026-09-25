@@ -54,6 +54,7 @@ from fhy_core.symbolic.expression import (
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
     evaluate_expression_with_numpy,
+    logical_and,
     make_binary_expression,
     piecewise,
     substitute_sympy_expression_variables,
@@ -88,8 +89,7 @@ _SubstitutionCase = tuple[
 # =============================================================================
 
 
-_CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION: Final[Expression] = make_binary_expression(
-    BinaryOperation.LOGICAL_AND,
+_CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION: Final[Expression] = logical_and(
     piecewise(
         (
             make_binary_expression(BinaryOperation.EQUAL, 0, _V0),
