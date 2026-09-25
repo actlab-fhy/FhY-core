@@ -1,19 +1,33 @@
-"""Pretty-printer for expressions."""
+"""Pretty-printer for expressions.
+
+On the Rust backend :func:`pformat_expression` prints the Rust core's
+text (decision D-S4-1 of ``docs/design/python-switch.md``): a literal as
+the core writes it (``true``, ``1``, ``NaN``, ``1.5``), a conjunction or
+disjunction as one n-ary node (``(a && b && c)``, functionally
+``(and a b c)``), and each operation's functional name as its Rust name,
+which is its member's value (``(floor_mod x 3)``).
+:class:`ExpressionPrettyFormatter` renders the same text as a Python
+``VisitablePass``, so a subclass can override the rendering of one node
+kind.
+"""
 
 from fhy_core.utils.override import override
 
 __all__ = ["pformat_expression"]
 
+from fhy_core._backend import IS_RUST_BACKEND_SELECTED
 from fhy_core.pass_infrastructure import PassExecutionError, VisitablePass
 
 from .core import (
     BINARY_OPERATION_SYMBOLS,
+    LOGICAL_OPERATION_SYMBOLS,
     UNARY_OPERATION_SYMBOLS,
     BinaryExpression,
     CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
 )
@@ -65,6 +79,13 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
                 f"{right})"
             )
 
+    def visit_logical_expression(self, logical_expression: LogicalExpression) -> str:
+        operands = [self.visit(operand) for operand in logical_expression.operands]
+        if self._is_printed_functional:
+            return f"({logical_expression.operation.value} {' '.join(operands)})"
+        symbol = LOGICAL_OPERATION_SYMBOLS[logical_expression.operation]
+        return "(" + f" {symbol} ".join(operands) + ")"
+
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression
     ) -> str:
@@ -75,6 +96,8 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
             return repr(identifier)
 
     def visit_literal_expression(self, literal_expression: LiteralExpression) -> str:
+        if IS_RUST_BACKEND_SELECTED:
+            return str(literal_expression)
         return str(literal_expression.value)
 
     def visit_piecewise_expression(
@@ -117,6 +140,9 @@ def pformat_expression(
 ) -> str:
     """Pretty-format an expression.
 
+    On the Rust backend the Rust core renders the text, which is the text
+    :class:`ExpressionPrettyFormatter` renders.
+
     Args:
         expression: Expression to pretty-format.
         show_id: Whether to show the identifier ID.
@@ -126,6 +152,8 @@ def pformat_expression(
         Pretty-formatted expression.
 
     """
+    if IS_RUST_BACKEND_SELECTED and isinstance(expression, Expression):
+        return expression._format(show_id, functional)
     return ExpressionPrettyFormatter(
         is_id_shown=show_id, is_printed_functional=functional
     )(expression)

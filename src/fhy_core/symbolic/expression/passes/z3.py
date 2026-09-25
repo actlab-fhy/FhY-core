@@ -107,8 +107,13 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             BinaryOperation.FLOOR_DIVIDE: _z3_floor_divide,
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            BinaryOperation.LOGICAL_AND: z3.And,
-            BinaryOperation.LOGICAL_OR: z3.Or,
+            # The binary connectives exist on the pure-Python backend only;
+            # the Rust backend's are `LogicalExpression` nodes (D-S4-1).
+            **{
+                getattr(BinaryOperation, name): connective
+                for name, connective in (("LOGICAL_AND", z3.And), ("LOGICAL_OR", z3.Or))
+                if hasattr(BinaryOperation, name)
+            },
             BinaryOperation.EQUAL: operator.eq,
             BinaryOperation.NOT_EQUAL: operator.ne,
             BinaryOperation.LESS: operator.lt,

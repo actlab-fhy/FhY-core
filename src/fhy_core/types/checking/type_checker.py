@@ -138,8 +138,12 @@ _ARITHMETIC_OPERATIONS = frozenset(
     }
 )
 
+# The binary connectives exist on the pure-Python backend only; the Rust
+# backend's are `LogicalExpression` nodes (decision D-S4-1).
 _LOGICAL_BOOLEAN_OPERATIONS = frozenset(
-    {BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR}
+    getattr(BinaryOperation, name)
+    for name in ("LOGICAL_AND", "LOGICAL_OR")
+    if hasattr(BinaryOperation, name)
 )
 
 _EQUALITY_OPERATIONS = frozenset({BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL})

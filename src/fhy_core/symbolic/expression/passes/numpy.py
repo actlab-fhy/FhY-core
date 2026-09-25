@@ -142,8 +142,16 @@ _BINARY_UFUNC_NAMES: immutabledict[BinaryOperation, str] = immutabledict(
         BinaryOperation.FLOOR_DIVIDE: "floor_divide",
         BinaryOperation.MODULO: "mod",
         BinaryOperation.POWER: "power",
-        BinaryOperation.LOGICAL_AND: "logical_and",
-        BinaryOperation.LOGICAL_OR: "logical_or",
+        # The binary connectives exist on the pure-Python backend only; the
+        # Rust backend's are `LogicalExpression` nodes (decision D-S4-1).
+        **{
+            getattr(BinaryOperation, name): ufunc_name
+            for name, ufunc_name in (
+                ("LOGICAL_AND", "logical_and"),
+                ("LOGICAL_OR", "logical_or"),
+            )
+            if hasattr(BinaryOperation, name)
+        },
         BinaryOperation.EQUAL: "equal",
         BinaryOperation.NOT_EQUAL: "not_equal",
         BinaryOperation.LESS: "less",

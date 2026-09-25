@@ -416,8 +416,12 @@ _COMPARISON_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
 )
 """Binary operations the Z3 bridge lowers to a comparison of two operands."""
 
+# The binary connectives exist on the pure-Python backend only; the Rust
+# backend's are `LogicalExpression` nodes (decision D-S4-1).
 _LOGICAL_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    {BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR}
+    getattr(BinaryOperation, name)
+    for name in ("LOGICAL_AND", "LOGICAL_OR")
+    if hasattr(BinaryOperation, name)
 )
 """Binary operations the Z3 bridge lowers to ``z3.And``/``z3.Or``."""
 

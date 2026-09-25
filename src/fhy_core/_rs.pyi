@@ -4,7 +4,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Any
 
-from typing_extensions import Self
+from typing_extensions import Self, override
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
@@ -323,8 +323,11 @@ class FusedProvenance(Provenance):
 class Expression:
     @property
     def is_frozen(self) -> bool: ...
+    @override
     def __eq__(self, other: object) -> bool: ...
+    @override
     def __ne__(self, other: object) -> bool: ...
+    @override
     def __hash__(self) -> int: ...
     def __bool__(self) -> bool: ...
     def _format(self, show_id: bool = False, functional: bool = False) -> str: ...

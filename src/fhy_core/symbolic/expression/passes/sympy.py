@@ -832,14 +832,28 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             # ``NonBooleanLogicalOperandError`` rather than SymPy's own error.
             # A Boolean piecewise operand passes that screen but is still not
             # a SymPy ``Boolean``, so it is rewritten as a Boolean first.
-            BinaryOperation.LOGICAL_AND: lambda x, y: sympy.And(
-                _convert_piecewise_to_sympy_boolean(x),
-                _convert_piecewise_to_sympy_boolean(y),
-            ),
-            BinaryOperation.LOGICAL_OR: lambda x, y: sympy.Or(
-                _convert_piecewise_to_sympy_boolean(x),
-                _convert_piecewise_to_sympy_boolean(y),
-            ),
+            # The binary connectives exist on the pure-Python backend only;
+            # the Rust backend's are `LogicalExpression` nodes (D-S4-1).
+            **{
+                getattr(BinaryOperation, name): connective
+                for name, connective in (
+                    (
+                        "LOGICAL_AND",
+                        lambda x, y: sympy.And(
+                            _convert_piecewise_to_sympy_boolean(x),
+                            _convert_piecewise_to_sympy_boolean(y),
+                        ),
+                    ),
+                    (
+                        "LOGICAL_OR",
+                        lambda x, y: sympy.Or(
+                            _convert_piecewise_to_sympy_boolean(x),
+                            _convert_piecewise_to_sympy_boolean(y),
+                        ),
+                    ),
+                )
+                if hasattr(BinaryOperation, name)
+            },
             # SymPy compares a ``Piecewise`` with a Boolean as unequal on
             # sight, so a Boolean piecewise operand is rewritten as a Boolean
             # here too.
