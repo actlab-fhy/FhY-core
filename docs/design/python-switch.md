@@ -50,7 +50,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] Windows paths: by design (crate decision D-16), provenance paths use platform-independent POSIX normalization, while the old pure-Python class kept a `pathlib.Path` as given (`WindowsPath` on Windows). Watch the Windows CI leg of release pull requests
   - [x] mypy over the Rust branches (S4.4)
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
-  - [ ] platform wheels in the release workflow, now that the extension is required (S4.4)
+  - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
 
 ## Goal
 
