@@ -2502,7 +2502,7 @@ says so.
 
 ### Needs the user
 
-- **N-S5-1: what `apply_rewrite_rules` returns.** The function name and
+- **N-S5-1 (resolved 2026-09-25, as option (a)): what `apply_rewrite_rules` returns.** It returns the `Expression`, as today. The pass exposes the firings. The function name and
   its meaning stay: one bottom-up pass. The Rust function returns a
   `RewriteOutcome` (`output`, `is_changed`, `fired`), where Python returns
   the tree. D-S4-1 and D-S4-2 point opposite ways here, since the result's
