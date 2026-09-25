@@ -354,8 +354,11 @@ statistics or caches, is an owned value that its user creates and passes
 explicitly. Where the Python API needs one shared instance, the binding
 holds it in the extension's module state. A new process-global `static`
 with interior mutability needs the maintainer's agreement and a line in
-this section. Tests never clear a process-global registry; a test that
-needs an empty or controlled registry builds a local one.
+this section. The binding crate keeps one such kind, agreed in slice S2 of
+`docs/design/python-switch.md`: each Rust-backed interned class's identity
+cache from canonical keys to their Python objects, which is append-only
+like the registry it mirrors. Tests never clear a process-global registry;
+a test that needs an empty or controlled registry builds a local one.
 
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
@@ -518,9 +521,9 @@ process.
 When a canonical Rust value, such as an interned `OpAttribute`, reaches
 Python, the binding returns the same Python object for the same canonical
 instance every time, so `is` holds exactly as it does for values interned
-in Python. The binding crate keeps that cache; the core crate never holds
-Python objects. The cache is added with the first binding that returns a
-canonical value.
+in Python. The binding crate keeps that cache, an `IdentityCache` per
+interned class in `rust/fhy-core-py/src/interned.rs`; the core crate never
+holds Python objects.
 
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:

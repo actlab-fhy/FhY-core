@@ -357,3 +357,149 @@ the only registry for these three concepts on the Rust backend.
   payload shapes, which are exercised through Python.
 - **Benchmarks.** Run `benchmarks/test_interned_tags.py` on both backends
   before and after. Record the results here.
+
+### Status
+
+Implemented on 2026-09-24 in four commits: the public
+`Identifier::try_restore` (fad791b), the binding (a114adc), the backend
+multiplexing (d39df06) and the interface tests (a8669dc).
+
+### Benchmarks (before and after)
+
+Median time per call from `uv run --python 3.11 nox -s
+"benchmark-3.11(backend='python')" "benchmark-3.11(backend='rust')"`, run
+back to back on the S0 machine with Python 3.11.13: "before" at 10565ab,
+"after" at a8669dc. The machine is shared, so differences of a few percent,
+and all differences between the two "before" columns, are noise. The table
+lists the interned-tag benchmarks and the `Note` ones, the other benchmarks
+that touch a tag; every other benchmark is unchanged within noise on both
+backends.
+
+| Benchmark | python before | rust before | python after | rust after | rust after / rust before |
+|---|--:|--:|--:|--:|--:|
+| `test_interned_tag_construction_of_existing_key[OpAttribute]` | 15.9 µs | 16.1 µs | 19.8 µs | 317 ns | 0.02 |
+| `test_interned_tag_construction_of_existing_key[NoteKind]` | 15.8 µs | 16.2 µs | 16.6 µs | 316 ns | 0.02 |
+| `test_interned_tag_construction_of_existing_key[ValueDomain]` | 16.3 µs | 16.3 µs | 16.0 µs | 310 ns | 0.02 |
+| `test_interned_tag_lookup[OpAttribute]` | 630 ns | 621 ns | 633 ns | 136 ns | 0.22 |
+| `test_interned_tag_lookup[NoteKind]` | 627 ns | 625 ns | 637 ns | 144 ns | 0.23 |
+| `test_interned_tag_lookup[ValueDomain]` | 636 ns | 511 ns | 647 ns | 145 ns | 0.28 |
+| `test_interned_tag_eq[OpAttribute]` | 151 ns | 152 ns | 154 ns | 74 ns | 0.49 |
+| `test_interned_tag_eq[NoteKind]` | 179 ns | 240 ns | 158 ns | 74 ns | 0.31 |
+| `test_interned_tag_eq[ValueDomain]` | 191 ns | 146 ns | 152 ns | 67 ns | 0.46 |
+| `test_interned_tag_hash[OpAttribute]` | 340 ns | 190 ns | 191 ns | 57 ns | 0.30 |
+| `test_interned_tag_hash[NoteKind]` | 334 ns | 189 ns | 211 ns | 57 ns | 0.30 |
+| `test_interned_tag_hash[ValueDomain]` | 331 ns | 199 ns | 213 ns | 57 ns | 0.29 |
+| `test_value_domain_is_subdomain_of_root` | 93.1 µs | 84.7 µs | 89.3 µs | 67 ns | 0.001 |
+| `test_value_domain_is_subdomain_of_unrelated` | 83.1 µs | 84.2 µs | 83.1 µs | 68 ns | 0.001 |
+| `test_note_construction` | 2.0 µs | 1.9 µs | 1.9 µs | 2.0 µs | 1.02 |
+| `test_note_eq` | 146 ns | 146 ns | 150 ns | 146 ns | 1.00 |
+| `test_note_str` | 346 ns | 336 ns | 347 ns | 325 ns | 0.97 |
+
+Every tag hot path is faster on the Rust backend, so no path needs a
+pattern change or an accepted cost:
+
+- Construction of a registered key drops from about 16 µs to about 0.3 µs:
+  it reads the key's id and returns the cached canonical object without
+  touching the Rust registry.
+- `is_subdomain_of` drops from about 85 µs to about 70 ns: the walk runs in
+  Rust and compares names, instead of running a Python structural
+  equivalence check per level.
+- Lookup, `==` and `hash` each cost one call into the extension. The `==`
+  benchmark compares a canonical tag with "a distinct, equal tag", which on
+  the Rust backend is the canonical tag itself (D-S2-4).
+- `Note` construction, `==` and `str` hold a tag but call none of its
+  methods on their hot path, except `str`, which now calls the Rust
+  `NoteKind.__str__`; all three are unchanged.
+
+A first "after" run, started while the machine's load average was about 8,
+measured `test_diagnostic_construction` at 8.4 µs on the Rust backend. The
+rerun above measured 1.1 µs, and that path never touches a tag, so the
+outlier was load.
+
+### Implementation notes
+
+Choices the plan above left open, made while implementing S2:
+
+- **Core additions.** Only `Identifier::try_restore` became public, with a
+  rustdoc example as its test. The binding needed nothing else: the tags'
+  `register` functions, `Interned::intern_registry`, `Canonical` and the
+  `ValueDomainConflict` accessors were public already.
+- **Two-step construction.** A `PyO3` `#[new]` either builds a new instance
+  of the requested subtype or returns an existing object, never both. So
+  each pyclass's own `__new__` only builds an instance from a private seed
+  class that the binding creates and does not export, and the public class
+  sets `__new__ = staticmethod(_rs.X._new_canonical)`. `_new_canonical`
+  returns the cached canonical object, or registers the tag in Rust and
+  builds its object through `_rs.X.__new__(cls, seed)`. No Python code can
+  build a second object for a canonical tag.
+- **Identity cache.** One per concept, a `Mutex<HashMap<u64, Py<PyAny>>>`
+  keyed by the name's identifier id; the lock is never held across a call
+  into Python. Its objects live for the rest of the process, as registry
+  entries do. An object is created as an instance of the class the call
+  came through (`cls`). S3 will return tags that Rust code reached, such as
+  `Note.kind`, with no class at hand, so it will need to register the
+  public classes with the binding.
+- **Fast path.** A cached key returns the cached object without touching
+  the Rust registry, since the first registration wins either way. A value
+  domain takes the fast path only when the cached domain's parent has the
+  requested parent's name; anything else goes through `register_root` or
+  `register_child`, so the core reports every conflict.
+- **Python protocols.** `DerivedEquivalenceMixin` needs a dataclass, so the
+  Rust-backed classes mix in `StructuralEquivalence` and
+  `AlphaEquivalenceMixin` and implement `is_structurally_equivalent` and
+  `is_alpha_equivalent_under` in Rust as "same class and same name", which
+  is what the derived plan computes for these fields. They are virtual
+  subclasses of `InternedMixin` and `FrozenMixin` (so `Note`'s frozen field
+  check accepts `NoteKind`), and implement those mixins' remaining members
+  themselves: `is_frozen` is always true, `freeze`, `assert_frozen` and
+  `register_interned_instance` do nothing, and `__setattr__` and
+  `__delattr__` raise `FrozenMutationError` with the mixin's message. The
+  subclasses do get an instance `__dict__` from their Python mixins, so
+  `__slots__ = ()` alone would not block new attributes.
+- **Errors.** Constructing a value domain under a conflicting parent
+  (D-S2-3) raises `ValueError` with the Rust `ValueDomainConflict` text,
+  through `IntoPyErr`: `value_domain` is a Rust-defined module, and
+  construction had no Python error to match. Decoding the same conflict,
+  through `construct_from_fields` or `deserialize_from_dict`, raises the
+  `DeserializationValueError` message of `InternedMixin`, which is
+  dual-defined. Malformed payloads raise the serialization framework's own
+  errors because the binding raises them through the framework: it builds
+  `DeserializationDictStructureError(cls, expected, data)` itself, and
+  decodes names through `Identifier.deserialize_from_dict`. A description
+  that differs from the canonical one is logged through the
+  `fhy_core.traits.interned` logger, in the Python format.
+- **Stricter arguments.** On the Rust backend a name must be an
+  `Identifier` and a description a `str`, and each raises `TypeError`
+  otherwise; the dataclasses accepted any value. `get_interned` of a key
+  that is not an identifier returns `None`, or raises `TypeError` for an
+  unhashable key, as a dict lookup does.
+- **Hashes.** A tag hashes to its name's id on the Rust backend. The
+  dataclasses hash their field tuple. Hash values are not part of the
+  parity contract; equal tags still hash equally.
+- **Pickles.** The pure-Python classes gained the Rust-backed classes'
+  `__reduce__`, `(Class.deserialize_from_dict, (payload,))`, so a shipped
+  tag pickles to the same bytes on both backends and any tag's pickle loads
+  under either. Unpickling and copying now return the canonical instance on
+  the Python backend too, where they used to return a fresh equal copy.
+- **Reserved table.** `identifier.py` holds the table as one
+  `_RESERVED_<entry>` constant per entry of `reserved.rs`, named after the
+  Rust entry, and a test parses `reserved.rs` and requires the same entries.
+  The built-in expression constants `pi`, `e`, `inf` and `nan` were the
+  first identifiers the counter issued after the shipped tags, so their
+  pinned ids move from 65,544 to 65,547 down to 65,536 to 65,539 on both
+  backends. A payload that names them, or a shipped tag, by an old id no
+  longer resolves to them; that follows from D-S2-2.
+- **Typing.** The modules branch on
+  `TYPE_CHECKING or not IS_RUST_BACKEND_SELECTED`, so type checkers see the
+  pure-Python classes, which describe the public API, and mypy does not
+  check the Rust branch. `_rs.pyi` declares the pyclasses. It types
+  `_new_canonical` loosely, because `tests/test_rs_stub.py` would count a
+  module-level type variable as a stub name the extension lacks.
+- **Tests skipped on the Rust backend.** Six behavioral tests, each marked
+  with the decision it pins: the three registry-reset tests, one in
+  `test_op_attribute.py` and two in `test_value_domain.py` (D-S2-1),
+  `test_value_domain_unequal_when_parents_differ` (D-S2-3), and the two
+  `..._first_constructed_with_key_is_canonical` tests, which assert that a
+  second construction returns a new object (D-S2-4). D-S2-4 was not listed
+  among the skip reasons above, but those two tests contradict it directly;
+  the new interface suite asserts the Rust behavior instead.
