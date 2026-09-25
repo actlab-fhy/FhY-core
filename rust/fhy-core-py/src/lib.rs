@@ -6,8 +6,15 @@
 //! one flat Python namespace: `PyO3` submodules are attributes, not
 //! importable packages.
 
+mod described_tag;
+mod diagnostic;
 mod error;
+mod frozen;
 mod identifier;
+mod interned;
+mod op_attribute;
+mod serialization;
+mod value_domain;
 
 /// `fhy_core`'s Rust implementation.
 #[pyo3::pymodule(name = "_rs")]
@@ -15,7 +22,13 @@ mod rs_module {
     use pyo3::prelude::*;
 
     #[pymodule_export]
+    use super::diagnostic::PyNoteKind;
+    #[pymodule_export]
     use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
+    #[pymodule_export]
+    use super::op_attribute::PyOpAttribute;
+    #[pymodule_export]
+    use super::value_domain::PyValueDomain;
 
     /// Set the extension's `__version__` to the crate version, which the
     /// package compares with its own before it selects the Rust backend.
