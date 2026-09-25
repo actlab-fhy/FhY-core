@@ -36,7 +36,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S5.5: pattern tests migrated, and the interface suite
   - [x] S5.6: benchmarks after, and docs
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
-  - [ ] N-S6-1 to N-S6-3 decided by the user
+  - [x] N-S6-1 to N-S6-3 decided (2026-09-25; see "S6 resolutions")
   - [ ] S6.1: pass-infrastructure benchmarks and baseline
   - [ ] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
   - [ ] S6.3: the `ValidationReport` representation (D-S6-17)
@@ -54,19 +54,20 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 
 ## Goal
 
-`import fhy_core` exposes one Python API. With the Rust backend selected
-(`fhy_core.RUST_BACKEND_SELECTED`), each switched concept runs on the Rust
-implementation. With `FHY_CORE_NO_EXTENSIONS=1`, it runs on the pure-Python
-implementation. Existing Python code, including user subclasses of the
-framework classes, keeps working unchanged on both backends. The existing
-Python test suite, run on both backends (the nox `tests` sessions), is the
-equivalence harness.
+`import fhy_core` exposes one Python API. Each switched concept runs on
+the Rust implementation, and the extension is required (D-S4-6 retired the
+pure-Python backend). Existing Python code, including user subclasses of
+the framework classes, keeps working as far as the recorded decisions
+allow.
 
-A switched concept is *defined in both languages* in the sense of decision 3.
-Its Python-visible behavior (names, signatures, exceptions, messages, reprs,
-pickles) must be identical on both backends. The binding crate
-(`fhy-core-py`) adapts the idiomatic Rust core to that Python API. The core
-crate does not bend to Python.
+Until S4.4, a switched concept was *defined in both languages*: its
+Python-visible behavior had to be identical on both backends, and the
+Python test suite run on both backends was the equivalence harness. For
+expressions and everything after them, the Python API takes the Rust
+semantics where the two differ, and keeps the Python names where the
+meaning is the same (D-S4-1, D-S4-2). The binding crate (`fhy-core-py`)
+adapts the idiomatic Rust core to the Python API. The core crate does not
+bend to Python.
 
 ## The three binding patterns
 
@@ -3991,3 +3992,38 @@ rewrite:
 - **Consumers.** The 22 `match=` checks move to `__cause__` (D-S6-6).
   `test_pprint.py`'s two formatter tests change per N-S6-3. The
   benchmarks' `warm_analysis_manager` fixture becomes `_warm_cache`.
+
+
+### S6 resolutions (2026-09-25)
+
+These were decided under the user's standing policy: Rust semantics where
+the two differ, Python names where the meaning is the same, the
+CompilerPass hook names stay Python, and work continues unless a decision
+is critical.
+
+- **N-S6-1: option (a).** `register_pass`, `CompilerPass.create`,
+  `get_registered_passes` and `PassInfo` keep their Python API as a
+  registry of Python classes; the native passes register in it. The binding
+  never builds a core `PassRegistry`, so one registry is live.
+  `get_run_count` and `get_total_run_count` are removed, in favor of
+  `PassResult.skipped`, `PassRunRecord.skipped` and
+  `PassManagerResult.run_count()`.
+- **N-S6-2: option (a), Rust semantics.** A nested run's error is
+  `Nested`: the outer exception names the outer pass and hook, keeps the
+  outer diagnostics, and has the inner exception as `__cause__`. A
+  `Pass*Error` raised by a hook's own code is a `Hook` failure like any
+  other exception.
+- **N-S6-3: option (a) for the three visitor classes, and the formatter
+  stays Python.** `VisitablePass`, `AnalysisVisitablePass` and
+  `RewritablePass` stay Python subclasses of the Rust-backed
+  `CompilerPass`, with their walks inside `run_pass` and their semantics
+  unchanged. `ExpressionPrettyFormatter` also stays a Python `VisitablePass`,
+  not a native pass: `pformat_expression` already renders through the core,
+  so a native formatter would gain little and would break the per-node
+  override its docstring advertises. This amends D-S6-14, which keeps only
+  `RewriteRuleApplier` as a native `extends` class if the binding makes
+  that worthwhile.
+- **Error text (amends D-S6-6).** Messages keep the core's wording but name
+  the *Python* hooks, for example `pass "X" failed in run_pass`, not
+  `failed in run`, since the hook names are Python. The binding maps the
+  hook when it renders the message. `hook` stays as an attribute.
