@@ -178,6 +178,7 @@ else:
 
     InternedMixin.register(OpAttribute)
     FrozenMixin.register(OpAttribute)
+    OpAttribute._register_public_class()
 
     COMMUTATIVE = OpAttribute.require_interned(
         _build_reserved_identifier(_RESERVED_COMMUTATIVE)

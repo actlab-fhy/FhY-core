@@ -17,6 +17,11 @@ Provides the layer-agnostic vocabulary for structured diagnostics:
   plus a generic sequence of per-source execution records.
 - :class:`ValidationFailedError` is raised when a report with ERROR
   diagnostics is escalated via :meth:`ValidationReport.raise_if_failed`.
+
+On the Rust backend, ``Note``, ``Diagnostic`` and ``ValidationReport`` are
+backed by the Rust implementation too, with the same API, text and pickles;
+their arguments are type-checked at construction. ``DiagnosticLevel`` and
+``ValidationFailedError`` stay Python classes on both backends.
 """
 
 from fhy_core.utils.override import override
@@ -204,6 +209,7 @@ else:
 
     InternedMixin.register(NoteKind)
     FrozenMixin.register(NoteKind)
+    NoteKind._register_public_class()
 
     RATIONALE_NOTE_KIND = NoteKind.require_interned(
         _build_reserved_identifier(_RESERVED_RATIONALE_NOTE_KIND)
@@ -226,50 +232,12 @@ _DEFAULT_NOTE_KINDS: tuple[NoteKind, ...] = (
 )
 
 
-@register_serializable(type_id="diagnostic_note")
-@dataclass(frozen=True, slots=True)
-class Note(Serializable, FrozenMixin, EqualMixin):
-    """A structured diagnostic message with an optional kind tag."""
-
-    message: str
-    kind: NoteKind = OTHER_NOTE_KIND
-
-    @override
-    def __str__(self) -> str:
-        return f"{self.kind}: {self.message}"
-
-
 class DiagnosticLevel(StrEnum):
     """Severity levels for structured diagnostics."""
 
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
-
-
-@dataclass(frozen=True)
-class Diagnostic(FrozenMixin, PartialEqualMixin):
-    """A structured diagnostic emitted by a named source.
-
-    Attributes:
-        level: Severity of the diagnostic.
-        message: The diagnostic message as a :class:`Note`.
-        source: Stable identifier of whatever emitted this diagnostic
-            (typically a pass name or a ``<module>.<class>.<method>``
-            identifier for non-pass verifiers).
-        detail: Optional supplementary string with extended context.
-
-    """
-
-    level: DiagnosticLevel
-    message: Note
-    source: str
-    detail: str | None = None
-
-    @property
-    def message_text(self) -> str:
-        """The underlying message text, without the kind prefix."""
-        return self.message.message
 
 
 _RecordT = TypeVar("_RecordT")
@@ -295,70 +263,223 @@ class ValidationFailedError(RuntimeError):
         return self._report
 
 
-@dataclass(frozen=True)
-class ValidationReport(FrozenMixin, PartialEqualMixin, Generic[_RecordT]):
-    """Aggregated diagnostics plus optional per-source execution records.
+if TYPE_CHECKING or not IS_RUST_BACKEND_SELECTED:
 
-    Generic over the record type. The pass infrastructure specializes
-    it with :class:`PassRunRecord`; non-pass callers leave the parameter
-    unbound and produce a report with no records.
+    @register_serializable(type_id="diagnostic_note")
+    @dataclass(frozen=True, slots=True)
+    class Note(Serializable, FrozenMixin, EqualMixin):
+        """A structured diagnostic message with an optional kind tag.
 
-    Attributes:
-        diagnostics: Every diagnostic, in emission order.
-        records: Per-source execution metadata, one entry per registered
-            source, in pipeline order. Empty for callers that do not run
-            a pipeline.
-
-    """
-
-    diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
-    records: tuple[_RecordT, ...] = field(default_factory=tuple)
-
-    def errors(self) -> tuple[Diagnostic, ...]:
-        """Return only the ERROR-level diagnostics."""
-        return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.ERROR)
-
-    def warnings(self) -> tuple[Diagnostic, ...]:
-        """Return only the WARNING-level diagnostics."""
-        return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.WARNING)
-
-    def infos(self) -> tuple[Diagnostic, ...]:
-        """Return only the INFO-level diagnostics."""
-        return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.INFO)
-
-    def has_errors(self) -> bool:
-        """Return True when at least one ERROR-level diagnostic is present."""
-        return any(d.level == DiagnosticLevel.ERROR for d in self.diagnostics)
-
-    def format(self) -> str:
-        """Return a human-readable rendering of every diagnostic.
-
-        Each diagnostic is rendered on its own line as
-        ``[LEVEL] <source>: <message>``; optional detail is appended on an
-        indented continuation line.
+        Pickling a note stores a call of its class with its fields, so a
+        pickle loads under either backend.
         """
-        if not self.diagnostics:
-            return "No validation diagnostics."
-        lines: list[str] = []
-        for diagnostic in self.diagnostics:
-            prefix = f"[{diagnostic.level.value.upper()}] {diagnostic.source}: "
-            body = diagnostic.message_text
-            lines.append(f"{prefix}{body}")
-            if diagnostic.detail:
-                lines.append(f"    detail: {diagnostic.detail}")
-        return "\n".join(lines)
 
-    def raise_if_failed(self) -> None:
-        """Raise :class:`ValidationFailedError` if any ERROR diagnostics exist.
+        message: str
+        kind: NoteKind = OTHER_NOTE_KIND
 
-        No-op when the report contains only warnings/infos or nothing at all.
+        @override
+        def __str__(self) -> str:
+            return f"{self.kind}: {self.message}"
 
-        Raises:
-            ValidationFailedError: If at least one diagnostic has level
-                :attr:`DiagnosticLevel.ERROR`. The error carries this
-                report on its :attr:`ValidationFailedError.report`
-                attribute.
+        @override
+        def __reduce__(self) -> tuple[type["Note"], tuple[str, NoteKind]]:
+            return (type(self), (self.message, self.kind))
+
+    @dataclass(frozen=True)
+    class Diagnostic(FrozenMixin, PartialEqualMixin):
+        """A structured diagnostic emitted by a named source.
+
+        Pickling a diagnostic stores a call of its class with its fields, so
+        a pickle loads under either backend.
+
+        Attributes:
+            level: Severity of the diagnostic.
+            message: The diagnostic message as a :class:`Note`.
+            source: Stable identifier of whatever emitted this diagnostic
+                (typically a pass name or a ``<module>.<class>.<method>``
+                identifier for non-pass verifiers).
+            detail: Optional supplementary string with extended context.
 
         """
-        if self.has_errors():
-            raise ValidationFailedError(self)
+
+        level: DiagnosticLevel
+        message: Note
+        source: str
+        detail: str | None = None
+
+        @property
+        def message_text(self) -> str:
+            """The underlying message text, without the kind prefix."""
+            return self.message.message
+
+        @override
+        def __reduce__(
+            self,
+        ) -> tuple[type["Diagnostic"], tuple[DiagnosticLevel, Note, str, str | None]]:
+            return (type(self), (self.level, self.message, self.source, self.detail))
+
+    @dataclass(frozen=True)
+    class ValidationReport(FrozenMixin, PartialEqualMixin, Generic[_RecordT]):
+        """Aggregated diagnostics plus optional per-source execution records.
+
+        Generic over the record type. The pass infrastructure specializes
+        it with :class:`PassRunRecord`; non-pass callers leave the parameter
+        unbound and produce a report with no records. Pickling a report
+        stores a call of its class with its fields, so a pickle loads under
+        either backend.
+
+        Attributes:
+            diagnostics: Every diagnostic, in emission order.
+            records: Per-source execution metadata, one entry per registered
+                source, in pipeline order. Empty for callers that do not run
+                a pipeline.
+
+        """
+
+        diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
+        records: tuple[_RecordT, ...] = field(default_factory=tuple)
+
+        def errors(self) -> tuple[Diagnostic, ...]:
+            """Return only the ERROR-level diagnostics."""
+            return tuple(
+                d for d in self.diagnostics if d.level == DiagnosticLevel.ERROR
+            )
+
+        def warnings(self) -> tuple[Diagnostic, ...]:
+            """Return only the WARNING-level diagnostics."""
+            return tuple(
+                d for d in self.diagnostics if d.level == DiagnosticLevel.WARNING
+            )
+
+        def infos(self) -> tuple[Diagnostic, ...]:
+            """Return only the INFO-level diagnostics."""
+            return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.INFO)
+
+        def has_errors(self) -> bool:
+            """Return True when at least one ERROR-level diagnostic is present."""
+            return any(d.level == DiagnosticLevel.ERROR for d in self.diagnostics)
+
+        def format(self) -> str:
+            """Return a human-readable rendering of every diagnostic.
+
+            Each diagnostic is rendered on its own line as
+            ``[LEVEL] <source>: <message>``; optional detail is appended on an
+            indented continuation line.
+            """
+            if not self.diagnostics:
+                return "No validation diagnostics."
+            lines: list[str] = []
+            for diagnostic in self.diagnostics:
+                prefix = f"[{diagnostic.level.value.upper()}] {diagnostic.source}: "
+                body = diagnostic.message_text
+                lines.append(f"{prefix}{body}")
+                if diagnostic.detail:
+                    lines.append(f"    detail: {diagnostic.detail}")
+            return "\n".join(lines)
+
+        def raise_if_failed(self) -> None:
+            """Raise :class:`ValidationFailedError` if any ERROR diagnostics exist.
+
+            No-op when the report contains only warnings/infos or nothing at all.
+
+            Raises:
+                ValidationFailedError: If at least one diagnostic has level
+                    :attr:`DiagnosticLevel.ERROR`. The error carries this
+                    report on its :attr:`ValidationFailedError.report`
+                    attribute.
+
+            """
+            if self.has_errors():
+                raise ValidationFailedError(self)
+
+        @override
+        def __reduce__(
+            self,
+        ) -> tuple[
+            type["ValidationReport[_RecordT]"],
+            tuple[tuple[Diagnostic, ...], tuple[_RecordT, ...]],
+        ]:
+            return (type(self), (self.diagnostics, self.records))
+
+else:
+
+    @register_serializable(type_id="diagnostic_note")
+    class Note(_rs.Note, Serializable, EqualMixin):
+        """A structured diagnostic message with an optional kind tag.
+
+        Backed by the Rust implementation: ``fhy_core._rs.Note`` holds the
+        Rust note and implements the fields, equality, hashing, ``str``,
+        ``repr`` and payloads. This class mixes in the stateless Python
+        protocols, and is registered as a virtual subclass of
+        ``FrozenMixin``. ``message`` must be a ``str`` and ``kind`` a
+        :class:`NoteKind`; either raises ``TypeError`` otherwise. Notes are
+        immutable, and pickle as a call of their class with their fields.
+
+        Attributes:
+            message: The message text.
+            kind: The role the note plays, by default
+                :data:`OTHER_NOTE_KIND`.
+
+        """
+
+        __slots__ = ()
+        __match_args__ = ("message", "kind")
+
+    FrozenMixin.register(Note)
+    Note._register_public_class()
+
+    class Diagnostic(_rs.Diagnostic, PartialEqualMixin):
+        """A structured diagnostic emitted by a named source.
+
+        Backed by the Rust implementation: ``fhy_core._rs.Diagnostic`` holds
+        the Rust diagnostic and implements the fields, ``message_text``,
+        equality, hashing and ``repr``. This class mixes in the stateless
+        Python protocols, and is registered as a virtual subclass of
+        ``FrozenMixin``. ``level`` is converted to a :class:`DiagnosticLevel`
+        as ``DiagnosticLevel(level)`` does; ``message`` must be a
+        :class:`Note`, ``source`` a ``str`` and ``detail`` a ``str`` or
+        ``None``, and each raises ``TypeError`` otherwise. Diagnostics are
+        immutable, and pickle as a call of their class with their fields.
+
+        Attributes:
+            level: Severity of the diagnostic.
+            message: The diagnostic message as a :class:`Note`.
+            source: Stable identifier of whatever emitted this diagnostic
+                (typically a pass name or a ``<module>.<class>.<method>``
+                identifier for non-pass verifiers).
+            detail: Optional supplementary string with extended context.
+
+        """
+
+        __slots__ = ()
+        __match_args__ = ("level", "message", "source", "detail")
+
+    FrozenMixin.register(Diagnostic)
+    Diagnostic._register_public_class()
+
+    class ValidationReport(_rs.ValidationReport, PartialEqualMixin, Generic[_RecordT]):
+        """Aggregated diagnostics plus optional per-source execution records.
+
+        Backed by the Rust implementation: ``fhy_core._rs.ValidationReport``
+        holds a Rust report over the Python records and implements the
+        fields, ``errors``, ``warnings``, ``infos``, ``has_errors``,
+        ``format``, ``raise_if_failed``, equality, hashing and ``repr``. This
+        class mixes in the stateless Python protocols, and is registered as a
+        virtual subclass of ``FrozenMixin``. Each argument may be any
+        iterable and is stored as a tuple; every diagnostic must be a
+        :class:`Diagnostic`, and raises ``TypeError`` otherwise. Reports are
+        immutable, and pickle as a call of their class with their fields.
+
+        Attributes:
+            diagnostics: Every diagnostic, in emission order.
+            records: Per-source execution metadata, one entry per registered
+                source, in pipeline order. Empty for callers that do not run
+                a pipeline.
+
+        """
+
+        __slots__ = ()
+        __match_args__ = ("diagnostics", "records")
+
+    FrozenMixin.register(ValidationReport)
+    ValidationReport._register_public_class()
