@@ -1213,3 +1213,171 @@ What the baseline shows for S4.3:
   0.25 ms (2.1 ms on the DAG), `pformat_expression` and the counting
   visitor 0.9 ms, the screen of a 100-operand conjunction 1.3 ms, and
   decoding a deep tree from a dict or JSON 45 ms.
+
+### S4.2 status
+
+S4.2 ports the binder frames and capture rules of the Python
+`AlphaRenaming` (`src/fhy_core/term/alpha_equivalence.py`) to the Rust
+`fhy_core::expression::AlphaRenaming`, per D-S4-3. Nothing Python-visible
+changes; the binding does not use the renaming yet. The Rust tests were
+written first and failed against `todo!()` stubs (43 of their 46 cases;
+the other three pin behavior the flat renaming already had), then passed.
+
+### S4.2 implementation notes
+
+- **The Rust API.** `AlphaRenaming` keeps its private fields, now a stack of
+  binder frames (outermost first) over the free renaming, each an injective
+  map with its image set:
+  - `try_new(free_renaming: HashMap<Identifier, Identifier, S>)`, as before,
+    is the renaming with no frame; `Default` maps nothing;
+  - `enter_binder(&mut self, bindings: HashMap<..>) -> Result<(),
+    NonInjectiveRenamingError>` pushes an innermost frame, and leaves the
+    renaming unchanged when it refuses one;
+  - `leave_binder(&mut self) -> bool` pops it and says whether there was
+    one; `binder_depth()` counts the frames;
+  - `resolve(&self, identifier) -> &Identifier` is Python's `resolve`: the
+    innermost frame binding it, then the free renaming, then itself;
+  - `is_corresponding(left, right)` is Python's
+    `are_identifiers_alpha_equivalent` (renamed by the crate's S-7), with
+    the capture rules, and `is_empty()` now means "maps no identifier in
+    any frame or in the free renaming".
+
+  Python's `extend` returns a new renaming; the Rust frame is pushed in
+  place, and a caller that needs the old value clones first, as the
+  binding's `extend` will. `NonInjectiveRenamingError` gained
+  `#[non_exhaustive]` and `part() -> RenamingPart` (a new
+  `#[non_exhaustive]` enum, `FreeRenaming` or `BinderFrame`), and displays
+  `a binder frame must be injective, ...` for a frame. The part is what
+  the binding needs to raise Python's two messages, which name the
+  parameter (`free_renaming` or `bindings`).
+- **The flat-map API is kept, not migrated.** `try_new`, `Default`,
+  `is_corresponding` and `is_empty` keep their signatures and, without
+  frames, their meaning, so the existing tests in
+  `tests/it/expression/node_stories.rs` and `properties.rs` pass unchanged.
+  `Expression::is_alpha_equivalent_under` is unchanged in code and
+  compares identifiers through `is_corresponding`, so it works under
+  frames; its shared-subtree shortcut still applies only when `is_empty()`
+  holds, and its pair memo stays sound because an expression has no
+  binders, so the renaming is the same everywhere in one comparison.
+- **Divergence from Python: shadowing on the other side (needs sign-off).**
+  Python's `are_identifiers_alpha_equivalent` returns at the innermost frame
+  binding `left`, even when a frame inside it binds `right` on the other
+  side. So it finds `\x. \y. x` alpha-equivalent to `\a. \a. a`, whose body
+  refers to the inner `a`, and `\a. \a. a` not equivalent to `\x. \y. x`
+  (checked on the Python backend): the relation is neither symmetric nor
+  transitive there, against its own contract. The Rust rule lets the
+  innermost frame that binds `left` *or* has `right` as an image decide,
+  which is the de Bruijn reading, and agrees with Python everywhere else:
+  - a differential run of 20,000 random cases (up to three frames and a
+    free renaming over four identifiers), generated from the Python
+    oracle, found `resolve` identical in all of them and `is_corresponding`
+    identical in 19,819; the other 181 are exactly this case;
+  - implementing Python's rule in Rust fails exactly the five tests that
+    pin it (`alpha_renaming_is_corresponding_lets_an_inner_image_shadow_an_outer_binding`,
+    the symmetry and transitivity tests over the example binder terms, and
+    the symmetry and de Bruijn properties in `alpha_properties.rs`), and
+    passes every other test.
+
+  - the Python suites of `term`, `BinderMixin`, the derived equivalence
+    and `symbolic` (4,549 tests) all pass with Python's method replaced by
+    the Rust rule (through a pytest plugin kept outside the repo).
+
+  Python binder terms (`RegisteredFunction`, `Param`, `BinderMixin`
+  users) reach this case only when one side's nested binders reuse a
+  name, and no Python test does. S4.3 inherits the Rust rule when the
+  binding backs Python's `AlphaRenaming`; the maintainer may instead want
+  the Python rule fixed first, which is a two-line change.
+- **Duplicate bound identifiers.** A frame is a map, as Python's `dict` is,
+  so it cannot bind one identifier twice. Python builds it with
+  `dict(zip(self_bound, other_bound))`, which keeps the last pairing of a
+  repeated self-side name; the Rust docs of `enter_binder` tell a caller
+  pairing parameter lists to refuse a repeated name instead. This is left
+  to the caller on both sides.
+- **Hashing.** Python's `AlphaRenaming` is hashable; the Rust one is not,
+  since its maps are `HashMap`s. No Rust caller needs it. See the proposals
+  below.
+- **Tests.** `tests/it/expression/alpha_stories.rs` (43 cases, counting
+  `rstest` cases) and `alpha_properties.rs` (3 properties: symmetry under
+  the inverse renaming, agreement with a de Bruijn model of the frames,
+  and `leave_binder` undoing `enter_binder`). A Rust expression has no
+  binder, so where a Python test compares two binder terms, the Rust test
+  compares their bodies under the frames the binders would enter, through
+  a test-local `Binders` term of nested one-parameter binders. The
+  property file's regression seeds are the two shrunk shadowing cases.
+
+Traceability of the Python tests (`test_alpha_equivalence.py` is `A`,
+`test_binder.py` is `B`, `test_derived_equivalence.py` is `D`):
+
+| Python test | Rust test | Note |
+|---|---|---|
+| A `test_alpha_renaming_empty_returns_renaming_instance` | none | a Rust type needs no instance check |
+| A `test_alpha_renaming_empty_resolves_to_identity` | `alpha_renaming_default_resolves_every_identifier_to_itself` | |
+| A `test_alpha_renaming_with_free_renaming_stores_mapping` | `alpha_renaming_try_new_resolves_a_mapped_identifier_to_its_image` | |
+| A `test_alpha_renaming_with_free_renaming_empty_matches_empty` | `alpha_renaming_try_new_of_an_empty_map_is_the_default` | |
+| A `test_alpha_renaming_with_free_renaming_rejects_non_injective_mapping` | `alpha_renaming_try_new_names_the_free_renaming_in_its_refusal`; existing `alpha_renaming_try_new_refuses_a_non_injective_map` | |
+| A `test_alpha_renaming_extend_returns_new_instance`, `..._does_not_mutate_receiver` | `alpha_renaming_leave_binder_restores_the_renaming_before_the_frame`, `alpha_renaming_enter_binder_refuses_a_non_injective_frame` (unchanged on refusal) | adapted: Rust pushes in place, so the laws are "leaving restores" and "a refusal changes nothing"; also `alpha_renaming_leave_binder_undoes_enter_binder` (property) |
+| A `test_alpha_renaming_extend_empty_frame_resolves_to_identity` | `alpha_renaming_enter_binder_of_an_empty_frame_keeps_resolution_at_identity` | |
+| A `test_alpha_renaming_extend_resolves_bound_identifier` | `alpha_renaming_enter_binder_resolves_a_bound_identifier_to_its_image` | |
+| A `test_alpha_renaming_extend_inner_frame_shadows_outer_frame` | `alpha_renaming_inner_frame_shadows_an_outer_frame` | |
+| A `test_alpha_renaming_extend_permits_other_side_value_reuse_across_frames` | `alpha_renaming_frames_may_share_an_image` | |
+| A `test_alpha_renaming_extend_rejects_non_injective_frame` | `alpha_renaming_enter_binder_refuses_a_non_injective_frame` | also pins the message and the part |
+| A `test_alpha_renaming_extend_preserves_free_renaming_for_unbound_keys` | `alpha_renaming_enter_binder_keeps_the_free_renaming_of_unbound_identifiers` | |
+| A `test_alpha_renaming_resolve_falls_back_to_free_renaming_for_unframed_key` | `alpha_renaming_resolve_falls_back_to_the_free_renaming_outside_every_frame` | |
+| A `test_alpha_renaming_resolve_falls_back_to_identity_for_unmapped_key` | `alpha_renaming_resolve_falls_back_to_identity_for_an_unmapped_identifier` | |
+| A `test_alpha_renaming_frame_overrides_free_renaming_for_same_key` | `alpha_renaming_frame_takes_precedence_over_the_free_renaming` | |
+| A `test_are_identifiers_alpha_equivalent_returns_true_for_resolved_match`, `..._false_for_resolution_mismatch`, `..._true_for_identity_match`, `..._false_for_distinct_unmapped` | `alpha_renaming_is_corresponding_follows_one_frame` (4 cases) | |
+| A `test_are_identifiers_alpha_equivalent_agrees_with_resolve` | `alpha_renaming_is_corresponding_agrees_with_resolve` | |
+| A `test_alpha_renaming_equal_by_structure` | `alpha_renaming_equal_frames_make_equal_renamings` | |
+| A `test_alpha_renaming_hashable` | none | no `Hash` in Rust; see the proposals |
+| A `test_alpha_renaming_distinguishes_frame_order` | `alpha_renaming_frame_order_distinguishes_renamings` | |
+| A `test_alpha_renaming_distinguishes_free_renaming` | `alpha_renaming_free_renaming_distinguishes_renamings` | |
+| A `test_alpha_renaming_empty_equals_empty` | `alpha_renaming_empty_frame_distinguishes_renamings` | also pins that an empty frame counts, as Python's tuple of frames does |
+| A `test_mapping_helper_*` (11 tests) | none | `is_identifier_mapping_alpha_equivalent_under` compares Python IR mappings and stays Python; it needs only `resolve` and `is_corresponding`, which are ported |
+| A `test_alpha_equivalence_runtime_protocol_*`, `test_alpha_equivalence_mixin_*`, `test_alpha_equivalence_returns_false_for_unrelated_type`, `test_map_bag_*` | none | Python protocols and mixins, and cross-type checks the Rust types rule out |
+| A `test_binder_alpha_equivalence_handles_parameter_rename` | `binders_renaming_their_parameter_are_alpha_equivalent` | |
+| A `test_binder_alpha_equivalence_distinguishes_diverging_bodies` | `binders_with_a_free_body_on_one_side_are_not_alpha_equivalent` | |
+| A `test_binder_alpha_equivalence_handles_nested_shadowing_match` | `binders_nested_over_one_name_match_the_inner_binder` | |
+| A `test_binder_alpha_equivalence_handles_nested_shadowing_mismatch` | `binders_nested_over_one_name_do_not_match_the_outer_binder` | |
+| A `test_binder_alpha_equivalence_rejects_capture` | `binders_refuse_to_capture_a_free_identifier`, `alpha_renaming_is_corresponding_refuses_an_identifier_bound_only_on_the_other_side` | |
+| A `test_binder_alpha_equivalence_swapped_arguments_under_swapped_binders` | `binders_swapped_with_their_operands_are_alpha_equivalent` | |
+| A `test_binder_alpha_equivalence_handles_free_renaming_in_body` | `binders_compare_free_identifiers_of_their_body_under_the_free_renaming` | |
+| A `test_binder_alpha_equivalence_self_bound_to_self_bound` | `binders_over_the_same_parameter_are_alpha_equivalent` | |
+| A `test_alpha_equivalence_is_reflexive`, `..._is_symmetric`, `..._is_transitive` | `binders_alpha_equivalence_is_reflexive`, `..._is_symmetric`, `..._is_transitive` | the example terms add three terms whose nested binders reuse a name, where Python's rule breaks symmetry |
+| B `test_identity_lambdas_are_alpha_equivalent` | `binders_renaming_their_parameter_are_alpha_equivalent` | |
+| B `test_lambdas_with_distinct_free_bodies_are_not_alpha_equivalent`, D `test_binder_distinguishes_free_identifiers_in_the_body` | `binders_over_distinct_free_bodies_are_not_alpha_equivalent`, `binders_sharing_a_free_body_are_alpha_equivalent` | |
+| B `test_lambdas_sharing_a_free_identifier_are_alpha_equivalent` | `binders_sharing_a_free_body_are_alpha_equivalent` | |
+| B `test_lambdas_with_different_arity_are_not_alpha_equivalent`, D `test_binder_distinguishes_bound_arity` | `binders_of_different_depths_are_not_alpha_equivalent` | arity is the binder's check, before any frame; the test-local term checks it |
+| B `test_non_injective_binding_is_not_alpha_equivalent`, D `test_binder_with_non_injective_binding_returns_false` | `binder_frame_pairing_two_parameters_with_one_is_refused` | |
+| D `test_reference_field_consults_the_renaming_in_alpha_mode` | `alpha_renaming_is_corresponding_follows_one_frame`, `expression_is_not_alpha_equivalent_to_itself_under_a_frame_renaming_its_identifier` | the second also pins that a shared handle is not skipped under a frame |
+| D `test_reference_field_requires_identifier_equality_without_renaming` | existing `expression_is_alpha_equivalent_under_empty_renaming_is_structural_equality` | |
+| D `test_nested_binders_shadow_outer_bindings` | `binders_nested_over_one_name_match_the_inner_binder`, `binders_nested_over_one_name_do_not_match_the_outer_binder` | |
+| D `test_binder_renames_bound_identifiers_in_the_scoped_body`, `test_binder_is_alpha_equivalent_to_itself` | `binders_renaming_their_parameter_are_alpha_equivalent`, `binders_alpha_equivalence_is_reflexive` | |
+| B substitution, free-identifier and `_Block` tests; D field-schema derivation tests | none | `BinderMixin` and the derived plan stay Python; they call the renaming only through `extend`, `resolve` and `are_identifiers_alpha_equivalent` |
+
+Proposals for S4.3 (core additions the binding may need; none is
+implemented):
+
+1. **Nothing is needed to build calls by name.** `Callee`'s `FromStr`
+   gives the built-in for a reserved name and `Named` otherwise, and
+   `Expression::call(callee, arguments)` builds the node, so
+   `CallExpression.function_name` round-trips through `Callee::name()`.
+2. **A cheap clone of the frame stack**, if the binding's `extend`
+   (clone, then `enter_binder`) shows up in the derived-equivalence
+   benchmarks: frames as `Arc`s, or a persistent list, would make the clone
+   O(1) instead of copying every frame's maps. Python copies only the tuple
+   of frame references.
+3. **`Hash` for `AlphaRenaming`**, order-independent, if the binding wants
+   Python's `hash(renaming)` without walking the maps itself; otherwise the
+   binding hashes sorted `(id, id)` pairs.
+4. **A cached structural hash.** On the Rust semantics `hash(expression)`
+   walks the whole tree (B3 §7 keeps caching out of the core). The
+   baseline's dict lookup by a deep tree takes 46 ns today; the binding can
+   cache the hash in each pyclass, which is immutable, without a core
+   change.
+5. **`Decimal` from parts.** `LiteralExpression(decimal.Decimal(...))`
+   reaches the core only through positional text today (`format(d, "f")`
+   parsed by `Decimal::from_str`, not `LiteralValue::parse_text`, which
+   reads `"100"` as an integer). A `Decimal` constructor from a coefficient
+   and an exponent would avoid the text, and the binding must decide what a
+   negative `decimal.Decimal` becomes, since the core's `Decimal` is
+   non-negative.
