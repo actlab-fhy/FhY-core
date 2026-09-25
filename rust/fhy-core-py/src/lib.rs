@@ -14,6 +14,7 @@ mod frozen;
 mod identifier;
 mod interned;
 mod op_attribute;
+mod provenance;
 mod public_class;
 mod serialization;
 mod value_domain;
@@ -29,6 +30,11 @@ mod rs_module {
     use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
     #[pymodule_export]
     use super::op_attribute::PyOpAttribute;
+    #[pymodule_export]
+    use super::provenance::{
+        PyCallSiteProvenance, PyFileProvenance, PyFusedProvenance, PyNamedProvenance, PyPosition,
+        PyProvenance, PySpan, PyUnknownProvenance,
+    };
     #[pymodule_export]
     use super::value_domain::PyValueDomain;
 

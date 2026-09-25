@@ -7,10 +7,10 @@
 //! validate incoming ones exactly as the classes they replace do, raising
 //! the framework's own exceptions with the same messages.
 
-use pyo3::exceptions::{PyKeyError, PyTypeError};
+use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyDict, PyMapping, PyString, PyType};
+use pyo3::types::{PyBool, PyDict, PyInt, PyList, PyMapping, PyString, PyType};
 
 const MODULE: &str = "fhy_core.serialization";
 
@@ -31,6 +31,12 @@ pub(crate) fn is_serialized_dict(value: &Bound<'_, PyAny>) -> PyResult<bool> {
         .is_truthy()
 }
 
+/// Return `fhy_core.serialization.SerializationError`.
+fn serialization_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    CLASS.import(py, MODULE, "SerializationError")
+}
+
 /// What a payload field must hold, as the derived deserialization of the
 /// replaced dataclasses checks it.
 #[derive(Debug, Clone, Copy)]
@@ -39,27 +45,58 @@ pub(crate) enum FieldShape {
     Payload,
     /// A `str`.
     Str,
+    /// An `int` that is not a `bool`.
+    Int,
     /// A nested payload dict or `None`, an optional serializable value.
     OptionalPayload,
+    /// A `str` or `None`.
+    OptionalStr,
+    /// An `int` that is not a `bool`, or `None`.
+    OptionalInt,
+    /// A list of nested payload dicts, a sequence of serializable values.
+    PayloadList,
 }
 
 impl FieldShape {
     /// Return whether `value` has this shape.
     fn accepts(self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let is_int = |value: &Bound<'_, PyAny>| {
+            value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>()
+        };
         match self {
             Self::Payload => is_serialized_dict(value),
             Self::Str => Ok(value.is_instance_of::<PyString>()),
+            Self::Int => Ok(is_int(value)),
             Self::OptionalPayload => Ok(value.is_none() || is_serialized_dict(value)?),
+            Self::OptionalStr => Ok(value.is_none() || value.is_instance_of::<PyString>()),
+            Self::OptionalInt => Ok(value.is_none() || is_int(value)),
+            Self::PayloadList => {
+                let Ok(items) = value.cast::<PyList>() else {
+                    return Ok(false);
+                };
+                for item in items {
+                    if !is_serialized_dict(&item)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
         }
     }
 
     /// Return the type the structure error names for this shape.
     fn expected_type(self, py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
         let dict_type = py.get_type::<PyDict>().into_any();
+        let str_type = py.get_type::<PyString>().into_any();
+        let int_type = py.get_type::<PyInt>().into_any();
         match self {
             Self::Payload => Ok(dict_type),
-            Self::Str => Ok(py.get_type::<PyString>().into_any()),
+            Self::Str => Ok(str_type),
+            Self::Int => Ok(int_type),
             Self::OptionalPayload => dict_type.bitor(py.None()),
+            Self::OptionalStr => str_type.bitor(py.None()),
+            Self::OptionalInt => int_type.bitor(py.None()),
+            Self::PayloadList => Ok(py.get_type::<PyList>().into_any()),
         }
     }
 }
@@ -170,4 +207,37 @@ pub(crate) fn read_constructor_fields<'py, const N: usize>(
     Ok(values
         .try_into()
         .unwrap_or_else(|_values: Vec<_>| unreachable!("one value per name")))
+}
+
+/// Build an instance of `cls` from the decoded payload `fields` through
+/// `cls.construct_from_fields(fields)`.
+///
+/// Matches the Python implementation: the construction step of the derived
+/// `Serializable.deserialize_from_dict`.
+///
+/// # Errors
+///
+/// Raises what the construction raises, except that a `ValueError` or
+/// `TypeError` outside the serialization hierarchy becomes a
+/// `DeserializationValueError` with its message, caused by it.
+pub(crate) fn construct_from_decoded_fields<'py>(
+    cls: &Bound<'py, PyType>,
+    fields: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    match cls.call_method1(pyo3::intern!(py, "construct_from_fields"), (fields,)) {
+        Ok(instance) => Ok(instance),
+        Err(error)
+            if !error.is_instance(py, serialization_error_class(py)?)
+                && (error.is_instance_of::<PyValueError>(py)
+                    || error.is_instance_of::<PyTypeError>(py)) =>
+        {
+            let message = error.value(py).str()?;
+            let wrapped =
+                PyErr::from_value(deserialization_value_error_class(py)?.call1((message,))?);
+            wrapped.set_cause(py, Some(error));
+            Err(wrapped)
+        }
+        Err(error) => Err(error),
+    }
 }
