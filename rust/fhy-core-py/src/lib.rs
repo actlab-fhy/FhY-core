@@ -10,6 +10,7 @@ mod dataclass;
 mod described_tag;
 mod diagnostic;
 mod error;
+mod expression;
 mod frozen;
 mod identifier;
 mod interned;
@@ -26,6 +27,12 @@ mod rs_module {
 
     #[pymodule_export]
     use super::diagnostic::{PyDiagnostic, PyNote, PyNoteKind, PyValidationReport};
+    #[pymodule_export]
+    use super::expression::{
+        PyBinaryExpression, PyCallExpression, PyExpression, PyIdentifierExpression,
+        PyLiteralExpression, PyLogicalExpression, PyPiecewiseExpression, PyUnaryExpression,
+        validate_logical_operands, validate_predicate,
+    };
     #[pymodule_export]
     use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
     #[pymodule_export]

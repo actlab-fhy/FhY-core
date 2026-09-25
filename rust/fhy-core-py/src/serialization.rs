@@ -10,7 +10,7 @@
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyDict, PyInt, PyList, PyMapping, PyString, PyType};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyType};
 
 const MODULE: &str = "fhy_core.serialization";
 
@@ -55,6 +55,8 @@ pub(crate) enum FieldShape {
     OptionalInt,
     /// A list of nested payload dicts, a sequence of serializable values.
     PayloadList,
+    /// A literal expression's value: a `str`, `float`, `int` or `bool`.
+    Literal,
 }
 
 impl FieldShape {
@@ -81,6 +83,9 @@ impl FieldShape {
                 }
                 Ok(true)
             }
+            Self::Literal => Ok(value.is_instance_of::<PyString>()
+                || value.is_instance_of::<PyFloat>()
+                || value.is_instance_of::<PyInt>()),
         }
     }
 
@@ -97,6 +102,10 @@ impl FieldShape {
             Self::OptionalStr => str_type.bitor(py.None()),
             Self::OptionalInt => int_type.bitor(py.None()),
             Self::PayloadList => Ok(py.get_type::<PyList>().into_any()),
+            Self::Literal => str_type
+                .bitor(py.get_type::<PyFloat>())?
+                .bitor(int_type)?
+                .bitor(py.get_type::<PyBool>()),
         }
     }
 }
