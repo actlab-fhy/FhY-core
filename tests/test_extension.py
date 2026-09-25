@@ -10,6 +10,7 @@ failure is simulated in a fresh interpreter.
 
 import importlib
 import importlib.metadata
+import os
 import pathlib
 import subprocess
 import sys
@@ -44,11 +45,16 @@ def _import_the_package(program_prefix: str = "") -> subprocess.CompletedProcess
         difference between two consecutively constructed ids.
 
     """
+    # Python 3.13+ colors tracebacks when FORCE_COLOR is set, as CI and nox
+    # set it; plain text keeps the final line starting with the exception
+    # name. PYTHON_COLORS takes precedence over FORCE_COLOR.
+    environment = {**os.environ, "PYTHON_COLORS": "0"}
     return subprocess.run(
         [sys.executable, "-c", program_prefix + _IMPORT_PACKAGE_PROGRAM],
         capture_output=True,
         text=True,
         check=False,
+        env=environment,
     )
 
 

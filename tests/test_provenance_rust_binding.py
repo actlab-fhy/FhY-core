@@ -839,6 +839,8 @@ def test_pickle_refers_only_to_the_public_classes() -> None:
     assert {module for module, _ in unpickler.found_globals} <= {
         "builtins",
         "pathlib",
+        # Python 3.13+ defines the pathlib classes in pathlib._local.
+        "pathlib._local",
         "fhy_core.provenance",
     }
     assert ("fhy_core.provenance", "Span") in unpickler.found_globals
