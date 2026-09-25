@@ -85,11 +85,11 @@ impl<'py> RuleFields<'py> {
     }
 
     /// Return the rule's label in messages: `RewriteRule 'name'`, or
-    /// `RewriteRule` for an unnamed rule.
+    /// `RewriteRule '<unnamed>'` for an unnamed rule.
     fn label(&self) -> PyResult<String> {
         Ok(match &self.name {
             Some(name) => format!("RewriteRule {}", name.repr()?),
-            None => "RewriteRule".to_owned(),
+            None => "RewriteRule '<unnamed>'".to_owned(),
         })
     }
 

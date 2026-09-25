@@ -5,7 +5,8 @@ object identity); a semantics-preserving rule set (``x + 0 -> x``,
 ``x * 1 -> x``, ``-(-x) -> x``) applied to a tree wrapped with those
 same no-op forms, checked against the un-wrapped tree's evaluation; and
 the documented "identity iff zero rules fired" contract, checked by
-wrapping each rule's rewrite callable with a fire counter.
+wrapping each rule's rewrite callable with a fire counter and against the
+firings ``RewriteRuleApplier.fired`` records.
 """
 
 import pytest
@@ -32,12 +33,13 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.symbolic.expression.pattern import (
     BinaryExpressionPattern,
+    Capture,
     CapturePattern,
     LiteralPattern,
     MatchBindings,
     RewriteRule,
+    RewriteRuleApplier,
     UnaryExpressionPattern,
-    WildcardPattern,
     apply_rewrite_rules,
 )
 
@@ -181,33 +183,32 @@ def draw_wrapped_numeric_tree(
 
 def _build_rewrite_rules() -> tuple[RewriteRule, ...]:
     """Return the semantics-preserving rule set, without fire counting."""
+    x = Capture("x")
     return (
         RewriteRule(
             pattern=BinaryExpressionPattern(
                 BinaryOperation.ADD,
-                CapturePattern("x", WildcardPattern()),
+                CapturePattern(x),
                 LiteralPattern(value=0),
             ),
-            rewrite=lambda bindings: bindings.get("x"),
+            rewrite=lambda bindings: bindings[x],
             name="x + 0 -> x",
         ),
         RewriteRule(
             pattern=BinaryExpressionPattern(
                 BinaryOperation.MULTIPLY,
-                CapturePattern("x", WildcardPattern()),
+                CapturePattern(x),
                 LiteralPattern(value=1),
             ),
-            rewrite=lambda bindings: bindings.get("x"),
+            rewrite=lambda bindings: bindings[x],
             name="x * 1 -> x",
         ),
         RewriteRule(
             pattern=UnaryExpressionPattern(
                 UnaryOperation.NEGATE,
-                UnaryExpressionPattern(
-                    UnaryOperation.NEGATE, CapturePattern("x", WildcardPattern())
-                ),
+                UnaryExpressionPattern(UnaryOperation.NEGATE, CapturePattern(x)),
             ),
-            rewrite=lambda bindings: bindings.get("x"),
+            rewrite=lambda bindings: bindings[x],
             name="-(-x) -> x",
         ),
     )
@@ -220,17 +221,18 @@ def _build_counting_rewrite_rules() -> tuple[list[int], tuple[RewriteRule, ...]]
     returning its capture, so a caller can tell whether any rule fired
     across a whole ``apply_rewrite_rules`` walk.
     """
+    x = Capture("x")
     fire_count = [0]
 
     def _count_and_return_x(bindings: MatchBindings) -> Expression:
         fire_count[0] += 1
-        return bindings.get("x")
+        return bindings[x]
 
     rules = (
         RewriteRule(
             pattern=BinaryExpressionPattern(
                 BinaryOperation.ADD,
-                CapturePattern("x", WildcardPattern()),
+                CapturePattern(x),
                 LiteralPattern(value=0),
             ),
             rewrite=_count_and_return_x,
@@ -239,7 +241,7 @@ def _build_counting_rewrite_rules() -> tuple[list[int], tuple[RewriteRule, ...]]
         RewriteRule(
             pattern=BinaryExpressionPattern(
                 BinaryOperation.MULTIPLY,
-                CapturePattern("x", WildcardPattern()),
+                CapturePattern(x),
                 LiteralPattern(value=1),
             ),
             rewrite=_count_and_return_x,
@@ -248,9 +250,7 @@ def _build_counting_rewrite_rules() -> tuple[list[int], tuple[RewriteRule, ...]]
         RewriteRule(
             pattern=UnaryExpressionPattern(
                 UnaryOperation.NEGATE,
-                UnaryExpressionPattern(
-                    UnaryOperation.NEGATE, CapturePattern("x", WildcardPattern())
-                ),
+                UnaryExpressionPattern(UnaryOperation.NEGATE, CapturePattern(x)),
             ),
             rewrite=_count_and_return_x,
             name="-(-x) -> x",
@@ -305,11 +305,18 @@ def test_rewrite_rules_identity_holds_iff_no_rule_fired(
 ) -> None:
     """Test apply_rewrite_rules(e', rules) is e' iff the fire count is zero.
 
-    Oracle: apply_rewrite_rules's documented identity contract.
+    Oracle: apply_rewrite_rules's documented identity contract. The pass
+    records one firing per rewrite call, since no rule here returns the
+    node it matched, and none exactly when the output is its input.
     """
     _expression, wrapped, _environment = triple
     fire_count, rules = _build_counting_rewrite_rules()
+    pass_fire_count, pass_rules = _build_counting_rewrite_rules()
+    applier = RewriteRuleApplier(pass_rules)
 
     result = apply_rewrite_rules(wrapped, rules)
+    pass_result = applier.execute(wrapped)
 
     assert (result is wrapped) == (fire_count[0] == 0)
+    assert (pass_result.output is wrapped) == (applier.fired == ())
+    assert len(applier.fired) == pass_fire_count[0]
