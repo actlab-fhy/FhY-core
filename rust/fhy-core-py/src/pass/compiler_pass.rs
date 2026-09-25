@@ -51,6 +51,32 @@ mod hook_bit {
     pub(super) const GET_PASS_NAME: u32 = 1 << 5;
 }
 
+/// Refuse constructor arguments for a subclass of `cls` whose `__init__` is
+/// `object.__init__`, as `object` does: a base's `__new__` accepts any
+/// arguments so a subclass's own `__init__` can take them.
+///
+/// # Errors
+///
+/// Raises `TypeError` with Python's message, `X() takes no arguments`.
+pub(super) fn refuse_unused_arguments(
+    cls: &Bound<'_, PyType>,
+    args: &Bound<'_, PyTuple>,
+    kwargs: Option<&Bound<'_, PyDict>>,
+) -> PyResult<()> {
+    if args.is_empty() && kwargs.is_none_or(PyDictMethods::is_empty) {
+        return Ok(());
+    }
+    let py = cls.py();
+    let object_init = py.get_type::<PyAny>().getattr(intern!(py, "__init__"))?;
+    if cls.getattr(intern!(py, "__init__"))?.is(&object_init) {
+        return Err(PyTypeError::new_err(format!(
+            "{}() takes no arguments",
+            cls.name()?
+        )));
+    }
+    Ok(())
+}
+
 /// Log a diagnostic on its source's pass logger, as `CompilerPass.report`
 /// does: `fhy_core.pass_infrastructure.core._log_diagnostic`.
 pub(super) fn log_diagnostic(
@@ -576,13 +602,21 @@ impl PyCompilerPassBase {
 #[pymethods]
 impl PyCompilerPassBase {
     /// Accept any arguments, so a subclass's `__init__` takes its own.
+    ///
+    /// Raises `TypeError` for arguments a subclass without an `__init__`
+    /// of its own was given.
     #[new]
+    #[classmethod]
     #[pyo3(signature = (*args, **kwargs))]
-    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        let _ = (args, kwargs);
-        Self {
+    fn new(
+        cls: &Bound<'_, PyType>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        refuse_unused_arguments(cls, args, kwargs)?;
+        Ok(Self {
             diagnostics: Mutex::new(Vec::new()),
-        }
+        })
     }
 
     /// The diagnostics of the current run during a hook; afterwards those of

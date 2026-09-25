@@ -26,7 +26,7 @@ use crate::identifier::{new_python_identifier, read_identifier_id, restore_ident
 
 use super::compiler_pass::{
     HookFailure, PyCompilerPassBase, PythonPass, build_interrupted_failure, log_diagnostic,
-    report_check_failure, report_into,
+    refuse_unused_arguments, report_check_failure, report_into,
 };
 use super::context::{self, FrameGuard, PyAnalysisManager};
 use super::convert::validation_report_to_python;
@@ -253,11 +253,19 @@ pub(crate) struct PyValidatorBase;
 #[pymethods]
 impl PyValidatorBase {
     /// Accept any arguments, so a subclass's `__init__` takes its own.
+    ///
+    /// Raises `TypeError` for arguments a subclass without an `__init__`
+    /// of its own was given.
     #[new]
+    #[classmethod]
     #[pyo3(signature = (*args, **kwargs))]
-    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        let _ = (args, kwargs);
-        Self
+    fn new(
+        cls: &Bound<'_, PyType>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        refuse_unused_arguments(cls, args, kwargs)?;
+        Ok(Self)
     }
 
     /// Record `diagnostic`, which `report` built, into the running check's

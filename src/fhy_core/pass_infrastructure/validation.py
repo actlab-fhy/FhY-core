@@ -79,9 +79,6 @@ class Validator(_rs.ValidatorBase, ABC, Generic[_IRType]):
     validator's diagnostics.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
-
     @property
     def name(self) -> str:
         """Return the validator's name."""

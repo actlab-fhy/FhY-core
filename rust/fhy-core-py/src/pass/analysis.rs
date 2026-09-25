@@ -23,6 +23,8 @@ use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::public_class::PublicClass;
 
+use super::compiler_pass::refuse_unused_arguments;
+
 /// The base of the Python `Analysis` ABC.
 ///
 /// It holds nothing: a Python analysis runs in Python, and the binding
@@ -34,11 +36,19 @@ pub(crate) struct PyAnalysisBase;
 #[pymethods]
 impl PyAnalysisBase {
     /// Accept any arguments, so a subclass's `__init__` takes its own.
+    ///
+    /// Raises `TypeError` for arguments a subclass without an `__init__`
+    /// of its own was given.
     #[new]
+    #[classmethod]
     #[pyo3(signature = (*args, **kwargs))]
-    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        let _ = (args, kwargs);
-        Self
+    fn new(
+        cls: &Bound<'_, PyType>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        refuse_unused_arguments(cls, args, kwargs)?;
+        Ok(Self)
     }
 
     /// Return no constructor arguments, so a subclass instance pickles

@@ -224,7 +224,7 @@ def test_subclass_with_its_own_init_constructs(calls_super: bool) -> None:
 def test_constructor_refuses_arguments_it_does_not_take() -> None:
     """Test `CompilerPass()` takes no arguments, as before the switch."""
     with pytest.raises(TypeError):
-        IdentityPass(1)  # type: ignore[call-arg]
+        IdentityPass(1)
 
 
 # ---------------------------------------------------------------------------

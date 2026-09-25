@@ -91,9 +91,6 @@ class Analysis(_rs.AnalysisBase, ABC, Generic[_IRType, _AnalysisResultT]):
                     f"The analysis cache instantiates analyses with no arguments."
                 )
 
-    def __init__(self) -> None:
-        super().__init__()
-
     @classmethod
     def get_analysis_name(cls) -> Identifier:
         """Return the unique identifier for this analysis type."""

@@ -383,9 +383,6 @@ class CompilerPass(_rs.CompilerPassBase, ABC, Generic[_PassInputT, _PassOutputT]
                 hooks |= 1 << bit
         cls._python_hooks = hooks
 
-    def __init__(self) -> None:
-        super().__init__()
-
     @classmethod
     def get_pass_name(cls) -> str:
         """Return a stable pass name used for registration and reporting."""
