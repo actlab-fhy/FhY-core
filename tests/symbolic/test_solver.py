@@ -15,6 +15,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NonBooleanLogicalOperandError,
     PiecewiseExpression,
     UnaryExpression,
@@ -263,13 +265,15 @@ def test_check_expression_satisfiability_true_for_satisfiable_expression() -> No
 def test_check_expression_satisfiability_false_for_unsatisfiable_expression() -> None:
     """Test a provably unsatisfiable expression reports `False`."""
     x = mock_identifier("x", 0)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
-        BinaryExpression(
-            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
-        ),
-        BinaryExpression(
-            BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(5)
+    expression = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
+            ),
+            BinaryExpression(
+                BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(5)
+            ),
         ),
     )
 
@@ -325,13 +329,15 @@ def test_check_expression_satisfiability_is_threaded_through_symbol_type() -> No
     depending on the sort assigned to its one free identifier.
     """
     x = mock_identifier("x", 0)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
-        BinaryExpression(
-            BinaryOperation.LESS, LiteralExpression(0), IdentifierExpression(x)
-        ),
-        BinaryExpression(
-            BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(1)
+    expression = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            BinaryExpression(
+                BinaryOperation.LESS, LiteralExpression(0), IdentifierExpression(x)
+            ),
+            BinaryExpression(
+                BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(1)
+            ),
         ),
     )
 
@@ -437,13 +443,17 @@ def test_assert_holds_for_all_free_assignments_returns_false_without_raising() -
     """
     x = mock_identifier("x", 0)
     n = mock_identifier("N", 1)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
-        BinaryExpression(
-            BinaryOperation.LESS, IdentifierExpression(x), IdentifierExpression(n)
-        ),
-        BinaryExpression(
-            BinaryOperation.GREATER, IdentifierExpression(x), IdentifierExpression(n)
+    expression = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            BinaryExpression(
+                BinaryOperation.LESS, IdentifierExpression(x), IdentifierExpression(n)
+            ),
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x),
+                IdentifierExpression(n),
+            ),
         ),
     )
 
@@ -722,6 +732,38 @@ def test_check_expression_satisfiability_bool_coercion_hazard_returns_none(
     assert messages, "expected a WARNING naming the hazardous node"
     assert "check_expression_satisfiability" in messages[0]
     assert repr(x) in messages[0]
+
+
+def test_check_expression_satisfiability_screens_a_conjunction_compared_to_an_int(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a ``LogicalExpression`` compared with an INT identifier is screened.
+
+    A conjunction lowers to a Z3 Boolean, so comparing it with an
+    INT-sorted identifier mixes a Boolean and a numeric sort, which the Z3
+    bindings would coerce; the seam classifies the conjunction as Boolean
+    and refuses the comparison.
+    """
+    x = mock_identifier("x", 0)
+    b = mock_identifier("b", 1)
+    c = mock_identifier("c", 2)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(x),
+        LogicalExpression(
+            LogicalOperation.AND, (IdentifierExpression(b), IdentifierExpression(c))
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(
+            expression, {x: SymbolType.INT, b: SymbolType.BOOL, c: SymbolType.BOOL}
+        )
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous node"
+    assert "Boolean operand into a numeric context" in messages[0]
 
 
 @pytest.mark.z3

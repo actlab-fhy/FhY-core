@@ -8,8 +8,9 @@ exactly one capable backend.
 
 The two bridges agree on what a single literal denotes. Each of
 ``LiteralExpression``'s numeric forms carries its own precision contract
--- a Python ``float`` is IEEE-754 binary, a float-grammar ``str`` is
-exact decimal -- and both bridges lower each form to that exact value.
+-- a Python ``float`` is IEEE-754 binary, a ``decimal.Decimal`` (which a
+float-grammar ``str`` normalizes to) is exact decimal -- and both bridges
+lower each form to that exact value.
 Past a single literal the two diverge: ``simplify_expression`` evaluates
 binary-float arithmetic in SymPy's binary floating point, while the Z3
 questions below reason over it in exact rational arithmetic, so a
@@ -115,6 +116,7 @@ from .expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -269,8 +271,8 @@ def simplify_expression(
             identity to the constant's own value before any substitution
             runs, so the binding would otherwise be silently dropped
             rather than applied.
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+        NonBooleanLogicalOperandError: If an operand of a ``LogicalExpression``
+            or ``LOGICAL_NOT`` node, or a piecewise case
             condition, provably denotes a number, counting an operand
             ``environment`` binds to one. Left unscreened, SymPy's
             ``And``/``Or`` raise a raw ``TypeError`` on such an operand,
@@ -340,9 +342,9 @@ def _find_native_constant_identifiers(expression: Expression) -> list[Identifier
 def _is_non_finite_float_literal(node: Expression) -> bool:
     """Return whether ``node`` is a ``LiteralExpression`` holding an infinity or a NaN.
 
-    Only a Python ``float`` value is checked: a float-grammar string-form
-    literal is exact decimal text and always finite, and a ``bool`` is not
-    a ``float`` even though it subclasses ``int``.
+    Only a Python ``float`` value is checked: a decimal literal (a
+    ``decimal.Decimal`` value) is always finite, and a ``bool`` is not a
+    ``float`` even though it subclasses ``int``.
 
     """
     if not isinstance(node, LiteralExpression):
@@ -416,19 +418,10 @@ _COMPARISON_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
 )
 """Binary operations the Z3 bridge lowers to a comparison of two operands."""
 
-# The binary connectives exist on the pure-Python backend only; the Rust
-# backend's are `LogicalExpression` nodes (decision D-S4-1).
-_LOGICAL_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    getattr(BinaryOperation, name)
-    for name in ("LOGICAL_AND", "LOGICAL_OR")
-    if hasattr(BinaryOperation, name)
-)
-"""Binary operations the Z3 bridge lowers to ``z3.And``/``z3.Or``."""
-
 
 # One early return per node kind reads clearest here; the alternative is a
 # lookup table that would have to be threaded through `symbol_types` anyway.
-def _classify_lowered_sort(  # noqa: PLR0911
+def _classify_lowered_sort(  # noqa: PLR0911, PLR0912
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> _LoweredSort:
     """Return the Z3 sort ``expression`` lowers to, per ``passes.z3``.
@@ -436,7 +429,7 @@ def _classify_lowered_sort(  # noqa: PLR0911
     Mirrors ``ExpressionToZ3Converter``: a ``bool``-valued literal becomes
     a ``BoolVal`` and every other literal an ``IntVal``/``RealVal``; an
     identifier takes the sort named by its ``symbol_types`` entry; a
-    comparison, a logical operation, and a logical negation are Boolean;
+    comparison, a ``LogicalExpression``, and a logical negation are Boolean;
     arithmetic is numeric; a piecewise takes the sort its branches agree
     on.
 
@@ -463,11 +456,11 @@ def _classify_lowered_sort(  # noqa: PLR0911
     elif isinstance(expression, BinaryExpression):
         if expression.operation in _NUMERIC_BINARY_OPERATIONS:
             return _LoweredSort.NUMERIC
-        elif expression.operation in (
-            _COMPARISON_BINARY_OPERATIONS | _LOGICAL_BINARY_OPERATIONS
-        ):
+        elif expression.operation in _COMPARISON_BINARY_OPERATIONS:
             return _LoweredSort.BOOLEAN
         return _LoweredSort.UNDETERMINED
+    elif isinstance(expression, LogicalExpression):
+        return _LoweredSort.BOOLEAN
     elif isinstance(expression, UnaryExpression):
         if expression.operation is UnaryOperation.LOGICAL_NOT:
             return _LoweredSort.BOOLEAN
@@ -640,13 +633,13 @@ sign-dependent divergence).
 def _get_finite_divisor_literal_value(node: Expression) -> int | float | None:
     """Return a divisor literal's value as an int or a finite float, or None.
 
-    A ``bool`` value, a float-grammar string-form literal, and a
-    non-finite float (``nan``/``inf``) carry none of the finite,
+    A ``bool`` value, a decimal literal (a ``decimal.Decimal`` value),
+    and a non-finite float (``nan``/``inf``) carry none of the finite,
     provably-numeric guarantee the two divisor-safety checks below
     require, even when the float is a constructible
     ``LiteralExpression`` value; this returns ``None`` for all of them.
-    An integer-valued literal is safe in either of its forms, so this
-    returns the same ``int`` for every member of one equivalence class.
+    An integer literal is safe whichever spelling built it, since every
+    spelling normalizes to the same ``int``.
 
     """
     if not isinstance(node, LiteralExpression):
@@ -737,8 +730,7 @@ def _is_safe_true_division(
 def _is_safe_exponent(node: Expression) -> bool:
     """Return whether ``node`` is an exponent Z3 raises to totally.
 
-    Requires an integer-valued literal of at least one, in either of the
-    forms the IR treats as that integer. A negative exponent makes
+    Requires an integer literal of at least one. A negative exponent makes
     exponentiation a division, underspecified at a zero base and
     rational-valued on integers; a zero exponent leaves ``0 ** 0``
     underspecified; a non-integer exponent lowers to a real power that is
@@ -807,12 +799,13 @@ def _find_partial_operation_hazard(
 def _is_float_valued_literal(node: Expression) -> bool:
     """Return whether ``node`` is a ``LiteralExpression`` in a float bucket.
 
-    Covers a Python ``float`` value and a float-grammar string-form
-    literal (e.g. ``"1.5"``). A literal is bucketed as Boolean,
+    Covers a Python ``float`` value and a decimal literal (a
+    ``decimal.Decimal`` value, which a float-grammar string such as
+    ``"1.5"`` normalizes to). A literal is bucketed as Boolean,
     integer-valued, or float-valued, so the answer is what is left once
     the first two are ruled out through the IR's own integer predicate:
-    an integer-grammar string is not float-valued, matching the INT sort
-    the Z3 bridge lowers it to.
+    an integer literal is not float-valued, matching the INT sort the Z3
+    bridge lowers it to.
 
     """
     if not isinstance(node, LiteralExpression):
@@ -1300,7 +1293,7 @@ def _screen_z3_question(
             identifier, that is not a native constant's canonical
             identifier.
         NonBooleanLogicalOperandError: If any expression's root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, or a piecewise case condition,
             provably denotes a number.
 
@@ -1356,7 +1349,7 @@ def check_expression_satisfiability(
             native constant's canonical identifier is not a free
             identifier here and needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
             piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
@@ -1433,7 +1426,7 @@ def does_expression_imply(
             not a free identifier here and needs no entry; the screen
             refuses it.
         NonBooleanLogicalOperandError: If either expression's root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
             piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
@@ -1505,7 +1498,7 @@ def holds_for_all_free_assignments(
             identifier is not a free or considered identifier here and
             needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
             piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
@@ -1574,7 +1567,7 @@ def assert_holds_for_all_free_assignments(
             identifier is not a free or considered identifier here and
             needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
             piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
@@ -1654,7 +1647,7 @@ def assert_expression_implies(
             not a free identifier here and needs no entry; the screen
             refuses it.
         NonBooleanLogicalOperandError: If either expression's root, an
-            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            operand of a ``LogicalExpression`` or
             ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
             piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
