@@ -7,6 +7,27 @@
 - **Related:** `docs/design/rust-workspace.md` (the crate's design) and
   CONTRIBUTING "Porting to Rust".
 
+## Progress checklist
+
+This is kept up to date after every step, so work can resume from here if a
+session ends. Environment for resuming: rustup's cargo is in
+`~/.cargo/bin`, and a uv install lives in `target/tooling/pyenv` (gitignored;
+recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyenv/bin/pip install uv`).
+
+- [x] S0: benchmark harness and baseline
+- [x] S1: `Identifier` stays P1; conversion is in the binding
+- [x] S2: interned tags
+- [x] S3a: diagnostics
+- [x] S3b: provenance
+- [x] S4.1: expression benchmarks
+- [x] S4.2: frame-based `AlphaRenaming` in Rust, plus the Python capture-rule fix
+- [x] S4.3a: expressions on the Rust core with Rust semantics
+- [x] S4.3b: consumers migrated. On the Rust backend: the suite is green (6,960 passed), slow tests pass (7,008), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
+- [ ] S4.4: retire the pure-Python backend
+- [ ] S5: patterns and rewrite rules
+- [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
+- [ ] Leftovers: the `ValidationReport` construction cost (S6); the unknown-provenance `str` cost; Windows paths; mypy over the Rust branches; slow callee-name parsing in the core
+
 ## Goal
 
 `import fhy_core` exposes one Python API. With the Rust backend selected
@@ -1816,3 +1837,37 @@ identifier nodes; `pattern/core.py` matches literals by stored type and
 connectives as `BinaryExpressionPattern`s; and consumers that detect a
 no-op rewrite by `is` get the same objects back only where the core
 kept the subtree.
+
+
+### S4.3b notes
+
+The agent that did S4.3b stopped when its session ended, after these
+commits. The remaining checks (slow tests, the property session, the Rust
+gate, benchmarks) were then run and recorded directly.
+
+- `2d7dbdb`: the z3, sympy, numpy, evaluate and inline passes lower
+  `LogicalExpression` and `Decimal` literals.
+- `c416242`: Python patterns match `LogicalExpression` (a new
+  `LogicalExpressionPattern`) and normalized literals.
+- `78e2a05`: the solver's hazard screens classify a `LogicalExpression` as
+  Boolean.
+- `ab2bbc6`: the type checker checks `LogicalExpression` and unifies
+  through it.
+- `8de9b85`: constraints are keyed and decided over the Rust expression
+  semantics.
+- `ab3e6d3`: the param tests pin the core's literal-text message for a
+  malformed real bound.
+- `7d50809`: the README lists `LogicalExpressionPattern`.
+- The five import-time shims from S4.3a are gone (`grep` finds none).
+
+Benchmarks (Rust backend, 3.11, after S4.3b):
+
+| Benchmark | S0/S4.1 baseline | After S4.3b |
+|---|--:|--:|
+| `visitable_pass_walk_of_deep_tree` | 906 us | 297 us |
+| `compiler_pass_execute` | 13.6 us | 11.4 us |
+| `pass_manager_run_of_5_passes` | 381 us | 355 us |
+| `analysis_manager_cache_hit` | 9.2 us | 8.7 us |
+
+The pass-infrastructure rows are within noise of the baseline; they change
+in S6.
