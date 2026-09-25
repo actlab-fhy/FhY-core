@@ -7,10 +7,9 @@ import pickle
 import re
 import subprocess
 import sys
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import pytest
 
@@ -24,7 +23,6 @@ from fhy_core.diagnostic import (
 from fhy_core.identifier import (
     Identifier,
     _build_reserved_identifier,
-    _PythonIdCounter,
     _ReservedIdentifier,
 )
 from fhy_core.op_attribute import ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, PURE
@@ -179,113 +177,6 @@ def test_non_str_name_hint_does_not_consume_an_id() -> None:
 def test_constructor_accepts_non_ascii_name_hint(name_hint: str) -> None:
     """Test a non-ASCII name hint that is valid Unicode is kept as given."""
     assert Identifier(name_hint).name_hint == name_hint
-
-
-# =============================================================================
-# Pure-Python id counter locking
-#
-# `_PythonIdCounter` must touch its next id only under its lock. Racing threads
-# rarely expose a missing lock under the GIL, so these tests check the
-# discipline directly.
-# =============================================================================
-
-
-class _RecordingLock:
-    """Non-reentrant lock that records whether it is currently held."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.is_held = False
-
-    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-        acquired = self._lock.acquire(blocking, timeout)
-        if acquired:
-            self.is_held = True
-        return acquired
-
-    def release(self) -> None:
-        self.is_held = False
-        self._lock.release()
-
-    def __enter__(self) -> bool:
-        return self.acquire()
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.release()
-
-
-class _LockCheckedCounter(NamedTuple):
-    """A fresh counter, its recording lock, and its next-id accesses so far."""
-
-    counter: _PythonIdCounter
-    lock: _RecordingLock
-    locked_accesses: list[str]
-    unlocked_accesses: list[str]
-
-
-def _create_lock_checked_counter() -> _LockCheckedCounter:
-    """Return a fresh counter that records each next-id access as locked or not.
-
-    The counter is an instance of a subclass whose next-id attribute is a
-    property backed by the instance dict, so every read and write of it goes
-    through the property and is recorded. Accesses made while constructing
-    the counter, before the recording lock replaces its own, are discarded.
-    """
-    lock = _RecordingLock()
-    locked_accesses: list[str] = []
-    unlocked_accesses: list[str] = []
-
-    def record(access: str) -> None:
-        (locked_accesses if lock.is_held else unlocked_accesses).append(access)
-
-    def read_next_id(counter: _PythonIdCounter) -> int:
-        record("read")
-        next_id: int = vars(counter)["_next_id"]
-        return next_id
-
-    def write_next_id(counter: _PythonIdCounter, next_id: int) -> None:
-        record("write")
-        vars(counter)["_next_id"] = next_id
-
-    lock_checked_class = type(
-        "_LockCheckedPythonIdCounter",
-        (_PythonIdCounter,),
-        {"_next_id": property(read_next_id, write_next_id)},
-    )
-    counter: _PythonIdCounter = lock_checked_class()
-    vars(counter)["_lock"] = lock
-    locked_accesses.clear()
-    unlocked_accesses.clear()
-    return _LockCheckedCounter(counter, lock, locked_accesses, unlocked_accesses)
-
-
-def test_python_counter_allocates_only_while_holding_its_lock() -> None:
-    """Test `allocate` reads and advances the next id only under the lock."""
-    checked = _create_lock_checked_counter()
-
-    allocated = [checked.counter.allocate() for _ in range(3)]
-
-    assert allocated == [65_536, 65_537, 65_538]
-    assert checked.unlocked_accesses == []
-    assert {"read", "write"} <= set(checked.locked_accesses)
-    assert not checked.lock.is_held
-
-
-def test_python_counter_advances_only_while_holding_its_lock() -> None:
-    """Test `advance_past` reads and moves the next id only under the lock.
-
-    Advancing ahead of the counter writes the next id, and advancing behind
-    it only reads it; both must happen under the lock.
-    """
-    checked = _create_lock_checked_counter()
-
-    checked.counter.advance_past(65_546)
-    checked.counter.advance_past(65_541)
-
-    assert checked.unlocked_accesses == []
-    assert {"read", "write"} <= set(checked.locked_accesses)
-    assert not checked.lock.is_held
-    assert checked.counter.allocate() == 65_547
 
 
 # =============================================================================
@@ -754,11 +645,6 @@ def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
     assert min(issued_ids, default=first_id) == 65_536
     assert all(identifier_id < first_id for identifier_id in import_time_ids)
     assert second_id == first_id + 1
-
-
-def test_python_counter_starts_at_the_reserved_block() -> None:
-    """Test a fresh pure-Python counter issues `65_536` first."""
-    assert _PythonIdCounter().allocate() == 65_536
 
 
 # =============================================================================

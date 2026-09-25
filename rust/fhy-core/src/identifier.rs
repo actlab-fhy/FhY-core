@@ -79,8 +79,7 @@ impl IdOutOfRange {
     }
 }
 
-/// Matches the Python implementation: the `OverflowError` message of
-/// `fhy_core.identifier`'s pure-Python counter.
+/// Python's `fhy_core.identifier` raises this text as its `OverflowError`.
 impl fmt::Display for IdOutOfRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

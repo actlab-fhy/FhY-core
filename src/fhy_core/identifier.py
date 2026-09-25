@@ -1,16 +1,13 @@
 """Unique identifier for named compiler objects.
 
 An :class:`Identifier` stores its id and name hint itself and draws new ids
-from a process-global counter. The counter is the Rust extension's
-(``fhy_core._rs``) when the package runs on the Rust backend
-(``fhy_core.RUST_BACKEND_SELECTED``) and a pure-Python counter otherwise.
-The backend is fixed when the package is imported, so exactly one counter
-issues ids in a process.
+from the Rust extension's (``fhy_core._rs``) process-global counter, which
+Rust code shares, so exactly one counter issues ids in a process.
 
-The class stays in Python on both backends, and only the counter comes from
-the extension. A Rust-backed class makes every attribute read, equality
-check, and hash cross into the extension, which is significantly slower than
-reading plain Python attributes.
+The class stays in Python, and only the counter comes from the extension. A
+Rust-backed class makes every attribute read, equality check, and hash cross
+into the extension, which is significantly slower than reading plain Python
+attributes.
 """
 
 from fhy_core.utils.override import override
@@ -18,7 +15,6 @@ from fhy_core.utils.override import override
 __all__ = ["HasIdentifier", "Identifier"]
 
 from collections.abc import Callable
-from threading import Lock
 from typing import (
     Any,
     Final,
@@ -32,7 +28,7 @@ from typing import (
 
 from fhy_core.utils import is_strict_int
 
-from ._backend import IS_RUST_BACKEND_SELECTED
+from . import _rs
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -50,14 +46,6 @@ _RESERVED_ID_COUNT: Final[int] = 65_536
 # Exclusive upper bound of a payload id, so no payload can raise the counter
 # past it. Matches the Rust implementation: `fhy_core::identifier::ID_CAP`.
 _ID_CAP: Final[int] = 2**63
-_ID_SPACE_SIZE = 2**64
-_EXHAUSTED_COUNTER_VALUE = _ID_SPACE_SIZE - 1
-_ID_SPACE_EXHAUSTED_MESSAGE = "identifier id space exhausted"
-# The messages the Rust extension raises for an id outside ``[0, 2**64)``.
-_NEGATIVE_ID_MESSAGE = "can't convert negative int to unsigned"
-_OVERSIZED_ID_MESSAGE = "int too big to convert"
-# The message the Rust extension raises for an id in ``[2**63, 2**64)``.
-_ID_OUT_OF_RANGE_MESSAGE = f"identifier id {{}} is at or above the cap {_ID_CAP}"
 
 
 class _ReservedIdentifier(NamedTuple):
@@ -68,10 +56,10 @@ class _ReservedIdentifier(NamedTuple):
 
 
 # The reserved-id table: the fixed ids of the identifiers the package ships,
-# so a shipped tag, and its payload, is the same in every process and on
-# either backend. Ids are grouped by family: note kinds in 0..16, op
-# attributes in 16..32 and value domains in 32..48. Matches the Rust
-# implementation: `fhy_core::identifier::reserved`, entry for entry.
+# so a shipped tag, and its payload, is the same in every process. Ids are
+# grouped by family: note kinds in 0..16, op attributes in 16..32 and value
+# domains in 32..48. Matches the Rust implementation:
+# `fhy_core::identifier::reserved`, entry for entry.
 _RESERVED_RATIONALE_NOTE_KIND: Final = _ReservedIdentifier(0, "rationale")
 _RESERVED_SUGGESTION_NOTE_KIND: Final = _ReservedIdentifier(1, "suggestion")
 _RESERVED_REMARK_NOTE_KIND: Final = _ReservedIdentifier(2, "remark")
@@ -112,78 +100,9 @@ def _is_utf8_encodable(text: str) -> bool:
     return True
 
 
-@final
-class _PythonIdCounter:
-    """Lock-protected id counter that never wraps.
-
-    Behaves like the Rust extension's counter: it starts at ``65_536``,
-    above the ids reserved for shipped identifiers, it advances only past
-    ids in ``[0, 2**63)``, and the largest id it issues is ``2**64 - 2``.
-    Allocating once the counter has reached ``2**64 - 1`` raises
-    ``RuntimeError``, advancing past an id outside ``[0, 2**63)`` raises
-    ``OverflowError``, and both leave the counter unchanged.
-    """
-
-    def __init__(self, next_id: int = _RESERVED_ID_COUNT) -> None:
-        """Create a counter whose first allocation returns ``next_id``.
-
-        Args:
-            next_id: The first id to issue. Tests set it to reach the end of
-                the id space; the process-global counter keeps the default.
-
-        """
-        self._lock = Lock()
-        self._next_id = next_id
-
-    def allocate(self) -> int:
-        """Return the next id and advance the counter past it.
-
-        Raises:
-            RuntimeError: If the counter has reached ``2**64 - 1``.
-
-        """
-        with self._lock:
-            if self._next_id >= _EXHAUSTED_COUNTER_VALUE:
-                raise RuntimeError(_ID_SPACE_EXHAUSTED_MESSAGE)
-            identifier_id = self._next_id
-            self._next_id += 1
-        return identifier_id
-
-    def advance_past(self, identifier_id: int, /) -> None:
-        """Advance the counter so ``identifier_id`` is never allocated.
-
-        The counter is left unchanged when it is already past
-        ``identifier_id``.
-
-        Args:
-            identifier_id: Id in ``[0, 2**63)`` to advance past.
-
-        Raises:
-            OverflowError: If ``identifier_id`` is outside ``[0, 2**63)``.
-
-        """
-        if identifier_id < 0:
-            raise OverflowError(_NEGATIVE_ID_MESSAGE)
-        if identifier_id >= _ID_SPACE_SIZE:
-            raise OverflowError(_OVERSIZED_ID_MESSAGE)
-        if identifier_id >= _ID_CAP:
-            raise OverflowError(_ID_OUT_OF_RANGE_MESSAGE.format(identifier_id))
-        with self._lock:
-            if identifier_id >= self._next_id:
-                self._next_id = identifier_id + 1
-
-
-_allocate_id: Callable[[], int]
-_advance_counter_past: Callable[[int], None]
-if IS_RUST_BACKEND_SELECTED:
-    from . import _rs
-
-    _allocate_id = _rs.allocate_identifier_id
-    _advance_counter_past = _rs.advance_identifier_counter_past
-else:
-    _PYTHON_ID_COUNTER = _PythonIdCounter()
-    _allocate_id = _PYTHON_ID_COUNTER.allocate
-    _advance_counter_past = _PYTHON_ID_COUNTER.advance_past
+# Bound once, so a construction skips the module attribute lookups.
+_allocate_id: Callable[[], int] = _rs.allocate_identifier_id
+_advance_counter_past: Callable[[int], None] = _rs.advance_identifier_counter_past
 
 
 @final
@@ -197,8 +116,8 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     monotonically-increasing counter and are never reused. The ids
     ``0..65_536`` are reserved for the identifiers the package ships, such
     as the shipped note kinds, op attributes and value domains, which hold
-    the same fixed ids on both backends, so the counter starts at ``65_536``
-    on both backends.
+    the same fixed ids in every process, so the counter starts at
+    ``65_536``.
 
     Construction and deserialization are thread-safe and share the same
     counter: a deserialized id cannot collide with a subsequently
@@ -206,15 +125,14 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     greater than or equal to the next-to-be-issued value advances the
     counter past it. Unpickling, copying, and deep-copying restore an
     identifier through deserialization, so they advance the counter the
-    same way. A pickle holds only the id and the name hint and loads under
-    either backend.
+    same way. A pickle holds only the id and the name hint.
 
     Ids are unsigned 64-bit integers. Deserialization accepts an int ``id``
     with ``0 <= id < 2**63`` and raises ``DeserializationValueError`` for any
     other int before it touches the counter, so no payload can raise the
     counter past ``2**63`` and exhaust it. Construction still raises
-    ``RuntimeError("identifier id space exhausted")`` on both backends, and
-    leaves the counter unchanged, once ``2**64 - 2`` has been issued, which
+    ``RuntimeError("identifier id space exhausted")``, and leaves the
+    counter unchanged, once ``2**64 - 2`` has been issued, which
     only a counter started near the end of the id space can reach.
 
     A name hint must be a ``str`` encodable as UTF-8: construction raises

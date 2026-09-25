@@ -1,10 +1,9 @@
 //! `PyO3` bindings for [`fhy_core::identifier`]: the process-global id
 //! counter, and the conversion of identifiers between the two languages.
 //!
-//! `fhy_core.identifier.Identifier` draws its ids from these functions when
-//! the package runs on the Rust backend. The counter itself, including its
-//! refusal to wrap and its cap on payload ids, lives in the pure-Rust core.
-//! As the pure-Python counter does, a counter that cannot advance raises
+//! `fhy_core.identifier.Identifier` draws its ids from these functions. The
+//! counter itself, including its refusal to wrap and its cap on payload ids,
+//! lives in the pure-Rust core. A counter that cannot advance raises
 //! `RuntimeError("identifier id space exhausted")`, and advancing past an id
 //! outside `[0, 2**63)` raises `OverflowError`.
 //!
@@ -23,7 +22,7 @@ use fhy_core::identifier::{self as rust_identifier, IdOutOfRange, IdSpaceExhaust
 
 use crate::error::{IntoPyErr, IntoPyResult};
 
-/// Raises the `RuntimeError` the pure-Python counter raises when it cannot
+/// Raises `RuntimeError` with the core's message when the counter cannot
 /// advance.
 impl IntoPyErr for IdSpaceExhausted {
     fn into_py_err(self) -> PyErr {
@@ -67,7 +66,7 @@ pub(crate) fn advance_identifier_counter_past(identifier_id: u64) -> PyResult<()
 }
 
 /// The Python `fhy_core.identifier.Identifier` class, which stays a Python
-/// class on both backends (pattern P1).
+/// class (pattern P1).
 fn python_identifier_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     static IDENTIFIER_CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     IDENTIFIER_CLASS.import(py, "fhy_core.identifier", "Identifier")
