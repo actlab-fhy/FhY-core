@@ -2946,3 +2946,12 @@ the walk (a shared subtree rewritten once, the input returned itself, a
 20,000-level tree, a pattern deeper than the recursion limit), the error
 classes and the rule a refused rebuild blames, Python rules, the applier,
 pickles and reprs.
+
+#### S5 follow-up: `MatchBindings` truthiness
+
+S5.4 left an empty `MatchBindings` falsy, a side effect of D-S5-3 giving
+it `len()`. The old dataclass had no `__len__`, so it was always truthy,
+and `if pattern.match(expression):` read every hit as a hit. With the
+falsy version, a capture-free pattern's hit read as a miss. Bindings are
+now always truthy, as `re.Match` is. `len()` still counts captures, and
+the interface test pins both.

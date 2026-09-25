@@ -98,7 +98,8 @@ class MatchBindings(_rs.MatchBindings):
     ``bindings[x] is node`` holds for the node that matched. ``get``
     returns ``None`` for a capture that is not bound, ``bindings[x]``
     raises ``KeyError`` (``capture `x` is not bound``), and ``has`` and
-    ``in`` test whether one is. ``len`` counts the bound captures,
+    ``in`` test whether one is. Bindings are always truthy, as ``re.Match``
+    is, even when they bind nothing. ``len`` counts the bound captures,
     iteration yields them in binding order, and `items` returns the
     ``(capture, expression)`` pairs.
 

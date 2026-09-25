@@ -426,16 +426,18 @@ def test_no_public_constructor_binds_a_capture() -> None:
         MatchBindings(((Capture("x"), LiteralExpression(1)),))  # type: ignore[call-arg]
 
 
-def test_bindings_are_falsy_when_empty() -> None:
-    """Test bindings of no capture are falsy, as an empty container is.
+def test_bindings_are_truthy_even_when_empty() -> None:
+    """Test match bindings are always truthy, as ``re.Match`` is.
 
-    A match is tested with ``is not None``: a pattern without captures
-    matches with empty bindings.
+    A pattern without captures matches with empty bindings, so
+    ``if pattern.match(expression):`` must read that match as a hit.
     """
     bindings = WildcardPattern().match(LiteralExpression(1))
 
     assert bindings is not None
-    assert not bindings
+    assert len(bindings) == 0
+    assert bindings
+    assert MatchBindings()
     assert CapturePattern(Capture("x")).match(LiteralExpression(1))
 
 

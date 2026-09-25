@@ -171,6 +171,16 @@ impl PyMatchBindings {
         self.bindings.len()
     }
 
+    /// Return `true`: bindings are always truthy, as `re.Match` is, so a
+    /// match of a pattern without captures still reads as a hit.
+    #[expect(
+        clippy::unused_self,
+        reason = "Python's __bool__ slot is an instance method"
+    )]
+    fn __bool__(&self) -> bool {
+        true
+    }
+
     /// Iterate over the bound captures, in binding order.
     fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let captures = self
