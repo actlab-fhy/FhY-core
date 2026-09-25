@@ -10,7 +10,7 @@ need the ``bench`` dependency group.
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ParamSpec, Protocol, TypeVar
+from typing import Any, ClassVar, ParamSpec, Protocol, TypeVar
 
 import pytest
 
@@ -24,10 +24,11 @@ from fhy_core.diagnostic import (
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     Analysis,
-    AnalysisManager,
     CompilerPass,
     PassManager,
+    PreservedAnalyses,
     register_pass,
+    register_verification,
 )
 from fhy_core.provenance import (
     CallSiteProvenance,
@@ -44,12 +45,27 @@ from fhy_core.utils.override import override
 from fhy_core.value_domain import ValueDomain
 
 __all__ = [
+    "PIPELINE_INCREMENT",
     "REPORT_DIAGNOSTIC_COUNT",
+    "SATURATION_VALUE",
     "Benchmark",
     "Box",
     "BoxValueAnalysis",
+    "CopyReadingPass",
+    "CountingBoxValueAnalysis",
+    "EveryHookPass",
+    "FailingPass",
     "IdentityPass",
+    "IncrementPass",
+    "ReadAnalysisPass",
+    "ReportingPass",
+    "ReportingValidator",
+    "SaturatingIncrementPass",
+    "SkippedPass",
+    "TwiceVerifiedBox",
+    "VerifiedBox",
     "build_diagnostics",
+    "build_pipeline",
 ]
 
 _P = ParamSpec("_P")
@@ -61,6 +77,12 @@ REPORT_DIAGNOSTIC_COUNT = 100
 _IDENTIFIER_TABLE_SIZE = 100
 # How many domains the benchmarked value-domain chain holds, root included.
 _VALUE_DOMAIN_CHAIN_LENGTH = 4
+# The value the benchmarked pipelines' two increment passes per five add.
+PIPELINE_INCREMENT = 2
+# The value at which `SaturatingIncrementPass` stops changing a box.
+SATURATION_VALUE = 9
+# The largest value `BoundedBoxVerifier` accepts.
+_BOX_BOUND = 1_000_000
 
 
 class Benchmark(Protocol):
@@ -217,11 +239,32 @@ class Box(FrozenMixin):
         self.freeze()
 
 
+@dataclass
+class VerifiedBox(Box):
+    """A box with one registered verification pass."""
+
+
+@dataclass
+class TwiceVerifiedBox(VerifiedBox):
+    """A box with two registered verification passes: its own and its base's."""
+
+
 class BoxValueAnalysis(Analysis[Box, int]):
     """Analysis that reads the box's value."""
 
     @override
     def run(self, ir: Box) -> int:
+        return ir.value
+
+
+class CountingBoxValueAnalysis(Analysis[Box, int]):
+    """Analysis that reads the box's value and counts its runs."""
+
+    runs: ClassVar[int] = 0
+
+    @override
+    def run(self, ir: Box) -> int:
+        CountingBoxValueAnalysis.runs += 1
         return ir.value
 
 
@@ -240,7 +283,7 @@ class IdentityPass(CompilerPass[Box, Box]):
 
 @register_pass("benchmarks.increment", "Return a box holding the next value.")
 class IncrementPass(CompilerPass[Box, Box]):
-    """Pass that returns a new box holding the next value."""
+    """Pass that returns a new box of the input's type holding the next value."""
 
     @override
     def get_noop_output(self, ir: Box) -> Box:
@@ -248,7 +291,7 @@ class IncrementPass(CompilerPass[Box, Box]):
 
     @override
     def run_pass(self, ir: Box) -> Box:
-        return Box(ir.value + 1)
+        return type(ir)(ir.value + 1)
 
 
 @register_pass("benchmarks.read_analysis", "Read an analysis of the box.")
@@ -265,6 +308,189 @@ class ReadAnalysisPass(CompilerPass[Box, Box]):
         return ir
 
 
+class CopyReadingPass(CompilerPass[Box, Box]):
+    """Pass that reads a counting analysis and returns an equal, new box.
+
+    The copy compares equal to its input, so the run is unchanged and
+    preserves every analysis, which the pipeline carries over to the copy.
+    """
+
+    @override
+    def get_noop_output(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def run_pass(self, ir: Box) -> Box:
+        self.get_analysis(CountingBoxValueAnalysis, ir)
+        return type(ir)(ir.value)
+
+
+class EveryHookPass(CompilerPass[Box, Box]):
+    """Identity pass that overrides all seven lifecycle hooks in Python."""
+
+    @override
+    def validate_input(self, ir: Box) -> None:
+        _ = ir
+
+    @override
+    def should_run(self, ir: Box) -> bool:
+        _ = ir
+        return True
+
+    @override
+    def get_noop_output(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def run_pass(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def validate_output(self, input_ir: Box, output: Box) -> None:
+        _ = (input_ir, output)
+
+    @override
+    def did_change(self, input_ir: Box, output: Box) -> bool:
+        return output is not input_ir
+
+    @override
+    def get_preserved_analyses(
+        self, input_ir: Box, output: Box, *, changed: bool
+    ) -> PreservedAnalyses:
+        _ = (input_ir, output)
+        return PreservedAnalyses.none() if changed else PreservedAnalyses.all()
+
+
+class SkippedPass(CompilerPass[Box, Box]):
+    """Pass that always skips, returning its input as the no-op output."""
+
+    @override
+    def should_run(self, ir: Box) -> bool:
+        _ = ir
+        return False
+
+    @override
+    def get_noop_output(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def run_pass(self, ir: Box) -> Box:
+        raise AssertionError("a skipped pass never runs")
+
+
+class FailingPass(CompilerPass[Box, Box]):
+    """Pass whose run always raises ``ValueError``."""
+
+    @override
+    def get_noop_output(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def run_pass(self, ir: Box) -> Box:
+        raise ValueError("boom")
+
+
+class ReportingPass(CompilerPass[Box, Box]):
+    """Identity pass that reports `count` diagnostics, cycling the levels."""
+
+    _count: int
+
+    def __init__(self, count: int) -> None:
+        super().__init__()
+        self._count = count
+
+    @override
+    def get_noop_output(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def run_pass(self, ir: Box) -> Box:
+        levels = (DiagnosticLevel.ERROR, DiagnosticLevel.WARNING, DiagnosticLevel.INFO)
+        for index in range(self._count):
+            self.report(levels[index % len(levels)], f"message {index}")
+        return ir
+
+
+class SaturatingIncrementPass(CompilerPass[Box, Box]):
+    """Pass that increments a box until it holds `SATURATION_VALUE`."""
+
+    @override
+    def get_noop_output(self, ir: Box) -> Box:
+        return ir
+
+    @override
+    def run_pass(self, ir: Box) -> Box:
+        if ir.value >= SATURATION_VALUE:
+            return ir
+        return type(ir)(ir.value + 1)
+
+
+class ReportingValidator(CompilerPass[Box, None]):
+    """Validator pass that reports one warning when `is_reporting` is set."""
+
+    _is_reporting: bool
+
+    def __init__(self, *, is_reporting: bool) -> None:
+        super().__init__()
+        self._is_reporting = is_reporting
+
+    @override
+    def get_noop_output(self, ir: Box) -> None:
+        _ = ir
+
+    @override
+    def run_pass(self, ir: Box) -> None:
+        if self._is_reporting:
+            self.report(DiagnosticLevel.WARNING, f"box holds {ir.value}")
+
+
+@register_verification(
+    VerifiedBox, "benchmarks.verify_non_negative", "Reject a negative box."
+)
+class NonNegativeBoxVerifier(CompilerPass[Box, None]):
+    """Verification pass that reports an error for a negative box."""
+
+    @override
+    def get_noop_output(self, ir: Box) -> None:
+        _ = ir
+
+    @override
+    def run_pass(self, ir: Box) -> None:
+        if ir.value < 0:
+            self.report(DiagnosticLevel.ERROR, "the box is negative")
+
+
+@register_verification(
+    TwiceVerifiedBox, "benchmarks.verify_bounded", "Reject an unbounded box."
+)
+class BoundedBoxVerifier(CompilerPass[Box, None]):
+    """Verification pass that reports an error for a box above `_BOX_BOUND`."""
+
+    @override
+    def get_noop_output(self, ir: Box) -> None:
+        _ = ir
+
+    @override
+    def run_pass(self, ir: Box) -> None:
+        if ir.value > _BOX_BOUND:
+            self.report(DiagnosticLevel.ERROR, "the box is too large")
+
+
+def build_pipeline(repetitions: int) -> PassManager[Box]:
+    """Return `repetitions` copies of five passes that change, keep and analyze."""
+    manager = PassManager[Box]()
+    for _ in range(repetitions):
+        for compiler_pass in (
+            IncrementPass(),
+            ReadAnalysisPass(),
+            IdentityPass(),
+            ReadAnalysisPass(),
+            IncrementPass(),
+        ):
+            manager.add_pass(compiler_pass)
+    return manager
+
+
 @pytest.fixture()
 def box() -> Box:
     """Return a small IR."""
@@ -274,21 +500,4 @@ def box() -> Box:
 @pytest.fixture()
 def pass_manager() -> PassManager[Box]:
     """Return a pipeline of five passes that change, keep, and analyze the IR."""
-    manager = PassManager[Box]()
-    for compiler_pass in (
-        IncrementPass(),
-        ReadAnalysisPass(),
-        IdentityPass(),
-        ReadAnalysisPass(),
-        IncrementPass(),
-    ):
-        manager.add_pass(compiler_pass)
-    return manager
-
-
-@pytest.fixture()
-def warm_analysis_manager(box: Box) -> AnalysisManager[Box]:
-    """Return an analysis manager that has cached ``BoxValueAnalysis`` of ``box``."""
-    manager = AnalysisManager[Box]()
-    manager.get(BoxValueAnalysis, box)
-    return manager
+    return build_pipeline(1)

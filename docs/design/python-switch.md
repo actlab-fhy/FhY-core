@@ -37,7 +37,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S5.6: benchmarks after, and docs
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
   - [x] N-S6-1 to N-S6-3 decided (2026-09-25; see "S6 resolutions")
-  - [ ] S6.1: pass-infrastructure benchmarks and baseline
+  - [x] S6.1: pass-infrastructure benchmarks and baseline
   - [ ] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
   - [ ] S6.3: the `ValidationReport` representation (D-S6-17)
   - [ ] S6.4: the pass binding
@@ -4027,3 +4027,81 @@ is critical.
   the *Python* hooks, for example `pass "X" failed in run_pass`, not
   `failed in run`, since the hook names are Python. The binding maps the
   hook when it renders the message. `hook` stays as an attribute.
+
+### S6.1 baseline (2026-09-25, a5f5eb2 plus the new benchmarks)
+
+`benchmarks/test_pass_infrastructure.py` implements the benchmark plan
+above, with its passes, IR types and verification passes in
+`benchmarks/conftest.py`.
+
+- **The IR.** `VerifiedBox` has one registered verification pass, and
+  `TwiceVerifiedBox`, a subclass, adds a second, so `run_verification`
+  finds two through the MRO. `IncrementPass` now builds a box of its
+  input's type, so the verified pipeline stays over `VerifiedBox`.
+- **The helpers.** `_warm_cache` (D-S6-8) times a second `get_analysis`
+  inside one pass run of a pipeline. This replaces the S0 row's
+  `AnalysisManager.get` on a standalone manager and the
+  `warm_analysis_manager` fixture. Today the two paths cost the same,
+  8.7 µs, since a bound pass asks its manager. `_run_count` (N-S6-1)
+  counts the pass records, which equals the run count when no pass
+  skips; after the switch it is `result.run_count()`.
+- **The other rows.** The preserving pipeline chains five passes that
+  each read a counting analysis and return a new, equal box. The run is
+  unchanged, so the analysis is computed once and carried from box to box.
+  The mixed pipeline runs `RewriteRuleApplier` with S5's four rules, a
+  Python identity pass, and `ExpressionPrettyFormatter` over the deep
+  tree. It is a `PassManager[Any]`, since the formatter's output is a
+  `str`.
+
+Median time per call, from `uv run --python 3.11 nox -s benchmark-3.11 --
+-k "test_pass_infrastructure or rewrite_rule_applier_execute or
+visitable_pass_walk or pformat_expression or validation_report"`, measuring
+today's pure-Python pass infrastructure. The machine is the S0 one, with
+Python 3.11.13 and pytest-benchmark 5.3.0. The load average was about 1,
+and the table lists the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_compiler_pass_execute` | 11.3 µs |
+| `test_compiler_pass_call` | 11.4 µs |
+| `test_compiler_pass_execute_with_every_hook_overridden` | 10.7 µs |
+| `test_compiler_pass_execute_skipped` | 6.60 µs |
+| `test_compiler_pass_execute_failing` | 145.2 µs |
+| `test_compiler_pass_report_of_100_diagnostics` | 1.50 ms |
+| `test_compiler_pass_create` | 493 ns |
+| `test_pass_manager_run_of_5_passes` | 343.7 µs |
+| `test_pass_manager_run_of_50_passes` | 3.42 ms |
+| `test_pass_manager_fixpoint_group_of_10_iterations` | 680.6 µs |
+| `test_pass_manager_run_with_verification` | 436.3 µs |
+| `test_analysis_manager_cache_hit` | 8.71 µs |
+| `test_analysis_preserved_across_5_passes` | 372.0 µs |
+| `test_validation_manager_validate_of_10_validators` | 300.5 µs |
+| `test_run_verification` | 28.2 µs |
+| `test_mixed_pipeline_over_a_deep_expression` | 500.3 µs |
+| `test_rewrite_rule_applier_execute_of_a_deep_tree` (rerun) | 222.9 µs |
+| `test_visitable_pass_walk_of_deep_tree` (rerun) | 287.3 µs |
+| `test_pformat_expression_of_deep_tree[symbolic]` (rerun) | 8.81 µs |
+| `test_pformat_expression_of_deep_tree[functional]` (rerun) | 7.71 µs |
+| `test_pformat_expression_of_deep_tree[show_id]` (rerun) | 10.3 µs |
+| `test_validation_report_construction` (rerun) | 14.9 µs |
+| `test_validation_report_build_of_100_diagnostics` (rerun) | 93.8 µs |
+| `test_validation_report_eq` (rerun) | 939 ns |
+| `test_validation_report_format` (rerun) | 3.04 µs |
+| `test_validation_report_errors` (rerun) | 541 ns |
+| `test_validation_report_has_errors` (rerun) | 54 ns |
+
+- **One pass.** A run costs about 11 µs, whichever hooks are Python: the
+  every-hook pass matches the floor, since its hooks are cheaper than the
+  defaults it replaces (`is not` for `!=`, no `None` check). A skipped run
+  takes 6.6 µs.
+- **Failures and diagnostics.** A failing run takes 145 µs and each
+  reported diagnostic about 15 µs. Both paths log: the failure with its
+  traceback, and each diagnostic at its level. The benchmarks run under
+  pytest's log capture, which receives every record, since the package's
+  loggers are at DEBUG.
+- **Pipelines.** A pipeline costs about 68 µs per pass, about six times a
+  standalone run: 5 passes take 344 µs, 50 take 3.4 ms, and 10 fixpoint
+  iterations 681 µs. Verification adds 93 µs over the 5 passes.
+  Validation costs 30 µs per validator.
+- **The rest.** A cache hit costs 8.7 µs. The expression pipeline takes
+  500 µs, of which the applier is about 220 µs.
