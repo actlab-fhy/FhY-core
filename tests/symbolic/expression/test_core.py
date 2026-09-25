@@ -46,6 +46,8 @@ from fhy_core.symbolic.expression import (
     build_literal_equivalence_key,
     call,
     get_native_constant_identifier,
+    get_registered_entries,
+    is_entry_registered,
     is_integer_valued_literal,
     logical_and,
     logical_not,
@@ -2854,9 +2856,18 @@ def test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue(
 
     Built-in names are reserved, so the screen reads a built-in call's
     sort from the core's catalogue, even when the Python registry holds no
-    entry for the name.
+    entry for the name. (Only the two entries are dropped: dropping a
+    native constant would lose its canonical identifier for the rest of
+    the process.)
     """
-    set_registry_state_for_tests({})
+    set_registry_state_for_tests(
+        {
+            name: entry
+            for name, entry in get_registered_entries().items()
+            if name not in {"max", "xor"}
+        }
+    )
+    assert not is_entry_registered("max")
 
     with pytest.raises(NonBooleanLogicalOperandError):
         validate_predicate(call("max", LiteralExpression(1), LiteralExpression(2)))
