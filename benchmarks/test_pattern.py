@@ -35,6 +35,7 @@ from fhy_core.symbolic.expression import (
     PredicatePattern,
     RewriteRule,
     RewriteRuleApplier,
+    Rule,
     UnaryExpression,
     UnaryExpressionPattern,
     UnaryOperation,
@@ -42,6 +43,7 @@ from fhy_core.symbolic.expression import (
     apply_rewrite_rule,
     apply_rewrite_rules,
 )
+from fhy_core.utils.override import override
 
 from .conftest import Benchmark
 from .test_expression import (
@@ -400,3 +402,23 @@ def test_apply_rewrite_rules_with_a_guard_and_rewrite_at_every_leaf(
         guard=guard,
     )
     assert benchmark(apply_rewrite_rules, deep_tree, (rule,)) is not deep_tree
+
+
+class _NeverRule(Rule):
+    """A Python rule that declines at every node."""
+
+    @override
+    def apply(self, expression: Expression) -> Expression | None:
+        _ = expression
+        return None
+
+
+def test_apply_rewrite_rules_with_a_python_rule(
+    benchmark: Benchmark, deep_tree: Expression
+) -> None:
+    """Benchmark a Python ``Rule`` subclass tried at every node.
+
+    Added after the switch (S5.6), with no baseline: the Rust walk calls
+    the rule's ``apply`` with each node's object.
+    """
+    assert benchmark(apply_rewrite_rules, deep_tree, (_NeverRule(),)) is deep_tree
