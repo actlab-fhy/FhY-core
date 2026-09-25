@@ -52,10 +52,10 @@ from fhy_core.symbolic.expression.core import (
 from fhy_core.symbolic.expression.pattern.core import Capture as _Capture
 from fhy_core.symbolic.expression.pattern.core import MatchBindings as _MatchBindings
 from fhy_core.symbolic.expression.pattern.core import Pattern as _Pattern
-from fhy_core.symbolic.expression.pattern.core import (
-    WildcardPattern as _WildcardPattern,
-)
 from fhy_core.symbolic.expression.pattern.rewrite import FiredRule as _FiredRule
+from fhy_core.symbolic.expression.pattern.rewrite import (
+    RewriteRule as _RewriteRule,
+)
 from fhy_core.symbolic.expression.pattern.rewrite import Rule as _Rule
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import AlphaRenaming, Term
@@ -781,6 +781,6 @@ class FiredRule:
 
 def apply_rewrite_rules(
     expression: _Expression,
-    rules: Iterable[_Rule],
+    rules: Iterable[_Rule | _RewriteRule],
     fired: list[_FiredRule] | None = None,
 ) -> _Expression: ...

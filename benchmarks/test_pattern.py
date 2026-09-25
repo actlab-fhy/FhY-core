@@ -7,9 +7,10 @@ and doubling DAG, and "the rules" are four: ``x + 0 -> x``,
 ``x * 1 -> x``, ``-(-x) -> x`` and ``x - x -> 0``.
 
 The benchmarks call only API whose meaning S5 keeps, and assert no result
-that S5 changes. The one call whose spelling S5 changes sits in a helper
-marked with its decision: :func:`_capture` returns what a
-``CapturePattern`` binds and a ``MatchBindings`` is read by (D-S5-2).
+that S5 changes. The calls whose spelling S5 changes sit in helpers marked
+with their decisions: :func:`_capture` returns what a ``CapturePattern``
+binds (D-S5-2), and :func:`_read` reads it from a ``MatchBindings``
+(D-S5-3).
 """
 
 from collections.abc import Callable, Sequence
@@ -22,6 +23,7 @@ from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryExpressionPattern,
     BinaryOperation,
+    Capture,
     CapturePattern,
     Expression,
     IdentifierExpression,
@@ -59,19 +61,23 @@ _ALTERNATIVE_COUNT = 4
 _FIRING_PERIOD = 4
 
 
-def _capture(name: str) -> str:
+def _capture(name: str) -> Capture:
     """Return a new capture named `name`.
 
     D-S5-2: a ``Capture`` handle, which two positions share by passing the
     same object; before the switch, the name itself, which two positions
     shared by spelling it the same.
     """
-    return name
+    return Capture(name)
 
 
-def _read(bindings: MatchBindings, capture: str) -> Expression:
-    """Return the expression `bindings` binds to `capture`."""
-    return bindings.get(capture)
+def _read(bindings: MatchBindings, capture: Capture) -> Expression:
+    """Return the expression `bindings` binds to `capture`.
+
+    D-S5-3: ``bindings[capture]``; before the switch, ``bindings.get(name)``,
+    which raised ``KeyError`` for an unbound name as ``[]`` does now.
+    """
+    return bindings[capture]
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +195,7 @@ def a() -> IdentifierExpression:
 
 
 @pytest.fixture()
-def add_zero_pattern() -> tuple[str, Pattern]:
+def add_zero_pattern() -> tuple[Capture, Pattern]:
     """Return a capture ``x`` and the pattern ``x + 0`` capturing it."""
     x = _capture("x")
     pattern = BinaryExpressionPattern(
@@ -220,7 +226,7 @@ def test_binary_expression_pattern_construction(benchmark: Benchmark) -> None:
 
 
 def test_rewrite_rule_construction(
-    benchmark: Benchmark, add_zero_pattern: tuple[str, Pattern]
+    benchmark: Benchmark, add_zero_pattern: tuple[Capture, Pattern]
 ) -> None:
     """Benchmark building a named, guarded rule."""
     x, pattern = add_zero_pattern
@@ -236,7 +242,7 @@ def test_rewrite_rule_construction(
 
 
 def test_pattern_attribute_access(
-    benchmark: Benchmark, add_zero_pattern: tuple[str, Pattern]
+    benchmark: Benchmark, add_zero_pattern: tuple[Capture, Pattern]
 ) -> None:
     """Benchmark reading every field of a binary pattern."""
     _, pattern = add_zero_pattern
@@ -256,7 +262,7 @@ def test_pattern_attribute_access(
 @pytest.mark.parametrize("outcome", ["hit", "miss"])
 def test_match_of_a_small_pattern(
     benchmark: Benchmark,
-    add_zero_pattern: tuple[str, Pattern],
+    add_zero_pattern: tuple[Capture, Pattern],
     a: IdentifierExpression,
     outcome: str,
 ) -> None:
@@ -304,7 +310,7 @@ def test_match_of_alternatives(benchmark: Benchmark, a: IdentifierExpression) ->
 
 def test_match_bindings_get(
     benchmark: Benchmark,
-    add_zero_pattern: tuple[str, Pattern],
+    add_zero_pattern: tuple[Capture, Pattern],
     a: IdentifierExpression,
 ) -> None:
     """Benchmark reading one capture of a match."""
