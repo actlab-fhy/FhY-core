@@ -1,6 +1,10 @@
 # Switching the Python package to the Rust implementation
 
 - **Status:** plan, with decisions signed off 2026-09-24 (see "Decisions").
+  Since S4.4 (2026-09-25) the package has one backend: it requires the
+  extension, and the pure-Python implementations are deleted. The sections
+  that describe two backends (the goal, the multiplexing and parity rules,
+  and the slices up to S4.3) record how the switch was done.
 - **Scope:** how each concept already ported to `fhy-core` becomes the
   implementation behind the Python API when the Rust backend is selected, and
   the patterns every later port follows.
@@ -23,10 +27,16 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [x] S4.2: frame-based `AlphaRenaming` in Rust, plus the Python capture-rule fix
 - [x] S4.3a: expressions on the Rust core with Rust semantics
 - [x] S4.3b: consumers migrated. On the Rust backend: the suite is green (6,960 passed), slow tests pass (7,008), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
-- [ ] S4.4: retire the pure-Python backend
+- [x] S4.4: retire the pure-Python backend. The suite is green (6,949 passed), slow tests pass (6,982), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
 - [ ] S5: patterns and rewrite rules
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
-- [ ] Leftovers: the `ValidationReport` construction cost (S6); the unknown-provenance `str` cost; Windows paths; mypy over the Rust branches; slow callee-name parsing in the core
+- Leftovers:
+  - [ ] the `ValidationReport` construction cost (S6)
+  - [ ] the unknown-provenance `str` cost
+  - [ ] Windows paths
+  - [x] mypy over the Rust branches (S4.4)
+  - [ ] slow callee-name parsing in the core
+  - [ ] platform wheels in the release workflow, now that the extension is required (S4.4)
 
 ## Goal
 
@@ -1871,3 +1881,156 @@ Benchmarks (Rust backend, 3.11, after S4.3b):
 
 The pass-infrastructure rows are within noise of the baseline; they change
 in S6.
+
+### S4.4 status
+
+S4.4 retires the pure-Python backend per D-S4-6. It was implemented on
+2026-09-25 in six commits: the mandatory extension, with the backend switch
+and the tests that only made sense on or against the pure-Python backend
+(80618a8); the deletion of the pure-Python tags, diagnostics and
+provenance, with mypy over the Rust-backed classes (1aafced); the deletion
+of the Python id counter (232a41d) and of the Python expression core
+(67178b7); the binding's docs and its append-only message (70a2a88); and
+these docs. No test is skipped any more. At the end: `pytest` 6,949 passed,
+`-m "not very_slow"` 6,982 passed, the `property` session 280 passed, the
+`tests-3.11` session (coverage, slow tests included) 6,702 passed with the
+43 property modules skipped because its `test` group has no Hypothesis,
+`lint` and `type_check` clean, and the Rust gate green (fmt, clippy
+`-D warnings`, 2,630 tests, doc `-D warnings`, deny, `cargo +1.85 check`).
+
+### S4.4 implementation notes
+
+- **A missing or broken extension is an `ImportError`.** The new
+  `fhy_core._extension` module imports `fhy_core._rs` and checks it;
+  `fhy_core/__init__.py` imports it before any other module, so the check
+  runs before any module imports the extension. It raises `ImportError`
+  (with `name="fhy_core._rs"` and the original error, if any, as its cause)
+  whose message names the requirement, the cause and the fix:
+  - not installed: `fhy_core requires its Rust extension fhy_core._rs,
+    which is not installed. Install a fhy_core wheel for this platform, or
+    build the extension from the source checkout with `uv sync`.`;
+  - built only for other interpreters: the builds found and the suffix this
+    interpreter loads, then the rebuild advice (`uv sync`, or reinstall the
+    wheel);
+  - failing to import: `... which is installed but failed to import
+    (ImportError: ...)`, then the rebuild advice;
+  - stale, that is, a `__version__` that is missing, not PEP 440, or
+    another version than the installed package's: both versions, then the
+    rebuild advice.
+
+  The old module's checks and its PEP 440 normalization are kept; only the
+  warnings and the fallback are gone. A stale extension is an error rather
+  than a warning because the Python sources now depend on the extension's
+  classes, so a mismatched pair cannot be trusted to work.
+- **`fhy_core.RUST_BACKEND_SELECTED` is removed.** It was documented and in
+  `fhy_core.__all__`, but it was never released: it exists only on the dev
+  branches, not on `main` or in any tag. With one backend it would be a
+  constant `True`, so no caller could use it for anything; keeping it would
+  keep a vestigial API. The commit is marked breaking anyway, since it
+  removes a documented name and `FHY_CORE_NO_EXTENSIONS`.
+- **`FHY_CORE_NO_EXTENSIONS` is removed** from the code, the test helpers,
+  nox (the `backend` parametrization of the `tests`, `property` and
+  `benchmark` sessions, and `_select_backend`; `golden_expanded` no longer
+  forces the pure-Python backend), CONTRIBUTING and the README. CI already
+  called `tests-<python>`, which now runs one session instead of two; only
+  its header comment changed. The benchmark session writes
+  `.benchmarks/<python>.json` and saves under `.benchmarks/storage/`, and
+  the benchmarks no longer record a backend in the machine info.
+- **Deleted code.** `symbolic/expression/_python_core.py` (1,650 lines);
+  the dataclass branches of `op_attribute.py`, `value_domain.py`,
+  `diagnostic.py` and `provenance.py`, with the default-instance tuples
+  only their `register_default_instances` read; `identifier.py`'s
+  `_PythonIdCounter` and the extension messages it copied; the two backend
+  branches of `pprint.py`; `fhy_core._backend`, which kept an always-true
+  `IS_RUST_BACKEND_SELECTED` while the branches were removed; the test
+  helpers `skip_on_rust_backend`, `build_backend_environment` and
+  `NO_EXTENSIONS_VARIABLE`.
+- **Kept, although the deleted classes used it.** `InternedMixin` is public
+  in `fhy_core.traits`, has its own tests (`tests/test_basic_traits.py`),
+  and is the oracle of the interned golden corpus, whose generator interns
+  its own dataclass through it; the Rust-backed tags stay virtual
+  subclasses of it. `_build_reserved_identifier` and the reserved table
+  build the shipped tags' names for `require_interned`.
+  `DerivedEquivalenceMixin` is public in `fhy_core.term`. `provenance`
+  keeps `_LOGGER`, which the binding's `fuse` logs through. The golden
+  corpus stays live, since its oracle still runs.
+- **mypy checks the Rust-backed classes** (the leftover "mypy over the Rust
+  branches"). With the `TYPE_CHECKING or not IS_RUST_BACKEND_SELECTED`
+  branches gone, mypy saw 224 errors, which needed:
+  - `_rs.pyi` types fields, arguments and results with the public classes
+    (`fhy_core.diagnostic.Note`, `fhy_core.provenance.Provenance`, ...), as
+    it already did for expressions, and declares each provenance variant's
+    `__str__`, so the variants are not abstract to mypy;
+  - the three tags declare their constructor under `TYPE_CHECKING` in the
+    class body, since the stub cannot type `_new_canonical` as the public
+    subclass's `__new__` (the runtime assignment stays in the `else`), and
+    `ValidationReport` declares its generic `__new__` and `records` the
+    same way, since `_rs.ValidationReport` cannot be subscripted at runtime
+    and so cannot be generic in the stub;
+  - `FrozenMixin.register(Provenance)` ignores `type-abstract`: `register`
+    takes an abstract class;
+  - test ignores that went stale (the stub accepts a level's `str`, any
+    iterable, and any object in `is_subdomain_of`), and one that changed
+    code.
+
+  `tests/test_rs_stub.py` needed no change: no module-level type variable
+  was needed.
+- **The binding's text.** The `NotImplementedError` of
+  `clear_interned_registry` and `register_default_instances` now reads
+  `X.method is not supported: the Rust intern registries are append-only,
+  ...`, without "on the Rust backend"; the tests match `append-only` and the
+  `X.method is not` prefix. The binding's docs no longer place classes "on
+  the Rust backend" or defer to a Python counter.
+- **The interface suites keep their names.** `test_*_rust_binding.py` still
+  describe what they test, the binding's additions over the core (the
+  pyclass structure, the public-class registration, argument checks,
+  payload shapes, pickles); the README now says so. Renaming them would
+  also break every reference to them above.
+- **Release packaging (leftover).** `python-release.yml` runs `uv build`
+  on one Linux runner and publishes the result. Before S4.4 a user without
+  a matching wheel still got a working pure-Python package; now installing
+  from the source distribution needs a Rust toolchain, and the one wheel
+  covers only that runner's platform and Python. Publishing needs wheels
+  for every supported platform and Python (for example with
+  `maturin-action`), which is outside this step; the README says a source
+  install needs Rust.
+- **Behavioral Python tests are kept.** Decision 4 kept them until the
+  pure-Python backend was deleted; they now test the Python API over Rust,
+  and many consumers' tests rely on them. Pruning the ones the Rust tests
+  already specify is left for a later decision.
+
+Tests deleted or rewritten, each with its reason:
+
+| Test | Change | Reason |
+|---|---|---|
+| `test_backend.py` | becomes `test_extension.py` | The selection is gone. Deleted: `test_backend_flag_reflects_this_process_environment`, `test_disabling_variable_value_selects_the_python_backend` (6 cases), `test_unset_or_enabling_variable_value_selects_the_rust_backend` (7), `test_disabling_the_extension_skips_the_broken_extension_warning`, `test_disabling_the_extension_skips_the_version_check`. Rewritten to pin the `ImportError`: `test_a_missing_extension_raises_import_error`, `test_an_extension_built_for_other_interpreters_raises_import_error`, `test_a_broken_extension_raises_import_error_naming_the_cause` (2), `test_a_stale_extension_raises_import_error`, `test_a_versionless_extension_raises_import_error`. Kept: the foreign-build finder and the version normalization. New: `test_the_package_imported_its_extension`, `test_the_package_imports_in_a_fresh_interpreter` |
+| `test_op_attribute.py::test_op_attribute_first_constructed_with_key_is_canonical`, `test_value_domain.py::test_value_domain_first_constructed_with_key_is_canonical` | deleted | D-S2-4: pinned a fresh object per construction; `test_construction_of_a_registered_key_returns_the_canonical_instance` pins the Rust behavior |
+| `test_op_attribute.py::test_register_default_instances_restores_module_level_op_attributes`, `test_value_domain.py::test_clearing_registry_desyncs_module_level_constants_without_default_restore`, `test_value_domain.py::test_register_default_instances_restores_module_level_canonicals` | deleted | D-S2-1: the registries are append-only; `test_registry_reset_raises_not_implemented` pins it |
+| `test_value_domain.py::test_value_domain_unequal_when_parents_differ` | deleted | D-S2-3: a name has one parent; `test_value_domain_construction_under_another_parent_raises` and `test_tags_compare_and_hash_by_name` pin it |
+| `test_identifier.py::test_python_counter_allocates_only_while_holding_its_lock`, `..._advances_only_while_holding_its_lock`, `test_python_counter_starts_at_the_reserved_block` | deleted | tested `_PythonIdCounter`; `test_fresh_process_issues_ids_upward_from_the_reserved_block` pins the start of the counter that runs |
+| `test_identifier.py::test_deserializing_the_largest_payload_id_leaves_construction_working` | its `python` case deleted | one counter |
+| `test_identifier.py::test_pickle_written_under_this_backend_loads_under_the_other`, `..._under_the_other_backend_loads_under_this_one` | now `test_pickle_written_in_this_process_loads_in_a_fresh_one`, `test_pickle_written_in_a_fresh_process_loads_in_this_one` | the other process runs the same backend; the tests still pin that unpickling advances that process's counter |
+| `test_identifier_rust_binding.py` | the counter tests' `python` cases deleted (8); `test_counters_issue_the_same_relative_ids_for_the_same_operations` now `test_counter_issues_the_expected_relative_ids_for_a_script`; `test_python_counter_issues_the_largest_id_then_fails` and `test_public_identifier_leaves_the_rust_counter_alone_when_unselected` deleted; `..._draws_ids_from_the_rust_counter_when_selected` unconditional, without the suffix; new `test_public_identifier_deserialization_advances_the_rust_counter` | the Python reference counter is gone; the Rust counter's exhaustion is a Rust unit test |
+| `test_identifier_rust_binding_properties.py` | the property compares the Rust counter with a model of its contract | the Python reference counter is gone |
+| `test_interned_tags_rust_binding.py::test_pickles_of_shipped_tags_are_identical_on_both_backends`, `test_pickle_of_a_new_domain_loads_under_the_python_backend`, `test_pickle_from_the_python_backend_loads_as_the_canonical_tag` | now `..._identical_in_every_process`, `..._loads_in_a_fresh_process`, `test_pickle_from_a_fresh_process_loads_as_the_canonical_tag` | D-S2-2 still holds across processes |
+| `test_diagnostic_rust_binding.py::test_pickles_load_across_backends`, `test_provenance_rust_binding.py::test_pickles_load_across_backends` | now `test_pickles_load_across_processes` | as above |
+| `test_provenance_rust_binding.py::test_payloads_match_the_python_backend` | now `test_payloads_keep_the_pinned_json_text` | the pure-Python payloads, which the Rust classes matched, are pinned as data |
+| the four interface suites | their module-level Rust-backend skip removed | one backend |
+| `tests/symbolic/test_namespace.py` | `RUST_BACKEND_SELECTED` no longer in `fhy_core.__all__` | removed |
+| `tests/test_golden_corpora.py` | docstring only | the generators run on the one backend |
+
+### S4.4 benchmarks
+
+`uv run --python 3.11 nox -s benchmark-3.11`, now one session with no
+backend parameter, ran all 143 benchmarks on the S0 machine (load average
+about 1.3) in 2 minutes and wrote `.benchmarks/3.11.json`. S4.4 changes no
+hot path: the Rust-backed classes were already the ones that ran, and the
+deleted code was never on a Rust-backend path. Spot checks against the
+S4.3a and S4.3b tables agree within noise, for example
+`test_deep_tree_construction` 75.9 µs (79.9 µs in S4.3a),
+`test_eq_of_distinct_equal_deep_trees` 5.1 µs (4.8 µs),
+`test_visitable_pass_walk_of_deep_tree` 288 µs (297 µs in S4.3b),
+`test_note_construction` 254 ns (300 ns in S3a),
+`test_validation_report_construction` 14.6 µs (14.5 µs, the recorded S3a
+cost), and `test_identifier_construction` 3.85 µs (4.06 µs in S0). No new
+table is needed.

@@ -172,11 +172,8 @@ how hard Hypothesis looks:
   database in `.hypothesis/`.
 - `thorough`: 400 inputs, derandomized, with no database. This is the
   release gate. Set `HYPOTHESIS_PROFILE=thorough`, or run
-  `uv run nox -s property`, which sets it for you and runs the suite once
-  per backend, as `property(backend='rust')` and
-  `property(backend='python')`. Like `tests`, each fails before testing if
-  the package does not report the backend it was asked for. A failure
-  prints a `@reproduce_failure` blob that replays it exactly.
+  `uv run nox -s property`, which sets it for you. A failure prints a
+  `@reproduce_failure` blob that replays it exactly.
 - `mutation`: 25 inputs, derandomized, with no database, so every mutant
   sees the same inputs. The `mutation` nox session selects it.
 
@@ -265,8 +262,8 @@ grouped into one pull request per ecosystem.
 The Rust equivalence tests replay golden corpora under `rust/fhy-core/tests/golden/`,
 each recorded from the Python implementation by the `generate_*.py` script
 beside it. `tests/test_golden_corpora.py` reruns every generator in a fresh
-interpreter on the backend the test run selected, so the `tests` sessions
-check the corpora on both backends and every supported Python. It fails,
+interpreter, so the `tests` sessions check the corpora on every supported
+Python. It fails,
 printing the regeneration command and a diff, if a committed corpus differs
 outside its `provenance` block or a generator has no committed corpus. The
 `golden-corpora` pre-commit hook runs the same module whenever a commit
@@ -279,7 +276,7 @@ result.
 Each generator can also write a much larger random corpus, which an ignored
 test in its equivalence test file replays from the path in an environment
 variable. `uv run nox -s golden_expanded` writes every expanded corpus from
-the pure-Python backend and runs those ignored tests on them (it needs
+its Python oracle and runs those ignored tests on them (it needs
 `cargo`); the `golden-expanded` job runs it on the same triggers as the
 `property` job. A new generator needs an entry in `EXPANDED_GOLDEN_CORPORA`
 in `noxfile.py`, or the session fails.
@@ -295,29 +292,30 @@ module has its own config under `cosmic-ray/`; run one with
 benchmarks of the public API's hot paths, grouped by concept, with shared
 fixtures in `benchmarks/conftest.py`. They use the public API only, so the
 same benchmark measures a class before and after it switches to Rust. The
-opt-in `benchmark` session runs them on one backend per session, like
-`tests`, and is neither a default session nor a CI job. Compare the two
-backends through the JSON results each session writes:
+opt-in `benchmark` session runs them and is neither a default session nor
+a CI job. It writes each run's results to `.benchmarks/<python>.json` and
+saves the run under `.benchmarks/storage/` (both gitignored), so
+`-- --benchmark-compare` compares a run with the previous one:
 
 ```bash
-uv run nox -s "benchmark-3.12(backend='python')"
-uv run nox -s "benchmark-3.12(backend='rust')"
+git switch --detach <before>
+uv run nox -s benchmark-3.12
+cp .benchmarks/3.12.json .benchmarks/3.12-before.json
+git switch -
+uv run nox -s benchmark-3.12
 uv run --group bench pytest-benchmark compare --group-by=name --columns=median \
-    .benchmarks/3.12-python.json .benchmarks/3.12-rust.json
+    .benchmarks/3.12-before.json .benchmarks/3.12.json
 ```
 
-Each session also saves its run under `.benchmarks/storage/<backend>/`
-(gitignored), so `-- --benchmark-compare` compares a run with the previous
-one on the same backend. The machine's load moves the numbers, so compare
-runs made back to back on the same machine.
+The machine's load moves the numbers, so compare runs made back to back on
+the same machine.
 
-A class's benchmark must be run on both backends before it switches and
-again after, per `docs/design/python-switch.md`. A class without a
-benchmark gets one in `benchmarks/` first, covering construction,
-attribute access, `==`, `hash` and the module's main operations. The
-slice records the numbers behind its pattern choice, and a switch that
-makes a hot path slower either changes pattern or is recorded as an
-accepted cost.
+A class's benchmark must be run before it switches and again after, per
+`docs/design/python-switch.md`. A class without a benchmark gets one in
+`benchmarks/` first, covering construction, attribute access, `==`, `hash`
+and the module's main operations. The slice records the numbers behind its
+pattern choice, and a switch that makes a hot path slower either changes
+pattern or is recorded as an accepted cost.
 
 ## Porting to Rust
 
@@ -366,8 +364,8 @@ builds a local one.
 
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
-a fixed id in the crate-private reserved table. The counter, in Rust and in
-the Python fallback alike, issues fresh ids from 65,536 upward, and no
+a fixed id in the crate-private reserved table. The counter issues fresh
+ids from 65,536 upward, and no
 payload id at or above `ID_CAP` (2^63) is decoded or restored, so no
 payload can exhaust the counter. A newly shipped identifier takes an unused
 id from the reserved table rather than drawing one from the counter.
@@ -396,15 +394,15 @@ affected types document this; decoding is not ordered to prevent it.
 - Switch in one step. The binding replaces the Python class outright; a
   Python registry and a Rust registry for the same concept are never live
   at the same time.
-- Benchmark before deleting. Measure the module's hot paths (construction,
-  equality, hashing, attribute access, and whatever the module does most)
-  on both backends with the `benchmark` session (see "Benchmarks"). When
-  the Rust-backed version is at most 10% slower than the Python one on
-  every measured path, delete the pure-Python implementation. When it is
-  more than 10% slower on any path, usually because every call crosses
-  into the extension, the maintainer decides whether to keep the Python
-  class. A kept class moves only the parts that
-  gain from Rust and says why in its module docstring.
+- Benchmark before replacing. Measure the module's hot paths
+  (construction, equality, hashing, attribute access, and whatever the
+  module does most) with the `benchmark` session (see "Benchmarks") on the
+  Python implementation, then again on the Rust-backed one. When the
+  Rust-backed version is at most 10% slower on every measured path, it
+  replaces the Python implementation. When it is more than 10% slower on
+  any path, usually because every call crosses into the extension, the
+  maintainer decides whether to keep the Python class. A kept class moves
+  only the parts that gain from Rust and says why in its module docstring.
   `fhy_core.identifier` is the example: `Identifier` stays in Python and
   only its id counter runs in Rust.
 - Freeze the golden corpus. Golden corpora exist only for concepts defined
@@ -414,9 +412,15 @@ affected types document this; decoding is not ordered to prevent it.
   generators by the `generate_*.py` pattern) and its
   `EXPANDED_GOLDEN_CORPORA` entry, and keep the committed JSON as a fixed
   regression corpus.
-- From the first deletion on, the package requires the extension, and
-  `FHY_CORE_NO_EXTENSIONS` selects the pure-Python implementation only for
-  modules that still have one.
+- Keep no fallback. The package requires the extension: importing
+  `fhy_core` raises `ImportError` when `fhy_core._rs` is missing, fails to
+  import, or does not match the package version (`fhy_core._extension`).
+  A switched module defines only its Rust-backed classes; there is no
+  pure-Python copy to keep in parity and no switch that selects one. Rust
+  tests in `rust/fhy-core/tests/` specify the concept's behavior, and a
+  Python interface suite covers the Python API over it (decision 4 of
+  `docs/design/python-switch.md`). Modules not yet ported stay ordinary
+  Python on top of the Rust-backed types.
 
 ### Module paths follow Rust layering
 

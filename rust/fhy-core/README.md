@@ -2,7 +2,7 @@
 
 Core IR building blocks for the [FhY](https://github.com/actlab-fhy) compiler, in Rust: identifiers, interned vocabularies, diagnostics and provenance, symbolic expressions with patterns and rewrite rules, tree traversals, and a compiler-pass framework.
 
-This crate is the Rust implementation of the `fhy_core` Python package. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's and a golden corpus checks it. Elsewhere Rust defines the behavior.
+This crate is the Rust implementation of the `fhy_core` Python package, which requires it: the package's extension module, built from the `fhy-core-py` binding crate, issues its identifier ids and backs its interned tags, diagnostics, provenance and expressions. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's and a golden corpus checks it. Elsewhere Rust defines the behavior.
 
 ## Modules
 
