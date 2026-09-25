@@ -44,6 +44,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S6.5: the Python switch
   - [x] S6.6: tests migrated, and the interface suite
   - [x] S6.7: benchmarks after, and docs
+- [x] Final verification (2026-09-25). The Rust CI jobs replay cleanly, and so do nox `lint`, `type_check`, `tests` on 3.10 to 3.14 with `FORCE_COLOR=1` as in CI, `coverage`, `property` and `golden_expanded`. Two 3.13+-only test issues this found are fixed: colored tracebacks, and `pathlib._local`
 - Leftovers:
   - [x] the `ValidationReport` construction cost (S6.3)
   - [x] the unknown-provenance `str` cost: accepted as a recorded cost of about 20 ns, the fixed price of calling into the extension
