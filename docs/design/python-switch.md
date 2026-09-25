@@ -28,7 +28,13 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [x] S4.3a: expressions on the Rust core with Rust semantics
 - [x] S4.3b: consumers migrated. On the Rust backend: the suite is green (6,960 passed), slow tests pass (7,008), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
 - [x] S4.4: retire the pure-Python backend. The suite is green (6,949 passed), slow tests pass (6,982), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
-- [ ] S5: patterns and rewrite rules
+- [ ] S5: patterns and rewrite rules (designed; N-S5-1 needs the user before S5.4)
+  - [ ] S5.1: pattern benchmarks and baseline
+  - [ ] S5.2: core additions, if any, with Rust tests
+  - [ ] S5.3: the pattern binding
+  - [ ] S5.4: the Python switch
+  - [ ] S5.5: pattern tests migrated, and the interface suite
+  - [ ] S5.6: benchmarks after, and docs
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
 - Leftovers:
   - [ ] the `ValidationReport` construction cost (S6)
@@ -2034,3 +2040,624 @@ S4.3a and S4.3b tables agree within noise, for example
 `test_validation_report_construction` 14.6 µs (14.5 µs, the recorded S3a
 cost), and `test_identifier_construction` 3.85 µs (4.06 µs in S0). No new
 table is needed.
+
+## S5: patterns and rewrite rules
+
+- **Status:** design, 2026-09-25, at fbbb5af. Nothing is implemented.
+  D-S5-1 to D-S5-16 apply the policy the user already set. N-S5-1 is not
+  covered by it and needs the user before S5.4.
+- **Pattern:** P2 for captures, patterns, bindings and rules; P3 for the
+  Python callbacks and the `Rule` trait, as the slice table says.
+
+### Survey: the Python API
+
+The package is `src/fhy_core/symbolic/expression/pattern/`: `__init__.py`
+(63 lines, re-exports), `core.py` (752) and `rewrite.py` (178). It is pure
+Python over the Rust-backed expressions since S4.3b (c416242), and
+`symbolic/expression/__init__.py` re-exports its 19 names.
+
+**Patterns (`core.py`).**
+
+- `Pattern(FrozenMixin, ABC)` is open to user subclasses. `match(expression)
+  -> MatchBindings | None` calls the abstract `match_under(expression,
+  bindings)`, the public seam that threads bindings through compound
+  patterns. A structural mismatch returns `None`; only callbacks raise.
+- Twelve `@final` frozen dataclasses implement it:
+
+| Class | Constructor | Meaning |
+|---|---|---|
+| `WildcardPattern` | `()` | any expression, captures nothing |
+| `CapturePattern` | `(name, sub_pattern)` | binds `name: str` after `sub_pattern` matched; the same name in two places is one capture, whose expressions must be structurally equal; the first-bound object is kept |
+| `LiteralPattern` | `(value=None)` | `None`: any literal; otherwise equality with `LiteralExpression(value)` (normalized: `"05"` matches `5`, NaN matches NaN, `-0.0` matches `0.0`, `1` matches neither `1.0` nor `True`); `.value` keeps the given value |
+| `IdentifierPattern` | `(identifier=None)` | `None`: any reference; otherwise the same identifier id |
+| `UnaryExpressionPattern` | `(operation, operand)` | `operation=None`: any operation |
+| `BinaryExpressionPattern` | `(operation, left, right)` | as above; left, then right |
+| `LogicalExpressionPattern` | `(operation, operands)` | `operands=None`: any; otherwise at least two patterns and the exact count |
+| `PiecewiseExpressionPattern` | `(cases, otherwise)` | `cases=None`: any; otherwise a non-empty tuple of `(condition, value)` pairs and the exact count, then `otherwise` |
+| `CallExpressionPattern` | `(function_name, arguments)` | `function_name: str` compared with the call's `function_name`; `arguments=None`: any; `()`: no arguments |
+| `PredicatePattern` | `(predicate)` | matches when `predicate(expression)` is truthy; captures nothing; its exceptions propagate |
+| `AlternativesPattern` | `(alternatives)` | non-empty; the first that matches wins, a failed one leaves no captures, and the choice is final |
+
+- **Construction errors** are `ValueError`s: a sub-pattern that is not a
+  `Pattern` (`BinaryExpressionPattern left must be a Pattern instance, but
+  got value 1 of type int.`), a capture name that is not a `str` or is
+  empty (`CapturePattern name must not be empty.`), fewer than two logical
+  operand patterns, empty piecewise cases, a case that is not a pair, and
+  no alternatives. Sequences are copied into tuples.
+- **Dataclass protocols.** `==` and `hash` by fields (callables by
+  identity); `repr` such as `BinaryExpressionPattern(operation=None,
+  left=CapturePattern(name='a', sub_pattern=WildcardPattern()),
+  right=LiteralPattern(value=1))`; default pickling, which fails only for a
+  callable that does not pickle.
+- **`MatchBindings(bindings: immutabledict[str, Expression] = ...)`**: a
+  public constructor with `TypeError` checks on keys and values, `empty()`,
+  `is_empty()`, `names() -> frozenset[str]`, `get(name)` (`KeyError` when
+  unbound), `has(name)`, and `try_bind(name, expression) -> MatchBindings |
+  None`, which returns the receiver itself on a structurally equal rebind.
+  `==` compares the key sets and the values structurally; `hash` hashes
+  the key set only. It is a `FrozenMixin`.
+- `match_pattern(pattern, expression)` and `does_pattern_match(pattern,
+  expression)` are the free-function forms of `match`.
+
+**Rewriting (`rewrite.py`).**
+
+- `RewriteRule(pattern, rewrite, guard=None, name=None)` is a frozen
+  dataclass, equal and hashable by content.
+- `apply_rewrite_rule(rule, expression) -> Expression | None` matches at the
+  root, calls `guard(bindings)` (truthiness) and then `rewrite(bindings)`.
+  An exception from a predicate, the guard or the rewrite propagates
+  unchanged. A result that is not an `Expression`, `None` included, raises
+  `TypeError("RewriteRule 'n' rewrite callable must return an Expression;
+  got NoneType.")`, with `'<unnamed>'` for an unnamed rule.
+- `apply_rewrite_rules(expression, rules) -> Expression` is
+  `RewriteRuleApplier(rules)(expression)`, so its errors are the pass
+  framework's. A callback's exception is logged as an ERROR diagnostic with
+  its traceback, then raised as `PassExecutionError('Pass
+  "fhy_core.symbolic.expression.apply_rewrite_rules" failed with
+  ValueError: boom')`, with the exception as `__cause__`.
+- `RewriteRuleApplier(rules)` is a `RewritablePass[Expression]` registered
+  with `@register_pass("fhy_core.symbolic.expression.apply_rewrite_rules",
+  "Apply a sequence of rewrite rules bottom-up over an expression tree.")`.
+  - `rules` is the tuple it copied.
+  - Its `visit_unknown(node)` hook tries the rules in order through
+    `apply_rewrite_rule`, and the first result that is not `None` wins. A
+    named rule's firing reports the INFO diagnostic `Applied rewrite rule
+    'name'.`
+  - The walk is `RewritablePass`'s recursive, bottom-up `transform`, and
+    `did_change` is `output is not input`.
+  - `CompilerPass.create(name)` raises `TypeError`, because `rules` is
+    required.
+
+Probed at fbbb5af:
+
+- **A rule that returns the matched node itself fires.** It reports its
+  diagnostic, and later rules are not tried. At the root, the output is the
+  input. At a child, the parent is rebuilt around the identical child, so
+  the output is a new, equal tree and `changed` is `True`.
+- **A shared subtree is rewritten once per occurrence.** In `s + s`, the
+  rewrite of `s` ran twice.
+- **Depth.** A 3,000-level unary chain raises `PassExecutionError` from a
+  `RecursionError`. Patterns recurse in Python too.
+
+### Survey: the Rust API
+
+`fhy_core::expression::pattern` (`pattern.rs` 21 lines, `matching.rs` 789,
+`rewrite.rs` 613) and `fhy_core::expression::passes` (227). The Rust design
+fixed two Python-driven findings here: string-keyed captures (F-019) and a
+rewrite returning its own input counting as a change (F-009).
+
+- **`Capture::new(&str)`** is an identity handle. Two captures are equal
+  only when one is a clone of the other, and hashing agrees. The name
+  serves only `Debug`, `Display` and panic messages, and may be empty.
+- **`Pattern`** is closed, an `Arc` of a private `PatternKind`, and its
+  constructors never fail:
+  - `wildcard`, `nothing`, `capture(&c)` and `captured_as(self, &c)`;
+  - `any_literal`/`literal(v)` and `any_identifier`/`identifier(id)`;
+  - `unary`/`unary_any_operation` and `binary`/`binary_any_operation`;
+  - `logical`, `logical_any_operation`, `logical_any_operands` and
+    `any_logical`;
+  - `piecewise`/`piecewise_any_cases`;
+  - `call`, `call_any_arguments`, `call_any_callee` and `any_call`, over a
+    `Callee`;
+  - `predicate`/`try_predicate` and `alternatives`.
+
+  Fewer than two logical operand patterns, no piecewise case, or no
+  alternative builds a pattern that matches nothing. `matches(&e) ->
+  Result<Option<MatchBindings>, CallbackError>` and `is_match` test the
+  root only. There is no `PartialEq`, no `Hash`, no field getter and no
+  serde; `Debug` is derived. Matching recurses once per pattern level.
+- **`MatchBindings`** is a trail in binding order: `new`/`Default` (no
+  public way to bind), `is_empty`, `len`, `contains`, `get -> Option`,
+  `iter`, and `Index`, which panics with ``capture `x` is not bound``.
+  Equality and hashing ignore order and compare the expressions
+  structurally.
+- **`CallbackError`** is `Box<dyn Error + Send + Sync>`. `matches` and
+  `RewriteRule::apply` return it unchanged.
+- **`Rule`** is a trait: `apply(&e) -> Result<Option<Expression>,
+  CallbackError>`, and `name() -> Option<&str>`, `None` by default. It has
+  blanket impls for `&R`, `Box<R>` and `Arc<R>`, so a `Box<dyn Rule>` list
+  mixes rule types. Returning the input itself means declining.
+- **`RewriteRule`**:
+  - `new(pattern, rewrite)` takes a rewrite that always returns an
+    expression; `new_partial` takes one that may return `Ok(None)` to
+    decline;
+  - `with_guard` appends a guard: every guard must return `Ok(true)`, in
+    order, and the first that does not stops the rest;
+  - `with_name`, `name` and `apply`. `apply` declines a replacement that is
+    the input itself.
+
+  Cloning shares the callbacks, which are `Send + Sync`. A rule has no
+  equality.
+- **`apply_rewrite_rules(&e, &[R]) -> Result<RewriteOutcome,
+  RewriteError>`** walks bottom-up once, on its own work stack, so a tree of
+  any depth works. It rewrites a node that occurs in several places once
+  and reuses the result, and it never revisits a replacement.
+  `RewriteOutcome` has `output`, `is_changed` and `fired`: a list of
+  `FiredRule { rule_index, name }` in walk order.
+- **`RewriteError`** (`#[non_exhaustive]`) has two variants:
+  - `Callback { rule_index, rule_name, source }` displays as `rewrite rule
+    0 (n) failed`;
+  - `Rebuild { rule_index, rule_name, source: RebuildError }` displays as
+    `rebuilding a node after rewrite rule 0 (n) failed`, and blames the
+    rule that produced the refused child.
+- **`passes::RewriteRuleApplier<R = RewriteRule>`**:
+  - `new(rules)`, `rules()` and `fired()`, which holds the last run's
+    firings, and after a failed run the firings before the failure;
+  - `NAME` and `DESCRIPTION` equal Python's;
+  - an INFO diagnostic `applied rewrite rule "n"` per named firing;
+  - a failure is the `RewriteError` boxed as `PassFailure`, and
+    `did_change` is `!ptr_eq`.
+
+  `register_expression_passes(&mut PassRegistry)` registers a factory that
+  builds an applier of no rules.
+
+No pattern binding exists yet. The screen's `SortLookup` adapter
+(`rust/fhy-core-py/src/expression/screen.rs`) is the binding's one
+precedent for calling Python from Rust, and S4.3a's materializer
+(`expression/materialize.rs`) turns a tree the core built into Python
+objects, reusing the input's objects.
+
+### Divergences visible from Python
+
+| # | Python today | Rust core |
+|---|---|---|
+| V-1 | Captures are `str` names. Equal names are one capture everywhere; the name must be a non-empty `str` | `Capture` identity handles. Two `Capture::new("x")` are independent; the name may be empty |
+| V-2 | `MatchBindings` is keyed by name. It has a public constructor, `try_bind`, the `bindings` mapping and `names()`; `get` raises `KeyError`; `hash` covers keys only | Keyed by `Capture`. There is no public bind; `get` returns `None`, and indexing panics; it has `len` and `iter` in binding order; `hash` covers the entries |
+| V-3 | `Pattern` is an open ABC with a public `match_under` | A closed type with no threading API |
+| V-4 | Patterns have dataclass `==`, `hash`, `repr` and pickling | Only a derived `Debug` |
+| V-5 | Degenerate or ill-typed construction raises `ValueError`: an empty name, alternatives or cases, fewer than two operand patterns, a non-`Pattern` | Construction never fails; the degenerate patterns match nothing; types are checked by the compiler |
+| V-6 | `CallExpressionPattern` compares `function_name` strings; `""` matches nothing | Compares `Callee`s; an empty name is not a `Callee` (`FunctionNameError`) |
+| V-7 | Predicate and guard results are read by truthiness | `bool` |
+| V-8 | One optional `guard` attribute | A list of guards (`with_guard`) |
+| V-9 | A rewrite must return an `Expression`; `None` raises `TypeError` | `new` always returns one; `new_partial`'s `None` declines |
+| V-10 | Returning the matched node itself fires: it reports its diagnostic, stops later rules, and rebuilds the ancestors | Declines: the next rule is tried, nothing is rebuilt, nothing is recorded |
+| V-11 | A shared subtree is rewritten, and its callbacks called, once per occurrence | Once |
+| V-12 | Trees and patterns deeper than about 1,000 levels raise `RecursionError` | Trees of any depth; pattern matching recurses on the Rust stack |
+| V-13 | `apply_rewrite_rules` returns an `Expression` and raises `PassExecutionError` | Returns a `RewriteOutcome` and raises a `RewriteError`, which names the rule's index and name and has a rebuild variant |
+| V-14 | Firings are not recorded, apart from the diagnostics | `RewriteOutcome.fired`, `RewriteRuleApplier::fired` |
+| V-15 | Diagnostic `Applied rewrite rule 'n'.` | `applied rewrite rule "n"` |
+| V-16 | The applier is a `RewritablePass` with a per-node `visit_unknown` hook; `create(name)` fails for want of rules | A `CompilerPass` with no per-node hook; the registry builds an applier of no rules |
+| V-17 | Rules are `RewriteRule`s only | The `Rule` trait, and mixed lists |
+| V-18 | `RewriteRule` is equal and hashable by content | No equality |
+
+Unchanged in meaning:
+
+- the matching order and the threading of bindings;
+- repeated captures: they need structural equality and keep the first
+  object;
+- literal and identifier equality, and exact operand counts;
+- root-only matching;
+- one bottom-up pass that does not revisit a replacement, and the input
+  itself as the output when nothing fires;
+- unchanged propagation of callback errors from a single match or rule;
+- the pass's name and description.
+
+### Consumers and tests
+
+- **`src`.** No module outside the package uses it. The only users are the
+  re-exports in `symbolic/expression/__init__.py` (192 lines) and the
+  README's feature row. No pass, solver, type checker or constraint code
+  matches patterns.
+- **Python tests.** 188 tests, all in `tests/symbolic/expression/pattern/`:
+
+  | File | Lines | Tests |
+  |---|--:|--:|
+  | `test_core.py` | 1,624 | 132 |
+  | `test_rewrite.py` | 702 | 42 |
+  | `test_user_stories.py` | 267 | 7 |
+  | `test_core_properties.py` | 206 | 4 |
+  | `test_rewrite_properties.py` | 315 | 3 |
+
+  They draw trees from `tests/strategies/structural_expressions.py`, and
+  some use `mock_identifier`. No other test module imports the package.
+- **Rust tests**, which already specify the core:
+
+  | File | Lines | Tests |
+  |---|--:|--:|
+  | `tests/it/expression/pattern/stories.rs` | 1,980 | 105 |
+  | `tests/it/expression/pattern/rewrite_stories.rs` | 1,342 | 66 |
+  | `tests/it/expression/pattern/properties.rs` | 714 | 12 properties |
+  | `tests/it/expression/pattern/user_stories.rs` | 295 | 9 |
+  | `tests/it/support/pattern.rs` | 133 | helpers |
+  | `tests/it/expression/pass_stories.rs` | 630 | 25 (the applier and the formatter) |
+- **Benchmarks.** None cover patterns.
+
+### Pattern choice
+
+- **P2: `Capture`, the pattern hierarchy, `MatchBindings`, `RewriteRule`
+  and `FiredRule`.** Patterns are logic-rich machinery, and a Rust walk has
+  to hold the patterns and rules, so they go to Rust (decision 2). The
+  alternative, P1, would keep the Python dataclasses and convert a rule
+  list to Rust patterns on every `apply_rewrite_rules` call. `match` would
+  stay Python, and the conversion would be paid per call. The benchmarks
+  below check the choice.
+- **P3: the callbacks and `Rule`.**
+  - A `PredicatePattern`'s predicate, a rule's guards and its rewrite are
+    Rust closures holding the Python callable (`Py<PyAny>`). Each call
+    attaches to the interpreter, which is already held because the call
+    came from Python, then calls it and converts the result. A raised
+    exception becomes the `CallbackError`, a boxed `PyErr`, and the
+    binding downcasts it back at the boundary.
+  - A Python subclass of the new `Rule` ABC is driven through an adapter
+    struct holding `Py<PyAny>` that implements the Rust `Rule` trait.
+    `RewriteRule`, the Rust implementation, is registered with the ABC.
+  - This is the pattern-rule exception that P3's granularity rule allows.
+    A callback runs per candidate node only after the Rust pattern around
+    it matched; a predicate at a pattern's root runs at every node.
+- **`RewriteRuleApplier` stays a Python `CompilerPass` until S6.** Its
+  `run_pass` calls the Rust walk.
+- **The objects Python sees.** A callback gets the Python object of the
+  input tree's node at that place, so `bindings[x] is node` holds. It gets
+  a new object, built once, only for a node the walk rebuilt around
+  rewritten children. Each replacement a rewrite returns is kept by
+  identity, so the output, materialized beside the input as `substitute`'s
+  is, shares every object it can.
+
+**Benchmark plan: `benchmarks/test_pattern.py` (S5.1).** It reuses
+`test_expression.py`'s deep tree (100 operations over four identifiers)
+and its doubling DAG. "A few rules" means four: `x + 0 -> x`, `x * 1 -> x`,
+`-(-x) -> x` and `x - x -> 0`. As in S4.1, every call whose spelling S5
+changes sits in a helper marked with its decision: `_capture(name)`
+(D-S5-2) and `_rewritten(result)` (N-S5-1). The baseline measures today's
+Python classes.
+
+| Benchmark | Measures |
+|---|---|
+| `test_capture_pattern_construction`, `test_binary_expression_pattern_construction`, `test_rewrite_rule_construction` | construction (dataclass `__post_init__` against a pyclass) |
+| `test_pattern_attribute_access` | field reads |
+| `test_match_of_a_small_pattern[hit]`, `[miss]` | `x + 0` against a match and a root mismatch |
+| `test_match_of_a_mirroring_pattern_of_a_deep_tree` | a pattern mirroring the deep tree, capturing every leaf |
+| `test_match_of_a_repeated_capture_over_deep_operands` | `x - x` over two distinct, equal deep trees (unification) |
+| `test_match_of_alternatives` | four alternatives, the last of which matches |
+| `test_match_bindings_get` | reading one capture |
+| `test_apply_rewrite_rule_at_the_root` | one rule once: the per-call overhead |
+| `test_apply_rewrite_rules_to_a_deep_tree[no_firing]`, `[firing]` | the four rules over the deep tree, firing nowhere, and over a variant in which about a quarter of the nodes fire |
+| `test_apply_rewrite_rules_to_a_shared_dag` | the four rules over the DAG (V-11) |
+| `test_rewrite_rule_applier_execute_of_a_deep_tree` | the same through the pass, with diagnostics |
+| `test_apply_rewrite_rules_with_a_predicate_at_every_node` | callback-heavy: one `PredicatePattern` rule that never fires, so one Python call per node |
+| `test_apply_rewrite_rules_with_a_guard_and_rewrite_at_every_leaf` | callback-heavy: a captured leaf pattern with a guard and a rewrite that fire at every leaf, so the cost of building bindings and objects for Python |
+
+After S5.4 the file gains `test_apply_rewrite_rules_with_a_python_rule`, a
+`Rule` subclass at every node; it has no baseline. The verdict follows
+cross-cutting rule 5: a slower hot path changes pattern or is recorded as
+an accepted cost, with numbers. The paths at risk:
+
+- field reads, which stay struct-member reads;
+- the per-leaf callback case, where each call builds a `MatchBindings`
+  object and looks up node objects. If it loses to today's immutabledict,
+  the fix is to build the objects lazily, on first access.
+
+### Decisions (proposed 2026-09-25)
+
+Each names the policy it follows: D-S4-1 (Rust semantics where the two
+differ), D-S4-2 (Python names where the meaning is the same), the S6 rule
+(`CompilerPass` hook names stay Python), "no fallback", or "tests rewritten,
+not skipped". Where a decision follows an S2 to S4 implementation note, it
+says so.
+
+- **D-S5-1: one implementation, no fallback** (no pure-Python fallback).
+  `core.py` and `rewrite.py` become thin public classes over `_rs`, as the
+  expression core did. The dataclasses are deleted, not kept behind a
+  switch.
+- **D-S5-2: captures are Rust `Capture` handles** (D-S4-1; V-1).
+  - A new `Capture(name)` class with identity `==`/`hash`, `name`, `str` as
+    the name, and `repr` `Capture('x')`. Any `str` is a valid name,
+    including the empty one.
+  - `CapturePattern(capture, sub_pattern=WildcardPattern())` has the fields
+    `capture` and `sub_pattern`; the default is Rust's `Pattern::capture`.
+  - The same `Capture` object in two places means "must be equal". Two
+    captures with the same name are independent.
+
+  This is the most visible change. It touches only the pattern tests and
+  the README, since `src` has no consumer.
+- **D-S5-3: `MatchBindings` has Rust semantics** (D-S4-1; V-2) **and keeps
+  Python names where the meaning is the same** (D-S4-2).
+  - Only a match produces non-empty bindings. `MatchBindings()` and
+    `empty()` are empty.
+  - Kept: `is_empty()`, `has(capture)` (and `in`), and `get(capture)`,
+    which now returns the expression or `None`.
+  - `bindings[capture]` raises `KeyError` with the core's text,
+    ``capture `x` is not bound``.
+  - `len()`, iteration over the captures in binding order, and `items()`.
+  - `==` and `hash` ignore order and compare the expressions structurally.
+  - Removed: `try_bind`, `names()`, the `bindings` mapping and the
+    constructor from entries.
+  - The values are the node objects the match saw.
+- **D-S5-4: patterns are a closed P2 hierarchy** (D-S4-1; V-3; S4.3a's
+  closed node kinds). The twelve class names, their fields and `None`
+  meaning "any" stay (D-S4-2), mapped onto the Rust constructors. `match`,
+  `match_pattern` and `does_pattern_match` keep their names (D-S4-2).
+  - `match_under` is removed.
+  - A Python subclass of `Pattern` that is none of the twelve cannot be
+    built (`TypeError`), and a subclass of one of them is that kind.
+  - Each class keeps its field objects as struct members (S3/S4 practice),
+    so `.value` is the given value and `.operands` a tuple.
+  - Rust's `nothing` is not exposed; `AlternativesPattern(())` is the same
+    pattern.
+- **D-S5-5: construction follows the core** (D-S4-1; V-5, V-6).
+  - `LogicalExpressionPattern` with fewer than two operand patterns,
+    `PiecewiseExpressionPattern` with `cases=()`, and `AlternativesPattern`
+    with no alternative build and match nothing.
+  - The binding's own type checks raise `TypeError` in S2's style
+    (`BinaryExpressionPattern left must be a Pattern, got int.`), per the
+    "stricter arguments" notes of S2 to S4.
+  - `LiteralPattern` keeps raising `LiteralExpression`'s errors.
+  - `CallExpressionPattern` parses `function_name` with `Callee::from_str`,
+    so `""` raises the core's `FunctionNameError` as `ValueError`, as
+    `CallExpression("")` does, and matching compares callees.
+- **D-S5-6: callback results are read by truthiness** (D-S4-2; V-7). The
+  meaning ("the guard allows it") is the same, and Rust's `bool` has no
+  counterpart for other Python values, so the binding takes
+  `bool(result)`. An exception from `__bool__` is the callback's error.
+- **D-S5-7: callback errors.** Two rules:
+  - The Rust core returns a `CallbackError` unchanged from `match`,
+    `match_pattern`, `does_pattern_match`, `apply_rewrite_rule` and
+    `RewriteRule.apply`, so the same exception object propagates (D-S4-1).
+  - An exception that is not an `Exception` (`KeyboardInterrupt`,
+    `SystemExit`, `GeneratorExit`) always propagates unchanged and is
+    never wrapped in `RewriteError`, so `except Exception` cannot swallow
+    it (D-S4-2: the core does not distinguish them).
+- **D-S5-8: `RewriteRule` has the core's semantics** (D-S4-1; V-8, V-9,
+  V-10, V-18) **under Python names** (D-S4-2).
+  - `RewriteRule(pattern, rewrite, guard=None, name=None)` is `new`, plus
+    `with_guard` and `with_name`.
+  - `RewriteRule.new_partial(pattern, rewrite, guard=None, name=None)`
+    lets a rewrite return `None` to decline.
+  - `with_guard(guard)` and `with_name(name)` return new rules.
+  - The fields are `pattern`, `rewrite`, `guards` (a tuple, which replaces
+    `guard`) and `name`.
+  - `apply(expression)` is the method; `apply_rewrite_rule(rule,
+    expression)` stays as its free-function form.
+  - A rewrite result that is neither an `Expression` nor, for
+    `new_partial`, `None` raises `TypeError` naming the rule
+    (`RewriteRule 'n' rewrite must return an Expression, got NoneType.`).
+  - A result that is the matched node itself declines (F-009).
+  - Rules compare and hash by identity, since callbacks cannot be
+    compared. They are virtual `FrozenMixin`s.
+- **D-S5-9: a `Rule` ABC** (P3 in the slice table; V-17). `class
+  Rule(_rs.RuleBase, ABC)` declares the abstract `apply(expression) ->
+  Expression | None` and a `name` property that is `None` by default. These
+  are the Rust hook names, since Python has no counterpart. `RewriteRule`
+  is registered as a virtual subclass. A rule list may mix both kinds. A
+  Python rule's `name` is read once per walk.
+- **D-S5-10: the walk is the core's** (D-S4-1; V-10, V-11, V-12).
+  - A shared node is rewritten once.
+  - A rule returning its input declines, and the next rule is tried.
+  - A tree of any depth is walked.
+  - When nothing fires, the output is the input object itself; otherwise
+    it shares the input's objects wherever the core kept the node.
+- **D-S5-11: the walk's errors are the core's** (D-S4-1: errors map
+  through `IntoPyErr`; V-13).
+  - `pattern/rewrite.py` defines `RewriteError(RuntimeError)`, with
+    `rule_index` and `rule_name`, and a subclass for each variant:
+    `RewriteCallbackError` and `RewriteRebuildError`.
+  - The message is the core's `Display`, and `__cause__` is the callback's
+    exception or the rebuild's `ValueError`.
+  - The base is `RuntimeError` because `PassExecutionError`, which it
+    replaces at the free function, is one, so `except RuntimeError` keeps
+    catching it.
+  - `apply_rewrite_rules` raises it directly.
+- **D-S5-12: `RewriteRuleApplier` stays a Python `CompilerPass` until S6**
+  (the S6 rule; V-14, V-15, V-16). It is `CompilerPass[Expression,
+  Expression]`, registered under the same name and description, with the
+  Python hooks `run_pass`, `get_noop_output` and `did_change` (identity).
+  - It is no longer a `RewritablePass` (D-S4-1: the Rust applier is no
+    per-node visitor), so `visit_unknown`, `visit` and `transform` go.
+  - `RewriteRuleApplier(rules=())` defaults to no rules, so
+    `CompilerPass.create(NAME)` builds one, as the Rust registry does.
+  - `rules` is a tuple, and the new `fired` holds the `FiredRule(rule_index,
+    name)` values of the last run, or the firings before the failure after
+    a failed run.
+  - Each named firing reports INFO `applied rewrite rule "name"` (the core's
+    text, D-S4-1).
+  - A `RewriteError` fails the run through `execute`'s guard as
+    `PassExecutionError`, with the `RewriteError` as `__cause__`.
+- **D-S5-13: pickles** (S3/S4 practice).
+  - Patterns, captures and rules pickle as a call of their class with their
+    fields. A capture shared within one pickle stays shared, through the
+    pickle memo.
+  - A `PredicatePattern` or a rule pickles only if its callables do, as
+    today.
+  - `MatchBindings` does not pickle (`TypeError`): only a match produces
+    bindings (D-S4-1).
+- **D-S5-14: reprs** (D-S4-2).
+  - The core has no `Display` for patterns, only a derived `Debug`, so no
+    Rust text convention applies. Patterns keep Python's dataclass-style
+    `repr`, rendered from the field objects.
+  - A capture is `Capture('x')`.
+  - Bindings are `MatchBindings({Capture('x'): LiteralExpression(1)})`.
+  - A rule is `RewriteRule(pattern=..., name='n')`, callables omitted, as
+    the core's `Debug` omits them.
+- **D-S5-15: a depth guard for patterns** (S3b's recursion guard). The
+  Rust matcher recurses once per pattern level, so each pattern records its
+  depth. `match` and the walk raise `RecursionError` for a pattern deeper
+  than `sys.getrecursionlimit()`, instead of overflowing the stack. Trees
+  have no limit (D-S5-10).
+- **D-S5-16: tests are rewritten, not skipped** (the tests rule).
+  - The 188 behavioral Python tests stay, as S4.4 kept them, and are
+    rewritten to the new semantics. Each rename or rewrite is recorded with
+    its reason, as S4.4's table does.
+  - The Rust tests already specify the core. New Rust tests come only with
+    core additions (S5.2).
+
+### Needs the user
+
+- **N-S5-1: what `apply_rewrite_rules` returns.** The function name and
+  its meaning stay: one bottom-up pass. The Rust function returns a
+  `RewriteOutcome` (`output`, `is_changed`, `fired`), where Python returns
+  the tree. D-S4-1 and D-S4-2 point opposite ways here, since the result's
+  meaning is the same and its shape is not.
+  - (a) **Return the `Expression`, as today.** Firings are available
+    through `RewriteRuleApplier.fired` and, as today, through
+    `PassResult.changed` and its diagnostics. Callers change only for
+    D-S5-2.
+  - (b) **Return a `RewriteOutcome` pyclass**, with `output`, `is_changed`
+    and `fired`. Every caller adds `.output`: 18 of the 42 rewrite tests,
+    6 of the 7 user stories and the 3 rewrite properties.
+  - (c) **Both:** (a) plus a new `apply_rewrite_rules_with_outcome`.
+
+  Recommendation: (a). The free function is the convenience form, as
+  `CompilerPass.__call__` is beside `execute`. The pass already gives
+  `changed`, and it gains `fired`. Either way it raises `RewriteError`
+  (D-S5-11).
+
+### Steps
+
+1. **S5.1: benchmarks.** Add `benchmarks/test_pattern.py` as planned above
+   and record the baseline here, on today's Python classes.
+2. **S5.2: core additions, with Rust tests.** None are expected. The
+   binding needs only public API: the `Pattern` constructors, `Capture`,
+   `MatchBindings::iter`, `RewriteRule` and its builders, `Rule`,
+   `apply_rewrite_rules`, `RewriteError`'s accessors, and
+   `NodeHandle::identity` for expressions. There is one candidate: the
+   Python applier must report the firings before a failure (D-S5-12),
+   which the public
+   `apply_rewrite_rules` drops. The binding records them in its own rule
+   adapters. If that duplicates the walk's firing rule too closely, the
+   fallback is a public `RewriteError::fired()`, which would need a Rust
+   test and an update of the crate's README.
+3. **S5.3: the binding.** Add `rust/fhy-core-py/src/expression/pattern.rs`,
+   with submodules for captures, patterns, bindings, rules and the walk.
+   - **Pyclasses.** `_rs.Capture`; a `_rs.Pattern` base,
+     `#[pyclass(subclass, frozen)]`, holding the Rust `Pattern`, its depth,
+     and the `Capture` objects it contains, with one `extends` class per
+     pattern kind holding its field objects; `_rs.MatchBindings`, holding
+     the Rust bindings and the `(Capture, node)` objects in binding order;
+     `_rs.RewriteRule`, holding the Rust rule and its Python callables;
+     `_rs.RuleBase`; `_rs.FiredRule`.
+   - **The object table.** A per-call table maps a node's identity to its
+     Python object. It is kept on a thread-local stack while a match or a
+     walk runs, so nested calls from callbacks work; the interpreter is held
+     throughout.
+     - It is filled from the input tree's objects on first need, and from
+       each replacement a rewrite returns.
+     - A node without an object is built once from its children's
+       objects, as S4.3a's materializer does.
+   - **Adapters and results.** The callback closures and the Python `Rule`
+     adapter hold `Py<PyAny>`. `RewriteError` maps onto the Python classes
+     of D-S5-11. The public classes register with the binding, as S3's do.
+   - **Stubs.** Everything new goes into `_rs.pyi`.
+4. **S5.4: the Python switch.**
+   - `pattern/core.py` and `rewrite.py` define the public classes over
+     `_rs` (with `FrozenMixin` virtual membership), the `Rule` ABC, the
+     error classes, and `RewriteRuleApplier` as a Python `CompilerPass`
+     calling the Rust walk.
+   - The package's `__all__` and `symbolic/expression/__init__.py` gain
+     `Capture`, `Rule`, `FiredRule`, `RewriteError`, `RewriteCallbackError`
+     and `RewriteRebuildError`.
+   - The README's feature row changes.
+5. **S5.5: tests.** Migrate the pattern tests and add the interface suite
+   (the test plan below).
+6. **S5.6: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with `pytest` and `-m "not very_slow"`
+green, the `property` session, `lint` and `type_check` clean, and the Rust
+gate green (fmt, clippy `-D warnings`, tests, doc `-D warnings`, deny,
+`cargo +1.85 check`).
+
+### Test plan
+
+**The interface suite:** `tests/symbolic/expression/pattern/test_pattern_rust_binding.py`,
+next to S4.3a's `test_expression_rust_binding.py`. It covers what the
+binding adds over the core:
+
+- **Class structure and registration.** Each pattern class extends its
+  `_rs` class, and a new `Pattern` kind cannot be built. `FrozenMixin`
+  membership holds, and so does `isinstance(rule, Rule)` for a
+  `RewriteRule`. The frozen errors are raised.
+- **Argument checks and their messages.** The `TypeError`s; the
+  degenerate patterns that build and match nothing; `""` as a call name;
+  the literal errors.
+- **`Capture`.** Identity equality and hash, the name (the empty one
+  included), and `repr`.
+- **`MatchBindings`.** `get`, `[]`, `has`, `in`, `len`, iteration order,
+  equality and hash. No public constructor binds. The bound objects are
+  the input's (`is`), and a rebuilt node's object is built once.
+- **Callbacks.**
+  - The arguments are the right objects, and results are read by
+    truthiness.
+  - The same exception object propagates from `match` and
+    `apply_rewrite_rule`, and a `KeyboardInterrupt` passes through a walk
+    unwrapped.
+  - Nested matches and walks inside a callback work.
+  - The rewrite-result `TypeError`, `new_partial`'s decline, and a result
+    that is the matched node itself, which declines so the next rule fires.
+- **The walk.** A shared subtree is rewritten once (by a callback count),
+  and the input comes back itself when nothing fires. A 20,000-level tree
+  rewrites. A pattern deeper than the recursion limit raises
+  `RecursionError` and does not crash.
+- **Walk errors.** The `RewriteError` subclasses, `rule_index`,
+  `rule_name` and `__cause__`, and the rule a refused rebuild blames.
+- **`Rule`.** Abstract methods are enforced. A Python subclass is driven
+  from Rust, mixed with `RewriteRule`, and its name appears in the errors
+  and diagnostics.
+- **The applier.**
+  - It is registered, and `CompilerPass.create(NAME)` builds one with no
+    rules.
+  - The diagnostic text, `fired` after a success and after a failure, and
+    `PassExecutionError` wrapping the `RewriteError`.
+  - `changed` is by identity.
+- **Pickles.** Patterns, a capture shared within one pickle, and rules
+  with module-level callables round-trip. A lambda predicate fails as
+  pickle fails. `MatchBindings` refuses.
+- **Stubs.** `tests/test_rs_stub.py` covers the new stubs.
+
+**Migrating the existing 188 tests.** No test is skipped or deleted
+without a rewrite, and each change is recorded with its reason:
+
+- **`test_core.py` (132).**
+  - Every capture is spelled with a `Capture` (D-S5-2).
+  - The 18 `MatchBindings` tests are rewritten through matching (D-S5-3).
+    `try_bind`'s first-bound and repeated-bind laws become repeated-capture
+    matches; the constructor type checks become "no public constructor
+    binds"; `get` of an unbound capture pins `None`, and `[]` pins
+    `KeyError`.
+  - `test_capture_pattern_siblings_with_shared_name_share_the_same_capture`
+    is rewritten to pin that one `Capture` is shared and that two
+    same-named captures are independent.
+  - The construction-error tests for empty cases, empty alternatives,
+    fewer than two operands and an empty name are rewritten to pin
+    "builds and matches nothing" (D-S5-5).
+  - The non-`Pattern` tests pin `TypeError`.
+  - The two `match_under` tests
+    (`test_wildcard_pattern_match_under_returns_input_bindings`,
+    `test_predicate_pattern_captures_nothing`) are rewritten through a
+    compound pattern whose other capture shows the threading (D-S5-4).
+  - The coercion and list-mutation tests keep their meaning.
+- **`test_rewrite.py` (42).**
+  - `test_rewrite_rule_is_hashable_and_equal_by_content` is rewritten to
+    identity (D-S5-8), and `test_rewrite_rule_defaults_for_optional_fields`
+    to `guards == ()`.
+  - The two tests that pin `PassExecutionError` from `apply_rewrite_rules`
+    are rewritten to `RewriteCallbackError` with its cause (D-S5-11). The
+    two applier tests keep `PassExecutionError` and add the cause.
+  - The diagnostic test pins the core's text (D-S5-12).
+  - `test_apply_rewrite_rules_with_identity_rewrite_reports_unchanged` is
+    extended with the next rule firing (D-S5-10).
+  - `test_rewrite_rule_accepts_arbitrary_pattern_subclasses` is rewritten
+    to "accepts every pattern kind" (D-S5-4).
+  - The rest change only by D-S5-2 and N-S5-1.
+- **`test_user_stories.py` (7)** and the two property modules (7) change
+  only by D-S5-2 and N-S5-1. The "identity holds iff no rule fired"
+  property also checks `RewriteRuleApplier.fired`.
