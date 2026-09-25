@@ -28,13 +28,13 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [x] S4.3a: expressions on the Rust core with Rust semantics
 - [x] S4.3b: consumers migrated. On the Rust backend: the suite is green (6,960 passed), slow tests pass (7,008), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
 - [x] S4.4: retire the pure-Python backend. The suite is green (6,949 passed), slow tests pass (6,982), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
-- [ ] S5: patterns and rewrite rules (designed; N-S5-1 resolved as (a))
+- [x] S5: patterns and rewrite rules (N-S5-1 resolved as (a)). The suite is green (7,054 passed), slow tests pass (7,087), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
   - [x] S5.1: pattern benchmarks and baseline
-  - [ ] S5.2: core additions, if any, with Rust tests
-  - [ ] S5.3: the pattern binding
-  - [ ] S5.4: the Python switch
-  - [ ] S5.5: pattern tests migrated, and the interface suite
-  - [ ] S5.6: benchmarks after, and docs
+  - [x] S5.2: core additions, if any, with Rust tests (none were needed)
+  - [x] S5.3: the pattern binding
+  - [x] S5.4: the Python switch
+  - [x] S5.5: pattern tests migrated, and the interface suite
+  - [x] S5.6: benchmarks after, and docs
 - [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
 - Leftovers:
   - [ ] the `ValidationReport` construction cost (S6)
@@ -2043,9 +2043,9 @@ table is needed.
 
 ## S5: patterns and rewrite rules
 
-- **Status:** design, 2026-09-25, at fbbb5af. Nothing is implemented.
-  D-S5-1 to D-S5-16 apply the policy the user already set. N-S5-1 is not
-  covered by it and needs the user before S5.4.
+- **Status:** designed 2026-09-25 at fbbb5af, and implemented the same
+  day; see "S5 status" below. D-S5-1 to D-S5-16 apply the policy the user
+  already set, and N-S5-1 was resolved as option (a).
 - **Pattern:** P2 for captures, patterns, bindings and rules; P3 for the
   Python callbacks and the `Rule` trait, as the slice table says.
 
@@ -2704,3 +2704,245 @@ rule fires, since each node runs the Python visitor dispatch and tries four
 Python patterns, and 7 µs per occurrence of the DAG, whose 2,047
 occurrences are each walked. Matching a 100-level mirroring pattern takes
 about 1 ms, a small pattern 1.3 to 3.1 µs.
+
+### S5 status
+
+S5 was implemented on 2026-09-25 in seven commits: the benchmarks and
+their baseline (4ff400a); the binding, with no core addition (a9ef7b5);
+the Python switch, marked breaking (31bdf7e); the migrated pattern tests
+and the new interface suite (7a4d01b); a cleanup of that suite's
+overrides (b034fe2); the Python-rule benchmark (10d81b1); and these docs.
+No pattern test was skipped or deleted. At the end: `pytest` 7,054
+passed (188 pattern tests became 199 after the rewrites, plus the
+interface suite's 94), `-m "not very_slow"` 7,087 passed, the `property`
+session 280 passed, `lint` and `type_check` clean, and the Rust gate green
+(fmt, clippy `-D warnings`, 2,630 tests, doc `-D warnings`, deny,
+`cargo +1.85 check`).
+
+### S5 benchmarks (before and after)
+
+Median time per call, from `uv run --python 3.11 nox -s benchmark-3.11 --
+-k test_pattern` on the S0 machine with Python 3.11.13 and
+pytest-benchmark 5.3.0. "Before" is 4ff400a, the S5.1 baseline's tree, run
+from a detached worktree under `target/`; "after" is 10d81b1. The two ran
+three times each, interleaved (before, then after, in each round), with a
+load average of 4 to 6, and the table lists the best of the three
+medians. The "before" column agrees with the S5.1 table within 10%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_capture_pattern_construction` | 929 ns | 239 ns | 0.26 |
+| `test_binary_expression_pattern_construction` | 1.21 µs | 256 ns | 0.21 |
+| `test_rewrite_rule_construction` | 1.08 µs | 617 ns | 0.57 |
+| `test_pattern_attribute_access` | 96 ns | 88 ns | 0.92 |
+| `test_match_of_a_small_pattern[hit]` | 3.37 µs | 983 ns | 0.29 |
+| `test_match_of_a_small_pattern[miss]` | 1.33 µs | 232 ns | 0.17 |
+| `test_match_of_a_mirroring_pattern_of_a_deep_tree` | 1.04 ms | 37.6 µs | 0.04 |
+| `test_match_of_a_repeated_capture_over_deep_operands` | 8.65 µs | 5.72 µs | 0.66 |
+| `test_match_of_alternatives` | 2.55 µs | 703 ns | 0.28 |
+| `test_match_bindings_get` | 127 ns | 93 ns | 0.73 |
+| `test_apply_rewrite_rule_at_the_root` | 3.78 µs | 1.31 µs | 0.35 |
+| `test_apply_rewrite_rules_to_a_deep_tree[no_firing]` | 2.01 ms | 28.8 µs | 0.01 |
+| `test_apply_rewrite_rules_to_a_deep_tree[firing]` | 2.08 ms | 130.7 µs | 0.06 |
+| `test_apply_rewrite_rules_to_a_shared_dag` | 15.45 ms | 2.82 µs | 0.0002 |
+| `test_rewrite_rule_applier_execute_of_a_deep_tree` | 2.07 ms | 225.8 µs | 0.11 |
+| `test_apply_rewrite_rules_with_a_predicate_at_every_node` | 596.5 µs | 46.5 µs | 0.08 |
+| `test_apply_rewrite_rules_with_a_guard_and_rewrite_at_every_leaf` | 955.9 µs | 179.4 µs | 0.19 |
+| `test_apply_rewrite_rules_with_a_python_rule` | - | 44.7 µs | - |
+
+Every hot path is faster, so P2 stands, no path changes pattern, and no
+cost needs accepting (cross-cutting rule 5):
+
+- **Construction** of a pattern is 4 to 5 times faster: a type check per
+  field and a Rust pattern, with no dataclass `__post_init__`. A rule
+  builds its Rust closures and collects its pattern's captures, so it
+  gains less, 1.75 times.
+- **Field reads** stay struct-member reads. `bindings[x]` is a scan of a
+  short tuple by identity (`_read` in the "after" run; `get(name)`, a
+  dict lookup, before).
+- **Matching** a small pattern is 3 to 6 times faster, a 100-level
+  mirroring pattern 28 times: the match runs in Rust, and building the
+  bindings of 100 captures finds each node object in one walk of the
+  input's objects. The repeated capture over deep operands gains least,
+  1.5 times, since the structural comparison of the two deep trees
+  dominates both.
+- **The walk** with native rules only never calls Python: over the deep
+  tree it drops from 2 ms to 29 µs, and over the DAG, which it walks once
+  per distinct node (V-11), from 15 ms to 2.8 µs. Where rules fire, each
+  firing calls a Python rewrite with a bindings object and the rebuilt
+  spine is materialized once: 16 times faster. The pass adds its
+  diagnostics and their logging.
+- **The callback-heavy walks** are 5 to 13 times faster: a Python call per
+  node remains, but the walk, the matching and the dispatch around it run
+  in Rust. The per-leaf callback case, the path the plan put at risk, is
+  5 times faster with eager bindings objects, so they are not made lazy.
+  A Python `Rule` costs about 230 ns per node of the deep tree's 191, a
+  predicate about the same.
+
+### S5 implementation notes
+
+Choices the decisions left open, made while implementing S5:
+
+- **Core additions: none (S5.2).** The binding uses the public API of
+  `fhy_core::expression::pattern`. The Python applier's firings before a
+  failure (D-S5-12) are recorded by the binding's walk-rule wrapper, which
+  records a firing when its rule returns a replacement that is not the
+  node it was tried on, the same comparison the core's walk makes; so
+  `RewriteError::fired()` was not needed. A pattern nested 200,000 levels
+  deep was checked to deallocate without overflowing the stack, so
+  `PatternKind` needed no iterative `Drop`. No Rust test was added.
+- **Module layout.** `rust/fhy-core-py/src/expression/pattern.rs`, with
+  `capture.rs`, `kinds.rs` (the `Pattern` base and the eleven kinds),
+  `bindings.rs`, `rules.rs` (`RewriteRule`, `RuleBase`, the Python-rule
+  adapter, `FiredRule`), `walk.rs` and `objects.rs` (the object table).
+  `OptionalArgument` and `format_dataclass_repr` moved from the
+  diagnostics and provenance bindings to `dataclass.rs`.
+- **The object table** (`objects.rs`) is the plan's per-call table, on a
+  thread-local stack while a match, a rule's `apply` or a walk runs:
+  - It maps a Rust node's identity to its Python object and holds the node,
+    so the identity stays unique. It is filled on first need by walking
+    the input's objects beside their handles, recording every object it
+    passes, and from each replacement a callback returns.
+  - A node the walk rebuilt gets an object built once through the public
+    class of its kind. That object holds its own, equal, Rust handle, so
+    the table also maps the object back to the node it stands for: a
+    callback returning it returns that node, and a rule returning the node
+    it matched still declines.
+  - The last bindings object is reused for the same bindings, so a rule's
+    guards and rewrite receive one object. No borrow of a table is held
+    across a call into Python code. CONTRIBUTING's "Process-global state"
+    section records the stack, which is empty whenever no match or walk
+    runs.
+- **Pattern equality and hashing follow the fields, as the dataclasses'
+  did.** D-S5-4 and D-S5-14 left them open: the core has no `PartialEq`
+  for patterns, and D-S5-8 gives rules identity equality because
+  callables cannot be compared. Patterns keep the dataclasses' `==` and
+  `hash` over their field objects, as they keep their `repr`: a capture
+  compares by identity and a predicate by its callable's `==`, so
+  `CapturePattern(x) == CapturePattern(x)`, but a pattern loaded from a
+  pickle, which holds new captures, equals the original only if it has
+  none. `==` requires exactly the same class, as a dataclass's does.
+- **`MatchBindings` truthiness.** With `len()` (D-S5-3), bindings of no
+  capture are falsy, as an empty container is; the dataclass was always
+  true. A match is tested with `is not None`, as the package and its tests
+  always did, but a caller writing `if pattern.match(e):` for a pattern
+  without captures would now read a match as a miss. The docstring says
+  so; the maintainer may prefer a `__bool__` that is always true.
+- **`MatchBindings` details.** `get(key)` returns `None`, and `has(key)`
+  and `in` are false, for a key that is not a bound `Capture` (anything
+  else included); `bindings[key]` raises `KeyError` with the core's text,
+  using `str(key)` for the name. `items()` returns a tuple of pairs.
+  Hashing is the core's, over the entries; the bindings hold the node
+  objects the match saw. The public class is built through a private seed
+  class, as S2's tags are, so `MatchBindings(anything)` raises
+  `TypeError` (`only a match produces bindings that bind a capture`).
+- **Rules.** `RewriteRule.new_partial`, `with_guard` and `with_name` build
+  new rules through a private seed; the constructor's `rewrite` defaults
+  to `None` at runtime only, for the seed, and the stub keeps it required.
+  A rule pickles as `RewriteRule._from_fields(pattern, rewrite, guards,
+  name, is_partial)`, a class method, since `guards` has no constructor
+  argument (D-S5-13 said "a call of their class"). The rewrite-result
+  `TypeError` keeps `'<unnamed>'` for an unnamed rule, so the old test
+  keeps its meaning: `RewriteRule '<unnamed>' rewrite must return an
+  Expression, got int.`, and `... an Expression or None, ...` for a
+  partial rule. `apply_rewrite_rule(rule, e)` is `rule.apply(e)`, so it
+  takes a Python `Rule` too. mypy does not see `Rule.register`, so the
+  functions and the applier are typed with `Rule | RewriteRule`.
+- **Python rules.** `apply_rewrite_rules` and the walk take any
+  `_rs.RewriteRule` natively, any `_rs.RuleBase` instance through the
+  adapter, and refuse anything else (`apply_rewrite_rules rules must be
+  Rules, got int.`). A Python rule's `name` must be a `str` or `None`,
+  and its `apply` must return an `Expression` or `None`; anything else
+  raises `TypeError` (`_Wrong.apply must return an Expression or None, got
+  int.`), which the walk reports as the rule's `RewriteCallbackError`.
+- **The walk's entry point.** `_rs.apply_rewrite_rules(expression, rules,
+  fired=None)` appends each firing to the list `fired` if given, also on
+  failure; the public function passes two arguments, and the applier its
+  list. A private top-level `_rs` function would not do: the stub test
+  counts every stub name but only the extension's public ones.
+- **`FiredRule`** has a public constructor `FiredRule(rule_index, name)`,
+  compares and hashes by its fields, prints as a dataclass, and pickles as
+  a call of its class. Its private `_diagnostic_message()` renders the
+  core's text, `applied rewrite rule "name"`, with the name escaped as
+  Rust's `Debug` writes a string, which Python's `repr` would not match.
+- **Errors.** The three error classes live in `pattern/rewrite.py` and
+  pickle with their fields. The binding imports them when it raises one,
+  and sets `__cause__` to the callback's exception or to the rebuild's
+  `ValueError`, whose text is the core's `RebuildError`.
+- **Stricter arguments**, beyond D-S5-5's list: a piecewise case that is
+  not a pair of patterns raises `TypeError` (`PiecewiseExpressionPattern
+  cases must be (condition, value) pairs of Patterns, got int.`), where it
+  raised `ValueError`; a predicate must be callable, an identifier pattern
+  an `Identifier` or `None`, a call pattern's name a `str` or `None`, a
+  rule's rewrite and guards callables and its name a `str`, each raising
+  `TypeError`; the dataclasses accepted anything there. `match`, `apply`
+  and the walk refuse a non-expression with `TypeError`. An operation
+  given by value (`"negate"`) is stored as its member.
+- **The depth guard** (D-S5-15) reads the recursion limit only for a
+  pattern deeper than 64 levels, as S3b's does, and raises
+  `maximum recursion depth exceeded: the pattern is N levels deep`. With
+  the recursion limit raised, a deep enough pattern still overflows the
+  stack: 20,000 levels matched and 50,000 crashed with a limit of
+  100,000, as S3b recorded for provenance.
+- **Public classes.** Each is a thin Python subclass with `__slots__ =
+  ()`, a virtual `FrozenMixin` (and `RewriteRule` a virtual `Rule`), and
+  registers its public class; the pattern kinds keep `@final` for type
+  checkers and set `__match_args__`. `_rs.Pattern` has no constructor, so a
+  new kind raises PyO3's `TypeError` ("No constructor defined").
+- **Benchmarks.** `_read(bindings, capture)` joined `_capture` as a
+  helper whose spelling S5 changes (`bindings.get(name)` before,
+  `bindings[capture]` after), and `test_apply_rewrite_rules_with_a_python_rule`
+  was added after the switch, as planned.
+
+Tests migrated in S5.5 (`test_core.py` is `C`, `test_rewrite.py` `R`); every
+other test changed only by D-S5-2 (captures) or not at all, and none was
+skipped or deleted. `test_user_stories.py`, `test_core_properties.py` and
+`test_rewrite_properties.py` changed only by D-S5-2, except that the
+mirror property builds its altered pattern with the constructor instead
+of `dataclasses.replace`, and the identity property also checks
+`RewriteRuleApplier.fired`.
+
+| Test | Now | Reason |
+|---|---|---|
+| C `test_match_bindings_try_bind_records_first_binding` | `test_match_bindings_of_a_capture_match_record_the_binding` | D-S5-3: only a match binds |
+| C `test_match_bindings_try_bind_leaves_receiver_untouched` | `test_matching_leaves_earlier_bindings_untouched` | as above |
+| C `test_match_bindings_try_bind_repeated_with_equivalent_returns_self` | `test_repeated_capture_of_equal_expressions_binds_the_capture_once` | `try_bind`'s law as a repeated-capture match |
+| C `test_match_bindings_try_bind_retains_original_expression_on_reconfirm` | `test_repeated_capture_keeps_the_first_bound_expression` | as above |
+| C `test_match_bindings_try_bind_repeated_with_distinct_returns_none` | `test_repeated_capture_of_distinct_expressions_does_not_match` | as above |
+| C `test_match_bindings_try_bind_repeated_with_equivalent_compound` | `test_repeated_capture_of_equal_compound_expressions_matches` | as above |
+| C `test_match_bindings_get_raises_key_error_for_unbound_name` | `test_match_bindings_get_returns_none_for_an_unbound_capture`, and new `test_match_bindings_index_raises_key_error_for_an_unbound_capture` | D-S5-3: `get` returns `None`, `[]` raises `KeyError` |
+| C `test_match_bindings_has_reports_bound_name` | `test_match_bindings_has_reports_bound_capture` | captures, and `in` |
+| C `test_match_bindings_names_after_multiple_binds` | `test_match_bindings_iterate_over_bound_captures_in_binding_order` | `names()` is gone; iteration and `len` |
+| C `test_match_bindings_hash_collides_on_matching_key_sets` | `test_match_bindings_equality_and_hash_ignore_binding_order` | the hash covers the entries now; order is what it ignores |
+| C `test_match_bindings_with_different_key_sets_are_unequal` | `test_match_bindings_with_different_captures_are_unequal` | captures instead of names |
+| C `test_match_bindings_post_init_rejects_non_string_keys` | `test_match_bindings_constructor_refuses_an_argument` | no public constructor binds |
+| C `test_match_bindings_post_init_rejects_non_expression_values` | `test_match_bindings_constructed_without_arguments_bind_nothing` | as above |
+| C the other five `MatchBindings` tests | same names | rewritten through matching |
+| C `test_wildcard_pattern_match_under_returns_input_bindings` | `test_wildcard_pattern_keeps_the_bindings_threaded_to_it` | D-S5-4: through a sibling capture |
+| C `test_predicate_pattern_captures_nothing` | same name | as above |
+| C `test_capture_pattern_stores_name_as_plain_string` | `test_capture_pattern_stores_its_capture_and_a_wildcard_by_default` | D-S5-2: the field is `capture` |
+| C `test_capture_pattern_siblings_with_shared_name_share_the_same_capture` | `test_capture_pattern_siblings_share_one_capture_object` | D-S5-2: one object is shared, same-named ones are independent |
+| C `test_capture_pattern_rejects_a_non_string_name` | `test_capture_pattern_rejects_a_capture_that_is_not_a_capture` | D-S5-2 |
+| C `test_capture_pattern_rejects_an_empty_name` | `test_capture_with_an_empty_name_binds_like_any_other` | D-S5-2: any `str` is a name |
+| C `test_piecewise_expression_pattern_rejects_empty_cases_tuple`, `test_logical_expression_pattern_rejects_fewer_than_two_operands` (2), `test_alternatives_pattern_with_empty_alternatives_raises_value_error` | `..._with_empty_cases_matches_nothing`, `..._with_fewer_than_two_operands_matches_nothing` (2), `..._with_empty_alternatives_matches_nothing` | D-S5-5 |
+| C the non-`Pattern` tests (4 parametrized cases, and the piecewise, call, logical and alternatives ones) | same names | D-S5-5: `TypeError` with the binding's message; the piecewise pair-length test too |
+| R `test_rewrite_rule_defaults_for_optional_fields` | same name | D-S5-8: `guards == ()` |
+| R `test_rewrite_rule_is_hashable_and_equal_by_content` | `test_rewrite_rule_compares_and_hashes_by_identity` | D-S5-8 |
+| R `test_apply_rewrite_rules_wraps_guard_exception_as_pass_execution_error`, `..._rewrite_exception_...` | `..._as_rewrite_callback_error` | D-S5-11, with the cause |
+| R the two applier `PassExecutionError` tests | same names | D-S5-12: they also pin the cause chain |
+| R `test_rewrite_rule_applier_emits_diagnostic_when_named_rule_fires` | same name | D-S5-12: the core's text |
+| R `test_apply_rewrite_rules_with_identity_rewrite_reports_unchanged` | same name | D-S5-10: extended with the next rule firing |
+| R `test_rewrite_rule_accepts_arbitrary_pattern_subclasses` | `test_rewrite_rule_accepts_every_pattern_kind` (11 cases) | D-S5-4 |
+
+The new `tests/symbolic/expression/pattern/test_pattern_rust_binding.py`
+(94 tests) covers the test plan above: the class structure and
+registration, the frozen errors, the argument checks and their messages,
+the degenerate patterns, captures, bindings (including their falsiness
+and repr, and their refusal to pickle), the node objects callbacks receive
+and a rebuilt node's single object, truthiness and callback exceptions
+(the same object, `KeyboardInterrupt` unwrapped, nested matches and
+walks), `new_partial`, declining by returning the matched node, guards,
+the walk (a shared subtree rewritten once, the input returned itself, a
+20,000-level tree, a pattern deeper than the recursion limit), the error
+classes and the rule a refused rebuild blames, Python rules, the applier,
+pickles and reprs.

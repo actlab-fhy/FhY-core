@@ -358,7 +358,12 @@ class's identity cache from canonical keys to their Python objects, which
 is append-only like the registry it mirrors, and each Rust-backed class's
 write-once slot for the public Python class that registers itself at
 import (`rust/fhy-core-py/src/public_class.rs`), so a value the binding
-builds from Rust is an instance of that class. Tests never clear a
+builds from Rust is an instance of that class. Slice S5 adds a
+thread-local stack of per-call object tables
+(`rust/fhy-core-py/src/expression/pattern/objects.rs`), which maps the Rust
+nodes a match or a rewrite walk reaches to their Python objects while it
+runs; a table lives only for its call, so the stack is empty whenever no
+match or walk runs. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one.
 
