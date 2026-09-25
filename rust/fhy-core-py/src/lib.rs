@@ -29,6 +29,14 @@ mod rs_module {
     use super::diagnostic::{PyDiagnostic, PyNote, PyNoteKind, PyValidationReport};
     #[pymodule_export]
     use super::expression::{
+        PyAlternativesPattern, PyBinaryExpressionPattern, PyCallExpressionPattern, PyCapture,
+        PyCapturePattern, PyFiredRule, PyIdentifierPattern, PyLiteralPattern,
+        PyLogicalExpressionPattern, PyMatchBindings, PyPattern, PyPiecewiseExpressionPattern,
+        PyPredicatePattern, PyRewriteRule, PyRuleBase, PyUnaryExpressionPattern, PyWildcardPattern,
+        apply_rewrite_rules,
+    };
+    #[pymodule_export]
+    use super::expression::{
         PyBinaryExpression, PyCallExpression, PyExpression, PyIdentifierExpression,
         PyLiteralExpression, PyLogicalExpression, PyPiecewiseExpression, PyUnaryExpression,
         validate_logical_operands, validate_predicate,

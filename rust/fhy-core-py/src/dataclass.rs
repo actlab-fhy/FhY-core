@@ -1,12 +1,13 @@
 //! What the Rust-backed classes share to stand in for the Python
 //! dataclasses they replace: argument checks in one message style, the
-//! `__eq__` a dataclass generates, and hashing.
+//! `__eq__` and `__repr__` a dataclass generates, hashing, and arguments
+//! that may be omitted.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyString, PyTuple};
+use pyo3::types::{PyBool, PyString, PyTuple, PyType};
 
 /// Return the `TypeError` for an argument `field` of `owner` that is not a
 /// `expected`.
@@ -77,4 +78,41 @@ pub(crate) fn collect_tuple<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'
         values.py(),
         values.try_iter()?.collect::<PyResult<Vec<_>>>()?,
     )
+}
+
+/// Render `class(field=value, ...)` from the reprs of `fields`, as a
+/// dataclass's `__repr__` does.
+pub(crate) fn format_dataclass_repr(
+    class: &Bound<'_, PyType>,
+    fields: &[(&str, &Bound<'_, PyAny>)],
+) -> PyResult<String> {
+    let mut text = class.qualname()?.to_string();
+    text.push('(');
+    for (index, (name, value)) in fields.iter().enumerate() {
+        if index > 0 {
+            text.push_str(", ");
+        }
+        text.push_str(name);
+        text.push('=');
+        text.push_str(value.repr()?.to_str()?);
+    }
+    text.push(')');
+    Ok(text)
+}
+
+/// A constructor argument that may be omitted, so that an explicit `None`
+/// is not mistaken for the omitted argument's default.
+pub(crate) enum OptionalArgument<'py> {
+    /// The caller did not pass the argument.
+    Omitted,
+    /// The caller passed this object.
+    Given(Bound<'py, PyAny>),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for OptionalArgument<'py> {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(Self::Given(object.to_owned()))
+    }
 }

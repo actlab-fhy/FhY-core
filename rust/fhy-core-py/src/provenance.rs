@@ -30,7 +30,8 @@ use fhy_core::provenance::{
 };
 
 use crate::dataclass::{
-    build_argument_type_error, collect_tuple, compare_as_dataclass, hash_value, read_str,
+    build_argument_type_error, collect_tuple, compare_as_dataclass, format_dataclass_repr,
+    hash_value, read_str,
 };
 use crate::error::{IntoPyErr, IntoPyResult};
 use crate::frozen::build_frozen_mutation_error;
@@ -230,26 +231,6 @@ fn pure_path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 fn path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     CLASS.import(py, "pathlib", "Path")
-}
-
-/// Render `class(field=value, ...)` from the reprs of `fields`, as a
-/// dataclass's `__repr__` does.
-fn format_dataclass_repr(
-    class: &Bound<'_, PyType>,
-    fields: &[(&str, &Bound<'_, PyAny>)],
-) -> PyResult<String> {
-    let mut text = class.qualname()?.to_string();
-    text.push('(');
-    for (index, (name, value)) in fields.iter().enumerate() {
-        if index > 0 {
-            text.push_str(", ");
-        }
-        text.push_str(name);
-        text.push('=');
-        text.push_str(value.repr()?.to_str()?);
-    }
-    text.push(')');
-    Ok(text)
 }
 
 // ---------------------------------------------------------------------------

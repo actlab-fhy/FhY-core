@@ -26,7 +26,8 @@ use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind, Validati
 use fhy_core::interned::Canonical;
 
 use crate::dataclass::{
-    build_argument_type_error, collect_tuple, compare_as_dataclass, hash_value, read_str,
+    OptionalArgument, build_argument_type_error, collect_tuple, compare_as_dataclass, hash_value,
+    read_str,
 };
 use crate::described_tag::define_described_tag_class;
 use crate::frozen::build_frozen_mutation_error;
@@ -50,23 +51,6 @@ define_described_tag_class! {
         fn __str__(&self) -> String {
             self.tag.name().name_hint().to_owned()
         }
-    }
-}
-
-/// A constructor argument that may be omitted, so that an explicit `None`
-/// is not mistaken for the omitted argument's default.
-enum OptionalArgument<'py> {
-    /// The caller did not pass the argument.
-    Omitted,
-    /// The caller passed this object.
-    Given(Bound<'py, PyAny>),
-}
-
-impl<'a, 'py> FromPyObject<'a, 'py> for OptionalArgument<'py> {
-    type Error = PyErr;
-
-    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        Ok(Self::Given(object.to_owned()))
     }
 }
 
