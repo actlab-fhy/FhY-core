@@ -1021,3 +1021,82 @@ Choices the plan above left open, made while implementing S3b:
   matching, the payload shapes and errors, `fuse`'s identity and log, the
   recursion guard, the frozen errors, and pickles, including payloads and
   pickles checked against a Python-backend subprocess.
+
+## S4: expressions, then retiring the pure-Python backend
+
+Survey: the S4 API diff (kept in the session notes). It found that Python
+expressions differ from the Rust core in ways S2/S3 did not:
+
+- identity `==`/`hash` against Rust's structural equality;
+- child object identity;
+- binary `LOGICAL_AND`/`LOGICAL_OR` against Rust's n-ary `Logical` node;
+- literal spellings against Rust's normalized literals;
+- a runtime function registry;
+- binder-frame alpha renaming;
+- Python text in error messages.
+
+Making the Rust backend reproduce all of that would turn Rust nodes into
+shells around Python objects.
+
+### Decisions (signed off 2026-09-25)
+
+- **D-S4-1: Rust semantics.** On the Rust backend the Python expression API
+  takes the Rust core's semantics, and the consumers and tests are updated to
+  match. Parity with the pure-Python implementation is not kept for
+  expressions. In particular:
+  - **Equality.** `==` and `hash` are structural.
+  - **Literals are normalized.** `.value` is a `bool`, `int`, `float`, or
+    `decimal.Decimal`, and spellings such as `"05"` or `"1.50"` are not
+    kept.
+  - **Logical connectives.** A new n-ary `LogicalExpression` class, with a
+    `LogicalOperation` of `AND` or `OR`, replaces
+    `BinaryExpression(LOGICAL_AND/LOGICAL_OR, ...)`.
+  - **Calls.** Built-in function names are reserved, per the crate's D-9.
+  - **Text.** Printed text (`str`, `repr`, `pformat_expression`) follows
+    the Rust display conventions (`true`, `NaN`, `(a && b && c)`).
+  - **Errors.** Expression errors map onto Python exception classes through
+    `IntoPyErr`.
+- **D-S4-2: some Python names stay.** Where the meaning is the same, the
+  Python name stays: `BinaryOperation.MODULO`, `CallExpression.function_name`
+  as the callee's name, the node class names, and the visitor suffixes.
+- **D-S4-3: alpha renaming with binder frames moves to Rust.** The frame
+  stack and its capture rules from `term/alpha_equivalence.py` are ported to
+  Rust `AlphaRenaming`, with Rust tests. `RegisteredFunction` and `Param`
+  keep comparing under frames.
+- **D-S4-4: the function registry stays Python for now.** It is
+  `symbolic/expression/registry`, with runtime registration, until the
+  modules that own it are ported. The Rust Boolean-position screen reads it
+  through a `SortLookup` adapter in the binding.
+- **D-S4-5: payloads keep the `__type__`/`__data__` envelope,** because
+  Python containers embed expressions. The data inside follows the new
+  semantics, for example a `logical_expression` type id and normalized
+  literals. No reader for the old format is needed.
+- **D-S4-6: the pure-Python backend is retired right after S4.**
+  - The extension becomes mandatory.
+  - `FHY_CORE_NO_EXTENSIONS` and the backend parametrization of the nox
+    sessions go.
+  - The pure-Python implementations kept only for that backend are deleted:
+    the S2/S3 parity classes, the Python id counter, and the Python
+    expression core.
+
+  Modules not yet ported stay ordinary Python on top of the Rust types.
+
+### Steps
+
+1. **S4.1: expression benchmarks.** Add `benchmarks/test_expression.py`
+   and record a baseline on the current implementation.
+2. **S4.2: Rust core additions,** with Rust tests. These are the frame-based
+   `AlphaRenaming` and anything else the binding needs.
+3. **S4.3: switch expressions onto Rust.** Add the binding, the Python
+   module on the Rust backend, and the migration of the consumers and tests
+   to Rust semantics:
+   - the solver, type checker, `types/dispatch.py`,
+     `constraint/ordering.py`, and the sympy/z3/numpy/evaluator/inline
+     passes;
+   - the `mock_identifier` fixture, which becomes real `Identifier`s.
+
+   The Rust-backend suite must be green. The pure-Python backend is expected
+   to break for expression code from here until S4.4.
+4. **S4.4: retire the pure-Python backend** per D-S4-6, and update
+   CONTRIBUTING, the README, CI and nox.
+5. **Benchmarks after,** recorded here.
