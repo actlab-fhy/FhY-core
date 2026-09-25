@@ -28,7 +28,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [x] S4.3a: expressions on the Rust core with Rust semantics
 - [x] S4.3b: consumers migrated. On the Rust backend: the suite is green (6,960 passed), slow tests pass (7,008), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
 - [x] S4.4: retire the pure-Python backend. The suite is green (6,949 passed), slow tests pass (6,982), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
-- [ ] S5: patterns and rewrite rules (designed; N-S5-1 needs the user before S5.4)
+- [ ] S5: patterns and rewrite rules (designed; N-S5-1 resolved as (a))
   - [ ] S5.1: pattern benchmarks and baseline
   - [ ] S5.2: core additions, if any, with Rust tests
   - [ ] S5.3: the pattern binding
