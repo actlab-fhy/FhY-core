@@ -35,8 +35,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S5.4: the Python switch
   - [x] S5.5: pattern tests migrated, and the interface suite
   - [x] S5.6: benchmarks after, and docs
-- [ ] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers)
-  - S6 in progress: done S6.4 (the binding, `rust/fhy-core-py/src/pass/`), S6.5 (the Python switch) and S6.6 (the migrated tests and `test_pass_infrastructure_rust_binding.py`; the suite is green); next S6.7, the benchmarks after and the docs
+- [x] S6: pass infrastructure (`CompilerPass`, `Analysis`, `Validator`, managers). The suite is green (7,163 passed), slow tests pass (7,196), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,660)
   - [x] N-S6-1 to N-S6-3 decided (2026-09-25; see "S6 resolutions")
   - [x] S6.1: pass-infrastructure benchmarks and baseline
   - [x] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
@@ -44,7 +43,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S6.4: the pass binding
   - [x] S6.5: the Python switch
   - [x] S6.6: tests migrated, and the interface suite
-  - [ ] S6.7: benchmarks after, and docs
+  - [x] S6.7: benchmarks after, and docs
 - Leftovers:
   - [x] the `ValidationReport` construction cost (S6.3)
   - [ ] the unknown-provenance `str` cost
@@ -2970,8 +2969,8 @@ the interface test pins both.
 
 - **Status:** designed 2026-09-25 at 64598a2. D-S6-1 to D-S6-20 apply
   the policy the user already set, and N-S6-1 to N-S6-3 are decided (see
-  "S6 resolutions"). S6.1 to S6.3 are implemented (see "S6.1 to S6.3
-  status"); S6.4 onwards are not started.
+  "S6 resolutions"). S6.1 to S6.7 are implemented (see "S6.1 to S6.3
+  status" and "S6.4 to S6.7 status").
 - **Pattern:** P3 for `CompilerPass`, `Analysis` and `Validator`; P2 for
   the managers, `PassResult`, `PreservedAnalyses` and the records, as the
   slice table says.
@@ -4318,3 +4317,274 @@ Choices the plan left open, and where the shape differs from it:
   builders, which build the `Diagnostic` objects and then the tuple. So
   one representation serves both origins, and no Rust
   `ValidationReport` of Python records is needed.
+
+### S6.4 to S6.7 status
+
+S6.4 to S6.7 were implemented on 2026-09-25 in four commits: the binding
+(b4bb6ba); the Python switch, marked breaking (5f1a9aa); the migrated
+tests and the new interface suite (d9cf3b6); and the benchmarks and these
+notes, with the constructor-argument check moved into the Rust bases,
+which the benchmarks called for. No test was skipped or deleted. At the end: `pytest` 7,163 passed (the
+pass-infrastructure tests gained one in the rewrites, and the interface
+suite adds 108), `-m "not very_slow"` 7,196 passed, the `property` session
+280 passed, `lint` and `type_check` clean, `tests/test_rs_stub.py` green,
+and the Rust gate green (fmt, clippy `-D warnings`, 2,660 tests, doc
+`-D warnings`, deny, `cargo +1.85 check`).
+
+### S6 benchmarks (before and after)
+
+Median time per call, from `uv run --python 3.11 nox -s benchmark-3.11 --
+-k "test_pass_infrastructure or rewrite_rule_applier_execute or
+visitable_pass_walk or pformat_expression or validation_report"` on the S0
+machine with Python 3.11.13 and pytest-benchmark 5.3.0. "Before" is
+a308100, the last commit with the pure-Python pass infrastructure,
+exported with `git archive` under `target/`; "after" is the S6.7 tree. The
+two ran three times each, interleaved (before, then after, in each round),
+with a load average of 9 to 12, and the table lists the best of the three
+medians. The "before" column is 5 to 15% above the S6.1 table, which was
+measured at a load of about 1; the ratios compare runs under the same
+load.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_validation_report_construction` | 641 ns | 486 ns | 0.76 |
+| `test_validation_report_build_of_100_diagnostics` | 88.5 µs | 88.3 µs | 1.00 |
+| `test_validation_report_eq` | 1.9 µs | 2.1 µs | 1.12 |
+| `test_validation_report_format` | 3.9 µs | 3.8 µs | 0.98 |
+| `test_validation_report_errors` | 945 ns | 959 ns | 1.01 |
+| `test_validation_report_has_errors` | 65 ns | 64 ns | 0.99 |
+| `test_pformat_expression_of_deep_tree[symbolic]` | 9.6 µs | 9.7 µs | 1.01 |
+| `test_pformat_expression_of_deep_tree[functional]` | 8.5 µs | 8.7 µs | 1.02 |
+| `test_pformat_expression_of_deep_tree[show_id]` | 11.2 µs | 11.5 µs | 1.02 |
+| `test_visitable_pass_walk_of_deep_tree` | 303.5 µs | 285.2 µs | 0.94 |
+| `test_compiler_pass_execute` | 12.2 µs | 2.9 µs | 0.24 |
+| `test_compiler_pass_call` | 12.5 µs | 2.2 µs | 0.18 |
+| `test_compiler_pass_execute_with_every_hook_overridden` | 11.9 µs | 4.1 µs | 0.35 |
+| `test_compiler_pass_execute_skipped` | 7.4 µs | 2.8 µs | 0.37 |
+| `test_compiler_pass_execute_failing` | 158.4 µs | 51.1 µs | 0.32 |
+| `test_compiler_pass_report_of_100_diagnostics` | 1.66 ms | 1.70 ms | 1.03 |
+| `test_compiler_pass_create` | 542 ns | 546 ns | 1.01 |
+| `test_pass_manager_run_of_5_passes` | 382.6 µs | 26.6 µs | 0.07 |
+| `test_pass_manager_run_of_50_passes` | 3.73 ms | 212.8 µs | 0.06 |
+| `test_pass_manager_fixpoint_group_of_10_iterations` | 760.1 µs | 48.8 µs | 0.06 |
+| `test_pass_manager_run_with_verification` | 484.1 µs | 34.1 µs | 0.07 |
+| `test_analysis_manager_cache_hit` | 9.8 µs | 778 ns | 0.08 |
+| `test_analysis_preserved_across_5_passes` | 420.9 µs | 34.1 µs | 0.08 |
+| `test_validation_manager_validate_of_10_validators` | 329.9 µs | 147.0 µs | 0.45 |
+| `test_run_verification` | 30.5 µs | 12.5 µs | 0.41 |
+| `test_mixed_pipeline_over_a_deep_expression` | 561.2 µs | 309.1 µs | 0.55 |
+| `test_rewrite_rule_applier_execute_of_a_deep_tree` | 245.6 µs | 232.2 µs | 0.95 |
+
+Every pass-infrastructure hot path is faster or unchanged, so P3 and P2
+stand and no path changes pattern (cross-cutting rule 5):
+
+- **One pass.** The lifecycle's floor drops from 12.2 to 2.9 µs (`__call__`
+  2.2 µs): the hooks a class does not override run in Rust, so an
+  identity pass makes one Python call, to `run_pass`. With all seven hooks
+  in Python a run takes 4.1 µs, about 0.2 µs per hook. A skipped run takes
+  2.8 µs, and a failing one 51 µs, a third of before; the rest is the
+  failure's logging with its traceback.
+- **Pipelines** are 13 to 17 times faster: about 4.3 µs per pass instead
+  of 75 µs. The per-run cost is the Rust pipeline and its adapters built
+  from the current items (D-S6-11), the records built once through their
+  public classes, and the registry verifier's lookup of
+  `VerificationRegistry.get_passes_for` for the input and each changed
+  output. Verification adds 7.5 µs over the five passes, where it added
+  100 µs.
+- **Analyses.** A cache hit costs 0.78 µs instead of 9.8 µs, and the
+  preserving pipeline 34 µs instead of 421 µs.
+- **Validation** is 2.2 to 2.4 times faster; each validator's cost is now
+  mostly its Python `visit` and the log lines of the report.
+- **Expressions.** The mixed pipeline is 1.8 times faster; the applier
+  alone is unchanged within noise, since its walk was already Rust (S5),
+  and so are the visitor walk and the formatter rows, which are Python.
+- **Unchanged rows.** The `ValidationReport` rows run code S6 does not
+  change; their ratios of 0.76 to 1.12 are the noise of this load, as
+  the reruns show (the first set of rounds had 0.96 to 1.00).
+
+Two rows needed a second look:
+
+- **`test_compiler_pass_create`** came out at 1.44 in a first set of
+  rounds: 761 against 530 ns. The cost was structural and in the Python
+  layer: `CompilerPass.__init__`, kept so a pass refuses constructor
+  arguments it does not take, added a Python frame and a `super()` call,
+  about 160 ns, to every construction. The check moved into the Rust
+  bases' `__new__`, which runs it only when arguments are given (and
+  then raises `X() takes no arguments`, as `object` does), and
+  `CompilerPass`, `Analysis` and `Validator` define no `__init__`.
+  Construction dropped from 280 to 114 ns, and the row to 1.01; the table
+  is the second set of rounds.
+- **`test_compiler_pass_report_of_100_diagnostics`** is 1.01 and 1.03 in
+  the two sets, so about 2% slower, within the noise of this load but
+  consistently on the slow side. A reported diagnostic now also crosses
+  into Rust twice: once to record it in the hook's frame, and once, when
+  the run ends, to be found again in the run's scope by value (D-S6-18).
+  Outside pytest's log capture, which costs about 15 µs per diagnostic in
+  both columns, that is about 0.3 µs per diagnostic of 3 µs. This is
+  recorded as an accepted cost (cross-cutting rule 5): the per-diagnostic
+  cost is the log capture's, and the only way to remove the lookup would
+  be position-keyed tables, which the notes below explain the adapter
+  cannot build reliably.
+
+### S6.4 to S6.7 implementation notes
+
+Choices the decisions left open, made while implementing S6.4 to S6.7,
+and where the shape differs from the plan:
+
+- **Module layout.** `rust/fhy-core-py/src/pass.rs`, with `ir.rs`
+  (`PyIr`), `scope.rs` (the state of one run), `context.rs` (the hook
+  frames and the `AnalysisManager` view), `compiler_pass.rs`
+  (`CompilerPassBase` and the Python-pass adapter), `analysis.rs`
+  (`AnalysisBase`, `PreservedAnalyses`), `validation.rs` (`ValidatorBase`,
+  `ValidationManager`, the validators the binding runs), `manager.rs`
+  (`PassManager`, `FixpointPassGroup`), `records.rs` (`PassResult` and the
+  records, through one macro), `error.rs` and `convert.rs`. There is no
+  `native.rs`: no pass became native (see below). The records share
+  `diagnostic.rs`'s new builders, `diagnostic_to_python` and
+  `report_to_python`.
+- **The hook table** is `CompilerPass._python_hooks`, a bit mask that
+  `CompilerPass.__init_subclass__` computes once per class from the class
+  that defines each hook with a default (`validate_input`, `should_run`,
+  `validate_output`, `did_change`, `get_preserved_analyses`,
+  `get_pass_name`). The adapter reads it once per run and runs the
+  defaults of the unset bits in Rust. A hook assigned to a class after it
+  was created, or to an instance, is not seen; no code in `src` or
+  `tests` does either. `get_noop_output` has no bit: it is called only on
+  a skip, where calling Python is required anyway.
+- **The owned context** is a frame on a thread-local stack, found by the
+  pass object's address, rather than an object bound to the instance.
+  So a pass that runs itself inside its own hook, and one pass object run
+  from two threads, each see their own frame. A frame holds the detached
+  analysis handle of S6.2, which is therefore kept, and the diagnostics
+  its hook reported; it expires when the hook returns, and an
+  `AnalysisManager` view kept past that raises. `get_analysis_manager`
+  raises in `did_change` and `get_preserved_analyses` too, as `report`
+  and `get_analysis` do.
+- **Diagnostics that come back as themselves** (D-S6-18) are found by
+  value, not by position. The run's scope keeps each object a hook
+  reported under the hash of its Rust diagnostic, in report order, and a
+  conversion takes the first equal one. The plan's positions would need
+  the adapter to know which core record a context becomes, which it does
+  not, and a verifier's contexts are discarded when verification passes.
+  The only difference: a diagnostic the core made that is equal to one a
+  hook reported in the same run could come back as that equal object.
+- **Failure texts name the Python hook everywhere.** The resolution
+  amended the error message; the binding also rewrites the core's
+  failure diagnostic, the last one of a hook failure, to the same
+  wording, `pass "X" failed in run_pass: ValueError: boom`, and renders a
+  nested chain with Python names at every level. A pass run as a check
+  (in a validation or as a verification pass) runs through the binding's
+  own four-hook sequence, the one the core's `PassValidator` runs, so it
+  writes its failure diagnostic with the Python hook's name. A failing
+  `Validator` gets the core's synthesized text, logged by the binding
+  with the exception.
+- **Nested errors** (N-S6-2). An exception the binding raises keeps its
+  Rust `PassError` in a private `_rust_error` cell, which its pickles
+  leave out. When it propagates out of a lifecycle hook, the adapter
+  takes the error out and returns it, so the core builds `Nested`, and
+  the run's scope keeps the exception to become the outer `__cause__`.
+  In a validation a nested error does not nest; its chain goes into the
+  failure text.
+- **Exceptions that are not `Exception`s** (`KeyboardInterrupt`) are
+  recorded in the run's scope; later hooks of that run call no Python, and
+  the run's boundary raises the exception itself, also from a validation,
+  whose collect-all loop would otherwise go on.
+- **Analysis results** are cached as a cell per analysis id and node, which
+  the binding fills after the Python analysis returns, so an analysis
+  that raises caches nothing and runs again on the next request. The
+  cacheability check reads `Frozen`'s members (`freeze`, `assert_frozen`,
+  a true `is_frozen`) instead of the runtime protocol's slow `isinstance`.
+- **The default verifier** is one validator, named `verification`, that
+  runs a new instance of each registered verification pass as a check,
+  so a verification error's report has one `ValidatorRecord`.
+  `VerificationAnalysis` and `run_verification` still build a
+  `ValidationManager` with one record per pass.
+- **Logging.** The pipeline's per-item DEBUG lines and a group's INFO
+  line are written from the records after the run, since the core has no
+  hooks for them; the per-pass line gains `skipped=`, the group's loses its
+  elapsed time, and their `funcName` is the logging helper's. A
+  non-convergence is logged at ERROR where the pipeline raises it. The
+  binding logs through `core._log_diagnostic` and `core._lifecycle_logger`,
+  and logs a pass's lifecycle lines only when its logger is enabled for
+  DEBUG.
+- **Stricter arguments**, beyond D-S6-15's list: the records check their
+  fields (a `bool` for `changed`, `skipped`, `converged` and `failed`,
+  `Diagnostic`s, a `PreservedAnalyses`, an `Identifier` group name, an
+  `int` iteration); the pipelines' names must be `Identifier`s; a
+  `Validator`'s `name` must be a `str`; `PassValidationError` and
+  `PassExecutionError` gain the keyword arguments `pass_name`, `hook`,
+  `diagnostics` and `records`.
+- **Smaller shapes.** `skipped` is the last positional-or-keyword
+  parameter of `PassResult` and `PassRunRecord`, so a pickle is a plain
+  call. A `FixpointGroupRecord`'s `group_name` is the group's own
+  `Identifier` object, and a preserved set that crossed the core rebuilds
+  its Python identifiers from its ids (equal, not identical).
+  `AnalysisManager` is `_rs.AnalysisManager` itself, without a public
+  subclass. A pass, an analysis or a validator whose class defines no
+  `__init__` still refuses constructor arguments, through its Rust base's
+  `__new__` (see the benchmarks). The name is read once
+  per run; the description is never read, since the core uses it only in
+  its registry. `ValidatorBase` keeps no diagnostics, so a `Validator`'s
+  `report` outside a check is only logged.
+- **No native pass** (D-S6-14 as N-S6-3 amends it). `RewriteRuleApplier`
+  stays a Python `CompilerPass` whose `run_pass` calls the Rust walk: the
+  adapter's floor is about 3 µs of the applier's 220 µs run over the deep
+  tree, so a native holder, with its Expression adapter and output
+  materializer, would not be worth its code. `ExpressionPrettyFormatter`
+  stays a Python `VisitablePass`, as N-S6-3 decided.
+
+Tests migrated in S6.6 (`test_core.py` is `C`, `test_manager.py` `M`,
+`test_validation.py` `V`, `test_verification.py` `F`). Every other test
+of the seven files kept its name; the six wrap tests of `C`, the two
+`test_visitable.py` error tests, and the 22 consumer checks that matched
+the cause in the message (in `test_evaluator.py`, `test_inline_pass.py`,
+`test_sympy_pass.py`, `test_sympy_natives.py`, `test_z3_pass.py` and
+`test_numpy_evaluator.py`) now assert on the core's message, `hook` and
+`__cause__` (D-S6-6). None was skipped or deleted; `F` gained one test.
+
+| Test | Now | Reason |
+|---|---|---|
+| C `test_compiler_pass_executes_and_tracks_stats` | `test_compiler_pass_executes_and_reports_run_statistics` | N-S6-1: `PassResult.skipped` |
+| C `test_compiler_pass_rejects_none_input` | `test_compiler_pass_accepts_none_input_unless_an_override_refuses_it` | D-S6-3 |
+| C `test_compiler_pass_skip_path_uses_noop_output` | same name | N-S6-1: `skipped` instead of the counters |
+| C `test_explicit_pass_{validation,execution}_error_passes_through_unchanged` (2) | `..._is_wrapped_as_a_hook_failure` | N-S6-2 |
+| C `test_run_counter_counts_only_real_executions` | `test_run_statistics_count_only_real_executions` | N-S6-1: `skipped`, `run_count()` |
+| C `test_run_counter_counts_attempts_even_when_run_pass_raises` | `test_failed_run_has_no_record_but_the_completed_work_does` | N-S6-1: a failed run has no record; the error carries the earlier ones |
+| C `test_execute_emits_lifecycle_debug` | same name | D-S6-5: the new entering line |
+| M `test_pass_manager_applies_analysis_preservation_and_invalidation`, `test_analysis_manager_does_not_cache_non_frozen_ir`, `test_analysis_manager_does_not_block_ir_from_garbage_collection` | same names | D-S6-8: observed inside a run; release after the run |
+| M `test_bind_and_get_analysis_manager_are_public_accessors` | `test_get_analysis_manager_is_the_hook_view_of_the_run_cache` | D-S6-8 |
+| M `test_analysis_manager_falls_back_when_weakref_finalize_raises` | `test_analysis_of_ir_that_is_not_frozen_yet_is_computed_uncached` | D-S6-8: no weakrefs; uncacheable IR |
+| M `test_analysis_manager_clear_drops_cached_entries` | `test_each_run_starts_with_an_empty_cache` | D-S6-8 |
+| M `test_analysis_manager_invalidate_with_none_drops_everything` | `test_pass_returning_its_input_keeps_every_result_even_when_preserving_none` | W-12: merge-only |
+| M `test_analysis_manager_invalidate_with_preserve_all_keeps_everything` | `test_pass_returning_its_input_and_preserving_all_keeps_every_result` | D-S6-8 |
+| M `test_analysis_manager_invalidate_keeps_only_preserved_entries` | `test_changing_pass_carries_only_its_preserved_results` | D-S6-8 |
+| M `test_analysis_manager_transfer_moves_preserved_entries` | `test_changing_pass_preserving_all_carries_every_result` | D-S6-8 |
+| M `test_analysis_manager_transfer_drops_when_not_preserved` | `test_changing_pass_preserving_none_carries_no_result` | D-S6-8 |
+| M `test_bind_analysis_manager_rejects_none` | `test_get_analysis_manager_raises_in_a_hook_without_a_context` | D-S6-4, D-S6-8 |
+| M `test_unbind_analysis_manager_clears_binding` | `test_retained_analysis_manager_raises_after_its_hook` | D-S6-8 |
+| M `test_unbind_analysis_manager_is_idempotent` | `test_get_analysis_manager_is_none_outside_a_run` | D-S6-8 |
+| M `test_analysis_manager_get_is_safe_under_concurrent_callers` | `test_concurrent_runs_of_one_pipeline_are_independent` | D-S6-11 |
+| M `test_analysis_manager_survives_concurrent_get_and_gc_eviction` (slow) | `test_concurrent_runs_survive_garbage_collection_of_their_ir` | D-S6-8, D-S6-11 |
+| M `test_analysis_manager_logs_cache_hit_and_miss` | `test_analysis_cache_logs_no_hit_or_miss_lines` | D-S6-5 |
+| M `test_pass_manager_configuration_is_read_only` | same name | D-S6-8: no `analysis_manager` half |
+| M `test_fixpoint_convergence_logs_info` | same name | the line no longer comes from `_run_fixpoint_group` |
+| M `test_pass_manager_fixpoint_group_raises_on_non_convergence`, `test_pass_run_record_stores_preserved_analyses_directly` | same names | the core's text and records; `skipped` |
+| V `test_validation_manager_synthesizes_error_when_pass_raises_without_reporting` | `test_validation_manager_reports_the_failure_of_a_validation_hook` | D-S6-3, D-S6-13 |
+| V `test_validation_manager_record_reports_no_changes_and_preserves_all` | `test_validation_manager_record_holds_the_validators_slice_of_the_report` | D-S6-13: `ValidatorRecord` |
+| V `test_validation_manager_synthesizes_balanced_quotes_around_exception_type` | `test_validation_manager_reports_silent_failures_with_the_cores_text` | D-S6-13 |
+| V three tests reading `pass_name` of a record | same names | `validator_name` |
+| F `test_register_verification_disables_auto_verify_on_decorated_class` | `test_register_verification_leaves_the_class_a_pass_that_never_verifies` | D-S6-12: `_auto_verify` gone |
+| F `test_auto_verify_default_is_true_on_compiler_pass` | `test_standalone_execute_never_verifies` | D-S6-12 |
+| F `test_auto_verify_pre_raises_...`, `test_auto_verify_post_raises_...` | `test_pipeline_raises_pass_validation_error_when_its_input_is_malformed`, `test_pipeline_raises_when_a_pass_produces_malformed_output` | D-S6-12: pipeline input and output checks |
+| F `test_auto_verify_false_on_pass_class_disables_pre_and_post` | `test_set_verifier_none_disables_input_and_output_verification` | D-S6-12 |
+| F `test_verification_pass_does_not_recurse_into_auto_verify` | `test_verification_pass_does_not_recurse_into_verification` | D-S6-12 |
+| F `test_auto_verify_uses_analysis_manager_cache_across_passes` | `test_pipeline_verifies_its_input_once_and_no_unchanged_output`, and new `test_pipeline_verifies_a_changed_output_again` | R-6 |
+| F `test_auto_verify_recomputes_when_pass_changes_ir`, `test_auto_verify_is_silent_when_no_passes_registered_for_ir_type`, `test_pass_manager_surfaces_auto_verify_failure_to_caller` | `test_pipeline_verifies_the_output_of_a_changing_pass`, `test_pipeline_verification_is_silent_when_no_passes_registered_for_ir_type`, `test_pass_manager_surfaces_verification_failure_to_caller` | D-S6-12: renamed, the last two now run a pipeline |
+| F `test_pass_manager_continues_when_pass_disables_auto_verify` | `test_pass_manager_continues_with_a_verifier_that_finds_nothing` | D-S6-12: `set_verifier` |
+| F `test_registry_mutation_between_passes_does_not_invalidate_cached_results`, `test_verification_analysis_cache_does_not_pin_ir` | same names | D-S6-8: inside runs |
+| F `test_user_story_pipeline_blames_pass_that_produced_invalid_ir` | same name | the core's text, the blamed pass and the records |
+
+The new `tests/pass_infrastructure/test_pass_infrastructure_rust_binding.py`
+(108 tests) covers the test plan above, except its native-pass items,
+since no pass became native: it pins that `RewriteRuleApplier` runs in a
+pipeline and keeps its input object when nothing fires.
