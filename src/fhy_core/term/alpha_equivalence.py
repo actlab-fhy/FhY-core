@@ -302,15 +302,16 @@ class AlphaRenaming:
             renaming, ``False`` otherwise.
 
         """
-        other_captured = False
+        # The innermost frame that binds either identifier decides: a frame
+        # binding ``other_identifier`` (as an image) inside the one binding
+        # ``self_identifier`` captures it, so the two refer to different
+        # binders.
         for frame in reversed(self._frames):
             if self_identifier in frame:
                 return frame[self_identifier] == other_identifier
             if other_identifier in frame.values():
-                other_captured = True
-        if other_captured:
-            return False
-        elif self_identifier in self._free_renaming:
+                return False
+        if self_identifier in self._free_renaming:
             return self._free_renaming[self_identifier] == other_identifier
         elif other_identifier in self._free_renaming.values():
             return False
