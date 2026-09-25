@@ -39,13 +39,13 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] N-S6-1 to N-S6-3 decided (2026-09-25; see "S6 resolutions")
   - [x] S6.1: pass-infrastructure benchmarks and baseline
   - [x] S6.2: core additions, with Rust tests (`NodeIdentity::of_ptr`, analysis ids from an `Identifier`, the detached analysis cache)
-  - [ ] S6.3: the `ValidationReport` representation (D-S6-17)
+  - [x] S6.3: the `ValidationReport` representation (D-S6-17)
   - [ ] S6.4: the pass binding
   - [ ] S6.5: the Python switch
   - [ ] S6.6: tests migrated, and the interface suite
   - [ ] S6.7: benchmarks after, and docs
 - Leftovers:
-  - [ ] the `ValidationReport` construction cost (S6)
+  - [x] the `ValidationReport` construction cost (S6.3)
   - [ ] the unknown-provenance `str` cost
   - [ ] Windows paths
   - [x] mypy over the Rust branches (S4.4)
@@ -4105,3 +4105,67 @@ and the table lists the best of three runs' medians.
   Validation costs 30 µs per validator.
 - **The rest.** A cache hit costs 8.7 µs. The expression pipeline takes
   500 µs, of which the applier is about 220 µs.
+
+### S6.3 benchmarks: the `ValidationReport` representation (before and after)
+
+D-S6-17 is implemented as planned: the `_rs.ValidationReport` pyclass keeps
+the diagnostic and record tuples and drops the `ValidationReport<Py<PyAny>>`
+beside them. Construction checks that each item is a `Diagnostic`.
+`errors()`, `warnings()`, `infos()`, `has_errors()`, `format()`,
+`raise_if_failed()`, `==` and `hash` walk the diagnostic tuple through
+borrowed references. Each borrows the Rust `Diagnostic` from its frozen
+pyclass, which costs one type check per item and no clone. The Python API, the reprs, the text and the pickles are unchanged,
+and no test changed.
+
+Median time per call, from `uv run --python 3.11 nox -s benchmark-3.11 --
+-k "validation_report or run_verification or validation_manager or
+diagnostic"` on the S0 machine with Python 3.11.13 and pytest-benchmark
+5.3.0. "Before" is 7f2a554, exported with `git archive` under `target/`;
+"after" is the S6.3 commit. The two ran three times each, interleaved
+(before, then after, in each round), with a load average of about 2, and
+the table lists the best of the three medians. The dataclass column is
+the "python after" column of the S3a table: the retired pure-Python
+dataclass, measured on 40eaa23 under a heavier load. The `Note` and `Diagnostic` rows, whose code S6.3 does not change,
+came out within 4% of 1.00.
+
+| Benchmark | dataclass (S3a) | before | after | after / before |
+|---|--:|--:|--:|--:|
+| `test_validation_report_construction` | 999 ns | 14.1 µs | 469 ns | 0.03 |
+| `test_validation_report_build_of_100_diagnostics` | 367 µs | 93.0 µs | 80.9 µs | 0.87 |
+| `test_validation_report_eq` | 31.7 µs | 982 ns | 1.75 µs | 1.78 |
+| `test_validation_report_format` | 44.2 µs | 3.11 µs | 3.46 µs | 1.11 |
+| `test_validation_report_errors` | 10.1 µs | 509 ns | 857 ns | 1.68 |
+| `test_validation_report_has_errors` | 459 ns | 53 ns | 58 ns | 1.10 |
+| `test_compiler_pass_report_of_100_diagnostics` | - | 1.53 ms | 1.53 ms | 1.00 |
+| `test_validation_manager_validate_of_10_validators` | - | 306.0 µs | 305.2 µs | 1.00 |
+| `test_run_verification` | - | 27.7 µs | 27.7 µs | 1.00 |
+
+The S3a leftover is resolved. Building a report from 100 existing
+diagnostics drops from 14.1 µs to 469 ns, half the dataclass's 1 µs, and
+building 100 diagnostics together with their report gets 13% faster.
+
+The planned "other operations keep their S3a speed" held only in part:
+
+- `has_errors()` stops at the first error, and `format()` is dominated by
+  the text, so they stay within 11%.
+- `==` of two reports of 100 distinct diagnostics goes from 0.98 to
+  1.75 µs, and `errors()` from 0.51 to 0.86 µs. The type check costs about
+  4 ns per item: `==` makes two per pair, and `errors()` one per item on
+  top of building its tuple. Both stay 12 to 18 times faster than the
+  dataclass.
+
+This is recorded as an accepted cost (cross-cutting rule 5), since the
+alternative measured worse overall. That alternative kept, beside the
+tuple, a boxed slice of `Py<Diagnostic>` handles, typed once at
+construction:
+
+- `==`, `format()` and `errors()` came out at 1.01, 3.10 and 0.42 µs,
+  with `has_errors()` unchanged.
+- Construction took 1.39 µs, more than the dataclass, for the handles'
+  allocation and reference counts.
+
+A report is usually built once and asked once or twice, as
+`raise_if_failed()` and the verification path do. Construction plus one
+`errors()` then costs 1.33 µs with the tuples alone and 1.81 µs with the
+handles. The handles would also be a second list of the same diagnostics,
+which D-S6-17 set out to avoid.

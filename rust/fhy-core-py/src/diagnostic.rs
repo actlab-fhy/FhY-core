@@ -3,9 +3,10 @@
 //! the same names in `fhy_core.diagnostic` (pattern P2).
 //!
 //! Each class wraps the Rust value. `DiagnosticLevel` stays a Python enum
-//! (pattern P1) and converts by value at the boundary. A report holds
-//! arbitrary Python objects as its records, so its class wraps a
-//! `ValidationReport<Py<PyAny>>`.
+//! (pattern P1) and converts by value at the boundary. A report keeps the
+//! tuples of `Diagnostic` objects and records it was built from, and runs
+//! its operations over the Rust diagnostics borrowed from those objects,
+//! as the core's `ValidationReport` does over its own.
 //!
 //! The Python API is the one the retired pure-Python dataclasses had, with
 //! their reprs, their `format()` text, their payloads and their exceptions:
@@ -22,7 +23,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
-use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationReport};
+use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind};
 use fhy_core::interned::Canonical;
 
 use crate::dataclass::{
@@ -480,47 +481,45 @@ fn validation_failed_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>>
     CLASS.import(py, MODULE, "ValidationFailedError")
 }
 
-/// Render the diagnostics as `format()` does: one `[LEVEL] source:
-/// message` line each, followed by an indented `detail:` line when the
-/// detail is non-empty, or the placeholder for no diagnostics.
+/// Append `diagnostic` to `text` as `format()` renders it: a `[LEVEL]
+/// source: message` line, followed by an indented `detail:` line when the
+/// detail is non-empty.
 ///
 /// Matches the Python implementation: `ValidationReport.format`.
-fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
-    if diagnostics.is_empty() {
-        return NO_DIAGNOSTICS_TEXT.to_owned();
+fn format_diagnostic(text: &mut String, diagnostic: &Diagnostic) {
+    text.push('[');
+    text.extend(
+        diagnostic
+            .level()
+            .as_str()
+            .chars()
+            .map(|character| character.to_ascii_uppercase()),
+    );
+    text.push_str("] ");
+    text.push_str(diagnostic.source());
+    text.push_str(": ");
+    text.push_str(diagnostic.message_text());
+    if let Some(detail) = diagnostic.detail().filter(|detail| !detail.is_empty()) {
+        text.push_str("\n    detail: ");
+        text.push_str(detail);
     }
-    let mut text = String::new();
-    for (index, diagnostic) in diagnostics.iter().enumerate() {
-        if index > 0 {
-            text.push('\n');
-        }
-        text.push('[');
-        text.extend(
-            diagnostic
-                .level()
-                .as_str()
-                .chars()
-                .map(|character| character.to_ascii_uppercase()),
-        );
-        text.push_str("] ");
-        text.push_str(diagnostic.source());
-        text.push_str(": ");
-        text.push_str(diagnostic.message_text());
-        if let Some(detail) = diagnostic.detail().filter(|detail| !detail.is_empty()) {
-            text.push_str("\n    detail: ");
-            text.push_str(detail);
-        }
-    }
-    text
 }
 
-/// Aggregated diagnostics plus per-source execution records, backed by a
-/// Rust [`ValidationReport`] over Python records.
+/// Return the Rust diagnostic of `diagnostic`, a `Diagnostic` object,
+/// borrowed from it.
+fn borrow_diagnostic<'a>(diagnostic: Borrowed<'a, '_, PyAny>) -> PyResult<&'a Diagnostic> {
+    Ok(&diagnostic.cast::<PyDiagnostic>()?.get().diagnostic)
+}
+
+/// Aggregated diagnostics plus per-source execution records.
+///
+/// The report keeps the tuples it was built from. Its operations run over
+/// the Rust [`Diagnostic`] each diagnostic object holds, borrowed rather
+/// than copied, so building a report costs a type check per diagnostic.
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "ValidationReport")]
 pub(crate) struct PyValidationReport {
-    report: ValidationReport<Py<PyAny>>,
-    /// The Python objects of the diagnostics, in the report's order: the
-    /// `Diagnostic`s the report was built from.
+    /// The diagnostics, in the report's order: the `Diagnostic`s the report
+    /// was built from.
     #[pyo3(get)]
     diagnostics: Py<PyTuple>,
     /// The records, as given.
@@ -535,22 +534,47 @@ impl PyValidationReport {
         &PUBLIC_CLASS
     }
 
-    /// Return the Python objects of the diagnostics at `level`, in order.
+    /// Return the diagnostic objects at `level`, in order.
     fn filter_level<'py>(
         &self,
         py: Python<'py>,
         level: DiagnosticLevel,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let diagnostics = self.diagnostics.bind(py);
-        let selected = self
-            .report
-            .diagnostics()
-            .iter()
-            .enumerate()
-            .filter(|(_, diagnostic)| diagnostic.level() == level)
-            .map(|(index, _)| diagnostics.get_item(index))
-            .collect::<PyResult<Vec<_>>>()?;
+        let mut selected = Vec::new();
+        for diagnostic in self.diagnostics.bind(py).iter_borrowed() {
+            if borrow_diagnostic(diagnostic)?.level() == level {
+                selected.push(diagnostic);
+            }
+        }
         PyTuple::new(py, selected)
+    }
+
+    /// Return whether at least one diagnostic is an error.
+    fn contains_errors(&self, py: Python<'_>) -> PyResult<bool> {
+        for diagnostic in self.diagnostics.bind(py).iter_borrowed() {
+            if borrow_diagnostic(diagnostic)?.level() == DiagnosticLevel::Error {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Return whether both reports hold equal diagnostics, in order.
+    fn has_equal_diagnostics(&self, py: Python<'_>, other: &Self) -> PyResult<bool> {
+        let diagnostics = self.diagnostics.bind(py);
+        let other_diagnostics = other.diagnostics.bind(py);
+        if diagnostics.len() != other_diagnostics.len() {
+            return Ok(false);
+        }
+        for (diagnostic, other_diagnostic) in diagnostics
+            .iter_borrowed()
+            .zip(other_diagnostics.iter_borrowed())
+        {
+            if borrow_diagnostic(diagnostic)? != borrow_diagnostic(other_diagnostic)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -577,21 +601,17 @@ impl PyValidationReport {
         };
         let diagnostics = read_tuple(diagnostics)?;
         let records = read_tuple(records)?;
-        let rust_diagnostics = diagnostics
-            .iter()
-            .map(|diagnostic| match diagnostic.cast::<PyDiagnostic>() {
-                Ok(diagnostic) => Ok(diagnostic.get().diagnostic.clone()),
-                Err(_not_a_diagnostic) => Err(build_argument_type_error(
+        for diagnostic in diagnostics.iter_borrowed() {
+            if !diagnostic.is_instance_of::<PyDiagnostic>() {
+                return Err(build_argument_type_error(
                     "ValidationReport",
                     "diagnostics",
                     "Diagnostic instances",
                     &diagnostic,
-                )?),
-            })
-            .collect::<PyResult<_>>()?;
-        let rust_records = records.iter().map(Bound::unbind).collect();
+                )?);
+            }
+        }
         Ok(Self {
-            report: ValidationReport::new(rust_diagnostics, rust_records),
             diagnostics: diagnostics.unbind(),
             records: records.unbind(),
         })
@@ -613,19 +633,35 @@ impl PyValidationReport {
     }
 
     /// Return whether at least one ERROR-level diagnostic is present.
-    fn has_errors(&self) -> bool {
-        self.report.has_errors()
+    fn has_errors(&self, py: Python<'_>) -> PyResult<bool> {
+        self.contains_errors(py)
     }
 
-    /// Return a human-readable rendering of every diagnostic.
-    fn format(&self) -> String {
-        format_diagnostics(self.report.diagnostics())
+    /// Return a human-readable rendering of every diagnostic: one
+    /// `[LEVEL] source: message` line each, followed by an indented
+    /// `detail:` line when the detail is non-empty, or a placeholder for
+    /// no diagnostics.
+    ///
+    /// Matches the Python implementation: `ValidationReport.format`.
+    fn format(&self, py: Python<'_>) -> PyResult<String> {
+        let diagnostics = self.diagnostics.bind(py);
+        if diagnostics.is_empty() {
+            return Ok(NO_DIAGNOSTICS_TEXT.to_owned());
+        }
+        let mut text = String::new();
+        for (index, diagnostic) in diagnostics.iter_borrowed().enumerate() {
+            if index > 0 {
+                text.push('\n');
+            }
+            format_diagnostic(&mut text, borrow_diagnostic(diagnostic)?);
+        }
+        Ok(text)
     }
 
     /// Raise `ValidationFailedError`, carrying this report, if any ERROR
     /// diagnostics exist.
     fn raise_if_failed(slf: &Bound<'_, Self>) -> PyResult<()> {
-        if !slf.get().report.has_errors() {
+        if !slf.get().contains_errors(slf.py())? {
             return Ok(());
         }
         let error = validation_failed_error_class(slf.py())?.call1((slf,))?;
@@ -650,7 +686,7 @@ impl PyValidationReport {
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         compare_as_dataclass(slf, other, |this, other| {
-            Ok(this.report.diagnostics() == other.report.diagnostics()
+            Ok(this.has_equal_diagnostics(py, other)?
                 && this.records.bind(py).eq(other.records.bind(py))?)
         })
     }
@@ -659,7 +695,11 @@ impl PyValidationReport {
     /// is unhashable.
     fn __hash__(&self, py: Python<'_>) -> PyResult<u64> {
         let mut hasher = DefaultHasher::new();
-        self.report.diagnostics().hash(&mut hasher);
+        let diagnostics = self.diagnostics.bind(py);
+        hasher.write_usize(diagnostics.len());
+        for diagnostic in diagnostics.iter_borrowed() {
+            borrow_diagnostic(diagnostic)?.hash(&mut hasher);
+        }
         self.records.bind(py).hash()?.hash(&mut hasher);
         Ok(hasher.finish())
     }
