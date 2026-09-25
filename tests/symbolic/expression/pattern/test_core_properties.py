@@ -26,6 +26,7 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
 )
@@ -34,6 +35,7 @@ from fhy_core.symbolic.expression.pattern import (
     CallExpressionPattern,
     CapturePattern,
     LiteralPattern,
+    LogicalExpressionPattern,
     Pattern,
     PiecewiseExpressionPattern,
     UnaryExpressionPattern,
@@ -50,10 +52,10 @@ pytestmark = pytest.mark.property
 _POOL = build_identifier_pool(3)
 _STRUCTURAL_MAX_LEAVES = 6
 
-# A decimal-string value longer than `build_decimal_string_value_strategy`'s
+# A decimal value longer than `build_decimal_string_value_strategy`'s
 # 4-digit-per-part limit, so it can never equal a literal
-# `build_structural_expression_strategy` generates; `LiteralPattern` compares
-# by exact stored value and type, not by equivalence class, so this is
+# `build_structural_expression_strategy` generates; `LiteralPattern` matches
+# exactly the literals equal to `LiteralExpression(value)`, so this is
 # genuinely "a literal not in e's alphabet" rather than merely an unlikely
 # draw.
 _LITERAL_NOT_IN_ALPHABET = LiteralPattern(value="99999.99999")
@@ -67,9 +69,9 @@ def build_mirroring_pattern(
     Every leaf (a ``LiteralExpression`` or an ``IdentifierExpression``,
     identified here as any node with no visit children) becomes a
     uniquely-named ``CapturePattern(WildcardPattern())``; every
-    ``UnaryExpression``, ``BinaryExpression``, ``CallExpression``, and
-    ``PiecewiseExpression`` node becomes the matching ``*Pattern`` over
-    mirrored children.
+    ``UnaryExpression``, ``BinaryExpression``, ``LogicalExpression``,
+    ``CallExpression``, and ``PiecewiseExpression`` node becomes the
+    matching ``*Pattern`` over mirrored children.
 
     Args:
         expression: Expression tree to mirror.
@@ -88,6 +90,10 @@ def build_mirroring_pattern(
         if isinstance(node, BinaryExpression):
             return BinaryExpressionPattern(
                 node.operation, build(node.left), build(node.right)
+            )
+        if isinstance(node, LogicalExpression):
+            return LogicalExpressionPattern(
+                node.operation, tuple(build(operand) for operand in node.operands)
             )
         if isinstance(node, CallExpression):
             return CallExpressionPattern(

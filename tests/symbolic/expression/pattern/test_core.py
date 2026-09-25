@@ -1,6 +1,8 @@
 """Tests for ``fhy_core.symbolic.expression.pattern.core``."""
 
+import math
 from collections.abc import Callable
+from decimal import Decimal
 
 import pytest
 from immutabledict import immutabledict
@@ -12,6 +14,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -23,6 +27,7 @@ from fhy_core.symbolic.expression.pattern import (
     CapturePattern,
     IdentifierPattern,
     LiteralPattern,
+    LogicalExpressionPattern,
     MatchBindings,
     Pattern,
     PiecewiseExpressionPattern,
@@ -405,6 +410,57 @@ def test_literal_pattern_distinguishes_int_from_bool() -> None:
     pattern = LiteralPattern(value=1)
 
     assert pattern.match(LiteralExpression(True)) is None
+
+
+def test_literal_pattern_matches_the_normalized_value_of_its_text() -> None:
+    """Test a text pattern value matches the literal the text normalizes to.
+
+    A literal keeps no spelling, so ``LiteralPattern(value="05")`` stands
+    for the literal ``5`` and ``"1.50"`` for ``Decimal("1.5")``.
+    """
+    assert LiteralPattern(value="05").match(LiteralExpression(5)) is not None
+    assert LiteralPattern(value="1.50").match(LiteralExpression("1.5")) is not None
+    assert (
+        LiteralPattern(value="1.50").match(LiteralExpression(Decimal("1.5")))
+        is not None
+    )
+
+
+def test_literal_pattern_distinguishes_decimal_from_float() -> None:
+    """Test a decimal pattern value rejects the binary float with the same digits."""
+    pattern = LiteralPattern(value=Decimal("1.5"))
+
+    assert pattern.match(LiteralExpression(1.5)) is None
+
+
+def test_literal_pattern_with_nan_value_matches_a_nan_literal() -> None:
+    """Test ``LiteralPattern(value=nan)`` matches a NaN literal, as ``==`` does."""
+    pattern = LiteralPattern(value=math.nan)
+
+    assert pattern.match(LiteralExpression(math.nan)) is not None
+    assert pattern.match(LiteralExpression(0.0)) is None
+
+
+def test_literal_pattern_with_negative_zero_matches_positive_zero() -> None:
+    """Test ``LiteralPattern(value=-0.0)`` matches ``LiteralExpression(0.0)``."""
+    assert LiteralPattern(value=-0.0).match(LiteralExpression(0.0)) is not None
+
+
+def test_literal_pattern_rejects_text_outside_the_literal_grammar() -> None:
+    """Test a text value ``LiteralExpression`` refuses is refused at construction."""
+    with pytest.raises(ValueError, match="invalid literal text"):
+        LiteralPattern(value="abc")
+
+
+def test_literal_pattern_rejects_an_unsupported_value_type() -> None:
+    """Test a value of a type ``LiteralExpression`` refuses raises ``TypeError``."""
+    with pytest.raises(TypeError):
+        LiteralPattern(value=object())  # type: ignore[arg-type]
+
+
+def test_literal_pattern_keeps_the_value_it_was_given() -> None:
+    """Test the pattern's ``value`` field is the given value, not the normalized one."""
+    assert LiteralPattern(value="05").value == "05"
 
 
 # ===========================================================================
@@ -1072,6 +1128,173 @@ def test_call_expression_pattern_rejects_non_pattern_argument() -> None:
         CallExpressionPattern(
             function_name="f",
             arguments=(WildcardPattern(), "not a pattern"),  # type: ignore[arg-type]
+        )
+
+
+# ===========================================================================
+# LogicalExpressionPattern
+# ===========================================================================
+
+
+def _make_conjunction(*operands: Expression) -> LogicalExpression:
+    return LogicalExpression(LogicalOperation.AND, operands)
+
+
+def test_logical_expression_pattern_matches_specific_operation() -> None:
+    """Test ``LogicalExpressionPattern(AND, ...)`` matches a conjunction."""
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.AND, (WildcardPattern(), WildcardPattern())
+    )
+    expression = _make_conjunction(LiteralExpression(True), LiteralExpression(False))
+
+    assert pattern.match(expression) is not None
+
+
+def test_logical_expression_pattern_rejects_wrong_operation() -> None:
+    """Test ``LogicalExpressionPattern(AND, ...)`` rejects a disjunction."""
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.AND, (WildcardPattern(), WildcardPattern())
+    )
+    expression = LogicalExpression(
+        LogicalOperation.OR, (LiteralExpression(True), LiteralExpression(False))
+    )
+
+    assert pattern.match(expression) is None
+
+
+def test_logical_expression_pattern_with_none_operation_matches_any() -> None:
+    """Test ``LogicalExpressionPattern(None, ...)`` matches either connective."""
+    pattern = LogicalExpressionPattern(None, (WildcardPattern(), WildcardPattern()))
+    operands = (LiteralExpression(True), LiteralExpression(False))
+
+    assert pattern.match(LogicalExpression(LogicalOperation.AND, operands)) is not None
+    assert pattern.match(LogicalExpression(LogicalOperation.OR, operands)) is not None
+
+
+def test_logical_expression_pattern_rejects_operand_count_mismatch() -> None:
+    """Test a two-operand pattern rejects a three-operand conjunction.
+
+    A logical expression keeps its operands as given, so a pattern of two
+    operands does not match the flattened shape of three.
+    """
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.AND, (WildcardPattern(), WildcardPattern())
+    )
+    expression = _make_conjunction(
+        LiteralExpression(True), LiteralExpression(False), LiteralExpression(True)
+    )
+
+    assert pattern.match(expression) is None
+
+
+def test_logical_expression_pattern_with_none_operands_matches_any_count() -> None:
+    """Test ``LogicalExpressionPattern(operands=None)`` matches any operand count."""
+    pattern = LogicalExpressionPattern(LogicalOperation.AND, None)
+
+    assert (
+        pattern.match(
+            _make_conjunction(LiteralExpression(True), LiteralExpression(False))
+        )
+        is not None
+    )
+    assert (
+        pattern.match(
+            _make_conjunction(
+                LiteralExpression(True),
+                LiteralExpression(False),
+                LiteralExpression(True),
+            )
+        )
+        is not None
+    )
+
+
+def test_logical_expression_pattern_threads_bindings_through_operands() -> None:
+    """Test ``LogicalExpressionPattern`` records bindings from operand sub-patterns."""
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.AND,
+        (
+            CapturePattern("a", WildcardPattern()),
+            CapturePattern("b", WildcardPattern()),
+        ),
+    )
+    a_operand = IdentifierExpression(mock_identifier("a", 0))
+    b_operand = IdentifierExpression(mock_identifier("b", 1))
+
+    result = pattern.match(_make_conjunction(a_operand, b_operand))
+
+    assert result is not None
+    assert result.get("a") is a_operand
+    assert result.get("b") is b_operand
+
+
+def test_logical_expression_pattern_requires_repeated_captures_to_agree() -> None:
+    """Test a capture repeated across operands matches only equal operands."""
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.OR,
+        (
+            CapturePattern("x", WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
+        ),
+    )
+    a = IdentifierExpression(mock_identifier("a", 0))
+    b = IdentifierExpression(mock_identifier("b", 1))
+
+    assert pattern.match(LogicalExpression(LogicalOperation.OR, (a, a))) is not None
+    assert pattern.match(LogicalExpression(LogicalOperation.OR, (a, b))) is None
+
+
+def test_logical_expression_pattern_does_not_splice_a_nested_operand() -> None:
+    """Test a nested conjunction is one operand, matched by a nested pattern."""
+    inner = _make_conjunction(LiteralExpression(True), LiteralExpression(False))
+    expression = _make_conjunction(LiteralExpression(True), inner)
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.AND,
+        (
+            LiteralPattern(value=True),
+            LogicalExpressionPattern(LogicalOperation.AND, None),
+        ),
+    )
+
+    assert pattern.match(expression) is not None
+
+
+def test_logical_expression_pattern_rejects_non_logical_expression() -> None:
+    """Test ``LogicalExpressionPattern`` rejects a binary comparison."""
+    pattern = LogicalExpressionPattern(None, None)
+
+    assert pattern.match(_make_simple_binary_expression(BinaryOperation.LESS)) is None
+
+
+def test_logical_expression_pattern_coerces_list_operands_to_tuple() -> None:
+    """Test constructing with a list ``operands`` coerces it to a tuple."""
+    operand_patterns: list[Pattern] = [WildcardPattern(), WildcardPattern()]
+
+    pattern = LogicalExpressionPattern(
+        LogicalOperation.AND,
+        operand_patterns,  # type: ignore[arg-type]
+    )
+    operand_patterns.append(WildcardPattern())
+
+    assert type(pattern.operands) is tuple
+    assert pattern.operands == (WildcardPattern(), WildcardPattern())
+
+
+@pytest.mark.parametrize("count", [0, 1])
+def test_logical_expression_pattern_rejects_fewer_than_two_operands(count: int) -> None:
+    """Test a supplied ``operands`` tuple of fewer than two patterns raises."""
+    with pytest.raises(ValueError, match="at least two"):
+        LogicalExpressionPattern(
+            LogicalOperation.AND, tuple(WildcardPattern() for _ in range(count))
+        )
+
+
+def test_logical_expression_pattern_rejects_non_pattern_operand() -> None:
+    """Test a non-``Pattern`` element in ``operands`` raises ``ValueError``."""
+    with pytest.raises(ValueError, match="operands element must be a Pattern instance"):
+        LogicalExpressionPattern(
+            LogicalOperation.AND,
+            (WildcardPattern(), "not a pattern"),  # type: ignore[arg-type]
         )
 
 

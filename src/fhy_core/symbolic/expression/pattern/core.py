@@ -18,6 +18,7 @@ __all__ = [
     "CapturePattern",
     "IdentifierPattern",
     "LiteralPattern",
+    "LogicalExpressionPattern",
     "MatchBindings",
     "Pattern",
     "PiecewiseExpressionPattern",
@@ -46,6 +47,8 @@ from ..core import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -316,13 +319,28 @@ class LiteralPattern(Pattern):
 
     Attributes:
         value: Required literal value. ``None`` means "any literal
-            value." When a value is supplied, the candidate's value
-            must satisfy ``type(self.value) is type(other.value)``
-            and ``self.value == other.value``.
+            value." When a value is supplied, it must be one
+            `LiteralExpression` accepts, and the candidate must equal
+            ``LiteralExpression(value)``: literals compare by their
+            normalized value and kind, so ``"05"`` matches the literal
+            ``5``, ``"1.50"`` the decimal ``Decimal("1.5")``, a NaN every
+            NaN literal, and ``1`` neither ``1.0`` nor ``True``.
+
+    Raises:
+        TypeError: If `value` has a type `LiteralExpression` refuses.
+        ValueError: If `value` is a value `LiteralExpression` refuses,
+            such as text outside the literal grammar.
 
     """
 
     value: LiteralType | None = None
+    _literal: LiteralExpression | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        literal = None if self.value is None else LiteralExpression(self.value)
+        object.__setattr__(self, "_literal", literal)
 
     @override
     def match_under(
@@ -330,14 +348,7 @@ class LiteralPattern(Pattern):
     ) -> MatchBindings | None:
         if not isinstance(expression, LiteralExpression):
             return None
-        elif self.value is None:
-            return bindings
-        elif (
-            # bool is a subclass of int: a type-identity check prevents
-            # LiteralPattern(value=1) from matching LiteralExpression(True).
-            type(self.value) is type(expression.value)
-            and self.value == expression.value
-        ):
+        elif self._literal is None or self._literal == expression:
             return bindings
         else:
             return None
@@ -437,6 +448,69 @@ class BinaryExpressionPattern(Pattern):
             return None
         else:
             return self.right.match_under(expression.right, after_left)
+
+
+@final
+@dataclass(frozen=True)
+class LogicalExpressionPattern(Pattern):
+    """Match a `LogicalExpression`.
+
+    Attributes:
+        operation: Required connective. ``None`` means "any
+            connective."
+        operands: Tuple of patterns the operands must match
+            position-wise. ``None`` means "any operands"; when a tuple is
+            supplied, the pattern matches only when
+            ``len(self.operands) == len(expression.operands)``, since a
+            logical expression keeps its operands as given and never
+            splices a nested one into its parent.
+
+    Raises:
+        ValueError: If `operands` is supplied with fewer than two
+            elements, which no logical expression has, or if any element
+            is not a `Pattern` instance.
+
+    """
+
+    operation: LogicalOperation | None
+    operands: tuple[Pattern, ...] | None
+
+    def __post_init__(self) -> None:
+        operands = None if self.operands is None else tuple(self.operands)
+        if operands is not None:
+            if len(operands) < 2:  # noqa: PLR2004
+                raise ValueError(
+                    "LogicalExpressionPattern.operands must hold at least two "
+                    "patterns when supplied, since a logical expression has at "
+                    "least two operands; use `None` to match any operands."
+                )
+            for operand in operands:
+                _validate_pattern_instance(
+                    operand, "LogicalExpressionPattern.operands element"
+                )
+        object.__setattr__(self, "operands", operands)
+
+    @override
+    def match_under(
+        self, expression: Expression, bindings: MatchBindings
+    ) -> MatchBindings | None:
+        if not isinstance(expression, LogicalExpression):
+            return None
+        elif self.operation is not None and self.operation != expression.operation:
+            return None
+        elif self.operands is None:
+            return bindings
+        elif len(self.operands) != len(expression.operands):
+            return None
+        accumulator = bindings
+        for operand_pattern, operand in zip(
+            self.operands, expression.operands, strict=True
+        ):
+            next_bindings = operand_pattern.match_under(operand, accumulator)
+            if next_bindings is None:
+                return None
+            accumulator = next_bindings
+        return accumulator
 
 
 @final
