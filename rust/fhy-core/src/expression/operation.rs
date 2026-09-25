@@ -11,7 +11,7 @@ use std::error::Error;
 use std::fmt;
 
 use serde::de::IntoDeserializer;
-use serde::de::value::{Error as ValueError, StrDeserializer};
+use serde::de::value::StrDeserializer;
 use serde::{Deserialize, Serialize};
 
 /// Parse `text` as the variant of `T` whose serialized name it is, exactly,
@@ -25,11 +25,34 @@ pub(crate) fn parse_variant_name<'a, T: Deserialize<'a>>(
     text: &'a str,
     expected: &'static str,
 ) -> Result<T, UnknownNameError> {
-    let deserializer: StrDeserializer<'a, ValueError> = text.into_deserializer();
-    T::deserialize(deserializer).map_err(|_unknown: ValueError| UnknownNameError {
+    let deserializer: StrDeserializer<'a, NoVariant> = text.into_deserializer();
+    T::deserialize(deserializer).map_err(|_no_variant: NoVariant| UnknownNameError {
         name: text.into(),
         expected,
     })
+}
+
+/// The deserializer error of [`parse_variant_name`].
+///
+/// It discards serde's message: a derived enum's unknown-variant error
+/// otherwise formats a list of every variant name, which a caller that only
+/// asks "is this a variant" never reads, and which made parsing a
+/// non-built-in function name slow.
+#[derive(Debug)]
+struct NoVariant;
+
+impl fmt::Display for NoVariant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("no variant has this name")
+    }
+}
+
+impl Error for NoVariant {}
+
+impl serde::de::Error for NoVariant {
+    fn custom<M: fmt::Display>(_message: M) -> Self {
+        Self
+    }
 }
 
 /// A name that no variant of an enum has, refused by the enum's
