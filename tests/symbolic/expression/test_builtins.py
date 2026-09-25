@@ -24,6 +24,7 @@ from typing import Any, cast
 
 import pytest
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -32,11 +33,14 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NativeConstant,
     NativeFunction,
     PiecewiseExpression,
     RegisteredFunction,
     UnaryExpression,
+    UnaryOperation,
     call,
     evaluate_expression,
     get_registered_entry,
@@ -55,8 +59,6 @@ from fhy_core.symbolic.expression.builtins import (
     BuiltinFunctions,
 )
 
-from ..conftest import mock_identifier
-
 _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
     BinaryOperation.GREATER: ">",
     BinaryOperation.GREATER_EQUAL: ">=",
@@ -64,8 +66,6 @@ _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
     BinaryOperation.LESS_EQUAL: "<=",
     BinaryOperation.EQUAL: "==",
     BinaryOperation.NOT_EQUAL: "!=",
-    BinaryOperation.LOGICAL_AND: "logical_and",
-    BinaryOperation.LOGICAL_OR: "logical_or",
     BinaryOperation.ADD: "+",
     BinaryOperation.SUBTRACT: "-",
     BinaryOperation.MULTIPLY: "*",
@@ -99,6 +99,11 @@ def _structure_summary(expression: Expression) -> str:  # noqa: PLR0911
             f"{operation_symbol}({_structure_summary(expression.left)}, "
             f"{_structure_summary(expression.right)})"
         )
+    if isinstance(expression, LogicalExpression):
+        operand_summaries = ", ".join(
+            _structure_summary(operand) for operand in expression.operands
+        )
+        return f"{expression.operation.value}({operand_summaries})"
     if isinstance(expression, PiecewiseExpression):
         case_summaries = ", ".join(
             f"({_condition_shape_tag(condition)}, {_structure_summary(value)})"
@@ -242,7 +247,7 @@ def test_each_built_in_constant_is_a_native_constant(name: str) -> None:
 
 def test_abs_inlining_produces_documented_piecewise_body() -> None:
     """Test ``abs(x)`` inlines to ``{x if x >= 0; -x otherwise}``."""
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     expression = call("abs", x)
 
     inlined = inline_functions(expression)
@@ -263,7 +268,7 @@ def test_sign_inlining_produces_two_case_piecewise_body() -> None:
     A single node carries both cases (``x > 0`` and ``x < 0``) plus one
     ``otherwise``, rather than a nested chain of one-case conditionals.
     """
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     expression = call("sign", x)
 
     inlined = inline_functions(expression)
@@ -276,7 +281,7 @@ def test_sign_inlining_produces_two_case_piecewise_body() -> None:
 
 def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
     """Test ``relu(x)`` inlines to ``max(x, 0)``'s piecewise body."""
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     expression = call("relu", x)
 
     inlined = inline_functions(expression)
@@ -287,9 +292,9 @@ def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
 
 def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
     """Test ``clamp(x, lo, hi)`` inlines to the documented nested piecewise tree."""
-    x = mock_identifier("x", 0)
-    lo = mock_identifier("lo", 1)
-    hi = mock_identifier("hi", 2)
+    x = Identifier("x")
+    lo = Identifier("lo")
+    hi = Identifier("hi")
     expression = call("clamp", x, lo, hi)
 
     inlined = inline_functions(expression)
@@ -301,16 +306,52 @@ def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
 
 def test_xor_inlining_produces_or_and_not_and_combination() -> None:
     """Test ``xor(a, b)`` inlines to ``(a || b) && !(a && b)``."""
-    a = mock_identifier("a", 0)
-    b = mock_identifier("b", 1)
+    a = Identifier("a")
+    b = Identifier("b")
     expression = call("xor", a, b)
 
     inlined = inline_functions(expression)
 
-    summary = _structure_summary(inlined)
-    assert "logical_and" in summary
-    assert "logical_or" in summary
-    assert "logical_not" in summary
+    assert _structure_summary(inlined) == (
+        "and(or(identifier, identifier), logical_not(and(identifier, identifier)))"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_body_text"),
+    [
+        ("xor", "((a || b) && (!(a && b)))"),
+        ("nand", "(!(a && b))"),
+        ("nor", "(!(a || b))"),
+        ("implies", "((!a) || b)"),
+        ("iff", "(a == b)"),
+    ],
+)
+def test_boolean_builtin_bodies_are_built_from_logical_expressions(
+    name: str, expected_body_text: str
+) -> None:
+    """Test the Boolean combinators' bodies use n-ary ``LogicalExpression`` nodes.
+
+    The registry and ``builtins.py`` stay Python and build their bodies with
+    the Rust-backed nodes, so a conjunction is a ``LogicalExpression`` there
+    too, printed in the core's text.
+    """
+    body = BUILTIN_FUNCTIONS[name].body  # type: ignore[literal-required]
+
+    assert str(body) == expected_body_text
+
+
+def test_xor_body_conjoins_a_disjunction_and_a_negated_conjunction() -> None:
+    """Test ``xor``'s body is one AND node over its two parts, not a binary node."""
+    body = BUILTIN_FUNCTIONS["xor"].body
+
+    assert isinstance(body, LogicalExpression)
+    assert body.operation is LogicalOperation.AND
+    disjunction, negation = body.operands
+    assert isinstance(disjunction, LogicalExpression)
+    assert disjunction.operation is LogicalOperation.OR
+    assert isinstance(negation, UnaryExpression)
+    assert negation.operation is UnaryOperation.LOGICAL_NOT
 
 
 # =============================================================================

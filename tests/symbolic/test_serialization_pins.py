@@ -1,7 +1,7 @@
 """Golden `type_id` and wire-shape pins for the expression/constraint/param tree.
 
 Every `Serializable` in the `expression` / `constraint` / `param` tree
-pins an explicit `type_id`. This module hard-codes all 18 pinned
+pins an explicit `type_id`. This module hard-codes all 19 pinned
 strings and checks, for one representative instance of each class, that
 `get_serialization_class_type_id()` equals the pinned literal (the
 registry key regardless of wrapped-family vs. plain dict form) and that
@@ -11,9 +11,11 @@ blob's deserialization here, even when every other test still passes.
 """
 
 import json
+from decimal import Decimal
 
 import pytest
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
     EquationConstraint,
     InSetConstraint,
@@ -26,6 +28,8 @@ from fhy_core.symbolic.expression import (
     CallExpression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -41,9 +45,8 @@ from fhy_core.symbolic.param import (
     create_integer_param,
 )
 
-from .conftest import mock_identifier
-
-_x = mock_identifier("x", 0)
+_x = Identifier.deserialize_from_dict({"id": 60_000, "name_hint": "x"})
+"""The shared variable, with a fixed id in the reserved range no shipped tag uses."""
 
 _EXPRESSION_FIXTURES: dict[str, object] = {
     "unary_expression": UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1)),
@@ -62,6 +65,16 @@ _EXPRESSION_FIXTURES: dict[str, object] = {
         LiteralExpression(0),
     ),
     "call_expression": CallExpression("sqrt", (LiteralExpression(4),)),
+    "logical_expression": LogicalExpression(
+        LogicalOperation.AND,
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(_x), LiteralExpression(0)
+            ),
+            LiteralExpression(True),
+            LiteralExpression(False),
+        ),
+    ),
 }
 
 _CONSTRAINT_FIXTURES: dict[str, object] = {
@@ -92,13 +105,13 @@ _ALL_FIXTURES: dict[str, object] = {
     **_PARAM_FIXTURES,
 }
 
-# Golden serialized forms for the 18 classes covered by `_ALL_FIXTURES`. Each
+# Golden serialized forms for the 19 classes covered by `_ALL_FIXTURES`. Each
 # blob is the literal `serialize_to_dict()` output of one representative
 # instance, held as a static literal independent of the current
 # implementation. Regenerating this JSON from the current code would defeat
 # the test's purpose: a wire-format regression that changes both the writer
 # and the golden data in lockstep would still pass. Every identifier embeds a
-# fixed id (0 for the shared variable `x`, 1 for the `Param` variable) rather
+# fixed id (60000 for the shared variable `x`, 1 for the `Param` variable) rather
 # than one drawn from the process-global identifier counter, so the blob is
 # exactly reproducible; `param` and `param_assignment` are compared by alpha
 # equivalence below because their variable's id is not expected to match the
@@ -168,7 +181,7 @@ _GOLDEN_BLOBS_JSON = """
               }
             ],
             "variable": {
-              "id": 0,
+              "id": 60000,
               "name_hint": "x"
             }
           },
@@ -183,7 +196,7 @@ _GOLDEN_BLOBS_JSON = """
               }
             ],
             "variable": {
-              "id": 0,
+              "id": 60000,
               "name_hint": "x"
             }
           },
@@ -207,7 +220,7 @@ _GOLDEN_BLOBS_JSON = """
   "identifier_expression": {
     "__data__": {
       "identifier": {
-        "id": 0,
+        "id": 60000,
         "name_hint": "x"
       }
     },
@@ -226,7 +239,7 @@ _GOLDEN_BLOBS_JSON = """
         }
       ],
       "variable": {
-        "id": 0,
+        "id": 60000,
         "name_hint": "x"
       }
     },
@@ -253,6 +266,47 @@ _GOLDEN_BLOBS_JSON = """
     },
     "__type__": "literal_expression"
   },
+  "logical_expression": {
+    "__data__": {
+      "operands": [
+        {
+          "__data__": {
+            "left": {
+              "__data__": {
+                "identifier": {
+                  "id": 60000,
+                  "name_hint": "x"
+                }
+              },
+              "__type__": "identifier_expression"
+            },
+            "operation": "greater",
+            "right": {
+              "__data__": {
+                "value": 0
+              },
+              "__type__": "literal_expression"
+            }
+          },
+          "__type__": "binary_expression"
+        },
+        {
+          "__data__": {
+            "value": true
+          },
+          "__type__": "literal_expression"
+        },
+        {
+          "__data__": {
+            "value": false
+          },
+          "__type__": "literal_expression"
+        }
+      ],
+      "operation": "and"
+    },
+    "__type__": "logical_expression"
+  },
   "not_in_set_constraint": {
     "__data__": {
       "values": [
@@ -266,7 +320,7 @@ _GOLDEN_BLOBS_JSON = """
         }
       ],
       "variable": {
-        "id": 0,
+        "id": 60000,
         "name_hint": "x"
       }
     },
@@ -366,7 +420,7 @@ _GOLDEN_BLOBS_JSON = """
             "left": {
               "__data__": {
                 "identifier": {
-                  "id": 0,
+                  "id": 60000,
                   "name_hint": "x"
                 }
               },
@@ -428,7 +482,7 @@ _GOLDEN_BLOBS: dict[str, object] = json.loads(_GOLDEN_BLOBS_JSON)
 # right relation for a variable whose concrete id is incidental.
 _ALPHA_EQUIVALENT_ONLY: frozenset[str] = frozenset({"param", "param_assignment"})
 
-# The 18 `type_id` literals this module pins, hard-coded independently of
+# The 19 `type_id` literals this module pins, hard-coded independently of
 # `_ALL_FIXTURES` and `_GOLDEN_BLOBS`. Because this set does not derive from
 # either table, a missing or mismatched fixture or golden-blob entry is
 # caught by the two guard tests below rather than passing vacuously.
@@ -440,6 +494,7 @@ _EXPECTED_PINNED_TYPE_IDS: frozenset[str] = frozenset(
         "literal_expression",
         "piecewise_expression",
         "call_expression",
+        "logical_expression",
         "equation_constraint",
         "in_set_constraint",
         "not_in_set_constraint",
@@ -456,9 +511,9 @@ _EXPECTED_PINNED_TYPE_IDS: frozenset[str] = frozenset(
 )
 
 
-def test_exactly_eighteen_pinned_type_ids_are_covered() -> None:
-    """Test the fixture table covers exactly the 18 pinned `type_id` literals."""
-    assert len(_EXPECTED_PINNED_TYPE_IDS) == 18
+def test_exactly_nineteen_pinned_type_ids_are_covered() -> None:
+    """Test the fixture table covers exactly the 19 pinned `type_id` literals."""
+    assert len(_EXPECTED_PINNED_TYPE_IDS) == 19
     assert set(_ALL_FIXTURES) == _EXPECTED_PINNED_TYPE_IDS
 
 
@@ -491,3 +546,58 @@ def test_golden_blob_deserializes_to_an_equivalent_instance(
         assert rebuilt.is_alpha_equivalent(expected)
     else:
         assert rebuilt.is_structurally_equivalent(expected)
+
+
+# =============================================================================
+# The payload values of the Rust semantics (D-S4-5)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression, expected_data",
+    [
+        pytest.param(
+            IdentifierExpression(_x) % LiteralExpression(3),
+            {
+                "left": IdentifierExpression(_x).serialize_to_dict(),
+                "operation": "floor_mod",
+                "right": {"__data__": {"value": 3}, "__type__": "literal_expression"},
+            },
+            id="modulo_is_floor_mod",
+        ),
+        pytest.param(
+            LiteralExpression("1.50"),
+            {"value": "1.5"},
+            id="decimal_text_is_normalized",
+        ),
+        pytest.param(
+            LiteralExpression(Decimal("100")),
+            {"value": "100.0"},
+            id="integral_decimal_keeps_a_point",
+        ),
+        pytest.param(
+            LiteralExpression("007"),
+            {"value": 7},
+            id="integer_text_is_an_int",
+        ),
+        pytest.param(
+            LogicalExpression(
+                LogicalOperation.OR, (LiteralExpression(True), LiteralExpression(False))
+            ),
+            {
+                "operation": "or",
+                "operands": [
+                    {"__data__": {"value": True}, "__type__": "literal_expression"},
+                    {"__data__": {"value": False}, "__type__": "literal_expression"},
+                ],
+            },
+            id="disjunction",
+        ),
+    ],
+)
+def test_payload_data_follows_the_rust_semantics(
+    expression: LiteralExpression | BinaryExpression | LogicalExpression,
+    expected_data: dict[str, object],
+) -> None:
+    """Test the envelope's data holds the core's names and normalized literals."""
+    assert expression.serialize_data_to_dict() == expected_data

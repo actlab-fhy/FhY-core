@@ -31,8 +31,6 @@ from fhy_core.types import (
 )
 from fhy_core.types.checking import synthesize_expression_type
 
-from .conftest import mock_identifier
-
 
 def _scalar(core_data_type: CoreDataType) -> NumericalType:
     return NumericalType(PrimitiveDataType(core_data_type))
@@ -115,9 +113,9 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
     a valid bound. They build the call via the public ``call`` helper and
     rely on inlining to substitute the body.
     """
-    low = mock_identifier("low", 0)
-    high = mock_identifier("high", 1)
-    value = mock_identifier("value", 2)
+    low = Identifier("low")
+    high = Identifier("high")
+    value = Identifier("value")
 
     expression = call(
         "max",
@@ -166,9 +164,9 @@ def test_user_story_predicate_guarded_fallback_with_piecewise() -> None:
     They build the expression directly via the public ``piecewise``
     helper.
     """
-    x = mock_identifier("x", 0)
-    sqrt_path = mock_identifier("sqrt_path", 1)
-    fallback_path = mock_identifier("fallback_path", 2)
+    x = Identifier("x")
+    sqrt_path = Identifier("sqrt_path")
+    fallback_path = Identifier("fallback_path")
 
     expression = piecewise(
         (IdentifierExpression(x) > 0, IdentifierExpression(sqrt_path)),
@@ -203,7 +201,7 @@ def test_user_story_register_and_inline_custom_abs_function(
     and then references it. Inlining substitutes the body. The inlined
     expression should match an equivalent hand-built tree.
     """
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_user_story_abs",
         parameters=[parameter],
@@ -215,7 +213,7 @@ def test_user_story_register_and_inline_custom_abs_function(
         ),
     )
 
-    y = mock_identifier("y", 1)
+    y = Identifier("y")
     expression = call("test_user_story_abs", IdentifierExpression(y))
     inlined = inline_functions(expression)
     expected = PiecewiseExpression(

@@ -19,6 +19,7 @@ from typing import Final
 from hypothesis import example, given
 from hypothesis import strategies as st
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -37,7 +38,6 @@ from ...strategies.literals import (
     build_integer_literal_strategy,
 )
 from ...strategies.settings import cap_max_examples
-from .conftest import mock_identifier
 
 pytestmark = pytest.mark.property
 
@@ -181,7 +181,7 @@ def test_numpy_evaluation_matches_pointwise_first_match_fold(
     common (a large ``x`` can satisfy every threshold), so first-match-wins
     is genuinely exercised, not just the degenerate single-case path.
     """
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     x_expression = IdentifierExpression(x)
     expression = piecewise(
         *((x_expression > threshold, value) for threshold, value in cases),
@@ -226,6 +226,20 @@ def _draw_distinct_integers(draw: st.DrawFn, count: int) -> list[int]:
     return taken
 
 
+_MAX_ROUND_TRIP_CASES: Final = 4
+"""Most cases a SymPy round-trip piecewise holds."""
+
+_CASE_CONDITION_IDENTIFIERS: Final = tuple(
+    Identifier(f"property_case_{index}") for index in range(_MAX_ROUND_TRIP_CASES)
+)
+"""One distinct identifier per case condition, shared by every example."""
+
+_CASE_VALUE_IDENTIFIERS: Final = tuple(
+    Identifier(f"property_value_{index}") for index in range(_MAX_ROUND_TRIP_CASES)
+)
+"""One distinct identifier per Boolean case value, apart from every condition's."""
+
+
 @st.composite
 def _draw_piecewise_with_distinct_case_values(draw: st.DrawFn) -> PiecewiseExpression:
     """Draw a piecewise node with distinct integer case values and ``otherwise``.
@@ -237,20 +251,16 @@ def _draw_piecewise_with_distinct_case_values(draw: st.DrawFn) -> PiecewiseExpre
     -- not just dropped one -- is still caught by comparing the whole
     restored tree structurally.
     """
-    num_cases = draw(st.integers(min_value=1, max_value=4))
+    num_cases = draw(st.integers(min_value=1, max_value=_MAX_ROUND_TRIP_CASES))
     *values, otherwise_value = draw(_draw_distinct_integers(num_cases + 1))
     conditions = tuple(
-        IdentifierExpression(mock_identifier(f"property_case_{i}", i))
-        for i in range(num_cases)
+        IdentifierExpression(identifier)
+        for identifier in _CASE_CONDITION_IDENTIFIERS[:num_cases]
     )
     value_expressions = tuple(LiteralExpression(value) for value in values)
     return PiecewiseExpression(
         conditions, value_expressions, LiteralExpression(otherwise_value)
     )
-
-
-_BOOLEAN_VALUE_ID_BASE: Final = 100
-"""First id of a Boolean case value, clear of every case condition's id."""
 
 
 @st.composite
@@ -265,16 +275,14 @@ def _draw_boolean_piecewise_with_distinct_case_values(
     tree. ``otherwise`` is a Boolean literal, which settles the node's
     sort as Boolean.
     """
-    num_cases = draw(st.integers(min_value=1, max_value=4))
+    num_cases = draw(st.integers(min_value=1, max_value=_MAX_ROUND_TRIP_CASES))
     conditions = tuple(
-        IdentifierExpression(mock_identifier(f"property_case_{i}", i))
-        for i in range(num_cases)
+        IdentifierExpression(identifier)
+        for identifier in _CASE_CONDITION_IDENTIFIERS[:num_cases]
     )
     value_expressions = tuple(
-        IdentifierExpression(
-            mock_identifier(f"property_value_{i}", _BOOLEAN_VALUE_ID_BASE + i)
-        )
-        for i in range(num_cases)
+        IdentifierExpression(identifier)
+        for identifier in _CASE_VALUE_IDENTIFIERS[:num_cases]
     )
     otherwise = draw(build_boolean_literal_strategy())
     return PiecewiseExpression(conditions, value_expressions, otherwise)
@@ -283,7 +291,7 @@ def _draw_boolean_piecewise_with_distinct_case_values(
 # Shared building block for the two pinned examples below: both use a
 # comparison (rather than a bare identifier) as a case condition, a shape
 # _draw_piecewise_with_distinct_case_values never draws.
-_COMPARISON_CONDITION_IDENTIFIER: Final = mock_identifier("x", 0)
+_COMPARISON_CONDITION_IDENTIFIER: Final = Identifier("x")
 _COMPARISON_CONDITION_SYMBOL: Final = IdentifierExpression(
     _COMPARISON_CONDITION_IDENTIFIER
 )

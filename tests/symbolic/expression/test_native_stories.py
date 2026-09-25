@@ -37,8 +37,6 @@ from fhy_core.types import (
 )
 from fhy_core.types.checking import synthesize_expression_type
 
-from .conftest import mock_identifier
-
 pytestmark = pytest.mark.integration
 
 
@@ -106,7 +104,7 @@ def test_user_story_evaluate_clamp_of_exp_under_literal_bounds() -> None:
 
 def test_user_story_symbolic_exp_stays_symbolic_under_evaluation() -> None:
     """Test ``exp(x)`` evaluates unchanged when ``x`` is a free identifier."""
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     expression = call("exp", x)
 
     evaluated = evaluate_expression(expression)
@@ -269,7 +267,7 @@ def test_user_story_variable_named_after_a_constant_stays_a_free_variable(
     variable types as unbound, evaluates to itself, and keeps its place
     among the expression's free identifiers.
     """
-    variable = mock_identifier(constant_name, 640)
+    variable = Identifier(constant_name)
     expression = IdentifierExpression(variable)
 
     evaluated = evaluate_expression(expression)
@@ -286,7 +284,7 @@ def test_user_story_binding_a_variable_named_after_a_constant_is_honored() -> No
     The bridge previously resolved the name to the constant and dropped
     the binding, leaving the caller's substitution silently unapplied.
     """
-    variable = mock_identifier("e", 641)
+    variable = Identifier("e")
     expression = LiteralExpression(2) * IdentifierExpression(variable)
 
     simplified = simplify_expression(expression, {variable: LiteralExpression(3)})

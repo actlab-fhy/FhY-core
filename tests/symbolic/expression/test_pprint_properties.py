@@ -1,9 +1,9 @@
 """Hypothesis property tests for the expression pretty-printer.
 
-Covers two cheap invariants of ``pformat_expression``: a DICT
-serialization round trip formats identically to the original tree, and
-every free identifier's name hint appears somewhere in the formatted
-output.
+Covers cheap invariants of ``pformat_expression``: a DICT
+serialization round trip formats identically to the original tree, every
+free identifier's name hint appears somewhere in the formatted output,
+and the Python ``ExpressionPrettyFormatter`` renders the core's text.
 """
 
 import pytest
@@ -13,6 +13,7 @@ pytest.importorskip("hypothesis")
 from hypothesis import given
 
 from fhy_core.symbolic.expression import Expression, pformat_expression
+from fhy_core.symbolic.expression.pprint import ExpressionPrettyFormatter
 
 from ...strategies.identifiers import build_identifier_pool
 from ...strategies.structural_expressions import build_structural_expression_strategy
@@ -39,3 +40,16 @@ def test_every_free_identifier_name_hint_appears_in_the_output(
 
     for identifier in expression.get_free_identifiers():
         assert identifier.name_hint in formatted
+
+
+@given(build_structural_expression_strategy(_POOL))
+def test_pretty_formatter_agrees_with_the_core_text(expression: Expression) -> None:
+    """Test the Python formatter renders the core's text under every option."""
+    for show_id in (False, True):
+        for functional in (False, True):
+            formatter = ExpressionPrettyFormatter(
+                is_id_shown=show_id, is_printed_functional=functional
+            )
+            assert formatter(expression) == pformat_expression(
+                expression, show_id=show_id, functional=functional
+            )

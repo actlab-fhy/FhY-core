@@ -1,20 +1,19 @@
 """Pickle and deepcopy round trips for the frozen types that hold identifiers.
 
-An ``EquationConstraint``/``InSetConstraint``/``NotInSetConstraint``, a
-``Param``, and a ``ParamAssignment`` are all frozen value objects that reach
-an ``Identifier`` -- a constraint through the free identifiers of its
-expression, a parameter through the variable it binds. Duplicating one must
-return an independent object that is still frozen and still equivalent to
-its source, so neither the freeze flag nor any derived state is lost or
-shared on the way through.
+An ``Expression``, an ``EquationConstraint``/``InSetConstraint``/
+``NotInSetConstraint``, a ``Param``, and a ``ParamAssignment`` are all
+frozen value objects that reach an ``Identifier`` -- an expression through
+its identifier references, a constraint through the free identifiers of
+its expression, a parameter through the variable it binds. Duplicating one
+must return an independent object that is still frozen and still
+equivalent to its source, so neither the freeze flag nor any derived state
+is lost or shared on the way through.
 
-A test identifier is a ``Mock(spec=Identifier)``, which pickle refuses to
-serialize. Handing every identifier to the pickler as a persistent reference
-keeps the object under test itself on the real ``dumps``/``loads`` path.
+Every identifier is a real ``Identifier``, which pickles by its id and name
+hint, so each object goes through the plain ``dumps``/``loads`` path.
 """
 
 import copy
-import io
 import pickle
 from collections.abc import Callable
 from typing import Any, Final, TypeVar
@@ -27,7 +26,11 @@ from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import Constraint, EquationConstraint
-from fhy_core.symbolic.expression import IdentifierExpression, LiteralExpression
+from fhy_core.symbolic.expression import (
+    Expression,
+    IdentifierExpression,
+    LiteralExpression,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamAssignment,
@@ -40,7 +43,6 @@ from fhy_core.symbolic.param import (
     create_real_param_between,
     create_single_valid_value_param,
 )
-from fhy_core.utils.override import override
 
 from ..strategies.constraints import (
     draw_bound_equation_constraint,
@@ -55,7 +57,7 @@ from ..strategies.params import (
     draw_ordered_optional_bounds,
     draw_param_over_any_domain,
 )
-from .conftest import mock_identifier
+from ..strategies.structural_expressions import build_structural_expression_strategy
 from .param.conftest import build_interval_integer_param
 
 pytestmark = pytest.mark.property
@@ -63,49 +65,9 @@ pytestmark = pytest.mark.property
 _T = TypeVar("_T")
 
 
-class _IdentifierByReferencePickler(pickle.Pickler):
-    """Pickler that emits identifiers as external references."""
-
-    referenced: dict[str, Identifier]
-
-    def __init__(self, file: Any, referenced: dict[str, Identifier]) -> None:
-        super().__init__(file)
-        self.referenced = referenced
-
-    @override
-    def persistent_id(self, obj: Any) -> str | None:
-        if isinstance(obj, Identifier):
-            key = str(id(obj))
-            self.referenced[key] = obj
-            return key
-        return None
-
-
-class _IdentifierByReferenceUnpickler(pickle.Unpickler):
-    """Unpickler resolving the external identifier references by key."""
-
-    referenced: dict[str, Identifier]
-
-    def __init__(self, file: Any, referenced: dict[str, Identifier]) -> None:
-        super().__init__(file)
-        self.referenced = referenced
-
-    @override
-    def persistent_load(self, pid: Any) -> Identifier:
-        return self.referenced[pid]
-
-
 def round_trip_through_pickle(value: _T) -> _T:
-    """Return the value after a ``pickle.dumps``/``loads`` round trip.
-
-    Routes every ``Identifier`` through a persistent reference (see the
-    module docstring): a ``Mock(spec=Identifier)`` is otherwise unpicklable.
-    """
-    referenced: dict[str, Identifier] = {}
-    buffer = io.BytesIO()
-    _IdentifierByReferencePickler(buffer, referenced).dump(value)
-    buffer.seek(0)
-    restored = _IdentifierByReferenceUnpickler(buffer, referenced).load()
+    """Return the value after a ``pickle.dumps``/``loads`` round trip."""
+    restored: _T = pickle.loads(pickle.dumps(value))
     assert isinstance(restored, type(value))
     return restored
 
@@ -116,6 +78,35 @@ _DUPLICATORS = [
     pytest.param(round_trip_through_pickle, id="pickle"),
     pytest.param(copy.deepcopy, id="deepcopy"),
 ]
+
+
+# =============================================================================
+# Expressions: duplication stays frozen and equal
+# =============================================================================
+
+_EXPRESSION_POOL: Final = build_identifier_pool(3, name_prefix="e")
+
+
+@pytest.mark.parametrize("duplicate", _DUPLICATORS)
+@given(expression=build_structural_expression_strategy(_EXPRESSION_POOL))
+def test_expression_survives_duplication(
+    expression: Expression, duplicate: Duplicator
+) -> None:
+    """Test an expression duplicates into an independent, equal, frozen tree.
+
+    Oracle: the expression itself. An expression pickles as a constructor
+    call of its class with its fields, so the copy is a new object of the
+    same class, structurally equal (``==``) with the same hash and the
+    same free identifiers.
+    """
+    duplicated = duplicate(expression)
+
+    assert duplicated is not expression
+    assert type(duplicated) is type(expression)
+    assert duplicated.is_frozen
+    assert duplicated == expression
+    assert hash(duplicated) == hash(expression)
+    assert duplicated.get_free_identifiers() == expression.get_free_identifiers()
 
 
 # =============================================================================
@@ -139,7 +130,7 @@ def draw_constraint_over_one_identifier(draw: st.DrawFn) -> Constraint:
     return result
 
 
-_PINNED_CONSTRAINT_VARIABLE = mock_identifier("x", 0)
+_PINNED_CONSTRAINT_VARIABLE = Identifier("x")
 _PINNED_CONSTRAINT = EquationConstraint(
     IdentifierExpression(_PINNED_CONSTRAINT_VARIABLE) < LiteralExpression(5)
 )
@@ -175,7 +166,7 @@ def test_constraint_survives_duplication(
 _CATEGORICAL_ALPHABET: Final = tuple("abcdefgh")
 
 
-_PINNED_PARAM = create_integer_param(name=mock_identifier("p", 1))
+_PINNED_PARAM = create_integer_param(name=Identifier("p"))
 """A hand-picked integer parameter pinned as an example."""
 
 
@@ -315,7 +306,7 @@ def draw_param_assignment(draw: st.DrawFn) -> ParamAssignment[Any]:
     return param.assign(value)
 
 
-_PINNED_ASSIGNMENT_PARAM = create_integer_param(name=mock_identifier("p", 2))
+_PINNED_ASSIGNMENT_PARAM = create_integer_param(name=Identifier("p"))
 _PINNED_ASSIGNMENT = ParamAssignment(_PINNED_ASSIGNMENT_PARAM, 5)
 """A hand-picked integer assignment pinned as an example."""
 

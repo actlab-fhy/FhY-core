@@ -1,4 +1,12 @@
-"""Tests for `fhy_core.symbolic.expression.pprint`."""
+"""Tests for `fhy_core.symbolic.expression.pprint`.
+
+The printed text is the Rust core's (decision D-S4-1): a literal as the
+core writes it (``true``, ``1``, ``NaN``), a connective as one n-ary node,
+and each operation's functional name its Rust name.
+"""
+
+import math
+from decimal import Decimal
 
 import pytest
 
@@ -11,15 +19,17 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    logical_and,
+    logical_or,
     pformat_expression,
 )
 from fhy_core.symbolic.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.utils.override import override
-
-from .conftest import mock_identifier
 
 # =============================================================================
 # Symbolic format (default)
@@ -31,10 +41,10 @@ from .conftest import mock_identifier
     [
         (LiteralExpression(4.5), "4.5"),
         (LiteralExpression("0.1"), "0.1"),
-        (IdentifierExpression(mock_identifier("baz", 0)), "baz"),
+        (IdentifierExpression(Identifier("baz")), "baz"),
         (
             UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True)),
-            "(!True)",
+            "(!true)",
         ),
         (
             BinaryExpression(
@@ -53,6 +63,126 @@ def test_pformat_expression_renders_symbolic_form(
     assert pformat_expression(expression) == expected_str
 
 
+@pytest.mark.parametrize(
+    "value, expected_text",
+    [
+        pytest.param(True, "true", id="true"),
+        pytest.param(False, "false", id="false"),
+        pytest.param(5, "5", id="int"),
+        pytest.param(-3, "-3", id="negative_int"),
+        pytest.param(10**30, "1" + "0" * 30, id="big_int"),
+        pytest.param(1.0, "1", id="integral_float"),
+        pytest.param(1.5, "1.5", id="float"),
+        pytest.param(-0.0, "-0", id="negative_zero"),
+        pytest.param(1e16, "10000000000000000", id="large_float"),
+        pytest.param(1e-7, "0.0000001", id="small_float"),
+        pytest.param(math.nan, "NaN", id="nan"),
+        pytest.param(math.inf, "inf", id="infinity"),
+        pytest.param(-math.inf, "-inf", id="negative_infinity"),
+        pytest.param("05", "5", id="integer_text"),
+        pytest.param("1.50", "1.5", id="decimal_text"),
+        pytest.param("100.0", "100", id="integral_decimal_text"),
+        pytest.param(".5", "0.5", id="fraction_text"),
+        pytest.param(Decimal("2.50"), "2.5", id="decimal"),
+    ],
+)
+def test_pformat_literal_renders_the_core_text(
+    value: bool | int | float | str | Decimal, expected_text: str
+) -> None:
+    """Test a literal renders as the Rust core writes its normalized value.
+
+    Unequal literals may render alike: ``1``, ``1.0`` and ``Decimal("1")``
+    all render as ``1``.
+    """
+    literal = LiteralExpression(value)
+
+    assert pformat_expression(literal) == expected_text
+    assert pformat_expression(literal, functional=True) == expected_text
+    assert str(literal) == expected_text
+
+
+@pytest.mark.parametrize(
+    "build, expected_symbolic, expected_functional",
+    [
+        pytest.param(logical_and, "(p && q && r)", "(and p q r)", id="conjunction"),
+        pytest.param(logical_or, "(p || q || r)", "(or p q r)", id="disjunction"),
+    ],
+)
+def test_pformat_logical_expression_renders_one_n_ary_node(
+    build: object, expected_symbolic: str, expected_functional: str
+) -> None:
+    """Test a connective renders its operands joined by one symbol, or its name."""
+    p, q, r = (IdentifierExpression(Identifier(name)) for name in "pqr")
+    expression = build(p, q, r)  # type: ignore[operator]
+
+    assert pformat_expression(expression) == expected_symbolic
+    assert pformat_expression(expression, functional=True) == expected_functional
+
+
+def test_pformat_nested_logical_expression_keeps_the_nesting() -> None:
+    """Test a nested connective renders as its own parenthesized node."""
+    p, q, r = (IdentifierExpression(Identifier(name)) for name in "pqr")
+    expression = LogicalExpression(
+        LogicalOperation.AND, (LogicalExpression(LogicalOperation.OR, (p, q)), r)
+    )
+
+    assert pformat_expression(expression) == "((p || q) && r)"
+
+
+def test_pformat_modulo_renders_its_rust_name_functionally() -> None:
+    """Test ``MODULO`` renders as ``%`` and, functionally, as ``floor_mod``."""
+    x = IdentifierExpression(Identifier("x"))
+
+    assert pformat_expression(x % 3) == "(x % 3)"
+    assert pformat_expression(x % 3, functional=True) == "(floor_mod x 3)"
+
+
+def test_str_of_an_expression_is_its_symbolic_text() -> None:
+    """Test ``str`` is the core's display, ``pformat_expression``'s default."""
+    x = IdentifierExpression(Identifier("x"))
+    expression = piecewise_of(x)
+
+    assert str(expression) == pformat_expression(expression)
+    assert str(expression) == "{1 if (x > 0); -1 otherwise}"
+
+
+def test_repr_of_an_expression_is_its_class_and_functional_text_with_ids() -> None:
+    """Test ``repr`` is the class name around the core's bounded diagnostic text.
+
+    The diagnostic text is the functional notation with identifier ids.
+    """
+    identifier = Identifier("x")
+    x = IdentifierExpression(identifier)
+
+    assert repr(x + 1) == f"BinaryExpression((add x::{identifier.id} 1))"
+    assert repr(LiteralExpression(1.5)) == "LiteralExpression(1.5)"
+    assert repr(x) == f"IdentifierExpression(x::{identifier.id})"
+    assert repr(logical_and(x > 0, x < 1)) == (
+        f"LogicalExpression((and (greater x::{identifier.id} 0) "
+        f"(less x::{identifier.id} 1)))"
+    )
+
+
+def test_repr_of_a_very_large_expression_is_bounded() -> None:
+    """Test ``repr`` of a DAG with an exponential tree elides past 1,000 nodes."""
+    node: Expression = IdentifierExpression(Identifier("x"))
+    for _ in range(40):
+        node = node + node
+
+    text = repr(node)
+
+    assert text.startswith("BinaryExpression((add ")
+    assert ".." in text
+    assert len(text) < 20_000
+
+
+def piecewise_of(x: Expression) -> Expression:
+    """Return ``{1 if x > 0; -1 otherwise}``."""
+    return PiecewiseExpression(
+        (x > LiteralExpression(0),), (LiteralExpression(1),), LiteralExpression(-1)
+    )
+
+
 # =============================================================================
 # Functional format
 # =============================================================================
@@ -63,7 +193,7 @@ def test_pformat_expression_renders_symbolic_form(
     [
         (LiteralExpression(5), "5"),
         (
-            IdentifierExpression(mock_identifier("test_identifier", 0)),
+            IdentifierExpression(Identifier("test_identifier")),
             "test_identifier",
         ),
         (
@@ -110,7 +240,7 @@ def test_pformat_expression_with_show_id_includes_name_hint_and_id() -> None:
 
 def test_pformat_expression_with_show_id_propagates_into_piecewise() -> None:
     """Test ``show_id=True`` reaches identifiers nested in a ``PiecewiseExpression``."""
-    condition_identifier = mock_identifier("cond", 0)
+    condition_identifier = Identifier("cond")
     expression = PiecewiseExpression(
         (IdentifierExpression(condition_identifier),),
         (LiteralExpression(1),),
@@ -142,7 +272,7 @@ def test_pformat_expression_with_show_id_propagates_into_call_arguments() -> Non
 
 def test_pretty_formatter_default_does_not_show_identifier_id() -> None:
     """Test `ExpressionPrettyFormatter()` defaults render identifiers without an id."""
-    identifier = mock_identifier("name_only", 0)
+    identifier = Identifier("name_only")
     result = ExpressionPrettyFormatter()(IdentifierExpression(identifier))
     assert result == identifier.name_hint
 
@@ -193,7 +323,7 @@ def test_pformat_single_case_piecewise_renders_symbolic_case_form() -> None:
         (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
-    assert pformat_expression(expression) == "{1 if True; 2 otherwise}"
+    assert pformat_expression(expression) == "{1 if true; 2 otherwise}"
 
 
 def test_pformat_multi_case_piecewise_renders_all_cases_then_otherwise() -> None:
@@ -204,7 +334,7 @@ def test_pformat_multi_case_piecewise_renders_all_cases_then_otherwise() -> None
         LiteralExpression(3),
     )
 
-    assert pformat_expression(expression) == "{1 if True; 2 if False; 3 otherwise}"
+    assert pformat_expression(expression) == "{1 if true; 2 if false; 3 otherwise}"
 
 
 def test_pformat_piecewise_expression_renders_in_functional_form() -> None:
@@ -213,7 +343,7 @@ def test_pformat_piecewise_expression_renders_in_functional_form() -> None:
         (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
-    assert pformat_expression(expression, functional=True) == "(piecewise True 1 2)"
+    assert pformat_expression(expression, functional=True) == "(piecewise true 1 2)"
 
 
 def test_pformat_multi_case_piecewise_renders_functional_form_with_odd_arity() -> None:
@@ -226,7 +356,7 @@ def test_pformat_multi_case_piecewise_renders_functional_form_with_odd_arity() -
 
     assert (
         pformat_expression(expression, functional=True)
-        == "(piecewise True 1 False 2 3)"
+        == "(piecewise true 1 false 2 3)"
     )
 
 
@@ -235,7 +365,7 @@ def test_pformat_piecewise_with_over_one_hundred_cases_renders_all_in_order() ->
     symbolic and functional forms.
     """
     NUM_CASES = 120
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     x_expression = IdentifierExpression(x)
     cases = tuple(
         (x_expression.equals(i), LiteralExpression(i)) for i in range(NUM_CASES)
@@ -280,7 +410,7 @@ def test_pformat_nested_piecewise_renders_inner_form_inside_branch() -> None:
 
     assert (
         pformat_expression(expression)
-        == "{{1 if False; 2 otherwise} if True; 3 otherwise}"
+        == "{{1 if false; 2 otherwise} if true; 3 otherwise}"
     )
 
 
@@ -323,3 +453,47 @@ def test_pformat_call_expression_renders_nested_call_in_argument_position() -> N
     )
 
     assert pformat_expression(expression) == "max(min(1, 2), 3)"
+
+
+# =============================================================================
+# ExpressionPrettyFormatter renders the core's text
+# =============================================================================
+
+
+@pytest.mark.parametrize("show_id", [False, True])
+@pytest.mark.parametrize("functional", [False, True])
+def test_pretty_formatter_renders_what_pformat_expression_renders(
+    show_id: bool, functional: bool
+) -> None:
+    """Test the Python formatter and the core render every node kind alike."""
+    x = IdentifierExpression(Identifier("x"))
+    expression = PiecewiseExpression(
+        (logical_and(x > 0, -x < LiteralExpression(Decimal("1.5"))),),
+        (CallExpression("max", (x % 3, LiteralExpression(True))),),
+        logical_or(
+            LiteralExpression(False), UnaryExpression(UnaryOperation.POSITIVE, x)
+        ),
+    )
+
+    formatted = ExpressionPrettyFormatter(
+        is_id_shown=show_id, is_printed_functional=functional
+    )(expression)
+
+    assert formatted == pformat_expression(
+        expression, show_id=show_id, functional=functional
+    )
+
+
+def test_pretty_formatter_subclass_overrides_one_node_kind() -> None:
+    """Test a formatter subclass can change how one node kind renders."""
+
+    class _BracketedLiterals(ExpressionPrettyFormatter):
+        @override
+        def visit_literal_expression(
+            self, literal_expression: LiteralExpression
+        ) -> str:
+            return f"[{super().visit_literal_expression(literal_expression)}]"
+
+    x = IdentifierExpression(Identifier("x"))
+
+    assert _BracketedLiterals()(x + LiteralExpression(True)) == "(x + [true])"

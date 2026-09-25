@@ -5,8 +5,10 @@ Covers ``Expression.substitute``'s free-identifier specification; that
 equivalence-relation-shaped (reflexive, symmetric), that structural
 equivalence (a DICT round trip) implies alpha equivalence, that
 renaming every free identifier breaks both unless declared through an
-explicit free-renaming bijection; and that ``build_literal_equivalence_key``
-is constant on the weak literal classes its docstring documents.
+explicit free-renaming bijection; that ``==`` is structural equivalence
+and ``hash`` agrees with it; and that ``build_literal_equivalence_key``
+is constant on the weak literal classes its docstring documents and
+agrees with literal ``==``.
 """
 
 import pytest
@@ -22,6 +24,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
+    LiteralExpression,
     build_literal_equivalence_key,
 )
 from fhy_core.term import AlphaRenaming
@@ -34,9 +37,11 @@ from ...strategies.identifiers import (
     build_boolean_identifier_pool,
     build_identifier_pool,
 )
-from ...strategies.literals import build_decimal_string_value_strategy
+from ...strategies.literals import (
+    build_any_literal_strategy,
+    build_decimal_string_value_strategy,
+)
 from ...strategies.structural_expressions import build_structural_expression_strategy
-from .conftest import mock_identifier
 
 pytestmark = pytest.mark.property
 
@@ -44,11 +49,11 @@ _POOL = build_identifier_pool(3)
 _BOOLEAN_POOL = build_boolean_identifier_pool(2)
 _STRUCTURAL_MAX_LEAVES = 6
 
-# A second pool with ids well above `_POOL`'s (10000-10002): calling
+# A second pool distinct from `_POOL` (ids 10000-10002): calling
 # `build_identifier_pool(3, name_prefix="w")` again would reuse ids
-# 10000-10002 and alias `_POOL` (mock identifiers compare by id alone), so
-# the renaming law below needs a pool built directly with an offset base.
-_FRESH_POOL = tuple(mock_identifier(f"w{index}", 20_000 + index) for index in range(3))
+# 10000-10002 and alias `_POOL` (identifiers compare by id alone), so the
+# renaming law below takes fresh identifiers from the counter instead.
+_FRESH_POOL = tuple(Identifier(f"w{index}") for index in range(3))
 
 
 # =============================================================================
@@ -108,8 +113,8 @@ def test_substitute_updates_free_identifiers_per_specification(
 
     ``e.substitute(s).get_free_identifiers()`` must equal
     ``(free(e) - dom(s)) | union(free(s[v]) for v in free(e) & dom(s))``.
-    Both sides are frozensets of mock identifiers, which hash and compare
-    by id.
+    Both sides are frozensets of identifiers, which hash and compare by
+    id.
     """
     expression, substitution = pair
     free_before = expression.get_free_identifiers()
@@ -153,6 +158,39 @@ def test_structural_and_alpha_equivalence_are_symmetric(
         left
     )
     assert left.is_alpha_equivalent(right) == right.is_alpha_equivalent(left)
+
+
+# =============================================================================
+# `==` is structural equivalence, and `hash` agrees with it
+# =============================================================================
+
+
+@given(
+    build_structural_expression_strategy(_POOL, _STRUCTURAL_MAX_LEAVES),
+    build_structural_expression_strategy(_POOL, _STRUCTURAL_MAX_LEAVES),
+)
+def test_eq_is_structural_equivalence_and_hash_agrees(
+    left: Expression, right: Expression
+) -> None:
+    """Test ``==`` is ``is_structurally_equivalent``, and equal trees hash alike.
+
+    Oracle: D-S4-1's structural ``==`` and ``hash``; a hash that split an
+    equality class would lose dict and set lookups.
+    """
+    assert (left == right) is left.is_structurally_equivalent(right)
+    assert (left != right) is not left.is_structurally_equivalent(right)
+    if left == right:
+        assert hash(left) == hash(right)
+
+
+@given(build_structural_expression_strategy(_POOL, _STRUCTURAL_MAX_LEAVES))
+def test_a_rebuilt_copy_is_equal_and_hashes_alike(expression: Expression) -> None:
+    """Test a separately built copy of a tree is ``==`` and has the same hash."""
+    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
+
+    assert restored == expression
+    assert hash(restored) == hash(expression)
+    assert {expression: True}[restored]
 
 
 # =============================================================================
@@ -233,9 +271,9 @@ def test_literal_equivalence_key_agrees_for_int_and_digit_string_forms(
 
     Restricted to non-negative ``value``: the integer grammar
     ``build_literal_equivalence_key`` recognizes for a string is
-    unsigned digits only (``LiteralExpression``'s own grammar,
-    ``core.py`` around line 914), so ``str(value)`` for a negative
-    ``value`` would not land in the integer bucket at all.
+    unsigned digits only (the Rust core's literal grammar), so
+    ``str(value)`` for a negative ``value`` would not land in the
+    integer bucket at all.
     """
     zero_padded = ("0" * padding) + str(value)
 
@@ -272,3 +310,43 @@ def test_literal_equivalence_key_treats_signed_and_unsigned_zero_as_equal() -> N
     ``-0.0`` into the ``0.0`` it already equals.
     """
     assert build_literal_equivalence_key(0.0) == build_literal_equivalence_key(-0.0)
+
+
+@given(build_any_literal_strategy(), build_any_literal_strategy())
+def test_literal_equivalence_key_agrees_with_literal_equality(
+    left: LiteralExpression, right: LiteralExpression
+) -> None:
+    """Test two literals are ``==`` exactly when their values' keys are equal.
+
+    Oracle: ``build_literal_equivalence_key``'s contract, that the key
+    agrees with literal equality in both directions.
+    """
+    keys_agree = build_literal_equivalence_key(
+        left.value
+    ) == build_literal_equivalence_key(right.value)
+
+    assert (left == right) is keys_agree
+
+
+@given(
+    st.one_of(
+        st.integers(min_value=0, max_value=10**6).map(str),
+        build_decimal_string_value_strategy(),
+        st.integers(min_value=-(10**6), max_value=10**6),
+        st.floats(allow_nan=True),
+        st.booleans(),
+    )
+)
+def test_literal_equivalence_key_is_unchanged_by_normalization(
+    value: str | int | float | bool,
+) -> None:
+    """Test a value keys like the normalized value its literal holds.
+
+    Normalization never moves a value to another equivalence class, so a
+    consumer may key the raw value or the literal's ``value`` alike.
+    """
+    literal = LiteralExpression(value)
+
+    assert build_literal_equivalence_key(value) == build_literal_equivalence_key(
+        literal.value
+    )
