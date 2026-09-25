@@ -29,7 +29,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [x] S4.3b: consumers migrated. On the Rust backend: the suite is green (6,960 passed), slow tests pass (7,008), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
 - [x] S4.4: retire the pure-Python backend. The suite is green (6,949 passed), slow tests pass (6,982), properties pass (280), lint and mypy are clean, and the Rust gate passes (2,630)
 - [ ] S5: patterns and rewrite rules (designed; N-S5-1 resolved as (a))
-  - [ ] S5.1: pattern benchmarks and baseline
+  - [x] S5.1: pattern benchmarks and baseline
   - [ ] S5.2: core additions, if any, with Rust tests
   - [ ] S5.3: the pattern binding
   - [ ] S5.4: the Python switch
@@ -2661,3 +2661,46 @@ without a rewrite, and each change is recorded with its reason:
 - **`test_user_stories.py` (7)** and the two property modules (7) change
   only by D-S5-2 and N-S5-1. The "identity holds iff no rule fired"
   property also checks `RewriteRuleApplier.fired`.
+
+### S5.1 baseline (2026-09-25, 1207faf plus the new benchmarks)
+
+`benchmarks/test_pattern.py` implements the benchmark plan above. It
+imports the deep tree, the doubling DAG and their sizes from
+`test_expression.py`. The "firing" variant of the deep tree replaces every
+fourth multiplication with an addition of zero, so `x + 0 -> x` fires 25
+times in its 100 levels. The leaf benchmark negates every identifier
+reference, so each call reads a binding and builds a node. `_capture(name)`
+is the one helper marked with a decision (D-S5-2). N-S5-1's resolution, (a),
+keeps `apply_rewrite_rules` returning the expression, so the planned
+`_rewritten(result)` helper is not needed.
+
+Median time per call, from `uv run --python 3.11 nox -s benchmark-3.11 --
+-k test_pattern` on the S0 machine with Python 3.11.13 and pytest-benchmark
+5.3.0, measuring today's pure-Python pattern classes. The load average was
+about 1, and the table lists the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_capture_pattern_construction` | 880 ns |
+| `test_binary_expression_pattern_construction` | 1.15 µs |
+| `test_rewrite_rule_construction` | 1.06 µs |
+| `test_pattern_attribute_access` | 90 ns |
+| `test_match_of_a_small_pattern[hit]` | 3.10 µs |
+| `test_match_of_a_small_pattern[miss]` | 1.28 µs |
+| `test_match_of_a_mirroring_pattern_of_a_deep_tree` | 967.6 µs |
+| `test_match_of_a_repeated_capture_over_deep_operands` | 8.15 µs |
+| `test_match_of_alternatives` | 2.39 µs |
+| `test_match_bindings_get` | 118 ns |
+| `test_apply_rewrite_rule_at_the_root` | 3.52 µs |
+| `test_apply_rewrite_rules_to_a_deep_tree[no_firing]` | 1.88 ms |
+| `test_apply_rewrite_rules_to_a_deep_tree[firing]` | 1.98 ms |
+| `test_apply_rewrite_rules_to_a_shared_dag` | 15.2 ms |
+| `test_rewrite_rule_applier_execute_of_a_deep_tree` | 1.99 ms |
+| `test_apply_rewrite_rules_with_a_predicate_at_every_node` | 568.0 µs |
+| `test_apply_rewrite_rules_with_a_guard_and_rewrite_at_every_leaf` | 925.7 µs |
+
+The walk dominates: about 9 µs per node of the deep tree whether or not a
+rule fires, since each node runs the Python visitor dispatch and tries four
+Python patterns, and 7 µs per occurrence of the DAG, whose 2,047
+occurrences are each walked. Matching a 100-level mirroring pattern takes
+about 1 ms, a small pattern 1.3 to 3.1 µs.
