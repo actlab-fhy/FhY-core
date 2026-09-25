@@ -56,6 +56,7 @@ from fhy_core.symbolic.expression.pattern import (
     apply_rewrite_rules,
 )
 from fhy_core.traits import FrozenMixin, FrozenMutationError
+from fhy_core.utils.override import override
 
 _PATTERN_CLASSES = [
     (WildcardPattern, _rs.WildcardPattern),
@@ -809,14 +810,16 @@ class _DoubleLiteral(Rule):
         self.label = label
         self.calls = 0
 
-    def apply(self, expression: Expression) -> Expression | None:  # type: ignore[explicit-override]
+    @override
+    def apply(self, expression: Expression) -> Expression | None:
         self.calls += 1
         if isinstance(expression, LiteralExpression) and expression.value:
             return LiteralExpression(2 * expression.value)
         return None
 
     @property
-    def name(self) -> str | None:  # type: ignore[explicit-override]
+    @override
+    def name(self) -> str | None:
         return self.label
 
 
@@ -852,7 +855,8 @@ def test_a_python_rule_name_appears_in_errors() -> None:
     """Test a failing Python rule is named in the walk's error."""
 
     class _Failing(_DoubleLiteral):
-        def apply(self, expression: Expression) -> Expression | None:  # type: ignore[explicit-override]
+        @override
+        def apply(self, expression: Expression) -> Expression | None:
             raise OSError("disk")
 
     with pytest.raises(RewriteCallbackError, match=r"rewrite rule 0 \(failing\)"):
@@ -863,7 +867,8 @@ def test_a_python_rule_result_of_another_type_raises_type_error() -> None:
     """Test a Python rule returning neither an expression nor ``None``."""
 
     class _Wrong(_DoubleLiteral):
-        def apply(self, expression: Expression) -> Expression | None:  # type: ignore[explicit-override]
+        @override
+        def apply(self, expression: Expression) -> Expression | None:
             return 1  # type: ignore[return-value]
 
     with pytest.raises(RewriteCallbackError) as caught:
@@ -879,7 +884,8 @@ def test_a_python_rule_name_is_read_once_per_walk() -> None:
 
     class _Counted(_DoubleLiteral):
         @property
-        def name(self) -> str | None:  # type: ignore[explicit-override]
+        @override
+        def name(self) -> str | None:
             nonlocal reads
             reads += 1
             return "counted"
