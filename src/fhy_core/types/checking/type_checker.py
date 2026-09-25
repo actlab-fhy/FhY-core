@@ -33,7 +33,7 @@ synthesizes ``int32`` and checks against ``int32``.
 
 This module raises :class:`FhYCoreTypeError` for type-rule violations and
 :class:`NotImplementedError` for expression shapes / operations that are
-not yet supported (string literals, tensor operands, unknown
+not yet supported (decimal literals, tensor operands, unknown
 ``UnaryOperation`` / ``Expression`` subclasses).
 
 :class:`FhYCoreTypeError` instances raised through
@@ -66,8 +66,10 @@ __all__ = [
     "synthesize_expression_type",
 ]
 
+import functools
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import TypeAlias
 
 from fhy_core.identifier import Identifier
@@ -85,6 +87,7 @@ from fhy_core.symbolic.expression.core import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -136,14 +139,6 @@ _ARITHMETIC_OPERATIONS = frozenset(
         BinaryOperation.MODULO,
         BinaryOperation.POWER,
     }
-)
-
-# The binary connectives exist on the pure-Python backend only; the Rust
-# backend's are `LogicalExpression` nodes (decision D-S4-1).
-_LOGICAL_BOOLEAN_OPERATIONS = frozenset(
-    getattr(BinaryOperation, name)
-    for name in ("LOGICAL_AND", "LOGICAL_OR")
-    if hasattr(BinaryOperation, name)
 )
 
 _EQUALITY_OPERATIONS = frozenset({BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL})
@@ -221,15 +216,15 @@ def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
 
     Numeric literals (``int`` and ``float``) participate in the type
     system via the weak ``UINT``/``INT``/``FLOAT`` types; ``bool``
-    literals are concrete ``BOOL``. ``str`` values are accepted by
-    :class:`~fhy_core.symbolic.expression.core.LiteralExpression` for other
-    purposes (e.g. serialization round-trips) but have no core data type
-    and are rejected here with :class:`NotImplementedError`. Callers that
-    may receive string literals should either filter them earlier or
+    literals are concrete ``BOOL``. A decimal literal, whose value is a
+    ``decimal.Decimal`` (the value a float-grammar ``str`` normalizes to),
+    has no core data type yet and is rejected here with
+    :class:`NotImplementedError`, as is a raw ``str`` value. Callers that
+    may receive decimal literals should either filter them earlier or
     catch ``NotImplementedError`` explicitly.
 
     Raises:
-        NotImplementedError: If ``literal`` is a ``str``.
+        NotImplementedError: If ``literal`` is a ``Decimal`` or a ``str``.
         ValueError: If ``literal`` is none of the supported literal types.
 
     """
@@ -242,6 +237,8 @@ def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
             return CoreDataType.INT
         case float():
             return CoreDataType.FLOAT
+        case Decimal():
+            raise NotImplementedError("Decimal literals are not yet supported.")
         case str():
             raise NotImplementedError("String literals are not yet supported.")
         case _:
@@ -279,7 +276,7 @@ def _get_primitive_data_type(numerical_type: NumericalType) -> PrimitiveDataType
 
 def _get_numeric_literal_value(literal_expression: LiteralExpression) -> int | float:
     literal_value = literal_expression.value
-    if isinstance(literal_value, bool | str):
+    if isinstance(literal_value, bool | str | Decimal):
         raise FhYCoreTypeError(
             f"expected a numeric literal value, got {literal_value!r}"
         )
@@ -507,6 +504,12 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         """Infer and check the type of the binary expression."""
         return self._infer_binary_expression(binary_expression)
 
+    def visit_logical_expression(
+        self, logical_expression: LogicalExpression
+    ) -> tuple[Type, TypeQualifier]:
+        """Infer and check the type of the logical expression."""
+        return self._infer_logical_expression(logical_expression)
+
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression
     ) -> tuple[Type, TypeQualifier]:
@@ -584,7 +587,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
 
     # --- Core inference ------------------------------------------------------
 
-    def _infer(
+    # One case per node kind reads clearest here.
+    def _infer(  # noqa: PLR0911
         self, expression: Expression, expected_type: Type | None = None
     ) -> tuple[Type, TypeQualifier]:
         match expression:
@@ -592,6 +596,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 return self._infer_unary_expression(expression, expected_type)
             case BinaryExpression():
                 return self._infer_binary_expression(expression, expected_type)
+            case LogicalExpression():
+                return self._infer_logical_expression(expression)
             case IdentifierExpression():
                 return self.visit_identifier_expression(expression)
             case LiteralExpression():
@@ -749,14 +755,6 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 operation,
             )
 
-            if operation in _LOGICAL_BOOLEAN_OPERATIONS:
-                return self._infer_logical_binary(
-                    operation,
-                    left_value_type,
-                    right_value_type,
-                    left_qualifier,
-                    right_qualifier,
-                )
             if operation in _COMPARISON_OPERATIONS:
                 return self._infer_comparison_binary(
                     operation,
@@ -783,26 +781,39 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 right_qualifier,
             )
 
-    def _infer_logical_binary(
-        self,
-        operation: BinaryOperation,
-        left_value_type: ExpressionValueType,
-        right_value_type: ExpressionValueType,
-        left_qualifier: TypeQualifier,
-        right_qualifier: TypeQualifier,
+    def _infer_logical_expression(
+        self, logical_expression: LogicalExpression
     ) -> tuple[Type, TypeQualifier]:
-        if not (
-            _is_boolean_numerical_type(left_value_type)
-            and _is_boolean_numerical_type(right_value_type)
-        ):
-            raise self._context.type_error(
-                f"logical {operation.name.lower()} requires boolean operands, "
-                f"but got {left_value_type} and {right_value_type}"
+        """Infer a conjunction or disjunction: every operand must be boolean.
+
+        The operands are inferred in order with no expected type, and the
+        result is ``BOOL`` under the promotion of the operands' qualifiers.
+        """
+        with self._context.entering(logical_expression):
+            operand_value_types: list[ExpressionValueType] = []
+            operand_qualifiers: list[TypeQualifier] = []
+            for operand in logical_expression.operands:
+                operand_type, operand_qualifier = self._infer(operand)
+                operand_value_types.append(
+                    self._as_expression_value_type(operand, operand_type)
+                )
+                operand_qualifiers.append(operand_qualifier)
+            if not all(
+                _is_boolean_numerical_type(value_type)
+                for value_type in operand_value_types
+            ):
+                rendered_types = ", ".join(
+                    str(value_type) for value_type in operand_value_types[:-1]
+                )
+                raise self._context.type_error(
+                    f"logical {logical_expression.operation.name.lower()} requires "
+                    f"boolean operands, but got {rendered_types} and "
+                    f"{operand_value_types[-1]}"
+                )
+            return (
+                _BOOLEAN_NUMERICAL_TYPE,
+                functools.reduce(promote_type_qualifiers, operand_qualifiers),
             )
-        return (
-            _BOOLEAN_NUMERICAL_TYPE,
-            promote_type_qualifiers(left_qualifier, right_qualifier),
-        )
 
     def _infer_comparison_binary(
         self,

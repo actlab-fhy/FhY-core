@@ -61,6 +61,7 @@ from ..symbolic.expression.core import (
     BinaryExpression,
     Expression,
     IdentifierExpression,
+    LogicalExpression,
     UnaryExpression,
 )
 from ..traits import FrozenMixin, StructuralEquivalence, VerificationError
@@ -104,6 +105,11 @@ def _is_identifier_in_expression(
         return _is_identifier_in_expression(
             identifier, expression.left
         ) or _is_identifier_in_expression(identifier, expression.right)
+    elif isinstance(expression, LogicalExpression):
+        return any(
+            _is_identifier_in_expression(identifier, operand)
+            for operand in expression.operands
+        )
     elif isinstance(expression, UnaryExpression):
         return _is_identifier_in_expression(identifier, expression.operand)
     else:
@@ -160,6 +166,19 @@ def _substitute_expression(  # noqa: PLR0911
         return BinaryExpression(
             expression.operation, substituted_left, substituted_right
         )
+    elif isinstance(expression, LogicalExpression):
+        substituted_operands = tuple(
+            _substitute_expression(operand, environment, visited_identifiers)
+            for operand in expression.operands
+        )
+        if all(
+            substituted is operand
+            for substituted, operand in zip(
+                substituted_operands, expression.operands, strict=True
+            )
+        ):
+            return expression
+        return LogicalExpression(expression.operation, substituted_operands)
     elif isinstance(expression, UnaryExpression):
         substituted_operand = _substitute_expression(
             expression.operand, environment, visited_identifiers

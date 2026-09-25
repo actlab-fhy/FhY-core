@@ -9,6 +9,8 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
 )
 from fhy_core.traits import VerificationError
 from fhy_core.types import (
@@ -778,6 +780,45 @@ def test_unify_expression_raises_when_occurs_check_fails(
     )
     with pytest.raises(VerificationError):
         unify_expression(left, right, empty_environment)
+
+
+def test_unify_expression_occurs_check_looks_inside_a_logical_expression(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check finds a placeholder among a connective's operands."""
+    n_identifier = Identifier("N")
+    left = IdentifierExpression(n_identifier)
+    right = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            LiteralExpression(True),
+            BinaryExpression(
+                BinaryOperation.LESS,
+                IdentifierExpression(n_identifier),
+                LiteralExpression(1),
+            ),
+        ),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, empty_environment)
+
+
+def test_unify_expression_occurs_check_follows_bindings_into_a_logical_expression(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check substitutes through a connective's operands."""
+    m_identifier = Identifier("M")
+    n_identifier = Identifier("N")
+    pre_bound_environment = empty_environment.with_expression_binding(
+        m_identifier, IdentifierExpression(n_identifier)
+    )
+    left = IdentifierExpression(n_identifier)
+    right = LogicalExpression(
+        LogicalOperation.OR,
+        (LiteralExpression(False), IdentifierExpression(m_identifier)),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, pre_bound_environment)
 
 
 def test_unify_expression_raises_when_occurs_check_fails_indirectly_via_binding(

@@ -7,6 +7,7 @@ the full ``(data_type, shape)`` / ``(lower_bound, upper_bound, stride)``
 contract is compared on every case.
 """
 
+from decimal import Decimal
 from unittest.mock import Mock
 
 import pytest
@@ -18,6 +19,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     UnaryExpression,
     UnaryOperation,
     get_native_constant_identifier,
@@ -42,6 +45,7 @@ from fhy_core.types.checking.type_checker import (
     get_core_data_type_from_literal_type,
     synthesize_expression_type,
 )
+from fhy_core.utils.override import override
 
 from .conftest import (
     make_identifier_checker,
@@ -93,16 +97,35 @@ def test_get_core_data_type_from_literal_type_rejects_string_literal() -> None:
         get_core_data_type_from_literal_type("1")
 
 
+def test_get_core_data_type_from_literal_type_rejects_decimal_literal() -> None:
+    """Test decimal literal values are rejected with `NotImplementedError`."""
+    with pytest.raises(NotImplementedError, match="Decimal literals"):
+        get_core_data_type_from_literal_type(Decimal("1.5"))
+
+
 # =============================================================================
 # Literal synthesis - weak typing & bidirectional check
 # =============================================================================
 
 
-def test_synthesize_string_literal_expression_is_rejected() -> None:
-    """Test a string-form `LiteralExpression` is rejected during type synthesis."""
+def test_synthesize_decimal_literal_expression_is_rejected() -> None:
+    """Test a decimal `LiteralExpression` is rejected during type synthesis.
+
+    Float-grammar text normalizes to a ``Decimal``, which has no core data
+    type yet.
+    """
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="Decimal literals"):
         checker.visit(LiteralExpression("1.0"))
+
+
+def test_synthesize_integer_text_literal_expression_is_a_weak_integer() -> None:
+    """Test integer-grammar text synthesizes as the integer it normalizes to."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, _ = checker.visit(LiteralExpression("05"))
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.UINT))
 
 
 def test_unary_negation_of_positive_integer_literal_becomes_weak_signed_int() -> None:
@@ -1988,7 +2011,7 @@ def test_floor_division_of_two_real_floats_promotes_via_lattice() -> None:
 
 
 def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> None:
-    """Test `LOGICAL_AND` rejects non-boolean operands with `FhYCoreTypeError`."""
+    """Test an `AND` `LogicalExpression` rejects non-boolean operands."""
     left = mock_identifier("a", 0)
     right = mock_identifier("b", 1)
     checker = make_identifier_checker(
@@ -2000,10 +2023,9 @@ def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> N
 
     with pytest.raises(FhYCoreTypeError):
         checker.visit(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(left),
-                IdentifierExpression(right),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (IdentifierExpression(left), IdentifierExpression(right)),
             )
         )
 
@@ -2264,14 +2286,28 @@ def test_synthesize_accepts_index_with_boolean_false_stride() -> None:
 # =============================================================================
 
 
+class _UnaryExpressionWithUnknownOperation(UnaryExpression):
+    """A `UnaryExpression` whose `operation` reads as no known member.
+
+    Expressions are frozen, so the unknown operation is supplied by
+    overriding the field's property rather than patching the node.
+    """
+
+    @property
+    @override
+    def operation(self) -> UnaryOperation:
+        return Mock(spec=UnaryOperation)
+
+
 def test_unary_expression_with_unknown_operation_raises_not_implemented() -> None:
     """Test an `UnaryExpression` carrying an unknown operation is rejected."""
     identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
-    unary = UnaryExpression(UnaryOperation.POSITIVE, IdentifierExpression(identifier))
-    object.__setattr__(unary, "operation", Mock(spec=UnaryOperation))
+    unary = _UnaryExpressionWithUnknownOperation(
+        UnaryOperation.POSITIVE, IdentifierExpression(identifier)
+    )
 
     with pytest.raises(NotImplementedError, match=r"unary operation"):
         checker.synthesize(unary)
