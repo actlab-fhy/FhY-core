@@ -796,6 +796,9 @@ All changes are breaking unless marked otherwise. The crate is unpublished
   intended: that is how shipped tags stay portable (§5.3).
 - **Restore.** `Identifier::restore` is narrowed from `pub` to `pub(crate)`
   as `try_restore`. The only public way to pin an id is `Deserialize`.
+  (Revised by slice S2 of `docs/design/python-switch.md`: `try_restore` is
+  `pub` again, so the Python binding can hand identifiers to the crate by id
+  and name hint. It pins an id exactly as decoding one does.)
 - **Clearing.** `InternRegistry::clear` takes `&mut self`, so a process-wide
   registry cannot be cleared from anywhere. This replaces "test-only" in
   decision 2; see D-3.

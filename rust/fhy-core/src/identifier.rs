@@ -15,11 +15,11 @@
 //! advances the counter past it.
 //!
 //! A payload id, one read from a serialized identifier or handed to
-//! [`try_advance_counter_past`], must lie below [`ID_CAP`] (`2^63`), so
-//! exhausting the counter always takes `2^63` fresh identifiers. Fresh ids
-//! may exceed the cap. A payload id outside `0..ID_CAP` is rejected with the
-//! range it must lie in, wherever the identifier is nested, and leaves the
-//! counter unchanged.
+//! [`Identifier::try_restore`] or [`try_advance_counter_past`], must lie
+//! below [`ID_CAP`] (`2^63`), so exhausting the counter always takes `2^63`
+//! fresh identifiers. Fresh ids may exceed the cap. A payload id outside
+//! `0..ID_CAP` is rejected with the range it must lie in, wherever the
+//! identifier is nested, and leaves the counter unchanged.
 
 use std::error::Error;
 use std::fmt;
@@ -155,14 +155,36 @@ impl Identifier {
         })
     }
 
-    /// Restore an identifier with a payload id and name hint, advancing the
-    /// global counter so `id` is never re-issued to a later construction.
+    /// Restore an identifier from its parts, advancing the global counter
+    /// past `id` as deserialization does, so `id` is never issued to a later
+    /// construction.
+    ///
+    /// For language bindings, which keep identifiers in their own objects
+    /// and hand them to this crate by id and name hint. The restored
+    /// identifier equals every other identifier with the same id.
     ///
     /// # Errors
     ///
     /// Returns [`IdOutOfRange`], leaving the counter unchanged, if `id` is
     /// at or above [`ID_CAP`].
-    pub(crate) fn try_restore(id: u64, name_hint: &str) -> Result<Self, IdOutOfRange> {
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::{ID_CAP, Identifier};
+    ///
+    /// let original = Identifier::new("x");
+    /// let restored = Identifier::try_restore(original.id(), "x")?;
+    /// assert_eq!(restored, original);
+    ///
+    /// let ahead = Identifier::try_restore(original.id() + 1_000, "ahead")?;
+    /// assert!(Identifier::new("later").id() > ahead.id());
+    ///
+    /// let rejected = Identifier::try_restore(ID_CAP, "too far").unwrap_err();
+    /// assert_eq!(rejected.id(), ID_CAP);
+    /// # Ok::<(), fhy_core::identifier::IdOutOfRange>(())
+    /// ```
+    pub fn try_restore(id: u64, name_hint: &str) -> Result<Self, IdOutOfRange> {
         try_advance_counter_past(id)?;
         Ok(Self {
             id,
