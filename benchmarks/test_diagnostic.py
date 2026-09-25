@@ -38,6 +38,16 @@ def test_note_str(benchmark: Benchmark, note: Note) -> None:
     benchmark(str, note)
 
 
+def test_note_hash(benchmark: Benchmark, note: Note) -> None:
+    """Benchmark hashing a note."""
+    benchmark(hash, note)
+
+
+def test_note_attribute_access(benchmark: Benchmark, note: Note) -> None:
+    """Benchmark reading a note's two fields."""
+    benchmark(operator.attrgetter("message", "kind"), note)
+
+
 def test_diagnostic_construction(benchmark: Benchmark, note: Note) -> None:
     """Benchmark constructing a diagnostic with detail."""
     benchmark(
@@ -58,6 +68,18 @@ def test_diagnostic_eq(benchmark: Benchmark, diagnostic: Diagnostic) -> None:
         detail=diagnostic.detail,
     )
     assert benchmark(operator.eq, diagnostic, other)
+
+
+def test_diagnostic_hash(benchmark: Benchmark, diagnostic: Diagnostic) -> None:
+    """Benchmark hashing a diagnostic."""
+    benchmark(hash, diagnostic)
+
+
+def test_diagnostic_attribute_access(
+    benchmark: Benchmark, diagnostic: Diagnostic
+) -> None:
+    """Benchmark reading a diagnostic's four fields."""
+    benchmark(operator.attrgetter("level", "message", "source", "detail"), diagnostic)
 
 
 def test_validation_report_construction(
@@ -86,3 +108,17 @@ def test_validation_report_format(
 ) -> None:
     """Benchmark rendering a report of 100 diagnostics."""
     benchmark(report.format)
+
+
+def test_validation_report_errors(
+    benchmark: Benchmark, report: ValidationReport[Any]
+) -> None:
+    """Benchmark selecting the errors of a report of 100 diagnostics."""
+    benchmark(report.errors)
+
+
+def test_validation_report_has_errors(
+    benchmark: Benchmark, report: ValidationReport[Any]
+) -> None:
+    """Benchmark checking a report of 100 diagnostics for errors."""
+    benchmark(report.has_errors)
