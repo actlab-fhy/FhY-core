@@ -10,14 +10,15 @@ Exposes:
 - :func:`register_verification`: decorator that registers a
   ``CompilerPass`` subclass as a verification pass.
 - :func:`run_verification`: helper used by
-  :meth:`fhy_core.traits.VerifiableMixin.verify` and by
-  :class:`CompilerPass` auto-verification when no analysis manager is
-  bound.
+  :meth:`fhy_core.traits.VerifiableMixin.verify`.
 
 Verification passes are ``CompilerPass`` subclasses whose only effect
 is to ``report(...)`` structural diagnostics about an IR. They run
-through :class:`ValidationManager`, inheriting its collect-all and
-synthetic-error-on-crash behavior.
+through :class:`ValidationManager`, inheriting its collect-all behavior.
+A :class:`PassManager` verifies its input and every changed output with
+the passes registered for the IR's type, unless its verifier is replaced;
+a verification pass runs as a check, so it never verifies anything
+itself.
 
 :class:`VerificationRegistry` is a class-level singleton: all state
 lives in ``ClassVar`` attributes, there are no instances, and every
@@ -61,9 +62,8 @@ class VerificationRegistry:
     The class itself is the registry.
 
     Registration is module-load-time by convention. Late registration
-    after cached :class:`VerificationAnalysis` results exist does not
-    retroactively invalidate those caches; callers who need that must
-    clear the relevant :class:`AnalysisManager` themselves.
+    during a pipeline run does not invalidate the :class:`VerificationAnalysis`
+    results that run cached already.
     """
 
     _passes_by_type: ClassVar[dict[type, list[type[CompilerPass[Any, Any]]]]] = {}
@@ -151,10 +151,9 @@ class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
     analysis result. When no passes are registered for the IR's type
     (or any of its base classes), the report is empty.
 
-    Has a stable ``analysis_name``, so results compose with
-    :class:`AnalysisManager`: cached per IR identity, invalidated on
-    pass-reported changes unless the pass declares this analysis
-    preserved.
+    Has a stable ``analysis_name``, so a pipeline run caches its result
+    per IR node, and carries it to a pass's output when the pass preserves
+    it.
     """
 
     @override
@@ -188,8 +187,7 @@ def register_verification(
 
     - added to the global pass registry under ``name`` and
       ``description``,
-    - added to the :class:`VerificationRegistry` under ``ir_type``,
-    - assigned ``_auto_verify = False``.
+    - added to the :class:`VerificationRegistry` under ``ir_type``.
 
     Args:
         ir_type: The IR type this verification pass applies to.
@@ -218,7 +216,6 @@ def register_verification(
             )
         register_pass(name, description)(pass_class)
         VerificationRegistry.register(ir_type, pass_class)
-        pass_class._auto_verify = False
         return pass_class
 
     return _decorator
@@ -227,8 +224,7 @@ def register_verification(
 def run_verification(ir: Any) -> ValidationReport[Any]:
     """Run the verification pipeline for ``ir`` and return the report.
 
-    Bypasses any :class:`AnalysisManager` and recomputes the report on
-    every call.
+    Computes the report afresh on every call.
 
     Args:
         ir: The IR to verify.

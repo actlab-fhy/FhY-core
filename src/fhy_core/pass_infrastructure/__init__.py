@@ -24,7 +24,7 @@ from .manager import (
     PassManagerResult,
     PassRunRecord,
 )
-from .validation import ValidationManager
+from .validation import ValidationManager, Validator, ValidatorRecord
 from .verification import (
     VerificationAnalysis,
     VerificationRegistry,
@@ -52,6 +52,8 @@ __all__ = [
     "RewritablePass",
     "TraversalOrder",
     "ValidationManager",
+    "Validator",
+    "ValidatorRecord",
     "VerificationAnalysis",
     "VerificationRegistry",
     "VisitablePass",

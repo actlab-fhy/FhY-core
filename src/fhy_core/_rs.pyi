@@ -10,6 +10,7 @@ from fhy_core.diagnostic import Diagnostic as _Diagnostic
 from fhy_core.diagnostic import DiagnosticLevel as _DiagnosticLevel
 from fhy_core.diagnostic import Note as _Note
 from fhy_core.diagnostic import NoteKind as _NoteKind
+from fhy_core.diagnostic import ValidationReport as _ValidationReport
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure.core import CompilerPass as _CompilerPass
 from fhy_core.pass_infrastructure.core import PassResult as _PassResult
@@ -1082,4 +1083,4 @@ class ValidationManager:
     @property
     def validators(self) -> tuple[_Validator[Any] | _CompilerPass[Any, Any], ...]: ...
     def add(self, validator: _Validator[Any] | _CompilerPass[Any, Any]) -> None: ...
-    def validate(self, ir: Any) -> ValidationReport: ...
+    def validate(self, ir: Any) -> _ValidationReport[_ValidatorRecord]: ...
