@@ -259,3 +259,101 @@ about 87 µs on a four-domain chain: each step up the chain runs a
 structural-equivalence check of about 22 µs, most of it spent in
 `isinstance` checks against runtime-checkable protocols. Constructing a tag
 whose key is already registered takes about 17 µs.
+
+## S2: interned tags (`OpAttribute`, `NoteKind`, `ValueDomain`)
+
+**Pattern: P2.** The registry rule requires it: after S2, the Rust registry is
+the only registry for these three concepts on the Rust backend.
+
+### Shape
+
+- **`fhy-core-py` pyclasses.** One `#[pyclass(subclass, frozen)]` per concept
+  wraps the canonical Rust handle (`Canonical<OpAttribute>`,
+  `Canonical<NoteKind>`, `Canonical<ValueDomain>`). It implements in Rust:
+  - `name`, `description` and `parent` (`ValueDomain` only);
+  - `get_identifier`, `get_intern_key`, `is_subdomain_of`;
+  - `__eq__` and `__hash__` by key, `__repr__`;
+  - the class methods `get_interned`, `require_interned` and
+    `construct_from_fields`;
+  - `serialize_to_dict` and `deserialize_from_dict`, in exactly today's
+    Python payload shapes. `ValueDomain` nests its parent as today; the Rust
+    core's flat wire form stays internal to Rust serde.
+- **The public Python classes.** On the Rust backend, `OpAttribute`,
+  `NoteKind` and `ValueDomain` are thin Python subclasses of those pyclasses:
+  - they set `__slots__ = ()`, so instances stay immutable;
+  - they mix in the stateless Python protocols the classes have today
+    (`HasIdentifier`, the structural/alpha/derived equivalence mixins,
+    `Serializable` through `register_serializable` with the same type ids);
+  - they never mix in `InternedMixin` itself. Instead they are registered as
+    virtual subclasses of `InternedMixin` (and `FrozenMixin`), so
+    `isinstance` checks still hold.
+
+  Mutating an attribute raises `FrozenMutationError` with today's message.
+- **Construction.** `OpAttribute(name, description)`,
+  `NoteKind(name, description)` and
+  `ValueDomain(name, description, parent=None)` register through the Rust
+  registry.
+  - **Canonical identity (D-S2-4).** When the key exists, construction
+    returns the canonical Python object itself, so `a is b` holds for equal
+    keys. A per-concept identity cache in the binding maps each canonical
+    key to its single Python object, so `get_interned(key) is DATA_DOMAIN`.
+  - **Descriptions.** A new description for an existing key is ignored. The
+    first one wins (decision D-4 of the crate spec).
+- **`Identifier` (P1).** It converts through `(id, name_hint)`. The binding
+  restores the Rust identifier through a now-public
+  `Identifier::try_restore(id, name_hint) -> Result<Identifier, IdOutOfRange>`
+  in the core crate. It caches the Python `Identifier` object on each tag,
+  so reading `.name` doesn't rebuild it.
+
+### Backend multiplexing
+
+- **Where it happens.** `op_attribute.py`, `value_domain.py` and the
+  `NoteKind` part of `diagnostic.py` each choose their implementation with
+  `if IS_RUST_BACKEND_SELECTED:`. The pure-Python classes stay unchanged for
+  the Python backend.
+- **Shipped constants.** The module constants (`COMMUTATIVE`, `ASSOCIATIVE`,
+  `PURE`, `ELEMENTWISE`, `DATA_DOMAIN`, `ADDRESS_DOMAIN` and the four note
+  kinds) are the Rust shipped tags on the Rust backend.
+
+### Decisions (signed off 2026-09-24)
+
+- **D-S2-1: `clear_interned_registry` and `register_default_instances` are
+  unsupported on the Rust backend.** They raise `NotImplementedError`, with
+  a message saying the Rust registries are append-only. The Python tests
+  that use them become Python-backend-only, with a skip reason. Their
+  behavior is covered by the Rust tests over local registries.
+- **D-S2-2: shipped tags use the reserved ids on both backends.** The
+  pure-Python backend builds its shipped tags' identifiers with the fixed ids
+  from `fhy_core::identifier::reserved`, through a private helper in
+  `identifier.py` that mirrors the deserialization path and never touches
+  the counter. A shipped tag, and a pickle of one, is then identical across
+  backends. This revises R-3 of the crate spec.
+- **D-S2-3: `ValueDomain` follows Rust semantics on the Rust backend.**
+  Constructing a domain whose name is registered with a different parent
+  raises the conflict error; Python's own deserialization already raises
+  `DeserializationValueError` for this. Domains compare by name. The Python
+  tests that expect the silent shadow or `(name, parent)` equality become
+  Python-backend-only, with a reason.
+- **D-S2-4: construction of an existing key returns the canonical object**
+  on the Rust backend. The Python backend keeps returning a fresh, equal,
+  non-canonical object until it is deleted.
+
+### Tests
+
+- **During the transition, the whole Python suite passes on both backends.**
+  The exceptions are tests that pin D-S2-1 or D-S2-3 behavior; those are
+  skipped on the Rust backend, with a reason naming the decision.
+- **Python interface tests.** A small new file,
+  `tests/test_interned_tags_rust_binding.py`, covers the Python interface
+  over the Rust implementation:
+  - construction and canonical identity;
+  - `get_interned` and `require_interned`;
+  - payload round trips and pickles;
+  - frozen errors;
+  - the `NotImplementedError` of D-S2-1;
+  - the conflict error of D-S2-3.
+- **Rust behavior tests** already exist in `rust/fhy-core/tests/it/`. New
+  Rust tests cover only behavior the binding adds, such as the Python
+  payload shapes, which are exercised through Python.
+- **Benchmarks.** Run `benchmarks/test_interned_tags.py` on both backends
+  before and after. Record the results here.
