@@ -478,7 +478,7 @@ def test_mutation_raises_the_frozen_mixin_error(cls: type[_Tag]) -> None:
     with pytest.raises(FrozenMutationError) as set_info:
         tag.description = "rewritten"  # type: ignore[misc]  # test: frozen
     with pytest.raises(FrozenMutationError) as new_info:
-        tag.extra = 1
+        tag.extra = 1  # type: ignore[union-attr]  # test: no such attribute
     with pytest.raises(FrozenMutationError) as delete_info:
         del tag.name
 
@@ -650,4 +650,4 @@ def test_value_domain_parent_is_the_canonical_parent_object() -> None:
 
 def test_value_domain_is_not_a_subdomain_of_a_non_domain() -> None:
     """Test `is_subdomain_of` returns `False` for anything but a domain."""
-    assert not DATA_DOMAIN.is_subdomain_of(COMMUTATIVE)  # type: ignore[arg-type]
+    assert not DATA_DOMAIN.is_subdomain_of(COMMUTATIVE)

@@ -275,7 +275,7 @@ def test_diagnostic_holds_its_fields() -> None:
 
 def test_diagnostic_converts_a_level_value_to_the_enum_member() -> None:
     """Test a level is converted as `DiagnosticLevel(level)` converts it."""
-    diagnostic = Diagnostic("info", Note("m"), "source")  # type: ignore[arg-type]
+    diagnostic = Diagnostic("info", Note("m"), "source")
 
     assert diagnostic.level is DiagnosticLevel.INFO
 
@@ -283,7 +283,7 @@ def test_diagnostic_converts_a_level_value_to_the_enum_member() -> None:
 def test_diagnostic_rejects_a_value_that_names_no_level() -> None:
     """Test an unknown level raises the enum's own `ValueError`."""
     with pytest.raises(ValueError) as info:
-        Diagnostic("fatal", Note("m"), "source")  # type: ignore[arg-type]
+        Diagnostic("fatal", Note("m"), "source")
 
     assert str(info.value) == "'fatal' is not a valid DiagnosticLevel"
 
@@ -380,8 +380,8 @@ def test_report_stores_any_iterable_as_a_tuple() -> None:
     diagnostic = _build_error()
 
     report: ValidationReport[str] = ValidationReport(
-        [diagnostic],  # type: ignore[arg-type]  # test: any iterable
-        iter(["record"]),  # type: ignore[arg-type]  # test: any iterable
+        [diagnostic],
+        iter(["record"]),
     )
 
     assert report.diagnostics == (diagnostic,)
