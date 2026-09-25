@@ -4320,11 +4320,11 @@ Choices the plan left open, and where the shape differs from it:
 
 ### S6.4 to S6.7 status
 
-S6.4 to S6.7 were implemented on 2026-09-25 in four commits: the binding
+S6.4 to S6.7 were implemented on 2026-09-25 in five commits: the binding
 (b4bb6ba); the Python switch, marked breaking (5f1a9aa); the migrated
-tests and the new interface suite (d9cf3b6); and the benchmarks and these
-notes, with the constructor-argument check moved into the Rust bases,
-which the benchmarks called for. No test was skipped or deleted. At the end: `pytest` 7,163 passed (the
+tests and the new interface suite (d9cf3b6); the constructor-argument
+check moved into the Rust bases, which the benchmarks called for
+(441f77d); and these notes (af12d0c). No test was skipped or deleted. At the end: `pytest` 7,163 passed (the
 pass-infrastructure tests gained one in the rewrites, and the interface
 suite adds 108), `-m "not very_slow"` 7,196 passed, the `property` session
 280 passed, `lint` and `type_check` clean, `tests/test_rs_stub.py` green,
