@@ -61,6 +61,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -90,7 +91,6 @@ from .strategies.constraints import (
 from .strategies.expressions import (
     BOOLEAN_EQUALITY_OPERATIONS,
     COMPARISON_OPERATIONS,
-    LOGICAL_BINARY_OPERATIONS,
     NUMERIC_DIVISION_OPERATIONS,
     SYMPY_STABLE_CALL_FUNCTIONS,
     build_any_sort_expression_strategy,
@@ -733,7 +733,7 @@ def _is_typed_boolean(expression: Expression) -> bool:
     )
 
 
-def _is_boolean_sorted(expression: Expression) -> bool:
+def _is_boolean_sorted(expression: Expression) -> bool:  # noqa: PLR0911
     """Return whether a gate tree over the two pools denotes a Boolean.
 
     Reads the sort off the root alone, which is exact for a well-typed
@@ -747,10 +747,9 @@ def _is_boolean_sorted(expression: Expression) -> bool:
     if isinstance(expression, UnaryExpression):
         return expression.operation is UnaryOperation.LOGICAL_NOT
     if isinstance(expression, BinaryExpression):
-        return expression.operation in (
-            *COMPARISON_OPERATIONS,
-            *LOGICAL_BINARY_OPERATIONS,
-        )
+        return expression.operation in COMPARISON_OPERATIONS
+    if isinstance(expression, LogicalExpression):
+        return True
     if isinstance(expression, PiecewiseExpression):
         return _is_boolean_sorted(expression.otherwise)
     return False
@@ -789,8 +788,10 @@ def _holds_open_boolean_piecewise_under_binary(
 
 def _holds_open_boolean_piecewise_under_and_or(expression: Expression) -> bool:
     """Return whether an ``&&``/``||`` node has an open Boolean piecewise operand."""
-    return _holds_open_boolean_piecewise_under_binary(
-        expression, LOGICAL_BINARY_OPERATIONS
+    return any(
+        isinstance(node, LogicalExpression)
+        and any(_is_open_boolean_piecewise(operand) for operand in node.operands)
+        for node in _iter_expression_nodes(expression)
     )
 
 
