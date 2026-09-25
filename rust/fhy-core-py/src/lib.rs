@@ -15,6 +15,7 @@ mod frozen;
 mod identifier;
 mod interned;
 mod op_attribute;
+mod pass;
 mod provenance;
 mod public_class;
 mod serialization;
@@ -45,6 +46,13 @@ mod rs_module {
     use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
     #[pymodule_export]
     use super::op_attribute::PyOpAttribute;
+    #[pymodule_export]
+    use super::pass::{
+        PyAnalysisBase, PyAnalysisManager, PyCompilerPassBase, PyFixpointGroupRecord,
+        PyFixpointIterationRecord, PyFixpointPassGroup, PyPassManager, PyPassManagerResult,
+        PyPassResult, PyPassRunRecord, PyPreservedAnalyses, PyValidationManager, PyValidatorBase,
+        PyValidatorRecord,
+    };
     #[pymodule_export]
     use super::provenance::{
         PyCallSiteProvenance, PyFileProvenance, PyFusedProvenance, PyNamedProvenance, PyPosition,

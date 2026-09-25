@@ -363,7 +363,13 @@ thread-local stack of per-call object tables
 (`rust/fhy-core-py/src/expression/pattern/objects.rs`), which maps the Rust
 nodes a match or a rewrite walk reaches to their Python objects while it
 runs; a table lives only for its call, so the stack is empty whenever no
-match or walk runs. Tests never clear a
+match or walk runs. Slice S6 adds two more thread-local stacks
+(`rust/fhy-core-py/src/pass/scope.rs` and `pass/context.rs`): the scope of
+each pass run, pipeline run or validation in progress, which records the
+diagnostics Python hooks report so they return as themselves, and the
+frame of each Python hook call, which `report` and `get_analysis` find by
+the pass object. Both live only for their run or hook, so the stacks are
+empty whenever no pass runs. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one.
 

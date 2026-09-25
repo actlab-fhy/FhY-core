@@ -129,7 +129,10 @@ fn level_from_python(value: &Bound<'_, PyAny>) -> PyResult<DiagnosticLevel> {
 /// # Errors
 ///
 /// Raises `ValueError` for a Rust level the Python enum lacks.
-fn level_to_python(py: Python<'_>, level: DiagnosticLevel) -> PyResult<Bound<'_, PyAny>> {
+pub(crate) fn level_to_python(
+    py: Python<'_>,
+    level: DiagnosticLevel,
+) -> PyResult<Bound<'_, PyAny>> {
     level_table(py)?
         .members
         .iter()
@@ -471,6 +474,37 @@ impl PyDiagnostic {
     }
 }
 
+/// Return the Rust diagnostic of `object`, borrowed from it, or `None` if
+/// `object` is not a `Diagnostic`.
+pub(crate) fn borrow_python_diagnostic<'a>(object: &'a Bound<'_, PyAny>) -> Option<&'a Diagnostic> {
+    object
+        .cast::<PyDiagnostic>()
+        .ok()
+        .map(|diagnostic| &diagnostic.get().diagnostic)
+}
+
+/// Return a new object of the public `Diagnostic` class holding
+/// `diagnostic`, with a new public `Note` as its message.
+///
+/// For a diagnostic that reaches Python from Rust; the note's kind is the
+/// single Python object of its canonical kind.
+pub(crate) fn diagnostic_to_python<'py>(
+    py: Python<'py>,
+    diagnostic: &Diagnostic,
+) -> PyResult<Bound<'py, PyAny>> {
+    let note = diagnostic.message();
+    let kind = PyNoteKind::to_python(py, None, note.kind().clone(), None)?;
+    let note = PyNote::public_class()
+        .get(py)?
+        .call1((note.message(), kind))?;
+    PyDiagnostic::public_class().get(py)?.call1((
+        level_to_python(py, diagnostic.level())?,
+        note,
+        diagnostic.source(),
+        diagnostic.detail(),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // ValidationReport
 // ---------------------------------------------------------------------------
@@ -576,6 +610,18 @@ impl PyValidationReport {
         }
         Ok(true)
     }
+}
+
+/// Return a new object of the public `ValidationReport` class of
+/// `diagnostics`, which must hold `Diagnostic`s, and `records`.
+pub(crate) fn report_to_python<'py>(
+    py: Python<'py>,
+    diagnostics: Bound<'py, PyTuple>,
+    records: Bound<'py, PyTuple>,
+) -> PyResult<Bound<'py, PyAny>> {
+    PyValidationReport::public_class()
+        .get(py)?
+        .call1((diagnostics, records))
 }
 
 #[pymethods]

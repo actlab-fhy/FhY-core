@@ -72,6 +72,18 @@ fn python_identifier_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     IDENTIFIER_CLASS.import(py, "fhy_core.identifier", "Identifier")
 }
 
+/// Return a new Python `Identifier` named `name_hint`, with a new id.
+///
+/// # Errors
+///
+/// Raises whatever the constructor raises.
+pub(crate) fn new_python_identifier<'py>(
+    py: Python<'py>,
+    name_hint: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    python_identifier_class(py)?.call1((name_hint,))
+}
+
 /// Return the id of `object` if it is a Python `Identifier`, or `None` for
 /// any other object.
 ///
