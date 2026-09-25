@@ -554,3 +554,197 @@ These are as in S2:
   decision;
 - a new interface test file covers each concept;
 - benchmarks run before and after, and the results are recorded here.
+
+### S3a status
+
+S3 lands in two steps. S3a switches `DiagnosticLevel` (P1), `Note`,
+`Diagnostic` and `ValidationReport` (P2); `ValidationFailedError` stays a
+Python exception class. S3b, the provenance family, is still to do.
+
+S3a was implemented on 2026-09-24 in seven commits: the new benchmarks
+(6d0a28d), the public-class registration with S2's tags moved onto it
+(2bd613a), the binding (27d449a), the backend multiplexing (50712a1), the
+interface tests (5ad125d), and two fixes of field-read regressions the
+benchmarks found (02e90cc, 40eaa23). The whole Python suite passes on both
+backends with no test skipped or changed; the only new skips are the new
+interface suite's, which runs on the Rust backend only.
+
+### S3a benchmarks (before and after)
+
+Median time per call, from `uv run --python 3.11 nox -s
+"benchmark-3.11(backend='python')" "benchmark-3.11(backend='rust')"`
+restricted with `-k` to the diagnostic, pass-infrastructure, identifier
+and some provenance benchmarks, on the S0 machine with Python 3.11.13.
+"Before" is 38092cd plus the benchmarks of 6d0a28d, "after" is 40eaa23.
+The machine was shared, with a load average of 12 to 18, so each
+configuration ran three times, interleaved (before and after alternating
+on each backend), and the table lists the best of the three medians; a
+single configuration's medians spread by up to a factor of two between
+runs. The identifier and provenance benchmarks, whose code S3a does not
+change, came out within 5% of 1.00 after/before on both backends, except
+`test_provenance_eq[named]` at 1.30 on the Rust backend only, whose code
+is identical in both trees. The 3.8 µs "rust before" note construction is
+also noise: the same code measured 2.3 µs on the Python backend and in the
+S2 run.
+
+| Benchmark | python before | rust before | python after | rust after | rust after / rust before |
+|---|--:|--:|--:|--:|--:|
+| `test_note_construction` | 2.3 µs | 3.8 µs | 2.3 µs | 300 ns | 0.08 |
+| `test_note_eq` | 176 ns | 176 ns | 176 ns | 80 ns | 0.46 |
+| `test_note_str` | 388 ns | 371 ns | 388 ns | 321 ns | 0.87 |
+| `test_note_hash` | 420 ns | 297 ns | 422 ns | 102 ns | 0.34 |
+| `test_note_attribute_access` | 89 ns | 92 ns | 90 ns | 93 ns | 1.01 |
+| `test_diagnostic_construction` | 1.3 µs | 1.3 µs | 1.3 µs | 496 ns | 0.39 |
+| `test_diagnostic_eq` | 330 ns | 329 ns | 332 ns | 90 ns | 0.27 |
+| `test_diagnostic_hash` | 544 ns | 409 ns | 553 ns | 144 ns | 0.35 |
+| `test_diagnostic_attribute_access` | 126 ns | 139 ns | 127 ns | 122 ns | 0.88 |
+| `test_validation_report_construction` | 988 ns | 1 µs | 999 ns | 14.5 µs | 14.21 |
+| `test_validation_report_build_of_100_diagnostics` | 371 µs | 387 µs | 367 µs | 107 µs | 0.28 |
+| `test_validation_report_eq` | 31.5 µs | 31.3 µs | 31.7 µs | 1.1 µs | 0.04 |
+| `test_validation_report_format` | 43.9 µs | 44.6 µs | 44.2 µs | 3.6 µs | 0.08 |
+| `test_validation_report_errors` | 10.2 µs | 10.1 µs | 10.1 µs | 721 ns | 0.07 |
+| `test_validation_report_has_errors` | 459 ns | 464 ns | 459 ns | 63 ns | 0.13 |
+| `test_compiler_pass_execute` | 15.3 µs | 16.1 µs | 15.6 µs | 14.2 µs | 0.89 |
+| `test_pass_manager_run_of_5_passes` | 431 µs | 424 µs | 428 µs | 424 µs | 1.00 |
+| `test_analysis_manager_cache_hit` | 10.5 µs | 10.3 µs | 10.6 µs | 10.5 µs | 1.02 |
+
+Every hot path but one is faster on the Rust backend, or unchanged within
+noise:
+
+- **Construction.** A note drops from about 2.3 µs to 0.3 µs and a
+  diagnostic from 1.3 µs to 0.5 µs: construction is a type check and a
+  copy of the strings, with no dataclass `__init__`, `FrozenMixin.__new__`
+  or field-type bookkeeping. Building 100 notes, 100 diagnostics and a
+  report of them drops from about 370 µs to 107 µs.
+- **Equality, hashing and the report operations** run in Rust: `==` of
+  two reports of 100 diagnostics drops from 31 µs to 1.1 µs, `format()`
+  from 44 µs to 3.6 µs, `errors()` from 10 µs to 0.7 µs.
+- **Field reads** cost the same as the dataclass's, after the fix
+  described in the implementation notes; the first version measured them
+  at 1.5 to 2 times slower.
+- **The pass infrastructure** is unchanged within noise: a pass run
+  creates no diagnostics on the benchmarked paths.
+
+**Regression: constructing a report from 100 existing diagnostics** takes
+about 14.5 µs instead of 1 µs. The dataclass stores the tuple it is given;
+the Rust class also builds the `ValidationReport<Py<PyAny>>` the plan
+calls for, which clones each Rust `Diagnostic` (three or four `String`
+allocations each) out of its pyclass, and collects the records into a
+`Vec`. It is about 145 ns per diagnostic, paid once per report, and it is
+what makes the report's later operations 10 to 30 times faster; a report
+built together with its diagnostics, the realistic path, is still 3.5
+times faster overall. Options, for the maintainer to decide:
+
+1. accept it as a recorded cost (CONTRIBUTING "Replacing a Python class");
+2. build the Rust report lazily, on the first operation that needs it,
+   which moves the cost rather than removing it;
+3. for reports built in Python, keep only the tuples and run
+   `errors()`, `format()` and `==` over the Rust diagnostics borrowed
+   from each `Diagnostic` pyclass, with no clone, keeping
+   `ValidationReport<Py<PyAny>>` for the reports S6 produces in Rust.
+
+Option 3 would make every path faster than the dataclass, at the price of
+two representations in one class. S6 is the natural point to decide,
+since it adds the Rust-produced reports.
+
+### S3a implementation notes
+
+Choices the plan above left open, made while implementing S3a:
+
+- **Core additions.** None. The binding uses the public API of
+  `fhy_core::diagnostic` as it is: `Note::new`/`with_other_kind`,
+  `Diagnostic::new`/`with_detail` and its getters, and
+  `ValidationReport::new`, `diagnostics` and `has_errors`. The core's
+  `Display` impls never reach Python; the binding renders `str`, `repr`
+  and `format()` itself.
+- **Public-class registration.** Each pyclass has a private class method
+  `_register_public_class`, which the public class calls once, at import,
+  right after its definition. It fills a write-once `PublicClass` slot
+  (`rust/fhy-core-py/src/public_class.rs`, a `PyOnceLock<Py<PyType>>`);
+  registering the same class again does nothing, and registering another
+  class raises `RuntimeError`, so the class a Rust-built value becomes
+  never changes. CONTRIBUTING's "Process-global state" section records the
+  slot next to the identity caches. `OpAttribute` and `NoteKind` register
+  too: the described-tag macro's `to_python` now takes an optional class
+  and falls back to the registered one, which is how `Note.kind` builds
+  the object of a canonical kind that has none yet. `ValueDomain` does not
+  register yet, because nothing hands a domain back from Rust before S4.
+- **What the pyclasses hold.** Each holds the Rust value next to the
+  Python objects its fields return, as the S2 tags do. `Note` holds the
+  Rust `Note`, the message `str` and its kind's single Python object;
+  every Python `NoteKind` is canonical, so the object passed in is the
+  one kept, and an omitted kind is `OTHER_NOTE_KIND` from the identity
+  cache. `Diagnostic` holds the Rust `Diagnostic`, the `DiagnosticLevel`
+  member, the `Note` object and the source and detail objects it was
+  built from, so `diagnostic.message is note` holds as it does for the
+  dataclass. `ValidationReport` holds the planned
+  `ValidationReport<Py<PyAny>>` next to the diagnostic and record tuples
+  it was given: `report.diagnostics is diagnostics` and
+  `report.errors()[0] is diagnostics[0]` hold, and `errors()`,
+  `warnings()` and `infos()` pick from the tuple by index. A first
+  version built each field's object on every read; the benchmarks showed
+  field reads at 1.5 to 2 times the dataclass, so the objects are kept
+  (commits 02e90cc and 40eaa23). No path in S3a creates a diagnostic
+  or a report in Rust, so the builders that turn a Rust `Diagnostic` or
+  `ValidationReport` into the registered public classes arrive with S6,
+  the first slice that produces them; the classes register now, so S6
+  changes only Rust.
+- **`DiagnosticLevel` (P1).** The orphan rule forbids `FromPyObject` for
+  a core type, so, as for `Identifier`, the conversion is two functions.
+  They share a table built once from `DiagnosticLevel(level.as_str())`
+  for each Rust level. A member converts by identity; anything else goes
+  through `DiagnosticLevel(value)`, so `"error"` is accepted and stored as
+  the member, and any other value raises the enum's own `ValueError`
+  (`'fatal' is not a valid DiagnosticLevel`).
+- **Stricter arguments.** On the Rust backend a note's `message` must be a
+  `str` and its `kind` a `NoteKind`, a diagnostic's `message` a `Note`,
+  its `source` a `str` and its `detail` a `str` or `None`, and a report's
+  diagnostics `Diagnostic`s. Each raises `TypeError` with a message in
+  S2's style (`Note kind must be a NoteKind, got NoneType.`); the
+  dataclasses accepted anything. An explicit `kind=None` raises instead of
+  meaning the default: the binding tells an omitted argument from `None`.
+  A report stores any iterable as a tuple, where the dataclass kept a list
+  as a list. A missing required argument names `Note.__new__()` instead of
+  `Note.__init__()` in PyO3's `TypeError`.
+- **Python protocols.** `EqualMixin` and `PartialEqualMixin` carry no
+  state, so the public classes inherit them, and
+  `supports_equality`/`supports_partial_equality` answer as before
+  (`Diagnostic` and `ValidationReport` still lack `supports_equality`).
+  `FrozenMixin` has slots, so, as in S2, the classes are virtual
+  subclasses and implement `is_frozen`, `freeze`, `assert_frozen` and the
+  frozen `__setattr__`/`__delattr__` in Rust. `ValidationReport` keeps
+  `FrozenMixin`'s one carve-out: `typing` may store `__orig_class__` for
+  `ValidationReport[int](...)`. The classes set `__match_args__` as the
+  dataclasses do.
+- **Equality and hashing.** `==` returns `NotImplemented` unless both
+  objects have exactly the same class, as a dataclass's `__eq__` does, and
+  then compares the Rust values; a report also compares its record tuples
+  with Python `==`. Hashes come from Rust's `DefaultHasher`, and a report's
+  hash includes its record tuple's Python hash, so a report with an
+  unhashable record still raises `TypeError`. Hash values differ from the
+  dataclasses'; equal objects still hash equally.
+- **Payloads.** Only `Note` is serializable, as before. Its payload nests
+  the kind's payload, which the tag macro now builds from the canonical
+  tag in an associated function. Decoding checks the structure with the
+  same helper S2 uses, decodes the kind through the registered
+  `NoteKind.deserialize_from_dict`, and calls `cls(message, kind)`, so
+  malformed payloads raise the framework's `DeserializationDictStructureError`
+  for `Note` or `NoteKind` with the pure-Python text. `construct_from_fields`
+  is `Serializable`'s default, which calls the class.
+- **Pickles.** All three classes pickle as a call of their class with
+  their fields, `(type(self), fields)`, on both backends: the pure-Python
+  dataclasses gained that `__reduce__`, because their default pickles
+  restore slot or dict state that the Rust classes cannot take. A note's
+  kind pickles as S2's canonical-kind payload. A pickle written by an
+  older version on the Python backend still loads there, but not on the
+  Rust backend.
+- **`ValidationFailedError`.** `raise_if_failed` imports the Python class
+  once and raises `ValidationFailedError(report)`, so the message is the
+  class's own `report.format()` and `.report` is the report itself.
+- **Tests.** No existing test was skipped or changed. The new
+  `tests/test_diagnostic_rust_binding.py` (55 tests, Rust backend only)
+  covers the class structure and registration, the argument checks, the
+  reprs and `format()` text, equality and hashing, the note payload and
+  its structure errors, `raise_if_failed`, the frozen errors and the
+  `__orig_class__` carve-out, and pickles, including a round trip through
+  a Python-backend subprocess.
