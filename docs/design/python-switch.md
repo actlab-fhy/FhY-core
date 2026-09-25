@@ -46,10 +46,10 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S6.7: benchmarks after, and docs
 - Leftovers:
   - [x] the `ValidationReport` construction cost (S6.3)
-  - [ ] the unknown-provenance `str` cost
-  - [ ] Windows paths
+  - [x] the unknown-provenance `str` cost: accepted as a recorded cost of about 20 ns, the fixed price of calling into the extension
+  - [x] Windows paths: by design (crate decision D-16), provenance paths use platform-independent POSIX normalization, while the old pure-Python class kept a `pathlib.Path` as given (`WindowsPath` on Windows). Watch the Windows CI leg of release pull requests
   - [x] mypy over the Rust branches (S4.4)
-  - [ ] slow callee-name parsing in the core
+  - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [ ] platform wheels in the release workflow, now that the extension is required (S4.4)
 
 ## Goal
