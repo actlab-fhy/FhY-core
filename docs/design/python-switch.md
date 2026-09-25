@@ -503,3 +503,54 @@ Choices the plan above left open, made while implementing S2:
   second construction returns a new object (D-S2-4). D-S2-4 was not listed
   among the skip reasons above, but those two tests contradict it directly;
   the new interface suite asserts the Rust behavior instead.
+
+## S3: diagnostics and provenance
+
+### Pattern choices (from the S0 baseline)
+
+| Concept | Pattern | Why |
+|---|---|---|
+| `DiagnosticLevel` | P1 | A three-value `StrEnum`. It converts by value in both directions (`"error"`, `"warning"`, `"info"`) |
+| `Note` | P2 | Holds a `NoteKind`, which is Rust-backed since S2. Construction is 2.0 µs in Python |
+| `Diagnostic` | P2 | S6's Rust pass infrastructure produces diagnostics. Construction is 1.15 µs and `==` 296 ns in Python |
+| `ValidationReport` | P2, generic over Python records | Building a report of 100 diagnostics takes 327 µs in Python, `==` 27.8 µs, `format` 39.9 µs. The binding stores `ValidationReport<Py<PyAny>>`, because records are arbitrary Python objects (the same exception as `PyIr`: framework payloads supplied by Python) |
+| `ValidationFailedError` | stays a Python exception class | The binding raises it with the report attached and the message Python uses today |
+| `Position`, `Span`, the `Provenance` family (S3b) | P2 hierarchy, unless its before/after benchmark shows a regression | Nothing in `src` depends on it. Its operations take 0.1–7 µs in Python |
+
+### Shape
+
+This follows S2's shape:
+
+- **Classes.** `#[pyclass(subclass, frozen)]` classes wrap the Rust values.
+  The public classes are thin Python subclasses that mix in the stateless
+  Python protocols: `Serializable` with the same type ids, `FrozenMixin` or
+  `EqualMixin` membership, and `WrappedFamilySerializable` for the
+  provenance family.
+- **Python API unchanged.** Constructor signatures, keyword names, fields,
+  properties and methods are exactly today's, including `Diagnostic.message`
+  (a `Note`), `message_text`, `ValidationReport.format()`, `errors()`,
+  `raise_if_failed()`, `Provenance.fuse(sources, metadata=None)`,
+  `FusedProvenance.metadata` and `FileProvenance.file_path` (a
+  `pathlib.Path`). The binding maps them onto the Rust API:
+  - `metadata` maps to `label`;
+  - Span's four keyword arguments map to Rust's typed constructors.
+- **Text.** `ValidationReport.format()`, `str`/`repr`, and the exception
+  messages produce Python's current text: `[ERROR] source: message` and the
+  `No validation diagnostics.` placeholder. The Rust core's `Display` stays
+  Rust-style (decision 3 at the binding boundary).
+- **Rust objects handed back to Python.** When Rust returns a value such as
+  `Note.kind`, a diagnostic inside a report, or a provenance child, the
+  binding builds the *public* Python class. Each public class registers
+  itself with the binding once, at import. This follows up S2's
+  implementation note. Canonical tags come from S2's identity cache.
+- **Payloads and pickles.** Today's Python payload shapes are kept, and
+  pickles load across backends.
+
+### Tests and benchmarks
+
+These are as in S2:
+
+- the whole Python suite passes on both backends, and every skip names a
+  decision;
+- a new interface test file covers each concept;
+- benchmarks run before and after, and the results are recorded here.
