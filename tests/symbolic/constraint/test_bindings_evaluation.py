@@ -300,7 +300,6 @@ def test_set_constraint_bindings_logs_nothing_when_decidable(
 
 OFF_UNION_BINDING_VALUES = [
     pytest.param(None, id="none"),
-    pytest.param(Decimal("1"), id="decimal"),
     pytest.param([1, 2], id="list"),
     pytest.param(object(), id="object"),
 ]
@@ -309,6 +308,17 @@ OFF_UNION_BINDING_VALUES = [
 ``ConstraintBindings`` admits none of these; each reaches the API only
 from code the type checker has not seen or has been silenced on, which is
 exactly the case the runtime boundary has to answer for.
+"""
+
+NON_MEMBER_BINDING_VALUES = [
+    *OFF_UNION_BINDING_VALUES,
+    pytest.param(Decimal("1"), id="decimal"),
+]
+"""Parametrize list of values that could never be a constraint member.
+
+A ``Decimal`` is a ``LiteralType``, the value a decimal literal holds, so
+an equation constraint lifts it; it is not a ``ConstraintMember``, so a set
+constraint refuses it with the values outside the union.
 """
 
 
@@ -335,8 +345,43 @@ def test_equation_constraint_bindings_rejects_a_value_outside_the_declared_union
     assert type(value).__name__ in message
 
 
+@pytest.mark.parametrize(
+    "value, expected_outcome",
+    [
+        pytest.param(Decimal("1"), ConstraintOutcome.SATISFIED, id="below"),
+        pytest.param(Decimal("10.5"), ConstraintOutcome.VIOLATED, id="above"),
+        pytest.param(Decimal("10.0"), ConstraintOutcome.VIOLATED, id="equal"),
+    ],
+)
+def test_equation_constraint_bindings_decide_a_decimal_value_exactly(
+    value: Decimal, expected_outcome: ConstraintOutcome
+) -> None:
+    """Test a ``Decimal`` binding lifts to the decimal literal it denotes.
+
+    ``Decimal`` is the value a decimal literal holds, so a ``Decimal``
+    binding is inside ``Expression | LiteralType`` and is decided exactly.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
+
+    assert constraint.evaluate_with_bindings({x: value}) is expected_outcome
+
+
+def test_equation_constraint_bindings_rejects_a_negative_decimal_value() -> None:
+    """Test a negative ``Decimal`` binding, which no literal holds, raises.
+
+    A literal's decimal is non-negative, so the boundary reports the
+    refusal as a domain error naming the identifier.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))):
+        constraint.evaluate_with_bindings({x: Decimal("-1")})
+
+
 @pytest.mark.parametrize("factory", SET_KINDS)
-@pytest.mark.parametrize("value", OFF_UNION_BINDING_VALUES)
+@pytest.mark.parametrize("value", NON_MEMBER_BINDING_VALUES)
 def test_set_constraint_bindings_rejects_a_value_outside_the_declared_union(
     factory: Any, value: Any
 ) -> None:

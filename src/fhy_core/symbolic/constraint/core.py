@@ -54,7 +54,6 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     LiteralType,
     NonBooleanLogicalOperandError,
-    is_integer_valued_literal,
     make_binary_expression,
     pformat_expression,
     validate_predicate,
@@ -121,18 +120,19 @@ def _validate_binding_value(identifier: Identifier, value: object) -> None:
         return
     raise ConstraintError(
         f"Binding for identifier {identifier!r} must be an `Expression` or a "
-        f"literal (`str`, `float`, `int`, `bool`), but got value {value!r} of "
-        f"type {type(value).__name__}."
+        f"literal (`str`, `float`, `int`, `bool`, `Decimal`), but got value "
+        f"{value!r} of type {type(value).__name__}."
     )
 
 
 def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expression:
     """Wrap a raw binding value in the ``LiteralExpression`` it denotes.
 
-    Being a ``LiteralType`` is not enough: ``LiteralExpression`` holds a
-    ``str`` only when it matches the integer or float grammar. A number
-    always lifts; one whose type subclasses ``int`` or ``float``, such as
-    an ``IntEnum`` member, lifts to the exact value it denotes.
+    Being a ``LiteralType`` is not enough: ``LiteralExpression`` accepts a
+    ``str`` only when it matches the integer or float grammar, and a
+    ``Decimal`` only when it is finite and non-negative. Any other number
+    lifts; one whose type subclasses ``int`` or ``float``, such as an
+    ``IntEnum`` member, lifts to the exact value it denotes.
 
     Args:
         identifier: Identifier the value is bound to.
@@ -163,7 +163,7 @@ def _coerce_bindings_to_environment(
     """Coerce every binding value to the ``Expression`` a substitution consumes.
 
     A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``, which
-    holds a ``str`` only in the integer or float grammar. An
+    accepts a ``str`` only in the integer or float grammar. An
     ``Expression`` value passes through unchanged, including a non-literal,
     symbolic one: substituting a symbolic value is supported, and the
     residual it leaves behind is what the caller's outcome is read from.
@@ -178,7 +178,8 @@ def _coerce_bindings_to_environment(
     Raises:
         ConstraintError: If a value falls outside ``Expression |
             LiteralType``, or is a literal value ``LiteralExpression``
-            refuses: a ``str`` outside the integer and float grammars.
+            refuses: a ``str`` outside the integer and float grammars, or
+            a negative or non-finite ``Decimal``.
 
     """
     environment: dict[Identifier, Expression] = {}
@@ -729,11 +730,11 @@ def _decide_bound_value_membership(
 ) -> bool | None:
     """Return whether the value bound to ``variable`` is one of ``members``.
 
-    A ``LiteralExpression`` binding is decided by the value it denotes: an
-    integer-grammar string denotes its ``int`` (matching
-    ``LiteralExpression("5")`` being equivalent to ``LiteralExpression(5)``),
-    a float-grammar string stays a decimal-kind value, and every other
-    value passes through unchanged. Any other ``Expression`` is symbolic,
+    A ``LiteralExpression`` binding is decided by its normalized value:
+    ``LiteralExpression("5")`` holds the ``int`` ``5``, and
+    ``LiteralExpression("0.5")`` the ``Decimal("0.5")``, which is not a
+    constraint member kind and so matches no member, neither the float
+    ``0.5`` nor the string ``"0.5"``. Any other ``Expression`` is symbolic,
     and membership cannot be decided against it.
 
     Args:
@@ -755,8 +756,6 @@ def _decide_bound_value_membership(
         if not isinstance(value, LiteralExpression):
             return None
         value = value.value
-        if isinstance(value, str) and is_integer_valued_literal(value):
-            value = int(value)
     else:
         _validate_set_binding_value(variable, value)
     try:

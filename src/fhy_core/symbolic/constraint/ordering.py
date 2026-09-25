@@ -21,6 +21,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
     UnaryExpression,
     build_literal_equivalence_key,
 )
@@ -31,8 +32,9 @@ def _build_expression_ordering_key(expression: Expression) -> str:
 
     Renders the tree as ``NodeType[node data](child keys)``. Node data is
     whatever the node compares by beyond its children: a literal's bucket
-    and canonical form, an identifier's ``id``, an operation's name, or a
-    call's function name. A ``PiecewiseExpression`` needs none, since its
+    and canonical form, an identifier's ``id``, an operation's or a
+    connective's value (``floor_mod``, ``and``), or a call's function
+    name. A ``PiecewiseExpression`` needs none, since its
     children already encode the cases and the fallback.
 
     Args:
@@ -56,7 +58,7 @@ def _render_expression_node_ordering_data(expression: Expression) -> str:
         return build_literal_equivalence_key(expression.value)
     elif isinstance(expression, IdentifierExpression):
         return f"id:{expression.identifier.id}"
-    elif isinstance(expression, (BinaryExpression, UnaryExpression)):
+    elif isinstance(expression, (BinaryExpression, LogicalExpression, UnaryExpression)):
         return expression.operation.value
     elif isinstance(expression, CallExpression):
         return f"call:{expression.function_name}"

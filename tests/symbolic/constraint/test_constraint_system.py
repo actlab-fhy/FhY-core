@@ -31,13 +31,15 @@ from fhy_core.symbolic.constraint import (
     create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
-    BinaryExpression,
     BinaryOperation,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NonBooleanLogicalOperandError,
     get_native_constant_identifier,
+    logical_and,
     logical_or,
     make_binary_expression,
     piecewise,
@@ -614,7 +616,7 @@ def test_convert_to_expression_single_member_is_unwrapped() -> None:
 
 
 def test_convert_to_expression_multi_member_is_a_logical_and() -> None:
-    """Test a multi-member system's expression is a top-level LOGICAL_AND."""
+    """Test a multi-member system's expression is one top-level conjunction."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
@@ -623,8 +625,9 @@ def test_convert_to_expression_multi_member_is_a_logical_and() -> None:
 
     expression = system.convert_to_expression()
 
-    assert isinstance(expression, BinaryExpression)
-    assert expression.operation is BinaryOperation.LOGICAL_AND
+    assert isinstance(expression, LogicalExpression)
+    assert expression.operation is LogicalOperation.AND
+    assert len(expression.operands) == 2
 
 
 def test_convert_to_expression_propagates_constraint_error_from_a_member() -> None:
@@ -2880,11 +2883,7 @@ def test_bindings_paths_report_ill_typedness_ahead_of_a_bound_constant(
     """
     pi = get_native_constant_identifier("pi")
     x = mock_identifier("x", 0)
-    expression = make_binary_expression(
-        BinaryOperation.LOGICAL_AND,
-        x,
-        make_binary_expression(BinaryOperation.GREATER, pi, 3),
-    )
+    expression = logical_and(x, make_binary_expression(BinaryOperation.GREATER, pi, 3))
     system = create_constraint_system(EquationConstraint(expression))
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -3070,6 +3069,13 @@ _LITERAL_BINDING_SET_CASES = [
         LiteralExpression("5"),
         ConstraintOutcome.VIOLATED,
         id="in_set_categorical_string_member_vs_denoted_int",
+    ),
+    pytest.param(
+        InSetConstraint,
+        {"0.5"},
+        LiteralExpression("0.5"),
+        ConstraintOutcome.VIOLATED,
+        id="in_set_categorical_string_member_vs_denoted_decimal",
     ),
     pytest.param(
         NotInSetConstraint,
@@ -3269,11 +3275,7 @@ def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(
-        EquationConstraint(
-            make_binary_expression(
-                BinaryOperation.LOGICAL_AND, x, LiteralExpression(True)
-            )
-        )
+        EquationConstraint(logical_and(x, LiteralExpression(True)))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -3328,8 +3330,9 @@ def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expressi
 
     Each constraint of a system is itself a Boolean position, so
     ``x + 1`` is ill-typed on its own. The message names ``x + 1``, the
-    caller's own node, rather than a synthetic ``LOGICAL_AND`` the caller
-    never wrote joining it to the rest of the lowered conjunction.
+    caller's own node, as the root of a predicate, rather than as an
+    operand of a synthetic conjunction the caller never wrote joining it to
+    the rest of the lowered system.
     """
     x = mock_identifier("x", 0)
     numeric_expression = make_binary_expression(
@@ -3342,7 +3345,8 @@ def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expressi
 
     message = str(exc_info.value)
     assert repr(numeric_expression) in message
-    assert "LOGICAL_AND" not in message
+    assert message.startswith("the predicate provably denotes a number")
+    assert "LogicalExpression" not in message
 
 
 @pytest.mark.z3
@@ -3355,9 +3359,9 @@ def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one
     """Test the same refusal holds with a well-typed member alongside it.
 
     The lowered conjunction still joins both members with a real
-    ``LOGICAL_AND`` for the solver, but the refusal is decided per member
-    before that join, so the message still names only the offending
-    member's own expression.
+    ``LogicalExpression`` for the solver, but the refusal is decided per
+    member before that join, so the message still names only the offending
+    member's own expression, as the root of a predicate.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -3374,4 +3378,5 @@ def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one
 
     message = str(exc_info.value)
     assert repr(numeric_expression) in message
-    assert "LOGICAL_AND" not in message
+    assert message.startswith("the predicate provably denotes a number")
+    assert "LogicalExpression" not in message

@@ -20,6 +20,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NonBooleanLogicalOperandError,
     UnaryExpression,
     UnaryOperation,
@@ -928,20 +930,17 @@ def test_str_matches_expression_pformat() -> None:
             id="not_true",
         ),
         pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                LiteralExpression(True),
-                LiteralExpression(False),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (LiteralExpression(True), LiteralExpression(False)),
             ),
             {},
             ConstraintOutcome.VIOLATED,
             id="and_true_false",
         ),
         pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_OR,
-                LiteralExpression(True),
-                LiteralExpression(False),
+            LogicalExpression(
+                LogicalOperation.OR, (LiteralExpression(True), LiteralExpression(False))
             ),
             {},
             ConstraintOutcome.SATISFIED,

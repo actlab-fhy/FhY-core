@@ -29,6 +29,8 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     Expression,
     LiteralExpression,
+    logical_and,
+    logical_or,
     make_binary_expression,
 )
 from fhy_core.term import compared_as_reference
@@ -209,6 +211,38 @@ def test_distinct_keys_for_different_equation_expressions() -> None:
     right = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
 
     assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_a_conjunction_and_a_disjunction_of_one_operand_list() -> (
+    None
+):
+    """Test ``a && b`` and ``a || b`` key apart: the key renders the connective."""
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
+    operands = (
+        make_binary_expression(BinaryOperation.LESS, a, 5),
+        make_binary_expression(BinaryOperation.LESS, b, 5),
+    )
+    left = EquationConstraint(logical_and(*operands))
+    right = EquationConstraint(logical_or(*operands))
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_conjunctions_of_different_operand_counts() -> None:
+    """Test ``a && b`` keys apart from ``a && b && c``, and from ``a && (b && c)``."""
+    a, b, c = (
+        make_binary_expression(BinaryOperation.LESS, mock_identifier(name, index), 5)
+        for index, name in enumerate("abc")
+    )
+
+    keys = {
+        EquationConstraint(logical_and(a, b)).build_ordering_key(),
+        EquationConstraint(logical_and(a, b, c)).build_ordering_key(),
+        EquationConstraint(logical_and(a, logical_and(b, c))).build_ordering_key(),
+    }
+
+    assert len(keys) == 3
 
 
 def test_distinct_keys_for_equations_over_decimals_past_default_precision() -> None:
