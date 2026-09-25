@@ -2967,9 +2967,10 @@ the interface test pins both.
 
 ## S6: pass infrastructure
 
-- **Status:** designed 2026-09-25 at 64598a2; nothing is implemented.
-  D-S6-1 to D-S6-20 apply the policy the user already set. N-S6-1 to
-  N-S6-3 need the user.
+- **Status:** designed 2026-09-25 at 64598a2. D-S6-1 to D-S6-20 apply
+  the policy the user already set, and N-S6-1 to N-S6-3 are decided (see
+  "S6 resolutions"). S6.1 to S6.3 are implemented (see "S6.1 to S6.3
+  status"); S6.4 onwards are not started.
 - **Pattern:** P3 for `CompilerPass`, `Analysis` and `Validator`; P2 for
   the managers, `PassResult`, `PreservedAnalyses` and the records, as the
   slice table says.
@@ -4169,3 +4170,150 @@ A report is usually built once and asked once or twice, as
 `errors()` then costs 1.33 µs with the tuples alone and 1.81 µs with the
 handles. The handles would also be a second list of the same diagnostics,
 which D-S6-17 set out to avoid.
+
+### S6.1 to S6.3 status
+
+S6.1 to S6.3 were implemented on 2026-09-25 in four commits: the
+benchmarks and their baseline (9452b46), the core additions (7f2a554),
+the `ValidationReport` representation (30dbf7e), and these notes. At the
+end: `pytest` 7,054 passed, `-m "not very_slow"` 7,087 passed, the
+`property` session 280 passed, `lint` and `type_check` clean, and the Rust
+gate green (fmt, clippy `-D warnings`, 2,660 tests, doc `-D warnings`,
+deny, `cargo +1.85 check`). No Python test changed.
+
+### S6.2 implementation notes
+
+The additions are in `rust/fhy-core/src/tree/node.rs`,
+`src/pass/preserved.rs`, `src/pass/context.rs` and the new
+`src/pass/detached.rs`, and the crate README lists them. The API:
+
+```rust
+impl NodeIdentity {
+    pub fn of_ptr<T: ?Sized>(pointer: *const T) -> Self;
+}
+
+impl AnalysisId {                       // now Clone, no longer Copy
+    pub fn of_identifier(name: &Identifier) -> Self;
+    pub fn identifier(&self) -> Option<&Identifier>;
+}
+
+impl PreservedAnalyses {
+    pub fn is_id_preserved(&self, id: &AnalysisId) -> bool;         // was by value
+    pub fn preserved_ids(&self) -> impl Iterator<Item = &AnalysisId> + '_; // was owned
+}
+
+impl PassContext<'_> {
+    pub fn analysis_by_id<T: NodeHandle, V: Send + Sync + 'static>(
+        &mut self, ir: &T, id: &AnalysisId, compute: impl FnOnce(&T) -> V,
+    ) -> Arc<V>;
+    pub fn with_detached_analyses<R>(
+        &mut self, callback: impl FnOnce(&DetachedAnalyses) -> R,
+    ) -> R;
+}
+
+#[derive(Debug, Clone)]
+pub struct DetachedAnalyses { /* Arc<Mutex<..>> */ }   // Send + Sync + 'static
+
+impl DetachedAnalyses {
+    pub fn analysis_by_id<T: NodeHandle, V: Send + Sync + 'static>(
+        &self, ir: &T, id: &AnalysisId, compute: impl FnOnce(&T) -> V,
+    ) -> Result<Arc<V>, DetachedAnalysesExpired>;
+    pub fn is_expired(&self) -> bool;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DetachedAnalysesExpired;     // "the detached analyses expired when their callback returned"
+```
+
+Choices the plan left open, and where the shape differs from it:
+
+- **`NodeIdentity::of_ptr`** is as planned. It drops a wide pointer's
+  metadata, so a slice, a trait object and a thin pointer to the same
+  address agree, and `of_arc` now calls it. Its rustdoc states the
+  `NodeHandle` contract: the handle keeps the pointee alive.
+- **`AnalysisId` is `Clone`, not `Copy`** (a different shape from the
+  plan's "it stays `Copy`"). An id of an identifier holds the
+  `Identifier`, whose name hint is an `Arc<str>`. To stay `Copy` and still
+  display the name hint, the id would need a `&'static str`, which means
+  leaking each name hint or keeping a process-global table of them. B5
+  removed global state from the pass framework (F-006), so the id holds
+  the identifier, and a clone costs one reference-count increment.
+  - `is_id_preserved` therefore takes the id by reference, and
+    `preserved_ids` yields references. `preserve_id` still takes it by
+    value.
+  - Four lines of `tests/it/pass/core_stories.rs` changed for these
+    signatures only: three `is_id_preserved` calls and one
+    `preserved_ids().cloned()`.
+  - The commit is not marked breaking; the crate is unpublished
+    (decision 9).
+- **The order of ids.** Ids of types come first, by type name as before.
+  Ids of identifiers follow, ordered by the identifier's id, not by its
+  name hint as the plan said. Identifiers are equal exactly when their
+  ids are, and `Identifier::try_restore` can give an equal identifier
+  another name hint. An order by name hint would then disagree with `==`,
+  and `BTreeSet` lookups in a preservation set could miss. Display is the
+  name hint, as planned, and `Hash` includes which kind of id it is.
+- **`AnalysisId::identifier`** is new. S6.4's
+  `PreservedAnalyses.analysis_names` needs it to rebuild the Python
+  identifiers from a set of ids.
+- **`analysis_by_id`'s contract.** `compute` receives the node. The
+  caller keeps one computation, with one result type, per id. The id of
+  an analysis type reaches that type's cached result when `V` is its
+  output. A result cached under the id with another type is recomputed
+  and replaced, the cache's existing rule. The private cache now has
+  separate lookup and insert steps, so the detached handle can compute
+  between them.
+- **The detached handle.**
+  - **Shape.** The handle is an `Arc<Mutex<_>>` over one of three states:
+    the run's cache, no cache (a standalone run, where every request
+    computes afresh as `PassContext::analysis` does), or expired.
+  - **Moving the cache.** The cache moves in and out with `mem::take`, so
+    nothing is copied. A drop guard moves it back, which also covers an
+    unwinding callback.
+  - **Lending it.** The callback receives the handle by reference, as
+    `thread::scope` lends its scope, and clones it to keep it.
+  - **No lock while computing.** `compute` runs with no lock held. A
+    request from inside `compute`, or from another thread, therefore
+    cannot deadlock, and the S6.4 binding can call Python there without
+    holding a Rust lock across a call that may wait for the interpreter.
+    When a nested request caches the same id and node while `compute`
+    runs, its result is the one returned, so one result per id and node
+    stays true.
+  - **Expiry.** An expired handle holds nothing: the state becomes
+    "expired" when the cache moves back, so a clone kept past the callback
+    pins no node. The tests check this with the node's handle count.
+  - **Only `analysis_by_id`.** The handle has no typed `analysis::<A>()`,
+    since the binding needs only ids. A typed request reaches the same
+    result through `AnalysisId::of::<A>()`.
+- **Tests first.** The new `tests/it/pass/dynamic_analysis_stories.rs`
+  has 23 tests: ids of identifiers and their equality, order, display and
+  preservation; the cache by id, within a pass, standalone, per id and
+  node, through a type's id, and across a type change; merge-only
+  transfer of preserved ids; and the detached handle, covering serving
+  the cache, standalone runs, expiry, releasing nodes, a panicking
+  callback, another thread, and nested requests. `core_stories.rs` gained
+  three `of_ptr` tests, and the rustdoc four examples.
+  - The tests were written before the code, and failed to compile
+    against the old API.
+  - Two mutations checked that they bite. Not moving the cache back
+    failed three tests. Comparing identifier ids by name hint, with ids of
+    different kinds equal, failed two.
+- **Still to confirm.** If S6.4 finds the handle unnecessary, it is
+  dropped, as planned.
+
+### S6.3 implementation notes
+
+- **Borrowing.** The operations walk the tuple with `iter_borrowed` and
+  borrow each Rust `Diagnostic` through `Borrowed::cast` and
+  `Borrowed::get`, with no `unsafe`. A type check per item is the price
+  of reading a Python tuple as typed data. Construction's `TypeError`
+  text is unchanged.
+- **Hashing.** The hash covers the diagnostic count, each Rust
+  diagnostic and the records' Python hash. The values differ from
+  before, but equal reports still hash equally, and an unhashable record
+  still raises `TypeError`.
+- **Reports built in Rust.** They will reach Python through D-S6-18's
+  builders, which build the `Diagnostic` objects and then the tuple. So
+  one representation serves both origins, and no Rust
+  `ValidationReport` of Python records is needed.
