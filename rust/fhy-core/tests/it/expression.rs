@@ -1,6 +1,8 @@
 //! Tests for `fhy_core::expression`: expressions, their builders, analyses, wire
 //! form, text forms, built-ins and passes, and the patterns over them.
 
+mod alpha_properties;
+mod alpha_stories;
 mod builders_stories;
 mod builtins_stories;
 mod literal_stories;

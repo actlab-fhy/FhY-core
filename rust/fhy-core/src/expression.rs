@@ -28,7 +28,7 @@ pub use callee::{Callee, FunctionName, FunctionNameError};
 pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
 pub use error::{
     BooleanPosition, NonBooleanLogicalOperandError, NonInjectiveRenamingError, PiecewiseError,
-    RebuildError,
+    RebuildError, RenamingPart,
 };
 pub use literal::{Decimal, LiteralTextError, LiteralValue};
 pub use node::{

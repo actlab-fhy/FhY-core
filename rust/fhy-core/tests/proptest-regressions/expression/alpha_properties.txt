@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 48295ec7d40aaa14d5ea70167176f2af0cb730540109dd0d0bc3a62e8969b47d # shrinks to free_pairs = [], frame_pairs = [[(0, 0)], [(1, 0)]], left = 0, right = 0
+cc e878bdec39268a304337c2a57e82a5996df5bc146b663d06fe17fd38c3c872d4 # shrinks to free_pairs = [], frame_pairs = [[(0, 1)], [(1, 1)]], left = 0, right = 1

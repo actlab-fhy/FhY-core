@@ -647,14 +647,17 @@ impl Expression {
         })
     }
 
-    /// Return whether `other` is this expression with its free identifiers
+    /// Return whether `other` is this expression with its identifiers
     /// renamed by `renaming`.
     ///
-    /// The trees must have the same structure. Where this expression refers
-    /// to an identifier `renaming` maps, `other` must refer to its image;
-    /// where it refers to an unmapped identifier, `other` must refer to the
-    /// same identifier, and that identifier must not be an image of
-    /// `renaming`. Under the empty renaming this is structural equality.
+    /// The trees must have the same structure, and each identifier this
+    /// expression refers to must correspond, by
+    /// [`AlphaRenaming::is_corresponding`], to the one `other` refers to at
+    /// the same place. So under a renaming's binder frames, as when a binder
+    /// term compares its body, a bound identifier must be replaced by the
+    /// one the other binder pairs it with, and a free one must not become a
+    /// bound one. Under a renaming that maps nothing this is structural
+    /// equality.
     ///
     /// A pair of subtrees met again at another place of the two trees is
     /// compared once, so two DAGs compare in time linear in their distinct
