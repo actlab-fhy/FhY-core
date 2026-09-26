@@ -114,7 +114,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11b.6: benchmarks after, and docs (every row faster; see "S11b benchmarks")
 - [ ] S14: pass verification (`verification.py` and its use from `traits/verifiable.py`; "Needs the user" is empty)
   - [x] S14 design (D-S14-1 to D-S14-12; see "S14: pass verification")
-  - [ ] S14.1: verification benchmarks and baseline
+  - [x] S14.1: verification benchmarks and baseline (5 rows; see "S14.1 baseline")
   - [ ] S14.2: core addition, test-first, with Rust tests (`fhy_core::pass::VerificationRegistry`, `VerifierId`)
   - [ ] S14.3: the binding (the registry in the extension's module state, the pipeline verifier over it, the stubs)
   - [ ] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`)
@@ -14345,3 +14345,31 @@ rewrite:
 - **`test_pass_infrastructure_rust_binding.py`, `test_core_traits.py` and
   `test_basic_traits.py`** are unchanged.
 - **The benchmarks'** fixtures keep their spelling.
+
+### S14.1 baseline (2026-09-26, 368985f plus the new benchmarks)
+
+`benchmarks/test_pass_infrastructure.py` gains the three rows of the
+benchmark plan, and `benchmarks/conftest.py` gains `VerifiedNode` and its
+verification pass `NonNegativeNodeVerifier`. Each row is the median time
+per call from `.venv/bin/python -m pytest benchmarks/test_pass_infrastructure.py
+-k "verification or verifiable" -n 0 --benchmark-only`. The runs used the
+worktree's own environment (the release build uv installs), measuring
+today's Python registry, on the S0 machine with Python 3.11.13 and
+pytest-benchmark 5.3.0. The load average was 7 to 8, and the table lists
+the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_verification_registry_register_again` | 795 ns |
+| `test_verification_registry_get_passes_for` | 988 ns |
+| `test_verifiable_mixin_verify` | 11.3 µs |
+| `test_run_verification` | 12.8 µs |
+| `test_pass_manager_run_with_verification` | 33.3 µs |
+
+- **The registry.** An idempotent `register` costs 0.8 µs (the check, the
+  lock, a list scan and the DEBUG call), and a lookup over a two-level
+  MRO costs 1.0 µs.
+- **Verification.** One pass costs 11.3 µs through `verify()` and two cost
+  12.8 µs through `run_verification`. Most of that is building the
+  `ValidationManager` and running each pass as a check. The lookup is
+  about 1 µs of it.

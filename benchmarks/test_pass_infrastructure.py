@@ -25,6 +25,7 @@ from fhy_core.pass_infrastructure import (
     PassManager,
     PassManagerResult,
     ValidationManager,
+    VerificationRegistry,
     run_verification,
 )
 from fhy_core.symbolic.expression import Expression, RewriteRuleApplier
@@ -36,6 +37,7 @@ from .conftest import (
     REPORT_DIAGNOSTIC_COUNT,
     SATURATION_VALUE,
     Benchmark,
+    BoundedBoxVerifier,
     Box,
     BoxValueAnalysis,
     CopyReadingPass,
@@ -43,12 +45,14 @@ from .conftest import (
     EveryHookPass,
     FailingPass,
     IdentityPass,
+    NonNegativeBoxVerifier,
     ReportingPass,
     ReportingValidator,
     SaturatingIncrementPass,
     SkippedPass,
     TwiceVerifiedBox,
     VerifiedBox,
+    VerifiedNode,
     build_pipeline,
 )
 from .test_expression import (
@@ -262,6 +266,25 @@ def test_run_verification(benchmark: Benchmark) -> None:
     report = benchmark(run_verification, TwiceVerifiedBox(0))
     assert not report.has_errors()
     assert len(report.records) == 2  # noqa: PLR2004
+
+
+def test_verification_registry_get_passes_for(benchmark: Benchmark) -> None:
+    """Benchmark the lookup of two verification passes over a two-level MRO."""
+    passes = benchmark(VerificationRegistry.get_passes_for, TwiceVerifiedBox)
+    assert passes == (NonNegativeBoxVerifier, BoundedBoxVerifier)
+
+
+def test_verification_registry_register_again(benchmark: Benchmark) -> None:
+    """Benchmark re-registering a registered pair, which changes nothing."""
+    benchmark(VerificationRegistry.register, VerifiedBox, NonNegativeBoxVerifier)
+    assert VerificationRegistry.get_passes_for(VerifiedBox) == (NonNegativeBoxVerifier,)
+
+
+def test_verifiable_mixin_verify(benchmark: Benchmark) -> None:
+    """Benchmark the default `verify` of a node with one registered pass."""
+    report = benchmark(VerifiedNode(0).verify)
+    assert not report.has_errors()
+    assert len(report.records) == 1
 
 
 # ---------------------------------------------------------------------------

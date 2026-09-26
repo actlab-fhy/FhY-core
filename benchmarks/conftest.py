@@ -40,7 +40,7 @@ from fhy_core.provenance import (
     Span,
     UnknownProvenance,
 )
-from fhy_core.traits import FrozenMixin
+from fhy_core.traits import FrozenMixin, VerifiableMixin
 from fhy_core.utils.override import override
 from fhy_core.value_domain import ValueDomain
 
@@ -485,6 +485,31 @@ class BoundedBoxVerifier(CompilerPass[Box, None]):
     def run_pass(self, ir: Box) -> None:
         if ir.value > _BOX_BOUND:
             self.report(DiagnosticLevel.ERROR, "the box is too large")
+
+
+class VerifiedNode(VerifiableMixin):
+    """A `VerifiableMixin` whose default `verify` runs one registered pass."""
+
+    value: int
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+
+@register_verification(
+    VerifiedNode, "benchmarks.verify_node", "Reject a negative verified node."
+)
+class NonNegativeNodeVerifier(CompilerPass[VerifiedNode, None]):
+    """Verification pass that reports an error for a negative node."""
+
+    @override
+    def get_noop_output(self, ir: VerifiedNode) -> None:
+        _ = ir
+
+    @override
+    def run_pass(self, ir: VerifiedNode) -> None:
+        if ir.value < 0:
+            self.report(DiagnosticLevel.ERROR, "the node is negative")
 
 
 def build_pipeline(repetitions: int) -> PassManager[Box]:
