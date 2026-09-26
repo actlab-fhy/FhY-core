@@ -56,7 +56,7 @@ fn read_expression(value: &Bound<'_, PyAny>, owner: &str, field: &str) -> PyResu
 ///
 /// Raises `ValueError` unless it is `None` or a positive integer, below
 /// `2**64` milliseconds.
-fn read_limits(timeout_milliseconds: &Bound<'_, PyAny>) -> PyResult<CheckLimits> {
+pub(crate) fn read_limits(timeout_milliseconds: &Bound<'_, PyAny>) -> PyResult<CheckLimits> {
     static VALIDATE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = timeout_milliseconds.py();
     VALIDATE
@@ -189,7 +189,7 @@ impl PySolver {
     }
 
     /// Return the name of the SMT backend.
-    fn backend_name(&self) -> String {
+    pub(crate) fn backend_name(&self) -> String {
         self.solver
             .smt_solver()
             .map_or_else(String::new, |backend| backend.name().into_owned())

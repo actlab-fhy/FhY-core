@@ -33,7 +33,7 @@ mod rs_module {
 
     #[pymodule_export]
     use super::constraint::{
-        PyEquationConstraint, PyInSetConstraint, PyNotInSetConstraint,
+        PyConstraintSystem, PyEquationConstraint, PyInSetConstraint, PyNotInSetConstraint,
         does_member_lift_to_expression,
     };
     #[pymodule_export]

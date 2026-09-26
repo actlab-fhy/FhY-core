@@ -50,7 +50,7 @@ pub(super) fn symbol_type_name(symbol_type: SymbolType) -> &'static str {
 /// # Errors
 ///
 /// Raises `TypeError` for a value that is not a `SymbolType`.
-pub(super) fn read_symbol_types(
+pub(crate) fn read_symbol_types(
     symbol_types: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<HashMap<Identifier, SymbolType>> {
     let mut read = HashMap::new();

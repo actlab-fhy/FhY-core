@@ -15,9 +15,9 @@ use crate::expression::render_expression_repr;
 use super::value::{record_pending_error, repr_text};
 
 /// `logging.DEBUG`.
-const DEBUG: u8 = 10;
+pub(super) const DEBUG: u8 = 10;
 /// `logging.WARNING`.
-const WARNING: u8 = 30;
+pub(super) const WARNING: u8 = 30;
 
 /// Return `fhy_core.symbolic.constraint.core`'s logger.
 pub(super) fn core_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
@@ -117,7 +117,7 @@ impl LoggingObserver {
     }
 
     /// Log `event`.
-    fn log_event(&self, py: Python<'_>, event: &Event<'_>) -> PyResult<()> {
+    pub(super) fn log_event(&self, py: Python<'_>, event: &Event<'_>) -> PyResult<()> {
         let logger = core_logger(py)?;
         let kind = &self.kind;
         match *event {

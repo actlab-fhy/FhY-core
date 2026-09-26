@@ -189,7 +189,7 @@ fn render_identifier_sorts(
 /// Log the refusal of `hazard` by the entry point `context` at WARNING, on
 /// `fhy_core.symbolic.solver`: the core's text, the refused node's `repr`,
 /// and the sorts of its identifiers.
-pub(super) fn warn_hazard(
+pub(crate) fn warn_hazard(
     py: Python<'_>,
     context: &str,
     hazard: &Hazard,
@@ -221,7 +221,7 @@ pub(super) fn warn_hazard(
 
 /// Log that the backend `backend` answered `unknown` for `reason` at
 /// WARNING, on `fhy_core.symbolic.solver`.
-pub(super) fn warn_unknown(
+pub(crate) fn warn_unknown(
     py: Python<'_>,
     context: &str,
     backend: &str,

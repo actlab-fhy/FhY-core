@@ -128,7 +128,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`, with the migrated tests
   - [x] S13a.5: tests migrated (with S13a.4), and the interface suite (47)
   - [x] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`; 28 new tests)
-  - [ ] S13b.2: the system's binding
+  - [x] S13b.2: the system's binding
   - [ ] S13b.3: the Python switch of `system.py`, with its tests
   - [ ] S13b.4: benchmarks after, and docs
 
@@ -15700,6 +15700,15 @@ Where the shape differs from D-S13-2's sketch, or fills it in:
   sides' symbol types, the members of this system then of the other, then
   the question. Each member is converted once, where Python converted it
   twice.
+
+### S13b.2 status
+
+The binding adds `constraint/system.rs` (`_rs.ConstraintSystem` and its
+observer) and `constraint/custom.rs` (`PyCustomConstraint`, the adapter of
+a Python-defined member), exported from `_rs` and declared in `_rs.pyi`.
+The solver binding lends it `read_limits`, `read_symbol_types`,
+`warn_hazard`, `warn_unknown` and `PySolver::backend_name`. Nothing in
+Python uses it yet, so the suite is unchanged (7,732 passed).
 
 ### S13 resume notes
 

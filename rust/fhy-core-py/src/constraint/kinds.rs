@@ -21,8 +21,8 @@ use pyo3::types::{
 };
 
 use fhy_core::constraint::{
-    Binding, Bindings, ConstraintContext, EquationConstraint, MemberSet, Outcome, Polarity,
-    SetConstraint,
+    Binding, Bindings, Constraint, ConstraintContext, EquationConstraint, MemberSet, Outcome,
+    Polarity, SetConstraint,
 };
 use fhy_core::expression::ExpressionKind;
 use fhy_core::identifier::Identifier;
@@ -76,7 +76,7 @@ fn is_satisfied(outcome: Outcome) -> bool {
 }
 
 /// Return the core binding of the Python value `value`.
-fn read_binding(value: &Bound<'_, PyAny>) -> PyResult<Binding> {
+pub(super) fn read_binding(value: &Bound<'_, PyAny>) -> PyResult<Binding> {
     Ok(match value.cast::<PyExpression>() {
         Ok(expression) => Binding::Expression(expression.get().expression().clone()),
         Err(_not_an_expression) => Binding::Value(read_bound_value(value)?),
@@ -175,12 +175,12 @@ fn run_evaluation(
 }
 
 /// Return whether `other` is of exactly `this`'s class.
-fn is_same_class(this: &Bound<'_, PyAny>, other: &Bound<'_, PyAny>) -> bool {
+pub(super) fn is_same_class(this: &Bound<'_, PyAny>, other: &Bound<'_, PyAny>) -> bool {
     this.get_type().is(other.get_type())
 }
 
 /// Return the renaming of `renaming`, an `AlphaRenaming`.
-fn with_renaming<T>(
+pub(super) fn with_renaming<T>(
     renaming: &Bound<'_, PyAny>,
     use_renaming: impl FnOnce(&AlphaRenaming) -> T,
 ) -> PyResult<T> {
@@ -189,7 +189,7 @@ fn with_renaming<T>(
 }
 
 /// Return the payload of the serializable `value`.
-fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+pub(super) fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     value.call_method0(intern!(value.py(), "serialize_to_dict"))
 }
 
@@ -917,6 +917,21 @@ set_constraint_class!(
     Polarity::NotIn,
     "not in"
 );
+
+/// Return the core constraint of a Python constraint of a built-in kind,
+/// or `None` for any other value.
+pub(super) fn read_native_constraint(value: &Bound<'_, PyAny>) -> Option<Constraint> {
+    if let Ok(equation) = value.cast::<PyEquationConstraint>() {
+        return Some(Constraint::from(equation.get().core.clone()));
+    }
+    if let Ok(set) = value.cast::<PyInSetConstraint>() {
+        return Some(Constraint::from(set.get().state.core.clone()));
+    }
+    if let Ok(set) = value.cast::<PyNotInSetConstraint>() {
+        return Some(Constraint::from(set.get().state.core.clone()));
+    }
+    None
+}
 
 /// Return whether a constraint member lifts to a `LiteralExpression`: a
 /// `bool`, an `int`, a `float` or a `Decimal` the literal holds, as the

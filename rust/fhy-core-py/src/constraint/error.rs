@@ -9,6 +9,7 @@
 //! `ConstraintError` with the core's text, and a solver error S8's and
 //! S12's exception.
 
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
@@ -25,6 +26,22 @@ use super::value::{constraint_error, read_member_value, repr_text, type_name};
 fn literal_expression_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     CLASS.import(py, "fhy_core.symbolic.expression", "LiteralExpression")
+}
+
+/// Return the `MissingSymbolTypeError` with `message`.
+fn missing_symbol_type_error(py: Python<'_>, message: String) -> PyErr {
+    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    match CLASS
+        .import(
+            py,
+            "fhy_core.symbolic.constraint.errors",
+            "MissingSymbolTypeError",
+        )
+        .and_then(|class| class.call1((message,)))
+    {
+        Ok(error) => PyErr::from_value(error),
+        Err(error) => error,
+    }
 }
 
 /// Return whether `value` is a `LiteralType`: a `str`, `float`, `int`,
@@ -53,6 +70,12 @@ pub(super) fn constraint_error_to_py(
         ConstraintError::IllTyped(error) => error.into_py_err(),
         ConstraintError::NonBooleanResult { .. } => non_boolean_operand_error(py, text),
         ConstraintError::Solve(error) => solve_error_to_py(py, error),
+        ConstraintError::MissingSymbolTypes(_) => missing_symbol_type_error(py, text),
+        ConstraintError::Custom(error) => match error.downcast::<PyErr>() {
+            Ok(error) => *error,
+            Err(error) => PyRuntimeError::new_err(format!("{text}: {error}")),
+        },
+        ConstraintError::Substitution(error) => PyValueError::new_err(format!("{text}: {error}")),
         _ => constraint_error(py, text),
     }
 }

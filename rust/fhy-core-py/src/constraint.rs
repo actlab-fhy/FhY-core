@@ -9,11 +9,14 @@
 //! opaque value that Python compares (D-S13-3). The `Constraint` ABC, the
 //! outcome enum and the error classes stay Python.
 
+mod custom;
 mod error;
 mod kinds;
 mod observer;
+mod system;
 mod value;
 
 pub(crate) use kinds::{
     PyEquationConstraint, PyInSetConstraint, PyNotInSetConstraint, does_member_lift_to_expression,
 };
+pub(crate) use system::PyConstraintSystem;
