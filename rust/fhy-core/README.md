@@ -1,12 +1,12 @@
 # fhy-core
 
-Core IR building blocks for the [FhY](https://github.com/actlab-fhy) compiler, in Rust: identifiers, interned vocabularies, diagnostics and provenance, symbolic expressions with patterns and rewrite rules, tree traversals, and a compiler-pass framework.
+Core IR building blocks for the [FhY](https://github.com/actlab-fhy) compiler, in Rust: identifiers, interned vocabularies, diagnostics and provenance, symbolic expressions with patterns and rewrite rules, tree traversals, a compiler-pass framework, and a solver with pluggable backends.
 
 This crate is the Rust implementation of the `fhy_core` Python package, which requires it: the package's extension module, built from the `fhy-core-py` binding crate, issues its identifier ids and backs its interned tags, diagnostics, provenance and expressions. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's and a golden corpus checks it. Elsewhere Rust defines the behavior.
 
 ## Modules
 
-Each module depends only on the modules listed before it, except that `expression` and `pass` are independent of each other and `expression::passes` joins them. Each public item has exactly one public path.
+Each module depends only on the modules listed before it, except that `expression` and `pass` are independent of each other, `expression::passes` joins them, and `solver` depends on `expression` and not on `pass`. Each public item has exactly one public path.
 
 - `identifier`: `Identifier`, a name hint paired with a process-unique id.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical value per key.
@@ -22,6 +22,7 @@ Each module depends only on the modules listed before it, except that `expressio
   - `expression::pattern`: `Pattern`, `Capture`, the `Rule` trait and `RewriteRule`, and `apply_rewrite_rules`.
   - `expression::passes`: `RewriteRuleApplier`, `ExpressionPrettyFormatter` and `register_expression_passes`.
 - `pass`: `CompilerPass`, `PassManager`, `FixpointPassGroup`, analyses, `Validator`s and the owned `PassRegistry`. An analysis is named by its type, or, when no Rust type names it, such as one a language binding defines, by an `Identifier` (`AnalysisId::of_identifier`, `PassContext::analysis_by_id`). `PassContext::with_detached_analyses` lends a hook's code an owned `DetachedAnalyses` handle to the run's cache.
+- `solver`: `Solver`, which answers satisfiability, implication and universal-validity questions with an `SmtSolver` backend, and simplification with a `Simplifier` backend. It checks each question's symbol types and Boolean positions, refuses the shapes SMT-LIB2 cannot state in this crate's semantics (`Hazard::find`), and encodes a logical question as one `SmtScript`, lowered to SMT-LIB2 with the crate's semantics. `SmtLib2Process` drives any SMT-LIB2 executable, such as `z3 -in` or `cvc5 --lang=smt2`, over its standard input and output.
 
 ## One copy per process
 

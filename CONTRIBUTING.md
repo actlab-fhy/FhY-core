@@ -459,7 +459,9 @@ module depends only on the layers before it:
 4. `tree`
 5. `expression` (with `expression::pattern` and `expression::builtins`) and `pass`, which do
    not depend on each other
-6. `expression::passes`, the passes over expressions, which depends on both
+6. `expression::passes`, the passes over expressions, which depends on both,
+   and `solver`, the questions about expressions and their backends, which
+   depends on `expression` and never on `pass`
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -481,6 +483,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expression::pattern`; the rule-applier pass is in `fhy_core::expression::passes` |
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
+| `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
 
 ### Errors belong to their module
 

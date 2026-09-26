@@ -1,6 +1,6 @@
 [package]
 name = "fhy-core"
-description = "Core IR building blocks for the FhY compiler: identifiers, interned tags, diagnostics, symbolic expressions, rewrite rules and a pass manager."
+description = "Core IR building blocks for the FhY compiler: identifiers, interned tags, diagnostics, symbolic expressions, rewrite rules, a pass manager and a solver with pluggable backends."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

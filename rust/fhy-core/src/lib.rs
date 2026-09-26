@@ -6,8 +6,9 @@
 //! # Modules
 //!
 //! Each module depends only on the modules listed before it, except that
-//! [`expression`] and [`pass`] are independent of each other and
-//! [`expression::passes`] joins them.
+//! [`expression`] and [`pass`] are independent of each other,
+//! [`expression::passes`] joins them, and [`solver`] depends on
+//! [`expression`] and not on [`pass`].
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -21,6 +22,7 @@
 //! | [`tree`] | the [`Tree`](tree::Tree) trait and iterative walks and rewrites over any tree-shaped IR |
 //! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
+//! | [`solver`] | questions about expressions answered by pluggable backends: the hazard screen, the SMT-LIB2 lowering, and a backend that drives an SMT-LIB2 executable |
 //!
 //! Each public item has exactly one public path.
 //!
@@ -86,6 +88,7 @@ pub mod interned;
 pub mod op_attribute;
 pub mod pass;
 pub mod provenance;
+pub mod solver;
 pub mod tree;
 pub mod value_domain;
 

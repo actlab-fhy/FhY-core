@@ -63,7 +63,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S8: the solver and its backends (designed; see "S8: the solver and its backends")
   - [x] N-S8-1 decided as (a), N-S8-2 as (b)
   - [x] S8.1: solver benchmarks and baseline (14 rows; see "S8.1 baseline")
-  - [ ] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend)
+  - [x] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend). 224 new tests; the Rust gate passes (3,040); see "S8.2 implementation notes"
   - [ ] S8.3: the `z3` cargo feature and its backend, with the CI changes
   - [ ] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs)
   - [ ] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports)
@@ -6972,3 +6972,153 @@ runs' medians.
   param's value check 145 µs, with sympy's cache warm across rounds.
 - **The import** of `fhy_core` takes 487 ms in a fresh interpreter, which
   includes sympy and z3.
+
+### S8.2 implementation notes
+
+The tests were written first, against `todo!()` stubs of `Hazard::find`,
+`SmtScript::lower` and its `Display`, `Solver::ask` and `simplify`, and
+`SmtLib2Process::check`: 213 of the 224 new integration tests failed (the
+other 11 pin plain data, such as a `Display` of a hand-built error), and
+all pass now. A proptest regression file written while the stubs failed
+was deleted, as in S7.2. The new module is `rust/fhy-core/src/solver.rs`
+(the facade, the questions, answers and context) with `solver/backend.rs`
+(the traits, `SatResult`, `CheckLimits`, `SimplifyContext`),
+`solver/error.rs`, `solver/screen.rs`, `solver/process.rs` and
+`solver/smt.rs` with `smt/term.rs`, `smt/lower.rs` and `smt/print.rs`.
+Every public item has one path, `fhy_core::solver::X`. `lib.rs`, the
+crate README and manifest description, and CONTRIBUTING's layering list
+and module table list the module.
+
+Where the shape differs from D-S8-2's and D-S8-3's sketches, or fills
+them in:
+
+- **`Simplifier::simplify` takes a `SimplifyContext`** besides the
+  expression. The next slice's Rust CAS backend, SymPy through pyo3, will
+  need more than the expression, at least the sorts of native constants
+  and named functions, and perhaps their values or limits. A context
+  struct with private fields and accessors can gain those without
+  changing the trait, which the user asked for. It carries the solver's
+  `SortLookup` today.
+- **`Hazard::find(expression, symbol_types, sorts)` is public.** The
+  screen is a function of its own, as `BooleanScreen` is, so the stories
+  pin each hazard directly and another caller can screen without a
+  backend. `Hazard::node()` returns the refused node.
+- **The facade holds shared backends.** `Solver` also has
+  `with_shared_smt_solver(Arc<dyn SmtSolver>)`,
+  `with_shared_simplifier`, and the accessors `smt_solver()` and
+  `simplifier()`, for the binding, which keeps its adapters behind an
+  `Arc`, and for the tests' recording fakes.
+- **`SmtScript::lower` checks in the order of the Python
+  `convert_expression_to_z3_expression`:** missing symbol types, then the
+  logical-operand screen, then native constants, then the first node in
+  post-order without a term (`LoweringError::MissingSymbolTypes`,
+  `IllTyped`, `NativeConstants`, `NonFiniteLiteral`, `Call`,
+  `SortMismatch`, `UnsupportedPower`). The facade runs its own checks
+  first and lowers without repeating them.
+- **A non-Boolean expression is named.** `SmtScript::lower` of a numeric
+  expression declares the constant `value` of its sort and asserts
+  `(= value e)`, and `value_sort()` reports the sort. The binding's
+  `convert_expression_to_z3_expression` must keep converting numeric
+  expressions (D-S4-2), and z3's parser returns only assertions, so it
+  reads the term as the assertion's second argument. No identifier's
+  symbol can be `value`, since those end in `_` and digits.
+- **Shared terms are written once, under `let`.** Terms live in one arena
+  and refer to their arguments by id, so a node an expression shares, and
+  the operands a floor encoding or a power by squaring repeats, are one
+  term. The printer binds each application an assertion reaches from
+  several places to `t!1`, `t!2`, ... in id order, nested lets at the top
+  of the assertion (inside a quantifier), so a 64-level doubling DAG
+  prints in linear size. Printing and lowering run on explicit work
+  lists, so a 100,000-level tree lowers and prints on a small stack.
+- **Numerals.** An integer literal in a real position is a real numeral
+  (`1.0`), not `(to_real 1)`, and the negation of a constant is folded,
+  so `x // -3` is `(div (- |x|) 3)`. Rationals are in lowest terms:
+  `0.1` is `(/ 3602879701896397.0 36028797018963968.0)`, the decimal `2.50`
+  is `(/ 5.0 2.0)`.
+- **Linearity is syntactic.** The property that compares satisfiability
+  with brute force found z3 refusing `(* (+ 1 2) x)` in `QF_LIA`: solvers
+  read a coefficient or a divisor as linear only when it is a numeral. So
+  a product is nonlinear when two of its factors are not numerals, and a
+  quotient, `div` or `mod` when its divisor is not one, which refines
+  D-S8-6's "two non-constant factors, or a power". A power of a variable
+  is a product of two variables, so the rule covers it. The three shrunk
+  cases, such as `(* x (mod 0 1))`, stay as seeds in
+  `tests/proptest-regressions/solver/solver_properties.txt`. A script with
+  both numeric sorts, or with only Booleans, is `ALL`, as D-S8-6 says;
+  `to_int` in a real floor operation makes a script mixed.
+- **Declarations** are ordered by identifier id, and `value` comes last.
+  A universally quantified identifier is bound by the `forall`, never
+  declared.
+- **Texts.** The identifiers in `SolveError`, `LoweringError` and
+  `Hazard` texts are written as `name::id`, their `Debug` form and also
+  their Python `repr`, since Python's message tests match `repr(x)` in the
+  `KeyError`. The Boolean-coercion text is lowercase, `lowers a boolean
+  operand into a numeric context`; the one Python test matching the old
+  capital `Boolean` is rewritten in S8.6. `SolveError::Substitution` is new
+  and cannot arise after the screen, which refuses a number bound into a
+  case condition first; it keeps `substitute`'s error typed.
+- **The screen is Python's, including one quirk.** A division is safe only
+  with a provably real operand, and "provably real" follows negation but
+  not unary plus, as `_does_operand_lower_to_real_sort` did;
+  `partial_operation_hazard_reads_a_real_dividend_through_arithmetic_but_not_unary_plus`
+  pins it, and D-S8-5's follow-up can widen it. The classifications are
+  computed bottom-up on a work list and remembered per node, and the
+  pre-order walks skip a shared node met again, so a 64-level doubling DAG
+  screens at once and a 100,000-level chain or piecewise nest screens on a
+  small stack.
+- **The process protocol** writes the script and `(check-sat)`, reads the
+  first non-blank line, asks `(get-info :reason-unknown)` only after
+  `unknown`, and then writes `(exit)` and closes the input. A reason is
+  read from `(:reason-unknown "r")` or `(:reason-unknown r)`; any other
+  reply, such as an `(error ...)` to `get-info`, gives the empty reason.
+  A write the program refuses is dropped, since its output or its exit
+  then tells why. Standard error is discarded, and the output thread ends
+  when the program's output closes.
+- **Solver-backed properties** run when `FHY_SMT_SOLVER` names an
+  SMT-LIB2 executable (locally the z3 4.16 of the z3-solver wheel, `z3
+  -in`), and under the `z3` feature from S8.3. Each check is bounded to
+  2 s and an `unknown` is accepted, so the properties pin that every
+  decided answer agrees: without the bound, z3 used 69 GB of memory on
+  one generated quantified nonlinear case before it was killed.
+- **Tests.** `tests/it/solver/`: `screen_stories.rs` (92 tests, counting
+  `rstest` cases), `smt_lowering_stories.rs` (76), `solver_stories.rs`
+  (38), `process_stories.rs` (12, `cfg(unix)`, `sh` scripts as fake
+  solvers) and `solver_properties.rs` (6); the fakes are in
+  `tests/it/support/solver.rs`. The Rust gate: fmt, clippy `-D warnings`,
+  3,040 tests, doc `-D warnings`, deny, `cargo +1.85 check`, and the
+  public-paths checks.
+
+Traceability of the Python tests (`test_solver.py` is `S`,
+`test_solver_properties.py` `P`, `test_z3_pass.py` `Z`); the Python tests
+stay, and S8.6 migrates them:
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| S the capability tests (5) | `capabilities_follow_the_backends_a_solver_holds`, `missing_backend_is_reported_before_every_other_check` | the Python table stays in Python (D-S8-13) |
+| S `test_check_expression_satisfiability_true_for_*`, `false_for_*`, `does_expression_imply_reports_true_*`, `holds_for_all_free_assignments_reports_true_*`, the `assert_*` decided tests | `satisfiability_asserts_the_expression_and_is_yes_when_sat`, `implication_asserts_a_counterexample_and_is_yes_when_unsat`, the three `universal_validity_*` stories, `real_solver_decides_the_three_questions` | the scripts, then the answer of each `check-sat` result |
+| S `..._returns_none_on_unknown`, the `raises_undecidable_error_on_unknown` tests | `unknown_answers_unknown_with_the_reason_the_backend_gave` (3 cases) | the strict companions' error is the binding's |
+| S `..._raises_key_error_for_missing_symbol_type`, `rejects_unmapped_considered_id`, `z3_question_raises_a_missing_symbol_type_ahead_of_ill_typedness`, `still_requires_a_sort_for_a_variable_beside_a_constant`, `needs_no_sort_for_a_considered_constant` | `missing_symbol_types_are_reported_before_ill_typedness_naming_every_identifier`, `missing_symbol_types_cover_both_sides_of_an_implication_but_no_constant` | |
+| S `is_threaded_through_symbol_type`, `accepts_a_mapped_considered_id` | `universal_validity_without_considered_identifiers_asserts_the_negation`, `real_solver_decides_the_three_questions` | a considered identifier the expression does not mention quantifies nothing |
+| S the `timeout` tests (threading and rejection) | `limits_reach_the_backend`, `process_is_killed_at_the_timeout_and_answers_unknown`, `real_solver_answers_unknown_at_the_timeout` | the value check stays Python (D-S8-8) |
+| S the Boolean-coercion screen tests (5) | `boolean_coercion_hazard_*` (7) | |
+| S the division, floor, modulo and power screen tests (15) | `partial_operation_hazard_*` (13 functions, 36 cases) | |
+| S the mixed int/real equality screen tests (20) | `mixed_equality_hazard_*` (11 functions, 30 cases) | |
+| S the native-constant screen tests (7) | `native_constant_hazard_*` (5), `native_constant_is_refused_by_the_screen_needing_no_symbol_type`, `user_constant_is_read_from_the_sorts_of_the_context` | |
+| S the non-finite literal tests (5) | `non_finite_literal_hazard_*` (3 functions, 10 cases) | |
+| S the ill-typedness order tests (15) | `ill_typedness_is_reported_before_a_hazard_on_either_side`, `numeric_root_is_ill_typed`, `symbol_typed_operand_in_a_boolean_position_is_ill_typed_despite_a_hazard` | |
+| S `does_expression_imply_hazardous_premise_returns_none`, `screens_a_hazard_in_the_consequent`, `screens_a_nested_int_float_equality` | `hazard_answers_unknown_without_asking_the_backend`, `each_expression_is_screened_on_its_own_antecedent_first`, `mixed_equality_hazard_is_found_below_the_root` | |
+| S the warning tests | `hazard_displays_one_lowercase_line_per_kind`, `hazard_node_is_the_refused_node_except_for_constants` | the warning is the binding's (D-S8-14) |
+| S the simplification tests | `simplification_*` (4), `simplifier_*` (2) | the screen, the constant refusal and the substitution |
+| none | `hazard_kinds_are_checked_in_order_whatever_the_node_order`, `hazard_of_a_kind_is_the_first_node_in_pre_order`, `hazard_screen_walks_a_deep_*_on_a_small_stack` (2), `hazard_screen_classifies_a_shared_dag_in_linear_time` | new: order, depth and sharing |
+| Z `test_convert_expression_to_z3_expression`, `symbol_type_maps_to_correct_z3_sort` | `script_sets_the_logic_declares_each_constant_and_asserts_the_predicate`, `declarations_pair_each_identifier_with_its_symbol_and_sort_ordered_by_id` | |
+| Z the literal tests | `boolean_literal_*`, `integer_literal_*`, `float_literal_is_its_exact_binary_rational` (8 cases), `decimal_literal_*` (4), `non_finite_float_is_refused` | |
+| Z `test_z3_floor_divide_rejects_non_int_non_real_expression` | `integer_floor_division_divides_by_the_sign_of_the_divisor`, `integer_floor_modulo_takes_the_sign_of_the_divisor`, `real_floor_operations_go_through_to_int`, `integer_floor_division_by_a_real_literal_is_a_real_floor` | Y-2 |
+| Z the piecewise tests (4) | `piecewise_is_a_right_folded_ite_whose_first_match_wins`, `integer_side_meeting_a_real_is_converted_with_to_real_in_every_position` | |
+| Z `test_convert_call_expression_to_z3_rejects_unresolved_call` | `call_is_refused_naming_the_callee` (3 cases), `call_has_no_lowering_after_the_screens_pass` | Y-7 |
+| Z `test_z3_rewrites_a_bool_operand_compared_against_an_integer`, `bool_coercion_yields_a_model_this_package_rejects` | `boolean_meeting_a_number_is_refused` (4 cases), `piecewise_mixing_a_boolean_and_a_number_is_refused` | Y-4 |
+| Z the missing-sort, ill-typedness and native-constant order tests of the conversion | `missing_symbol_types_are_refused_first_naming_every_identifier_by_id`, `ill_typed_expression_is_refused_before_a_native_constant`, `native_constants_are_refused_before_the_nodes` | |
+| Z the questions' own tests (17) | `solver_stories.rs`'s scripts and answers | the unscreened questions are deleted (D-S8-1) |
+| none | `arithmetic_is_the_smt_lib2_operator` (5), `comparison_is_the_smt_lib2_predicate` (6), `connectives_are_n_ary_and_or_and_not`, `division_is_exact_over_the_reals`, the `power_*` stories (4), the `logic_*` stories (4), the symbol stories (2), `numeric_expression_is_named_by_the_value_constant`, `shared_*` (2), `deep_tree_lowers_and_prints_on_a_small_stack` | new: D-S8-6's table |
+| P the Z3 properties (3) | `satisfiability_agrees_with_brute_force_over_a_small_domain`, `implication_agrees_with_brute_force_over_a_small_domain`, `universal_validity_agrees_with_brute_force_over_a_small_domain` | with a real solver |
+| none | `screened_safe_tree_lowers_to_a_balanced_script_declaring_its_identifiers`, `ground_ordering_lowers_to_a_script_as_satisfiable_as_it_is_true` | new: the exact rational reference |
+| none | `process_*` (10) | new: the process protocol |

@@ -13,6 +13,7 @@ mod pass;
 mod provenance_diagnostic_properties;
 mod provenance_stories;
 mod serde_format_stories;
+mod solver;
 mod support;
 mod tag_type_stories;
 mod tree;
