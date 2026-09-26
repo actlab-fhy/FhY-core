@@ -13897,3 +13897,27 @@ notes):
 - **Not done here, as planned:** a serde form of `Type` and `DataType`
   (D-S11-16); iterative chasing of an expression-binding chain deeper than
   the stack (S11a.2's notes).
+
+### S11 rebase onto S12 (2026-09-26)
+
+With the user's approval, the whole branch was rebased once more, onto
+`dev-rust` at 125507b, S12's last commit. Three conflicts, all additive:
+this document's checklist and sections (S12's entry and section kept
+intact, S11's following them, twice), and `rust/fhy-core/README.md`'s
+module list (S12's `solver` line, with `SympySimplifier`, then S11's
+`types` line). `uv lock` and `cargo metadata --locked` left both lock
+files unchanged. Every rebased commit passes `cargo check --workspace
+--all-targets --all-features --locked`. S11 does not call
+`Solver::simplify`, so its new `SimplifyContext` needed no change, and
+the new `clippy.toml` raised no finding.
+
+The Rust gate runs with the shared gate Python for the `sympy` feature
+(`PYO3_PYTHON` and `PYTHONPATH`, S12's required mode) and this worktree's
+z3 and target. After the rebase: `cargo test --workspace` 3,735 passed and
+3,767 with all features; clippy `-D warnings` both ways, fmt, doc `-D
+warnings`, the public-paths check, deny, and `cargo +1.85 check` with and
+without `z3` pass; the CI's test-target list, package contents and
+default-feature solver tests pass; `pytest` 7,685 passed, `-m "not
+very_slow"` 7,718, the `property` session 282, `tests_minimal` 5,734 passed
+and 627 skipped, nox `lint` and `type_check` clean. S12 changed no code S11
+measures, so the benchmarks were not rerun.
