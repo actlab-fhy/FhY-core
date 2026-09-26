@@ -52,6 +52,17 @@ The `z3-sys` crate links libz3 4.13.3 or newer. By default it finds a system lib
 
 Without the feature, `SmtLib2Process` drives a z3 executable (`z3 -in`) or any other SMT-LIB2 solver (`cvc5 --lang=smt2`) over its standard input and output.
 
+## The `ndarray` feature
+
+`Prepared::evaluate_array`, which evaluates an expression over [`ndarray`](https://crates.io/crates/ndarray) arrays bound to its identifiers, broadcast together as NumPy broadcasts, is behind the off-by-default `ndarray` feature:
+
+```toml
+[dependencies]
+fhy-core = { version = "0.2", features = ["ndarray"] }
+```
+
+Every lane is computed as the scalar evaluation of that lane's bindings is, and the result is a new array in the standard layout. An `ArrayKernels` implementation can compute native built-ins over whole arrays instead of the crate's own per-lane kernels; `CoreKernels` uses the crate's. The feature's API names `ndarray` 0.17's types, and it does not raise the minimum Rust version. docs.rs builds the default features.
+
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).

@@ -26,6 +26,7 @@ name = "fhy_core"
 
 [dependencies]
 libm = { workspace = true }
+ndarray = { workspace = true, optional = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 serde = { workspace = true }
@@ -35,6 +36,8 @@ z3 = { workspace = true, optional = true }
 # The `Z3Solver` backend of `fhy_core::solver`, which links libz3 through
 # the `z3` crate (see the README for how to choose the link method).
 z3 = ["dep:z3"]
+# The array backend of `expression::evaluate` (slice S9).
+ndarray = ["dep:ndarray"]
 
 [dev-dependencies]
 postcard = { workspace = true }

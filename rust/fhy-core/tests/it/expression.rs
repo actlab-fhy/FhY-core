@@ -4,6 +4,8 @@
 
 mod builders_stories;
 mod builtins_stories;
+#[cfg(feature = "ndarray")]
+mod evaluate_array_stories;
 mod evaluate_properties;
 mod evaluate_stories;
 mod fold_stories;

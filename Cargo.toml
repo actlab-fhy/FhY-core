@@ -19,6 +19,9 @@ num-bigint = "0.5"
 num-traits = "0.2"
 # The error function of the native built-in `erf` (slice S9).
 libm = "0.2"
+# The array backend of the evaluator, behind fhy-core's `ndarray` feature
+# (slice S9).
+ndarray = { version = "0.17", default-features = false, features = ["std"] }
 proptest = "1"
 # The non-self-describing format the serialization round-trip tests use.
 postcard = { version = "1", default-features = false, features = ["alloc"] }

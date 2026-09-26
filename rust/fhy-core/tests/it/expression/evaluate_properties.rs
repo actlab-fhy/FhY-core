@@ -220,3 +220,75 @@ proptest! {
         prop_assert_eq!(value(BuiltinFunction::Sigmoid, &[a]), Scalar::Real(1.0 / (1.0 + (-a).exp())));
     }
 }
+
+#[cfg(feature = "ndarray")]
+mod lanes {
+    use super::*;
+
+    use fhy_core::expression::evaluate::{ArrayBinding, ArrayValue, CoreKernels};
+    use ndarray::{Array1, IxDyn};
+
+    fn lane_scalar(value: &ArrayValue, index: usize) -> Scalar {
+        let position = if value.shape().is_empty() {
+            IxDyn(&[])
+        } else {
+            IxDyn(&[index])
+        };
+        match value {
+            ArrayValue::Bool(array) => Scalar::Bool(array[position]),
+            ArrayValue::Int(array) => Scalar::Int(array[position]),
+            ArrayValue::Real(array) => Scalar::Real(array[position]),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn each_lane_of_an_array_evaluation_is_the_scalar_evaluation_of_that_lane(
+            tree in any_tree(),
+            lanes in proptest::collection::vec(lane_values(), 1..8),
+        ) {
+            let registry = FunctionRegistry::new();
+            let evaluator = Evaluator::new(&registry);
+            let integers: Array1<i64> = lanes.iter().map(|lane| lane.0).collect();
+            let reals: Array1<f64> = lanes.iter().map(|lane| lane.1).collect();
+            let booleans: Array1<bool> = lanes.iter().map(|lane| lane.2).collect();
+            let environment = HashMap::from([
+                (IDENTIFIERS[0].clone(), ArrayBinding::Int(integers.view().into_dyn())),
+                (IDENTIFIERS[1].clone(), ArrayBinding::Real(reals.view().into_dyn())),
+                (IDENTIFIERS[2].clone(), ArrayBinding::Bool(booleans.view().into_dyn())),
+            ]);
+            let scalars: Vec<Result<Scalar, EvaluationError>> = lanes
+                .iter()
+                .map(|lane| evaluator.evaluate(&tree, &scalar_environment(*lane)))
+                .collect();
+
+            let prepared = evaluator.prepare(&tree).expect("no call to inline fails");
+            match prepared.evaluate_array(&environment, &CoreKernels) {
+                Ok(result) => {
+                    for (index, scalar) in scalars.iter().enumerate() {
+                        prop_assert!(scalar.is_ok(), "lane {} fails alone: {:?}", index, scalar);
+                        let lane = lane_scalar(&result, index);
+                        let scalar = *scalar.as_ref().expect("checked");
+                        prop_assert!(is_same_scalar(lane, scalar), "lane {}: {:?} != {:?}", index, lane, scalar);
+                    }
+                }
+                Err(EvaluationError::Lane { failure, node }) => {
+                    let first = scalars.iter().position(Result::is_err).expect("some lane fails alone");
+                    let Err(EvaluationError::Lane { failure: alone, node: alone_node }) = &scalars[first] else {
+                        panic!("lane {first} fails differently: {:?}", scalars[first]);
+                    };
+                    prop_assert_eq!(failure, *alone);
+                    prop_assert!(Expression::ptr_eq(&node, alone_node) || node == *alone_node);
+                }
+                Err(error) => {
+                    let expected = summarize(&Err(error));
+                    for scalar in &scalars {
+                        prop_assert_eq!(summarize(scalar), expected.clone());
+                    }
+                }
+            }
+        }
+    }
+}

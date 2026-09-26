@@ -82,7 +82,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] N-S9-1 decided as (a), N-S9-2 as (b) (2026-09-26; see "S9 resolutions")
   - [x] S9.1: evaluator benchmarks and baseline (26 rows; see "S9.1 baseline")
   - [x] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
-  - [ ] S9.3: the `ndarray` cargo feature and the array backend
+  - [x] S9.3: the `ndarray` cargo feature and the array backend
   - [ ] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
   - [ ] S9.5: the Python switch
   - [ ] S9.6: tests migrated, and the interface suite
@@ -10000,3 +10000,38 @@ array stories are S9.3's):
 | N `test_raises_for_native_function_without_numpy_mapping`, `test_raises_for_unregistered_function_name`, `test_raises_for_recursive_function` | `evaluate_refuses_a_native_user_function`, `evaluate_reports_an_inlining_error` | |
 | N the auto-inline tests | `evaluate_inlines_composed_builtins_and_user_functions`, `composed_builtins_evaluate_as_their_definitions` | |
 | none | `evaluate_refuses_a_boolean_used_as_a_number` (3), `evaluate_refuses_a_boolean_under_negation_and_as_a_native_argument`, `evaluate_refuses_a_piecewise_mixing_booleans_and_numbers`, `a_conjunction_discards_*`, `a_disjunction_discards_*`, `a_failed_piecewise_condition_*`, `a_failure_passes_through_every_other_node`, `evaluate_negation_of_the_smallest_integer_overflows`, `evaluate_compares_nan_as_ieee_does`, `prepare_exposes_*`, `evaluate_walks_a_deep_tree_on_a_small_stack` | new: Z-3, D-S9-6, depth |
+
+### S9.3 implementation notes
+
+The `ndarray` feature is `rust/fhy-core/src/expression/evaluate/array.rs`,
+with `ndarray = { version = "0.17", default-features = false, features =
+["std"] }` (MIT or Apache-2.0, `rust-version` 1.64) as an optional
+dependency and `[features] ndarray = ["dep:ndarray"]`. CI's `rust` job
+already builds and tests `--all-features`, `deny` checks the all-features
+graph, and `cargo +1.85 check -p fhy-core --all-features` passes, so the
+workflow needs no change. The crate README documents the feature.
+
+- **The API.** `ArrayBinding<'a>` holds a view (`ArrayViewD`) of
+  Booleans, `i64`s or `f64`s, of any strides; `ArrayValue` an owned
+  result. `Prepared::evaluate_array(environment, kernels)` takes the
+  `ArrayKernels` N-S9-2 (b) plugs NumPy in through: `handles(function)`
+  and `native(function, argument: CowArray<f64, IxDyn>)`, which receives
+  a borrowed view for a bound identifier and an owned temporary
+  otherwise, so an implementation can move a temporary out without a
+  copy. `CoreKernels` handles nothing. A kernel's error, or a result of
+  another shape, is `EvaluationError::Kernel`.
+- **The backend** implements `Lanes` with `Of<T> = CowArray<'a, T,
+  IxDyn>`: the bindings stay borrowed, and every computed value is owned.
+  The maps broadcast by NumPy's rules and apply the kernel with
+  `ndarray::Zip::map_collect`, which keeps the inputs' memory order; a
+  constant is a 0-d array. The result is an owned array in the standard
+  layout, copied only when it is a binding or in another order.
+- **Tests.** `evaluate_array_stories.rs` (15 tests) under
+  `cfg(feature = "ndarray")`, and the property
+  `each_lane_of_an_array_evaluation_is_the_scalar_evaluation_of_that_lane`
+  in `evaluate_properties.rs`: random trees over an integer, a real and a
+  Boolean identifier, with every arithmetic operation, comparisons,
+  connectives, piecewise and six natives, over up to eight lanes of
+  values including zeros, NaNs, infinities and 64-bit extremes. Each lane
+  of the array evaluation equals that lane's scalar evaluation, and an
+  array evaluation's lane failure is the first failing lane's.

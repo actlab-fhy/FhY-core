@@ -1,0 +1,410 @@
+//! Tests for `Prepared::evaluate_array`: broadcasting, result domains,
+//! borrowed bindings, lane failures in selected and unselected lanes, the
+//! first failed lane, plugged-in kernels, and a million lanes.
+
+use crate::support::expression as expression_support;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use fhy_core::expression::builtins::BuiltinFunction;
+use fhy_core::expression::evaluate::{
+    ArrayBinding, ArrayKernels, ArrayValue, CoreKernels, EvaluationError, Evaluator, LaneFailure,
+};
+use fhy_core::expression::pattern::CallbackError;
+use fhy_core::expression::registry::FunctionRegistry;
+use fhy_core::expression::{Callee, Expression, SymbolType};
+use fhy_core::identifier::Identifier;
+use ndarray::{ArrayD, CowArray, IxDyn, arr0, array};
+
+use expression_support::{build_identifier, build_literal};
+
+fn call(
+    function: impl Into<Callee>,
+    arguments: impl IntoIterator<Item = Expression>,
+) -> Expression {
+    Expression::call(function, arguments)
+}
+
+fn piecewise(cases: Vec<(Expression, Expression)>, otherwise: impl Into<Expression>) -> Expression {
+    Expression::piecewise(cases, otherwise).expect("a valid piecewise")
+}
+
+fn evaluate_with(
+    expression: &Expression,
+    bindings: Vec<(&Identifier, ArrayBinding<'_>)>,
+    kernels: &dyn ArrayKernels,
+) -> Result<ArrayValue, EvaluationError> {
+    let registry = FunctionRegistry::new();
+    let environment: HashMap<Identifier, ArrayBinding<'_>> = bindings
+        .into_iter()
+        .map(|(identifier, binding)| (identifier.clone(), binding))
+        .collect();
+    Evaluator::new(&registry)
+        .prepare(expression)?
+        .evaluate_array(&environment, kernels)
+}
+
+fn evaluate(
+    expression: &Expression,
+    bindings: Vec<(&Identifier, ArrayBinding<'_>)>,
+) -> Result<ArrayValue, EvaluationError> {
+    evaluate_with(expression, bindings, &CoreKernels)
+}
+
+fn expect_real(value: ArrayValue) -> ArrayD<f64> {
+    match value {
+        ArrayValue::Real(array) => array,
+        other => panic!("expected reals, got {other:?}"),
+    }
+}
+
+fn expect_int(value: ArrayValue) -> ArrayD<i64> {
+    match value {
+        ArrayValue::Int(array) => array,
+        other => panic!("expected integers, got {other:?}"),
+    }
+}
+
+fn expect_bool(value: ArrayValue) -> ArrayD<bool> {
+    match value {
+        ArrayValue::Bool(array) => array,
+        other => panic!("expected Booleans, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Broadcasting and domains
+// ---------------------------------------------------------------------------
+
+#[test]
+fn evaluate_array_computes_each_lane() {
+    let (x, reference) = build_identifier("x");
+    let values = array![1.0, 2.0, 3.0].into_dyn();
+
+    let result = evaluate(
+        &(&reference * &reference + 1),
+        vec![(&x, ArrayBinding::Real(values.view()))],
+    );
+
+    assert_eq!(
+        expect_real(result.unwrap()),
+        array![2.0, 5.0, 10.0].into_dyn()
+    );
+}
+
+#[test]
+fn evaluate_array_broadcasts_as_numpy_does() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let column = array![[1], [2]].into_dyn();
+    let row = array![10, 20, 30].into_dyn();
+
+    let result = evaluate(
+        &(x_reference + y_reference),
+        vec![
+            (&x, ArrayBinding::Int(column.view())),
+            (&y, ArrayBinding::Int(row.view())),
+        ],
+    );
+
+    assert_eq!(
+        expect_int(result.unwrap()),
+        array![[11, 21, 31], [12, 22, 32]].into_dyn()
+    );
+}
+
+#[test]
+fn evaluate_array_refuses_shapes_that_do_not_broadcast() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let two = array![1.0, 2.0].into_dyn();
+    let three = array![1.0, 2.0, 3.0].into_dyn();
+
+    let error = evaluate(
+        &(x_reference + y_reference),
+        vec![
+            (&x, ArrayBinding::Real(two.view())),
+            (&y, ArrayBinding::Real(three.view())),
+        ],
+    )
+    .expect_err("2 and 3 do not broadcast");
+
+    assert!(
+        matches!(&error, EvaluationError::Shape { left, right } if left == &[2] && right == &[3])
+    );
+    assert_eq!(error.to_string(), "shapes [2] and [3] do not broadcast");
+}
+
+#[test]
+fn evaluate_array_keeps_zero_dimensional_and_empty_shapes() {
+    let (x, reference) = build_identifier("x");
+    let scalar = arr0(2.0).into_dyn();
+    let empty = ArrayD::<f64>::zeros(IxDyn(&[0, 3]));
+
+    let zero_dimensional = evaluate(
+        &(&reference * 2),
+        vec![(&x, ArrayBinding::Real(scalar.view()))],
+    );
+    let nothing = evaluate(
+        &(&reference * 2),
+        vec![(&x, ArrayBinding::Real(empty.view()))],
+    );
+    let literal = evaluate(&build_literal(1), vec![]);
+
+    assert_eq!(expect_real(zero_dimensional.unwrap()), arr0(4.0).into_dyn());
+    assert_eq!(nothing.unwrap().shape(), [0, 3]);
+    assert_eq!(expect_int(literal.unwrap()), arr0(1).into_dyn());
+}
+
+#[test]
+fn evaluate_array_yields_the_domain_of_each_operation() {
+    let (x, reference) = build_identifier("x");
+    let values = array![1, 3, 5].into_dyn();
+    let binding = || vec![(&x, ArrayBinding::Int(values.view()))];
+
+    let quotient = evaluate(&(&reference / 2), binding()).unwrap();
+    let comparison = evaluate(&reference.greater(2), binding()).unwrap();
+    let rounded = evaluate(&call(BuiltinFunction::Round, [&reference / 2]), binding()).unwrap();
+
+    assert_eq!(expect_real(quotient), array![0.5, 1.5, 2.5].into_dyn());
+    assert_eq!(
+        expect_bool(comparison),
+        array![false, true, true].into_dyn()
+    );
+    assert_eq!(rounded.symbol_type(), SymbolType::Int);
+    assert_eq!(expect_int(rounded), array![0, 2, 2].into_dyn());
+}
+
+#[test]
+fn evaluate_array_reads_strided_bindings_without_copying_them_into_the_result() {
+    let (x, reference) = build_identifier("x");
+    let values = array![[1.0, 2.0], [3.0, 4.0]].into_dyn();
+    let transposed = values.t();
+
+    let result =
+        expect_real(evaluate(&reference, vec![(&x, ArrayBinding::Real(transposed))]).unwrap());
+
+    assert_eq!(result, array![[1.0, 3.0], [2.0, 4.0]].into_dyn());
+    assert_ne!(result.as_ptr(), values.as_ptr());
+    assert!(result.is_standard_layout());
+}
+
+// ---------------------------------------------------------------------------
+// Lane failures
+// ---------------------------------------------------------------------------
+
+#[test]
+fn evaluate_array_discards_the_failures_of_unselected_lanes() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let dividends = array![7, 7, 7].into_dyn();
+    let divisors = array![2, 0, -2].into_dyn();
+    let tree = piecewise(
+        vec![(
+            y_reference.not_equals(0),
+            x_reference.floor_divide(&y_reference),
+        )],
+        0,
+    );
+
+    let result = evaluate(
+        &tree,
+        vec![
+            (&x, ArrayBinding::Int(dividends.view())),
+            (&y, ArrayBinding::Int(divisors.view())),
+        ],
+    );
+
+    assert_eq!(expect_int(result.unwrap()), array![3, 0, -4].into_dyn());
+}
+
+#[test]
+fn evaluate_array_guards_a_non_finite_cast_per_lane() {
+    let (x, reference) = build_identifier("x");
+    let values = array![4.0, -1.0, 10.0].into_dyn();
+    let tree = piecewise(
+        vec![(
+            reference.greater_equal(0),
+            call(
+                BuiltinFunction::Floor,
+                [call(BuiltinFunction::Sqrt, [reference.clone()])],
+            ),
+        )],
+        -1,
+    );
+
+    let result = evaluate(&tree, vec![(&x, ArrayBinding::Real(values.view()))]);
+
+    assert_eq!(expect_int(result.unwrap()), array![2, -1, 3].into_dyn());
+}
+
+#[test]
+fn evaluate_array_raises_the_first_failed_lane_in_c_order() {
+    let (x, reference) = build_identifier("x");
+    let values = array![[1, 0], [i64::MIN, 0]].into_dyn();
+    let tree = reference.floor_divide(&reference) + reference.floor_divide(-1);
+
+    let error = evaluate(&tree, vec![(&x, ArrayBinding::Int(values.view()))]).expect_err("fails");
+
+    assert!(matches!(
+        &error,
+        EvaluationError::Lane { failure: LaneFailure::DivisionByZero, node } if node.to_string() == "(x // x)"
+    ));
+}
+
+#[test]
+fn evaluate_array_keeps_the_failure_of_the_operand_computed_first() {
+    let (x, reference) = build_identifier("x");
+    let values = array![i64::MIN].into_dyn();
+    let tree = (-&reference).floor_divide(0);
+
+    let error = evaluate(&tree, vec![(&x, ArrayBinding::Int(values.view()))]).expect_err("fails");
+
+    assert!(matches!(
+        error,
+        EvaluationError::Lane {
+            failure: LaneFailure::IntegerOverflow,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn evaluate_array_discards_failures_decided_by_a_connective() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let dividends = array![7, 7, 7].into_dyn();
+    let divisors = array![0, 2, 7].into_dyn();
+    let tree = Expression::all([
+        y_reference.not_equals(0),
+        x_reference.floor_divide(&y_reference).greater(1),
+    ]);
+
+    let result = evaluate(
+        &tree,
+        vec![
+            (&x, ArrayBinding::Int(dividends.view())),
+            (&y, ArrayBinding::Int(divisors.view())),
+        ],
+    );
+
+    assert_eq!(
+        expect_bool(result.unwrap()),
+        array![false, true, false].into_dyn()
+    );
+}
+
+#[test]
+fn a_nested_piecewise_is_guarded_per_lane_by_its_outer_condition() {
+    let (x, reference) = build_identifier("x");
+    let values = array![-1, 3].into_dyn();
+    let inner = piecewise(vec![(reference.less(0), reference.floor_divide(0))], 1);
+    let tree = piecewise(vec![(reference.greater(0), inner)], 2);
+
+    let result = evaluate(&tree, vec![(&x, ArrayBinding::Int(values.view()))]);
+
+    assert_eq!(expect_int(result.unwrap()), array![2, 1].into_dyn());
+}
+
+// ---------------------------------------------------------------------------
+// Kernels
+// ---------------------------------------------------------------------------
+
+/// Kernels that compute `exp` as a constant and record their arguments.
+#[derive(Default)]
+struct RecordingKernels {
+    arguments: RefCell<Vec<(BuiltinFunction, Vec<f64>, bool)>>,
+}
+
+impl ArrayKernels for RecordingKernels {
+    fn handles(&self, function: BuiltinFunction) -> bool {
+        matches!(function, BuiltinFunction::Exp | BuiltinFunction::Log)
+    }
+
+    fn native(
+        &self,
+        function: BuiltinFunction,
+        argument: CowArray<'_, f64, IxDyn>,
+    ) -> Result<ArrayD<f64>, CallbackError> {
+        self.arguments.borrow_mut().push((
+            function,
+            argument.iter().copied().collect(),
+            argument.is_view(),
+        ));
+        if function == BuiltinFunction::Log {
+            return Err("the kernel failed".into());
+        }
+        Ok(argument.mapv(|_| 7.0))
+    }
+}
+
+#[test]
+fn evaluate_array_computes_the_natives_a_kernel_handles_with_it() {
+    let (x, reference) = build_identifier("x");
+    let values = array![1.0, 2.0].into_dyn();
+    let kernels = RecordingKernels::default();
+    let tree = call(BuiltinFunction::Exp, [reference.clone()])
+        + call(BuiltinFunction::Exp, [&reference + 1])
+        + call(BuiltinFunction::Sqrt, [reference.clone()]);
+
+    let result = evaluate_with(
+        &tree,
+        vec![(&x, ArrayBinding::Real(values.view()))],
+        &kernels,
+    );
+
+    assert_eq!(
+        expect_real(result.unwrap()),
+        array![14.0 + 1.0, 14.0 + 2.0_f64.sqrt()].into_dyn()
+    );
+    let arguments = kernels.arguments.borrow();
+    assert_eq!(arguments.len(), 2);
+    assert_eq!(arguments[0], (BuiltinFunction::Exp, vec![1.0, 2.0], true));
+    assert_eq!(arguments[1], (BuiltinFunction::Exp, vec![2.0, 3.0], false));
+}
+
+#[test]
+fn evaluate_array_reports_a_failing_kernel() {
+    let (x, reference) = build_identifier("x");
+    let values = array![1.0].into_dyn();
+
+    let error = evaluate_with(
+        &call(BuiltinFunction::Log, [reference]),
+        vec![(&x, ArrayBinding::Real(values.view()))],
+        &RecordingKernels::default(),
+    )
+    .expect_err("the kernel fails");
+
+    assert!(matches!(
+        error,
+        EvaluationError::Kernel {
+            function: BuiltinFunction::Log,
+            ..
+        }
+    ));
+    assert_eq!(error.to_string(), "the array kernel of log failed");
+    assert_eq!(
+        std::error::Error::source(&error).map(ToString::to_string),
+        Some("the kernel failed".to_owned())
+    );
+}
+
+#[test]
+fn evaluate_array_runs_a_million_lanes() {
+    let (x, reference) = build_identifier("x");
+    let values = ArrayD::from_shape_fn(IxDyn(&[1_000_000]), |index| {
+        f64::from(u32::try_from(index[0]).expect("small"))
+    });
+
+    let result = expect_real(
+        evaluate(
+            &(&reference * 2 + 1),
+            vec![(&x, ArrayBinding::Real(values.view()))],
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(result.len(), 1_000_000);
+    assert_eq!(result[[999_999]].to_bits(), 1_999_999.0_f64.to_bits());
+}

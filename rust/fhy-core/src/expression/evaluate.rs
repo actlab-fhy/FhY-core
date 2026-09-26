@@ -71,6 +71,9 @@ mod lanes;
 mod value;
 mod walk;
 
+#[cfg(feature = "ndarray")]
+mod array;
+
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 
@@ -89,6 +92,9 @@ use walk::{Data, Walk};
 
 pub use error::{EvaluationError, FoldError, LaneFailure, NearMiss};
 pub use value::Scalar;
+
+#[cfg(feature = "ndarray")]
+pub use array::{ArrayBinding, ArrayKernels, ArrayValue, CoreKernels};
 
 /// The implementations of native user functions, which a
 /// [`fold`](Evaluator::fold) calls.
