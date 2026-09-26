@@ -93,7 +93,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.1: SymPy benchmarks and baseline, on today's Python adapter (12 rows; see "S12.1 baseline")
   - [x] S12.2: the simplify context carries the function registry (core, test-first; `SimplifyContext::from_registry`, `Solver::simplify` taking the context)
   - [x] S12.3: the `sympy` cargo feature and `SympySimplifier`, with its stories and the CI changes (144 new tests; see "S12.2 and S12.3 status")
-  - [ ] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs)
+  - [x] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs; see "S12.4 status")
   - [ ] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver)
   - [ ] S12.6: tests migrated, and the interface suite
   - [ ] S12.7: benchmarks after, and docs
@@ -11532,3 +11532,35 @@ step. Its target list becomes `id_cap_decode it sympy_unavailable`, and its
 package-contents pattern admits the prelude. `noxfile.py`'s `SOURCES` and
 ty's `include` gain the prelude's directory, and a new `clippy.toml` lets
 rustdoc write SymPy without backticks.
+
+### S12.4 status: the binding
+
+`fhy-core-py` enables `fhy-core/sympy`. The new class is
+`rust/fhy-core-py/src/solver/sympy.rs`'s `_rs.SympySimplifier`, an
+`extends = SimplifierBase` pyclass that is frozen and not subclassable.
+
+- **Its methods:** `name` (`"sympy"`), `load()`, `simplify(expression)`,
+  `lower`, `lift`, `simplify_object`, `substitute(sympy_expression,
+  environment)`, `substitute_symbols` and `__reduce__`. Every method reads
+  the registry snapshot, as the facade does.
+- **The native path.** `build_simplifier` hands a `Solver` the class's core
+  backend, so a solver holding one simplifies with no Python backend in
+  between.
+- **D-S12-11's mapping** is `sympy_error_to_py(error, wrap)`, and the facade
+  uses it for a `SympyError` behind `SolveError::Backend`.
+  - With `wrap`, as `simplify` and `substitute` use it, a lowering,
+    substitution or lifting failure raises `PassExecutionError('pass "<the
+    phase's pass>" failed in run_pass', pass_name=..., hook="run_pass")`
+    with the mapped exception as its `__cause__`.
+  - The screen's refusal, a bound constant and a missing SymPy are never
+    wrapped, and neither is a `BaseException` that is not an `Exception`.
+  - `lower`, `lift` and `substitute_symbols` raise the mapped exception
+    itself, and the thin passes of S12.5 wrap it.
+- **Messages.** A missing SymPy raises `SolverBackendUnavailableError` with
+  the bridge's message and the `ImportError` as its cause. An `Implies` is
+  logged at WARNING on `fhy_core.symbolic.expression.passes.sympy`, as the
+  bridge logged it.
+- **The stub** declares the class, and `tests/test_rs_stub.py` passes.
+- **Nothing in Python uses the class yet.** `pytest` has 7,556 passed, and
+  the Rust gate passes. `cargo test --workspace` now runs the SymPy
+  stories: 3,420 tests.

@@ -310,13 +310,16 @@ pub(super) fn build_smt_solver(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Sm
     )))
 }
 
-/// Return the core backend of the Python `Simplifier` `object`: an adapter
-/// calling it.
+/// Return the core backend of the Python `Simplifier` `object`: the native
+/// backend of a `SympySimplifier`, or an adapter calling `object`.
 ///
 /// # Errors
 ///
 /// Raises `TypeError` for an object that is not a `SimplifierBase`.
 pub(super) fn build_simplifier(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Simplifier>> {
+    if let Ok(native) = object.cast::<super::sympy::PySympySimplifier>() {
+        return Ok(native.get().backend());
+    }
     if object.is_instance_of::<PySimplifierBase>() {
         return Ok(Arc::new(PythonSimplifier {
             object: object.clone().unbind(),

@@ -3,8 +3,9 @@
 //!
 //! Each core error raises the exception class the Python API documents,
 //! with the core's text. A backend written in Python fails with its own
-//! exception, which propagates as the same object; a Rust backend's failure
-//! raises `SolverBackendError`.
+//! exception, which propagates as the same object; the SymPy backend's
+//! failure raises the bridge's exception (D-S12-11), and another Rust
+//! backend's `SolverBackendError`.
 
 use std::collections::HashMap;
 
@@ -16,7 +17,7 @@ use pyo3::types::{PyDict, PyType};
 
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::{Hazard, LoweringError, SolveError};
+use fhy_core::solver::{Hazard, LoweringError, SolveError, SympyError};
 
 use crate::error::IntoPyErr;
 use crate::expression::render_expression_repr;
@@ -138,7 +139,12 @@ pub(super) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
         SolveError::Lowering(error) => lowering_error_to_py(py, error),
         SolveError::Backend { backend, source } => match source.downcast::<PyErr>() {
             Ok(error) => *error,
-            Err(source) => backend_error(py, format!("the backend {backend:?} failed: {source}")),
+            Err(source) => match source.downcast::<SympyError>() {
+                Ok(error) => super::sympy::sympy_error_to_py(py, *error, true),
+                Err(source) => {
+                    backend_error(py, format!("the backend {backend:?} failed: {source}"))
+                }
+            },
         },
         _ => PyRuntimeError::new_err(text),
     }

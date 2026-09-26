@@ -14,7 +14,7 @@ name = "fhy_core_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-fhy-core = { workspace = true, features = ["ndarray"] }
+fhy-core = { workspace = true, features = ["ndarray", "sympy"] }
 num-traits = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["macros"] }

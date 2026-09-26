@@ -76,7 +76,7 @@ mod rs_module {
     #[pymodule_export]
     use super::solver::{
         PySatResult, PySimplifierBase, PySmtLib2ProcessSolver, PySmtScript, PySmtSolverBase,
-        PySolver, get_default_solver, set_default_solver,
+        PySolver, PySympySimplifier, get_default_solver, set_default_solver,
     };
     #[pymodule_export]
     use super::term::{
