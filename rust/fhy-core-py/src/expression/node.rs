@@ -35,12 +35,12 @@ use crate::identifier::{read_identifier_id, restore_identifier};
 use crate::public_class::PublicClass;
 use crate::serialization::{FieldShape, construct_from_decoded_fields, read_payload_fields};
 
-use super::alpha::read_alpha_renaming;
 use super::literal::{literal_to_python, read_literal};
 use super::materialize::substitute;
 use super::operation::{PythonOperation, operation_from_python, operation_to_python};
 use super::payload::deserialize_expression_payload;
 use super::text::{render_formatted, render_repr};
+use crate::term::read_renaming;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -531,13 +531,13 @@ impl PyExpression {
         let Ok(other) = other.cast::<Self>() else {
             return Ok(false);
         };
-        let renaming = read_alpha_renaming(renaming)?;
+        let renaming = read_renaming(renaming)?.get().value().renaming();
         if renaming.is_empty() {
             return Ok(self.is_structurally_equal(other.get()));
         }
         Ok(self
             .expression
-            .is_alpha_equivalent_under(&other.get().expression, &renaming))
+            .is_alpha_equivalent_under(&other.get().expression, renaming))
     }
 
     /// Return the expression of the envelope payload `data`, an instance

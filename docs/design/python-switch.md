@@ -75,7 +75,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S10.1: term benchmarks and baseline (32 rows; see "S10.1 baseline")
   - [x] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
   - [x] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
-  - [ ] S10.4: the Python switch
+  - [x] S10.4: the Python switch
   - [ ] S10.5: tests migrated, and the interface suite
   - [ ] S10.6: benchmarks after, and docs
 
@@ -8526,3 +8526,20 @@ switch. `NonInjectiveRenamingError`'s `IntoPyErr` moved from
 `expression/node.rs` to `term/renaming.rs`, and `PyExpression` exposes its
 handle and structural equality to the crate. Nothing in Python uses the
 binding yet, so the suite is unchanged (7,327 passed).
+
+### S10.4 status
+
+`fhy_core.term` runs on the binding. `alpha_equivalence.py` re-exports
+`_rs.AlphaRenaming` (registered as a virtual `FrozenMixin`) and
+`_rs.is_identifier_mapping_alpha_equivalent_under`, and keeps the protocol
+and the mixin; `binder.py` keeps the protocols and `BinderMixin`'s abstract
+hooks, whose three derived methods call `_rs`; `derived_equivalence.py`
+keeps the role functions, now returning `_rs.EquivalenceRole` values, the
+metadata key, the error class, `FieldComparator`, the `_PLAN_CACHE` dict and
+the mixin, whose two methods call `_rs`. `expression/node.rs` and
+`registry/entries.rs` read the Rust renaming from the pyclass, and
+`expression/alpha.rs`, the per-comparison conversion, is deleted. The
+function entries pair their parameters with `enter_binders` (D-S10-14).
+The README's three term rows changed. The whole suite passed unchanged
+(7,327 passed): no existing test pins a behavior Z-1 to Z-7 or N-S10-2
+changes, so S10.5 migrates nothing and only adds tests.

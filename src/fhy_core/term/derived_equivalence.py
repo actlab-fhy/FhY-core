@@ -23,6 +23,17 @@ A field whose value is none of the recognized categories (and carries no
 role metadata) raises :class:`EquivalenceDerivationError`, naming the
 field; supply :func:`compared_with` or :func:`compared_as_value` to
 resolve it.
+
+The engine runs in the Rust binding (S10 of
+``docs/design/python-switch.md``): it builds a class's plan from
+``dataclasses.fields`` on the first comparison and keeps it in
+``_PLAN_CACHE``, and walks nested derived values on its own stack, so a
+tree of any depth compares. It compares identifiers, expressions, scalars
+and nested derived values without calling their Python methods, and calls
+everything else -- comparators, ``key`` normalizers, hand-written methods
+and ``==`` -- as before. A binder field that repeats an identifier, on
+either side, pairs with none, so its node is alpha-equivalent to no node,
+itself included.
 """
 
 from fhy_core.utils.override import override
@@ -40,19 +51,23 @@ __all__ = [
 ]
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
-from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
+from fhy_core import _rs
 from fhy_core.error import register_error
-from fhy_core.traits import PartialEqual, StructuralEquivalence
+from fhy_core.traits import StructuralEquivalence
 
-from .alpha_equivalence import AlphaEquivalence, AlphaEquivalenceMixin, AlphaRenaming
+from .alpha_equivalence import AlphaEquivalenceMixin, AlphaRenaming
 
 EQUIVALENCE_METADATA_KEY: Final[str] = "fhy_equivalence"
 """``dataclasses.field(metadata=...)`` key holding an equivalence role override."""
 
-_VALUE_SCALAR_TYPES: Final[tuple[type, ...]] = (bool, int, float, str)
+# Comparison plans are built by the binding once per class on first comparison
+# and cached here forever, keyed by the class. This assumes a class's dataclass
+# field schema is frozen after first use; redefining a class (or mutating its
+# fields) under the same identity after it has been compared leaves the stale
+# plan in place.
+_PLAN_CACHE: dict[type, object] = {}
 
 
 @register_error
@@ -90,46 +105,9 @@ class FieldComparator(Protocol):
         """Return whether left and right are alpha-equivalent under the renaming."""
 
 
-class _ComparatorInferenceError(Exception):
-    """Internal: a field value fell into no recognized comparison category."""
-
-    value_type: type
-    in_sequence: bool
-
-    def __init__(self, value_type: type, *, in_sequence: bool = False) -> None:
-        self.value_type = value_type
-        self.in_sequence = in_sequence
-        super().__init__(value_type.__name__)
-
-
 # ===========================================================================
 # Role markers (stored under ``EQUIVALENCE_METADATA_KEY`` in field metadata)
 # ===========================================================================
-
-
-@dataclass(frozen=True)
-class _ValueRole:
-    key: Callable[[Any], Any] | None
-
-
-@dataclass(frozen=True)
-class _ReferenceRole:
-    pass
-
-
-@dataclass(frozen=True)
-class _BinderRole:
-    scopes_over: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _ExcludeRole:
-    pass
-
-
-@dataclass(frozen=True)
-class _ExplicitRole:
-    comparator: FieldComparator
 
 
 def compared_as_value(*, key: Callable[[Any], Any] | None = None) -> Mapping[str, Any]:
@@ -148,7 +126,7 @@ def compared_as_value(*, key: Callable[[Any], Any] | None = None) -> Mapping[str
         A one-entry mapping for ``dataclasses.field(metadata=...)``.
 
     """
-    return {EQUIVALENCE_METADATA_KEY: _ValueRole(key)}
+    return {EQUIVALENCE_METADATA_KEY: _rs.EquivalenceRole.value(key)}
 
 
 def compared_as_reference() -> Mapping[str, Any]:
@@ -162,7 +140,7 @@ def compared_as_reference() -> Mapping[str, Any]:
         A one-entry mapping for ``dataclasses.field(metadata=...)``.
 
     """
-    return {EQUIVALENCE_METADATA_KEY: _ReferenceRole()}
+    return {EQUIVALENCE_METADATA_KEY: _rs.EquivalenceRole.reference()}
 
 
 def compared_as_binder(*, scopes_over: tuple[str, ...] = ()) -> Mapping[str, Any]:
@@ -176,9 +154,9 @@ def compared_as_binder(*, scopes_over: tuple[str, ...] = ()) -> Mapping[str, Any
     renaming. The bound names themselves are not compared by identity in
     alpha mode.
 
-    If the two binders' pairwise binding is not injective (e.g. two
-    distinct self-side names binding to the same other-side name),
-    ``is_alpha_equivalent_under`` returns ``False``.
+    If either side's names repeat an identifier, the binding pairs with
+    none and ``is_alpha_equivalent_under`` returns ``False``, even
+    against the same node.
 
     Args:
         scopes_over: Names of sibling fields whose comparison happens
@@ -192,7 +170,7 @@ def compared_as_binder(*, scopes_over: tuple[str, ...] = ()) -> Mapping[str, Any
         A one-entry mapping for ``dataclasses.field(metadata=...)``.
 
     """
-    return {EQUIVALENCE_METADATA_KEY: _BinderRole(scopes_over)}
+    return {EQUIVALENCE_METADATA_KEY: _rs.EquivalenceRole.binder(scopes_over)}
 
 
 def excluded_from_equivalence() -> Mapping[str, Any]:
@@ -207,7 +185,7 @@ def excluded_from_equivalence() -> Mapping[str, Any]:
         A one-entry mapping for ``dataclasses.field(metadata=...)``.
 
     """
-    return {EQUIVALENCE_METADATA_KEY: _ExcludeRole()}
+    return {EQUIVALENCE_METADATA_KEY: _rs.EquivalenceRole.excluded()}
 
 
 def compared_with(comparator: FieldComparator) -> Mapping[str, Any]:
@@ -223,193 +201,7 @@ def compared_with(comparator: FieldComparator) -> Mapping[str, Any]:
         A one-entry mapping for ``dataclasses.field(metadata=...)``.
 
     """
-    return {EQUIVALENCE_METADATA_KEY: _ExplicitRole(comparator)}
-
-
-# ===========================================================================
-# Default capability dispatch and built-in comparators
-# ===========================================================================
-
-
-def _is_value_comparable(value: object) -> bool:
-    return isinstance(value, _VALUE_SCALAR_TYPES) or isinstance(
-        value, (Enum, PartialEqual)
-    )
-
-
-def _auto_structural(left: Any, right: Any) -> bool:
-    if left is None or right is None:
-        return left is right
-    if isinstance(left, StructuralEquivalence):
-        return left.is_structurally_equivalent(right)
-    if isinstance(left, (tuple, list)) and isinstance(right, (tuple, list)):
-        if len(left) != len(right):
-            return False
-        for item_left, item_right in zip(left, right, strict=True):
-            try:
-                if not _auto_structural(item_left, item_right):
-                    return False
-            except _ComparatorInferenceError as exc:
-                raise _ComparatorInferenceError(
-                    exc.value_type, in_sequence=True
-                ) from exc
-        return True
-    if _is_value_comparable(left):
-        return bool(left == right)
-    raise _ComparatorInferenceError(type(left))
-
-
-# Type-guard dispatch over comparable value kinds; early returns read clearest.
-def _auto_alpha(left: Any, right: Any, renaming: AlphaRenaming) -> bool:  # noqa: PLR0911
-    if left is None or right is None:
-        return left is right
-    if isinstance(left, AlphaEquivalence):
-        return left.is_alpha_equivalent_under(right, renaming)
-    if isinstance(left, StructuralEquivalence):
-        return left.is_structurally_equivalent(right)
-    if isinstance(left, (tuple, list)) and isinstance(right, (tuple, list)):
-        if len(left) != len(right):
-            return False
-        for item_left, item_right in zip(left, right, strict=True):
-            try:
-                if not _auto_alpha(item_left, item_right, renaming):
-                    return False
-            except _ComparatorInferenceError as exc:
-                raise _ComparatorInferenceError(
-                    exc.value_type, in_sequence=True
-                ) from exc
-        return True
-    if _is_value_comparable(left):
-        return bool(left == right)
-    raise _ComparatorInferenceError(type(left))
-
-
-class _ValueComparator:
-    """Compare a field by ``==``, optionally through a normalizer."""
-
-    def __init__(self, key: Callable[[Any], Any] | None) -> None:
-        self._key = key
-
-    def _normalize(self, value: Any) -> Any:
-        return value if self._key is None else self._key(value)
-
-    def is_structurally_equivalent(self, left: Any, right: Any) -> bool:
-        return bool(self._normalize(left) == self._normalize(right))
-
-    def is_alpha_equivalent_under(
-        self, left: Any, right: Any, renaming: AlphaRenaming
-    ) -> bool:
-        del renaming
-        return bool(self._normalize(left) == self._normalize(right))
-
-
-class _ReferenceComparator:
-    """Compare a reference ``Identifier`` nominally or through the renaming."""
-
-    def is_structurally_equivalent(self, left: Any, right: Any) -> bool:
-        return bool(left == right)
-
-    def is_alpha_equivalent_under(
-        self, left: Any, right: Any, renaming: AlphaRenaming
-    ) -> bool:
-        return renaming.are_identifiers_alpha_equivalent(left, right)
-
-
-# ===========================================================================
-# Plan (one per deriving class)
-# ===========================================================================
-
-
-@dataclass(frozen=True)
-class _Plan:
-    """Cached comparison plan for one deriving class.
-
-    ``comparable_fields`` pairs each participating field name with its
-    comparator, or ``None`` for the default capability dispatch.
-    ``binders`` pairs each binder field name with the sibling field names
-    it scopes over.
-    """
-
-    comparable_fields: tuple[tuple[str, FieldComparator | None], ...]
-    binders: tuple[tuple[str, tuple[str, ...]], ...]
-
-
-# Comparison plans are built once per class on first comparison and cached
-# forever. This assumes a class's dataclass field schema is frozen after first
-# use; redefining a class (or mutating its fields) under the same identity after
-# it has been compared leaves the stale plan in place.
-_PLAN_CACHE: dict[type, _Plan] = {}
-
-
-def _build_plan(cls: type) -> _Plan:
-    if not is_dataclass(cls):
-        raise EquivalenceDerivationError(
-            f'Cannot derive equivalence for "{cls.__name__}": it is not a '
-            f"dataclass. Implement is_structurally_equivalent / "
-            f"is_alpha_equivalent_under by hand."
-        )
-    field_names = {f.name for f in fields(cls)}
-    comparable_fields: list[tuple[str, FieldComparator | None]] = []
-    binders: list[tuple[str, tuple[str, ...]]] = []
-    for field_definition in fields(cls):
-        role = field_definition.metadata.get(EQUIVALENCE_METADATA_KEY)
-        if isinstance(role, _ExcludeRole) or not field_definition.compare:
-            continue
-        if isinstance(role, _BinderRole):
-            for scoped in role.scopes_over:
-                if scoped not in field_names:
-                    raise EquivalenceDerivationError(
-                        f'Cannot derive equivalence for "{cls.__name__}": binder '
-                        f'field "{field_definition.name}" declares '
-                        f'scopes_over=("{scoped}", ...), but "{scoped}" is not a '
-                        f'field of "{cls.__name__}".'
-                    )
-            binders.append((field_definition.name, role.scopes_over))
-        elif isinstance(role, _ValueRole):
-            comparable_fields.append(
-                (field_definition.name, _ValueComparator(role.key))
-            )
-        elif isinstance(role, _ReferenceRole):
-            comparable_fields.append((field_definition.name, _ReferenceComparator()))
-        elif isinstance(role, _ExplicitRole):
-            comparable_fields.append((field_definition.name, role.comparator))
-        else:
-            comparable_fields.append((field_definition.name, None))
-    return _Plan(tuple(comparable_fields), tuple(binders))
-
-
-def _get_plan(cls: type) -> _Plan:
-    plan = _PLAN_CACHE.get(cls)
-    if plan is None:
-        plan = _build_plan(cls)
-        _PLAN_CACHE[cls] = plan
-    return plan
-
-
-def _as_identifier_tuple(value: Any) -> tuple[Any, ...]:
-    if isinstance(value, tuple):
-        return value
-    if isinstance(value, list):
-        return tuple(value)
-    return (value,)
-
-
-def _inference_error(
-    cls: type, field_name: str, exc: _ComparatorInferenceError
-) -> EquivalenceDerivationError:
-    if exc.in_sequence:
-        return EquivalenceDerivationError(
-            f'Cannot derive equivalence for field "{cls.__name__}.{field_name}": '
-            f"contains a sequence element of type {exc.value_type.__name__} that "
-            f"is not comparable. Supply compared_with(...) or hand-write the "
-            f"comparison."
-        )
-    return EquivalenceDerivationError(
-        f'Cannot derive equivalence for field "{cls.__name__}.{field_name}" '
-        f"of type {exc.value_type.__name__}. Tag it with compared_as_value(), "
-        f"supply compared_with(...), exclude it with "
-        f"excluded_from_equivalence(), or hand-write the comparison."
-    )
+    return {EQUIVALENCE_METADATA_KEY: _rs.EquivalenceRole.explicit(comparator)}
 
 
 # ===========================================================================
@@ -459,36 +251,7 @@ class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
             (including when ``other`` is of an incompatible type).
 
         """
-        if type(self) is not type(other):
-            return False
-        plan = _get_plan(type(self))
-        for name, scopes in plan.binders:
-            del scopes
-            if _as_identifier_tuple(getattr(self, name)) != _as_identifier_tuple(
-                getattr(other, name)
-            ):
-                return False
-        for name, comparator in plan.comparable_fields:
-            left = getattr(self, name)
-            right = getattr(other, name)
-            # The recurse case is inlined (rather than delegated to
-            # ``_auto_structural``) so a deeply nested tree costs one stack
-            # frame per level on the recursion spine, not two. The alpha
-            # method does not inline this case and pays two frames per level.
-            if comparator is not None:
-                matched = comparator.is_structurally_equivalent(left, right)
-            elif left is None or right is None:
-                matched = left is right
-            elif isinstance(left, StructuralEquivalence):
-                matched = left.is_structurally_equivalent(right)
-            else:
-                try:
-                    matched = _auto_structural(left, right)
-                except _ComparatorInferenceError as exc:
-                    raise _inference_error(type(self), name, exc) from exc
-            if not matched:
-                return False
-        return True
+        return _rs.derived_is_structurally_equivalent(self, other)
 
     @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
@@ -498,7 +261,8 @@ class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
         :meth:`is_structurally_equivalent`, differing only in the
         per-field operator: ``AlphaEquivalence`` sub-objects recurse under
         ``renaming``, reference identifiers consult it, and binder fields
-        ``extend`` it for the fields they scope over.
+        extend it, pairing their identifiers by position, for the fields
+        they scope over.
 
         Args:
             other: Candidate object.
@@ -511,35 +275,4 @@ class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
             type).
 
         """
-        if type(self) is not type(other):
-            return False
-        plan = _get_plan(type(self))
-        scoped_renamings: dict[str, AlphaRenaming] = {}
-        for name, scopes in plan.binders:
-            self_ids = _as_identifier_tuple(getattr(self, name))
-            other_ids = _as_identifier_tuple(getattr(other, name))
-            if len(self_ids) != len(other_ids):
-                return False
-            binding = dict(zip(self_ids, other_ids, strict=True))
-            try:
-                for scoped in scopes:
-                    base = scoped_renamings.get(scoped, renaming)
-                    scoped_renamings[scoped] = base.extend(binding)
-            except ValueError:
-                return False
-        for name, comparator in plan.comparable_fields:
-            left = getattr(self, name)
-            right = getattr(other, name)
-            field_renaming = scoped_renamings.get(name, renaming)
-            try:
-                if comparator is None:
-                    matched = _auto_alpha(left, right, field_renaming)
-                else:
-                    matched = comparator.is_alpha_equivalent_under(
-                        left, right, field_renaming
-                    )
-            except _ComparatorInferenceError as exc:
-                raise _inference_error(type(self), name, exc) from exc
-            if not matched:
-                return False
-        return True
+        return _rs.derived_is_alpha_equivalent_under(self, other, renaming)

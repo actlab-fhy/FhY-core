@@ -29,4 +29,4 @@ pub(crate) use derived::{
     PyEquivalenceRole, derived_is_alpha_equivalent_under, derived_is_structurally_equivalent,
 };
 pub(crate) use mapping::is_identifier_mapping_alpha_equivalent_under;
-pub(crate) use renaming::PyAlphaRenaming;
+pub(crate) use renaming::{PyAlphaRenaming, read_renaming};

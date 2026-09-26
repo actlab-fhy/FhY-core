@@ -15,7 +15,6 @@
 //! The solver binding (S8) reads expressions, the registry snapshot and the
 //! materializer through the crate-visible items below.
 
-mod alpha;
 mod literal;
 mod materialize;
 mod node;

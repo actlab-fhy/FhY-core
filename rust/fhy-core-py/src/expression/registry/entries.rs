@@ -32,11 +32,11 @@ use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::public_class::PublicClass;
 
-use super::super::alpha::read_alpha_renaming;
 use super::super::literal::read_big_int;
 use super::super::materialize::materialize_expression;
 use super::super::node::read_expression;
 use super::state;
+use crate::term::read_renaming;
 
 /// Raises `ValueError` with the core's text.
 impl IntoPyErr for FunctionDefinitionError {
@@ -449,11 +449,7 @@ impl PyRegisteredFunction {
     /// Return whether the binder terms `self` and `other` are
     /// alpha-equivalent under `renaming`, extended by the frame pairing
     /// their parameters.
-    fn is_alpha_equivalent_under_renaming(
-        &self,
-        other: &Self,
-        mut renaming: AlphaRenaming,
-    ) -> bool {
+    fn is_alpha_equivalent_under_renaming(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
         let (parameters, other_parameters) = (self.rust_parameters(), other.rust_parameters());
         if parameters.len() != other_parameters.len()
             || self.rust_parameter_sorts() != other.rust_parameter_sorts()
@@ -461,12 +457,11 @@ impl PyRegisteredFunction {
         {
             return false;
         }
-        let frame: std::collections::HashMap<Identifier, Identifier> = parameters
-            .iter()
-            .cloned()
-            .zip(other_parameters.iter().cloned())
-            .collect();
-        if renaming.enter_binder(frame).is_err() {
+        let mut renaming = renaming.clone();
+        if renaming
+            .enter_binders(parameters, other_parameters)
+            .is_err()
+        {
             return false;
         }
         self.rust_body()
@@ -581,7 +576,7 @@ impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
             return false;
         };
         slf.get()
-            .is_alpha_equivalent_under_renaming(other.get(), AlphaRenaming::default())
+            .is_alpha_equivalent_under_renaming(other.get(), &AlphaRenaming::default())
     }
 
     /// Return whether `other` is this function with its parameters renamed,
@@ -594,7 +589,7 @@ impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
         other: &Bound<'_, PyAny>,
         renaming: &Bound<'_, PyAny>,
     ) -> PyResult<bool> {
-        let renaming = read_alpha_renaming(renaming)?;
+        let renaming = read_renaming(renaming)?;
         if !slf.get_type().is(other.get_type()) {
             return Ok(false);
         }
@@ -603,7 +598,7 @@ impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
         };
         Ok(slf
             .get()
-            .is_alpha_equivalent_under_renaming(other.get(), renaming))
+            .is_alpha_equivalent_under_renaming(other.get(), renaming.get().value().renaming()))
     }
 });
 

@@ -383,7 +383,9 @@ fn build_plan(class: &Bound<'_, PyType>) -> PyResult<PyEquivalencePlan> {
 // Capabilities
 // ---------------------------------------------------------------------------
 
-/// What the default dispatch needs to know of a value's class.
+/// What the default dispatch needs to know of a value. The protocol checks
+/// ask the value, as a runtime-checkable protocol does; the answers are kept
+/// per class for one walk.
 #[derive(Clone, Copy)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -411,8 +413,9 @@ struct Capabilities {
     is_sequence: bool,
 }
 
-fn read_capabilities(class: &Bound<'_, PyType>) -> PyResult<Capabilities> {
-    let py = class.py();
+fn read_capabilities(value: &Bound<'_, PyAny>) -> PyResult<Capabilities> {
+    let py = value.py();
+    let class = value.get_type();
     let expression = py.get_type::<PyExpression>();
     let is_expression = class.is_subclass(expression.as_any())?;
     let keeps = |method: &Bound<'_, PyString>| -> PyResult<bool> {
@@ -422,9 +425,9 @@ fn read_capabilities(class: &Bound<'_, PyType>) -> PyResult<Capabilities> {
         Ok(class.hasattr(method)? && class.getattr(method)?.is(&mixin_method(py, method)?))
     };
     Ok(Capabilities {
-        is_structural: class.hasattr(intern!(py, "is_structurally_equivalent"))?,
-        is_alpha: class.hasattr(intern!(py, "is_alpha_equivalent"))?
-            && class.hasattr(intern!(py, "is_alpha_equivalent_under"))?,
+        is_structural: value.hasattr(intern!(py, "is_structurally_equivalent"))?,
+        is_alpha: value.hasattr(intern!(py, "is_alpha_equivalent"))?
+            && value.hasattr(intern!(py, "is_alpha_equivalent_under"))?,
         native_structural: keeps(intern!(py, "is_structurally_equivalent"))?,
         native_alpha: keeps(intern!(py, "is_alpha_equivalent_under"))?,
         derives_structural: derives(intern!(py, "is_structurally_equivalent"))?,
@@ -434,7 +437,7 @@ fn read_capabilities(class: &Bound<'_, PyType>) -> PyResult<Capabilities> {
             || class.is_subclass_of::<PyFloat>()?
             || class.is_subclass_of::<PyString>()?
             || class.is_subclass(enum_class(py)?.as_any())?
-            || class.hasattr(intern!(py, "supports_partial_equality"))?,
+            || value.hasattr(intern!(py, "supports_partial_equality"))?,
         is_identifier: class.is(&identifier_class(py)?),
         is_sequence: class.is_subclass_of::<PyTuple>()? || class.is_subclass_of::<PyList>()?,
     })
@@ -538,7 +541,7 @@ impl<'py> Walk<'py> {
         if let Some(capabilities) = self.capabilities.get(&key) {
             return Ok(*capabilities);
         }
-        let capabilities = read_capabilities(&class)?;
+        let capabilities = read_capabilities(value)?;
         self.capabilities.insert(key, capabilities);
         Ok(capabilities)
     }
