@@ -62,7 +62,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S7.6: benchmarks after, and docs
 - [ ] S8: the solver and its backends (designed; see "S8: the solver and its backends")
   - [x] N-S8-1 decided as (a), N-S8-2 as (b)
-  - [ ] S8.1: solver benchmarks and baseline
+  - [x] S8.1: solver benchmarks and baseline (14 rows; see "S8.1 baseline")
   - [ ] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend)
   - [ ] S8.3: the `z3` cargo feature and its backend, with the CI changes
   - [ ] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs)
@@ -6917,3 +6917,58 @@ rewrite, and each change is recorded with its reason:
   markers. The six places in `test_constraint_system.py` that patch the
   solver's functions keep working, since those names stay.
 - **`tests/test_import_graph.py`** gains no edge; a new test pins D-S8-16.
+
+### S8.1 baseline (2026-09-25, 87dd88f plus the new benchmarks)
+
+`benchmarks/test_solver.py` implements the benchmark plan above, except
+`test_lower_to_smtlib2_of_a_deep_tree`, which has nothing to measure
+before S8 and joins the file with `convert_expression_to_smtlib2`.
+
+- **The screen row** asks a satisfiability question whose backend answers
+  at once: before S8 the fixture `_instant_backend` replaces the z3
+  bridge's implication by a function answering `False`, so the row runs
+  the capability, timeout, symbol-type, ill-typedness and hazard checks
+  and no solver. The helper `_ask_an_instant_backend` carries the D-S8-11
+  mark; after S8 it asks a `Solver` holding a Python `SmtSolver` that
+  answers `sat`, so the row adds the lowering and one Python call.
+- **The 50 bounds** alternate `b > -i` and `b < i + 100` over five
+  integer identifiers.
+- **The refused question** divides two real variables, a partial
+  operation the screen refuses, logging its warning each round.
+- **The import row** starts a fresh interpreter importing `fhy_core`, five
+  rounds through `pedantic`.
+
+Median time per call, from `.nox/benchmark-3-11/bin/python -m pytest
+benchmarks/test_solver.py -n 0 --benchmark-only`, the benchmark
+session's environment, measuring today's Python solver and bridges. The
+machine is the S0 one, with Python 3.11.13 and pytest-benchmark 5.3.0.
+The load average was below 1, and the table lists the best of three
+runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_screen_of_a_deep_predicate` | 467.8 µs |
+| `test_lower_to_z3_of_a_deep_tree` | 2.12 ms |
+| `test_check_satisfiability_of_bounds` | 1.56 ms |
+| `test_check_satisfiability_of_a_conjunction_of_50_bounds` | 5.78 ms |
+| `test_does_expression_imply_of_bounds` | 1.36 ms |
+| `test_holds_for_all_free_assignments_with_a_witness` | 1.39 ms |
+| `test_check_satisfiability_refused_by_the_screen` | 48.0 µs |
+| `test_simplify_expression_of_a_ground_comparison` | 128.8 µs |
+| `test_simplify_expression_symbolic` | 72.7 µs |
+| `test_equation_constraint_evaluate_with_bindings` | 141.3 µs |
+| `test_constraint_system_check_implication` | 1.36 ms |
+| `test_nat_param_is_value_valid` | 145.3 µs |
+| `test_int_param_intersection_feasibility` | 1.95 ms |
+| `test_import_fhy_core` | 487 ms |
+
+- **The screens** cost 468 µs over the 100-operation comparison: five
+  recursive Python walks and the classifications they repeat per node.
+- **The z3 lowering** of the deep tree takes 2.1 ms, a Python visitor
+  call and a z3 API call per node.
+- **The smallest question** takes 1.4 to 1.6 ms, most of it z3's own
+  `check` and building the terms; the 50 bounds 5.8 ms.
+- **Simplification** of a bound comparison takes 129 µs, and a nat
+  param's value check 145 µs, with sympy's cache warm across rounds.
+- **The import** of `fhy_core` takes 487 ms in a fresh interpreter, which
+  includes sympy and z3.
