@@ -99,7 +99,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.7: benchmarks after, and docs (every row faster or within 10%; see "S12 benchmarks")
 - [ ] S11: types, in two parts (see "S11: types"; "Needs the user" is empty)
   - [ ] S11a: lattice, poset, the type representations and the dispatchers
-    - [ ] S11a.1: type, lattice and poset benchmarks, and the baseline
+    - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
     - [ ] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification)
     - [ ] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
     - [ ] S11a.4: the Python switch, and `networkx` out of the dependencies
@@ -13166,3 +13166,82 @@ S11 uses neither the evaluators nor the CAS backend, and they use no type,
 so no code depends across the slices. S9's N-S9-1 (a), which D-S11-20
 follows, is the user's resolution for S9; if S9 lands a different shape
 for the formatter, S11b follows what lands.
+
+### S11 rebase onto S9 (2026-09-26)
+
+The design commit was rebased onto `dev-rust` at 3a53195, S9's last
+commit. The only conflict was this document: S9's checklist entry and
+section were kept intact, and S11's entry and section follow them. No
+lock file changed. S9 made `ExpressionPrettyFormatter` a
+`CompilerPass[Expression, str]` whose `run_pass` renders through the core,
+and refuses a subclass defining a `visit_*` method in `__init_subclass__`
+with a `TypeError` naming N-S9-1. D-S11-20 follows that shape unchanged:
+`ExpressionTypeChecker` refuses its `visit_*` overrides the same way, with
+a `TypeError` naming D-S11-20.
+
+### S11a.1 baseline (2026-09-26, ca5e6b9 plus the new benchmarks)
+
+`benchmarks/test_types.py` implements S11a's benchmark plan, plus one row,
+`test_data_type_is_a_data_type`, for the `isinstance` check a consumer makes
+against the public bases. The Python-type row binds through `_TaggedType`,
+a `Type` defined in the file with handlers registered for
+`is_structurally_equivalent` and `bind_template`, as `test_extension.py`'s
+wrapper does. The `==` and `hash` rows call helpers marked D-S11-10.
+
+Median time per call, from `.venv/bin/python -m pytest
+benchmarks/test_types.py -n 0 --benchmark-only` in the worktree's
+environment, measuring today's Python package. The machine is the S0 one,
+with Python 3.11.13 and pytest-benchmark 5.3.0. The load average was 2 to
+4, and the table lists the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_bind_template_of_a_templated_array` | 11.5 µs |
+| `test_bind_template_through_a_python_type` | 13.5 µs |
+| `test_data_type_is_a_data_type` | 324 ns |
+| `test_environment_empty` | 2 µs |
+| `test_environment_structural_equivalence` | 4.03 µs |
+| `test_environment_with_binding` | 2.36 µs |
+| `test_index_type_construction` | 5.02 µs |
+| `test_lattice_construction_of_the_integer_promotion_order` | 66.4 µs |
+| `test_lattice_is_lattice_of_a_powerset` | 9.44 ms |
+| `test_lattice_join` | 75 µs |
+| `test_lattice_meet` | 73.2 µs |
+| `test_lattice_verify_of_the_integer_promotion_order` | 13.2 ms |
+| `test_numerical_type_construction[scalar]` | 4.04 µs |
+| `test_numerical_type_construction[shape_2]` | 4.05 µs |
+| `test_numerical_type_data_type_access` | 95 ns |
+| `test_numerical_type_eq` | 67 ns |
+| `test_numerical_type_hash` | 82 ns |
+| `test_numerical_type_shape_access` | 134 ns |
+| `test_numerical_type_str` | 1.85 µs |
+| `test_poset_construction_of_a_50_chain` | 245.5 µs |
+| `test_poset_contains` | 149 ns |
+| `test_poset_is_less_than_across_a_50_chain` | 22.9 µs |
+| `test_poset_iter_of_a_50_chain` | 33.2 µs |
+| `test_poset_iter_stable_of_a_50_chain` | 128.4 µs |
+| `test_primitive_data_type_construction` | 3.3 µs |
+| `test_promote_core_data_types[float_complex]` | 64.4 µs |
+| `test_promote_core_data_types[integer]` | 74.7 µs |
+| `test_resolve_literal_core_data_type` | 77.7 µs |
+| `test_structural_equivalence[index]` | 1.01 µs |
+| `test_structural_equivalence[numerical_2d]` | 1.98 µs |
+| `test_structural_equivalence[primitive]` | 526 ns |
+| `test_substitute_template_of_a_templated_array` | 8.62 µs |
+| `test_template_data_type_construction` | 4.02 µs |
+| `test_type_deserialize_from_dict` | 22.9 µs |
+| `test_type_pickle_round_trip` | 14.4 µs |
+| `test_type_serialize_to_dict` | 1.88 µs |
+| `test_unify_expression_through_a_chain_of_10` | 8.21 µs |
+| `test_unify_of_a_templated_array` | 23.4 µs |
+| `test_unify_of_index_types` | 14.4 µs |
+| `test_variable_symbol_table_frame_construction` | 1.04 µs |
+| `test_variable_symbol_table_frame_hash` | 204 ns |
+
+- **Promotion** costs 64 to 78 µs a call, a networkx search of a lattice
+  per join, and so do the lattice's own `get_join` and `get_meet`.
+- **The all-pairs checks** cost 9.4 ms (`is_lattice` of an eight-element
+  powerset) and 13.2 ms (`verify` of the nine-element promotion order).
+- **The value classes** cost 3.3 to 5 µs to build, through `FrozenMixin`,
+  and the dispatchers 8 to 23 µs a call. `==` and `hash` are identity, 67
+  and 82 ns.
