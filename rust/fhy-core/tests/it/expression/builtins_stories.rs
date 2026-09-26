@@ -814,3 +814,66 @@ fn build_piecewise_guards_a_fast_path_with_a_fallback() {
     );
     assert_eq!(expression, expected);
 }
+
+// ---------------------------------------------------------------------------
+// The constants' identifiers
+// ---------------------------------------------------------------------------
+
+#[rstest]
+#[case::pi(BuiltinConstant::Pi, 48)]
+#[case::e(BuiltinConstant::E, 49)]
+#[case::inf(BuiltinConstant::Inf, 50)]
+#[case::nan(BuiltinConstant::Nan, 51)]
+fn builtin_constant_identifier_holds_its_reserved_id_and_name(
+    #[case] constant: BuiltinConstant,
+    #[case] reserved_id: u64,
+) {
+    let identifier = constant.identifier();
+
+    assert_eq!(identifier.id(), reserved_id);
+    assert_eq!(identifier.name_hint(), constant.name());
+}
+
+#[test]
+fn builtin_constant_identifier_is_one_value_across_calls_and_threads() {
+    let first = BuiltinConstant::Pi.identifier();
+    let from_thread = thread::spawn(|| BuiltinConstant::Pi.identifier().clone())
+        .join()
+        .expect("the thread finishes");
+
+    assert!(std::ptr::eq(first, BuiltinConstant::Pi.identifier()));
+    assert_eq!(first, &from_thread);
+}
+
+#[test]
+fn builtin_constant_identifiers_are_distinct() {
+    let identifiers: HashSet<&Identifier> = BuiltinConstant::iter()
+        .map(BuiltinConstant::identifier)
+        .collect();
+
+    assert_eq!(identifiers.len(), BuiltinConstant::iter().len());
+}
+
+#[test]
+fn builtin_constant_of_identifier_inverts_identifier() {
+    for constant in BuiltinConstant::iter() {
+        assert_eq!(
+            BuiltinConstant::of_identifier(constant.identifier()),
+            Some(constant)
+        );
+    }
+}
+
+#[test]
+fn builtin_constant_of_identifier_goes_by_the_id_not_the_name() {
+    let look_alike = Identifier::new("pi");
+    let restored = Identifier::try_restore(48, "renamed").expect("a reserved id restores");
+    let other_reserved = Identifier::try_restore(52, "pi").expect("a reserved id restores");
+
+    assert_eq!(BuiltinConstant::of_identifier(&look_alike), None);
+    assert_eq!(
+        BuiltinConstant::of_identifier(&restored),
+        Some(BuiltinConstant::Pi)
+    );
+    assert_eq!(BuiltinConstant::of_identifier(&other_reserved), None);
+}

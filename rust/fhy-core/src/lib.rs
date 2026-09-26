@@ -19,7 +19,7 @@
 //! | [`value_domain`] | [`ValueDomain`](value_domain::ValueDomain): the hierarchy of value classifications |
 //! | [`provenance`] | source positions, spans and where a value came from |
 //! | [`tree`] | the [`Tree`](tree::Tree) trait and iterative walks and rewrites over any tree-shaped IR |
-//! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
+//! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //!
 //! Each public item has exactly one public path.
@@ -49,7 +49,9 @@
 //! and append-only: an id is never reissued, and a canonical value is never
 //! replaced or removed. The tags this crate ships hold fixed ids below
 //! [`RESERVED_ID_COUNT`](identifier::RESERVED_ID_COUNT), the same in every
-//! process. Everything else, including the pass registry, is an owned value.
+//! process, and so do the built-in constants' identifiers. Everything else,
+//! including the pass registry and the function registry, is an owned
+//! value.
 //!
 //! A process must therefore hold exactly one compiled copy of this crate. A
 //! second copy would issue ids that collide with the first copy's, and keep

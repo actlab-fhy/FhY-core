@@ -17,14 +17,15 @@ Each module depends only on the modules listed before it, except that `expressio
 - `provenance`: `Position`, `Span` and `Provenance`, where a value came from.
 - `tree`: `NodeHandle` and its `NodeIdentity`, from an `Arc` or from a pointer to a foreign object, the `Tree` trait, and iterative walks (`walk_tree`) and memoized rewrites (`rewrite_tree`) over any tree-shaped IR.
 - `expression`: `Expression`, its node kinds, builders, literals and analyses, and `BooleanScreen`.
-  - `expression::builtins`: the catalogue of built-in functions and constants.
+  - `expression::builtins`: the catalogue of built-in functions and constants. Each constant has a fixed identifier from the reserved block (`BuiltinConstant::identifier`), so a reference to it means the same in every process.
+  - `expression::registry`: the owned `FunctionRegistry` of user functions (`FunctionDefinition`), native functions (`NativeFunction`) and constants (`NativeConstant`), which implements the screen's `SortLookup`, and `FunctionRegistry::inline`, which replaces calls of composed built-ins and user functions by their bodies in time linear in the distinct nodes.
   - `expression::pattern`: `Pattern`, `Capture`, the `Rule` trait and `RewriteRule`, and `apply_rewrite_rules`.
   - `expression::passes`: `RewriteRuleApplier`, `ExpressionPrettyFormatter` and `register_expression_passes`.
 - `pass`: `CompilerPass`, `PassManager`, `FixpointPassGroup`, analyses, `Validator`s and the owned `PassRegistry`. An analysis is named by its type, or, when no Rust type names it, such as one a language binding defines, by an `Identifier` (`AnalysisId::of_identifier`, `PassContext::analysis_by_id`). `PassContext::with_detached_analyses` lends a hook's code an owned `DetachedAnalyses` handle to the run's cache.
 
 ## One copy per process
 
-The identifier id counter and each interned type's registry are process-global statics, and both are append-only: an id is never reissued and a canonical value is never replaced. A process must therefore hold exactly one compiled copy of this crate. Link it into one Python extension module, and compile other FhY packages' Rust code into that same module rather than into a second one. Everything else, including the pass registry, is an owned value.
+The identifier id counter and each interned type's registry are process-global statics, and both are append-only: an id is never reissued and a canonical value is never replaced. A process must therefore hold exactly one compiled copy of this crate. Link it into one Python extension module, and compile other FhY packages' Rust code into that same module rather than into a second one. Everything else, including the pass registry and the function registry, is an owned value.
 
 ## Using it
 

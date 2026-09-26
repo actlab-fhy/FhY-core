@@ -9,6 +9,7 @@
 pub mod builtins;
 pub mod passes;
 pub mod pattern;
+pub mod registry;
 
 mod alpha;
 mod build;

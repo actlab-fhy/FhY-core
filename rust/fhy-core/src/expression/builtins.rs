@@ -40,6 +40,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 
 use crate::identifier::Identifier;
+use crate::identifier::reserved::{self, ReservedIdentifier};
 
 use super::node::Expression;
 use super::operation::impl_name_text;
@@ -429,6 +430,48 @@ impl BuiltinConstant {
         }
     }
 
+    /// Return the identifier an expression refers to the constant by.
+    ///
+    /// Each constant's identifier has a fixed id from the reserved block
+    /// (`pi` 48, `e` 49, `inf` 50, `nan` 51) and the constant's name as its
+    /// name hint, so it is the same in every process and in every payload,
+    /// and the counter never issues it to another identifier.
+    #[must_use]
+    pub fn identifier(self) -> &'static Identifier {
+        &CONSTANT_IDENTIFIERS[self.catalogue_index()]
+    }
+
+    /// Return the constant `identifier` refers to, or `None` if it is no
+    /// built-in constant's [`identifier`](Self::identifier).
+    ///
+    /// The id decides: an identifier merely named `pi` is no constant.
+    #[must_use]
+    pub fn of_identifier(identifier: &Identifier) -> Option<Self> {
+        CONSTANTS
+            .into_iter()
+            .find(|constant| constant.reserved_entry().id() == identifier.id())
+    }
+
+    /// Return the constant's position in catalogue order.
+    fn catalogue_index(self) -> usize {
+        match self {
+            Self::Pi => 0,
+            Self::E => 1,
+            Self::Inf => 2,
+            Self::Nan => 3,
+        }
+    }
+
+    /// Return the constant's entry of the reserved-id table.
+    fn reserved_entry(self) -> ReservedIdentifier {
+        match self {
+            Self::Pi => reserved::PI_CONSTANT,
+            Self::E => reserved::E_CONSTANT,
+            Self::Inf => reserved::INF_CONSTANT,
+            Self::Nan => reserved::NAN_CONSTANT,
+        }
+    }
+
     /// Return the constant's sort, [`FunctionSort::Real`] for all four.
     #[must_use]
     pub fn sort(self) -> FunctionSort {
@@ -452,6 +495,11 @@ impl BuiltinConstant {
 }
 
 impl_name_text!(BuiltinConstant, name, "built-in constant");
+
+/// The constants' identifiers in catalogue order, built from the reserved
+/// table on first use; building them draws nothing from the counter.
+static CONSTANT_IDENTIFIERS: LazyLock<[Identifier; 4]> =
+    LazyLock::new(|| CONSTANTS.map(|constant| Identifier::reserved(constant.reserved_entry())));
 
 /// Build a piecewise from cases whose conditions are comparisons and whose
 /// list is non-empty, so the construction cannot be refused.
@@ -641,20 +689,11 @@ mod tests {
     /// added without listing it.
     #[test]
     fn catalogue_order_array_lists_every_variant() {
-        fn index_constant(constant: BuiltinConstant) -> usize {
-            match constant {
-                BuiltinConstant::Pi => 0,
-                BuiltinConstant::E => 1,
-                BuiltinConstant::Inf => 2,
-                BuiltinConstant::Nan => 3,
-            }
-        }
-
         for (index, function) in FUNCTIONS.into_iter().enumerate() {
             assert_eq!(function.catalogue_index(), index, "{function:?}");
         }
         for (index, constant) in CONSTANTS.into_iter().enumerate() {
-            assert_eq!(index_constant(constant), index, "{constant:?}");
+            assert_eq!(constant.catalogue_index(), index, "{constant:?}");
         }
     }
 

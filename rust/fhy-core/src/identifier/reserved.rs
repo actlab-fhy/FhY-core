@@ -9,8 +9,9 @@
 //!
 //! The table is append-only: an assigned id never changes, a retired entry
 //! leaves a hole, and a new entry takes the next free id in its family's
-//! block. The blocks are `0..16` for note kinds, `16..32` for op attributes
-//! and `32..48` for value domains.
+//! block. The blocks are `0..16` for note kinds, `16..32` for op attributes,
+//! `32..48` for value domains and `48..64` for the built-in expression
+//! constants.
 
 use super::RESERVED_ID_COUNT;
 
@@ -67,6 +68,18 @@ pub(crate) const DATA_DOMAIN: ReservedIdentifier = ReservedIdentifier::new(32, "
 /// The value domain of addresses.
 pub(crate) const ADDRESS_DOMAIN: ReservedIdentifier = ReservedIdentifier::new(33, "address");
 
+/// The built-in constant pi.
+pub(crate) const PI_CONSTANT: ReservedIdentifier = ReservedIdentifier::new(48, "pi");
+
+/// The built-in constant e.
+pub(crate) const E_CONSTANT: ReservedIdentifier = ReservedIdentifier::new(49, "e");
+
+/// The built-in constant positive infinity.
+pub(crate) const INF_CONSTANT: ReservedIdentifier = ReservedIdentifier::new(50, "inf");
+
+/// The built-in constant NaN.
+pub(crate) const NAN_CONSTANT: ReservedIdentifier = ReservedIdentifier::new(51, "nan");
+
 // Fails the build unless every id lies below `RESERVED_ID_COUNT` and no two
 // entries share an id.
 const _: () = {
@@ -81,6 +94,10 @@ const _: () = {
         ELEMENTWISE,
         DATA_DOMAIN,
         ADDRESS_DOMAIN,
+        PI_CONSTANT,
+        E_CONSTANT,
+        INF_CONSTANT,
+        NAN_CONSTANT,
     ];
     let mut index = 0;
     while index < table.len() {

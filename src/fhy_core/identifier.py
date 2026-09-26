@@ -56,10 +56,11 @@ class _ReservedIdentifier(NamedTuple):
 
 
 # The reserved-id table: the fixed ids of the identifiers the package ships,
-# so a shipped tag, and its payload, is the same in every process. Ids are
-# grouped by family: note kinds in 0..16, op attributes in 16..32 and value
-# domains in 32..48. Matches the Rust implementation:
-# `fhy_core::identifier::reserved`, entry for entry.
+# so a shipped tag or constant, and its payload, is the same in every
+# process. Ids are grouped by family: note kinds in 0..16, op attributes in
+# 16..32, value domains in 32..48 and the built-in expression constants in
+# 48..64. Matches the Rust implementation: `fhy_core::identifier::reserved`,
+# entry for entry.
 _RESERVED_RATIONALE_NOTE_KIND: Final = _ReservedIdentifier(0, "rationale")
 _RESERVED_SUGGESTION_NOTE_KIND: Final = _ReservedIdentifier(1, "suggestion")
 _RESERVED_REMARK_NOTE_KIND: Final = _ReservedIdentifier(2, "remark")
@@ -70,6 +71,10 @@ _RESERVED_PURE: Final = _ReservedIdentifier(18, "pure")
 _RESERVED_ELEMENTWISE: Final = _ReservedIdentifier(19, "elementwise")
 _RESERVED_DATA_DOMAIN: Final = _ReservedIdentifier(32, "data")
 _RESERVED_ADDRESS_DOMAIN: Final = _ReservedIdentifier(33, "address")
+_RESERVED_PI_CONSTANT: Final = _ReservedIdentifier(48, "pi")
+_RESERVED_E_CONSTANT: Final = _ReservedIdentifier(49, "e")
+_RESERVED_INF_CONSTANT: Final = _ReservedIdentifier(50, "inf")
+_RESERVED_NAN_CONSTANT: Final = _ReservedIdentifier(51, "nan")
 
 
 class _IdentifierData(TypedDict):

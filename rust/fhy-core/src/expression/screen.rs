@@ -13,6 +13,7 @@ use std::hash::BuildHasher;
 use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
+use super::builtins::BuiltinConstant;
 use super::callee::{Callee, FunctionName};
 use super::error::{BooleanPosition, NonBooleanLogicalOperandError};
 use super::literal::LiteralValue;
@@ -194,9 +195,10 @@ fn find_boolean_positions(
 ///   the sort lookup reports it, is not;
 /// - a piecewise whose every case value and otherwise branch provably
 ///   denotes a number;
-/// - an identifier the sort lookup reports as a native constant of a sort
-///   other than [`FunctionSort::Bool`], whatever the environment binds to
-///   it;
+/// - a built-in constant's [identifier](BuiltinConstant::identifier), all
+///   four of which are real, or an identifier the sort lookup reports as a
+///   native constant of a sort other than [`FunctionSort::Bool`], whatever
+///   the environment binds to it;
 /// - any other identifier the environment binds to a value that provably
 ///   denotes a number, judged with no binding applied to the value in turn;
 /// - an unbound identifier the symbol types declare [`SymbolType::Int`] or
@@ -211,7 +213,7 @@ fn find_boolean_positions(
 /// piecewise's conditions, then its values, then its otherwise branch) and
 /// the first offending one is reported, before the walk descends into the
 /// children in [`Expression::children`] order. An identifier the
-/// environment binds (and the lookup does not report as a native constant)
+/// environment binds (and that is no constant)
 /// is screened by walking its bound value in the identifier's own position,
 /// with no binding applied inside it.
 ///
@@ -323,10 +325,20 @@ impl<'a> BooleanScreen<'a> {
     /// Return the value `identifier` is bound to, unless it is a native
     /// constant's canonical identifier or the bindings do not apply.
     fn find_binding(&self, identifier: &Identifier, is_bound_here: bool) -> Option<&'a Expression> {
-        if !is_bound_here || self.sorts.native_constant_sort(identifier).is_some() {
+        if !is_bound_here || self.find_constant_sort(identifier).is_some() {
             return None;
         }
         self.environment.binding(identifier)
+    }
+
+    /// Return the sort of the constant `identifier` refers to: a built-in
+    /// constant's from the catalogue, without asking the sort lookup, and
+    /// any other from the lookup.
+    fn find_constant_sort(&self, identifier: &Identifier) -> Option<FunctionSort> {
+        match BuiltinConstant::of_identifier(identifier) {
+            Some(constant) => Some(constant.sort()),
+            None => self.sorts.native_constant_sort(identifier),
+        }
     }
 
     /// Return whether `expression` provably denotes a number.
@@ -410,7 +422,7 @@ impl<'a> BooleanScreen<'a> {
                 return Err(branches);
             }
             ExpressionKind::Identifier(identifier) => {
-                if let Some(sort) = self.sorts.native_constant_sort(identifier) {
+                if let Some(sort) = self.find_constant_sort(identifier) {
                     sort != FunctionSort::Bool
                 } else if let Some(bound) = self.find_binding(identifier, is_bound_here) {
                     return Err(vec![(bound, false)]);
@@ -517,9 +529,12 @@ impl fmt::Debug for BooleanScreen<'_> {
 ///
 /// The screens ask it for the sort of a native constant's canonical
 /// identifier and for the result sort of a called [`Callee::Named`]
-/// function; a built-in function's result sort comes from the catalogue
-/// ([`BuiltinFunction::result_sort`](super::builtins::BuiltinFunction::result_sort)).
-/// Both methods default to knowing nothing.
+/// function. A built-in function's result sort comes from the catalogue
+/// ([`BuiltinFunction::result_sort`](super::builtins::BuiltinFunction::result_sort)),
+/// and so does a built-in constant's sort
+/// ([`BuiltinConstant::sort`]), without asking. Both methods default to
+/// knowing nothing. A [`FunctionRegistry`](super::registry::FunctionRegistry)
+/// implements it for its entries.
 pub trait SortLookup {
     /// Return the sort of the native constant `identifier` is the canonical
     /// identifier of, or `None` if it is no native constant's.

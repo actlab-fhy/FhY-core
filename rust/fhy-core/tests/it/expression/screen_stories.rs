@@ -18,7 +18,7 @@ use expression_support::{
     build_call_or_panic, build_decimal_literal, build_deep_conjunction, build_identifier,
     build_literal, build_piecewise_or_panic,
 };
-use fhy_core::expression::builtins::BuiltinFunction;
+use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::{
     BooleanPosition, BooleanScreen, Expression, FunctionName, FunctionSort, LogicalOperation,
     NoRegisteredSorts, NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation,
@@ -1483,4 +1483,96 @@ fn validate_walks_deep_doubling_dags_on_a_small_stack() {
         assert_eq!(predicate_result, Ok(()));
         assert!(Expression::ptr_eq(root_error.operand(), &piecewise));
     });
+}
+
+// ---------------------------------------------------------------------------
+// Built-in constants, judged by the catalogue
+// ---------------------------------------------------------------------------
+
+/// A lookup that fails the test when it is asked about a built-in
+/// constant's identifier, and knows nothing else.
+#[derive(Debug)]
+struct CatalogueOnlySorts;
+
+impl SortLookup for CatalogueOnlySorts {
+    fn native_constant_sort(&self, identifier: &Identifier) -> Option<FunctionSort> {
+        assert_eq!(
+            BuiltinConstant::of_identifier(identifier),
+            None,
+            "the screen asked the lookup about a built-in constant"
+        );
+        None
+    }
+}
+
+fn reference_builtin_constant(constant: BuiltinConstant) -> Expression {
+    Expression::from(constant.identifier().clone())
+}
+
+#[rstest]
+fn boolean_screen_judges_a_builtin_constant_by_the_catalogue(
+    #[values(
+        BuiltinConstant::Pi,
+        BuiltinConstant::E,
+        BuiltinConstant::Inf,
+        BuiltinConstant::Nan
+    )]
+    constant: BuiltinConstant,
+    #[values(
+        Placement::AndLeft,
+        Placement::OrRight,
+        Placement::Negated,
+        Placement::CaseCondition
+    )]
+    placement: Placement,
+) {
+    let reference = reference_builtin_constant(constant);
+    let expression = placement.place(&reference);
+
+    let error = expect_refusal(
+        BooleanScreen::new()
+            .with_sorts(&CatalogueOnlySorts)
+            .check_logical_operands(&expression),
+    );
+
+    assert_refusal(&error, &reference, &expression, placement.position());
+}
+
+#[test]
+fn boolean_screen_refuses_a_builtin_constant_predicate_root_without_a_lookup() {
+    let reference = reference_builtin_constant(BuiltinConstant::E);
+
+    let error = expect_refusal(BooleanScreen::new().check_predicate(&reference));
+
+    assert_root_refusal(&error, &reference);
+}
+
+#[test]
+fn boolean_screen_reads_a_builtin_constant_by_its_sort_not_a_binding() {
+    let reference = reference_builtin_constant(BuiltinConstant::Pi);
+    let expression = reference.and(build_literal(true));
+    let environment = HashMap::from([(
+        BuiltinConstant::Pi.identifier().clone(),
+        build_literal(true),
+    )]);
+
+    let error = expect_refusal(
+        BooleanScreen::new()
+            .with_environment(&environment)
+            .check_logical_operands(&expression),
+    );
+
+    assert_eq!(error.operand(), &reference);
+}
+
+#[test]
+fn boolean_screen_accepts_a_builtin_constant_in_a_numeric_position() {
+    let reference = reference_builtin_constant(BuiltinConstant::Inf);
+    let expression = reference.greater(0).and(build_literal(true));
+
+    let result = BooleanScreen::new()
+        .with_sorts(&CatalogueOnlySorts)
+        .check_logical_operands(&expression);
+
+    assert_eq!(result, Ok(()));
 }

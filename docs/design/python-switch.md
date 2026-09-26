@@ -53,10 +53,10 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
 - [ ] S7: the function registry (designed; see "S7: the function registry")
-  - S7 in progress: done S7.1; next S7.2 (the Rust tests first)
+  - S7 in progress: done S7.1 and S7.2; next S7.3 (the binding)
   - [x] N-S7-1 to N-S7-3 decided (2026-09-25; see "S7 resolutions")
   - [x] S7.1: registry benchmarks and baseline
-  - [ ] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
+  - [x] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
   - [ ] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
   - [ ] S7.4: the Python switch
   - [ ] S7.5: tests migrated, and the interface suite
@@ -5498,6 +5498,137 @@ runs' medians.
   derived plan in Python around one Rust comparison of the bodies.
 - **The sweep** over the 16 composed built-ins and 20 user functions takes
   7.2 ms.
+
+### S7.2 implementation notes
+
+The tests were written first, against `todo!()` stubs of every checking
+constructor, lookup, `inline`, and the constant identifiers: 133 of the
+156 new or filtered tests failed (the rest pin pure data, such as a
+`Display` of a hand-built error, or are older tests the filter matched),
+and all pass now. The additions are the new module
+`rust/fhy-core/src/expression/registry.rs` with `registry/definition.rs`,
+`registry/error.rs` and `registry/inline.rs`; `BuiltinConstant::identifier`
+and `of_identifier` in `builtins.rs`; the screen's constant rule in
+`screen.rs`; and four entries of `identifier/reserved.rs`, mirrored in
+`identifier.py`. `lib.rs` and the crate README list the module.
+
+Where the shape differs from D-S7-2's sketch, or fills it in:
+
+- **`FunctionSort::admits` is the existing `FunctionSort::accepts_literal`.**
+  The core already had it, in `literal.rs`, with exactly D-S7-5's table
+  (a Boolean only `bool`, a non-negative integer `nat`, an integer `int`
+  and `real`, a float or a decimal only `real`), and tests in
+  `literal_stories.rs`. A second method of the same meaning would give
+  one rule two names, so `NativeConstant::try_new` calls it, and
+  `native_constant_accepts_exactly_the_values_of_its_sort` pins the table
+  again through the constant, `bool`-as-`int`, negatives, big integers,
+  NaN, infinities and decimals included.
+- **The errors name the entry.** D-S7-12 relies on the core's texts
+  keeping the names the Python message tests match, so
+  `FunctionDefinitionError`'s variants are struct variants with the
+  function's name (`SortCountMismatch { function, parameters, sorts }`,
+  `RepeatedParameter { function, parameter }`), and `ConstantValueError`
+  holds the constant's name beside its sort and value, with accessors.
+  The texts: `function "f" has 1 parameter but 2 parameter sorts`,
+  `function "f" repeats the parameter "x"`, `constant "c" of sort nat
+  cannot hold -1`, `"f" is already registered`, `"pi" is the name of a
+  built-in constant`, `function "f" captures identifiers that are not its
+  parameters: x, y` (by name hint, then by id), `no function is registered
+  under "f"`, `"f" takes 2 arguments but the call passes 1`, `"c" is a
+  constant, not a function`, `function "f" is recursive and cannot be
+  inlined`.
+- **`InlineError::Piecewise(PiecewiseError)` is new.** A body using a
+  parameter as a piecewise condition, called with a numeric literal, puts
+  that literal in the condition, which `substitute` refuses; Python raised
+  the same refusal as a `ValueError` from `substitute`. It displays
+  `inlining built an invalid piecewise` with the piecewise's error as its
+  source.
+- **`FunctionRegistry::retain(keep)` is new**, for S7.3's
+  `set_registry_state_for_tests` (D-S7-14): it keeps the chosen entries in
+  their order, each constant with its identifier, and checks nothing
+  again. Registering a constant always mints a new identifier, so without
+  it the seam could not restore a snapshot's constants with their
+  identifiers. It is the owned-value counterpart of `Vec::retain`; the
+  core still has no global state.
+- **`RegistryEntry::name()`** returns an entry's name whatever its kind.
+- **The entry types.** `FunctionDefinition` is one `Arc` of its fields,
+  `NativeFunction` holds its sorts in an `Arc<[FunctionSort]>`, and both
+  are cheap to clone; `NativeFunction` derives `PartialEq`, `Eq` and
+  `Hash`, `NativeConstant` `PartialEq` (its value may be a float).
+  `FunctionDefinition` has no equality, as D-S7-2 planned.
+- **Lookups by `&str`.** `entry`, `contains` and `constant_identifier`
+  take a `&str`, so a caller can ask about any text, a built-in's name
+  included, which finds nothing; `result_sort` takes a `FunctionName`,
+  as `SortLookup::call_result_sort` does. `SortLookup` answers for the
+  registry's own constants and functions only: the screen judges the
+  built-in constants itself.
+- **The screen's constant rule** (D-S7-4) is one private helper,
+  `find_constant_sort`: a built-in constant's identifier has its
+  catalogue sort, and any other identifier is asked of the lookup, both
+  for judging an operand and for ignoring a constant's binding.
+  `BooleanScreen`'s and `SortLookup`'s rustdoc say so.
+- **The constant identifiers** are built once, by a `LazyLock` over the
+  reserved entries `PI_CONSTANT` (48), `E_CONSTANT` (49), `INF_CONSTANT`
+  (50) and `NAN_CONSTANT` (51), which draws nothing from the counter.
+  `of_identifier` compares ids, so an identifier restored with id 48 and
+  any name hint is `pi`, and one merely named `pi` is not.
+- **The inliner** (`registry/inline.rs`) is a post-order walk on an
+  explicit stack. It remembers each node's result by the node's identity,
+  holding the node so that no other node can take its address during the
+  walk, and each new result as its own result, since a result has nothing
+  left to inline. A substituted body holds the arguments' results, so the
+  walk meets them as remembered nodes: `relu` nested 1,000 deep inlines
+  into at most five new nodes per level, and a 64-level doubling DAG with
+  a `sigmoid` call at its leaf into 64 additions over one inlined
+  `sigmoid`. The user functions whose bodies are being walked are a set,
+  entered when a body is pushed and left when its result is taken, which
+  the stack order makes exactly the functions of the current path; a
+  remembered result never hides a recursion, since a node whose inlining
+  reaches a function in progress never finished its first inlining. The
+  order of checks follows Python's: arguments first, then recursion, then
+  the lookup, then the arity.
+- **Tests.** `registry_stories.rs` (72 tests, counting `rstest` cases),
+  `inline_stories.rs` (36) and `registry_properties.rs` (3 properties)
+  are new; `builtins_stories.rs` gained 8 and `screen_stories.rs` 19. A
+  proptest regression file written while the stubs failed was deleted:
+  its seeds were stub failures, not findings.
+
+Traceability of the Python tests (`test_registry.py` is `G`,
+`test_inline_pass.py` `I`, `test_inline_pass_properties.py` `P`):
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| G `test_register_function_stores_name_parameters_and_body`, `..._records_parameter_sorts_and_result_sort`, `..._returns_a_registered_function_instance`, `..._with_multiple_parameters_records_order` | `function_definition_keeps_its_fields`, `registered_function_is_found_by_name` | |
+| G `test_register_function_accepts_self_recursive_body`, `..._accepts_body_calling_an_unregistered_name`, `..._accepts_a_body_whose_forward_reference_is_incompatible`, `test_registered_function_direct_construction_accepts_self_recursive_call` | `registration_accepts_a_body_calling_an_unregistered_or_recursive_name` | a call is a reference by name |
+| G `test_register_function_rejects_duplicate_name`, `test_register_native_function_rejects_duplicate_name`, `..._rejects_collision_with_registered_function`, `test_register_native_constant_rejects_duplicate_name`, `..._rejects_collision_with_function` | `registration_refuses_a_taken_name_whatever_the_kinds` (6 cases), `refused_registration_leaves_the_registry_unchanged` | |
+| G `test_register_function_rejects_captured_free_identifier`, `..._lists_multiple_captured_identifiers_in_sorted_order`, `test_registered_function_direct_construction_rejects_captured_identifier` | `registration_refuses_a_body_capturing_free_identifiers`, `captured_identifiers_sharing_a_name_hint_are_ordered_by_id` | D-S7-5: a registration check |
+| G `test_register_function_accepts_subset_of_parameters_used_in_body`, `..._accepts_literal_only_body` | `capture_check_exempts_the_builtin_constants`, `registry_answers_the_screens_sort_lookup` (a literal body) | |
+| G `test_register_function_rejects_sort_arity_mismatch` | `function_definition_refuses_a_sort_count_other_than_its_parameter_count` (3 cases) | |
+| none | `function_definition_refuses_a_repeated_parameter`, `function_definition_accepts_distinct_parameters_sharing_a_name_hint` | D-S7-5, new |
+| G `test_register_function_accepts_body_referencing_registered_constant`, `..._rejects_body_identifier_merely_named_like_a_constant` | `capture_check_reads_the_constants_registered_so_far`, `capture_check_refuses_a_look_alike_of_a_builtin_constant` | the order dependence, per registry |
+| G `test_get_registered_entry_*`, `test_is_entry_registered_*`, `test_get_registered_entries_includes_registered_entry`, `..._snapshot_includes_all_entry_kinds` | `registered_function_is_found_by_name`, `registered_native_function_is_found_by_name`, `registered_constant_is_found_by_name_and_by_its_minted_identifier`, `new_registry_is_empty`, `entries_iterate_in_registration_order` | |
+| G `test_get_registered_entries_returns_immutable_snapshot`, `test_function_registry_snapshot_restores_state_after_test_a`/`_b` | `registry_clone_is_independent`, `registry_clone_keeps_the_constants_identifiers` | an owned value needs no test seam (X-12); the seam is the binding's |
+| G `test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry` | `retain_keeps_the_chosen_entries_in_order_with_their_identifiers`, `constant_registered_again_after_retain_gets_a_new_identifier` | |
+| G `test_registered_functions_with_separately_built_equal_bodies_are_equal`, `..._swapping_their_parameters_are_alpha_equivalent`, the `NativeFunction`/`NativeConstant` equality tests | none | entry equality is the binding's (D-S7-9, D-S7-10); the core compares bodies with `is_alpha_equivalent_under` |
+| G the three `..._dataclass_is_frozen` tests | none | Rust values are immutable |
+| G `test_native_function_constructs_with_declared_sorts_and_implementation`, `test_register_native_function_stores_supplied_fields`, `..._returns_native_function_instance` | `native_function_keeps_its_signature`, `registered_native_function_is_found_by_name` | the core holds no implementation |
+| G `test_native_function_direct_construction_rejects_arity_mismatch`, `..._accepts_signature_less_callable`, `test_register_native_function_rejects_arity_mismatch` | none | the `inspect` check stays Python (D-S7-9) |
+| G `test_native_constant_constructs_with_name_sort_and_value`, `test_register_native_constant_stores_supplied_fields`, `..._returns_native_constant_instance`, `..._rejects_sort_value_incompatibility`, `..._rejects_bool_for_int_sort` | `native_constant_accepts_exactly_the_values_of_its_sort` (19 cases), `constant_value_error_displays_the_constant_its_sort_and_the_value` (3) | |
+| G `test_register_native_constant_mints_an_identifier_for_the_new_constant`, `test_try_get_native_constant_for_identifier_rejects_a_same_named_identifier`, `..._rejects_a_function_named_identifier`, `test_get_native_constant_identifier_raises_for_an_unregistered_name`, `..._for_a_function_name` | `registered_constant_is_found_by_name_and_by_its_minted_identifier`, `identifier_merely_named_like_a_constant_is_no_reference_to_it`, `each_registered_constant_gets_a_new_identifier`, `constant_identifier_is_none_for_a_function_or_an_unknown_name` | |
+| G `test_try_get_registered_result_sort_*` (4) | `result_sort_answers_for_functions_only`, `registry_answers_the_screens_sort_lookup` | |
+| G `test_pi_is_registered_at_import_time`, `test_pi_lookup_returns_a_native_constant`, `test_builtin_constants_mapping_covers_seeded_constants`, `test_get_native_constant_identifier_is_stable_across_calls`, `test_each_seeded_constant_owns_a_distinct_identifier`, `test_builtin_constants_keep_their_pinned_canonical_ids` (and its fresh-interpreter twin) | `builtin_constant_identifier_holds_its_reserved_id_and_name` (4 cases), `builtin_constant_identifier_is_one_value_across_calls_and_threads`, `builtin_constant_identifiers_are_distinct`, `builtin_constant_of_identifier_inverts_identifier`, `builtin_constant_of_identifier_goes_by_the_id_not_the_name`, `builtin_names_find_no_entry` | N-S7-1 (a): the reserved ids; built-ins are no entries (D-S7-3) |
+| I `test_inline_functions_returns_literal_unchanged`, `..._returns_identifier_unchanged`, `..._traverses_binary_expression_without_calls`, `..._preserves_piecewise_expression_structurally`, `..._does_not_modify_input_expression` | `inline_returns_the_input_itself_when_nothing_is_inlined`, `inline_shares_every_subtree_without_a_call_to_inline`, `inline_returns_a_deep_tree_without_calls_itself_on_a_small_stack` | the input itself, by `ptr_eq` |
+| I `test_inline_functions_substitutes_call_with_registered_body`, `..._substitutes_parameter_in_piecewise_body`, `..._inlines_call_nested_inside_arithmetic` | `inline_replaces_a_user_call_by_its_body_over_the_arguments`, `inline_substitutes_the_argument_object_at_every_use`, `inline_replaces_a_composed_builtin_call_by_the_catalogue_body` | |
+| I `test_inline_functions_recursively_inlines_nested_calls`, `..._inlines_call_that_references_another_registered_function`, `..._result_contains_no_call_expression` | `inline_expands_nested_calls_inside_out`, `inline_follows_a_chain_of_user_functions`, `inline_expands_a_user_body_calling_a_composed_builtin`, `inline_uses_a_function_registered_after_its_caller`, `inline_leaves_no_composed_call_of_a_composed_builtin` (5 cases) | |
+| I `test_inline_functions_raises_for_unknown_function_name` | `inline_refuses_a_call_of_an_unknown_name`, `inline_checks_the_arguments_before_the_call_taking_them` | |
+| I `test_inline_functions_raises_when_argument_count_exceeds_parameters`, `..._is_too_few`, `..._rejects_wrong_arity_to_native_function` | `inline_refuses_a_user_call_of_the_wrong_arity` (3 cases), `inline_refuses_a_builtin_call_of_the_wrong_arity` (4), `arity_mismatch_displays_both_counts` (2) | |
+| I `test_inline_functions_raises_for_recursive_function`, `..._for_mutually_recursive_functions` | `inline_refuses_a_self_recursive_function`, `inline_refuses_mutually_recursive_functions_naming_the_first_reached_again`, `inline_accepts_a_function_called_twice_but_not_inside_itself` | |
+| I `test_inline_functions_rejects_call_to_native_constant` | `inline_refuses_a_call_of_a_constant` | |
+| I `test_inline_functions_passes_through_native_function_call_unchanged` | `inline_keeps_a_native_user_call`, `inline_keeps_a_native_builtin_call_and_inlines_its_arguments` | |
+| none | `inline_refuses_a_substitution_that_breaks_a_piecewise_condition`, `inline_expands_a_shared_call_once_per_distinct_node`, `inline_of_nested_composed_calls_takes_linear_time`, `inline_walks_a_deep_tree_on_a_small_stack` | new: X-10, sharing and depth |
+| P `test_inline_functions_leaves_no_registered_function_call`, `..._is_idempotent` | `inline_leaves_no_call_of_a_composed_builtin_or_a_user_function`, `inline_is_idempotent` (by `ptr_eq`) | |
+| P `test_inline_functions_evaluates_like_the_reference_table_for_real_builtins`, `..._for_bool_builtins` | `inline_keeps_the_reference_meaning_of_the_calls` | one generator of Boolean trees over numeric comparisons, both kinds of built-ins and three user functions |
+| none | `boolean_screen_judges_a_builtin_constant_by_the_catalogue` (16 cases), `boolean_screen_refuses_a_builtin_constant_predicate_root_without_a_lookup`, `boolean_screen_reads_a_builtin_constant_by_its_sort_not_a_binding`, `boolean_screen_accepts_a_builtin_constant_in_a_numeric_position` | D-S7-4 |
 
 ## Plan after S7 (the user, 2026-09-25)
 
