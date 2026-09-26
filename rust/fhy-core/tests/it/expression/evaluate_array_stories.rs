@@ -408,3 +408,128 @@ fn evaluate_array_runs_a_million_lanes() {
     assert_eq!(result.len(), 1_000_000);
     assert_eq!(result[[999_999]].to_bits(), 1_999_999.0_f64.to_bits());
 }
+
+// ---------------------------------------------------------------------------
+// Chunks
+// ---------------------------------------------------------------------------
+
+/// More lanes than one chunk holds.
+const MANY_LANES: usize = 200_003;
+
+fn build_reals(count: usize, lane: impl Fn(usize) -> f64) -> ArrayD<f64> {
+    ArrayD::from_shape_fn(IxDyn(&[count]), |index| lane(index[0]))
+}
+
+#[test]
+fn evaluate_array_computes_every_chunk_as_one_evaluation_would() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let values = build_reals(MANY_LANES, |index| {
+        f64::from(u32::try_from(index).unwrap()) - 1e5
+    });
+    let tree = piecewise(
+        vec![(x_reference.greater(0), &x_reference * &y_reference)],
+        call(BuiltinFunction::Exp, [x_reference.clone() / 1e5]),
+    );
+
+    let result = expect_real(
+        evaluate(
+            &tree,
+            vec![
+                (&x, ArrayBinding::Real(values.view())),
+                (&y, ArrayBinding::Real(arr0(3.0).into_dyn().view())),
+            ],
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(result.shape(), [MANY_LANES]);
+    for (index, (&lane, &x)) in result.iter().zip(values.iter()).enumerate() {
+        let expected = if x > 0.0 { x * 3.0 } else { (x / 1e5).exp() };
+        assert_eq!(lane.to_bits(), expected.to_bits(), "lane {index}");
+    }
+}
+
+#[test]
+fn evaluate_array_broadcasts_bindings_across_chunks() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let column = ArrayD::from_shape_fn(IxDyn(&[500, 1]), |index| i64::try_from(index[0]).unwrap());
+    let row = ArrayD::from_shape_fn(IxDyn(&[1_000]), |index| {
+        i64::try_from(index[0]).unwrap() * 1_000
+    });
+    let transposed = ArrayD::from_shape_fn(IxDyn(&[1_000, 500]), |index| {
+        i64::try_from(index[0] + index[1]).unwrap()
+    });
+    let (z, z_reference) = build_identifier("z");
+
+    let result = expect_int(
+        evaluate(
+            &(x_reference + y_reference + z_reference),
+            vec![
+                (&x, ArrayBinding::Int(column.view())),
+                (&y, ArrayBinding::Int(row.view())),
+                (&z, ArrayBinding::Int(transposed.t().into_dyn())),
+            ],
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(result.shape(), [500, 1_000]);
+    assert!(result.is_standard_layout());
+    assert_eq!(result[[499, 999]], 499 + 999_000 + 999 + 499);
+    assert_eq!(result[[3, 7]], 3 + 7_000 + 7 + 3);
+}
+
+#[test]
+fn evaluate_array_raises_the_first_failed_lane_of_a_later_chunk() {
+    let (x, reference) = build_identifier("x");
+    let values = ArrayD::from_shape_fn(IxDyn(&[MANY_LANES]), |index| match index[0] {
+        150_000 => 0_i64,
+        199_999 => i64::MIN,
+        _ => 1,
+    });
+    let tree = (-&reference).floor_divide(&reference);
+
+    let error = evaluate(&tree, vec![(&x, ArrayBinding::Int(values.view()))]).expect_err("fails");
+
+    assert!(matches!(
+        error,
+        EvaluationError::Lane {
+            failure: LaneFailure::DivisionByZero,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn evaluate_array_hands_a_kernel_each_chunk() {
+    let (x, reference) = build_identifier("x");
+    let values = build_reals(MANY_LANES, |_| 1.0);
+    let kernels = RecordingKernels::default();
+
+    let result = expect_real(
+        evaluate_with(
+            &call(BuiltinFunction::Exp, [reference]),
+            vec![(&x, ArrayBinding::Real(values.view()))],
+            &kernels,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(result.len(), MANY_LANES);
+    assert!(
+        result
+            .iter()
+            .all(|&lane| lane.to_bits() == 7.0_f64.to_bits())
+    );
+    let arguments = kernels.arguments.borrow();
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|(_, lanes, _)| lanes.len())
+            .sum::<usize>(),
+        MANY_LANES
+    );
+    assert!(arguments.len() > 1);
+}

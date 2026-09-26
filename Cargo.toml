@@ -22,6 +22,8 @@ libm = "0.2"
 # The array backend of the evaluator, behind fhy-core's `ndarray` feature
 # (slice S9).
 ndarray = { version = "0.17", default-features = false, features = ["std"] }
+# The NumPy arrays of the binding's evaluator (slice S9).
+numpy = "0.29"
 proptest = "1"
 # The non-self-describing format the serialization round-trip tests use.
 postcard = { version = "1", default-features = false, features = ["alloc"] }

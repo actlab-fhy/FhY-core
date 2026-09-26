@@ -8,6 +8,9 @@
 //! node passes its operands' failures on, the first operand's first, and
 //! adds its own for the lanes its kernel fails; a piecewise and a
 //! connective drop the failures of lanes they do not need.
+//!
+//! A value no one else holds is consumed by its parent, so an array
+//! backend can compute the parent in its operand's storage.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -19,11 +22,11 @@ use crate::expression::operation::{BinaryOperation, LogicalOperation, UnaryOpera
 use crate::expression::registry::{FunctionRegistry, RegistryEntry};
 use crate::expression::sort::FunctionSort;
 use crate::identifier::Identifier;
-use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
+use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 
 use super::error::{EvaluationError, LaneFailure, NearMiss};
 use super::kernel;
-use super::lanes::{Lane, Lanes};
+use super::lanes::{Lane, Lanes, Operand};
 use super::value::{Scalar, literal_scalar};
 
 /// The lanes of a value, in its domain.
@@ -59,6 +62,9 @@ struct Value<L: Lanes> {
 
 /// The lanes of a result and the failure ids its own kernel added, if any.
 type WithFailures<L, T> = (T, Option<<L as Lanes>::Of<u32>>);
+
+/// An operand's reals, owned, or else the shared value holding them.
+type HeldReals<L> = (Option<<L as Lanes>::Of<f64>>, Option<Rc<Value<L>>>);
 
 /// A piecewise condition's lanes and failure ids.
 type Condition<'v, L> = (
@@ -127,14 +133,27 @@ where
     /// [`EvaluationError::Lane`] for the first failed lane of the result.
     pub(super) fn run(mut self, root: &Expression) -> Result<Data<L>, EvaluationError> {
         let mut values: Vec<Rc<Value<L>>> = Vec::new();
-        let mut shared: HashMap<NodeIdentity, Rc<Value<L>>, BuildIdentityHasher> =
+        // The value of each node the tree reaches more than once, and how
+        // many more times it is reached; the last use takes the value, so
+        // its storage can be reused.
+        let mut shared: HashMap<NodeIdentity, (Rc<Value<L>>, usize), BuildIdentityHasher> =
             HashMap::default();
+        let repeated = count_repeated_uses(root);
         let mut pending = vec![Step::Enter(root)];
         while let Some(step) = pending.pop() {
-            match step {
+            let (node, value) = match step {
                 Step::Enter(node) => {
-                    if let Some(value) = shared.get(&node.identity()) {
-                        values.push(Rc::clone(value));
+                    if let Some((value, remaining)) = shared.get_mut(&node.identity()) {
+                        *remaining -= 1;
+                        let value = if *remaining == 0 {
+                            shared.remove(&node.identity()).map_or_else(
+                                || unreachable!("the entry is present"),
+                                |(value, _)| value,
+                            )
+                        } else {
+                            Rc::clone(value)
+                        };
+                        values.push(value);
                         continue;
                     }
                     let value = match node.kind() {
@@ -146,21 +165,18 @@ where
                             continue;
                         }
                     };
-                    let value = Rc::new(value);
-                    if node.is_shared() {
-                        shared.insert(node.identity(), Rc::clone(&value));
-                    }
-                    values.push(value);
+                    (node, value)
                 }
                 Step::Exit(node) => {
                     let arguments = values.split_off(values.len() - node.children().count());
-                    let value = Rc::new(self.combine(node, arguments)?);
-                    if node.is_shared() {
-                        shared.insert(node.identity(), Rc::clone(&value));
-                    }
-                    values.push(value);
+                    (node, self.combine(node, arguments)?)
                 }
+            };
+            let value = Rc::new(value);
+            if let Some(uses) = repeated.get(&node.identity()) {
+                shared.insert(node.identity(), (Rc::clone(&value), uses - 1));
             }
+            values.push(value);
         }
         let root_value = values
             .pop()
@@ -245,9 +261,28 @@ where
         mut arguments: Vec<Rc<Value<L>>>,
     ) -> Result<Value<L>, EvaluationError> {
         match node.kind() {
-            ExpressionKind::Unary(unary) => self.unary(node, unary.operation(), &arguments[0]),
+            ExpressionKind::Unary(unary) => {
+                let operand = arguments
+                    .pop()
+                    .unwrap_or_else(|| unreachable!("one operand"));
+                if unary.operation() == UnaryOperation::Negate
+                    && matches!(operand.data, Data::Real(_))
+                {
+                    return Ok(self.negate_reals(operand));
+                }
+                self.unary(node, unary.operation(), &operand)
+            }
             ExpressionKind::Binary(binary) => {
-                self.binary(node, binary.operation(), &arguments[0], &arguments[1])
+                let right = arguments
+                    .pop()
+                    .unwrap_or_else(|| unreachable!("two operands"));
+                let left = arguments
+                    .pop()
+                    .unwrap_or_else(|| unreachable!("two operands"));
+                if is_real_arithmetic(binary.operation(), &left.data, &right.data) {
+                    return self.real_arithmetic(binary.operation(), left, right);
+                }
+                self.binary(node, binary.operation(), &left, &right)
             }
             ExpressionKind::Logical(logical) => self.logical(node, logical.operation(), &arguments),
             ExpressionKind::Piecewise(_) => self.piecewise(node, &arguments),
@@ -357,6 +392,74 @@ where
             )),
             Data::Real(lanes) => Some(Reals::Borrowed(lanes)),
         }
+    }
+
+    /// Negate the reals of `operand`, reusing their storage when no one
+    /// else holds them.
+    fn negate_reals(&self, operand: Rc<Value<L>>) -> Value<L> {
+        let Value { data, failures } =
+            Rc::try_unwrap(operand).unwrap_or_else(|shared| clone_value(&shared));
+        let Data::Real(lanes) = data else {
+            unreachable!("the operand is real")
+        };
+        Value {
+            data: Data::Real(self.lanes.map1_reusing(lanes, |x: f64| -x)),
+            failures,
+        }
+    }
+
+    /// Split `value` into its reals, owned when no one else holds them or
+    /// when they are converted integers, or else the shared value.
+    fn hold_reals(&self, value: Rc<Value<L>>) -> HeldReals<L> {
+        match Rc::try_unwrap(value) {
+            Ok(Value {
+                data: Data::Real(lanes),
+                ..
+            }) => (Some(lanes), None),
+            Ok(Value {
+                data: Data::Int(lanes),
+                ..
+            }) => (Some(self.lanes.map1(&lanes, kernel::int_to_real)), None),
+            Ok(Value {
+                data: Data::Bool(_),
+                ..
+            }) => unreachable!("the operand is numeric"),
+            Err(shared) => match &shared.data {
+                Data::Int(lanes) => (Some(self.lanes.map1(lanes, kernel::int_to_real)), None),
+                Data::Real(_) => (None, Some(shared)),
+                Data::Bool(_) => unreachable!("the operand is numeric"),
+            },
+        }
+    }
+
+    /// Evaluate a real arithmetic operation, reusing an operand's storage
+    /// when no one else holds it.
+    fn real_arithmetic(
+        &self,
+        operation: BinaryOperation,
+        left: Rc<Value<L>>,
+        right: Rc<Value<L>>,
+    ) -> Result<Value<L>, EvaluationError> {
+        let failures = self.merge([left.failures.as_ref(), right.failures.as_ref()])?;
+        let (owned_left, shared_left) = self.hold_reals(left);
+        let (owned_right, shared_right) = self.hold_reals(right);
+        let a = real_operand(owned_left, shared_left.as_ref());
+        let b = real_operand(owned_right, shared_right.as_ref());
+        let lanes = self.lanes;
+        let data = match operation {
+            BinaryOperation::Add => lanes.map2_reusing(a, b, |x: f64, y: f64| x + y)?,
+            BinaryOperation::Subtract => lanes.map2_reusing(a, b, |x: f64, y: f64| x - y)?,
+            BinaryOperation::Multiply => lanes.map2_reusing(a, b, |x: f64, y: f64| x * y)?,
+            BinaryOperation::Divide => lanes.map2_reusing(a, b, |x: f64, y: f64| x / y)?,
+            BinaryOperation::FloorDivide => lanes.map2_reusing(a, b, kernel::real_floor_divide)?,
+            BinaryOperation::FloorMod => lanes.map2_reusing(a, b, kernel::real_floor_mod)?,
+            BinaryOperation::Power => lanes.map2_reusing(a, b, f64::powf)?,
+            _ => unreachable!("comparisons are not arithmetic"),
+        };
+        Ok(Value {
+            data: Data::Real(data),
+            failures,
+        })
     }
 
     /// Evaluate a unary node.
@@ -686,6 +789,51 @@ where
         let failures = self.merge([failures.as_ref(), own.as_ref()])?;
         Ok(Value { data, failures })
     }
+}
+
+/// Return the operand of reals `owned`, or else those of `shared`.
+fn real_operand<L: Lanes>(
+    owned: Option<L::Of<f64>>,
+    shared: Option<&Rc<Value<L>>>,
+) -> Operand<'_, L::Of<f64>> {
+    match (owned, shared) {
+        (Some(lanes), _) => Operand::Owned(lanes),
+        (None, Some(value)) => match &value.data {
+            Data::Real(lanes) => Operand::Borrowed(lanes),
+            _ => unreachable!("a shared operand is real"),
+        },
+        (None, None) => unreachable!("an operand is owned or shared"),
+    }
+}
+
+/// Return whether `operation` over `left` and `right` is real arithmetic:
+/// numbers, at least one of them real.
+fn is_real_arithmetic<L: Lanes>(
+    operation: BinaryOperation,
+    left: &Data<L>,
+    right: &Data<L>,
+) -> bool {
+    !is_comparison(operation)
+        && matches!(
+            (left, right),
+            (Data::Real(_), Data::Real(_) | Data::Int(_)) | (Data::Int(_), Data::Real(_))
+        )
+}
+
+/// Return how many times the tree `root` reaches each node it reaches more
+/// than once.
+fn count_repeated_uses(root: &Expression) -> HashMap<NodeIdentity, usize, BuildIdentityHasher> {
+    let mut uses: HashMap<NodeIdentity, usize, BuildIdentityHasher> = HashMap::default();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        let count = uses.entry(node.identity()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            pending.extend(node.children());
+        }
+    }
+    uses.retain(|_, count| *count > 1);
+    uses
 }
 
 /// Return whether `operation` is a comparison.

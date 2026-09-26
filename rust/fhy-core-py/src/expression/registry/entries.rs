@@ -683,6 +683,11 @@ impl PyNativeFunction {
         matches!(self.source, NativeSource::Builtin)
     }
 
+    /// Return the Python callable computing the function.
+    pub(super) fn implementation<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        self.implementation.bind(py).clone()
+    }
+
     /// Return the user declaration, or `None` for a built-in.
     pub(super) fn declaration(&self) -> Option<&NativeFunction> {
         match &self.source {
@@ -778,17 +783,22 @@ impl_entry_protocols!(PyNativeFunction, "NativeFunction", {
         })
     }
 
-    /// Build the entries of the built-ins once, with the Python callables
-    /// `implementations` of the native built-ins by name. `builtins.py`
-    /// calls it at import; a later call does nothing.
+    /// Build the entries of the built-ins once, each native built-in
+    /// computed by the callable of its name in `implementations`, or, when
+    /// it is `None`, by its `BuiltinNativeImplementation`, the core's
+    /// kernel. `builtins.py` calls it at import; a later call does nothing.
     ///
     /// Raises `KeyError` for a native built-in without an implementation.
     #[classmethod]
+    #[pyo3(signature = (implementations = None))]
     fn _install_builtins(
         cls: &Bound<'_, PyType>,
-        implementations: &Bound<'_, PyAny>,
+        implementations: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        state::install_builtins(cls.py(), implementations.cast::<pyo3::types::PyMapping>()?)
+        let implementations = implementations
+            .map(|implementations| implementations.cast::<pyo3::types::PyMapping>())
+            .transpose()?;
+        state::install_builtins(cls.py(), implementations)
     }
 });
 

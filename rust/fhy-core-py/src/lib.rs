@@ -46,6 +46,11 @@ mod rs_module {
     };
     #[pymodule_export]
     use super::expression::{
+        PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
+        fold_expression, is_decimal_text_exactly_binary,
+    };
+    #[pymodule_export]
+    use super::expression::{
         PyNativeConstant, PyNativeFunction, PyRegisteredFunction, get_native_constant_identifier,
         get_registered_entries, get_registered_entry, inline_functions, is_entry_registered,
         register_function, register_native_constant, register_native_function,

@@ -11,10 +11,12 @@
 //! `WrappedFamilySerializable`, which the public classes inherit (D-S4-5).
 //!
 //! The `pattern` submodule binds the core's patterns and rewrite rules (S5),
-//! and the `registry` submodule the function registry and inlining (S7).
-//! The solver binding (S8) reads expressions, the registry snapshot and the
-//! materializer through the crate-visible items below.
+//! the `registry` submodule the function registry and inlining (S7), and
+//! the `evaluate` submodule the evaluators (S9). The solver binding (S8)
+//! reads expressions, the registry snapshot and the materializer through
+//! the crate-visible items below.
 
+mod evaluate;
 mod literal;
 mod materialize;
 mod node;
@@ -25,6 +27,10 @@ mod registry;
 mod screen;
 mod text;
 
+pub(crate) use evaluate::{
+    PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
+    fold_expression, is_decimal_text_exactly_binary,
+};
 pub(crate) use materialize::{materialize_expression, materialize_substituted};
 pub(crate) use node::{
     PyBinaryExpression, PyCallExpression, PyExpression, PyIdentifierExpression,

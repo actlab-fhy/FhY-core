@@ -79,6 +79,28 @@ pub(super) trait Lanes {
         f: impl Fn(A, B, C) -> D,
     ) -> Result<Self::Of<D>, EvaluationError>;
 
+    /// Apply `f` to each lane of `a`, reusing `a`'s storage when the
+    /// backend can.
+    fn map1_reusing<A: Lane>(&self, a: Self::Of<A>, f: impl Fn(A) -> A) -> Self::Of<A> {
+        self.map1(&a, f)
+    }
+
+    /// Apply `f` to each pair of lanes of `a` and `b`, broadcast together,
+    /// reusing the storage of `a`, or else of `b`, when it is owned and has
+    /// the result's shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvaluationError::Shape`] if the shapes do not broadcast.
+    fn map2_reusing<A: Lane>(
+        &self,
+        a: Operand<'_, Self::Of<A>>,
+        b: Operand<'_, Self::Of<A>>,
+        f: impl Fn(A, A) -> A,
+    ) -> Result<Self::Of<A>, EvaluationError> {
+        self.map2(a.get(), b.get(), f)
+    }
+
     /// Return the first lane of `a` other than zero, in C order.
     fn first_nonzero(&self, a: &Self::Of<u32>) -> Option<u32>;
 
@@ -93,6 +115,25 @@ pub(super) trait Lanes {
         function: BuiltinFunction,
         argument: Self::Of<f64>,
     ) -> Result<Self::Of<f64>, EvaluationError>;
+}
+
+/// An operand of a map: owned, so a backend may reuse its storage, or
+/// borrowed.
+pub(super) enum Operand<'v, T> {
+    /// An operand no one else holds.
+    Owned(T),
+    /// An operand others hold too.
+    Borrowed(&'v T),
+}
+
+impl<T> Operand<'_, T> {
+    /// Return the operand.
+    pub(super) fn get(&self) -> &T {
+        match self {
+            Self::Owned(value) => value,
+            Self::Borrowed(value) => value,
+        }
+    }
 }
 
 /// The scalar backend: one lane per container.

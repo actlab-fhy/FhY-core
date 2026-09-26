@@ -83,7 +83,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.1: evaluator benchmarks and baseline (26 rows; see "S9.1 baseline")
   - [x] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
   - [x] S9.3: the `ndarray` cargo feature and the array backend
-  - [ ] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
+  - [x] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
   - [ ] S9.5: the Python switch
   - [ ] S9.6: tests migrated, and the interface suite
   - [ ] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README
@@ -10035,3 +10035,78 @@ workflow needs no change. The crate README documents the feature.
   values including zeros, NaNs, infinities and 64-bit extremes. Each lane
   of the array evaluation equals that lane's scalar evaluation, and an
   array evaluation's lane failure is the first failing lane's.
+
+### S9.4 implementation notes
+
+The binding is `rust/fhy-core-py/src/expression/evaluate.rs`, with
+`evaluate/fold.rs` (`fold_expression` and the `NativeCalls` adapter),
+`evaluate/numpy.rs` (`evaluate_expression_with_numpy` and the NumPy
+kernels), `evaluate/builtins.rs` (`BuiltinNativeImplementation`),
+`evaluate/literal.rs` (`coerce_literal_value` and
+`is_decimal_text_exactly_binary`) and `evaluate/error.rs` (D-S9-14's
+mapping), exported from `_rs` and declared in `_rs.pyi`. The binding
+depends on `numpy` 0.29 (rust-numpy, whose `ndarray` Cargo unifies with
+the core's 0.17), `num-traits`, and `fhy-core` with the `ndarray`
+feature; `deny.toml`'s BSD-2-Clause allowance is now used. Nothing in
+Python uses the new functions yet, so the suite is unchanged (7,327
+passed).
+
+- **`fold_expression(expression)`** returns the folded expression,
+  materialized beside the input as the inliner's is, and the names of the
+  functions with a body whose calls it kept. The adapter reads each native
+  user function's Python `implementation` from the registry snapshot the
+  fold reads (a new `RegistryState::native_implementation`), passes it
+  `bool`, `int` and `float` arguments, and returns its exception unchanged
+  as the callback error; a result that is no `bool`, `int` or `float` is
+  refused with `NativeResultSortError` by the adapter itself.
+- **`BuiltinNativeImplementation`** is a frozen pyclass with one object per
+  native built-in, `__call__(value, /)`, `__name__`, a `repr`, and
+  `__reduce__` through the class method `_of(name)`, so it unpickles as
+  itself. `NativeFunction._install_builtins` takes its table as an
+  optional argument for the one step until S9.5; without it the built-in
+  entries hold these objects.
+- **The NumPy entry point** imports NumPy first, on every call, and raises
+  the guiding `ImportError` with the failure as `__cause__`: rust-numpy
+  panics if it touches the C API without NumPy, so nothing else may run
+  before. It inlines through `Evaluator::prepare`, converts only the
+  bindings of the inlined tree's free identifiers (by id, so no key is
+  restored in vain), and takes the scalar backend when every binding is a
+  scalar, a 0-d array included. A `uint64` array above `i64::MAX`, and a
+  Python `int` outside `i64`, raise `OverflowError`; `float128` and other
+  dtypes wider than 64 bits are refused with the other unsupported dtypes.
+- **The NumPy kernels** (N-S9-2 (b)) call the ufunc named like the
+  built-in (the 14 names are NumPy's) inside `numpy.errstate(all="ignore")`,
+  with the interpreter reattached for the call. A real binding NumPy
+  already holds is passed as its own array; other lanes are copied into a
+  NumPy array the ufunc overwrites (`out=`), and an owned temporary then
+  takes the result back in place.
+
+**Performance work the benchmarks called for, in the core** (the design
+left the array backend's memory use open):
+
+- **Operand storage is reused.** An operand value no one else holds is
+  consumed by its parent, and real arithmetic, real negation and the
+  native kernels compute into its storage (`Lanes::map2_reusing`,
+  `map1_reusing`), as NumPy elides temporaries. The walk counts, before it
+  starts, how often the tree reaches each node, and keeps a shared node's
+  value only until its last use, since `Tree::is_shared` also counts the
+  handles Python objects hold, which made every node look shared.
+- **Arrays of more than 65,536 lanes are evaluated in chunks** of that
+  many lanes: the bindings the expression refers to are broadcast
+  together once, a binding in the standard layout of the result's shape is
+  sliced per chunk without a copy, any other one is copied once into that
+  layout, and a one-lane binding stays a 0-d array. Each chunk is one
+  walk, and the chunks' lanes are appended to one output buffer. The lanes
+  are computed as before, and a lane failure is still the first in C
+  order, since the chunks go in order. The reason is the allocator: on this
+  machine (glibc 2.31, Linux 5.4) every fresh 8 MB buffer costs about
+  1,940 page faults, 3 to 4 ms, while NumPy's buffers use transparent huge
+  pages (`madvise`, which the crate's `unsafe_code = "forbid"` rules out).
+  With whole-array temporaries the polynomial over 10^6 floats took 15 ms
+  with 3,874 faults per call; chunked, its temporaries stay small and are
+  reused, and it takes 2.4 ms with no fault, where NumPy by hand takes
+  3.0 ms.
+- Four Rust tests cover chunks: a piecewise over 200,003 lanes, bindings
+  broadcast and transposed across chunks, the first failed lane in a
+  later chunk, and a kernel handed each chunk. `evaluate_array_stories.rs`
+  has 19 tests now.

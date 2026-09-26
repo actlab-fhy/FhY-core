@@ -43,7 +43,7 @@ pub(super) fn registration_error(py: Python<'_>, message: &str) -> PyErr {
 }
 
 /// Return the `EntryLookupError` carrying `message`.
-fn lookup_error(py: Python<'_>, message: &str) -> PyErr {
+pub(in crate::expression) fn lookup_error(py: Python<'_>, message: &str) -> PyErr {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     match error_class(py, &CLASS, "EntryLookupError") {
         Ok(class) => match class.call1((message,)) {
@@ -56,7 +56,7 @@ fn lookup_error(py: Python<'_>, message: &str) -> PyErr {
 
 /// Return the `FunctionArityError` of `fhy_core.symbolic.expression.passes
 /// .inline` carrying `message`.
-fn arity_error(py: Python<'_>, message: &str) -> PyErr {
+pub(in crate::expression) fn arity_error(py: Python<'_>, message: &str) -> PyErr {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     match CLASS.import(
         py,
@@ -76,7 +76,7 @@ fn arity_error(py: Python<'_>, message: &str) -> PyErr {
 /// for a wrong argument count or a constant called, `RecursionError` for a
 /// recursive function, and `ValueError`, followed by the refusal, for an
 /// invalid piecewise.
-fn inline_error_to_python(py: Python<'_>, error: &InlineError) -> PyErr {
+pub(in crate::expression) fn inline_error_to_python(py: Python<'_>, error: &InlineError) -> PyErr {
     let message = error.to_string();
     match error {
         InlineError::UnknownFunction(_) => lookup_error(py, &message),

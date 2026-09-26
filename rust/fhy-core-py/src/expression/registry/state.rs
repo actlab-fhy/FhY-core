@@ -28,6 +28,7 @@ use fhy_core::expression::registry::{FunctionRegistry, RegistryEntry};
 
 use crate::identifier::identifier_to_python;
 
+use super::super::evaluate::builtin_implementation;
 use super::entries::{PyNativeConstant, PyNativeFunction, PyRegisteredFunction};
 
 /// One state of the user registry: the core registry and the Python object
@@ -87,6 +88,18 @@ impl RegistryState {
     /// Return the Python object of the entry named `name`.
     pub(super) fn object<'py>(&self, py: Python<'py>, name: &str) -> Option<Bound<'py, PyAny>> {
         self.objects.get(name).map(|object| object.bind(py).clone())
+    }
+
+    /// Return the Python callable of the native user function named
+    /// `name`, or `None` if no native user function has the name.
+    pub(in crate::expression) fn native_implementation<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> Option<Bound<'py, PyAny>> {
+        let object = self.objects.get(name)?.bind(py);
+        let function = object.cast::<PyNativeFunction>().ok()?;
+        Some(function.get().implementation(py))
     }
 
     /// Return the Python object of the constant whose identifier has `id`.
@@ -361,8 +374,9 @@ pub(super) fn find_builtin<'py>(
     Ok(builtins(py)?.object(py, name))
 }
 
-/// Build the built-in entries, with the Python callables `implementations`
-/// of the native built-ins by name, unless they are built already.
+/// Build the built-in entries, unless they are built already, each native
+/// built-in computed by `implementations`' callable of its name, or by its
+/// `BuiltinNativeImplementation` when `implementations` is `None`.
 ///
 /// # Errors
 ///
@@ -370,7 +384,7 @@ pub(super) fn find_builtin<'py>(
 /// whatever building an entry raises.
 pub(super) fn install_builtins(
     py: Python<'_>,
-    implementations: &Bound<'_, PyMapping>,
+    implementations: Option<&Bound<'_, PyMapping>>,
 ) -> PyResult<()> {
     BUILTINS
         .get_or_try_init(py, || {
@@ -383,13 +397,14 @@ pub(super) fn install_builtins(
                 in_order.push((constant.name(), object.unbind()));
             }
             for function in BuiltinFunction::iter() {
-                let object = match function.composed() {
-                    Some(composed) => PyRegisteredFunction::build_builtin(py, composed)?,
-                    None => PyNativeFunction::build_builtin(
-                        py,
-                        function,
-                        &implementations.get_item(function.name())?,
-                    )?,
+                let object = if let Some(composed) = function.composed() {
+                    PyRegisteredFunction::build_builtin(py, composed)?
+                } else {
+                    let implementation = match implementations {
+                        Some(implementations) => implementations.get_item(function.name())?,
+                        None => builtin_implementation(py, function)?.into_any(),
+                    };
+                    PyNativeFunction::build_builtin(py, function, &implementation)?
                 };
                 in_order.push((function.name(), object.unbind()));
             }
