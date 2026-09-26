@@ -84,7 +84,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
   - [x] S9.3: the `ndarray` cargo feature and the array backend
   - [x] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
-  - [ ] S9.5: the Python switch
+  - [x] S9.5: the Python switch
   - [ ] S9.6: tests migrated, and the interface suite
   - [ ] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README
   - [ ] S9.8: benchmarks after, and docs
@@ -10110,3 +10110,20 @@ left the array backend's memory use open):
   broadcast and transposed across chunks, the first failed lane in a
   later chunk, and a kernel handed each chunk. `evaluate_array_stories.rs`
   has 19 tests now.
+
+### S9.5 status
+
+The Python switch (marked breaking) makes `passes/numpy.py`,
+`passes/evaluate.py` and `passes/native_lowering.py` thin layers over
+`_rs`, drops `builtins.py`'s table of `math` callables (the built-in
+entries hold `BuiltinNativeImplementation`s, and
+`NativeFunction._install_builtins()` takes no argument any more), makes
+`ExpressionPrettyFormatter` a `CompilerPass[Expression, str]` over the
+core (N-S9-1), and rewrites two docstrings of `errors.py`. It leaves the
+tests of S9.6's migration failing: three modules fail collection, since
+they import the private tables (`test_numpy_evaluator.py`,
+`test_builtins.py`, `test_registry_rust_binding.py`), and the two
+`test_pprint.py` subclass tests fail (6,841 passed). Every other test,
+the property oracles included, passes unchanged. `pformat_expression`
+raises `TypeError` for an argument that is not an `Expression`, where it
+used to run the Python formatter over it.

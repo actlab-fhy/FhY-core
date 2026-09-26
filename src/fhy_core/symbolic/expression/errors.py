@@ -126,14 +126,14 @@ class NonBooleanLogicalOperandError(TypeError):
 
 @register_error
 class NonFiniteCastError(ValueError):
-    """Raised when a non-finite NumPy result reaches an integer-sorted cast.
+    """Raised when a non-finite value reaches an integer-sorted result.
 
-    The NumPy evaluator casts a native call's result to the dtype of its
-    declared result sort. A ``nan``/``inf`` value has no faithful
-    ``BOOL``-, ``NAT``-, or ``INT``-sorted representation, so casting it
-    would silently produce a platform-defined sentinel; the evaluator
-    checks for non-finite values before the cast and raises this error
-    instead.
+    ``round``, ``floor`` and ``ceil`` are ``INT``-sorted, and a ``nan`` or
+    an infinity has no integer. ``evaluate_expression`` raises this for
+    such a call with a literal argument, and
+    ``evaluate_expression_with_numpy`` for an element whose selected
+    branch holds one; an element a piecewise or a connective does not need
+    is discarded instead.
     """
 
 
@@ -215,13 +215,10 @@ class UnboundVariableError(ValueError):
 
 @register_error
 class UnsupportedNumpyLoweringError(RuntimeError):
-    """Raised when an expression node has no NumPy lowering.
+    """Raised when the NumPy evaluator meets a call it cannot compute.
 
     Surfaced by :func:`~fhy_core.symbolic.expression.evaluate_expression_with_numpy`
-    when a node cannot be evaluated with NumPy. Current cases:
-
-    - The ``erf`` native function (and therefore ``gelu``, whose body
-      calls ``erf``): NumPy has no vectorized ``erf`` ufunc.
-    - Any registered :class:`NativeFunction` the evaluator has no ufunc
-      mapping for (for example, a caller-registered native).
+    for a call of a registered :class:`NativeFunction`: its implementation
+    is a Python callable of scalars, which the evaluator does not run.
+    Every built-in native, ``erf`` included, is computed.
     """

@@ -13,18 +13,16 @@ native one's a :class:`NativeFunction`, and a constant's a
 :class:`NativeConstant` whose identifier has a fixed reserved id (``pi``
 48, ``e`` 49, ``inf`` 50, ``nan`` 51), the same in every process.
 
-The core computes no native function, so this module keeps the Python
-callables that compute them, and importing it installs them: the
-extension builds the built-ins' entries then, once. That the composed
-bodies type-check against their declared sorts is pinned by
-``tests/types/checking/test_builtin_bodies.py`` rather than checked on
-every import.
-
-Numerical native implementations are backed by Python's ``math``
-module. Their results are reproducible within a single run but the
-final bits may differ across operating systems and CPU families.
-Callers requiring cross-platform exact reproducibility must not rely
-on the low-order bits of these results.
+Importing this module has the extension build the built-ins' entries,
+once. A native built-in's ``implementation`` is the core's kernel
+(``BuiltinFunction::native_value``), the one the evaluators compute it
+with: IEEE results, so ``sqrt(-1.0)`` is ``nan``, ``round`` rounding half
+to even, and ``round``, ``floor`` and ``ceil`` returning the exact
+``int``. The kernels call the platform's math library, except ``erf``
+(``libm``), so the final bits may differ across operating systems and
+CPU families. That the composed bodies type-check against their declared
+sorts is pinned by ``tests/types/checking/test_builtin_bodies.py``
+rather than checked on every import.
 """
 
 __all__ = [
@@ -34,8 +32,6 @@ __all__ = [
     "BuiltinFunctions",
 ]
 
-import math
-from collections.abc import Callable
 from typing import cast
 
 from immutabledict import immutabledict
@@ -58,8 +54,8 @@ class BuiltinFunctions(TypedDict):
     """Mapping of built-in function names to their registry entries.
 
     Composed entries are expression-bodied :class:`RegisteredFunction`
-    instances; native entries are :class:`NativeFunction` instances
-    bound to ``math`` callables.
+    instances; native entries are :class:`NativeFunction` instances whose
+    ``implementation`` is the core's kernel.
     """
 
     # Composable utilities.
@@ -111,39 +107,7 @@ class BuiltinConstants(TypedDict):
     nan: ReadOnly[NativeConstant]
 
 
-def _exp2(value: int | float) -> float:
-    return math.pow(2, value)
-
-
-# The Python callables computing the native built-ins, by name. The
-# core's catalogue declares their sorts; `round` rounds half to even.
-_NATIVE_IMPLEMENTATIONS: immutabledict[str, Callable[..., bool | int | float]] = (
-    immutabledict(
-        {
-            "exp": math.exp,
-            "exp2": _exp2,
-            "log": math.log,
-            "log2": math.log2,
-            "log10": math.log10,
-            "sqrt": math.sqrt,
-            "sin": math.sin,
-            "cos": math.cos,
-            "tan": math.tan,
-            "arcsin": math.asin,
-            "arccos": math.acos,
-            "arctan": math.atan,
-            "sinh": math.sinh,
-            "cosh": math.cosh,
-            "tanh": math.tanh,
-            "erf": math.erf,
-            "round": round,
-            "floor": math.floor,
-            "ceil": math.ceil,
-        }
-    )
-)
-
-_rs.NativeFunction._install_builtins(_NATIVE_IMPLEMENTATIONS)
+_rs.NativeFunction._install_builtins()
 
 BUILTIN_CONSTANTS: BuiltinConstants = cast(
     BuiltinConstants,

@@ -12,8 +12,8 @@
 //! released, since dropping it may run Python finalizers. The state is not
 //! append-only: `set_registry_state_for_tests` replaces it.
 //!
-//! The built-in entries are built once, when `builtins.py` installs the
-//! Python callables of the native built-ins, and never change.
+//! The built-in entries are built once, when `builtins.py` installs them,
+//! and never change.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
@@ -375,17 +375,12 @@ pub(super) fn find_builtin<'py>(
 }
 
 /// Build the built-in entries, unless they are built already, each native
-/// built-in computed by `implementations`' callable of its name, or by its
-/// `BuiltinNativeImplementation` when `implementations` is `None`.
+/// built-in computed by its `BuiltinNativeImplementation`.
 ///
 /// # Errors
 ///
-/// Raises `KeyError` for a native built-in without an implementation, and
-/// whatever building an entry raises.
-pub(super) fn install_builtins(
-    py: Python<'_>,
-    implementations: Option<&Bound<'_, PyMapping>>,
-) -> PyResult<()> {
+/// Raises whatever building an entry raises.
+pub(super) fn install_builtins(py: Python<'_>) -> PyResult<()> {
     BUILTINS
         .get_or_try_init(py, || {
             let mut in_order: Vec<(&'static str, Py<PyAny>)> = Vec::new();
@@ -400,10 +395,7 @@ pub(super) fn install_builtins(
                 let object = if let Some(composed) = function.composed() {
                     PyRegisteredFunction::build_builtin(py, composed)?
                 } else {
-                    let implementation = match implementations {
-                        Some(implementations) => implementations.get_item(function.name())?,
-                        None => builtin_implementation(py, function)?.into_any(),
-                    };
+                    let implementation = builtin_implementation(py, function)?.into_any();
                     PyNativeFunction::build_builtin(py, function, &implementation)?
                 };
                 in_order.push((function.name(), object.unbind()));

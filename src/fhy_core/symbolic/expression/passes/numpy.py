@@ -1,124 +1,63 @@
-"""Evaluate a fully-bound expression tree to concrete NumPy values.
+"""Evaluate an expression over NumPy values.
 
-This pass is the fast path for computing a function authored in the
-expression vocabulary over data. Given an expression and an environment
-binding every free identifier to a NumPy-consumable value, it walks the
-tree once and applies a vectorized NumPy operation at each node, producing
-a NumPy array (or scalar) rather than another :class:`Expression`.
+The evaluation runs in the Rust core (``fhy_core::expression::evaluate``,
+S9 of ``docs/design/python-switch.md``), over NumPy arrays read through
+rust-numpy. :func:`evaluate_expression_with_numpy` inlines composed
+built-ins and registered functions, converts the environment's bindings
+of the identifiers the inlined tree refers to, and walks the tree once,
+broadcasting as NumPy does.
 
-Walking the tree once with whole arrays bound to the variables issues the
-same sequence of NumPy calls a user would write by hand, so throughput
-approaches native NumPy for an element-wise transform over a large array:
-the tree walk is ``O(tree_size)`` Python calls, each dispatching one
-C-level operation over all elements. Contrast the existing paths, which are
-unsuited to per-value computation over arrays: ``evaluate_expression``
-folds only all-literal native calls and returns an ``Expression``, and
-``simplify_expression`` runs symbolic SymPy algebra on scalars.
+The evaluation computes in three domains: ``bool``, ``int64`` and
+``float64``. A binding of another Boolean, integer or floating-point dtype
+is converted to one of them (``float32`` becomes ``float64``, a
+``uint64`` above the signed range raises ``OverflowError``), and object,
+complex, string and other dtypes are refused with ``TypeError``.
 
-A native call's result is cast to the dtype of its declared result sort,
-so ``floor``/``round``/``ceil`` (declared ``INT``) return an integer array
-rather than NumPy's floating-point default, agreeing with the declared
-sort and with ``evaluate_expression``. Floating-point domain conditions
-follow NumPy at the point of computation: ``sqrt(-1)``, ``log(0)``, and
-division by zero produce ``nan``/``inf`` (with NumPy's usual warning)
-rather than raising -- unlike ``evaluate_expression``, whose scalar native
-implementations raise immediately. A non-finite value that reaches an
-integer- or boolean-sorted cast (for example ``round(nan)``) raises
-``NonFiniteCastError`` instead of being cast to a platform-defined
-sentinel. NumPy does still raise for operations it rejects outright
-rather than folding to ``nan``/``inf`` -- most notably an integer base
-raised to a negative integer power (``numpy.power``) -- and such a
-``ValueError`` surfaces wrapped in ``PassExecutionError``.
+- Integer arithmetic is checked: an overflow raises ``OverflowError``, and
+  an integer floor division or remainder by zero ``ZeroDivisionError``.
+  ``/`` is the real quotient even of two integers; ``//`` rounds toward
+  negative infinity and ``%`` has the sign of the divisor. An integer
+  raised to a negative integer power raises ``ValueError``. Mixed integer
+  and real operands compute in reals.
+- Real arithmetic is IEEE's: ``sqrt(-1)``, ``log(0)`` and division by zero
+  give ``nan`` or ``inf``, without a warning.
+- A Boolean compares with ``==`` and ``!=`` and is refused (``TypeError``)
+  in arithmetic and orderings; a connective operand or piecewise condition
+  that is a number is refused with :class:`NonBooleanLogicalOperandError`.
+- An ``INT``-sorted native (``round``, ``floor``, ``ceil``) needs a finite
+  value in the ``int64`` range: ``NonFiniteCastError`` or
+  ``OverflowError`` otherwise. ``erf`` and ``gelu`` are computed.
+- A failure belongs to its element: a piecewise raises it only for an
+  element whose selected branch fails, and ``&&`` or ``||`` only where no
+  other operand decides the element, so ``{floor(sqrt(x)) if x >= 0; 0
+  otherwise}`` and ``(y != 0) && (x // y > 1)`` evaluate everywhere.
 
-A piecewise expression lowers to a right-folded chain of ``numpy.where``
-calls, one per case. This is not lazy: every case value and ``otherwise``
-are evaluated for every element before selection. A domain error in an
-*unselected* case still produces its ``nan``/``inf`` (and warning); the
-conditions do not guard their sibling cases from evaluation. They do
-guard the integer-sorted cast of the result, though: a non-finite value
-arising inside a branch raises ``NonFiniteCastError`` only for elements
-the selected branch actually returns, so guarding a domain error with a
-condition -- ``{floor(sqrt(x)) if x >= 0; 0 otherwise}`` -- yields the
-guarded value rather than an error. Each condition must be
-boolean-dtyped: ``numpy.where`` would otherwise silently treat a nonzero
-numeric condition as true, exactly like a
-``logical_and``/``logical_or``/``logical_not`` operand below. A static
-check ahead of the walk reads a sort from each bound value's declared
-NumPy dtype and refuses a provably numeric condition with an unwrapped
-``NonBooleanLogicalOperandError``; a condition the static check cannot
-classify (for example an object dtype) is still caught by a runtime
-guard during the walk, and raises ``TypeError`` wrapped in
-``PassExecutionError`` instead.
-
-A ``logical_and``/``logical_or``/``logical_not`` operand must be
-boolean-dtyped: NumPy would otherwise treat a nonzero numeric value as
-true, exactly the piecewise-condition hazard above. The same static
-check refuses a provably numeric operand with an unwrapped
-``NonBooleanLogicalOperandError``, mirroring the SymPy and Z3 bridges; a
-value the static check cannot classify (for example an object dtype) is
-still caught by a runtime guard during the walk, and raises
-``NonBooleanLogicalOperandError`` wrapped in ``PassExecutionError``
-instead.
-
-Expression-bodied built-ins (``relu``, ``sigmoid``, ``clamp``, ...) are
-inlined automatically before the walk via ``inline_functions``, so the
-caller does not pre-inline them. ``erf`` (and therefore ``gelu``) has no
-NumPy ufunc and is unsupported.
+A 0-d result is a NumPy scalar (``numpy.bool_``, ``numpy.int64`` or
+``numpy.float64``); any other result is a new C-contiguous array, never a
+binding. Every error is raised directly, under its own class.
 
 NumPy is an optional dependency: importing this module never imports
-NumPy. The runtime import happens inside
-:func:`evaluate_expression_with_numpy`; when NumPy is not installed it
-raises :class:`ImportError` with guidance to install the ``numpy`` extra.
+NumPy, and without it the evaluation raises :class:`ImportError` with the
+extra to install.
 """
 
 __all__ = [
     "evaluate_expression_with_numpy",
 ]
 
-import functools
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from immutabledict import immutabledict
 
+from fhy_core import _rs
 from fhy_core.pass_infrastructure import (
+    CompilerPass,
     PassExecutionError,
-    VisitablePass,
     register_pass,
 )
 from fhy_core.utils.override import override
 
-from ...symbol_type import SymbolType
-from ..core import (
-    BinaryExpression,
-    BinaryOperation,
-    CallExpression,
-    Expression,
-    IdentifierExpression,
-    LiteralExpression,
-    LogicalExpression,
-    LogicalOperation,
-    PiecewiseExpression,
-    UnaryExpression,
-    UnaryOperation,
-    validate_logical_operands,
-)
-from ..errors import (
-    EntryLookupError,
-    NativeConstantBindingError,
-    NonBooleanLogicalOperandError,
-    NonFiniteCastError,
-    UnboundVariableError,
-    UnsupportedNumpyLoweringError,
-)
-from ..registry import (
-    NativeConstant,
-    NativeFunction,
-    get_registered_entry,
-    try_get_native_constant_for_identifier,
-)
-from ..sort import FunctionSort
-from .inline import inline_functions
-from .native_lowering import coerce_literal_value, try_get_native_constant_value
+from ..core import Expression
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -131,484 +70,37 @@ if TYPE_CHECKING:
     NumpyEnvironment: TypeAlias = Mapping[Identifier, npt.ArrayLike]
     """Binding of each free identifier to a NumPy-consumable value."""
 
-    NumpyResult: TypeAlias = npt.NDArray[Any] | np.generic | bool | int | float
+    NumpyResult: TypeAlias = npt.NDArray[Any] | np.generic
     """Concrete value produced by NumPy evaluation: an array or a scalar."""
-
-
-# Binary operation -> attribute name of the NumPy ufunc that lowers it.
-_BINARY_UFUNC_NAMES: immutabledict[BinaryOperation, str] = immutabledict(
-    {
-        BinaryOperation.ADD: "add",
-        BinaryOperation.SUBTRACT: "subtract",
-        BinaryOperation.MULTIPLY: "multiply",
-        BinaryOperation.DIVIDE: "true_divide",
-        BinaryOperation.FLOOR_DIVIDE: "floor_divide",
-        BinaryOperation.MODULO: "mod",
-        BinaryOperation.POWER: "power",
-        BinaryOperation.EQUAL: "equal",
-        BinaryOperation.NOT_EQUAL: "not_equal",
-        BinaryOperation.LESS: "less",
-        BinaryOperation.LESS_EQUAL: "less_equal",
-        BinaryOperation.GREATER: "greater",
-        BinaryOperation.GREATER_EQUAL: "greater_equal",
-    }
-)
-
-# Logical connective -> attribute name of the NumPy ufunc that lowers it; an
-# n-ary connective reduces its operands, in order, with the binary ufunc.
-_LOGICAL_UFUNC_NAMES: immutabledict[LogicalOperation, str] = immutabledict(
-    {
-        LogicalOperation.AND: "logical_and",
-        LogicalOperation.OR: "logical_or",
-    }
-)
-
-# Unary operation -> attribute name of the NumPy ufunc that lowers it.
-_UNARY_UFUNC_NAMES: immutabledict[UnaryOperation, str] = immutabledict(
-    {
-        UnaryOperation.NEGATE: "negative",
-        UnaryOperation.POSITIVE: "positive",
-        UnaryOperation.LOGICAL_NOT: "logical_not",
-    }
-)
-
-# Native-function name -> attribute name of the NumPy function that lowers it.
-# Most are ufuncs; ``round`` resolves to ``numpy.round`` (an array function).
-# ``erf`` is intentionally absent: NumPy has no vectorized ``erf``.
-_NATIVE_FUNCTION_UFUNC_NAMES: immutabledict[str, str] = immutabledict(
-    {
-        "exp": "exp",
-        "exp2": "exp2",
-        "log": "log",
-        "log2": "log2",
-        "log10": "log10",
-        "sqrt": "sqrt",
-        "sin": "sin",
-        "cos": "cos",
-        "tan": "tan",
-        "arcsin": "arcsin",
-        "arccos": "arccos",
-        "arctan": "arctan",
-        "sinh": "sinh",
-        "cosh": "cosh",
-        "tanh": "tanh",
-        "round": "round",
-        "floor": "floor",
-        "ceil": "ceil",
-    }
-)
-
-# Result sort -> attribute name of the NumPy dtype a native-call result is
-# cast to, so the result conforms to the call's declared result sort.
-# ``REAL`` is intentionally absent: real-sorted results are already
-# floating-point and pass through with their width preserved (e.g. a
-# ``float32`` input stays ``float32``).
-_SORT_CAST_DTYPE_NAMES: immutabledict[FunctionSort, str] = immutabledict(
-    {
-        FunctionSort.BOOL: "bool_",
-        FunctionSort.NAT: "int64",
-        FunctionSort.INT: "int64",
-    }
-)
-
-
-def _import_numpy() -> Any:
-    """Import and return NumPy, or raise a guiding ``ImportError``."""
-    try:
-        import numpy  # noqa: PLC0415
-    except ImportError as error:
-        raise ImportError(
-            "NumPy is required for `evaluate_expression_with_numpy`; install it "
-            "with `pip install fhy_core[numpy]`."
-        ) from error
-    return numpy
-
-
-# NumPy dtype kind code -> the sort a value of that kind declares for the
-# static connective screen. A kind absent here (for example "O", object)
-# stays undeclared: the screen can prove nothing about it, and the
-# runtime backstop in the visitor catches it instead.
-_DTYPE_KIND_SYMBOL_TYPES: immutabledict[str, SymbolType] = immutabledict(
-    {
-        "b": SymbolType.BOOL,
-        "i": SymbolType.INT,
-        "u": SymbolType.INT,
-        "f": SymbolType.REAL,
-    }
-)
-
-
-def _derive_symbol_types_from_environment(
-    expression: Expression, environment: "NumpyEnvironment", numpy_module: Any
-) -> "dict[Identifier, SymbolType]":
-    """Return the sort each dtype declares for a value bound to a referenced identifier.
-
-    Read by :func:`evaluate_expression_with_numpy` ahead of the pass, so
-    ``validate_logical_operands`` can screen a connective or piecewise
-    condition bound to a numeric value the same way the SymPy and Z3
-    bridges do, using ``symbol_types`` rather than an ``Expression``
-    environment. Coercing a binding with ``numpy.asarray`` to read its
-    dtype is skipped for an identifier ``expression`` does not reference,
-    since such a binding is ignored and may not even be NumPy-consumable
-    (for example a ragged nested sequence).
-
-    Args:
-        expression: Expression whose free identifiers select which
-            bindings to read.
-        environment: Binding of each free identifier to a
-            NumPy-consumable value.
-        numpy_module: The imported NumPy module.
-
-    Returns:
-        The sort declared by each referenced identifier's bound value's
-        dtype kind (``bool_``/``int``/``uint`` families, or
-        floating-point); an identifier bound to any other dtype (for
-        example ``object``) is omitted, leaving its sort undeclared.
-
-    """
-    referenced = expression.get_free_identifiers()
-    derived: dict[Identifier, SymbolType] = {}
-    for identifier, value in environment.items():
-        if identifier not in referenced:
-            continue
-        kind = numpy_module.asarray(value).dtype.kind
-        symbol_type = _DTYPE_KIND_SYMBOL_TYPES.get(kind)
-        if symbol_type is not None:
-            derived[identifier] = symbol_type
-    return derived
-
-
-def _raise_if_environment_binds_a_referenced_native_constant(
-    expression: Expression, environment: "NumpyEnvironment"
-) -> None:
-    """Raise if ``environment`` binds a native constant ``expression`` references.
-
-    Read ahead of the walk, since
-    :meth:`NumpyExpressionEvaluator.visit_identifier_expression` checks
-    the environment before falling back to a registered constant and
-    would otherwise silently prefer the caller's bound value over the
-    constant's.
-    """
-    referenced = expression.get_free_identifiers()
-    bound_constants = sorted(
-        (
-            identifier
-            for identifier in environment
-            if identifier in referenced
-            and try_get_native_constant_for_identifier(identifier) is not None
-        ),
-        key=lambda identifier: identifier.id,
-    )
-    if bound_constants:
-        raise NativeConstantBindingError(
-            f"cannot bind the native constant(s) {bound_constants}: a "
-            "constant's value is fixed by the registry, and a binding for "
-            "its canonical identifier is refused because this evaluator "
-            "would otherwise read the environment first and silently "
-            "prefer the caller's value over the constant's."
-        )
 
 
 @register_pass(
     "fhy_core.symbolic.expression.evaluate_with_numpy",
     "Evaluate a fully-bound expression tree to concrete NumPy values.",
 )
-class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
-    """Bottom-up evaluator lowering an expression tree to NumPy values.
+class NumpyExpressionEvaluator(CompilerPass[Expression, "NumpyResult"]):
+    """Pass evaluating an expression over NumPy values.
 
-    Each node is lowered to a vectorized NumPy operation over its
-    already-evaluated children. Identifiers resolve against the caller's
-    environment (coerced with ``numpy.asarray``) or, for a registered
-    native constant's canonical identifier, to the constant's value;
-    every other free identifier raises
-    :class:`UnboundVariableError`. A native call with no NumPy lowering
-    (``erf``, or a non-built-in native) raises
-    :class:`UnsupportedNumpyLoweringError`.
-
-    Expression-bodied calls are expected to have been inlined before the
-    walk; :func:`evaluate_expression_with_numpy` runs ``inline_functions``
-    first, so only native calls reach :meth:`visit_call_expression`.
+    A run evaluates its input over the environment given at construction,
+    which is copied then, as :func:`evaluate_expression_with_numpy` does. A
+    failure fails the run with ``PassExecutionError``, whose ``__cause__``
+    is the error the function raises.
     """
 
     _environment: "immutabledict[Identifier, npt.ArrayLike]"
-    # NumPy is optional, so its module and result values are typed ``Any``
-    # rather than referencing NumPy types at import time.
-    _numpy: Any
-    # Non-``None`` only while a piecewise branch is being evaluated, where a
-    # non-finite cast accumulates its offending elements into this mask
-    # instead of raising; see :meth:`_visit_branch_deferring_non_finite`.
-    _deferred_non_finite: Any | None
 
-    def __init__(self, environment: "NumpyEnvironment", numpy_module: Any) -> None:
+    def __init__(self, environment: "NumpyEnvironment") -> None:
         super().__init__()
         self._environment = immutabledict(environment)
-        self._numpy = numpy_module
-        self._deferred_non_finite = None
 
-    def visit_literal_expression(self, expression: LiteralExpression) -> Any:
-        """Return the literal's value, coercing string-form numerics."""
-        return coerce_literal_value(expression.value)
-
-    def visit_identifier_expression(self, expression: IdentifierExpression) -> Any:
-        """Resolve an identifier to its bound array or native-constant value."""
-        identifier = expression.identifier
-        if identifier in self._environment:
-            return self._numpy.asarray(self._environment[identifier])
-        constant_value = try_get_native_constant_value(identifier)
-        if constant_value is not None:
-            return constant_value
-        raise UnboundVariableError(self._describe_unbound_identifier(identifier))
-
-    def _describe_unbound_identifier(self, identifier: "Identifier") -> str:
-        """Explain why a bare identifier could not be resolved to a value.
-
-        Two shapes of near-miss get their own wording. A name that
-        resolves to a registered function is the likely result of
-        dropping a call. A name that resolves to a registered constant
-        means the identifier shares that constant's name without being
-        the canonical identifier the registry minted for it, so it is an
-        ordinary variable the caller has to bind.
-        """
-        name_hint = identifier.name_hint
-        try:
-            entry = get_registered_entry(name_hint)
-        except EntryLookupError:
-            return (
-                f"identifier {name_hint!r} is not bound in the environment "
-                f"and does not denote a registered native constant."
-            )
-        if isinstance(entry, NativeConstant):
-            return (
-                f"identifier {name_hint!r} is not bound in the environment; it "
-                f"shares its name with the native constant {name_hint!r} but is "
-                f"a distinct identifier, so bind it or use the registry's "
-                f"canonical identifier for that constant."
-            )
-        return (
-            f"identifier {name_hint!r} names a registered function, not a "
-            f"value; call it as {name_hint}(...) or bind it in the environment."
-        )
-
-    def visit_unary_expression(self, expression: UnaryExpression) -> Any:
-        """Apply the NumPy ufunc for a unary operation to its operand.
-
-        Raises:
-            NonBooleanLogicalOperandError: If the operation is
-                ``LOGICAL_NOT`` and the operand's lowered value is not
-                boolean-dtyped.
-
-        """
-        operand = self.visit(expression.operand)
-        ufunc_name = _UNARY_UFUNC_NAMES[expression.operation]
-        if expression.operation is UnaryOperation.LOGICAL_NOT:
-            self._raise_unless_boolean_connective_operand(operand, ufunc_name)
-        ufunc = getattr(self._numpy, ufunc_name)
-        return ufunc(operand)
-
-    def visit_binary_expression(self, expression: BinaryExpression) -> Any:
-        """Apply the NumPy ufunc for a binary operation to its operands."""
-        left = self.visit(expression.left)
-        right = self.visit(expression.right)
-        ufunc = getattr(self._numpy, _BINARY_UFUNC_NAMES[expression.operation])
-        return ufunc(left, right)
-
-    def visit_logical_expression(self, expression: LogicalExpression) -> Any:
-        """Reduce the operands, in order, with the connective's NumPy ufunc.
-
-        Raises:
-            NonBooleanLogicalOperandError: If an operand's lowered value is
-                not boolean-dtyped.
-
-        """
-        ufunc_name = _LOGICAL_UFUNC_NAMES[expression.operation]
-        operands = [self.visit(operand) for operand in expression.operands]
-        for operand in operands:
-            self._raise_unless_boolean_connective_operand(operand, ufunc_name)
-        ufunc = getattr(self._numpy, ufunc_name)
-        return functools.reduce(ufunc, operands)
-
-    def _raise_unless_boolean_connective_operand(
-        self, value: Any, connective_name: str
-    ) -> None:
-        """Raise unless a connective operand's lowered value is boolean-dtyped.
-
-        A backstop for what the static pre-check in
-        :func:`evaluate_expression_with_numpy` cannot prove from the
-        environment's declared dtypes alone -- for example a value bound
-        with an object dtype -- mirroring the existing dtype guard on a
-        piecewise condition.
-
-        Raises:
-            NonBooleanLogicalOperandError: If ``value`` is not
-                boolean-dtyped.
-
-        """
-        if self._is_boolean_condition_value(value):
-            return
-        raise NonBooleanLogicalOperandError(
-            f"{connective_name} operand has dtype "
-            f"{getattr(value, 'dtype', type(value))}, not boolean; the "
-            "expression is ill-typed and NumPy would otherwise read it by "
-            "truthiness."
-        )
-
-    def visit_piecewise_expression(self, expression: PiecewiseExpression) -> Any:
-        """Select elementwise via a right-folded chain of ``numpy.where`` calls.
-
-        Every case value and ``otherwise`` are evaluated for every
-        element before selection (``numpy.where`` is not lazy), so a
-        domain error (division by zero, ``log`` of a non-positive) in an
-        unselected case still produces its ``nan``/``inf`` and NumPy
-        warning -- the conditions do not guard their sibling cases from
-        evaluation. They do, however, guard the integer-sorted cast of
-        those values: a non-finite value produced inside a branch is
-        recorded per element rather than raising, and the recorded masks
-        are folded through the same ``numpy.where`` chain as the values,
-        so :class:`NonFiniteCastError` is raised only for an element the
-        selected branch actually returns. Guarding a domain error with a
-        condition therefore works. A nested piecewise passes its own
-        surviving mask up instead of raising, so the outermost node --
-        the only one whose selection the caller actually receives -- is
-        what decides.
-
-        The chain is right-folded from ``otherwise``, so the first case's
-        ``numpy.where`` is outermost and first-match-wins holds. Each
-        condition must be boolean-dtyped: ``numpy.where`` would otherwise
-        silently treat a nonzero numeric condition as true. A condition
-        provably numeric from its declared NumPy dtype is already refused
-        by the static pre-check in
-        :func:`evaluate_expression_with_numpy`, with a bare
-        :class:`NonBooleanLogicalOperandError` raised before this method
-        runs; this check is the backstop for a condition whose dtype the
-        static check cannot classify (for example an object dtype), and
-        raises ``TypeError`` here instead.
-        """
-        lowered_cases: list[tuple[Any, Any, Any]] = []
-        for index, (condition, value) in enumerate(expression.get_cases()):
-            condition_value = self.visit(condition)
-            if not self._is_boolean_condition_value(condition_value):
-                raise TypeError(
-                    f"piecewise case {index} condition must be boolean-dtyped, "
-                    f"but got dtype "
-                    f"{getattr(condition_value, 'dtype', type(condition_value))}"
-                )
-            case_value, case_non_finite = self._visit_branch_deferring_non_finite(value)
-            lowered_cases.append((condition_value, case_value, case_non_finite))
-        result, non_finite = self._visit_branch_deferring_non_finite(
-            expression.otherwise
-        )
-        for condition_value, case_value, case_non_finite in reversed(lowered_cases):
-            result = self._numpy.where(condition_value, case_value, result)
-            non_finite = self._numpy.where(condition_value, case_non_finite, non_finite)
-        if self._numpy.any(non_finite):
-            if self._deferred_non_finite is None:
-                raise NonFiniteCastError(
-                    "cannot cast a non-finite value to an integer- or boolean-sorted "
-                    "dtype: the branch selected for at least one element produced a "
-                    "nan/inf value with no faithful representation there."
-                )
-            # Nested piecewise: this node's own selection is poisoned, but an
-            # enclosing condition may still discard the element. Pass the mask
-            # up rather than deciding here. The poisoned lanes of ``result``
-            # already carry zero, substituted at the cast.
-            self._deferred_non_finite = self._numpy.logical_or(
-                self._deferred_non_finite, non_finite
-            )
+    @override
+    def run_pass(self, ir: Expression) -> "NumpyResult":
+        result: NumpyResult = _rs.evaluate_expression_with_numpy(ir, self._environment)
         return result
-
-    def _visit_branch_deferring_non_finite(self, node: Expression) -> tuple[Any, Any]:
-        """Evaluate a piecewise branch, returning its value and non-finite mask.
-
-        While the branch is being walked, an integer- or boolean-sorted
-        cast of a non-finite value adds the offending elements to the mask
-        instead of raising, so the caller can discard the ones its
-        condition does not select. The mask starts out as a scalar
-        ``False`` and broadcasts against every cast that adds to it.
-        """
-        outer = self._deferred_non_finite
-        self._deferred_non_finite = self._numpy.zeros((), dtype=self._numpy.bool_)
-        try:
-            value = self.visit(node)
-            non_finite = self._deferred_non_finite
-        finally:
-            self._deferred_non_finite = outer
-        return value, non_finite
-
-    def _is_boolean_condition_value(self, value: Any) -> bool:
-        """Return whether a lowered piecewise condition value is boolean-dtyped.
-
-        A raw Python ``bool`` (from a boolean ``LiteralExpression``, the
-        only literal value a piecewise condition may hold) has no
-        ``dtype`` attribute and is checked directly; every other lowered
-        condition is NumPy-typed and is checked by dtype.
-        """
-        if isinstance(value, bool):
-            return True
-        return bool(getattr(value, "dtype", None) == self._numpy.bool_)
-
-    def visit_call_expression(self, expression: CallExpression) -> Any:
-        """Apply a native call's NumPy operation, then cast to its result sort.
-
-        The registered entry is resolved once and dispatched by type --
-        mirroring ``evaluate_expression`` and ``inline_functions`` -- so a
-        name that is not a :class:`NativeFunction` with a ufunc mapping
-        (``erf``, or a caller-registered native) raises
-        :class:`UnsupportedNumpyLoweringError` before any NumPy work.
-        """
-        function_name = expression.function_name
-        entry = get_registered_entry(function_name)
-        ufunc_name = _NATIVE_FUNCTION_UFUNC_NAMES.get(function_name)
-        if not isinstance(entry, NativeFunction) or ufunc_name is None:
-            raise UnsupportedNumpyLoweringError(
-                f"native function {function_name!r} has no NumPy lowering."
-            )
-        ufunc = getattr(self._numpy, ufunc_name)
-        arguments = [self.visit(argument) for argument in expression.arguments]
-        return self._cast_to_result_sort(ufunc(*arguments), entry.result_sort)
-
-    def _cast_to_result_sort(self, result: Any, result_sort: FunctionSort) -> Any:
-        """Cast a native-call result to the dtype of its declared result sort.
-
-        Integer- and boolean-sorted natives (``floor``, ``round``, ...)
-        would otherwise return NumPy's floating-point default; casting
-        makes the NumPy path agree with the declared sort and with
-        ``evaluate_expression``. Real-sorted results are already
-        floating-point and pass through unchanged, preserving their width.
-        A non-finite (``nan``/``inf``) result raises ``NonFiniteCastError``
-        rather than casting, since neither value has a faithful integer
-        or boolean representation. Inside a piecewise branch the offending
-        elements are recorded instead, and
-        :meth:`visit_piecewise_expression` raises only if the selected
-        branch returns one; the non-finite elements are replaced with zero
-        before the cast so the discarded lanes carry no platform sentinel.
-        """
-        dtype_name = _SORT_CAST_DTYPE_NAMES.get(result_sort)
-        if dtype_name is None:
-            return result
-        non_finite = self._numpy.logical_not(self._numpy.isfinite(result))
-        if self._numpy.any(non_finite):
-            if self._deferred_non_finite is None:
-                raise NonFiniteCastError(
-                    f"cannot cast a non-finite value to the {result_sort.value}-sorted "
-                    f"dtype {dtype_name!r}: the result contains a nan/inf value with "
-                    "no faithful representation there."
-                )
-            self._deferred_non_finite = self._numpy.logical_or(
-                self._deferred_non_finite, non_finite
-            )
-            result = self._numpy.where(non_finite, 0, result)
-        return result.astype(getattr(self._numpy, dtype_name))
 
     @override
     def did_change(self, input_ir: Expression, output: "NumpyResult") -> bool:
-        """Report that evaluation always produces a new value.
-
-        The default change detection compares ``input_ir`` against
-        ``output`` with ``!=``. Here ``output`` is a NumPy array, so that
-        comparison would trigger NumPy's elementwise machinery over the
-        whole array -- an ``O(n_elements)`` cost on every call. Evaluation
-        never returns the input tree, so this reports ``True`` directly.
-        """
+        """Report that evaluation always produces a new value."""
         _ = (input_ir, output)
         return True
 
@@ -623,106 +115,49 @@ def evaluate_expression_with_numpy(
     expression: Expression,
     environment: "NumpyEnvironment",
 ) -> "NumpyResult":
-    """Evaluate ``expression`` to a concrete NumPy value.
-
-    Expression-bodied function calls are inlined first, then the tree is
-    walked once: each node applies the corresponding vectorized NumPy
-    operation to its already-evaluated children. Every free identifier
-    must be resolvable -- bound in ``environment`` or matching a
-    registered native constant (``pi``, ``e``, ``inf``, ``nan``).
+    """Evaluate ``expression`` to a NumPy value over ``environment``.
 
     Args:
         expression: Expression tree to evaluate. Every free identifier
             (after inlining) must be bound in ``environment`` or be a
-            registered native constant.
+            constant's canonical identifier (``pi``, ``e``, ``inf``,
+            ``nan``, or a registered constant).
         environment: Value for each free identifier, as anything NumPy
-            accepts (``ndarray``, scalar, or nested sequence). Bindings
-            for identifiers that are not free in ``expression`` are
+            accepts (``ndarray``, scalar, or nested sequence). Bindings of
+            identifiers the inlined expression does not refer to are
             ignored.
 
     Returns:
-        The evaluated value: a NumPy array when any bound variable is
-        array-valued. For a fully scalar environment the result is a NumPy
-        or Python scalar, except that a piecewise- or bare-identifier-rooted
-        expression returns a rank-0 ``ndarray``. A native call's result is
-        cast to the dtype of its declared result sort (so
-        ``floor``/``round``/``ceil`` yield integers); every other node's
-        dtype follows NumPy's type-promotion rules. Floating-point domain
-        conditions (``sqrt(-1)``, ``log(0)``, division by zero) follow
-        NumPy and yield ``nan``/``inf`` rather than raising at the point of
-        computation -- unlike ``evaluate_expression``, whose scalar native
-        implementations raise immediately. A piecewise expression evaluates
-        every case value and ``otherwise`` for every element (it lowers to
-        a chain of ``numpy.where`` calls), so a domain error in an
-        unselected case is not suppressed by its condition -- but the
-        resulting ``nan``/``inf`` is discarded with its lane, so an
-        integer-sorted branch guarded by a condition does not raise.
+        A NumPy scalar when every binding is a scalar, and otherwise a new
+        array of the bindings' broadcast shape.
 
     Raises:
-        ImportError: If NumPy is not installed. Raised directly, before
-            any evaluation, with guidance to install the ``numpy`` extra.
-        NativeConstantBindingError: If ``environment`` binds a registered
-            native constant's canonical identifier that the inlined
-            expression references. Raised directly, before any
-            evaluation: this evaluator otherwise reads the environment
-            before checking for a constant and would silently prefer the
-            caller's bound value over the constant's.
-        NonBooleanLogicalOperandError: If a ``LogicalExpression`` or
-            ``LOGICAL_NOT`` operand, or a piecewise case condition,
-            provably denotes a number. Raised directly, before any
-            evaluation, from a static check over the inlined tree that
-            reads a sort from each bound value's NumPy dtype (boolean,
-            integer/unsigned, or floating-point; any other dtype is left
-            undeclared). An operand or condition the static check cannot
-            prove numeric from a declared dtype -- for example one bound
-            with an object dtype -- is still caught at evaluation time and
-            surfaces as ``PassExecutionError.__cause__`` instead, below.
-        PassExecutionError: Wraps each domain failure below, with the
-            underlying typed error attached as ``__cause__`` (matching the
-            sibling expression passes). The underlying errors are:
-
-            - :class:`UnboundVariableError`: a free identifier is neither
-              bound in ``environment`` nor a registered native constant.
-            - :class:`UnsupportedNumpyLoweringError`: a node has no NumPy
-              lowering (``erf``/``gelu``, or a non-built-in native
-              function).
-            - :class:`StringLiteralPrecisionError`: a float-grammar
-              string literal cannot be coerced to a binary ``float``
-              without precision loss.
-            - :class:`NonFiniteCastError`: a ``nan``/``inf`` value reaches
-              a ``BOOL``/``NAT``/``INT``-sorted cast, which has no
-              faithful representation for it. Inside a piecewise, only an
-              element the selected branch returns raises; one produced by
-              an unselected branch is discarded with its lane.
-            - :class:`NonBooleanLogicalOperandError`: a ``LogicalExpression``
-              or ``LOGICAL_NOT`` operand's lowered value
-              is not boolean-dtyped, and the static check above could not
-              prove it numeric ahead of evaluation.
-            - ``TypeError``: a piecewise condition's lowered value is not
-              boolean-dtyped, and the static check above could not prove
-              it numeric ahead of evaluation (for example one bound with
-              an object dtype).
-            - :class:`EntryLookupError`: a call references an
-              unregistered function name.
-            - :class:`FunctionArityError`: a call's argument count does
-              not match its registered arity, or the call target is a
-              native constant.
-            - ``RecursionError``: a registered function is transitively
-              recursive and cannot be inlined.
-            - ``ValueError``: raised by NumPy for an operation it rejects
-              on the given dtypes rather than folding to ``nan``/``inf``
-              -- most notably an integer base raised to a negative integer
-              power (``numpy.power``).
+        ImportError: If NumPy is not installed.
+        EntryLookupError: A call names an unregistered function.
+        FunctionArityError: A call's argument count is wrong, or its
+            target is a constant.
+        RecursionError: A registered function is recursive.
+        NonBooleanLogicalOperandError: A connective operand, a negation's
+            operand, or a piecewise condition is a number.
+        NativeConstantBindingError: ``environment`` binds a constant's
+            canonical identifier the expression refers to.
+        UnboundVariableError: A free identifier is neither bound nor a
+            constant.
+        StringLiteralPrecisionError: A decimal literal has no exact binary
+            float.
+        UnsupportedNumpyLoweringError: A call of a registered native
+            function, which has no implementation the evaluator can run.
+        NonFiniteCastError: An ``INT``-sorted native's selected result is
+            ``nan`` or infinite.
+        OverflowError: An integer overflows ``int64``, or a binding does
+            not fit it.
+        ZeroDivisionError: An integer is floor-divided by zero, or its
+            remainder taken.
+        ValueError: Shapes do not broadcast, or an integer is raised to a
+            negative integer power.
+        TypeError: A Boolean is used as a number, a piecewise mixes
+            Booleans and numbers, or a binding's dtype is unsupported.
 
     """
-    numpy_module = _import_numpy()
-    inlined_expression = inline_functions(expression)
-    derived_symbol_types = _derive_symbol_types_from_environment(
-        inlined_expression, environment, numpy_module
-    )
-    validate_logical_operands(inlined_expression, symbol_types=derived_symbol_types)
-    _raise_if_environment_binds_a_referenced_native_constant(
-        inlined_expression, environment
-    )
-    evaluator = NumpyExpressionEvaluator(environment, numpy_module)
-    return evaluator(inlined_expression)
+    result: NumpyResult = _rs.evaluate_expression_with_numpy(expression, environment)
+    return result

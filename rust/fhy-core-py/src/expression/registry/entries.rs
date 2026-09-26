@@ -784,21 +784,12 @@ impl_entry_protocols!(PyNativeFunction, "NativeFunction", {
     }
 
     /// Build the entries of the built-ins once, each native built-in
-    /// computed by the callable of its name in `implementations`, or, when
-    /// it is `None`, by its `BuiltinNativeImplementation`, the core's
-    /// kernel. `builtins.py` calls it at import; a later call does nothing.
-    ///
-    /// Raises `KeyError` for a native built-in without an implementation.
+    /// computed by its `BuiltinNativeImplementation`, the core's kernel
+    /// (D-S9-9). `builtins.py` calls it at import; a later call does
+    /// nothing.
     #[classmethod]
-    #[pyo3(signature = (implementations = None))]
-    fn _install_builtins(
-        cls: &Bound<'_, PyType>,
-        implementations: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
-        let implementations = implementations
-            .map(|implementations| implementations.cast::<pyo3::types::PyMapping>())
-            .transpose()?;
-        state::install_builtins(cls.py(), implementations)
+    fn _install_builtins(cls: &Bound<'_, PyType>) -> PyResult<()> {
+        state::install_builtins(cls.py())
     }
 });
 
