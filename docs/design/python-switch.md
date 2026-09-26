@@ -89,7 +89,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README. `tests_minimal` passes (5,646 passed, 626 skipped)
   - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost, accepted by the maintainer; see "S9 benchmarks")
 - [ ] S12: the Rust SymPy simplifier backend (designed 2026-09-26; see "S12: the Rust SymPy simplifier backend")
-  - [ ] N-S12-1 decided
+  - [x] N-S12-1 decided as (a) (2026-09-26; see "S12 resolutions")
   - [ ] S12.1: SymPy benchmarks and baseline, on today's Python adapter
   - [ ] S12.2: the simplify context carries the function registry (core, test-first)
   - [ ] S12.3: the `sympy` cargo feature and `SympySimplifier`, test-first, with the CI changes
@@ -10373,8 +10373,8 @@ Choices the decisions left open, made while implementing S9.5 to S9.8
   user's direction in "Plan after S7", item 2: a Rust `Simplifier` over
   SymPy through pyo3, behind an off-by-default `sympy` cargo feature of
   `fhy-core`, with pyo3 optional and without `auto-initialize`, which the
-  Python binding then uses too, so one copy of the mapping is left. N-S12-1
-  needs the user. Nothing is implemented yet.
+  Python binding then uses too, so one copy of the mapping is left. The
+  user resolved N-S12-1 as (a); see "S12 resolutions".
 - **Pattern:** the lowering to SymPy, the simplify call with its
   workarounds, and the lifting back move into the core, as
   `fhy_core::solver::SympySimplifier` under the feature. In Python it
@@ -11005,7 +11005,8 @@ Where a decision follows an earlier slice's decision or note, it says so.
     - A support helper builds one `SympySimplifier::with_embedded_python()`
       for the binary and calls `load()`.
     - Without SymPy, that call fails with a message naming `PYO3_PYTHON`,
-      `PYTHONPATH` and the recipe, under N-S12-1 (a).
+      `PYTHONPATH` and `LD_LIBRARY_PATH` and the recipe (N-S12-1, resolved
+      as (a)); nothing skips.
     - The tests share one interpreter, and the GIL serializes them.
   - **A fresh-process target.** `tests/sympy_unavailable.rs`, with
     `required-features = ["sympy"]`, is one `#[test]` in a fresh process:
@@ -11026,14 +11027,30 @@ Where a decision follows an earlier slice's decision or note, it says so.
     - The `rust-msrv` job needs no change (`cargo +1.85 check`, which also
       builds the feature through the binding), and neither does the
       packaged-crate test (default features).
+    - The step writes `PYO3_PYTHON` and `PYTHONPATH` to `$GITHUB_ENV`, so
+      every later step has them: each `cargo test` that builds the
+      workspace (`--workspace --all-features`) links the venv's Python and
+      finds its SymPy. The default-feature steps (`-p fhy-core`, the
+      packaged crate) do not enable the feature and ignore them.
   - **Locally.** The known `-lpython3.11` failure comes from the tooling's
     deadsnakes 3.11, which has no `libpython3.11.so`. The Rust gate
-    therefore runs with a Python that has one:
-    - `PYO3_PYTHON` set to a `python3.10` venv holding sympy, and
-      `PYTHONPATH` set to its site-packages;
-    - or a uv-managed CPython, with `LD_LIBRARY_PATH` set to its `lib`.
+    therefore runs with a Python that has one. On this machine it is a
+    uv-managed CPython 3.11.16, installed with `--no-bin` inside the
+    worktree, and a venv of it holding sympy 1.14:
 
-    CONTRIBUTING's porting section records the recipe.
+    ```bash
+    G=$PWD/target/gate-python
+    uv python install --no-bin --install-dir "$G/pythons" 3.11.16
+    uv venv --python "$G"/pythons/cpython-3.11.16-*/bin/python3.11 "$G/venv"
+    VIRTUAL_ENV="$G/venv" uv pip install sympy==1.14.0
+    export PYO3_PYTHON="$G/venv/bin/python"
+    export PYTHONPATH="$G/venv/lib/python3.11/site-packages"
+    export LD_LIBRARY_PATH="$(echo "$G"/pythons/cpython-3.11.16-*/lib)"
+    ```
+
+    With the `z3` feature too, `LD_LIBRARY_PATH` also names the
+    z3-solver wheel's `lib` (S8.3). CONTRIBUTING's porting section records
+    the recipe, which nothing outside the worktree needs.
 - **D-S12-14: `deny.toml` does not change** (D-S8-9's reasoning).
   - `cargo deny` checks the workspace graph with `all-features = true`.
     pyo3 and its tree (`pyo3-ffi`, `pyo3-build-config`, `pyo3-macros`,
@@ -11114,8 +11131,8 @@ The paths at risk:
 
 ### Needs the user
 
-- **N-S12-1: what the SymPy stories do when no SymPy is importable.**
-  Every workspace build enables the feature (D-S12-3), so `cargo test
+- **N-S12-1 (resolved 2026-09-26 by the user, as option (a)): what the
+  SymPy stories do when no SymPy is importable.** Every workspace build enables the feature (D-S12-3), so `cargo test
   --workspace` runs the stories. Today, the only extra that command needs
   is a linkable libpython for the binding's test harness; with this
   change it would also need SymPy on the embedded interpreter's path. The
@@ -11142,6 +11159,37 @@ The paths at risk:
   The local cost is one pair of environment variables, which the gate
   already needs on this machine for the binding's harness, since the
   tooling Python has no shared libpython.
+
+### S12 resolutions (decided by the user, 2026-09-26)
+
+- **N-S12-1: (a) required.** Wherever the `sympy` feature is enabled,
+  which is every workspace build, the SymPy stories fail when SymPy cannot
+  be imported, and the failure message gives the setup recipe:
+  `PYO3_PYTHON`, `PYTHONPATH`, and `LD_LIBRARY_PATH` where the linked
+  libpython is not on the loader's path. There is no opt-in variable.
+  D-S12-13 records the recipe for CI and for this machine.
+
+### S12 rebase onto S9 (2026-09-26)
+
+The design commit was rebased onto `dev-rust` at 3a53195, S9's last
+commit. The one conflict was additive: S9's and S12's checklist entries
+and sections, S12's after S9's. Checked against S9's code, the design
+holds with these adjustments:
+
+- `rust/fhy-core/Cargo.toml`'s `[features]` now holds `z3` and `ndarray`,
+  and `sympy` joins them. The binding's `fhy-core` dependency already
+  names `features = ["ndarray"]`, and gains `"sympy"`.
+- rust-numpy (`numpy` 0.29) depends on pyo3 with `macros`, so in the
+  workspace graph pyo3 has `macros` whatever the core asks for. The core
+  still asks for no pyo3 feature (D-S12-2), and `cargo deny` sees no new
+  crate (D-S12-14).
+- `Decimal::to_f64_exact` and `fhy_core::expression::evaluate` have
+  landed, so S12.3 uses them directly (D-S12-8; the properties' oracle).
+- `native_lowering.py` is now a thin layer over `_rs`, and
+  `passes/sympy.py` still imports `is_decimal_text_exactly_binary` from
+  it; S12.5 drops that import.
+- S9 marked 13 tests of `test_sympy_pass.py` `numpy`, since they tabulate
+  with the NumPy evaluator as the oracle. The marks stay.
 
 ### Steps
 
