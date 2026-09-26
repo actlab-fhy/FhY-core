@@ -8,8 +8,9 @@ entries restore one after their benchmark.
 
 The trees are the expression benchmarks' deep tree and doubling DAG. The
 nested row inlines ``relu`` nested `_NESTED_DEPTH` deep; before the switch
-the Python inliner walks the substituted body per occurrence, so the cost
-doubles with each level, and depth 100 did not finish in five minutes.
+the Python inliner walked the substituted body per occurrence, so the cost
+doubled with each level, and depth 100 did not finish in five minutes. The
+row nesting it `_DEEP_NESTED_DEPTH` deep was added after the switch.
 """
 
 import math
@@ -66,8 +67,9 @@ _SWEPT_USER_FUNCTION_COUNT = 20
 # they cycle through.
 _SCREENED_CALL_COUNT = 100
 _SCREENED_FUNCTION_COUNT = 5
-# How deep the nested row nests `relu`.
+# How deep the nested rows nest `relu`.
 _NESTED_DEPTH = 10
+_DEEP_NESTED_DEPTH = 100
 # How many user functions the chain row links.
 _CHAIN_LENGTH = 10
 
@@ -346,6 +348,17 @@ def test_inline_functions(
     else:
         tree = _build_dag_over(call("sigmoid", Identifier("z")))
     benchmark(inline_functions, tree)
+
+
+def test_inline_functions_of_builtins_nested_a_hundred_deep(
+    benchmark: Benchmark,
+) -> None:
+    """Time the inliner over ``relu`` nested `_DEEP_NESTED_DEPTH` deep.
+
+    Added after the switch to the Rust inliner, with no baseline: the
+    Python inliner did not finish it in five minutes.
+    """
+    benchmark(inline_functions, _nest_relu(_DEEP_NESTED_DEPTH))
 
 
 def _build_dag_over(leaf: Expression) -> Expression:

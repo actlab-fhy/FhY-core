@@ -52,15 +52,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] mypy over the Rust branches (S4.4)
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
-- [ ] S7: the function registry (designed; see "S7: the function registry")
-  - S7 in progress: done S7.1 to S7.5; next S7.6 (benchmarks after, and the docs)
+- [x] S7: the function registry (N-S7-1 to N-S7-3 resolved as (a)). The suite is green (7,327 passed), slow tests pass (7,360), properties pass (281), lint and mypy are clean, `tests-3.13` passes with `FORCE_COLOR=1`, and the Rust gate passes (2,808)
   - [x] N-S7-1 to N-S7-3 decided (2026-09-25; see "S7 resolutions")
   - [x] S7.1: registry benchmarks and baseline
   - [x] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
   - [x] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
   - [x] S7.4: the Python switch
   - [x] S7.5: tests migrated, and the interface suite
-  - [ ] S7.6: benchmarks after, and docs
+  - [x] S7.6: benchmarks after, and docs
 
 ## Goal
 
@@ -4601,8 +4600,9 @@ pipeline and keeps its input object when nothing fires.
 
 ## S7: the function registry
 
-- **Status:** designed 2026-09-25 at 0bc8952. D-S7-1 to D-S7-17 apply the
-  policy the user already set; N-S7-1 to N-S7-3 need the user.
+- **Status:** designed 2026-09-25 at 0bc8952, and implemented the same
+  day; see "S7 status" below. D-S7-1 to D-S7-17 apply the policy the user
+  already set, and N-S7-1 to N-S7-3 were resolved as option (a).
 - **Pattern:** P2 for the three entry classes and for the registry, whose
   core type is a new owned `FunctionRegistry`. The binding keeps one in
   module state, so Python keeps its global `register_function` API.
@@ -5713,6 +5713,201 @@ Python lookups replaced by raising ones; the inliner's pass, its identity
 result, its errors as causes, and `relu` nested 100 deep; threads (distinct
 names, one contested name, and whole snapshots while another thread
 registers); and the 16 printed bodies.
+
+### S7 status
+
+S7 was implemented on 2026-09-25 in nine commits: the benchmarks and
+their baseline (b131516); the core additions, test-first (3bda92b); the
+binding (9c34e3b); the Python switch, marked breaking (b4ca537); the
+inliner's refusal of a call of a built-in constant, which the migration
+found (52fad7e); the migrated tests and the interface suite (bca3227);
+the entries' equality in Rust, which the benchmarks called for
+(1c6805c); and these docs, with the depth-100 benchmark. No test was
+skipped or deleted. At the end: `pytest` 7,327 passed, `-m "not
+very_slow"` 7,360 passed, the `property` session 281 passed, `lint` and
+`type_check` clean, `tests/test_rs_stub.py` green, `FORCE_COLOR=1 nox -s
+tests-3.13` green, and the Rust gate green (fmt, clippy `-D warnings`,
+2,808 tests, doc `-D warnings`, deny, `cargo +1.85 check`).
+
+### S7 benchmarks (before and after)
+
+Median time per call, from the benchmark session's environment, `pytest
+benchmarks -k "test_registry or call_construction_of_a_user or
+test_validate" -n 0 --benchmark-only`, on the S0 machine with Python
+3.11.13 and pytest-benchmark 5.3.0. "Before" is b131516, the S7.1
+baseline's tree, exported with `git archive` under `target/` and built
+there; "after" is the S7.6 tree. The two ran three times each,
+interleaved (before, then after, in each round), with a load average of
+3 to 5, and the table lists the best of the three medians. The "before"
+column agrees with the S7.1 table within 7%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_register_function[small]` | 3.56 µs | 3.09 µs | 0.87 |
+| `test_register_function[deep_body]` | 13.3 µs | 9.19 µs | 0.69 |
+| `test_register_native_function` | 72.6 µs | 77.4 µs | 1.07 |
+| `test_register_native_constant` | 5.94 µs | 1.25 µs | 0.21 |
+| `test_registered_function_construction` | 2.54 µs | 1.09 µs | 0.43 |
+| `test_registered_function_eq` | 531 ns | 284 ns | 0.53 |
+| `test_registered_function_hash` | 330 ns | 273 ns | 0.83 |
+| `test_registered_function_alpha_equivalence` | 52.1 µs | 856 ns | 0.02 |
+| `test_get_registered_entry[user]` | 261 ns | 120 ns | 0.46 |
+| `test_get_registered_entry[builtin]` | 261 ns | 86 ns | 0.33 |
+| `test_get_registered_entry[miss]` | 658 ns | 552 ns | 0.84 |
+| `test_is_entry_registered` | 239 ns | 119 ns | 0.50 |
+| `test_try_get_registered_result_sort[user]` | 331 ns | 179 ns | 0.54 |
+| `test_try_get_registered_result_sort[miss]` | 569 ns | 167 ns | 0.29 |
+| `test_try_get_native_constant_for_identifier[hit]` | 297 ns | 119 ns | 0.40 |
+| `test_try_get_native_constant_for_identifier[miss]` | 296 ns | 138 ns | 0.47 |
+| `test_get_native_constant_identifier` | 247 ns | 73 ns | 0.30 |
+| `test_get_registered_entries` | 1.04 µs | 150 ns | 0.14 |
+| `test_validate_predicate_of_user_calls` | 32.0 µs | 18.2 µs | 0.57 |
+| `test_inline_functions[no_calls]` | 189.6 µs | 18.5 µs | 0.10 |
+| `test_inline_functions[nested_builtins]` (relu 10 deep) | 11.4 ms | 46.9 µs | 0.004 |
+| `test_inline_functions[user_chain]` | 111.5 µs | 30.3 µs | 0.27 |
+| `test_inline_functions[shared_dag]` | 17.9 ms | 22.5 µs | 0.001 |
+| `test_inline_functions_of_builtins_nested_a_hundred_deep` (relu 100 deep) | did not finish in 5 min (probe) | 367.0 µs | - |
+| `test_evaluate_after_inline` | 174.0 µs | 62.7 µs | 0.36 |
+| `test_check_all_registered_function_bodies` | 7.33 ms | 7.22 ms | 0.98 |
+| `test_call_construction_of_a_user_function` (rerun) | 1.45 µs | 1.57 µs | 1.08 |
+| `test_validate_logical_operands_of_deep_conjunction` (rerun) | 72.8 µs | 16.8 µs | 0.23 |
+| `test_validate_predicate_of_nested_piecewise` (rerun) | 16.8 µs | 11.1 µs | 0.66 |
+| `test_validate_predicate_of_comparison` (rerun) | 1.50 µs | 497 ns | 0.33 |
+
+Every hot path is faster or within the 10% CONTRIBUTING allows, so P2
+stands and no cost needs the maintainer (cross-cutting rule 5):
+
+- **The lookups** the passes make per call, which the plan put at risk,
+  are 1.2 to 3.5 times faster: one call into the extension, a lock held
+  only to read the current state, and the cached entry object returned.
+  The snapshot is 7 times faster, since it is built once per state. A
+  miss of `get_registered_entry` still pays for its `EntryLookupError`.
+- **The inliner** is where S7 pays off: X-10's nested `relu` goes from
+  11.4 ms at depth 10, doubling per level, to 47 µs, and depth 100, which
+  the Python inliner did not finish, takes 0.37 ms, linear in the depth;
+  the DAG with a `sigmoid` call at its leaf drops from 17.9 ms to 23 µs,
+  since each distinct node is inlined once. A tree with no call costs the
+  pass's floor, 18 µs, most of it the lifecycle and the walk's memo; the
+  Python walk took 190 µs. The evaluator after inlining is 2.8 times
+  faster.
+- **The screen** no longer calls Python: the user-call conjunction is 1.8
+  times faster, and the S4.1 screen rows 1.5 to 4.3 times, since they
+  lost the identifier-collection walk of the old adapter.
+- **Entry values.** Construction is 2.3 times faster; the binder
+  equivalence of two functions 61 times, one Rust comparison instead of
+  the derived plan; `==` 1.9 times, after 1c6805c (the first run
+  measured 1.12 with the field tuples, see the notes), and `hash` 1.2.
+- **Registration** of a function or a constant is faster. A native
+  function takes 1.07 times as long: `inspect.signature` still dominates
+  it, and the binding adds a call through the public class, the Python
+  arity check called from Rust, and the state's clone. It is within the
+  10%, and registrations are rare.
+- **Unchanged rows.** The body sweep runs the Python type checker, which
+  S7 does not change. `test_call_construction_of_a_user_function`'s code
+  does not change either; it measured 0.98 in the first set of rounds.
+
+### S7 implementation notes
+
+Choices the decisions left open, made while implementing S7.3 to S7.6,
+and where the shape differs from the plan (S7.2's are in its own notes
+above):
+
+- **Module layout.** `rust/fhy-core-py/src/expression/registry.rs`, with
+  `entries.rs` (the three pyclasses and the `FunctionSort` conversion),
+  `state.rs` (the module state and the built-in entries) and `lookups.rs`
+  (the `_rs` functions). The materializer gained `materialize_beside`,
+  for the inliner's output, and `materialize_expression`, for the
+  built-ins' bodies. `screen.rs` lost `RegistrySorts`, its
+  identifier-collection walk and its deferred lookup error, and reads
+  `snapshot().registry()` as its `SortLookup`.
+- **The Python functions are the extension's.** `storage.py` and
+  `api.py` re-export `_rs.get_registered_entry` and the other eight
+  functions directly, so a lookup is one call into the extension; their
+  documentation is in the Rust doc comments, the stub and the modules'
+  docstrings.
+- **The module state** (N-S7-2 (a), D-S7-13) is a `Mutex<Arc<_>>` of the
+  core registry and each entry's Python object, by name and, for a
+  constant, by its identifier's id. A registration builds the entry
+  object by calling the public class, with no lock held, then under the
+  lock clones the state, registers the object's Rust value into the
+  clone and swaps it in; the old state is dropped after the lock is
+  released, since dropping it may run Python finalizers. A lookup locks
+  only to read the current `Arc`.
+- **A constant's Python identifier is built on first request**, in a cell
+  shared by every later state that keeps the constant, so it is one
+  object. Building it calls Python (`Identifier.deserialize_from_dict`),
+  which the registration's critical section must not; the core mints the
+  Rust identifier there.
+- **`get_registered_entries` returns one `immutabledict` per state**,
+  built on the first request and returned again until the next
+  registration: the built-ins in catalogue order (the constants, the
+  composed functions, the native functions, D-S7-16), then the user
+  entries in registration order. The Python order was constants, natives,
+  composed functions.
+- **The built-in entries** are built once, when `builtins.py` calls
+  `_rs.NativeFunction._install_builtins(_NATIVE_IMPLEMENTATIONS)` at
+  import, a class method since the stub test admits no private
+  module-level function. So the catalogue's composed parameters are
+  minted at import, when the entries' bodies are materialized, not on
+  their first use as D-S7-15 put it: N-S7-3 (a) builds the entries at
+  import. A fresh process now issues its first identifier after the 27
+  catalogue parameters (65,563), where it used to follow the four
+  constants and 27 Python parameters. A lookup before the installation
+  raises `RuntimeError`; the package installs them on import.
+  `builtins.py` imports `core` first, whose classes the bodies are built
+  from.
+- **A built-in's entry** holds its catalogue item instead of a Rust
+  value: `ComposedFunction`, or just its name for a native function or
+  a constant. It is built through a private seed, as S2's tags are, and
+  pickles as `Class._builtin(name)`, so it unpickles as itself. A
+  built-in constant's `value` is the `float` of the core's
+  `BuiltinConstant::value()`, equal to `math.pi` and the others (and a
+  NaN for `nan`), not the `math` objects themselves.
+- **Equality, hashing and `repr`** follow the fields, as the frozen
+  dataclasses did, with `NotImplemented` against another class. A native
+  function or a constant compares and hashes its field tuple through
+  Python, since its implementation or value is a Python object. A
+  function entry compares its Rust values instead (the name, the
+  parameters' ids, the sorts and the bodies' structural equality, which
+  is what the field objects' `==` computes), and hashes them with the
+  body object's cached hash: the first benchmark run measured the
+  tuple comparison at 1.12 times the dataclass's `==` (493 against
+  440 ns), and the Rust one takes 0.54 times. The classes are not
+  `@final`, as the dataclasses were not, and set `__match_args__`.
+- **Binder equivalence** (D-S7-10) reads the Rust parameters and bodies,
+  the catalogue's for a built-in, and compares with `type(self) is
+  type(other)`, as the derived plan did. With repeated parameters refused
+  (D-S7-5), a frame pairing two parameter lists is always injective, so
+  the plan's "non-injective pairing" case cannot arise any more; the
+  binding still reads a refused frame as "not equivalent".
+- **Registration errors.** A `ValueError` from building the entry is
+  raised as `EntryRegistrationError` with its text and the `ValueError`
+  as its `__cause__`, as Python did; a `TypeError` passes through; a
+  refusal of the core registry raises `EntryRegistrationError` with the
+  core's text. A lookup miss keeps Python's text (D-S7-12); the
+  inliner's unknown name raises `EntryLookupError` with the core's.
+- **Stricter arguments**, beyond D-S7-9: a sort must be a `FunctionSort`
+  member (a bare `"real"` is refused), a parameter an `Identifier`, a
+  missing constructor argument raises `TypeError` naming it, and a
+  built-in function's name is refused at direct construction, not only
+  at registration. A built-in constant's name is accepted at direct
+  construction and refused at registration.
+- **`set_registry_state_for_tests`** keeps each entry whose very object
+  the state holds under its name, in its place and, for a constant, with
+  its identifier; every other entry of the state is registered anew after
+  them, in the state's order. Python replaced the dict with the state's
+  order exactly; the fixture's states only drop later entries, where the
+  two agree. Built-in names are ignored, a value that is no user entry
+  raises `TypeError`, and a failure leaves the registry unchanged.
+- **`FunctionInliner`** is a `CompilerPass[Expression, Expression]` with
+  the hooks `run_pass`, `get_noop_output` (its input) and `did_change`
+  (identity), as D-S5-12's applier; `inline_functions` still runs it, so
+  its errors are still `PassExecutionError`s with the cause. A
+  `RecursionError` carries the core's text; an invalid piecewise raises
+  `ValueError` with the core's text and the piecewise refusal after it.
+- **The mock identifiers of the tests** cannot take the ids 48 to 51
+  any more, since `mock_identifier` refuses a constant's id; no test
+  used them.
 
 ## Plan after S7 (the user, 2026-09-25)
 

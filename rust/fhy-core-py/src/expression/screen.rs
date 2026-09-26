@@ -15,9 +15,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyMapping, PyString, PyType};
 
-use fhy_core::expression::{
-    BooleanScreen, Expression, NonBooleanLogicalOperandError, SymbolType,
-};
+use fhy_core::expression::{BooleanScreen, Expression, NonBooleanLogicalOperandError, SymbolType};
 use fhy_core::identifier::Identifier;
 
 use crate::error::IntoPyErr;
