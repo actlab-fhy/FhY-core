@@ -100,6 +100,8 @@ from fhy_core.symbolic.expression.registry.entries import (
 )
 from fhy_core.symbolic.expression.sort import FunctionSort
 from fhy_core.symbolic.solver import SatStatus as _SatStatus
+from fhy_core.symbolic.solver import Simplifier as _Simplifier
+from fhy_core.symbolic.solver import SmtSolver as _SmtSolver
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import AlphaRenaming, Term
 from fhy_core.value_domain import ValueDomain as _ValueDomain
@@ -1293,9 +1295,9 @@ class Solver:
         simplifier: SimplifierBase | None = None,
     ) -> Self: ...
     @property
-    def smt_solver(self) -> SmtSolverBase | None: ...
+    def smt_solver(self) -> _SmtSolver | None: ...
     @property
-    def simplifier(self) -> SimplifierBase | None: ...
+    def simplifier(self) -> _Simplifier | None: ...
     def can_answer(self, kind: str) -> bool: ...
     def simplify_expression(
         self,

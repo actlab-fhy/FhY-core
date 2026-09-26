@@ -16,7 +16,6 @@ from fhy_core.symbolic.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
 )
-from fhy_core.symbolic.expression.passes.z3 import ExpressionToZ3Converter
 
 # =============================================================================
 # Pass registry - every expression pass must self-register
@@ -25,8 +24,14 @@ from fhy_core.symbolic.expression.passes.z3 import ExpressionToZ3Converter
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
     ("fhy_core.symbolic.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.symbolic.expression.to_sympy", ExpressionToSympyConverter),
-    ("fhy_core.symbolic.expression.to_z3", ExpressionToZ3Converter),
 ]
+
+
+def test_z3_lowering_is_no_registered_pass() -> None:
+    """Test the z3 lowering registers no pass: it is the Rust lowering (D-S8-1)."""
+    assert (
+        "fhy_core.symbolic.expression.to_z3" not in CompilerPass.get_registered_passes()
+    )
 
 
 @pytest.mark.parametrize("pass_name, pass_class", _EXPECTED_REGISTRATIONS)
@@ -133,8 +138,9 @@ def test_binary_float_literal_lowers_to_its_ieee_value_in_both_bridges() -> None
     lowered_z3, _ = convert_expression_to_z3_expression(literal, {})
     lowered_sympy = convert_expression_to_sympy_expression(literal)
 
-    assert lowered_z3.eq(z3.RatVal(ieee_numerator, ieee_denominator))
-    assert not lowered_z3.eq(z3.RealVal("1/10"))
+    folded_z3 = z3.simplify(lowered_z3)
+    assert folded_z3.eq(z3.RatVal(ieee_numerator, ieee_denominator))
+    assert not folded_z3.eq(z3.RealVal("1/10"))
     assert lowered_sympy == sympy.Float(0.1)
     assert sympy.Rational(lowered_sympy) == sympy.Rational(
         ieee_numerator, ieee_denominator
@@ -156,7 +162,7 @@ def test_decimal_string_literal_lowers_to_its_exact_decimal_in_both_bridges() ->
     lowered_z3, _ = convert_expression_to_z3_expression(literal, {})
     lowered_sympy = convert_expression_to_sympy_expression(literal)
 
-    assert lowered_z3.eq(z3.RatVal(1, 10))
+    assert z3.simplify(lowered_z3).eq(z3.RatVal(1, 10))
     assert lowered_sympy == sympy.Rational(1, 10)
     assert lowered_sympy != sympy.Float(0.1)
 
@@ -190,4 +196,6 @@ def test_float_literal_lowers_to_the_same_rational_in_both_bridges(
     lowered_sympy = convert_expression_to_sympy_expression(literal)
 
     sympy_rational = sympy.Rational(lowered_sympy)
-    assert lowered_z3.eq(z3.RatVal(int(sympy_rational.p), int(sympy_rational.q)))
+    assert z3.simplify(lowered_z3).eq(
+        z3.RatVal(int(sympy_rational.p), int(sympy_rational.q))
+    )

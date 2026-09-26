@@ -57,10 +57,7 @@ from fhy_core.symbolic.expression.passes.sympy import (
     SympyVariableSubstitutionPass,
     _ParityOpaquePiecewise,
 )
-from fhy_core.symbolic.expression.passes.sympy import (
-    simplify_expression as sympy_simplify_expression,
-)
-from fhy_core.symbolic.solver import simplify_expression
+from fhy_core.symbolic.solver import SolverBackend, simplify_expression
 
 from ..conftest import mock_identifier
 
@@ -3227,40 +3224,47 @@ def test_simplify_expression_compares_a_piecewise_with_a_boolean_branch_as_boole
 
 
 @pytest.mark.parametrize(
-    "build_comparison",
+    "build_comparison, expected",
     [
         pytest.param(
             lambda numeric, _: BinaryExpression(
                 BinaryOperation.EQUAL, numeric, LiteralExpression(True)
             ),
+            False,
             id="equal_to_true",
         ),
         pytest.param(
             lambda numeric, x: BinaryExpression(
                 BinaryOperation.NOT_EQUAL, numeric, x < 2
             ),
+            True,
             id="not_equal_to_relation",
         ),
     ],
 )
-def test_simplify_expression_refuses_to_compare_a_numeric_piecewise_with_a_boolean(
+def test_simplify_expression_compares_a_bound_numeric_piecewise_with_a_boolean_strictly(
     build_comparison: Callable[[Expression, Expression], Expression],
+    expected: bool,
 ) -> None:
-    """Test ``(1 if x == 0, otherwise 2)`` compared with a Boolean raises.
+    """Test ``(1 if x == 0, otherwise 2)`` compared with a Boolean, x bound, folds.
 
-    The comparison is ill-typed for every ``x``, so it must not fold to the
-    constant SymPy decides for a number compared with a Boolean.
+    The solver substitutes the environment before the sympy adapter lowers
+    the expression (Y-9 of the S8 design), so the piecewise has picked its
+    number, and a number is unequal to every Boolean under the IR's
+    type-strict equality, as ``1 == True`` is. Before S8 the adapter lowered
+    the piecewise with ``x`` free, where sympy refused the comparison.
     """
     variables = _create_piecewise_variables()
     numeric = piecewise(
         (variables.x.equals(0), LiteralExpression(1)), otherwise=LiteralExpression(2)
     )
 
-    with pytest.raises(PassExecutionError):
-        simplify_expression(
-            build_comparison(numeric, variables.x),
-            {variables.x.identifier: LiteralExpression(0)},
-        )
+    result = simplify_expression(
+        build_comparison(numeric, variables.x),
+        {variables.x.identifier: LiteralExpression(0)},
+    )
+
+    assert result == LiteralExpression(expected)
 
 
 def test_substitute_sympy_variables_refuses_a_partial_piecewise_in_a_comparison() -> (
@@ -4601,14 +4605,18 @@ def test_native_lookup_table_item_assignment_raises_type_error(
 
 
 def test_sympy_simplify_expression_accepts_an_immutabledict_environment() -> None:
-    """Test the bridge's own `simplify_expression` accepts an `immutabledict`."""
+    """Test simplifying with the sympy backend accepts an `immutabledict`.
+
+    The bridge's own ``simplify_expression`` is gone (D-S8-1); the solver's,
+    naming the sympy backend, is the one pipeline.
+    """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
         BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
     )
     environment = immutabledict({x: LiteralExpression(2)})
 
-    result = sympy_simplify_expression(expression, environment)
+    result = simplify_expression(expression, environment, backend=SolverBackend.SYMPY)
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 3

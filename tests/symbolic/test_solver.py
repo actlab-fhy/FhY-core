@@ -24,16 +24,8 @@ from fhy_core.symbolic.expression import (
     get_native_constant_identifier,
 )
 from fhy_core.symbolic.expression.errors import UndecidableError
-from fhy_core.symbolic.expression.passes.sympy import (
-    simplify_expression as _bridge_simplify_expression,
-)
-
-# White-box import: no public accessor enumerates every backend's capability
-# entry at once (`get_backend_capabilities` only looks up one backend at a
-# time), so this drift guard reads the table directly, matching the
-# convention in test_numpy_evaluator.py's lowering-table coverage tests.
+from fhy_core.symbolic.expression.passes.sympy import SympySimplifier
 from fhy_core.symbolic.solver import (
-    _BACKEND_CAPABILITIES,
     SolverBackend,
     SolverCapabilityError,
     SolverQueryKind,
@@ -55,14 +47,14 @@ from .conftest import mock_identifier
 
 
 def test_every_solver_backend_has_a_capability_table_entry() -> None:
-    """Test every `SolverBackend` member has an entry in the capability table.
+    """Test every `SolverBackend` member answers at least one query kind.
 
-    `get_backend_capabilities` subscripts the table directly, so a member
-    added without an entry would otherwise raise a raw `KeyError` only when
-    that backend is first queried; this makes the drift a deterministic
-    failure instead.
+    `get_backend_capabilities` falls back to an empty set for a backend
+    with no table entry, so a member added without one would report no
+    capability; this makes the drift a deterministic failure instead.
     """
-    assert set(_BACKEND_CAPABILITIES) == set(SolverBackend)
+    for backend in SolverBackend:
+        assert get_backend_capabilities(backend), backend
 
 
 def test_get_backend_capabilities_sympy_supports_only_simplification() -> None:
@@ -151,13 +143,17 @@ def test_solver_capability_error_names_backend_and_query_kind() -> None:
 
 
 def test_simplify_expression_matches_direct_bridge_pipeline() -> None:
-    """Test the seam's simplification is structurally identical to the bridge's."""
+    """Test the seam's simplification is structurally identical to the adapter's.
+
+    With nothing to substitute, the seam hands the expression itself to the
+    sympy adapter, so simplifying through either gives the same tree.
+    """
     expression: Expression = BinaryExpression(
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
 
     seam_result = simplify_expression(expression)
-    bridge_result = _bridge_simplify_expression(expression)
+    bridge_result = SympySimplifier().simplify(expression)
 
     assert seam_result.is_structurally_equivalent(bridge_result)
 
@@ -763,7 +759,7 @@ def test_check_expression_satisfiability_screens_a_conjunction_compared_to_an_in
     assert result is None
     messages = _collect_solver_warning_messages(caplog)
     assert messages, "expected a WARNING naming the hazardous node"
-    assert "Boolean operand into a numeric context" in messages[0]
+    assert "boolean operand into a numeric context" in messages[0]
 
 
 @pytest.mark.z3

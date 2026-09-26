@@ -67,7 +67,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.3: the `z3` cargo feature and its backend, with the CI changes. Built against the z3-solver wheel's libz3 4.16 (D-S8-18's fallback; the local libz3 4.8.7 is below z3-sys's 4.13.3); 3,072 Rust tests with the feature; see "S8.3 status"
   - [x] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs). The suite is unchanged (7,327 passed); see "S8.4 status"
   - [x] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports). 6,228 passed; exactly the four migrated modules (`test_solver.py`, `test_z3_pass.py`, `test_sympy_pass.py`, `test_cross_cutting.py`) fail collection until S8.6
-  - [ ] S8.6: tests migrated, and the interface suite
+  - [x] S8.6: tests migrated, and the interface suite (57). The suite is green (7,387 passed), `-m "not very_slow"` 7,420, properties 281; see "S8.5 and S8.6 status"
   - [ ] S8.7: optional extras, backend markers and the minimal-install session
   - [ ] S8.8: benchmarks after, and docs
 
@@ -7232,3 +7232,64 @@ Choices made here:
 - **`SatResult.status`** returns a member of the Python `SatStatus` of
   `fhy_core.symbolic.solver`, which S8.5 adds; the stub declares it as
   `str` until then.
+
+### S8.5 and S8.6 status
+
+The Python switch (7b2d574, marked breaking) left exactly the four
+modules of the migration plan failing collection (6,228 passed); the test
+commit after it migrates them and adds the interface suite. At the end of
+S8.6: `pytest` 7,387 passed, `-m "not very_slow"` 7,420 passed, the
+`property` session 281 passed, `lint` and `type_check` clean, and
+`tests/test_rs_stub.py` green. The constraint and param tests pass
+unchanged on the new solver, the six places in `test_constraint_system.py`
+that patch the solver's functions included, and so do the solver tests
+that force z3's `unknown` or observe its timeout by patching `z3.Solver`,
+since the adapter drives a `z3.Solver` too.
+
+Tests migrated in S8.6. None was skipped or deleted without a rewrite:
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_solver.py::test_every_solver_backend_has_a_capability_table_entry` | same name | reads `get_backend_capabilities` over every member, not the private table |
+| `test_solver.py::test_simplify_expression_matches_direct_bridge_pipeline` | same name | compares with `SympySimplifier` (D-S8-1, D-S8-12) |
+| `test_solver.py::test_check_expression_satisfiability_screens_a_conjunction_compared_to_an_int` | same name | the core's lowercase `boolean operand into a numeric context` (D-S8-14) |
+| `test_sympy_pass.py::test_sympy_simplify_expression_accepts_an_immutabledict_environment` | same name | through `simplify_expression(..., backend=SolverBackend.SYMPY)`; the bridge's is gone |
+| `test_sympy_pass.py::test_simplify_expression_refuses_to_compare_a_numeric_piecewise_with_a_boolean` (2 cases) | `test_simplify_expression_compares_a_bound_numeric_piecewise_with_a_boolean_strictly` | Y-9: the environment is substituted before lowering, so the piecewise has picked its number, which compares unequal to a Boolean under the IR's type-strict equality, as `1 == True` did before S8; the old raise came from lowering the piecewise with its identifier free |
+| `test_cross_cutting.py`: the registration list | the list without `to_z3`, and `test_z3_lowering_is_no_registered_pass` | D-S8-1 |
+| `test_cross_cutting.py`: the three rational-agreement tests | same names | compare `z3.simplify` of the parsed term: z3 parses `(/ p.0 q.0)` as a division term, not a numeral (Y-8) |
+| `test_z3_pass.py::test_convert_expression_to_z3_expression` (27 cases) | same name | pinned by sort and meaning (an equivalence check), not shape; a real floor division stays real and a power is a product (Y-2, Y-3, Y-8) |
+| `test_z3_pass.py::test_holds_for_all_free_assignments_maps_solver_result_to_satisfiability` (3 cases) | same name (6) | D-S8-7: with every identifier considered, the script asserts the expression and `sat` means it holds |
+| `test_z3_pass.py::test_z3_floor_divide_rejects_non_int_non_real_expression` | the Rust floor-encoding stories | no Python floor helper is left |
+| `test_z3_pass.py::test_convert_expression_to_z3_returned_mapping_is_immutable` | same name | through `convert_expression_to_z3_expression` |
+| `test_z3_pass.py::test_z3_visit_identifier_rejects_invalid_symbol_type`, `test_z3_visit_literal_unsupported_value_raises` | `test_convert_expression_to_z3_rejects_an_invalid_symbol_type`, `..._rejects_a_value_that_is_no_expression` | no Python visitor; the arguments' `TypeError`s |
+| `test_z3_pass.py::test_z3_converter_get_noop_output_raises` | `test_z3_solver_decides_a_script_and_is_named_z3` | the converter pass is gone (D-S8-1); the adapter is what the module defines |
+| `test_z3_pass.py::test_expression_to_z3_converter_accepts_an_immutabledict_symbol_types`, `..._snapshots_symbol_types_at_construction` | `test_smt_script_lowering_accepts_an_immutabledict_symbol_types`, `test_smt_script_snapshots_symbol_types_when_it_is_lowered` | the lowering takes the symbol types |
+| `test_z3_pass.py`: the bridge questions' `immutabledict` and numeric-root tests (8) | same names | through the solver's functions (D-S8-1) |
+| `test_z3_pass.py::test_holds_for_all_free_assignments_logs_z3s_reason_for_unknown` | same name | on the solver's logger (D-S8-14) |
+| `test_z3_pass.py::test_convert_single_case_piecewise_expression_to_z3_if` | same name | an `If`, compared by meaning: z3's parser writes `(- x)` as `-1*x` |
+| `test_z3_pass.py::test_convert_call_expression_to_z3_rejects_unresolved_call`, `test_non_finite_float_literal_is_refused_rather_than_lowered` (3) | same names | the lowering's `TypeError`, no `PassExecutionError` (Y-7) |
+| `test_z3_pass.py::test_z3_rewrites_a_bool_operand_compared_against_an_integer`, `test_z3_bool_coercion_yields_a_model_this_package_rejects` | `test_lowering_refuses_a_bool_operand_compared_against_an_integer`, `test_z3_parser_rewrites_a_bool_operand_compared_against_an_integer`, `test_z3_bool_coercion_yields_a_model_this_package_rejects` | Y-4: the lowering refuses the term; z3's SMT-LIB2 parser still coerces it, which is why the lowering must never emit one and the Boolean-coercion screen stays |
+| `test_z3_pass.py::test_bridge_question_refuses_a_native_constant_it_would_decide_wrongly` | `test_question_refuses_a_native_constant_it_would_decide_wrongly` | the bridge's questions are gone; the solver's screen refuses the constant, with the reason `hazard_screen` |
+| none | `tests/symbolic/test_solver_rust_binding.py` (57) | the interface suite |
+
+The interface suite covers the test plan: the ABCs' abstract hooks,
+their own and refused constructor arguments, `SmtLib2ProcessSolver` as a
+native, registered `SmtSolver`, frozen values, `Solver`'s backends,
+`can_answer` and `repr`; a Python `SmtSolver` receiving the script's text
+and the timeout once per query, each `SatResult` as the answer, a wrong
+result type, an exception and a `KeyboardInterrupt` propagating as the
+same object, a nested question, the strict companions' reason, and the
+timeout checks; a Python `Simplifier` receiving the input object itself
+when nothing is bound and the environment's objects in place, its result
+object returned, its errors, and a nested simplification; `SatResult`'s
+values, status, reason, `repr` and pickles, and `SmtScript`'s parts; three
+pinned scripts and the z3 conversion's identifier map; the adapters, one
+object each, availability, capabilities, and, in subprocesses with
+`sys.modules[package] = None`, `SolverBackendUnavailableError` and its
+message and a fresh `import fhy_core` importing neither package; the lazy
+re-exports; each row of D-S8-14 and both warnings; the process backend
+driving a fake SMT-LIB2 program run with the interpreter, through a
+`Solver` and directly; the default solver, replacing it for the module
+functions, a constraint system and a param, and a named backend ignoring
+it; and eight threads asking one solver with a Python and with the
+process backend.
