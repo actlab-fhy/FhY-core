@@ -120,7 +120,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`; cb959f5)
   - [x] S14.5: tests migrated, and the interface suite (23; see "S14.3 to S14.5 status")
   - [x] S14.6: benchmarks after, and docs (every row faster or within noise; see "S14 benchmarks")
-- [ ] S13: constraints (designed; "Needs the user" is empty; rebased onto S11 and S12 by the coordinator; see "S13 resume notes")
+- [x] S13: constraints ("Needs the user" was empty). The suite is green (7,744 passed), slow tests pass (7,777), properties pass (282), `tests_minimal` passes (5,793 passed, 627 skipped), lint and mypy are clean, and the Rust gate passes (3,908 tests; 3,940 with all features)
   - [x] S13.0: the design (survey, decisions D-S13-1 to D-S13-22, benchmark plan, steps, test plan)
   - [x] S13a.1: constraint benchmarks and baseline (39 rows; see "S13a.1 baseline")
   - [x] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer; 144 new tests)
@@ -130,7 +130,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`; 28 new tests)
   - [x] S13b.2: the system's binding
   - [x] S13b.3: the Python switch of `system.py`, with its tests (12 new interface tests)
-  - [ ] S13b.4: benchmarks after, and docs
+  - [x] S13b.4: benchmarks after, and docs (every row faster or within 10%, after 64a1436; see "S13 benchmarks")
 
 ## Goal
 
@@ -14587,8 +14587,8 @@ Every benchmark row is faster, or within noise.
   the policy the user already set, the precedent of S7 to S10, and the
   user's direction for this slice: port as much of the package to Rust as
   possible, accepting small slowdowns on paths nothing calls. "Needs the
-  user" is empty. The branch has not yet been rebased onto `dev-rust`, and
-  so not onto S12 either; see "S13 resume notes".
+  user" is empty. Implemented the same day, after the coordinator rebased
+  the branch onto S11 and S12; see "S13 status".
 - **Scope:** `src/fhy_core/symbolic/constraint/`, 2,658 lines: `core.py`
   (1,117), `members.py` (527), `system.py` (848), `ordering.py` (65),
   `errors.py` (35) and `__init__.py` (66). The core goes in `rust/fhy-core`,
@@ -15744,18 +15744,195 @@ method, `check_implication`'s argument check, equivalence through a Python
 member's method, pickling and the payload, and eight threads asking one
 system.
 
-### S13 resume notes
+### S13 status
 
-- The coordinator rebased the branch onto `dev-rust` (dfd940a, with S11
-  and S12) with the user's approval; the gate environment is
-  `target/gate-env.sh` (gitignored).
-- **Rechecked against S12:** `Solver::simplify` takes a
-  `SimplifyContext`, which the constraint core builds with
-  `SimplifyContext::from_registry` (D-S13-8). The default solver's
-  simplifier is the native `_rs.SympySimplifier`, whose failure the
-  binding's `solve_error_to_py` raises as the `PassExecutionError` the
-  Python bridge raised, so param's `evaluate_system_outcome`, which reads
-  that error as `UNDECIDED`, keeps working (D-S13-14, C-9: unchanged).
-- **Rechecked against S11:** neither `types` nor `lattice` uses the
-  constraint package, and S11 changed nothing in it or in `param`.
-- The next step is the first unticked one of the checklist.
+S13 was implemented on 2026-09-26 in twelve commits after the design
+(abe7c57, e94db01, both rebased by the coordinator onto dfd940a):
+
+- the benchmarks and their baseline (3bf48fc);
+- the core's equation and set constraints, test-first (cad18be);
+- their binding (5c7df5f);
+- the Python switch of `core.py`, `members.py` and `ordering.py` with the
+  migrated tests, marked breaking (0807b8b);
+- the interface suite (b5c09ba);
+- the core's system and custom constraints, test-first (8a35e7b);
+- their binding (b8b7b34);
+- the Python switch of `system.py` with its migrated tests and interface
+  tests, marked breaking (fc20850), and its docs (26a613a);
+- the slot-cached attributes the benchmarks called for (64a1436);
+- these docs.
+
+No test was skipped, or deleted without a rewrite. At the end:
+
+- `pytest tests`: 7,744 passed; `-m "not very_slow"`: 7,777 passed;
+- the `property` session: 282 passed;
+- nox `tests_minimal`: 5,793 passed and 627 skipped;
+- nox `lint` and `type_check`: clean; `tests/test_rs_stub.py`: green.
+
+The Rust gate is green with `target/gate-env.sh` (the shared gate Python
+read-only, the z3 paths and `CARGO_TARGET_DIR` in this worktree, no tooling
+environment on `PATH`):
+
+- fmt, and clippy `--all-targets -D warnings` with and without
+  `--all-features`;
+- `cargo test --workspace`: 3,908 tests; `--all-features`: 3,940;
+  `cargo test -p fhy-core` without a Python: 3,743;
+- doc `-D warnings` with and without `--all-features`, and the
+  public-paths checks (no glob re-exports, no module re-exports, no item
+  under two paths);
+- `cargo deny check`;
+- `cargo +1.85 check --workspace`, and `-p fhy-core` with the three
+  features;
+- the packaging checks.
+
+### S13 benchmarks (before and after)
+
+Median time per call of `benchmarks/test_constraint.py` and the reruns,
+`pytest <the rows> -n 0 --benchmark-only`, on the S0 machine with Python
+3.11.13 and pytest-benchmark 5.3.0. "Before" is 3bf48fc, the S13a.1
+baseline's tree, exported with `git archive` under `target/before` and
+built there; "after" is 64a1436. The two ran three times each,
+interleaved, with a load average of 9 to 13 from other work on the
+machine, and the table lists the best of the three medians. The "before"
+column agrees with the S13a.1 table within 3%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_constraint_alpha_equivalence` | 1.68 µs | 254 ns | 0.15 |
+| `test_constraint_build_ordering_key[equation]` | 10.63 µs | 1.33 µs | 0.13 |
+| `test_constraint_build_ordering_key[set_100]` | 37.75 µs | 6.77 µs | 0.18 |
+| `test_constraint_deserialize_from_dict` | 698.90 µs | 219.76 µs | 0.31 |
+| `test_constraint_pickle_round_trip` | 23.97 µs | 21.88 µs | 0.91 |
+| `test_constraint_repr` | 51.93 µs | 12.36 µs | 0.24 |
+| `test_constraint_serialize_to_dict` | 71.19 µs | 16.43 µs | 0.23 |
+| `test_constraint_structural_equivalence (rerun)` | 1.53 µs | 208 ns | 0.14 |
+| `test_constraint_structural_equivalence_of_large_sets` | 748.99 µs | 8.24 µs | 0.01 |
+| `test_constraint_system_check_implication (rerun)` | 464.80 µs | 454.20 µs | 0.98 |
+| `test_constraint_system_check_satisfiability_of_bounds` | 769.23 µs | 719.63 µs | 0.94 |
+| `test_constraint_system_check_satisfiability_with_bindings` | 520.18 µs | 471.47 µs | 0.91 |
+| `test_constraint_system_construction` | 71.68 µs | 19.93 µs | 0.28 |
+| `test_constraint_system_evaluate_with_bindings[mixed]` | 38.06 µs | 14.77 µs | 0.39 |
+| `test_constraint_system_evaluate_with_bindings[sets_20]` | 10.96 µs | 3.23 µs | 0.29 |
+| `test_constraint_system_serialize_to_dict` | 173.37 µs | 49.80 µs | 0.29 |
+| `test_constraint_system_structural_equivalence` | 1.50 ms | 11.43 µs | 0.01 |
+| `test_equation_constraint_construction` | 1.18 µs | 640 ns | 0.54 |
+| `test_equation_constraint_evaluate_with_bindings (rerun)` | 19.29 µs | 11.61 µs | 0.60 |
+| `test_equation_constraint_evaluate_with_bindings[ground]` | 36.99 µs | 28.81 µs | 0.78 |
+| `test_equation_constraint_evaluate_with_bindings[partial]` | 5.19 ms | 4.98 ms | 0.96 |
+| `test_int_param_intersection_feasibility (rerun)` | 680.58 µs | 602.49 µs | 0.89 |
+| `test_nat_param_is_value_valid (rerun)` | 22.08 µs | 13.33 µs | 0.60 |
+| `test_param_alpha_equivalence[integer] (rerun)` | 6.14 µs | 4.38 µs | 0.71 |
+| `test_param_alpha_equivalence[natural_between] (rerun)` | 9.34 µs | 5.04 µs | 0.54 |
+| `test_param_construction_between_bounds (rerun)` | 72.22 µs | 41.56 µs | 0.58 |
+| `test_param_structural_equivalence (rerun)` | 7.54 µs | 3.05 µs | 0.40 |
+| `test_set_constraint_construction[100]` | 458.90 µs | 14.14 µs | 0.03 |
+| `test_set_constraint_construction[4]` | 20.63 µs | 2.37 µs | 0.12 |
+| `test_set_constraint_construction[serializable]` | 51.42 µs | 16.79 µs | 0.33 |
+| `test_set_constraint_construction[tuples]` | 186.40 µs | 10.19 µs | 0.05 |
+| `test_set_constraint_convert_to_expression` | 107.62 µs | 56.00 µs | 0.52 |
+| `test_set_constraint_evaluate_with_bindings[literal_expression]` | 4.94 µs | 814 ns | 0.16 |
+| `test_set_constraint_evaluate_with_bindings[member]` | 5.24 µs | 822 ns | 0.16 |
+| `test_set_constraint_evaluate_with_bindings[non_member]` | 5.07 µs | 822 ns | 0.16 |
+| `test_set_constraint_evaluate_with_bindings[serializable]` | 5.53 µs | 2.22 µs | 0.40 |
+| `test_set_constraint_evaluate_with_bindings[unbound]` | 1.04 µs | 552 ns | 0.53 |
+| `test_set_constraint_members` | 500.81 µs | 14.45 µs | 0.03 |
+| `test_set_constraint_values` | 66 ns | 64 ns | 0.97 |
+
+Every row is faster or within the 10% CONTRIBUTING allows, so the pattern
+choice stands and no cost needs the maintainer (cross-cutting rule 5):
+
+- **The first run after the switch** had one row slower:
+  `test_set_constraint_values`, 1.34 times (89 against 67 ns), since each
+  attribute read called into the extension where the dataclass read its
+  instance dict. The public classes now copy their attributes into slots
+  when they are built (64a1436), so a read is a slot read (13 ns, against
+  27 ns through the extension and 14 ns before S13), for about 0.7 µs more
+  per construction.
+- **Members and sets** are 8 to 35 times faster to build, read and
+  compare: the type-strict set, its canonical order and its keys are Rust,
+  where Python wrapped, hashed and sorted each member. Two 100-member sets,
+  and two 20-member systems, compare about 90 and 130 times faster.
+- **Evaluation** of a set constraint is 6 times faster (a `Serializable`
+  member 2.5 times, since Python's `==` is still called), and an equation's
+  ground evaluation 1.3 to 1.7 times, the rest being SymPy's; with a
+  residual, SymPy's 5 ms dominate.
+- **Serialization, `repr` and keys** are 3 to 8 times faster; pickling
+  stays near Python's, since it rebuilds the expression through its class.
+- **The questions** gain 2 to 12%: the checks around the solver are Rust,
+  but z3's work dominates.
+- **The param rows** gain from both slices of the port: a nat param's value
+  check and a bounded param's construction 1.7 times, and param
+  equivalence 1.4 to 2.5 times.
+
+### S13 implementation notes
+
+Choices the decisions left open, made while implementing S13a.3 to S13b.4,
+and where the implementation departs from the design (S13a.2's and
+S13b.1's are in their own notes above):
+
+- **The leaves are virtual `Constraint` subclasses** (D-S13-9's "pyclass
+  first in the MRO" could not hold): `Constraint`'s bases carry an instance
+  layout a pyclass cannot share. The stub declares the `_rs` classes as
+  `Constraint` subclasses for type checkers.
+- **Attributes are slot-cached** (64a1436): each public class copies its
+  attributes (`expression`; `variable`, `values`, `members`;
+  `constraints`) from the Rust getters into slots in its `__init__`. A
+  mutation still raises `FrozenMutationError` through the pyclass's
+  `__setattr__`.
+- **Messages about bound values keep Python's words** (a refinement of
+  D-S13-14): an unusable binding names the identifier, the value's `repr`
+  and its type, and chains the member validation's or the literal
+  constructor's error, since they describe Python values; the binding
+  composes them from the Python objects, which it keeps beside the core
+  bindings. Member-shape messages at construction keep Python's text too,
+  as argument shapes do; a NaN member takes the core's text.
+- **`values` is `members`**: one tuple in canonical order serves both.
+- **Bound values are read lazily, as Python did**: an equation reads the
+  in-scope bindings of any mapping, and a set constraint reads its
+  variable with one `get`. A key that is no identifier is skipped.
+- **A `Serializable` member's key** is its class's qualified name and the
+  `repr` of its payload, computed once when the member is read; a bound
+  opaque value is compared with each opaque member instead of computing a
+  key.
+- **The pending-error slot** (D-S13-18 anticipated no thread-local state):
+  a raising `==` of an opaque member, or of a Python-defined constraint's
+  comparison, is kept in a thread-local slot that holds at most one
+  exception during one call, and raised when the core returns. CONTRIBUTING
+  records it. The Python-defined members' bindings need no such state: the
+  core carries the Python snapshot as `Bindings::source`.
+- **Questions run detached** from the interpreter, as S8's do; an equation's
+  evaluation stays attached, since SymPy holds the interpreter throughout.
+- **`convert_to_expression` of a system** calls each member's Python method
+  and builds the conjunction through `Expression.logical_and`, so a
+  one-member system returns the member's own object, as before.
+- **Equivalence of systems** compares two built-in members in the core and
+  any pair with a Python-defined member through the left member's own
+  method, with the Python renaming given.
+- **`does_member_lift_to_expression`** keeps Python's answer for values
+  that are no members: a NaN float and a `Decimal` a literal holds lift.
+- **Divergences as the design listed them** (C-1, C-2, C-3, C-6, C-7, C-8)
+  are the only behavioral changes the migrated tests record. C-5 (the key
+  text) changed no test; C-9 needed no change, since S12's SymPy backend
+  raises the bridge's `PassExecutionError`.
+
+Traceability of the Python tests to the Rust tests (`tests/it/constraint/`):
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| `test_member_validation.py`, the member tests of `test_set_constraints.py` | `value_stories.rs` | the Python-typed shape messages stay the binding's |
+| `test_set_constraints.py` (evaluation, conversion), `test_bindings_evaluation.py` (set cases), `test_convert_to_expression.py` | `set_stories.rs` | |
+| `test_equation_constraint.py`, `test_bindings_evaluation.py` (equation cases) | `equation_stories.rs` | a recording simplifier stands in for SymPy |
+| `test_ordering_key.py`, `test_ordering_key_properties.py` | `key_stories.rs`, the key properties | the third-party keys stay Python |
+| `test_structural_equivalence.py` | `equivalence_stories.rs` | |
+| `test_constraint_system.py`, `test_constraint_system_properties.py` | `system_stories.rs`, `system_satisfiability_agrees_with_brute_force` | a recording SMT backend stands in for z3 |
+| `test_set_constraints_properties.py` | `set_membership_agrees_with_a_type_strict_reference` | |
+| none | the canonical-order stories and properties, the deep-tree key, custom members, `Bindings::source` | new |
+
+Left for later:
+
+- **Param** (the next slice) can hold `Constraint` and `ConstraintSystem`,
+  match on `Constraint::Equation`, `Constraint::Set` and `Polarity`, and
+  ask the questions with one `ConstraintContext` (D-S13-20).
+- **The third-party key TODO** in `Constraint.build_ordering_key` (deriving
+  it from the field schema) stays, for Python-defined constraints.
+
