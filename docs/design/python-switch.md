@@ -5407,3 +5407,35 @@ a rewrite:
   that D-S7-12 or D-S7-16 changes.
 - **Each rename or rewrite** is recorded here with its reason, as in S4.4
   to S6.
+
+
+### S7 resolutions (decided by the user, 2026-09-25)
+
+- **N-S7-1: (a) reserved ids.** `pi`, `e`, `inf` and `nan` get the fixed
+  ids 48, 49, 50 and 51 in a new block for expression constants in
+  `identifier::reserved`, mirrored in `identifier.py`. This revises R-2,
+  as D-S2-2 revised R-3.
+- **N-S7-2: (a) a replaceable static.** The binding holds one
+  `Mutex<Arc<FunctionRegistry>>` in the extension's module state for
+  Python's global API, with `set_registry_state_for_tests` kept as the test
+  seam. This is the maintainer's agreement CONTRIBUTING requires, and it is
+  recorded there.
+- **N-S7-3: (a) a resolution view.** The Python lookups consult the
+  catalogue first, then the registry. `BUILTIN_FUNCTIONS` and
+  `BUILTIN_CONSTANTS` hold entry objects built once, at import, and the
+  consumers are unchanged.
+
+## Plan after S7 (the user, 2026-09-25)
+
+1. **S8: the solver, ported to Rust with pluggable backends.** An SMT
+   backend lowers to SMT-LIB2 in pure Rust, shipped in every build. z3 is
+   optional: `z3-solver` in Python, or a `z3` cargo feature in Rust.
+2. **A CAS backend for simplification.** Research the most widely used
+   computer algebra system that can be driven from Rust, with a license
+   that allows it as an optional dependency, and build a Rust backend for
+   it.
+3. **The sympy adapter stays,** but only for Python.
+4. **S9: the numpy evaluator in Rust.** It uses the `numpy` crate with
+   `ndarray`; numpy is imported lazily, so it stays an optional extra.
+5. **Symbolica is not used.** It is source-available, and its license
+   restricts distribution.
