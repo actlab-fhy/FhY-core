@@ -3,8 +3,9 @@
 //! with an exact rational evaluation and the three questions agree with
 //! brute force over small integer domains.
 //!
-//! The solver-backed properties run when `FHY_SMT_SOLVER` names an SMT-LIB2
-//! executable, such as `z3 -in`, and pass trivially otherwise.
+//! The solver-backed properties run on the z3 backend under the `z3`
+//! feature, and otherwise when `FHY_SMT_SOLVER` names an SMT-LIB2
+//! executable, such as `z3 -in`; without either, they pass trivially.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -17,7 +18,7 @@ use fhy_core::expression::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
-    CheckLimits, QueryContext, Question, SatResult, SmtLib2Process, SmtScript, SmtSolver, Solver,
+    CheckLimits, QueryContext, Question, SatResult, SmtScript, SmtSolver, Solver,
 };
 use num_traits::ToPrimitive;
 use proptest::prelude::*;
@@ -39,11 +40,24 @@ fn limits() -> CheckLimits {
 }
 
 /// Return the SMT solver the solver-backed properties run on, if any.
+#[cfg(feature = "z3")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "without the feature, there may be no backend"
+)]
+fn property_backend() -> Option<Arc<dyn SmtSolver>> {
+    Some(Arc::new(fhy_core::solver::Z3Solver::new()))
+}
+
+/// Return the SMT solver the solver-backed properties run on, if any.
+#[cfg(not(feature = "z3"))]
 fn property_backend() -> Option<Arc<dyn SmtSolver>> {
     let configured = std::env::var("FHY_SMT_SOLVER").ok()?;
     let mut words = configured.split_whitespace();
     let program = words.next()?;
-    Some(Arc::new(SmtLib2Process::new(program).with_args(words)))
+    Some(Arc::new(
+        fhy_core::solver::SmtLib2Process::new(program).with_args(words),
+    ))
 }
 
 // ---------------------------------------------------------------------------

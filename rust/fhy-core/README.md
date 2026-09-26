@@ -37,6 +37,19 @@ fhy-core = "0.2"
 
 The minimum supported Rust version is 1.85.
 
+## The `z3` feature
+
+`fhy_core::solver::Z3Solver`, a backend that decides scripts with the z3 library through the [`z3`](https://crates.io/crates/z3) crate, is behind the off-by-default `z3` feature:
+
+```toml
+[dependencies]
+fhy-core = { version = "0.2", features = ["z3"] }
+```
+
+The `z3-sys` crate links libz3 4.13.3 or newer. By default it finds a system libz3 through `pkg-config`. To choose another link method, enable it on your own `z3` dependency, which Cargo's feature unification applies to this crate's: `vendored` builds libz3 from source, `gh-release` downloads a z3 release, and `vcpkg` uses vcpkg. To link a libz3 you already have, such as the one the `z3-solver` Python wheel ships, set `Z3_LIBRARY_PATH_OVERRIDE` to its directory, `Z3_SYS_Z3_VERSION` to its version when neither `pkg-config` nor a `z3` executable on `PATH` reports it, and the library search path of your platform (`LD_LIBRARY_PATH` on Linux) to the same directory when running. The feature does not raise the minimum Rust version. docs.rs builds the default features.
+
+Without the feature, `SmtLib2Process` drives a z3 executable (`z3 -in`) or any other SMT-LIB2 solver (`cvc5 --lang=smt2`) over its standard input and output.
+
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).

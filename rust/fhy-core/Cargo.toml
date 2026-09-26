@@ -28,6 +28,12 @@ name = "fhy_core"
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 serde = { workspace = true }
+z3 = { workspace = true, optional = true }
+
+[features]
+# The `Z3Solver` backend of `fhy_core::solver`, which links libz3 through
+# the `z3` crate (see the README for how to choose the link method).
+z3 = ["dep:z3"]
 
 [dev-dependencies]
 postcard = { workspace = true }

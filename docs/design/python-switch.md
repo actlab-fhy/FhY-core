@@ -64,7 +64,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] N-S8-1 decided as (a), N-S8-2 as (b)
   - [x] S8.1: solver benchmarks and baseline (14 rows; see "S8.1 baseline")
   - [x] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend). 224 new tests; the Rust gate passes (3,040); see "S8.2 implementation notes"
-  - [ ] S8.3: the `z3` cargo feature and its backend, with the CI changes
+  - [x] S8.3: the `z3` cargo feature and its backend, with the CI changes. Built against the z3-solver wheel's libz3 4.16 (D-S8-18's fallback; the local libz3 4.8.7 is below z3-sys's 4.13.3); 3,072 Rust tests with the feature; see "S8.3 status"
   - [ ] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs)
   - [ ] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports)
   - [ ] S8.6: tests migrated, and the interface suite
@@ -7122,3 +7122,50 @@ stay, and S8.6 migrates them:
 | P the Z3 properties (3) | `satisfiability_agrees_with_brute_force_over_a_small_domain`, `implication_agrees_with_brute_force_over_a_small_domain`, `universal_validity_agrees_with_brute_force_over_a_small_domain` | with a real solver |
 | none | `screened_safe_tree_lowers_to_a_balanced_script_declaring_its_identifiers`, `ground_ordering_lowers_to_a_script_as_satisfiable_as_it_is_true` | new: the exact rational reference |
 | none | `process_*` (10) | new: the process protocol |
+
+### S8.3 status: the `z3` feature
+
+`fhy-core` gains `z3 = { workspace = true, optional = true }` (`z3 =
+"0.21"` in the workspace table) and `[features] z3 = ["dep:z3"]`. The
+backend is `rust/fhy-core/src/solver/z3.rs`, `Z3Solver`, exported as
+`fhy_core::solver::Z3Solver` under the feature, with `Z3TermError` for a
+term z3 cannot build (only a malformed script holds one). It builds the
+z3 terms from the script's arena in id order, so every argument is built
+before the term applying it and a deep script builds without recursion,
+and runs each check in a fresh context from `with_z3_config`, with the
+timeout in the context's configuration. It uses z3's default solver, as
+the z3-solver path does (`Solver.from_string` ignores `set-logic`), not
+`Solver::new_for_logic`. Integers and rationals of any size are built
+from their decimal text (`Int::from_str`, `Real::from_rational_str`), so
+the `z3` crate's `num` feature, which would pull a second `num-bigint`,
+is not needed. The all-features graph gains `z3`, `z3-sys`, `log` and
+`pkg-config`, and `cargo deny check` passes unchanged.
+
+**The build against the local libz3.** The machine's libz3 is 4.8.7 (with
+headers, and no `pkg-config` file or `z3` executable). `z3-sys` 0.13
+supports 4.13.3 and newer; with neither detection it assumes that minimum
+and links `-lz3`, and the binaries do link against 4.8.7, since the few
+symbols the backend uses exist there, but the enum tables `z3-sys` checks
+against are those of 4.13.3. So, as D-S8-18's fallback says, the feature
+is built against the libz3 4.16 of the z3-solver wheel:
+`Z3_LIBRARY_PATH_OVERRIDE=<site-packages>/z3/lib`,
+`Z3_SYS_Z3_VERSION=4.16.0`, and `LD_LIBRARY_PATH` for running (the
+library's soname is `libz3.so.4.16`); `ldd` of the test binary shows the
+wheel's library. The CI `rust` job does the same: it installs z3-solver
+into a venv, exports those three variables and `FHY_SMT_SOLVER` (the
+wheel's `z3 -in`), runs `cargo test --workspace --all-features`, and then
+the solver's stories with the default features, where the process
+backend runs against the z3 executable. `rust-msrv` keeps checking the
+default features, and `cargo +1.85 check -p fhy-core --features z3`
+passes too. The crate README documents the feature and the link methods.
+
+**Tests.** `tests/it/solver/z3_stories.rs` (31, `cfg(feature = "z3")`):
+25 decided cases of `test_solver.py` decided the same way, float
+arithmetic in exact rationals (`(1e16 + 1.0) == 1e16` and `0.1 + 0.2 ==
+0.3` are false, the decimal tenths true), implication and universal
+validity, `unknown` at a 50 ms timeout, eight concurrent checks, and a
+symbol redeclared with another sort in the next check. Under the feature
+the solver-backed properties run on `Z3Solver`. The Rust gate: fmt,
+clippy `-D warnings` with and without `--all-features`, 3,072 tests with
+the feature and 3,040 without, doc `-D warnings`, deny, `cargo +1.85
+check`.

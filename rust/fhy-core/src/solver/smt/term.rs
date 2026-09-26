@@ -12,7 +12,7 @@ pub(crate) struct TermId(usize);
 
 impl TermId {
     /// Return the id of the term at `index` of the arena.
-    pub(super) fn new(index: usize) -> Self {
+    pub(crate) fn at(index: usize) -> Self {
         Self(index)
     }
 

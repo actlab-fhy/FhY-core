@@ -63,6 +63,22 @@ jobs:
           components: clippy, rustfmt
       - name: Cache Rust Build Artifacts
         uses: Swatinem/rust-cache@v2
+      - name: Install z3
+        # The z3 feature's z3-sys 0.13 links libz3 4.13.3 or newer, which
+        # Ubuntu does not ship, so the job links the libz3 of the z3-solver
+        # wheel (D-S8-18). The wheel's z3 executable runs the process
+        # backend's stories against a real solver (FHY_SMT_SOLVER).
+        run: |
+          python3 -m venv "$RUNNER_TEMP/z3"
+          "$RUNNER_TEMP/z3/bin/pip" install --quiet z3-solver
+          lib="$("$RUNNER_TEMP/z3/bin/python" -c 'import os, z3; print(os.path.join(os.path.dirname(z3.__file__), "lib"))')"
+          version="$("$RUNNER_TEMP/z3/bin/python" -c 'import z3; print(z3.get_version_string())')"
+          {
+            echo "Z3_LIBRARY_PATH_OVERRIDE=$lib"
+            echo "Z3_SYS_Z3_VERSION=$version"
+            echo "LD_LIBRARY_PATH=$lib"
+            echo "FHY_SMT_SOLVER=$RUNNER_TEMP/z3/bin/z3 -in"
+          } >> "$GITHUB_ENV"
       - name: Code Formatting
         run: cargo fmt --all --check
       - name: Code Linting
@@ -89,10 +105,15 @@ jobs:
         # pyo3 leaves libpython unlinked only when maturin sets
         # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
         # build links the runner's Python and the fhy-core-py test binaries
-        # run.
+        # run. --all-features builds the z3 feature and runs its stories.
         run: cargo test --workspace --locked --all-features
+      - name: Default-Feature Testing
+        # The solver's stories without the z3 feature run the process
+        # backend against the z3 executable instead.
+        run: 'cargo test --locked -p fhy-core --test it solver::'
       - name: Documentation
         # Fresh docs, so the public-paths check below reads no stale page.
+        # The default features, as docs.rs builds them.
         env:
           RUSTDOCFLAGS: -D warnings
         run: |

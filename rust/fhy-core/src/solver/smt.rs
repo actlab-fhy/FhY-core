@@ -14,8 +14,12 @@ use super::error::LoweringError;
 use super::screen::{find_native_constants, is_native_constant};
 
 pub(crate) use lower::Lowerer;
+#[cfg(not(feature = "z3"))]
+use term::TermId;
 pub(crate) use term::{Assertion, Operator};
-use term::{Symbol, TermId, TermNode};
+use term::{Symbol, TermNode};
+#[cfg(feature = "z3")]
+pub(crate) use term::{Term, TermId};
 
 /// An SMT-LIB2 logic: the theories and quantifiers a script uses.
 ///
@@ -216,8 +220,27 @@ impl SmtScript {
     }
 
     /// Return the term with id `id`.
-    fn term(&self, id: TermId) -> &TermNode {
+    pub(crate) fn term(&self, id: TermId) -> &TermNode {
         &self.terms[id.index()]
+    }
+
+    /// Return the symbols the terms refer to.
+    #[cfg(feature = "z3")]
+    pub(crate) fn symbols(&self) -> &[Symbol] {
+        &self.symbols
+    }
+
+    /// Return how many terms the script holds; their ids are
+    /// `0..term_count()`, each argument's before the term applying it.
+    #[cfg(feature = "z3")]
+    pub(crate) fn term_count(&self) -> usize {
+        self.terms.len()
+    }
+
+    /// Return the assertions.
+    #[cfg(feature = "z3")]
+    pub(crate) fn assertions(&self) -> &[Assertion] {
+        &self.assertions
     }
 }
 

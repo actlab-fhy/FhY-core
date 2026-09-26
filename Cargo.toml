@@ -21,6 +21,8 @@ proptest = "1"
 # The non-self-describing format the serialization round-trip tests use.
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 rstest = "0.27"
+# The z3 backend of `fhy_core::solver`, behind the off-by-default `z3` feature.
+z3 = "0.21"
 fhy-core = { path = "rust/fhy-core" }
 
 [workspace.lints.rust]

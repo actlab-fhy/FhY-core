@@ -87,6 +87,8 @@ mod error;
 mod process;
 mod screen;
 mod smt;
+#[cfg(feature = "z3")]
+mod z3;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -103,6 +105,8 @@ pub use error::{LoweringError, SolveError};
 pub use process::{ProcessError, SmtLib2Process};
 pub use screen::Hazard;
 pub use smt::{Declaration, Logic, SmtScript};
+#[cfg(feature = "z3")]
+pub use z3::{Z3Solver, Z3TermError};
 
 use screen::is_native_constant;
 use smt::{Assertion, Lowerer, Operator};

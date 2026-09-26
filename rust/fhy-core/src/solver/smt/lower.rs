@@ -578,7 +578,7 @@ impl<'a> Lowerer<'a> {
             sort,
             is_ground,
         });
-        TermId::new(self.terms.len() - 1)
+        TermId::at(self.terms.len() - 1)
     }
 
     /// Return the script of `assertions`, declaring every symbol they do
