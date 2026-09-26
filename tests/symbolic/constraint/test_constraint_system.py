@@ -637,7 +637,7 @@ def test_convert_to_expression_propagates_constraint_error_from_a_member() -> No
     system = create_constraint_system(member)
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         system.convert_to_expression()
 
@@ -1007,7 +1007,7 @@ def test_check_satisfiability_propagates_constraint_error_from_a_member() -> Non
     )
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         system.check_satisfiability({x: SymbolType.INT})
 
@@ -1025,7 +1025,7 @@ def test_check_satisfiability_with_bindings_propagates_constraint_error() -> Non
     )
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         system.check_satisfiability_with_bindings({}, {x: SymbolType.INT})
 
@@ -2652,7 +2652,7 @@ def test_check_implication_propagates_constraint_error_from_a_member() -> None:
     )
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         antecedent.check_implication(consequent, {x: SymbolType.INT})
 

@@ -207,22 +207,20 @@ def _read_wire_members(constraint: Constraint, field: str) -> list[Any]:
 
 
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
-def test_set_constraint_serialized_values_are_repr_sorted(
+def test_set_constraint_serialized_values_are_in_canonical_order(
     factory: SetConstraintType, field: str
 ) -> None:
-    """Test serialized members are emitted in repr-sorted order for determinism.
+    """Test serialized members are emitted in the canonical member order.
 
-    The members are chosen so repr-sorted order (``10, 2, 33, 4`` --
-    lexicographic on the rendered digits) is not the numeric order and is
-    not the order the normalized member set iterates in, so emitting the
-    set as it happens to iterate would produce a different list.
+    Integer members order numerically (C-2 of the S13 design), so the wire
+    lists ``2, 4, 10, 33``, not the ``repr``-sorted ``10, 2, 33, 4``, and
+    the order the members are given in does not matter.
     """
-    constraint = factory(mock_identifier("x", 0), {10, 2, 33, 4})  # type: ignore[call-arg]
+    constraint = factory(mock_identifier("x", 0), [33, 10, 4, 2])  # type: ignore[call-arg]
 
     serialized_values = _read_wire_members(constraint, field)
 
-    assert [member["__data__"] for member in serialized_values] == [10, 2, 33, 4]
-    assert serialized_values == sorted(serialized_values, key=repr)
+    assert [member["__data__"] for member in serialized_values] == [2, 4, 10, 33]
 
 
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
@@ -231,20 +229,17 @@ def test_set_constraint_wire_order_is_independent_of_construction_order(
 ) -> None:
     """Test two constraints over the same members serialize to one byte-identical list.
 
-    The members collide on hash, so the two constraints provably store
-    them in different orders. Determinism of the wire form therefore has
-    to come from sorting at encode time rather than from the stored order
-    happening to agree.
+    The members collide on hash, and are given in opposite orders; both
+    constraints store them in the canonical order (C-1 of the S13 design),
+    so the wire lists agree.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = factory(x, list(members))  # type: ignore[call-arg]
     right = factory(x, list(reversed(members)))  # type: ignore[call-arg]
 
-    assert getattr(left, field) != getattr(right, field), (
-        "the two constraints must store their members in different orders "
-        "for this test to say anything about encode-time ordering"
-    )
+    # C-1 of the S13 design: both store their members in canonical order.
+    assert getattr(left, field) == getattr(right, field)
     assert _read_wire_members(left, field) == _read_wire_members(right, field)
 
 

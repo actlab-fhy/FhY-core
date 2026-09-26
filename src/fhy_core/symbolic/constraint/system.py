@@ -32,6 +32,7 @@ from fhy_core.serialization import WrappedFamilySerializable, register_serializa
 from fhy_core.symbolic.expression import (
     Expression,
     LiteralExpression,
+    LiteralType,
     try_get_native_constant_for_identifier,
     validate_predicate,
 )
@@ -53,13 +54,102 @@ from .core import (
     InSetConstraint,
     NotInSetConstraint,
     SymbolicPredicate,
-    _coerce_bindings_to_environment,
-    _find_bound_native_constants,
-    _log_native_constant_binding_refusal,
 )
 from .errors import ConstraintError, MissingSymbolTypeError
 
 _LOGGER = get_logger(__name__)
+
+
+def _validate_binding_value(identifier: Identifier, value: object) -> None:
+    """Reject a binding value ``ConstraintBindings`` does not admit.
+
+    Raises:
+        ConstraintError: If ``value`` is neither an ``Expression`` nor a
+            ``LiteralType``. The message names the identifier, the value,
+            and the value's type.
+
+    """
+    if isinstance(value, (Expression, LiteralType)):
+        return
+    raise ConstraintError(
+        f"Binding for identifier {identifier!r} must be an `Expression` or a "
+        f"literal (`str`, `float`, `int`, `bool`, `Decimal`), but got value "
+        f"{value!r} of type {type(value).__name__}."
+    )
+
+
+def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expression:
+    """Wrap a raw binding value in the ``LiteralExpression`` it denotes.
+
+    Raises:
+        ConstraintError: If ``LiteralExpression`` refuses ``value``, chained
+            to the constructor's error.
+
+    """
+    try:
+        return LiteralExpression(value)
+    except ValueError as exc:
+        raise ConstraintError(
+            f"Binding for identifier {identifier!r} cannot be lifted into a "
+            f"literal: value {value!r} of type {type(value).__name__} is not "
+            f"one a `LiteralExpression` holds ({exc})"
+        ) from exc
+
+
+def _coerce_bindings_to_environment(
+    bindings: ConstraintBindings,
+) -> dict[Identifier, Expression]:
+    """Coerce every binding value to the ``Expression`` a substitution consumes.
+
+    Raises:
+        ConstraintError: If a value falls outside ``Expression |
+            LiteralType``, or is a literal value ``LiteralExpression``
+            refuses.
+
+    """
+    environment: dict[Identifier, Expression] = {}
+    for identifier, value in bindings.items():
+        _validate_binding_value(identifier, value)
+        environment[identifier] = (
+            value
+            if isinstance(value, Expression)
+            else _lift_binding_value(identifier, value)
+        )
+    return environment
+
+
+def _find_bound_native_constants(
+    scope: frozenset[Identifier], bindings: Mapping[Identifier, object]
+) -> list[Identifier]:
+    """Return the native constants' canonical identifiers ``bindings`` binds in scope.
+
+    Returns:
+        The bound canonical identifiers in ``scope``, ordered by id.
+
+    """
+    return sorted(
+        (
+            identifier
+            for identifier in bindings
+            if identifier in scope
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+
+
+def _log_native_constant_binding_refusal(
+    context: str, identifiers: Sequence[Identifier]
+) -> None:
+    """Log the WARNING refusing bindings for native constants' canonical identifiers."""
+    _LOGGER.warning(
+        "%s: identifier(s) %s are the canonical identifier(s) of registered "
+        "native constant(s), which name a value rather than a variable, so "
+        "the supplied binding cannot be honored; reporting UNDECIDED rather "
+        "than a decision the binding did not take part in",
+        context,
+        format_comma_separated_list(tuple(identifiers)),
+    )
 
 
 def _raise_if_missing_symbol_types(
@@ -744,9 +834,7 @@ class ConstraintSystem(
         captured = _find_bound_native_constants(scope, environment)
         if captured:
             _log_native_constant_binding_refusal(
-                _LOGGER,
-                "ConstraintSystem.check_satisfiability_with_bindings",
-                captured,
+                "ConstraintSystem.check_satisfiability_with_bindings", captured
             )
             return ConstraintOutcome.UNDECIDED
         leaves_outcome = _decide_leaves_with_bindings(decided_leaves, bindings)

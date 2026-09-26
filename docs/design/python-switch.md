@@ -125,7 +125,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13a.1: constraint benchmarks and baseline (39 rows; see "S13a.1 baseline")
   - [x] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer; 144 new tests)
   - [x] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
-  - [ ] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`
+  - [x] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`, with the migrated tests
   - [ ] S13a.5: tests migrated, and the interface suite
   - [ ] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`)
   - [ ] S13b.2: the system's binding
@@ -15601,6 +15601,39 @@ Python exceptions) and `constraint/kinds.rs` (`_rs.EquationConstraint`,
 `decimal_class`, `big_int_to_python` and `non_boolean_operand_error`; the
 solver binding `solve_error_to_py` and `PySolver::core`. Nothing in Python
 uses it yet, so the suite is unchanged (7,685 passed, 2 xfailed).
+
+### S13a.4 status
+
+The Python switch (marked breaking) makes `core.py` and `members.py` thin
+layers and deletes `ordering.py`. `core.py` keeps `ConstraintBindings`,
+`ConstraintOutcome`, `SymbolicPredicate`, the `Constraint` ABC and its
+logger, and defines the three leaves as `class
+EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable)` and
+the like, registered as virtual subclasses of `Constraint` and
+`FrozenMixin`: `Constraint`'s bases carry an instance layout a pyclass
+cannot share (the multiple-bases layout conflict), as `Expression` found
+with `FrozenMixin`. The stub declares the three `_rs` classes as
+`Constraint` subclasses, so type checkers see the public leaves as
+constraints. `members.py` keeps `ConstraintMember`, `MemberCollection` and
+`does_member_lift_to_expression`. `system.py` stays Python until S13b and
+takes over the three binding helpers it used from `core.py`
+(`_coerce_bindings_to_environment`, `_find_bound_native_constants`,
+`_log_native_constant_binding_refusal`). The README's constraint row and
+Rust-backed list change.
+
+The suite failed 31 tests after the switch, all in the migration below;
+nothing else changed, the param tests and the log, message and
+third-party tests included. At the end: `pytest` 7,685 passed, `-m "not
+very_slow"` 7,718 passed, ruff and mypy clean.
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_set_constraints.py::test_set_constraint_repr_is_stable_across_construction_order`, `test_set_constraint_members_order_is_independent_of_construction_order`; `test_serialization.py::test_set_constraint_wire_order_is_independent_of_construction_order`; `test_structural_equivalence.py::test_set_constraint_uses_value_equality_not_identity`, `test_set_constraint_alpha_equivalence_matches_structural_for_same_variable`; `test_ordering_key.py::test_equal_keys_for_in_set_constraints_built_in_different_member_orders` (11 cases) | same names | C-1: their precondition that the stored `values` differ becomes that they are equal; the property each pins holds either way |
+| `test_convert_to_expression.py::test_multi_value_convert_to_expression_orders_leaves_by_repr` (2) | `..._orders_leaves_canonically` | C-2: `[3, 7, 9, 12]`, not `repr` order |
+| `test_serialization.py::test_set_constraint_serialized_values_are_repr_sorted` (2) | `..._are_in_canonical_order` | C-2: `[2, 4, 10, 33]` |
+| `test_set_constraints.py::test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set` (10) | `test_set_constraint_reader_does_not_rebuild_the_members` | D-S13-1: the patched `_wrap_member_collection` is gone; every reader leaves the one members tuple in place |
+| `test_set_constraints.py::test_set_constraint_replace_rederives_the_member_set_from_the_new_values` (2) | `test_set_constraint_rebuilt_with_new_values_decides_against_them` | C-3: no dataclass, so `type(c)(c.variable, values)`, as param rebuilds one |
+| `test_constraint_system.py`: the four `match="Conversion of type ..."` | same names | C-6: the core's lowercase text |
 
 ### S13 resume notes
 

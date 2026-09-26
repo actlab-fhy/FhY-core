@@ -194,19 +194,17 @@ def test_multi_value_convert_to_expression_is_deterministic_across_construction_
 @pytest.mark.parametrize(
     "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
 )
-def test_multi_value_convert_to_expression_orders_leaves_by_repr(
+def test_multi_value_convert_to_expression_orders_leaves_canonically(
     factory: SetConstraintFactory,
 ) -> None:
-    """Test the produced combinator's leaves match `repr`-sorted member order.
+    """Test the produced combinator's leaves follow the canonical member order.
 
-    The chosen integer members give a lexicographic-by-repr order
-    (``[12, 3, 7, 9]``) that differs from both numeric order and
-    typical ``frozenset`` iteration order, so the test will fail if
-    the implementation forgets to sort by ``repr`` and falls through
-    to either of those orderings.
+    Integer members order numerically (C-2 of the S13 design): ``[3, 7, 9,
+    12]``, not the ``repr``-sorted ``[12, 3, 7, 9]``, whatever order they
+    are given in.
     """
     x = mock_identifier("x", 0)
-    members = [3, 7, 9, 12]
+    members = [12, 9, 3, 7]
     constraint = factory(x, members)
 
     expression = constraint.convert_to_expression()
@@ -222,4 +220,4 @@ def test_multi_value_convert_to_expression_orders_leaves_by_repr(
             leaf_literals.append(node.right.value)
 
     _walk(expression)
-    assert leaf_literals == sorted(members, key=repr)
+    assert leaf_literals == [3, 7, 9, 12]
