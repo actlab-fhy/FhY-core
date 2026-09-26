@@ -63,9 +63,10 @@ def function_registry_snapshot() -> Iterator[None]:
 
     Captures the registry's contents before the test runs, then restores
     them after the test completes. Tests that mutate the registry
-    request this fixture explicitly. Built-in registrations
-    (``max``, ``min``) survive across tests because they are in the
-    snapshot.
+    request this fixture explicitly. The built-ins (``max``, ``pi``) are
+    the core's catalogue, no registry state, so restoring leaves them in
+    place, and a user constant keeps its identifier when the snapshot
+    holds its entry.
     """
     snapshot = dict(_registry.get_registered_entries())
     try:

@@ -19,7 +19,7 @@ inlining semantics.
 """
 
 import math
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Mapping, MutableMapping
 from typing import Any, cast
 
 import pytest
@@ -30,7 +30,6 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
-    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     LogicalExpression,
@@ -48,11 +47,7 @@ from fhy_core.symbolic.expression import (
     is_entry_registered,
 )
 from fhy_core.symbolic.expression.builtins import (
-    _BOOL_PARAMS_2,
-    _BUILTIN_NATIVE_FUNCTIONS,
-    _REAL_PARAMS_1,
-    _REAL_PARAMS_2,
-    _REAL_PARAMS_3,
+    _NATIVE_IMPLEMENTATIONS,
     BUILTIN_CONSTANTS,
     BUILTIN_FUNCTIONS,
     BuiltinConstants,
@@ -607,21 +602,24 @@ def test_builtin_typed_dict_declares_every_key_read_only(
 
 
 @pytest.mark.parametrize(
-    "parameter_sorts",
-    [_REAL_PARAMS_1, _REAL_PARAMS_2, _REAL_PARAMS_3, _BOOL_PARAMS_2],
+    "name",
+    ["exp", "max", "clamp", "xor"],
     ids=["real-1", "real-2", "real-3", "bool-2"],
 )
-def test_builtin_parameter_sort_table_is_a_tuple(
-    parameter_sorts: Sequence[FunctionSort],
-) -> None:
-    """Test each seeded parameter-sort table is a tuple, not a list."""
-    assert isinstance(parameter_sorts, tuple)
+def test_builtin_entry_parameter_sorts_are_a_tuple(name: str) -> None:
+    """Test each built-in entry's parameter sorts are a tuple, not a list."""
+    entry = get_registered_entry(name)
+
+    assert isinstance(entry, RegisteredFunction | NativeFunction)
+    assert isinstance(entry.parameter_sorts, tuple)
 
 
-def test_builtin_native_functions_table_item_assignment_raises_type_error() -> None:
+def test_builtin_native_implementations_table_item_assignment_raises_type_error() -> (
+    None
+):
     """Test assigning to an existing key in the native table raises TypeError."""
-    mutable_table = cast(MutableMapping[str, object], _BUILTIN_NATIVE_FUNCTIONS)
-    existing_key = next(iter(_BUILTIN_NATIVE_FUNCTIONS))
+    mutable_table = cast(MutableMapping[str, object], _NATIVE_IMPLEMENTATIONS)
+    existing_key = next(iter(_NATIVE_IMPLEMENTATIONS))
 
     with pytest.raises(TypeError):
-        mutable_table[existing_key] = _BUILTIN_NATIVE_FUNCTIONS[existing_key]
+        mutable_table[existing_key] = _NATIVE_IMPLEMENTATIONS[existing_key]

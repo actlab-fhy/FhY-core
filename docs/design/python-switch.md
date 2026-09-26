@@ -53,13 +53,13 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
 - [ ] S7: the function registry (designed; see "S7: the function registry")
-  - S7 in progress: done S7.1 to S7.4 (the switch commit leaves 7 tests failing and `test_builtins.py` failing collection, all fixed in S7.5); next S7.5 (tests migrated, the interface suite)
+  - S7 in progress: done S7.1 to S7.5; next S7.6 (benchmarks after, and the docs)
   - [x] N-S7-1 to N-S7-3 decided (2026-09-25; see "S7 resolutions")
   - [x] S7.1: registry benchmarks and baseline
   - [x] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
   - [x] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
   - [x] S7.4: the Python switch
-  - [ ] S7.5: tests migrated, and the interface suite
+  - [x] S7.5: tests migrated, and the interface suite
   - [ ] S7.6: benchmarks after, and docs
 
 ## Goal
@@ -5664,6 +5664,55 @@ of the 35 Python built-in entries with the binding's:
 
 So the Python bodies can be deleted (S7.4), and the interface suite pins
 the printed bodies as data.
+
+### S7.4 and S7.5 status
+
+The Python switch (b4ca537, marked breaking) left 7 tests failing and
+`test_builtins.py` failing collection; the test commit after it migrates
+them and adds the interface suite. One failure was a core bug the
+migration found: a call of a built-in constant's name, such as `pi()`,
+was an unknown function to the inliner, where Python called it not
+callable. The one call namespace of D-S7-3 means a built-in constant
+is refused as `NotCallable` as a registered one is (52fad7e, with its
+Rust test). `test_numpy_evaluator.py::test_raises_when_calling_native_constant`
+pins it unchanged.
+
+At the end of S7.5: `pytest` 7,327 passed, `-m "not very_slow"` 7,360
+passed, the `property` session 281 passed, `lint` and `type_check` clean,
+`tests/test_rs_stub.py` green, and the Rust gate green.
+
+Tests migrated in S7.5. None was skipped or deleted; every other test,
+the message tests of `test_registry.py` included, passes unchanged.
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_registry.py::test_registered_function_dataclass_is_frozen`, `test_native_function_dataclass_is_frozen`, `test_native_constant_dataclass_is_frozen` | same names | D-S7-9: `FrozenMutationError` |
+| `test_registry.py::test_registered_function_direct_construction_rejects_captured_identifier` | `test_registered_function_direct_construction_leaves_captures_to_registration` | D-S7-5: an entry built directly holds the body; registering it refuses the capture, naming it |
+| none | `test_registry.py::test_registered_function_direct_construction_rejects_a_repeated_parameter` | D-S7-5, new |
+| `test_registry.py::test_builtin_constants_keep_their_pinned_canonical_ids`, and its fresh-interpreter twin | same names | N-S7-1 (a): the ids 48 to 51, and the name hints |
+| `test_builtins.py::test_builtin_parameter_sort_table_is_a_tuple` (4 cases) | `test_builtin_entry_parameter_sorts_are_a_tuple` (4 cases) | D-S7-15: the private sort tables are gone, and the entries' sorts are the catalogue's |
+| `test_builtins.py::test_builtin_native_functions_table_item_assignment_raises_type_error` | `test_builtin_native_implementations_table_item_assignment_raises_type_error` | D-S7-7: the native callables are the table `_NATIVE_IMPLEMENTATIONS` |
+| `test_core.py::test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue` | same name | D-S7-3, D-S7-14: restoring a state without `max` and `xor` keeps both |
+| `test_inline_pass.py`: the unknown-name, the two arity, the two recursion, the constant and the native-arity tests | same names | D-S7-7, D-S7-12: they also pin the core's text of the cause |
+| `test_inline_pass.py::test_inline_functions_passes_through_native_function_call_unchanged` | same name | D-S7-7: the input comes back itself |
+| `test_inline_pass_properties.py::test_inline_functions_is_idempotent` | same name | D-S7-7: the second inlining returns its input itself, not a structurally equal tree |
+| none | `test_inline_pass_properties.py::test_inline_functions_leaves_no_registered_function_call_in_deep_nesting` | X-10: nests of 20 to 300 calls, beyond the Python inliner's reach |
+| `tests/conftest.py::function_registry_snapshot` | docstring | the built-ins are no state |
+
+The new `tests/symbolic/expression/test_registry_rust_binding.py` (162
+tests, counting parametrized cases) covers the test plan above: the class
+structure, frozen errors, `__match_args__`, reprs and pickles (a built-in
+unpickles as itself); the argument checks and the core's `ValueError`
+texts, the Python arity check, the registration errors and their causes,
+and the Python text of lookup misses; identity across registration, the
+lookups, `BUILTIN_FUNCTIONS` and the snapshot, whose order it pins; the
+built-in constants' identifiers, resolution by id, pruning and keeping on
+restore, and the value check against `is_python_value_compatible_with_sort`
+over 11 values and the four sorts; binder equivalence; the screen with the
+Python lookups replaced by raising ones; the inliner's pass, its identity
+result, its errors as causes, and `relu` nested 100 deep; threads (distinct
+names, one contested name, and whole snapshots while another thread
+registers); and the 16 printed bodies.
 
 ## Plan after S7 (the user, 2026-09-25)
 

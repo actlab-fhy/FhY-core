@@ -18,7 +18,6 @@ need to distinguish kinds use ``isinstance``.
 constant-identity mapping.
 """
 
-import dataclasses
 import math
 import subprocess
 import sys
@@ -49,6 +48,7 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
 from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
+from fhy_core.traits.frozen import FrozenMutationError
 
 # =============================================================================
 # register_function: happy paths
@@ -164,7 +164,7 @@ def test_registered_function_dataclass_is_frozen(
         body=IdentifierExpression(parameter),
     )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         registered.name = "renamed"  # type: ignore[misc]
 
 
@@ -466,18 +466,50 @@ def test_function_registry_snapshot_restores_state_after_test_b(
 # =============================================================================
 
 
-def test_registered_function_direct_construction_rejects_captured_identifier() -> None:
-    """Test constructing ``RegisteredFunction`` directly rejects an unclosed body."""
+def test_registered_function_direct_construction_leaves_captures_to_registration(
+    function_registry_snapshot: None,
+) -> None:
+    """Test only registration refuses a body capturing a free identifier.
+
+    Which identifiers a body may refer to depends on the registry it joins
+    (D-S7-5), so an entry built directly holds the body, and registering
+    the same function refuses it, naming the captured identifier.
+    """
     parameter = Identifier("x")
     captured = Identifier("y")
+    body = IdentifierExpression(parameter) + captured
 
-    with pytest.raises(ValueError, match="y"):
-        RegisteredFunction(
-            name="test_direct_captured",
+    entry = RegisteredFunction(
+        name="test_direct_captured",
+        parameters=(parameter,),
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        body=body,
+    )
+
+    assert entry.body is body
+    with pytest.raises(EntryRegistrationError, match="y"):
+        register_function(
+            "test_direct_captured",
             parameters=(parameter,),
             parameter_sorts=(FunctionSort.REAL,),
             result_sort=FunctionSort.REAL,
-            body=IdentifierExpression(parameter) + captured,
+            body=body,
+        )
+    assert not is_entry_registered("test_direct_captured")
+
+
+def test_registered_function_direct_construction_rejects_a_repeated_parameter() -> None:
+    """Test constructing ``RegisteredFunction`` refuses a parameter named twice."""
+    parameter = Identifier("x")
+
+    with pytest.raises(ValueError, match='repeats the parameter "x"'):
+        RegisteredFunction(
+            name="test_direct_repeated",
+            parameters=(parameter, parameter),
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter),
         )
 
 
@@ -611,7 +643,7 @@ def test_native_function_dataclass_is_frozen() -> None:
         implementation=math.sqrt,
     )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         native.name = "renamed"  # type: ignore[misc]
 
 
@@ -671,7 +703,7 @@ def test_native_constant_dataclass_is_frozen() -> None:
         name="test_const_frozen", sort=FunctionSort.REAL, value=1.0
     )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         constant.name = "renamed"  # type: ignore[misc]
 
 
@@ -1187,19 +1219,17 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
 # Pinned built-in constant ids
 # =============================================================================
 
-# The id counter starts at 65_536, above the ids reserved for the shipped
-# identifiers. The shipped tags hold fixed reserved ids and draw nothing from
-# the counter, so import-time registration numbers the constants from 65_536.
-_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 65_536, "e": 65_537, "inf": 65_538, "nan": 65_539}
+# The built-in constants hold fixed ids from the reserved block, as the
+# shipped tags do (N-S7-1 (a)), so they draw nothing from the counter and are
+# the same in every process, whatever it did first.
+_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 48, "e": 49, "inf": 50, "nan": 51}
 
 
 def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:
     """Test the built-in constants keep the ids a serialized reference resolves by.
 
-    A constant's id is assigned by registration order at import time, so
-    it can shift if the seeding order ever changes; a wire form minted
-    against today's id would then resolve to the wrong identifier, or to
-    none at all, on a process that assigns the ids differently.
+    The ids are the reserved table's, so a wire form naming a constant
+    resolves to it in any process; a constant's name hint is its name.
     """
     ids = {
         name: get_native_constant_identifier(name).id
@@ -1207,6 +1237,10 @@ def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:
     }
 
     assert ids == _PINNED_BUILTIN_CONSTANT_IDS
+    assert all(
+        get_native_constant_identifier(name).name_hint == name
+        for name in _PINNED_BUILTIN_CONSTANT_IDS
+    )
 
 
 @pytest.mark.slow
@@ -1216,10 +1250,9 @@ def test_builtin_constants_keep_their_pinned_canonical_ids_in_a_fresh_interprete
 ):
     """Test the pinned canonical ids hold from a clean process start.
 
-    The ids depend on registration order at import time, which earlier
-    tests in this process may have perturbed by registering their own
-    functions or constants; a fresh interpreter is the only way to see
-    the ids a real deserializing process would see.
+    Earlier tests in this process may have drawn ids from the counter; a
+    fresh interpreter shows the ids a real deserializing process sees,
+    which are the reserved ones whatever the process did first.
     """
     names = tuple(_PINNED_BUILTIN_CONSTANT_IDS)
     output = subprocess.check_output(

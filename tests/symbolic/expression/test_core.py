@@ -2852,13 +2852,12 @@ def test_a_call_of_a_builtin_name_calls_the_builtin() -> None:
 def test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue(
     function_registry_snapshot: None,
 ) -> None:
-    """Test a built-in call keeps its built-in result sort without the registry.
+    """Test the built-ins survive a restored state that drops them.
 
-    Built-in names are reserved, so the screen reads a built-in call's
-    sort from the core's catalogue, even when the Python registry holds no
-    entry for the name. (Only the two entries are dropped: dropping a
-    native constant would lose its canonical identifier for the rest of
-    the process.)
+    The built-ins are the core's catalogue, no registry state (D-S7-3,
+    D-S7-14): restoring a state without ``max`` and ``xor`` keeps both
+    resolving, and the screen reads a built-in call's sort from the
+    catalogue.
     """
     set_registry_state_for_tests(
         {
@@ -2867,7 +2866,8 @@ def test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue(
             if name not in {"max", "xor"}
         }
     )
-    assert not is_entry_registered("max")
+    assert is_entry_registered("max")
+    assert is_entry_registered("xor")
 
     with pytest.raises(NonBooleanLogicalOperandError):
         validate_predicate(call("max", LiteralExpression(1), LiteralExpression(2)))
