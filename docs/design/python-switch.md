@@ -131,14 +131,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13b.2: the system's binding
   - [x] S13b.3: the Python switch of `system.py`, with its tests (12 new interface tests)
   - [x] S13b.4: benchmarks after, and docs (every row faster or within 10%, after 64a1436; see "S13 benchmarks")
-- [ ] S15: the symbol table (`symbol_table.py`; "Needs the user" is empty; see "S15: the symbol table")
+- [x] S15: the symbol table (`symbol_table.py`; "Needs the user" is empty; see "S15: the symbol table"). The suite is green (7,763 passed), slow tests pass (7,796), properties pass (282), `tests_minimal` passes (5,812 passed, 627 skipped), lint and mypy are clean, and the Rust gate passes (3,826; 3,858 with all features). Two benchmark rows slower than 10% (`get_namespace` 1.52, `update_namespaces` 1.88; neither has a caller in `src`) await the maintainer's verdict; see "S15 benchmarks"
   - [x] S15 design (D-S15-1 to D-S15-16)
   - [x] S15.1: symbol-table benchmarks and baseline (21 rows; see "S15.1 baseline")
   - [x] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`: `SymbolTable`, `Frame`, `SymbolFrame`, `FunctionKeyword`; 59 new tests, see "S15.2 implementation notes")
   - [x] S15.3: the binding (the table, the three frames, the stubs; with the core's `SymbolTable::insert_namespace` for pickling)
   - [x] S15.4: the Python switch (`symbol_table.py` over `_rs`; the README row and CONTRIBUTING's callback exception)
   - [x] S15.5: tests migrated (none needed a change), and the interface suite (54)
-  - [ ] S15.6: benchmarks after, and docs
+  - [x] S15.6: benchmarks after, and docs (every row faster or within noise except `get_namespace` and `update_namespaces`; see "S15 benchmarks")
 
 ## Goal
 
@@ -15954,10 +15954,11 @@ the stub.
 
 ## S15: the symbol table
 
-- **Status:** designed 2026-09-26 at a47aad0 (dev-rust with S14). D-S15-1
-  to D-S15-16 apply the policy the user already set, the precedent of S7,
-  S11, S13 and S14, and the user's direction for this slice: port as much
-  as possible to Rust, accepting small slowdowns on paths nothing calls.
+- **Status:** designed 2026-09-26 at a47aad0 (dev-rust with S14), and
+  implemented the same day; see "S15 status" below. D-S15-1 to D-S15-16
+  apply the policy the user already set, the precedent of S7, S11, S13
+  and S14, and the user's direction for this slice: port as much as
+  possible to Rust, accepting small slowdowns on paths nothing calls.
   "Needs the user" is empty.
 - **Scope:** `src/fhy_core/symbol_table.py` (758 lines): `SymbolTable`,
   the three frame classes, `FunctionKeyword`, `SymbolTableError` and the
@@ -16746,3 +16747,190 @@ shape follows D-S15-2, with these choices:
 The Rust gate is green: fmt, clippy `-D warnings` both ways, 3,825 tests
 (3,857 with all features), doc `-D warnings` both ways, deny, and
 `cargo +1.85 check` both ways. Python is unchanged in this step.
+
+### S15.3 to S15.5 status
+
+S15.3 to S15.5 were implemented on 2026-09-26 in these commits: the core's
+`SymbolTable::insert_namespace`, which the binding's pickling needs
+(3462e73); the binding and the stubs (ef2b071, with the stub's import
+order fixed in 855611b); the Python switch, marked breaking (0a675b9); and
+the interface suite (460b738). No existing test was skipped, deleted or
+changed. At the end, after the S15.6 optimizations:
+
+- `pytest`: 7,763 passed. The interface suite adds 55 tests, from 34
+  functions.
+- `-m "not very_slow"`: 7,796 passed.
+- The `property` session: 282 passed.
+- `tests_minimal`: 5,812 passed, 627 skipped.
+- `lint` and `type_check` are clean (mypy `--strict`; `ty` stays
+  advisory), and `tests/test_rs_stub.py` is green.
+- The Rust gate is green: fmt, clippy `-D warnings` both ways, 3,826
+  tests (3,858 with all features), doc `-D warnings` both ways, deny, and
+  `cargo +1.85 check` both ways. It ran in the environment of
+  `target/gate-env.sh`, without the tooling pyenv on `PATH`.
+
+### S15 benchmarks (before and after)
+
+These are median times per call, from `.venv/bin/python -m pytest
+benchmarks/test_symbol_table.py` and the three rerun rows of
+`test_term.py` and `test_types.py`, `-n 0 --benchmark-only`, on the S0
+machine with Python 3.11.13 and pytest-benchmark 5.3.0.
+
+- "Before" is 772f92b (the S15.1 tree, before any Rust change): its `src`
+  was exported with `git archive` under `target/before`, beside the
+  extension built from it, and put first on `PYTHONPATH`.
+- "After" is b2c3375, the tree with the S15.6 optimizations.
+- The two ran three times each, interleaved, at a load average of 8 to
+  12, and the table lists the best of the three medians.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_import_frame_construction` | 956 ns | 304 ns | 0.32 |
+| `test_function_frame_construction` | 1.26 µs | 534 ns | 0.42 |
+| `test_variable_symbol_table_frame_construction` | 1.16 µs | 245 ns | 0.21 |
+| `test_frame_name_access` | 48 ns | 50 ns | 1.05 |
+| `test_frame_eq` | 211 ns | 96 ns | 0.46 |
+| `test_variable_symbol_table_frame_hash` | 246 ns | 63 ns | 0.26 |
+| `test_frame_structural_equivalence` | 7.31 µs | 100 ns | 0.01 |
+| `test_frame_serialize_to_dict` | 3.02 µs | 2.40 µs | 0.80 |
+| `test_frame_deserialize_from_dict` | 53.1 µs | 51.7 µs | 0.97 |
+| `test_symbol_table_construction` | 1.04 µs | 216 ns | 0.21 |
+| `test_symbol_table_build_of_20_symbols` | 41.5 µs | 19.1 µs | 0.46 |
+| `test_symbol_table_add_and_remove_symbol` | 2.96 µs | 1.63 µs | 0.55 |
+| `test_is_symbol_defined_in_namespace_through_a_chain_of_10` | 6.03 µs | 915 ns | 0.15 |
+| `test_get_frame_from_namespace_through_a_chain_of_10` | 6.28 µs | 926 ns | 0.15 |
+| `test_get_frame_of_the_last_symbol` | 28.4 µs | 305 ns | 0.01 |
+| `test_is_symbol_defined` | 27.2 µs | 303 ns | 0.01 |
+| `test_get_namespace_of_20_symbols` | 232 ns | 352 ns | **1.52** |
+| `test_symbol_table_verify` | 33.5 µs | 2.98 µs | 0.09 |
+| `test_symbol_table_canonicalize` | 74.5 µs | 3.43 µs | 0.05 |
+| `test_symbol_table_structural_equivalence` | 152.5 µs | 1.12 µs | 0.01 |
+| `test_symbol_table_serialize_to_dict` | 52.5 µs | 31.9 µs | 0.61 |
+| `test_symbol_table_deserialize_from_dict` | 1.21 ms | 1.04 ms | 0.86 |
+| `test_symbol_table_pickle_round_trip` | 195.7 µs | 171.2 µs | 0.87 |
+| `test_symbol_table_update_namespaces` | 2.75 µs | 5.16 µs | **1.88** |
+
+- **The lookups** are 7 to 90 times faster. A walk through 10 parents is
+  0.9 µs, and a search of 200 symbols 0.3 µs, where Python built closures
+  per call and compared each symbol in Python.
+- **The whole-table operations** are 10 to 140 times faster: a comparison
+  of two 20-variable tables takes 1.1 µs instead of 153 µs, since two
+  built-in frames of one class compare in Rust, without the derived plan;
+  `verify` and `canonicalize` of 200 symbols take 3 µs.
+- **The frames** construct 2 to 5 times faster, and compare and hash 2 to
+  70 times faster. A name read costs what the dataclass's did (the 1.05 is
+  2 ns).
+- **Building a table** is twice as fast: `add_symbol` reads its three
+  arguments across the boundary and still writes the DEBUG line (D-S15-13),
+  in 0.8 µs.
+- **Serialization** gains less, 1.1 to 1.6 times: each frame's envelope, and
+  each type's family dispatch on decoding, stay Python.
+
+**Two rows are slower than 10%, flagged for the maintainer's verdict**
+(cross-cutting rule 5; CONTRIBUTING "Replacing a Python class"). Neither
+path has a caller in `src`, which is the kind of slowdown the direction
+accepts, but the verdict is the maintainer's:
+
+| Benchmark | after / before | Why | Who pays it |
+|---|--:|---|---|
+| `test_get_namespace_of_20_symbols` | 1.52 (+120 ns) | Y-5: `get_namespace` returns a new dict, where Python returned the table's own. The binding keeps each namespace's dict until the namespace changes and returns `dict.copy()` of it; the copy is the 120 ns | a caller reading a namespace's symbols; its first read after a change also builds the dict, 1.8 µs for 20 symbols |
+| `test_symbol_table_update_namespaces` | 1.88 (+2.4 µs) | copying 200 symbols clones two reference-counted handles per symbol (its identifier and its entry) and drops the replaced copies, where `dict(...)` copies pointers with plain reference counts | a merge of one table into another, 12 ns a symbol more |
+
+The first run after the switch measured the two at 8.4 and 2.8. Two changes
+in b2c3375 brought them to the table: the dict cache above, and an ordered
+map indexed by identifier id, so cloning a namespace copies its index
+without touching the identifiers. Sharing a namespace's symbols between
+tables until one changes (copy-on-write) would remove most of the second
+cost, but it needs `F: Clone` on every mutating method of the generic core
+table, so it was not done.
+
+### S15 implementation notes
+
+These are the choices the decisions left open, made while implementing
+S15.3 to S15.6, and the places where the shape differs from the plan (the
+S15.2 notes are above):
+
+- **A core addition after S15.2:** `SymbolTable::insert_namespace`, which
+  sets a namespace's parent and symbols without checks, in place if the
+  namespace is defined. The binding's pickling needs it: a table
+  `update_namespaces` reached can hold a symbol an ancestor also defines,
+  or a cycle with symbols, which `add_symbol` refuses to rebuild. It has
+  its own story.
+- **Binding layout.** `rust/fhy-core-py/src/symbol_table.rs` with
+  `symbol_table/frames.rs` (the three classes and the `FunctionKeyword`
+  table) and `symbol_table/table.rs` (the table, its entries, its payload,
+  `verify`, the pickling and the DEBUG lines). `types.rs` re-exports five
+  of its helpers for them (`run_in_context`, `MayCallPython`,
+  `read_type_value`, `read_type_qualifier`, `type_qualifier_to_python`).
+- **The frames** are `#[pyclass(frozen, subclass)]`s, so a Python class
+  may subclass one, and the public classes are thin subclasses with
+  `WrappedFamilySerializable` and `__slots__ = ()`, registered as virtual
+  `SymbolTableFrame`s and `FrozenMixin`s, as S13 registers its leaves.
+  The stub declares the three `_rs` classes as `SymbolTableFrame`
+  subclasses, so mypy accepts a built-in frame where a frame is expected.
+  - A signature entry is any sequence of two items but a `str`; each pair
+    is stored as a new tuple of the given objects.
+  - `==` returns `NotImplemented` for another class, as the dataclass's
+    did, and the same object is equal at once. A comparison or hash that
+    meets a Python-defined type part runs in S11's context.
+  - The function frame's payload errors keep Python's texts: `Invalid
+    function frame values: 'bogus' is not a valid FunctionKeyword`, and a
+    `ValueError` from a nested type's decoding is wrapped the same way.
+- **The table's entries** hold the symbol's `Identifier` object, the frame
+  object, its name and, for a built-in frame, its core frame, behind an
+  `Arc`. The comparison of two entries runs in Rust when the left one is
+  built in: `false` for another class, the core frames' structural
+  equivalence for the same one. Otherwise it calls the left frame's
+  `is_structurally_equivalent`.
+- **A frame Python defines** is checked with `isinstance(frame,
+  SymbolTableFrame)` after the three built-in classes, and its `name` is
+  read with `getattr`; a name that is no `Identifier` raises ``SymbolTableFrame
+  name must be an Identifier, got str.``
+- **`deserialize_from_dict`** replays through the object's own
+  `add_namespace` and `add_symbol`, as the Python method did, so a
+  subclass's override still sees each call, and the DEBUG lines are
+  written. The structure error names the top-level field, `namespaces:
+  list`.
+- **Pickling.** `__reduce__` is `copyreg.__newobj__` of the class, so a
+  subclass whose `__init__` takes arguments restores, as the default
+  pickling of the Python class did, with a state of the namespaces in order
+  and the instance dictionary. `__setstate__` rebuilds the core table with
+  `insert_namespace`, so copies and unpickled tables are independent
+  (Y-7), and any reachable table round-trips.
+- **`get_namespace`'s dict cache** (S15.6) is a map from namespace id to
+  the dict it built, dropped for a namespace by `add_namespace`,
+  `add_symbol`, `remove_symbol` and `remove_namespace`, and whole by
+  `update_namespaces`, `canonicalize` and `__setstate__`. A call returns a
+  copy, so a caller's changes never reach the table (Y-5).
+- **The logger** is the module's `_LOGGER`, read through a write-once
+  import cache, as provenance's is.
+- **The interface suite** uses real `Identifier`s, not `mock_identifier`:
+  a mock neither pickles nor prints its name hint in a log line.
+
+Tests migrated: none. `test_symbol_table.py` (48) and
+`test_symbol_table_properties.py` (3) pass unchanged, and so do the
+serialization contract's frame parameter and the benchmarks, which keep
+their spelling. The new `tests/test_symbol_table_rust_binding.py` (55
+tests) covers the test plan's interface suite, and a test that
+`get_namespace` answers from the table after each kind of change.
+
+### S15 status
+
+S15 was implemented on 2026-09-26 on port/s15-symbol-table, on top of
+dev-rust at a47aad0, in these commits:
+
+- the design (1ba5572);
+- the benchmarks and baseline (772f92b);
+- the core addition (1e84d43), and `insert_namespace` (3462e73);
+- the binding (ef2b071, 855611b);
+- the switch (0a675b9);
+- the tests (460b738);
+- the optimizations (b2c3375);
+- these notes.
+
+The suite is green (7,763 passed), slow tests pass (7,796), properties
+pass (282), `tests_minimal` passes (5,812 passed, 627 skipped), lint and
+mypy are clean, and the Rust gate passes (3,826; 3,858 with all features).
+Every benchmark row is faster, or within noise, except
+`get_namespace` (1.52) and `update_namespaces` (1.88), which await the
+maintainer's verdict.
