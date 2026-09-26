@@ -451,6 +451,14 @@ affected types document this; decoding is not ordered to prevent it.
   generators by the `generate_*.py` pattern) and its
   `EXPANDED_GOLDEN_CORPORA` entry, and keep the committed JSON as a fixed
   regression corpus.
+- Call back into Python per hook, not per tree node. A Rust walk over an
+  IR calls a Python pass, analysis or rule once per run or match, and walks
+  the nodes itself. The one exception is `fhy_core.term`
+  (N-S10-1 of `docs/design/python-switch.md`): `BinderMixin` and
+  `DerivedEquivalenceMixin` run in Rust but call a node's own hooks, its
+  children's methods, its dataclass fields and user comparators per node,
+  since those are per node by nature; each call into Rust still answers
+  one comparison, query or substitution that Python asked for.
 - Keep no fallback. The package requires the extension: importing
   `fhy_core` raises `ImportError` when `fhy_core._rs` is missing, fails to
   import, or does not match the package version (`fhy_core._extension`).

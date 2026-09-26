@@ -71,7 +71,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.7: optional extras, backend markers and the minimal-install session. `tests_minimal` passes (5,764 passed, 608 skipped); the suite 7,389 passed; see "S8.7 status"
   - [x] S8.8: benchmarks after, and docs (every solver row faster, or within 10%, after c0af152; see "S8 benchmarks")
 - [ ] S10: terms (designed; see "S10: terms")
-  - [ ] N-S10-1 and N-S10-2 decided
+  - [x] N-S10-1 decided as (a), N-S10-2 as (b)
   - [ ] S10.1: term benchmarks and baseline
   - [ ] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
   - [ ] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
@@ -7505,8 +7505,8 @@ Left for later, as the design says:
 
 - **Status:** designed 2026-09-26 at ab05802. D-S10-1 to D-S10-16 apply
   the policy the user already set and the user's direction for this slice
-  ("port the `fhy_core.term` package to Rust"). N-S10-1 and N-S10-2 need
-  the user.
+  ("port the `fhy_core.term` package to Rust"). The user resolved N-S10-1
+  as (a) and N-S10-2 as (b); see "S10 resolutions".
 - **Pattern:** the logic moves into a new core module, `fhy_core::term`,
   which takes over `AlphaRenaming` from `fhy_core::expression` and adds
   traits for alpha equivalence, free identifiers, terms and binders.
@@ -7744,7 +7744,7 @@ renaming.
 | Z-1 | `AlphaRenaming` is a frozen dataclass. A mutation raises `FrozenInstanceError`, the private fields are readable, the `repr` is the dataclass's, and pickling is the default | a final, frozen Rust-backed class: `FrozenMutationError` (as X-15), no private fields, `repr` `AlphaRenaming(frames=[{x::7: y::8}], free_renaming={})`, and it pickles as a call |
 | Z-2 | Keys and values may be any hashable object | `Identifier`s only; anything else raises `TypeError` in S2's style. The same holds for bound identifiers a hook or a binder field returns |
 | Z-3 | `empty()` builds a new instance | returns one shared instance, which is immutable |
-| Z-4 | A binder list that repeats an identifier pairs by `dict(zip(...))`. The last pairing wins on the left, and a repeat on the right is not injective. So `\x x. x` matches `\a b. b` but not the reverse (probed) | N-S10-2 |
+| Z-4 | A binder list that repeats an identifier pairs by `dict(zip(...))`. The last pairing wins on the left, and a repeat on the right is not injective. So `\x x. x` matches `\a b. b` but not the reverse (probed) | a list that repeats an identifier, on either side, pairs with nothing (N-S10-2 (b)), so `\x x. x` matches no binder, itself included |
 | Z-5 | Messages of a refused map: `` `free_renaming` must be injective; got duplicate other-side values in mapping. `` | the core's text, `a free-identifier renaming must be injective, but more than one identifier maps to y::8`, or `a binder frame ...`, as expressions already raise it. The tests match `injective` |
 | Z-6 | The derived walks and `BinderMixin` recurse in Python | nested derived values are walked on the heap, at any depth. A hand-written method or a hook still recurses in Python |
 | Z-7 | `hash` values | different values, still equal for equal renamings |
@@ -7902,7 +7902,7 @@ Where a decision follows an earlier slice's decision or note, it says so.
 
   #[non_exhaustive] pub struct NonInjectiveRenamingError { /* image, part */ }       // moved
   #[non_exhaustive] pub enum RenamingPart { FreeRenaming, BinderFrame }                // moved
-  #[non_exhaustive] pub enum BinderPairingError { ArityMismatch { left: usize, right: usize }, /* per N-S10-2 */ }
+  #[non_exhaustive] pub enum BinderPairingError { ArityMismatch { left: usize, right: usize }, RepeatedIdentifier(Identifier) }  // N-S10-2 (b)
   ```
 
   - The traits use Rust names (I.3 rule 5: no `get_`), and Python keeps
@@ -8043,11 +8043,21 @@ Where a decision follows an earlier slice's decision or note, it says so.
   `{EQUIVALENCE_METADATA_KEY: role}`, where `role` is a frozen
   `_rs.EquivalenceRole` the plan builder reads without calling Python.
   `field(compare=False)` is still honored.
-- **D-S10-10: repeated bound identifiers follow N-S10-2** (D-S4-1; S4.2's
-  `enter_binder` note; D-S7-5). One rule, in `AlphaRenaming::enter_binders`,
-  covers `Binder`, `BinderMixin` and `compared_as_binder`. A refused
-  pairing answers "not equivalent", never an error, as a refused frame
-  does today.
+- **D-S10-10: a binder list that repeats an identifier pairs with
+  nothing** (N-S10-2 (b); D-S4-1; S4.2's `enter_binder` note; D-S7-5). One
+  rule, in `AlphaRenaming::enter_binders`, covers `Binder`, `BinderMixin`
+  and `compared_as_binder`: two lists of different lengths are refused
+  (`ArityMismatch`), and so is a list that repeats an identifier on either
+  side (`RepeatedIdentifier`). A refused pairing answers "not equivalent",
+  never an error, as a refused frame does today. So a term with a
+  repeated binder is alpha-equivalent to nothing, itself included, and
+  the laws (reflexivity, and "structurally equivalent implies
+  alpha-equivalent") hold for terms whose binder lists repeat no
+  identifier. Every law test and property states that as an explicit
+  precondition on the terms it generates, not as a skip. This is the rule
+  `enter_binder`'s rustdoc already asks of a caller pairing lists, and the
+  one D-S7-5 applies to function parameters; the rustdoc now points to
+  `enter_binders`.
 - **D-S10-11: the mapping helper is the core's function under the Python
   name** (D-S4-2). `is_identifier_mapping_alpha_equivalent_under` is an
   `_rs` function over the core's rule. It compares the values in the left
@@ -8088,8 +8098,8 @@ Where a decision follows an earlier slice's decision or note, it says so.
 
 ### Needs the user
 
-- **N-S10-1: whether Rust may drive Python per node for the term
-  mixins.** The direction says to port the package. P3's granularity rule
+- **N-S10-1 (resolved 2026-09-26 by the user, as option (a)): whether
+  Rust may drive Python per node for the term mixins.** The direction says to port the package. P3's granularity rule
   says "Python callbacks happen per pass hook, never per tree node". But
   `BinderMixin`'s hooks and the derived fields are per node by nature.
   D-S10-7 has Rust call a binder's four hooks and its children's methods.
@@ -8116,7 +8126,8 @@ Where a decision follows an earlier slice's decision or note, it says so.
   51 µs against 0.86 µs for the same comparison). Each call into Rust
   answers one comparison that Python asked for, as a pass hook answers one
   run.
-- **N-S10-2: a binder list that repeats an identifier** (Z-4). Python's
+- **N-S10-2 (resolved 2026-09-26 by the user, as option (b)): a binder
+  list that repeats an identifier** (Z-4). Python's
   rule is asymmetric. The Rust core has only a doc line: `enter_binder`'s
   rustdoc tells a caller that pairs lists to refuse a repeated name.
   D-S7-5 refuses one at construction for functions. Neither fixes what a
@@ -8146,6 +8157,23 @@ Where a decision follows an earlier slice's decision or note, it says so.
   S4.2's choice of the de Bruijn reading when Python's rule broke
   symmetry, and no existing test changes: every Python test of a repeated
   binder expects `False`, and gets it under (a).
+
+### S10 resolutions (decided by the user, 2026-09-26)
+
+- **N-S10-1: (a) port both engines.** `BinderMixin` (D-S10-7) and the
+  derived-equivalence engine (D-S10-8) run in Rust. This is the term
+  package's recorded exception to P3's granularity rule: Rust calls a
+  binder's hooks, its children's methods, dataclass field reads,
+  comparators and hand-written methods per node, because those are per
+  node by nature, and every call into Rust answers one comparison, query
+  or substitution Python asked for. CONTRIBUTING's "Porting to Rust"
+  records the exception.
+- **N-S10-2: (b) refusal.** A binder list that repeats an identifier, on
+  either side, pairs with nothing (D-S10-10). The user chose this knowing
+  that `\x x. x` is then not alpha-equivalent to itself: reflexivity and
+  "structurally equivalent implies alpha-equivalent" hold for terms whose
+  binder lists repeat no identifier, and the law tests say so as explicit
+  preconditions.
 
 ### Steps
 
@@ -8207,15 +8235,14 @@ Commit per step. Every step ends with these green:
   - `Hash` agrees with `==`: an empty frame and frame order count, and map
     order does not;
   - the read views, outermost first;
-  - `enter_binders`: an arity mismatch, and N-S10-2's cases (for (a): the
-    last occurrence binds, one-sided bindings correspond to nothing, and
-    `resolve` of one returns the identifier itself), each with its
-    `Display`.
+  - `enter_binders`: an arity mismatch, and a repeat on the left, on the
+    right and on both sides refused (N-S10-2 (b)), each leaving the
+    renaming unchanged, with its `Display`.
 - **`renaming_properties.rs`.** It holds `alpha_properties.rs`, moved,
   and these new properties:
   - `hash` is consistent with `==` over random frame stacks;
-  - under N-S10-2 (a), `enter_binders` agrees with a positional de Bruijn
-    model over lists with repeats.
+  - `enter_binders` accepts exactly the equal-length lists without
+    repeats, and then agrees with `enter_binder` of their zip.
 - **`binder_stories.rs`,** over a test-local lambda calculus (`Var`,
   `App`, and `Lam` over a parameter list) that implements `Binder`:
   - S4.2's `Binders` cases, moved onto it;
@@ -8226,9 +8253,14 @@ Commit per step. Every step ends with these green:
     the same handle, and several children;
   - `Expression` through the traits, agreeing with its inherent methods.
 - **`binder_properties.rs`:**
-  - alpha equivalence is reflexive, symmetric and transitive over random
-    terms (with repeated binders under N-S10-2 (a)), and agrees with a de
-    Bruijn model;
+  - alpha equivalence is symmetric and transitive over random terms,
+    repeated binders included, and agrees with a de Bruijn model that
+    refuses repeated binders;
+  - alpha equivalence is reflexive, and implied by structural
+    equivalence, over terms whose binder lists repeat no identifier: the
+    generator of those properties builds only such terms, and the
+    property states the precondition;
+  - a term with a repeated binder is alpha-equivalent to no term;
   - substitution respects alpha equivalence;
   - substitution never captures: the free identifiers of a result are the
     input's, minus the substituted ones that occur, plus the
@@ -8283,10 +8315,14 @@ its reason:
   public names and match messages on `injective`, `dataclass`,
   `"bdy" is not a field`, `payload` and `sequence element`, which the core
   and the binding keep. Their repeated-binder tests expect `False`, which
-  both options of N-S10-2 that keep symmetry answer.
-- **New tests for N-S10-2,** in `test_binder.py` and
-  `test_derived_equivalence.py`: the repeated-binder cases in both
-  directions.
+  N-S10-2 (b) answers. Any test that expects `True` for a repeated binder
+  is rewritten to the refusal and recorded here.
+- **New tests for N-S10-2 (b),** in `test_binder.py` and
+  `test_derived_equivalence.py`: a repeat on either side refused in both
+  directions, and a term with a repeated binder not alpha-equivalent to
+  itself. The law tests of those files state their precondition, binder
+  lists without repeats, in their docstrings and in the terms they
+  build.
 - **`test_term.py` (28)**, the param, constraint and symbol-table
   equivalence tests, and the registry binding tests should pass unchanged.
   Any test that pins a message or a `repr` Z-1 or Z-5 changes is
