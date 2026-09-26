@@ -133,7 +133,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13b.4: benchmarks after, and docs (every row faster or within 10%, after 64a1436; see "S13 benchmarks")
 - [ ] S15: the symbol table (`symbol_table.py`; "Needs the user" is empty; see "S15: the symbol table")
   - [x] S15 design (D-S15-1 to D-S15-16)
-  - [ ] S15.1: symbol-table benchmarks and baseline
+  - [x] S15.1: symbol-table benchmarks and baseline (21 rows; see "S15.1 baseline")
   - [ ] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`)
   - [ ] S15.3: the binding (the table, the three frames, the stubs)
   - [ ] S15.4: the Python switch
@@ -16652,3 +16652,52 @@ use only the public API and pin no changed text, so they are expected to
 pass unchanged; any change is recorded in the implementation notes. The
 serialization contract's parameter and the benchmarks keep their
 spelling.
+
+### S15.1 baseline (2026-09-26, 1ba5572 plus the new benchmarks)
+
+`benchmarks/test_symbol_table.py` adds the 21 rows of the benchmark plan.
+Each row is the median time per call from `.venv/bin/python -m pytest
+benchmarks/test_symbol_table.py -n 0 --benchmark-only`, with the three
+rerun rows of `test_term.py` and `test_types.py` beside them. The runs
+used the worktree's own environment, measuring today's Python module, on
+the S0 machine with Python 3.11.13 and pytest-benchmark 5.3.0. The load
+average was 15 to 24 (another slice was building), so the table lists the
+best of three runs' medians, and is indicative.
+
+| Benchmark | before |
+|---|--:|
+| `test_import_frame_construction` | 897 ns |
+| `test_function_frame_construction` | 1.25 µs |
+| `test_variable_symbol_table_frame_construction` | 1.15 µs |
+| `test_frame_name_access` | 49 ns |
+| `test_frame_eq` | 211 ns |
+| `test_variable_symbol_table_frame_hash` | 324 ns |
+| `test_frame_structural_equivalence` | 7.32 µs |
+| `test_frame_serialize_to_dict` | 2.98 µs |
+| `test_frame_deserialize_from_dict` | 53.5 µs |
+| `test_symbol_table_construction` | 1.04 µs |
+| `test_symbol_table_build_of_20_symbols` | 43.3 µs |
+| `test_symbol_table_add_and_remove_symbol` | 3.01 µs |
+| `test_is_symbol_defined_in_namespace_through_a_chain_of_10` | 6.26 µs |
+| `test_get_frame_from_namespace_through_a_chain_of_10` | 6.56 µs |
+| `test_get_frame_of_the_last_symbol` | 29.3 µs |
+| `test_is_symbol_defined` | 27.7 µs |
+| `test_get_namespace_of_20_symbols` | 235 ns |
+| `test_symbol_table_verify` | 33.8 µs |
+| `test_symbol_table_canonicalize` | 76.3 µs |
+| `test_symbol_table_structural_equivalence` | 151.2 µs |
+| `test_symbol_table_serialize_to_dict` | 50.8 µs |
+| `test_symbol_table_deserialize_from_dict` | 1.23 ms |
+| `test_symbol_table_pickle_round_trip` | 206.2 µs |
+| `test_symbol_table_update_namespaces` | 2.89 µs |
+
+- **The frames.** Construction costs 0.9 to 1.3 µs, mostly `FrozenMixin`'s
+  setup. A structural comparison costs 7.3 µs through the derived plan,
+  where `==` costs 0.2 µs. Deserializing one function frame costs 54 µs,
+  through the family dispatch and two types.
+- **The lookups.** A walk through 10 parents costs 6.3 µs, and a search of
+  200 symbols 28 to 29 µs, one Python comparison per symbol.
+- **The table.** Building 20 symbols costs 43 µs, about 2 µs a symbol with
+  its parent walk and DEBUG line. `get_namespace` is a dict read, 0.24 µs,
+  since it returns the table's own dict. Deserialization is the slowest
+  path, 1.2 ms for 20 variables.
