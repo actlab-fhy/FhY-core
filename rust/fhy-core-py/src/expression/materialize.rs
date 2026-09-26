@@ -171,3 +171,42 @@ pub(super) fn substitute<'py>(
     let mut materializer = Materializer { py, known };
     materializer.materialize(&result, Some(slf.clone()))
 }
+
+/// Return the Python object of the tree `result` the core built from the
+/// expression `input`, reusing the objects of every subtree of `input` the
+/// core kept in place.
+///
+/// # Errors
+///
+/// Raises whatever building a node through its public class raises.
+pub(super) fn materialize_beside<'py>(
+    input: &Bound<'py, PyExpression>,
+    result: &Expression,
+) -> PyResult<Bound<'py, PyAny>> {
+    if Expression::ptr_eq(result, input.get().expression()) {
+        return Ok(input.clone().into_any());
+    }
+    let mut materializer = Materializer {
+        py: input.py(),
+        known: HashMap::new(),
+    };
+    materializer.materialize(result, Some(input.clone()))
+}
+
+/// Return a new Python object of the core tree `expression`, every node
+/// built through the public class of its kind, and a node the core shares
+/// built once.
+///
+/// # Errors
+///
+/// Raises whatever building a node through its public class raises.
+pub(super) fn materialize_expression<'py>(
+    py: Python<'py>,
+    expression: &Expression,
+) -> PyResult<Bound<'py, PyAny>> {
+    let mut materializer = Materializer {
+        py,
+        known: HashMap::new(),
+    };
+    materializer.materialize(expression, None)
+}

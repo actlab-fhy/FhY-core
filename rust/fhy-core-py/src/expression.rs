@@ -10,7 +10,8 @@
 //! core's text. Payloads keep the `__type__`/`__data__` envelope of
 //! `WrappedFamilySerializable`, which the public classes inherit (D-S4-5).
 //!
-//! The `pattern` submodule binds the core's patterns and rewrite rules (S5).
+//! The `pattern` submodule binds the core's patterns and rewrite rules (S5),
+//! and the `registry` submodule the function registry and inlining (S7).
 
 mod alpha;
 mod literal;
@@ -19,6 +20,7 @@ mod node;
 mod operation;
 mod pattern;
 mod payload;
+mod registry;
 mod screen;
 mod text;
 
@@ -32,5 +34,12 @@ pub(crate) use pattern::{
     PyLogicalExpressionPattern, PyMatchBindings, PyPattern, PyPiecewiseExpressionPattern,
     PyPredicatePattern, PyRewriteRule, PyRuleBase, PyUnaryExpressionPattern, PyWildcardPattern,
     apply_rewrite_rules,
+};
+pub(crate) use registry::{
+    PyNativeConstant, PyNativeFunction, PyRegisteredFunction, get_native_constant_identifier,
+    get_registered_entries, get_registered_entry, inline_functions, is_entry_registered,
+    register_function, register_native_constant, register_native_function,
+    set_registry_state_for_tests, try_get_native_constant_for_identifier,
+    try_get_registered_result_sort,
 };
 pub(crate) use screen::{validate_logical_operands, validate_predicate};

@@ -53,11 +53,11 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
 - [ ] S7: the function registry (designed; see "S7: the function registry")
-  - S7 in progress: done S7.1 and S7.2; next S7.3 (the binding)
+  - S7 in progress: done S7.1 to S7.3 (the screen's switch moved to S7.4); next S7.4 (the Python switch)
   - [x] N-S7-1 to N-S7-3 decided (2026-09-25; see "S7 resolutions")
   - [x] S7.1: registry benchmarks and baseline
   - [x] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
-  - [ ] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
+  - [x] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
   - [ ] S7.4: the Python switch
   - [ ] S7.5: tests migrated, and the interface suite
   - [ ] S7.6: benchmarks after, and docs
@@ -5629,6 +5629,41 @@ Traceability of the Python tests (`test_registry.py` is `G`,
 | P `test_inline_functions_leaves_no_registered_function_call`, `..._is_idempotent` | `inline_leaves_no_call_of_a_composed_builtin_or_a_user_function`, `inline_is_idempotent` (by `ptr_eq`) | |
 | P `test_inline_functions_evaluates_like_the_reference_table_for_real_builtins`, `..._for_bool_builtins` | `inline_keeps_the_reference_meaning_of_the_calls` | one generator of Boolean trees over numeric comparisons, both kinds of built-ins and three user functions |
 | none | `boolean_screen_judges_a_builtin_constant_by_the_catalogue` (16 cases), `boolean_screen_refuses_a_builtin_constant_predicate_root_without_a_lookup`, `boolean_screen_reads_a_builtin_constant_by_its_sort_not_a_binding`, `boolean_screen_accepts_a_builtin_constant_in_a_numeric_position` | D-S7-4 |
+
+### S7.3 status and the differential check
+
+The binding is `rust/fhy-core-py/src/expression/registry.rs` with
+`registry/entries.rs` (the three pyclasses), `registry/state.rs` (the
+module state and the built-in entries) and `registry/lookups.rs` (the
+functions), exported from `_rs` and declared in `_rs.pyi`. Nothing in
+Python uses it yet, so the suite is unchanged (7,163 passed).
+
+**`screen.rs` switches in S7.4, not here.** Until the Python modules
+register through the binding, the Rust registry holds no user entry, so a
+screen reading it would pass numeric user calls that the Python registry
+knows, and the suite would fail between the two commits. The switch moves
+with the Python switch, so each step stays green.
+
+**The differential check of D-S7-15** ran as a temporary script, kept
+outside the repo: it registered temporary public classes, installed the
+built-ins from `builtins.py`'s `_NATIVE_FUNCTION_SPECS`, and compared each
+of the 35 Python built-in entries with the binding's:
+
+- the 16 composed bodies are alpha-equivalent to the catalogue's under the
+  frame pairing the parameters, whose name hints agree in order, and print
+  the same text: `max` `{a if (a > b); b otherwise}`, `min`, `abs`
+  `{x if (x >= 0); (-x) otherwise}`, `sign`, `clamp` `min(max(x, lo),
+  hi)`, `clamp_symmetric`, `relu` `max(x, 0)`, `leaky_relu`, `xor`
+  `((a || b) && (!(a && b)))`, `nand`, `nor`, `implies`, `iff`, `sigmoid`
+  `(1 / (1 + exp((-x))))`, `silu` and `gelu` `((0.5 * x) * (1 + erf((x /
+  sqrt(2)))))`;
+- all 35 have the same parameter and result sorts, and the 19 native
+  entries hold the very callables of `builtins.py`;
+- the four constants have the same sorts and values, and their
+  identifiers the reserved ids 48 to 51 with their names.
+
+So the Python bodies can be deleted (S7.4), and the interface suite pins
+the printed bodies as data.
 
 ## Plan after S7 (the user, 2026-09-25)
 
