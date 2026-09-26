@@ -141,7 +141,10 @@ impl EquationConstraint {
 
 /// Return the expression `binding` puts in an equation's environment: an
 /// expression itself, or the literal a literal value denotes.
-fn lift_binding(identifier: &Identifier, binding: &Binding) -> Result<Expression, ConstraintError> {
+pub(super) fn lift_binding(
+    identifier: &Identifier,
+    binding: &Binding,
+) -> Result<Expression, ConstraintError> {
     let refuse = |reason| ConstraintError::UnusableBinding {
         identifier: identifier.clone(),
         reason,

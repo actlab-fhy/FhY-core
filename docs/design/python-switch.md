@@ -127,7 +127,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
   - [x] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`, with the migrated tests
   - [x] S13a.5: tests migrated (with S13a.4), and the interface suite (47)
-  - [ ] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`)
+  - [x] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`; 28 new tests)
   - [ ] S13b.2: the system's binding
   - [ ] S13b.3: the Python switch of `system.py`, with its tests
   - [ ] S13b.4: benchmarks after, and docs
@@ -15659,6 +15659,47 @@ and negative-decimal errors with their causes; `does_member_lift_to_expression`;
 pickling and copying; a payload in another member order decoding to the
 canonical order; and eight threads agreeing. At the end: `pytest` 7,732
 passed, `-m "not very_slow"` 7,765 passed, ruff and mypy clean.
+
+### S13b.1 implementation notes
+
+The 27 stories of `tests/it/constraint/system_stories.rs` were written
+first against `todo!()` stubs of every `ConstraintSystem` method, and all
+27 failed; all pass now, with a sixth property,
+`system_satisfiability_agrees_with_brute_force`, which runs on the z3
+backend under the `z3` feature and otherwise when `FHY_SMT_SOLVER` names an
+executable, as S8's solver properties do. The new files are
+`constraint/system.rs` and `constraint/custom.rs`.
+
+Where the shape differs from D-S13-2's sketch, or fills it in:
+
+- **`ConstraintSystem::new` is infallible.** A custom member's key is read
+  through `CustomConstraint::ordering_key`, which is infallible; the
+  binding reads the Python key when it builds the adapter.
+- **The questions take the symbol types and the limits as arguments**,
+  beside the `ConstraintContext`, so one context serves a system's
+  evaluation and its questions.
+- **`Bindings` carry an optional source** (`with_source`, `source`): the
+  caller's own form of the bindings, which a `CustomConstraint` reads back.
+  The binding stores the Python snapshot of the caller's mapping there, so a
+  Python-defined member receives the mapping it received before, with its
+  objects, and no thread-local stack is needed (D-S13-18).
+- **Events.** `Event::InMember { index, event }` wraps what a member
+  reports while a system evaluates it, `Event::UndecidedMember` names an
+  undecided member, and `Event::Refused` and `Event::GaveUp` report the
+  solver's refusal and `unknown`.
+- **Errors.** `ConstraintError::MissingSymbolTypes` (`symbol_types is
+  missing an entry for free identifier(s): x::7, y::8`, ordered by id),
+  `Substitution` and `Custom` are new.
+- **The order of checks** is `system.py`'s: in `check_satisfiability`,
+  the member conversions, the symbol types of the conjunction, each
+  member's predicate screen, then the question; in the bindings variant,
+  every binding lifted, the partition, the symbol types of what
+  substitution leaves free, each residual member screened with the
+  bindings, the bound-constant refusal, the decided members' fold, then the
+  substituted residual; in `check_implication`, both conversions, both
+  sides' symbol types, the members of this system then of the other, then
+  the question. Each member is converted once, where Python converted it
+  twice.
 
 ### S13 resume notes
 

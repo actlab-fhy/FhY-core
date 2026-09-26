@@ -46,13 +46,16 @@
 
 mod binding;
 mod context;
+mod custom;
 mod equation;
 mod error;
 mod key;
 mod set;
+mod system;
 mod value;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::expression::Expression;
 use crate::identifier::Identifier;
@@ -60,9 +63,11 @@ use crate::term::{AlphaEquivalence, AlphaRenaming, FreeIdentifiers};
 
 pub use binding::{Binding, Bindings};
 pub use context::{ConstraintContext, Event, NoObserver, Observer};
+pub use custom::{CustomConstraint, CustomError};
 pub use equation::EquationConstraint;
 pub use error::{ConstraintError, UnusableBindingReason};
 pub use set::{Polarity, SetConstraint};
+pub use system::ConstraintSystem;
 pub use value::{
     Member, MemberError, MemberKind, MemberSet, Opaque, OpaqueError, OpaqueValue, Value,
 };
@@ -90,6 +95,8 @@ pub enum Constraint {
     Equation(EquationConstraint),
     /// Membership of one identifier's value in a set, or its absence.
     Set(SetConstraint),
+    /// A constraint of a kind defined elsewhere.
+    Custom(Arc<dyn CustomConstraint>),
 }
 
 impl Constraint {
@@ -99,6 +106,7 @@ impl Constraint {
         match self {
             Self::Equation(constraint) => constraint.free_identifiers(),
             Self::Set(constraint) => constraint.free_identifiers(),
+            Self::Custom(constraint) => constraint.free_identifiers(),
         }
     }
 
@@ -116,6 +124,9 @@ impl Constraint {
         match self {
             Self::Equation(constraint) => constraint.evaluate(bindings, context),
             Self::Set(constraint) => constraint.evaluate(bindings, context),
+            Self::Custom(constraint) => constraint
+                .evaluate(bindings)
+                .map_err(ConstraintError::Custom),
         }
     }
 
@@ -130,6 +141,7 @@ impl Constraint {
         match self {
             Self::Equation(constraint) => Ok(constraint.expression().clone()),
             Self::Set(constraint) => constraint.to_expression(),
+            Self::Custom(constraint) => constraint.to_expression().map_err(ConstraintError::Custom),
         }
     }
 
@@ -139,6 +151,7 @@ impl Constraint {
         match self {
             Self::Equation(constraint) => constraint.ordering_key(),
             Self::Set(constraint) => constraint.ordering_key(),
+            Self::Custom(constraint) => constraint.ordering_key().into_owned(),
         }
     }
 
@@ -148,6 +161,9 @@ impl Constraint {
         match (self, other) {
             (Self::Equation(left), Self::Equation(right)) => left.is_structurally_equivalent(right),
             (Self::Set(left), Self::Set(right)) => left.is_structurally_equivalent(right),
+            (Self::Custom(left), Self::Custom(right)) => {
+                left.is_structurally_equivalent(right.as_ref())
+            }
             _ => false,
         }
     }
@@ -163,6 +179,9 @@ impl AlphaEquivalence for Constraint {
                 left.is_alpha_equivalent_under(right, renaming)
             }
             (Self::Set(left), Self::Set(right)) => left.is_alpha_equivalent_under(right, renaming),
+            (Self::Custom(left), Self::Custom(right)) => {
+                left.is_alpha_equivalent_under(right.as_ref(), renaming)
+            }
             _ => false,
         }
     }

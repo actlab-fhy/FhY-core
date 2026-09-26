@@ -3,14 +3,18 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fmt;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Bindings, Event, Member, MemberSet, Observer, Opaque, OpaqueError, OpaqueValue, Value,
+    Bindings, Constraint, CustomConstraint, CustomError, Event, Member, MemberSet, Observer,
+    Opaque, OpaqueError, OpaqueValue, Outcome, Value,
 };
 use fhy_core::expression::{BigInt, Expression};
 use fhy_core::identifier::Identifier;
+use fhy_core::solver::QueryKind;
+use fhy_core::term::AlphaRenaming;
 
 /// Return the integer value `value`.
 pub(crate) fn int(value: i64) -> Value {
@@ -148,6 +152,34 @@ pub(crate) enum RecordedEvent {
     SymbolicBinding(Identifier, Expression),
     BoundNativeConstants(Vec<Identifier>),
     Residual(Expression, bool),
+    InMember(usize, Box<RecordedEvent>),
+    UndecidedMember(usize),
+    Refused(QueryKind),
+    GaveUp(QueryKind, String),
+}
+
+impl RecordedEvent {
+    /// Return the owned copy of `event`.
+    fn of(event: &Event<'_>) -> Self {
+        match *event {
+            Event::Unbound { variable } => Self::Unbound(variable.clone()),
+            Event::SymbolicBinding { variable, binding } => {
+                Self::SymbolicBinding(variable.clone(), binding.clone())
+            }
+            Event::BoundNativeConstants { identifiers } => {
+                Self::BoundNativeConstants(identifiers.to_vec())
+            }
+            Event::Residual {
+                residual,
+                has_free_identifiers,
+            } => Self::Residual(residual.clone(), has_free_identifiers),
+            Event::InMember { index, event } => Self::InMember(index, Box::new(Self::of(event))),
+            Event::UndecidedMember { index } => Self::UndecidedMember(index),
+            Event::Refused { kind, .. } => Self::Refused(kind),
+            Event::GaveUp { kind, reason } => Self::GaveUp(kind, reason.to_owned()),
+            _ => unreachable!("the constraint tests know every event"),
+        }
+    }
 }
 
 /// An [`Observer`] that records every event.
@@ -168,23 +200,83 @@ impl RecordingObserver {
 
 impl Observer for RecordingObserver {
     fn notify(&self, event: &Event<'_>) {
-        let recorded = match *event {
-            Event::Unbound { variable } => RecordedEvent::Unbound(variable.clone()),
-            Event::SymbolicBinding { variable, binding } => {
-                RecordedEvent::SymbolicBinding(variable.clone(), binding.clone())
-            }
-            Event::BoundNativeConstants { identifiers } => {
-                RecordedEvent::BoundNativeConstants(identifiers.to_vec())
-            }
-            Event::Residual {
-                residual,
-                has_free_identifiers,
-            } => RecordedEvent::Residual(residual.clone(), has_free_identifiers),
-            _ => unreachable!("the constraint tests know every event"),
-        };
         self.events
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(recorded);
+            .push(RecordedEvent::of(event));
+    }
+}
+
+/// A custom constraint of a test kind: keyed by its label, converting to
+/// its expression, and answering its outcome while recording its label in
+/// a shared log.
+#[derive(Debug)]
+pub(crate) struct TestCustom {
+    pub(crate) label: String,
+    pub(crate) expression: Expression,
+    pub(crate) outcome: Outcome,
+    pub(crate) log: Arc<Mutex<Vec<String>>>,
+}
+
+impl TestCustom {
+    /// Return the custom constraint labelled `label`, answering `outcome`
+    /// and converting to `expression`, logging to `log`.
+    pub(crate) fn build(
+        label: &str,
+        expression: Expression,
+        outcome: Outcome,
+        log: &Arc<Mutex<Vec<String>>>,
+    ) -> Constraint {
+        Constraint::Custom(Arc::new(Self {
+            label: label.to_owned(),
+            expression,
+            outcome,
+            log: Arc::clone(log),
+        }))
+    }
+}
+
+impl CustomConstraint for TestCustom {
+    fn free_identifiers(&self) -> HashSet<Identifier> {
+        self.expression.free_identifiers()
+    }
+
+    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, CustomError> {
+        let source = bindings
+            .source()
+            .and_then(|source| source.downcast_ref::<String>())
+            .map_or("none", String::as_str);
+        self.log
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(format!("{}:{source}", self.label));
+        Ok(self.outcome)
+    }
+
+    fn to_expression(&self) -> Result<Expression, CustomError> {
+        Ok(self.expression.clone())
+    }
+
+    fn ordering_key(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("custom|{}", self.label))
+    }
+
+    fn is_structurally_equivalent(&self, other: &dyn CustomConstraint) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| other.label == self.label)
+    }
+
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &dyn CustomConstraint,
+        _renaming: &AlphaRenaming,
+    ) -> bool {
+        self.is_structurally_equivalent(other)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

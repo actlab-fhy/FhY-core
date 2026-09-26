@@ -8,7 +8,7 @@ use crate::expression::builtins::BuiltinConstant;
 use crate::expression::registry::FunctionRegistry;
 use crate::expression::{Expression, NoRegisteredSorts, SortLookup};
 use crate::identifier::Identifier;
-use crate::solver::{SimplifyContext, Solver};
+use crate::solver::{Hazard, QueryKind, SimplifyContext, Solver};
 
 /// Why an evaluation or a question is undecided, reported to an
 /// [`Observer`] when the reason arises.
@@ -34,6 +34,36 @@ pub enum Event<'a> {
     BoundNativeConstants {
         /// The native constants' identifiers, ordered by id.
         identifiers: &'a [Identifier],
+    },
+    /// A member of a [`ConstraintSystem`](super::ConstraintSystem) reported
+    /// `event` while the system evaluated it.
+    InMember {
+        /// The member's position in the system's canonical order.
+        index: usize,
+        /// What the member reported.
+        event: &'a Event<'a>,
+    },
+    /// A member of a system answered [`Outcome::Undecided`](super::Outcome)
+    /// while the system evaluated it.
+    UndecidedMember {
+        /// The member's position in the system's canonical order.
+        index: usize,
+    },
+    /// The solver's hazard screen refused a question a system asked, so no
+    /// backend was asked.
+    Refused {
+        /// The kind of question.
+        kind: QueryKind,
+        /// What the screen refused.
+        hazard: &'a Hazard,
+    },
+    /// The solver's backend answered `unknown` to a question a system
+    /// asked.
+    GaveUp {
+        /// The kind of question.
+        kind: QueryKind,
+        /// Why, in the backend's words.
+        reason: &'a str,
     },
     /// An equation simplified to an expression that is not a literal.
     Residual {

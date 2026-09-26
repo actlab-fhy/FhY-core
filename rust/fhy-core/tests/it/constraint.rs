@@ -6,4 +6,5 @@ mod equation_stories;
 mod equivalence_stories;
 mod key_stories;
 mod set_stories;
+mod system_stories;
 mod value_stories;

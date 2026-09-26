@@ -1,0 +1,706 @@
+//! Tests for `ConstraintSystem`: the canonical order, the conjunction and
+//! its events, the expression, the three questions and the order of their
+//! checks, the decided set members, custom members, and equivalence.
+//!
+//! The cases are ported from `test_constraint_system.py`; a recording fake
+//! backend stands in for z3.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use fhy_core::constraint::{
+    Binding, Bindings, Constraint, ConstraintContext, ConstraintError, ConstraintSystem,
+    EquationConstraint, Outcome, Polarity, SetConstraint, UnusableBindingReason, Value,
+};
+use fhy_core::expression::builtins::BuiltinConstant;
+use fhy_core::expression::{Expression, SymbolType};
+use fhy_core::identifier::Identifier;
+use fhy_core::solver::{CheckLimits, QueryKind, SatResult, Solver};
+use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
+
+use crate::support::constraint::{
+    RecordedEvent, RecordingObserver, TestCustom, bind, int, int_set, member_set, text,
+};
+use crate::support::solver::{RecordingSmtSolver, build_symbol_types, quoted_symbol};
+
+fn equation(expression: Expression) -> Constraint {
+    Constraint::from(EquationConstraint::new(expression))
+}
+
+fn in_set(variable: &Identifier, members: &[i64]) -> Constraint {
+    Constraint::from(SetConstraint::new(
+        variable.clone(),
+        int_set(members.iter().copied()),
+        Polarity::In,
+    ))
+}
+
+fn not_in_set(variable: &Identifier, members: &[i64]) -> Constraint {
+    Constraint::from(SetConstraint::new(
+        variable.clone(),
+        int_set(members.iter().copied()),
+        Polarity::NotIn,
+    ))
+}
+
+/// A system's questions asked of a backend answering one result, with the
+/// events and checks they caused.
+struct Harness {
+    backend: Arc<RecordingSmtSolver>,
+    solver: Solver,
+    observer: RecordingObserver,
+}
+
+impl Harness {
+    fn answering(answer: SatResult) -> Self {
+        let backend = RecordingSmtSolver::answering(answer);
+        let solver = backend.solver();
+        Self {
+            backend,
+            solver,
+            observer: RecordingObserver::default(),
+        }
+    }
+
+    fn context(&self) -> ConstraintContext<'_> {
+        ConstraintContext::new(&self.solver).with_observer(&self.observer)
+    }
+
+    fn scripts(&self) -> Vec<String> {
+        self.backend
+            .checks()
+            .into_iter()
+            .map(|(script, _)| script)
+            .collect()
+    }
+}
+
+fn assertion_lines(script: &str) -> Vec<String> {
+    script
+        .lines()
+        .filter(|line| line.starts_with("(assert"))
+        .map(str::to_owned)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn members_are_sorted_by_key_keeping_duplicates() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let first = not_in_set(&y, &[1]);
+    let second = in_set(&x, &[2]);
+    let third = equation(Expression::from(x.clone()).less(1));
+
+    let system = ConstraintSystem::new([first, second.clone(), third, second]);
+
+    let keys: Vec<String> = system
+        .constraints()
+        .iter()
+        .map(Constraint::ordering_key)
+        .collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(keys, sorted);
+    assert_eq!(system.constraints().len(), 4);
+}
+
+#[test]
+fn a_custom_member_sorts_among_the_built_in_kinds_by_its_key() {
+    let x = Identifier::new("x");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let custom = TestCustom::build("probe", Expression::literal(true), Outcome::Satisfied, &log);
+
+    let system = ConstraintSystem::new([
+        in_set(&x, &[1]),
+        custom,
+        equation(Expression::literal(true)),
+    ]);
+
+    let keys: Vec<String> = system
+        .constraints()
+        .iter()
+        .map(Constraint::ordering_key)
+        .collect();
+    assert_eq!(keys[0], "custom|probe");
+    assert!(keys[1].starts_with("equation|"));
+    assert!(keys[2].starts_with("in_set|"));
+}
+
+// ---------------------------------------------------------------------------
+// The conjunction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn evaluation_stops_at_the_first_violated_member_in_order() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let system = ConstraintSystem::new([
+        TestCustom::build(
+            "a_first",
+            Expression::literal(true),
+            Outcome::Violated,
+            &log,
+        ),
+        TestCustom::build(
+            "b_second",
+            Expression::literal(true),
+            Outcome::Satisfied,
+            &log,
+        ),
+    ]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.evaluate(&Bindings::new(), &harness.context());
+
+    assert_eq!(outcome.expect("decided"), Outcome::Violated);
+    assert_eq!(*log.lock().expect("the log"), ["a_first:none"]);
+}
+
+#[test]
+fn an_undecided_member_makes_the_system_undecided_unless_a_later_one_is_violated() {
+    let x = Identifier::new("x");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let undecided = ConstraintSystem::new([
+        in_set(&x, &[1]),
+        TestCustom::build(
+            "z_last",
+            Expression::literal(true),
+            Outcome::Satisfied,
+            &log,
+        ),
+    ]);
+    let violated = ConstraintSystem::new([
+        in_set(&x, &[1]),
+        TestCustom::build("z_last", Expression::literal(true), Outcome::Violated, &log),
+    ]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let first = undecided.evaluate(&Bindings::new(), &harness.context());
+    let second = violated.evaluate(&Bindings::new(), &harness.context());
+
+    assert_eq!(first.expect("decided"), Outcome::Undecided);
+    assert_eq!(second.expect("decided"), Outcome::Violated);
+    let set_index = undecided
+        .constraints()
+        .iter()
+        .position(|member| matches!(member, Constraint::Set(_)))
+        .expect("a set member");
+    assert_eq!(
+        harness.observer.events()[..2],
+        [
+            RecordedEvent::InMember(set_index, Box::new(RecordedEvent::Unbound(x))),
+            RecordedEvent::UndecidedMember(set_index),
+        ]
+    );
+}
+
+#[test]
+fn every_member_satisfied_satisfies_the_system() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([in_set(&x, &[1, 2]), not_in_set(&x, &[3])]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.evaluate(&bind([(x, Binding::Value(int(2)))]), &harness.context());
+
+    assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
+    assert!(harness.observer.events().is_empty());
+}
+
+#[test]
+fn a_member_error_is_the_system_error() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let harness = Harness::answering(SatResult::Sat);
+    let unusable = Value::Decimal("1".parse().expect("a decimal"));
+
+    let outcome = system.evaluate(&bind([(x, Binding::Value(unusable))]), &harness.context());
+
+    assert!(matches!(
+        outcome,
+        Err(ConstraintError::UnusableBinding {
+            reason: UnusableBindingReason::NotMemberShaped,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_custom_member_receives_the_bindings_with_their_source() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let system = ConstraintSystem::new([TestCustom::build(
+        "probe",
+        Expression::literal(true),
+        Outcome::Satisfied,
+        &log,
+    )]);
+    let harness = Harness::answering(SatResult::Sat);
+    let bindings = Bindings::new().with_source(Arc::new("the caller's".to_owned()));
+
+    system
+        .evaluate(&bindings, &harness.context())
+        .expect("decided");
+
+    assert_eq!(*log.lock().expect("the log"), ["probe:the caller's"]);
+}
+
+// ---------------------------------------------------------------------------
+// The expression
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_empty_system_is_true_one_member_is_itself_and_several_their_conjunction() {
+    let x = Identifier::new("x");
+    let bound = Expression::from(x.clone()).less(1);
+    let other = Expression::from(x).greater(0);
+
+    let empty = ConstraintSystem::new([]).to_expression().expect("converts");
+    let one = ConstraintSystem::new([equation(bound.clone())])
+        .to_expression()
+        .expect("converts");
+    let two = ConstraintSystem::new([equation(bound.clone()), equation(other.clone())])
+        .to_expression()
+        .expect("converts");
+
+    assert_eq!(empty, Expression::literal(true));
+    assert!(Expression::ptr_eq(&one, &bound));
+    assert!(
+        two == Expression::all([bound.clone(), other.clone()])
+            || two == Expression::all([other, bound])
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Satisfiability
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_empty_system_is_satisfiable_without_asking_the_solver() {
+    let harness = Harness::answering(SatResult::Unsat);
+
+    let outcome = ConstraintSystem::new([]).check_satisfiability(
+        &HashMap::new(),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn satisfiability_asks_about_the_conjunction_and_reads_each_answer() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([
+        equation(Expression::from(x.clone()).greater(0)),
+        in_set(&x, &[1, 2]),
+    ]);
+    let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
+
+    for (answer, expected) in [
+        (SatResult::Sat, Outcome::Satisfied),
+        (SatResult::Unsat, Outcome::Violated),
+    ] {
+        let harness = Harness::answering(answer);
+        let outcome = system
+            .check_satisfiability(&symbol_types, CheckLimits::new(), &harness.context())
+            .expect("decided");
+        assert_eq!(outcome, expected);
+        let scripts = harness.scripts();
+        assert_eq!(scripts.len(), 1);
+        let assertion = &assertion_lines(&scripts[0])[0];
+        assert!(assertion.starts_with("(assert (and"), "{assertion}");
+        assert!(assertion.contains(&quoted_symbol(&x)), "{assertion}");
+    }
+}
+
+#[test]
+fn an_unknown_answer_is_undecided_and_reported() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let harness = Harness::answering(SatResult::Unknown {
+        reason: "timeout".to_owned(),
+    });
+
+    let outcome = system.check_satisfiability(
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("undecided"), Outcome::Undecided);
+    assert_eq!(
+        harness.observer.events(),
+        [RecordedEvent::GaveUp(
+            QueryKind::Satisfiability,
+            "timeout".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_hazard_is_undecided_and_reported_without_asking_the_backend() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let system = ConstraintSystem::new([equation(
+        (&Expression::from(x.clone()) / Expression::from(y.clone())).greater(0),
+    )]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability(
+        &build_symbol_types(&[(&x, SymbolType::Real), (&y, SymbolType::Real)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("undecided"), Outcome::Undecided);
+    assert_eq!(
+        harness.observer.events(),
+        [RecordedEvent::Refused(QueryKind::Satisfiability)]
+    );
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn a_conversion_error_comes_before_missing_symbol_types() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([Constraint::from(SetConstraint::new(
+        x,
+        member_set([text("a")]),
+        Polarity::In,
+    ))]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome =
+        system.check_satisfiability(&HashMap::new(), CheckLimits::new(), &harness.context());
+
+    assert!(
+        matches!(outcome, Err(ConstraintError::UnliftableMember(_))),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn missing_symbol_types_come_before_ill_typedness_and_skip_native_constants() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let pi = Expression::from(BuiltinConstant::Pi.identifier().clone());
+    let system = ConstraintSystem::new([
+        equation(&Expression::from(y.clone()) + 1),
+        equation(Expression::from(x.clone()).less(pi)),
+    ]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome =
+        system.check_satisfiability(&HashMap::new(), CheckLimits::new(), &harness.context());
+
+    let error = outcome.expect_err("missing symbol types");
+    assert!(
+        matches!(&error, ConstraintError::MissingSymbolTypes(identifiers) if *identifiers == vec![x.clone(), y.clone()]),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("symbol_types is missing an entry for free identifier(s): {x:?}, {y:?}")
+    );
+}
+
+#[test]
+fn an_ill_typed_member_is_refused_naming_its_own_expression() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 1)]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability(
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert!(
+        matches!(outcome, Err(ConstraintError::IllTyped(_))),
+        "{outcome:?}"
+    );
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn the_limits_reach_the_backend() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let harness = Harness::answering(SatResult::Sat);
+    let limits = CheckLimits::new().with_timeout(Duration::from_millis(2500));
+
+    system
+        .check_satisfiability(
+            &build_symbol_types(&[(&x, SymbolType::Int)]),
+            limits,
+            &harness.context(),
+        )
+        .expect("decided");
+
+    assert_eq!(harness.backend.checks()[0].1, limits);
+}
+
+// ---------------------------------------------------------------------------
+// Satisfiability with bindings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_violated_decided_set_member_answers_without_the_solver() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let system = ConstraintSystem::new([
+        in_set(&x, &[1, 2]),
+        equation(Expression::from(y.clone()).greater(0)),
+    ]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability_with_bindings(
+        &bind([(x, Binding::Value(int(5)))]),
+        &build_symbol_types(&[(&y, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("decided"), Outcome::Violated);
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn decided_set_members_alone_answer_their_fold() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([in_set(&x, &[1, 2]), not_in_set(&x, &[3])]);
+    let harness = Harness::answering(SatResult::Unsat);
+
+    let outcome = system.check_satisfiability_with_bindings(
+        &bind([(x, Binding::Value(int(2)))]),
+        &HashMap::new(),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn the_residual_is_substituted_and_needs_symbol_types_for_what_it_leaves_free() {
+    let (x, y, z) = (
+        Identifier::new("x"),
+        Identifier::new("y"),
+        Identifier::new("z"),
+    );
+    let system = ConstraintSystem::new([equation(
+        Expression::from(x.clone()).less(Expression::from(y.clone())),
+    )]);
+    let harness = Harness::answering(SatResult::Sat);
+    let bindings = bind([
+        (x.clone(), Binding::Value(int(1))),
+        (
+            y.clone(),
+            Binding::Expression(&Expression::from(z.clone()) + 1),
+        ),
+    ]);
+
+    let missing = system.check_satisfiability_with_bindings(
+        &bindings,
+        &build_symbol_types(&[(&x, SymbolType::Int), (&y, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+    let decided = system.check_satisfiability_with_bindings(
+        &bindings,
+        &build_symbol_types(&[(&z, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert!(
+        matches!(&missing, Err(ConstraintError::MissingSymbolTypes(identifiers)) if *identifiers == vec![z.clone()]),
+        "{missing:?}"
+    );
+    assert_eq!(decided.expect("decided"), Outcome::Satisfied);
+    let script = &harness.scripts()[0];
+    assert!(!script.contains(&quoted_symbol(&x)), "{script}");
+    assert!(script.contains(&quoted_symbol(&z)), "{script}");
+}
+
+#[test]
+fn every_binding_must_be_an_expression_or_a_literal() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability_with_bindings(
+        &bind([(y.clone(), Binding::Value(Value::Tuple(vec![])))]),
+        &HashMap::new(),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert!(matches!(
+        outcome,
+        Err(ConstraintError::UnusableBinding { identifier, reason: UnusableBindingReason::NotALiteral }) if identifier == y
+    ));
+}
+
+#[test]
+fn a_bound_native_constant_the_system_refers_to_is_undecided_and_reported() {
+    let pi = BuiltinConstant::Pi.identifier().clone();
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([equation(
+        Expression::from(x.clone()).less(Expression::from(pi.clone())),
+    )]);
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability_with_bindings(
+        &bind([(pi.clone(), Binding::Value(int(3)))]),
+        &build_symbol_types(&[(&x, SymbolType::Real)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("undecided"), Outcome::Undecided);
+    assert_eq!(
+        harness.observer.events(),
+        [RecordedEvent::BoundNativeConstants(vec![pi])]
+    );
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn satisfied_leaves_and_an_undecided_residual_are_undecided() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let system = ConstraintSystem::new([
+        in_set(&x, &[1]),
+        equation(Expression::from(y.clone()).greater(0)),
+    ]);
+    let harness = Harness::answering(SatResult::Unknown {
+        reason: "incomplete".to_owned(),
+    });
+
+    let outcome = system.check_satisfiability_with_bindings(
+        &bind([(x, Binding::Value(int(1)))]),
+        &build_symbol_types(&[(&y, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("undecided"), Outcome::Undecided);
+}
+
+#[test]
+fn an_empty_system_with_bindings_is_satisfiable_without_reading_them() {
+    let x = Identifier::new("x");
+    let harness = Harness::answering(SatResult::Unsat);
+
+    let outcome = ConstraintSystem::new([]).check_satisfiability_with_bindings(
+        &bind([(x, Binding::Value(Value::Tuple(vec![])))]),
+        &HashMap::new(),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
+}
+
+// ---------------------------------------------------------------------------
+// Implication
+// ---------------------------------------------------------------------------
+
+#[test]
+fn implication_asks_about_a_counterexample_and_reads_each_answer() {
+    let x = Identifier::new("x");
+    let antecedent =
+        ConstraintSystem::new([equation(Expression::from(x.clone()).greater_equal(1))]);
+    let consequent =
+        ConstraintSystem::new([equation(Expression::from(x.clone()).greater_equal(0))]);
+    let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
+
+    for (answer, expected) in [
+        (SatResult::Unsat, Outcome::Satisfied),
+        (SatResult::Sat, Outcome::Violated),
+    ] {
+        let harness = Harness::answering(answer);
+        let outcome = antecedent
+            .check_implication(
+                &consequent,
+                &symbol_types,
+                CheckLimits::new(),
+                &harness.context(),
+            )
+            .expect("decided");
+        assert_eq!(outcome, expected);
+        let assertion = &assertion_lines(&harness.scripts()[0])[0];
+        assert!(assertion.contains("(not"), "{assertion}");
+    }
+}
+
+#[test]
+fn implication_screens_every_member_of_this_system_before_the_other() {
+    let x = Identifier::new("x");
+    let antecedent = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 1)]);
+    let consequent = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 2)]);
+    let harness = Harness::answering(SatResult::Unsat);
+
+    let outcome = antecedent.check_implication(
+        &consequent,
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    let Err(ConstraintError::IllTyped(error)) = outcome else {
+        panic!("expected an ill-typed member, got {outcome:?}");
+    };
+    assert_eq!(error.operand(), &(&Expression::from(x) + 1));
+}
+
+#[test]
+fn implication_needs_symbol_types_for_both_sides() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let antecedent = ConstraintSystem::new([equation(Expression::from(x.clone()).greater(0))]);
+    let consequent = ConstraintSystem::new([equation(Expression::from(y.clone()).greater(0))]);
+    let harness = Harness::answering(SatResult::Unsat);
+
+    let outcome = antecedent.check_implication(
+        &consequent,
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert!(
+        matches!(&outcome, Err(ConstraintError::MissingSymbolTypes(identifiers)) if *identifiers == vec![y.clone()]),
+        "{outcome:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Equivalence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn systems_are_equivalent_member_by_member_in_canonical_order() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let left = ConstraintSystem::new([
+        in_set(&x, &[1]),
+        equation(Expression::from(x.clone()).less(3)),
+    ]);
+    let right = ConstraintSystem::new([
+        equation(Expression::from(x.clone()).less(3)),
+        in_set(&x, &[1]),
+    ]);
+    let renamed = ConstraintSystem::new([
+        in_set(&y, &[1]),
+        equation(Expression::from(y.clone()).less(3)),
+    ]);
+    let shorter = ConstraintSystem::new([in_set(&x, &[1])]);
+    let renaming = AlphaRenaming::try_new(HashMap::from([(x, y)])).expect("injective");
+
+    assert!(left.is_structurally_equivalent(&right));
+    assert!(!left.is_structurally_equivalent(&shorter));
+    assert!(!left.is_structurally_equivalent(&renamed));
+    assert!(left.is_alpha_equivalent_under(&renamed, &renaming));
+    assert!(!left.is_alpha_equivalent(&renamed));
+}

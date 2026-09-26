@@ -1,14 +1,23 @@
 //! Properties of constraints: membership agrees with a reference
 //! type-strict matcher, a member set does not depend on the order of its
-//! members, and the ordering key is equal exactly on structural
-//! equivalence.
+//! members, the ordering key is equal exactly on structural equivalence,
+//! and a system's satisfiability agrees with brute force.
+//!
+//! The satisfiability property runs on the z3 backend under the `z3`
+//! feature, and otherwise when `FHY_SMT_SOLVER` names an SMT-LIB2
+//! executable, such as `z3 -in`; without either, it passes trivially.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use fhy_core::constraint::{
-    Binding, Bindings, Constraint, ConstraintContext, EquationConstraint, Member, MemberKind,
-    MemberSet, Outcome, Polarity, SetConstraint, Value,
+    Binding, Bindings, Constraint, ConstraintContext, ConstraintSystem, EquationConstraint, Member,
+    MemberKind, MemberSet, Outcome, Polarity, SetConstraint, Value,
 };
+use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::Solver;
+use fhy_core::solver::{CheckLimits, SmtSolver, Solver};
 use proptest::prelude::*;
 
 use crate::support::constraint::{int, member, text};
@@ -62,6 +71,81 @@ fn is_type_strictly_equal(left: &Value, right: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+/// Return the SMT solver the solver-backed property runs on, if any.
+#[cfg(feature = "z3")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "without the feature, there may be no backend"
+)]
+fn property_backend() -> Option<Arc<dyn SmtSolver>> {
+    Some(Arc::new(fhy_core::solver::Z3Solver::new()))
+}
+
+/// Return the SMT solver the solver-backed property runs on, if any.
+#[cfg(not(feature = "z3"))]
+fn property_backend() -> Option<Arc<dyn SmtSolver>> {
+    let configured = std::env::var("FHY_SMT_SOLVER").ok()?;
+    let mut words = configured.split_whitespace();
+    let program = words.next()?;
+    Some(Arc::new(
+        fhy_core::solver::SmtLib2Process::new(program).with_args(words),
+    ))
+}
+
+/// A member of the generated systems over one integer identifier.
+#[derive(Debug, Clone)]
+enum Bound {
+    AtLeast(i64),
+    Below(i64),
+    In(Vec<i64>),
+    NotIn(Vec<i64>),
+}
+
+impl Bound {
+    /// Return whether `value` satisfies the member.
+    fn holds(&self, value: i64) -> bool {
+        match self {
+            Self::AtLeast(bound) => value >= *bound,
+            Self::Below(bound) => value < *bound,
+            Self::In(members) => members.contains(&value),
+            Self::NotIn(members) => !members.contains(&value),
+        }
+    }
+
+    /// Return the member as a constraint on `x`.
+    fn to_constraint(&self, x: &Identifier) -> Constraint {
+        let reference = Expression::from(x.clone());
+        let set = |members: &[i64], polarity| {
+            Constraint::from(SetConstraint::new(
+                x.clone(),
+                members.iter().map(|value| member(int(*value))).collect(),
+                polarity,
+            ))
+        };
+        match self {
+            Self::AtLeast(bound) => {
+                Constraint::from(EquationConstraint::new(reference.greater_equal(*bound)))
+            }
+            Self::Below(bound) => Constraint::from(EquationConstraint::new(reference.less(*bound))),
+            Self::In(members) => set(members, Polarity::In),
+            Self::NotIn(members) => set(members, Polarity::NotIn),
+        }
+    }
+}
+
+/// Return a strategy for members whose constants lie in `[-5, 5]`, so a
+/// satisfiable system has a solution in `[-10, 10]`.
+fn build_bound_strategy() -> BoxedStrategy<Bound> {
+    let constant = -5_i64..=5;
+    prop_oneof![
+        constant.clone().prop_map(Bound::AtLeast),
+        constant.clone().prop_map(Bound::Below),
+        prop::collection::vec(constant.clone(), 0..4).prop_map(Bound::In),
+        prop::collection::vec(constant, 0..4).prop_map(Bound::NotIn),
+    ]
+    .boxed()
 }
 
 /// Return the canonical sequence of `set`, as debug texts.
@@ -162,5 +246,31 @@ proptest! {
             left.is_structurally_equivalent(&right)
         );
         prop_assert_eq!(left.ordering_key(), left.clone().ordering_key());
+    }
+
+    #[test]
+    fn system_satisfiability_agrees_with_brute_force(
+        bounds in prop::collection::vec(build_bound_strategy(), 1..5),
+    ) {
+        let Some(backend) = property_backend() else {
+            return Ok(());
+        };
+        let x = Identifier::new("x");
+        let system = ConstraintSystem::new(bounds.iter().map(|bound| bound.to_constraint(&x)));
+        let solver = Solver::new().with_shared_smt_solver(backend);
+        let symbol_types = HashMap::from([(x, SymbolType::Int)]);
+        let limits = CheckLimits::new().with_timeout(Duration::from_secs(2));
+
+        let outcome = system
+            .check_satisfiability(&symbol_types, limits, &ConstraintContext::new(&solver))
+            .expect("the question is answered");
+
+        let expected = (-10..=10).any(|value| bounds.iter().all(|bound| bound.holds(value)));
+        if outcome != Outcome::Undecided {
+            prop_assert_eq!(
+                outcome,
+                if expected { Outcome::Satisfied } else { Outcome::Violated }
+            );
+        }
     }
 }

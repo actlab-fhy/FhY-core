@@ -1,6 +1,9 @@
 //! Bindings: the values a constraint is evaluated under.
 
+use std::any::Any;
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::Arc;
 
 use crate::expression::Expression;
 use crate::identifier::Identifier;
@@ -38,10 +41,24 @@ impl From<Value> for Binding {
 /// Bindings of identifiers, in the order they were made.
 ///
 /// Binding an identifier again replaces its binding and keeps its place.
-#[derive(Debug, Clone, Default)]
+///
+/// Bindings may also carry their caller's own form of them, its
+/// [`source`](Self::source), which a [`CustomConstraint`](super::CustomConstraint)
+/// can read back, since it may decide from values the core does not model.
+#[derive(Clone, Default)]
 pub struct Bindings {
     entries: Vec<(Identifier, Binding)>,
     positions: HashMap<Identifier, usize>,
+    source: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl fmt::Debug for Bindings {
+    /// Write the bindings, not their source.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Bindings")
+            .field("entries", &self.entries)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Bindings {
@@ -77,6 +94,21 @@ impl Bindings {
         self.entries
             .iter()
             .map(|(identifier, binding)| (identifier, binding))
+    }
+
+    /// Return these bindings carrying `source`, their caller's own form.
+    #[must_use]
+    pub fn with_source(self, source: Arc<dyn Any + Send + Sync>) -> Self {
+        Self {
+            source: Some(source),
+            ..self
+        }
+    }
+
+    /// Return the caller's own form of the bindings, if it gave one.
+    #[must_use]
+    pub fn source(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.source.as_deref()
     }
 
     /// Return the number of bound identifiers.

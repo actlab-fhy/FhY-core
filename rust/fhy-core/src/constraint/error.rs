@@ -3,10 +3,13 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::{Expression, LiteralTextError, NonBooleanLogicalOperandError};
+use crate::expression::{
+    Expression, LiteralTextError, NonBooleanLogicalOperandError, PiecewiseError,
+};
 use crate::identifier::Identifier;
 use crate::solver::SolveError;
 
+use super::custom::CustomError;
 use super::value::{Member, MemberKind, OpaqueError};
 
 /// Why a constraint cannot use the value bound to an identifier in its
@@ -53,6 +56,13 @@ pub enum ConstraintError {
     UnliftableMember(Member),
     /// The solver refused or failed the question.
     Solve(SolveError),
+    /// The symbol types of a question lack identifiers it mentions, other
+    /// than native constants; they are ordered by id.
+    MissingSymbolTypes(Vec<Identifier>),
+    /// Substituting the bindings into a system's residual failed.
+    Substitution(PiecewiseError),
+    /// A [`CustomConstraint`](super::CustomConstraint) failed.
+    Custom(CustomError),
 }
 
 impl fmt::Display for ConstraintError {
@@ -98,6 +108,18 @@ impl fmt::Display for ConstraintError {
                 ),
             },
             Self::Solve(_) => f.write_str("the solver refused or failed the question"),
+            Self::MissingSymbolTypes(identifiers) => {
+                f.write_str("symbol_types is missing an entry for free identifier(s): ")?;
+                for (index, identifier) in identifiers.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{identifier:?}")?;
+                }
+                Ok(())
+            }
+            Self::Substitution(_) => f.write_str("substituting the bindings failed"),
+            Self::Custom(_) => f.write_str("a custom constraint failed"),
         }
     }
 }
@@ -112,7 +134,11 @@ impl Error for ConstraintError {
             },
             Self::IllTyped(error) => Some(error),
             Self::Solve(error) => Some(error),
-            Self::NonBooleanResult { .. } | Self::UnliftableMember(_) => None,
+            Self::Substitution(error) => Some(error),
+            Self::Custom(error) => Some(&**error),
+            Self::NonBooleanResult { .. }
+            | Self::UnliftableMember(_)
+            | Self::MissingSymbolTypes(_) => None,
         }
     }
 }
