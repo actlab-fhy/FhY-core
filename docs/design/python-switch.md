@@ -97,7 +97,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver), with the migrated tests (`pytest` 7,576 passed)
   - [x] S12.6: tests migrated, and the interface suite (21; see "S12.5 and S12.6 status")
   - [x] S12.7: benchmarks after, and docs (every row faster or within 10%; see "S12 benchmarks")
-- [x] S11: types, in two parts (see "S11: types"; "Needs the user" is empty). S11a's three slower rows (`==` and `hash` of a type, a frame's hash; T-1's structural semantics) await the maintainer's acceptance; see "S11a benchmarks"
+- [x] S11: types, in two parts (see "S11: types"; "Needs the user" is empty). S11a's three slower rows (`==` and `hash` of a type, a frame's hash; T-1's structural semantics) were accepted by the maintainer on 2026-09-26; see "S11a benchmarks"
   - [x] S11a: lattice, poset, the type representations and the dispatchers. The suite is green (7,611 passed), slow tests pass (7,644), properties pass (282), `tests_minimal` passes (5,701 passed, 626 skipped), lint and mypy are clean, and the Rust gate passes (3,492; 3,524 with all features)
     - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
     - [x] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification; 216 new tests, see "S11a.2 implementation notes")
@@ -13517,9 +13517,9 @@ the three medians; the "before" column agrees with the S11a.1 table within
 - **Serialization** gains less, 1.2 to 1.7 times: the envelope and the
   family's type-id lookup stay Python.
 
-**Three rows are slower than 10%, all from T-1**, and need the
-maintainer's decision (cross-cutting rule 5; CONTRIBUTING "Replacing a
-Python class"):
+**Three rows are slower than 10%, all from T-1**. The maintainer
+accepted them on 2026-09-26 (cross-cutting rule 5; CONTRIBUTING
+"Replacing a Python class"):
 
 | Benchmark | after / before | Why | Who pays it |
 |---|--:|---|---|
