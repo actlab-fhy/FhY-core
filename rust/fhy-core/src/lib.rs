@@ -6,9 +6,10 @@
 //! # Modules
 //!
 //! Each module depends only on the modules listed before it, except that
-//! [`tree`] and [`term`] are independent of each other, [`expression`] and
-//! [`pass`] are independent of each other, [`expression::passes`] joins
-//! them, and [`solver`] depends on [`expression`] and not on [`pass`].
+//! [`tree`], [`term`] and [`lattice`] are independent of each other,
+//! [`expression`] and [`pass`] are independent of each other,
+//! [`expression::passes`] joins them, and [`solver`] and [`types`] depend on
+//! [`expression`] and not on [`pass`].
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -21,9 +22,11 @@
 //! | [`provenance`] | source positions, spans and where a value came from |
 //! | [`tree`] | the [`Tree`](tree::Tree) trait and iterative walks and rewrites over any tree-shaped IR |
 //! | [`term`] | [`AlphaRenaming`](term::AlphaRenaming) and the traits of terms: alpha equivalence, free identifiers, substitution, and [`Binder`](term::Binder)s |
+//! | [`lattice`] | [`PartiallyOrderedSet`](lattice::PartiallyOrderedSet) and [`Lattice`](lattice::Lattice): partial orders over hashable elements, their meets and joins |
 //! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], folding and evaluation in [`expression::evaluate`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //! | [`solver`] | questions about expressions answered by pluggable backends: the hazard screen, the SMT-LIB2 lowering, and a backend that drives an SMT-LIB2 executable |
+//! | [`types`] | the IR type system: core data types and their promotion, data types, numerical and index types, and template binding, substitution and unification, with extensions |
 //!
 //! Each public item has exactly one public path.
 //!
@@ -86,12 +89,14 @@ pub mod diagnostic;
 pub mod expression;
 pub mod identifier;
 pub mod interned;
+pub mod lattice;
 pub mod op_attribute;
 pub mod pass;
 pub mod provenance;
 pub mod solver;
 pub mod term;
 pub mod tree;
+pub mod types;
 pub mod value_domain;
 
 #[cfg(test)]

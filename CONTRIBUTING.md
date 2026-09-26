@@ -489,11 +489,12 @@ module depends only on the layers before it:
 2. `described_tag`, `value_domain`, `provenance`
 3. `diagnostic` and `op_attribute`, whose tags are `described_tag`
    vocabularies
-4. `tree` and `term`, which do not depend on each other
+4. `tree`, `term` and `lattice`, which do not depend on one another
 5. `expression` (with `expression::pattern` and `expression::builtins`) and `pass`, which do
    not depend on each other
 6. `expression::passes`, the passes over expressions, which depends on both,
    and `solver`, the questions about expressions and their backends, which
+   depends on `expression` and never on `pass`; and `types`, the IR type system, which
    depends on `expression` and never on `pass`
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
@@ -520,6 +521,8 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
 | `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | `fhy_core::solver` (`SympySimplifier`, behind the `sympy` feature) |
 | `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
+| `fhy_core.lattice`, `fhy_core.utils.poset` | `fhy_core::lattice` |
+| `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
 
 ### Errors belong to their module
 

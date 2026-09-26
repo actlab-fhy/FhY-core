@@ -100,7 +100,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S11: types, in two parts (see "S11: types"; "Needs the user" is empty)
   - [ ] S11a: lattice, poset, the type representations and the dispatchers
     - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
-    - [ ] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification)
+    - [x] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification; 216 new tests, see "S11a.2 implementation notes")
     - [ ] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
     - [ ] S11a.4: the Python switch, and `networkx` out of the dependencies
     - [ ] S11a.5: tests migrated, and the interface suites
@@ -13245,3 +13245,117 @@ with Python 3.11.13 and pytest-benchmark 5.3.0. The load average was 2 to
 - **The value classes** cost 3.3 to 5 µs to build, through `FrozenMixin`,
   and the dispatchers 8 to 23 µs a call. `==` and `hash` are identity, 67
   and 82 ns.
+
+### S11a.2 implementation notes
+
+The tests were written against the module skeletons, and run with the
+bodies of the order queries, the topological sort, the meet and join,
+promotion, literal resolution, and every equivalence, binding,
+substitution and unification function replaced by `todo!()`: 169 of the
+216 new integration tests failed, and all pass now. The 47 that passed pin
+plain data: widths, family predicates, the qualifiers, construction, texts
+and serde. The new modules are `rust/fhy-core/src/lattice.rs` with
+`lattice/poset.rs`, `lattice/bounds.rs`, `lattice/error.rs` and the private
+bit set `lattice/bits.rs`, and `rust/fhy-core/src/types.rs` with
+`types/core_data_type.rs`, `types/qualifier.rs`, `types/data_type.rs`,
+`types/ty.rs`, `types/extension.rs`, `types/environment.rs`,
+`types/unify.rs` and `types/error.rs`. Every public item has one path,
+`fhy_core::lattice::X` or `fhy_core::types::X`. `lib.rs`, the crate README
+and manifest description, and CONTRIBUTING's layering list and module
+table list both modules; `expression`'s private `operation` module became
+`pub(crate)`, so `types` shares its `Display`/`FromStr` macro for the two
+enums.
+
+Where the shape differs from D-S11-3's and D-S11-6's sketches, or fills
+them in:
+
+- **The poset keeps up-sets and the added edges.** Each element's up-set is
+  a bit set; `add_order` unions the upper element's up-set into every
+  up-set that holds the lower one, and records the edge only when the
+  order did not already hold. `iter` and `iter_by_key` run Kahn's
+  algorithm over the edges with a heap keyed by (rank, insertion
+  position), where the rank is the position for `iter` and the key's rank
+  among the sorted keys for `iter_by_key`. `Lattice::meet` and `join` are
+  Python's rule over the bit sets. `missing_bounds` returns the pairs in
+  iteration order.
+- **The extension hooks return `Option`.** `TypeExtension::bind_template`,
+  `substitute_template` and `unify`, and `DataTypeExtension`'s two, return
+  `None` for "the core's default rule", which the core then applies with
+  the `Type` it holds; that is what lets the default name the value in its
+  error. `is_structurally_equivalent` returns `bool` (default `false`), and
+  `eq_extension` and `hash_extension` default to identity and to nothing.
+  Both traits require `as_any`, since trait upcasting is above MSRV 1.85.
+  An extension's own failure is `UnificationError::Extension`, holding the
+  boxed error, `expression::pattern::CallbackError`.
+- **Types are handles.** `NumericalType` and `IndexType` hold an `Arc`, and
+  `Type::ptr_eq` compares handles; substitution returns its input handle
+  when nothing changed, which the binding uses to keep objects. `==` is
+  structural for the built-in parts and delegates to the extension hooks;
+  `is_structurally_equivalent` differs from `==` only in calling an
+  extension's equivalence hook instead of its equality hook.
+- **Promotion** is two `const` lists of covering pairs whose up-sets a
+  `const fn` computes as `u32` masks; `promote` takes the least member of
+  the two up-sets' intersection. `data_type_stories.rs` builds both orders
+  as `Lattice`s, checks `is_lattice`, and checks `promote` against `join`
+  for all 81 and 49 pairs. `CoreDataType` also has the family predicates
+  (`is_integral`, `is_unsigned`, `is_signed`, `is_real_float`,
+  `is_complex`, `is_float_like`) and `all()`, which S11b's checker uses.
+- **Literal resolution** takes a `LiteralValue`: an integer of any size
+  checks the ranges with `BigInt`, a decimal is
+  `LiteralTypeError::UnsupportedDecimal` (and a string, reserved for S11b,
+  `UnsupportedString`), and `is_unsupported` tells the binding which
+  errors are `NotImplementedError`.
+- **Texts.** Types print in Python's `str` shape, with identifier ids in
+  expressions; templates and identifiers in errors print as `name::id`,
+  so two templates of one name stay distinguishable (`cannot unify
+  distinct template data types: T::7 vs T::9`). `TemplateWidthError`
+  refuses a zero width, the one refusal `TemplateDataType` adds; Python's
+  deserialization refused non-positive widths.
+- **The chase.** Substituting a shape variable recurses once per binding
+  on the chain, with the chain as the cycle guard, and substitutes each
+  expression with the core's iterative `substitute`; the occurs check
+  reads `free_identifiers` of the substituted form. So both reach calls
+  and piecewise nodes (T-5), and deep dimensions run on a small stack; a
+  chain of bindings deeper than the stack allows is out of scope.
+- **Tests.** `tests/it/lattice/`: `poset_stories.rs` (20),
+  `lattice_stories.rs` (14), `lattice_properties.rs` (6);
+  `tests/it/types/`: `data_type_stories.rs` (94, counting `rstest`
+  cases), `type_stories.rs` (13), `unification_stories.rs` (55),
+  `extension_stories.rs` (10), `unification_properties.rs` (4); the
+  builders are in `tests/it/support/types.rs`. The Rust gate: fmt, clippy
+  `--all-targets -D warnings`, doc `-D warnings`, the public-paths checks,
+  and `cargo +1.85 check`.
+
+Traceability of the Python tests (`test_poset.py` is `P`,
+`test_lattice.py` `L`, `test_core.py` `C`, `test_unification.py` `U`,
+`test_extension.py` `E`, the properties files by name); the Python tests
+stay, and S11a.5 migrates them:
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| P the length, membership and `add_element` tests (6) | `empty_poset_has_no_elements`, `added_elements_are_members`, `adding_a_member_again_is_refused_and_leaves_the_poset_unchanged` | |
+| P `is_less_than`, `is_greater_than` and their refusals (6) | `order_holds_directly_transitively_and_reflexively`, `unrelated_elements_are_not_ordered_either_way`, `asking_about_a_non_member_is_refused_lower_first` | `is_greater_than` is Python's swap of `is_less_than` |
+| P the `add_order` tests (4) | `ordering_a_non_member_is_refused_lower_first`, `reversing_an_order_is_refused_as_a_cycle_and_leaves_the_poset_unchanged`, `ordering_an_element_below_itself_is_refused_as_a_cycle`, `adding_an_order_that_already_holds_is_accepted`, `a_later_order_extends_the_up_sets_of_everything_below` | |
+| P `test_poset_iter` | `iteration_repeats_the_same_order`, `iteration_is_topological_with_insertion_order_breaking_ties` | T-11 |
+| P the three `iter_stable` tests | `iteration_by_key_breaks_ties_by_the_least_key`, `iteration_by_key_stays_topological`, `iteration_by_key_takes_any_ordered_key`, `iteration_by_key_breaks_equal_keys_by_insertion_order` | |
+| `test_poset_properties.py` (3) | `order_agrees_with_the_closure_of_the_added_orders`, `reversing_an_order_is_refused_exactly_when_it_holds`, `iteration_is_a_topological_order` | a closure, not networkx, is the oracle |
+| L the empty, singleton and two-element tests (19) | `empty_lattice_*` (2), `singleton_lattice_*`, `two_element_chain_*`, `ordering_through_the_lattice_refuses_a_cycle` | T-12: the empty lattice refuses a non-member |
+| L the chain and subset tests (6) | `chain_meets_at_the_minimum_and_joins_at_the_maximum`, `subsets_meet_at_the_intersection`, `subsets_join_at_the_union` | |
+| L the non-lattice tests (6) | `crown_has_no_meet_below_and_no_join_above`, `several_minimal_upper_bounds_mean_no_join` | |
+| L the `verify` tests (4) | `missing_bounds_list_each_ordered_pair_meet_first`, `missing_bounds_of_the_crown_name_every_pair_across_the_levels` | the report is the binding's |
+| `test_lattice_properties.py` (13) | `meet_and_join_are_the_bounds_of_the_family_order`, `meet_and_join_are_commutative_associative_idempotent_and_absorbing`, `is_lattice_exactly_when_no_bound_is_missing` | |
+| C the bit-width, weak and partition tests | `bit_width_of_each_core_data_type` (17), `only_the_three_literal_families_are_weak`, `every_type_but_bool_belongs_to_exactly_one_promotion_family`, `family_predicates_partition_the_numbers` | |
+| C the promotion tests (29) | `promotion_joins_two_types_of_one_family` (20), `promotion_across_families_is_refused` (3), `promotion_of_bool_with_any_other_type_is_refused` (5), `both_promotion_orders_are_lattices_whose_joins_are_the_promotions`, `promotion_errors_display_one_lowercase_line` | |
+| C the literal-resolution tests (27) | `literal_resolves_to_its_narrowest_type_in_the_context` (18), `boolean_literal_is_refused_outside_the_bool_context` (4), `number_is_refused_in_the_bool_context` (4), `float_literal_is_refused_in_an_integer_context`, `negative_integer_is_refused_in_an_unsigned_context`, `integer_outside_every_width_of_its_family_is_refused` (4), `out_of_range_error_names_the_family`, `decimal_literal_has_no_core_data_type_yet` | |
+| C `test_promote_type_qualifiers` (6) | `qualifiers_promote_to_param_only_from_two_params` (6) | |
+| C the equivalence, `is_scalar` and `str` tests | `type_stories.rs` | `repr` and the frozen tests are the binding's |
+| U the environment tests (5) | `empty_environment_binds_nothing`, `with_helpers_return_new_environments_and_leave_the_receiver_alone`, `environment_equivalence_*` (2), `chained_with_helpers_produce_distinct_environments` | |
+| U the equivalence-dispatch tests (4) | `separately_built_equal_types_are_equal_and_hash_alike`, `types_differing_anywhere_are_unequal_and_not_equivalent`, `templates_are_equivalent_only_with_the_same_identifier_and_widths` | |
+| U the binding tests (21) | the 24 binding stories of `unification_stories.rs` | |
+| U the substitution tests (4) | `substitution_leaves_unbound_placeholders_and_returns_the_same_type`, `substitution_walks_compound_shape_expressions`, `data_type_substitution_resolves_a_bound_template_and_leaves_others` | |
+| U the unification tests (9) | the 10 unification stories | |
+| U the `unify_expression` tests (13) | the 10 expression stories | |
+| U the dispatcher-default tests (5) | `an_extension_without_rules_takes_the_default_rules`, `a_data_type_extension_without_rules_takes_the_default_rules` | the two `TypeError` defaults are the binding's |
+| E the five out-of-tree tests | `extension_takes_part_in_structural_equivalence_and_equality`, `extension_binds_then_substitutes_through_its_inner_type`, `extension_unifies_through_its_inner_type_recording_the_inner_bindings`, `extension_errors_propagate_from_bind_and_unify`, `a_width_violation_inside_an_extension_surfaces_as_the_core_error` | |
+| `test_unification_properties.py` (4), `test_core_properties.py` (the promotion laws) | `unification_properties.rs` (4), `both_promotion_orders_are_lattices_whose_joins_are_the_promotions` | the serialization round trips are the binding's |
+| none | `substitution_reaches_shape_variables_inside_calls_and_piecewise`, `the_occurs_check_looks_inside_every_node_kind`, `substitution_follows_a_chain_of_bindings_and_stops_at_a_cycle`, `a_cycle_of_placeholder_bindings_resolves_to_where_it_closes`, `deep_dimensions_bind_substitute_and_unify_on_a_small_stack`, `long_chain_orders_and_iterates_on_a_small_stack`, `a_built_in_pattern_refuses_an_extension_by_its_kind_name`, `a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule` | new: T-5, cycles, depth, extensions nested in built-ins |

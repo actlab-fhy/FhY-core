@@ -14,3 +14,4 @@ pub(crate) mod stack;
 #[cfg(feature = "sympy")]
 pub(crate) mod sympy;
 pub(crate) mod tree_ir;
+pub(crate) mod types;

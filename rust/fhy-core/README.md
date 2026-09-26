@@ -1,12 +1,12 @@
 # fhy-core
 
-Core IR building blocks for the [FhY](https://github.com/actlab-fhy) compiler, in Rust: identifiers, interned vocabularies, diagnostics and provenance, symbolic expressions with patterns and rewrite rules, tree traversals, a compiler-pass framework, and a solver with pluggable backends.
+Core IR building blocks for the [FhY](https://github.com/actlab-fhy) compiler, in Rust: identifiers, interned vocabularies, diagnostics and provenance, symbolic expressions with patterns and rewrite rules, tree traversals, a compiler-pass framework, a solver with pluggable backends, partial orders and lattices, and the IR type system.
 
 This crate is the Rust implementation of the `fhy_core` Python package, which requires it: the package's extension module, built from the `fhy-core-py` binding crate, issues its identifier ids and backs its interned tags, diagnostics, provenance and expressions. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's and a golden corpus checks it. Elsewhere Rust defines the behavior.
 
 ## Modules
 
-Each module depends only on the modules listed before it, except that `tree` and `term` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, and `solver` depends on `expression` and not on `pass`. Each public item has exactly one public path.
+Each module depends only on the modules listed before it, except that `tree`, `term` and `lattice` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, and `solver` and `types` depend on `expression` and not on `pass`. Each public item has exactly one public path.
 
 - `identifier`: `Identifier`, a name hint paired with a process-unique id.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical value per key.
@@ -17,6 +17,7 @@ Each module depends only on the modules listed before it, except that `tree` and
 - `provenance`: `Position`, `Span` and `Provenance`, where a value came from.
 - `tree`: `NodeHandle` and its `NodeIdentity`, from an `Arc` or from a pointer to a foreign object, the `Tree` trait, and iterative walks (`walk_tree`) and memoized rewrites (`rewrite_tree`) over any tree-shaped IR.
 - `term`: `AlphaRenaming`, the correspondence of identifiers between two terms under comparison, and the traits of terms: `AlphaEquivalence`, `FreeIdentifiers`, `Term`, and `Binder`, which derives alpha equivalence, free identifiers and capture-avoiding substitution for a node that binds identifiers; a binder list that repeats an identifier pairs with none. `is_mapping_alpha_equivalent_under` compares identifier-keyed maps.
+- `lattice`: `PartiallyOrderedSet`, a partial order over any hashable elements whose order queries are bit tests and whose iteration is topological with insertion order breaking ties, and `Lattice`, its meets, joins and missing bounds.
 - `expression`: `Expression`, its node kinds, builders, literals and analyses, and `BooleanScreen`.
   - `expression::builtins`: the catalogue of built-in functions and constants. Each constant has a fixed identifier from the reserved block (`BuiltinConstant::identifier`), so a reference to it means the same in every process.
   - `expression::registry`: the owned `FunctionRegistry` of user functions (`FunctionDefinition`), native functions (`NativeFunction`) and constants (`NativeConstant`), which implements the screen's `SortLookup`, and `FunctionRegistry::inline`, which replaces calls of composed built-ins and user functions by their bodies in time linear in the distinct nodes.
@@ -25,6 +26,7 @@ Each module depends only on the modules listed before it, except that `tree` and
   - `expression::passes`: `RewriteRuleApplier`, `ExpressionPrettyFormatter` and `register_expression_passes`.
 - `pass`: `CompilerPass`, `PassManager`, `FixpointPassGroup`, analyses, `Validator`s and the owned `PassRegistry`. An analysis is named by its type, or, when no Rust type names it, such as one a language binding defines, by an `Identifier` (`AnalysisId::of_identifier`, `PassContext::analysis_by_id`). `PassContext::with_detached_analyses` lends a hook's code an owned `DetachedAnalyses` handle to the run's cache.
 - `solver`: `Solver`, which answers satisfiability, implication and universal-validity questions with an `SmtSolver` backend, and simplification with a `Simplifier` backend. It checks each question's symbol types and Boolean positions, refuses the shapes SMT-LIB2 cannot state in this crate's semantics (`Hazard::find`), and encodes a logical question as one `SmtScript`, lowered to SMT-LIB2 with the crate's semantics. `SmtLib2Process` drives any SMT-LIB2 executable, such as `z3 -in` or `cvc5 --lang=smt2`, over its standard input and output, and, with the `sympy` feature, `SympySimplifier` simplifies with SymPy.
+- `types`: the IR type system. `CoreDataType` with its promotion orders and the types literals resolve to, `TypeQualifier`, the `DataType`s (primitive, `TemplateDataType`, or an extension) and `Type`s (`NumericalType`, `IndexType`, or an extension), and template binding, substitution and unification into a `TypeUnificationEnvironment`. `TypeExtension` and `DataTypeExtension` let types defined elsewhere take part in each operation.
 
 ## One copy per process
 

@@ -18,7 +18,7 @@ mod display;
 mod error;
 mod literal;
 mod node;
-mod operation;
+pub(crate) mod operation;
 mod screen;
 mod sort;
 mod symbol_type;
