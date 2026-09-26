@@ -78,7 +78,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S10.4: the Python switch
   - [x] S10.5: tests migrated, and the interface suite
   - [x] S10.6: benchmarks after, and docs
-- [ ] S9: the expression evaluators (designed; see "S9: the expression evaluators")
+- [x] S9: the expression evaluators (N-S9-1 resolved as (a), N-S9-2 as (b)). Rebased onto S8 and S10 (c93f76f): the suite is green (7,556 passed), slow tests pass (7,589), properties pass (282), `tests_minimal` passes (5,646 passed, 626 skipped), lint and mypy are clean, and the Rust gate passes (3,271; 3,303 with all features)
   - [x] N-S9-1 decided as (a), N-S9-2 as (b) (2026-09-26; see "S9 resolutions")
   - [x] S9.1: evaluator benchmarks and baseline (26 rows; see "S9.1 baseline")
   - [x] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
@@ -87,7 +87,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.5: the Python switch
   - [x] S9.6: tests migrated, and the interface suite
   - [x] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README. `tests_minimal` passes (5,646 passed, 626 skipped)
-  - [ ] S9.8: benchmarks after, and docs
+  - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost for the maintainer; see "S9 benchmarks")
 
 ## Goal
 
@@ -8791,9 +8791,10 @@ commit hashes in this section are the rebased ones.
 ## S9: the expression evaluators
 
 - **Status:** designed 2026-09-26 at ab05802, in parallel with S8's
-  implementation. D-S9-1 to D-S9-20 apply the policy the user already set
-  and the direction in "Plan after S7" (item 4). N-S9-1 was resolved as
-  (a) and N-S9-2 as (b); see "S9 resolutions".
+  implementation, and implemented the same day; see "S9 status" below.
+  D-S9-1 to D-S9-20 apply the policy the user already set and the
+  direction in "Plan after S7" (item 4). N-S9-1 was resolved as (a) and
+  N-S9-2 as (b); see "S9 resolutions".
 - **Pattern:** the evaluation logic moves into a new core module,
   `fhy_core::expression::evaluate`. One evaluator walk is generic over
   its values: a scalar backend in every build, and an `ndarray` backend
@@ -10241,3 +10242,115 @@ Then, following S8's scheme (D-S8-17):
 - **The README** documents the `numpy` extra's `ImportError` and that
   nothing else imports NumPy, and its expression row describes the Rust
   fold, the NumPy evaluator and the formatter pass.
+
+### S9 status
+
+S9 was implemented on 2026-09-26 in eleven commits after the design and
+the resolutions: the benchmarks and their baseline; the core evaluator,
+test-first; the `ndarray` backend behind its feature; the binding; the
+Python switch, marked breaking; the migrated tests and the interface
+suite; the performance work the benchmarks called for; the rebase onto
+S8 and S10 (no commit of its own); the `numpy` marker and
+`tests_minimal` without NumPy; and these docs. No test was skipped or
+deleted without a rewrite. At the end: `pytest tests` 7,556 passed, `-m
+"not very_slow"` 7,589 passed, the `property` session 282 passed, nox
+`tests_minimal` (5,646 passed, 626 skipped), `lint` and `type_check`
+clean, `tests/test_rs_stub.py` green, and the Rust gate green: fmt, clippy
+`-D warnings` with and without `--all-features`, 3,271 tests with the
+default features and 3,303 with all of them (`z3` built against the
+z3-solver wheel's libz3 4.16, as S8.3 records), doc `-D warnings` both
+ways, `cargo deny check` (BSD-2-Clause now used by rust-numpy), and `cargo
++1.85 check`, with and without `ndarray`.
+
+### S9 benchmarks (before and after)
+
+Median time per call, from each tree's own environment, `pytest
+benchmarks/test_evaluate.py <the rerun rows> -n 0 --benchmark-only`, on
+the S0 machine with Python 3.11.13, NumPy 2.4.6 and pytest-benchmark
+5.3.0. "Before" is 6a84ae3, the rebased S9.1 tree (S8 and S10 with the
+benchmark file), exported with `git archive` under `target/` and built
+there; "after" is the S9.7 tree. The two ran three times each,
+interleaved, with a load average of 3 to 10 from other work on the
+machine, and the table lists the best of the three medians. The
+"before" column agrees with the S9.1 table within 10%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_evaluate_expression_of_a_builtin_native_call` | 6.7 µs | 3.4 µs | 0.51 |
+| `test_evaluate_expression_of_a_user_native_call` | 6.5 µs | 3.8 µs | 0.59 |
+| `test_evaluate_expression_of_the_deep_tree` | 203 µs | 21.1 µs | 0.10 |
+| `test_evaluate_expression_of_nested_native_calls` | 37.0 µs | 5.3 µs | 0.14 |
+| `test_evaluate_expression_of_constant_references` | 384 µs | 70.7 µs | 0.18 |
+| `test_evaluate_with_numpy_of_scalars[poly]` | 29.2 µs | 3.5 µs | 0.12 |
+| `test_evaluate_with_numpy_of_scalars[sigmoid]` | 55.2 µs | 4.3 µs | 0.08 |
+| `test_evaluate_with_numpy_of_scalars[deep_tree]` | 471 µs | 44.9 µs | 0.10 |
+| `test_evaluate_with_numpy_of_arrays[poly-1e3]` | 35.1 µs | 7.0 µs | 0.20 |
+| `test_evaluate_with_numpy_of_arrays[poly-1e6]` | 6.89 ms | 1.96 ms | 0.28 |
+| `test_evaluate_with_numpy_of_arrays[exp-1e6]` | 961 µs | 888 µs | 0.92 |
+| `test_evaluate_with_numpy_of_arrays[tanh-1e6]` | 1.84 ms | 1.82 ms | 0.99 |
+| `test_evaluate_with_numpy_of_arrays[sigmoid-1e6]` | 5.92 ms | 3.27 ms | 0.55 |
+| `test_evaluate_with_numpy_of_arrays[piecewise-1e6]` | 12.72 ms | 2.68 ms | 0.21 |
+| `test_evaluate_with_numpy_of_arrays[guarded-1e6]` | 20.71 ms | 20.01 ms | 0.97 |
+| `test_evaluate_with_numpy_of_arrays[integer-1e6]` | 20.14 ms | 17.50 ms | 0.87 |
+| `test_evaluate_with_numpy_of_arrays[logical-1e6]` | 2.00 ms | 1.90 ms | 0.95 |
+| `test_evaluate_with_numpy_of_arrays[deep_tree-1e4]` | 741 µs | 309 µs | 0.42 |
+| `test_evaluate_with_numpy_of_float32_arrays` | 1.62 ms | 2.63 ms | 1.62 |
+| `test_evaluate_with_numpy_with_unused_bindings` | 39.6 µs | 15.5 µs | 0.39 |
+| `test_pretty_formatter_of_the_deep_tree` | 234 µs | 10.2 µs | 0.04 |
+| `test_evaluate_after_inline` | 60.7 µs | 25.8 µs | 0.43 |
+| `test_mixed_pipeline_over_a_deep_expression` | 276 µs | 45.0 µs | 0.16 |
+| `test_pformat_expression_of_deep_tree[symbolic]` | 8.1 µs | 8.3 µs | 1.03 |
+| `test_pformat_expression_of_deep_tree[functional]` | 7.4 µs | 7.7 µs | 1.03 |
+| `test_pformat_expression_of_deep_tree[show_id]` | 9.8 µs | 9.8 µs | 1.00 |
+
+Every row is faster or within the 10% CONTRIBUTING allows, except one:
+
+- **`float32` arrays, 1.62 times as long: an accepted cost for the
+  maintainer** (cross-cutting rule 5). The evaluator computes reals in
+  `float64` (D-S9-4, Z-1), so a `float32` binding is widened by one NumPy
+  cast and the arithmetic moves twice the bytes; NumPy computes in
+  `float32`. Converting chunk by chunk inside the core would save the cast
+  (an estimated 1.3 times), but only a `float32` domain would reach
+  parity, which D-S9-4 left for later.
+- **Scalars and the fold** are 2 to 12 times faster: one call into the
+  extension instead of a pass lifecycle and a Python visitor call per
+  node.
+- **Arithmetic over arrays** is 3.5 times faster for the million-element
+  polynomial and 4.7 times for a piecewise: the chunked, storage-reusing
+  walk (see "S9.4 implementation notes") keeps temporaries in cache,
+  where NumPy writes each one out.
+- **The transcendentals** run NumPy's ufuncs (N-S9-2 (b)): a lone `exp`
+  or `tanh` over a binding is NumPy's call itself (0.92 and 0.99), and
+  `sigmoid` is 1.8 times faster.
+- **Integer arithmetic** (0.87) and the guarded non-finite casts (0.97),
+  whose element failures take the walk's second pass, stay near NumPy's
+  cost; the connectives are at 0.95.
+- **The formatter** takes 10 µs, the core's rendering, where the Python
+  visitor took 234 µs (N-S9-1).
+
+### S9 implementation notes
+
+Choices the decisions left open, made while implementing S9.5 to S9.8
+(S9.2 to S9.4 have their own notes above):
+
+- **The chunked array evaluation and operand reuse** (S9.4 notes) are the
+  core's answer to the allocator costs this machine showed; the lanes
+  and their failures are exactly those of the whole-array walk, which the
+  lane property pins.
+- **The lone-transcendental fast path** is in the binding, not the core:
+  it is where NumPy's ufunc is the node's kernel, and it only skips
+  copies, so the core's semantics are unchanged.
+- **`pformat_expression` refuses a non-expression** with `TypeError`;
+  it used to run the Python formatter over one.
+- **`NumpyExpressionEvaluator(environment)`** lost its `numpy_module`
+  argument, and it inlines, so a composed call evaluates in a pass run as
+  it does through the function.
+- **`BuiltinNativeImplementation` is only in `_rs`**: Python reaches it as
+  a built-in entry's `implementation`; no public module re-exports it.
+- **`coerce_literal_value`** refuses a value of another type with
+  `TypeError`, and text outside the core's literal grammar (such as
+  `"1e5"`) with `ValueError`, where Python passed other types through and
+  read any `int()` or `Decimal()` text.
+- **Without NumPy**, the 27 test functions S9.7 marks are the only
+  unmarked ones that reached NumPy; they failed the same way before S9,
+  since the Python evaluator raised the same `ImportError`.
