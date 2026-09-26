@@ -120,6 +120,8 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`; cb959f5)
   - [x] S14.5: tests migrated, and the interface suite (23; see "S14.3 to S14.5 status")
   - [x] S14.6: benchmarks after, and docs (every row faster or within noise; see "S14 benchmarks")
+- [ ] S13: constraints (design in progress; see "S13 resume notes")
+  - [ ] S13.0: the design (survey, decisions, benchmark plan, "Needs the user", steps, test plan)
 
 ## Goal
 
@@ -14569,3 +14571,76 @@ The suite is green (7,708 passed), slow tests pass (7,741), properties
 pass (282), `tests_minimal` passes (5,757 passed, 627 skipped), lint and
 mypy are clean, and the Rust gate passes (3,765; 3,797 with all features).
 Every benchmark row is faster, or within noise.
+
+## S13: constraints
+
+- **Status:** design in progress (2026-09-26, from 3a53195). Only the
+  survey is under way; no decision is proposed yet. See "S13 resume
+  notes" for where the work stopped.
+- **Scope:** `src/fhy_core/symbolic/constraint/` (`core.py` 1,117 lines,
+  `members.py` 527, `ordering.py` 65, `system.py` 848, `errors.py` 35,
+  `__init__.py` 66): a core in `rust/fhy-core` on `fhy_core::solver`,
+  `fhy_core::term` and `fhy_core::expression`, and a binding in
+  `rust/fhy-core-py`. `symbolic/param` is the next slice, so the Rust API
+  is to be designed with it in mind.
+
+### Survey so far (TODO: complete)
+
+- **Consumers in `src`:** only `symbolic/param` (`core.py` and
+  `domains.py`, public names only: `Constraint`, `ConstraintBindings`,
+  `ConstraintError`, `ConstraintOutcome`, `ConstraintSystem`,
+  `EquationConstraint`, `InSetConstraint`, `NotInSetConstraint`,
+  `create_constraint_system`, `does_member_lift_to_expression`), and the
+  namespace re-export in `symbolic/__init__.py`.
+- **Solver use:** `EquationConstraint.evaluate_with_bindings` simplifies
+  through `simplify_expression`; `ConstraintSystem` asks
+  `check_expression_satisfiability` and `does_expression_imply`, and
+  checks `validate_timeout_milliseconds`. Six places in
+  `test_constraint_system.py` patch `system.check_expression_satisfiability`
+  (S8's survey), which a Rust system would no longer call through Python.
+- **Members** may be `str`, `int`, `float` (NaN refused, `-0.0` stored as
+  `0.0`), `bool`, `tuple` and `frozenset` of members, or any `Serializable`
+  and hashable Python object, compared type-strictly
+  (`type(a) is type(b) and a == b`). The last kind is a user value no port
+  will move to Rust, which the core's member type must admit without
+  holding Python objects itself (an open design point).
+- **Third-party constraints:** `Constraint` documents a subclassing
+  contract (six abstract methods), and
+  `tests/symbolic/constraint/test_abstract_contract.py` defines a dataclass
+  subclass overriding them. Whether a `ConstraintSystem` must accept such a
+  member decides whether the core's constraint type is closed (an open
+  design point).
+- **Python-text-dependent orders:** members are ordered by a Python-`repr`
+  key (`members`, `__repr__`, `__str__`, serialization,
+  `convert_to_expression`), and systems by `build_ordering_key()`, a
+  string built from Python class names and literal keys.
+- **Tests:** `tests/symbolic/constraint/` has 21 modules (about 11,000
+  lines; `test_constraint_system.py` alone 3,358), and 40 param modules
+  exercise constraints through the param API. The per-file survey (private
+  names, message, log, `repr` and key pins, subclasses, patches, markers)
+  was running when the work paused, and is to be redone.
+- **Benchmarks:** `benchmarks/test_solver.py` has two constraint rows
+  (`test_equation_constraint_evaluate_with_bindings`,
+  `test_constraint_system_check_implication`) and `benchmarks/test_term.py`
+  one (`test_constraint_structural_equivalence`); a
+  `benchmarks/test_constraint.py` is planned.
+
+### S13 resume notes
+
+Paused on 2026-09-26 at the coordinator's request, before any decision
+was written. Done: the policy and precedent reading (the Goal, P1 to P3,
+the cross-cutting rules, S8, S10 and S9 in full, `rust-workspace.md`
+Part I, CONTRIBUTING "Porting to Rust"), the reading of the whole
+constraint package, the core solver facade and the binding's default
+solver (`solver/state.rs`, `solver/facade.rs`, `solver/backends.rs`),
+and the worktree's `.venv` (`uv sync --group dev --group bench`). Next:
+
+1. redo the two surveys: the constraint tests file by file, and param's
+   use of the constraint API (member types in `param/values.py`, fields,
+   roles, renaming, screened systems, bindings);
+2. write the survey sections, the divergences, the pattern choice, the
+   decisions D-S13-x, the benchmark plan, "Needs the user", the steps and
+   the test plan, replacing this subsection's TODOs;
+3. commit the full design, and stop there if "Needs the user" is
+   non-empty.
+
