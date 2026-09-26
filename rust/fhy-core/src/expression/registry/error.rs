@@ -241,7 +241,8 @@ pub enum InlineError {
         /// How many arguments the call passes.
         actual: usize,
     },
-    /// A call names a registered constant, which cannot be called.
+    /// A call names a constant, registered or built in, which cannot be
+    /// called.
     ///
     /// Displays as `"c" is a constant, not a function`.
     NotCallable(FunctionName),

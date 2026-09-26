@@ -316,7 +316,7 @@ impl FunctionRegistry {
     ///
     /// Returns [`InlineError::UnknownFunction`] for a call of an
     /// unregistered name, [`InlineError::NotCallable`] for a call of a
-    /// constant's name, [`InlineError::ArityMismatch`] for a call passing a
+    /// registered or built-in constant's name, [`InlineError::ArityMismatch`] for a call passing a
     /// wrong number of arguments, [`InlineError::Recursive`] for a function
     /// reached again inside its own body, and [`InlineError::Piecewise`] if
     /// substituting an argument puts a literal other than a Boolean in a

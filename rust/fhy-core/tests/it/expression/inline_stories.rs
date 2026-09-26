@@ -363,6 +363,19 @@ fn inline_refuses_a_call_of_a_constant() {
 }
 
 #[rstest]
+fn inline_refuses_a_call_of_a_builtin_constant(
+    #[values("pi", "e", "inf", "nan")] constant: &str,
+) {
+    let registry = FunctionRegistry::new();
+
+    let error = registry
+        .inline(&call_named(constant, []))
+        .expect_err("a built-in constant is not callable");
+
+    assert_eq!(error, InlineError::NotCallable(name(constant)));
+}
+
+#[rstest]
 #[case::too_few_for_a_user_function("double", 0, 1)]
 #[case::too_many_for_a_user_function("double", 2, 1)]
 #[case::too_many_for_a_native_user_function("softplus", 3, 1)]

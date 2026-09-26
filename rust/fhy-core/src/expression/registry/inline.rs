@@ -13,7 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::expression::builtins::BuiltinFunction;
+use crate::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use crate::expression::callee::{Callee, FunctionName};
 use crate::expression::error::RebuildError;
 use crate::expression::node::{CallExpression, Expression, ExpressionKind};
@@ -67,6 +67,9 @@ impl<'r> Inliner<'r> {
             Callee::Named(name) => {
                 if self.in_progress.contains(name) {
                     return Err(InlineError::Recursive(name.clone()));
+                }
+                if name.as_str().parse::<BuiltinConstant>().is_ok() {
+                    return Err(InlineError::NotCallable(name.clone()));
                 }
                 match self.registry.find(name.as_str()) {
                     None => Err(InlineError::UnknownFunction(name.clone())),
