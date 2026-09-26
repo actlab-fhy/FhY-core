@@ -129,7 +129,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13a.5: tests migrated (with S13a.4), and the interface suite (47)
   - [x] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`; 28 new tests)
   - [x] S13b.2: the system's binding
-  - [ ] S13b.3: the Python switch of `system.py`, with its tests
+  - [x] S13b.3: the Python switch of `system.py`, with its tests (12 new interface tests)
   - [ ] S13b.4: benchmarks after, and docs
 
 ## Goal
@@ -15709,6 +15709,40 @@ a Python-defined member), exported from `_rs` and declared in `_rs.pyi`.
 The solver binding lends it `read_limits`, `read_symbol_types`,
 `warn_hazard`, `warn_unknown` and `PySolver::backend_name`. Nothing in
 Python uses it yet, so the suite is unchanged (7,732 passed).
+
+### S13b.3 status
+
+The Python switch of `system.py` (fc20850, marked breaking) makes
+`ConstraintSystem` `class ConstraintSystem(_rs.ConstraintSystem,
+WrappedFamilySerializable)`, a virtual `FrozenMixin`, and keeps
+`create_constraint_system` and the module logger; the three binding
+helpers S13a moved there are deleted. `tests/symbolic/conftest.py` gains
+`RecordingSmtSolver` and the `plug_smt_solver` fixture, which makes a
+recording Python backend the default solver's SMT backend and restores the
+default afterwards. The README's constraint row changes, and CONTRIBUTING's
+process-global section records the pending-error slot (in the docs commit
+after the switch).
+
+After the switch 15 tests failed, all in the migration below. At the end:
+`pytest` 7,744 passed, `-m "not very_slow"` 7,777 passed, ruff and mypy
+clean.
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_constraint_system.py`: the 8 tests reading the names of a `MissingSymbolTypeError` | same names | C-7: `_extract_reported_missing_names` reads `name::id` and returns the name hints |
+| `test_constraint_system.py::test_check_satisfiability_reports_every_missing_identifier_in_sorted_order` | same name | C-7: ordered by id, `b, a` |
+| `test_constraint_system.py`: the 6 tests patching `system.check_expression_satisfiability` (empty systems ask nothing, the timeout reaches the backend, `unknown` is undecided) | same names | C-8: they plug a recording backend into the default solver |
+| `test_param_intersection.py::test_intersection_accepts_result_when_z3_returns_unknown` | same name | C-8: the same fixture, with an `unknown` backend |
+
+The interface suite gains 12 tests for the system: its class structure and
+the member objects it returns, a Python-defined member's key read once,
+its bindings snapshot holding the objects given, its exception propagating
+as itself, a result that is no outcome refused, a member that is no
+constraint refused, the DEBUG record of an undecided member beside the
+member's own record, a question converting a Python member through its
+method, `check_implication`'s argument check, equivalence through a Python
+member's method, pickling and the payload, and eight threads asking one
+system.
 
 ### S13 resume notes
 

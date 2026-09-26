@@ -419,7 +419,11 @@ owned `VerificationRegistry` and the Python objects its keys stand for
 through a write-once import cache. A registration swaps in a new state
 whole, and the lock is never held across a call into Python. It is
 append-only, as the dict was, and adds no Rust `static` with interior
-mutability. Tests never clear a
+mutability. Slice S13 adds a
+thread-local slot (`rust/fhy-core-py/src/constraint/value.rs`) holding the
+first exception a Python member's `==`, or a Python-defined constraint's
+comparison, raised during one call into the constraint core, which the call
+raises when the core returns; it is empty whenever no such call runs. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default
