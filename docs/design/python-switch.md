@@ -70,7 +70,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.6: tests migrated, and the interface suite (57). The suite is green (7,387 passed), `-m "not very_slow"` 7,420, properties 281; see "S8.5 and S8.6 status"
   - [x] S8.7: optional extras, backend markers and the minimal-install session. `tests_minimal` passes (5,764 passed, 608 skipped); the suite 7,389 passed; see "S8.7 status"
   - [x] S8.8: benchmarks after, and docs (every solver row faster, or within 10%, after c0af152; see "S8 benchmarks")
-- [x] S10: terms (N-S10-1 resolved as (a), N-S10-2 as (b)). The suite is green (7,376 passed), slow tests pass (7,409), properties pass (281), lint and mypy are clean, and the Rust gate passes (2,872)
+- [x] S10: terms (N-S10-1 resolved as (a), N-S10-2 as (b)). Rebased onto S8 (7078ca2): the suite is green (7,438 passed), slow tests pass (7,471), properties pass (282), `tests_minimal` passes (5,813 passed, 608 skipped), lint and mypy are clean, and the Rust gate passes (3,104; 3,136 with the `z3` feature)
   - [x] N-S10-1 decided as (a), N-S10-2 as (b)
   - [x] S10.1: term benchmarks and baseline (32 rows; see "S10.1 baseline")
   - [x] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
@@ -8361,7 +8361,7 @@ shared files stay small and additive:
 S10 does not use the solver or the evaluators, and they do not use
 `AlphaRenaming`, so no code depends across the slices.
 
-### S10.1 baseline (2026-09-26, e2bb157 plus the new benchmarks)
+### S10.1 baseline (2026-09-26, d5241db plus the new benchmarks)
 
 `benchmarks/test_term.py` implements the benchmark plan above, with its
 own toy classes: a lambda calculus over `BinderMixin` (`_Var`, `_App`,
@@ -8585,11 +8585,11 @@ mapping helper's order, a raising value, and a key of the wrong type.
 ### S10 status
 
 S10 was implemented on 2026-09-26 in eight commits after the design: the
-user's decisions (e2bb157); the benchmarks and their baseline (b5ba528);
-the core module, test-first (d9bb627); the binding (e7a178b); the Python
-switch, marked breaking (6c96ec4); the new tests and the interface suite
-(4fcda7a); faster identifier and map reading, which the benchmarks called
-for (529cabb); and these docs. No test was skipped or deleted. At the end:
+user's decisions (d5241db); the benchmarks and their baseline (388a69d);
+the core module, test-first (63d5fa7); the binding (c41a29b); the Python
+switch, marked breaking (1efe852); the new tests and the interface suite
+(35fe0b5); faster identifier and map reading, which the benchmarks called
+for (bac34da); and these docs. No test was skipped or deleted. At the end:
 `pytest` 7,376 passed, `-m "not very_slow"` 7,409 passed, the `property`
 session 281 passed, nox `lint` and `type_check` clean,
 `tests/test_rs_stub.py` green, and the Rust gate green (fmt, clippy
@@ -8601,7 +8601,7 @@ session 281 passed, nox `lint` and `type_check` clean,
 Median time per call, from the worktree's environment, `pytest
 benchmarks/test_term.py <the three reruns> -n 0 --benchmark-only`, on the
 S0 machine with Python 3.11.13 and pytest-benchmark 5.3.0. "Before" is
-b5ba528, the S10.1 baseline's tree, exported with `git archive` under
+388a69d, the S10.1 baseline's tree, exported with `git archive` under
 `target/` and built there; "after" is the S10.6 tree. The two ran three
 times each, interleaved (before, then after, in each round), with a load
 average of 3 to 8 (other builds shared the machine), and the table lists
@@ -8664,7 +8664,7 @@ where S10 pays off:
   core calls the Python hooks, and the mapping helper 1.7 times.
 - **The reruns.** Expressions under a free renaming and function entries
   compare 1.3 times faster (no conversion), and identifier expressions are
-  built 15% faster, from the faster identifier reading of 529cabb.
+  built 15% faster, from the faster identifier reading of bac34da.
 
 **Three rows are slower than 10%, and are recorded as accepted costs**
 (cross-cutting rule 5), for the maintainer to confirm (CONTRIBUTING
@@ -8678,7 +8678,7 @@ where S10 pays off:
 
 `BinderMixin` has no consumer in `src`, and N-S10-1 (a) chose one
 implementation of its algorithms, in the core, over keeping Python's. The
-first 529cabb pass removed part of each cost: an exact `Identifier` is now
+first bac34da pass removed part of each cost: an exact `Identifier` is now
 read through its instance attributes, not its properties (98 against
 10 ns per read, measured), and a dict is iterated directly.
 
@@ -8752,3 +8752,27 @@ and where the shape differs from the plan (S10.2's are in its own notes):
 - **Follow-ups, not done here.** `Binder` for `FunctionDefinition` and
   `ComposedFunction` (D-S10-14); a Rust counterpart of the derived plan
   for Rust IR, which would be a derive macro in a second crate (D-S10-8).
+
+### S10 rebase onto S8 (2026-09-26)
+
+The branch was rebased onto `dev-rust` at 7078ca2, S8's last commit. The
+conflicts were all additive: S8's and S10's checklist entries and sections
+(S8's kept intact, S10's after them), the module tables and layering
+sentences of `lib.rs`, the crate README and CONTRIBUTING (`solver` and
+`term` both listed; `term` sits beside `tree`, `solver` after `expression`),
+the `mod`/`#[pymodule_export]` lines of the binding's `lib.rs`, the stub
+(S8's version, with S10's alias and block reapplied), and CONTRIBUTING's
+process-global section (S8's default solver, then S10's slot). S8 uses no
+term item: its binding converts identifiers through `restore_identifier`
+and `read_identifier_id`, whose meaning 529cabb's fast path (now bac34da)
+keeps, so no code changed. Every rebased commit that touches Rust was
+checked to build (`cargo check --workspace --all-targets`). After the
+rebase: `pytest` 7,438 passed, `-m "not very_slow"` 7,471, the `property`
+session 282, `tests_minimal` 5,813 passed and 608 skipped, nox `lint` and
+`type_check` clean, and the Rust gate green: 3,104 tests with the default
+features and 3,136 with `--all-features` (the `z3` feature against the
+z3-solver wheel's libz3 4.16, as S8.3 builds it), clippy `--all-targets
+-D warnings` with and without the feature, fmt, doc, deny and `cargo +1.85
+check`. A single run of the term benchmarks after the rebase found no row
+slower than the table above by more than 15%, so the table stands. The
+commit hashes in this section are the rebased ones.
