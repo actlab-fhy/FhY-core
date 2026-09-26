@@ -87,7 +87,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.5: the Python switch
   - [x] S9.6: tests migrated, and the interface suite
   - [x] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README. `tests_minimal` passes (5,646 passed, 626 skipped)
-  - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost for the maintainer; see "S9 benchmarks")
+  - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost, accepted by the maintainer; see "S9 benchmarks")
 
 ## Goal
 
@@ -10307,8 +10307,8 @@ difference of the load and of the rebased pass framework.
 
 Every row is faster or within the 10% CONTRIBUTING allows, except one:
 
-- **`float32` arrays, 1.62 times as long: an accepted cost for the
-  maintainer** (cross-cutting rule 5). The evaluator computes reals in
+- **`float32` arrays, 1.62 times as long: an accepted cost, which the
+  maintainer accepted on 2026-09-26** (cross-cutting rule 5). The evaluator computes reals in
   `float64` (D-S9-4, Z-1), so a `float32` binding is widened by one NumPy
   cast and the arithmetic moves twice the bytes; NumPy computes in
   `float32`. Converting chunk by chunk inside the core would save the cast
