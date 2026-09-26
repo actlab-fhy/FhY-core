@@ -68,7 +68,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs). The suite is unchanged (7,327 passed); see "S8.4 status"
   - [x] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports). 6,228 passed; exactly the four migrated modules (`test_solver.py`, `test_z3_pass.py`, `test_sympy_pass.py`, `test_cross_cutting.py`) fail collection until S8.6
   - [x] S8.6: tests migrated, and the interface suite (57). The suite is green (7,387 passed), `-m "not very_slow"` 7,420, properties 281; see "S8.5 and S8.6 status"
-  - [ ] S8.7: optional extras, backend markers and the minimal-install session
+  - [x] S8.7: optional extras, backend markers and the minimal-install session. `tests_minimal` passes (5,764 passed, 608 skipped); the suite 7,389 passed; see "S8.7 status"
   - [ ] S8.8: benchmarks after, and docs
 
 ## Goal
@@ -7293,3 +7293,53 @@ driving a fake SMT-LIB2 program run with the interpreter, through a
 functions, a constraint system and a param, and a named backend ignoring
 it; and eight threads asking one solver with a Python and with the
 process backend.
+
+### S8.7 status: optional extras
+
+Per N-S8-1 (a), `sympy` and `z3-solver` left the required dependencies:
+`pyproject.toml` has the extras `fhy_core[z3]`, `fhy_core[sympy]` and
+`fhy_core[solvers]`, the `test` dependency group installs both, and a new
+`test-minimal` group, which `test` includes, holds the suite's tools
+without them. `tests/conftest.py` skips a test marked `z3` or `sympy` when
+its package is missing, and the new nox session `tests_minimal` installs
+`test-minimal`, checks that neither package is importable, and runs the
+suite (`-m "slow or not slow"`); CI runs it as the `tests-minimal` job on
+Python 3.12, which `ci-ok` requires. The README documents the extras and
+the session, and CONTRIBUTING the marking rule.
+
+**How the marks were set.** The marks follow what a test reaches (D-S8-17),
+found by a probe kept outside the repo: a pytest plugin that drops the
+optional-backend skips and records, per test, whether it fails with
+`SolverBackendUnavailableError` (or an `ImportError`) naming z3 or sympy.
+A run with both packages missing reports only the first package a test
+reaches, so the suite ran twice in the `tests_minimal` environment, with
+hypothesis added, once with sympy and without z3-solver and once the other
+way round; the union gave each test function's needs. Marks were added
+where a function needs its package and removed where it ran without it,
+and the probe was repeated until nothing changed. A test failing without a
+package for another reason (an assertion about availability, a subprocess)
+keeps its mark by hand. At the end, 395 collected tests carry `z3` and
+1,104 `sympy` (1,411 either). The probe's own count before any change was
+564 failures without both packages.
+
+**Modules that need a package throughout** skip without it through
+`pytest.importorskip` before importing it, and carry a module mark:
+`test_z3_pass.py` (`z3`), `test_sympy_pass.py`, `test_sympy_natives.py`,
+`test_sympy_pass_properties.py` (`sympy`) and `test_cross_cutting.py`
+(both). `test_solver.py` imports `z3` inside the eight tests that patch
+it and `SympySimplifier` inside its one test, so its screen tests run
+without either package; `test_native_stories.py` and
+`test_piecewise_properties.py` import the sympy bridge inside the tests
+that use it.
+
+Tests changed in S8.7 beyond their marks:
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_param_serialization_properties.py::test_derived_param_result_round_trips_through_every_format`'s `@example` of an interval intersection | `test_interval_param_intersection_round_trips_through_every_format` (`z3`) | the example was built at import, and an intersection of numeric operands asks the solver whether it is empty, so the module needed z3-solver to import |
+| `test_bindings_evaluation.py`: the `z3` mark of one `pytest.param` of `_EQUATION_BACKED_BINDINGS_METHODS` | removed | that case reaches no z3 |
+| `test_param_intersection_properties.py`'s module-level `z3` mark | on the four properties that reach z3 | the other two reach none |
+| `test_solver_rust_binding.py::test_importing_fhy_core_imports_neither_sympy_nor_z3` | the same, and `test_lazy_bridge_export_imports_its_package_on_first_access` (`z3`) | the first half runs in the minimal session |
+
+At the end of S8.7: `tests_minimal` 5,764 passed and 608 skipped, `pytest`
+7,389 passed, `lint` and `type_check` clean.

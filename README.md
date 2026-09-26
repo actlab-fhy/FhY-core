@@ -127,6 +127,17 @@ pip install fhy_core
 
 The package runs on its compiled Rust extension, `fhy_core._rs`, and cannot run without it. A wheel includes the extension; installing from a source distribution compiles it, which needs a Rust toolchain (stable, 1.85 or newer).
 
+The solver's shipped backends are optional extras, each imported only when a question needs it:
+
+```bash
+pip install "fhy_core[z3]"       # the z3 SMT backend: satisfiability, implication, universal validity
+pip install "fhy_core[sympy]"    # the sympy simplifier: simplification, and so validating values of params with equation constraints
+pip install "fhy_core[solvers]"  # both
+pip install "fhy_core[numpy]"    # the NumPy evaluator
+```
+
+Without a backend's package, a question that needs it raises `SolverBackendUnavailableError`, which names the extra to install; everything that asks no solver question, such as finite domains, set constraints and enumeration, works without either. `SmtLib2ProcessSolver` needs no Python package: it drives any SMT-LIB2 executable, such as `z3 -in`, and a `Solver` holding it can become the default with `set_default_solver`.
+
 ### Build from Source
 
 This project uses [uv](https://docs.astral.sh/uv/) for environment and dependency management and [maturin](https://www.maturin.rs/) for building the Rust extension.
@@ -144,6 +155,9 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
     ```bash
     # Runtime dependencies only
     uv sync --no-default-groups
+
+    # Runtime dependencies with the solver backends
+    uv sync --no-default-groups --extra solvers
 
     # For contributors (default dev group: test, lint, type, property, nox, pre-commit)
     uv sync
@@ -221,7 +235,12 @@ uv run nox -s tests-3.12
 
 # Run the property-based test suite (Hypothesis, thorough profile)
 uv run nox -s property
+
+# Run the suite without the optional solver packages (sympy, z3-solver)
+uv run nox -s tests_minimal
 ```
+
+Tests that reach a solver backend carry the `sympy` or `z3` marker and are skipped when its package is not installed, which `tests_minimal` checks: there, an unmarked test that reaches a missing backend fails.
 
 The `*_rust_binding.py` suites cover what each binding adds over the Rust core, such as the class structure, argument checks, payload shapes and pickles; the other suites test the Python API's behavior.
 

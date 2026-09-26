@@ -80,6 +80,7 @@ def _draw_system_and_bindings(
     return system, members, bindings
 
 
+@pytest.mark.sympy
 @example(
     drawn=(
         _PINNED_CONJUNCTION_SYSTEM,
@@ -201,6 +202,7 @@ def _draw_domain_bound_system(
 
 @pytest.mark.z3
 # Z3-backed: check_satisfiability routes through the solver.
+@pytest.mark.sympy
 @cap_max_examples(50)
 @example(
     drawn=(

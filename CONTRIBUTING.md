@@ -29,7 +29,12 @@ uv run nox              # lint, type_check, tests, coverage
 uv run nox -s lint      # ruff check + format
 uv run nox -s type_check  # ty (advisory) + mypy --strict
 uv run nox -s tests-3.12  # a single Python version
+uv run nox -s tests_minimal  # without the optional solver packages
 ```
+
+A test that reaches a solver backend is marked `z3` or `sympy` (by what it
+reaches, not what it imports), so it is skipped where that package is
+missing; `tests_minimal`, which installs neither, catches a missing mark.
 
 The `coverage` session combines the `.coverage.*` data left by the `tests`
 sessions, so run `tests` first. A bare `uv run nox` runs `tests` then

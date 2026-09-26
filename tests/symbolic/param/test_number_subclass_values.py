@@ -74,6 +74,7 @@ def _create_real_param_below_ten(variable: Identifier) -> Param[Any]:
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("create_param", "value"),
     [
@@ -99,6 +100,7 @@ def test_param_validates_an_admitted_number_subclass_value(
     assert ParamAssignment(param, value).value == value
 
 
+@pytest.mark.sympy
 def test_param_rejects_a_number_subclass_value_that_violates_a_constraint() -> None:
     """Test such a value is decided invalid rather than refused as unliftable."""
     x = mock_identifier("x", 1)
@@ -111,6 +113,7 @@ def test_param_rejects_a_number_subclass_value_that_violates_a_constraint() -> N
         param.validate_value(_Level.HIGH)
 
 
+@pytest.mark.sympy
 def test_real_param_validates_a_numpy_float64_value() -> None:
     """Test NumPy's ``float64``, which the real domain admits, lifts as a float."""
     np = pytest.importorskip("numpy")
@@ -165,6 +168,7 @@ def test_numpy_int64_is_refused_consistently() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_factories_lift_an_int_subclass_bound() -> None:
     """Test a bound the factories accept as a strict integer reaches a literal.
 
@@ -181,6 +185,7 @@ def test_bound_factories_lift_an_int_subclass_bound() -> None:
         assert not param.is_value_valid(4)
 
 
+@pytest.mark.sympy
 def test_interval_arithmetic_lifts_an_int_subclass_operand() -> None:
     """Test interval addition takes an ``IntEnum`` operand as the ``int`` it is."""
     shifted = create_interval_integer_param_between(0, 10) + _Level.HIGH
@@ -194,6 +199,8 @@ def test_interval_arithmetic_lifts_an_int_subclass_operand() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 def test_in_set_int_subclass_member_decides_feasibility_subsets_and_intersection() -> (
     None
 ):
@@ -218,6 +225,7 @@ def test_in_set_int_subclass_member_decides_feasibility_subsets_and_intersection
     assert not intersection.is_value_valid(4)
 
 
+@pytest.mark.sympy
 def test_in_set_float_subclass_member_decides_feasibility_and_membership() -> None:
     """Test a real parameter over a ``float`` subclass member decides from it."""
     x = mock_identifier("x", 1)
@@ -234,6 +242,8 @@ def test_in_set_float_subclass_member_decides_feasibility_and_membership() -> No
     assert param.is_value_valid(_Measure(1.5))
 
 
+@pytest.mark.sympy
+@pytest.mark.z3
 def test_not_in_set_int_subclass_member_excludes_the_int_it_denotes() -> None:
     """Test feasibility and validity agree on a not-in-set subclass member.
 
@@ -251,6 +261,8 @@ def test_not_in_set_int_subclass_member_excludes_the_int_it_denotes() -> None:
     assert not param.is_value_valid(_Level.HIGH)
 
 
+@pytest.mark.sympy
+@pytest.mark.z3
 def test_subset_into_an_int_subclass_in_set_member_agrees_with_membership() -> None:
     """Test a subset decided through the lifted member holds for membership too.
 

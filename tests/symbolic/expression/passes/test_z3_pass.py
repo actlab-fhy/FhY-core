@@ -11,6 +11,9 @@ identifier map, the errors, and the questions decided through z3.
 import logging
 
 import pytest
+
+pytest.importorskip("z3")
+
 import z3  # type: ignore[import-untyped]
 from immutabledict import immutabledict
 

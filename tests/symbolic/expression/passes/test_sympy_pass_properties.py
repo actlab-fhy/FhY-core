@@ -40,6 +40,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 pytest.importorskip("numpy")
+pytest.importorskip("sympy")
 
 from hypothesis import example, given
 from hypothesis import strategies as st

@@ -311,6 +311,7 @@ _PINNED_ASSIGNMENT = ParamAssignment(_PINNED_ASSIGNMENT_PARAM, 5)
 """A hand-picked integer assignment pinned as an example."""
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize("duplicate", _DUPLICATORS)
 @example(assignment=_PINNED_ASSIGNMENT)
 @given(assignment=draw_param_assignment())

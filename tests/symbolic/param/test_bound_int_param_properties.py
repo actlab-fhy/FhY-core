@@ -155,6 +155,7 @@ def _assert_admits_exactly(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @given(case=draw_binary_interval_case())
 def test_interval_addition_subtraction_negation_are_sound(
     case: BinaryIntervalCase,
@@ -181,6 +182,7 @@ def test_interval_addition_subtraction_negation_are_sound(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @example(case=_build_case(0, 0, 0, 0))
 @example(case=_build_case(0, 1, 0, 1))
 @example(case=_build_case(-3, 3, -3, 3))

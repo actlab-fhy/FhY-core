@@ -888,7 +888,6 @@ def _extract_reported_missing_names(error: MissingSymbolTypeError) -> str:
     return str(error).rpartition(": ")[2].rstrip(".")
 
 
-@pytest.mark.z3
 def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
     """Test a missing `symbol_types` entry raises `MissingSymbolTypeError` naming it."""
     x = mock_identifier("x", 0)
@@ -905,7 +904,6 @@ def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -> None:
     """Test a missing `symbol_types` entry for a residual free identifier raises.
 
@@ -927,7 +925,6 @@ def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
-@pytest.mark.z3
 def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order() -> (
     None
 ):
@@ -954,6 +951,7 @@ def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order()
     )
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_missing_value_binding_degrades_to_undecided() -> None:
     """Test a missing value binding is UNDECIDED, contrasting a missing symbol type.
 
@@ -1081,7 +1079,6 @@ _BINDINGS_PATHS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_PATHS)
 def test_every_bindings_path_refuses_a_number_bound_into_a_case_condition(
     decide: Callable[[Constraint, ConstraintBindings], ConstraintOutcome],
@@ -1101,6 +1098,7 @@ def test_every_bindings_path_refuses_a_number_bound_into_a_case_condition(
         decide(constraint, {condition: 1})
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_PATHS)
 @pytest.mark.parametrize(
@@ -1164,7 +1162,6 @@ _ILL_TYPED_SATISFIABILITY_QUESTIONS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("ask", _ILL_TYPED_SATISFIABILITY_QUESTIONS)
 def test_satisfiability_reports_a_missing_symbol_type_ahead_of_ill_typedness(
     ask: Callable[[Identifier, Mapping[Identifier, SymbolType]], ConstraintOutcome],
@@ -1186,7 +1183,6 @@ def test_satisfiability_reports_a_missing_symbol_type_ahead_of_ill_typedness(
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("ask", _ILL_TYPED_SATISFIABILITY_QUESTIONS)
 def test_satisfiability_reports_ill_typedness_ahead_of_the_hazard_screen(
     ask: Callable[[Identifier, Mapping[Identifier, SymbolType]], ConstraintOutcome],
@@ -1203,7 +1199,6 @@ def test_satisfiability_reports_ill_typedness_ahead_of_the_hazard_screen(
         ask(y, {y: SymbolType.INT})
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_counts_identifiers_a_binding_adds() -> None:
     """Test the early symbol-type check sees identifiers a bound expression adds.
 
@@ -1227,6 +1222,7 @@ def test_check_satisfiability_with_bindings_counts_identifiers_a_binding_adds() 
     assert _extract_reported_missing_names(exception_info.value) == z.name_hint
 
 
+@pytest.mark.z3
 def test_check_satisfiability_with_bindings_matches_the_documented_example() -> None:
     """Test `{x: 5}` on `{x<y, y<3}` is VIOLATED after substitution."""
     x = mock_identifier("x", 0)
@@ -1315,6 +1311,7 @@ def test_check_satisfiability_with_bindings_constants_only_needs_no_symbol_types
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> None:
     """Test the two bindings-aware APIs never reach opposite decided outcomes.
 
@@ -1346,7 +1343,6 @@ def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> 
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() -> None:
     """Test a bool-ambiguous system that is type-strictly satisfiable reports UNDECIDED.
 
@@ -1369,7 +1365,6 @@ def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() 
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_bool_member_under_int_sort_is_not_satisfied() -> None:
     """Test a bool member under a non-bool sort is never reported SATISFIED.
 
@@ -1425,7 +1420,7 @@ def test_check_satisfiability_bindings_int_against_bool_member_is_decided() -> N
 # =============================================================================
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 def test_check_satisfiability_equation_bool_literal_ambiguity_is_undecided() -> None:
     """Test an equation's bool literal against a non-bool variable is UNDECIDED.
 
@@ -1488,7 +1483,6 @@ def test_check_satisfiability_equation_bool_literal_under_bool_sort_is_unaffecte
     assert outcome_with_bindings is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_non_bool_member_under_bool_sort_is_undecided() -> None:
     """Test a non-bool member against a `BOOL`-sorted variable is UNDECIDED.
 
@@ -1511,7 +1505,7 @@ def test_check_satisfiability_non_bool_member_under_bool_sort_is_undecided() -> 
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 def test_check_satisfiability_closed_bool_versus_int_comparison_is_undecided() -> None:
     """Test a closed bool-against-int comparison is UNDECIDED, not SATISFIED.
 
@@ -1570,7 +1564,6 @@ def test_check_satisfiability_with_bindings_bool_value_against_int_membership() 
     assert outcome is ConstraintOutcome.VIOLATED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_set_ambiguity_survives_equation_branch() -> None:
     """Test a bool-ambiguous set constraint stays UNDECIDED alongside an equation.
 
@@ -1669,6 +1662,7 @@ def test_check_satisfiability_bare_bool_literal_equation_is_decided() -> None:
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_check_satisfiability_with_bindings_bool_binding_matching_bool_literal() -> (
     None
 ):
@@ -1719,7 +1713,6 @@ def test_check_satisfiability_piecewise_with_uniform_bool_branches_is_decided() 
     assert outcome is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_piecewise_with_mixed_branches_is_undecided() -> None:
     """Test a piecewise mixing a Boolean and a numeric branch is UNDECIDED.
 
@@ -1753,7 +1746,6 @@ def test_check_satisfiability_piecewise_with_mixed_branches_is_undecided() -> No
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_check_satisfiability_missing_symbol_type_raises_despite_bool_hazard() -> None:
     """Test the missing-symbol-type precondition raises even for a hazardous system.
 
@@ -1768,7 +1760,6 @@ def test_check_satisfiability_missing_symbol_type_raises_despite_bool_hazard() -
         system.check_satisfiability({})
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_missing_symbol_type_raises_on_hazard() -> (
     None
 ):
@@ -2637,7 +2628,6 @@ def test_check_implication_logs_warning_for_a_hazardous_side(
     assert "does_expression_imply" in warnings[0].getMessage()
 
 
-@pytest.mark.z3
 def test_check_implication_missing_symbol_type_raises_for_either_side() -> None:
     """Test a missing `symbol_types` entry for either side raises."""
     x = mock_identifier("x", 0)
@@ -2713,7 +2703,6 @@ def _build_system_comparing_pi_with(bound: int) -> ConstraintSystem:
     )
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SATISFIABILITY_CHECKS)
 @pytest.mark.parametrize(
     "declare_a_sort", [False, True], ids=["no_sort", "declared_real"]
@@ -2739,7 +2728,6 @@ def test_satisfiability_is_undecided_for_a_native_constant(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_implication_is_undecided_for_a_native_constant() -> None:
     """Test entailment between systems over ``pi`` is UNDECIDED with no sort for it."""
     antecedent = _build_system_comparing_pi_with(4)
@@ -2749,7 +2737,6 @@ def test_check_implication_is_undecided_for_a_native_constant() -> None:
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_requires_a_sort_for_a_variable_beside_a_constant() -> (
     None
 ):
@@ -2766,7 +2753,6 @@ def test_check_satisfiability_requires_a_sort_for_a_variable_beside_a_constant()
     assert _extract_reported_missing_names(exception_info.value) == x.name_hint
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_refuses_a_bound_native_constant(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2810,7 +2796,6 @@ _DecideWithBindings = Callable[
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize(
     "build_expression, bound_value",
@@ -2848,7 +2833,6 @@ def test_bindings_paths_agree_that_a_bound_native_constant_is_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_report_an_unliftable_value_ahead_of_a_bound_constant(
     decide: _DecideWithBindings,
@@ -2870,7 +2854,6 @@ def test_bindings_paths_report_an_unliftable_value_ahead_of_a_bound_constant(
         decide(system, bindings, {})
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_report_ill_typedness_ahead_of_a_bound_constant(
     decide: _DecideWithBindings,
@@ -2890,6 +2873,7 @@ def test_bindings_paths_report_ill_typedness_ahead_of_a_bound_constant(
         decide(system, {pi: 4, x: LiteralExpression(2)}, {})
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
@@ -2912,7 +2896,6 @@ def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
 # =============================================================================
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_agree_a_root_bound_to_a_mixed_piecewise_is_refused(
     decide: _DecideWithBindings,
@@ -2954,7 +2937,6 @@ _CONSTANT_MEMBER_BUILDERS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize("kind", _SET_KINDS_OVER_A_CONSTANT)
 @pytest.mark.parametrize(
@@ -2981,7 +2963,6 @@ def test_bindings_paths_agree_on_a_set_constraint_over_a_bound_constant(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize("kind", _SET_KINDS_OVER_A_CONSTANT)
 def test_bindings_paths_report_an_unusable_set_binding_ahead_of_a_bound_constant(
@@ -2997,7 +2978,7 @@ def test_bindings_paths_report_an_unusable_set_binding_ahead_of_a_bound_constant
         decide(system, bindings, {})
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize("build_constant_member", _CONSTANT_MEMBER_BUILDERS)
 def test_a_bound_constant_member_leaves_a_satisfied_conjunction_undecided(
@@ -3022,6 +3003,7 @@ def test_a_bound_constant_member_leaves_a_satisfied_conjunction_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize("build_constant_member", _CONSTANT_MEMBER_BUILDERS)
 def test_evaluation_lets_a_violated_member_outrank_a_refused_constant_member(
     build_constant_member: Callable[[Identifier], Constraint],
@@ -3122,7 +3104,6 @@ _LITERAL_BINDING_SET_CASES = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize(
     ("factory", "members", "bound_value", "expected"), _LITERAL_BINDING_SET_CASES
@@ -3192,7 +3173,6 @@ def test_satisfiability_bindings_matching_int_literal_defers_rest_to_solver() ->
     assert outcome is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.z3
 def test_satisfiability_bindings_nonmember_int_literal_violates_system() -> None:
     """Test a non-member int-literal binding violates the system outright."""
     x = mock_identifier("x", 0)
@@ -3258,7 +3238,6 @@ _SOLVER_BACKED_QUESTIONS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 @pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
 def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
@@ -3282,7 +3261,6 @@ def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
         decide(system, {x: sort})
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 def test_solver_questions_report_ill_typedness_despite_a_hazard_elsewhere(
     decide: Callable[
@@ -3319,7 +3297,6 @@ def test_solver_questions_report_ill_typedness_despite_a_hazard_elsewhere(
 # =============================================================================
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expression(
     decide: Callable[
@@ -3349,7 +3326,6 @@ def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expressi
     assert "LogicalExpression" not in message
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one(
     decide: Callable[

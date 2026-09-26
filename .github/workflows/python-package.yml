@@ -268,6 +268,24 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
+  tests-minimal:
+    # The suite without the optional solver packages (sympy, z3-solver), on
+    # one Python version: a test that reaches a solver backend is marked
+    # sympy or z3 and skipped here, and an unmarked one fails with
+    # SolverBackendUnavailableError, so a wrong mark cannot hide.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Testing without the Solver Packages
+        run: uv run nox -s tests_minimal
+
   property:
     # Release gate only: hypothesis property suites are slow and probe deep
     # soundness invariants, so they gate PRs into main (version releases) and
@@ -338,7 +356,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, rust, rust-msrv, deny, tests, property, golden-expanded]
+    needs: [style, rust, rust-msrv, deny, tests, tests-minimal, property, golden-expanded]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -346,7 +364,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          required=(style rust rust-msrv deny tests)
+          required=(style rust rust-msrv deny tests tests-minimal)
           # Conditional jobs skip on dev PRs, so skipped is fine for them;
           # any other result besides success is not.
           conditional=(property golden-expanded)

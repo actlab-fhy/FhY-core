@@ -793,6 +793,7 @@ def test_evaluates_negated_float_grammar_string_literal_with_exact_binary_value(
     assert result == -0.5
 
 
+@pytest.mark.sympy
 def test_evaluates_simplified_half_division_of_a_bound_variable() -> None:
     """Test a simplified division-by-two literal evaluates without precision loss."""
     x = mock_identifier("x", 0)

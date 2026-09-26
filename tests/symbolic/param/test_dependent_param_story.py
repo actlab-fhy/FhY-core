@@ -49,6 +49,7 @@ def test_shared_constraints_attach_to_both_dependent_tile_params() -> None:
     assert len(y_param.constraints) == 2
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("x_value", "y_value"),
     [pytest.param(4, 8, id="4-by-8"), pytest.param(2, 16, id="2-by-16")],
@@ -63,6 +64,7 @@ def test_satisfying_tile_candidate_validates_jointly_via_bindings(
     assert y_param.is_value_valid(y_value, bindings={x_param.variable: x_value})
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("x_value", "y_value"),
     [pytest.param(10, 20, id="over-budget"), pytest.param(8, 2, id="wrong-shape")],

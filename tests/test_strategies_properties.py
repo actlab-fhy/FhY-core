@@ -423,6 +423,7 @@ def test_params_strategy_reaches_an_exclusive_bound(case: _Case) -> None:
     assert _has_exclusive_bound(found)
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
     "case",
     _EMPTY_CAPABLE_PARAM_CASES,
@@ -473,6 +474,7 @@ def test_real_param_strategy_reaches_a_bound_at_the_widest_scale() -> None:
     assert _get_widest_bound_magnitude(found) >= widest_scale
 
 
+@pytest.mark.sympy
 @given(case=draw_interval_integer_param_with_bounds())
 def test_interval_integer_param_with_bounds_reports_its_extreme_members(
     case: tuple[Param[int], int | None, int | None],
@@ -493,6 +495,7 @@ def test_interval_integer_param_with_bounds_reports_its_extreme_members(
         assert not param.is_value_valid(upper + 1)
 
 
+@pytest.mark.z3
 @given(case=draw_interval_integer_param_with_bounds(include_empty=True))
 def test_interval_integer_param_with_bounds_crosses_endpoints_exactly_when_empty(
     case: tuple[Param[int], int | None, int | None],
@@ -505,6 +508,7 @@ def test_interval_integer_param_with_bounds_crosses_endpoints_exactly_when_empty
     assert param.is_empty() == is_crossed
 
 
+@pytest.mark.z3
 @given(param=st.one_of(draw_interval_integer_param(), draw_bounded_integer_param()))
 def test_params_strategy_draws_no_empty_param_by_default(param: Param[int]) -> None:
     """Test an empty-capable strategy draws no empty param without include_empty."""

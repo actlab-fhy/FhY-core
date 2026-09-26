@@ -177,12 +177,6 @@ def test_param_over_any_domain_round_trips_through_every_format(
 )
 @example(
     param=create_intersection_param(
-        create_interval_integer_param_between(0, 10),
-        create_interval_integer_param_between(5, 20),
-    )
-)
-@example(
-    param=create_intersection_param(
         create_categorical_param({"a", "b", "c"}),
         create_categorical_param({"b", "c", "d"}),
     )
@@ -203,11 +197,29 @@ def test_derived_param_result_round_trips_through_every_format(
     assert_param_round_trips_in_all_formats(param)
 
 
+@pytest.mark.z3
+def test_interval_param_intersection_round_trips_through_every_format() -> None:
+    """Test an intersection of interval params round-trips.
+
+    It was an ``@example`` of the property above, which builds its value
+    when the module is imported; an intersection of numeric operands asks
+    the solver whether it is empty, so the module would need z3-solver to
+    import at all.
+    """
+    assert_param_round_trips_in_all_formats(
+        create_intersection_param(
+            create_interval_integer_param_between(0, 10),
+            create_interval_integer_param_between(5, 20),
+        )
+    )
+
+
 # =============================================================================
 # Property: a valid assignment round-trips through DICT
 # =============================================================================
 
 
+@pytest.mark.sympy
 @given(case=draw_param_with_a_valid_value())
 def test_param_assignment_round_trips_through_dict(
     case: tuple[Param[Any], Any],

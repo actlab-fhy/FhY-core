@@ -41,7 +41,7 @@ from ...strategies.params import (
 # no explicit solver-only constraint. Every test in this file is therefore
 # marked z3, whether or not the specific example it runs happens to draw a
 # numeric kind.
-pytestmark = [pytest.mark.property, pytest.mark.z3]
+pytestmark = pytest.mark.property
 
 # Every property runs without a hypothesis deadline. Every example takes
 # about a millisecond and no draw is filtered -- the overlap the membership
@@ -91,6 +91,8 @@ def draw_overlapping_constrained_ordinal_pair_with_candidate(
 # =============================================================================
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 @given(case=draw_overlapping_intersection_eligible_group(size=2))
 def test_intersection_membership_law_holds_across_every_supported_domain_kind(
     case: tuple[tuple[Param[Any], ...], Any],
@@ -138,6 +140,8 @@ def test_intersection_membership_law_follows_each_operands_constrained_set(
 # =============================================================================
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 @given(case=draw_overlapping_intersection_eligible_group(size=2))
 def test_intersection_is_commutative(
     case: tuple[tuple[Param[Any], ...], Any],
@@ -151,6 +155,8 @@ def test_intersection_is_commutative(
     assert forward.is_value_valid(candidate) == backward.is_value_valid(candidate)
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 @given(case=draw_overlapping_intersection_eligible_group(size=3))
 def test_intersection_is_associative(
     case: tuple[tuple[Param[Any], ...], Any],
@@ -169,6 +175,8 @@ def test_intersection_is_associative(
     assert left_first.is_value_valid(candidate) == right_first.is_value_valid(candidate)
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 @given(case=draw_overlapping_intersection_eligible_group(size=1))
 def test_intersection_is_idempotent(
     case: tuple[tuple[Param[Any], ...], Any],

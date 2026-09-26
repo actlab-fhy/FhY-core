@@ -1086,7 +1086,6 @@ def test_constraint_system_evaluate_with_bindings_decides_a_nan_binding(
     assert system.evaluate_with_bindings({x: float("nan")}) is outcome
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
 def test_constraint_system_check_satisfiability_with_bindings_decides_a_nan_binding(
     factory: SetConstraintFactory,

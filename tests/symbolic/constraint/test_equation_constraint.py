@@ -149,6 +149,7 @@ def test_convert_to_expression_returns_the_wrapped_expression_unchanged() -> Non
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_ground_expression_decidable_under_empty_bindings() -> (
     None
 ):
@@ -158,6 +159,7 @@ def test_evaluate_with_bindings_ground_expression_decidable_under_empty_bindings
     assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_ground_false_expression_is_violated() -> None:
     """Test a ground `False`-valued expression is decidably VIOLATED."""
     constraint = EquationConstraint(LiteralExpression(False))
@@ -165,6 +167,7 @@ def test_evaluate_with_bindings_ground_false_expression_is_violated() -> None:
     assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_full_assignment_satisfied() -> None:
     """Test a full multi-variable assignment that holds reports SATISFIED."""
     x = mock_identifier("x", 0)
@@ -179,6 +182,7 @@ def test_evaluate_with_bindings_full_assignment_satisfied() -> None:
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_full_assignment_violated() -> None:
     """Test a full multi-variable assignment that fails reports VIOLATED."""
     x = mock_identifier("x", 0)
@@ -193,6 +197,7 @@ def test_evaluate_with_bindings_full_assignment_violated() -> None:
     assert outcome is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_partial_assignment_is_undecided() -> None:
     """Test binding only one of two free identifiers is UNDECIDED."""
     x = mock_identifier("x", 0)
@@ -207,6 +212,7 @@ def test_evaluate_with_bindings_partial_assignment_is_undecided() -> None:
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_empty_bindings_undecided_for_open_expression() -> None:
     """Test empty bindings is UNDECIDED for an expression with free identifiers."""
     x = mock_identifier("x", 0)
@@ -231,6 +237,7 @@ def test_evaluate_with_bindings_non_bool_literal_reduction_raises() -> None:
         constraint.evaluate_with_bindings({})
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_symbolic_binding_can_decide() -> None:
     """Test a symbolic (non-literal) binding can still decide the outcome."""
     x = mock_identifier("x", 0)
@@ -246,6 +253,7 @@ def test_evaluate_with_bindings_symbolic_binding_can_decide() -> None:
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_chained_assignment_is_undecided() -> None:
     """Test a chained binding leaves a residual instead of folding through it.
 
@@ -263,6 +271,7 @@ def test_evaluate_with_bindings_chained_assignment_is_undecided() -> None:
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_swap_assignment_is_undecided_not_violated() -> None:
     """Test a swap binding on `x < y` is UNDECIDED, not VIOLATED.
 
@@ -281,6 +290,7 @@ def test_evaluate_with_bindings_swap_assignment_is_undecided_not_violated() -> N
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_ignores_extraneous_keys() -> None:
     """Test bindings for identifiers outside the expression do not affect the result."""
     z = mock_identifier("z", 2)
@@ -387,6 +397,7 @@ def test_is_satisfied_with_bindings_refuses_an_arithmetic_root() -> None:
         constraint.is_satisfied_with_bindings({x: 0})
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_raises_when_a_binding_divides_by_zero() -> None:
     """Test a zero-divisor binding under a comparison raises `PassExecutionError`.
 
@@ -412,6 +423,7 @@ def test_evaluate_with_bindings_raises_when_a_binding_divides_by_zero() -> None:
     assert isinstance(exc_info.value.__cause__, TypeError)
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_raises_when_a_nan_binding_reaches_a_comparison() -> (
     None
 ):
@@ -425,6 +437,7 @@ def test_evaluate_with_bindings_raises_when_a_nan_binding_reaches_a_comparison()
     assert isinstance(exc_info.value.__cause__, TypeError)
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_still_decides_a_well_defined_divided_comparison() -> (
     None
 ):
@@ -449,6 +462,7 @@ def test_evaluate_with_bindings_still_decides_a_well_defined_divided_comparison(
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_equality_of_two_nan_bindings_is_violated() -> None:
     """Test an equality comparison between two NaN bindings decides VIOLATED.
 
@@ -484,6 +498,7 @@ def test_construction_still_accepts_a_numeric_literal_expression() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("b_value", "c_value", "expected"),
     [
@@ -513,6 +528,7 @@ def test_evaluate_with_bindings_negates_a_piecewise_with_an_identifier_condition
     assert outcome is expected
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("b_value", "c_value", "x_value", "expected"),
     [
@@ -545,6 +561,7 @@ def test_evaluate_with_bindings_reads_a_case_condition_with_an_identifier_condit
     assert outcome is expected
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "operation", [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL]
 )
@@ -582,6 +599,7 @@ def test_evaluate_with_bindings_leaves_a_bound_open_boolean_piecewise_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("bound_values", "expected"),
     [
@@ -639,6 +657,7 @@ def test_evaluate_with_bindings_compares_a_piecewise_mixing_identifier_branches(
     assert outcome is expected
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("b_value", "d_value", "c_value", "expected"),
     [
@@ -672,6 +691,7 @@ def test_evaluate_with_bindings_negates_a_piecewise_comparing_a_branch_identifie
     assert outcome is expected
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("x_value", "expected"),
     [
@@ -697,6 +717,7 @@ def test_evaluate_with_bindings_compares_a_numeric_piecewise_over_an_unbound_con
     assert outcome is expected
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_refutes_a_boolean_comparison_beside_relations() -> None:
     """Test ``(d == True) && x < 1 && x > 2`` is violated for every ``d`` and ``x``."""
     d = mock_identifier("d", 0)
@@ -716,6 +737,7 @@ def test_evaluate_with_bindings_refutes_a_boolean_comparison_beside_relations() 
     assert outcome is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("c_value", "d_value", "expected"),
     [
@@ -748,6 +770,7 @@ def test_evaluate_with_bindings_reads_a_case_condition_comparing_a_relation(
     assert outcome is expected
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("b_value", "expected"),
     [(True, ConstraintOutcome.SATISFIED), (False, ConstraintOutcome.VIOLATED)],
@@ -775,6 +798,7 @@ def test_evaluate_with_bindings_divides_an_even_valued_piecewise(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_logs_debug_when_free_identifiers_unbound(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -794,6 +818,7 @@ def test_evaluate_with_bindings_logs_debug_when_free_identifiers_unbound(
     assert not _find_records(caplog, logging.WARNING)
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_logs_debug_for_symbolic_residual(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -817,6 +842,7 @@ def test_evaluate_with_bindings_logs_debug_for_symbolic_residual(
     assert not _find_records(caplog, logging.WARNING)
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_logs_warning_when_fully_bound_but_irreducible(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -849,6 +875,7 @@ def test_evaluate_with_bindings_logs_warning_when_fully_bound_but_irreducible(
     assert not _find_records(caplog, logging.DEBUG)
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_logs_nothing_when_decided(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -868,6 +895,7 @@ def test_evaluate_with_bindings_logs_nothing_when_decided(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_is_satisfied_with_bindings_folds_undecided_to_false() -> None:
     """Test an UNDECIDED bindings outcome maps to `False`."""
     y = mock_identifier("y", 1)
@@ -877,6 +905,7 @@ def test_is_satisfied_with_bindings_folds_undecided_to_false() -> None:
     assert constraint.is_satisfied_with_bindings({}) is False
 
 
+@pytest.mark.sympy
 def test_is_satisfied_with_bindings_true_when_satisfied() -> None:
     """Test a SATISFIED bindings outcome maps to `True`."""
     constraint = EquationConstraint(LiteralExpression(True))
@@ -884,6 +913,7 @@ def test_is_satisfied_with_bindings_true_when_satisfied() -> None:
     assert constraint.is_satisfied_with_bindings({}) is True
 
 
+@pytest.mark.sympy
 def test_is_satisfied_with_bindings_false_when_violated() -> None:
     """Test a VIOLATED bindings outcome maps to `False`."""
     constraint = EquationConstraint(LiteralExpression(False))
@@ -920,6 +950,7 @@ def test_str_matches_expression_pformat() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "expression, bindings, expected_outcome",
     [
@@ -967,6 +998,7 @@ def test_evaluate_with_bindings_decides_a_variety_of_ground_shapes(
     assert constraint.evaluate_with_bindings(bindings) is expected_outcome
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_two_free_identifiers_undecided_when_unbound(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1008,6 +1040,7 @@ def test_evaluate_with_bindings_refuses_to_decide_a_bound_native_constant(
     assert repr(pi) in records[0].getMessage()
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_honors_a_binding_named_after_a_constant() -> None:
     """Test a binding for an identifier that merely shares ``pi``'s name is applied.
 

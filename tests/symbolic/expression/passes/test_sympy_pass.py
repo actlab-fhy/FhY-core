@@ -10,6 +10,9 @@ from typing import Any, NamedTuple, cast
 from unittest.mock import Mock
 
 import pytest
+
+pytest.importorskip("sympy")
+
 import sympy  # type: ignore[import-untyped]
 from immutabledict import immutabledict
 from sympy.core import random as sympy_random  # type: ignore[import-untyped]
@@ -60,6 +63,8 @@ from fhy_core.symbolic.expression.passes.sympy import (
 from fhy_core.symbolic.solver import SolverBackend, simplify_expression
 
 from ..conftest import mock_identifier
+
+pytestmark = pytest.mark.sympy
 
 # =============================================================================
 # Expression -> SymPy

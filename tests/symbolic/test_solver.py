@@ -3,9 +3,9 @@
 import inspect
 import logging
 from collections.abc import Callable
+from typing import Any
 
 import pytest
-import z3  # type: ignore[import-untyped]
 from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
@@ -24,7 +24,6 @@ from fhy_core.symbolic.expression import (
     get_native_constant_identifier,
 )
 from fhy_core.symbolic.expression.errors import UndecidableError
-from fhy_core.symbolic.expression.passes.sympy import SympySimplifier
 from fhy_core.symbolic.solver import (
     SolverBackend,
     SolverCapabilityError,
@@ -142,12 +141,17 @@ def test_solver_capability_error_names_backend_and_query_kind() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_simplify_expression_matches_direct_bridge_pipeline() -> None:
     """Test the seam's simplification is structurally identical to the adapter's.
 
     With nothing to substitute, the seam hands the expression itself to the
     sympy adapter, so simplifying through either gives the same tree.
     """
+    from fhy_core.symbolic.expression.passes.sympy import (  # noqa: PLC0415
+        SympySimplifier,
+    )
+
     expression: Expression = BinaryExpression(
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
@@ -158,6 +162,7 @@ def test_simplify_expression_matches_direct_bridge_pipeline() -> None:
     assert seam_result.is_structurally_equivalent(bridge_result)
 
 
+@pytest.mark.sympy
 def test_simplify_expression_with_environment_folds_to_a_literal() -> None:
     """Test substituting every free identifier lets the seam fold to a literal."""
     x = mock_identifier("x", 0)
@@ -171,6 +176,7 @@ def test_simplify_expression_with_environment_folds_to_a_literal() -> None:
     assert result.value == 5
 
 
+@pytest.mark.sympy
 def test_simplify_expression_with_residual_variable_reduces_to_the_identifier() -> None:
     """Test an open ``x + 0`` simplifies to the bare identifier expression.
 
@@ -189,6 +195,7 @@ def test_simplify_expression_with_residual_variable_reduces_to_the_identifier() 
     assert result.is_structurally_equivalent(IdentifierExpression(x))
 
 
+@pytest.mark.sympy
 def test_simplify_expression_accepts_an_immutabledict_environment() -> None:
     """Test the seam's simplification accepts an `immutabledict` environment."""
     x = mock_identifier("x", 0)
@@ -203,6 +210,7 @@ def test_simplify_expression_accepts_an_immutabledict_environment() -> None:
     assert result.value == 3
 
 
+@pytest.mark.sympy
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
@@ -293,6 +301,7 @@ def test_check_expression_satisfiability_returns_none_on_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test a solver `unknown` result surfaces as `None`."""
+    z3 = pytest.importorskip("z3")
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
@@ -302,7 +311,6 @@ def test_check_expression_satisfiability_returns_none_on_unknown(
     assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_raises_key_error_for_missing_symbol_type() -> (
     None
 ):
@@ -466,6 +474,7 @@ def test_assert_expression_implies_raises_undecidable_error_on_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test the strict variant raises `UndecidableError` naming Z3's stated reason."""
+    z3 = pytest.importorskip("z3")
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
     monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
     x = mock_identifier("x", 0)
@@ -487,6 +496,7 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test the strict variant raises `UndecidableError` naming Z3's stated reason."""
+    z3 = pytest.importorskip("z3")
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
     monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
     x = mock_identifier("x", 0)
@@ -563,6 +573,7 @@ def test_assert_holds_for_all_free_assignments_with_immutabledict_raises_on_unkn
     matter; the test pins that a `Mapping` other than `dict` reaches the
     raising path.
     """
+    z3 = pytest.importorskip("z3")
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
     monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
     x = mock_identifier("x", 0)
@@ -585,6 +596,7 @@ def test_assert_expression_implies_with_immutabledict_symbol_types_raises_on_unk
     matter; the test pins that a `Mapping` other than `dict` reaches the
     raising path.
     """
+    z3 = pytest.importorskip("z3")
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
     monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
     x = mock_identifier("x", 0)
@@ -999,7 +1011,6 @@ def test_check_expression_satisfiability_non_finite_literal_divisor_is_screened(
     assert result is None
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "claimed_quotient",
     [3, 3.5],
@@ -1048,7 +1059,6 @@ def test_check_expression_satisfiability_int_dividend_real_divisor_stays_decided
     assert check_expression_satisfiability(expression, {}) is True
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_int_true_division_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1070,7 +1080,6 @@ def test_check_expression_satisfiability_int_true_division_warns(
     assert repr(division) in messages[0]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "is_equality",
     [True, False],
@@ -1096,7 +1105,6 @@ def test_check_expression_satisfiability_zero_to_the_zero_is_screened(
     assert check_expression_satisfiability(expression, {}) is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_negative_exponent_is_screened() -> None:
     """Test a negative exponent is screened.
 
@@ -1116,7 +1124,6 @@ def test_check_expression_satisfiability_negative_exponent_is_screened() -> None
     assert result is None
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "exponent",
     [0, 0.5, "2.0"],
@@ -1168,7 +1175,6 @@ def test_check_expression_satisfiability_positive_integer_exponent_stays_decided
     assert result is True
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "operation",
     [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
@@ -1301,7 +1307,6 @@ def test_check_expression_satisfiability_int_identifier_lt_float_not_screened() 
 # -----------------------------------------------------------------------
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "operation",
     [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
@@ -1327,7 +1332,6 @@ def test_check_expression_satisfiability_int_addition_against_float_literal_is_s
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_literal_left_of_int_addition_screened() -> (
     None
 ):
@@ -1349,7 +1353,6 @@ def test_check_expression_satisfiability_literal_left_of_int_addition_screened()
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_int_multiply_vs_float_literal_screened() -> (
     None
 ):
@@ -1371,7 +1374,6 @@ def test_check_expression_satisfiability_int_multiply_vs_float_literal_screened(
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_negated_int_vs_float_literal_screened() -> (
     None
 ):
@@ -1391,7 +1393,6 @@ def test_check_expression_satisfiability_negated_int_vs_float_literal_screened()
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_int_power_vs_float_literal_screened() -> None:
     """Test INT POWER by an integer exponent compared to a float literal is screened.
 
@@ -1410,7 +1411,6 @@ def test_check_expression_satisfiability_int_power_vs_float_literal_screened() -
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_int_literal_vs_real_piecewise_screened() -> (
     None
 ):
@@ -1434,7 +1434,6 @@ def test_check_expression_satisfiability_int_literal_vs_real_piecewise_screened(
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_float_vs_mixed_kind_piecewise_screened() -> (
     None
 ):
@@ -1762,12 +1761,11 @@ def test_seam_functions_thread_the_timeout_to_the_z3_solver(
     unbounded, so a query the caller expected to give up on becomes a
     hang and ``UndecidableError`` never fires.
     """
+    z3 = pytest.importorskip("z3")
     recorded: dict[str, object] = {}
     original_set = z3.Solver.set
 
-    def record_solver_set_kwargs(
-        self: z3.Solver, *args: object, **kwargs: object
-    ) -> None:
+    def record_solver_set_kwargs(self: Any, *args: object, **kwargs: object) -> None:
         recorded.update(kwargs)
         original_set(self, *args, **kwargs)
 
@@ -1805,12 +1803,11 @@ def test_timeout_milliseconds_is_threaded_to_the_z3_solver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test `timeout_milliseconds` is set on the underlying `z3.Solver`."""
+    z3 = pytest.importorskip("z3")
     recorded: dict[str, object] = {}
     original_set = z3.Solver.set
 
-    def record_solver_set_kwargs(
-        self: z3.Solver, *args: object, **kwargs: object
-    ) -> None:
+    def record_solver_set_kwargs(self: Any, *args: object, **kwargs: object) -> None:
         recorded.update(kwargs)
         original_set(self, *args, **kwargs)
 
@@ -1832,7 +1829,6 @@ def test_timeout_milliseconds_is_threaded_to_the_z3_solver(
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_does_expression_imply_screens_a_hazard_in_the_consequent() -> None:
     """Test a hazard in the consequent is screened, not just one in the antecedent.
 
@@ -1854,7 +1850,6 @@ def test_does_expression_imply_screens_a_hazard_in_the_consequent() -> None:
     assert result is None
 
 
-@pytest.mark.z3
 def test_holds_for_all_free_assignments_screens_a_hazard() -> None:
     """Test the lenient universal-validity entry point screens hazards too.
 
@@ -1874,7 +1869,6 @@ def test_holds_for_all_free_assignments_screens_a_hazard() -> None:
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_screens_a_bool_in_arithmetic() -> None:
     """Test a Boolean operand inside arithmetic is screened, not only in a comparison.
 
@@ -1896,7 +1890,6 @@ def test_check_expression_satisfiability_screens_a_bool_in_arithmetic() -> None:
     assert result is None
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -> None:
     """Test the int/float equality screen descends past the root node.
 
@@ -1924,7 +1917,6 @@ def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -
 # =============================================================================
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "integer_form", [1, "1", "01"], ids=["int", "string", "leading_zero"]
 )
@@ -1972,7 +1964,6 @@ def test_equality_of_integer_literal_forms_is_decided_as_an_integer_comparison(
     assert check_expression_satisfiability(expression, {}) is expected
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "float_form",
     [1.0, "1.0", 1.5, "1.5"],
@@ -2030,7 +2021,6 @@ def test_partial_operation_screen_admits_every_integer_operand_form(
     assert result is True
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "operation",
     [
@@ -2064,6 +2054,7 @@ def test_partial_operation_screen_refuses_a_float_grammar_string_operand(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("constant_name", ["pi", "e"])
 def test_backends_agree_on_an_identifier_named_after_a_native_constant(
@@ -2110,7 +2101,6 @@ _NUMERIC_CONNECTIVES = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("expression", _NUMERIC_CONNECTIVES)
 def test_check_expression_satisfiability_refuses_a_numeric_logical_operand(
     expression: Expression,
@@ -2129,7 +2119,6 @@ def test_check_expression_satisfiability_refuses_a_numeric_logical_operand(
     assert "Sort mismatch" not in str(exc_info.value)
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("expression", _NUMERIC_CONNECTIVES)
 def test_both_backends_refuse_one_ill_typed_expression_with_the_same_error(
     expression: Expression,
@@ -2149,7 +2138,6 @@ def test_both_backends_refuse_one_ill_typed_expression_with_the_same_error(
     assert type(simplify_error.value) is type(satisfiability_error.value)
 
 
-@pytest.mark.z3
 def test_does_expression_imply_raises_rather_than_reporting_none() -> None:
     """Test an ill-typed operand raises instead of taking the hazard screen's `None`.
 
@@ -2164,7 +2152,6 @@ def test_does_expression_imply_raises_rather_than_reporting_none() -> None:
         does_expression_imply(antecedent, LiteralExpression(True), {})
 
 
-@pytest.mark.z3
 def test_holds_for_all_free_assignments_raises_rather_than_reporting_none() -> None:
     """Test the lenient universal-validity entry point raises on a numeric operand."""
     expression = Expression.logical_or(LiteralExpression(2), LiteralExpression(4))
@@ -2173,7 +2160,6 @@ def test_holds_for_all_free_assignments_raises_rather_than_reporting_none() -> N
         holds_for_all_free_assignments(frozenset(), expression, {})
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "query",
     [
@@ -2251,7 +2237,6 @@ _Z3_QUESTIONS_OVER_ONE_EXPRESSION = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
 def test_z3_question_reports_ill_typedness_ahead_of_the_hazard_screen(
     query: Callable[[Expression], bool | None],
@@ -2272,7 +2257,6 @@ def test_z3_question_reports_ill_typedness_ahead_of_the_hazard_screen(
         query(expression)
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize(
     "implies",
     [
@@ -2296,7 +2280,6 @@ def test_implication_reports_an_ill_typed_consequent_behind_a_hazardous_antecede
         implies(hazardous, ill_typed, {})
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
 def test_z3_question_raises_a_missing_symbol_type_ahead_of_ill_typedness(
     query: Callable[[Expression], bool | None],
@@ -2316,7 +2299,6 @@ def test_z3_question_raises_a_missing_symbol_type_ahead_of_ill_typedness(
 # =============================================================================
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
 def test_z3_question_refuses_a_bare_numeric_root(
     query: Callable[[Expression], bool | None],
@@ -2332,7 +2314,6 @@ def test_z3_question_refuses_a_bare_numeric_root(
         query(LiteralExpression(2))
 
 
-@pytest.mark.z3
 def test_check_expression_satisfiability_refuses_an_arithmetic_root_before_hazard() -> (
     None
 ):
@@ -2355,7 +2336,6 @@ def test_check_expression_satisfiability_refuses_an_arithmetic_root_before_hazar
         )
 
 
-@pytest.mark.z3
 def test_does_expression_imply_refuses_a_numeric_antecedent_before_the_hazard() -> None:
     """Test the antecedent's ill-typedness is reported before the consequent's hazard.
 
@@ -2372,7 +2352,6 @@ def test_does_expression_imply_refuses_a_numeric_antecedent_before_the_hazard() 
         does_expression_imply(LiteralExpression(2), consequent, {})
 
 
-@pytest.mark.z3
 def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
     """Test an environment binding a number under a connective is refused too.
 
@@ -2389,7 +2368,6 @@ def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
         simplify_expression(expression, {p: LiteralExpression(2)})
 
 
-@pytest.mark.z3
 def test_simplify_expression_refuses_a_number_bound_into_a_case_condition() -> None:
     """Test a number bound into a piecewise condition is refused, not read as truth.
 
@@ -2407,7 +2385,6 @@ def test_simplify_expression_refuses_a_number_bound_into_a_case_condition() -> N
         simplify_expression(expression, {condition: LiteralExpression(1)})
 
 
-@pytest.mark.z3
 def test_both_backends_refuse_an_arithmetic_case_condition_with_one_error() -> None:
     """Test SymPy and Z3 refuse an arithmetic piecewise condition alike.
 
@@ -2503,6 +2480,7 @@ def _make_three_tenths_comparison(
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_binary_float_tenths_are_decided_the_same_way_by_both_backends() -> None:
     """Test `0.1 + 0.1 + 0.1 == 0.3` is false for simplification and the solver.
 
@@ -2523,6 +2501,7 @@ def test_binary_float_tenths_are_decided_the_same_way_by_both_backends() -> None
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_decimal_string_tenths_are_decided_the_same_way_by_both_backends() -> None:
     """Test `"0.1" + "0.1" + "0.1" == "0.3"` is true for simplification and the solver.
 
@@ -2857,6 +2836,7 @@ def test_symbol_typed_ill_typedness_is_reported_despite_a_hazard_elsewhere(
         query(expression, {x: SymbolType.INT, y: SymbolType.REAL})
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
 def test_z3_question_decides_a_boolean_sort_in_a_boolean_position(
     query: _SortedQuery,

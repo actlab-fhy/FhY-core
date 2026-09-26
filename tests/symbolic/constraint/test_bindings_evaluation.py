@@ -345,6 +345,7 @@ def test_equation_constraint_bindings_rejects_a_value_outside_the_declared_union
     assert type(value).__name__ in message
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "value, expected_outcome",
     [
@@ -487,6 +488,7 @@ _ALL_KINDS_BY_ID: dict[str, Any] = {
 }
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "kind_id, satisfying_value, violating_value",
     _KIND_SATISFYING_AND_VIOLATING_BINDINGS,
@@ -507,6 +509,7 @@ def test_is_satisfied_with_bindings_matches_the_documented_true_false_split(
     assert constraint.is_satisfied_with_bindings({x: violating_value}) is False
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize("factory", ALL_KINDS)
 def test_is_satisfied_with_bindings_folds_undecided_to_false(
     factory: Any,
@@ -519,6 +522,7 @@ def test_is_satisfied_with_bindings_folds_undecided_to_false(
     assert constraint.is_satisfied_with_bindings({}) is False
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "build_constraint",
     [
@@ -607,7 +611,6 @@ _EQUATION_BACKED_BINDINGS_METHODS = [
             constraint
         ).check_satisfiability_with_bindings(bindings, {}),
         id="ConstraintSystem.check_satisfiability_with_bindings",
-        marks=pytest.mark.z3,
     ),
 ]
 
@@ -635,6 +638,8 @@ def test_bindings_method_refuses_a_value_no_literal_can_hold(
     assert isinstance(exception_info.value.__cause__, ValueError)
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 @pytest.mark.parametrize("decide", _EQUATION_BACKED_BINDINGS_METHODS)
 @pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
 def test_bindings_method_lifts_a_number_subclass_as_the_value_it_denotes(

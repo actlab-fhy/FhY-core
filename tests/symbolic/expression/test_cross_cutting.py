@@ -3,6 +3,10 @@
 from decimal import Decimal
 
 import pytest
+
+pytest.importorskip("sympy")
+pytest.importorskip("z3")
+
 import sympy  # type: ignore[import-untyped]
 import z3  # type: ignore[import-untyped]
 
@@ -16,6 +20,8 @@ from fhy_core.symbolic.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
 )
+
+pytestmark = [pytest.mark.sympy, pytest.mark.z3]
 
 # =============================================================================
 # Pass registry - every expression pass must self-register

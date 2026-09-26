@@ -498,9 +498,7 @@ dependencies = [
     { name = "immutabledict" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "sympy" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "z3-solver" },
 ]
 
 [package.optional-dependencies]
@@ -508,6 +506,16 @@ numpy = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+solvers = [
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+sympy = [
+    { name = "sympy" },
+]
+z3 = [
+    { name = "z3-solver" },
 ]
 
 [package.dev-dependencies]
@@ -528,7 +536,9 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 lint = [
     { name = "ruff" },
@@ -543,6 +553,8 @@ mutation = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 property = [
     { name = "coverage", extra = ["toml"] },
@@ -553,8 +565,21 @@ property = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 test = [
+    { name = "coverage", extra = ["toml"] },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+test-minimal = [
     { name = "coverage", extra = ["toml"] },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
@@ -573,7 +598,9 @@ type = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 
 [package.metadata]
@@ -581,11 +608,13 @@ requires-dist = [
     { name = "immutabledict" },
     { name = "networkx" },
     { name = "numpy", marker = "extra == 'numpy'" },
-    { name = "sympy" },
+    { name = "sympy", marker = "extra == 'solvers'" },
+    { name = "sympy", marker = "extra == 'sympy'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "z3-solver" },
+    { name = "z3-solver", marker = "extra == 'solvers'" },
+    { name = "z3-solver", marker = "extra == 'z3'" },
 ]
-provides-extras = ["numpy"]
+provides-extras = ["numpy", "solvers", "sympy", "z3"]
 
 [package.metadata.requires-dev]
 bench = [{ name = "pytest-benchmark" }]
@@ -601,7 +630,9 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 lint = [{ name = "ruff" }]
 mutation = [
@@ -612,6 +643,8 @@ mutation = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 property = [
     { name = "coverage", extras = ["toml"] },
@@ -620,8 +653,19 @@ property = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 test = [
+    { name = "coverage", extras = ["toml"] },
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+test-minimal = [
     { name = "coverage", extras = ["toml"] },
     { name = "numpy" },
     { name = "pytest" },
@@ -636,7 +680,9 @@ type = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 
 [[package]]

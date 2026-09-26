@@ -104,6 +104,7 @@ def test_int_param_with_value_rejects_invalid_value() -> None:
         create_integer_param().assign(1.2)  # type: ignore[arg-type]  # test: invalid input
 
 
+@pytest.mark.sympy
 def test_param_assign_creates_immutable_assignment() -> None:
     """Test `Param.assign` returns an immutable `ParamAssignment`."""
     param = create_integer_param_with_lower_bound(0)
@@ -133,6 +134,7 @@ def test_repeated_assigns_share_param_definition_and_record_value(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_assignment_reports_violation_for_genuinely_violated_constraint() -> None:
     """Test a decided violation raises the ``violates`` message."""
     param = create_integer_param_with_lower_bound(0)
@@ -141,6 +143,7 @@ def test_assignment_reports_violation_for_genuinely_violated_constraint() -> Non
         param.assign(-1)
 
 
+@pytest.mark.sympy
 def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
     """Test an undecided constraint raises the ``could not be verified`` message.
 
@@ -160,6 +163,7 @@ def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
         param.assign(3)
 
 
+@pytest.mark.sympy
 def test_assignment_undecided_message_is_distinct_from_violation_message() -> None:
     """Test the undecided error does not use the ``violates`` wording."""
     x = mock_identifier("x", 0)
@@ -182,6 +186,7 @@ def test_assignment_undecided_message_is_distinct_from_violation_message() -> No
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_assignment_round_trips_through_serialize_to_dict() -> None:
     """Test `ParamAssignment` round-trips through `serialize_to_dict`."""
     assignment = create_integer_param_with_lower_bound(0).assign(3)
@@ -214,6 +219,7 @@ def test_assignment_round_trips_through_json_and_binary_serialization() -> None:
     assert from_binary.value == ("n", "c", "h", "w")
 
 
+@pytest.mark.sympy
 def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
     """Test an assignment proven via bindings survives a serialization round-trip.
 
@@ -236,6 +242,7 @@ def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
     assert restored.serialize_to_dict() == dictionary
 
 
+@pytest.mark.sympy
 def test_dependent_assignment_round_trips_when_bridge_fails_without_bindings() -> None:
     """Test round-tripping survives a constraint the bridge cannot lower alone.
 
@@ -302,6 +309,7 @@ def test_permutation_validate_value_normalizes_list_before_constraint_check() ->
         param.validate_value([3, 2, 1])
 
 
+@pytest.mark.sympy
 def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:
     """Test assignment deserialization fails when payload value violates constraints."""
     param = create_real_param_with_lower_bound(0.0)

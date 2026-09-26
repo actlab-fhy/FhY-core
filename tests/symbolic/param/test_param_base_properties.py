@@ -58,6 +58,7 @@ _IDENTIFIER_POOL = build_identifier_pool(5)
 # =============================================================================
 
 
+@pytest.mark.sympy
 @given(case=draw_param_with_candidate(include_empty=True))
 def test_assign_succeeds_exactly_when_the_value_is_valid(
     case: tuple[Param[Any], Any],

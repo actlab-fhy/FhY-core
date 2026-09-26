@@ -6,6 +6,8 @@ empty parameter, so these tests confirm the empty constructions build before
 querying feasibility.
 """
 
+import pytest
+
 from fhy_core.symbolic.constraint import InSetConstraint, NotInSetConstraint
 from fhy_core.symbolic.param import (
     create_categorical_param,
@@ -30,6 +32,7 @@ def test_unconstrained_integer_param_is_feasible() -> None:
     assert not param.is_empty()
 
 
+@pytest.mark.z3
 def test_bounded_integer_param_is_feasible() -> None:
     """Test a bounded integer parameter with a non-empty interval is feasible."""
     param = create_integer_param_between(0, 10, name=mock_identifier("x", 2))
@@ -96,6 +99,7 @@ def test_categorical_param_with_out_of_domain_in_set_is_empty() -> None:
     assert narrowed.is_empty()
 
 
+@pytest.mark.z3
 def test_integer_param_with_contradictory_bounds_is_empty() -> None:
     """Test a plain integer param with contradictory bounds is empty."""
     param = create_integer_param(name=mock_identifier("x", 102))

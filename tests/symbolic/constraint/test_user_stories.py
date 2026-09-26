@@ -26,6 +26,7 @@ from fhy_core.symbolic.symbol_type import SymbolType
 from .conftest import mock_identifier
 
 
+@pytest.mark.sympy
 def test_dependent_constraint_scenario_matches_the_documented_walkthrough() -> None:
     """Test the design doc's dependent-constraint example end to end.
 
@@ -54,6 +55,7 @@ def test_unary_set_constraint_scenario_matches_the_documented_walkthrough() -> N
     assert s.evaluate_with_bindings({}) is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_one_generic_consumer_handles_both_a_leaf_and_a_system() -> None:
     """Test a single function typed over `SymbolicPredicate` serves both shapes."""
     x = mock_identifier("x", 0)
@@ -118,6 +120,7 @@ def test_migration_shaped_scenario_matches_the_old_suites_outcomes() -> None:
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.sympy
 def test_ground_constraint_scenario_matches_the_documented_edge_case() -> None:
     """Test a ground equation constraint's documented edge-case behavior.
 

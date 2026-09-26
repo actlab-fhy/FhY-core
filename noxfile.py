@@ -83,6 +83,27 @@ def tests(session: nox.Session) -> None:
 
 
 @nox.session
+def tests_minimal(session: nox.Session) -> None:
+    """Run the suite without the optional solver packages, sympy and z3-solver.
+
+    The tests that reach a solver backend carry the `sympy` or `z3` marker
+    and are skipped here; an unmarked test that reaches a missing backend
+    fails with `SolverBackendUnavailableError`, so a wrong mark cannot hide.
+    """
+    _sync(session, "test-minimal")
+    session.run(
+        "python",
+        "-c",
+        "import importlib.util, sys; "
+        "installed = [name for name in ('sympy', 'z3') "
+        "if importlib.util.find_spec(name)]; "
+        "sys.exit(f'optional solver packages installed: {installed}' "
+        "if installed else 0)",
+    )
+    session.run("pytest", "-m", "slow or not slow", *session.posargs)
+
+
+@nox.session
 def lint(session: nox.Session) -> None:
     """Check linting and formatting with ruff."""
     _sync(session, "lint")

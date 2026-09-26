@@ -27,8 +27,6 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     PiecewiseExpression,
-    convert_expression_to_sympy_expression,
-    convert_sympy_expression_to_expression,
     evaluate_expression_with_numpy,
     piecewise,
 )
@@ -321,6 +319,7 @@ _MULTI_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
 
 # Tree-heavy: exercises the SymPy bridge over piecewise trees with up to
 # four cases.
+@pytest.mark.sympy
 @cap_max_examples(50)
 @example(expression=_SINGLE_COMPARISON_CASE_PIECEWISE)
 @example(expression=_MULTI_COMPARISON_CASE_PIECEWISE)
@@ -339,6 +338,11 @@ def test_sympy_round_trip_preserves_the_whole_piecewise(
     the cases or paired a value with the wrong condition, so the restored
     node is compared against the original structurally.
     """
+    from fhy_core.symbolic.expression import (  # noqa: PLC0415
+        convert_expression_to_sympy_expression,
+        convert_sympy_expression_to_expression,
+    )
+
     sympy_expression = convert_expression_to_sympy_expression(expression)
     restored = convert_sympy_expression_to_expression(sympy_expression)
 

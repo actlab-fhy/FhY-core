@@ -20,6 +20,9 @@ import math
 import pickle
 
 import pytest
+
+pytest.importorskip("sympy")
+
 import sympy  # type: ignore[import-untyped]
 
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -41,6 +44,8 @@ from fhy_core.symbolic.expression import (
 from fhy_core.symbolic.solver import simplify_expression
 
 from .conftest import mock_identifier
+
+pytestmark = pytest.mark.sympy
 
 # =============================================================================
 # Native function lowering (IR -> sympy)

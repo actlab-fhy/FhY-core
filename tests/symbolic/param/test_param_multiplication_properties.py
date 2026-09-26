@@ -155,6 +155,7 @@ def draw_bounded_multiplication_case(draw: st.DrawFn) -> BoundedMultiplicationCa
     return BoundedMultiplicationCase(x, y, concrete_x, concrete_y)
 
 
+@pytest.mark.sympy
 @given(case=draw_bounded_multiplication_case())
 def test_multiplication_is_sound_for_every_concrete_pair_in_range(
     case: BoundedMultiplicationCase,
@@ -220,6 +221,7 @@ def _build_hull_example(
 # actual pairwise products (e.g. ``[1,3] * [1,3]`` admits ``5``, which is
 # nobody's product), so the tightness check -- against the corner-product
 # hull, not brute-force multiplication -- is the property that matters here.
+@pytest.mark.sympy
 @example(case=_build_hull_example(0, 0, 0, 0))
 @example(case=_build_hull_example(0, 3, 0, 3))
 @example(case=_build_hull_example(-3, 3, -3, 3))

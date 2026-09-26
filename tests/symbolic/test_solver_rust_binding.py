@@ -584,6 +584,8 @@ def test_convert_expression_to_z3_expression_maps_identifiers_to_declared_consta
 # =============================================================================
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 def test_solver_backends_resolve_to_one_adapter_each() -> None:
     """Test each ``SolverBackend`` member resolves to its adapter, created once."""
     from fhy_core.symbolic.expression.passes.sympy import (  # noqa: PLC0415
@@ -601,6 +603,8 @@ def test_solver_backends_resolve_to_one_adapter_each() -> None:
     assert (z3_adapter.name, sympy_adapter.name) == ("z3", "sympy")
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 def test_backends_are_available_when_their_packages_are_installed() -> None:
     """Test ``is_backend_available`` for both shipped backends in this environment."""
     assert is_backend_available(SolverBackend.Z3) is True
@@ -692,15 +696,31 @@ def test_importing_fhy_core_imports_neither_sympy_nor_z3() -> None:
         import fhy_core
         import fhy_core.symbolic.solver
         print(sorted(name for name in ("sympy", "z3") if name in sys.modules))
+        """
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["[]"]
+
+
+@pytest.mark.z3
+@pytest.mark.subprocess
+def test_lazy_bridge_export_imports_its_package_on_first_access() -> None:
+    """Test the first access of a lazy re-export imports the bridge's package."""
+    completed = _run_python(
+        """
+        import sys
         from fhy_core.symbolic.expression import convert_expression_to_z3_expression
         print("z3" in sys.modules)
         """
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.splitlines() == ["[]", "True"]
+    assert completed.stdout.splitlines() == ["True"]
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 def test_lazy_bridge_exports_resolve_to_the_bridge_functions() -> None:
     """Test the package's lazy re-exports are the bridges' functions."""
     import fhy_core.symbolic.expression as expression_package  # noqa: PLC0415
@@ -948,6 +968,8 @@ def test_concurrent_questions_from_several_threads(build_backend: Any) -> None:
     assert answers == dict.fromkeys(range(8), True)
 
 
+@pytest.mark.sympy
+@pytest.mark.z3
 def test_param_checks_ask_the_default_solver() -> None:
     """Test a param's feasibility and value checks reach the default backends."""
     left = create_integer_param_between(0, 10)

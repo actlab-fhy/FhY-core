@@ -47,14 +47,24 @@ if find_spec("hypothesis") is not None:
     _hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
 
 
+# The markers of the tests that reach an optional solver backend, with the
+# module each backend imports and the package that provides it. A marked
+# test is skipped when the package is not installed: that is the documented
+# configuration the `tests_minimal` session runs, where an unmarked test
+# reaching a missing backend fails with `SolverBackendUnavailableError`.
+_OPTIONAL_BACKEND_MARKERS = {"z3": ("z3", "z3-solver"), "sympy": ("sympy", "sympy")}
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    if find_spec("z3") is None:
-        skip_z3 = pytest.mark.skip(reason="z3-solver not installed")
+    for marker, (module, package) in _OPTIONAL_BACKEND_MARKERS.items():
+        if find_spec(module) is not None:
+            continue
+        skip = pytest.mark.skip(reason=f"{package} not installed")
         for item in items:
-            if "z3" in item.keywords:
-                item.add_marker(skip_z3)
+            if marker in item.keywords:
+                item.add_marker(skip)
 
 
 @pytest.fixture()

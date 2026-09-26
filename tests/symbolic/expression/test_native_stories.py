@@ -19,8 +19,6 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     call,
-    convert_expression_to_sympy_expression,
-    convert_sympy_expression_to_expression,
     evaluate_expression,
     get_native_constant_identifier,
     inline_functions,
@@ -79,6 +77,7 @@ def test_user_story_evaluate_ceil_of_float_yields_int() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_user_story_evaluate_clamp_of_exp_under_literal_bounds() -> None:
     """Test ``clamp(exp(2.0), 0, 5)`` inlines + evaluates the exp + simplifies to 5.0.
 
@@ -132,6 +131,7 @@ def test_user_story_real_native_rejects_boolean_argument() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_user_story_sin_of_pi_round_trips_through_sympy_to_zero() -> None:
     """Test ``sin(pi)`` lowers + simplifies through sympy and lifts back to ``0``."""
     expression = call("sin", get_native_constant_identifier("pi"))
@@ -147,6 +147,7 @@ def test_user_story_sin_of_pi_round_trips_through_sympy_to_zero() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_user_story_pipeline_sigmoid_zero_simplifies_to_half() -> None:
     """Test the inline / evaluate / simplify pipeline yields ``0.5``."""
     expression = call("sigmoid", LiteralExpression(0.0))
@@ -237,8 +238,14 @@ def test_user_story_outer_arithmetic_preserved_around_folded_native_call() -> No
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_user_story_native_call_with_constant_round_trips_through_sympy() -> None:
     """Test ``cos(pi)`` round-trips through sympy lower / lift and folds to ``-1``."""
+    from fhy_core.symbolic.expression import (  # noqa: PLC0415
+        convert_expression_to_sympy_expression,
+        convert_sympy_expression_to_expression,
+    )
+
     expression = call("cos", get_native_constant_identifier("pi"))
 
     lowered = convert_expression_to_sympy_expression(expression)
@@ -278,6 +285,7 @@ def test_user_story_variable_named_after_a_constant_stays_a_free_variable(
         synthesize_expression_type(expression, _no_identifiers)
 
 
+@pytest.mark.sympy
 def test_user_story_binding_a_variable_named_after_a_constant_is_honored() -> None:
     """Test a binding for a variable named ``e`` reaches the simplifier.
 
