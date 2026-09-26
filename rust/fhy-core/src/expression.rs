@@ -7,6 +7,7 @@
 //! on that crate.
 
 pub mod builtins;
+pub mod evaluate;
 pub mod passes;
 pub mod pattern;
 pub mod registry;

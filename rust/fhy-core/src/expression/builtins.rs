@@ -16,8 +16,9 @@
 //! body calls other built-in functions through [`Callee::Builtin`](super::Callee::Builtin), and
 //! refers to nothing but its own parameters by identifier.
 //!
-//! The catalogue is data only. It registers nothing, and it does not
-//! compute native functions. Look a function up by name with
+//! The catalogue registers nothing. It computes the native functions,
+//! through [`BuiltinFunction::native_value`], for the evaluator of
+//! [`evaluate`](super::evaluate). Look a function up by name with
 //! [`FromStr`](std::str::FromStr), and list the composed functions with
 //! `BuiltinFunction::iter().filter_map(BuiltinFunction::composed)`.
 //!
@@ -328,6 +329,67 @@ impl BuiltinFunction {
     #[must_use]
     pub fn composed(self) -> Option<&'static ComposedFunction> {
         COMPOSED_FUNCTIONS.get(self.catalogue_index())
+    }
+
+    /// Return the value of a native built-in at `argument`, before its
+    /// result sort's cast, or `None` for a composed built-in.
+    ///
+    /// The results are IEEE's: `sqrt` of a negative number and `log` of a
+    /// negative number are NaN, `log(0)` is negative infinity, and `exp` of
+    /// a large number is infinity. `round` rounds half to even. `erf` is
+    /// `libm`'s, and every other function is the standard library's `f64`
+    /// method, which calls the platform's math library, so the last bits
+    /// may differ between platforms.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::expression::builtins::BuiltinFunction;
+    ///
+    /// assert_eq!(BuiltinFunction::Round.native_value(2.5), Some(2.0));
+    /// assert!(BuiltinFunction::Sqrt.native_value(-1.0).is_some_and(f64::is_nan));
+    /// assert_eq!(BuiltinFunction::Relu.native_value(1.0), None);
+    /// ```
+    #[must_use]
+    pub fn native_value(self, argument: f64) -> Option<f64> {
+        let value = match self {
+            Self::Exp => argument.exp(),
+            Self::Exp2 => argument.exp2(),
+            Self::Log => argument.ln(),
+            Self::Log2 => argument.log2(),
+            Self::Log10 => argument.log10(),
+            Self::Sqrt => argument.sqrt(),
+            Self::Sin => argument.sin(),
+            Self::Cos => argument.cos(),
+            Self::Tan => argument.tan(),
+            Self::Arcsin => argument.asin(),
+            Self::Arccos => argument.acos(),
+            Self::Arctan => argument.atan(),
+            Self::Sinh => argument.sinh(),
+            Self::Cosh => argument.cosh(),
+            Self::Tanh => argument.tanh(),
+            Self::Erf => libm::erf(argument),
+            Self::Round => argument.round_ties_even(),
+            Self::Floor => argument.floor(),
+            Self::Ceil => argument.ceil(),
+            Self::Max
+            | Self::Min
+            | Self::Abs
+            | Self::Sign
+            | Self::Clamp
+            | Self::ClampSymmetric
+            | Self::Relu
+            | Self::LeakyRelu
+            | Self::Xor
+            | Self::Nand
+            | Self::Nor
+            | Self::Implies
+            | Self::Iff
+            | Self::Sigmoid
+            | Self::Silu
+            | Self::Gelu => return None,
+        };
+        Some(value)
     }
 
     /// Return the function's position in catalogue order, the order of

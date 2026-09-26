@@ -751,3 +751,58 @@ fn big_int_re_export_is_the_num_bigint_type() {
         LiteralValue::from(from_num_bigint)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Exact binary floats of decimals (S9, D-S9-2)
+// ---------------------------------------------------------------------------
+
+#[rstest]
+#[case("0.5", Some(0.5))]
+#[case("0", Some(0.0))]
+#[case("1.25", Some(1.25))]
+#[case("1024", Some(1024.0))]
+#[case("0.1", None)]
+#[case("0.3", None)]
+#[case("9007199254740993", None)]
+#[case("9007199254740992", Some(9_007_199_254_740_992.0))]
+fn decimal_to_f64_exact_answers_only_for_an_exact_binary_value(
+    #[case] text: &str,
+    #[case] expected: Option<f64>,
+) {
+    let decimal: Decimal = text.parse().expect("decimal text");
+
+    assert_eq!(decimal.to_f64_exact(), expected);
+}
+
+#[test]
+fn decimal_to_f64_exact_is_exact_at_any_length() {
+    // 2^-60, written out in full, has 60 fractional digits.
+    let text = "0.000000000000000000867361737988403547205962240695953369140625";
+    let decimal: Decimal = text.parse().expect("decimal text");
+    assert_eq!(decimal.to_f64_exact(), Some(2.0_f64.powi(-60)));
+
+    let one_digit_more: Decimal = format!("{text}1").parse().expect("decimal text");
+    assert_eq!(one_digit_more.to_f64_exact(), None);
+}
+
+#[test]
+fn decimal_to_f64_exact_refuses_a_value_beyond_the_float_range() {
+    let huge: Decimal = format!("1{}", "0".repeat(400))
+        .parse()
+        .expect("decimal text");
+    let tiny: Decimal = format!("0.{}1", "0".repeat(400))
+        .parse()
+        .expect("decimal text");
+
+    assert_eq!(huge.to_f64_exact(), None);
+    assert_eq!(tiny.to_f64_exact(), None);
+}
+
+#[test]
+fn decimal_to_f64_exact_keeps_the_smallest_subnormal() {
+    let smallest = 5e-324_f64;
+    let text = format!("{smallest:.1074}");
+    let decimal: Decimal = text.parse().expect("decimal text");
+
+    assert_eq!(decimal.to_f64_exact(), Some(smallest));
+}

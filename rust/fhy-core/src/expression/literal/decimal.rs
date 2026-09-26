@@ -9,10 +9,24 @@ use std::fmt;
 use std::str::FromStr;
 
 use num_bigint::BigInt;
+use num_traits::Zero;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::LiteralTextError;
+
+/// Return the integer mantissa and the binary exponent of the finite,
+/// positive `value`: `value == mantissa * 2^exponent` exactly.
+fn split_float(value: f64) -> (u64, i64) {
+    let bits = value.to_bits();
+    let stored_exponent = i64::try_from((bits >> 52) & 0x7ff).expect("11 bits");
+    let fraction = bits & ((1 << 52) - 1);
+    if stored_exponent == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | (1 << 52), stored_exponent - 1075)
+    }
+}
 
 fn convert_count_to_exponent(count: usize) -> i64 {
     i64::try_from(count).expect("a digit count fits in an i64 exponent")
@@ -109,6 +123,51 @@ impl Decimal {
     #[must_use]
     pub fn exponent(&self) -> i64 {
         self.exponent
+    }
+
+    /// Return the binary64 float equal to the decimal, or `None` if no
+    /// float is: `0.5` is one, and `0.1` is not.
+    ///
+    /// The answer is exact at any length: the nearest float to the decimal
+    /// is compared with the decimal as exact rationals.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::expression::Decimal;
+    ///
+    /// assert_eq!("0.5".parse::<Decimal>()?.to_f64_exact(), Some(0.5));
+    /// assert_eq!("0.1".parse::<Decimal>()?.to_f64_exact(), None);
+    /// # Ok::<(), fhy_core::expression::LiteralTextError>(())
+    /// ```
+    #[must_use]
+    pub fn to_f64_exact(&self) -> Option<f64> {
+        let nearest: f64 = self.to_string().parse().ok()?;
+        if !nearest.is_finite() {
+            return None;
+        }
+        if nearest == 0.0 {
+            return self.coefficient.is_zero().then_some(0.0);
+        }
+        // The float is `mantissa * 2^binary_exponent` exactly, and the
+        // decimal `coefficient * 10^exponent`; compare the two as integers,
+        // scaling whichever side has a negative exponent up.
+        let (mantissa, binary_exponent) = split_float(nearest);
+        let mut float_side = BigInt::from(mantissa);
+        let mut decimal_side = self.coefficient.clone();
+        if binary_exponent >= 0 {
+            float_side <<= binary_exponent.unsigned_abs();
+        } else {
+            decimal_side <<= binary_exponent.unsigned_abs();
+        }
+        let ten = BigInt::from(10);
+        let scale = num_traits::pow(ten, usize::try_from(self.exponent.unsigned_abs()).ok()?);
+        if self.exponent >= 0 {
+            decimal_side *= scale;
+        } else {
+            float_side *= scale;
+        }
+        (float_side == decimal_side).then_some(nearest)
     }
 }
 

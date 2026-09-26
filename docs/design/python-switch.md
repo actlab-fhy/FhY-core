@@ -81,7 +81,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S9: the expression evaluators (designed; see "S9: the expression evaluators")
   - [x] N-S9-1 decided as (a), N-S9-2 as (b) (2026-09-26; see "S9 resolutions")
   - [x] S9.1: evaluator benchmarks and baseline (26 rows; see "S9.1 baseline")
-  - [ ] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
+  - [x] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
   - [ ] S9.3: the `ndarray` cargo feature and the array backend
   - [ ] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
   - [ ] S9.5: the Python switch
@@ -9890,3 +9890,113 @@ a rewrite, and each change is recorded with its reason:
   bounded values. The numpy-reaching tests get the `numpy` marker in
   S9.7.
 - **`test_pprint.py`** follows N-S9-1.
+
+### S9.2 implementation notes
+
+The tests were written first, against `todo!()` stubs of
+`BuiltinFunction::native_value`, `Decimal::to_f64_exact`,
+`Evaluator::fold`, `Evaluator::prepare`, `Prepared::evaluate` and (in
+S9.3) `Prepared::evaluate_array`: all 159 new tests of S9.2 and S9.3
+failed, and all pass now. The new module is
+`rust/fhy-core/src/expression/evaluate.rs`, with `evaluate/value.rs`
+(`Scalar` and the literal conversion), `evaluate/kernel.rs` (the per-lane
+integer and real kernels), `evaluate/lanes.rs` (the backend trait and the
+scalar backend), `evaluate/walk.rs` (the generic walk), `evaluate/fold.rs`
+and `evaluate/error.rs`. `lib.rs`, the crate README and CONTRIBUTING's
+table list it.
+
+Where the shape differs from D-S9-2's sketch, or fills it in:
+
+- **No `Domain` type.** The three domains are `SymbolType`'s, whose meaning
+  is the same, so `Scalar::symbol_type` returns a `SymbolType`, and the
+  screen reads the bindings' `SymbolType`s directly (D-S4-2).
+- **`Evaluator::prepare` and `Prepared`.** The binding converts only the
+  bindings the *inlined* tree refers to (D-S9-12), so inlining is its own
+  step: `prepare` inlines and returns a `Prepared` holding the inlined tree
+  and its free identifiers, whose `evaluate` (and, in S9.3,
+  `evaluate_array`) screens, refuses bound constants and walks.
+  `Evaluator::evaluate` is `prepare` then `evaluate`.
+- **`Folding::not_inlined` lists `Callee`s,** composed built-ins included,
+  since Python's evaluator warns for both kinds today.
+- **The walk** (`walk.rs`) is written once over a crate-private `Lanes`
+  trait with a generic associated type `Of<T>`, the container of lanes:
+  `T` itself for the scalar backend, and a `CowArray` for the array one.
+  Its maps apply the same per-lane kernels (`kernel.rs`). A value carries
+  an optional container of failure ids: zero for a lane that did not fail,
+  and otherwise an index into the walk's table of `(LaneFailure, node)`.
+  A fallible map first computes the lanes, noting whether any failed, and
+  only then, in a second pass, the ids, so a walk with no failure pays
+  nothing for them. The walk borrows the tree, keeps its pending nodes on
+  the heap, and remembers the value of every node the tree shares
+  (`Tree::is_shared`) by identity, behind an `Rc`.
+- **The failure rules** (D-S9-6): a node passes its operands' failures on,
+  the first operand's first; a connective computes, per lane, whether an
+  operand that did not fail there holds its absorbing value, and drops
+  the failure where one does; a piecewise folds the failure ids through
+  the same selection as the values, and a failed condition fails its lane
+  unless an earlier case's condition holds there.
+- **Error variants beyond the sketch.** `EvaluationError::NumberAsBoolean`
+  is the walk's own check of a connective operand, a negation or a
+  piecewise condition, which the screen normally refuses first;
+  `IntegerLiteralOutOfRange` is named `IntegerOutOfRange`, since a user
+  constant's value can be out of range too; `Kernel` is the failure of a
+  plugged-in array kernel (S9.3). `FoldError::Piecewise` is new: a native
+  call with literal arguments used as a piecewise condition folds to a
+  literal, and a non-Boolean one breaks the piecewise, which
+  `rebuild_with_children` refuses, as `InlineError::Piecewise` does.
+  `LaneFailure` is payload-free; the failing node gives the sort.
+- **`NoNativeCalls`** is a `NativeCalls` with no implementation, for Rust
+  users and tests that fold only built-ins.
+- **The fold refuses eagerly.** A literal call the fold cannot compute,
+  such as `round(nan)`, is refused wherever it sits, as Python's fold did,
+  while an evaluation discards its lane when a guard does not need it. The
+  property `folding_does_not_change_the_value` therefore compares only
+  trees the fold accepts, and compares outcomes by kind, since folding
+  changes the node a lane failure names.
+- **`BuiltinFunction::native_value`** is the kernel of D-S9-7, a method of
+  the catalogue; its rustdoc says the last bits follow the platform's math
+  library, except `erf` (`libm`) and `round` (`round_ties_even`).
+- **`Decimal::to_f64_exact`** parses the decimal's text to the nearest
+  `f64` (Rust's parsing rounds correctly) and compares it with the decimal
+  as integers: the float's mantissa and binary exponent against the
+  coefficient and the decimal exponent, scaling whichever side has a
+  negative exponent.
+- **Tests.** `fold_stories.rs` (35 tests, counting `rstest` cases),
+  `evaluate_stories.rs` (69), `evaluate_properties.rs` (2 properties; the
+  lane property joins in S9.3); `builtins_stories.rs` gained 26 and
+  `literal_stories.rs` 11. A proptest regression file written while the
+  stubs failed was deleted, as in S7.2.
+
+Traceability of the Python tests (`test_evaluator.py` is `E`,
+`test_evaluator_properties.py` `EP`, `test_numpy_evaluator.py` `N`; the
+array stories are S9.3's):
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| E `test_evaluate_folds_native_call_with_single_literal_argument`, `..._multiple_literal_arguments`, `..._returning_int_to_int_literal` | `fold_calls_a_user_native_with_its_literal_arguments`, `fold_makes_an_integer_sorted_builtin_an_integer`, `fold_computes_a_real_builtin` | built-ins now computed by the core (D-S9-7) |
+| E `test_evaluate_extracts_int_value_from_int_literal_argument` | `fold_converts_an_integer_argument_to_the_nearest_real` | |
+| E `test_evaluate_leaves_native_call_with_identifier_argument_alone`, `..._mixed_arguments_alone` | `fold_keeps_a_native_call_with_a_non_literal_argument_unchecked` | |
+| E `test_evaluate_leaves_expression_bodied_call_alone_even_with_literal_args`, `test_evaluate_preserves_call_to_registered_function_unchanged` | `fold_keeps_calls_of_functions_with_a_body_and_lists_them_once` | the WARNING is the binding's (D-S9-15) |
+| E `test_evaluate_substitutes_canonical_constant_identifier_with_its_value`, `..._leaves_identifier_alone_when_name_not_a_constant`, `..._leaves_an_identifier_merely_named_like_a_constant_alone`, `..._folds_native_call_with_constant_argument` | `fold_resolves_builtin_and_user_constants`, `fold_leaves_an_identifier_merely_named_like_a_constant` | |
+| E `test_evaluate_folds_nested_native_calls_bottom_up` | `fold_folds_nested_native_calls_inside_out` | |
+| E `test_evaluate_does_not_fold_binary_addition_of_literals`, `..._unary_negation_of_literal`, `..._literal_only_piecewise`, `test_evaluate_returns_literal_unchanged`, `..._identifier_unchanged_when_not_a_constant` | `fold_does_not_fold_arithmetic_or_a_literal_piecewise`, `fold_keeps_a_native_call_with_a_non_literal_argument_unchecked` | the input itself, by `ptr_eq` |
+| E `test_evaluate_recurses_into_binary_expression_children`, `..._piecewise_branches`, `test_evaluate_does_not_mutate_input_expression` | `fold_recurses_into_children_and_shares_what_it_keeps` | |
+| E `test_evaluate_wraps_native_value_error_in_pass_execution_error`, `..._zero_division_error_...` | `fold_keeps_a_user_native_failure_as_its_source` | the wrapping is the binding's |
+| E `test_evaluate_rejects_string_form_float_literal_argument`, `..._coerces_decimal_literal_argument_like_its_text`, `..._coerces_string_form_float_literal_with_exact_binary_value`, `..._folds_native_call_with_exact_binary_float_string_argument`, `..._coerces_string_form_integer_literal_to_int` | `fold_converts_an_exact_decimal_argument_and_refuses_an_inexact_one`, `fold_hands_a_user_native_its_decimal_arguments_as_floats`, `decimal_to_f64_exact_*` (4) | |
+| E `test_evaluate_raises_for_unregistered_call_name`, `..._for_call_to_native_constant` | `fold_refuses_an_unknown_name_and_a_constant_called` | |
+| E `test_evaluate_raises_native_result_sort_error_for_wrong_return_type` | `fold_refuses_a_user_native_result_outside_its_result_sort` | |
+| none | `fold_checks_the_arity_of_a_folded_call`, `fold_checks_the_argument_sorts_of_a_folded_call`, `fold_checks_the_arguments_before_the_call_taking_them`, `fold_refuses_a_non_finite_integer_sorted_result`, `fold_follows_ieee_where_math_would_raise`, `fold_makes_a_huge_integer_sorted_result_its_exact_integer`, `fold_calls_a_shared_user_native_once`, `fold_folds_a_shared_dag_once_per_distinct_node`, `fold_walks_a_deep_tree_on_a_small_stack` | new: Z-7, Z-8, Z-13 |
+| EP `test_evaluate_expression_preserves_evaluation`, `..._is_idempotent`, `..._folds_every_literal_argument_call` | `folding_does_not_change_the_value` | idempotence stays a Python property |
+| N the arithmetic, comparison, logical, unary and literal cases | `evaluate_computes_integer_arithmetic_exactly` (14 cases), `evaluate_divides_integers_to_a_real`, `evaluate_floor_divides_reals_as_python_does` (5), `evaluate_promotes_an_integer_beside_a_real`, `evaluate_compares_integers` (6), `evaluate_reduces_connectives_in_order`, `evaluate_reads_literals_in_their_domains` | D-S9-5 |
+| N `test_integer_base_to_negative_integer_power_raises_value_error` | `evaluate_fails_the_lane_of_an_integer_error` (8 cases) | overflow and division by zero are new (Z-2) |
+| N the dtype-screen tests (`..._raises_directly`) | `evaluate_screens_with_the_value_kinds_of_the_bindings`, `evaluate_screens_before_refusing_a_bound_constant` | |
+| N the constant and binding tests | `evaluate_resolves_builtin_and_user_constants`, `evaluate_refuses_a_bound_constant_it_refers_to_and_ignores_one_it_does_not`, `evaluate_reads_bindings_and_ignores_unreferenced_ones` | |
+| N `test_raises_for_unbound_variable`, `..._unbound_identifier_merely_named_like_a_native_constant`, `..._unbound_identifier_matching_a_native_function_name` | `evaluate_names_the_near_miss_of_an_unbound_identifier` | |
+| N the float-grammar string literal tests | `evaluate_refuses_an_inexact_decimal_and_an_out_of_range_integer` | |
+| N the non-finite cast, guarded and nested piecewise tests | `a_piecewise_guards_a_non_finite_cast`, `a_piecewise_raises_the_failure_of_the_branch_it_selects`, `a_nested_piecewise_is_guarded_by_its_outer_condition`, `a_piecewise_discards_the_failure_of_a_branch_it_does_not_select` | extended to every lane failure (Z-5) |
+| N the piecewise selection tests | `evaluate_takes_the_first_piecewise_case_that_holds`, `evaluate_mixes_integer_and_real_branches_as_reals` | |
+| N `test_sqrt_of_negative_returns_nan_without_raising`, `test_native_function_matches_hand_computed_value`, `test_integer_sort_native_returns_integer_dtype` | `evaluate_computes_native_builtins_and_casts_integer_results`, `native_builtin_computes_its_function` (19), `native_builtins_follow_ieee_outside_their_domains` | |
+| N `test_raises_for_unsupported_erf`, `test_raises_for_gelu_due_to_unsupported_erf` | `evaluate_inlines_composed_builtins_and_user_functions` (gelu) | Z-6: computed now |
+| N `test_raises_for_native_function_without_numpy_mapping`, `test_raises_for_unregistered_function_name`, `test_raises_for_recursive_function` | `evaluate_refuses_a_native_user_function`, `evaluate_reports_an_inlining_error` | |
+| N the auto-inline tests | `evaluate_inlines_composed_builtins_and_user_functions`, `composed_builtins_evaluate_as_their_definitions` | |
+| none | `evaluate_refuses_a_boolean_used_as_a_number` (3), `evaluate_refuses_a_boolean_under_negation_and_as_a_native_argument`, `evaluate_refuses_a_piecewise_mixing_booleans_and_numbers`, `a_conjunction_discards_*`, `a_disjunction_discards_*`, `a_failed_piecewise_condition_*`, `a_failure_passes_through_every_other_node`, `evaluate_negation_of_the_smallest_integer_overflows`, `evaluate_compares_nan_as_ieee_does`, `prepare_exposes_*`, `evaluate_walks_a_deep_tree_on_a_small_stack` | new: Z-3, D-S9-6, depth |

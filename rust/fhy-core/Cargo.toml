@@ -25,6 +25,7 @@ include = [
 name = "fhy_core"
 
 [dependencies]
+libm = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 serde = { workspace = true }

@@ -509,6 +509,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expression` |
 | `fhy_core.symbolic.expression.builtins` | `fhy_core::expression::builtins` |
 | `fhy_core.symbolic.expression.registry`, `passes.inline` | `fhy_core::expression::registry` |
+| `fhy_core.symbolic.expression.passes.evaluate`, `passes.numpy`, `passes.native_lowering` | `fhy_core::expression::evaluate` |
 | `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expression::pattern`; the rule-applier pass is in `fhy_core::expression::passes` |
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |

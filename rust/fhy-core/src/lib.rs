@@ -21,7 +21,7 @@
 //! | [`provenance`] | source positions, spans and where a value came from |
 //! | [`tree`] | the [`Tree`](tree::Tree) trait and iterative walks and rewrites over any tree-shaped IR |
 //! | [`term`] | [`AlphaRenaming`](term::AlphaRenaming) and the traits of terms: alpha equivalence, free identifiers, substitution, and [`Binder`](term::Binder)s |
-//! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
+//! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], folding and evaluation in [`expression::evaluate`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //! | [`solver`] | questions about expressions answered by pluggable backends: the hazard screen, the SMT-LIB2 lowering, and a backend that drives an SMT-LIB2 executable |
 //!

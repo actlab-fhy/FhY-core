@@ -877,3 +877,90 @@ fn builtin_constant_of_identifier_goes_by_the_id_not_the_name() {
     );
     assert_eq!(BuiltinConstant::of_identifier(&other_reserved), None);
 }
+
+// ---------------------------------------------------------------------------
+// Native kernels (S9, D-S9-7)
+// ---------------------------------------------------------------------------
+
+#[rstest]
+#[case::exp(BuiltinFunction::Exp, 1.0, 1.0_f64.exp())]
+#[case::exp2(BuiltinFunction::Exp2, 3.0, 8.0)]
+#[case::log(BuiltinFunction::Log, std::f64::consts::E, 1.0)]
+#[case::log2(BuiltinFunction::Log2, 8.0, 3.0)]
+#[case::log10(BuiltinFunction::Log10, 1000.0, 3.0)]
+#[case::sqrt(BuiltinFunction::Sqrt, 2.25, 1.5)]
+#[case::sin(BuiltinFunction::Sin, 0.5, 0.5_f64.sin())]
+#[case::cos(BuiltinFunction::Cos, 0.5, 0.5_f64.cos())]
+#[case::tan(BuiltinFunction::Tan, 0.5, 0.5_f64.tan())]
+#[case::arcsin(BuiltinFunction::Arcsin, 0.5, 0.5_f64.asin())]
+#[case::arccos(BuiltinFunction::Arccos, 0.5, 0.5_f64.acos())]
+#[case::arctan(BuiltinFunction::Arctan, 0.5, 0.5_f64.atan())]
+#[case::sinh(BuiltinFunction::Sinh, 0.5, 0.5_f64.sinh())]
+#[case::cosh(BuiltinFunction::Cosh, 0.5, 0.5_f64.cosh())]
+#[case::tanh(BuiltinFunction::Tanh, 0.5, 0.5_f64.tanh())]
+#[case::erf(BuiltinFunction::Erf, 0.5, 0.520_499_877_813_046_5)]
+#[case::round(BuiltinFunction::Round, 1.6, 2.0)]
+#[case::floor(BuiltinFunction::Floor, -1.5, -2.0)]
+#[case::ceil(BuiltinFunction::Ceil, -1.5, -1.0)]
+fn native_builtin_computes_its_function(
+    #[case] function: BuiltinFunction,
+    #[case] argument: f64,
+    #[case] expected: f64,
+) {
+    let value = function.native_value(argument).expect("a native built-in");
+
+    assert!(
+        (value - expected).abs() <= 4.0 * f64::EPSILON * expected.abs().max(1.0),
+        "{} at {argument} is {value}, expected {expected}",
+        function.name()
+    );
+}
+
+#[rstest]
+#[case(0.5, 0.0)]
+#[case(1.5, 2.0)]
+#[case(2.5, 2.0)]
+#[case(-0.5, -0.0)]
+#[case(-1.5, -2.0)]
+fn round_rounds_half_to_even(#[case] argument: f64, #[case] expected: f64) {
+    assert_eq!(
+        BuiltinFunction::Round.native_value(argument),
+        Some(expected)
+    );
+}
+
+#[test]
+fn native_builtins_follow_ieee_outside_their_domains() {
+    let is_nan = |function: BuiltinFunction, argument: f64| {
+        function.native_value(argument).is_some_and(f64::is_nan)
+    };
+
+    assert!(is_nan(BuiltinFunction::Sqrt, -1.0));
+    assert!(is_nan(BuiltinFunction::Log, -1.0));
+    assert!(is_nan(BuiltinFunction::Arcsin, 2.0));
+    assert_eq!(
+        BuiltinFunction::Log.native_value(0.0),
+        Some(f64::NEG_INFINITY)
+    );
+    assert_eq!(
+        BuiltinFunction::Exp.native_value(1000.0),
+        Some(f64::INFINITY)
+    );
+    assert_eq!(
+        BuiltinFunction::Floor.native_value(f64::INFINITY),
+        Some(f64::INFINITY)
+    );
+    assert!(is_nan(BuiltinFunction::Round, f64::NAN));
+}
+
+#[test]
+fn composed_builtins_have_no_native_value() {
+    for function in BuiltinFunction::iter() {
+        assert_eq!(
+            function.native_value(1.0).is_none(),
+            function.composed().is_some(),
+            "{}",
+            function.name()
+        );
+    }
+}
