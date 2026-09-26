@@ -60,6 +60,16 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S7.4: the Python switch
   - [x] S7.5: tests migrated, and the interface suite
   - [x] S7.6: benchmarks after, and docs
+- [ ] S8: the solver and its backends (designed; see "S8: the solver and its backends")
+  - [ ] N-S8-1 and N-S8-2 decided
+  - [ ] S8.1: solver benchmarks and baseline
+  - [ ] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend)
+  - [ ] S8.3: the `z3` cargo feature and its backend, with the CI changes
+  - [ ] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs)
+  - [ ] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports)
+  - [ ] S8.6: tests migrated, and the interface suite
+  - [ ] S8.7: optional extras, backend markers and the minimal-install session
+  - [ ] S8.8: benchmarks after, and docs
 
 ## Goal
 
@@ -5923,3 +5933,977 @@ above):
    `ndarray`; numpy is imported lazily, so it stays an optional extra.
 5. **Symbolica is not used.** It is source-available, and its license
    restricts distribution.
+
+## S8: the solver and its backends
+
+- **Status:** designed 2026-09-25 at 17a5502. D-S8-1 to D-S8-20 apply the
+  policy the user already set and the direction in "Plan after S7".
+  N-S8-1 and N-S8-2 need the user.
+- **Pattern:** the query logic moves into a new core module,
+  `fhy_core::solver`. Its two backend traits, one for SMT solving and one
+  for simplification, are P3: Python implementations are driven through
+  `Py<PyAny>` adapters, and Rust implementations are registered with the
+  Python ABCs. The facade and the result values are P2. The sympy
+  integration stays Python, as a P3 simplification backend.
+- **Scope.** This covers `symbolic/solver.py`, the z3 bridge
+  (`symbolic/expression/passes/z3.py`), the sympy bridge's role as the
+  simplifier (`passes/sympy.py`), and making `sympy` and `z3-solver`
+  optional. The Rust CAS backend is the next slice (Plan after S7, item 2),
+  and the numpy evaluator is S9.
+
+### Survey: the Python API
+
+**`src/fhy_core/symbolic/solver.py` (1,687 lines)** is pure Python over
+the Rust-backed expressions. Its module docstring (83 lines) is its
+contract. It exports eleven names:
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `SolverBackend` | `StrEnum` | `SYMPY = "sympy"`, `Z3 = "z3"` |
+| `SolverQueryKind` | `StrEnum` | `SIMPLIFICATION`, `SATISFIABILITY`, `IMPLICATION`, `UNIVERSAL_VALIDITY` |
+| `SolverCapabilityError` | `ValueError`, `register_error`ed | the backend cannot answer the query kind: `Backend ... cannot answer ... queries; it supports [...].`, with both enums' `repr`s |
+| `get_backend_capabilities(backend)` | function | reads the private `_BACKEND_CAPABILITIES` table: SYMPY answers SIMPLIFICATION, Z3 the other three; an unknown backend has none |
+| `validate_timeout_milliseconds(t)` | function | `None` or a positive strict `int` (`bool` and `float` refused), else `ValueError("timeout_milliseconds must be None or a positive integer, but got ...")`. Public so `ConstraintSystem` can hold up the precondition on paths that never reach the solver |
+| `simplify_expression(expression, environment=None, *, backend=SYMPY)` | query | the sympy bridge's `simplify_expression`; no timeout |
+| `check_expression_satisfiability(expression, symbol_types, *, backend=Z3, timeout_milliseconds=None)` | query, `bool \| None` | encoded as `not does_expression_imply(expression, False)` on the bridge |
+| `does_expression_imply(antecedent, consequent, symbol_types, *, ...)` | query, `bool \| None` | the bridge's implication |
+| `holds_for_all_free_assignments(considered_identifiers, expression, symbol_types, *, ...)` | query, `bool \| None` | `forall free. exists considered. expression` |
+| `assert_expression_implies`, `assert_holds_for_all_free_assignments` | query, `bool` | the strict companions: `UndecidableError` instead of `None` |
+
+- **Query kinds.** Four kinds, each answered by exactly one backend. Every
+  query function starts with the capability check and then dispatches
+  without looking at `backend`, under an `INVARIANT` comment saying that a
+  second capable backend needs real dispatch. The Z3 questions are
+  tri-state: `True`, `False`, or `None` for Z3's `unknown` or a screened
+  expression. The strict companions raise `UndecidableError(message,
+  reason=...)` instead, whose `reason` is Z3's `reason_unknown()` (such
+  as `"timeout"`) or the fixed marker `"hazard_screen"`.
+- **The order of checks** in each Z3 question, which the tests pin:
+  1. the capability check, then `validate_timeout_milliseconds`;
+  2. `symbol_types` covers every free identifier of every expression, and
+     every considered identifier, except a registered native constant's
+     canonical identifier (`KeyError("symbol_types is missing entries for
+     identifiers: [...]")`, sorted by id);
+  3. `validate_predicate` of each expression, in order (the Rust
+     `BooleanScreen` since S4.3a): an ill-typed expression raises
+     `NonBooleanLogicalOperandError`, ahead of any hazard;
+  4. the hazard screen of each expression, in order, stopping at the
+     first hazard. Each expression is screened on its own, never the
+     combined formula.
+- **The hazard screen** (about 1,000 lines) refuses five shapes the z3
+  bridge mis-lowers, in this order. The first found is logged at WARNING
+  on `fhy_core.symbolic.solver`, naming the entry point and the refused
+  constants or node (and, for the last three, the identifier sorts at
+  that node), and ending "bounding timeout_milliseconds cannot change
+  this outcome":
+  1. **Native constants:** a reference to a registered native constant's
+     canonical identifier (`pi`, `e`, `inf`, `nan`, or a user constant),
+     since Z3 has no term for one and a variable would let the solver
+     choose it;
+  2. **Non-finite literals:** a `float` infinity or NaN anywhere, since
+     `float.as_integer_ratio` has no rational for it;
+  3. **Boolean coercion:** arithmetic with a Boolean operand, a comparison
+     mixing a Boolean and a number, or a piecewise whose branches mix
+     them, since the z3 Python API rewrites a Boolean in a numeric context
+     to `If(b, 1, 0)`;
+  4. **Partial operations:** `DIVIDE` unless the divisor is a finite
+     nonzero literal and one operand is provably real (Z3 truncates two
+     ints); `FLOOR_DIVIDE` and `MODULO` unless the divisor is a finite
+     positive literal (Z3 is Euclidean); `POWER` unless the exponent is an
+     integer literal of at least one;
+  5. **Mixed int/real equality:** an `EQUAL` or `NOT_EQUAL` with a numeric
+     literal on one side and, on the other, an operand whose evaluated
+     int/real kind differs or cannot be determined, since Z3's `ToReal`
+     collapses the package's type-strict `1` against `1.0`.
+
+  The screen reads two classifications off the tree: the Z3 sort a node
+  lowers to (`_LoweredSort`: Boolean, numeric or undetermined), mirroring
+  the converter, and the int/real kind the IR evaluates to
+  (`_classify_operand_numeric_kind`), which reads a call's result sort
+  through `try_get_registered_result_sort`. Every walk is recursive
+  Python.
+- **Simplification.** `simplify_expression` checks the capability and
+  calls the sympy bridge. It has no timeout; a signature test pins that.
+- **Caching:** none. Every query builds a fresh `z3.Solver`, and nothing
+  is memoized across calls.
+- **Timeouts** are passed to `z3.Solver.set(timeout=...)` unchanged.
+- **Errors.** `SolverCapabilityError`, `KeyError`,
+  `NonBooleanLogicalOperandError`, `ValueError` for a bad timeout, and
+  `RuntimeError` for an unexpected Z3 result. A lowering failure inside a
+  bridge pass (a call, or a `Z3Exception`) arrives as
+  `PassExecutionError` with the cause, since both bridges are
+  `VisitablePass`es.
+
+**The z3 bridge (`passes/z3.py`, 727 lines).** It imports `z3` at module
+level.
+
+- `ExpressionToZ3Converter(symbol_types)`, a `VisitablePass` registered
+  as `fhy_core.symbolic.expression.to_z3`, lowers through the z3 Python
+  API's operators:
+  - identifiers become `z3.Int`, `z3.Real` or `z3.Bool` named
+    `<name_hint>_<id>`, recorded in `identifier_to_z3_expression`;
+  - a `bool` literal becomes `BoolVal`, an `int` `IntVal`, and a `float`
+    or `Decimal` the exact `RatVal` of its value;
+  - `DIVIDE` is `/`, which is integer division on two ints;
+    `FLOOR_DIVIDE` is `_z3_floor_divide` (`ToInt` of a real quotient,
+    Euclidean `div` on ints); `MODULO` is Euclidean `%`; `POWER` is `**`;
+  - `LogicalExpression` is n-ary `z3.And` or `z3.Or`, a piecewise a
+    right-folded `z3.If`;
+  - every call is refused with a `TypeError`, a user function asking for
+    `inline_functions` first.
+- `convert_expression_to_z3_expression(expression, symbol_types=None) ->
+  (z3 expression, identifier map)` checks the symbol types, screens with
+  `validate_logical_operands`, refuses native constants
+  (`NativeConstantLoweringError`), then runs the converter. The package
+  re-exports it from `fhy_core.symbolic.expression`.
+- `holds_for_all_free_assignments`, `does_expression_imply` and their
+  strict `assert_*` companions are the bridge's own questions, without the
+  hazard screen. The universal check asserts `ForAll(considered, Not(e))`
+  (or `Not(e)` when nothing is considered) and reads `unsat` as `True`.
+  The implication runs it over `a && !c` with every identifier
+  considered, so it asserts a closed formula quantified over every
+  identifier it mentions. `unknown`
+  is logged at WARNING with `reason_unknown()`.
+
+**The sympy bridge (`passes/sympy.py`, 1,738 lines).** It imports `sympy`
+at module level, and defines a `sympy.Piecewise` subclass there.
+
+- Three registered passes: `ExpressionToSympyConverter` (`to_sympy`),
+  `SympyVariableSubstitutionPass` and `SymPyToExpressionConverter`
+  (`from_sympy`), plus tables that lower and lift the native functions
+  and constants.
+- Public functions: `convert_expression_to_sympy_expression`,
+  `substitute_sympy_expression_variables` (simultaneous, refusing a bound
+  native constant), `convert_sympy_expression_to_expression` (exact
+  rationals, `oo` and `nan` to the constants, `zoo` refused), and
+  `simplify_expression(expression, environment=None)`. That last one
+  screens with `validate_logical_operands(expression, environment)`,
+  refuses an environment binding a referenced constant
+  (`NativeConstantBindingError`), lowers, substitutes, simplifies, and
+  lifts. Simplification is best-effort: `PrecisionExhausted`, a dropped
+  otherwise branch and an unfoldable relational each keep the substituted
+  but unsimplified form.
+- The package re-exports the first three functions.
+
+**Who uses the bridges directly, not through the solver.**
+
+- **In `src`:** only `solver.py`, which imports four z3 functions and the
+  sympy `simplify_expression`, and the re-exports in
+  `symbolic/expression/__init__.py`. Every other module goes through the
+  solver.
+- **In tests:** `test_z3_pass.py` (the converter, `_z3_floor_divide`,
+  17 calls of the unscreened questions), `test_sympy_pass.py` (the three
+  passes, the private tables, one call of the bridge's
+  `simplify_expression`), `test_cross_cutting.py` (the pass registrations
+  and both lowerings of one literal), and `test_solver.py` (the bridge's
+  `simplify_expression`, as the oracle of one test).
+
+**Import cost.** `import fhy_core` imports both packages today:
+`symbolic/expression/__init__.py` re-exports the bridges, and `solver.py`
+imports them. One `-X importtime` run of `import fhy_core` measured
+393 ms in all, 208 ms of it `sympy` and 14 ms `z3`.
+
+### Survey: the Rust API
+
+- **Nothing solves.** The core has no solver, no SMT lowering and no
+  simplifier.
+- **What the port builds on:**
+  - `BooleanScreen`, with its `SymbolTypes`, `Environment` and
+    `SortLookup` traits (`expression/screen.rs`): `validate_predicate`
+    and `validate_logical_operands`;
+  - `Expression::free_identifiers` and `substitute`;
+  - `SymbolType` (`Real`, `Int`, `Bool`);
+  - `LiteralValue`: `Bool`, `Int(BigInt)`, `Float(f64)`, `Decimal`;
+  - `BuiltinConstant::of_identifier`, and the `FunctionRegistry` (S7),
+    which is a `SortLookup` for user constants and call result sorts.
+  - The operations' semantics: `Divide` is the exact real quotient even
+    of two integers, `FloorDivide` rounds toward negative infinity, and
+    `FloorMod`'s sign follows the divisor (F-010).
+- **The `z3` crate** (prove-rs/z3.rs): version 0.21.1, MIT, `rust-version`
+  1.85, the crate's MSRV.
+  - It depends on `z3-sys` 0.13.1 (MIT) and `log`. `z3-sys` links a
+    system `libz3` found through `pkg-config` by default, and has the
+    mutually exclusive link features `vendored` (build from source with
+    `z3-src`), `gh-release` (download a release; pulls `reqwest` with
+    `rustls`, `zip` and `serde_json`), `vcpkg`, and `bundled` (an alias of
+    `vendored`). With more than one enabled it warns and falls back to
+    `pkg-config`.
+  - The API uses a thread-local default `Context`. `with_z3_config(&cfg,
+    || ...)` runs a closure in a fresh context, and `Solver` has
+    `from_string`, `check`, `get_reason_unknown`, `set_params`,
+    `push`/`pop` and `get_model`.
+- **z3-solver** (the Python package), probed: `Solver.from_string` reads a
+  whole SMT-LIB2 script, with `set-logic`, `check-sat` and `get-info`
+  lines ignored, and raises `Z3Exception` on an ill-sorted term;
+  `set(timeout=1)` then `check()` returns `unknown` with
+  `reason_unknown()` `"timeout"`; `parse_smt2_string` returns the
+  assertions.
+
+### Consumers and tests
+
+**`src`.** Two modules call the solver, and two more reach it through
+them:
+
+| Module | Lines | Solver use |
+|---|--:|---|
+| `constraint/core.py` | 1,117 | `simplify_expression`, once: `EquationConstraint.evaluate_with_bindings` substitutes the bindings and simplifies, reading `True`/`False` literals as SATISFIED/VIOLATED |
+| `constraint/system.py` | 848 | `check_expression_satisfiability` (in `_decide_satisfiability`, behind `check_satisfiability` and `check_satisfiability_with_bindings`), `does_expression_imply` (in `check_implication`), `validate_timeout_milliseconds` (3 calls). `_classify_solver_answer` maps `True`/`False`/`None` to SATISFIED/VIOLATED/UNDECIDED, the one tri-state rule |
+| `param/core.py` | 2,175 | through `ConstraintSystem` and `Constraint`: `is_value_valid`, `validate_value`, `check_feasibility`, `check_subset` |
+| `param/domains.py` | 2,612 | through `ConstraintSystem`: `_numeric_has_feasible_value` (satisfiability), `_does_own_admit_a_value_outside` (a witness system), `compute_constraint_implication_subset` (implication), and value checks through `is_satisfied_with_bindings` |
+
+- `symbolic/__init__.py` re-exports the module as a namespace. `types`,
+  `symbol_table` and the passes do not use the solver; `numpy.py` and
+  `evaluate.py` only mention it in docstrings.
+- `holds_for_all_free_assignments` and the two `assert_*` functions have
+  no caller in `src`.
+- **Every param with an equation constraint needs the simplifier to
+  validate a value.** A nat param's bound is `EquationConstraint(x >= 0)`,
+  so `is_value_valid(3)` reaches `sympy.simplify`. Finite domains, set
+  constraints and enumeration never reach a backend.
+
+**Python tests.** Counts are collected tests, parametrized cases included:
+
+| File | Lines | Functions | Collected |
+|---|--:|--:|--:|
+| `symbolic/test_solver.py` | 3,046 | 127 | 346 |
+| `symbolic/test_solver_properties.py` | 434 | 8 | 8 |
+| `expression/passes/test_z3_pass.py` | 1,588 | 59 | 108 |
+| `expression/passes/test_sympy_pass.py` | 4,646 | 141 | 627 |
+| `expression/passes/test_sympy_pass_properties.py` | 303 | 6 | 6 |
+| `expression/test_sympy_natives.py` | 421 | 21 | 59 |
+| `expression/test_cross_cutting.py` | 193 | 6 | 20 |
+| `constraint/test_constraint_system.py` | 3,382 | | 233 |
+| `constraint/test_bindings_evaluation.py` | 809 | | 102 |
+| `constraint/test_equation_constraint.py` | 1,027 | | 81 |
+| `param/test_tri_state_feasibility.py` | 1,064 | | 100 |
+| `param/test_param_intersection.py` | 1,204 | | 76 |
+| `param/test_sound_feasibility.py` | 944 | | 49 |
+| `param/test_subset_relations.py` | 603 | | 50 |
+
+- The solver properties compare simplification with evaluation on integer
+  and Boolean trees, and each Z3 question with a brute-force enumeration.
+- **Fakes.** 27 `monkeypatch.setattr` calls, 11 in `test_solver.py` and
+  16 in `test_z3_pass.py`, patch `z3.Solver.check`, `reason_unknown` or
+  `set` to force `unknown` or observe the timeout. Six places in
+  `test_constraint_system.py` patch `system.check_expression_satisfiability`
+  itself.
+- **Markers.** The `z3` marker exists, and `tests/conftest.py` skips
+  marked tests when `find_spec("z3")` finds nothing. It marks 474
+  collected tests in 18 files, but it is not accurate, and never mattered
+  while `z3-solver` was required. There is no `sympy` marker. Five test
+  modules import `z3` or `sympy` at module level.
+- **Which tests reach a backend.** A probe kept outside the repo wrapped
+  `z3.Solver.check` and both converters' constructors and ran the default
+  suite (`-m "not slow"`): 1,239 tests reach a backend, 335 of them z3,
+  967 sympy, and 63 both. Of the 335, 76 are not marked `z3`, in 12 files
+  (for example 23 in `test_tri_state_feasibility.py`, 19 in
+  `test_sound_feasibility.py`, 4 in `test_real_param.py`), while 213 of
+  the 472 marked tests in that run never reach z3. The sympy users are
+  mostly the sympy pass tests (531) and the param and constraint tests
+  that evaluate constraints with bindings (351 in 29 files).
+
+**Rust tests:** none for a solver. The screen's stories
+(`screen_stories.rs`) cover `BooleanScreen`.
+
+**Benchmarks:** none cover the solver, the bridges, constraints or
+params.
+
+### Backend-neutral and backend-specific
+
+| Part | Today | Neutral? |
+|---|---|---|
+| the capability table and check, the timeout check | `solver.py` | neutral |
+| the `symbol_types` coverage check and its native-constant exemption | `solver.py`, repeated in `z3.py` | neutral |
+| the ill-typedness screen (`validate_predicate`, `validate_logical_operands`) | Rust core | neutral |
+| the order of the checks, and per-expression screening | `solver.py` | neutral |
+| the hazard screens | `solver.py` | neutral across SMT solvers: each refuses what SMT-LIB2 arithmetic cannot say in the package's semantics (no term for a constant or a non-finite float, a total function at a zero divisor, type-strict int/real equality), except the Boolean-coercion rule, which exists because the z3 Python API coerces. Strict SMT-LIB2 refuses those terms instead, so the rule stays as the refusal |
+| the encodings of the three questions, and reading `sat`/`unsat`/`unknown` | `z3.py` | neutral: they are SMT-LIB2 commands |
+| the tri-state result, the strict companions, the `hazard_screen` reason | both | neutral |
+| lowering to z3 terms; `z3.Solver`, `set(timeout=)`, `reason_unknown()` | `z3.py` | z3-specific |
+| the simplification's screen, the constant-binding refusal, the substitution | `sympy.py` | neutral (the substitution matches `Expression.substitute`, by its own docstring) |
+| lowering to sympy, `sympy.simplify` and its best-effort fallbacks, lifting | `sympy.py` | sympy-specific |
+
+### Divergences visible from Python
+
+The port lowers to SMT-LIB2 with the core's semantics. Where the z3
+bridge lowered differently, Python sees:
+
+| # | Python today | After S8 |
+|---|---|---|
+| Y-1 | `DIVIDE` of two ints truncates in Z3 | exact real division, as `Divide` means in the core. The screen still refuses it (D-S8-5), so no answer changes |
+| Y-2 | `FLOOR_DIVIDE` and `MODULO` are Euclidean on ints, and `MODULO` of reals raises `Z3Exception` | floor semantics on ints and reals |
+| Y-3 | `POWER` is Z3's `**` for any exponent, and `Int ** Int` has sort Real | an integer literal exponent of at least one is a product with the base's sort; any other exponent is refused |
+| Y-4 | a Boolean in a numeric context is coerced to `If(b, 1, 0)` | refused by the lowering, as strict SMT-LIB2 refuses it |
+| Y-5 | mixed int/real arithmetic converts through the z3 API | an explicit `to_real`, with the same meaning |
+| Y-6 | the implication always asserts a closed `ForAll` | quantifier-free where the question allows it (D-S8-7) |
+| Y-7 | a call, or a term Z3 refuses, raises `PassExecutionError` with the cause | the lowering's `TypeError`, with the core's text |
+| Y-8 | `convert_expression_to_z3_expression` names constants `x_7` and builds terms through the Python API | the parsed lowering: quoted `\|x_7\|`, with Y-1 to Y-5 |
+| Y-9 | the simplifier substitutes after lowering, in sympy | the core's `substitute`, before lowering |
+| Y-10 | `import fhy_core` imports `sympy` and `z3` | neither, until a query needs one |
+
+Unchanged in meaning: the four query kinds and their answers, the
+tri-state results and the strict companions' reasons, the order of the
+checks, what each hazard refuses, the capability table, and what a
+timeout bounds.
+
+### Pattern choice
+
+- **The query logic goes to Rust** (decision 2: logic-rich machinery).
+  The screens, encodings and checks are about 1,000 lines of recursive
+  Python walks, which a Rust facade runs over the Rust trees in one call,
+  and a Rust backend must be able to use them without Python.
+- **P3: the two backend traits.** Following P3:
+  - `class SmtSolver(_rs.SmtSolverBase, abc.ABC)` and `class
+    Simplifier(_rs.SimplifierBase, abc.ABC)` declare the abstract hooks;
+    each base's `#[new]` accepts `*args, **kwargs`;
+  - a Python subclass is driven from Rust through an adapter holding
+    `Py<PyAny>`;
+  - a Rust implementation (the process backend) is an `#[pyclass(extends
+    = SmtSolverBase)]` registered with the ABC.
+
+  The granularity rule holds: Python is called once per query, never per
+  node.
+- **P2:** the facade `Solver`, `SmtScript` and `SatResult`. **P1:**
+  `SolverBackend`, `SolverQueryKind` and `SymbolType` stay `StrEnum`s.
+- **Plain Python:** the z3-solver and sympy adapters, which talk to
+  Python packages; `validate_timeout_milliseconds`, whose text is
+  Python's; and the resolution of a `SolverBackend` member to an
+  adapter.
+
+**Benchmark plan: `benchmarks/test_solver.py` (S8.1).** The baseline
+runs it against today's Python solver; every call whose spelling S8
+changes sits in a helper marked with its decision. The trees reuse
+`test_expression.py`'s deep tree (100 operations over four identifiers)
+where a row names it.
+
+| Benchmark | Measures |
+|---|---|
+| `test_screen_of_a_deep_predicate` | the hazard screens over a 100-operation comparison, through a question whose backend is a fake that answers at once: the screen's cost |
+| `test_lower_to_z3_of_a_deep_tree` | `convert_expression_to_z3_expression` of the deep tree: lowering throughput, Python visitor before, Rust lowering and a z3 parse after |
+| `test_lower_to_smtlib2_of_a_deep_tree` | after only: `convert_expression_to_smtlib2` |
+| `test_check_satisfiability_of_bounds` | `0 < x && x < 10` over an int: the per-query floor |
+| `test_check_satisfiability_of_a_conjunction_of_50_bounds` | 50 interval bounds over five identifiers |
+| `test_does_expression_imply_of_bounds` | `x >= 1` implies `x >= 0` |
+| `test_holds_for_all_free_assignments_with_a_witness` | for every `x` there is a `y > x`: the quantified encoding |
+| `test_check_satisfiability_refused_by_the_screen` | a screened hazard: the screen and its warning |
+| `test_simplify_expression_of_a_ground_comparison` | a fully bound comparison: the param validation path |
+| `test_simplify_expression_symbolic` | `x + x - x` |
+| `test_equation_constraint_evaluate_with_bindings` | the constraint layer over the simplifier |
+| `test_constraint_system_check_implication` | the constraint layer over the implication |
+| `test_nat_param_is_value_valid` | a nat param's value check |
+| `test_int_param_intersection_feasibility` | a param intersection that asks the solver |
+| `test_import_fhy_core` | a fresh interpreter importing `fhy_core`, five rounds (D-S8-16) |
+
+The verdict follows cross-cutting rule 5. The paths at risk:
+
+- the small queries, which now render a script and have z3 parse it, where
+  the bridge built terms through the z3 API. The Python visitor costs a
+  call per node, so the text path is expected to win on anything but a
+  one-node tree;
+- simplification, which gains a crossing into Rust and back to the Python
+  adapter. It is a few microseconds against sympy's milliseconds;
+- backend resolution per call (D-S8-13), which must stay a cached lookup.
+
+### Decisions (proposed 2026-09-25)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I: owned values and
+  no global mutable state beyond identity (F-006, CONTRIBUTING),
+  `#[non_exhaustive]` errors with one-line lowercase `Display` (I.3
+  rule 3), the naming rules (I.3 rule 5), the layering (§I.2), and MSRV
+  1.85;
+- the user's direction in "Plan after S7" and for this slice: an
+  SMT-LIB2 backend in pure Rust in every build, z3 optional in both
+  languages, a pluggable simplifier, and sympy as a Python-only adapter
+  (cited as "the direction").
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+- **D-S8-1: one implementation, no fallback** ("no fallback"; D-S7-1).
+  - The screens, the question encodings, the capability and precondition
+    checks, and the simplification's screening and substitution move to
+    Rust. `solver.py` becomes thin functions over `_rs`.
+  - The Python z3 lowering (`ExpressionToZ3Converter` and its
+    `to_z3` registration, `_z3_floor_divide`) and the bridge's unscreened
+    questions (`holds_for_all_free_assignments`, `does_expression_imply`
+    and their `assert_*` companions in `passes/z3.py`) are deleted, not
+    kept beside the Rust path. The solver's functions are the questions.
+  - `passes.sympy.simplify_expression` is deleted; the solver's
+    `simplify_expression` is the one pipeline.
+- **D-S8-2: a new core module, `fhy_core::solver`** (crate conventions;
+  §I.2). It depends on `expression` (with `builtins` and `registry`) and
+  `identifier`, never on `pass`, so it sits beside `expression::passes` in
+  the layering. Its name mirrors `fhy_core.symbolic.solver`, and it joins
+  CONTRIBUTING's module table. The sketch below is settled test-first in
+  S8.2, as D-S7-2's was:
+
+  ```rust
+  // fhy_core::solver
+  #[derive(Debug, Clone, Default)]            // owned; backends behind Arc
+  pub struct Solver { /* Option<Arc<dyn SmtSolver>>, Option<Arc<dyn Simplifier>> */ }
+  impl Solver {
+      pub fn new() -> Self;                                       // no backend
+      pub fn with_smt_solver(self, backend: impl SmtSolver + 'static) -> Self;
+      pub fn with_simplifier(self, backend: impl Simplifier + 'static) -> Self;
+      pub fn can_answer(&self, kind: QueryKind) -> bool;
+      pub fn ask(&self, question: &Question<'_>, context: &QueryContext<'_>) -> Result<Answer, SolveError>;
+      pub fn simplify<S: BuildHasher>(&self, expression: &Expression,
+          environment: &HashMap<Identifier, Expression, S>, sorts: &dyn SortLookup) -> Result<Expression, SolveError>;
+  }
+  #[non_exhaustive] pub enum QueryKind { Simplification, Satisfiability, Implication, UniversalValidity }
+  #[non_exhaustive] pub enum Question<'a> {
+      Satisfiability(&'a Expression),
+      Implication { antecedent: &'a Expression, consequent: &'a Expression },
+      UniversalValidity { considered: &'a HashSet<Identifier>, expression: &'a Expression },
+  }
+  pub struct QueryContext<'a> { /* symbol types, sorts, limits */ }   // builder: new(&dyn SymbolTypes).with_sorts(..).with_limits(..)
+  #[non_exhaustive] pub struct CheckLimits { /* timeout: Option<Duration> */ }  // new(), with_timeout(Duration), timeout()
+
+  #[derive(Debug, Clone, PartialEq)]
+  pub enum Answer { Yes, No, Unknown(UnknownReason) }   // exhaustive: a question has these three answers
+  #[non_exhaustive] pub enum UnknownReason { Refused(Hazard), GaveUp { reason: String } }
+  #[non_exhaustive] pub enum Hazard {
+      NativeConstant(Vec<Identifier>), NonFiniteLiteral(Expression), BooleanCoercion(Expression),
+      PartialOperation(Expression), MixedIntRealEquality(Expression),
+  }
+  #[non_exhaustive] pub enum SolveError {
+      NoCapableBackend(QueryKind), MissingSymbolTypes(Vec<Identifier>),
+      IllTyped(NonBooleanLogicalOperandError), BoundNativeConstant(Vec<Identifier>),
+      Lowering(LoweringError), Backend { backend: String, source: BackendError },
+  }
+  ```
+
+  - `Answer::decided() -> Option<bool>` gives the Python tri-state.
+  - A `Hazard` holds the node it refused, so the binding can name it.
+  - Every `Display` is one lowercase line, for example `symbol_types is
+    missing entries for identifiers: x, y`, `the backends of this solver
+    cannot answer satisfiability queries`, or `the expression applies a
+    partial operation off the domain its lowering is sound on`. The
+    texts keep the phrases the Python message tests match, as D-S7-12's
+    did.
+  - Nothing is global. A `Solver` is a value its user builds, and cloning
+    one shares its backends.
+- **D-S8-3: two backend traits, so every backend is pluggable** (crate
+  conventions; the direction for a pluggable CAS; D-10's
+  `CallbackError`):
+
+  ```rust
+  pub type BackendError = Box<dyn std::error::Error + Send + Sync + 'static>;
+  pub trait SmtSolver: Send + Sync + fmt::Debug {
+      fn name(&self) -> Cow<'_, str>;
+      fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BackendError>;
+  }
+  pub trait Simplifier: Send + Sync + fmt::Debug {
+      fn name(&self) -> Cow<'_, str>;
+      fn simplify(&self, expression: &Expression) -> Result<Expression, BackendError>;
+  }
+  #[derive(Debug, Clone, PartialEq, Eq)]
+  pub enum SatResult { Sat, Unsat, Unknown { reason: String } }   // exhaustive: check-sat's three answers
+  ```
+
+  - Both are object-safe, so the facade holds `Arc<dyn _>`.
+  - The later Rust CAS backend implements `Simplifier`. The facade and
+    the Python API do not change for it; `SolverBackend` gains a member
+    naming it.
+  - `simplify` receives the expression with the environment already
+    substituted (D-S8-12). It may return its input, which means "nothing
+    simpler", as the sympy bridge's best-effort cases do.
+- **D-S8-4: capability follows the backends a solver holds** (D-S4-2 for
+  the meaning; crate conventions: no global table). An SMT backend
+  answers satisfiability, implication and universal validity; a
+  simplifier answers simplification. Asking a `Solver` without a capable
+  backend is `SolveError::NoCapableBackend`, checked first, as the
+  capability check is today. The core ships no default backend; defaults
+  are the binding's business (D-S8-13, N-S8-2).
+- **D-S8-5: the screens move to Rust unchanged** (D-S4-2: the same
+  meaning; "tests rewritten, not skipped": the 346 solver tests pin it).
+  `fhy_core::solver::screen` keeps the five hazards, their order, the
+  per-expression rule, the precedence (symbol types, then ill-typedness,
+  then hazards) and both classifications, reading call result sorts and
+  user constants through the `SortLookup` it is given, and the built-in
+  constants through `BuiltinConstant::of_identifier`. The walks keep their
+  pending nodes on the heap, as the core's other walks do.
+  - Y-1 and Y-2 make `DIVIDE` of two ints and floor operations with a
+    negative divisor lower soundly, so the partial-operation rule could
+    later narrow to what SMT-LIB2 cannot say (a zero or non-literal
+    divisor, an unsafe exponent). That changes which questions are
+    decided, so it is a separate change with its own tests, recorded
+    here as a follow-up, not part of S8.
+- **D-S8-6: the SMT-LIB2 lowering is pure Rust with the core's
+  semantics** (D-S4-1; the direction). `fhy_core::solver::smt` lowers an
+  expression and its symbol types to an `SmtScript`: a logic, declarations
+  and assertions over crate-private typed terms. `Display` writes the
+  standard text, and `declarations()` pairs each identifier with its
+  symbol and sort.
+
+  | Expression | SMT-LIB2 |
+  |---|---|
+  | identifier | `(declare-const \|<name_hint>_<id>\| Int)` (`Real`, `Bool`); `\|` and `\` in a name hint become `_`, and the id keeps symbols distinct |
+  | `bool` literal | `true`, `false` |
+  | integer literal | a numeral; a negative one is `(- n)` |
+  | `float`, `Decimal` literal | the exact rational of its value, `(/ p.0 q.0)` (or `p.0` for an integer value), with Real numerals written as decimals, since strict solvers do not read an integer numeral as a real. A non-finite float is refused |
+  | `+`, `-`, `*`, negation | `+`, `-`, `*`, `(- x)`; `+x` is `x` |
+  | mixed Int and Real operands | the Int side under `to_real`, in arithmetic, comparisons and piecewise branches |
+  | `DIVIDE` | `(/ a b)` over reals, `to_real` on an Int side: the exact quotient |
+  | `FLOOR_DIVIDE` | ints: `(div a b)` for a literal positive divisor, `(div (- a) (- b))` for a negative one, and `(ite (> b 0) (div a b) (div (- a) (- b)))` otherwise; reals: `(to_real (to_int (/ a b)))`, which keeps the Real sort the IR gives it |
+  | `MODULO` (`FloorMod`) | ints: `(mod a b)`, `(- (mod (- a) (- b)))` or the `ite` of both, by the divisor's sign; reals: `(- a (* b (to_real (to_int (/ a b)))))` |
+  | `POWER` | an integer literal exponent of at least one is a product built by squaring through `let`, so its size is logarithmic in the exponent; any other exponent is refused |
+  | comparisons | `=`, `distinct`, `<`, `<=`, `>`, `>=` |
+  | `LogicalExpression`, `!` | n-ary `and`, `or`; `not` |
+  | piecewise | a right-folded `ite`, first match wins |
+  | call | refused, naming the call; a user function names `inline_functions` |
+  | native constant's identifier | refused |
+  | a Boolean where a number is required, or the reverse | refused |
+
+  - Division by zero is left to SMT-LIB2, where `/`, `div` and `mod` are
+    total with an unspecified value at zero. The screen refuses those
+    shapes before lowering, as today.
+  - **The logic** is the narrowest of `QF_LIA`, `QF_LRA`, `QF_NIA`,
+    `QF_NRA`, `LIA`, `LRA`, `NIA` and `NRA` that fits (nonlinear when a
+    product has two non-constant factors, or a power appears), and `ALL`
+    otherwise: mixed Int and Real terms, or only Booleans.
+  - A refusal is a `LoweringError` (`#[non_exhaustive]`), which the
+    facade only meets for calls, since the screens refuse the other
+    shapes first.
+- **D-S8-7: the questions are encoded by the facade** (D-S4-2: the same
+  questions; D-S4-1: the core's encoding; Y-6). Each is one script:
+
+  | Question | Script | `Yes` when |
+  |---|---|---|
+  | satisfiability of `e` | `(assert e)` | `sat` |
+  | `a` implies `c` | `(assert (and a (not c)))` | `unsat` |
+  | universal validity, free `F`, considered `C` (those of `e`'s identifiers) | `F` and `C` both non-empty: `(assert (forall (C) (not e)))`, with `F` declared; `C` empty: `(assert (not e))`; `F` empty: `(assert e)` | `unsat`, `unsat`, `sat` |
+
+  A quantifier appears only where the question alternates them, so a
+  quantifier-free solver answers every other question. `sat` and `unsat`
+  map to `Yes` or `No` by the table, and `unknown` to
+  `Unknown(GaveUp { reason })`. Satisfiability no longer goes through the
+  implication. A considered identifier the expression does not mention
+  needs a sort but quantifies nothing, as today.
+- **D-S8-8: one-shot scripts; no sessions or models; timeouts as a
+  `Duration`** (crate conventions; D-S4-2 for the Python name).
+  - Each query builds one script and one check. Today's bridge builds a
+    fresh `z3.Solver` per query, so nothing incremental is lost.
+    `push`/`pop` sessions, which a param's many related questions could
+    use, and models, which no consumer reads, are non-goals. A later
+    `SmtSession` trait can add them without changing `SmtSolver`.
+  - `CheckLimits::with_timeout(Duration)` bounds a check, and each backend
+    enforces it its own way (D-S8-9, D-S8-10). A backend that runs out of
+    time answers `Unknown { reason: "timeout" }`.
+  - Python keeps `timeout_milliseconds` and `validate_timeout_milliseconds`
+    with its text. A value above `u64::MAX` milliseconds raises the same
+    `ValueError`.
+- **D-S8-9: the backends in Rust** (the direction; crate conventions).
+  - **`SmtLib2Process`, in every build.** It drives any SMT-LIB2
+    executable over standard input and output, with `std::process` only:
+    `SmtLib2Process::new(program).with_args(args)`, for example `z3 -in`
+    or `cvc5 --lang=smt2`. It writes the script, `(check-sat)`,
+    `(get-info :reason-unknown)` and `(exit)`, and reads `sat`, `unsat` or
+    `unknown` with the reason. An `(error ...)` line, a missing
+    executable or an unexpected answer is a `BackendError`. A timeout
+    kills the child and answers `Unknown { reason: "timeout" }`. The
+    output is read on a helper thread, so the wait can time out. It is
+    configured explicitly; nothing searches `PATH`.
+  - **`Z3Solver`, behind the off-by-default `z3` cargo feature.**
+    `fhy-core` gains `z3 = { version = "0.21", optional = true }` and
+    `[features] z3 = ["dep:z3"]`.
+    - It links the system `libz3` through `pkg-config`, `z3-sys`'s
+      default. A downstream crate that wants a vendored or downloaded
+      z3 enables `vendored` or `gh-release` on its own `z3` dependency,
+      which Cargo's feature unification applies. `fhy-core` re-exports
+      neither, so its all-features graph gains only `z3`, `z3-sys`,
+      `log` and `pkg-config`, all MIT or Apache-2.0, and `deny.toml`
+      needs no new license.
+    - Each check runs in a fresh context through `with_z3_config`, with
+      the timeout in its `Config`, so no z3 state outlives a query: the
+      crate's rule that nothing but identity is global. `Z3Solver`
+      holds only its configuration and is `Send + Sync`.
+    - It builds z3 terms from the script's typed terms, with no text in
+      between, so a malformed term cannot pass silently through the
+      crate's `from_string`, which returns no error.
+- **D-S8-10: the published wheels reach z3 through z3-solver** (the
+  direction; "no fallback"). The Python extension cannot enable a cargo
+  feature at install time, and linking `libz3` into every wheel would
+  make z3 a required dependency and ship it twice beside z3-solver. So
+  `fhy-core-py` never enables `z3`. Python's `SolverBackend.Z3` is a
+  Python `SmtSolver` over z3-solver, in `passes/z3.py`:
+  - `Z3Solver.check(script, timeout_milliseconds)` creates a
+    `z3.Solver()`, applies `set(timeout=...)`, calls
+    `from_string(script.text)`, then `check()`, and reads
+    `reason_unknown()` for `unknown`;
+  - z3-solver releases the interpreter during its ctypes calls, as it does
+    today, so threads keep running.
+- **D-S8-11: the Python backend classes are P3** (P3; D-S5-9 for new
+  names; D-S5-7 for errors).
+  - `SmtSolver` declares the abstract `check(script: SmtScript, *,
+    timeout_milliseconds: int | None) -> SatResult` and a `name` property
+    that defaults to the class's `__name__`. `SmtScript` is a frozen
+    pyclass with `text` (the whole script), `logic` and `declarations`.
+  - `Simplifier` declares the abstract `simplify(expression) ->
+    Expression` and the same `name`.
+  - `SatResult` is a frozen pyclass: `SatResult.SAT`, `SatResult.UNSAT`,
+    `SatResult.unknown(reason)`, with `status` (a `SatStatus` `StrEnum`
+    of `"sat"`, `"unsat"`, `"unknown"`) and `reason`. It compares by value
+    and pickles as a call.
+  - `SmtLib2ProcessSolver(program, args=())` is the Rust
+    `SmtLib2Process` as an `extends = SmtSolverBase` class, registered with
+    `SmtSolver`.
+  - The adapters hold `Py<PyAny>` and call the hook once per query. A
+    result of the wrong type raises `TypeError` in S2's style. An
+    exception the hook raises propagates as the same object, and a
+    `KeyboardInterrupt` passes through unwrapped.
+  - While a Rust-native backend runs, the binding detaches from the
+    interpreter, so other Python threads run, as they do during a
+    z3-solver call.
+- **D-S8-12: the sympy simplifier is a Python-only P3 backend, and the
+  facade substitutes** (the direction; D-S4-1 for the substitution; Y-9).
+  - `SympySimplifier(Simplifier)` in `passes/sympy.py` lowers, runs
+    `_try_simplify_sympy_expression` with its three best-effort cases
+    unchanged, and lifts.
+  - The facade's `simplify` first screens with `validate_logical_operands`
+    and the environment, then refuses an environment binding a referenced
+    native constant (`NativeConstantBindingError`), then substitutes with
+    the core's `substitute`, and hands the result to the simplifier. The
+    sympy bridge's own substitution already promised the IR's
+    simultaneous semantics, and a Rust CAS backend should not have to
+    re-implement it.
+  - `ExpressionToSympyConverter`, `SympyVariableSubstitutionPass`,
+    `SymPyToExpressionConverter` and the three bridge functions stay
+    public Python, with their registrations (D-S4-2).
+- **D-S8-13: the Python API keeps its names and meaning** (D-S4-2).
+  - The eleven names keep their signatures. A `SolverBackend` member
+    resolves to its adapter: `Z3` to `passes.z3.Z3Solver`, `SYMPY` to
+    `passes.sympy.SympySimplifier`, each created on first use and
+    reused, since they hold no state. `get_backend_capabilities` keeps
+    its static table, a property of the kind of backend.
+  - New names (the Rust names, D-S5-9): `Solver`, a pyclass over the Rust
+    facade with the functions' names as methods, minus `backend`;
+    `SmtSolver`, `Simplifier`, `SmtScript`, `SatResult`, `SatStatus`,
+    `SmtLib2ProcessSolver`; `is_backend_available(backend)`;
+    `convert_expression_to_smtlib2(expression, symbol_types)`, which
+    returns the script's text; and the errors of D-S8-14 and D-S8-15.
+  - `convert_expression_to_z3_expression` keeps its name and result
+    shape: it parses the Rust lowering with `z3.parse_smt2_string`, and
+    maps each identifier to its declared constant. Its terms follow
+    D-S8-6 (Y-8).
+  - How module functions pick a backend when `backend` is omitted, and
+    whether constraints and params can use a plugged backend, is N-S8-2.
+- **D-S8-14: errors are the core's text under the Python classes, and the
+  warnings are kept** (D-S4-1, D-S7-12; D-S6-5 for logging).
+
+  | Core | Python |
+  |---|---|
+  | `NoCapableBackend` | `SolverCapabilityError`, whose text keeps "cannot answer" |
+  | `MissingSymbolTypes` | `KeyError`, whose text keeps "symbol_types is missing" |
+  | `IllTyped` | `NonBooleanLogicalOperandError`, as S4.3a maps it |
+  | `BoundNativeConstant` | `NativeConstantBindingError` |
+  | `Lowering`, for a call or another refused term | `TypeError`, no longer wrapped in `PassExecutionError` (Y-7); for a native constant in `convert_expression_to_*`, `NativeConstantLoweringError` |
+  | `Backend` from a Python backend | the backend's exception itself (D-S8-11) |
+  | `Backend` from a Rust backend | the new `SolverBackendError(RuntimeError)`, with the backend's name and the source's text |
+
+  A screened hazard is logged at WARNING on `fhy_core.symbolic.solver`,
+  as today: the binding writes the entry point's name, the core's hazard
+  text, the node's Python `repr` and the identifier sorts at that node.
+  A backend's `unknown` is logged at WARNING with its reason, as the z3
+  bridge logs it. The core does not log.
+- **D-S8-15: a missing backend is an error at query time, never a
+  degraded answer** ("no fallback"; the direction).
+  - Resolving `SolverBackend.Z3` without z3-solver, or `SYMPY` without
+    sympy, raises the new `SolverBackendUnavailableError(ImportError)`,
+    `register_error`ed, whose message names the package and the extra to
+    install, as the numpy evaluator's `ImportError` does. It is raised
+    when a query needs the backend, never at import.
+  - Constraints and params let it propagate. They do not turn it into
+    UNDECIDED: a missing package is a configuration error, not an
+    undecided question, and reporting UNDECIDED would silently weaken
+    every validation. Paths that never reach a backend (finite domains,
+    set constraints, enumeration, the screens) keep working without
+    either package.
+  - Capabilities can be asked without running a query:
+    `get_backend_capabilities(backend)` (what a kind of backend answers),
+    `is_backend_available(backend)` (whether its package imports), and
+    `Solver.can_answer(kind)`.
+- **D-S8-16: `import fhy_core` imports neither package** (the direction;
+  Y-10). `fhy_core.symbolic.expression` re-exports the four bridge
+  functions through a module `__getattr__` (PEP 562), declared under
+  `TYPE_CHECKING` for type checkers, and `solver.py` imports the adapters
+  on first use. `passes/sympy.py` and `passes/z3.py` keep their
+  module-level imports, since they subclass `sympy.Piecewise` and use `z3`
+  throughout; importing either without its package raises
+  `SolverBackendUnavailableError`. A fresh-interpreter test pins that
+  neither is in `sys.modules` after `import fhy_core`, and
+  `test_import_graph.py` keeps passing, since function-level imports are
+  no load-time edges.
+- **D-S8-17: tests that need a backend are marked, and a minimal
+  session proves the marks** ("tests rewritten, not skipped").
+  - Two markers, `z3` and a new `sympy`, and `tests/conftest.py` skips a
+    marked test when its package is not installed, as it does for `z3`
+    today. That is the only skip, for a documented configuration.
+  - Markers follow what a test reaches, from the probe: the 76 unmarked
+    z3 users and every sympy user are marked, and marks on tests that
+    reach no backend are removed. The five modules that import `z3` or
+    `sympy` at module level mark the whole module and import the package
+    inside the tests or through `pytest.importorskip`.
+  - A new nox session, `tests_minimal`, installs the package with neither
+    package and runs the suite. An unmarked test that reaches a missing
+    backend fails there with `SolverBackendUnavailableError`, so a wrong
+    mark cannot hide. CI runs it on one Python version.
+  - The `test` dependency group gains each package that becomes an
+    extra, so the ordinary sessions run everything.
+  - Under N-S8-1 (b), `tests_minimal` leaves out z3-solver only, and the
+    `sympy` marks take effect when sympy becomes an extra.
+- **D-S8-18: the `z3` feature in CI and docs** (crate conventions; MSRV
+  1.85).
+  - CI's `rust` job builds with `--all-features`, so it installs a
+    `libz3` for the feature, and the `z3` executable for the process
+    backend's tests; S8.3 checks the distribution's `libz3`
+    against `z3-sys` 0.13 first. If it is too old, the job links the
+    `libz3` that the z3-solver wheel ships, through
+    `Z3_LIBRARY_PATH_OVERRIDE`, or enables `z3/gh-release` on that job's
+    command line only, which `deny.toml`'s manifest graph never sees.
+  - The `rust-msrv` job keeps checking the default features. The `z3`
+    crate's own `rust-version` is 1.85, so the feature does not raise the
+    MSRV.
+  - `deny` keeps `all-features = true` and passes with the crates of
+    D-S8-9.
+  - The crate README documents the feature and how to choose the link
+    method. docs.rs builds the default features.
+- **D-S8-19: the Rust tests specify the solver first** (the tests rule;
+  S7.2's test-first practice). The screens, the lowering, the encodings,
+  the facade's errors and order, and the process protocol are specified by
+  Rust tests written against `todo!()` stubs, with a traceability table
+  from `test_solver.py` and `test_z3_pass.py`. The tests that need a real
+  solver run under the `z3` feature.
+- **D-S8-20: the Python tests are rewritten, not skipped** (the tests
+  rule). The behavioral tests stay and change only where a decision
+  changes what they pin; each change is recorded with its reason, as S4.4
+  to S7 did.
+
+### Needs the user
+
+- **N-S8-1: when `sympy` and `z3-solver` become optional extras.** Both
+  are required in `pyproject.toml` today. D-S8-16 makes both lazy either
+  way, so the question is only what `pip install fhy_core` brings. The
+  catch is sympy: it is today's only simplifier, and every param with an
+  equation constraint, a nat param included, needs it to validate a value
+  (the survey above); 351 param and constraint tests reach it that way.
+  z3-solver is needed only by the solver's questions: feasibility,
+  intersection, subset and implication checks.
+  - (a) **Both become extras now:** `fhy_core[z3]`, `fhy_core[sympy]`,
+    and `fhy_core[solvers]` for both. Without sympy, `is_value_valid` of a
+    nat param raises `SolverBackendUnavailableError`.
+  - (b) **z3-solver becomes an extra now; sympy stays a required
+    dependency** (lazily imported) until the Rust CAS backend of the next
+    slice can decide a ground constraint, and becomes an extra then.
+  - (c) **Both stay required** (lazily imported) until Rust backends cover
+    both.
+
+  Recommendation: (b). It makes z3 optional where only the questions
+  that name a solver need it, keeps a plain install able to validate
+  params, and saves the 208 ms sympy import either way. (a) is the full
+  "optional like Python" state, at the price of breaking value validation
+  for a plain install until the CAS slice.
+- **N-S8-2: the default backends, and whether constraints and params can
+  use a plugged one.** The module functions default to `backend=Z3` or
+  `SYMPY`, and `constraint` and `param` call them with the defaults. So a
+  backend a user builds, such as an `SmtLib2ProcessSolver` for cvc5, a
+  Python `SmtSolver`, or the later Rust CAS, reaches only direct calls of
+  a `Solver`. The policy does not cover this, since CONTRIBUTING requires
+  the maintainer's agreement for a new process-global static with
+  interior mutability.
+  - (a) **No global state.** `backend` keeps its defaults and resolves
+    per call (D-S8-13). Plugged backends work through `Solver` objects
+    only, and constraints and params always use z3-solver and sympy.
+  - (b) **A replaceable default `Solver` in the extension's module
+    state,** as N-S7-2 (a) held the function registry: a `Mutex<Arc<_>>`,
+    never locked across a call into Python, with
+    `set_default_solver(solver)` and `get_default_solver()`. The module
+    functions' `backend` defaults to `None`, meaning the default solver,
+    whose initial value holds the z3-solver and sympy adapters. A named
+    member still selects its adapter. Constraints and params then use a
+    plugged backend unchanged, and CONTRIBUTING's section records the
+    static.
+  - (c) **Thread a `solver` argument** through `ConstraintSystem`'s
+    entry points, `Constraint.evaluate_with_bindings` and the param
+    checks that reach them: more than a dozen public signatures.
+
+  Recommendation: (b). It is the only option in which a plugged backend
+  reaches the layers that ask the most questions, without changing their
+  signatures, and it keeps the core free of global state, as the S7
+  registry did.
+
+### Steps
+
+1. **S8.1: benchmarks.** Add `benchmarks/test_solver.py` as planned
+   above, and record the baseline here, on today's Python solver.
+2. **S8.2: core additions, test-first, with Rust tests.**
+   - `fhy_core::solver` (`solver.rs`) with `solver/screen.rs`,
+     `solver/smt.rs` (with `smt/term.rs`, `smt/lower.rs`, `smt/print.rs`),
+     `solver/backend.rs` (the traits, `SatResult`, `CheckLimits`),
+     `solver/error.rs` and `solver/process.rs`.
+   - The tests are written first and fail against `todo!()` stubs, as in
+     S4.2 and S7.2. `lib.rs`, the crate README and CONTRIBUTING's module
+     table list the module.
+   - Nothing in Python changes, so the suite stays green.
+3. **S8.3: the `z3` feature.** `solver/z3.rs` under `#[cfg(feature =
+   "z3")]`, its tests under the same `cfg`, the manifest and README, and
+   the CI changes of D-S8-18. The step ends with `deny` and the `rust`
+   job green with the feature built.
+4. **S8.4: the binding.** Add `rust/fhy-core-py/src/solver.rs` with:
+   - `backends.rs`: `SmtSolverBase`, `SimplifierBase`, the two Python
+     adapters, and `SmtLib2ProcessSolver`;
+   - `values.rs`: `SmtScript`, `SatResult`, and the result conversions;
+   - `facade.rs`: `Solver`, and the functions `solver.py` calls, which
+     take the registry snapshot of S7 as their `SortLookup`;
+   - `error.rs`: D-S8-14's mapping, and the warnings;
+   - `state.rs`, only under N-S8-2 (b).
+
+   Everything new goes into `_rs.pyi`. Nothing in Python uses it yet, so
+   the suite stays green.
+5. **S8.5: the Python switch** (marked breaking). `solver.py` becomes the
+   thin layer. `passes/z3.py` becomes the z3-solver adapter (`Z3Solver`,
+   `convert_expression_to_z3_expression`) and loses the converter and the
+   unscreened questions. `passes/sympy.py` gains `SympySimplifier` and
+   loses `simplify_expression`. `symbolic/expression/__init__.py`
+   re-exports lazily (D-S8-16). The README's expression row changes. It
+   lands together with S8.6 when the migration is small enough to review
+   in one commit; otherwise it leaves exactly the tests of the migration
+   table failing, as S7.4 did.
+6. **S8.6: tests.** Migrate the tests and add the interface suite (the
+   test plan below).
+7. **S8.7: optional extras.** `pyproject.toml` per N-S8-1, the markers and
+   `conftest.py` of D-S8-17, the `test` group, the `tests_minimal` nox
+   session and its CI job, and the README's install line. The step ends
+   with `tests_minimal` green.
+8. **S8.8: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with `pytest` and `-m "not very_slow"`
+green, the `property` session, `lint` and `type_check` clean,
+`tests/test_rs_stub.py` green, and the Rust gate green (fmt, clippy `-D
+warnings`, tests, doc `-D warnings`, deny, `cargo +1.85 check`), with the
+`z3` feature built from S8.3 on.
+
+### Test plan
+
+**Rust tests, written first (S8.2 and S8.3),** in a new
+`tests/it/solver/` area:
+
+- **`screen_stories.rs`:** each hazard, the shapes it refuses and the
+  neighbours it admits, one case per screen test of `test_solver.py`;
+  the order of the five; the first hazard wins; each
+  expression screened on its own; the classifications, call result sorts
+  through a `SortLookup` included; built-in and user constants, and an
+  identifier merely named like one; a 100,000-level tree on a small
+  stack.
+- **`smt_lowering_stories.rs`:** the script text for each row of
+  D-S8-6's table, pinned as strings: the exact rationals of `0.1`, `1e16`
+  and a decimal; `to_real` in each position; the three floor encodings
+  per divisor sign, and the real ones; a power by squaring, with its size
+  logarithmic in the exponent; the logic chosen for each theory mix;
+  symbol quoting; every refusal and its `Display`.
+- **`solver_stories.rs`**, with a recording fake `SmtSolver` and a fake
+  `Simplifier`:
+  - capabilities, and `NoCapableBackend` checked first;
+  - the order: missing symbol types, then ill-typedness, then the hazards,
+    each pinned where the Python tests pin it;
+  - the script of each question, and the answer from each `SatResult`
+    (D-S8-7), quantifiers only where both sets are non-empty;
+  - `Unknown` reasons, screened and given up;
+  - the timeout reaching the backend;
+  - a backend's error as `SolveError::Backend` with its source;
+  - simplification: the screen with the environment, the constant-binding
+    refusal, the substitution before the simplifier, and the simplifier's
+    input itself when the environment binds nothing.
+- **`process_stories.rs`**, `cfg(unix)`, with `sh` scripts as fake
+  solvers: the protocol for each answer and reason, an `(error ...)`
+  line, a missing program, a solver that never answers (the timeout kills
+  it), and a process that dies. Tests against a real `z3` executable run
+  when the `FHY_SMT_SOLVER` variable names one; CI's `rust` job installs
+  the distribution's `z3` and sets it.
+- **`z3_stories.rs`**, `cfg(feature = "z3")`: every decided case of
+  `test_solver.py` decided the same way, `unknown` on a timeout,
+  concurrent checks on several threads, and nothing kept between queries.
+- **`solver_properties.rs`:** the lowering of a random screened-safe
+  ground tree prints a script whose satisfiability, under the `z3`
+  feature, agrees with an exact rational reference evaluation; and the
+  three questions agree with brute force over small integer domains, as
+  the Python properties do (feature-gated).
+- A traceability table maps `test_solver.py`, `test_solver_properties.py`
+  and `test_z3_pass.py` to them, as S4.2 and S7.2 did.
+
+**The interface suite, `tests/symbolic/test_solver_rust_binding.py`,**
+covers what the binding adds over the core:
+
+- **Class structure.** `SmtSolver` and `Simplifier` enforce their
+  abstract methods; a subclass with its own `__init__` constructs;
+  `SmtLib2ProcessSolver` extends `SmtSolverBase` and is an `SmtSolver`;
+  `Solver`, `SmtScript` and `SatResult` are frozen; the stubs are covered
+  by `tests/test_rs_stub.py`.
+- **P3 driving.** A Python `SmtSolver` receives the script text and the
+  timeout, once per query; each `SatResult` becomes its answer; a wrong
+  result type raises `TypeError`; an exception propagates as the same
+  object; a `KeyboardInterrupt` passes through; a nested query inside a
+  hook works. The same for a Python `Simplifier`, whose input is the
+  substituted expression object.
+- **`SatResult`**: construction, equality, `repr`, pickles.
+- **Backends.** `SolverBackend.Z3` and `SYMPY` resolve to their adapters,
+  one object each; `is_backend_available`; `SolverBackendUnavailableError`
+  and its message, in a subprocess with `sys.modules["z3"] = None` (and
+  the same for `sympy`); `get_backend_capabilities` unchanged.
+- **Imports.** A fresh `import fhy_core` imports neither `sympy` nor `z3`;
+  the lazy re-exports resolve; importing a bridge without its package
+  raises `SolverBackendUnavailableError`.
+- **Errors and warnings.** Each row of D-S8-14, and the warning's logger,
+  level, entry point, node `repr` and sorts.
+- **The lowering.** `convert_expression_to_smtlib2` pins a few scripts,
+  and `convert_expression_to_z3_expression`'s identifier map holds the
+  declared constants.
+- **Threads.** Concurrent queries from several threads, each with a
+  Python backend and with the process backend.
+- **Under N-S8-2 (b):** the default solver, replacing it, and
+  constraints and params reaching a plugged backend.
+
+**Migrating the existing tests.** No test is skipped or deleted without a
+rewrite, and each change is recorded with its reason:
+
+- **`test_solver.py` (346).**
+  - The 11 `monkeypatch.setattr` calls on `z3.Solver`, which force
+    `unknown` or observe the timeout, use a fake `SmtSolver` through a
+    `Solver`, or patch `Z3Solver.check` (D-S8-11).
+  - The white-box `_BACKEND_CAPABILITIES` drift test reads
+    `get_backend_capabilities` over every `SolverBackend` member.
+  - `test_simplify_expression_matches_direct_bridge_pipeline` compares
+    with `SympySimplifier` over the substituted expression (D-S8-1,
+    D-S8-12).
+  - The warning tests keep matching the phrases the core's texts keep;
+    any that do not are rewritten to the core's text (D-S8-14).
+  - The tests that describe a `Z3Exception` wrapped as
+    `PassExecutionError` pin the refusal that replaces it (Y-7).
+  - The rest keep their meaning; markers follow D-S8-17.
+- **`test_solver_properties.py` (8)** is unchanged, with markers.
+- **`test_z3_pass.py` (108).**
+  - The converter's shape tests become Rust lowering stories, and the
+    Python file keeps tests of `convert_expression_to_z3_expression` over
+    the new lowering, rewritten where Y-1 to Y-5 and Y-8 change a term.
+  - `_z3_floor_divide`'s tests become the floor-encoding stories.
+  - The 17 calls of the unscreened questions call the solver's functions.
+    Where a test relied on the missing screen, it pins the screen's
+    refusal or asks through `convert_expression_to_smtlib2` instead.
+- **`test_cross_cutting.py` (20):** the registration list loses `to_z3`
+  (D-S8-1), and the one-literal agreement compares the SMT-LIB2 numeral
+  with sympy's.
+- **`test_sympy_pass.py` (627)** changes only for its one call of the
+  bridge's `simplify_expression` and its markers.
+  `test_sympy_pass_properties.py` and `test_sympy_natives.py` change only
+  their markers.
+- **Constraint and param tests** change only where they pin a message or
+  a `PassExecutionError` that Y-7 or D-S8-14 changes, and in their
+  markers. The six places in `test_constraint_system.py` that patch the
+  solver's functions keep working, since those names stay.
+- **`tests/test_import_graph.py`** gains no edge; a new test pins D-S8-16.
