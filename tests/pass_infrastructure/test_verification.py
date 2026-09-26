@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import pytest
 
 import fhy_core.pass_infrastructure as pass_infra
+from fhy_core import _rs
 from fhy_core.diagnostic import (
     DiagnosticLevel,
     Note,
@@ -673,15 +674,16 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
     _Cached(0)  # primes the cache
 
     # If subsequent instantiations consulted the registry again, breaking the
-    # registry's public lookup method would cause the test to fail. The
-    # positive-result cache means the lookup is never invoked again.
+    # registry lookup `VerifiableMixin` calls (`_rs`, D-S14-10) would cause
+    # the test to fail. The positive-result cache means the lookup is never
+    # invoked again.
     def _unreachable(_ir_type: type) -> tuple[type[CompilerPass[object, object]], ...]:
         raise AssertionError(
-            "VerificationRegistry.get_passes_for should not be called after the "
+            "_rs.get_verification_passes_for should not be called after the "
             "positive-result cache is primed."
         )
 
-    monkeypatch.setattr(VerificationRegistry, "get_passes_for", _unreachable)
+    monkeypatch.setattr(_rs, "get_verification_passes_for", _unreachable)
 
     follow_up = _Cached(1)
 
