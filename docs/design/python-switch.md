@@ -90,7 +90,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost, accepted by the maintainer; see "S9 benchmarks")
 - [ ] S12: the Rust SymPy simplifier backend (designed 2026-09-26; see "S12: the Rust SymPy simplifier backend")
   - [x] N-S12-1 decided as (a) (2026-09-26; see "S12 resolutions")
-  - [ ] S12.1: SymPy benchmarks and baseline, on today's Python adapter
+  - [x] S12.1: SymPy benchmarks and baseline, on today's Python adapter (12 rows; see "S12.1 baseline")
   - [ ] S12.2: the simplify context carries the function registry (core, test-first)
   - [ ] S12.3: the `sympy` cargo feature and `SympySimplifier`, test-first, with the CI changes
   - [ ] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs)
@@ -11413,3 +11413,57 @@ files stay small and additive:
   the Progress checklist.
 - **S11 (types)** uses neither the simplifier nor the SymPy bridge, and
   S12 does not use types, so no code depends across the two.
+
+### S12.1 baseline (2026-09-26, a641699 plus the new benchmarks)
+
+`benchmarks/test_sympy.py` implements the benchmark plan's seven rows.
+Every call keeps its spelling across S12, so no helper carries a decision
+mark.
+
+- **The bound piecewise** is `(x + 1 if b; x * 2 if x > 0; x - 1
+  otherwise) > 3` with `x = 2` and `b = false`.
+- **The Boolean comparison** is `(x < 1) == b && x > -5` with `b = true`,
+  which leaves `x` free. So `sympy.simplify` works on a relational, and
+  the row is dominated by SymPy.
+- **The fresh-interpreter row** runs `simplify_expression` of a bound
+  comparison once in a new process, five rounds through `pedantic`.
+
+The measurements:
+
+- Command: `.venv/bin/python -m pytest benchmarks/test_sympy.py
+  benchmarks/test_solver.py -k '...' -n 0 --benchmark-only`, with the five
+  simplification rows of `test_solver.py` selected.
+- Measured: the median time per call of today's Python bridge.
+- Environment: the S0 machine, with Python 3.11.13, sympy 1.14.0 and
+  pytest-benchmark 5.3.0.
+- The load average was below 2, and the table lists the best of three
+  runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_lower_to_sympy_of_a_deep_tree` | 433.4 µs |
+| `test_lift_from_sympy_of_a_deep_tree` | 104.6 µs |
+| `test_substitute_sympy_variables_of_a_deep_tree` | 76.6 µs |
+| `test_sympy_simplifier_of_a_ground_comparison` | 41.6 µs |
+| `test_simplify_expression_of_a_bound_piecewise` | 105.1 µs |
+| `test_simplify_expression_of_a_boolean_comparison` | 8.55 ms |
+| `test_first_simplification_in_a_fresh_interpreter` | 444 ms |
+| `test_solver.py::test_simplify_expression_of_a_ground_comparison` | 50.8 µs |
+| `test_solver.py::test_simplify_expression_symbolic` | 72.6 µs |
+| `test_solver.py::test_equation_constraint_evaluate_with_bindings` | 60.2 µs |
+| `test_solver.py::test_nat_param_is_value_valid` | 63.3 µs |
+| `test_solver.py::test_import_fhy_core` | 203 ms |
+
+What the numbers show:
+
+- **The lowering** of the deep tree takes 433 µs, a visitor call and a
+  SymPy constructor per node. Lifting takes 105 µs, and substituting four
+  literals 77 µs.
+- **The simplifier alone** takes 42 µs on a ground comparison. Through
+  `simplify_expression` with a binding it takes 51 µs, and the value
+  checks of the constraint and param layers take about 60 µs.
+- **The Boolean comparison** takes 8.6 ms, almost all of it
+  `sympy.simplify` on a relational.
+- **A fresh interpreter** that imports `fhy_core` and simplifies once
+  takes 444 ms, of which SymPy's import is most of the difference from
+  the 203 ms plain import.
