@@ -126,7 +126,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer; 144 new tests)
   - [x] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
   - [x] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`, with the migrated tests
-  - [ ] S13a.5: tests migrated, and the interface suite
+  - [x] S13a.5: tests migrated (with S13a.4), and the interface suite (47)
   - [ ] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`)
   - [ ] S13b.2: the system's binding
   - [ ] S13b.3: the Python switch of `system.py`, with its tests
@@ -15634,6 +15634,31 @@ very_slow"` 7,718 passed, ruff and mypy clean.
 | `test_set_constraints.py::test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set` (10) | `test_set_constraint_reader_does_not_rebuild_the_members` | D-S13-1: the patched `_wrap_member_collection` is gone; every reader leaves the one members tuple in place |
 | `test_set_constraints.py::test_set_constraint_replace_rederives_the_member_set_from_the_new_values` (2) | `test_set_constraint_rebuilt_with_new_values_decides_against_them` | C-3: no dataclass, so `type(c)(c.variable, values)`, as param rebuilds one |
 | `test_constraint_system.py`: the four `match="Conversion of type ..."` | same names | C-6: the core's lowercase text |
+
+### S13a.5 status
+
+The new `tests/symbolic/constraint/test_constraint_rust_binding.py` (47
+tests, counting parametrized cases) covers the interface suite of the
+test plan for the three leaves: the class structure (each leaf extends its
+`_rs` class and is a virtual `Constraint` and `FrozenMixin`, not a real
+one), the frozen contract, identity `==` and `hash`, equivalence only
+within one class, the renaming argument's `TypeError`; the objects kept
+(the expression, the variable, an opaque member, the one members tuple,
+and the variable object in `convert_to_expression`'s comparisons); the
+readers (an `IntEnum`, a float subclass, a str subclass, `-0.0` and a big
+integer stored as the exact builtin value, plain containers, subclass
+bindings decided type-strictly, a mapping that is not a dict read once,
+keys that are no identifiers ignored, bindings that are no mapping
+refused); opaque members found by `==`, and the exception their `==`
+raises reaching the caller as itself, a `KeyboardInterrupt` included;
+equations decided by a plugged default simplifier that sees the
+substituted expression, a non-Boolean result's error, and set
+constraints asking no solver; the DEBUG record of an unbound variable and
+no record at a disabled level; the unhashable-member, NaN, string-member
+and negative-decimal errors with their causes; `does_member_lift_to_expression`;
+pickling and copying; a payload in another member order decoding to the
+canonical order; and eight threads agreeing. At the end: `pytest` 7,732
+passed, `-m "not very_slow"` 7,765 passed, ruff and mypy clean.
 
 ### S13 resume notes
 
