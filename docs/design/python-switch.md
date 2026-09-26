@@ -72,7 +72,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.8: benchmarks after, and docs (every solver row faster, or within 10%, after c0af152; see "S8 benchmarks")
 - [ ] S10: terms (designed; see "S10: terms")
   - [x] N-S10-1 decided as (a), N-S10-2 as (b)
-  - [ ] S10.1: term benchmarks and baseline
+  - [x] S10.1: term benchmarks and baseline (32 rows; see "S10.1 baseline")
   - [ ] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
   - [ ] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
   - [ ] S10.4: the Python switch
@@ -8359,3 +8359,67 @@ shared files stay small and additive:
 
 S10 does not use the solver or the evaluators, and they do not use
 `AlphaRenaming`, so no code depends across the slices.
+
+### S10.1 baseline (2026-09-26, e2bb157 plus the new benchmarks)
+
+`benchmarks/test_term.py` implements the benchmark plan above, with its
+own toy classes: a lambda calculus over `BinderMixin` (`_Var`, `_App`,
+`_Lam`), derived terms (`_DerivedConst`, `_DerivedAdd`, `_DerivedVar`,
+`_DerivedLam`) and `_DerivedExpressionHolder`, a binder over S4.1's
+100-operation tree, as a param binds its constraints. The param rows use
+`create_integer_param()` and `create_natural_param_between(1, 10)`, and the
+symbol-table row two tables of 20 variables.
+
+Median time per call, from `.venv/bin/python -m pytest
+benchmarks/test_term.py <the two reruns> -n 0 --benchmark-only` in the
+worktree's environment, measuring today's Python package. The machine is
+the S0 one, with Python 3.11.13 and pytest-benchmark 5.3.0. The load
+average was about 2, and the table lists the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_alpha_renaming_empty` | 915 ns |
+| `test_alpha_renaming_with_free_renaming[1]` | 1.17 µs |
+| `test_alpha_renaming_with_free_renaming[50]` | 4.43 µs |
+| `test_alpha_renaming_extend[depth_1]` | 1.27 µs |
+| `test_alpha_renaming_extend[depth_10]` | 1.29 µs |
+| `test_alpha_renaming_resolve[frame]` | 304 ns |
+| `test_alpha_renaming_resolve[free]` | 409 ns |
+| `test_alpha_renaming_resolve[identity]` | 336 ns |
+| `test_are_identifiers_alpha_equivalent[frame]` | 462 ns |
+| `test_are_identifiers_alpha_equivalent[capture]` | 310 ns |
+| `test_alpha_renaming_eq` | 1.38 µs |
+| `test_alpha_renaming_hash` | 303 ns |
+| `test_binder_alpha_equivalence[flat]` | 4.86 µs |
+| `test_binder_alpha_equivalence[nested_10]` | 27.3 µs |
+| `test_binder_free_identifiers` | 1.21 µs |
+| `test_binder_substitute[no_capture]` | 2.25 µs |
+| `test_binder_substitute[capture]` | 8 µs |
+| `test_derived_structural_equivalence_of_a_deep_tree` | 2.11 ms |
+| `test_derived_alpha_equivalence_of_a_deep_tree` | 2.31 ms |
+| `test_derived_alpha_equivalence_of_binders` | 7.92 µs |
+| `test_derived_equivalence_over_expressions` | 16.7 µs |
+| `test_mapping_helper` | 50.2 µs |
+| `test_param_alpha_equivalence[integer]` | 32.4 µs |
+| `test_param_alpha_equivalence[natural_between]` | 61.6 µs |
+| `test_param_structural_equivalence` | 41.1 µs |
+| `test_param_construction_between_bounds` | 71.3 µs |
+| `test_constraint_structural_equivalence` | 3.85 µs |
+| `test_symbol_table_structural_equivalence` | 829.0 µs |
+| `test_expression_alpha_equivalence_under_frames[1]` | 1.42 µs |
+| `test_expression_alpha_equivalence_under_frames[10]` | 10.1 µs |
+| `test_alpha_equivalence_under_free_renaming_of_deep_trees` (rerun) | 8.67 µs |
+| `test_registered_function_alpha_equivalence` (rerun) | 848 ns |
+
+- **The derived walk** is the slow path: 21 µs per node over the
+  100-addition tree, structurally or alpha, and 41 µs per frame over the
+  symbol tables. Each field pays the runtime-protocol `isinstance`
+  checks.
+- **The consumers** pay it per comparison: a param comparison takes 32 to
+  62 µs, and building a bounded integer param 71 µs.
+- **`BinderMixin`** costs about 2.7 µs per binder level, and a
+  substitution that renames to avoid capture 8 µs.
+- **The renaming** answers a lookup from Python in 300 to 460 ns, and
+  `extend` takes 1.3 µs at any depth, since it copies only the tuple of
+  frames. An expression compared under ten frames takes 10 µs, most of it
+  S4.3a's conversion.
