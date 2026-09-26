@@ -17,6 +17,7 @@ mod provenance_stories;
 mod serde_format_stories;
 mod solver;
 mod support;
+mod symbol_table;
 mod tag_type_stories;
 mod term;
 mod tree;

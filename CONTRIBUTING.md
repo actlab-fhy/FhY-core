@@ -522,6 +522,8 @@ module depends only on the layers before it:
    depends on `expression` and never on `pass`
 7. `constraint`, the constraints over identifiers, which depends on `solver`
    and never on `pass`
+8. `symbol_table`, the symbol table and its frames, which depends on `types` and
+   never on `pass`
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -551,6 +553,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
 | `fhy_core.types.checking` | `fhy_core::types::checking`; the body-check pass stays a Python `CompilerPass` over it |
 | `fhy_core.symbolic.constraint` | `fhy_core::constraint`; the Python-defined constraints and the member objects only Python compares reach it through the binding's adapters |
+| `fhy_core.symbol_table` | `fhy_core::symbol_table`; the abstract `SymbolTableFrame` that Python-defined frames subclass stays in Python |
 
 ### Errors belong to their module
 

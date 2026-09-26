@@ -134,7 +134,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S15: the symbol table (`symbol_table.py`; "Needs the user" is empty; see "S15: the symbol table")
   - [x] S15 design (D-S15-1 to D-S15-16)
   - [x] S15.1: symbol-table benchmarks and baseline (21 rows; see "S15.1 baseline")
-  - [ ] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`)
+  - [x] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`: `SymbolTable`, `Frame`, `SymbolFrame`, `FunctionKeyword`; 59 new tests, see "S15.2 implementation notes")
   - [ ] S15.3: the binding (the table, the three frames, the stubs)
   - [ ] S15.4: the Python switch
   - [ ] S15.5: tests migrated, and the interface suite
@@ -16701,3 +16701,48 @@ best of three runs' medians, and is indicative.
   its parent walk and DEBUG line. `get_namespace` is a dict read, 0.24 µs,
   since it returns the table's own dict. Deserialization is the slowest
   path, 1.2 ms for 20 variables.
+
+### S15.2 implementation notes
+
+The tests were written first, against `todo!()` stubs of every public
+method and trait impl of the new module (the private ordered map, which
+nothing outside the module reaches, was written with them). Of the 59 new
+tests (55 stories and 4 properties), 58 failed against the stubs; the one
+that passed checks that `SymbolTable<SymbolFrame>` is `Send + Sync`. The
+proptest seed files the failing runs wrote were deleted, as in S11. The
+shape follows D-S15-2, with these choices:
+
+- **Layout.** `symbol_table.rs` with `symbol_table/table.rs` (the table
+  and the `Namespace` view), `frame.rs` (`Frame`, the three frames,
+  `SymbolFrame`, `FunctionKeyword`), `ordered.rs` (the private
+  insertion-ordered map) and `error.rs` (`SymbolTableError`,
+  `Violation`).
+- **Storage.** The table is an ordered map from each namespace to its
+  parent and its ordered map of symbols. The ordered map is a `Vec` of
+  entries with a `HashMap` index; replacing a value keeps its position,
+  and removing one shifts the later entries' positions, a linear cost on
+  the removal paths only.
+- **The cycle check of `violations` is linear.** Python walks each
+  namespace's whole chain, which is quadratic in a long chain. The core
+  classifies each chain once: a walk stops at the first namespace already
+  classified, and every namespace on its path takes the answer. The
+  reported namespaces are Python's: each one whose walk comes back to a
+  namespace it passed, whether it lies on the cycle or leads into it.
+- **`add_symbol` shares `lookup`'s walk,** through a private `resolve`
+  that also returns the namespace holding the symbol, which
+  `SymbolAlreadyDefined` names as `defined_in`. Its text adds `, an
+  ancestor of namespace ..` when that is not the target namespace.
+- **`CyclicNamespace`'s text** is ``namespace a::5 is cyclic: the walk up
+  its parents returns to it``, keeping the phrase `is cyclic` that the
+  Python test matches.
+- **One story changed while it was written:** a lookup that finds its
+  symbol before the walk closes a cycle cannot be built with
+  `add_symbol`, whose own walk meets the cycle, as Python's does. The
+  story builds it with `update_namespaces`, which leaves a namespace's
+  parent alone when the other table names none.
+- **Docs.** The crate README and `lib.rs` list the module, and
+  CONTRIBUTING gains the module's row and the seventh layer.
+
+The Rust gate is green: fmt, clippy `-D warnings` both ways, 3,825 tests
+(3,857 with all features), doc `-D warnings` both ways, deny, and
+`cargo +1.85 check` both ways. Python is unchanged in this step.
