@@ -142,7 +142,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S16: params, in two parts (see "S16: params"; "Needs the user" is empty)
   - [x] S16.0: the design (survey, divergences P-1 to P-14, decisions D-S16-1 to D-S16-22, benchmark plan, steps, test plan)
   - [ ] S16a: values and domains
-    - [ ] S16a.1: param benchmarks and baseline
+    - [x] S16a.1: param benchmarks and baseline (55 rows; see "S16a.1 baseline")
     - [ ] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events)
     - [ ] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
     - [ ] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests
@@ -17728,3 +17728,86 @@ Commit per step. Every step ends with these green:
 - **Everything else is expected to pass unchanged:** the log tests
   (D-S16-7), the tri-state and soundness tests, the serialization pins,
   the pickle properties, and the solver-binding tests.
+
+### S16a.1 baseline (2026-09-26, 9ef68f3 plus the new benchmarks)
+
+`benchmarks/test_param.py` implements the benchmark plan, with its own
+`Serializable` value class, `_Level`. Two rows are named more simply than
+in the plan: `test_param_add_lower_bound` (the plan's `[natural]`) and
+`test_param_alpha_equivalence` (the plan's `[natural_between]`), which the
+reruns' `(rerun)` suffix tells apart from `test_term.py`'s rows of the same
+names. `target/bench.sh` runs the file and the reruns, each with `-n 0
+--benchmark-only`, from a copy of the tree under `target/before` (the
+extension built at 452d0f6), and the table lists the best of three
+medians. The machine is the S0 one, with Python 3.11.13 and
+pytest-benchmark 5.3.0; the load average was 10 to 16 from other work. The
+numbers measure today's Python package.
+
+| Benchmark | before |
+|---|--:|
+| `test_constraint_system_construction (rerun)` | 20.67 µs |
+| `test_domain_construction[categorical_100]` | 2.13 ms |
+| `test_domain_construction[ordinal_100]` | 1.54 ms |
+| `test_domain_construction[ordinal_serializable]` | 376.12 µs |
+| `test_int_param_intersection_feasibility (rerun)` | 601.21 µs |
+| `test_nat_param_is_value_valid (rerun)` | 13.25 µs |
+| `test_param_add_lower_bound` | 19.60 µs |
+| `test_param_alpha_equivalence` | 5.12 µs |
+| `test_param_alpha_equivalence[integer] (rerun)` | 4.34 µs |
+| `test_param_alpha_equivalence[natural_between] (rerun)` | 5.18 µs |
+| `test_param_arithmetic[add]` | 64.45 µs |
+| `test_param_arithmetic[mul]` | 68.62 µs |
+| `test_param_arithmetic[neg]` | 57.12 µs |
+| `test_param_arithmetic[sub]` | 64.01 µs |
+| `test_param_assign` | 35.69 µs |
+| `test_param_assignment_deserialize_from_dict` | 132.30 µs |
+| `test_param_attribute_read` | 139 ns |
+| `test_param_check_feasibility[in_set]` | 86.85 µs |
+| `test_param_check_feasibility[natural_between]` | 501.29 µs |
+| `test_param_check_feasibility[ordinal_20]` | 1.98 µs |
+| `test_param_check_feasibility[permutation_4]` | 10.21 µs |
+| `test_param_check_feasibility[real_between]` | 495.96 µs |
+| `test_param_check_subset[in_set]` | 250.22 µs |
+| `test_param_check_subset[integer]` | 569.17 µs |
+| `test_param_check_subset[ordinal_20]` | 52.97 µs |
+| `test_param_construction[categorical_4]` | 14.44 µs |
+| `test_param_construction[integer]` | 10.02 µs |
+| `test_param_construction[interval_between]` | 50.34 µs |
+| `test_param_construction[natural_between]` | 62.72 µs |
+| `test_param_construction[ordinal_20]` | 78.26 µs |
+| `test_param_construction[permutation_4]` | 14.01 µs |
+| `test_param_construction_between_bounds (rerun)` | 41.66 µs |
+| `test_param_deserialize_from_dict` | 181.77 µs |
+| `test_param_intersection[integer]` | 603.98 µs |
+| `test_param_intersection[ordinal_20]` | 295.90 µs |
+| `test_param_intersection[permutation_4]` | 35.02 µs |
+| `test_param_is_value_valid[categorical_4-c]` | 4.07 µs |
+| `test_param_is_value_valid[natural_between-3]` | 37.77 µs |
+| `test_param_is_value_valid[ordinal_20-7]` | 5.35 µs |
+| `test_param_is_value_valid[permutation_4-value3]` | 11.96 µs |
+| `test_param_is_value_valid[serializable-value4]` | 21.67 µs |
+| `test_param_pickle_round_trip` | 22.79 µs |
+| `test_param_repr` | 2.94 µs |
+| `test_param_serialize_to_dict` | 8.41 µs |
+| `test_param_str` | 3.55 µs |
+| `test_param_structural_equivalence` | 10.56 µs |
+| `test_param_structural_equivalence (rerun)` | 3.04 µs |
+| `test_param_union[categorical_4]` | 47.89 µs |
+| `test_param_union[ordinal_20]` | 466.56 µs |
+| `test_param_validate_value_violation` | 91.29 µs |
+| `test_set_constraint_evaluate_with_bindings[literal_expression] (rerun)` | 726 ns |
+| `test_set_constraint_evaluate_with_bindings[member] (rerun)` | 769 ns |
+| `test_set_constraint_evaluate_with_bindings[non_member] (rerun)` | 771 ns |
+| `test_set_constraint_evaluate_with_bindings[serializable] (rerun)` | 2.07 µs |
+| `test_set_constraint_evaluate_with_bindings[unbound] (rerun)` | 480 ns |
+
+- **Finite domains** cost about 15 to 21 µs per value to build at 100
+  values: the pairwise uniqueness check and the `repr` sort are Python.
+  Their value checks cost 4 to 12 µs, a `Serializable` value 22 µs.
+- **The set algebra of finite params** takes 0.3 to 0.5 ms for 20 values
+  (each side's values filtered through their constraints, then a new
+  domain validated), and **deserialization** 132 to 182 µs.
+- **The questions** of numeric params take 0.5 to 0.6 ms, most of it z3;
+  an in-set param decides by enumeration in 87 µs (feasibility) and 250
+  µs (subset). Value checks of a bounded natural param take 38 µs, most of
+  it SymPy.
