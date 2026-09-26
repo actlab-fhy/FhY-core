@@ -135,7 +135,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S15 design (D-S15-1 to D-S15-16)
   - [x] S15.1: symbol-table benchmarks and baseline (21 rows; see "S15.1 baseline")
   - [x] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`: `SymbolTable`, `Frame`, `SymbolFrame`, `FunctionKeyword`; 59 new tests, see "S15.2 implementation notes")
-  - [ ] S15.3: the binding (the table, the three frames, the stubs)
+  - [x] S15.3: the binding (the table, the three frames, the stubs; with the core's `SymbolTable::insert_namespace` for pickling)
   - [ ] S15.4: the Python switch
   - [ ] S15.5: tests migrated, and the interface suite
   - [ ] S15.6: benchmarks after, and docs

@@ -22,6 +22,7 @@ mod provenance;
 mod public_class;
 mod serialization;
 mod solver;
+mod symbol_table;
 mod term;
 mod types;
 mod value_domain;
@@ -88,6 +89,11 @@ mod rs_module {
     use super::solver::{
         PySatResult, PySimplifierBase, PySmtLib2ProcessSolver, PySmtScript, PySmtSolverBase,
         PySolver, PySympySimplifier, get_default_solver, set_default_solver,
+    };
+    #[pymodule_export]
+    use super::symbol_table::{
+        PyFunctionSymbolTableFrame, PyImportSymbolTableFrame, PySymbolTable,
+        PyVariableSymbolTableFrame,
     };
     #[pymodule_export]
     use super::term::{

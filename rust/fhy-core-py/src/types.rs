@@ -40,3 +40,8 @@ pub(crate) use dispatch::{
     types_substitute_data_template, types_substitute_template, types_unify, types_unify_expression,
 };
 pub(crate) use environment::PyTypeUnificationEnvironment;
+// For the symbol table's frames (S15), which hold types and qualifiers.
+pub(crate) use adapter::run_in_context;
+pub(crate) use classes::MayCallPython;
+pub(crate) use convert::read_type_value;
+pub(crate) use enums::{read_type_qualifier, type_qualifier_to_python};
