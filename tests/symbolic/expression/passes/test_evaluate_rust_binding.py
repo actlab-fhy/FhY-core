@@ -722,3 +722,51 @@ def test_concurrent_evaluations_agree() -> None:
     assert len(results) == 4
     for result in results:
         assert np.array_equal(result, expected)
+
+
+# =============================================================================
+# NumPy kernels (N-S9-2 (b))
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.linspace(-2.0, 2.0, 7),
+        np.asfortranarray(np.linspace(-2.0, 2.0, 12).reshape(3, 4)),
+        np.linspace(-2.0, 2.0, 200_003),
+    ],
+    ids=["contiguous", "fortran", "chunked"],
+)
+@pytest.mark.parametrize("name", ["exp", "tanh", "arcsin"])
+def test_a_transcendental_native_is_numpys_ufunc(name: str, values: Any) -> None:
+    """Test the 14 transcendental natives compute NumPy's ufunc over arrays.
+
+    A lone call over a binding, a Fortran-ordered binding and one evaluated
+    in chunks agree exactly with the ufunc, and the result is a new
+    C-contiguous array; NumPy's warnings are silenced.
+    """
+    x, reference = _reference("x")
+
+    with np.errstate(all="raise"):
+        result = evaluate_expression_with_numpy(call(name, reference), {x: values})
+        compound = evaluate_expression_with_numpy(
+            call(name, reference) + 0.0, {x: values}
+        )
+
+    with np.errstate(all="ignore"):
+        expected = getattr(np, name)(values)
+    assert np.array_equal(result, expected, equal_nan=True)
+    assert np.array_equal(compound, expected, equal_nan=True)
+    assert result.flags.c_contiguous
+    assert not np.shares_memory(result, values)
+
+
+def test_a_lone_native_over_a_bound_constant_is_still_refused() -> None:
+    """Test binding a constant's identifier is refused whatever the tree's shape."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(NativeConstantBindingError):
+        evaluate_expression_with_numpy(
+            call("exp", IdentifierExpression(pi)), {pi: np.array([1.0, 2.0])}
+        )

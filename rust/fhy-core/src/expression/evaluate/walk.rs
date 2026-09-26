@@ -270,6 +270,11 @@ where
                 {
                     return Ok(self.negate_reals(operand));
                 }
+                if unary.operation() == UnaryOperation::LogicalNot
+                    && matches!(operand.data, Data::Bool(_))
+                {
+                    return Ok(self.negate_booleans(operand));
+                }
                 self.unary(node, unary.operation(), &operand)
             }
             ExpressionKind::Binary(binary) => {
@@ -404,6 +409,20 @@ where
         };
         Value {
             data: Data::Real(self.lanes.map1_reusing(lanes, |x: f64| -x)),
+            failures,
+        }
+    }
+
+    /// Negate the Booleans of `operand`, reusing their storage when no one
+    /// else holds them.
+    fn negate_booleans(&self, operand: Rc<Value<L>>) -> Value<L> {
+        let Value { data, failures } =
+            Rc::try_unwrap(operand).unwrap_or_else(|shared| clone_value(&shared));
+        let Data::Bool(lanes) = data else {
+            unreachable!("the operand is Boolean")
+        };
+        Value {
+            data: Data::Bool(self.lanes.map1_reusing(lanes, |x: bool| !x)),
             failures,
         }
     }
@@ -628,9 +647,9 @@ where
         }
         let is_conjunction = matches!(operation, LogicalOperation::And);
         let combine = |x: bool, y: bool| if is_conjunction { x && y } else { x || y };
-        let mut data = booleans[0].clone();
-        for value in &booleans[1..] {
-            data = lanes.map2(&data, value, combine)?;
+        let mut data = lanes.map2(booleans[0], booleans[1], combine)?;
+        for value in &booleans[2..] {
+            data = lanes.map2_reusing(Operand::Owned(data), Operand::Borrowed(value), combine)?;
         }
         let failures =
             if operands.iter().any(|operand| operand.failures.is_some()) {

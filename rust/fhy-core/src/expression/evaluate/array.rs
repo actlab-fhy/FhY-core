@@ -467,6 +467,14 @@ fn broadcast_shape(left: &[usize], right: &[usize]) -> Result<Vec<usize>, Evalua
     Ok(shape)
 }
 
+/// Return the one lane of the 0-d `array`, when the other operand of a map
+/// has the result's `shape` and `array` merely broadcasts against it.
+fn single_lane<T: Lane>(array: &CowArray<'_, T, IxDyn>, shape: &[usize]) -> Option<T> {
+    (array.ndim() == 0 && !shape.is_empty())
+        .then(|| array.first().copied())
+        .flatten()
+}
+
 /// Return a view of `array` broadcast to `shape`.
 fn broadcast_view<'v, T>(array: &'v CowArray<'_, T, IxDyn>, shape: &[usize]) -> ArrayViewD<'v, T> {
     if array.shape() == shape {
@@ -514,6 +522,12 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
         f: impl Fn(A, B) -> C,
     ) -> Result<CowArray<'a, C, IxDyn>, EvaluationError> {
         let shape = broadcast_shape(a.shape(), b.shape())?;
+        if let Some(y) = single_lane(b, &shape) {
+            return Ok(CowArray::from(a.map(|&x| f(x, y))));
+        }
+        if let Some(x) = single_lane(a, &shape) {
+            return Ok(CowArray::from(b.map(|&y| f(x, y))));
+        }
         let lanes = Zip::from(broadcast_view(a, &shape))
             .and(broadcast_view(b, &shape))
             .map_collect(|&x, &y| f(x, y));
@@ -577,9 +591,13 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
                 unreachable!("a reusable operand is owned")
             };
             let mut owned = target.into_owned();
-            Zip::from(&mut owned)
-                .and(broadcast_view(b.get(), &shape))
-                .for_each(|x, &y| *x = f(*x, y));
+            if let Some(y) = single_lane(b.get(), &shape) {
+                owned.mapv_inplace(|x| f(x, y));
+            } else {
+                Zip::from(&mut owned)
+                    .and(broadcast_view(b.get(), &shape))
+                    .for_each(|x, &y| *x = f(*x, y));
+            }
             return Ok(CowArray::from(owned));
         }
         if is_reusable(&b) {
@@ -587,9 +605,13 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
                 unreachable!("a reusable operand is owned")
             };
             let mut owned = target.into_owned();
-            Zip::from(&mut owned)
-                .and(broadcast_view(a.get(), &shape))
-                .for_each(|y, &x| *y = f(x, *y));
+            if let Some(x) = single_lane(a.get(), &shape) {
+                owned.mapv_inplace(|y| f(x, y));
+            } else {
+                Zip::from(&mut owned)
+                    .and(broadcast_view(a.get(), &shape))
+                    .for_each(|y, &x| *y = f(x, *y));
+            }
             return Ok(CowArray::from(owned));
         }
         self.map2(a.get(), b.get(), f)

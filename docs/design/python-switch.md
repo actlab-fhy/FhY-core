@@ -10186,3 +10186,30 @@ the guiding `ImportError`: 368 in `test_sympy_pass.py` and 3 in
 `test_solver_properties.py`, which evaluate with NumPy as an oracle
 without importing it. They failed the same way before S9, since the
 Python evaluator raised the same `ImportError`; S9.7 marks them.
+
+### S9.8 performance work
+
+The first "after" run (before this commit) measured the lone transcendentals
+and the Boolean row slower than NumPy's own ufuncs: `exp-1e6` 2.40, `tanh-1e6`
+1.86, `logical-1e6` 1.30 times the baseline. Three changes, with tests:
+
+- **A lone transcendental over a real array binding** in C order is
+  NumPy's ufunc over the binding itself, in the binding
+  (`evaluate_lone_kernel_call`): N-S9-2 (b) makes NumPy's ufunc that node's
+  kernel anyway, and the core's chunked path copies the ufunc's output
+  twice (into the chunk, then into the result), which safe code cannot
+  avoid, since NumPy cannot write into Rust memory without `unsafe`. The
+  bound-constant refusal still applies: a binding of a constant's
+  identifier takes the ordinary path, which refuses it.
+- **A chunk of a binding is passed to a ufunc as a NumPy view** of the
+  binding (a `reshape(-1)` slice), not as a copy.
+- **Maps against a one-lane operand** (a literal or a scalar binding) take
+  `ndarray`'s contiguous `map` and `mapv_inplace`, not a broadcast `Zip`;
+  connectives no longer copy their first operand, and `!` reuses its
+  operand's storage.
+
+Tests: `test_a_transcendental_native_is_numpys_ufunc` (9 cases: a lone
+call, a Fortran-ordered binding, 200,003 lanes in chunks, and the same
+call inside a compound tree, each equal to the ufunc, C-contiguous, new,
+and without a warning under `np.errstate(all="raise")`) and
+`test_a_lone_native_over_a_bound_constant_is_still_refused`.

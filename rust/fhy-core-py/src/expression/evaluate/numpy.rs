@@ -19,13 +19,15 @@ use numpy::{PyArray, PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn, PyUntypedAr
 use pyo3::exceptions::{PyImportError, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyMapping, PyModule};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyMapping, PyModule, PySlice};
 
-use fhy_core::expression::builtins::BuiltinFunction;
+use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::evaluate::{
     ArrayBinding, ArrayKernels, ArrayValue, Evaluator, Prepared, Scalar,
 };
 use fhy_core::expression::pattern::CallbackError;
+use fhy_core::expression::registry::FunctionRegistry;
+use fhy_core::expression::{Callee, ExpressionKind};
 use fhy_core::identifier::Identifier;
 
 use crate::identifier::read_identifier_id;
@@ -198,12 +200,13 @@ enum ZeroDimensional {
     Real(ArrayD<f64>),
 }
 
-/// A real array binding `NumPy` already holds: where its lanes are, and the
-/// Python array.
+/// A real array binding `NumPy` already holds, in the standard layout:
+/// where its lanes are, and the Python array.
 struct HeldInput {
-    pointer: usize,
-    shape: Vec<usize>,
-    strides: Vec<isize>,
+    /// The address of the first lane.
+    start: usize,
+    /// The number of lanes.
+    length: usize,
     array: Py<PyAny>,
 }
 
@@ -216,25 +219,42 @@ struct NumpyKernels {
 }
 
 impl NumpyKernels {
-    /// Return the Python array holding exactly the lanes of `argument`, if
-    /// it is a binding's.
+    /// Return a `NumPy` view of the lanes of `argument`, when they are a
+    /// contiguous run of a binding's: the whole binding, or the slice of it
+    /// a chunk of the evaluation reads.
     fn find_input<'py>(
         &self,
         py: Python<'py>,
         argument: &CowArray<'_, f64, IxDyn>,
-    ) -> Option<Bound<'py, PyAny>> {
-        if !argument.is_view() {
-            return None;
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if !argument.is_view() || !argument.is_standard_layout() {
+            return Ok(None);
         }
-        let pointer = argument.as_ptr() as usize;
-        self.inputs
-            .iter()
-            .find(|input| {
-                input.pointer == pointer
-                    && input.shape == argument.shape()
-                    && input.strides == argument.strides()
-            })
-            .map(|input| input.array.bind(py).clone())
+        let start = argument.as_ptr() as usize;
+        let lane_size = std::mem::size_of::<f64>();
+        let Some(input) = self.inputs.iter().find(|input| {
+            start >= input.start
+                && (start - input.start) % lane_size == 0
+                && (start - input.start) / lane_size + argument.len() <= input.length
+        }) else {
+            return Ok(None);
+        };
+        let offset = (start - input.start) / lane_size;
+        let array = input.array.bind(py);
+        if offset == 0 && argument.len() == input.length {
+            return Ok(Some(array.clone()));
+        }
+        let flat = array.call_method1(intern!(py, "reshape"), (-1,))?;
+        let lanes = flat.get_item(PySlice::new(
+            py,
+            isize::try_from(offset)?,
+            isize::try_from(offset + argument.len())?,
+            1,
+        ))?;
+        Ok(Some(lanes.call_method1(
+            intern!(py, "reshape"),
+            (argument.shape().to_vec(),),
+        )?))
     }
 
     /// Return the lanes of `NumPy`'s ufunc for `function` over `argument`,
@@ -270,7 +290,7 @@ impl NumpyKernels {
         ufunc: &Bound<'_, PyAny>,
         argument: CowArray<'_, f64, IxDyn>,
     ) -> PyResult<ArrayD<f64>> {
-        if let Some(input) = self.find_input(py, &argument) {
+        if let Some(input) = self.find_input(py, &argument)? {
             let numpy = self.numpy.bind(py);
             let result = numpy.call_method1(intern!(py, "asarray"), (ufunc.call1((input,))?,))?;
             return Ok(typed_array::<f64>(numpy, &result, "float64")?.to_owned_array());
@@ -352,10 +372,59 @@ fn array_to_numpy<'py>(
     Ok(array)
 }
 
+/// Return the value of the prepared expression when it is a call of a
+/// transcendental native over one real array binding: `NumPy`'s ufunc over
+/// the binding itself, the kernel N-S9-2 (b) gives that node, with no
+/// copy. Return `None` for any other expression, for a binding that is not
+/// C-contiguous (the result has the binding's order), or for a binding of a
+/// constant's identifier, which the evaluation refuses.
+fn evaluate_lone_kernel_call<'py>(
+    numpy: &Bound<'py, PyModule>,
+    kernels: &NumpyKernels,
+    prepared: &Prepared<'_>,
+    registry: &FunctionRegistry,
+    bindings: &[(Identifier, Converted<'py>)],
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    let py = numpy.py();
+    let ExpressionKind::Call(call) = prepared.expression().kind() else {
+        return Ok(None);
+    };
+    let (Callee::Builtin(function), [argument]) = (call.callee(), call.arguments()) else {
+        return Ok(None);
+    };
+    let ExpressionKind::Identifier(identifier) = argument.kind() else {
+        return Ok(None);
+    };
+    if !kernels.handles(*function)
+        || BuiltinConstant::of_identifier(identifier).is_some()
+        || registry.constant(identifier).is_some()
+    {
+        return Ok(None);
+    }
+    let Some((_, Converted::Real(array))) = bindings.iter().find(|(bound, _)| bound == identifier)
+    else {
+        return Ok(None);
+    };
+    if !array.is_c_contiguous() {
+        return Ok(None);
+    }
+    let ufunc = numpy.getattr(function.name())?;
+    let settings = PyDict::new(py);
+    settings.set_item(intern!(py, "all"), intern!(py, "ignore"))?;
+    let silenced = numpy
+        .getattr(intern!(py, "errstate"))?
+        .call((), Some(&settings))?;
+    silenced.call_method0(intern!(py, "__enter__"))?;
+    let result = ufunc.call1((array.as_any(),));
+    silenced.call_method1(intern!(py, "__exit__"), (py.None(), py.None(), py.None()))?;
+    Ok(Some(result?))
+}
+
 /// Evaluate the prepared expression over `bindings`, converted.
 fn evaluate_bindings<'py>(
     numpy: &Bound<'py, PyModule>,
     prepared: &Prepared<'_>,
+    registry: &FunctionRegistry,
     bindings: Vec<(Identifier, Converted<'py>)>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let py = numpy.py();
@@ -402,12 +471,13 @@ fn evaluate_bindings<'py>(
             Converted::Int(array) => ArrayBinding::Int(array.as_array()),
             Converted::Real(array) => {
                 let view = array.as_array();
-                inputs.push(HeldInput {
-                    pointer: view.as_ptr() as usize,
-                    shape: view.shape().to_vec(),
-                    strides: view.strides().to_vec(),
-                    array: array.as_any().clone().unbind(),
-                });
+                if view.is_standard_layout() {
+                    inputs.push(HeldInput {
+                        start: view.as_ptr() as usize,
+                        length: view.len(),
+                        array: array.as_any().clone().unbind(),
+                    });
+                }
                 ArrayBinding::Real(view)
             }
         };
@@ -425,6 +495,10 @@ fn evaluate_bindings<'py>(
         numpy: numpy.clone().unbind(),
         inputs,
     };
+    if let Some(result) = evaluate_lone_kernel_call(numpy, &kernels, prepared, registry, &bindings)?
+    {
+        return Ok(result);
+    }
     let value = py
         .detach(|| prepared.evaluate_array(&environment, &kernels))
         .map_err(|error| evaluation_error_to_python(py, error))?;
@@ -454,5 +528,5 @@ pub(crate) fn evaluate_expression_with_numpy<'py>(
         .prepare(expression.get().expression())
         .map_err(|error| evaluation_error_to_python(py, error))?;
     let bindings = read_bindings(&numpy, environment, prepared.free_identifiers())?;
-    evaluate_bindings(&numpy, &prepared, bindings)
+    evaluate_bindings(&numpy, &prepared, snapshot.registry(), bindings)
 }
