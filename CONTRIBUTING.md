@@ -533,6 +533,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
 | `fhy_core.lattice`, `fhy_core.utils.poset` | `fhy_core::lattice` |
 | `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
+| `fhy_core.types.checking` | `fhy_core::types::checking`; the body-check pass stays a Python `CompilerPass` over it |
 
 ### Errors belong to their module
 

@@ -5,8 +5,12 @@ than a :class:`~fhy_core.types.CoreDataType`, so one declared signature
 describes a function over a whole family of concrete IR types (``REAL``
 admits every integer and real-float core data type, for example).
 
-The two helpers here are the only place that mapping is written down.
-The type checker uses :func:`is_core_data_type_compatible_with_sort` to
+The two helpers here are the only place that mapping is exposed; the
+Rust core holds it (D-S11-22 of ``docs/design/python-switch.md``): ``BOOL``
+satisfies the Boolean sort, the unsigned integers ``NAT``, every integer
+``INT``, and every integer and real float ``REAL``, and a value of a sort
+takes ``BOOL``, ``UINT32``, ``INT64`` or ``FLOAT64``. The type checker
+uses :func:`is_core_data_type_compatible_with_sort` to
 validate arguments at call sites and
 :func:`get_result_core_data_type_for_sort` to synthesize the type of a
 function result or constant reference.
@@ -17,65 +21,10 @@ __all__ = [
     "is_core_data_type_compatible_with_sort",
 ]
 
+from fhy_core import _rs
 from fhy_core.symbolic.expression.sort import FunctionSort
 
 from ..core import CoreDataType
-
-_UINT_CORE_DATA_TYPES: frozenset[CoreDataType] = frozenset(
-    {
-        CoreDataType.UINT,
-        CoreDataType.UINT8,
-        CoreDataType.UINT16,
-        CoreDataType.UINT32,
-    }
-)
-
-_SIGNED_INT_CORE_DATA_TYPES: frozenset[CoreDataType] = frozenset(
-    {
-        CoreDataType.INT,
-        CoreDataType.INT8,
-        CoreDataType.INT16,
-        CoreDataType.INT32,
-        CoreDataType.INT64,
-    }
-)
-
-_INTEGER_CORE_DATA_TYPES: frozenset[CoreDataType] = (
-    _UINT_CORE_DATA_TYPES | _SIGNED_INT_CORE_DATA_TYPES
-)
-
-_REAL_FLOAT_CORE_DATA_TYPES: frozenset[CoreDataType] = frozenset(
-    {
-        CoreDataType.FLOAT,
-        CoreDataType.FLOAT16,
-        CoreDataType.FLOAT32,
-        CoreDataType.FLOAT64,
-    }
-)
-
-_REAL_CORE_DATA_TYPES: frozenset[CoreDataType] = (
-    _INTEGER_CORE_DATA_TYPES | _REAL_FLOAT_CORE_DATA_TYPES
-)
-
-
-_SORT_TO_COMPATIBLE_CORE_DATA_TYPES: dict[FunctionSort, frozenset[CoreDataType]] = {
-    FunctionSort.BOOL: frozenset({CoreDataType.BOOL}),
-    FunctionSort.NAT: _UINT_CORE_DATA_TYPES,
-    FunctionSort.INT: _INTEGER_CORE_DATA_TYPES,
-    FunctionSort.REAL: _REAL_CORE_DATA_TYPES,
-}
-
-
-# Concrete (non-weak) result types so downstream arithmetic on the
-# returned value triggers the type-checker's weak-literal rescue against
-# this operand. Widths match Python's native runtime types (int / float
-# map to INT64 / FLOAT64).
-_SORT_TO_RESULT_CORE_DATA_TYPE: dict[FunctionSort, CoreDataType] = {
-    FunctionSort.BOOL: CoreDataType.BOOL,
-    FunctionSort.NAT: CoreDataType.UINT32,
-    FunctionSort.INT: CoreDataType.INT64,
-    FunctionSort.REAL: CoreDataType.FLOAT64,
-}
 
 
 def is_core_data_type_compatible_with_sort(
@@ -93,7 +42,7 @@ def is_core_data_type_compatible_with_sort(
         ``sort``; ``False`` otherwise.
 
     """
-    return core_data_type in _SORT_TO_COMPATIBLE_CORE_DATA_TYPES[sort]
+    return _rs.is_core_data_type_compatible_with_sort(core_data_type, sort)
 
 
 def get_result_core_data_type_for_sort(sort: FunctionSort) -> CoreDataType:
@@ -109,4 +58,4 @@ def get_result_core_data_type_for_sort(sort: FunctionSort) -> CoreDataType:
         The concrete core data type to assign to a value of ``sort``.
 
     """
-    return _SORT_TO_RESULT_CORE_DATA_TYPE[sort]
+    return _rs.get_result_core_data_type_for_sort(sort)
