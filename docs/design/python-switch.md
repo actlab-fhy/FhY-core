@@ -5716,7 +5716,7 @@ registers); and the 16 printed bodies.
 
 ### S7 status
 
-S7 was implemented on 2026-09-25 in nine commits: the benchmarks and
+S7 was implemented on 2026-09-25 in eight commits: the benchmarks and
 their baseline (b131516); the core additions, test-first (3bda92b); the
 binding (9c34e3b); the Python switch, marked breaking (b4ca537); the
 inliner's refusal of a call of a built-in constant, which the migration
