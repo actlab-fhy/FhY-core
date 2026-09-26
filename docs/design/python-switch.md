@@ -139,6 +139,19 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S15.4: the Python switch (`symbol_table.py` over `_rs`; the README row and CONTRIBUTING's callback exception)
   - [x] S15.5: tests migrated (none needed a change), and the interface suite (54)
   - [x] S15.6: benchmarks after, and docs (every row faster or within noise except `get_namespace` and `update_namespaces`; see "S15 benchmarks")
+- [ ] S16: params, in two parts (see "S16: params"; "Needs the user" is empty)
+  - [x] S16.0: the design (survey, divergences P-1 to P-14, decisions D-S16-1 to D-S16-22, benchmark plan, steps, test plan)
+  - [ ] S16a: values and domains
+    - [ ] S16a.1: param benchmarks and baseline
+    - [ ] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events)
+    - [ ] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
+    - [ ] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests
+    - [ ] S16a.5: the interface suite for the domains
+  - [ ] S16b: params
+    - [ ] S16b.1: core additions, test-first (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection)
+    - [ ] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
+    - [ ] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite
+    - [ ] S16b.4: benchmarks after, and docs
 
 ## Goal
 
@@ -16933,3 +16946,785 @@ mypy are clean, and the Rust gate passes (3,826; 3,858 with all features).
 Every benchmark row is faster, or within noise, except
 `get_namespace` (1.52) and `update_namespaces` (1.88), which the
 maintainer accepted.
+
+## S16: params
+
+- **Status:** designed 2026-09-26 from 452d0f6. D-S16-1 to D-S16-22 apply
+  the policy the user already set, the precedent of S7 to S14 (S13's
+  above all, whose design was shaped for this slice, D-S13-20), and the
+  user's direction for this slice: port as much of the package to Rust as
+  possible, accepting small slowdowns on paths nothing calls. "Needs the
+  user" is empty.
+- **Scope:** `src/fhy_core/symbolic/param/`, 5,152 lines: `core.py`
+  (2,175), `domains.py` (2,612), `values.py` (271) and `__init__.py` (94).
+  The core goes in `rust/fhy-core` as a new module, `fhy_core::param`, on
+  `fhy_core::constraint`, `fhy_core::solver`, `fhy_core::term` and
+  `fhy_core::expression`, and the binding in `rust/fhy-core-py`.
+- **Split** (D-S16-22):
+  - **S16a** ports the values and the domains: `values.py` and
+    `domains.py`, with the screening, the decision procedures (enumeration,
+    feasibility, subset, implication) and the domains' set algebra.
+  - **S16b** ports `core.py`: `Param`, `ParamAssignment`, the bounds and
+    their natural-number gates, interval arithmetic, union and
+    intersection, and the helpers behind the factories.
+  - Between the two, the Python `Param` runs over the Rust-backed domains,
+    bottom-up (cross-cutting rule 7).
+- **Pattern:**
+  - The logic moves into `fhy_core::param`.
+  - The six domain kinds, `Param` and `ParamAssignment` are P2: thin
+    Python subclasses of pyclasses.
+  - `ParamDomain` stays a Python ABC that third parties subclass. A
+    Python-defined domain reaches the core through a P3 adapter
+    (D-S16-5).
+  - Domain members are the constraint core's members, and values only
+    Python can compare or order stay opaque values behind S13's adapter
+    (D-S16-3).
+  - `ParamError`, `IntervalProfile`, the value protocols, the type
+    aliases and the factory functions stay Python; the factories become
+    thin wrappers whose logic is the core's (D-S16-13).
+
+### Survey: the Python API
+
+`__init__.py` re-exports 40 names: `Param`, `ParamAssignment`,
+`ParamError`, `ParamDomain`, `IntervalProfile`, the six domain kinds, the
+five value aliases and protocols, and 25 `create_*` factories.
+
+| File | Public names | Contents |
+|---|---|---|
+| `values.py` | `ParamError(ValueError)` (`register_error`ed), `SerializableEqualValue`, `SerializableOrderableValue` (protocols), `CategoricalValue`, `OrdinalValue`, `PermutationMemberValue` (aliases) | the value-kind predicates (`is_categorical_value`, `is_ordinal_value`, `is_permutation_member_value`, `supports_*_semantics`), the type-strict match (`do_param_values_match`, `do_ordered_param_values_match`, `does_collection_contain_param_value`, `is_sequence_unique_without_set`), and the wrapped-leaf codec helpers |
+| `domains.py` | `ParamDomain` (ABC), `IntegerDomain`, `IntervalIntegerDomain`, `RealDomain`, `OrdinalDomain`, `CategoricalDomain`, `PermutationDomain`, `IntervalProfile`, `DecidedOutcome`, `compute_constraint_implication_subset` | the screening with its fidelity flag, renaming and rescoping, the in-set enumeration, the feasibility and subset procedures, the REAL-sort downgrades, `evaluate_system_outcome`, `is_bound_expression`, the `build_*_domain` builders, the logger `fhy_core.symbolic.param.domains` |
+| `core.py` | `Param`, `ParamAssignment`, the 25 factories | construction and canonical constraints, value checks, the bound constraints and their natural-number gates, interval arithmetic, union and intersection |
+
+**Values.**
+
+- A member of a finite domain is a leaf: a `bool`, `int`, `float` or
+  `str`, or a `Serializable` whose class supports equality (categorical,
+  permutation: `__eq__` and `__hash__`, or the `Equal` trait) or ordering
+  (ordinal: `__lt__` in its MRO, or the `Orderable` trait).
+  - Categorical members exclude `float`.
+  - A NaN is refused (`ParamError`), an infinity kept.
+- Matching is type-strict: `bool`, `int` and `float` are disjoint, so
+  `True`, `1` and `1.0` are three values. Other values match by `==`.
+- Uniqueness and membership are checked pairwise, without hashing.
+
+**`ParamDomain` (ABC).** Its bases are `WrappedFamilySerializable`,
+`FrozenMixin`, `StructuralEquivalence` and `ABC`.
+
+- Abstract: `symbol_type` (property), `is_value_admissible`,
+  `normalize_value`, `validate_constraint(constraint, variable)`,
+  `get_implied_constraints(variable)`, `is_value_set_subset(other)`,
+  `compute_feasibility_subset(own_constraints, own_variable, other,
+  other_constraints, other_variable)`, `has_feasible_value(constraints,
+  variable)`, `compute_intersection(...)`, `is_structurally_equivalent`,
+  `render_set_string`, `render_set_repr`.
+- Concrete defaults: `get_interval_profile()` answers `None`, and
+  `compute_union(...)` answers `None` ("not representable").
+- The module docstring presents a domain as the strategy that captures
+  "everything that varies between kinds of parameter", and `Param(domain,
+  ...)` is public, so a new kind of parameter is a new domain: the ABC is
+  the package's extension point.
+
+**The six kinds**, each a `@register_serializable @dataclass(frozen=True,
+eq=False)` leaf:
+
+| Kind | Fields | Admits | Constraints | Implied | Profile | Union |
+|---|---|---|---|---|---|---|
+| `IntegerDomain` | `non_negative`, `zero_included` (canonicalized to `True` unless non-negative) | strict `int` | any | `x >= 0` or `x > 0` when non-negative | admits other constraints | no |
+| `IntervalIntegerDomain` | `prefer_inclusive`, `non_negative`, `zero_included` | strict `int` | bound equations only (`TypeError` for another kind, `ParamError` for a non-bound) | as above | admits only bounds | no |
+| `RealDomain` | none | a finite `float`, or a `str` in the literal grammar | any | none | none | no |
+| `OrdinalDomain` | `sorted_values` | its members | set constraints only | none | none | yes |
+| `CategoricalDomain` | `categories` | its members | set constraints only | none | none | yes |
+| `PermutationDomain` | `ordered_members` | a non-`str` sequence holding each member once | set constraints only | none | none | no |
+
+- **Orders.** Ordinal values sort ascending by `<`, `repr` breaking ties
+  (`1` and `True`); categories sort by `repr`; permutation members keep
+  the given order.
+- **Construction checks, in order:** non-empty (`ParamError`), each
+  value's kind (`TypeError`), NaN (`ParamError`), mutual comparability
+  (ordinal: `TypeError`, chained to the comparison's), uniqueness
+  (`ParamError`).
+- **Rendering:** `render_set_repr` joins the members' `repr`s in braces,
+  `render_set_string` their `str`s (a `str` member as it is); the numeric
+  kinds render `Z` or `R`, and nothing in `repr`.
+- **Equivalence:** field-wise, type-strict; categories order-independent.
+- **Serialization:** the wrapped family envelope. Finite members go
+  through `serialize_registry_wrapped_value`; decoding validates each
+  member with the kind predicate (`DeserializationValueError`) and
+  rebuilds through the `build_*_domain` builder.
+
+**The decision procedures** (`domains.py`, module functions):
+
+- **Screening** (`_build_screened_constraint_system_with_fidelity`)
+  keeps, for a variable: an equation scoped exactly to it; an in-set
+  constraint on it whose every member lifts; a not-in-set constraint on
+  it narrowed to its liftable members. Everything else is dropped. Each
+  drop or narrowing logs a WARNING and marks the system inexact; a
+  constraint of another kind is dropped silently. The screen returns the
+  very object when it drops nothing, and fidelity is tested with `is`.
+- **Enumeration.** With an in-set constraint, the candidates are the
+  type-strict intersection of every in-set constraint's members minus
+  every not-in-set constraint's. A candidate the domain does not admit is
+  `VIOLATED`; otherwise the equation constraints are evaluated with it
+  bound (`evaluate_system_outcome`).
+- **Feasibility of a numeric domain** (`_numeric_has_feasible_value`):
+  enumeration when an in-set constraint exists (`SATISFIED` at the first
+  decided candidate, `VIOLATED` when all are, else `UNDECIDED` with a
+  WARNING naming the undecided candidates); otherwise the screened system
+  is asked `check_satisfiability({variable: INT or REAL})`. `SATISFIED`
+  on an inexact system, and `VIOLATED` over REAL with a not-in-set
+  `float` member, are downgraded to `UNDECIDED` (WARNING); a solver
+  `UNDECIDED` logs a WARNING.
+- **Subset of numeric domains** (`compute_constraint_implication_subset`,
+  after the symbol types match, else `VIOLATED`): enumeration of own
+  in-set candidates against the other side; else, when only the other
+  side is finite, a witness question (own admits a value outside the
+  other's candidates: `VIOLATED`, DEBUG); else both screened systems
+  renamed onto a fresh `Identifier("var")` and asked `check_implication`,
+  with the downgrades of inexact sides and of REAL-sort `float` members.
+- **Finite feasibility and subset** enumerate the domain's members (a
+  permutation domain every permutation, in `itertools.permutations`
+  order), checking each constraint alone with `is_satisfied_with_bindings`,
+  and always decide.
+- **`evaluate_system_outcome(system, bindings)`** reads the simplifier's
+  `PassExecutionError` as `UNDECIDED` (WARNING) and lets `ConstraintError`
+  and `NonBooleanLogicalOperandError` propagate.
+- **Set algebra of domains:** union and intersection of finite kinds bake
+  both sides' effective members (filtered by each side's own constraints)
+  into a new domain and carry no constraint; a permutation intersection
+  needs equal member sets; numeric intersections merge `non_negative`
+  (disjunction) and `zero_included`, and carry both sides' constraints
+  rescoped to the result variable, each side's reference to the other
+  operand's variable substituted too. Rescoping a set constraint that is
+  not on the old variable raises `ConstraintError`.
+
+**`Param(domain, variable=Identifier("param"),
+constraint_system=ConstraintSystem(()))`**, a frozen dataclass with
+`eq=False`, `Generic[_T]`, `Serializable`, `FrozenMixin` and
+`DerivedEquivalenceMixin`.
+
+- Construction: the variable must not be a native constant's identifier
+  (`ParamError`); each constraint is validated (the variable in its scope,
+  else `ParamError`; then the domain's check) and deduplicated by
+  structural equivalence in order; the domain's implied constraints are
+  appended unless an equivalent is present; the result is stored as a new
+  canonical `ConstraintSystem`.
+- `constraints`, `variable_expression`, `symbol_type`,
+  `replace_constraints`, `add_constraint(s)` (returning `self` for a
+  duplicate), `validate_constraint`, `add_lower_bound_constraint`,
+  `add_upper_bound_constraint` (with the natural-number gate on an `int`
+  bound of a non-negative profile).
+- Value checks: `is_value_valid`, `is_value_admissible`,
+  `is_constraints_satisfied`, `validate_value`, `assign`. `bindings` must
+  not bind the param's own variable (`ParamError`, checked first). The
+  outcome is the system's, and a second pass evaluates each member alone
+  to name the failing one (the violated one first). Messages name the
+  value, the constraint and the param by `repr`.
+- Questions: `check_feasibility`, `is_feasible`, `is_empty`,
+  `check_subset`, `is_subset`, `is_value_set_subset`, all delegated to the
+  domain.
+- Interval arithmetic `+`, `-`, `*`, unary `-` over interval operands
+  (a domain whose profile admits only bounds; an integer param whose
+  constraints are all bounds is recast; an `int` is the exact interval),
+  and `|`, `&` for union and intersection. Every result is over a fresh
+  variable.
+- `repr`: `Param(x::7, {1, 2}, constraints=(...))`; `str`:
+  `{x in Z | c1 /\ c2}`.
+- Equivalence is derived: the domain structurally, the variable as a
+  binder scoping `constraint_system`.
+- Wire: a plain `Serializable` (no envelope) with `domain` (wrapped),
+  `variable` (the identifier dict) and `constraint_system` (wrapped).
+
+**`ParamAssignment(param, value)`**, a frozen dataclass with `eq=False`:
+the constructor validates without bindings and stores the normalized
+value; `Param.assign` validates with the caller's bindings and builds one
+without re-validating; deserialization rejects only a provable violation
+(`construct_from_fields`). Equivalence: the params, and the values by
+`==`. Wire: `{"param": {...}, "value": <wrapped value>}`.
+
+**The factories** build a domain and add bounds: `_validate_bounds_are_ordered`
+compares the two bounds exactly (a `str` bound as the `Fraction` it
+spells), and the natural factories apply the natural-number gates.
+
+### Survey: the Rust API
+
+- **Nothing models a param.** `rust-workspace.md` §I.8 lists `param` as a
+  non-goal, which the user's direction replaces.
+- **What the port builds on** (S13 shaped it for this slice, D-S13-20):
+  - `fhy_core::constraint`: `Constraint` (`Equation`, `Set` with
+    `Polarity`, `Custom`), `EquationConstraint::new`, `SetConstraint::new`,
+    `variable()`, `members()`, `ConstraintSystem` and its three questions,
+    `Value`, `Member` (`lifts_to_expression`, `to_literal`, the canonical
+    order), `MemberSet` (`contains_value`), `Opaque` and `OpaqueValue`,
+    `Bindings` (with a source), `ConstraintContext`, `Observer`, `Event`,
+    `Outcome` and `ConstraintError`;
+  - `fhy_core::solver`: `Solver`, `CheckLimits`, `SolveError`;
+  - `fhy_core::expression`: `Expression` with `substitute`,
+    `free_identifiers` and the comparison builders, `LiteralValue`
+    (`parse_text`), `Decimal`, `BigInt`, `SymbolType`;
+  - `fhy_core::term`: `AlphaRenaming::enter_binders` and
+    `AlphaEquivalence`.
+- **The binding** has S13's member and bound-value readers,
+  `PyOpaqueValue`, the pending-error slot, `PyCustomConstraint`,
+  `outcome_to_python`, the constraint observers and error mapping, the
+  default solver and registry snapshot, S10's identifier conversions,
+  S11's seed-based instantiation of public classes, and the serialization
+  helpers.
+
+### Consumers and tests
+
+**`src`.** No module uses the package except `symbolic/__init__.py`, which
+re-exports it as a namespace (`fhy_core.symbolic.param`). `types` has an
+unrelated `PARAM` tag.
+
+**Python tests.** `tests/symbolic/param/` holds 40 test modules and a
+374-line `conftest.py`, 16,018 lines, with 1,209 collected tests: 121 are
+marked `z3`, 263 `sympy`, and 33 `property`.
+
+| File | Collected | What changes |
+|---|--:|---|
+| `test_real_param.py`, `test_tri_state_feasibility.py`, `test_bound_int_param.py`, `test_nat_param.py`, `test_param_intersection.py` | 103, 100, 92, 77, 76 | message pins with a core counterpart (the bound gates, unordered bounds, the empty interval, the coercion refusal); log pins on `fhy_core.symbolic.param.domains` |
+| `test_bindings_validation.py` | 67 | `evaluate_system_outcome`, `are_all_constraints_satisfied`; the value-check messages |
+| `test_param_base.py`, `test_subset_relations.py`, `test_sound_feasibility.py`, `test_param_multiplication.py`, `test_domain_invariants.py` | 57, 50, 49, 49, 49 | categorical order (P-1), dataclass machinery (P-5) |
+| `test_param_union.py`, `test_signatures.py`, `test_param_assignment.py`, `test_int_param.py`, `test_ordinal_param.py`, `test_categorical_param.py`, `test_perm_param.py`, `test_alpha_equivalence.py` | 39 to 25 | the ordinal and categorical orders; assignment equivalence (P-10) |
+| `test_value_predicates.py` | 21 | the deleted `do_param_values_match` and `do_ordered_param_values_match` (P-12) |
+| `test_domain_internals.py`, `test_bound_internals.py`, `test_core_internals.py` | 20, 12, 8 | the deleted private helpers (P-12) |
+| the other 18 modules | 165 | expected to pass unchanged |
+
+- **Private names used by tests:** `_build_screened_constraint_system`,
+  `_rename_constraint_variable`, `_bound_from_literal`,
+  `_invert_comparison`, and `values.py`'s `do_param_values_match`,
+  `do_ordered_param_values_match` and `serialize_wrapped_leaf_value`.
+- **Semi-public module functions used by tests** (not in `__all__`, but
+  without an underscore and used across modules): `evaluate_system_outcome`,
+  `are_all_constraints_satisfied`, `is_bound_expression` and the three
+  `build_*_domain` builders.
+- **Logger pinned:** `fhy_core.symbolic.param.domains` (WARNING records
+  naming candidates, variables and constraints by `repr`, and containing
+  `UNDECIDED`).
+- **Third-party code:** no test subclasses `ParamDomain` or `Param`. A
+  Python-defined `Constraint` sits in a param in
+  `test_param_intersection.py:645`.
+- **Outside the package:** `test_serialization_pins.py` (golden JSON for
+  the six domains, a param and an assignment), `test_pickle_round_trips_properties.py`,
+  `test_solver_rust_binding.py` (two tests asking params through a plugged
+  backend), `test_strategies_properties.py`, `constraint/test_user_stories.py`,
+  `test_error.py`, `test_import_graph.py`, and `tests/strategies/params.py`
+  (726 lines).
+
+**Benchmarks.** `test_term.py` has `test_param_alpha_equivalence[integer]`,
+`[natural_between]`, `test_param_structural_equivalence` and
+`test_param_construction_between_bounds`; `test_solver.py` has
+`test_nat_param_is_value_valid` and `test_int_param_intersection_feasibility`.
+
+**Probed at 452d0f6** (Python 3.11, `timeit`, best of five; indicative):
+
+| Operation | Time |
+|---|--:|
+| `create_integer_param()` | 9.5 µs |
+| `create_natural_param_between(1, 10)` | 57.7 µs |
+| `create_ordinal_param(range(20))` | 76.6 µs |
+| `create_categorical_param` of 4 | 13.5 µs |
+| `is_value_valid(3)` of a bounded natural param (SymPy) | 32.3 µs |
+| `is_value_valid` of an ordinal, a categorical param | 5.1, 3.8 µs |
+| `check_feasibility()` of a bounded natural param (z3) | 501 µs |
+| `check_subset` of two bounded integer params (z3) | 596 µs |
+| `check_feasibility()` of a 4-member permutation param | 10.2 µs |
+| interval `+`, ordinal `\|`, integer `&` | 63.7, 324, 636 µs |
+| `is_structurally_equivalent`, `repr`, `serialize_to_dict` | 2.9, 2.7, 9.0 µs |
+| `Param.deserialize_from_dict` | 184 µs |
+| `assign(3)` of a bounded natural param | 34.8 µs |
+
+The solver and SymPy dominate the questions and the value checks of
+numeric params; the finite domains, the set algebra and deserialization
+spend their time in Python loops (pairwise matching, `repr` sorting,
+re-validation).
+
+### Divergences visible from Python
+
+| # | Python today | After S16 |
+|---|---|---|
+| P-1 | categories sort by `repr` text | the constraint members' canonical order (by kind, then value), as D-S13-4 orders set members (D-S16-4) |
+| P-2 | ordinal values of equal value and different kinds (`1`, `True`, `1.0`) sort by `repr`; a number subclass (`IntEnum`) and `-0.0` are kept as given in all three finite kinds | ties sort by kind (`bool`, `float`, `int`), then as given; number subclasses are stored as the exact `int` or `float`, and `-0.0` as `0.0`, as S13 stores members (D-S16-3, D-S16-4) |
+| P-3 | an ordinal `Serializable` is compared with any other value by `<` | it orders against opaque values only, through its producer; against a primitive it is incomparable (`TypeError`) (D-S16-4) |
+| P-4 | a non-numeric value matches another by `==` | an opaque value matches only a value of its own class, by `==`, as a constraint member does (D-S16-3) |
+| P-5 | the domains, `Param` and `ParamAssignment` are dataclasses (`dataclasses.replace`, `fields`) | P2 classes without dataclass machinery; `construct_from_fields` stays (D-S16-9) |
+| P-6 | every error text is a Python sentence | errors with a core counterpart take the core's one-line lowercase text under the same Python class; texts that name Python values (a value, a constraint, a param, a class) keep Python's words (D-S16-12) |
+| P-7 | a simplifier failure (`PassExecutionError`) makes the whole system evaluation `UNDECIDED`, stopping there | it makes that member `UNDECIDED`, and evaluation goes on, so a later violated member decides `VIOLATED`, as "a definite violation dominates indeterminacy" says; its WARNING names the member (D-S16-6, D-S16-8) |
+| P-8 | `validate_value` evaluates the system, then each member again alone, to name the failing member | the first pass names it: the first violated member, else the first undecided one, the same member; each member's records are logged once (D-S16-6) |
+| P-9 | an assignment's value is compared by `==` | type-strictly, as the package matches values everywhere else (D-S16-9) |
+| P-10 | the domains' and params' walks, orders and matches run in Python | Rust, except user `==`, `<`, `hash` and the hooks of Python-defined domains and constraints |
+| P-11 | constraints the core builds (implied bounds, renamed and narrowed constraints) are Python objects built in Python | the binding builds them from the core's, as instances of the public classes; a Python-defined domain receives those objects (D-S16-5) |
+| P-12 | private helpers (`values.py`'s predicates and codec helpers, the screening, renaming and bound helpers of `domains.py` and `core.py`) exist | deleted; their tests are rewritten against the public API and as Rust stories (D-S16-1) |
+| P-13 | a Python-defined constraint in a param-internal evaluation receives the bindings dict the Python code built | the dict the binding rebuilds from the core's bindings, with the same identifiers and values (D-S16-15) |
+| P-14 | `Param.__add__` and the other operators are dataclass methods, re-dispatched by Python's rules | the pyclass's number slots, with the same results for every operand pair the Python methods handled (D-S16-11) |
+
+Unchanged in meaning:
+
+- the six kinds, what each admits, its constraints, implied constraints,
+  profile and rendering;
+- type-strict matching of `bool`, `int` and `float`, the NaN refusal, and
+  the order of construction checks;
+- the screening rules, the fidelity rule, the enumeration, and every
+  downgrade to `UNDECIDED`, with their WARNING records (logger, level,
+  what they name);
+- the order of checks in every entry point, and which errors propagate;
+- the interval arithmetic, the natural-number gates, the exact bound
+  ordering, and the set algebra;
+- the wire shapes and type ids;
+- identity `==` and `hash`, freezing, pickling, and `Generic[_T]`
+  subscripting;
+- `ParamError`, `IntervalProfile`, `ConstraintOutcome`, the protocols and
+  the aliases.
+
+### Pattern choice
+
+- **Core: `fhy_core::param`** (decision 2: logic-rich; the direction). The
+  domains, the value orders, screening, the decision procedures, the set
+  algebra, params, assignments, bounds and arithmetic move there with Rust
+  tests.
+- **P2:**
+  - `_rs.IntegerDomain`, `_rs.IntervalIntegerDomain`, `_rs.RealDomain`,
+    `_rs.OrdinalDomain`, `_rs.CategoricalDomain`, `_rs.PermutationDomain`,
+    as `#[pyclass(subclass, frozen)]`, under `class
+    IntegerDomain(_rs.IntegerDomain, WrappedFamilySerializable)` and so on,
+    registered as virtual `ParamDomain` and `FrozenMixin` subclasses as
+    S13's leaves are;
+  - `_rs.Param` under `class Param(_rs.Param, Serializable, Generic[_T])`,
+    and `_rs.ParamAssignment` likewise.
+- **P3:** a Python-defined `ParamDomain` is driven through an adapter
+  implementing the core's `CustomDomain` trait (D-S16-5). User values stay
+  opaque values behind S13's `PyOpaqueValue`, which gains an order hook
+  (D-S16-3).
+- **Stays Python (P1 or plain):** `ParamError`; `IntervalProfile` (P1, a
+  frozen dataclass converted at the boundary); the protocols and aliases;
+  `DecidedOutcome`; the factory functions (thin, D-S16-13); the
+  `build_*_domain` builders (one-line calls of the classes).
+
+**Benchmark plan: `benchmarks/test_param.py` (S16a.1).** It uses the
+public API only; `_Level` is a `Serializable` value class with `==`,
+`hash` and `<`, the kind the binding keeps opaque. The baseline measures
+today's Python package.
+
+| Benchmark | Measures |
+|---|---|
+| `test_param_construction[integer]`, `[natural_between]`, `[interval_between]`, `[ordinal_20]`, `[categorical_4]`, `[permutation_4]` | construction, canonical constraints, the domains' validation |
+| `test_domain_construction[ordinal_100]`, `[categorical_100]`, `[ordinal_serializable]` | the finite domains' checks and orders; opaque `<` and `==` |
+| `test_param_attribute_read` | `constraints` and `domain` reads |
+| `test_param_is_value_valid[natural_between]`, `[ordinal_20]`, `[categorical_4]`, `[permutation_4]`, `[serializable]` | value checks (SymPy for the equation row) |
+| `test_param_validate_value_violation` | the failing-member path and its message |
+| `test_param_assign` | assignment |
+| `test_param_check_feasibility[natural_between]`, `[real_between]`, `[in_set]`, `[ordinal_20]`, `[permutation_4]` | the solver, the enumeration, the finite walk |
+| `test_param_check_subset[integer]`, `[in_set]`, `[ordinal_20]` | implication, enumeration, the finite walk |
+| `test_param_union[ordinal_20]`, `[categorical_4]` | the finite set algebra |
+| `test_param_intersection[integer]`, `[ordinal_20]`, `[permutation_4]` | intersection and its emptiness check |
+| `test_param_arithmetic[add]`, `[sub]`, `[mul]`, `[neg]` | interval arithmetic |
+| `test_param_add_lower_bound[natural]` | the bound gate and one more constraint |
+| `test_param_structural_equivalence[ordinal_20]`, `test_param_alpha_equivalence[natural_between]` | equivalence |
+| `test_param_serialize_to_dict`, `test_param_deserialize_from_dict`, `test_param_pickle_round_trip`, `test_param_assignment_deserialize_from_dict` | serialization |
+| `test_param_repr`, `test_param_str` | rendering |
+
+Reruns, not added: the four param rows of `test_term.py` and the two of
+`test_solver.py`, and S13's `test_constraint_system_construction` and
+`test_set_constraint_evaluate_with_bindings[member]` (the constraint
+binding gains visibility changes and a fallback, D-S16-15).
+
+The verdict follows cross-cutting rule 5. The paths at risk are:
+
+- **attribute reads**, which cross into the extension unless cached in
+  slots, as S13's were (64a1436);
+- **small constructions**, such as `create_integer_param()`, which gain
+  crossings into the extension and the building of public-class objects
+  for the constraint system;
+- **opaque values**, whose `==` and `<` now cross from Rust into Python;
+- **Python-defined domains**, whose hooks the core calls through the
+  adapter, with Python objects rebuilt for the constraints the core made.
+
+### Decisions (proposed 2026-09-26)
+
+Each decision names the policy it follows: D-S4-1 (Rust semantics where
+the two differ), D-S4-2 (Python names where the meaning is the same), "no
+fallback", "tests rewritten, not skipped", the crate's conventions in
+`rust-workspace.md` Part I (one public path per item, the layering,
+`#[non_exhaustive]` errors with a one-line lowercase `Display`, the naming
+rules, no global state beyond identity), P1 to P3, cross-cutting rules 5
+to 7, and the direction (port as much as possible; small slowdowns on
+uncalled paths are acceptable). Where a decision follows an earlier slice,
+it says so.
+
+- **D-S16-1: one implementation, no fallback** ("no fallback"; D-S13-1).
+  - Deleted, not kept beside the Rust path: every private helper of the
+    three modules (`values.py`'s predicates and codec helpers,
+    `domains.py`'s screening, renaming, enumeration and downgrade helpers,
+    `core.py`'s bound, gate and arithmetic helpers), and the dataclass
+    bodies of the six kinds, `Param` and `ParamAssignment`.
+  - Stay Python:
+    - `values.py`: `ParamError`, the two protocols and the three aliases;
+    - `domains.py`: the `ParamDomain` ABC, `IntervalProfile`,
+      `DecidedOutcome`, the six thin classes, the logger, the
+      `build_*_domain` builders, and `compute_constraint_implication_subset`,
+      `evaluate_system_outcome`, `are_all_constraints_satisfied` and
+      `is_bound_expression` as calls into `_rs`;
+    - `core.py`: the thin `Param` and `ParamAssignment`, and the 25
+      factories (D-S16-13).
+  - The logger stays because the binding logs on its name (D-S16-7).
+- **D-S16-2: a new core module, `fhy_core::param`** (one public path;
+  §I.2; the direction).
+  - It depends on `constraint`, `solver`, `expression` and `term`, never
+    on `pass`, so it is an eighth layer in CONTRIBUTING's list. Its row
+    maps `fhy_core.symbolic.param` to `fhy_core::param`, and §I.8's
+    non-goal is revised for it.
+  - The sketch is settled test-first in S16a.2 and S16b.1, as D-S13-2's
+    was:
+
+  ```rust
+  // fhy_core::param
+  pub struct IntervalProfile { /* admits_only_bounds, non_negative, zero_included, prefer_inclusive */ }
+  pub struct IntegerDomain { .. }  pub struct IntervalIntegerDomain { .. }  pub struct RealDomain;
+  pub struct OrdinalDomain { /* Vec<Member> in ordinal order, and a MemberSet for lookup */ }
+  pub struct CategoricalDomain { /* MemberSet, canonical order */ }
+  pub struct PermutationDomain { /* Vec<Member>, as given */ }
+  #[non_exhaustive] pub enum ParamDomain {
+      Integer(IntegerDomain), IntervalInteger(IntervalIntegerDomain), Real(RealDomain),
+      Ordinal(OrdinalDomain), Categorical(CategoricalDomain), Permutation(PermutationDomain),
+      Custom(Arc<dyn CustomDomain>),                                     // D-S16-5
+  }
+  impl ParamDomain {
+      pub fn symbol_type(&self) -> Result<Option<SymbolType>, ParamError>;
+      pub fn is_value_admissible(&self, value: &Value) -> Result<bool, ParamError>;
+      pub fn validate_constraint(&self, constraint: &Constraint, variable: &Identifier) -> Result<(), ParamError>;
+      pub fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, ParamError>;
+      pub fn interval_profile(&self) -> Result<Option<IntervalProfile>, ParamError>;
+      pub fn is_value_set_subset(&self, other: &Self) -> Result<bool, ParamError>;
+      pub fn feasibility_subset(&self, own: Side<'_>, other_domain: &Self, other: Side<'_>, context: &ParamContext<'_>) -> Result<Outcome, ParamError>;
+      pub fn has_feasible_value(&self, side: Side<'_>, context: &ParamContext<'_>) -> Result<Outcome, ParamError>;
+      pub fn union(&self, own: Side<'_>, other_domain: &Self, other: Side<'_>, variable: &Identifier, context: &ParamContext<'_>) -> Result<Option<(Self, Vec<Constraint>)>, ParamError>;
+      pub fn intersection(&self, ..) -> Result<(Self, Vec<Constraint>), ParamError>;
+      pub fn is_structurally_equivalent(&self, other: &Self) -> bool;
+  }
+  pub struct Side<'a> { /* constraints: &'a [Constraint], variable: &'a Identifier */ }
+  pub trait CustomDomain: Send + Sync + fmt::Debug { /* the ABC's hooks, fallible; as_any */ }
+  pub fn compute_constraint_implication_subset(own_domain, own: Side, other_domain, other: Side, symbol_type, context) -> Result<Outcome, ParamError>;
+  pub fn is_bound_expression(expression: &Expression) -> bool;
+
+  pub struct ParamContext<'a> { /* &ConstraintContext, &dyn ParamObserver */ }
+  pub trait ParamObserver: Sync { fn notify(&self, event: &ParamEvent<'_>); fn is_undecidable(&self, error: &ConstraintError) -> bool { .. } }
+  #[non_exhaustive] pub enum ParamEvent<'a> { Constraint { .. }, Screened { .. }, EnumerationUndecided { .. },
+      SubsetEnumerationUndecided { .. }, Downgraded { .. }, SolverUndecided { .. }, Witness { .. }, BridgeFailed { .. } }
+
+  pub struct Param { /* Arc: domain, variable, ConstraintSystem */ }                 // S16b
+  impl Param {
+      pub fn new(domain, variable, constraints, context) -> Result<Self, ParamError>;
+      pub fn with_constraints(..); pub fn with_constraint(..); pub fn with_bound(.., Bound, ..);
+      pub fn check_value(&self, value: &Binding, bindings: &Bindings, context) -> Result<ValueCheck, ParamError>;
+      pub fn check_feasibility(..); pub fn check_subset(..); pub fn union(..); pub fn intersection(..);
+      pub fn checked_add(..); pub fn checked_sub(..); pub fn checked_mul(..); pub fn checked_neg(..);
+      pub fn is_structurally_equivalent(&self, other: &Self) -> bool;
+  }
+  impl AlphaEquivalence for Param { .. }
+  pub struct ParamAssignment { /* Param, Value */ }
+  pub fn check_bounds_are_ordered(lower: &LiteralValue, upper: &LiteralValue, inclusive: (bool, bool)) -> Result<(), ParamError>;
+  #[non_exhaustive] pub enum ParamError { /* see D-S16-12 */ }
+  ```
+
+  - The procedures take a `Side` (constraints and variable) so the
+    Python methods' six-argument shape maps onto the core without a
+    `Param`, as `compute_feasibility_subset` and friends need in S16a.
+  - Every entry point that may call a Python-defined domain or constraint
+    is fallible, since its hooks can raise.
+- **D-S16-3: domain members are constraint members; user values stay
+  opaque** (decision 2; D-S4-1; D-S13-3; S9's user-native call rule).
+  - A finite domain holds `constraint::Member`s: type-strict equality,
+    no NaN, positive zeros, number subclasses as exact numbers (P-2,
+    P-4). A candidate value is a `constraint::Value`, so the core binds it
+    to a variable and matches it against set constraints with the
+    constraint core's own `MemberSet::contains_value`.
+  - A `Serializable` value is an opaque value (S13's `PyOpaqueValue`). Its
+    member-shapedness now also records the capability the domain needs:
+    the binding's reader builds it only when the class supports equality
+    (categorical, permutation) or ordering (ordinal), as the Python
+    predicates judge it, and raises the Python `TypeError` otherwise.
+  - `OpaqueValue` gains one provided method, `order_against(&self, other:
+    &dyn OpaqueValue) -> Option<Ordering>` (default `None`), an additive
+    change to S13's trait. `PyOpaqueValue` implements it with `<` both
+    ways; an exception answers `None` and is kept in S13's pending-error
+    slot.
+  - A comparison that is not a total order must never panic: the core's
+    ordinal sort is its own stable merge sort, which gives some order for
+    any comparator, where `slice::sort_by` may panic since Rust 1.81.
+- **D-S16-4: one order per kind** (D-S4-1; D-S13-4; P-1 to P-3).
+  - **Categorical:** the members' canonical order (`MemberSet`).
+  - **Ordinal:** ascending by value: numbers (`bool`, `int`, `float`)
+    numerically and exactly across kinds, strings by code point, opaque
+    values by `order_against`; ties by kind (`bool`, `float`, `int`),
+    then as given. A number against a string, or an opaque value against
+    a primitive, is incomparable (`TypeError`, chained to a raising `<`'s
+    exception; any other exception `<` raises propagates as itself).
+  - **Permutation:** as given.
+  - `sorted_values`, `categories`, `ordered_members`, `repr`, `str` and
+    the wire all use it; decoding accepts any order, so every payload
+    written before S16 decodes, and the golden pins (already in these
+    orders) do not change.
+- **D-S16-5: `ParamDomain` stays an open Python ABC; a Python-defined
+  domain is a P3 member of the core** (P3; D-S13-5's reason; D-S10-7 for
+  the Python base).
+  - The ABC keeps its bases, its abstract methods and its two concrete
+    defaults. It keeps no pyclass base, since subclasses are frozen
+    dataclasses; the six native kinds are virtual subclasses.
+  - A domain that is not a native kind becomes
+    `ParamDomain::Custom(PyCustomDomain)` where the core needs it. The core
+    calls its hooks as the procedures need them, each once per question or
+    per candidate, like a pass per run: the granularity rule holds.
+  - Constraints the core passes to a hook are Python objects: the objects
+    given where the core still holds them, and new public-class objects
+    for constraints the core made (P-11). Values reach a hook as the
+    Python objects they were read from, or rebuilt ones.
+  - The adapter rules of D-S8-11, D-S10-7 and D-S13-5 hold: an exception
+    propagates as the same object, a `KeyboardInterrupt` passes through,
+    and a result of the wrong type raises `TypeError` in S2's style.
+- **D-S16-6: the procedures are the core's, with Python's order of
+  checks** (D-S4-2; "tests rewritten, not skipped"; P-7, P-8).
+  - Screening, fidelity, enumeration, feasibility, the witness question,
+    implication, the REAL-sort downgrades and the finite walks keep their
+    rules and their order. Fidelity is a flag the screen returns, not an
+    identity test.
+  - Evaluating a system under bindings (a param's value check, a
+    candidate) goes member by member, in canonical order: a violated
+    member answers, an undecided one is remembered, and a member whose
+    evaluation fails with an undecidable error (D-S16-8) is undecided.
+    The failing member is the first violated one, else the first
+    undecided one, from the same pass.
+  - The questions ask `ConstraintSystem::check_satisfiability` and
+    `check_implication` with no time limit, as Python did.
+- **D-S16-7: the core reports and the binding logs** (D-S8-14; D-S13-13).
+  - The core reports each WARNING and DEBUG cause to the `ParamObserver`
+    in the `ParamContext`, when Python logs it today; constraint-level
+    events of the systems it evaluates or asks arrive wrapped with the
+    system and bindings they concern.
+  - The binding's observer writes today's records, with the same logger,
+    level and Python `repr`s: on `fhy_core.symbolic.param.domains` the
+    screening, enumeration, downgrade and bridge-failure records; on the
+    constraint and solver loggers what S13's observers write.
+  - Rust users get a no-op observer by default.
+- **D-S16-8: which solver failures are undecided is the caller's**
+  (D-S4-1; D-S13-5's `KeyboardInterrupt` rule).
+  - `ParamObserver::is_undecidable(&ConstraintError)` decides; the default
+    answers true for a failing backend (`SolveError::Backend`).
+  - The binding answers true only when the error raises
+    `PassExecutionError` in Python, as `evaluate_system_outcome` caught it,
+    so a Python simplifier's other exceptions, `KeyboardInterrupt`
+    included, propagate as before.
+- **D-S16-9: the domains, `Param` and `ParamAssignment` are P2 under
+  their Python names** (P2; D-S4-2; D-S13-9; P-5, P-9).
+  - They keep their constructors and keyword names, attributes, methods,
+    `repr`, `str`, `construct_from_fields`, and the Python `TypeError`
+    texts for argument shapes.
+  - Each object keeps the Python objects it was given or built: a
+    domain's member objects (rebuilt from the core's members, P-2), a
+    param's domain, variable and `ConstraintSystem` object, an
+    assignment's value. The attributes are copied into slots when the
+    object is built, as S13's (64a1436).
+  - Frozen (`FrozenMutationError`), identity `==` and `hash`.
+  - Pickling: the domains and `Param` as a call of their class, which
+    re-canonicalizes idempotently; `ParamAssignment` as a call of a
+    private class method that rebuilds without re-validation, as the
+    dataclass's pickle did not re-validate (D-S10-5's form).
+  - Equivalence is the core's (D-S10-13): a param's domains structurally,
+    then its system under the renaming extended by the two variables
+    (`enter_binders`); an assignment's params, then its values
+    type-strictly (P-9).
+  - Objects the binding builds from core values (results of arithmetic,
+    the set algebra, deserialization) are built through S11's seed-based
+    `__new__`, then `__init__` fills the slots.
+- **D-S16-10: serialization keeps the wire format** (cross-cutting rule 4;
+  D-S13-10). The binding writes and reads the domains' envelopes and
+  fields, the param's plain payload and the assignment's, through the
+  framework's wrapped-value functions for members and values, and raises
+  today's `Deserialization*Error` classes and texts.
+- **D-S16-11: the operators are the pyclass's slots** (D-S4-2; P-14).
+  `+`, `-`, `*`, unary `-`, `|` and `&` keep their results for every pair
+  of operands the Python methods handled, and answer `NotImplemented` for
+  the pairs they declined.
+- **D-S16-12: errors** (D-S4-1; D-S7-12; D-S13-14 and S13's refinement;
+  CONTRIBUTING "Errors belong to their module"; P-6).
+
+  | Core | Python |
+  |---|---|
+  | construction of the finite kinds: empty, NaN, incomparable, duplicate | `ParamError` or `TypeError` (incomparable), the core's text |
+  | a value of the wrong kind for a finite domain | `TypeError`, Python's text (an argument shape) |
+  | the natural-number gates, unordered bounds, the empty interval, an empty union or intersection, different permutation members | `ParamError`, the core's text |
+  | a constraint outside the variable's scope, a native-constant variable, bindings of the own variable, a value not admissible, violated or not verified | `ParamError`, Python's words (they name a value, a constraint or a param by `repr`) |
+  | a forbidden constraint kind: interval domain / finite domain | `TypeError` / `ParamError`, the core's text; a non-bound interval constraint `ParamError`, the core's text |
+  | a kind mismatch in the set algebra, an unsupported union, an unsupported operand, a non-interval operand | `TypeError`, Python's words (they name classes and types) |
+  | a non-bound constraint in a coerced operand | `TypeError`, the core's text, chained to the conversion's `ConstraintError` |
+  | rescoping a set constraint off its variable, a constraint of an unexpected kind | `ConstraintError`, the core's text |
+  | a malformed bound in an interval param (unreachable through the API) | `RuntimeError`, the core's text |
+  | `Constraint(ConstraintError)` | S13's mapping |
+  | `Custom` | the Python exception itself |
+- **D-S16-13: the factories stay Python functions; their logic is the
+  core's** (D-S4-2; the direction). Each keeps its signature (keyword-only
+  parameters, which `test_signatures.py` pins) and docstring, and its body
+  calls the Rust classes and `_rs.check_param_bounds_are_ordered`, the
+  core's exact comparison. They are one to three lines each.
+- **D-S16-14: `IntervalProfile`, `ParamError`, `ConstraintOutcome`, the
+  protocols and the aliases stay Python** (P1; D-S13-15; D-S10-6). The
+  binding converts `IntervalProfile` at the boundary and returns
+  `ConstraintOutcome` members by identity.
+- **D-S16-15: the Python-defined constraint adapter rebuilds missing
+  bindings** (D-S13-5; P-13). When the core evaluates a
+  `CustomConstraint` under bindings that carry no Python source (a
+  candidate the core binds), S13's adapter builds the dict from the core's
+  bindings, where it passed an empty dict. An additive change to
+  `constraint/custom.rs`.
+- **D-S16-16: questions run detached** (D-S13-17; S8). Feasibility,
+  subset, intersection and the witness question run detached from the
+  interpreter, as S13's questions do; the adapters and observers attach
+  for their calls. Value checks, whose time is SymPy's, stay attached.
+- **D-S16-17: threads.** The core types are `Send + Sync` and hold no
+  state between calls.
+- **D-S16-18: no new process-global state.** Python objects live in the
+  pyclass objects and the adapters; an opaque `<` that raises uses S13's
+  pending-error slot.
+- **D-S16-19: the Rust tests specify the core first** (the tests rule;
+  S7.2's practice), with a traceability table from the Python param
+  tests.
+- **D-S16-20: the Python tests are rewritten, not skipped** (the tests
+  rule). The behavioral tests stay, and change only where P-1 to P-14
+  change what they pin; each change is recorded with its reason.
+- **D-S16-21: the module functions tests use stay** (D-S4-2).
+  `evaluate_system_outcome`, `are_all_constraints_satisfied`,
+  `is_bound_expression`, `compute_constraint_implication_subset` and the
+  `build_*_domain` builders keep their names and signatures over the
+  core; the underscore helpers go (D-S16-1).
+- **D-S16-22: split into S16a and S16b** (the task's size rule;
+  cross-cutting rule 7). S16a ports `values.py` and `domains.py`, and
+  leaves `core.py` Python over the new classes. S16b ports `core.py`.
+
+### Needs the user
+
+None. The decisions that could have needed the user are covered by the
+policy, the precedent and the direction:
+
+- **Keeping `ParamDomain` open:** D-S13-5 kept `Constraint` open through a
+  P3 adapter; the domain is the package's documented strategy.
+- **Calling a user's `==`, `hash` and `<` from Rust:** S9's user-native
+  rule and D-S13-3.
+- **The orders and the error texts:** D-S4-1, D-S13-4, D-S13-14 and S13's
+  refinement.
+- **Per-member degradation and the single pass:** D-S4-1; the documented
+  rule that a violation dominates indeterminacy.
+- **Deleting private helpers:** D-S13-1, with the tests rewritten.
+- **New process-global state:** none is added.
+
+### Steps
+
+1. **S16a.1: benchmarks.** Add `benchmarks/test_param.py`, and record the
+   baseline on today's package.
+2. **S16a.2: the core, test-first.** Add `fhy_core::param` (`param.rs`)
+   with `param/value.rs` (the ordinal order and the tolerant sort),
+   `param/domain.rs` (the six kinds, `IntervalProfile`, `ParamDomain`),
+   `param/custom.rs` (`CustomDomain`), `param/context.rs` (`ParamContext`,
+   `ParamObserver`, `ParamEvent`), `param/screen.rs` (screening, renaming,
+   rescoping), `param/decide.rs` (evaluation, enumeration, feasibility,
+   subset, implication), `param/algebra.rs` (the domains' union and
+   intersection) and `param/error.rs`; the provided `OpaqueValue`
+   method. Update `lib.rs`, the crate README and CONTRIBUTING's tables.
+   Nothing in Python changes.
+3. **S16a.3: the domain binding.** Add `rust/fhy-core-py/src/param.rs`
+   with `param/value.rs` (the value readers and materializers),
+   `param/domains.rs` (the six pyclasses), `param/custom.rs`
+   (`PyCustomDomain`), `param/observer.rs` (the records), `param/error.rs`
+   and `param/functions.rs`; `constraint_to_python` and the constraint
+   binding's visibility changes. Update `_rs.pyi`.
+4. **S16a.4: the Python switch of `values.py` and `domains.py`** (marked
+   breaking), with the migrated tests.
+5. **S16a.5: the interface suite** `tests/symbolic/param/test_domain_rust_binding.py`.
+6. **S16b.1: the params' core, test-first.** Add `param/core_param.rs`
+   (`Param`), `param/assignment.rs`, `param/interval.rs` (bounds, gates,
+   arithmetic, exact comparison) and the params' set algebra.
+7. **S16b.2: the param binding.** Add `param/param.rs` and
+   `param/assignment.rs`.
+8. **S16b.3: the Python switch of `core.py`** (marked breaking), with the
+   migrated tests and `tests/symbolic/param/test_param_rust_binding.py`.
+9. **S16b.4: benchmarks after, and docs.** Record the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with these green:
+
+- `pytest` and `-m "not very_slow"`;
+- the `property` session and `tests_minimal`;
+- `lint` and `type_check`;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `-D warnings` with and without
+  `--all-features`, tests with the default features and with all of them,
+  doc, deny, and `cargo +1.85 check`.
+
+### Test plan
+
+**Rust tests, written first,** in `tests/it/param/`.
+
+- **`value_stories.rs`:** the ordinal order across numeric kinds (exact
+  `int`/`float` comparison past 2^53, infinities), strings, opaque values
+  through a test-local `OpaqueValue` with an order, incomparable pairs,
+  ties by kind; the tolerant sort under a comparator that is no order.
+- **`domain_stories.rs`:** each kind's construction checks in order,
+  admissibility (strict integers, finite floats and literal-grammar
+  strings, type-strict members, permutations), constraint validation,
+  implied constraints, profiles, value-set subsets, structural
+  equivalence, and `is_bound_expression`.
+- **`screen_stories.rs`:** each screening rule with its event and the
+  fidelity flag; renaming and rescoping, and their refusals.
+- **`decide_stories.rs`:** against the fake SMT backend and the recording
+  simplifier of `tests/it/support/`: evaluation member by member with the
+  undecidable policy, enumeration, feasibility with each downgrade,
+  subset by enumeration, by the witness and by implication with each
+  downgrade, and the finite walks (a permutation's order).
+- **`algebra_stories.rs`:** union and intersection of each kind, empty
+  results, kind mismatches, merged attributes, rescoped constraints.
+- **`custom_stories.rs`:** a test-local `CustomDomain` reached from each
+  procedure, and its errors propagating.
+- **`param_stories.rs` (S16b):** construction (native-constant variable,
+  scope, validation, deduplication, implied constraints), value checks and
+  the failing member, bounds and gates, exact bound ordering, arithmetic
+  (each operator, coercion, natural results, rendering preference),
+  union, intersection and its emptiness, equivalence, assignments.
+- **`param_properties.rs`:** the ordinal order is a total order on
+  comparable values and independent of input order; finite feasibility
+  agrees with brute force; interval arithmetic contains every pairwise
+  result of members (brute force over small intervals); subset agrees with
+  brute force on finite domains.
+- **A traceability table** from the Python param tests.
+
+**The interface suites** (`test_domain_rust_binding.py`,
+`test_param_rust_binding.py`):
+
+- the class structure (pyclass first, virtual `ParamDomain`, `FrozenMixin`
+  and `Serializable`), frozen, identity `==`;
+- the objects kept (members, the variable, the domain, the system, the
+  assignment's value);
+- the readers for every value kind, including number subclasses, NumPy
+  scalars and `Serializable` values with and without the capabilities;
+- an opaque `<` or `==` raising, and a `KeyboardInterrupt` passing through;
+- a Python-defined domain driven from each procedure, with the objects
+  its hooks receive and how often they are called;
+- each log record, and each error row of D-S16-12;
+- pickling and copying; payloads in another order decoding;
+- threads.
+
+**Migrating the existing tests.** Each change is recorded with its reason:
+
+- **`test_value_predicates.py`, `test_core_internals.py`,
+  `test_domain_internals.py`, `test_bound_internals.py`** (P-12): the
+  helper-level tests become tests of the same rules through the public
+  API (the domains' constructors and admissibility, `has_feasible_value`,
+  `compute_intersection` and `compute_constraint_implication_subset` with
+  foreign-scoped constraints, arithmetic on reversed bounds) and Rust
+  stories.
+- **Order pins** (P-1, P-2): categorical `categories`, `repr`, `str` and
+  wire orders; ordinal ties.
+- **Message pins with a core counterpart** (P-6): rewritten to the core's
+  text.
+- **Assignment equivalence of `1` and `True`** (P-9), and dataclass
+  machinery (P-5), if any test uses them.
+- **Everything else is expected to pass unchanged:** the log tests
+  (D-S16-7), the tri-state and soundness tests, the serialization pins,
+  the pickle properties, and the solver-binding tests.
