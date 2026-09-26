@@ -10,7 +10,9 @@
 //! caches analysis results per [`NodeIdentity`](crate::tree::NodeIdentity)
 //! for the length of the run, and can verify the IR between passes with a
 //! [`ValidationManager`], which runs [`Validator`]s collect-all into one
-//! report. [`PassValidator`] runs a pass as a validator.
+//! report. [`PassValidator`] runs a pass as a validator, and a
+//! [`VerificationRegistry`] builds verifiers from the validators registered
+//! for the kinds of IR they apply to.
 //!
 //! Hook errors become a [`PassError`] naming the pass and the hook. A
 //! [`PassRegistry`] builds passes by their [`CompilerPass::name`], by
@@ -29,6 +31,7 @@ mod manager;
 mod preserved;
 mod registry;
 mod validation;
+mod verification;
 
 pub use adapters::{RewritePass, WalkPass};
 pub use analysis::Analysis;
@@ -43,3 +46,4 @@ pub use manager::{
 pub use preserved::{AnalysisId, PreservedAnalyses};
 pub use registry::{CreatePassError, PassInfo, PassRegistrationError, PassRegistry};
 pub use validation::{PassValidator, ValidationManager, Validator, ValidatorRecord};
+pub use verification::{VerificationRegistry, VerifierId};

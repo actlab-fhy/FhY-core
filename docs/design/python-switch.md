@@ -115,7 +115,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S14: pass verification (`verification.py` and its use from `traits/verifiable.py`; "Needs the user" is empty)
   - [x] S14 design (D-S14-1 to D-S14-12; see "S14: pass verification")
   - [x] S14.1: verification benchmarks and baseline (5 rows; see "S14.1 baseline")
-  - [ ] S14.2: core addition, test-first, with Rust tests (`fhy_core::pass::VerificationRegistry`, `VerifierId`)
+  - [x] S14.2: core addition, test-first, with Rust tests (`fhy_core::pass::VerificationRegistry`, `VerifierId`; 27 new tests, see "S14.2 implementation notes")
   - [ ] S14.3: the binding (the registry in the extension's module state, the pipeline verifier over it, the stubs)
   - [ ] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`)
   - [ ] S14.5: tests migrated, and the interface suite
@@ -14373,3 +14373,33 @@ the best of three runs' medians.
   12.8 µs through `run_verification`. Most of that is building the
   `ValidationManager` and running each pass as a check. The lookup is
   about 1 µs of it.
+
+### S14.2 implementation notes
+
+The tests were written first, against `todo!()` stubs of every method of
+`VerificationRegistry` but `new`. Of the 27 new tests (26 stories and one
+property), the 22 that touch the registry failed against the stubs. The
+five `VerifierId` and trait-bound stories passed, since `VerifierId` has
+no stub. The proptest seed file the failing run wrote was deleted, as in
+S11. The shape follows D-S14-2, with these choices:
+
+- **Storage.** A `HashMap` from each kind to its registrations in order,
+  each an id with an `Arc`'d factory. A lookup walks the lineage, skips
+  kinds with no registrations, and keeps the first registration of each
+  id, so a validator found under two kinds is built by the factory it was
+  registered with first. `len` counts every `(kind, id)` registration.
+- **`I: 'static`** bounds the impl block of the lookups and
+  registrations, since the factories are `'static` trait objects and
+  `ValidationManager<'static, I>` holds `'static` validators, as
+  `PassRegistry`'s `'static` bounds do. `new`, `len`, `is_empty`,
+  `Default`, `Clone` and `Debug` need no bound on `I`.
+- **The verifier's name** is a new `Identifier` named `verification` on
+  each call, as the binding's registry verifier already names its
+  pipeline, so `verify` issues one id per call.
+- **`Debug`** of the registry renders the number of kinds and of
+  registrations, since the factories have no `Debug`. `VerifierId`'s
+  renders the validator type's name or the address in hexadecimal.
+
+The Rust gate is green: fmt, clippy `-D warnings` both ways, 3,765 tests
+(3,797 with all features), doc `-D warnings` both ways, deny, and
+`cargo +1.85 check` both ways. Python is unchanged in this step.
