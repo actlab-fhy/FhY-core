@@ -97,6 +97,21 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver), with the migrated tests (`pytest` 7,576 passed)
   - [x] S12.6: tests migrated, and the interface suite (21; see "S12.5 and S12.6 status")
   - [x] S12.7: benchmarks after, and docs (every row faster or within 10%; see "S12 benchmarks")
+- [ ] S11: types, in two parts (see "S11: types"; "Needs the user" is empty)
+  - [ ] S11a: lattice, poset, the type representations and the dispatchers
+    - [ ] S11a.1: type, lattice and poset benchmarks, and the baseline
+    - [ ] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification)
+    - [ ] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
+    - [ ] S11a.4: the Python switch, and `networkx` out of the dependencies
+    - [ ] S11a.5: tests migrated, and the interface suites
+    - [ ] S11a.6: benchmarks after, and docs
+  - [ ] S11b: type checking
+    - [ ] S11b.1: type-checking benchmarks, and the baseline
+    - [ ] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
+    - [ ] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
+    - [ ] S11b.4: the Python switch
+    - [ ] S11b.5: tests migrated, and the interface suite
+    - [ ] S11b.6: benchmarks after, and docs
 
 ## Goal
 
@@ -11806,3 +11821,1348 @@ The Rust gate is green with `target/gate-python/env.sh` (D-S12-13):
 
 Every benchmark row is faster, or within 10% (see "S12 benchmarks"). The CI
 workflow's new steps first run on the next pull request.
+
+  copies, so the core's semantics are unchanged.
+- **`pformat_expression` refuses a non-expression** with `TypeError`;
+  it used to run the Python formatter over one.
+- **`NumpyExpressionEvaluator(environment)`** lost its `numpy_module`
+  argument, and it inlines, so a composed call evaluates in a pass run as
+  it does through the function.
+- **`BuiltinNativeImplementation` is only in `_rs`**: Python reaches it as
+  a built-in entry's `implementation`; no public module re-exports it.
+- **`coerce_literal_value`** refuses a value of another type with
+  `TypeError`, and text outside the core's literal grammar (such as
+  `"1e5"`) with `ValueError`, where Python passed other types through and
+  read any `int()` or `Decimal()` text.
+- **Without NumPy**, the 27 test functions S9.7 marks are the only
+  unmarked ones that reached NumPy; they failed the same way before S9,
+  since the Python evaluator raised the same `ImportError`.
+
+## S11: types
+
+- **Status:** designed 2026-09-26 at c93f76f. D-S11-1 to D-S11-25 apply
+  the policy the user already set and the user's direction for this slice:
+  port the order utilities and the `fhy_core.types` package to Rust, as
+  much as possible, with small slowdowns on uncalled paths accepted.
+  "Needs the user" is empty; it lists the three closest calls and the
+  precedent that settles each.
+- **Split (D-S11-1).** The slice has two parts, each with its own
+  checklist entry, and each lands green:
+  - **S11a:** `lattice.py`, `utils/poset.py`, `types/core.py`,
+    `types/dispatch.py` and `types/__init__.py`;
+  - **S11b:** `types/checking/`, that is `type_checker.py`,
+    `body_type_checker.py`, `sort_compatibility.py` and `__init__.py`.
+- **Pattern:** two new core modules.
+  - `fhy_core::lattice` holds the partially ordered set and the lattice.
+  - `fhy_core::types` holds the type representations, promotion,
+    binding, substitution and unification. In S11b it gains
+    `fhy_core::types::checking`.
+  - The type classes, the data-type classes and the environment are P2.
+  - The six dispatchers keep `functools.singledispatch` as their
+    registration API. A Python-defined `Type` or `DataType` subclass is
+    P3: the core holds it as an extension behind a trait object, and
+    drives it through an adapter (D-S11-9).
+  - `PartiallyOrderedSet` and `Lattice` are P2 over Python elements
+    (D-S11-5).
+  - `CoreDataType` and `TypeQualifier` stay P1 `StrEnum`s.
+- **Scope.** About 4,280 lines of Python. This revises the non-goal of
+  `rust-workspace.md` §I.8 for `types`, as S10 did for `term`.
+  `constraint`, `param` and `symbol_table` stay unported Python.
+- **Coordination.** S9 and S12 run in parallel, and this branch is rebased
+  onto `dev-rust` after they land. "Coordination with S9 and S12" below
+  lists the shared files S11 touches.
+
+### Survey: the Python API
+
+| File | Lines | Public names |
+|---|--:|---|
+| `lattice.py` | 206 | `Lattice` |
+| `utils/poset.py` | 142 | `PartiallyOrderedSet`, re-exported by `fhy_core.utils` |
+| `types/core.py` | 819 | `Type`, `DataType`, `FhYCoreTypeError`, `CoreDataType`, `PrimitiveDataType`, `TemplateDataType`, `NumericalType`, `IndexType`, `TypeQualifier`, `get_core_data_type_bit_width`, `is_weak_core_data_type`, `promote_core_data_types`, `promote_primitive_data_types`, `promote_type_qualifiers`, `resolve_literal_core_data_type` |
+| `types/dispatch.py` | 1,004 | `TypeUnificationEnvironment`, `is_structurally_equivalent`, `bind_template`, `substitute_template`, `unify`, `bind_data_template`, `substitute_data_template`, `unify_expression` |
+| `types/__init__.py` | 62 | the 23 names above, and `checking` |
+| `types/checking/type_checker.py` | 1,513 | `ExpressionTypeChecker`, `synthesize_expression_type`, `check_expression_type`, `get_core_data_type_from_literal_type` |
+| `types/checking/body_type_checker.py` | 372 | `RegisteredFunctionBodyTypeChecker`, `check_registered_function_body`, `check_all_registered_function_bodies` |
+| `types/checking/sort_compatibility.py` | 112 | `is_core_data_type_compatible_with_sort`, `get_result_core_data_type_for_sort` |
+| `types/checking/__init__.py` | 53 | the nine names of `checking` |
+
+**`PartiallyOrderedSet` (`utils/poset.py`)** is a `networkx.DiGraph` of
+its elements. An element is any hashable object, with a dict's key
+semantics.
+
+- `add_element(element)` raises `ValueError` for a member.
+- `add_order(lower, upper)` raises `ValueError` for a non-member. It
+  raises `RuntimeError` when `upper` already reaches `lower`, which
+  includes `lower == upper`. Its docstring says it also raises when "an
+  order relation already exists", but adding an existing order again is
+  accepted.
+- `is_less_than(lower, upper)` is `nx.has_path`, a graph search per call.
+  It is reflexive: `is_less_than(x, x)` is `True`. So the relation is "at
+  most", despite the name. `is_greater_than(a, b)` is
+  `is_less_than(b, a)`.
+- `__iter__` is `nx.topological_sort`, whose order the docstring calls
+  unspecified. `iter_stable(key=repr)` is
+  `nx.lexicographical_topological_sort`: among the elements ready next,
+  the least key comes first. There are also `__len__` and
+  `__contains__`.
+- Messages: ``Expected 3 to be a member of the poset, but it is not.``,
+  ``Expected no order between 2 and 1, but found one.``
+
+**`Lattice` (`lattice.py`)** is `Generic[T]` and a `VerifiableMixin`,
+over a private `_poset`.
+
+- `add_element`, `add_order` and `__contains__` forward to the poset.
+- `get_meet(x, y)` collects the lower bounds, the members `z` with `z ≤ x`
+  and `z ≤ y`, then keeps those not strictly below another lower bound. It
+  returns the only one left, or `None`. `get_join` is the dual. Each runs
+  O(n) graph searches, then O(k²).
+- A non-member argument raises the poset's `ValueError`, except on an
+  empty lattice. There no search runs, and the answer is `None`, which
+  `test_empty_lattice_meet` and `test_empty_lattice_join` pin.
+- `has_meet`, `has_join` and `get_least_upper_bound`. The last raises
+  ``RuntimeError("No least upper bound of 3 and 4 found for lattice.")``.
+- `is_lattice()` checks every pair.
+- `verify()` returns a `ValidationReport` with one ERROR per pair that
+  lacks a meet or a join. The source is `fhy_core.lattice.Lattice.verify`,
+  and the message is ``Lattice has no unique meet for elements 3 and 4.``,
+  with the elements' `repr`s.
+- In `src`, only `types/core.py` uses either class: it builds two
+  promotion lattices at import. `networkx` is a required dependency for
+  the poset alone.
+
+**`types/core.py`.**
+
+- **The abstract bases.** `Type` and `DataType` share
+  `_DispatchedStructuralEquivalence(WrappedFamilySerializable,
+  FrozenMixin, StructuralEquivalence, ABC)`. Its
+  `is_structurally_equivalent` method calls the dispatcher. Neither
+  class defines `__eq__` or `__hash__`, so `==` and `hash` are identity.
+  Users subclass both, as `tests/types/test_extension.py` does: the
+  subclass calls `super().__init__()`, stores private attributes, and
+  `FrozenMixin` freezes it after `__init__`.
+- **`CoreDataType`** is a `StrEnum` of 17 members:
+  - the weak `UINT`, `INT` and `FLOAT`;
+  - `UINT8` to `UINT32`, `INT8` to `INT64`, `FLOAT16` to `FLOAT64`, and
+    `COMPLEX32` to `COMPLEX128`;
+  - `BOOL`.
+
+  `get_core_data_type_bit_width` returns `None` for a weak type and 1 for
+  `BOOL`. `is_weak_core_data_type` tests membership of the weak three.
+- **Promotion.** Two `Lattice`s are built and verified at import:
+  - integers: the unsigned chain, the signed chain, `UINT < INT`, and
+    `UINT_N < INT_2N`;
+  - floats and complex numbers: `FLOAT < FLOAT16 < FLOAT32 < FLOAT64`,
+    `FLOAT_N < COMPLEX_2N`, and the complex chain.
+
+  `promote_core_data_types(a, b)` promotes `BOOL` only with `BOOL`, and
+  otherwise joins within one family. Anything else raises
+  ``FhYCoreTypeError("Unsupported primitive data type promotion: ...")``.
+  Each promotion is a `get_least_upper_bound`: the probe measured 63 to
+  73 µs. `promote_primitive_data_types` wraps it.
+- **`resolve_literal_core_data_type(literal, core_data_type)`:**
+  - a `bool` resolves only in a `BOOL` context;
+  - a `float` resolves in the float family, and the weak `FLOAT` to
+    `FLOAT64`;
+  - a non-negative `int` in an unsigned context resolves to its smallest
+    unsigned type, promoted with the context (`UINT` counts as `UINT8`);
+  - an `int` in a signed context resolves likewise, over the signed
+    types (`INT` counts as `INT8`);
+  - an `int` in a float context resolves to the float context;
+  - anything else raises `FhYCoreTypeError`, for example ``Literal 300
+    does not fit in a supported uint type.``
+- **The classes.** None of the constructors checks its argument types.
+  - `PrimitiveDataType(core_data_type)`.
+  - `TemplateDataType(data_type: Identifier, widths=None)` keeps the
+    widths as a tuple, unchecked. Deserialization refuses a width that is
+    not positive. `str` is the identifier's `str`, and `repr` omits the
+    widths.
+  - `NumericalType(data_type, shape=None)`. A shape element is an
+    `Expression` or `Ellipsis`. A shape of exactly `[...]` is the
+    full-shape wildcard, and an `Ellipsis` among other dimensions matches
+    one dimension. `is_scalar()` holds for the empty shape.
+  - `IndexType(lower_bound, upper_bound, stride=None)`, whose stride
+    defaults to the literal 1.
+  - `str` prints expressions with `pformat_expression(show_id=True)`:
+    `T[(N::65563 + 1), ...]` and `index(0:N::65563:1)`.
+- **Serialization.** The type ids are `primitive_data_type`,
+  `template_data_type`, `numerical_type` and `index_type`, in the
+  `WrappedFamilySerializable` envelope. An `Ellipsis` dimension is the
+  sentinel `{"__type__": "__numerical_type_shape_ellipsis__", "__data__":
+  {}}`. Pickling is the default, through `__dict__`.
+- `TypeQualifier` has the members `input`, `output`, `state`, `param` and
+  `temp`. `promote_type_qualifiers` gives `PARAM` for two `PARAM`s, and
+  `TEMP` otherwise.
+- Every promotion and literal resolution logs at DEBUG on
+  `fhy_core.types.core`.
+
+**`types/dispatch.py`.**
+
+- **Six `functools.singledispatch` functions,** keyed by the first
+  argument's class, with handlers for the four built-in classes.
+  Downstream packages register handlers for their own classes; this is
+  the module docstring's contract, and `test_extension.py` exercises it.
+  The defaults:
+  - `is_structurally_equivalent` answers `False`;
+  - `bind_template`, `unify` and `bind_data_template` require structural
+    equivalence, or raise `VerificationError`;
+  - `substitute_template` and `substitute_data_template` return the
+    argument, or raise `TypeError` for a value that is not a `Type` or
+    `DataType`.
+- **Structural equivalence** of the built-ins:
+  - numerical types: the data types, then the rank, then the dimensions
+    pairwise, where `Ellipsis` matches only `Ellipsis`;
+  - index types: the bounds and the stride;
+  - primitive types: the core type;
+  - template types: the identifier and the widths.
+- **`bind_template`:**
+  - numerical: the actual must be numerical. The data type binds first.
+    A template pattern with the wildcard shape records a full-type
+    binding, checked against an existing one. Otherwise the wildcard
+    shape accepts any shape; the ranks must agree; and each dimension
+    binds, where an `Ellipsis` in the pattern skips, one in the actual is
+    refused, an identifier pattern binds or checks its binding, and any
+    other pattern must be structurally equivalent;
+  - index: the three expressions bind as dimensions.
+- **`bind_data_template`:**
+  - template: a template actual must be the same template. Otherwise the
+    width constraint applies: `None` is unconstrained, a non-primitive
+    actual is refused, and a weak type never satisfies one. Then the
+    identifier binds, or its binding is checked;
+  - primitive: the same core type.
+- **`substitute_template` and `substitute_data_template`:**
+  - numerical: a wildcard template with a full-type binding returns the
+    bound type. Otherwise the data type and the dimensions are
+    substituted, and `Ellipsis` stays;
+  - index: the three expressions;
+  - template: its binding, or itself; primitive: itself.
+- **`unify`:**
+  - numerical: the actual must be numerical, and the ranks must agree.
+    Two templates must be the same template; one template binds through
+    `bind_data_template`; otherwise the data types must be structurally
+    equivalent. An `Ellipsis` dimension is refused, and each pair of
+    dimensions unifies as expressions;
+  - index: the three expressions unify.
+- **`unify_expression`** resolves each side's identifier chain through the
+  expression bindings. The same identifier on both sides unifies with
+  itself. An identifier on one side binds the other side, after an occurs
+  check against the other side substituted through the bindings. Two
+  other expressions must be structurally equivalent.
+- **The expression walks.** `_substitute_expression` follows a binding
+  chain to its end, with a guard against cycles. It and
+  `_is_identifier_in_expression` recurse into unary, binary, logical and
+  identifier nodes only, and stop at piecewise and call nodes. So
+  substitution leaves a shape variable inside a call unbound, and the
+  occurs check misses an identifier there. Probed:
+  `unify_expression(N, max(N, 1))` binds `N` to `max(N, 1)`, while
+  `N` against `N + 1` fails the occurs check.
+- **`TypeUnificationEnvironment`** is a frozen dataclass of three
+  `immutabledict`s: `data_type_bindings`, `type_bindings` and
+  `expression_bindings`, each keyed by `Identifier`.
+  - `empty()` builds a new one. `with_*` copies one map through
+    `dataclasses.replace`, so a subclass survives. `get_*` returns the
+    bound object or `None`.
+  - `is_structurally_equivalent` compares the three maps by keys and by
+    the values' own `is_structurally_equivalent`. `==`, `hash` and `repr`
+    are the dataclass's.
+  - The docstring invites subclasses that carry "layer-specific extras".
+    No module or test defines one.
+- **Messages** are Python text with `repr`s: ``Conflicting binding for
+  shape variable N::7: ...``, ``Occurs check failed: identifier N::7
+  appears in ...``, ``Width mismatch for template ...``. Each default
+  logs at DEBUG.
+
+**`types/checking/`.**
+
+- **`ExpressionTypeChecker(get_identifier_type, *, resolve_call_target,
+  defer_on_unknown_call=False)`** is a `VisitablePass[Expression,
+  tuple[Type, TypeQualifier]]` registered as
+  `fhy_core.types.checking.type_checker`.
+  - `synthesize(expression)` infers a type bottom-up. `check(expression,
+    expected_type)` hands the expected type to literals, then checks that
+    the result is assignment-compatible.
+  - Six public `visit_*` methods serve the pass call. `_infer` recurses
+    in Python, and calls `visit_identifier_expression` and
+    `visit_literal_expression` for nested nodes.
+  - `get_identifier_type` is called at every identifier occurrence. A
+    `KeyError` means "unbound". The checker then falls back to a
+    registered native constant (by identifier, through the registry), or
+    raises a type error. Any other exception propagates. A type supplied
+    for a constant's identifier is refused, and so is reading an `output`
+    identifier.
+  - `resolve_call_target(name)` is called at every call node. An
+    `EntryLookupError` becomes a type error, or propagates unframed with
+    `defer_on_unknown_call`.
+- **The rules,** in about 900 lines:
+  - weak literals and the late rescue of a weak literal operand against a
+    concrete other operand;
+  - arithmetic, true and floor division (with the integral-to-float lift),
+    comparisons, equality with Booleans, and logical connectives;
+  - the index-type algebra: shift by an integral scalar, scaling by a
+    positive integer literal, a refused stride of literal 0, and equality
+    by structural equivalence;
+  - piecewise conditions and branches, and calls checked against the
+    entry's parameter sorts;
+  - the qualifier promotion throughout.
+- **Errors.** A `_TypeCheckContext` stack frames each `FhYCoreTypeError`
+  as ``Type error while inferring type of `<root>`[ at sub-expression
+  `<sub>`]: <reason>``. Three helpers raise unframed errors, which the
+  module docstring admits. Unsupported shapes (a decimal or string
+  literal, a tensor operand, an unknown node or operation) raise
+  `NotImplementedError`.
+- **`sort_compatibility.py`** maps each `FunctionSort` to the core types
+  it admits (`NAT` to the unsigned ones, `INT` to the integers, `REAL` to
+  the integers and real floats), and to a concrete result type (`UINT32`,
+  `INT64`, `FLOAT64`, `BOOL`).
+- **`body_type_checker.py`.** `RegisteredFunctionBodyTypeChecker` is a
+  `CompilerPass[Expression, None]` registered as
+  `fhy_core.types.checking.check_registered_function_body`.
+  - Its `check(body)` synthesizes under the parameters' concrete sorts,
+    and checks the result against the declared result sort.
+  - It wraps failures in `EntryRegistrationError`. With
+    `defer_unresolved_calls`, a call to an unregistered name abandons the
+    check.
+  - `check_registered_function_body(...)` runs it through the pass call,
+    so a failure arrives as `PassExecutionError` with the cause.
+  - `check_all_registered_function_bodies()` sweeps the registry with
+    deferral off. It returns a `ValidationReport` with one ERROR per
+    failing body, in registration order, under the source
+    `fhy_core.types.checking.check_all_registered_function_bodies`.
+
+**Probed at c93f76f** (Python 3.11 in the worktree's environment,
+`timeit`, best of five; the load average was 3 to 10, so the numbers are
+indicative only):
+
+| Operation | Time |
+|---|--:|
+| `PrimitiveDataType(INT32)` | 3.4 µs |
+| `TemplateDataType(T, widths=[8, 16])` | 4.73 µs |
+| `NumericalType` scalar, with a two-dimension shape | 4.03, 4.48 µs |
+| `IndexType(0, N)` | 5.5 µs |
+| `.data_type`, `.shape`, `.core_data_type` | 63, 101, 64 ns |
+| `==`, `hash` of a numerical type (identity) | 38, 50 ns |
+| `is_structurally_equivalent` of two equal 2-d numerical types | 2.79 µs |
+| `promote_core_data_types(UINT16, INT8)`, `(FLOAT16, COMPLEX64)` | 72.9, 62.7 µs |
+| `resolve_literal_core_data_type(300, INT)` | 76.3 µs |
+| `TypeUnificationEnvironment.empty()`, `with_expression_binding` | 1.99, 2.51 µs |
+| `bind_template` of `T[N, M]` against `int32[4, 8]` | 11.2 µs |
+| `substitute_template` of `T[N, M]` | 8.32 µs |
+| `unify` of `T[N, M]` with `int32[4, 8]`, of two index types | 23.9, 20 µs |
+| `bind_template` through a Python `Type` subclass (test_extension's wrapper) | 8.83 µs |
+| `serialize_to_dict`, `Type.deserialize_from_dict` of `int32[4, 8]` | 1.83, 22.3 µs |
+| pickle round trip of `int32[4, 8]` | 14.4 µs |
+| `str` of `int32[4, 8]` | 1.61 µs |
+| `VariableSymbolTableFrame` construction | 5.43 µs |
+| `synthesize_expression_type` of `x + 1`, `check_expression_type` of it | 276, 263 µs |
+| `synthesize_expression_type` of S4.1's 100-operation tree | 32.9 ms |
+| `synthesize_expression_type` of `max(x, 1)`, of `2 * i + 1` over an index | 32.2, 68.4 µs |
+| `ExpressionTypeChecker(...)(x + 1)`, the pass call | 283 µs |
+| `check_registered_function_body` of `x * 2 + 1` | 550 µs |
+| `check_all_registered_function_bodies()` over the built-ins | 5.53 ms |
+| building the nine-element integer lattice | 76.5 µs |
+| `Lattice.get_join(UINT16, INT8)` | 98.8 µs |
+| `Lattice.verify()`, `is_lattice()` of the integer lattice | 28, 16.7 ms |
+| building a 50-element chain poset | 244 µs |
+| `is_less_than` across the chain, `in` | 26.7 µs, 146 ns |
+| iterating the chain, `iter_stable` of it | 34, 127 µs |
+
+- **Promotion dominates the checker.** Every binary node promotes at
+  least once, through a graph search of the lattice. That is why `x + 1`
+  takes 276 µs, and the 100-operation tree 33 ms, about 330 µs a node.
+- **The lattice and the poset** pay a networkx search per order query, so
+  `verify()` of a nine-element lattice takes 28 ms.
+- **The value classes** pay `FrozenMixin`'s construction, 3.4 to 5.5 µs,
+  and the dispatchers 8 to 24 µs per call.
+
+### Survey: the Rust API
+
+- **Nothing** for types, promotion, unification, orders or lattices.
+- **What the port builds on:**
+  - `Expression`, with structural `==` and `Hash`, `substitute`,
+    `free_identifiers`, iterative walks, and `display(FormatOptions)`,
+    whose `IdentifierStyle::NameHintWithId` prints `x::41`, as
+    `pformat_expression(show_id=True)` does;
+  - `LiteralValue` (`Bool`, `Int(BigInt)`, `Float`, `Decimal`), whose
+    `Int` variant is what `is_integer_valued_literal` tests;
+  - `FunctionSort`, `SortLookup` (a constant's sort by identifier, a
+    call's result sort by name), `FunctionRegistry` (S7), with
+    `entry(name)` and `constant(identifier)`, and the built-in catalogue
+    (`BuiltinFunction`, `BuiltinConstant::of_identifier`);
+  - `Diagnostic` and `ValidationReport`;
+  - `Identifier` (P1 in Python).
+- **Precedents in the binding:**
+  - the P2 hierarchy with thin Python subclasses (`Expression`, S4);
+  - `__class_getitem__` on a pyclass (`pass/context.rs`), and a thin
+    `Generic` subclass (`ValidationReport`);
+  - field objects kept as struct members (D-S7-9);
+  - P3 adapters holding `Py<PyAny>` inside core trait objects (S8's
+    backends);
+  - the deferred-error pattern for infallible core traits (D-S10-7);
+  - a Python callable called from Rust per folded call (S9's natives).
+
+### Consumers and tests
+
+**`src`.** Outside the package, only `symbol_table.py` (758 lines) uses
+types. `VariableSymbolTableFrame` and `FunctionSymbolTableFrame` are frozen
+dataclasses with `Type` and `TypeQualifier` fields, which they serialize
+through `Type.serialize_to_dict` and `Type.deserialize_from_dict`. Their
+dataclass `==` and `hash` call the type's. Nothing in `src` calls the
+dispatchers, the checker or the body checks. `lattice` and `poset` have no
+consumer outside `types/core.py`.
+
+**Python tests.** Counts are collected tests:
+
+| File | Lines | Collected | What it pins |
+|---|--:|--:|---|
+| `test_poset.py` | 229 | 22 | membership, orders, iteration, `iter_stable` |
+| `test_poset_properties.py` | 109 | 3 | reachability against `networkx.has_path` |
+| `test_lattice.py` | 381 | 37 | meet, join, `is_lattice`, `verify`, the empty lattice |
+| `test_lattice_properties.py` | 395 | 13 | the lattice laws against family oracles |
+| `types/test_core.py` | 519 | 107 | frozen classes, equivalence, `str`/`repr`, promotion, literal resolution |
+| `types/test_core_properties.py` | 332 | 12 | promotion laws, serialization round trips |
+| `types/test_unification.py` | 1,004 | 57 | the environment, bind, substitute, unify, the defaults |
+| `types/test_unification_properties.py` | 259 | 4 | bind-then-substitute, unify laws |
+| `types/test_serialization.py` | 332 | 18 | envelopes, the `Ellipsis` sentinel, refused payloads |
+| `types/test_extension.py` | 210 | 5 | an out-of-tree `Type` subclass through every dispatcher |
+| `checking/test_type_checker.py` | 2,325 | 158 | the rules, the framing, errors |
+| `checking/test_type_checker_booleans.py` | 670 | 50 | Boolean rules |
+| `checking/test_type_checker_sorts.py` | 398 | 17 | calls against sorts |
+| `checking/test_type_checker_properties.py` | 124 | 3 | synthesis laws |
+| `checking/test_sort_compatibility.py` | 195 | 72 | the two tables |
+| `checking/test_body_type_checker.py` | 324 | 13 | the body pass |
+| `checking/test_registry_body_sweep.py` | 338 | 10 | the sweep and its report |
+| `checking/test_builtin_bodies.py`, `test_cross_cutting.py` | 72, 27 | 2, 1 | the built-ins' bodies; registrations |
+
+That is 604 collected tests in about 8,500 lines, 35 of them properties.
+Other consumers:
+
+- `test_symbol_table.py` (48 tests) builds frames with types.
+- `symbolic/expression/test_functions_stories.py`,
+  `test_native_stories.py` and `test_strategies_properties.py` call
+  `synthesize_expression_type`.
+- `test_error.py` imports `FhYCoreTypeError`, and `test_import_graph.py`
+  lists `fhy_core.types` and `fhy_core.types.checking` as entry points.
+- `tests/strategies/types.py` and `serializables.py` build types for
+  Hypothesis.
+- Benchmarks: `test_registry.py`'s sweep row, and `test_term.py`'s
+  symbol-table row.
+
+**White-box and patching tests:**
+
+- `test_poset.py` builds its fixture through `poset._graph`, and
+  `test_lattice.py` through `lattice._poset`.
+- `test_poset_properties.py` uses `networkx` as its oracle.
+- `test_core.py` imports the private `_INTEGER_DATA_TYPES` and
+  `_FLOAT_COMPLEX_DATA_TYPES`.
+- `test_body_type_checker.py` patches `ExpressionTypeChecker.synthesize`
+  to return a `MagicMock(spec=NumericalType)`.
+- `test_type_checker.py` passes a `Mock(spec=Expression)`, and a
+  `UnaryExpression` subclass whose `operation` is a
+  `Mock(spec=UnaryOperation)`.
+
+**Messages.** 83 `match=` or `in str(...)` pins in the type tests, most on
+lowercase phrases of the reasons (``index type with stride `0` is not
+allowed``, ``index shift requires an integral scalar offset``, `width`,
+`template`). A few pin capitalized text: the three framing tests
+(``Type error while inferring type of```), `Unsupported`, ``Literal -1
+is incompatible with uint16``, `Decimal literals`, ``Unsupported literal
+type``, ``Unsupported expression type``. No test pins the lattice's or the
+poset's messages, and no test uses `caplog` on the types loggers.
+
+**Identity.** No test asserts that a type, an environment or a binding is
+a given object (`is`).
+
+**Rust tests:** none.
+
+**Benchmarks:** none cover types, the checker, the lattice or the poset.
+
+### Divergences visible from Python
+
+| # | Python today | After S11 |
+|---|---|---|
+| T-1 | `==` and `hash` of the built-in type and data-type classes are identity | structural, agreeing with `is_structurally_equivalent`, as expressions' became in S4 (D-S11-10). A Python-defined subclass keeps its own `==` and `hash`. A symbol-table frame therefore compares its type structurally |
+| T-2 | plain classes: private attributes, the default `repr` and pickling | frozen Rust-backed classes: no private attributes, a `repr` that lists every field (`TemplateDataType(T::7, widths=[8, 16])`), `FrozenMutationError` on mutation as before, and pickling as a call |
+| T-3 | no argument checks | `TypeError` in S2's style for a data type that is not a `DataType`, a dimension that is neither an `Expression` nor `Ellipsis`, a bound that is not an `Expression`, or a template identifier that is not an `Identifier`; `ValueError` for a width that is not a positive integer, which only deserialization refused before |
+| T-4 | Python messages, some unframed | the core's one-line lowercase text under the same Python classes (D-S11-14, D-S11-21). The phrases the tests match are kept. Every checker error is framed, `type error while inferring the type of ...`, including the three helpers' |
+| T-5 | substitution and the occurs check stop at piecewise and call nodes | both use the core's walks, which reach every node: a shape variable inside a call is substituted, and `unify_expression(N, max(N, 1))` fails the occurs check (D-S11-8) |
+| T-6 | a handler registered again for a built-in class replaces it everywhere | it replaces it only for a call of the dispatcher on that class. A built-in node nested in a type is handled by the core (D-S11-9) |
+| T-7 | results are often the objects given: `substitute_template` of a template returns the bound object, and synthesizing an identifier returns the lookup's type object | results are equal objects, not always the same ones. Getters of a class built from Python return the objects it was given |
+| T-8 | debug logs on `fhy_core.types.core`, `.dispatch` and `.checking` | none: the core does not log (D-S11-15) |
+| T-9 | the walks recurse in Python | shapes, bounds and checked expressions are walked on the heap, at any depth. A Python handler still recurses in Python |
+| T-10 | `TypeUnificationEnvironment` is a frozen dataclass | a Rust-backed class with the same constructor, methods, `==`, `hash` and a similar `repr`, but not a dataclass: `dataclasses.replace` and `fields` no longer apply. A subclass keeps its class through `with_*`, with its instance attributes (D-S11-13) |
+| T-11 | the poset's iteration order is networkx's, unspecified | a topological order in which insertion order breaks ties, stable across runs and versions. `iter_stable` is unchanged (D-S11-4) |
+| T-12 | `get_meet` and `get_join` of a non-member answer `None` on an empty lattice, and raise `ValueError` otherwise | they always raise `ValueError` (D-S11-4) |
+| T-13 | `networkx` is a required dependency | it is no dependency (D-S11-5) |
+| T-14 | `ExpressionTypeChecker` is a `VisitablePass` with six `visit_*` methods, and nested nodes call two of them | a `CompilerPass`: a subclass that defines a `visit_*` method is refused at class creation, as N-S9-1 (a) did for the pretty formatter (D-S11-20) |
+| T-15 | the lookups may return anything, and a wrong shape fails somewhere later | a `get_identifier_type` result that is not a `(Type, TypeQualifier)` pair, or a `resolve_call_target` result that is not an entry, raises `TypeError` in S2's style |
+
+Unchanged in meaning:
+
+- the classes, their fields, `str`, the type ids and the wire format;
+- the dispatchers' names, signatures, defaults and extension contract;
+- every binding, substitution and unification rule except T-5;
+- the promotion orders and the literal resolution;
+- every type rule of the checker, its entry points and the qualifier
+  promotion, and the body checks and the sweep's report;
+- the poset's and the lattice's operations, the reflexive order and
+  `iter_stable`.
+
+### Pattern choice
+
+- **Core: `fhy_core::lattice` and `fhy_core::types`** (decision 2:
+  logic-rich machinery). Promotion, the dispatch rules, unification and
+  the checker are logic that a Rust IR will need, and they are where the
+  time goes: promotion alone costs 63 to 76 µs a call.
+- **P2:** `PrimitiveDataType`, `TemplateDataType`, `NumericalType`,
+  `IndexType`, `TypeUnificationEnvironment`, `PartiallyOrderedSet` and
+  `Lattice`. A Rust container holds each, or each holds Rust state.
+- **P3 through the dispatchers: a Python-defined `Type` or `DataType`.**
+  The Python bases `Type` and `DataType` stay open for subclassing. The
+  core holds a Python-defined value as an extension trait object, and its
+  adapter calls the value's registered Python handler (D-S11-9).
+- **P1:** `CoreDataType` and `TypeQualifier`, as `FunctionSort` and
+  `SymbolType` are; `Identifier`.
+- **Passes:** `ExpressionTypeChecker` becomes a `CompilerPass` over the
+  core checker (N-S9-1 (a)'s shape); `RegisteredFunctionBodyTypeChecker`
+  stays a Python `CompilerPass` whose `check` calls `_rs`, as
+  `FunctionInliner` does (D-S7-7).
+- **Plain Python:** the six `singledispatch` objects themselves (the
+  registration API), `FhYCoreTypeError`, the module docstrings.
+
+**Benchmark plan.** Two files, written against the public API only. Each
+baseline measures today's Python package.
+
+**`benchmarks/test_types.py` (S11a.1):**
+
+| Benchmark | Measures |
+|---|---|
+| `test_primitive_data_type_construction`, `test_template_data_type_construction` | construction |
+| `test_numerical_type_construction[scalar]`, `[shape_2]`, `test_index_type_construction` | construction with expressions |
+| `test_numerical_type_data_type_access`, `_shape_access` | attribute reads |
+| `test_numerical_type_eq`, `_hash` | value semantics; before identity, after structural (T-1), in a helper marked D-S11-10 |
+| `test_structural_equivalence[primitive]`, `[numerical_2d]`, `[index]` | the dispatcher's entry |
+| `test_promote_core_data_types[integer]`, `[float_complex]`, `test_resolve_literal_core_data_type` | promotion |
+| `test_environment_empty`, `test_environment_with_binding`, `test_environment_structural_equivalence` | the environment |
+| `test_bind_template_of_a_templated_array`, `test_substitute_template_of_a_templated_array` | `T[N, M]` against `int32[4, 8]` |
+| `test_unify_of_a_templated_array`, `test_unify_of_index_types` | unification |
+| `test_unify_expression_through_a_chain_of_10` | the chase through the bindings |
+| `test_bind_template_through_a_python_type` | test_extension's wrapper: the P3 adapter's cost |
+| `test_type_serialize_to_dict`, `test_type_deserialize_from_dict`, `test_type_pickle_round_trip` | serialization |
+| `test_numerical_type_str` | printing |
+| `test_variable_symbol_table_frame_construction`, `_hash` | the consumer in `src` |
+| `test_poset_construction_of_a_50_chain`, `test_poset_is_less_than[chain_50]`, `test_poset_contains` | the poset |
+| `test_poset_iter[chain_50]`, `test_poset_iter_stable[chain_50]` | iteration |
+| `test_lattice_construction[integer_promotion]`, `test_lattice_join`, `test_lattice_meet` | the lattice |
+| `test_lattice_verify[integer_promotion]`, `test_lattice_is_lattice[powerset_3]` | the all-pairs checks |
+
+**`benchmarks/test_type_checking.py` (S11b.1):**
+
+| Benchmark | Measures |
+|---|---|
+| `test_synthesize_expression_type[identifier]`, `[x_plus_1]` | the per-call floor |
+| `test_synthesize_expression_type[deep_tree]` | S4.1's 100-operation tree: the walk |
+| `test_check_expression_type[x_plus_1]`, `[literal_into_int8]` | checking, with a literal handed its type |
+| `test_synthesize_of_calls` | a conjunction of 20 calls of built-ins and user functions |
+| `test_synthesize_of_index_arithmetic` | shift and scale over an index type |
+| `test_synthesize_with_a_python_resolver` | `resolve_call_target` a Python lambda: the per-call callback |
+| `test_type_error_of_a_failing_check` | the error path and its framing |
+| `test_expression_type_checker_pass_call` | the pass framework's floor |
+| `test_check_registered_function_body` | the body check |
+
+Rerun, not added: `test_check_all_registered_function_bodies`
+(`test_registry.py`) and `test_symbol_table_structural_equivalence`
+(`test_term.py`). The verdict follows cross-cutting rule 5. The paths at
+risk:
+
+- `==` and `hash`, which become structural (T-1) where they were
+  identity at 38 to 50 ns;
+- attribute reads, which cross into the extension; they must return the
+  stored objects;
+- the small helpers (`is_weak_core_data_type`, `get_core_data_type_bit_width`,
+  `promote_type_qualifiers`), which now convert a `StrEnum` member into
+  Rust where Python indexed a set. No module in `src` calls them after
+  the switch, so a small cost there is the kind the direction accepts,
+  and is recorded if it appears;
+- the Python-defined types, which now cross into Rust and back through
+  the adapter;
+- the checker's per-identifier callback, which now crosses from Rust into
+  Python.
+
+### Decisions (proposed 2026-09-26)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I: one public path
+  per item, the layering (§I.2, CONTRIBUTING "Module paths follow Rust
+  layering"), `#[non_exhaustive]` errors with one-line lowercase
+  `Display` (I.3 rule 3), the naming rules (I.3 rule 5), a single crate
+  (decision 13), no global state beyond identity, clippy pedantic, and
+  MSRV 1.85 (no let-chains);
+- the binding patterns P1 to P3 and cross-cutting rules 3 to 7;
+- the direction: port these modules to Rust, as much as possible, and
+  accept small slowdowns on uncalled paths.
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+**S11a: orders, types and dispatch.**
+
+- **D-S11-1: two parts, S11a and S11b** (the direction's size rule;
+  CONTRIBUTING "Modules not yet ported stay ordinary Python on top of the
+  Rust-backed types").
+  - S11a ports the orders, the representations, promotion and the
+    dispatchers. Between the parts, the Python checker runs unchanged
+    over the P2 classes: it calls only public names, and those keep
+    their meaning.
+  - S11b ports the checker, the sort tables and the body checks.
+  - Each part has its own steps, benchmarks, migration and checklist
+    entry, and ends with every gate green.
+- **D-S11-2: one implementation, no fallback** ("no fallback"; D-S7-1).
+  These are deleted, not kept beside the Rust path:
+  - S11a: the poset's `networkx` graph and every method body of both
+    classes; the two promotion lattices and the family sets of
+    `types/core.py`; the class bodies of the four built-in classes and
+    their serialization helpers; the environment dataclass; every handler
+    body and helper of `dispatch.py` (`_substitute_expression`,
+    `_resolve_expression`, `_unify_expressions`, `_unify_data_types`,
+    `_bind_shape_dimension`, `_check_template_width_constraint`, ...).
+  - S11b: `_TypeCheckContext`, every `_infer*` method and helper of
+    `type_checker.py`, the two tables of `sort_compatibility.py`, and the
+    body checker's lookup table and synthesis.
+
+  The Python modules keep the public names, the abstract bases, the
+  `singledispatch` objects, `FhYCoreTypeError`, the pass classes with
+  their registrations, and the docstrings.
+- **D-S11-3: a new core module, `fhy_core::lattice`** (one public path;
+  the layering; the direction). It depends only on `std`, so it joins
+  layer 4 beside `tree` and `term`. CONTRIBUTING's table maps both
+  `fhy_core.lattice` and `fhy_core.utils.poset` to it. The sketch is
+  settled test-first in S11a.2, as D-S7-2's was:
+
+  ```rust
+  // fhy_core::lattice
+  #[derive(Debug, Clone)]
+  pub struct PartiallyOrderedSet<T> { /* elements in insertion order, an index, reachability rows */ }
+  impl<T: Eq + Hash + Clone> PartiallyOrderedSet<T> {
+      pub fn new() -> Self;
+      pub fn len(&self) -> usize;
+      pub fn is_empty(&self) -> bool;
+      pub fn contains(&self, element: &T) -> bool;
+      pub fn add_element(&mut self, element: T) -> Result<(), OrderError<T>>;
+      pub fn add_order(&mut self, lower: &T, upper: &T) -> Result<(), OrderError<T>>;
+      pub fn is_at_most(&self, lower: &T, upper: &T) -> Result<bool, OrderError<T>>;   // Python's is_less_than
+      pub fn iter(&self) -> impl ExactSizeIterator<Item = &T> + '_;                    // topological
+      pub fn iter_by_key<K: Ord>(&self, key: impl FnMut(&T) -> K) -> impl ExactSizeIterator<Item = &T> + '_;
+  }
+  #[derive(Debug, Clone)]
+  pub struct Lattice<T> { /* a PartiallyOrderedSet<T> */ }
+  impl<T: Eq + Hash + Clone> Lattice<T> {
+      pub fn new() -> Self;
+      pub fn poset(&self) -> &PartiallyOrderedSet<T>;
+      pub fn add_element(&mut self, element: T) -> Result<(), OrderError<T>>;
+      pub fn add_order(&mut self, lower: &T, upper: &T) -> Result<(), OrderError<T>>;
+      pub fn meet(&self, x: &T, y: &T) -> Result<Option<&T>, OrderError<T>>;
+      pub fn join(&self, x: &T, y: &T) -> Result<Option<&T>, OrderError<T>>;
+      pub fn is_lattice(&self) -> bool;
+      pub fn missing_bounds(&self) -> impl Iterator<Item = MissingBound<'_, T>> + '_;    // what verify reports
+  }
+  #[non_exhaustive] pub enum OrderError<T> { AlreadyAMember(T), NotAMember(T), WouldCycle { lower: T, upper: T } }
+  #[non_exhaustive] pub enum MissingBound<'a, T> { Meet(&'a T, &'a T), Join(&'a T, &'a T) }
+  ```
+
+  - The Rust names follow I.3 rule 5. `is_at_most` says what
+    `is_less_than` computes; Python keeps its names (D-S4-2).
+  - `Display` texts are one lowercase line, such as `3 is not a member of
+    the partially ordered set` and `ordering 2 below 1 would close a
+    cycle`, with `T: Debug`.
+  - `Lattice` does not depend on `diagnostic`: the binding builds the
+    report (D-S11-5).
+- **D-S11-4: the order semantics are Python's, with deterministic
+  iteration and consistent refusals** (D-S4-2; D-S4-1 for T-11 and T-12).
+  - The order is reflexive: `is_at_most(x, x)` holds. `add_order(x, x)`
+    is refused as a cycle, and so is any order whose upper element
+    already reaches its lower one. Adding an order that already holds is
+    accepted and changes nothing.
+  - The poset keeps a reachability row per element, a bit set updated on
+    each `add_order`, so an order query is a bit test and a meet or join
+    is O(n²/64), where each was a graph search.
+  - `iter` is a topological order in which insertion order breaks ties
+    (Kahn's algorithm). `iter_by_key` breaks ties by the least key, then
+    by insertion order, as networkx's lexicographic sort does (T-11).
+  - `meet` and `join` are Python's: the lower (upper) bounds, those not
+    strictly below (above) another, and the only one left. A non-member
+    is `NotAMember` on an empty lattice too (T-12).
+  - `missing_bounds` lists, for each ordered pair in iteration order, a
+    missing meet, then a missing join, as `verify` does.
+  - Walks run on explicit work lists.
+- **D-S11-5: `PartiallyOrderedSet` and `Lattice` are P2 over Python
+  elements** (P2; D-S4-2; "no fallback"; S10's object tables).
+  - `_rs.PartiallyOrderedSet` and `_rs.Lattice` are
+    `#[pyclass(subclass)]`s with a `__class_getitem__`, as
+    `pass/context.rs` has, so `Lattice[int]()` keeps working.
+    `fhy_core.utils.poset.PartiallyOrderedSet` and
+    `fhy_core.lattice.Lattice` are thin `Generic[T]` subclasses, as
+    `ValidationReport` is. `Lattice` is a virtual `VerifiableMixin`,
+    since the mixin's `__new__` cannot sit over a pyclass, and it defines
+    `verify` itself.
+  - The binding keeps the element objects in a Python `dict` from element
+    to index, and a core `PartiallyOrderedSet<usize>` over the indices.
+    So membership keeps Python's hashing and `==`, as networkx's dict of
+    nodes did, and the core never holds a Python object.
+  - `iter_stable(key=repr)` calls `key` once per element, ranks the keys
+    with Python's `sorted`, and hands the ranks to `iter_by_key`.
+  - `verify()` builds the `ValidationReport` from `missing_bounds`, with
+    the source `fhy_core.lattice.Lattice.verify` and the core's text
+    around the elements' `repr`s. The other errors raise the Python
+    classes of today, `ValueError` and `RuntimeError`, with the core's
+    text around the elements' `str`s.
+  - `networkx` leaves `pyproject.toml`'s dependencies (T-13): nothing
+    else imports it. `test_poset_properties.py` gets a test-local
+    transitive closure as its oracle.
+  - The docstring of `is_less_than` says "less than or equal to", which
+    is what it has always computed.
+- **D-S11-6: a new core module, `fhy_core::types`** (one public path; the
+  layering; I.3 rule 3; the direction). It depends on `expression` (with
+  `registry` for S11b's checker), `identifier` and `diagnostic`, and never
+  on `pass`. So it joins layer 6 beside `expression::passes` and
+  `solver`. CONTRIBUTING's table maps `fhy_core.types` to it. The sketch
+  below is settled test-first in S11a.2:
+
+  ```rust
+  // fhy_core::types
+  #[non_exhaustive]
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+  pub enum CoreDataType { Uint, Int, Float, Uint8, Uint16, Uint32, Int8, Int16, Int32, Int64,
+      Float16, Float32, Float64, Complex32, Complex64, Complex128, Bool }
+  impl CoreDataType {
+      pub const fn bit_width(self) -> Option<u32>;
+      pub const fn is_weak(self) -> bool;
+      pub fn promote(self, other: Self) -> Result<Self, PromotionError>;
+      pub fn of_literal(literal: &LiteralValue) -> Result<Self, LiteralTypeError>;          // S11b; Python's get_core_data_type_from_literal_type
+      pub fn resolve_literal(literal: &LiteralValue, context: Self) -> Result<Self, LiteralTypeError>;
+  }
+  #[non_exhaustive]
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+  pub enum TypeQualifier { Input, Output, State, Param, Temp }   // promote(self, other)
+
+  #[derive(Debug, Clone)] #[non_exhaustive]
+  pub enum DataType { Primitive(CoreDataType), Template(TemplateDataType), Extension(Arc<dyn DataTypeExtension>) }
+  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+  pub struct TemplateDataType { /* identifier, widths: Option<Box<[NonZeroU32]>> */ }
+  #[derive(Debug, Clone)] #[non_exhaustive]
+  pub enum Type { Numerical(NumericalType), Index(IndexType), Extension(Arc<dyn TypeExtension>) }
+  #[derive(Debug, Clone)]
+  pub struct NumericalType { /* data_type: DataType, shape: Arc<[Dimension]> */ }   // is_scalar, is_wildcard_shape
+  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+  pub enum Dimension { Expression(Expression), Wildcard }        // exhaustive: Python's Expression | Ellipsis
+  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+  pub struct IndexType { /* lower_bound, upper_bound, stride: Expression */ }
+
+  /// A type defined outside this crate: a Rust IR's own, or the binding's Python-defined ones.
+  pub trait TypeExtension: fmt::Debug + fmt::Display + Send + Sync {
+      fn type_name(&self) -> Cow<'_, str>;
+      fn is_structurally_equivalent(&self, other: &Type) -> bool;
+      fn eq_extension(&self, other: &dyn TypeExtension) -> bool { /* the same object */ }   // ==
+      fn hash_extension(&self, state: &mut dyn Hasher) {}              // nothing by default
+      fn bind_template(&self, actual: &Type, environment: &TypeUnificationEnvironment)
+          -> Result<TypeUnificationEnvironment, UnificationError> { /* structural equivalence, or StructuralMismatch */ }
+      fn substitute_template(&self, environment: &TypeUnificationEnvironment) -> Result<Option<Type>, UnificationError> { Ok(None) }
+      fn unify(&self, actual: &Type, environment: &TypeUnificationEnvironment)
+          -> Result<(Type, TypeUnificationEnvironment), UnificationError> { /* structural equivalence */ }
+  }
+  pub trait DataTypeExtension { /* the data-type tier: the same shape, without unify */ }
+
+  #[derive(Debug, Clone, Default)]
+  pub struct TypeUnificationEnvironment { /* three Arc'd maps keyed by Identifier */ }
+  // empty(), with_data_type_binding, with_type_binding, with_expression_binding,
+  // data_type_binding, type_binding, expression_binding, the three map views, is_structurally_equivalent
+
+  impl Type {
+      pub fn is_structurally_equivalent(&self, other: &Type) -> bool;
+      pub fn bind_template(&self, actual: &Type, environment: &TypeUnificationEnvironment) -> Result<TypeUnificationEnvironment, UnificationError>;
+      pub fn substitute_template(&self, environment: &TypeUnificationEnvironment) -> Result<Type, UnificationError>;
+      pub fn unify(&self, actual: &Type, environment: &TypeUnificationEnvironment) -> Result<(Type, TypeUnificationEnvironment), UnificationError>;
+  }
+  // DataType: is_structurally_equivalent, bind_template, substitute_template
+  pub fn unify_expressions(left: &Expression, right: &Expression, environment: &TypeUnificationEnvironment)
+      -> Result<(Expression, TypeUnificationEnvironment), UnificationError>;
+
+  #[non_exhaustive] pub enum PromotionError { Boolean(CoreDataType, CoreDataType), AcrossFamilies(CoreDataType, CoreDataType) }
+  #[non_exhaustive] pub enum LiteralTypeError { /* incompatible context, out of range, unsupported literal kind */ }
+  #[non_exhaustive] pub enum UnificationError {
+      StructuralMismatch { .. }, KindMismatch { .. }, RankMismatch { .. }, ConflictingBinding { .. },
+      WidthMismatch { .. }, DistinctTemplates { .. }, OccursCheck { .. }, WildcardInActual, WildcardInUnification,
+      Extension(CallbackError),     // an extension's own failure: expression::pattern's boxed error (D-10)
+  }
+  ```
+
+  - Types are values. A `NumericalType` shares its shape behind an
+    `Arc`, so a clone is cheap.
+  - `Dimension` and the bounds reuse `Expression`, so their equality,
+    hashing and walks are the core's.
+  - The Rust names follow I.3 rule 5 (`bit_width`, `is_weak`, `promote`,
+    `data_type_binding`); Python keeps its names (D-S4-2).
+  - The texts keep the phrases Python's tests match, as D-S7-12's and
+    D-S8-2's did: `width`, `template`, ``occurs check failed: identifier
+    N::7 appears in ...``, ``conflicting binding for shape variable N::7:
+    ...``. Expressions print with `IdentifierStyle::NameHintWithId`.
+- **D-S11-7: promotion and literal resolution are the core's, with no
+  table built at run time** (decision 2; the probes; CONTRIBUTING's
+  process-global rule).
+  - The two promotion orders are `const` lists of covering pairs. A
+    `const fn` computes each member's up-set as a bit mask at compile
+    time, and `promote` returns the least member of the two up-sets'
+    intersection, or the error. No lattice is built at import or per
+    call, and no static is added.
+  - A Rust test builds both orders as `fhy_core::lattice::Lattice`s,
+    checks `is_lattice`, and checks that `promote` equals `join` for every
+    pair in each family (81 and 49 pairs). The generic lattice is the
+    specification; the masks are its compiled form.
+  - `resolve_literal` keeps Python's rules, over `LiteralValue`, with
+    `BigInt` ranges. A `Decimal` or a string literal is
+    `LiteralTypeError::Unsupported`, which Python raises as
+    `NotImplementedError`.
+- **D-S11-8: binding, substitution and unification are the core's, with
+  Python's rules and the core's walks** (D-S4-2 for the rules; D-S4-1 for
+  T-5; "tests rewritten, not skipped").
+  - Every rule of the survey keeps its order of checks: kind, then data
+    type, then the full-type wildcard, then the shape wildcard, the
+    ranks, and the dimensions in order; the width constraint before the
+    binding; two templates only when they are the same.
+  - The chase follows an identifier's expression binding until an unbound
+    identifier or one already on the path, as `_resolve_expression` and
+    `_substitute_expression` did.
+  - Substitution and the occurs check walk every node kind through the
+    core's walks: substitution rebuilds only what changed, so an
+    unchanged dimension is the same handle, and the occurs check reads
+    `free_identifiers` of the substituted form. That reaches piecewise
+    and call nodes (T-5). New tests pin both.
+  - Environments are persistent values: `with_*` copies one map, as
+    `immutabledict.set` did, and never changes the receiver.
+- **D-S11-9: Python-defined types stay extensible through the
+  dispatchers, as P3 over extension trait objects** (P3; the Goal: "user
+  subclasses of the framework classes keep working"; D-S8-11 for the
+  adapter rules; N-S10-1 (a) for per-node hooks).
+  - The six public functions stay `functools.singledispatch` objects, so
+    `@bind_template.register` keeps working. The default of each, and
+    the handler of each built-in class, is one `_rs` function. The
+    built-in classes are registered explicitly, as today, so a handler
+    registered for `Type` does not capture them.
+  - The `_rs` function converts its arguments. A built-in class is read
+    from its pyclass. Any other `Type` or `DataType` instance becomes a
+    `Type::Extension` or `DataType::Extension` holding a binding adapter
+    over the object.
+  - The adapter implements the extension traits. For each hook it asks
+    the dispatcher which handler serves the object's class
+    (`dispatcher.dispatch(cls)`). When that is the `_rs` default, no user
+    handler exists, and the adapter runs the trait's provided default,
+    without calling Python. Otherwise it calls the handler with the
+    Python objects, and converts the result back.
+  - The adapter rules of D-S8-11 and D-S10-7 hold. An exception a handler
+    raises propagates as the same object, and a `KeyboardInterrupt`
+    passes through. A result of the wrong type raises `TypeError` in S2's
+    style. A structural-equivalence handler's error is deferred: the
+    adapter answers `false` so the core stops, and the binding raises the
+    error.
+  - **Granularity.** A handler is called once per Python-defined node
+    that the core meets, and never for a built-in node. The core cannot
+    answer for a class only Python defines. This is N-S10-1 (a)'s
+    reasoning ("per node by nature"), and it matches a rewrite `Rule`
+    called once per match (S5). Each call into Rust still answers one
+    dispatcher call that Python made. CONTRIBUTING's "per hook, not per
+    tree node" rule gains this second exception.
+  - The environment a handler receives is a Python
+    `TypeUnificationEnvironment` of the top-level call's class (D-S11-13).
+  - A handler registered again for a built-in class serves a call of the
+    dispatcher on that class. A nested built-in node is always the
+    core's (T-6).
+- **D-S11-10: `==` and `hash` are structural for the built-in classes**
+  (D-S4-1; S4's structural `==` for expressions; T-1).
+  - The core's `Type` and `DataType` implement `PartialEq`, `Eq` and
+    `Hash`. For the built-in parts they are structural equivalence, so
+    `==` and `is_structurally_equivalent` are one relation there. An
+    extension part compares through `eq_extension` and hashes through
+    `hash_extension`.
+  - The binding's adapter implements those two with the object's Python
+    `==` and `hash`. So a Python-defined subclass keeps its own `==` and
+    `hash` (identity unless it defines them), alone or nested in a
+    built-in type, and `hash` stays consistent with `==`.
+  - The public bases define no `__eq__` of their own, so a Python
+    subclass inherits `object`'s, as today.
+- **D-S11-11: the built-in classes are P2, under their Python names and
+  constructors** (decision 2; D-S4-2; D-S7-9; X-15; T-2, T-3, T-7).
+  - `_rs.Type` and `_rs.DataType` are `#[pyclass(subclass)]` bases whose
+    `#[new]` accepts `*args, **kwargs`, so a Python subclass constructs,
+    with its own `__init__` and instance attributes. The public `Type`
+    and `DataType` are thin Python subclasses that mix in
+    `WrappedFamilySerializable`, `FrozenMixin` and
+    `StructuralEquivalence` as today, so a Python subclass freezes after
+    its `__init__`, and `isinstance(t, StructuralEquivalence)` holds.
+    Where a mixin's metaclass or `__new__` conflicts with the pyclass
+    base, the public class registers as its virtual subclass instead, as
+    `Expression` does with `FrozenMixin`; S11a.3 settles which, and the
+    interface suite pins the behavior either way.
+  - `PrimitiveDataType`, `TemplateDataType`, `NumericalType` and
+    `IndexType` are frozen `extends` pyclasses with thin public
+    subclasses, as the expression nodes are. They keep their
+    constructors, properties, `is_scalar` and `str`. A mutation raises
+    `FrozenMutationError`.
+  - Each keeps the field objects it was given, so `t.data_type is
+    data_type` holds. A value built by Rust materializes its field
+    objects on first access and keeps them.
+  - The arguments are checked strictly (T-3).
+  - `repr` lists every field. Pickles are a call of the class with its
+    fields.
+  - The binding writes the Python envelope, the type ids and the
+    `Ellipsis` sentinel, and reads them back with today's
+    `DeserializationDictStructureError` and `DeserializationValueError`
+    (cross-cutting rule 4). A Python-defined part serializes through its
+    own methods.
+- **D-S11-12: `CoreDataType` and `TypeQualifier` stay P1, and the helper
+  functions call the core** (P1; S7's `FunctionSort`, S8's `SymbolType`;
+  "no fallback"; the direction for uncalled paths).
+  - Both stay `StrEnum`s, converted by value, and the binding returns
+    the member objects.
+  - `get_core_data_type_bit_width`, `is_weak_core_data_type`,
+    `promote_core_data_types`, `promote_primitive_data_types`,
+    `promote_type_qualifiers` and `resolve_literal_core_data_type` are
+    `_rs` functions under their Python names. A non-member argument
+    raises `TypeError`.
+- **D-S11-13: `TypeUnificationEnvironment` is P2 and stays subclassable**
+  (decision 2; D-S7-9's "not `@final`, as the dataclasses were not";
+  D-S4-2; T-10).
+  - `_rs.TypeUnificationEnvironment` is a `#[pyclass(subclass, frozen)]`
+    with a thin public subclass, a virtual `FrozenMixin`.
+  - It keeps the keyword constructor, `empty()`, the three `with_*` and
+    `get_*` methods, `is_structurally_equivalent`, `==`, `hash` and a
+    `repr` in the dataclass's shape. The three attributes are read-only
+    properties returning `immutabledict`s of the stored objects.
+  - Keys must be `Identifier`s, and values of the map's tier (`TypeError`
+    in S2's style).
+  - `with_*`, and every environment a dispatcher returns, keep the
+    receiver's class, and copy its instance dictionary, so a subclass's
+    extras survive, as `dataclasses.replace` kept them.
+- **D-S11-14: errors are the core's text under the Python classes**
+  (D-S4-1; D-S7-12; D-S8-14; CONTRIBUTING "Errors belong to their
+  module").
+
+  | Core | Python |
+  |---|---|
+  | `OrderError` | `ValueError` for a member or non-member, `RuntimeError` for a cycle |
+  | `Lattice::join` without a join, in `get_least_upper_bound` | `RuntimeError` |
+  | `PromotionError`, `LiteralTypeError` | `FhYCoreTypeError`; `NotImplementedError` for an unsupported literal kind |
+  | `UnificationError` | `VerificationError` |
+  | `UnificationError::Extension` | the handler's exception itself |
+  | argument checks | `TypeError` in S2's style; the substitution defaults keep naming `Type` and `DataType` |
+
+  The phrases today's tests match are kept. A test that pins a
+  capitalized first word is rewritten to the core's text and recorded.
+- **D-S11-15: the core does not log** (D-S8-14's rule; T-8). The debug
+  logs of promotion, literal resolution and the dispatchers' defaults go.
+  No test reads them.
+- **D-S11-16: serde for the closed parts only** (CONTRIBUTING
+  "Serialization is plain serde"; cross-cutting rule 4).
+  - `CoreDataType` and `TypeQualifier` derive serde in `snake_case`, with
+    JSON and postcard round trips, and `Display` and `FromStr` of the
+    Python values (`int32`).
+  - `Type` and `DataType` have no serde form: an extension variant has
+    none. The Python wire format is the binding's envelope. A Rust serde
+    form is a follow-up for the first Rust consumer that needs one.
+- **D-S11-17: the Rust tests specify the core first** (the tests rule;
+  S7.2's practice). The order module, promotion, the dispatch rules, the
+  environment and the extension traits are specified by Rust tests
+  written against `todo!()` stubs, with a traceability table from the
+  Python tests.
+- **D-S11-18: the Python tests are rewritten, not skipped** (the tests
+  rule). The behavioral tests stay, and change only where T-1 to T-13
+  change what they pin, each change recorded with its reason, as S4.4 to
+  S10 did.
+- **D-S11-19: consumers keep their code** (D-S4-2). `symbol_table.py`
+  and the Hypothesis strategies change nothing. Frames compare their
+  types structurally after T-1, and the symbol-table tests should pass
+  unchanged.
+
+**S11b: type checking.**
+
+- **D-S11-20: the checker is the core's, and `ExpressionTypeChecker`
+  becomes a `CompilerPass` over it** (decision 2; N-S9-1 (a) for the
+  pass shape; S9's per-call callbacks; D-S8-11's adapter rules; T-14,
+  T-15).
+  - `fhy_core::types::checking` holds the checker, the sort tables and
+    the body checks:
+
+    ```rust
+    // fhy_core::types::checking
+    pub trait IdentifierTypes { fn identifier_type(&self, identifier: &Identifier)
+        -> Result<Option<(Type, TypeQualifier)>, CallbackError>; }    // None: unbound
+    pub trait CallTargets { fn resolve(&self, name: &FunctionName)
+        -> Result<Option<CallTarget>, CallbackError>; }                // None: unknown
+    #[non_exhaustive] pub enum CallTarget { Function { parameter_sorts: Vec<FunctionSort>, result_sort: FunctionSort }, Constant }
+    impl CallTargets for FunctionRegistry { .. }                       // the catalogue and the user entries
+    pub struct TypeChecker<'a> { /* identifier types, call targets, constant sorts (&dyn SortLookup), deferral */ }
+    impl<'a> TypeChecker<'a> {
+        pub fn new(identifiers: &'a dyn IdentifierTypes, targets: &'a dyn CallTargets, sorts: &'a dyn SortLookup) -> Self;
+        pub fn with_deferred_unknown_calls(self) -> Self;
+        pub fn synthesize(&self, expression: &Expression) -> Result<(Type, TypeQualifier), TypeCheckError>;
+        pub fn check(&self, expression: &Expression, expected: &Type) -> Result<(Type, TypeQualifier), TypeCheckError>;
+    }
+    impl CoreDataType { pub fn is_compatible_with_sort(self, sort: FunctionSort) -> bool; pub fn of_sort(sort: FunctionSort) -> Self; }
+    pub fn check_function_body(signature: &BodySignature<'_>, body: &Expression, targets: &dyn CallTargets,
+        sorts: &dyn SortLookup) -> Result<BodyCheck, BodyCheckError>;             // BodyCheck::Checked | Deferred
+    pub fn check_all_function_bodies(registry: &FunctionRegistry) -> Vec<(FunctionName, BodyCheckError)>;
+    #[non_exhaustive] pub enum TypeCheckError {
+        Rule { root: Expression, at: Option<Expression>, reason: TypeRule },   // framed
+        Unsupported { .. }, UnknownCall(FunctionName),                          // unframed when deferred
+        Callback(CallbackError),
+    }
+    ```
+
+  - Every rule of the survey keeps its meaning and order. The walk runs
+    on an explicit stack, so a deep expression checks on a small stack
+    (T-9). The error frame records the root and the node where the rule
+    failed.
+  - `ExpressionTypeChecker` keeps its constructor, `synthesize`, `check`,
+    `get_noop_output` (still raising `PassExecutionError`) and its
+    registration name. It becomes a `CompilerPass[Expression,
+    tuple[Type, TypeQualifier]]` whose `run_pass` synthesizes. The
+    `visit_*` methods go, and a subclass defining one is refused when the
+    class is created, with a `TypeError` naming this decision, as N-S9-1
+    (a) refuses them for the pretty formatter. No module in `src`
+    subclasses the checker.
+  - **The two lookups** are called from Rust, once per identifier
+    occurrence and once per call node, as today: they are user
+    functions, not visitors, as S9's natives are. A `KeyError` from
+    `get_identifier_type` means unbound, as today. When
+    `resolve_call_target` is the registry's `get_registered_entry`, the
+    binding resolves through the registry snapshot without calling
+    Python. Otherwise it calls the function and reads the returned P2
+    entry's sorts natively. Constants resolve by identifier through the
+    registry snapshot, as today.
+  - A lookup's exception propagates as the same object, and a result of
+    the wrong shape raises `TypeError` (T-15).
+- **D-S11-21: checker errors** (D-S4-1; D-S11-14; T-4).
+  - `TypeCheckError::Rule` raises `FhYCoreTypeError` with the core's
+    framed text: ``type error while inferring the type of `<root>` at
+    sub-expression `<sub>`: <reason>``, where the root and the node print
+    with ids. Every rule failure is framed, including those of the three
+    helpers that raised bare errors.
+  - `Unsupported` raises `NotImplementedError`. `UnknownCall` raises
+    `EntryLookupError` unframed, for deferral. `Callback` raises the
+    lookup's exception itself.
+  - The reasons keep the phrases the tests match (``index type with
+    stride `0` is not allowed``, ``is wider than the expected type``, and
+    the others of the survey). The framing tests and the few capitalized
+    pins are rewritten to the core's text.
+- **D-S11-22: the sort tables and the body checks are the core's**
+  (decision 2; D-S7-7's shape for passes that stay Python).
+  - `is_core_data_type_compatible_with_sort` and
+    `get_result_core_data_type_for_sort` are `_rs` functions over
+    `CoreDataType::is_compatible_with_sort` and `of_sort`.
+  - `RegisteredFunctionBodyTypeChecker` stays a Python `CompilerPass`
+    with its constructor, `check`, `run_pass`, `get_noop_output`,
+    `did_change` and registration. `check` calls the core's
+    `check_function_body` and raises `EntryRegistrationError` with the
+    core's text, keeping the three message shapes of today (the body
+    fails to type-check, uses an unsupported construct, or calls an
+    unregistered function).
+  - `check_registered_function_body` keeps its signature, and still
+    raises `PassExecutionError` through the pass call.
+  - `check_all_registered_function_bodies()` sweeps the registry snapshot
+    in one call. The binding builds the `ValidationReport` in
+    registration order, under today's source.
+- **D-S11-23: the Rust tests specify the checker first** (the tests rule;
+  D-S11-17). The rules, the framing, the lookups' protocol, the sort
+  tables and the body checks are specified by Rust tests written against
+  `todo!()` stubs, with a traceability table from the checking tests.
+- **D-S11-24: the checking tests are rewritten, not skipped** (the tests
+  rule; D-S11-18).
+- **D-S11-25: `fhy_core.types.checking` keeps its layering in Python.**
+  The checking modules keep importing the registry and the pass
+  infrastructure as today, and `test_import_graph.py` gains no edge.
+
+### Needs the user
+
+None. The policy, the precedents and the direction settle every
+decision. The three closest calls, and what settles each:
+
+- **Rust calling Python handlers per Python-defined type node**
+  (D-S11-9). CONTRIBUTING's rule is one Python call per hook, with
+  `fhy_core.term` as its one exception. N-S10-1 (a) settled the same
+  conflict for hooks that are per node by nature, and this is such a
+  case: only Python can answer for a class Python defines. So it is
+  recorded as a second exception in CONTRIBUTING, by that precedent.
+  The checker's two lookups are user functions, which S9's natives
+  settle, and are no exception.
+- **`ExpressionTypeChecker` losing its `visit_*` methods** (D-S11-20).
+  N-S9-1 (a) settled the same question for the pretty formatter.
+- **`networkx` leaving the dependencies** (D-S11-5). Nothing else uses
+  it after "no fallback" removes the poset's graph.
+
+### Steps
+
+**S11a.**
+
+1. **S11a.1: benchmarks.** Add `benchmarks/test_types.py` as planned, and
+   record the baseline here, on today's Python package.
+2. **S11a.2: core additions, test-first, with Rust tests.**
+   - `rust/fhy-core/src/lattice.rs` with `lattice/poset.rs` and
+     `lattice/error.rs`.
+   - `rust/fhy-core/src/types.rs` with `types/data_type.rs` (the core
+     types, promotion, literals, templates), `types/ty.rs` (numerical and
+     index types, dimensions, qualifiers), `types/extension.rs`,
+     `types/environment.rs`, `types/unify.rs` (equivalence, bind,
+     substitute, unify) and `types/error.rs`.
+   - The tests are written first, and fail against `todo!()` stubs, as
+     in S4.2 and S7.2. `lib.rs`, the crate README and CONTRIBUTING's
+     tables list both modules.
+   - Nothing in Python changes, so the suite stays green.
+3. **S11a.3: the binding.** Add `rust/fhy-core-py/src/lattice.rs` and
+   `rust/fhy-core-py/src/types.rs` with `types/classes.rs` (the bases and
+   the four classes, their envelopes and pickling), `types/environment.rs`,
+   `types/dispatch.rs` (the six `_rs` functions and the extension
+   adapters) and `types/error.rs`. Everything new goes into `_rs.pyi`.
+   Nothing in Python uses it yet, so the suite stays green.
+4. **S11a.4: the Python switch** (marked breaking). `lattice.py`,
+   `utils/poset.py`, `types/core.py` and `types/dispatch.py` become the
+   thin layer of D-S11-2. `networkx` leaves `pyproject.toml` and
+   `uv.lock`. The README's Types, Lattice and POSET rows change. The step
+   lands with S11a.5 when the migration is small enough to review in one
+   commit. Otherwise it leaves exactly the tests of the migration plan
+   failing, as S7.4 did.
+5. **S11a.5: tests.** Migrate the tests and add the interface suites (the
+   test plan below).
+6. **S11a.6: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+**S11b.**
+
+1. **S11b.1: benchmarks.** Add `benchmarks/test_type_checking.py`, and
+   record the baseline on the S11a tree, whose checker is still Python.
+2. **S11b.2: core additions, test-first:** `types/checking.rs` with
+   `checking/checker.rs`, `checking/rules.rs`, `checking/sort.rs`,
+   `checking/body.rs` and `checking/error.rs`, and `CallTargets` for
+   `FunctionRegistry`.
+3. **S11b.3: the binding:** `rust/fhy-core-py/src/types/checking.rs`,
+   with the two lookup adapters, the registry fast path, the checker
+   functions and the body checks, and the stubs.
+4. **S11b.4: the Python switch** (marked breaking): the three checking
+   modules become thin. It lands with S11b.5 when the migration is small
+   enough.
+5. **S11b.5: tests.** Migrate the tests and add the interface suite.
+6. **S11b.6: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with these green:
+
+- `pytest`, and `pytest -m "not very_slow"`;
+- the `property` session, and `tests_minimal`;
+- `lint` and `type_check`, clean;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `--all-targets -D warnings` with and without
+  `--all-features`, tests, doc `-D warnings`, deny, and `cargo +1.85
+  check`.
+
+### Test plan
+
+**Rust tests, written first (S11a.2),** in two new areas,
+`tests/it/lattice/` and `tests/it/types/`:
+
+- **`lattice/poset_stories.rs`:**
+  - membership and the refused duplicate;
+  - orders and their reachability, reflexivity, a repeated order
+    accepted, and `x` below `x` or a reverse order refused as a cycle,
+    each leaving the poset unchanged;
+  - `iter` in topological order with insertion-order ties;
+  - `iter_by_key` with its ties;
+  - each `Display`;
+  - a 10,000-element chain on a small stack.
+- **`lattice/lattice_stories.rs`:**
+  - `test_lattice.py`'s fixtures: the singleton, the two-element, the
+    positive-integer and the subsets-of-xyz lattices, and the non-lattices;
+  - meet, join and `missing_bounds`, in their order;
+  - a non-member refused on an empty lattice too (T-12).
+- **`lattice/lattice_properties.rs`:**
+  - the laws (commutative, associative, idempotent, absorbing) over
+    powersets, divisor sets, chains and products, against family oracles,
+    as the Python properties do;
+  - reachability against a brute-force transitive closure over random
+    DAGs;
+  - `is_lattice` exactly when `missing_bounds` is empty.
+- **`types/data_type_stories.rs`:**
+  - `bit_width` and `is_weak` of every member;
+  - `promote` over every pair, including the `BOOL` and cross-family
+    refusals;
+  - the promotion orders as `Lattice`s, checked against `promote`
+    (D-S11-7);
+  - `resolve_literal` per family, at each range boundary, with `BigInt`
+    literals beyond `i64`;
+  - `TypeQualifier::promote`;
+  - serde round trips through JSON and postcard;
+  - `Display` and `FromStr`.
+- **`types/type_stories.rs`:**
+  - construction, including the width refusal;
+  - `==` and `Hash` agreeing with structural equivalence, with an
+    extension part through its hooks;
+  - `Display` in Python's `str` shape, with ids.
+- **`types/unification_stories.rs`,** one case per test of
+  `test_unification.py`:
+  - the environment;
+  - structural equivalence;
+  - `bind_template` of each shape: the wildcards, ranks, dimensions,
+    conflicts, widths and templates;
+  - substitution;
+  - `unify` of each shape, and `unify_expressions` with its chase and
+    occurs check;
+  - T-5's new cases: a shape variable inside a call substituted, and an
+    occurs check through a piecewise and a call;
+  - every `Display`;
+  - a 100,000-level dimension expression on a small stack.
+- **`types/extension_stories.rs`:** a test-local tagged wrapper type
+  implementing `TypeExtension`, `test_extension.py`'s five cases; the
+  provided defaults; an extension's error as `UnificationError::Extension`.
+- **`types/unification_properties.rs`:**
+  - bind then substitute gives back the actual;
+  - unification is symmetric in what it binds, and its result is
+    equivalent to both sides after substitution;
+  - `==` implies equal hashes.
+- A traceability table maps `test_poset.py`, `test_lattice.py`, their
+  properties, `test_core.py`, `test_unification.py`,
+  `test_extension.py` and their properties to the Rust tests.
+
+**Rust tests, written first (S11b.2),** in `tests/it/types/checking/`:
+
+- **`checker_stories.rs`:**
+  - one case per rule test of `test_type_checker.py`;
+  - the framing: the root alone, and the root with a sub-expression;
+  - the lookups' protocol: unbound, a constant's fallback, a type
+    supplied for a constant refused, and an `output` identifier refused;
+  - unknown calls, framed or deferred;
+  - a 100,000-level tree on a small stack.
+- **`checker_boolean_stories.rs`, `checker_sort_stories.rs`:** the
+  Boolean and sort tests.
+- **`sort_stories.rs`:** the two tables over every pair.
+- **`body_stories.rs`:** the body checks and the sweep, over a local
+  `FunctionRegistry`.
+- **`checker_properties.rs`:** the synthesis laws of
+  `test_type_checker_properties.py`.
+- A traceability table maps the checking tests to them.
+
+**The interface suites** cover what the binding adds over the core:
+
+- **`tests/test_lattice_rust_binding.py`:**
+  - the classes are the thin subclasses, and `Lattice[int]` and
+    `PartiallyOrderedSet[str]` subscript;
+  - `Lattice` is a `Verifiable` and a virtual `VerifiableMixin`;
+  - elements keep Python's hashing: `1`, `1.0` and `True` are one element;
+  - an unhashable element raises `TypeError`;
+  - `iter_stable`'s key is called once per element;
+  - `verify`'s report, its source and its texts with `repr`s;
+  - each exception class and its text.
+- **`tests/types/test_types_rust_binding.py`:**
+  - the class structure: the bases take `*args, **kwargs`, a Python
+    subclass constructs with its own `__init__` and attributes and
+    freezes after it, the built-ins are frozen (`FrozenMutationError`),
+    and `StructuralEquivalence` and `FrozenMixin` hold;
+  - `==` and `hash` (T-1), with a Python-defined part using its own;
+  - field objects returned as given;
+  - the argument checks (T-3);
+  - `repr`, pickling and `copy`;
+  - the envelopes and the `Ellipsis` sentinel;
+  - the environment: its class, frozen, its maps, a subclass kept by
+    `with_*` and by the dispatchers with its attributes, and key and
+    value checks;
+  - dispatch: a handler registered for a built-in class serving direct
+    calls only (T-6); the handlers a nested Python-defined node calls,
+    and how often; an unregistered Python class taking the core's
+    default without a Python call; a handler's exception propagating as
+    the same object, and a `KeyboardInterrupt`; a wrong result type; a
+    deferred structural-equivalence error;
+  - the helpers refusing a non-member (`TypeError`).
+- **`tests/types/checking/test_checking_rust_binding.py` (S11b):**
+  - `ExpressionTypeChecker` is a `CompilerPass`, a subclass defining
+    `visit_*` is refused, and the pass call synthesizes;
+  - the lookups are called once per identifier occurrence and per call
+    node; `get_registered_entry` takes the fast path; a custom resolver
+    is called; exceptions propagate as the same object; wrong result
+    shapes raise `TypeError`;
+  - the error classes and their framing;
+  - the body pass and the sweep's report;
+  - a 10,000-level expression without `RecursionError`.
+- **Stubs:** `tests/test_rs_stub.py` covers everything new.
+
+**Migrating the existing tests.** No test is skipped, or deleted without a
+rewrite, and each change is recorded here with its reason:
+
+- **`test_poset.py` (22), `test_lattice.py` (37):** the fixtures build
+  through the public API instead of `_graph` and `_poset`. The two
+  empty-lattice tests pin T-12's `ValueError`. The iteration tests
+  already pin orders that T-11's rule gives.
+- **`test_poset_properties.py` (3):** a test-local transitive closure
+  replaces the `networkx` oracle (T-13). `test_lattice_properties.py`
+  (13) is unchanged.
+- **`types/test_core.py` (107):**
+  - the family-coverage test reads the public helpers instead of the
+    private sets;
+  - the two `Unsupported` pins take the core's text;
+  - the frozen tests keep `FrozenMutationError`;
+  - `repr` pins change where T-2 adds a field.
+- **`types/test_unification.py` (57), `test_extension.py` (5),
+  `test_serialization.py` (18)** should pass unchanged. They match
+  `width`, `template`, `Type` and `DataType`, which the core keeps, and
+  `test_extension.py`'s out-of-tree class is D-S11-9's contract. A test
+  that pins a behavior T-5 changes is rewritten.
+- **New tests for T-5,** in `test_unification.py`: substitution into a
+  call dimension, and the occurs check through a call and a piecewise.
+- **S11b, `checking/test_type_checker.py` (158):**
+  - the three framing tests take the lowercase frame;
+  - the capitalized pins (``Literal -1 ...``, `Decimal literals`,
+    ``Unsupported literal type``) take the core's text;
+  - `test_infer_rejects_unsupported_expression_subclass` pins the
+    `TypeError` for a non-expression argument (T-3, T-15);
+  - `test_unary_expression_with_unknown_operation_raises_not_implemented`
+    becomes a test that the binding refuses a node whose operation is no
+    member. The core's operations are exhaustive, so the checker has no
+    unknown-operation path left.
+- **`checking/test_body_type_checker.py` (13):** the test that patches
+  `ExpressionTypeChecker.synthesize` to return a mock no longer reaches
+  the body check, which runs in Rust. It becomes a Rust story of a body
+  whose type is not a primitive scalar, plus a Python test through an
+  identifier of a template type.
+- **The other checking tests, `test_symbol_table.py`, the registry
+  stories and `test_strategies_properties.py`** should pass unchanged.
+  Any that pin a message or a `repr` T-2 or T-4 changes are rewritten to
+  the new text.
+
+### Coordination with S9 and S12
+
+This branch is rebased onto `dev-rust` after S9 and S12, so its edits to
+shared files stay small and additive:
+
+- **`rust/fhy-core/src/lib.rs`:** `pub mod lattice;` and `pub mod types;`,
+  two rows of the module table, and two clauses of the layering sentence.
+- **`rust/fhy-core/tests/it/main.rs`:** `mod lattice;` and `mod types;`.
+- **`rust/fhy-core-py/src/lib.rs`:** `mod lattice;`, `mod types;` and
+  their `#[pymodule_export]` blocks.
+- **`src/fhy_core/_rs.pyi`:** one new block per part.
+- **`Cargo.toml`, `Cargo.lock`:** unchanged. S11 adds no crate.
+- **`pyproject.toml`, `uv.lock`:** one removed line, `networkx`, and the
+  lock regenerated with `uv lock` after the rebase, since S9 and S12 may
+  change the lock too.
+- **CONTRIBUTING:** two rows of the Python-to-Rust table, `lattice` in
+  layer 4 and `types` in layer 6 of the layering list, and D-S11-9's
+  exception in "Call back into Python per hook". No process-global state
+  is added: the dispatchers' registries stay `functools` state in Python,
+  and the promotion masks are `const`s.
+- **READMEs:** the Python README's Types, Lattice and POSET rows, and one
+  line of the crate README per module.
+- **`noxfile.py`, `tests/conftest.py`, the benchmark `conftest.py`:**
+  unchanged.
+- **This document:** this section, appended, and one entry at the end of
+  the Progress checklist.
+
+S11 uses neither the evaluators nor the CAS backend, and they use no type,
+so no code depends across the slices. S9's N-S9-1 (a), which D-S11-20
+follows, is the user's resolution for S9; if S9 lands a different shape
+for the formatter, S11b follows what lands.
