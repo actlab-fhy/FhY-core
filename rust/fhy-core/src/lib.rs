@@ -26,7 +26,7 @@
 //! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], folding and evaluation in [`expression::evaluate`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //! | [`solver`] | questions about expressions answered by pluggable backends: the hazard screen, the SMT-LIB2 lowering, and a backend that drives an SMT-LIB2 executable |
-//! | [`types`] | the IR type system: core data types and their promotion, data types, numerical and index types, and template binding, substitution and unification, with extensions |
+//! | [`types`] | the IR type system: core data types and their promotion, data types, numerical and index types, and template binding, substitution and unification, with extensions; expression type checking in [`types::checking`] |
 //!
 //! Each public item has exactly one public path.
 //!

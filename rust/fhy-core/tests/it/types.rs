@@ -2,6 +2,7 @@
 //! type values, the environment, and binding, substitution and unification,
 //! with extensions.
 
+mod checking;
 mod data_type_stories;
 mod extension_stories;
 mod type_stories;

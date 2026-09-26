@@ -107,7 +107,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11a.6: benchmarks after, and docs (every row faster or within 10% except `==` and `hash` of a type and a frame's hash, T-1's structural semantics; see "S11a benchmarks")
   - [ ] S11b: type checking
     - [x] S11b.1: type-checking benchmarks, and the baseline (13 rows; see "S11b.1 baseline")
-    - [ ] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
+    - [x] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
     - [ ] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
     - [ ] S11b.4: the Python switch
     - [ ] S11b.5: tests migrated, and the interface suite
@@ -13631,4 +13631,74 @@ table lists the best of three runs' medians.
   sorts read through Python.
 - **The body checks** cost 43 µs for one body, and the sweep 1.2 ms over the
   built-ins' bodies.
+
+### S11b.2 implementation notes
+
+The tests were written against the module's skeleton and run with the
+bodies of `TypeChecker::synthesize` and `check`, `CallTargets for
+FunctionRegistry`, `CoreDataType::of_literal`, `is_compatible_with_sort`,
+`of_sort`, `check_function_body` and `check_all_function_bodies` replaced
+by `todo!()`: 91 of the 93 new integration tests failed (the other two pin
+a hand-built error's text), and all pass now; the proptest seeds the
+stubbed run wrote were deleted. The module is
+`rust/fhy-core/src/types/checking.rs` with `checking/checker.rs` (the
+lookups' traits, `CallTarget`, the checker and its walk),
+`checking/sort.rs`, `checking/body.rs` and `checking/error.rs`, under one
+path each, `fhy_core::types::checking::X`; the sort tables are methods of
+`CoreDataType`. `LiteralTypeError` lost the string variant S11a.2 reserved,
+since a Rust literal is never a string.
+
+Where the shape differs from D-S11-20's sketch, or fills it in:
+
+- **The walk** is a work list of steps: inferring a node, and one step per
+  rule that combines its children's results (a unary, a binary, a logical
+  operand and the connective, each piecewise condition and branch, and a
+  call's arguments), so the order of lookups and of refusals is Python's:
+  a call resolves and checks its arity before its arguments, a piecewise
+  checks each condition before the next, a logical node reads each operand
+  as a value type before the next. The weak-literal rescue and the
+  literal's own check run inline, on a leaf.
+- **The error frame** records the root and the node whose step failed,
+  which is the node Python's context stack had on top, the parent for a
+  child read as a value type. Python's three unframed helpers and the
+  promotion and literal errors are framed too (D-S11-21).
+- **`TypeRule`** is a kind (`TypeRuleKind`, non-exhaustive) and the reason
+  in words, rather than one variant per rule; `is_unsupported` picks out
+  what Python raised as `NotImplementedError`.
+- **Calls.** `CallTargets::call_target` takes the `Callee`; the registry's
+  implementation resolves a built-in function through the catalogue, a
+  built-in constant by name, and any other name through its entries, so a
+  body calls what Python's `get_registered_entry` resolves. An unknown
+  name is `CallTargetError::Unknown` with a message and the lookup's own
+  error, which a deferring checker returns unframed.
+- **Names in messages** are the Rust operation names (`floor_mod` where
+  Python wrote `modulo`), and types print in their Python `str` shape.
+- **The body checks** take a `FunctionSignature` of borrowed parts; the
+  sweep checks the composed built-ins in catalogue order and then the
+  registry's functions in registration order, as Python's sweep over
+  `get_registered_entries()` did.
+- **Tests.** `tests/it/types/checking/`: `checker_stories.rs` (76,
+  counting `rstest` cases), `sort_stories.rs` (4), `body_stories.rs` (8)
+  and `checker_properties.rs` (1), plus one doc test.
+
+Traceability of the Python checking tests (`test_type_checker.py` is `T`,
+`test_type_checker_booleans.py` `B`, `test_type_checker_sorts.py` `S`,
+`test_sort_compatibility.py` `C`, the body files by name):
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| T the literal-type and weak-literal tests (25) | `a_literal_synthesizes_its_weak_type` (5), `a_decimal_literal_*` (2), `a_large_literal_stays_weak_without_a_context`, `negating_a_weak_literal_flips_its_sign_family`, `checking_a_literal_*` (13), `a_literal_cannot_be_checked_against_an_index_type`, `the_expected_type_reaches_literal_operands_of_arithmetic`, `a_weak_literal_operand_is_checked_against_a_concrete_other_operand`, `a_literal_nested_below_a_negation_escapes_the_range_check` | a string literal has no Rust form |
+| T the qualifier and constant tests (8) | `an_output_identifier_cannot_be_read`, `other_qualifiers_are_read_and_kept` (4), `qualifiers_promote_to_param_only_from_params`, `a_native_constant_types_by_its_sort_and_refuses_a_supplied_type`, `an_identifier_merely_named_like_a_constant_is_unbound`, `an_unbound_identifier_is_refused` | |
+| T the promotion, division and floor-division tests (14) | `addition_promotes_the_operands` (4), `true_division_produces_a_float_of_the_wider_width` (8), `floor_division_*` (5), `arithmetic_across_families_is_a_promotion_error` | |
+| T the tensor and template tests (3) | `a_tensor_identifier_is_unsupported_and_a_template_one_is_no_value_type` | |
+| T the index-type tests (35) | `an_index_shifts_*`, `an_index_scales_*`, `an_index_refuses_*` (4), `index_comparisons_need_equal_index_types`, `a_zero_literal_stride_is_refused_wherever_the_index_is_read` | |
+| T the expected-type tests (8) | `a_synthesized_type_must_not_be_wider_than_the_expected_one`, `index_types_check_by_structural_equivalence_and_never_against_numbers` | |
+| T the framing tests (3) | `an_error_at_the_root_is_framed_by_the_root_alone`, `an_error_below_the_root_names_the_sub_expression` | the lowercase frame (D-S11-21) |
+| T the private-helper tests (6) | none; the helpers are gone | S11b.5 rewrites them through the public API |
+| B the Boolean tests (50) | `unary_arithmetic_refuses_a_boolean` (2), `binary_arithmetic_refuses_*`, `comparisons_are_boolean_*`, `boolean_comparisons_*`, `logical_connectives_need_boolean_operands`, `a_piecewise_*` (2) | |
+| S the call and sort tests (17) | `a_call_types_by_its_result_sort_after_checking_its_arguments`, `a_call_refuses_*`, `an_unknown_call_is_a_rule_or_deferred`, `the_call_target_is_resolved_before_the_arguments_are_checked` | |
+| C (72) | `sort_stories.rs` (4) | every pair |
+| `test_body_type_checker.py` (13), `test_registry_body_sweep.py` (10), `test_builtin_bodies.py` (2) | `body_stories.rs` (8) | the pass mechanics stay Python |
+| `test_type_checker_properties.py` (3) | `synthesis_agrees_with_the_promotion_of_the_leaves` | |
+| none | `a_callback_error_passes_through`, `a_deep_expression_checks_on_a_small_stack` | new |
 

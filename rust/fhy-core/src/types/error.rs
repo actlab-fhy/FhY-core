@@ -90,8 +90,6 @@ pub enum LiteralTypeError {
     },
     /// A decimal literal, which has no core data type yet.
     UnsupportedDecimal,
-    /// A string literal, which has no core data type yet.
-    UnsupportedString,
 }
 
 impl LiteralTypeError {
@@ -99,7 +97,7 @@ impl LiteralTypeError {
     /// opposed to a literal the context refuses.
     #[must_use]
     pub fn is_unsupported(&self) -> bool {
-        matches!(self, Self::UnsupportedDecimal | Self::UnsupportedString)
+        matches!(self, Self::UnsupportedDecimal)
     }
 }
 
@@ -137,7 +135,6 @@ impl fmt::Display for LiteralTypeError {
                 )
             }
             Self::UnsupportedDecimal => f.write_str("decimal literals are not yet supported"),
-            Self::UnsupportedString => f.write_str("string literals are not yet supported"),
         }
     }
 }

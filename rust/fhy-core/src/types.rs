@@ -14,6 +14,8 @@
 //!   [`TypeUnificationEnvironment`] and read them back.
 //! - [`TypeExtension`] and [`DataTypeExtension`] let types defined outside
 //!   this crate take part in every operation.
+//! - [`checking`] type-checks expressions against the type system, and holds
+//!   function bodies to their declared result sorts.
 //!
 //! # Examples
 //!
@@ -37,6 +39,8 @@
 //! assert_eq!(pattern.substitute_template(&environment)?, actual);
 //! # Ok::<(), fhy_core::types::UnificationError>(())
 //! ```
+
+pub mod checking;
 
 mod core_data_type;
 mod data_type;
