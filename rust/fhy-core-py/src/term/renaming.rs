@@ -139,21 +139,31 @@ fn read_identifier_map(
     owner: &str,
     field: &str,
 ) -> PyResult<(HashMap<Identifier, Identifier>, ObjectsById)> {
-    let Ok(mapping) = mapping.cast::<PyMapping>() else {
-        return Err(PyTypeError::new_err(format!(
-            "{owner} {field} must be a mapping, got {}.",
-            mapping.get_type().name()?
-        )));
-    };
-    let mut map = HashMap::with_capacity(mapping.len()?);
-    let mut objects = HashMap::with_capacity(2 * map.capacity());
-    for item in mapping.items()?.iter() {
-        let (key, value) = item.extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>()?;
+    let size = mapping.len().unwrap_or(0);
+    let mut map = HashMap::with_capacity(size);
+    let mut objects = HashMap::with_capacity(2 * size);
+    let mut insert = |key: Bound<'_, PyAny>, value: Bound<'_, PyAny>| -> PyResult<()> {
         let rust_key = restore_identifier(&key, owner, "key")?;
         let rust_value = restore_identifier(&value, owner, "value")?;
         objects.insert(rust_key.id(), key.unbind());
         objects.insert(rust_value.id(), value.unbind());
         map.insert(rust_key, rust_value);
+        Ok(())
+    };
+    if let Ok(dict) = mapping.cast::<PyDict>() {
+        for (key, value) in dict.iter() {
+            insert(key, value)?;
+        }
+    } else if let Ok(mapping) = mapping.cast::<PyMapping>() {
+        for item in mapping.items()?.iter() {
+            let (key, value) = item.extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>()?;
+            insert(key, value)?;
+        }
+    } else {
+        return Err(PyTypeError::new_err(format!(
+            "{owner} {field} must be a mapping, got {}.",
+            mapping.get_type().name()?
+        )));
     }
     Ok((map, objects))
 }

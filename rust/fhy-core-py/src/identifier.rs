@@ -116,6 +116,16 @@ pub(crate) fn restore_identifier(
     owner: &str,
     field: &str,
 ) -> PyResult<Identifier> {
+    let py = object.py();
+    if object.get_type().is(python_identifier_class(py)?) {
+        // An exact `Identifier` holds its id and name hint in the instance
+        // attributes its properties read, so read them without the
+        // properties' Python calls.
+        let id = object.getattr(intern!(py, "_id"))?.extract()?;
+        let name_hint = object.getattr(intern!(py, "_name_hint"))?;
+        return Identifier::try_restore(id, name_hint.cast::<PyString>()?.to_str()?)
+            .into_py_result();
+    }
     let Some(id) = read_identifier_id(object)? else {
         return Err(PyTypeError::new_err(format!(
             "{owner} {field} must be an Identifier, got {}.",
