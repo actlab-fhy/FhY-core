@@ -807,7 +807,12 @@ _r = mock_identifier("r", 1003)
 
 @pytest.fixture()
 def example_terms() -> list[AlphaEquivalenceMixin]:
-    """Yield a small set of terms covering leaves, refs, pairs, and binders."""
+    """Yield a small set of terms covering leaves, refs, pairs, and binders.
+
+    Every binder binds one identifier, so no binder list repeats one: the
+    precondition of the laws below, which hold only on such terms (N-S10-2
+    (b) of ``docs/design/python-switch.md``).
+    """
     leaf1 = _AlphaLeaf(1)
     leaf2 = _AlphaLeaf(2)
     ref_p = _IdRef(_p)
@@ -832,7 +837,10 @@ def example_terms() -> list[AlphaEquivalenceMixin]:
 def test_alpha_equivalence_is_reflexive(
     example_terms: list[AlphaEquivalenceMixin],
 ) -> None:
-    """Test alpha-equivalence is reflexive on the example-term set."""
+    """Test alpha-equivalence is reflexive on the example-term set.
+
+    Precondition: no binder list of the example terms repeats an identifier.
+    """
     for term in example_terms:
         assert term.is_alpha_equivalent(term)
 
@@ -849,7 +857,10 @@ def test_alpha_equivalence_is_symmetric(
 def test_alpha_equivalence_is_transitive(
     example_terms: list[AlphaEquivalenceMixin],
 ) -> None:
-    """Test alpha-equivalence is transitive on the example-term set."""
+    """Test alpha-equivalence is transitive on the example-term set.
+
+    Precondition: no binder list of the example terms repeats an identifier.
+    """
     triples_exercised = 0
     for left in example_terms:
         for middle in example_terms:

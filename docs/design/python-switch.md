@@ -76,7 +76,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
   - [x] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
   - [x] S10.4: the Python switch
-  - [ ] S10.5: tests migrated, and the interface suite
+  - [x] S10.5: tests migrated, and the interface suite
   - [ ] S10.6: benchmarks after, and docs
 
 ## Goal
@@ -8543,3 +8543,40 @@ function entries pair their parameters with `enter_binders` (D-S10-14).
 The README's three term rows changed. The whole suite passed unchanged
 (7,327 passed): no existing test pins a behavior Z-1 to Z-7 or N-S10-2
 changes, so S10.5 migrates nothing and only adds tests.
+
+### S10.5 status
+
+No existing test needed a rewrite (S10.4), and none was skipped or
+deleted. At the end of S10.5: `pytest` 7,376 passed, `-m "not very_slow"`
+7,409 passed, the `property` session 281 passed, `lint` and `type_check`
+clean, `tests/test_rs_stub.py` green.
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_alpha_equivalence.py`: the `example_terms` fixture and the reflexivity and transitivity tests | same names | N-S10-2 (b): their docstrings state the precondition, binder lists without a repeated identifier, which the example terms meet |
+| `test_derived_equivalence.py::test_structural_equivalence_implies_alpha_equivalence` | same name | the same precondition, stated in its docstring |
+| none | `test_binder.py::test_lambda_repeating_a_parameter_matches_no_lambda_in_either_direction`, `..._is_not_alpha_equivalent_to_itself` | N-S10-2 (b), new |
+| none | `test_derived_equivalence.py::test_binder_repeating_an_identifier_matches_no_binder_in_either_direction` | N-S10-2 (b), new |
+
+No Python test expected `True` for a repeated binder: the two that
+compare one, `test_binder.py::test_non_injective_binding_is_not_alpha_equivalent`
+and `test_derived_equivalence.py::test_binder_with_non_injective_binding_returns_false`,
+expect `False` and pass unchanged.
+
+The new `tests/test_term_rust_binding.py` (46 tests, counting parametrized
+cases) covers the test plan's interface suite: the renaming's class
+structure (the extension class itself, final, frozen), its argument checks
+and the core's `ValueError` texts, `empty()` as one object, equality and
+hash across construction orders, the `repr`, pickling and copying, and
+`resolve` returning the objects given; expressions and registry entries
+reading it and refusing anything else; the hooks a binder comparison, a
+free-identifier query and a substitution call, a hook's exception as the
+same object stopping where `all` stopped, a `KeyboardInterrupt`, a bound
+identifier of the wrong type, truthy child answers, an expression child,
+the extended renaming a child receives, and repeated parameters; the
+derived engine's plan cache, a 10,000-deep chain in both modes, a nested
+value with its own method, comparators and `key` normalizers receiving
+their arguments, exceptions from user code, native expressions and
+identifiers, repeated binder fields (scoped or not), argument types, the
+roles as `_rs.EquivalenceRole` values, and the unknown-scope text; and the
+mapping helper's order, a raising value, and a key of the wrong type.

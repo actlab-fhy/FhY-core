@@ -646,6 +646,38 @@ def test_binder_with_unknown_scopes_over_name_raises_on_first_comparison() -> No
         _Lam(x, _Var(x)).is_alpha_equivalent(_Lam(x, _Var(x)))
 
 
+def test_binder_repeating_an_identifier_matches_no_binder_in_either_direction() -> None:
+    """Test a binder field repeating an identifier pairs with nothing.
+
+    A binder list that repeats an identifier, on either side, pairs with
+    nothing (N-S10-2 (b) of ``docs/design/python-switch.md``), so the node
+    is alpha-equivalent to no node, itself included, though it stays
+    structurally equivalent to an equal copy.
+    """
+
+    @dataclass(frozen=True, eq=False)
+    class _Var(DerivedEquivalenceMixin):
+        identifier: Identifier = field(metadata=compared_as_reference())
+
+    @dataclass(frozen=True, eq=False)
+    class _Lam(DerivedEquivalenceMixin):
+        params: tuple[Identifier, ...] = field(
+            metadata=compared_as_binder(scopes_over=("body",))
+        )
+        body: _Var
+
+    x = mock_identifier("x", 1)
+    a = mock_identifier("a", 4)
+    b = mock_identifier("b", 5)
+    repeating = _Lam((x, x), _Var(x))
+    distinct = _Lam((a, b), _Var(b))
+
+    assert not repeating.is_alpha_equivalent(distinct)
+    assert not distinct.is_alpha_equivalent(repeating)
+    assert not repeating.is_alpha_equivalent(repeating)
+    assert repeating.is_structurally_equivalent(_Lam((x, x), _Var(x)))
+
+
 # ===========================================================================
 # Custom comparator
 # ===========================================================================
@@ -818,7 +850,11 @@ def test_structural_equivalence_is_transitive() -> None:
 
 
 def test_structural_equivalence_implies_alpha_equivalence() -> None:
-    """Test a structurally equivalent pair is also alpha-equivalent."""
+    """Test a structurally equivalent pair is also alpha-equivalent.
+
+    Precondition: the tree has no binder field that repeats an identifier,
+    since such a binder pairs with nothing (N-S10-2 (b)).
+    """
     left = _mixed_tree()
     right = _mixed_tree()
 
