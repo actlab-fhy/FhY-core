@@ -29,7 +29,6 @@ from fhy_core.symbolic.expression import (
     pformat_expression,
 )
 from fhy_core.symbolic.expression.pprint import ExpressionPrettyFormatter
-from fhy_core.utils.override import override
 
 # =============================================================================
 # Symbolic format (default)
@@ -290,18 +289,20 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
 # =============================================================================
 
 
-def test_pretty_formatter_call_rejects_non_string_formatted_result() -> None:
-    """Test `__call__` raises `TypeError` when the visit result is not a `str`."""
+def test_pretty_formatter_refuses_a_subclass_defining_a_visitor() -> None:
+    """Test a formatter subclass defining a ``visit_*`` method is refused.
 
-    class _NonStringFormatter(ExpressionPrettyFormatter):
-        @override
-        def visit_literal_expression(
-            self, literal_expression: LiteralExpression
-        ) -> str:
-            return 42  # type: ignore[return-value]  # intentional contract violation
+    The core renders the text, with no per-node hook (N-S9-1 of
+    ``docs/design/python-switch.md``), so an override that would be
+    ignored is refused when the class is created.
+    """
+    with pytest.raises(TypeError, match=r"visit_literal_expression.*N-S9-1"):
 
-    with pytest.raises(TypeError, match=r"Invalid formatted expression type"):
-        _NonStringFormatter()(LiteralExpression(5))
+        class _NonStringFormatter(ExpressionPrettyFormatter):
+            def visit_literal_expression(
+                self, literal_expression: LiteralExpression
+            ) -> str:
+                return "42"
 
 
 def test_pretty_formatter_get_noop_output_raises() -> None:
@@ -484,16 +485,18 @@ def test_pretty_formatter_renders_what_pformat_expression_renders(
     )
 
 
-def test_pretty_formatter_subclass_overrides_one_node_kind() -> None:
-    """Test a formatter subclass can change how one node kind renders."""
+def test_pretty_formatter_subclass_without_visitors_formats_as_the_core() -> None:
+    """Test a formatter subclass that defines no visitor formats the core's text."""
 
-    class _BracketedLiterals(ExpressionPrettyFormatter):
-        @override
-        def visit_literal_expression(
-            self, literal_expression: LiteralExpression
-        ) -> str:
-            return f"[{super().visit_literal_expression(literal_expression)}]"
+    class _Formatter(ExpressionPrettyFormatter):
+        pass
 
     x = IdentifierExpression(Identifier("x"))
 
-    assert _BracketedLiterals()(x + LiteralExpression(True)) == "(x + [true])"
+    assert _Formatter()(x + LiteralExpression(True)) == "(x + true)"
+
+
+def test_pformat_expression_refuses_a_value_that_is_no_expression() -> None:
+    """Test ``pformat_expression`` raises ``TypeError`` for a non-expression."""
+    with pytest.raises(TypeError, match="takes an Expression, got int"):
+        pformat_expression(5)  # type: ignore[arg-type]

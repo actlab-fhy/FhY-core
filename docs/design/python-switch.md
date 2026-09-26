@@ -85,7 +85,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.3: the `ndarray` cargo feature and the array backend
   - [x] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
   - [x] S9.5: the Python switch
-  - [ ] S9.6: tests migrated, and the interface suite
+  - [x] S9.6: tests migrated, and the interface suite
   - [ ] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README
   - [ ] S9.8: benchmarks after, and docs
 
@@ -10127,3 +10127,62 @@ they import the private tables (`test_numpy_evaluator.py`,
 the property oracles included, passes unchanged. `pformat_expression`
 raises `TypeError` for an argument that is not an `Expression`, where it
 used to run the Python formatter over it.
+
+### S9.6 status
+
+The tests are migrated, and the interface suite is new. At the end:
+`pytest` 7,435 passed, `-m "not very_slow"` 7,468 passed, the `property`
+session (`HYPOTHESIS_PROFILE=thorough -m property`) 281 passed, `ruff` and
+`mypy` over `src tests benchmarks rust/fhy-core/tests/golden` clean,
+`tests/test_rs_stub.py` green, and the Rust gate green (fmt, clippy `-D
+warnings` with `--all-features`, 2,481 tests of `tests/it`, doc `-D
+warnings`, deny, `cargo +1.85 check`). No test was skipped, or deleted
+without a rewrite; every other test, the property oracles that compare
+with the NumPy evaluator included, passes unchanged. None of their integer
+trees overflows `int64`, so Z-2 changed nothing there.
+
+Tests migrated in S9.6:
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_numpy_evaluator.py`: the 15 tests matching `PassExecutionError`'s `__cause__` (non-finite casts, guarded piecewise, inexact decimals, unbound identifiers, unknown and recursive functions, a constant called, a native user function, the integer power) | same names, `pytest.raises(<the cause's class>)` | D-S9-10: raised directly |
+| `test_numpy_evaluator.py`: the 11 `np.errstate(all="ignore")` blocks | `_refuse_warnings()`, which turns every warning into an error | Z-9: the evaluator warns nothing |
+| `test_numpy_evaluator.py::test_unselected_case_domain_error_still_warns_and_is_discarded` | `test_unselected_case_domain_error_is_discarded_without_a_warning` | Z-9 |
+| `test_numpy_evaluator.py::test_real_sort_native_preserves_float_width` | `test_real_sort_native_widens_a_float32_binding_to_float64` | Z-1 |
+| `test_numpy_evaluator.py::test_cast_to_result_sort_casts_to_declared_dtype` (3), `..._passes_real_through_unchanged`, `..._raises_for_non_finite_value` (3) | `test_native_results_take_the_dtype_of_their_result_sort` | the private cast helper is gone; the casts are Rust stories (`evaluate_computes_native_builtins_and_casts_integer_results`), and Python reaches only the `INT` and `REAL` ones |
+| `test_numpy_evaluator.py::test_every_binary_operation_has_a_lowering`, `test_every_unary_operation_has_a_lowering`, `test_every_lowered_native_name_resolves_to_a_numpy_callable`, `test_every_builtin_native_function_has_a_lowering` | `test_every_binary_operation_is_evaluated` (13 cases), `test_every_unary_operation_is_evaluated`, `test_every_builtin_native_function_is_evaluated` | the ufunc tables are gone; each operation and native is compared with NumPy or `math` |
+| `test_numpy_evaluator.py::test_logical_not_of_an_object_dtype_array_raises_as_a_runtime_backstop`, `test_piecewise_with_object_dtype_condition_array_raises_during_evaluation` | `..._is_refused_when_converted` (both) | Z-11: `TypeError` when converted |
+| `test_numpy_evaluator.py::test_raises_for_unsupported_erf`, `test_raises_for_gelu_due_to_unsupported_erf` | `test_evaluates_erf_as_math_does`, `test_evaluates_gelu_through_erf` | Z-6 |
+| `test_numpy_evaluator.py::test_raises_for_unbound_identifier_merely_named_like_a_native_constant`, `..._matching_a_native_function_name` | same names | D-S9-14: the core's texts ("shares its name with the constant", "names a function") |
+| `test_numpy_evaluator.py::test_numpy_expression_evaluator_snapshots_environment_at_construction` | same name | D-S9-10: no `numpy_module` argument |
+| `test_builtins.py::test_seeded_native_implementation_matches_math_callable` (17) | `test_seeded_native_implementation_agrees_with_math_inside_its_domain` (17), `test_seeded_native_implementation_follows_ieee_outside_its_domain` | D-S9-9: the implementation is the core's kernel, one `BuiltinNativeImplementation` per built-in |
+| `test_builtins.py::test_builtin_native_implementations_table_item_assignment_raises_type_error` | `test_builtin_native_entry_implementation_cannot_be_replaced` | D-S9-9: the table is gone; the entry is frozen |
+| `test_registry_rust_binding.py::test_builtin_function_entry_is_one_object_with_its_body_built_once` | same name | D-S9-9: a native built-in's implementation is its `BuiltinNativeImplementation` |
+| `test_pprint.py::test_pretty_formatter_call_rejects_non_string_formatted_result` | `test_pretty_formatter_refuses_a_subclass_defining_a_visitor` | N-S9-1 |
+| `test_pprint.py::test_pretty_formatter_subclass_overrides_one_node_kind` | `test_pretty_formatter_subclass_without_visitors_formats_as_the_core`, `test_pformat_expression_refuses_a_value_that_is_no_expression` | N-S9-1 |
+
+The new `tests/symbolic/expression/passes/test_evaluate_rust_binding.py`
+(101 tests, counting parametrized cases) covers the test plan: NumPy
+optional (three subprocess tests: `import fhy_core` and a fold without
+NumPy, NumPy left unimported, the guiding `ImportError` and its cause);
+every admitted and refused dtype, `uint64` at the edge, a Python `int`
+beyond `int64`, swapped byte order, Fortran order, strides, negative and
+zero strides, Python scalars, nested lists, an unreadable unreferenced
+binding, empty and 0-d bindings; 0-d results as NumPy scalars whatever
+the root, and array results that are new, writeable and C-contiguous; the
+12 error rows raised directly and wrapped by a pass run; the check order;
+both passes registered, the NumPy pass's snapshot and inlining, the fold's
+warnings and identity; the arity check of Z-8; native user functions
+receiving Python values, their exception as the cause itself, a
+`KeyboardInterrupt` passing through, a non-numeric result refused; the
+built-ins' implementations agreeing with the fold, one object each,
+pickling as themselves; the literal helpers; another thread running
+during a large evaluation, and concurrent evaluations agreeing.
+
+**Without NumPy** (a scratch venv in `target/` with the test group but
+no NumPy): `-m "not very_slow"` has 6,676 passed, 38 skipped (the modules
+that import NumPy through `importorskip`) and 371 failed. Every failure is
+the guiding `ImportError`: 368 in `test_sympy_pass.py` and 3 in
+`test_solver_properties.py`, which evaluate with NumPy as an oracle
+without importing it. They failed the same way before S9, since the
+Python evaluator raised the same `ImportError`; S9.7 marks them.

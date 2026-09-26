@@ -55,7 +55,6 @@ from fhy_core.symbolic.expression import (
     validate_logical_operands,
     validate_predicate,
 )
-from fhy_core.symbolic.expression.builtins import _NATIVE_IMPLEMENTATIONS
 from fhy_core.symbolic.expression.passes.inline import FunctionInliner
 from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
 from fhy_core.term import AlphaRenaming
@@ -451,7 +450,7 @@ def test_builtin_function_entry_is_one_object_with_its_body_built_once(
         assert entry.body is again.body
     else:
         assert isinstance(entry, NativeFunction)
-        assert entry.implementation is _NATIVE_IMPLEMENTATIONS[name]
+        assert entry.implementation is _rs.BuiltinNativeImplementation._of(name)
 
 
 def test_registered_entries_list_the_builtins_in_catalogue_order_first(

@@ -19,11 +19,12 @@ inlining semantics.
 """
 
 import math
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from typing import Any, cast
 
 import pytest
 
+from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -36,6 +37,7 @@ from fhy_core.symbolic.expression import (
     LogicalOperation,
     NativeConstant,
     NativeFunction,
+    NonFiniteCastError,
     PiecewiseExpression,
     RegisteredFunction,
     UnaryExpression,
@@ -47,7 +49,6 @@ from fhy_core.symbolic.expression import (
     is_entry_registered,
 )
 from fhy_core.symbolic.expression.builtins import (
-    _NATIVE_IMPLEMENTATIONS,
     BUILTIN_CONSTANTS,
     BUILTIN_FUNCTIONS,
     BuiltinConstants,
@@ -431,34 +432,66 @@ def test_seeded_nan_constant_is_nan() -> None:
 
 
 @pytest.mark.parametrize(
-    "name, math_callable",
+    "name, math_callable, argument",
     [
-        ("exp", math.exp),
-        ("log", math.log),
-        ("log2", math.log2),
-        ("log10", math.log10),
-        ("sqrt", math.sqrt),
-        ("sin", math.sin),
-        ("cos", math.cos),
-        ("tan", math.tan),
-        ("arcsin", math.asin),
-        ("arccos", math.acos),
-        ("arctan", math.atan),
-        ("sinh", math.sinh),
-        ("cosh", math.cosh),
-        ("tanh", math.tanh),
-        ("erf", math.erf),
-        ("floor", math.floor),
-        ("ceil", math.ceil),
+        ("exp", math.exp, 0.75),
+        ("log", math.log, 0.75),
+        ("log2", math.log2, 0.75),
+        ("log10", math.log10, 0.75),
+        ("sqrt", math.sqrt, 0.75),
+        ("sin", math.sin, 0.75),
+        ("cos", math.cos, 0.75),
+        ("tan", math.tan, 0.75),
+        ("arcsin", math.asin, 0.75),
+        ("arccos", math.acos, 0.75),
+        ("arctan", math.atan, 0.75),
+        ("sinh", math.sinh, 0.75),
+        ("cosh", math.cosh, 0.75),
+        ("tanh", math.tanh, 0.75),
+        ("erf", math.erf, 0.75),
+        ("floor", math.floor, -0.75),
+        ("ceil", math.ceil, -0.75),
     ],
 )
-def test_seeded_native_implementation_matches_math_callable(
-    name: str, math_callable: object
+def test_seeded_native_implementation_agrees_with_math_inside_its_domain(
+    name: str, math_callable: Callable[[float], float], argument: float
 ) -> None:
-    """Test each seeded native binds to the expected ``math`` callable."""
+    """Test each seeded native's implementation agrees with ``math`` in its domain.
+
+    The implementation is the core's kernel (D-S9-9 of
+    ``docs/design/python-switch.md``), one object per built-in, where it
+    used to be the ``math`` callable itself.
+    """
     entry = get_registered_entry(name)
     assert isinstance(entry, NativeFunction)
-    assert entry.implementation is math_callable
+    implementation = entry.implementation
+
+    assert type(implementation) is _rs.BuiltinNativeImplementation
+    assert implementation is _rs.BuiltinNativeImplementation._of(name)
+    result = implementation(argument)
+    expected = math_callable(argument)
+    assert type(result) is type(expected)
+    assert math.isclose(result, expected, rel_tol=1e-15)
+
+
+def test_seeded_native_implementation_follows_ieee_outside_its_domain() -> None:
+    """Test the kernels give IEEE results where ``math`` raises.
+
+    ``math.sqrt(-1)`` and ``math.log(0)`` raise ``ValueError``; the core's
+    kernels give ``nan`` and ``-inf``, as the evaluators compute them, and
+    an integer-sorted result with no integer raises ``NonFiniteCastError``.
+    """
+    sqrt = get_registered_entry("sqrt")
+    log = get_registered_entry("log")
+    floor = get_registered_entry("floor")
+    assert isinstance(sqrt, NativeFunction)
+    assert isinstance(log, NativeFunction)
+    assert isinstance(floor, NativeFunction)
+
+    assert math.isnan(sqrt.implementation(-1.0))
+    assert log.implementation(0.0) == -math.inf
+    with pytest.raises(NonFiniteCastError):
+        floor.implementation(math.inf)
 
 
 # =============================================================================
@@ -614,12 +647,13 @@ def test_builtin_entry_parameter_sorts_are_a_tuple(name: str) -> None:
     assert isinstance(entry.parameter_sorts, tuple)
 
 
-def test_builtin_native_implementations_table_item_assignment_raises_type_error() -> (
-    None
-):
-    """Test assigning to an existing key in the native table raises TypeError."""
-    mutable_table = cast(MutableMapping[str, object], _NATIVE_IMPLEMENTATIONS)
-    existing_key = next(iter(_NATIVE_IMPLEMENTATIONS))
+def test_builtin_native_entry_implementation_cannot_be_replaced() -> None:
+    """Test a native built-in's implementation cannot be replaced.
 
-    with pytest.raises(TypeError):
-        mutable_table[existing_key] = _NATIVE_IMPLEMENTATIONS[existing_key]
+    The table of Python callables is gone (D-S9-9); the entry holds its
+    kernel, and the entry is frozen.
+    """
+    entry = get_registered_entry("exp")
+
+    with pytest.raises(AttributeError):
+        entry.implementation = math.exp  # type: ignore[misc]
