@@ -70,6 +70,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.6: tests migrated, and the interface suite (57). The suite is green (7,387 passed), `-m "not very_slow"` 7,420, properties 281; see "S8.5 and S8.6 status"
   - [x] S8.7: optional extras, backend markers and the minimal-install session. `tests_minimal` passes (5,764 passed, 608 skipped); the suite 7,389 passed; see "S8.7 status"
   - [x] S8.8: benchmarks after, and docs (every solver row faster, or within 10%, after c0af152; see "S8 benchmarks")
+- [ ] S10: terms (designed; see "S10: terms")
+  - [ ] N-S10-1 and N-S10-2 decided
+  - [ ] S10.1: term benchmarks and baseline
+  - [ ] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
+  - [ ] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
+  - [ ] S10.4: the Python switch
+  - [ ] S10.5: tests migrated, and the interface suite
+  - [ ] S10.6: benchmarks after, and docs
 
 ## Goal
 
@@ -7492,3 +7500,826 @@ Left for later, as the design says:
   needs from the context, without changing the trait or the facade.
 - **Sessions and models** (`push`/`pop`, a `get_model`): non-goals of
   D-S8-8; a later `SmtSession` trait can add them.
+
+## S10: terms
+
+- **Status:** designed 2026-09-26 at ab05802. D-S10-1 to D-S10-16 apply
+  the policy the user already set and the user's direction for this slice
+  ("port the `fhy_core.term` package to Rust"). N-S10-1 and N-S10-2 need
+  the user.
+- **Pattern:** the logic moves into a new core module, `fhy_core::term`,
+  which takes over `AlphaRenaming` from `fhy_core::expression` and adds
+  traits for alpha equivalence, free identifiers, terms and binders.
+  `AlphaRenaming` becomes P2. `BinderMixin` is P3 over the core's `Binder`
+  trait, with a Python base instead of a Rust one (D-S10-7). The
+  derived-equivalence engine moves into the binding (D-S10-8). The
+  protocols, `AlphaEquivalenceMixin` and the field-role functions stay
+  Python.
+- **Scope.** `src/fhy_core/term/` (`alpha_equivalence.py`, `binder.py`,
+  `derived_equivalence.py`, `__init__.py`). This revises the non-goal of
+  `rust-workspace.md` §I.8 for `term` only; `constraint`, `param`, `types`
+  and `symbol_table` stay unported Python (D-S10-13).
+- **Coordination.** S8 and S9 run in parallel, and this branch is rebased
+  onto `dev-rust` after them. "Coordination with S8 and S9" below lists the
+  shared files S10 touches.
+
+### Survey: the Python API
+
+The package is 1,150 lines of pure Python. `__init__.py` (57 lines)
+re-exports 16 names.
+
+| File | Lines | Public names |
+|---|--:|---|
+| `alpha_equivalence.py` | 387 | `AlphaEquivalence`, `AlphaEquivalenceMixin`, `AlphaRenaming`, `is_identifier_mapping_alpha_equivalent_under` |
+| `binder.py` | 161 | `HasFreeIdentifiers`, `Term`, `BinderMixin` |
+| `derived_equivalence.py` | 545 | `EQUIVALENCE_METADATA_KEY`, `DerivedEquivalenceMixin`, `EquivalenceDerivationError`, `FieldComparator`, `compared_as_value`, `compared_as_reference`, `compared_as_binder`, `compared_with`, `excluded_from_equivalence` |
+
+**`alpha_equivalence.py`.**
+
+- **`AlphaEquivalence`**, a `runtime_checkable` protocol with
+  `is_alpha_equivalent(other)` and `is_alpha_equivalent_under(other,
+  renaming)`. Both return `False` rather than raise for an unrelated
+  `other`, and the contract asks for an equivalence relation on
+  well-formed terms.
+- **`AlphaEquivalenceMixin(ABC)`**: `is_alpha_equivalent_under` is
+  abstract, and `is_alpha_equivalent` calls it with
+  `AlphaRenaming.empty()`.
+- **`AlphaRenaming`**, a `@final` frozen dataclass of
+  `_frames: tuple[immutabledict, ...]` (outermost first) and
+  `_free_renaming: immutabledict`. It is equal by structure and hashable,
+  and an empty frame counts.
+  - `empty()` builds a new instance on every call.
+  - `with_free_renaming(mapping)` and `extend(bindings)` refuse a map with
+    a repeated value (``ValueError("`bindings` must be injective; got
+    duplicate other-side values in mapping.")``). `extend` returns a new
+    renaming with one more innermost frame.
+  - `resolve(identifier)` returns the image in the innermost frame binding
+    it, else the free image, else the identifier itself. It returns the
+    very object stored in the map.
+  - `are_identifiers_alpha_equivalent(left, right)` has the capture rule
+    and follows the Rust rule since 5a7802c (S4.2's shadowing note).
+  - Nothing checks that keys and values are `Identifier`s.
+- **`is_identifier_mapping_alpha_equivalent_under(left, right,
+  renaming)`** compares two identifier-keyed maps: equal sizes, keys
+  resolved through the renaming without collision, equal key sets, then
+  per pair the capture check and the values' `is_alpha_equivalent_under`,
+  in the left map's order, stopping at the first mismatch.
+
+**`binder.py`.**
+
+- **`HasFreeIdentifiers`** (`get_free_identifiers() -> frozenset`) and
+  **`Term`** (`AlphaEquivalence`, `HasFreeIdentifiers` and
+  `substitute(replacements) -> Term`) are `runtime_checkable` protocols.
+- **`BinderMixin(AlphaEquivalenceMixin)`** has four abstract hooks,
+  `get_bound_identifiers`, `get_scoped_children`,
+  `rename_bound_identifier(old, new)` and
+  `rebuild_with_scoped_children(children)`. It derives three methods:
+  - `is_alpha_equivalent_under`: the same concrete type, the same numbers
+    of bound identifiers and of scoped children, then the children
+    compared pairwise under `renaming.extend(dict(zip(self_bound,
+    other_bound)))`. A refused frame answers `False`.
+  - `get_free_identifiers`: the union over the children, minus the bound
+    set.
+  - `substitute`: replacements keyed by a bound identifier are dropped.
+    With none left it returns `self`. Otherwise every bound identifier
+    that is free in a replacement is renamed to a fresh
+    `Identifier(name_hint)` through `rename_bound_identifier`, then each
+    child is substituted and the node rebuilt.
+
+**`derived_equivalence.py`** derives `is_structurally_equivalent` and
+`is_alpha_equivalent_under` for a dataclass from its fields.
+
+- **The plan.** It is built from `dataclasses.fields` on the first
+  comparison of a class and cached forever in the module dict
+  `_PLAN_CACHE`, keyed by the class. A field with `compare=False` or
+  `excluded_from_equivalence()` is skipped.
+- **The roles.** Each is stored under `EQUIVALENCE_METADATA_KEY` in the
+  field's metadata:
+  - `compared_as_value(key=None)` compares by `==`, through `key`;
+  - `compared_as_reference()` compares by `==` structurally and by
+    `are_identifiers_alpha_equivalent` in alpha mode;
+  - `compared_as_binder(scopes_over=(...))` marks one `Identifier` or a
+    sequence of them. Structurally the names compare as tuples. In alpha
+    mode the two sides must have equal lengths, and each field in
+    `scopes_over` is compared under the renaming extended by
+    `dict(zip(...))`. Several binders scoping one field nest in field
+    order, and a refused frame answers `False`;
+  - `compared_with(comparator)` supplies a `FieldComparator`;
+  - any other field uses the default dispatch.
+- **The default dispatch**, in this order: `None` against anything by
+  `is`; an `AlphaEquivalence` value by its method (in alpha mode); a
+  `StructuralEquivalence` value by its method; a `tuple` or `list`
+  against a `tuple` or `list` element-wise; a `bool`, `int`, `float`,
+  `str`, `Enum` or `PartialEqual` value by `==`. Anything else raises
+  `EquivalenceDerivationError`, naming the class and field, and whether
+  the value sat in a sequence. The two protocol checks are `isinstance`
+  against runtime-checkable protocols, which runs Python code for each
+  check.
+- **Other refusals.** A class that is not a dataclass, or a `scopes_over`
+  name that is no field, raises `EquivalenceDerivationError` on the first
+  comparison, with Python text that the tests match (`dataclass`,
+  `"bdy" is not a field`, `payload`, `sequence element`).
+- **Opting out.** Overriding either method by hand opts that one out, and
+  `type(self) is type(other)` is required.
+- **Recursion.** The walks recurse in Python, one or two frames per level
+  of nesting.
+
+**Probed at ab05802** (Python 3.11, `timeit`, best of five; indicative
+only):
+
+| Operation | Time |
+|---|--:|
+| `AlphaRenaming.empty()` | 789 ns |
+| `extend` of one pair | 1.27 µs |
+| `resolve` | 300 ns |
+| `are_identifiers_alpha_equivalent` | 376 ns |
+| `==` of two one-frame renamings | 1.20 µs |
+| `hash` | 222 ns |
+| `with_free_renaming` of 50 pairs | 8.72 µs |
+| a `BinderMixin` lambda `\x. x z` against `\y. y z` | 4.94 µs |
+| ten nested `BinderMixin` lambdas | 30.6 µs |
+| `BinderMixin.substitute` that renames to avoid capture | 7.62 µs |
+| a derived `\x. x` against `\y. y` (`compared_as_binder`, alpha) | 8.24 µs |
+| the same term structurally | 4.57 µs |
+| the mapping helper over 50 entries | 52.4 µs |
+| `Param` alpha equivalence: integer, natural, integer between bounds | 33.2, 45.0, 54.8 µs |
+| `Param` structural equivalence: integer, integer between bounds | 21.4, 35.8 µs |
+| `create_integer_param_between(0, 10)` (dedupes its constraints structurally) | 77.1 µs |
+| `EquationConstraint` structural, alpha | 4.59, 6.61 µs |
+| `Expression.is_alpha_equivalent_under` of `x + z`, under one frame, under ten frames | 1.34, 9.91 µs |
+
+The derived walks cost microseconds per node, most of it the protocol
+`isinstance` checks. S7 measured the same plan comparing two functions in
+51 µs, and the Rust comparison in 856 ns. An expression compared under a
+renaming converts it on every call, in time linear in its frames.
+
+### Survey: the Rust API
+
+- **`fhy_core::expression::AlphaRenaming`** (`expression/alpha.rs`, 229
+  lines) is S4.2's port of the Python class. It has a stack of injective
+  frames over an injective free renaming, and these methods: `try_new`,
+  `Default`, `enter_binder` (in place), `leave_binder`, `binder_depth`,
+  `resolve`, `is_corresponding` (Python's
+  `are_identifiers_alpha_equivalent`) and `is_empty`.
+  - It derives `Clone`, `PartialEq` and `Eq`, but not `Hash`. A clone
+    copies every frame's maps.
+  - It has no read access to its frames or its free renaming.
+  - Its errors, `NonInjectiveRenamingError` and `RenamingPart`, live in
+    `expression/error.rs`.
+  - Its rustdoc tells a caller that pairs parameter lists to refuse a
+    repeated identifier.
+- **`Expression`** has inherent `is_alpha_equivalent_under(&self, other,
+  &AlphaRenaming)`, `free_identifiers() -> HashSet<Identifier>` and
+  `substitute(&HashMap<Identifier, Expression>) -> Result<Expression,
+  PiecewiseError>`. It has no traits for them; an expression binds
+  nothing.
+- **`fhy_core::tree`** has `Tree` (`children`, `rebuild_with_children`,
+  `RebuildError`) over children of the node's own type, with iterative
+  walks. A binder's scoped children are generally another type than the
+  binder (a lambda's body is a term; a function's body is an expression),
+  so `Binder` cannot be a `Tree`. It borrows `Tree`'s shape: a rebuild
+  hook with an associated error.
+- **`FunctionDefinition`** (S7) has no equality (D-S7-2). The binding
+  compares two entries under a parameter frame itself (D-S7-10,
+  `registry/entries.rs`).
+- **The binding.** `expression/alpha.rs` (74 lines) converts a Python
+  `AlphaRenaming` by reading its private `_frames` and `_free_renaming`.
+  `node.rs` (`is_alpha_equivalent_under`) and `registry/entries.rs` call
+  it on every comparison.
+- **Rust tests.** `tests/it/expression/alpha_stories.rs` (652 lines, 43
+  cases, including a test-local `Binders` term of nested one-parameter
+  binders), `alpha_properties.rs` (167 lines, 3 properties), and the
+  alpha cases of `node_stories.rs` and `properties.rs`.
+- **Non-goal.** `rust-workspace.md` §I.8 listed porting `term` as a
+  non-goal. The user's direction for S10 replaces that for `term`.
+
+### Consumers and tests
+
+**`src`.** No module outside the package uses `BinderMixin`, `Term`,
+`HasFreeIdentifiers` or the mapping helper, except in docs and stubs.
+
+| Module | Lines | Uses |
+|---|--:|---|
+| `symbolic/expression/core.py` | 807 | `Expression(_rs.Expression, ..., AlphaEquivalenceMixin, ...)`; its docs name `Term` and `AlphaRenaming` |
+| `diagnostic.py`, `op_attribute.py`, `value_domain.py` | 284, 107, 107 | `AlphaEquivalenceMixin`, mixed into the Rust-backed tags beside their pyclass bases |
+| `symbol_table.py` | 758 | the `SymbolTableFrame` family (frozen dataclasses): `DerivedEquivalenceMixin`. `SymbolTable.is_structurally_equivalent` compares frames through it |
+| `symbolic/constraint/core.py` | 1,117 | the `Constraint` family: `DerivedEquivalenceMixin`; the set constraints' `variable` is `compared_as_reference()`, their `values` `compared_as_value(key=_wrap_member_collection)` |
+| `symbolic/constraint/system.py` | 848 | `ConstraintSystem`: `DerivedEquivalenceMixin` |
+| `symbolic/param/core.py` | 2,175 | `Param`: `variable` is `compared_as_binder(scopes_over=("constraint_system",))`; `ParamAssignment`: `value` is `compared_as_value()`. Construction dedupes constraints with `is_structurally_equivalent`, quadratically |
+| binding: `expression/alpha.rs`, `node.rs`, `registry/entries.rs` | | the conversion above |
+| `_rs.pyi` | | types `AlphaRenaming` and `Term` |
+| `benchmarks/test_expression.py`, `test_registry.py` | | `AlphaRenaming.with_free_renaming`, `AlphaRenaming.empty()` |
+
+`types` imports nothing from the package. Its types reach the derived
+engine only as field values of symbol-table frames, which compare
+through their own `is_structurally_equivalent`. The constraint and param
+slices come later. Nothing in S10 changes their code (D-S10-13).
+
+**Python tests.** Counts are collected tests.
+
+| File | Lines | Collected | What it pins |
+|---|--:|--:|---|
+| `test_alpha_equivalence.py` | 863 | 59 | the renaming, the mapping helper, the protocol and mixin, toy binders |
+| `test_binder.py` | 288 | 17 | `BinderMixin` over a toy lambda calculus |
+| `test_derived_equivalence.py` | 858 | 58 | roles, dispatch, errors, laws, depth 500 |
+| `test_derived_equivalence_properties.py` | 203 | 4 | the laws over random value, reference and sequence holders |
+| `symbolic/expression/test_term.py` | 325 | 28 | expressions as `Term`s, under a renaming |
+| `symbolic/param/test_alpha_equivalence.py` | 401 | 25 | `Param` and `ParamAssignment` equivalence |
+| `symbolic/constraint/test_structural_equivalence.py` | 388 | 41 | constraint equivalence, `EquivalenceDerivationError` |
+| `test_symbol_table.py` | 717 | 48 | frame and table equivalence (7 calls) |
+| also `test_constraint_system.py`, `test_ordering_key.py`, `test_param_intersection.py`, `expression/test_core.py`, `test_core_properties.py`, `test_registry.py`, `test_registry_rust_binding.py`, `test_pickle_round_trips_properties.py`, `test_serialization_pins.py` | | | one to 14 equivalence calls each |
+
+The term tests use only public names. No test reads `_frames`,
+`_free_renaming` or `_PLAN_CACHE`, or pins `FrozenInstanceError` for a
+renaming.
+
+**Benchmarks.** Only the S4.1 row
+`test_alpha_equivalence_under_free_renaming_of_deep_trees` and the S7 row
+`test_registered_function_alpha_equivalence` touch the package.
+
+### Divergences visible from Python
+
+| # | Python today | After S10 |
+|---|---|---|
+| Z-1 | `AlphaRenaming` is a frozen dataclass. A mutation raises `FrozenInstanceError`, the private fields are readable, the `repr` is the dataclass's, and pickling is the default | a final, frozen Rust-backed class: `FrozenMutationError` (as X-15), no private fields, `repr` `AlphaRenaming(frames=[{x::7: y::8}], free_renaming={})`, and it pickles as a call |
+| Z-2 | Keys and values may be any hashable object | `Identifier`s only; anything else raises `TypeError` in S2's style. The same holds for bound identifiers a hook or a binder field returns |
+| Z-3 | `empty()` builds a new instance | returns one shared instance, which is immutable |
+| Z-4 | A binder list that repeats an identifier pairs by `dict(zip(...))`. The last pairing wins on the left, and a repeat on the right is not injective. So `\x x. x` matches `\a b. b` but not the reverse (probed) | N-S10-2 |
+| Z-5 | Messages of a refused map: `` `free_renaming` must be injective; got duplicate other-side values in mapping. `` | the core's text, `a free-identifier renaming must be injective, but more than one identifier maps to y::8`, or `a binder frame ...`, as expressions already raise it. The tests match `injective` |
+| Z-6 | The derived walks and `BinderMixin` recurse in Python | nested derived values are walked on the heap, at any depth. A hand-written method or a hook still recurses in Python |
+| Z-7 | `hash` values | different values, still equal for equal renamings |
+
+Unchanged in meaning: resolution order and the capture rule; the
+protocols and the mixins' contracts; each role, the dispatch order, the
+opt-outs, the plan cache's lifetime and every `EquivalenceDerivationError`
+text; the capture-avoiding substitution (a fresh identifier with the old
+name hint) and `substitute` returning `self` when nothing applies;
+`extend` returning a new renaming; `resolve` returning the objects given.
+
+### Pattern choice
+
+- **Core: `fhy_core::term`.** The renaming, the binder algorithms and the
+  mapping comparison are logic. A Rust IR with binders will need them,
+  so they live in the core with Rust tests (decision 2).
+- **P2: `AlphaRenaming`.** It is a value without registry state, but
+  Rust code holds and extends it. The binder engine, the derived engine
+  and expressions all read it, and S4.3a's per-comparison conversion goes
+  away once it is Rust-backed. It pays a crossing per `resolve` from
+  Python, which S4.3a named as the cost of this choice. After S10 only
+  hand-written leaf hooks call it from Python; the machinery that called
+  it per identifier runs in Rust (D-S10-5).
+- **P3 with a Python base: `BinderMixin`** (D-S10-7). Python binders are
+  driven through an adapter implementing the core's `Binder` trait.
+- **Binding engine: `DerivedEquivalenceMixin`** (D-S10-8). The plan is
+  reflection over Python dataclasses, so it lives in `fhy-core-py`, not in
+  the core. The walk runs in Rust and compares Rust-backed values without
+  calling Python.
+- **Plain Python:** the protocols (`AlphaEquivalence`,
+  `HasFreeIdentifiers`, `Term`, `FieldComparator`),
+  `AlphaEquivalenceMixin`, the role functions and
+  `EQUIVALENCE_METADATA_KEY`, and `EquivalenceDerivationError`.
+
+**Benchmark plan: `benchmarks/test_term.py` (S10.1).** It is written
+against the public API only, with its own toy classes: the lambda
+calculus of `test_binder.py` for `BinderMixin`, and derived `Var`, `Lam`,
+`Const` and `Add` dataclasses. The baseline measures today's Python
+package.
+
+| Benchmark | Measures |
+|---|---|
+| `test_alpha_renaming_empty`, `_with_free_renaming[1]`, `[50]` | construction |
+| `test_alpha_renaming_extend[depth_1]`, `[depth_10]` | `extend`, and its cost over a deep stack (D-S10-3's shared frames) |
+| `test_alpha_renaming_resolve[frame]`, `[free]`, `[identity]` | the lookup a hand-written hook makes |
+| `test_are_identifiers_alpha_equivalent[frame]`, `[capture]` | the correspondence a hand-written hook makes |
+| `test_alpha_renaming_eq`, `_hash` | value semantics |
+| `test_binder_alpha_equivalence[flat]`, `[nested_10]` | `BinderMixin` driving Python hooks |
+| `test_binder_free_identifiers`, `test_binder_substitute[no_capture]`, `[capture]` | the other two derived methods |
+| `test_derived_structural_equivalence_of_a_deep_tree`, `test_derived_alpha_equivalence_of_a_deep_tree` | 100 nested `Add`s: the walk |
+| `test_derived_alpha_equivalence_of_binders` | `\x. x` against `\y. y` through `compared_as_binder` |
+| `test_derived_equivalence_over_expressions` | a derived holder of a 100-operation expression, alpha under a binder: the native path |
+| `test_mapping_helper[50]` | the helper over 50 entries |
+| `test_param_alpha_equivalence[integer]`, `[natural_between]`, `test_param_structural_equivalence` | the consumers that ask most |
+| `test_param_construction_between_bounds` | construction, which dedupes constraints structurally |
+| `test_constraint_structural_equivalence`, `test_symbol_table_structural_equivalence` | the other consumers |
+| `test_expression_alpha_equivalence_under_frames[1]`, `[10]` | expressions under a framed renaming: the conversion S10 removes |
+
+Rerun, not added: `test_alpha_equivalence_under_free_renaming_of_deep_trees`
+(`test_expression.py`) and `test_registered_function_alpha_equivalence`
+(`test_registry.py`). The verdict follows cross-cutting rule 5. The paths
+at risk:
+
+- `resolve` and `are_identifiers_alpha_equivalent` from Python. Each now
+  crosses into the extension and reads an `Identifier`'s id (P1), where
+  today it runs 300 to 380 ns of Python;
+- `BinderMixin` comparisons, which now call their Python hooks from Rust
+  and build a Python renaming object per binder level;
+- `extend` over a deep stack, which must not copy the frames' maps.
+
+### Decisions (proposed 2026-09-26)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I: one public path
+  per item, the layering (§I.2, CONTRIBUTING "Module paths follow Rust
+  layering"), `#[non_exhaustive]` errors with one-line lowercase
+  `Display` (I.3 rule 3), the naming rules (I.3 rule 5), a single crate
+  (decision 13), and no global state beyond identity;
+- the binding patterns P1 to P3 and cross-cutting rules 5 to 7;
+- the direction: port `fhy_core.term` to Rust.
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+- **D-S10-1: one implementation, no fallback** ("no fallback"; D-S7-1).
+  These are deleted, not kept beside the Rust path:
+  - the `AlphaRenaming` dataclass and `_check_injective`;
+  - the Python body of the mapping helper;
+  - `BinderMixin`'s three derived bodies;
+  - `derived_equivalence.py`'s role dataclasses, the value and reference
+    comparators, `_Plan`, `_build_plan`, `_auto_structural`,
+    `_auto_alpha` and `_inference_error`.
+
+  The Python modules keep the protocols, the mixin classes with their
+  abstract hooks and one-line delegating methods, the role functions, the
+  metadata key, the error class and the plan cache dict (D-S10-8).
+- **D-S10-2: a new core module, `fhy_core::term`, which takes over
+  `AlphaRenaming`** (one public path; the layering; I.3 rule 6, since the
+  crate is unpublished; the direction). `AlphaRenaming`,
+  `NonInjectiveRenamingError` and `RenamingPart` move out of `expression`
+  ("Errors belong to their module"). The path
+  `fhy_core::expression::AlphaRenaming` goes, and `expression` imports
+  `term`. `term` depends only on `identifier`, so it joins layer 4 beside
+  `tree` in CONTRIBUTING's list, and its row maps `fhy_core.term` to
+  `fhy_core::term`. `alpha_stories.rs` and `alpha_properties.rs` move to
+  `tests/it/term/`. The sketch below is settled test-first in S10.2, as
+  D-S7-2's was:
+
+  ```rust
+  // fhy_core::term
+  #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]   // frames shared behind Arc (D-S10-3)
+  pub struct AlphaRenaming { /* private */ }
+  impl AlphaRenaming {
+      pub fn try_new<S: BuildHasher>(free_renaming: HashMap<Identifier, Identifier, S>) -> Result<Self, NonInjectiveRenamingError>; // moved
+      pub fn enter_binder<S: BuildHasher>(&mut self, bindings: HashMap<Identifier, Identifier, S>) -> Result<(), NonInjectiveRenamingError>; // moved
+      pub fn enter_binders(&mut self, left: &[Identifier], right: &[Identifier]) -> Result<(), BinderPairingError>; // new: pairs two binder lists by position (N-S10-2)
+      pub fn extended<S: BuildHasher>(&self, bindings: HashMap<Identifier, Identifier, S>) -> Result<Self, NonInjectiveRenamingError>; // new: Python's `extend`
+      pub fn leave_binder(&mut self) -> bool;                                        // moved, as are
+      pub fn binder_depth(&self) -> usize;                                           // binder_depth,
+      pub fn resolve<'a>(&'a self, identifier: &'a Identifier) -> &'a Identifier;     // resolve,
+      pub fn is_corresponding(&self, left: &Identifier, right: &Identifier) -> bool;  // is_corresponding
+      pub fn is_empty(&self) -> bool;                                                 // and is_empty
+      pub fn free_renaming(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Identifier)> + '_; // new: read views,
+      pub fn frames(&self) -> impl ExactSizeIterator<Item = BinderFrame<'_>> + '_;                    // outermost first
+  }
+
+  pub trait AlphaEquivalence {
+      fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool;
+      fn is_alpha_equivalent(&self, other: &Self) -> bool { self.is_alpha_equivalent_under(other, &AlphaRenaming::default()) }
+  }
+  pub trait FreeIdentifiers { fn free_identifiers(&self) -> HashSet<Identifier>; }
+  pub trait Term: AlphaEquivalence + FreeIdentifiers + Clone {
+      type SubstituteError;
+      fn substitute<S: BuildHasher>(&self, replacements: &HashMap<Identifier, Self, S>) -> Result<Self, Self::SubstituteError>;
+  }
+  /// A node binding identifiers over its scoped children.
+  pub trait Binder: Clone {
+      type Child: Term;
+      type RebuildError: From<<Self::Child as Term>::SubstituteError>;
+      fn bound_identifiers(&self) -> &[Identifier];
+      fn scoped_children(&self) -> &[Self::Child];
+      fn rename_bound_identifier(&self, old: &Identifier, new: Identifier) -> Result<Self, Self::RebuildError>;
+      fn rebuild_with_scoped_children(&self, children: Vec<Self::Child>) -> Result<Self, Self::RebuildError>;
+      // provided: what BinderMixin derives today
+      fn is_binder_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool;
+      fn binder_free_identifiers(&self) -> HashSet<Identifier>;
+      fn substitute_avoiding_capture<S: BuildHasher>(&self, replacements: &HashMap<Identifier, Self::Child, S>) -> Result<Self, Self::RebuildError>;
+  }
+  pub fn is_mapping_alpha_equivalent_under<V: AlphaEquivalence, S: BuildHasher>(
+      left: &HashMap<Identifier, V, S>, right: &HashMap<Identifier, V, S>, renaming: &AlphaRenaming) -> bool;
+
+  #[non_exhaustive] pub struct NonInjectiveRenamingError { /* image, part */ }       // moved
+  #[non_exhaustive] pub enum RenamingPart { FreeRenaming, BinderFrame }                // moved
+  #[non_exhaustive] pub enum BinderPairingError { ArityMismatch { left: usize, right: usize }, /* per N-S10-2 */ }
+  ```
+
+  - The traits use Rust names (I.3 rule 5: no `get_`), and Python keeps
+    its names (D-S4-2).
+  - The provided `Binder` methods have their own names, so that a term
+    enum with a binder variant can call them from its `AlphaEquivalence`
+    and `Term` impls.
+  - `Expression` implements `AlphaEquivalence`, `FreeIdentifiers` and
+    `Term` (with `SubstituteError = PiecewiseError`), forwarding to its
+    inherent methods.
+- **D-S10-3: `AlphaRenaming` gains shared frames, `Hash` and read views**
+  (S4.2's proposals 2 and 3; D-S4-2, since Python's renaming is hashable
+  and `extend` copies only a tuple of references).
+  - The frames and the free renaming sit behind `Arc`s, so a clone or
+    `extended` costs one reference count per frame, and never copies a
+    map.
+  - `Hash` is order-independent within each map and ordered across the
+    frames, consistent with the derived `Eq`: an empty frame counts, and
+    frame order counts.
+  - The read views serve the binding's `repr`, pickling and `resolve`
+    (D-S10-5).
+  - The existing methods keep their signatures and meaning, so the S4.2
+    tests pass unchanged after the move.
+- **D-S10-4: the binder algorithms are the core's** (the direction;
+  decision 2; "tests rewritten, not skipped"). `Binder`'s provided methods
+  implement exactly what `BinderMixin` derives today:
+  - the arity and child-count checks, then the pairing of the bound
+    lists, with `enter_binders`, and the children compared under it;
+  - free identifiers as the children's union minus the bound set;
+  - substitution that drops bound keys, returns a clone of `self` (the
+    same handle) when nothing applies, renames each captured binder to
+    `Identifier::new(name_hint)`, then substitutes the children and
+    rebuilds.
+
+  S4.2's test-local `Binders` term becomes an implementation of `Binder`
+  in the tests, over a test-local lambda calculus. `is_mapping_alpha_equivalent_under`
+  ports the mapping helper's algorithm.
+- **D-S10-5: `AlphaRenaming` is P2, under its Python name and API**
+  (decision 2; D-S4-2; S2 to S7 practice; Z-1 to Z-3, Z-5, Z-7). This
+  retires S4.3a's P1 conversion.
+  - `_rs.AlphaRenaming` is a `#[pyclass(frozen)]` without `subclass`, so
+    it is final. `fhy_core.term.AlphaRenaming` is that class itself: it
+    has no Python base to mix in, so it needs no thin subclass. It is a
+    virtual `FrozenMixin`, and a mutation raises `FrozenMutationError`.
+  - It keeps `empty()`, `with_free_renaming(mapping)`, `extend(bindings)`,
+    `resolve(identifier)`, `are_identifiers_alpha_equivalent(left,
+    right)`, `==` and `hash`. `empty()` returns one shared instance.
+  - It keeps each image's Python `Identifier` object beside the Rust
+    frames, keyed by id, so `resolve` returns the object that was given,
+    as today. An identifier that nothing maps is returned itself.
+  - Mapping arguments must hold `Identifier`s (`TypeError`). A refused
+    map raises `ValueError` with the core's text.
+  - `repr` lists the frames and the free renaming. Pickles are a call of a
+    private class method with the free renaming and the frames. (A
+    class method, since the stub test admits no private module-level
+    function, as S7 found.)
+  - `_rs.Expression.is_alpha_equivalent_under` and
+    `RegisteredFunction.is_alpha_equivalent_under` borrow the Rust
+    renaming from the pyclass, so nothing is converted per comparison.
+    `expression/alpha.rs` is deleted, and a non-renaming argument still
+    raises S4.3a's `TypeError`.
+- **D-S10-6: the protocols and `AlphaEquivalenceMixin` stay Python**
+  (P2's note on Python protocols; S4.3a's "no protocol metaclass").
+  `AlphaEquivalence`, `HasFreeIdentifiers`, `Term` and `FieldComparator`
+  are typing vocabulary with no logic, and `isinstance` against them must
+  keep working. `AlphaEquivalenceMixin` is stateless, and the Rust-backed
+  tags and expressions mix it in beside their pyclass bases. Its default
+  `is_alpha_equivalent` passes the shared empty renaming.
+- **D-S10-7: `BinderMixin` is P3 with a Python base** (P3; D-S8-11 for
+  the adapter rules; N-S10-1).
+  - `BinderMixin(AlphaEquivalenceMixin, ABC)` keeps its four abstract
+    hooks, under their Python names. Its three derived methods call
+    public `_rs` functions, which drive the node through an adapter
+    implementing the core's `Binder`.
+  - The adapter reads the node's bound identifiers and scoped children
+    once, through the hooks, as a view. It calls `rename_bound_identifier`
+    and `rebuild_with_scoped_children` only when a substitution needs them.
+  - A child is compared, asked its free identifiers and substituted
+    through its own Python methods. An `_rs.Expression` child, whose
+    class does not override those methods, is handled in Rust instead,
+    with the same answer.
+  - The base is Python, not a `#[pyclass(subclass)]` as P3 describes. The
+    users are frozen dataclasses. A Python class can have only one native
+    base layout, so a pyclass base would stop a binder class from also
+    being a Rust-backed class, or from mixing in another one. The mixin
+    holds no state. (The same reason keeps `AlphaEquivalenceMixin`
+    Python.)
+  - The P3 adapter rules hold:
+    - an exception a hook raises propagates as the same object, and a
+      `KeyboardInterrupt` passes through;
+    - a hook result of the wrong type raises `TypeError` in S2's style
+      (Z-2);
+    - a child's answer is read by truthiness, as `all(...)` reads it;
+    - a comparison hook that raises stops the comparison where Python's
+      `all(...)` stopped it: the adapter keeps the first error, answers
+      `false` so the core stops, and the binding raises the error. This
+      is S4's deferred-error pattern, and it keeps the core traits
+      infallible.
+- **D-S10-8: the derived-equivalence engine moves into the binding**
+  (decision 2: logic-rich and slow in Python, see the probes; D-S4-2 for
+  its meaning; CONTRIBUTING's process-global rule; N-S10-1).
+  - `DerivedEquivalenceMixin` keeps its bases and its two methods, which
+    call public `_rs` functions.
+  - The binding builds a class's plan in Rust from `dataclasses.fields`
+    on its first comparison: the roles, the binders and their scopes, and
+    whether the class overrides either method. The error texts are
+    Python's.
+  - The plan is stored in the module's `_PLAN_CACHE` dict, as today. That
+    dict is Python module state, which the binding reads through a
+    write-once import, so the binding adds no static with interior
+    mutability.
+  - The walk keeps the dispatch order and the role semantics. It compares
+    these values natively, without the protocol checks and without calling
+    their Python comparison methods, with the answers those methods give:
+    `None`; an `Identifier`, by its id; an `_rs.Expression`, by the core's
+    `==` or `is_alpha_equivalent_under`; a value of exactly `bool`, `int`,
+    `float` or `str`, by the interpreter's `==`; and a nested derived
+    value whose class does not override the method. It walks nested
+    derived values on its own stack.
+  - Every other value is compared through Python, as today: user
+    comparators, `key` normalizers, hand-written methods, the
+    `StructuralEquivalence` and `AlphaEquivalence` capability checks, and
+    `==`.
+  - It carries Rust renamings, and builds an `AlphaRenaming` object only
+    when a Python method or comparator must receive one.
+  - Field reads, `==` and user hooks run with the interpreter attached.
+    An exception propagates as the same object. `EquivalenceDerivationError`
+    keeps its Python class and texts, as D-S7-12 kept the text of errors
+    that have no core counterpart.
+  - The engine is binding code, not core. The plan is reflection over
+    Python dataclasses. The Rust counterpart of "derive equivalence from
+    the fields" would be a derive macro, which needs a second crate and
+    `syn`/`quote` (decision 13 keeps one crate), and no Rust type needs it
+    yet. Rust IR implements the traits by hand, or with `Binder`.
+- **D-S10-9: the roles are `_rs` values** (D-S4-2). `compared_as_value`,
+  `compared_as_reference`, `compared_as_binder`, `compared_with` and
+  `excluded_from_equivalence` keep their signatures. Each returns
+  `{EQUIVALENCE_METADATA_KEY: role}`, where `role` is a frozen
+  `_rs.EquivalenceRole` the plan builder reads without calling Python.
+  `field(compare=False)` is still honored.
+- **D-S10-10: repeated bound identifiers follow N-S10-2** (D-S4-1; S4.2's
+  `enter_binder` note; D-S7-5). One rule, in `AlphaRenaming::enter_binders`,
+  covers `Binder`, `BinderMixin` and `compared_as_binder`. A refused
+  pairing answers "not equivalent", never an error, as a refused frame
+  does today.
+- **D-S10-11: the mapping helper is the core's function under the Python
+  name** (D-S4-2). `is_identifier_mapping_alpha_equivalent_under` is an
+  `_rs` function over the core's rule. It compares the values in the left
+  mapping's iteration order, as today, so which value hook raises first
+  stays deterministic. It uses D-S10-7's native paths and deferred
+  errors.
+- **D-S10-12: errors** (D-S4-1; D-S7-12; CONTRIBUTING "Errors belong to
+  their module").
+  - `NonInjectiveRenamingError` raises `ValueError` with the core's text,
+    as S4.3a maps it.
+  - `BinderPairingError` never reaches Python: it means "not equivalent".
+  - Argument types raise `TypeError` in S2's style.
+  - `EquivalenceDerivationError` keeps Python's texts.
+  - Exceptions from user code propagate unchanged.
+- **D-S10-13: consumers keep their code** (D-S4-2; §I.8 for `constraint`,
+  `param`, `types` and `symbol_table`). The expression core, the tags,
+  `symbol_table`, `constraint` and `param` change nothing: they reach the
+  Rust engine through the mixins and roles they already use. When the
+  constraint and param slices make those classes Rust-backed, they can
+  implement equivalence on the core traits and drop the mixin, as
+  `RegisteredFunction` did (D-S7-10).
+- **D-S10-14: `RegisteredFunction`'s binder equivalence stays in the
+  binding** (D-S7-10). It reads the P2 renaming (D-S10-5) and pairs the
+  parameters with `enter_binders`. The core still gains no equality for
+  definitions: `FunctionDefinition` refuses repeated parameters (D-S7-5),
+  so its pairing never meets N-S10-2's case. Implementing `Binder` for
+  `FunctionDefinition` and `ComposedFunction` would unify the two, and is
+  left as a follow-up.
+- **D-S10-15: the Rust tests specify the core first** (the tests rule;
+  S7.2's practice). The new traits, `enter_binders`, `extended`, `Hash`
+  and the views are specified by Rust tests written against `todo!()`
+  stubs, with a traceability table from the Python term tests. It extends
+  S4.2's table.
+- **D-S10-16: the Python tests are rewritten, not skipped** (the tests
+  rule). The behavioral tests stay and change only where Z-1 to Z-7 or
+  N-S10-2 change what they pin, each change recorded with its reason, as
+  S4.4 to S8 did.
+
+### Needs the user
+
+- **N-S10-1: whether Rust may drive Python per node for the term
+  mixins.** The direction says to port the package. P3's granularity rule
+  says "Python callbacks happen per pass hook, never per tree node". But
+  `BinderMixin`'s hooks and the derived fields are per node by nature.
+  D-S10-7 has Rust call a binder's four hooks and its children's methods.
+  D-S10-8 has Rust read each dataclass field, and call user comparators
+  and hand-written methods, per node. The two conflict for this slice.
+  - (a) **Port both engines** (D-S10-7, D-S10-8). This is recorded as the
+    term package's exception to the granularity rule. Rust compares
+    Rust-backed values natively and walks nested derived values itself. It
+    calls into Python only for what only Python can answer: hooks, field
+    reads, comparators and hand-written methods. No Python walk stays
+    beside the Rust one.
+  - (b) **Port only the renaming, the pairing rule, the mapping helper
+    and the core traits.** The `BinderMixin` and derived walks stay
+    Python over the P2 renaming. The core `Binder` then repeats
+    `BinderMixin`'s algorithm for Rust IR, which leaves two copies of one
+    algorithm. The derived plan keeps its cost: 33 to 55 µs per `Param`
+    comparison, and 77 µs to build a bounded integer param.
+  - (c) **(a) for the derived engine only.** `BinderMixin`, which no
+    module in `src` uses, stays Python over the core-backed renaming and
+    pairing.
+
+  Recommendation: (a). It is the only option with one implementation of
+  each algorithm. The derived engine is where the time goes (S7 measured
+  51 µs against 0.86 µs for the same comparison). Each call into Rust
+  answers one comparison that Python asked for, as a pass hook answers one
+  run.
+- **N-S10-2: a binder list that repeats an identifier** (Z-4). Python's
+  rule is asymmetric. The Rust core has only a doc line: `enter_binder`'s
+  rustdoc tells a caller that pairs lists to refuse a repeated name.
+  D-S7-5 refuses one at construction for functions. Neither fixes what a
+  comparison answers.
+  - (a) **Positional shadowing.** The last occurrence of an identifier in
+    a list binds it, as nested binders would. `enter_binders` pairs the
+    positions that are last on both sides. An identifier whose last
+    position the other side shadows is bound with no partner, so it
+    corresponds to nothing.
+    - `\x x. x` matches `\a b. b` and itself, and `\x y. x` matches
+      neither.
+    - The relation stays symmetric and reflexive, and "structurally
+      equivalent implies alpha-equivalent" holds for every term.
+    - A frame gains one-sided bindings, a small private change to the
+      core's frame type. `resolve` of an identifier bound with no partner
+      returns the identifier itself, and `is_corresponding` refuses it.
+      This is S4.2's de Bruijn reading, extended to one list.
+  - (b) **Refusal.** A list that repeats an identifier, on either side,
+    pairs with nothing. The relation is symmetric, and it matches the
+    rustdoc note and D-S7-5. But `\x x. x` is not alpha-equivalent to
+    itself, which breaks reflexivity and "structural implies alpha" for
+    such terms.
+  - (c) **Keep Python's rule.** The relation is asymmetric, against the
+    protocol's contract.
+
+  Recommendation: (a). It keeps every law of the contract, it follows
+  S4.2's choice of the de Bruijn reading when Python's rule broke
+  symmetry, and no existing test changes: every Python test of a repeated
+  binder expects `False`, and gets it under (a).
+
+### Steps
+
+1. **S10.1: benchmarks.** Add `benchmarks/test_term.py` as planned above,
+   and record the baseline here, on today's Python package.
+2. **S10.2: core additions, test-first, with Rust tests.**
+   - The new module `rust/fhy-core/src/term.rs`, with `term/renaming.rs`
+     (moved from `expression/alpha.rs`, with D-S10-3 and `enter_binders`
+     under N-S10-2), `term/binder.rs` (the traits),
+     `term/mapping.rs` and `term/error.rs` (the moved errors and
+     `BinderPairingError`).
+   - `expression` imports `term`, and `Expression` implements the traits.
+   - The tests are written first and fail against `todo!()` stubs, as in
+     S4.2 and S7.2. `lib.rs`, the crate README and CONTRIBUTING's tables
+     list the module.
+   - The binding changes only its import paths, so the Python suite stays
+     green.
+3. **S10.3: the binding.** Add `rust/fhy-core-py/src/term.rs` with:
+   - `renaming.rs`: `_rs.AlphaRenaming`;
+   - `binder.rs`: the `Binder` adapter and the `BinderMixin` functions;
+   - `derived.rs`: `_rs.EquivalenceRole`, the plan and the walks;
+   - `mapping.rs`: the helper.
+
+   Everything new goes into `_rs.pyi`. Nothing in Python uses it yet, so
+   the suite stays green.
+4. **S10.4: the Python switch** (marked breaking). The three modules
+   become the thin layer of D-S10-1. `node.rs` and `registry/entries.rs`
+   read the pyclass, and `expression/alpha.rs` is deleted in the same
+   commit, since the Python class and the conversion cannot change apart.
+   The README's three term rows change. The step lands with S10.5 when the
+   migration is small enough to review in one commit (the survey expects
+   it to be). Otherwise it leaves exactly the tests of the migration table
+   failing, as S7.4 did.
+5. **S10.5: tests.** Migrate the tests and add the interface suite (the
+   test plan below).
+6. **S10.6: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with these green:
+
+- `pytest`, and `pytest -m "not very_slow"`;
+- the `property` session;
+- `lint` and `type_check`, clean;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `-D warnings`, tests, doc `-D warnings`,
+  deny, and `cargo +1.85 check`.
+
+### Test plan
+
+**Rust tests, written first (S10.2),** in a new `tests/it/term/` area
+(`tests/it/term.rs`):
+
+- **`renaming_stories.rs`.** It holds the renaming cases of
+  `expression/alpha_stories.rs`, moved unchanged, and these new cases:
+  - `extended` leaves the receiver unchanged, and equals a clone followed
+    by `enter_binder`;
+  - clones share frames without sharing changes: entering or leaving a
+    frame on one clone leaves the other as it was;
+  - `Hash` agrees with `==`: an empty frame and frame order count, and map
+    order does not;
+  - the read views, outermost first;
+  - `enter_binders`: an arity mismatch, and N-S10-2's cases (for (a): the
+    last occurrence binds, one-sided bindings correspond to nothing, and
+    `resolve` of one returns the identifier itself), each with its
+    `Display`.
+- **`renaming_properties.rs`.** It holds `alpha_properties.rs`, moved,
+  and these new properties:
+  - `hash` is consistent with `==` over random frame stacks;
+  - under N-S10-2 (a), `enter_binders` agrees with a positional de Bruijn
+    model over lists with repeats.
+- **`binder_stories.rs`,** over a test-local lambda calculus (`Var`,
+  `App`, and `Lam` over a parameter list) that implements `Binder`:
+  - S4.2's `Binders` cases, moved onto it;
+  - `test_binder.py`'s cases: arity and child counts, free identifiers,
+    a shadowed replacement key, substitution without capture, the
+    capture-avoiding rename (a fresh id with the same name hint, the
+    original identifier left free), no applicable replacement returning
+    the same handle, and several children;
+  - `Expression` through the traits, agreeing with its inherent methods.
+- **`binder_properties.rs`:**
+  - alpha equivalence is reflexive, symmetric and transitive over random
+    terms (with repeated binders under N-S10-2 (a)), and agrees with a de
+    Bruijn model;
+  - substitution respects alpha equivalence;
+  - substitution never captures: the free identifiers of a result are the
+    input's, minus the substituted ones that occur, plus the
+    replacements' free identifiers.
+- **`mapping_stories.rs`:** the mapping helper's 11 cases.
+- **A traceability table** maps `test_alpha_equivalence.py`,
+  `test_binder.py` and `test_derived_equivalence.py` to the Rust tests,
+  extending S4.2's. The derived plan's tests map to the interface suite,
+  since the engine is binding code.
+
+**The interface suite, `tests/test_term_rust_binding.py`,** covers what
+the binding adds over the core:
+
+- **`AlphaRenaming`.**
+  - It is `_rs.AlphaRenaming`, final (subclassing raises `TypeError`)
+    and frozen (`FrozenMutationError`, a virtual `FrozenMixin`).
+  - `repr`, pickle and `copy` round trips.
+  - `==` and `hash` across construction paths; `empty()` is one object.
+  - The `TypeError`s for a non-mapping and for non-`Identifier` keys and
+    values, and the `ValueError` texts naming each part.
+  - `resolve` returns the given objects (`is`).
+  - Expressions and registry entries accept it and refuse anything else.
+- **`BinderMixin` driving.**
+  - The hooks a comparison, a free-identifier query and a substitution
+    call, and how often.
+  - An exception from each hook propagates as the same object, stopping
+    where Python stopped, and a `KeyboardInterrupt` passes through.
+  - Wrong result types raise `TypeError`, and a truthy non-`bool` child
+    answer counts as `True`.
+  - An expression child answers as its own method does.
+  - A binder nested in a binder receives the extended renaming.
+- **The derived engine.**
+  - A plan is built once per class, and a class that overrides either
+    method has that method called for its nested values.
+  - A comparator receives an `AlphaRenaming` under the binders in scope,
+    and a `key` normalizer is called on both sides.
+  - Nested derived values 10,000 deep compare without `RecursionError`.
+  - Every `EquivalenceDerivationError` text, and exceptions from
+    comparators and `==` propagate.
+  - Expressions and identifiers compare natively, with the same answers as
+    their methods.
+- **The mapping helper:** values compared in the left mapping's order, and
+  a raising value hook.
+- **Stubs:** `tests/test_rs_stub.py` covers everything new.
+
+**Migrating the existing tests.** No test is skipped, or deleted without a
+rewrite. The survey expects few changes, and each is recorded here with
+its reason:
+
+- **`test_alpha_equivalence.py` (59), `test_binder.py` (17),
+  `test_derived_equivalence.py` (58) and its properties (4)** use only
+  public names and match messages on `injective`, `dataclass`,
+  `"bdy" is not a field`, `payload` and `sequence element`, which the core
+  and the binding keep. Their repeated-binder tests expect `False`, which
+  both options of N-S10-2 that keep symmetry answer.
+- **New tests for N-S10-2,** in `test_binder.py` and
+  `test_derived_equivalence.py`: the repeated-binder cases in both
+  directions.
+- **`test_term.py` (28)**, the param, constraint and symbol-table
+  equivalence tests, and the registry binding tests should pass unchanged.
+  Any test that pins a message or a `repr` Z-1 or Z-5 changes is
+  rewritten to the new text.
+
+### Coordination with S8 and S9
+
+This branch is rebased onto `dev-rust` after S8 and S9, so its edits to
+shared files stay small and additive:
+
+- **Untouched:** `pyproject.toml`, `noxfile.py`, `Cargo.toml`,
+  `Cargo.lock` (S10 adds no dependency), `tests/conftest.py` and the
+  benchmark `conftest.py`.
+- **`rust/fhy-core/src/lib.rs`:** one `pub mod term;` line, one row of the
+  module table, and one clause of the layering sentence. S8 adds
+  `pub mod solver;` just before it, so the conflict, if any, is two
+  adjacent added lines.
+- **`rust/fhy-core/src/expression.rs`:** it drops `mod alpha;`,
+  `pub use alpha::AlphaRenaming;` and two names from the `error`
+  re-export.
+- **`rust/fhy-core/tests/it/main.rs`:** one `mod term;` line. S8 adds
+  `mod solver;`. `tests/it/expression.rs` drops its two `alpha_*` lines.
+- **`rust/fhy-core-py/src/lib.rs`:** one `mod term;` line and one
+  `#[pymodule_export]` block.
+- **`src/fhy_core/_rs.pyi`:** one new block for the term names. Its
+  existing `from fhy_core.term import AlphaRenaming, Term` stays.
+- **CONTRIBUTING:** one row in the Python-to-Rust table and `term` in
+  layer 4 of the layering list, beside S8's `solver` row.
+- **READMEs:** the Python README's three "Term Traits" rows and its
+  Rust-backed list, and one line of the crate README.
+- **This document:** this section, appended, and one entry at the end of
+  the Progress checklist. S8 ticks its own entries, and S9 appends its
+  own, next to it.
+
+S10 does not use the solver or the evaluators, and they do not use
+`AlphaRenaming`, so no code depends across the slices.
