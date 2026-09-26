@@ -32,7 +32,7 @@ use super::entries::{PyNativeConstant, PyNativeFunction, PyRegisteredFunction};
 
 /// One state of the user registry: the core registry and the Python object
 /// of each entry. A state never changes once it is shared.
-pub(super) struct RegistryState {
+pub(in crate::expression) struct RegistryState {
     /// The core registry.
     registry: FunctionRegistry,
     /// Each entry's Python object, by name.
@@ -80,7 +80,7 @@ impl RegistryState {
     }
 
     /// Return the core registry.
-    pub(super) fn registry(&self) -> &FunctionRegistry {
+    pub(in crate::expression) fn registry(&self) -> &FunctionRegistry {
         &self.registry
     }
 
@@ -220,7 +220,7 @@ fn lock() -> MutexGuard<'static, Arc<RegistryState>> {
 }
 
 /// Return the current state, a snapshot no registration changes.
-pub(super) fn snapshot() -> Arc<RegistryState> {
+pub(in crate::expression) fn snapshot() -> Arc<RegistryState> {
     Arc::clone(&lock())
 }
 

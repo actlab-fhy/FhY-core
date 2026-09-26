@@ -21,3 +21,4 @@ pub(crate) use lookups::{
     set_registry_state_for_tests, try_get_native_constant_for_identifier,
     try_get_registered_result_sort,
 };
+pub(super) use state::snapshot;

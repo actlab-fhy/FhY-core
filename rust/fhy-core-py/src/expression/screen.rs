@@ -1,36 +1,30 @@
 //! The Boolean-position screen: `validate_logical_operands` and
 //! `validate_predicate` over the Rust [`BooleanScreen`] (D-S4-4).
 //!
-//! The function registry stays Python (`fhy_core.symbolic.expression
-//! .registry`), with runtime registration, so the screen learns the sorts
-//! of native constants and of named user functions through
-//! [`RegistrySorts`], a [`SortLookup`] adapter that asks the registry's
-//! public lookups once per identifier and per name. Built-in functions are
-//! judged by the core's catalogue, since their names are reserved (D-9).
+//! The screen reads the sorts of user constants and of named user functions
+//! from a snapshot of the one function registry, the core's
+//! [`FunctionRegistry`](fhy_core::expression::registry::FunctionRegistry)
+//! the binding keeps (D-S7-6), with no call into Python. Built-in functions
+//! and constants are judged by the core's catalogue, since their names and
+//! identifiers are reserved (D-9, D-S7-4).
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 use pyo3::exceptions::PyTypeError;
-use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyMapping, PyString, PyType};
 
 use fhy_core::expression::{
-    BooleanScreen, Expression, ExpressionKind, FunctionName, FunctionSort,
-    NonBooleanLogicalOperandError, SortLookup, SymbolType,
+    BooleanScreen, Expression, NonBooleanLogicalOperandError, SymbolType,
 };
 use fhy_core::identifier::Identifier;
 
 use crate::error::IntoPyErr;
-use crate::identifier::{identifier_to_python, read_identifier_id, restore_identifier};
+use crate::identifier::{read_identifier_id, restore_identifier};
 
-use super::node::{PyExpression, PyIdentifierExpression};
+use super::node::PyExpression;
 use super::text::render_kind_repr;
-
-/// The Python module of the function registry.
-const REGISTRY_MODULE: &str = "fhy_core.symbolic.expression.registry";
 
 /// Return `fhy_core.symbolic.expression.errors.NonBooleanLogicalOperandError`.
 fn non_boolean_operand_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
@@ -66,141 +60,14 @@ impl IntoPyErr for NonBooleanLogicalOperandError {
     }
 }
 
-/// The sorts the Python registry declares, for the screen.
-struct RegistrySorts<'py> {
-    py: Python<'py>,
-    /// The Python identifiers of the trees screened, by id, for asking the
-    /// registry about their Rust identifiers.
-    identifiers: HashMap<u64, Bound<'py, PyAny>>,
-    constant_sorts: RefCell<HashMap<u64, Option<FunctionSort>>>,
-    call_sorts: RefCell<HashMap<String, Option<FunctionSort>>>,
-    /// The first error a registry lookup raised, raised after the screen.
-    error: RefCell<Option<PyErr>>,
-}
-
-impl<'py> RegistrySorts<'py> {
-    fn new(py: Python<'py>) -> Self {
-        Self {
-            py,
-            identifiers: HashMap::new(),
-            constant_sorts: RefCell::new(HashMap::new()),
-            call_sorts: RefCell::new(HashMap::new()),
-            error: RefCell::new(None),
-        }
-    }
-
-    /// Record the Python identifier of every reference in `root`.
-    fn collect_identifiers(&mut self, root: &Bound<'py, PyExpression>) -> PyResult<()> {
-        let mut pending = vec![root.clone()];
-        let mut visited = std::collections::HashSet::new();
-        while let Some(node) = pending.pop() {
-            if let ExpressionKind::Identifier(identifier) = node.get().expression().kind() {
-                if !self.identifiers.contains_key(&identifier.id()) {
-                    let leaf = node.cast::<PyIdentifierExpression>()?;
-                    self.identifiers
-                        .insert(identifier.id(), leaf.get().identifier(self.py).clone());
-                }
-                continue;
-            }
-            for child in node.get().children(self.py) {
-                if visited.insert(child.as_ptr() as usize) {
-                    pending.push(child.cast_into::<PyExpression>()?);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Record the error `error` unless one is recorded.
-    fn record(&self, error: PyErr) {
-        let mut slot = self.error.borrow_mut();
-        if slot.is_none() {
-            *slot = Some(error);
-        }
-    }
-
-    /// Return the Rust sort of the Python `FunctionSort` member `sort`.
-    fn read_sort(sort: &Bound<'_, PyAny>) -> PyResult<Option<FunctionSort>> {
-        if sort.is_none() {
-            return Ok(None);
-        }
-        let value = sort.getattr(intern!(sort.py(), "value"))?;
-        Ok(value.cast::<PyString>()?.to_str()?.parse().ok())
-    }
-
-    /// Return the sort the registry declares for the native constant
-    /// `identifier` denotes, or `None` if it denotes none.
-    fn look_up_constant(&self, identifier: &Identifier) -> PyResult<Option<FunctionSort>> {
-        static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-        let py = self.py;
-        let python_identifier = match self.identifiers.get(&identifier.id()) {
-            Some(object) => object.clone(),
-            None => identifier_to_python(py, identifier)?,
-        };
-        let constant = FUNCTION
-            .import(
-                py,
-                REGISTRY_MODULE,
-                "try_get_native_constant_for_identifier",
-            )?
-            .call1((python_identifier,))?;
-        if constant.is_none() {
-            return Ok(None);
-        }
-        Self::read_sort(&constant.getattr(intern!(py, "sort"))?)
-    }
-
-    /// Return the result sort the registry declares for the entry `name`,
-    /// or `None` if none is registered.
-    fn look_up_call(&self, name: &str) -> PyResult<Option<FunctionSort>> {
-        static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-        let sort = FUNCTION
-            .import(self.py, REGISTRY_MODULE, "try_get_registered_result_sort")?
-            .call1((name,))?;
-        Self::read_sort(&sort)
-    }
-}
-
-impl SortLookup for RegistrySorts<'_> {
-    fn native_constant_sort(&self, identifier: &Identifier) -> Option<FunctionSort> {
-        if let Some(cached) = self.constant_sorts.borrow().get(&identifier.id()) {
-            return *cached;
-        }
-        let sort = self.look_up_constant(identifier).unwrap_or_else(|error| {
-            self.record(error);
-            None
-        });
-        self.constant_sorts
-            .borrow_mut()
-            .insert(identifier.id(), sort);
-        sort
-    }
-
-    fn call_result_sort(&self, name: &FunctionName) -> Option<FunctionSort> {
-        if let Some(cached) = self.call_sorts.borrow().get(name.as_str()) {
-            return *cached;
-        }
-        let sort = self.look_up_call(name.as_str()).unwrap_or_else(|error| {
-            self.record(error);
-            None
-        });
-        self.call_sorts
-            .borrow_mut()
-            .insert(name.as_str().to_owned(), sort);
-        sort
-    }
-}
-
 /// The arguments of a screen, converted.
-struct ScreenArguments<'py> {
+struct ScreenArguments {
     expression: Expression,
     environment: HashMap<Identifier, Expression>,
     symbol_types: HashMap<Identifier, SymbolType>,
-    sorts: RegistrySorts<'py>,
 }
 
-/// Return the screen's arguments, converted, with the Python identifiers
-/// of every tree recorded for the registry lookups.
+/// Return the screen's arguments, converted.
 ///
 /// # Errors
 ///
@@ -210,9 +77,7 @@ fn read_screen_arguments<'py>(
     expression: &Bound<'py, PyAny>,
     environment: Option<&Bound<'py, PyAny>>,
     symbol_types: Option<&Bound<'py, PyAny>>,
-) -> PyResult<ScreenArguments<'py>> {
-    let py = expression.py();
-    let mut sorts = RegistrySorts::new(py);
+) -> PyResult<ScreenArguments> {
     let root = expression
         .cast::<PyExpression>()
         .map_err(|_not_an_expression| {
@@ -224,14 +89,13 @@ fn read_screen_arguments<'py>(
                     .map_or_else(|_| "?".to_owned(), |name| name.to_string())
             ))
         })?;
-    sorts.collect_identifiers(root)?;
     let mut rust_environment = HashMap::new();
     if let Some(environment) = environment.filter(|environment| !environment.is_none()) {
         for item in environment.cast::<PyMapping>()?.items()?.iter() {
             let (key, value) = item.extract::<(Bound<'py, PyAny>, Bound<'py, PyAny>)>()?;
-            let Some(id) = read_identifier_id(&key)? else {
+            if read_identifier_id(&key)?.is_none() {
                 continue;
-            };
+            }
             let bound = value.cast::<PyExpression>().map_err(|_not_an_expression| {
                 PyTypeError::new_err(format!(
                     "environment values must be Expressions, got {} for {}.",
@@ -243,8 +107,6 @@ fn read_screen_arguments<'py>(
                         .map_or_else(|_| "?".to_owned(), |text| text.to_string())
                 ))
             })?;
-            sorts.collect_identifiers(bound)?;
-            sorts.identifiers.entry(id).or_insert_with(|| key.clone());
             rust_environment.insert(
                 restore_identifier(&key, "environment", "key")?,
                 bound.get().expression().clone(),
@@ -280,15 +142,15 @@ fn read_screen_arguments<'py>(
         expression: root.get().expression().clone(),
         environment: rust_environment,
         symbol_types: rust_symbol_types,
-        sorts,
     })
 }
 
-/// Screen `arguments`, as a predicate when `is_predicate` is set, raising
-/// the refusal, or the first error a registry lookup raised.
-fn run_screen(arguments: &ScreenArguments<'_>, is_predicate: bool) -> PyResult<()> {
+/// Screen `arguments` over a snapshot of the registry, as a predicate when
+/// `is_predicate` is set, raising the refusal.
+fn run_screen(arguments: &ScreenArguments, is_predicate: bool) -> PyResult<()> {
+    let registry = super::registry::snapshot();
     let screen = BooleanScreen::new()
-        .with_sorts(&arguments.sorts)
+        .with_sorts(registry.registry())
         .with_environment(&arguments.environment)
         .with_symbol_types(&arguments.symbol_types);
     let result = if is_predicate {
@@ -296,9 +158,6 @@ fn run_screen(arguments: &ScreenArguments<'_>, is_predicate: bool) -> PyResult<(
     } else {
         screen.check_logical_operands(&arguments.expression)
     };
-    if let Some(error) = arguments.sorts.error.borrow_mut().take() {
-        return Err(error);
-    }
     result.map_err(IntoPyErr::into_py_err)
 }
 

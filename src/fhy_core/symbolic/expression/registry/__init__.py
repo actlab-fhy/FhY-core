@@ -20,6 +20,13 @@ registered function's body against its declared result sort is an
 explicit call into the type-checking layer above, which keeps the IR
 type system out of this package's dependencies.
 
+The built-in functions and constants are the Rust core's catalogue: their
+names are reserved, and every lookup resolves them first, through entry
+objects built once at import. The user entries live in the Rust core's
+owned ``FunctionRegistry``, which the extension keeps for this
+process-wide API; the Boolean screen and the inliner read it without
+calling Python.
+
 The registry is process-wide. Tests that need isolation should request
 the ``function_registry_snapshot`` fixture defined in ``tests/conftest.py``
 rather than mutating the registry directly.

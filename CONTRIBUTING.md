@@ -369,9 +369,21 @@ each pass run, pipeline run or validation in progress, which records the
 diagnostics Python hooks report so they return as themselves, and the
 frame of each Python hook call, which `report` and `get_analysis` find by
 the pass object. Both live only for their run or hook, so the stacks are
-empty whenever no pass runs. Tests never clear a
+empty whenever no pass runs. Slice S7 adds the one registry the binding
+holds for the Python API, with the maintainer's agreement (N-S7-2 of the
+design doc): the function registry behind `register_function` and the
+lookups of `fhy_core.symbolic.expression.registry`, a
+`Mutex<Arc<_>>` of the core's owned `FunctionRegistry` and each entry's
+Python object (`rust/fhy-core-py/src/expression/registry/state.rs`). A
+registration swaps in a new state whole, and the lock is never held across
+a call into Python. It is the one kind that is not append-only:
+`set_registry_state_for_tests`, the tests' snapshot seam, replaces it. The
+built-in entries beside it are built once, at import, and never change.
+The core crate stays free of it, as of all global state beyond identity.
+Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
-builds a local one.
+builds a local one, except that the Python tests restore the function
+registry through the `function_registry_snapshot` fixture.
 
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
@@ -465,6 +477,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.symbol_type` | `fhy_core::expression` (`SymbolType`) |
 | `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expression` |
 | `fhy_core.symbolic.expression.builtins` | `fhy_core::expression::builtins` |
+| `fhy_core.symbolic.expression.registry`, `passes.inline` | `fhy_core::expression::registry` |
 | `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expression::pattern`; the rule-applier pass is in `fhy_core::expression::passes` |
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |

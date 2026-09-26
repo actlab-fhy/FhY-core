@@ -1297,13 +1297,6 @@ pub(crate) struct PyIdentifierExpression {
 
 impl_public_class!(PyIdentifierExpression, "IdentifierExpression");
 
-impl PyIdentifierExpression {
-    /// Return the Python `Identifier` the node refers to.
-    pub(super) fn identifier<'py>(&self, py: Python<'py>) -> &Bound<'py, PyAny> {
-        self.identifier.bind(py)
-    }
-}
-
 #[pymethods]
 impl PyIdentifierExpression {
     /// Create the reference to `identifier`, an `Identifier`.

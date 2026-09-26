@@ -53,12 +53,12 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
 - [ ] S7: the function registry (designed; see "S7: the function registry")
-  - S7 in progress: done S7.1 to S7.3 (the screen's switch moved to S7.4); next S7.4 (the Python switch)
+  - S7 in progress: done S7.1 to S7.4 (the switch commit leaves 7 tests failing and `test_builtins.py` failing collection, all fixed in S7.5); next S7.5 (tests migrated, the interface suite)
   - [x] N-S7-1 to N-S7-3 decided (2026-09-25; see "S7 resolutions")
   - [x] S7.1: registry benchmarks and baseline
   - [x] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
   - [x] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
-  - [ ] S7.4: the Python switch
+  - [x] S7.4: the Python switch
   - [ ] S7.5: tests migrated, and the interface suite
   - [ ] S7.6: benchmarks after, and docs
 
