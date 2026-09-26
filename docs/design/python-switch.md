@@ -120,9 +120,9 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`; cb959f5)
   - [x] S14.5: tests migrated, and the interface suite (23; see "S14.3 to S14.5 status")
   - [x] S14.6: benchmarks after, and docs (every row faster or within noise; see "S14 benchmarks")
-- [ ] S13: constraints (designed; "Needs the user" is empty; waiting for the rebase onto S12, see "S13 resume notes")
+- [ ] S13: constraints (designed; "Needs the user" is empty; rebased onto S11 and S12 by the coordinator; see "S13 resume notes")
   - [x] S13.0: the design (survey, decisions D-S13-1 to D-S13-22, benchmark plan, steps, test plan)
-  - [ ] S13a.1: constraint benchmarks and baseline
+  - [x] S13a.1: constraint benchmarks and baseline (39 rows; see "S13a.1 baseline")
   - [ ] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer)
   - [ ] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
   - [ ] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`
@@ -15467,23 +15467,85 @@ reason:
   - the serialization pins;
   - the param tests.
 
+### S13a.1 baseline (2026-09-26, e94db01 plus the new benchmarks)
+
+`benchmarks/test_constraint.py` implements the benchmark plan, with its own
+`Serializable` member class, `_Token`. Two rows are named more precisely
+than in the plan: `test_constraint_structural_equivalence_of_large_sets`
+(the plan's `test_constraint_structural_equivalence[set_100]`, renamed so
+it does not collide with `test_term.py`'s row), and the system rows are
+unparametrized. The partial-equation row leaves one identifier free, so
+SymPy simplifies a residual. `target/bench.sh` runs the file and the
+rerun rows three times, each with `-n 0 --benchmark-only`, and the table
+lists the best of the three medians. The machine is the S0 one, with
+Python 3.11.13 and pytest-benchmark 5.3.0, and the load average was 7 to
+8 from other work. The numbers measure today's Python package on
+`dev-rust` with S11 and S12.
+
+| Benchmark | before |
+|---|--:|
+| `test_constraint_alpha_equivalence` | 1.65 µs |
+| `test_constraint_build_ordering_key[equation]` | 10.48 µs |
+| `test_constraint_build_ordering_key[set_100]` | 37.60 µs |
+| `test_constraint_deserialize_from_dict` | 706.80 µs |
+| `test_constraint_pickle_round_trip` | 23.52 µs |
+| `test_constraint_repr` | 51.51 µs |
+| `test_constraint_serialize_to_dict` | 71.23 µs |
+| `test_constraint_structural_equivalence (rerun)` | 1.52 µs |
+| `test_constraint_structural_equivalence_of_large_sets` | 755.18 µs |
+| `test_constraint_system_check_implication (rerun)` | 460.09 µs |
+| `test_constraint_system_check_satisfiability_of_bounds` | 765.35 µs |
+| `test_constraint_system_check_satisfiability_with_bindings` | 516.12 µs |
+| `test_constraint_system_construction` | 71.00 µs |
+| `test_constraint_system_evaluate_with_bindings[mixed]` | 37.94 µs |
+| `test_constraint_system_evaluate_with_bindings[sets_20]` | 11.03 µs |
+| `test_constraint_system_serialize_to_dict` | 172.79 µs |
+| `test_constraint_system_structural_equivalence` | 1.53 ms |
+| `test_equation_constraint_construction` | 1.21 µs |
+| `test_equation_constraint_evaluate_with_bindings (rerun)` | 18.93 µs |
+| `test_equation_constraint_evaluate_with_bindings[ground]` | 36.77 µs |
+| `test_equation_constraint_evaluate_with_bindings[partial]` | 5.10 ms |
+| `test_int_param_intersection_feasibility (rerun)` | 675.53 µs |
+| `test_nat_param_is_value_valid (rerun)` | 21.61 µs |
+| `test_param_alpha_equivalence[integer] (rerun)` | 6.13 µs |
+| `test_param_alpha_equivalence[natural_between] (rerun)` | 9.57 µs |
+| `test_param_construction_between_bounds (rerun)` | 71.44 µs |
+| `test_param_structural_equivalence (rerun)` | 7.45 µs |
+| `test_set_constraint_construction[100]` | 470.31 µs |
+| `test_set_constraint_construction[4]` | 21.91 µs |
+| `test_set_constraint_construction[serializable]` | 51.34 µs |
+| `test_set_constraint_construction[tuples]` | 187.58 µs |
+| `test_set_constraint_convert_to_expression` | 108.26 µs |
+| `test_set_constraint_evaluate_with_bindings[literal_expression]` | 5.12 µs |
+| `test_set_constraint_evaluate_with_bindings[member]` | 5.27 µs |
+| `test_set_constraint_evaluate_with_bindings[non_member]` | 5.23 µs |
+| `test_set_constraint_evaluate_with_bindings[serializable]` | 5.46 µs |
+| `test_set_constraint_evaluate_with_bindings[unbound]` | 1.03 µs |
+| `test_set_constraint_members` | 509.81 µs |
+| `test_set_constraint_values` | 67 ns |
+
+- **Sets** cost about 4.7 µs per member to build (the 100-member row), most
+  of it the wrapping, validation and hashing of each member in Python; the
+  canonical `members` tuple sorts by type-tagged string keys on first read.
+- **Equality of large sets** takes 755 µs: the derived engine builds and
+  compares the type-strict wrapped sets through the `key` normalizer.
+- **Deserialization** of a 100-member set takes 707 µs, and a system's
+  structural equivalence over 20 set constraints 1.5 ms.
+- **Evaluation** is cheap for sets (about 5 µs), and dominated by SymPy for
+  equations: 37 µs ground, 5.1 ms with a residual.
+
 ### S13 resume notes
 
-- **Stopped:** after committing this design, at the step "rebase onto
-  `dev-rust` (125507b, S12)".
-- **Blocker:** the permission system denied the rebase, and also reading
-  the shared gate script `target/tooling/gate-env.sh`, so this branch
-  still stands on 3a53195. The task's standing rules also forbid a rebase
-  without the user.
-- **Next:**
-  1. The user rebases this branch onto `dev-rust`, or authorizes the
-     rebase. The design doc then conflicts only additively, at the end of
-     the checklist and after S12's section.
-  2. Set up the gate environment (`gate-env.sh` copied into this worktree's
-     `target/`, with the z3 paths, `FHY_SMT_SOLVER` and `CARGO_TARGET_DIR`
-     pointing here).
-  3. Check the decisions that name S12 (D-S13-8, D-S13-14, C-9) against
-     S12's actual `SimplifyContext` and error mapping.
-  4. Start S13a.1.
-- **Scratch:** the survey notes are in `target/s13-param-survey-notes.txt`
-  and `target/s13-test-survey-notes.txt` (gitignored).
+- The coordinator rebased the branch onto `dev-rust` (dfd940a, with S11
+  and S12) with the user's approval; the gate environment is
+  `target/gate-env.sh` (gitignored).
+- **Rechecked against S12:** `Solver::simplify` takes a
+  `SimplifyContext`, which the constraint core builds with
+  `SimplifyContext::from_registry` (D-S13-8). The default solver's
+  simplifier is the native `_rs.SympySimplifier`, whose failure the
+  binding's `solve_error_to_py` raises as the `PassExecutionError` the
+  Python bridge raised, so param's `evaluate_system_outcome`, which reads
+  that error as `UNDECIDED`, keeps working (D-S13-14, C-9: unchanged).
+- **Rechecked against S11:** neither `types` nor `lattice` uses the
+  constraint package, and S11 changed nothing in it or in `param`.
+- The next step is the first unticked one of the checklist.
