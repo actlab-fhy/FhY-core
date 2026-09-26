@@ -131,6 +131,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13b.2: the system's binding
   - [x] S13b.3: the Python switch of `system.py`, with its tests (12 new interface tests)
   - [x] S13b.4: benchmarks after, and docs (every row faster or within 10%, after 64a1436; see "S13 benchmarks")
+- [ ] S15: the symbol table (`symbol_table.py`; "Needs the user" is empty; see "S15: the symbol table")
+  - [x] S15 design (D-S15-1 to D-S15-16)
+  - [ ] S15.1: symbol-table benchmarks and baseline
+  - [ ] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`)
+  - [ ] S15.3: the binding (the table, the three frames, the stubs)
+  - [ ] S15.4: the Python switch
+  - [ ] S15.5: tests migrated, and the interface suite
+  - [ ] S15.6: benchmarks after, and docs
 
 ## Goal
 
@@ -15943,3 +15951,704 @@ on `dev-rust` at dfd940a, where the coordinator rebased it, so a later
 rebase meets only additive conflicts: in this document, the module tables
 of `lib.rs`, the crate README and CONTRIBUTING, the binding's `lib.rs`, and
 the stub.
+
+## S15: the symbol table
+
+- **Status:** designed 2026-09-26 at a47aad0 (dev-rust with S14). D-S15-1
+  to D-S15-16 apply the policy the user already set, the precedent of S7,
+  S11, S13 and S14, and the user's direction for this slice: port as much
+  as possible to Rust, accepting small slowdowns on paths nothing calls.
+  "Needs the user" is empty.
+- **Scope:** `src/fhy_core/symbol_table.py` (758 lines): `SymbolTable`,
+  the three frame classes, `FunctionKeyword`, `SymbolTableError` and the
+  abstract `SymbolTableFrame`. The core goes in `rust/fhy-core` as
+  `fhy_core::symbol_table`, and the binding in `rust/fhy-core-py`.
+  `utils/scope.py` and `utils/stack.py` are out of scope (D-S15-14): the
+  symbol table does not use them.
+- **Pattern:**
+  - The table's logic moves into a new core module: a generic
+    `SymbolTable<F>` over any frame type, and the three built-in frames as
+    core values.
+  - `SymbolTable` and the three frame classes are P2: thin Python
+    subclasses of pyclasses.
+  - `SymbolTableFrame` stays the Python frozen-dataclass ABC that third
+    parties subclass, as `Constraint` does in S13. The built-in frames are
+    its virtual subclasses. A frame Python defines is held by the Rust
+    table as an opaque value that answers through its own Python methods
+    (D-S15-9).
+  - `FunctionKeyword` stays a P1 `StrEnum`, as `TypeQualifier` does.
+- **Coordination.** S13 runs in parallel, and this branch is rebased onto
+  it later. Every edit to a shared file (`lib.rs` of both crates,
+  `_rs.pyi`, CONTRIBUTING, the crate README, this checklist) is additive.
+
+### Survey: the Python API
+
+**The frames.**
+
+- **`SymbolTableFrame(WrappedFamilySerializable, FrozenMixin,
+  DerivedEquivalenceMixin, ABC)`** is a frozen dataclass with one field,
+  `name: Identifier`. It is the serialization family of the frames:
+  `SymbolTableFrame.deserialize_from_dict(payload)` dispatches on the
+  envelope's `__type__` to any registered subclass, checked with
+  `issubclass`.
+- **`ImportSymbolTableFrame(name)`**, type id `import_symbol_table_frame`,
+  adds no field.
+- **`VariableSymbolTableFrame(name, type, type_qualifier)`**, type id
+  `variable_symbol_table_frame`.
+- **`FunctionSymbolTableFrame(name, keyword, signature=())`**, type id
+  `function_symbol_table_frame`. `signature` is a sequence of
+  `(TypeQualifier, Type)` pairs, kept as given: a list stays a list, and
+  the frame is then unhashable.
+- **`FunctionKeyword`** is a `StrEnum`: `PROCEDURE = "proc"`,
+  `OPERATION = "op"`, `NATIVE = "native"`. It is not in `__all__`; the
+  tests import it from the module.
+- **Behavior.** None of the constructors checks its arguments:
+  `VariableSymbolTableFrame("x", 3, "q")` builds.
+  - `==`, `hash` and `repr` are the dataclass's, over every field, and
+    `==` requires the same class. A type compares structurally, since
+    T-1.
+  - A mutation raises `FrozenMutationError` (`FrozenMixin`'s guard runs
+    before the dataclass's).
+  - Pickling and copying are the dataclass defaults.
+  - `is_structurally_equivalent`, `is_alpha_equivalent` and
+    `is_alpha_equivalent_under` are derived (S10). They require the same
+    class, then compare the fields by the default dispatch: `name` by `==`
+    (an `Identifier` is `PartialEqual`, not `AlphaEquivalence`), the type
+    by its own `is_structurally_equivalent`, the enums by `==`, and the
+    signature element-wise. So the renaming is never consulted: probed,
+    `x` against `y` under `{x: y}` answers `False`.
+- **Serialization.** The import and variable frames use the derived
+  payloads, `{"name": ..}` and `{"name": .., "type": .., "type_qualifier":
+  "input"}`. The function frame writes `{"name": .., "keyword": "proc",
+  "signature": [{"type_qualifier": .., "type": ..}, ..]}` by hand. A
+  malformed payload raises `DeserializationDictStructureError`; a bad
+  enum value raises `DeserializationValueError` (``Invalid function frame
+  values: 'bogus' is not a valid FunctionKeyword``, or the derived
+  codec's text for the variable frame).
+
+**`SymbolTable(Serializable, Canonicalizable, StructuralEquivalence,
+VerifiableMixin)`** holds `_table: dict[Identifier, dict[Identifier,
+SymbolTableFrame]]` (namespaces, each a map of symbols to frames, in
+insertion order) and `_parent_namespace: dict[Identifier, Identifier]`.
+
+- **Namespaces.**
+  - `add_namespace(name, parent=None)` raises ``Namespace ns already
+    defined in the symbol table.`` for a defined name. The parent is not
+    checked, so a child may name a parent added later, or none at all,
+    and `add_namespace(a, a)` is accepted.
+  - `is_namespace_defined(name)`, `get_number_of_namespaces()`.
+  - `get_namespace(name)` returns the live inner dict, so mutating it
+    changes the table. An undefined name raises ``Namespace ns not found
+    in the symbol table.``
+  - `remove_namespace(name)` raises for an undefined name, and for a name
+    another namespace names as its parent (``Namespace ns cannot be
+    removed because it is the parent of: [c::65568].``). It drops the
+    namespace's own parent entry.
+- **Symbols.**
+  - `add_symbol(namespace, symbol, frame)` raises ``Symbol x already
+    defined in namespace ns.`` when `is_symbol_defined_in_namespace` holds.
+    That walks the parent chain, so a child cannot shadow a symbol its
+    ancestors define. The frame is not checked, and neither is
+    `frame.name == symbol`.
+  - `is_symbol_defined_in_namespace(namespace, symbol)` and
+    `get_frame_from_namespace(namespace, symbol)` walk from `namespace`
+    up the parent chain. An undefined start raises ``Namespace ns not
+    found ...``, and a revisited namespace raises ``Namespace a is
+    cyclic.`` A parent that is not defined raises a bare `KeyError`
+    (probed). A missing symbol answers `False`, or raises ``Symbol x not
+    found in namespace ns.``
+  - `is_symbol_defined(symbol)` and `get_frame(symbol)` search every
+    namespace in insertion order, ignoring parents, and return the first
+    hit (``Symbol x not found in the symbol table.``).
+  - `remove_symbol(namespace, symbol)` removes a symbol the namespace
+    itself holds, and raises otherwise.
+- **`update_namespaces(other)`** replaces each of `other`'s namespaces in
+  `self` with a shallow copy of its symbol dict (a namespace already in
+  `self` keeps its position), then `_parent_namespace.update(other's)`:
+  a namespace `other` gives no parent keeps the parent `self` gave it.
+  Frames are shared.
+- **`canonicalize()`** reorders the namespaces, each namespace's symbols,
+  and the parent map by `(id, name_hint)`, in place, and returns `None`.
+- **`verify()`** returns a `ValidationReport` of ERROR diagnostics under
+  the source `fhy_core.symbol_table.SymbolTable.verify`, in this order:
+  1. a parent entry of an undefined namespace (unreachable through the
+     public API: `remove_namespace` drops the entry);
+  2. per parent entry: a parent that is not defined, then a namespace
+     that is its own parent;
+  3. per namespace: a cyclic parent chain;
+  4. per symbol: a frame whose name is not the symbol.
+- **`is_structurally_equivalent(other)`** is `False` for a non-table. It
+  compares the namespace key sets, the parent maps by `==`, and per
+  namespace the symbol key sets, then each frame's
+  `is_structurally_equivalent` in `self`'s order, stopping at the first
+  mismatch. Insertion order does not count.
+- **Serialization.** `{"namespaces": [{"namespace_name": ..,
+  "parent_namespace_name": .. | None, "symbols": [{"symbol_name": ..,
+  "frame": <frame envelope>}, ..]}, ..]}`, in insertion order. The whole
+  structure is validated first (`DeserializationDictStructureError`),
+  then every namespace is added, then every symbol, so a duplicate or a
+  cyclic chain raises `SymbolTableError` from the replay.
+- **Value semantics.** `==` and `hash` are identity, `repr` is
+  `object`'s, and pickling and `copy.copy` go through `__dict__`, so a
+  shallow copy shares the inner dicts.
+- **Logging.** DEBUG on `fhy_core.symbol_table`: `added namespace %s
+  (parent=%s)`, `removed namespace %s`, `added symbol %s to namespace %s
+  (frame=%s)` and `removed symbol %s from namespace %s`.
+- **Messages** use the identifiers' `str`, the bare name hint.
+
+**Probed at a47aad0** (Python 3.11, `timeit`, best of five; the load
+average was 3 to 8, so the numbers are indicative only):
+
+| Operation | Time |
+|---|--:|
+| `ImportSymbolTableFrame(x)`, `VariableSymbolTableFrame(..)`, `FunctionSymbolTableFrame(..)` of one parameter | 0.76, 1.07, 1.25 µs |
+| `frame.name` | 14 ns |
+| `==`, `hash` of two variable frames | 148, 215 ns |
+| `SymbolTable()` | 0.89 µs |
+| building a table of one namespace and 20 variables (frames and identifiers included) | 158 µs |
+| `is_symbol_defined_in_namespace`, `get_frame_from_namespace` through one parent | 2.29, 2.44 µs |
+| `get_frame`, `is_symbol_defined` of a symbol in the first namespace | 1.67, 0.71 µs |
+| `serialize_to_dict`, `deserialize_from_dict` of the 20-variable table | 51.6 µs, 1.21 ms |
+| `verify()`, `canonicalize()` of it | 3.96, 8.04 µs |
+| pickle round trip of it | 193 µs |
+
+- **The lookups** cost 1 to 2.5 µs each, mostly the closures
+  `_search_*_with_action` builds per call.
+- **Deserialization** is the slowest path, 60 µs a variable: each frame's
+  type goes through the family dispatch and the derived decoder.
+
+### Survey: the Rust API
+
+- **Nothing** for symbol tables or frames.
+- **What the port builds on:** `Identifier` (P1 in Python, equal and
+  hashed by id, `Debug` printing `x::7`); `fhy_core::types::{Type,
+  TypeQualifier}`, with structural `Eq` and `Hash` (D-S11-10) and
+  `Type::is_structurally_equivalent`; `CoreDataType`'s and
+  `TypeQualifier`'s serde, `Display` and `FromStr` of the Python values
+  (D-S11-16).
+- **Precedents in the binding:**
+  - frozen dataclasses as frozen pyclasses with thin public subclasses
+    that keep their field objects (D-S7-9, S3b, S11's types), and
+    `dataclass.rs`'s helpers for the dataclass `==` and `repr`;
+  - an abstract Python base that stays Python, with the built-in leaves
+    registered as its virtual subclasses (S13's `Constraint`, S4's
+    `FrozenMixin` registration);
+  - a mutable `#[pyclass(subclass)]` over a core container of Python
+    values (S11's `PartiallyOrderedSet` and `Lattice`);
+  - `run_in_context` and `MayCallPython` for comparing and hashing a type
+    with a Python-defined part (S11a);
+  - building a `ValidationReport` from core findings (S11's `Lattice.verify`);
+  - DEBUG lines written by the binding on the module's logger (S3b,
+    D-S6-5).
+
+### Consumers and tests
+
+- **`src`.** No module imports `symbol_table` except `fhy_core/__init__.py`,
+  which re-exports the module. `utils/scope.py`'s docstring names
+  `SymbolTable` as the pattern it generalizes; it imports nothing from it.
+- **Python tests:**
+
+  | File | Lines | Collected | What it pins |
+  |---|--:|--:|---|
+  | `tests/test_symbol_table.py` | 717 | 48 | frame protocols and round trips, table equivalence, serialization, `verify`, `canonicalize`, namespaces, symbols, parent lookup, cycles, `update_namespaces` |
+  | `tests/test_symbol_table_properties.py` | 114 | 3 | `canonicalize` idempotent, the dict round trip, `verify` clean on well-formed tables |
+  | `tests/serialization/test_serialization_contract.py` | | 1 of its parameters | `ImportSymbolTableFrame` round-trips in every format |
+  | `tests/test_import_graph.py`, `tests/symbolic/test_namespace.py` | | | the module is an entry point, and a public name of `fhy_core` |
+
+  The tests use only the public API. One pins text: `match="is cyclic"`.
+  None reads `_table` or `_parent_namespace`, uses `caplog`, asserts `is`
+  on a returned frame, or uses `dataclasses` on a frame.
+- **Benchmarks:** `test_term.py`'s
+  `test_symbol_table_structural_equivalence` (20 variables), and
+  `test_types.py`'s `test_variable_symbol_table_frame_construction` and
+  `_hash`.
+- **Rust tests:** none.
+
+### Divergences visible from Python
+
+| # | Python today | After S15 |
+|---|---|---|
+| Y-1 | the three frames are frozen dataclasses: `dataclasses.fields`, `replace` and `asdict` apply, and pickling is the dataclass default | frozen Rust-backed classes (D-S15-7): not dataclasses; the same constructors, attributes and `repr`; `FrozenMutationError` as today; a pickle is a call of the class |
+| Y-2 | no argument checks, in the frames or the table | `TypeError` in S2's style: a name, namespace or symbol that is not an `Identifier`, a type that is not a `Type`, a qualifier or keyword that is not a member, a frame that is not a `SymbolTableFrame`, or an `update_namespaces` argument that is not a `SymbolTable` (D-S15-7, D-S15-10) |
+| Y-3 | `signature` is kept as given | a tuple of pairs, whatever iterable was given, so every frame hashes |
+| Y-4 | a lookup that reaches a parent that is not defined raises `KeyError` | `SymbolTableError`, naming the namespace and its missing parent (D-S15-3) |
+| Y-5 | `get_namespace` returns the live inner dict | a new dict of the symbols' `Identifier`s to their frames, in order, on every call; the table changes only through its methods (D-S15-10) |
+| Y-6 | messages are sentences with the bare name hints | the core's one-line lowercase text, with `name::id` (D-S15-6). The phrases `already defined`, `not found` and `is cyclic` are kept, and so is each `verify` message's shape |
+| Y-7 | `copy.copy` of a table shares its inner dicts, and a pickle holds `__dict__` | a copy or an unpickled table is independent, rebuilt from the namespaces, symbols and frames (D-S15-10) |
+| Y-8 | frame `hash` values | different values, still equal for equal frames |
+| Y-9 | a frame's own method that mutates the table it is being compared or serialized in changes the dicts under iteration | it raises `RuntimeError` (the pyclass is borrowed for the walk) |
+| Y-10 | `verify` lists parent problems in the parent map's order | in namespace order; the table keeps each namespace's parent with it, so an orphan parent entry cannot exist (D-S15-3) |
+
+Unchanged in meaning: every method's name, signature and result; the
+insertion order and `canonicalize`'s order; the parent walk, the refusal
+to shadow, and the forward parent references; `update_namespaces`'s
+replacement rule; structural equivalence, including a Python-defined
+frame's own; the wire format of the table and of each frame, and the
+family dispatch; the `verify` source and levels; the error classes other
+than Y-4; `==`, `hash` and `repr` of a table; the DEBUG lines.
+
+### Decisions (proposed 2026-09-26)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I: one public path
+  per item, the layering (§I.2, CONTRIBUTING "Module paths follow Rust
+  layering"), `#[non_exhaustive]` errors with one-line lowercase
+  `Display` (I.3 rule 3), the naming rules (I.3 rule 5), threading (I.3
+  rule 7), a single crate (decision 13), no global state beyond identity,
+  and MSRV 1.85;
+- the binding patterns P1 to P3 and cross-cutting rules 3 to 7;
+- the direction: port as much as possible, and accept small slowdowns on
+  uncalled paths.
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+- **D-S15-1: one implementation, no fallback** ("no fallback"; D-S7-1).
+  These are deleted, not kept beside the Rust path: the class bodies of
+  `SymbolTable` and the three frames, the `TypedDict`s and `_is_valid_*`
+  guards, `_SymbolTableSearchResult`, `_identifier_sort_key` and the two
+  `_search_*_with_action` helpers. The module keeps its public names, the
+  `SymbolTableFrame` ABC, `FunctionKeyword`, `SymbolTableError`,
+  `_LOGGER`, and the docstrings.
+- **D-S15-2: a new core module, `fhy_core::symbol_table`** (one public
+  path; the layering; the direction). It depends on `identifier` and
+  `types`, and never on `pass` or `diagnostic`, so it becomes layer 7 of
+  CONTRIBUTING's list, after `types`. CONTRIBUTING's table maps
+  `fhy_core.symbol_table` to it. The sketch is settled test-first in
+  S15.2, as D-S14-2's was:
+
+  ```rust
+  // fhy_core::symbol_table
+  /// A value a symbol table holds for a symbol: it names the symbol it describes.
+  pub trait Frame { fn name(&self) -> &Identifier; }
+
+  #[derive(Debug, Clone)]
+  pub struct SymbolTable<F> { /* namespaces in insertion order, each with its parent and its symbols in order */ }
+  impl<F> SymbolTable<F> {
+      pub fn new() -> Self;
+      pub fn len(&self) -> usize;                                   // namespaces
+      pub fn is_empty(&self) -> bool;
+      pub fn contains_namespace(&self, namespace: &Identifier) -> bool;
+      pub fn namespace(&self, namespace: &Identifier) -> Option<Namespace<'_, F>>;
+      pub fn namespaces(&self) -> impl ExactSizeIterator<Item = Namespace<'_, F>> + '_;
+      pub fn add_namespace(&mut self, namespace: Identifier, parent: Option<Identifier>) -> Result<(), SymbolTableError>;
+      pub fn remove_namespace(&mut self, namespace: &Identifier) -> Result<(), SymbolTableError>;
+      pub fn add_symbol(&mut self, namespace: &Identifier, symbol: Identifier, frame: F) -> Result<(), SymbolTableError>;
+      pub fn remove_symbol(&mut self, namespace: &Identifier, symbol: &Identifier) -> Result<F, SymbolTableError>;
+      /// The frame of `symbol` in `namespace` or its nearest ancestor.
+      pub fn lookup(&self, namespace: &Identifier, symbol: &Identifier) -> Result<Option<&F>, SymbolTableError>;
+      /// The frame of `symbol` in the first namespace that holds it, in insertion order.
+      pub fn find(&self, symbol: &Identifier) -> Option<&F>;
+      pub fn update_namespaces(&mut self, other: &Self) where F: Clone;
+      pub fn canonicalize(&mut self);
+      pub fn is_equivalent_by<G, E>(&self, other: &SymbolTable<G>,
+          frames: impl FnMut(&F, &G) -> Result<bool, E>) -> Result<bool, E>;
+      pub fn violations(&self) -> Vec<Violation> where F: Frame;
+  }
+  impl<F: PartialEq> PartialEq for SymbolTable<F>;                  // is_equivalent_by with ==
+  impl<F: Eq> Eq for SymbolTable<F>;
+  impl<F> Default for SymbolTable<F>;
+  impl SymbolTable<SymbolFrame> { pub fn is_structurally_equivalent(&self, other: &Self) -> bool; }
+
+  /// A view of one namespace: its name, parent and symbols in order.
+  #[derive(Debug, Clone, Copy)]
+  pub struct Namespace<'a, F> { /* private */ }                    // name, parent, len, is_empty, get, contains, iter
+
+  #[non_exhaustive] #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+  pub enum SymbolFrame { Import(ImportFrame), Variable(VariableFrame), Function(FunctionFrame) }
+  pub struct ImportFrame { /* name */ }
+  pub struct VariableFrame { /* name, ty: Type, qualifier: TypeQualifier */ }
+  pub struct FunctionFrame { /* name, keyword: FunctionKeyword, signature: Arc<[(TypeQualifier, Type)]> */ }
+  impl SymbolFrame { pub fn is_structurally_equivalent(&self, other: &Self) -> bool; }   // and the From impls, accessors, Frame
+
+  #[non_exhaustive] #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+  pub enum FunctionKeyword { Procedure, Operation, Native }        // "proc", "op", "native": as_str, Display, FromStr
+
+  #[non_exhaustive] pub enum SymbolTableError {
+      NamespaceAlreadyDefined { namespace }, NamespaceNotFound { namespace },
+      NamespaceHasChildren { namespace, children: Vec<Identifier> },
+      SymbolAlreadyDefined { namespace, symbol, defined_in }, SymbolNotFound { namespace: Option<Identifier>, symbol },
+      CyclicNamespace { namespace }, ParentNotFound { namespace, parent },
+  }
+  #[non_exhaustive] pub enum Violation {
+      ParentNotFound { namespace, parent }, OwnParent { namespace },
+      CyclicParentChain { namespace }, FrameNameMismatch { namespace, symbol, frame_name },
+  }
+  ```
+
+  - The Rust names follow I.3 rule 5: `len`, `contains_namespace`,
+    `lookup`, `find`, `violations`. Python keeps its names (D-S4-2).
+  - `SymbolTable<F>` is generic, so a Rust IR stores its own frames, and
+    the binding stores its Python-facing entries (D-S15-10). It is `Send +
+    Sync` when `F` is (I.3 rule 7), and holds no global state.
+  - The ordered maps are private: a `Vec` of entries with a
+    `HashMap` index, as the poset keeps its elements (D-S11-4). No
+    dependency is added.
+- **D-S15-3: the semantics are Python's, with the gaps closed** (D-S4-2;
+  D-S4-1 for Y-4 and Y-10).
+  - Namespaces and symbols keep insertion order; a namespace replaced by
+    `update_namespaces` keeps its position.
+  - A parent is not checked when it is added: a forward reference, a
+    missing parent and a namespace that is its own parent are accepted,
+    and `violations` reports them.
+  - `lookup` walks from the namespace up its parents, and fails with
+    `NamespaceNotFound` for an undefined start, `CyclicNamespace` for the
+    first revisited namespace, and `ParentNotFound` for a parent that is
+    not defined (Y-4).
+  - `add_symbol` refuses a symbol `lookup` finds, naming where it is
+    defined, so a child never shadows an ancestor. It takes the frame as
+    given: a name that differs from the symbol is a violation, not an
+    error.
+  - `remove_namespace` refuses a namespace that another names as its
+    parent, listing the children in namespace order.
+  - `update_namespaces` replaces each of `other`'s namespaces' symbols
+    with clones of `other`'s frames, and sets its parent only when `other`
+    gives it one.
+  - `canonicalize` sorts the namespaces and each namespace's symbols by
+    identifier id. Ids are unique, so this is Python's `(id, name_hint)`
+    order.
+  - Each namespace keeps its parent, so the parent map has no entry
+    without a namespace (Y-10). `violations` lists, in namespace order,
+    each namespace's missing parent and self-parenthood, then each
+    namespace whose chain cycles, then each mismatched frame.
+  - `is_equivalent_by` compares the namespace sets, the parents, and per
+    namespace the symbol sets, then the frames pairwise in `self`'s order,
+    stopping at the first `false` or error. Order does not count.
+  - Walks are loops, so a deep parent chain needs no stack.
+- **D-S15-4: the built-in frames are core values** (decision 2; the
+  direction; D-S11-6's shape for closed families).
+  - `SymbolFrame` derives `PartialEq`, `Eq` and `Hash` over every field,
+    through `Type`'s structural ones. `is_structurally_equivalent` is the
+    same variant, equal names and enums, and types compared by
+    `Type::is_structurally_equivalent`, which is what the derived plan
+    computes today.
+  - `FunctionFrame::new` takes any iterable of pairs and stores a shared
+    slice (Y-3). `VariableFrame::ty` is named for `type`, a keyword.
+  - The frames have accessors and constructors, with private fields.
+- **D-S15-5: serde for the closed parts only** (D-S11-16; CONTRIBUTING
+  "Serialization is plain serde"). `FunctionKeyword` derives serde with
+  the Python values, with JSON and postcard round trips. `SymbolFrame` and
+  `SymbolTable` have no serde form, since `Type` has none; the Python wire
+  format is the binding's. A Rust serde form is a follow-up for the first
+  Rust consumer that needs one.
+- **D-S15-6: errors are the core's text under the Python classes**
+  (D-S4-1; D-S7-12; D-S11-14; CONTRIBUTING "Errors belong to their
+  module"; Y-6).
+  - Every `SymbolTableError` raises the Python `SymbolTableError`, which
+    stays a Python class with `@register_error`, as the pass errors do.
+  - The texts keep the phrases of today's messages, lowercase and with
+    `name::id`: ``namespace ns::7 already defined in the symbol table``,
+    ``symbol x::9 not found in namespace ns::7``, ``namespace a::5 is
+    cyclic``, ``namespace a::5 references missing parent namespace b::6``.
+  - The lookups that return `Option` in Rust raise the text of the
+    matching `SymbolTableError` variant, so every message has one source.
+  - Argument checks raise `TypeError` in S2's style (Y-2).
+- **D-S15-7: the three frames are P2, under their Python names and
+  fields** (decision 2; D-S7-9; S13's leaves; Y-1 to Y-3, Y-8).
+  - `_rs.ImportSymbolTableFrame`, `_rs.VariableSymbolTableFrame` and
+    `_rs.FunctionSymbolTableFrame` are `#[pyclass(frozen, subclass)]`s.
+    The public classes are thin subclasses with `WrappedFamilySerializable`
+    and `__slots__ = ()`, registered with `register_serializable` under
+    today's type ids.
+  - Each keeps its field objects, so `frame.type is ty` holds, beside its
+    core `SymbolFrame`. `signature` is a tuple of the given pairs (Y-3).
+  - `==` is the dataclass's: the same class, then the core frames' `==`;
+    `hash` hashes the core frame; `repr` is today's dataclass `repr`. A
+    type with a Python-defined part compares and hashes in a context, as
+    S11a's classes do.
+  - `is_frozen`, `freeze`, `assert_frozen`, `__setattr__` and
+    `__delattr__` behave as S11a's built-in types do; a mutation raises
+    `FrozenMutationError`. A pickle is a call of the class.
+  - The binding writes and reads today's payloads, with
+    `DeserializationDictStructureError` and `DeserializationValueError`
+    (cross-cutting rule 4). A type in a payload goes through `Type`'s
+    family dispatch, so a Python-defined type round-trips as today.
+  - The arguments are checked strictly (Y-2).
+- **D-S15-8: frame equivalence is computed in the binding with the
+  derived plan's meaning** (D-S7-10; S13's leaves). Each frame class
+  defines `is_structurally_equivalent`, `is_alpha_equivalent` and
+  `is_alpha_equivalent_under(other, renaming)`: `False` unless `other` has
+  exactly the frame's class, then the core's structural equivalence. The
+  renaming is checked to be an `AlphaRenaming` and otherwise not
+  consulted, as today (the survey's probe).
+- **D-S15-9: `SymbolTableFrame` stays the Python extension point** (the
+  Goal: user subclasses keep working; S13's `Constraint`; D-S11-9's
+  reasoning).
+  - It stays the frozen dataclass ABC of today, unchanged, so a frame a
+    third party defines as `@dataclass(frozen=True)` over it keeps its
+    inherited `name` field, its derived equivalence and its registered
+    type id. The three built-in classes are registered as its virtual
+    subclasses, and as `FrozenMixin`'s, since its bases carry an instance
+    layout a pyclass cannot share.
+  - The table holds a Python-defined frame as an opaque entry. It reads
+    `frame.name` once, when the frame is added, and refuses a name that is
+    not an `Identifier` (`TypeError`). It asks the frame's own
+    `is_structurally_equivalent` in a table comparison and its own
+    `serialize_to_dict` in a table's payload.
+  - These calls are per value the table holds, and each answers a
+    question only Python can answer, like D-S11-9's handlers. An exception
+    propagates as the same object, and a `KeyboardInterrupt` passes
+    through. CONTRIBUTING's "per hook, not per tree node" rule gains this
+    as its third exception.
+- **D-S15-10: `SymbolTable` is P2 over a core `SymbolTable<Entry>`**
+  (decision 2; S11's `Lattice`; D-S14-3's object tables; Y-2, Y-5, Y-7,
+  Y-9).
+  - `_rs.SymbolTable` is a mutable `#[pyclass(subclass)]` whose `#[new]`
+    accepts and ignores arguments, as `Lattice`'s does, so a subclass with
+    its own `__init__` constructs. The public `SymbolTable` is a thin
+    subclass with `Serializable`, `Canonicalizable` and
+    `StructuralEquivalence`, registered with `register_serializable` as
+    `symbol_table`. It is a virtual `VerifiableMixin`, since the mixin's
+    `__new__` cannot sit over a pyclass, as for `Lattice`.
+  - An entry keeps the symbol's `Identifier` object, the frame object,
+    the frame's name, and, for a built-in frame, its core `SymbolFrame`,
+    behind an `Arc`, so a clone is a reference count.
+  - Every method keeps its name, signature and result. The identifiers
+    are read by id (P1). A comparison of two built-in frames of one class
+    runs in Rust; any other pair asks the left frame's Python method.
+  - `get_namespace` returns a new dict (Y-5). `update_namespaces` of the
+    table itself changes nothing, as today.
+  - `==`, `hash` and `repr` stay `object`'s. A pickle is the class, no
+    arguments, and a state of the namespaces with their parents and
+    `(symbol, frame)` pairs, plus a subclass's instance dict; restoring it
+    rebuilds the table without replaying the checks, so any reachable
+    table round-trips, and copies are independent (Y-7).
+  - A walk that calls Python holds the pyclass borrowed, so a re-entrant
+    mutation raises `RuntimeError` (Y-9).
+- **D-S15-11: the table's payload is the binding's** (cross-cutting rule
+  4; D-S11-11). `serialize_to_dict` writes today's shape in namespace
+  order, with each frame's own `serialize_to_dict`. `deserialize_from_dict`
+  validates the whole structure first, raising
+  `DeserializationDictStructureError` with today's top-level field
+  description, then replays `add_namespace` for every namespace and
+  `add_symbol` for every symbol, so a payload that cannot be rebuilt
+  raises `SymbolTableError` as today. Frames decode through
+  `SymbolTableFrame.deserialize_from_dict`.
+- **D-S15-12: `verify` builds the report from `violations`** (S11's
+  `Lattice.verify`; D-S15-6). One ERROR `Diagnostic` per violation, with
+  a `Note` of the core's text and today's source.
+- **D-S15-13: the logging is kept** (D-S6-5; S3b; D-S4-2). The binding
+  writes today's four DEBUG lines on the module's `_LOGGER`, with the
+  same format strings and arguments. They are entry points called once
+  per Python call, as S6's lifecycle lines and S14's registration lines
+  are, not lines inside a core walk (D-S11-15 dropped those).
+- **D-S15-14: `utils/scope.py` and `utils/stack.py` stay Python** (the
+  task's condition). The symbol table imports neither. `Scope` and
+  `Stack` are generic containers over arbitrary Python keys and values,
+  with no consumer in `src`; a Rust port would hash and compare every key
+  through Python and gain nothing. They are left for a slice that finds a
+  consumer for them.
+- **D-S15-15: tests are rewritten, not skipped** (the tests rule; S7.2's
+  practice). The core is specified by Rust tests written against
+  `todo!()` stubs, with the traceability table below. The Python tests
+  change only where Y-1 to Y-10 change what they pin, each change
+  recorded with its reason. A Python interface suite covers the binding.
+- **D-S15-16: docs** (D-S14-12). CONTRIBUTING's module table gains the
+  `fhy_core.symbol_table` row, the layering list its seventh layer, and
+  the callback rule its third exception. The crate README and `lib.rs`
+  list the module. The package README's "Symbol Table" row describes what
+  the table does (it has no push and pop, and refuses shadowing), and
+  that it is backed by the Rust core.
+
+### Benchmark plan
+
+A new file, `benchmarks/test_symbol_table.py`, written against the public
+API only. The baseline measures today's Python module.
+
+| Benchmark | Measures |
+|---|---|
+| `test_import_frame_construction`, `test_function_frame_construction` | construction (the variable frame's row is in `test_types.py`) |
+| `test_frame_name_access` | an attribute read |
+| `test_frame_eq` | two equal variable frames built apart |
+| `test_frame_structural_equivalence` | the same pair |
+| `test_frame_serialize_to_dict`, `test_frame_deserialize_from_dict` | a function frame of two parameters, through the family |
+| `test_symbol_table_construction` | `SymbolTable()` |
+| `test_symbol_table_build_of_20_symbols` | one namespace and 20 prebuilt variable frames |
+| `test_symbol_table_add_and_remove_symbol` | one `add_symbol` and one `remove_symbol` on a 20-symbol table |
+| `test_is_symbol_defined_in_namespace_through_a_chain_of_10` | the parent walk |
+| `test_get_frame_from_namespace_through_a_chain_of_10` | the same, returning the frame |
+| `test_get_frame_of_the_last_symbol` | the global search over 10 namespaces of 20 symbols |
+| `test_is_symbol_defined` | the same search, answering `True` |
+| `test_get_namespace_of_20_symbols` | the namespace view |
+| `test_symbol_table_verify` | 10 namespaces of 20 symbols, well formed |
+| `test_symbol_table_canonicalize` | the same table, built in reverse order |
+| `test_symbol_table_serialize_to_dict`, `_deserialize_from_dict` | one namespace of 20 variables |
+| `test_symbol_table_pickle_round_trip` | the same table |
+| `test_symbol_table_update_namespaces` | merging a 10-namespace table into an empty one |
+
+Rerun, not added: `test_symbol_table_structural_equivalence`
+(`test_term.py`), and `test_variable_symbol_table_frame_construction` and
+`_hash` (`test_types.py`). The verdict follows cross-cutting rule 5. The
+paths at risk:
+
+- `frame.name`, a getter where the dataclass read an instance dict;
+- `get_namespace`, which builds a dict where Python returned its own;
+- `add_symbol`, which now reads its three arguments across the boundary,
+  and still writes the DEBUG line;
+- the frames' `hash`, which crosses into the extension.
+
+### Needs the user
+
+Nothing. D-S15-1 to D-S15-16 follow the policy, the precedents and the
+direction. The closest calls, and what settles each:
+
+- **Where the frames' base lives** (D-S15-9). S11 made its open bases
+  pyclasses; S13 kept `Constraint` a Python ABC with virtual leaves. A
+  frame subclass inherits a dataclass field, `name`, from the base, which
+  only the Python base keeps, so S13's shape is the one that keeps user
+  subclasses unchanged (the Goal).
+- **Calling a Python-defined frame's methods from a Rust walk**
+  (D-S15-9). D-S11-9 settled the same question for Python-defined types:
+  only Python can answer for a class Python defines.
+- **Keeping the DEBUG lines** (D-S15-13). D-S6-5 and S3b keep entry-point
+  logs; D-S11-15 dropped only logs inside core walks.
+- **`scope.py` and `stack.py`** (D-S15-14). The task ports helpers the
+  symbol table depends on; it depends on neither.
+
+### Steps
+
+1. **S15.1: benchmarks.** Add `benchmarks/test_symbol_table.py`, and
+   record the baseline here, on today's Python module.
+2. **S15.2: core addition, test-first, with Rust tests.**
+   `rust/fhy-core/src/symbol_table.rs` with `symbol_table/table.rs`,
+   `symbol_table/frame.rs`, `symbol_table/ordered.rs` and
+   `symbol_table/error.rs`; `lib.rs`, the crate README and CONTRIBUTING's
+   table and layering list. The stories and the properties are written
+   first and fail against `todo!()` stubs. Nothing in Python changes.
+3. **S15.3: the binding.** `rust/fhy-core-py/src/symbol_table.rs` with
+   `symbol_table/frames.rs` (the three classes, their payloads and
+   pickling) and `symbol_table/table.rs` (the table, its entries, its
+   payload, `verify` and the logging); the exports in `lib.rs`; the
+   stubs. Nothing in Python uses them yet, so the suite stays green.
+4. **S15.4: the Python switch** (marked breaking). `symbol_table.py`
+   becomes the thin layer of D-S15-1; CONTRIBUTING's callback exception;
+   the package README's row. It lands with S15.5 if the migration is
+   small.
+5. **S15.5: tests.** Migrate the tests and add the interface suite.
+6. **S15.6: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with these green or clean:
+
+- `pytest`, and `-m "not very_slow"`;
+- the `property` session, `lint`, `type_check` and `tests_minimal`;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `-D warnings`, tests, doc `-D warnings`,
+  deny and `cargo +1.85 check`, each with and without `--all-features`,
+  in the environment of `target/gate-env.sh` (S8.3, D-S12-13).
+
+### Test plan
+
+**Rust tests, written first (S15.2),** in `rust/fhy-core/tests/it/symbol_table/`:
+
+- **`table_stories.rs`:**
+  - a new table is empty, and `Default` is `new`;
+  - `add_namespace` then `contains_namespace` and `len`; a second add of
+    one name is `NamespaceAlreadyDefined`, and the table is unchanged;
+  - a forward parent reference, a missing parent and a self-parent are
+    accepted;
+  - `namespace` and `namespaces` in insertion order, with parents and
+    symbols in order; `namespace` of an unknown name is `None`;
+  - `add_symbol` into an unknown namespace is `NamespaceNotFound`; a
+    duplicate in the namespace, or a symbol an ancestor defines, is
+    `SymbolAlreadyDefined` naming where;
+  - `lookup` finds a symbol in the namespace, then in each ancestor, and
+    answers `None` past the root; `CyclicNamespace` names the first
+    revisited namespace; `ParentNotFound` names the child and the parent;
+  - `find` searches every namespace in insertion order, ignoring parents;
+  - `remove_symbol` returns the frame, and refuses a symbol only an
+    ancestor holds, or an unknown namespace;
+  - `remove_namespace` drops the namespace and its parent, and refuses a
+    parent of others, listing them, or an unknown name;
+  - `update_namespaces` replaces a namespace in place, adds new ones at
+    the end, sets parents only where `other` gives one, and leaves the
+    two tables independent afterwards;
+  - `canonicalize` sorts namespaces and symbols by id, and is idempotent;
+  - `violations`: none for a well-formed table; each kind, in order;
+  - `PartialEq` ignores order, and tells apart a parent, a namespace set,
+    a symbol set and a frame; `is_equivalent_by` stops at the first
+    `false` and propagates the first error;
+  - `SymbolTable<SymbolFrame>::is_structurally_equivalent`;
+  - a 10,000-namespace parent chain walks without recursion;
+  - `SymbolTable<SymbolFrame>` is `Send + Sync`, and `Debug` renders;
+  - every `SymbolTableError` and `Violation` `Display`.
+- **`frame_stories.rs`:** each frame's constructor and accessors; the
+  `Frame` impls; `==` and `Hash` over every field, through types
+  compared structurally; `is_structurally_equivalent` across variants;
+  a signature from any iterable; `FunctionKeyword`'s `as_str`,
+  `Display`, `FromStr` and its error, and the JSON and postcard round
+  trips.
+- **`table_properties.rs`:** for random well-formed tables (the Python
+  property's strategy: parents drawn from earlier namespaces, frames named
+  for their symbols), `violations` is empty, `canonicalize` is idempotent
+  and keeps the table equal, and `lookup` agrees with a reference model
+  walking the parents; for random operation sequences, the table agrees
+  with a model of Python's two dicts.
+
+| Python test (`test_symbol_table.py`) | Rust story |
+|---|---|
+| `test_add_and_check_namespace`, `test_add_duplicate_namespace_fails` | `a_namespace_is_added_once` |
+| `test_get_undefined_namespace_fails` | `an_unknown_namespace_has_no_view` |
+| `test_add_and_get_symbol`, `test_add_and_get_symbol_in_namespace`, `test_add_duplicate_symbol_fails` | `a_symbol_is_added_once_and_found` |
+| `test_get_undefined_symbol_from_namespace_fails` | `a_missing_symbol_is_not_found` |
+| `test_add_namespace_with_parent`, `test_get_symbol_from_namespace_inherited_from_parent` | `lookup_walks_up_the_parents` |
+| `test_cyclic_namespace_fails`, `test_get_frame_from_namespace_raises_symbol_table_error_on_cycle` | `a_cyclic_chain_fails_the_lookup` |
+| `test_remove_namespace`, `test_remove_namespace_clears_parent_mapping`, `test_remove_undefined_namespace_fails`, `test_remove_namespace_with_children_fails` | `remove_namespace_*` |
+| `test_remove_symbol`, `test_remove_symbol_from_undefined_namespace_fails`, `test_remove_undefined_symbol_fails`, `test_remove_symbol_only_removes_from_target_namespace` | `remove_symbol_*` |
+| `test_update_namespaces`, `test_update_namespaces_does_not_alias_inner_namespace_dicts`, `test_update_namespaces_propagates_existing_symbols` | `update_namespaces_*` |
+| `test_symbol_table_verify_*` | `violations_*` |
+| `test_symbol_table_canonicalize_*` | `canonicalize_*` |
+| `test_symbol_table_structural_equivalence_*` | `equivalence_*` |
+| the three properties | `table_properties.rs` |
+
+The frame protocol, serialization and `SymbolTable` payload tests exercise
+the Python API, and stay in Python.
+
+**The interface suite, `tests/test_symbol_table_rust_binding.py`,**
+covers what the binding adds over the core:
+
+- the classes are the `_rs` classes' thin subclasses, the frames virtual
+  `SymbolTableFrame`s and `FrozenMixin`s, and the table a virtual
+  `VerifiableMixin`;
+- Y-1: each frame keeps its field objects (`is`), its `repr`, its
+  `FrozenMutationError`, and pickles, copies and deep-copies to an equal
+  frame; it is no dataclass;
+- Y-2: every argument check, for the frames and the table;
+- Y-3: a list signature is stored as a tuple, and the frame hashes;
+- `==` and `hash` agree, `==` needs the same class, and a type with a
+  Python-defined part compares through its Python `==`;
+- each frame's payload, pinned as today's JSON, and each refused payload
+  with its error class;
+- D-S15-8: the three equivalence methods, and the renaming not
+  consulted;
+- D-S15-9: a third-party `@dataclass(frozen=True)` frame over
+  `SymbolTableFrame`, with its own type id, in a table: added, found,
+  compared through its own method, serialized and deserialized; a frame
+  whose `name` is no `Identifier` is refused; a raising
+  `is_structurally_equivalent` propagates its exception;
+- Y-4: a lookup through a missing parent raises `SymbolTableError`;
+- Y-5: `get_namespace` returns a new dict, and mutating it changes
+  nothing;
+- Y-6: the texts of each error, with the kept phrases;
+- Y-7: a pickled, copied and deep-copied table is equivalent and
+  independent, a subclass keeps its class and instance attributes, and a
+  table with a shadowing symbol (reachable through `update_namespaces`)
+  round-trips through pickle;
+- `get_frame` returns the frame object that was added, and
+  `get_namespace` the symbol objects;
+- the table's payload pinned as today's JSON, and the replay's
+  `SymbolTableError`;
+- `verify`'s diagnostics: the messages, the source and the level;
+- the four DEBUG lines (`caplog`);
+- a subclass of `SymbolTable` with its own `__init__` constructs.
+
+**Migrating the existing tests.** No test is skipped, or deleted without a
+rewrite. `test_symbol_table.py` and `test_symbol_table_properties.py`
+use only the public API and pin no changed text, so they are expected to
+pass unchanged; any change is recorded in the implementation notes. The
+serialization contract's parameter and the benchmarks keep their
+spelling.
