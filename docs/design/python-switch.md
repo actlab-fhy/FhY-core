@@ -98,13 +98,13 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.6: tests migrated, and the interface suite (21; see "S12.5 and S12.6 status")
   - [x] S12.7: benchmarks after, and docs (every row faster or within 10%; see "S12 benchmarks")
 - [ ] S11: types, in two parts (see "S11: types"; "Needs the user" is empty)
-  - [ ] S11a: lattice, poset, the type representations and the dispatchers
+  - [x] S11a: lattice, poset, the type representations and the dispatchers. The suite is green (7,611 passed), slow tests pass (7,644), properties pass (282), `tests_minimal` passes (5,701 passed, 626 skipped), lint and mypy are clean, and the Rust gate passes (3,492; 3,524 with all features)
     - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
     - [x] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification; 216 new tests, see "S11a.2 implementation notes")
     - [x] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
     - [x] S11a.4: the Python switch, and `networkx` out of the dependencies
     - [x] S11a.5: tests migrated, and the interface suites
-    - [ ] S11a.6: benchmarks after, and docs
+    - [x] S11a.6: benchmarks after, and docs (every row faster or within 10% except `==` and `hash` of a type and a frame's hash, T-1's structural semantics; see "S11a benchmarks")
   - [ ] S11b: type checking
     - [ ] S11b.1: type-checking benchmarks, and the baseline
     - [ ] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
@@ -13427,4 +13427,165 @@ Python-defined data type bound and returned as itself, a handler's
 exception as the same object, a deferred comparison error, a
 `KeyboardInterrupt`, a wrong result type, T-6 for a built-in subclass's
 handler; and the helpers' argument checks and returned enum members.
+
+### S11a status
+
+S11a was implemented on 2026-09-26 in eight commits after the rebase: the
+benchmarks and their baseline (91d5180); the core's `lattice` and `types`
+modules, test-first (597d55c), and the removal of the proptest seeds the
+stubbed run wrote (3fba5fa); the binding (77b3140); the Python switch,
+marked breaking (fb72b65); the migrated tests and the interface suites
+(5e66d99); and these docs, with the equality fast paths the benchmarks
+called for. No test was skipped or deleted without a rewrite. At the end:
+`pytest` 7,611 passed, `-m "not very_slow"` 7,644 passed, the `property`
+session 282 passed, `tests_minimal` 5,701 passed and 626 skipped, nox
+`lint` and `type_check` clean, `tests/test_rs_stub.py` green, and the Rust
+gate green: fmt, clippy `--all-targets -D warnings` with and without
+`--all-features`, 3,492 tests and 3,524 with all features (the `z3`
+feature against the z3-solver wheel's libz3 4.16, as S8.3 builds it), doc
+`-D warnings`, the public-paths checks, deny, and `cargo +1.85 check` with
+and without the `z3` feature.
+
+### S11a benchmarks (before and after)
+
+Median time per call of `benchmarks/test_types.py`, `pytest
+benchmarks/test_types.py -n 0 --benchmark-only`, on the S0 machine with
+Python 3.11.13 and pytest-benchmark 5.3.0. "Before" is 91d5180, the S11a.1
+baseline's tree, exported with `git archive` under `target/` and built
+there; "after" is the S11a.6 tree. The two ran three times each,
+interleaved, with a load average of 1 to 4, and the table lists the best of
+the three medians; the "before" column agrees with the S11a.1 table within
+6%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_bind_template_of_a_templated_array` | 11.8 µs | 2.41 µs | 0.20 |
+| `test_bind_template_through_a_python_type` | 12.3 µs | 3.02 µs | 0.25 |
+| `test_data_type_is_a_data_type` | 335 ns | 154 ns | 0.46 |
+| `test_environment_empty` | 2.06 µs | 724 ns | 0.35 |
+| `test_environment_structural_equivalence` | 4.15 µs | 173 ns | 0.04 |
+| `test_environment_with_binding` | 2.34 µs | 834 ns | 0.36 |
+| `test_index_type_construction` | 4.89 µs | 488 ns | 0.10 |
+| `test_lattice_construction_of_the_integer_promotion_order` | 64.3 µs | 4.64 µs | 0.07 |
+| `test_lattice_is_lattice_of_a_powerset` | 8.85 ms | 15.9 µs | 0.00 |
+| `test_lattice_join` | 70.3 µs | 266 ns | 0.00 |
+| `test_lattice_meet` | 69.4 µs | 264 ns | 0.00 |
+| `test_lattice_verify_of_the_integer_promotion_order` | 12.5 ms | 22.5 µs | 0.00 |
+| `test_numerical_type_construction[scalar]` | 3.97 µs | 191 ns | 0.05 |
+| `test_numerical_type_construction[shape_2]` | 3.93 µs | 339 ns | 0.09 |
+| `test_numerical_type_data_type_access` | 93 ns | 58 ns | 0.62 |
+| `test_numerical_type_eq` | 67 ns | 119 ns | 1.78 |
+| `test_numerical_type_hash` | 75 ns | 91 ns | 1.21 |
+| `test_numerical_type_shape_access` | 148 ns | 105 ns | 0.71 |
+| `test_numerical_type_str` | 1.79 µs | 506 ns | 0.28 |
+| `test_poset_construction_of_a_50_chain` | 245.1 µs | 27.7 µs | 0.11 |
+| `test_poset_contains` | 142 ns | 64 ns | 0.45 |
+| `test_poset_is_less_than_across_a_50_chain` | 22.5 µs | 117 ns | 0.01 |
+| `test_poset_iter_of_a_50_chain` | 30.8 µs | 999 ns | 0.03 |
+| `test_poset_iter_stable_of_a_50_chain` | 115.9 µs | 10.7 µs | 0.09 |
+| `test_primitive_data_type_construction` | 3.23 µs | 126 ns | 0.04 |
+| `test_promote_core_data_types[float_complex]` | 62.1 µs | 132 ns | 0.00 |
+| `test_promote_core_data_types[integer]` | 71.3 µs | 121 ns | 0.00 |
+| `test_resolve_literal_core_data_type` | 73.6 µs | 285 ns | 0.00 |
+| `test_structural_equivalence[index]` | 1.06 µs | 484 ns | 0.46 |
+| `test_structural_equivalence[numerical_2d]` | 2.17 µs | 455 ns | 0.21 |
+| `test_structural_equivalence[primitive]` | 543 ns | 435 ns | 0.80 |
+| `test_substitute_template_of_a_templated_array` | 8.31 µs | 2.72 µs | 0.33 |
+| `test_template_data_type_construction` | 4.1 µs | 386 ns | 0.09 |
+| `test_type_deserialize_from_dict` | 22 µs | 13.2 µs | 0.60 |
+| `test_type_pickle_round_trip` | 13.3 µs | 7.83 µs | 0.59 |
+| `test_type_serialize_to_dict` | 1.78 µs | 1.53 µs | 0.86 |
+| `test_unify_expression_through_a_chain_of_10` | 8.39 µs | 8.07 µs | 0.96 |
+| `test_unify_of_a_templated_array` | 22.6 µs | 3.73 µs | 0.16 |
+| `test_unify_of_index_types` | 13.7 µs | 2.62 µs | 0.19 |
+| `test_variable_symbol_table_frame_construction` | 1.05 µs | 957 ns | 0.91 |
+| `test_variable_symbol_table_frame_hash` | 198 ns | 220 ns | 1.11 |
+
+- **Promotion and literal resolution** are 250 to 560 times faster: a
+  bit-mask join where Python searched a networkx lattice per call.
+- **The lattice and the poset** are 10 to 800 times faster: an order query
+  is a bit test (22 µs to 119 ns across a 50-chain), a meet or join a scan
+  of up-sets (70 µs to 260 ns), and `verify` of the nine-element promotion
+  order takes 23 µs, down from 12.4 ms.
+- **Construction** is 10 to 25 times faster (a type in 125 to 410 ns), since
+  the Rust class checks and stores its fields without `FrozenMixin`'s
+  Python setup.
+- **The dispatchers** are 3 to 6 times faster for the built-in rules, and 4
+  times faster through a Python-defined type's handlers; the environment's
+  operations 3 to 14 times.
+- **Serialization** gains less, 1.2 to 1.7 times: the envelope and the
+  family's type-id lookup stay Python.
+
+**Three rows are slower than 10%, all from T-1**, and need the
+maintainer's decision (cross-cutting rule 5; CONTRIBUTING "Replacing a
+Python class"):
+
+| Benchmark | after / before | Why | Who pays it |
+|---|--:|---|---|
+| `test_numerical_type_eq` | 1.78 | `==` compares the data types and the dimensions structurally (T-1, D-S11-10), where Python compared identities; two separately built `int32[4, 8]`s are equal now, and were not before | a comparison of two types that are not the same object; the same object answers at once (51 ns) |
+| `test_numerical_type_hash` | 1.21 | the structural hash is computed once and cached, but reading it crosses into the extension, where Python read the object's id | hashing a type, as a dict key or a set member |
+| `test_variable_symbol_table_frame_hash` | 1.11 | the frame's dataclass hash hashes its type, as above | a symbol-table frame used as a key |
+
+The first run after the switch measured `==` at 5.2 times and `hash` at
+2.4: every comparison ran in a context, and two literal expressions
+compared through the tree walk's work list. Two changes in this commit
+brought them to the table: a comparison or hash of values without a
+Python-defined part runs in Rust alone, without a context, and the same
+object is equal to itself at once; and the core's `Expression` equality
+compares two leaves directly, without the walk (`expression/node.rs`).
+
+### S11a implementation notes
+
+Choices the decisions left open, made while implementing S11a.3 to
+S11a.6, and where the shape differs from the plan (S11a.2's are in its own
+notes):
+
+- **Freezing the open bases.** `FrozenMixin` cannot be a base beside a
+  Rust class: its `__slots__` would give the class a second instance
+  layout. So `Type` and `DataType` share a private `_FrozenAfterInit`
+  that implements the mixin's contract with its flag and its `__init__`
+  wrap, and are registered as virtual `FrozenMixin`s. A Python-defined
+  subclass sets attributes in its `__init__` and is frozen after the
+  outermost call, as before; the mixin's field-type check, which ran on a
+  `FrozenMixin` subclass's first instantiation, no longer runs for them.
+  The built-in classes are always frozen through their Rust classes. The
+  environment keeps the mixin's `__setattr__` in Python, frozen except
+  inside a subclass's `__init__`, since a Rust-level `__setattr__` would
+  make `object.__setattr__` refuse the instance.
+- **Environment subclasses.** A subclass that defines `__init__` receives
+  its constructor arguments there; the Rust base then starts empty and
+  reads none. Derived environments are built through `__new__` with a
+  private state object and get a copy of the receiver's instance
+  dictionary; pickles call the private class method `_from_tables` and
+  restore the dictionary as the state, so an unpickled subclass keeps its
+  attributes without its `__init__` running.
+- **Objects handed back.** Each dispatcher call runs in a context that
+  remembers the objects of the values it read: types by handle, data types
+  by value, expressions by node identity, identifiers by id. A value the
+  core returns unchanged is its object again; a binding call that learns
+  nothing returns the environment it was given, and a substitution that
+  changes nothing returns its type. Other values are built through the
+  public classes, and an expression through the materializer, which reuses
+  the known expression objects.
+- **Handlers.** The adapter asks `dispatcher.dispatch(cls)` and compares
+  the result with `dispatcher.registry[object]`; the six defaults are thin
+  Python functions over one `_rs` function each, which the built-in classes
+  are also registered to. Of a Python-defined *type*, the core only calls
+  the structural-equivalence handler itself (inside an environment or a
+  default rule); its binding, substitution and unification handlers run
+  when Python dispatches to them. Of a Python-defined *data type*, the core
+  calls every handler, since a numerical type holds one. The interface
+  suite's handler tests use a data type for that reason.
+- **Texts and argument checks.** The poset's and lattice's messages are the
+  core's text around the elements' `str` (their `repr` in `verify`); the
+  environment and the dispatchers raise `TypeError` in S2's style for an
+  argument of the wrong type, and `bind_template` against a value that is
+  no type raises the kind mismatch of the pattern's rule.
+- **`networkx`** left `pyproject.toml` and `uv.lock`; nothing else used it.
+  The cosmic-ray configs of `lattice`, `poset`, `types_core` and
+  `types_dispatch` now mutate the thin Python layers, as `expression_core`'s
+  has since S4.
+- **Not done here, as planned:** a serde form of `Type` and `DataType`
+  (D-S11-16); iterative chasing of an expression-binding chain deeper than
+  the stack (S11a.2's notes).
 

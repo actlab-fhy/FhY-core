@@ -682,9 +682,19 @@ impl PyTypeUnificationEnvironment {
             types: HashMap::new(),
             expressions: HashMap::new(),
         };
-        read_table(data_type_bindings, Table::DataTypes, &mut value, &mut objects.data_types)?;
+        read_table(
+            data_type_bindings,
+            Table::DataTypes,
+            &mut value,
+            &mut objects.data_types,
+        )?;
         read_table(type_bindings, Table::Types, &mut value, &mut objects.types)?;
-        read_table(expression_bindings, Table::Expressions, &mut value, &mut objects.expressions)?;
+        read_table(
+            expression_bindings,
+            Table::Expressions,
+            &mut value,
+            &mut objects.expressions,
+        )?;
         Self::instantiate(cls, value, objects, None)
     }
 

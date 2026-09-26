@@ -46,8 +46,35 @@ macro_rules! impl_public_class {
     };
 }
 
-/// Return `value` compared with `other` by `is_equal`, or `NotImplemented`
-/// when `other` is no value of the tier `read` reads.
+/// A core value whose equality may call Python: one with a part a Python
+/// class defines.
+pub(crate) trait MayCallPython {
+    /// Return whether comparing or hashing the value may call Python.
+    fn may_call_python(&self) -> bool;
+}
+
+impl MayCallPython for DataType {
+    fn may_call_python(&self) -> bool {
+        matches!(self, DataType::Extension(_))
+    }
+}
+
+impl MayCallPython for Type {
+    fn may_call_python(&self) -> bool {
+        match self {
+            Type::Numerical(numerical) => numerical.data_type().may_call_python(),
+            Type::Index(_) => false,
+            _ => true,
+        }
+    }
+}
+
+/// Return `value` compared with `other` for `==` (`expected` true) or `!=`,
+/// or `NotImplemented` when `other` is no value of the tier `read` reads.
+///
+/// The same object is equal to itself, and two values without a part a
+/// Python class defines compare in Rust alone; any other comparison runs in
+/// a context, since it calls Python's `==`.
 fn compare<'py, T>(
     slf: &Bound<'py, PyAny>,
     other: &Bound<'py, PyAny>,
@@ -56,19 +83,24 @@ fn compare<'py, T>(
     expected: bool,
 ) -> PyResult<Bound<'py, PyAny>>
 where
-    T: PartialEq,
+    T: PartialEq + MayCallPython,
 {
     let py = slf.py();
-    run_in_context(py, None, |_context| match read(other) {
-        Some(other) => Ok(PyBool::new(py, (*value == other) == expected)
-            .to_owned()
-            .into_any()),
-        None => Ok(py.NotImplemented().into_bound(py)),
-    })
+    let answer = |is_equal: bool| PyBool::new(py, is_equal == expected).to_owned().into_any();
+    if slf.is(other) {
+        return Ok(answer(true));
+    }
+    let Some(other) = read(other) else {
+        return Ok(py.NotImplemented().into_bound(py));
+    };
+    if !value.may_call_python() && !other.may_call_python() {
+        return Ok(answer(*value == other));
+    }
+    run_in_context(py, None, |_context| Ok(answer(*value == other)))
 }
 
 /// Return the hash of `value`, computed once into `cache`.
-fn cached_hash<T: std::hash::Hash>(
+fn cached_hash<T: std::hash::Hash + MayCallPython>(
     py: Python<'_>,
     cache: &OnceLock<u64>,
     value: &T,
@@ -76,7 +108,11 @@ fn cached_hash<T: std::hash::Hash>(
     if let Some(hash) = cache.get() {
         return Ok(*hash);
     }
-    let hash = run_in_context(py, None, |_context| Ok(hash_value(value)))?;
+    let hash = if value.may_call_python() {
+        run_in_context(py, None, |_context| Ok(hash_value(value)))?
+    } else {
+        hash_value(value)
+    };
     Ok(*cache.get_or_init(|| hash))
 }
 

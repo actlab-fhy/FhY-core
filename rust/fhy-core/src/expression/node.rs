@@ -730,6 +730,17 @@ impl PartialEq for Expression {
     /// identifiers with the same ids, equal literals, children equal
     /// in order.
     fn eq(&self, other: &Self) -> bool {
+        let is_leaf = |expression: &Self| {
+            matches!(
+                expression.kind(),
+                ExpressionKind::Identifier(_) | ExpressionKind::Literal(_)
+            )
+        };
+        if is_leaf(self) || is_leaf(other) {
+            // A leaf has no children, so its data decides, without the walk's
+            // work list.
+            return is_node_data_equal(self, other, &|left, right| left == right);
+        }
         is_tree_equal(self, other, true, &|left, right| left == right)
     }
 }

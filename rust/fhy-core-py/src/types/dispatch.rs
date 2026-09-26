@@ -21,10 +21,11 @@ use crate::error::{IntoPyErr, IntoPyResult};
 use crate::expression::read_big_int;
 
 use super::adapter::run_in_context;
-use super::classes::{PyPrimitiveDataType, build_not_a_type_error};
+use super::classes::{MayCallPython, PyPrimitiveDataType, build_not_a_type_error};
 use super::convert::{
     data_type_to_python, environment_to_python, expression_to_python, read_data_type,
-    read_environment, read_expression, read_type, type_to_python,
+    read_data_type_value, read_environment, read_expression, read_type, read_type_value,
+    type_to_python,
 };
 use super::enums::{
     core_data_type_to_python, read_core_data_type, read_type_qualifier, type_qualifier_to_python,
@@ -101,17 +102,30 @@ pub(crate) fn types_is_structurally_equivalent(
     left: &Bound<'_, PyAny>,
     right: &Bound<'_, PyAny>,
 ) -> PyResult<bool> {
-    run_in_context(left.py(), None, |context| {
-        if let Some(left) = read_type(context, left)? {
-            return Ok(read_type(context, right)?
-                .is_some_and(|right| left.is_structurally_equivalent(&right)));
+    let py = left.py();
+    if let Some(left) = read_type_value(left) {
+        let Some(right) = read_type_value(right) else {
+            return Ok(false);
+        };
+        if !left.may_call_python() && !right.may_call_python() {
+            return Ok(left.is_structurally_equivalent(&right));
         }
-        if let Some(left) = read_data_type(context, left)? {
-            return Ok(read_data_type(context, right)?
-                .is_some_and(|right| left.is_structurally_equivalent(&right)));
+        return run_in_context(py, None, |_context| {
+            Ok(left.is_structurally_equivalent(&right))
+        });
+    }
+    if let Some(left) = read_data_type_value(left) {
+        let Some(right) = read_data_type_value(right) else {
+            return Ok(false);
+        };
+        if !left.may_call_python() && !right.may_call_python() {
+            return Ok(left.is_structurally_equivalent(&right));
         }
-        Ok(false)
-    })
+        return run_in_context(py, None, |_context| {
+            Ok(left.is_structurally_equivalent(&right))
+        });
+    }
+    Ok(false)
 }
 
 /// Bind the type `pattern` against `actual` in `environment`, and return the
