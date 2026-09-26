@@ -11,7 +11,8 @@ import copy
 import logging
 import pickle
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import IntEnum
 from typing import Any
@@ -23,12 +24,15 @@ from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintBindings,
     ConstraintError,
     ConstraintOutcome,
+    ConstraintSystem,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
     SymbolicPredicate,
+    create_constraint_system,
     does_member_lift_to_expression,
 )
 from fhy_core.symbolic.expression import (
@@ -39,14 +43,18 @@ from fhy_core.symbolic.expression import (
     NonBooleanLogicalOperandError,
 )
 from fhy_core.symbolic.solver import (
+    SatResult,
     Simplifier,
     Solver,
     get_default_solver,
     set_default_solver,
 )
+from fhy_core.symbolic.symbol_type import SymbolType
+from fhy_core.term import excluded_from_equivalence
 from fhy_core.traits import FrozenMixin, FrozenMutationError
 from fhy_core.utils.override import override
 
+from ..conftest import RecordingSmtSolver
 from .conftest import SET_KINDS, mock_identifier
 
 _CORE_LOGGER = "fhy_core.symbolic.constraint.core"
@@ -632,3 +640,232 @@ def test_concurrent_evaluations_agree(x: Identifier) -> None:
 
     expected = [ConstraintOutcome.SATISFIED] * 5 + [ConstraintOutcome.VIOLATED] * 5
     assert results == [expected] * 8
+
+
+# =============================================================================
+# The system (S13b)
+# =============================================================================
+
+
+_PROBE_CALLS: dict[str, list[tuple[str, Any]]] = {}
+"""The calls made on the probes, by label; each test uses its own labels."""
+
+
+@dataclass(frozen=True, eq=False)
+class _Probe(Constraint):
+    """A Python-defined constraint that records the calls the system makes."""
+
+    label: str
+    outcome: Any = field(default=None, metadata=excluded_from_equivalence())
+
+    @property
+    def calls(self) -> list[tuple[str, Any]]:
+        """Return the calls made on probes of this label, in order."""
+        return _PROBE_CALLS.setdefault(self.label, [])
+
+    @override
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        return frozenset()
+
+    @override
+    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
+        self.calls.append(("evaluate", bindings))
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return ConstraintOutcome.SATISFIED if self.outcome is None else self.outcome
+
+    @override
+    def convert_to_expression(self) -> Expression:
+        self.calls.append(("convert", None))
+        return LiteralExpression(True)
+
+    @override
+    def build_ordering_key(self) -> str:
+        self.calls.append(("key", None))
+        return f"_Probe|{self.label}"
+
+    @override
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        return {"label": self.label}
+
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: Any) -> "_Probe":
+        return cls(str(data["label"]))
+
+    @override
+    def __repr__(self) -> str:
+        return f"_Probe({self.label})"
+
+    @override
+    def __str__(self) -> str:
+        return self.label
+
+
+def test_system_is_a_thin_frozen_subclass_holding_the_objects_given(
+    x: Identifier,
+) -> None:
+    """Test the system's class structure and the members it returns."""
+    member = InSetConstraint(x, [1])
+    probe = _Probe("probe")
+    system = ConstraintSystem((member, probe))
+
+    assert issubclass(ConstraintSystem, _rs.ConstraintSystem)
+    assert isinstance(system, SymbolicPredicate)
+    assert isinstance(system, FrozenMixin)
+    assert system.constraints == (probe, member)
+    assert system.constraints[0] is probe
+    assert system != ConstraintSystem((member, probe))
+    with pytest.raises(FrozenMutationError, match='"constraints"'):
+        system.constraints = ()  # type: ignore[misc]
+
+
+def test_a_python_member_key_is_read_once_when_the_system_is_built() -> None:
+    """Test the ordering key of a Python-defined member is read on construction."""
+    probe = _Probe("probe_key")
+
+    system = ConstraintSystem((probe,))
+    system.evaluate_with_bindings({})
+
+    assert [call for call, _ in probe.calls].count("key") == 1
+
+
+def test_a_python_member_receives_a_snapshot_of_the_bindings(x: Identifier) -> None:
+    """Test a Python-defined member is handed a dict of the bindings given."""
+    probe = _Probe("probe_snapshot")
+    token = _Token(1)
+    system = create_constraint_system(probe)
+
+    system.evaluate_with_bindings(_bind(x, token))
+
+    ((_, bindings),) = [call for call in probe.calls if call[0] == "evaluate"]
+    assert isinstance(bindings, dict)
+    assert bindings[x] is token
+
+
+def test_a_python_member_error_propagates_as_itself() -> None:
+    """Test an exception a Python-defined member raises reaches the caller."""
+    error = RuntimeError("probe failed")
+    system = create_constraint_system(_Probe("probe", error))
+
+    with pytest.raises(RuntimeError) as raised:
+        system.evaluate_with_bindings({})
+    assert raised.value is error
+
+
+def test_a_python_member_returning_no_outcome_is_refused() -> None:
+    """Test a member whose evaluation returns another value raises ``TypeError``."""
+    system = create_constraint_system(_Probe("probe", "yes"))
+
+    with pytest.raises(TypeError, match="ConstraintOutcome"):
+        system.evaluate_with_bindings({})
+
+
+def test_a_member_that_is_no_constraint_is_refused() -> None:
+    """Test a system refuses a member that is not a ``Constraint``."""
+    with pytest.raises(ConstraintError, match="must be Constraint instances"):
+        ConstraintSystem((object(),))  # type: ignore[arg-type]
+
+
+def test_system_logs_each_undecided_member_on_its_module_logger(
+    x: Identifier, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test an undecided member is logged at DEBUG, and its own record kept."""
+    member = InSetConstraint(x, [1])
+    system = create_constraint_system(member)
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = system.evaluate_with_bindings({})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    system_records = [
+        r for r in caplog.records if r.name == "fhy_core.symbolic.constraint.system"
+    ]
+    core_records = [r for r in caplog.records if r.name == _CORE_LOGGER]
+    assert [r.getMessage() for r in system_records] == [
+        f"ConstraintSystem.evaluate_with_bindings: member {member!r} is undecided "
+        "under the given bindings; the conjunction reports UNDECIDED unless a later "
+        "member is violated"
+    ]
+    assert (
+        core_records[0]
+        .getMessage()
+        .startswith("InSetConstraint.evaluate_with_bindings: no binding for variable")
+    )
+
+
+@pytest.mark.usefixtures("restore_default_solver")
+def test_system_questions_convert_python_members_through_their_methods(
+    x: Identifier,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
+) -> None:
+    """Test a question asks a Python-defined member for its expression."""
+    backend = plug_smt_solver(SatResult.SAT)
+    probe = _Probe("probe_convert")
+    system = create_constraint_system(probe, InSetConstraint(x, [1]))
+
+    outcome = system.check_satisfiability({x: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert ("convert", None) in probe.calls
+    assert len(backend.checks) == 1
+
+
+def test_check_implication_refuses_a_value_that_is_no_system(x: Identifier) -> None:
+    """Test ``check_implication`` raises ``TypeError`` for another value."""
+    system = create_constraint_system(InSetConstraint(x, [1]))
+
+    with pytest.raises(TypeError, match="ConstraintSystem"):
+        system.check_implication(object(), {})  # type: ignore[arg-type]
+
+
+def test_systems_with_python_members_compare_through_their_methods(
+    x: Identifier,
+) -> None:
+    """Test a pair of Python-defined members compares by the member's method."""
+    left = create_constraint_system(_Probe("probe"), InSetConstraint(x, [1]))
+    right = create_constraint_system(_Probe("probe"), InSetConstraint(x, [1]))
+    other = create_constraint_system(_Probe("other"), InSetConstraint(x, [1]))
+
+    assert left.is_structurally_equivalent(right)
+    assert left.is_alpha_equivalent(right)
+    assert not left.is_structurally_equivalent(other)
+    assert not left.is_structurally_equivalent(create_constraint_system())
+
+
+def test_system_pickles_and_round_trips_its_payload() -> None:
+    """Test a system pickles and deserializes to an equivalent system."""
+    x = Identifier("x")
+    system = create_constraint_system(
+        InSetConstraint(x, [2, 1]), EquationConstraint(IdentifierExpression(x) > 0)
+    )
+
+    restored = ConstraintSystem.deserialize_from_dict(system.serialize_to_dict())
+
+    assert restored.is_structurally_equivalent(system)
+    assert pickle.loads(pickle.dumps(system)).is_structurally_equivalent(system)
+
+
+@pytest.mark.usefixtures("restore_default_solver")
+def test_concurrent_system_questions_agree(
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
+) -> None:
+    """Test eight threads asking one system with a Python backend agree."""
+    plug_smt_solver(SatResult.UNSAT)
+    x = Identifier("x")
+    system = create_constraint_system(EquationConstraint(IdentifierExpression(x) > 0))
+    results: list[ConstraintOutcome] = []
+    lock = threading.Lock()
+
+    def ask() -> None:
+        outcome = system.check_satisfiability({x: SymbolType.INT})
+        with lock:
+            results.append(outcome)
+
+    threads = [threading.Thread(target=ask) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert results == [ConstraintOutcome.VIOLATED] * 8

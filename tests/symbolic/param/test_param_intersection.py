@@ -60,9 +60,11 @@ from fhy_core.symbolic.param.domains import (
     IntervalIntegerDomain,
     OrdinalDomain,
 )
+from fhy_core.symbolic.solver import SatResult
 from fhy_core.term import compared_as_reference
 from fhy_core.utils.override import override
 
+from ..conftest import RecordingSmtSolver
 from .conftest import (
     assert_all_satisfied,
     assert_all_valid,
@@ -610,27 +612,24 @@ def test_integer_intersection_z3_proven_empty_raises_param_error() -> None:
 
 @pytest.mark.sympy
 def test_intersection_accepts_result_when_z3_returns_unknown(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
     """Test intersection is accepted (not raised) when Z3 cannot decide feasibility.
 
-    Monkeypatches ``check_expression_satisfiability`` -- the seam
-    ``ConstraintSystem.check_satisfiability`` calls on behalf of the
-    domain's ``has_feasible_value`` -- to always return ``None`` (Z3's
-    "unknown" outcome), so the factory sees ``UNDECIDED`` and must not read
-    it as a proven-empty intersection. Asserting the tightened bounds
+    Plugs a backend answering ``unknown`` into the default solver, which
+    ``ConstraintSystem.check_satisfiability`` asks on behalf of the
+    domain's ``has_feasible_value``, so the factory sees ``UNDECIDED`` and
+    must not read it as a proven-empty intersection. Asserting the tightened bounds
     (rather than just ``result is not None``, which a ``Param``-or-raise
     factory can never fail) confirms the returned param is the real, live
     intersection and not some degenerate stand-in.
     """
     left = create_integer_param_with_lower_bound(0)
     right = create_integer_param_with_upper_bound(10)
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        lambda *args, **kwargs: None,
-    )
+    backend = plug_smt_solver(SatResult.unknown("incomplete"))
 
     result = create_intersection_param(left, right)
+    assert backend.checks, "the intersection must ask the backend"
 
     assert_all_satisfied(result, [0, 5, 10])
     assert_none_satisfied(result, [-1, 11])

@@ -44,6 +44,7 @@ from fhy_core.symbolic.expression import (
     make_binary_expression,
     piecewise,
 )
+from fhy_core.symbolic.solver import SatResult
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import (
     compared_as_reference,
@@ -53,6 +54,7 @@ from fhy_core.term import (
 from fhy_core.traits import Frozen, FrozenMutationError
 from fhy_core.utils.override import override
 
+from ..conftest import RecordingSmtSolver
 from .conftest import SerializableEqualHashable, mock_identifier
 
 # =============================================================================
@@ -877,15 +879,18 @@ def test_check_satisfiability_needs_sorts_only_for_the_lowered_conjunction() -> 
 
 
 def _extract_reported_missing_names(error: MissingSymbolTypeError) -> str:
-    """Return the identifier listing a `MissingSymbolTypeError` message carries.
+    """Return the name hints a `MissingSymbolTypeError` message lists.
 
-    The listing is everything after the message's final ``": "``. Reading
-    it out separately keeps an assertion off the fixed prefix, which
-    already contains several of the single-character name hints the tests
-    use and would otherwise satisfy a substring match no matter which
-    identifier the error actually reported.
+    The listing is everything after the message's final ``": "``, each
+    identifier written ``name::id`` and ordered by id (C-7 of the S13
+    design); this returns the name hints, joined by ``", "``. Reading it
+    out separately keeps an assertion off the fixed prefix, which already
+    contains several of the single-character name hints the tests use and
+    would otherwise satisfy a substring match no matter which identifier
+    the error actually reported.
     """
-    return str(error).rpartition(": ")[2].rstrip(".")
+    listing = str(error).rpartition(": ")[2].rstrip(".")
+    return ", ".join(item.rpartition("::")[0] for item in listing.split(", "))
 
 
 def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
@@ -928,12 +933,11 @@ def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -
 def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order() -> (
     None
 ):
-    """Test two missing entries are both reported, ordered by name hint.
+    """Test two missing entries are both reported, ordered by id.
 
-    The identifiers are declared so that their ``id`` order (which drives
-    the free-identifier set's iteration order) is the reverse of their
-    name-hint order, so a listing that skipped the sort would come out
-    ``b, a``.
+    The identifiers are declared so that their ``id`` order is the reverse
+    of their name-hint order: the core names them by id (C-7 of the S13
+    design), so the listing is ``b, a``.
     """
     b = mock_identifier("b", 0)
     a = mock_identifier("a", 1)
@@ -947,7 +951,7 @@ def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order()
         system.check_satisfiability({})
 
     assert _extract_reported_missing_names(exception_info.value) == (
-        f"{a.name_hint}, {b.name_hint}"
+        f"{b.name_hint}, {a.name_hint}"
     )
 
 
@@ -1031,22 +1035,16 @@ def test_check_satisfiability_with_bindings_propagates_constraint_error() -> Non
 
 
 def test_check_satisfiability_empty_system_does_not_invoke_the_solver(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test the empty system short-circuits to SATISFIED without calling z3."""
-
-    def _fail_if_called(*args: object, **kwargs: object) -> bool | None:
-        raise AssertionError("check_expression_satisfiability must not be called")
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fail_if_called,
-    )
+    """Test the empty system short-circuits to SATISFIED without asking a backend."""
+    backend = plug_smt_solver(SatResult.UNSAT)
     system = create_constraint_system()
 
     outcome = system.check_satisfiability({})
 
     assert outcome is ConstraintOutcome.SATISFIED
+    assert backend.checks == []
 
 
 @pytest.mark.z3
@@ -1264,26 +1262,20 @@ def test_check_satisfiability_with_closed_conjunction_needs_no_symbol_types() ->
 
 
 def test_check_satisfiability_with_bindings_empty_system_does_not_invoke_the_solver(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test the empty system short-circuits to SATISFIED without calling z3.
+    """Test the empty system short-circuits to SATISFIED without asking a backend.
 
     Mirrors ``test_check_satisfiability_empty_system_does_not_invoke_the_solver``
     for the bindings-aware entry point.
     """
-
-    def _fail_if_called(*args: object, **kwargs: object) -> bool | None:
-        raise AssertionError("check_expression_satisfiability must not be called")
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fail_if_called,
-    )
+    backend = plug_smt_solver(SatResult.UNSAT)
     system = create_constraint_system()
 
     outcome = system.check_satisfiability_with_bindings({}, {})
 
     assert outcome is ConstraintOutcome.SATISFIED
+    assert backend.checks == []
 
 
 @pytest.mark.z3
@@ -1782,58 +1774,30 @@ def test_check_satisfiability_with_bindings_missing_symbol_type_raises_on_hazard
 
 
 def test_check_satisfiability_forwards_timeout_milliseconds_to_the_solver_seam(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test `check_satisfiability` forwards `timeout_milliseconds` to the solver."""
+    """Test `check_satisfiability` forwards `timeout_milliseconds` to the backend."""
+    backend = plug_smt_solver(SatResult.SAT)
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
-    captured: dict[str, Any] = {}
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        captured["timeout_milliseconds"] = timeout_milliseconds
-        return True
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
-    )
 
     outcome = system.check_satisfiability(
         {x: SymbolType.INT}, timeout_milliseconds=2500
     )
 
     assert outcome is ConstraintOutcome.SATISFIED
-    assert captured["timeout_milliseconds"] == 2500
+    assert [timeout for _, timeout in backend.checks] == [2500]
 
 
 def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
     """Test `check_satisfiability_with_bindings` forwards `timeout_milliseconds`."""
+    backend = plug_smt_solver(SatResult.SAT)
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
-    )
-    captured: dict[str, Any] = {}
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        captured["timeout_milliseconds"] = timeout_milliseconds
-        return True
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
     )
 
     outcome = system.check_satisfiability_with_bindings(
@@ -1841,7 +1805,7 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
     )
 
     assert outcome is ConstraintOutcome.SATISFIED
-    assert captured["timeout_milliseconds"] == 1000
+    assert [timeout for _, timeout in backend.checks] == [1000]
 
 
 # =============================================================================
@@ -1850,30 +1814,17 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
 
 
 def test_check_satisfiability_solver_unknown_result_is_undecided(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test `check_satisfiability` maps a solver `None` (unknown) result to UNDECIDED.
+    """Test `check_satisfiability` maps a backend's `unknown` to UNDECIDED.
 
     Complements the `timeout_milliseconds` passthrough tests above, which
-    patch the same seam but always return `True`: this covers the
-    `_decide_satisfiability` branch where the solver itself is
+    plug a backend answering `sat`: this covers the backend itself being
     inconclusive.
     """
+    plug_smt_solver(SatResult.unknown("incomplete"))
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        return None
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
-    )
 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
@@ -1881,30 +1832,18 @@ def test_check_satisfiability_solver_unknown_result_is_undecided(
 
 
 def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test `check_satisfiability_with_bindings` maps solver `None` to UNDECIDED.
+    """Test `check_satisfiability_with_bindings` maps `unknown` to UNDECIDED.
 
     Mirrors `test_check_satisfiability_solver_unknown_result_is_undecided`
     for the bindings-aware entry point.
     """
+    plug_smt_solver(SatResult.unknown("incomplete"))
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
-    )
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        return None
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
     )
 
     outcome = system.check_satisfiability_with_bindings({x: 1}, {y: SymbolType.INT})
