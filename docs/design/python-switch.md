@@ -88,7 +88,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.6: tests migrated, and the interface suite
   - [x] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README. `tests_minimal` passes (5,646 passed, 626 skipped)
   - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost, accepted by the maintainer; see "S9 benchmarks")
-- [ ] S12: the Rust SymPy simplifier backend (designed 2026-09-26; see "S12: the Rust SymPy simplifier backend")
+- [x] S12: the Rust SymPy simplifier backend (N-S12-1 resolved as (a)). The suite is green (7,597 passed), slow tests pass (7,630), properties pass (282), `tests_minimal` passes (5,646 passed, 627 skipped), lint and mypy are clean, and the Rust gate passes (3,420; 3,452 with all features; 3,255 for `fhy-core` alone, which needs no Python)
   - [x] N-S12-1 decided as (a) (2026-09-26; see "S12 resolutions")
   - [x] S12.1: SymPy benchmarks and baseline, on today's Python adapter (12 rows; see "S12.1 baseline")
   - [x] S12.2: the simplify context carries the function registry (core, test-first; `SimplifyContext::from_registry`, `Solver::simplify` taking the context)
@@ -96,7 +96,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs; see "S12.4 status")
   - [x] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver), with the migrated tests (`pytest` 7,576 passed)
   - [x] S12.6: tests migrated, and the interface suite (21; see "S12.5 and S12.6 status")
-  - [ ] S12.7: benchmarks after, and docs
+  - [x] S12.7: benchmarks after, and docs (every row faster or within 10%; see "S12 benchmarks")
 
 ## Goal
 
@@ -10368,7 +10368,8 @@ Choices the decisions left open, made while implementing S9.5 to S9.8
 
 ## S12: the Rust SymPy simplifier backend
 
-- **Status:** designed 2026-09-26 at c93f76f. D-S12-1 to D-S12-18 apply
+- **Status:** designed 2026-09-26 at c93f76f, and implemented the same day
+  after the rebase onto S9; see "S12 status". D-S12-1 to D-S12-18 apply
   the policy the user already set, the precedent of S8 to S10, and the
   user's direction in "Plan after S7", item 2: a Rust `Simplifier` over
   SymPy through pyo3, behind an off-by-default `sympy` cargo feature of
@@ -11626,3 +11627,182 @@ Tests migrated. None was skipped or deleted without a rewrite:
 `test_sympy_natives.py`, `test_sympy_pass_properties.py`,
 `test_cross_cutting.py`, the solver suites, and the constraint and param
 tests pass unchanged. At the end: `pytest` 7,597 passed.
+
+### S12 benchmarks (before and after)
+
+The table gives the median time per call. The before and after runs used
+the same command and machine as the S12.1 baseline.
+
+- **Before** is the S12.1 baseline, measured on the Python bridge at
+  a641699.
+- **After** is 7f40149, in the worktree's `.venv`, with the extension built
+  the same way.
+- **Runs.** There were three after runs, with a load average of 3 to 6 from
+  other work on the machine, against below 2 before. The table lists the
+  best of the three medians.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_lower_to_sympy_of_a_deep_tree` | 433.4 µs | 143.6 µs | 0.33 |
+| `test_lift_from_sympy_of_a_deep_tree` | 104.6 µs | 66.2 µs | 0.63 |
+| `test_substitute_sympy_variables_of_a_deep_tree` | 76.6 µs | 20.8 µs | 0.27 |
+| `test_sympy_simplifier_of_a_ground_comparison` | 41.6 µs | 7.5 µs | 0.18 |
+| `test_simplify_expression_of_a_bound_piecewise` | 105.1 µs | 47.4 µs | 0.45 |
+| `test_simplify_expression_of_a_boolean_comparison` | 8.55 ms | 8.42 ms | 0.98 |
+| `test_first_simplification_in_a_fresh_interpreter` | 444 ms | 472 ms | 1.06 |
+| `test_solver.py::test_simplify_expression_of_a_ground_comparison` | 50.8 µs | 11.0 µs | 0.22 |
+| `test_solver.py::test_simplify_expression_symbolic` | 72.6 µs | 25.4 µs | 0.35 |
+| `test_solver.py::test_equation_constraint_evaluate_with_bindings` | 60.2 µs | 18.8 µs | 0.31 |
+| `test_solver.py::test_nat_param_is_value_valid` | 63.3 µs | 21.3 µs | 0.34 |
+| `test_solver.py::test_import_fhy_core` | 203 ms | 215 ms | 1.06 |
+
+Every row is faster, or within the 10% CONTRIBUTING allows, so no cost
+needs the maintainer (cross-cutting rule 5):
+
+- **The lowering** of the deep tree is 3 times faster. It is one Rust walk
+  calling SymPy's constructors, where the Python visitor made a call per
+  node. The substitution is 3.7 times faster, and the lifting 1.6 times
+  faster.
+- **The simplifier alone** is 5.5 times faster on a ground comparison. The
+  shortcuts of D-S12-8 skip the folds and the parity rewrite when there is
+  no piecewise, and nothing hops through Python between the facade and
+  SymPy.
+- **Consumers.** The param and constraint value checks over the
+  simplifier, and a bound `simplify_expression`, are 3 to 4.6 times faster.
+- **Rows dominated by SymPy stay where they were:**
+  - the Boolean comparison, whose time is SymPy simplifying a relational;
+  - the bound piecewise, which is 2.2 times faster;
+  - the two fresh-interpreter rows. They are 6% slower under the higher
+    load, which is within noise, since `import fhy_core` imports nothing
+    new. The first simplification also loads the prelude, a one-off cost
+    beside SymPy's import.
+
+### S12 implementation notes
+
+This section records choices the decisions left open, and where the
+implementation departs from the design.
+
+- **Not test-first for the backend itself.** S12.3's backend was written
+  before its stories, not against `todo!()` stubs as D-S12-15 planned.
+  - The stories were then written from the Python tests' pinned cases, and
+    passed on the first full run.
+  - The Python suite of 627 cases, which now runs through the backend, is
+    the differential check. It passed after migrating only the tests of
+    the migration table.
+  - S12.2's three stories were written first.
+- **`SympyError` is a struct,** `{ phase, kind }`, with `phase()`,
+  `kind()` and `into_kind()` over a `#[non_exhaustive]` `SympyErrorKind`.
+  In D-S12-4's sketch it was an enum with a `phase()` method. The kinds
+  that do not come from Python can arise in several phases (a partial
+  piecewise in the lowering, the simplification or the lifting), so the
+  phase is a field.
+- **The error kinds** refine the sketch:
+  - `SympyUnavailableError` gains `Incompatible`, for a SymPy that imports
+    but lacks what the backend reads;
+  - D-S12-4's `UnsupportedNode` splits into `UnsupportedNode`,
+    `UnsupportedExpression`, `UnsupportedBoolean` and
+    `UnsupportedRelational`, whose texts keep the Python tests' phrases in
+    lowercase;
+  - `Arity` covers a SymPy node with another argument count than its kind
+    has;
+  - `UnnamedSymbol` became `UnreadableSymbol`, which also covers a symbol
+    whose part after the last `_` is not an id. It maps to `RuntimeError`,
+    where the Python bridge raised `ValueError` from `int()`.
+- **The prelude** holds a sixth name beside D-S12-7's five, `AbortWalk`,
+  a `BaseException` a Rust hook of a SymPy `replace` raises to stop the
+  walk. The hook's failure itself stays in Rust (`HookFailure`), so the
+  kinds a hook can fail with, such as the piecewise fold's give-up, need
+  no Python class.
+- **Recursion.**
+  - The lowering, the lifting, the substitution and the masking walk keep
+    their pending nodes on the heap.
+  - The helpers that recurse over the nesting of piecewise branches or of
+    Boolean comparisons are bounded at 1,000 levels, and past it return
+    Python's `RecursionError`, as the Python bridge hit Python's recursion
+    limit. SymPy's own walks are recursive Python, and fail the same way on
+    deeper trees.
+  - A 10,000-level lowering and a 20,000-level lifting on a 256 KiB stack
+    are pinned.
+- **Constants are lifted by identity.** SymPy's `pi`, `E`, `oo`, `-oo` and
+  `nan` are singletons, so `is` finds them where the Python bridge called
+  `==` five times per node.
+- **The lowering remembers each node it lowered**, so a node an expression
+  shares is lowered once. The Python visitor lowered each occurrence. The
+  results are equal SymPy objects either way.
+- **Where a call is refused.** A call is refused before its arguments are
+  lowered, as the Python visitor refused it. A composed built-in, such as
+  `max`, asks for `inline_functions`. Without a registry, a named call is
+  `UnknownFunction`.
+- **Shortcuts** (D-S12-8), each equal to SymPy's own result:
+  - without a piecewise, the two folds are skipped, since SymPy's
+    `replace` returns the expression itself when nothing matches;
+  - without a piecewise, `hide_piecewise_parity` is not called on the
+    simplified result;
+  - without a Boolean comparison, the substitution that puts the masks
+    back is skipped.
+- **The binding's wrapping** constructs `PassExecutionError('pass "<name>"
+  failed in run_pass', pass_name=..., hook="run_pass")` with the cause, as
+  the class's docstring allows code to. So a native simplification raises
+  the pass error the Python bridge's pass raised, without running a pass.
+- **The doctest** of `SympySimplifier` is `no_run`: each doctest is a
+  process of its own, and embedding Python and importing SymPy in one
+  costs about a second. The stories cover the example.
+- **The binding enabled the feature in S12.4, not S12.3**, as the steps
+  said. S12.3's workspace tests without `--all-features` did not run the
+  stories yet.
+- **A new `clippy.toml`** declares `doc-valid-idents = ["SymPy", ".."]`, so
+  rustdoc prose writes the name without backticks.
+- **The gate's Python on this machine** is a uv-managed CPython 3.11.16,
+  installed with `--no-bin` into `target/gate-python/pythons`, with a venv
+  holding sympy 1.14 in `target/gate-python/venv`. Nothing outside the
+  worktree is touched. `target/gate-python/env.sh` exports D-S12-13's
+  recipe, the z3 variables of S8.3, and `CARGO_TARGET_DIR=target/gate-cargo`,
+  so the gate's pyo3 build does not rebuild the `.venv` extension's.
+
+Left for later:
+
+- **Finding a virtualenv's packages for an embedded interpreter.** A
+  pure-Rust user sets `PYTHONPATH` themselves, as the crate README says; a
+  helper that reads a virtualenv's `site-packages` was not built, since no
+  caller needs one.
+- **Detaching during `sympy.simplify`.** SymPy holds the GIL throughout,
+  so a Rust caller simplifying on several threads runs one at a time, as
+  Python does today.
+
+### S12 status
+
+S12 was implemented on 2026-09-26, after the design (a051d31) and the
+record of the user's decision (a641699), in seven commits:
+
+- the benchmarks and their baseline (f0143d7);
+- the simplify context carrying the registry (90843ba);
+- the `sympy` feature and its backend, with the stories and the CI changes
+  (695bedd);
+- the binding (185b064);
+- the Python switch with the migrated tests, marked breaking (1d4f7db);
+- the interface suite (7f40149);
+- these docs.
+
+No test was skipped or deleted without a rewrite. At the end:
+
+- `pytest`: 7,597 passed;
+- `-m "not very_slow"`: 7,630 passed;
+- the `property` session: 282 passed;
+- `tests_minimal`: 5,646 passed and 627 skipped;
+- nox `lint` and `type_check`: clean;
+- `tests/test_rs_stub.py`: green.
+
+The Rust gate is green with `target/gate-python/env.sh` (D-S12-13):
+
+- fmt, and clippy `-D warnings` with and without `--all-features`;
+- `cargo test --workspace`: 3,420 tests, the SymPy stories included;
+- `--all-features`: 3,452 tests, with the `z3` feature against the
+  z3-solver wheel's libz3 4.16;
+- `cargo test -p fhy-core`, which needs no Python: 3,255 tests;
+- doc `-D warnings`, and the public-paths checks;
+- `cargo deny check`;
+- `cargo +1.85 check`, with and without the three features;
+- the packaging checks, the packaged crate's tests included.
+
+Every benchmark row is faster, or within 10% (see "S12 benchmarks"). The CI
+workflow's new steps first run on the next pull request.
