@@ -4,7 +4,7 @@ import functools
 import itertools
 import logging
 import math
-from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
 from typing import Any, NamedTuple, cast
 from unittest.mock import Mock
@@ -32,6 +32,7 @@ from fhy_core.symbolic.expression import (
     LogicalExpression,
     LogicalOperation,
     NativeConstantBindingError,
+    NativeFunction,
     NonBooleanLogicalOperandError,
     PartialPiecewiseError,
     PiecewiseExpression,
@@ -49,22 +50,30 @@ from fhy_core.symbolic.expression import (
     piecewise,
     substitute_sympy_expression_variables,
 )
+from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS, BUILTIN_FUNCTIONS
 from fhy_core.symbolic.expression.core import LiteralType
-from fhy_core.symbolic.expression.passes import sympy as sympy_bridge
 from fhy_core.symbolic.expression.passes.sympy import (
-    _NATIVE_CONSTANT_LIFT,
-    _NATIVE_CONSTANT_LOWER,
-    _NATIVE_FUNCTION_LOWER,
     ExpressionToSympyConverter,
+    SympySimplifier,
     SymPyToExpressionConverter,
     SympyVariableSubstitutionPass,
-    _ParityOpaquePiecewise,
 )
 from fhy_core.symbolic.solver import SolverBackend, simplify_expression
 
 from ..conftest import mock_identifier
 
 pytestmark = pytest.mark.sympy
+
+# The class every lowered piecewise has: the Rust backend's parity-opaque
+# piecewise, defined in its prelude (S12).
+_PARITY_OPAQUE_PIECEWISE: type = type(
+    convert_expression_to_sympy_expression(
+        piecewise(
+            (IdentifierExpression(mock_identifier("flag", 0)), LiteralExpression(1)),
+            otherwise=LiteralExpression(2),
+        )
+    )
+)
 
 # =============================================================================
 # Expression -> SymPy
@@ -1287,14 +1296,18 @@ def test_simplify_expression_ignores_an_unreferenced_native_constant_binding() -
 # =============================================================================
 
 
-def test_sympy_converter_visit_literal_unsupported_value_raises() -> None:
-    """Test `visit_literal_expression` raises on a wholly unsupported literal value."""
-    converter = ExpressionToSympyConverter()
+def test_sympy_lowering_refuses_a_value_that_is_no_expression() -> None:
+    """Test the lowering refuses a value that is no expression.
+
+    The lowering runs in the Rust core, which has no Python visitor to hand
+    an unsupported literal to; a value that is no ``Expression`` is refused
+    at the boundary instead.
+    """
     literal = Mock(spec=LiteralExpression)
     literal.value = object()  # not int/float/bool/str
 
-    with pytest.raises(TypeError, match=r"Unsupported literal type"):
-        converter.visit_literal_expression(literal)
+    with pytest.raises(TypeError, match=r"must be an Expression"):
+        SympySimplifier().lower(literal)
 
 
 def test_sympy_converter_get_noop_output_raises() -> None:
@@ -1311,7 +1324,7 @@ def test_sympy_to_expression_converter_get_noop_output_raises() -> None:
 
 def test_sympy_to_expression_convert_rejects_unknown_node_type() -> None:
     """Test `convert` raises `TypeError` for a node that is neither Expr nor Boolean."""
-    with pytest.raises(TypeError, match=r"Unsupported node type"):
+    with pytest.raises(TypeError, match=r"unsupported node type"):
         SymPyToExpressionConverter().convert(42)
 
 
@@ -1324,55 +1337,55 @@ def test_sympy_to_expression_convert_expr_rejects_unsupported_expr_subtype() -> 
     rejection.
     """
     x = sympy.Symbol("x_0")
-    with pytest.raises(TypeError, match=r"Unsupported expression type"):
+    with pytest.raises(TypeError, match=r"unsupported expression type"):
         SymPyToExpressionConverter().convert_expr(sympy.Derivative(x, x))
 
 
 def test_sympy_to_expression_convert_bool_rejects_unsupported_boolean_subtype() -> None:
     """Test `convert_bool` raises `TypeError` for an unrecognized boolean subtype."""
     fake = Mock(spec=sympy.logic.boolalg.Boolean)
-    with pytest.raises(TypeError, match=r"Unsupported boolean expression type"):
+    with pytest.raises(TypeError, match=r"unsupported boolean expression type"):
         SymPyToExpressionConverter().convert_bool(fake)
 
 
 def test_sympy_to_expression_convert_relational_rejects_unsupported_subtype() -> None:
     """Test `convert_relational` raises `TypeError` for an unrecognized relational."""
     fake = Mock(spec=sympy.core.relational.Relational)
-    with pytest.raises(TypeError, match=r"Unsupported relational type"):
+    with pytest.raises(TypeError, match=r"unsupported relational type"):
         SymPyToExpressionConverter().convert_relational(fake)
 
 
 @pytest.mark.parametrize(
-    "method_name, sympy_class, identity_value",
+    "sympy_class, identity_value",
     [
-        pytest.param("_convert_add", sympy.Add, 0, id="add"),
-        pytest.param("_convert_mul", sympy.Mul, 1, id="mul"),
+        pytest.param(sympy.Add, 0, id="add"),
+        pytest.param(sympy.Mul, 1, id="mul"),
     ],
 )
 def test_sympy_to_expression_convert_commutative_op_zero_arg_returns_identity(
-    method_name: str, sympy_class: type, identity_value: int
+    sympy_class: type, identity_value: int
 ) -> None:
-    """Test `convert_Add`/`convert_Mul` return the identity literal on zero args."""
+    """Test an `Add`/`Mul` of no argument lifts to the identity literal."""
     fake = Mock(spec=sympy_class)
     fake.args = ()
-    result = getattr(SymPyToExpressionConverter(), method_name)(fake)
+    result = SymPyToExpressionConverter().convert_expr(fake)
     assert result.is_structurally_equivalent(LiteralExpression(identity_value))
 
 
 @pytest.mark.parametrize(
-    "method_name, sympy_class, sample_arg",
+    "sympy_class, sample_arg",
     [
-        pytest.param("_convert_add", sympy.Add, 7, id="add"),
-        pytest.param("_convert_mul", sympy.Mul, 5, id="mul"),
+        pytest.param(sympy.Add, 7, id="add"),
+        pytest.param(sympy.Mul, 5, id="mul"),
     ],
 )
 def test_sympy_to_expression_convert_commutative_op_one_arg_unwraps(
-    method_name: str, sympy_class: type, sample_arg: int
+    sympy_class: type, sample_arg: int
 ) -> None:
-    """Test `convert_Add`/`convert_Mul` unwrap a single-arg node to its argument."""
+    """Test an `Add`/`Mul` of one argument lifts to that argument."""
     fake = Mock(spec=sympy_class)
     fake.args = (sympy.Integer(sample_arg),)
-    result = getattr(SymPyToExpressionConverter(), method_name)(fake)
+    result = SymPyToExpressionConverter().convert_expr(fake)
     assert result.is_structurally_equivalent(LiteralExpression(sample_arg))
 
 
@@ -1500,14 +1513,14 @@ def test_sympy_to_expression_convert_implies_raises_not_implemented() -> None:
         convert_sympy_expression_to_expression(implies)
 
     assert isinstance(exc_info.value.__cause__, NotImplementedError)
-    assert "Implies is not supported" in str(exc_info.value.__cause__)
+    assert "implies is not supported" in str(exc_info.value.__cause__)
 
 
 def test_convert_implies_via_convert_method_raises_not_implemented() -> None:
     """Test calling `.convert(...)` directly preserves the original error type."""
     implies = sympy.Implies(sympy.Symbol("x_0"), sympy.Symbol("y_1"))
 
-    with pytest.raises(NotImplementedError, match=r"Implies is not supported"):
+    with pytest.raises(NotImplementedError, match=r"implies is not supported"):
         SymPyToExpressionConverter().convert(implies)
 
 
@@ -1517,9 +1530,9 @@ def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
     fake.args = (sympy.Integer(1), sympy.Integer(2), sympy.Integer(3))
 
     with pytest.raises(
-        ValueError, match=r"Expected a binary operation to have exactly two arguments"
+        ValueError, match=r"expected a binary operation to have exactly two arguments"
     ):
-        SymPyToExpressionConverter()._convert_pow(fake)
+        SymPyToExpressionConverter().convert_expr(fake)
 
 
 # =============================================================================
@@ -3686,25 +3699,24 @@ def test_simplify_expression_keeps_the_substituted_form_when_otherwise_is_droppe
     assert result.is_structurally_equivalent(unsimplified)
 
 
-def test_simplify_expression_raises_when_the_unsimplified_form_is_partial(
+def test_simplify_expression_keeps_the_input_when_simplify_leaves_a_partial_piecewise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test a piecewise with no otherwise branch before simplifying still raises.
+    """Test a simplification leaving a partial piecewise keeps the input.
 
-    Falling back to the unsimplified form is only sound when that form
-    lifts; a lowering that is itself partial has no expression to return.
+    Falling back to the unsimplified form is sound because the lowering
+    always builds a total piecewise, with a final ``True`` branch; so a
+    partial piecewise can only come from ``sympy.simplify``, and the
+    unsimplified form it replaces lifts.
     """
     x = mock_identifier("x", 0)
     partial = sympy.Piecewise((sympy.Symbol("x_0") < 1, sympy.Symbol("x_0") > 0))
-    monkeypatch.setattr(
-        sympy_bridge, "convert_expression_to_sympy_expression", lambda _: partial
-    )
-    monkeypatch.setattr(sympy, "simplify", lambda expression, **kwargs: expression)
+    monkeypatch.setattr(sympy, "simplify", lambda expression, **kwargs: partial)
+    expression = IdentifierExpression(x) < 1
 
-    with pytest.raises(PassExecutionError) as exc_info:
-        simplify_expression(IdentifierExpression(x) < 1)
+    result = simplify_expression(expression)
 
-    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+    assert result.is_structurally_equivalent(expression)
 
 
 def test_simplify_expression_raises_other_lift_errors_of_the_simplified_form(
@@ -4113,7 +4125,7 @@ def test_substitute_sympy_variables_keeps_every_nested_piecewise_parity_opaque()
     )
 
     assert all(
-        isinstance(node, _ParityOpaquePiecewise)
+        isinstance(node, _PARITY_OPAQUE_PIECEWISE)
         for node in substituted.atoms(sympy.Piecewise)
     )
 
@@ -4608,24 +4620,52 @@ def test_complex_infinity_is_refused_by_the_lifter_directly() -> None:
 
 
 # =============================================================================
-# Native lookup tables are read-only
+# Every native built-in and constant has a SymPy lowering
 # =============================================================================
+
+# The native built-ins that lift back as their SymPy form: ``exp2`` lowers
+# through ``Pow(2, x)``, and ``log2`` and ``log10`` through ``log(x, base)``.
+_NATIVE_BUILTINS_WITHOUT_A_ROUND_TRIP = frozenset({"exp2", "log2", "log10"})
 
 
 @pytest.mark.parametrize(
-    "table",
-    [_NATIVE_FUNCTION_LOWER, _NATIVE_CONSTANT_LOWER, _NATIVE_CONSTANT_LIFT],
-    ids=["function-lower", "constant-lower", "constant-lift"],
+    "name",
+    sorted(
+        name
+        for name, function in BUILTIN_FUNCTIONS.items()
+        if isinstance(function, NativeFunction)
+    ),
 )
-def test_native_lookup_table_item_assignment_raises_type_error(
-    table: Mapping[Any, Any],
-) -> None:
-    """Test assigning to an existing key in a native lookup table raises TypeError."""
-    mutable_table = cast(MutableMapping[Any, Any], table)
-    existing_key = next(iter(table))
+def test_every_native_builtin_has_a_sympy_lowering(name: str) -> None:
+    """Test each native built-in lowers to a SymPy function of its argument.
 
-    with pytest.raises(TypeError):
-        mutable_table[existing_key] = table[existing_key]
+    The lowering tables are Rust matches over the built-in catalogue now
+    (S12), so this pins their coverage where the old tests pinned their
+    immutability. Each round-trips to a call of itself, except the three
+    that SymPy rewrites.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    call_expression = call(name, x)
+
+    lowered = convert_expression_to_sympy_expression(call_expression)
+    lifted = convert_sympy_expression_to_expression(lowered)
+
+    assert sympy.Symbol("x_0") in lowered.free_symbols
+    if name not in _NATIVE_BUILTINS_WITHOUT_A_ROUND_TRIP:
+        assert lifted.is_structurally_equivalent(call_expression)
+
+
+@pytest.mark.parametrize("name", sorted(BUILTIN_CONSTANTS))
+def test_every_builtin_constant_lowers_and_lifts_as_itself(name: str) -> None:
+    """Test each built-in constant lowers to its SymPy constant and back."""
+    reference = IdentifierExpression(get_native_constant_identifier(name))
+
+    lowered = convert_expression_to_sympy_expression(reference)
+
+    assert lowered.is_number
+    assert convert_sympy_expression_to_expression(lowered).is_structurally_equivalent(
+        reference
+    )
 
 
 # =============================================================================

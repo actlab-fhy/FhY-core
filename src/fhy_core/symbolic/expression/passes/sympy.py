@@ -1,17 +1,34 @@
-"""Expression passes that interface with SymPy, and the sympy simplifier.
+"""Expression passes that interface with SymPy, and the SymPy simplifier.
 
-:class:`SympySimplifier` is the :class:`~fhy_core.symbolic.solver.Simplifier`
-that ``SolverBackend.SYMPY`` names: it lowers an expression to SymPy,
-simplifies it, and lifts the result back. The passes lower, substitute and
-lift on their own too.
+The lowering to SymPy, the simplification with its workarounds, and the
+lifting back run in the Rust core (``fhy_core::solver::SympySimplifier``,
+S12 of ``docs/design/python-switch.md``), so there is one copy of the
+mapping. :class:`SympySimplifier` is that backend, the
+:class:`~fhy_core.symbolic.solver.Simplifier` that ``SolverBackend.SYMPY``
+names; a :class:`~fhy_core.symbolic.solver.Solver` holding it simplifies in
+Rust. The passes and functions below lower, substitute and lift on their own
+through it.
+
+The lowering is exact: a ``bool`` becomes ``sympy.true`` or ``sympy.false``,
+an ``int`` an ``Integer``, a ``float`` the ``Float`` of its binary value, and
+a ``Decimal`` the ``Rational`` it denotes; an identifier becomes the symbol
+``<name_hint>_<id>``, and a native constant its value. The lifting is its
+inverse: a ``Rational`` becomes the decimal-string literal of its value when
+some binary ``float`` equals it, and a ``DIVIDE`` of its numerator and
+denominator otherwise; ``oo``, ``-oo`` and ``nan`` become the ``inf`` and
+``nan`` constants; ``zoo`` raises :class:`ComplexInfinityLiftError`, and a
+piecewise without a final ``True`` branch :class:`PartialPiecewiseError`.
+Simplification is best-effort: where ``sympy.simplify`` raises
+``PrecisionExhausted``, drops a piecewise's otherwise branch, or cannot
+compare a piecewise that has a Boolean identifier in a case condition and a
+branch that is not a real number, the expression is kept as it stands.
 
 Importing this module imports ``sympy``; without the ``sympy`` package it
 raises :class:`~fhy_core.symbolic.solver.SolverBackendUnavailableError`,
 naming the extra to install.
 """
 
-from fhy_core.symbolic.solver import Simplifier, SolverBackendUnavailableError
-from fhy_core.utils.override import override
+from fhy_core.symbolic.solver import SolverBackendUnavailableError
 
 __all__ = [
     "SympySimplifier",
@@ -20,20 +37,13 @@ __all__ = [
     "substitute_sympy_expression_variables",
 ]
 
-import operator
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from decimal import Decimal
-from fractions import Fraction
-from typing import Any, ClassVar
+from collections.abc import Mapping
+from typing import Any
 
 from immutabledict import immutabledict
 
 try:
     import sympy  # type: ignore
-    import sympy.core.evalf  # type: ignore
-    import sympy.functions.elementary.piecewise  # type: ignore
-    import sympy.logic  # type: ignore
-    import sympy.logic.boolalg  # type: ignore
 except ImportError as error:
     raise SolverBackendUnavailableError(
         "The sympy solver backend needs the sympy package, which is not "
@@ -41,985 +51,40 @@ except ImportError as error:
         "`pip install fhy_core[solvers]` for every solver backend."
     ) from error
 
+from fhy_core import _rs
 from fhy_core.identifier import Identifier
-from fhy_core.logger import get_logger
 from fhy_core.pass_infrastructure import (
     CompilerPass,
     PassExecutionError,
-    VisitablePass,
     register_pass,
 )
+from fhy_core.utils.override import override
 
-from ..core import (
-    BinaryExpression,
-    BinaryOperation,
-    CallExpression,
-    Expression,
-    IdentifierExpression,
-    LiteralExpression,
-    LogicalExpression,
-    LogicalOperation,
-    PiecewiseExpression,
-    UnaryExpression,
-    UnaryOperation,
-    validate_logical_operands,
-)
-from ..errors import (
-    ComplexInfinityLiftError,
-    NativeConstantBindingError,
-    PartialPiecewiseError,
-)
-from ..registry import (
-    EntryLookupError,
-    NativeConstant,
-    RegisteredFunction,
-    get_native_constant_identifier,
-    get_registered_entry,
-    try_get_native_constant_for_identifier,
-)
-from .native_lowering import is_decimal_text_exactly_binary
+from ..core import Expression, validate_logical_operands
 
+SympySimplifier = _rs.SympySimplifier
 
-def _sympy_exp2(value: Any) -> Any:
-    return sympy.Pow(2, value)
-
-
-def _sympy_log2(value: Any) -> Any:
-    return sympy.log(value, 2)
-
-
-def _sympy_log10(value: Any) -> Any:
-    return sympy.log(value, 10)
-
-
-def _fold_sympy_round_over_an_integer(value: Any) -> Any:
-    """Return ``value`` when it is a sympy integer, and ``None`` otherwise.
-
-    SymPy calls this to decide whether a ``round`` application evaluates,
-    and a ``None`` result keeps the application unevaluated. Rounding an
-    integer is the identity under every rounding rule, so that case folds;
-    a symbolic or non-integer argument keeps the ``round`` node, which
-    lifts back to a ``round`` call.
-    """
-    if value.is_Integer:
-        return value
-    return None
-
-
-# SymPy has no rounding operator, so ``round`` lowers to a function of its
-# own that folds only over an integer argument. SymPy reads the ``eval``
-# hook off the class, which hands a plain function the argument alone;
-# keeping it a plain function rather than a ``classmethod`` also keeps a
-# lowered ``round`` node picklable, since a ``classmethod`` object is not.
-_SYMPY_ROUND: Any = sympy.Function("round", eval=_fold_sympy_round_over_an_integer)
-
-
-# Native-function name <-> sympy operator. Entries appearing in
-# ``_NATIVE_FUNCTION_LIFT_DISPATCH`` below round-trip back to their
-# named form. The following do not round-trip: ``log2``/``log10`` lower
-# through ``sympy.log(arg, base)`` (sympy rewrites these to a Mul-of-
-# logs and they lift back as that mul rather than as ``log2``/``log10``);
-# ``exp2`` lowers to ``sympy.Pow(2, value)`` and lifts as ``Pow`` (or
-# as ``sqrt`` when the exponent is exactly 1/2).
-_NATIVE_FUNCTION_LOWER: immutabledict[str, Callable[..., Any]] = immutabledict(
-    {
-        "exp": sympy.exp,
-        "exp2": _sympy_exp2,
-        "log": sympy.log,
-        "log2": _sympy_log2,
-        "log10": _sympy_log10,
-        "sqrt": sympy.sqrt,
-        "sin": sympy.sin,
-        "cos": sympy.cos,
-        "tan": sympy.tan,
-        "arcsin": sympy.asin,
-        "arccos": sympy.acos,
-        "arctan": sympy.atan,
-        "sinh": sympy.sinh,
-        "cosh": sympy.cosh,
-        "tanh": sympy.tanh,
-        "erf": sympy.erf,
-        "round": _SYMPY_ROUND,
-        "floor": sympy.floor,
-        "ceil": sympy.ceiling,
-    }
-)
-
-# Native-function lift dispatch: each sympy function class maps to the
-# native name it lifts to.
-_NATIVE_FUNCTION_LIFT_DISPATCH: tuple[tuple[type, str], ...] = (
-    (sympy.exp, "exp"),
-    (sympy.sin, "sin"),
-    (sympy.cos, "cos"),
-    (sympy.tan, "tan"),
-    (sympy.asin, "arcsin"),
-    (sympy.acos, "arccos"),
-    (sympy.atan, "arctan"),
-    (sympy.sinh, "sinh"),
-    (sympy.cosh, "cosh"),
-    (sympy.tanh, "tanh"),
-    (sympy.erf, "erf"),
-    (sympy.log, "log"),
-    (sympy.floor, "floor"),
-    (sympy.ceiling, "ceil"),
-    (_SYMPY_ROUND, "round"),
-)
-
-# Native-constant lowering / lifting. SymPy folds a negated ``oo`` into a
-# separate ``-oo`` atom, which ``_try_lift_native_constant`` handles.
-_NATIVE_CONSTANT_LOWER: immutabledict[str, Any] = immutabledict(
-    {
-        "pi": sympy.pi,
-        "e": sympy.E,
-        "inf": sympy.oo,
-        "nan": sympy.nan,
-    }
-)
-_NATIVE_CONSTANT_LIFT: immutabledict[Any, str] = immutabledict(
-    {
-        sympy.pi: "pi",
-        sympy.E: "e",
-        sympy.oo: "inf",
-        sympy.nan: "nan",
-    }
-)
-
-
-def _try_get_native_constant_sympy_value(identifier: Identifier) -> Any | None:
-    """Return the sympy value for the constant ``identifier`` denotes, or ``None``.
-
-    Resolution is by identifier identity, so an identifier that merely
-    shares a constant's ``name_hint`` lowers to a sympy ``Symbol`` like
-    any other free variable.
-    """
-    entry = try_get_native_constant_for_identifier(identifier)
-    if entry is None:
-        return None
-    symbolic_value = _NATIVE_CONSTANT_LOWER.get(entry.name)
-    if symbolic_value is not None:
-        return symbolic_value
-    if isinstance(entry.value, bool):
-        return sympy.true if entry.value else sympy.false
-    if isinstance(entry.value, int):
-        return sympy.Integer(entry.value)
-    return sympy.Float(entry.value)
-
-
-def _split_off_prime_factor(value: int, prime: int) -> tuple[int, int]:
-    """Return the multiplicity of ``prime`` in ``value`` and the remaining cofactor.
-
-    Args:
-        value: Strictly positive integer to factor.
-        prime: Prime to divide out.
-
-    Returns:
-        The exponent of ``prime`` in ``value``, and ``value`` with every
-        factor of ``prime`` removed.
-
-    """
-    exponent = 0
-    while value % prime == 0:
-        value //= prime
-        exponent += 1
-    return exponent, value
-
-
-def _try_format_rational_as_exact_decimal(
-    numerator: int, denominator: int
-) -> str | None:
-    """Return the exact decimal text for a non-negative rational, or ``None``.
-
-    A rational in lowest terms has a terminating decimal expansion
-    exactly when the only prime factors of its denominator are 2 and 5,
-    the prime factors of ten. In that case ``n / (2**a * 5**b)`` equals
-    ``n * 2**(k-a) * 5**(k-b) / 10**k`` for ``k = max(a, b)``, which is
-    written exactly with ``k`` fractional digits; every other rational
-    repeats forever and has no finite decimal text.
-
-    Finite text is necessary for a decimal-string lift but not sufficient:
-    the NumPy evaluator reads a decimal string literal only when a binary
-    ``float`` equals it, so the lifter keeps this text only for such a
-    rational and writes every other one as a ``DIVIDE``.
-
-    Args:
-        numerator: Non-negative numerator, in lowest terms with
-            ``denominator``.
-        denominator: Strictly positive denominator.
-
-    Returns:
-        Exact fixed-point decimal text, or ``None`` when the expansion
-        does not terminate.
-
-    """
-    two_exponent, cofactor = _split_off_prime_factor(denominator, 2)
-    five_exponent, cofactor = _split_off_prime_factor(cofactor, 5)
-    if cofactor != 1:
-        return None
-    fractional_digits = max(two_exponent, five_exponent)
-    scaled = (
-        numerator
-        * 2 ** (fractional_digits - two_exponent)
-        * 5 ** (fractional_digits - five_exponent)
-    )
-    # Decimal's string constructor is exact regardless of the ambient
-    # context precision, and the ``f`` format never falls back to
-    # scientific notation, which the float grammar does not accept.
-    return format(Decimal(f"{scaled}e-{fractional_digits}"), "f")
-
-
-def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
-    """Return the IR expression for a sympy constant atom, or ``None``.
-
-    Lifts to the registry's canonical identifier for the constant, so a
-    lowered constant lifts back as the same identifier it came from and
-    the round trip is idempotent. ``-oo`` lifts as the ``NEGATE`` of the
-    canonical ``inf``, the IR's own spelling of a negative infinity. A
-    sympy constant whose IR counterpart is not registered has no
-    canonical identifier to lift to and is left to the ordinary
-    dispatch.
-    """
-    if expr == sympy.S.NegativeInfinity:
-        infinity = _try_lift_native_constant(sympy.oo)
-        if infinity is None:
-            return None
-        return UnaryExpression(UnaryOperation.NEGATE, infinity)
-    for sympy_value, name in _NATIVE_CONSTANT_LIFT.items():
-        if expr == sympy_value:
-            try:
-                canonical = get_native_constant_identifier(name)
-            except EntryLookupError:
-                return None
-            return IdentifierExpression(canonical)
-    return None
-
-
-_LOGGER = get_logger(__name__)
-
-
-class _ParityOpaquePiecewise(sympy.Piecewise):  # type: ignore[misc]
-    """A ``sympy.Piecewise`` that makes no claim about its value's parity.
-
-    SymPy 1.14's ``Mul._eval_is_integer`` counts a factor known to be even
-    as exactly one factor of two and ignores the odd part of the
-    denominator, so it calls ``n / 6`` an integer and ``n / 3`` a
-    non-integer for any ``n`` it knows is even. A ``Piecewise`` whose
-    branch values are all even is known even, so ``Mod(Piecewise((2, b),
-    (0, True)), -6)`` evaluates to ``0``, ``floor`` of its quotient by
-    ``-6`` is dropped, and ``Eq(Piecewise((6, b), (0, True)) / 3, 2)``
-    decides ``False``. Leaving the parity unknown keeps every such
-    consumer from reasoning about it; every other assumption, integrality
-    and sign included, is kept.
-
-    SymPy rebuilds a piecewise through its own class wherever it can, and
-    ``piecewise_simplify`` builds a plain ``Piecewise``, so simplifying one
-    of these returns the result with every plain ``Piecewise`` in it
-    rebuilt as this class.
-
-    Evaluating a piecewise also prunes a piecewise branch value by the
-    branch's own condition: under condition ``c``, ``Piecewise((1, b), (2,
-    c), (5, True))`` becomes the plain ``Piecewise((1, b), (2, c))``, which
-    is right where ``c`` holds but has no otherwise branch, so no
-    expression represents it. An evaluation that leaves such a partial
-    piecewise is skipped, and the piecewise keeps its own total branches.
-    """
-
-    @classmethod
-    @override
-    def eval(cls, *args: Any) -> Any:
-        evaluated = super().eval(*args)
-        if _holds_partial_sympy_piecewise(evaluated) and not any(
-            _holds_partial_sympy_piecewise(arg) for arg in args
-        ):
-            return None
-        return evaluated
-
-    @override
-    def _eval_is_even(self) -> bool | None:
-        return None
-
-    @override
-    def _eval_is_odd(self) -> bool | None:
-        return None
-
-    @override
-    def _eval_simplify(self, **kwargs: Any) -> Any:
-        return _hide_piecewise_parity(super()._eval_simplify(**kwargs))
-
-
-def _hide_piecewise_parity(expression: Any) -> Any:
-    """Return ``expression`` with each plain ``Piecewise`` made parity-opaque."""
-    if not isinstance(expression, sympy.Basic):
-        return expression
-    return expression.replace(
-        lambda node: type(node) is sympy.Piecewise,
-        lambda piecewise: _ParityOpaquePiecewise(*piecewise.args, evaluate=False),
-        simultaneous=False,
-    )
-
-
-def _convert_piecewise_to_sympy_boolean(operand: Any) -> Any:
-    """Return ``operand`` in a form SymPy's Boolean operators handle.
-
-    A ``sympy.Piecewise`` is not a SymPy ``Boolean`` even when every
-    branch is Boolean: ``sympy.And`` and ``sympy.Or`` refuse it, and
-    ``sympy.Not`` accepts it but SymPy's Boolean simplification then
-    mishandles the result. The equivalent Boolean is the piecewise's
-    first-match expansion, ``(condition & value) | (~condition & rest)``
-    over the branches in order, ending at the value of the first branch
-    whose condition is ``True``; a piecewise branch value is rewritten the
-    same way. Any other operand is returned as it stands.
-
-    SymPy's ``ITE`` is avoided on both of its routes.
-    ``Piecewise.rewrite(ITE)`` treats a bare Boolean symbol condition as
-    always true and drops every branch after it. The ``ITE`` constructor
-    replaces an ``Eq``/``Ne`` condition with a constant when one side is a
-    symbol a branch uses as a Boolean and the other side is not, whatever
-    ``evaluate`` says, so ``ITE(Eq(b, d), b, c)`` builds as ``c``.
-
-    A branch value that is not Boolean raises ``TypeError``, and a
-    piecewise with no ``True`` condition, which has no value where every
-    condition fails, raises ``PartialPiecewiseError``.
-    """
-    if not isinstance(operand, sympy.Piecewise):
-        return operand
-    reachable_branches = []
-    for value, condition in operand.args:
-        boolean_value = sympy.logic.boolalg.as_Boolean(
-            _convert_piecewise_to_sympy_boolean(value)
-        )
-        reachable_branches.append((boolean_value, condition))
-        if condition is sympy.true:
-            break
-    else:
-        raise PartialPiecewiseError(
-            "cannot rewrite a partial sympy.Piecewise as a Boolean: no branch "
-            f"condition of {operand!r} is sympy.true, so it has no value where "
-            "every condition fails."
-        )
-    (result, _), *earlier_branches = reversed(reachable_branches)
-    for value, condition in earlier_branches:
-        result = sympy.Or(
-            sympy.And(condition, value), sympy.And(sympy.Not(condition), result)
-        )
-    return result
-
-
-def _is_symbol_compared_with_relational(node: Any) -> bool:
-    """Return whether ``node`` is an ``Eq``/``Ne`` of a symbol and a relational."""
-    return (
-        isinstance(node, (sympy.Eq, sympy.Ne))
-        and any(operand.is_Symbol for operand in node.args)
-        and any(
-            isinstance(operand, sympy.core.relational.Relational)
-            for operand in node.args
-        )
-    )
-
-
-def _negate_symbol_side(comparison: Any) -> Any:
-    """Return ``comparison`` with its symbol negated and its relation inverted.
-
-    ``b == (x < 1)`` holds exactly when ``~b != (x < 1)`` does, and
-    ``b != (x < 1)`` exactly when ``~b == (x < 1)`` does.
-    """
-    inverted = sympy.Ne if isinstance(comparison, sympy.Eq) else sympy.Eq
-    return inverted(
-        *(
-            sympy.Not(operand) if operand.is_Symbol else operand
-            for operand in comparison.args
-        )
-    )
-
-
-def _negate_symbol_sides_of_relational_comparisons(condition: Any) -> Any:
-    """Return ``condition`` with no ``Eq``/``Ne`` of a symbol and a relational.
-
-    Evaluating a ``sympy.Piecewise`` canonicalizes each relational in its
-    conditions as though it compared numbers, subtracting one side from the
-    other. A comparison between a Boolean identifier, which lowers to a
-    plain ``Symbol``, and a relational such as ``Eq(b, x < 1)`` then raises
-    ``TypeError``, since nothing marks the relational side Boolean. The
-    equivalent ``Ne(~b, x < 1)`` has no ``Expr`` side to subtract from, so
-    each such comparison is rewritten to it.
-    """
-    if not isinstance(condition, sympy.Basic):
-        return condition
-    return condition.replace(
-        _is_symbol_compared_with_relational, _negate_symbol_side, simultaneous=False
-    )
-
-
-def _convert_condition_to_sympy_boolean(condition: Any) -> Any:
-    """Return a piecewise branch condition SymPy can evaluate a piecewise over.
-
-    SymPy folds a branch condition that holds a ``sympy.Piecewise`` into a
-    single piecewise and rewrites that with ``Piecewise.rewrite(ITE)``,
-    which drops the branches after a bare Boolean symbol condition.
-    Folding the condition here and rewriting it with
-    ``_convert_piecewise_to_sympy_boolean`` leaves SymPy nothing to
-    rewrite. A comparison of a Boolean symbol with a relational is first
-    rewritten by ``_negate_symbol_sides_of_relational_comparisons``, since
-    the fold and every later evaluation of the piecewise canonicalize the
-    condition.
-    """
-    condition = _negate_symbol_sides_of_relational_comparisons(condition)
-    if isinstance(condition, sympy.Basic) and condition.has(sympy.Piecewise):
-        condition = sympy.piecewise_fold(condition)
-    return _convert_piecewise_to_sympy_boolean(condition)
-
-
-class _UnfoldableRelationalError(Exception):
-    """Raised when a relational that must be folded compares a non-real value.
-
-    ``piecewise_fold`` builds the relational once per branch, and SymPy
-    refuses to build one over a value that is not an extended real, such
-    as complex infinity or NaN, by raising ``TypeError``. Simplification
-    cannot take the unfolded relational either, so it gives up.
-    """
-
-
-def _holds_boolean_symbol_position(condition: Any) -> bool:
-    """Return whether a bare symbol stands where ``condition`` needs a Boolean.
-
-    That is ``condition`` itself being a symbol, or a symbol as an argument
-    of a Boolean connective anywhere inside it.
-    """
-    if not isinstance(condition, sympy.Basic):
-        return False
-    return bool(condition.is_Symbol) or any(
-        any(argument.is_Symbol for argument in connective.args)
-        for connective in condition.atoms(sympy.logic.boolalg.BooleanFunction)
-    )
-
-
-def _must_fold_piecewise_out_of(relational: Any) -> bool:
-    """Return whether ``relational`` holds a piecewise simplify cannot compare.
-
-    See ``_fold_piecewise_out_of_relationals`` for why such a relational is
-    folded; every other relational is left to ``sympy.simplify``, since
-    folding multiplies the branches of each piecewise in it and nests the
-    Boolean result one level deeper per branch.
-    """
-    return isinstance(relational, sympy.core.relational.Relational) and any(
-        _holds_boolean_symbol_position(condition)
-        for piecewise in relational.atoms(sympy.Piecewise)
-        for _, condition in piecewise.args
-    )
-
-
-def _fold_piecewise_out_of_relational(relational: Any) -> Any:
-    """Return ``relational`` with its piecewise operands folded into a Boolean.
-
-    Raises ``_UnfoldableRelationalError`` when a branch value is one no
-    relational compares.
-    """
-    try:
-        folded = sympy.piecewise_fold(relational)
-    except TypeError as error:
-        raise _UnfoldableRelationalError(
-            f"cannot fold the piecewise out of {relational!r}"
-        ) from error
-    return _convert_piecewise_to_sympy_boolean(folded)
-
-
-def _fold_piecewise_out_of_relationals(expression: Any) -> Any:
-    """Return ``expression`` with each relational simplify cannot take folded.
-
-    ``sympy.simplify`` checks whether a relational's ``lhs - rhs`` is zero
-    with ``Expr.equals``, which substitutes for every free symbol at once
-    through ``subs(..., simultaneous=True)``, and that masks each symbol
-    with a product of dummy symbols first. A piecewise inside the
-    relational with a bare symbol in a Boolean position of a condition then
-    receives a product there and raises ``TypeError``, as in
-    ``Piecewise((1, b), (2, True)) < y``. Folding the piecewise out of such
-    a relational, into ``(b & (1 < y)) | (~b & (2 < y))``, leaves no
-    condition inside it.
-
-    Raises:
-        _UnfoldableRelationalError: If such a relational compares a value
-            that is not an extended real.
-    """
-    if not isinstance(expression, sympy.Basic):
-        return expression
-    return expression.replace(
-        _must_fold_piecewise_out_of,
-        _fold_piecewise_out_of_relational,
-        simultaneous=False,
-    )
-
-
-def _fold_piecewise_out_of_integer_parts(expression: Any) -> Any:
-    """Return ``expression`` with each integer part of a piecewise folded.
-
-    The integer parts are ``Mod``, ``floor``, and ``ceiling``.
-
-    ``sympy.simplify`` rebuilds a ``Mod``, ``floor``, or ``ceiling`` around
-    its simplified argument, and simplifying an argument that holds a
-    piecewise folds it into a plain ``Piecewise``, whose all-even branches
-    make SymPy misjudge the quotient's integrality as
-    ``_ParityOpaquePiecewise`` describes. Folding each such node first puts
-    it inside the branches, where it applies to each branch value alone.
-    """
-    if not isinstance(expression, sympy.Basic):
-        return expression
-    return expression.replace(
-        lambda node: (
-            isinstance(node, (sympy.Mod, sympy.floor, sympy.ceiling))
-            and node.has(sympy.Piecewise)
-        ),
-        lambda node: _hide_piecewise_parity(sympy.piecewise_fold(node)),
-        simultaneous=False,
-    )
-
-
-def _is_partial_sympy_piecewise(piecewise: sympy.Piecewise) -> bool:
-    """Return whether ``piecewise`` has branches but no final ``True`` condition.
-
-    Such a piecewise has no value where every condition fails, so no total
-    ``PiecewiseExpression`` represents it.
-    """
-    return bool(piecewise.args) and piecewise.args[-1][1] is not sympy.true
-
-
-def _holds_partial_sympy_piecewise(expression: Any) -> bool:
-    """Return whether ``expression`` is or contains a partial ``sympy.Piecewise``."""
-    return isinstance(expression, sympy.Basic) and any(
-        _is_partial_sympy_piecewise(piecewise)
-        for piecewise in expression.atoms(sympy.Piecewise)
-    )
-
-
-def _try_simplify_sympy_expression(sympy_expression: Any) -> Any | None:
-    """Return ``sympy_expression`` simplified, or ``None`` to keep it as it stands.
-
-    Simplification is best-effort, and SymPy can fail to produce a form to
-    lift while its input stays correct. ``sympy.simplify`` checks a
-    relational numerically at random points, and SymPy's integer-part
-    evaluation raises ``PrecisionExhausted`` instead of giving up when a
-    ``floor``'s argument is exactly an integer at such a point. It also
-    drops a piecewise's final ``True`` branch when the earlier conditions
-    already cover every real, as for ``Piecewise((x < 1, (x > 0) | (x <
-    1)), (x > 1, True))``, which leaves a partial piecewise the lifter
-    refuses. And a comparison of a piecewise that must be split per branch
-    before simplifying, but has a branch no comparison can take, such as
-    ``Piecewise((zoo, b), (1, True)) < y``, cannot be simplified at all.
-    Each case returns ``None``; every other failure propagates.
-    """
-    try:
-        simplified = _transform_masking_boolean_comparisons(
-            sympy_expression, _fold_and_simplify
-        )
-    except sympy.core.evalf.PrecisionExhausted:
-        _LOGGER.debug("simplify exhausted precision; keeping the unsimplified form")
-        return None
-    except _UnfoldableRelationalError:
-        _LOGGER.debug(
-            "simplify cannot compare a non-real piecewise branch; keeping the "
-            "unsimplified form"
-        )
-        return None
-    if _holds_partial_sympy_piecewise(simplified):
-        _LOGGER.debug(
-            "simplify left a piecewise with no otherwise branch; keeping the "
-            "unsimplified form"
-        )
-        return None
-    return simplified
-
-
-def _is_sympy_boolean_node(value: Any) -> bool:
-    """Return whether ``value`` is a SymPy Boolean other than a bare symbol.
-
-    A SymPy ``Symbol`` is a ``Boolean`` too, so it does not show that a
-    lowered operand denotes a truth value; a literal, a relational, or a
-    connective does.
-    """
-    return isinstance(value, sympy.logic.boolalg.Boolean) and not value.is_Symbol
-
-
-def _is_boolean_valued_sympy_piecewise(value: Any) -> bool:
-    """Return whether ``value`` is a ``sympy.Piecewise`` a branch shows is Boolean.
-
-    Every branch of a well-typed piecewise has one sort, so one branch
-    that is a Boolean node, or a piecewise a branch of which shows it is
-    Boolean, settles the sort even when the other branches are bare
-    symbols. A piecewise with no such branch, a numeric one included, is
-    not reported Boolean.
-    """
-    return isinstance(value, sympy.Piecewise) and any(
-        _is_sympy_boolean_node(branch_value)
-        or _is_boolean_valued_sympy_piecewise(branch_value)
-        for branch_value, _ in value.args
-    )
-
-
-def _is_boolean_comparison(left: Any, right: Any) -> bool:
-    """Return whether ``Eq``/``Ne`` over ``left`` and ``right`` compares Booleans.
-
-    Either operand shows it: a Boolean node, or a piecewise a branch of
-    which shows it is Boolean.
-    """
-    return any(
-        _is_sympy_boolean_node(operand) or _is_boolean_valued_sympy_piecewise(operand)
-        for operand in (left, right)
-    )
-
-
-def _convert_boolean_comparison_operands(left: Any, right: Any) -> tuple[Any, Any]:
-    """Return ``Eq``/``Ne`` operands with a Boolean piecewise made a Boolean.
-
-    SymPy decides a comparison between a Boolean and a non-Boolean as
-    unequal on sight, and a ``sympy.Piecewise`` is not a SymPy Boolean even
-    when every branch is Boolean, so ``pw == True`` would lower to
-    ``False``. When the comparison is between Booleans, a piecewise operand
-    is rewritten as its Boolean expansion; a numeric comparison is
-    returned as it stands.
-    """
-    if not _is_boolean_comparison(left, right):
-        return left, right
-    return (
-        _convert_piecewise_to_sympy_boolean(left),
-        _convert_piecewise_to_sympy_boolean(right),
-    )
-
-
-def _mask_boolean_comparisons(
-    node: Any,
-    comparisons: MutableMapping[sympy.Dummy, Any],
-    transform: Callable[[Any], Any],
-) -> Any:
-    """Return ``node`` with each outermost comparison between Booleans masked.
-
-    Each ``Eq``/``Ne`` that ``_is_boolean_comparison`` shows is between
-    Booleans is rebuilt over its operands transformed by
-    ``_transform_masking_boolean_comparisons`` with ``transform``, and is
-    replaced by a fresh dummy symbol recorded in ``comparisons`` against
-    the rebuilt comparison. A comparison the rebuild decides is kept as its
-    decided value instead.
-    """
-    if isinstance(node, (sympy.Eq, sympy.Ne)) and _is_boolean_comparison(*node.args):
-        comparison = node.func(
-            *(
-                _transform_masking_boolean_comparisons(arg, transform)
-                for arg in node.args
-            )
-        )
-        if not isinstance(comparison, (sympy.Eq, sympy.Ne)):
-            return comparison
-        placeholder = sympy.Dummy("boolean_comparison")
-        comparisons[placeholder] = comparison
-        return placeholder
-    masked_arguments = tuple(
-        _mask_boolean_comparisons(arg, comparisons, transform)
-        if isinstance(arg, sympy.Basic)
-        else arg
-        for arg in node.args
-    )
-    if all(
-        masked is original
-        for masked, original in zip(masked_arguments, node.args, strict=True)
-    ):
-        return node
-    return node.func(*masked_arguments)
-
-
-def _transform_masking_boolean_comparisons(
-    expression: Any, transform: Callable[[Any], Any]
-) -> Any:
-    """Return ``transform`` of ``expression`` with Boolean comparisons held opaque.
-
-    ``sympy.simplify``'s pattern rules for a conjunction subtract or negate
-    a comparison's sides, which raises for a comparison between Booleans
-    with a side such as ``True`` or ``x < 1``. Each such comparison is
-    transformed on its own operands and held as an opaque dummy symbol
-    while ``transform`` runs, then put back. Rewriting the comparison with
-    connectives instead would negate its operands, and SymPy's
-    simplification of a negated univariate range can drop one of its
-    boundary points.
-    """
-    if not isinstance(expression, sympy.Basic):
-        return transform(expression)
-    comparisons: dict[sympy.Dummy, Any] = {}
-    masked = _mask_boolean_comparisons(expression, comparisons, transform)
-    restored, _ = _substitute_sympy_symbols(transform(masked), comparisons)
-    return restored
-
-
-def _fold_and_simplify(expression: Any) -> Any:
-    """Return ``sympy.simplify`` of ``expression`` with piecewise nodes folded first.
-
-    Integer parts and the relationals ``sympy.simplify`` cannot take are
-    folded first, and each plain ``Piecewise`` in the result is rebuilt as
-    ``_ParityOpaquePiecewise`` before anything is built around it.
-    """
-    folded = _fold_piecewise_out_of_relationals(
-        _fold_piecewise_out_of_integer_parts(expression)
-    )
-    return _hide_piecewise_parity(sympy.simplify(folded))
-
-
-def _convert_boolean_positions(
-    node: Any, arguments: tuple[Any, ...]
-) -> tuple[Any, ...]:
-    """Return ``node``'s new ``arguments`` with each Boolean position made Boolean.
-
-    The Boolean positions are every argument of a Boolean connective or
-    ``ITE``, a piecewise branch's condition, and both operands of an
-    ``Eq``/``Ne`` that compares Booleans; a piecewise in one is rewritten
-    as its Boolean expansion. Every other argument is returned as it
-    stands.
-    """
-    if isinstance(node, (sympy.Eq, sympy.Ne)):
-        return _convert_boolean_comparison_operands(*arguments)
-    if isinstance(node, sympy.logic.boolalg.BooleanFunction):
-        return tuple(_convert_piecewise_to_sympy_boolean(arg) for arg in arguments)
-    if isinstance(node, sympy.functions.elementary.piecewise.ExprCondPair):
-        value, condition = arguments
-        return value, _convert_condition_to_sympy_boolean(condition)
-    return arguments
-
-
-def _substitute_sympy_symbols(
-    node: Any, replacements: Mapping[sympy.Symbol, Any]
-) -> tuple[Any, bool]:
-    """Return ``node`` with ``replacements`` applied, and whether any applied.
-
-    Substitutes as ``xreplace`` does, in one simultaneous bottom-up pass
-    that rebuilds only a node whose arguments changed, but converts the
-    rebuilt node's Boolean positions first. A rebuild evaluates the node,
-    and SymPy decides ``Eq(Piecewise, True)`` as ``False`` on sight and
-    refuses a ``Piecewise`` under ``And``, so a piecewise that reaches a
-    Boolean position -- a replacement value, or a piecewise already in
-    the tree whose comparison a replacement makes Boolean -- is rewritten
-    as a Boolean before its parent is rebuilt. A node no replacement reaches
-    is kept as it stands, unevaluated or not.
-    """
-    if node in replacements:
-        return replacements[node], True
-    substituted_arguments = tuple(
-        _substitute_sympy_symbols(arg, replacements)
-        if isinstance(arg, sympy.Basic)
-        else (arg, False)
-        for arg in node.args
-    )
-    if not any(changed for _, changed in substituted_arguments):
-        return node, False
-    arguments = tuple(arg for arg, _ in substituted_arguments)
-    return node.func(*_convert_boolean_positions(node, arguments)), True
+# The backend the passes and functions below run on. SymPy is imported
+# already, so loading it here publishes the backend's prelude module,
+# ``_fhy_core_sympy``, whose classes a pickled lowered expression names.
+_BACKEND = SympySimplifier()
+_BACKEND.load()
 
 
 @register_pass(
     "fhy_core.symbolic.expression.to_sympy",
     "Lower expression IR into an equivalent SymPy expression.",
 )
-class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
-    """Transforms an expression to SymPy expression."""
+class ExpressionToSympyConverter(CompilerPass[Expression, Any]):
+    """Lowers an expression to a SymPy expression, in the Rust core."""
 
-    _UNARY_OPERATION_SYMPY_OPERATORS: immutabledict[
-        UnaryOperation, Callable[[Any], Any]
-    ] = immutabledict(
-        {
-            UnaryOperation.NEGATE: operator.neg,
-            UnaryOperation.POSITIVE: operator.pos,
-            # ``sympy.Not``, not ``operator.not_``: the latter calls ``bool()``,
-            # and every SymPy object other than a ``Relational`` is truthy, so
-            # it would decide the negation at lowering time and emit the
-            # constant ``False`` -- discarding the operand entirely. A Boolean
-            # piecewise operand is rewritten as a Boolean first: ``sympy.Not``
-            # accepts a ``Piecewise``, but SymPy's Boolean simplification of
-            # the result can raise or return a wrong answer.
-            UnaryOperation.LOGICAL_NOT: lambda x: sympy.Not(
-                _convert_piecewise_to_sympy_boolean(x)
-            ),
-        }
-    )
-    _BINARY_OPERATION_SYMPY_OPERATORS: immutabledict[
-        BinaryOperation, Callable[[Any, Any], Any]
-    ] = immutabledict(
-        {
-            BinaryOperation.ADD: operator.add,
-            BinaryOperation.SUBTRACT: operator.sub,
-            BinaryOperation.MULTIPLY: operator.mul,
-            BinaryOperation.DIVIDE: operator.truediv,
-            BinaryOperation.FLOOR_DIVIDE: lambda x, y: sympy.floor(x / y),
-            BinaryOperation.MODULO: operator.mod,
-            BinaryOperation.POWER: operator.pow,
-            # SymPy compares a ``Piecewise`` with a Boolean as unequal on
-            # sight, so a Boolean piecewise operand is rewritten as a Boolean
-            # here too.
-            BinaryOperation.EQUAL: lambda x, y: sympy.Eq(
-                *_convert_boolean_comparison_operands(x, y)
-            ),
-            BinaryOperation.NOT_EQUAL: lambda x, y: sympy.Ne(
-                *_convert_boolean_comparison_operands(x, y)
-            ),
-            BinaryOperation.LESS: operator.lt,
-            BinaryOperation.LESS_EQUAL: operator.le,
-            BinaryOperation.GREATER: operator.gt,
-            BinaryOperation.GREATER_EQUAL: operator.ge,
-        }
-    )
-
-    # ``sympy.And``/``sympy.Or``, not ``operator.and_``/``operator.or_``: the
-    # latter two are SymPy's ``&``/``|``, which are *bitwise* on
-    # ``sympy.Integer`` operands, so a numeric operand would fold to a
-    # numerically wrong literal instead of being refused. The sympy
-    # constructors reject a non-Boolean operand; the bridge screens for that
-    # shape before lowering so the refusal is this package's
-    # ``NonBooleanLogicalOperandError`` rather than SymPy's own error. A
-    # Boolean piecewise operand passes that screen but is still not a SymPy
-    # ``Boolean``, so it is rewritten as a Boolean first.
-    _LOGICAL_OPERATION_SYMPY_OPERATORS: immutabledict[
-        LogicalOperation, Callable[..., Any]
-    ] = immutabledict({LogicalOperation.AND: sympy.And, LogicalOperation.OR: sympy.Or})
-
-    def visit_logical_expression(
-        self, logical_expression: LogicalExpression
-    ) -> sympy.logic.boolalg.Boolean:
-        """Lower to one n-ary ``sympy.And`` or ``sympy.Or`` over the operands."""
-        operands = [
-            _convert_piecewise_to_sympy_boolean(self.visit(operand))
-            for operand in logical_expression.operands
-        ]
-        return self._LOGICAL_OPERATION_SYMPY_OPERATORS[logical_expression.operation](
-            *operands
-        )
-
-    def visit_binary_expression(
-        self, binary_expression: BinaryExpression
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        left = self.visit(binary_expression.left)
-        right = self.visit(binary_expression.right)
-        return self._BINARY_OPERATION_SYMPY_OPERATORS[binary_expression.operation](
-            left, right
-        )
-
-    def visit_unary_expression(
-        self, unary_expression: UnaryExpression
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        operand = self.visit(unary_expression.operand)
-        return self._UNARY_OPERATION_SYMPY_OPERATORS[unary_expression.operation](
-            operand
-        )
-
-    def visit_identifier_expression(
-        self, identifier_expression: IdentifierExpression
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        identifier = identifier_expression.identifier
-        constant_value = _try_get_native_constant_sympy_value(identifier)
-        if constant_value is not None:
-            return constant_value
-        return sympy.Symbol(self.format_identifier(identifier))
-
-    def visit_piecewise_expression(
-        self, piecewise_expression: PiecewiseExpression
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        """Lower to a ``sympy.Piecewise`` with an unconditional trailing branch.
-
-        Each case becomes a ``(value, condition)`` branch, in case
-        order; ``otherwise`` becomes a final branch guarded by an
-        unconditional ``True``, so the result is total and
-        first-match-wins by construction (SymPy's ``Piecewise``
-        evaluates to the first branch whose condition holds). Every
-        condition must be boolean-valued; SymPy raises ``TypeError``
-        for a branch condition it can determine is not a Boolean. A
-        condition holding a piecewise is folded and rewritten as a Boolean
-        before SymPy sees it.
-        """
-        branches = [
-            (
-                self.visit(value),
-                _convert_condition_to_sympy_boolean(self.visit(condition)),
-            )
-            for condition, value in piecewise_expression.get_cases()
-        ]
-        branches.append((self.visit(piecewise_expression.otherwise), True))
-        return _ParityOpaquePiecewise(*branches, evaluate=False)
-
-    def visit_call_expression(
-        self, call_expression: CallExpression
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        name = call_expression.function_name
-        if name in _NATIVE_FUNCTION_LOWER:
-            sympy_operator = _NATIVE_FUNCTION_LOWER[name]
-            sympy_arguments = [
-                self.visit(argument) for argument in call_expression.arguments
-            ]
-            return sympy_operator(*sympy_arguments)
-        raise self._make_unsupported_call_error(name)
-
-    @staticmethod
-    def _make_unsupported_call_error(name: str) -> TypeError:
-        """Construct a precise error for an unsupported ``CallExpression``."""
-        try:
-            entry = get_registered_entry(name)
-        except EntryLookupError:
-            return TypeError(f"cannot lower call to unknown function {name!r} to SymPy")
-        if isinstance(entry, RegisteredFunction):
-            return TypeError(
-                f"Cannot lower an expression-bodied function call to SymPy; "
-                f"call `inline_functions` first to expand {name!r}."
-            )
-        if isinstance(entry, NativeConstant):
-            return TypeError(
-                f"call to {name!r} is to a registered native constant, which "
-                f"is not callable"
-            )
-        return TypeError(f"native function {name!r} has no SymPy lowering registered")
-
-    def visit_literal_expression(
-        self, literal_expression: LiteralExpression
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        """Lower a literal to the SymPy number its IR form denotes exactly.
-
-        ``LiteralExpression`` gives each literal form its own precision
-        contract, and each form reaches SymPy as the exact value that
-        contract names:
-
-        - ``bool`` becomes ``sympy.true``/``sympy.false``.
-        - An ``int`` becomes a ``sympy.Integer``. An integer-grammar
-          ``str`` is normalized to the same ``int`` when the literal is
-          built, so both spellings reach SymPy as one number kind.
-        - A Python ``float`` is an IEEE-754 binary value, and
-          ``sympy.Float`` carries exactly that value. A non-finite one
-          becomes ``oo``, ``-oo``, or ``nan``, which lift back as the
-          registered ``inf``/``nan`` constants rather than as literals.
-        - A ``decimal.Decimal`` (the normalized form of a float-grammar
-          ``str``) is exact decimal, so it becomes the ``sympy.Rational``
-          it denotes exactly, taken from ``fractions.Fraction``.
-          ``sympy.Float`` would instead round it to binary, making
-          ``"0.1" + "0.1" + "0.1" == "0.3"`` simplify to False for the
-          same reason the binary form does.
-
-        The Z3 bridge lowers each of those forms to the same value, so a
-        single literal denotes the same number on both bridges. Past a
-        single literal the two diverge: this bridge evaluates binary-float
-        arithmetic in SymPy's binary floating point, while the solver seam
-        reasons over it in exact rational arithmetic, so a ground
-        comparison that does float arithmetic can come out differently --
-        for example, ``(1e16 + 1.0) == 1e16`` simplifies to ``True`` but
-        the solver seam finds it ``False``.
-
-        A decimal whose value is a whole number (``"2."``, ``"2.0"``)
-        yields a ``sympy.Integer``, since ``sympy.Rational`` normalizes a
-        unit denominator away; lifting it back therefore lands in the
-        integer bucket rather than the decimal one. An unsupported literal
-        type raises ``TypeError``.
-        """
-        value = literal_expression.value
-        if isinstance(value, bool):
-            return sympy.true if value else sympy.false
-        if isinstance(value, int):
-            return sympy.Integer(value)
-        if isinstance(value, float):
-            return sympy.Float(value)
-        if isinstance(value, Decimal):
-            fraction = Fraction(value)
-            return sympy.Rational(fraction.numerator, fraction.denominator)
-        raise TypeError(f"Unsupported literal type: {type(value)}")
+    @override
+    def run_pass(self, ir: Expression) -> Any:
+        return _BACKEND.lower(ir)
 
     @staticmethod
     def format_identifier(identifier: Identifier) -> str:
+        """Return the name of the SymPy symbol of ``identifier``."""
         return f"{identifier.name_hint}_{identifier.id}"
 
     @override
@@ -1029,15 +94,12 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         )
 
 
-def convert_expression_to_sympy_expression(
-    expression: Expression,
-) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+def convert_expression_to_sympy_expression(expression: Expression) -> Any:
     """Convert an expression to a SymPy expression.
 
     Screens the expression before lowering: a provably numeric operand of
     a logical connective, or a provably numeric piecewise case condition,
-    is refused here rather than handed to SymPy, whose ``And``/``Or``
-    raise a raw ``TypeError`` on such an operand.
+    is refused here rather than handed to SymPy.
 
     Args:
         expression: Expression to convert.
@@ -1049,114 +111,53 @@ def convert_expression_to_sympy_expression(
         NonBooleanLogicalOperandError: If an operand of a ``LogicalExpression``
             or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number.
+        PassExecutionError: Wrapping a ``TypeError`` as ``__cause__`` for a
+            call SymPy has no function for.
 
     """
     validate_logical_operands(expression)
-    converter = ExpressionToSympyConverter()
-    return converter(expression)
+    return ExpressionToSympyConverter()(expression)
 
 
 @register_pass(
     "fhy_core.symbolic.expression.substitute_sympy_variables",
     "Replace bound symbols in a SymPy expression via xreplace.",
 )
-class SympyVariableSubstitutionPass(
-    CompilerPass[
-        sympy.Expr | sympy.logic.boolalg.Boolean,
-        sympy.Expr | sympy.logic.boolalg.Boolean,
-    ]
-):
-    """Applies a symbol-to-value replacement, so a bridge failure is wrapped.
+class SympyVariableSubstitutionPass(CompilerPass[Any, Any]):
+    """Applies a symbol-to-value replacement, so a SymPy failure is wrapped.
 
-    An ``xreplace`` rebuilds every substituted node bottom-up, so a
-    replacement can make SymPy auto-evaluate a relational it cannot
-    represent -- for example a comparison against ``zoo`` (SymPy's complex
-    infinity) or against NaN -- and raise a raw ``TypeError`` from deep
-    inside SymPy. Running the replacement as a pass, rather than calling
-    ``xreplace`` directly, lets the pass infrastructure wrap that failure
-    as ``PassExecutionError`` like every other bridge failure. The same
-    rebuild would decide a comparison the replacement makes Boolean, and
-    would refuse a piecewise replacement value under a Boolean connective,
-    so a piecewise reaching a Boolean position is rewritten as a Boolean
-    first.
+    The replacement is simultaneous and rebuilds every substituted node
+    bottom-up, which can make SymPy auto-evaluate a relational it cannot
+    represent, for example a comparison against ``zoo`` or NaN, and raise;
+    running it as a pass wraps that failure as ``PassExecutionError``. A
+    piecewise reaching a Boolean position is rewritten as a Boolean first.
     """
 
-    def __init__(self, replacements: Mapping[sympy.Symbol, Any]) -> None:
+    def __init__(self, replacements: Mapping[Any, Any]) -> None:
         super().__init__()
-        self._replacements: immutabledict[sympy.Symbol, Any] = immutabledict(
-            replacements
-        )
+        self._replacements: immutabledict[Any, Any] = immutabledict(replacements)
 
     @override
-    def run_pass(
-        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        substituted, _ = _substitute_sympy_symbols(ir, self._replacements)
-        return substituted
+    def run_pass(self, ir: Any) -> Any:
+        return _BACKEND.substitute_symbols(ir, dict(self._replacements))
 
     @override
-    def get_noop_output(
-        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
-    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+    def get_noop_output(self, ir: Any) -> Any:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'
         )
 
 
-def _raise_for_bound_native_constants(bound_constants: Sequence[Identifier]) -> None:
-    """Raise ``NativeConstantBindingError`` naming each already-sorted identifier."""
-    if not bound_constants:
-        return
-    raise NativeConstantBindingError(
-        f"cannot bind the native constant(s) {bound_constants}: a constant's "
-        "value is fixed by the registry, and a binding for its canonical "
-        "identifier is refused here because the SymPy bridge resolves the "
-        "constant by identity before a substitution ever runs, silently "
-        "dropping the binding rather than applying it."
-    )
-
-
-def _raise_if_sympy_expression_binds_a_referenced_native_constant(
-    sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
-    environment: Mapping[Identifier, Expression],
-) -> None:
-    """Raise if ``environment`` binds a native constant free in ``sympy_expression``.
-
-    A native constant's canonical identifier never lowers to a ``Symbol``:
-    ``visit_identifier_expression`` resolves it to the constant's own
-    SymPy value instead, so this checks the symbol name a caller's
-    binding would target against ``sympy_expression``'s free symbols,
-    which only matches a hand-built SymPy expression that still carries
-    such a symbol.
-    """
-    referenced_symbol_names = frozenset(
-        symbol.name for symbol in sympy_expression.free_symbols
-    )
-    bound_constants = sorted(
-        (
-            identifier
-            for identifier in environment
-            if ExpressionToSympyConverter.format_identifier(identifier)
-            in referenced_symbol_names
-            and try_get_native_constant_for_identifier(identifier) is not None
-        ),
-        key=lambda identifier: identifier.id,
-    )
-    _raise_for_bound_native_constants(bound_constants)
-
-
 def substitute_sympy_expression_variables(
-    sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
+    sympy_expression: Any,
     environment: Mapping[Identifier, Expression],
-) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+) -> Any:
     """Substitute variables in a SymPy expression.
 
     Every binding in ``environment`` is applied simultaneously: a
     replacement value is never itself re-substituted by another binding in
-    the same call, matching the IR-level ``Expression.substitute``
-    semantics that this bridge must agree with. For example, substituting
-    ``{x: y, y: 5}`` into ``x < 5`` yields the residual ``y < 5``, not
-    ``5 < 5``.
+    the same call, matching ``Expression.substitute``. For example,
+    substituting ``{x: y, y: 5}`` into ``x < 5`` yields ``y < 5``.
 
     Args:
         sympy_expression: SymPy expression to substitute variables in.
@@ -1179,107 +180,31 @@ def substitute_sympy_expression_variables(
             comparison against ``zoo`` or against NaN.
 
     """
-    # SymPy can fold boolean-valued subexpressions to plain Python `bool`
-    # instances (notably ``True``/``False`` after simplification of a
-    # ``sympy.logic.boolalg.Boolean``). These instances lack ``.subs`` and
-    # also have nothing to substitute, so we short-circuit the no-op case.
+    # SymPy can fold a Boolean to a plain Python ``bool``, which has nothing
+    # to substitute.
     if isinstance(sympy_expression, bool):
         return sympy_expression
-    _raise_if_sympy_expression_binds_a_referenced_native_constant(
-        sympy_expression, environment
-    )
-    # ``.subs(..., simultaneous=True)`` is deliberately avoided here.
-    # Internally it masks every replacement behind a synthetic
-    # ``Dummy() * Dummy()`` product before unmasking it with a final
-    # ``xreplace`` -- a trick that exists solely to disambiguate bound vs.
-    # free occurrences in calculus constructs (``Derivative``, ``Integral``,
-    # ...) that this IR never produces (see
-    # ``sympy.core.basic.Basic.subs``). When a replacement value is a
-    # SymPy ``Boolean`` (e.g. ``sympy.true``, or a ``Relational`` such as
-    # ``y > 0``), unmasking reconstructs a ``Mul`` with a non-``Expr``
-    # argument: at best a ``SymPyDeprecationWarning`` (deprecated since
-    # SymPy 1.7), at worst a hard ``TypeError`` (e.g. substituting a
-    # ``Piecewise`` condition symbol, or substituting with a
-    # ``Relational``, both raise outright).
-    #
-    # Every substitution key here is an atomic ``Symbol`` (never a
-    # compound pattern), and the IR never constructs bound-variable
-    # expressions, so an ``xreplace``-style pass is a safe, exact
-    # replacement: it matches each tree node against the full replacement
-    # mapping in a single bottom-up pass, so a replacement value is never
-    # itself re-substituted by another binding -- the same simultaneous,
-    # non-chaining semantics, without the deprecated masking path. The
-    # substitution pass runs that walk itself so it can keep each Boolean
-    # position Boolean as it rebuilds.
-    replacements = {
-        sympy.Symbol(
-            ExpressionToSympyConverter.format_identifier(k)
-        ): convert_expression_to_sympy_expression(v)
-        for k, v in environment.items()
-    }
-    return SympyVariableSubstitutionPass(replacements)(sympy_expression)
+    return _BACKEND.substitute(sympy_expression, environment)
 
 
 @register_pass(
     "fhy_core.symbolic.expression.from_sympy",
     "Lift a SymPy expression into the FhY expression IR.",
 )
-class SymPyToExpressionConverter(
-    CompilerPass[sympy.Expr | sympy.logic.boolalg.Boolean, Expression]
-):
-    """Converts a SymPy expression to an expression tree."""
-
-    # First match wins, so a subclass entry must precede its base:
-    # ``sympy.Integer`` subclasses ``sympy.Rational``, and an ``Integer``
-    # placed after ``Rational`` would be lifted as a quotient instead of
-    # as an integer literal.
-    _EXPR_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
-        (sympy.Piecewise, "_convert_piecewise"),
-        (sympy.Add, "_convert_add"),
-        (sympy.Mul, "_convert_mul"),
-        (sympy.Mod, "_convert_mod"),
-        (sympy.Pow, "_convert_pow"),
-        (sympy.Symbol, "_convert_symbol"),
-        (sympy.Integer, "_convert_integer"),
-        (sympy.Float, "_convert_float"),
-        (sympy.Rational, "_convert_rational"),
-        (sympy.core.numbers.ComplexInfinity, "_refuse_complex_infinity"),
-    )
-    _BOOL_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
-        (sympy.logic.boolalg.Not, "_convert_not"),
-        (sympy.logic.boolalg.And, "_convert_and"),
-        (sympy.logic.boolalg.Or, "_convert_or"),
-        (sympy.logic.boolalg.Xor, "_convert_xor"),
-        (sympy.logic.boolalg.Nor, "_convert_nor"),
-        (sympy.logic.boolalg.Nand, "_convert_nand"),
-        (sympy.logic.boolalg.ITE, "_convert_ite"),
-        (sympy.core.relational.Relational, "convert_relational"),
-        (sympy.logic.boolalg.Implies, "_convert_implies"),
-        (sympy.logic.boolalg.BooleanTrue, "_convert_boolean_true"),
-        (sympy.logic.boolalg.BooleanFalse, "_convert_boolean_false"),
-    )
-    _RELATIONAL_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
-        (sympy.Equality, "_convert_equality"),
-        (sympy.Unequality, "_convert_unequality"),
-        (sympy.StrictLessThan, "_convert_strict_less_than"),
-        (sympy.LessThan, "_convert_less_than"),
-        (sympy.StrictGreaterThan, "_convert_strict_greater_than"),
-        (sympy.GreaterThan, "_convert_greater_than"),
-    )
+class SymPyToExpressionConverter(CompilerPass[Any, Expression]):
+    """Converts a SymPy expression to an expression tree, in the Rust core."""
 
     @override
-    def run_pass(self, ir: sympy.Expr | sympy.logic.boolalg.Boolean) -> Expression:
+    def run_pass(self, ir: Any) -> Expression:
         return self.convert(ir)
 
     @override
-    def get_noop_output(
-        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
-    ) -> Expression:
+    def get_noop_output(self, ir: Any) -> Expression:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'
         )
 
-    def convert(self, node: sympy.Expr | sympy.logic.boolalg.Boolean) -> Expression:
+    def convert(self, node: Any) -> Expression:
         """Convert a SymPy node.
 
         Args:
@@ -1289,374 +214,33 @@ class SymPyToExpressionConverter(
             Expression tree.
 
         """
-        if isinstance(node, sympy.Expr):
-            return self.convert_expr(node)
-        elif isinstance(node, sympy.logic.boolalg.Boolean):
-            return self.convert_bool(node)
-        else:
-            raise TypeError(f"Unsupported node type: {type(node)}")
+        return _BACKEND.lift(node)
 
-    def convert_expr(self, expr: sympy.Expr) -> Expression:
-        constant_lift = _try_lift_native_constant(expr)
-        if constant_lift is not None:
-            return constant_lift
-        native_lift = self._try_lift_native_function_call(expr)
-        if native_lift is not None:
-            return native_lift
-        sqrt_lift = self._try_lift_sqrt_pow(expr)
-        if sqrt_lift is not None:
-            return sqrt_lift
-        return self._dispatch(expr, self._EXPR_DISPATCH, "Unsupported expression type")
+    def convert_expr(self, expr: Any) -> Expression:
+        """Convert a SymPy ``Expr``, refusing any other node."""
+        if not isinstance(expr, sympy.Expr):
+            raise TypeError(f"unsupported expression type: {type(expr)}")
+        return _BACKEND.lift(expr)
 
-    def _try_lift_native_function_call(self, expr: sympy.Expr) -> Expression | None:
-        for sympy_class, native_name in _NATIVE_FUNCTION_LIFT_DISPATCH:
-            if isinstance(expr, sympy_class):
-                lifted_arguments = tuple(self.convert(arg) for arg in expr.args)  # type: ignore[attr-defined]
-                return CallExpression(native_name, lifted_arguments)
-        return None
-
-    def _try_lift_sqrt_pow(self, expr: sympy.Expr) -> Expression | None:
-        if isinstance(expr, sympy.Pow) and expr.args[1] == sympy.Rational(1, 2):
-            return CallExpression("sqrt", (self.convert(expr.args[0]),))
-        return None
-
-    def convert_bool(
-        self, boolean_expression: sympy.logic.boolalg.Boolean
-    ) -> Expression:
-        return self._dispatch(
-            boolean_expression,
-            self._BOOL_DISPATCH,
-            "Unsupported boolean expression type",
-        )
-
-    def convert_relational(
-        self, relational: sympy.core.relational.Relational
-    ) -> Expression:
-        """Convert a SymPy relational node to an expression.
-
-        Args:
-            relational: SymPy relational node to convert.
-
-        Returns:
-            Expression.
-
-        """
-        return self._dispatch(
-            relational, self._RELATIONAL_DISPATCH, "Unsupported relational type"
-        )
-
-    def _dispatch(
-        self,
-        node: Any,
-        table: tuple[tuple[type, str], ...],
-        error_label: str,
-    ) -> Expression:
-        for sympy_type, method_name in table:
-            if isinstance(node, sympy_type):
-                method = getattr(self, method_name)
-                return method(node)  # type: ignore[no-any-return]
-        raise TypeError(f"{error_label}: {type(node)}")
-
-    def _convert_add(self, add: sympy.Add) -> Expression:
-        if len(add.args) == 0:
-            return LiteralExpression(0)
-        elif len(add.args) == 1:
-            return self.convert(add.args[0])
-        else:
-            return self._convert_commutative_and_associative_binary_operation(
-                BinaryOperation.ADD, add
+    def convert_bool(self, boolean_expression: Any) -> Expression:
+        """Convert a SymPy Boolean that is no ``Expr``, refusing any other node."""
+        if isinstance(boolean_expression, sympy.Expr) or not isinstance(
+            boolean_expression, sympy.logic.boolalg.Boolean
+        ):
+            raise TypeError(
+                f"unsupported boolean expression type: {type(boolean_expression)}"
             )
+        return _BACKEND.lift(boolean_expression)
 
-    def _convert_mul(self, mul: sympy.Mul) -> Expression:
-        if len(mul.args) == 0:
-            return LiteralExpression(1)
-        elif len(mul.args) == 1:
-            return self.convert(mul.args[0])
-        else:
-            return self._convert_commutative_and_associative_binary_operation(
-                BinaryOperation.MULTIPLY, mul
-            )
-
-    def _convert_mod(self, mod: sympy.Mod) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(BinaryOperation.MODULO, mod)
-
-    def _convert_pow(self, pow_: sympy.Pow) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(BinaryOperation.POWER, pow_)
-
-    def _convert_not(self, not_: sympy.logic.boolalg.Not) -> UnaryExpression:
-        operand = self.convert(not_.args[0])
-        return UnaryExpression(UnaryOperation.LOGICAL_NOT, operand)
-
-    def _convert_and(self, and_: sympy.logic.boolalg.And) -> Expression:
-        return self._convert_connective(LogicalOperation.AND, and_)
-
-    def _convert_or(self, or_: sympy.logic.boolalg.Or) -> Expression:
-        return self._convert_connective(LogicalOperation.OR, or_)
-
-    def _convert_xor(self, xor: sympy.logic.boolalg.Xor) -> LogicalExpression:
-        left = self.convert(xor.args[0])
-        right = self.convert(sympy.Xor(*xor.args[1:], evaluate=False))
-        return LogicalExpression(
-            LogicalOperation.AND,
-            (
-                LogicalExpression(LogicalOperation.OR, (left, right)),
-                UnaryExpression(
-                    UnaryOperation.LOGICAL_NOT,
-                    LogicalExpression(LogicalOperation.AND, (left, right)),
-                ),
-            ),
-        )
-
-    def _convert_nor(self, nor: sympy.logic.boolalg.Nor) -> Expression:
-        or_statement = self._convert_connective(LogicalOperation.OR, nor)
-        return UnaryExpression(UnaryOperation.LOGICAL_NOT, or_statement)
-
-    def _convert_nand(self, nand: sympy.logic.boolalg.Nand) -> Expression:
-        and_statement = self._convert_connective(LogicalOperation.AND, nand)
-        return UnaryExpression(UnaryOperation.LOGICAL_NOT, and_statement)
-
-    def _convert_connective(
-        self,
-        operation: LogicalOperation,
-        sympy_connective: sympy.logic.boolalg.BooleanFunction,
-    ) -> Expression:
-        """Lift an n-ary SymPy connective to one ``LogicalExpression``.
-
-        The operands keep SymPy's argument order. A connective of a single
-        argument, which only an unevaluated construction leaves, lifts as
-        that argument, since a ``LogicalExpression`` takes at least two.
-        """
-        operands = tuple(self.convert(argument) for argument in sympy_connective.args)
-        if len(operands) == 1:
-            return operands[0]
-        return LogicalExpression(operation, operands)
-
-    def _convert_ite(self, ite: sympy.logic.boolalg.ITE) -> PiecewiseExpression:
-        """Lift a boolean ``ITE`` to a total two-branch `PiecewiseExpression`.
-
-        ``ITE(condition, consequent, alternative)`` selects its
-        consequent where the condition holds and its alternative
-        everywhere else, so it lifts to the piecewise holding the single
-        case ``(condition, consequent)`` with the alternative as
-        ``otherwise``, the same total, first-match-wins shape a
-        ``sympy.Piecewise`` lifts to.
-        """
-        NUM_REQUIRED_ARGS = 3
-        if len(ite.args) != NUM_REQUIRED_ARGS:
-            raise ValueError("Expected an ITE to have exactly three arguments.")
-        condition, consequent, alternative = ite.args
-        return PiecewiseExpression(
-            (self.convert(condition),),
-            (self.convert(consequent),),
-            self.convert(alternative),
-        )
-
-    def _convert_equality(self, equivalent: sympy.Equality) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(
-            BinaryOperation.EQUAL, equivalent
-        )
-
-    def _convert_unequality(self, unequality: sympy.Unequality) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(
-            BinaryOperation.NOT_EQUAL, unequality
-        )
-
-    def _convert_strict_less_than(
-        self, strict_less_than: sympy.StrictLessThan
-    ) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(
-            BinaryOperation.LESS, strict_less_than
-        )
-
-    def _convert_less_than(self, less_than: sympy.LessThan) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(
-            BinaryOperation.LESS_EQUAL, less_than
-        )
-
-    def _convert_strict_greater_than(
-        self, strict_greater_than: sympy.StrictGreaterThan
-    ) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(
-            BinaryOperation.GREATER, strict_greater_than
-        )
-
-    def _convert_greater_than(
-        self, greater_than: sympy.GreaterThan
-    ) -> BinaryExpression:
-        return self._convert_two_argument_binary_operation(
-            BinaryOperation.GREATER_EQUAL, greater_than
-        )
-
-    def _convert_implies(
-        self, implies: sympy.logic.boolalg.Implies
-    ) -> BinaryExpression:
-        _LOGGER.warning("encountered unsupported Implies node %r", implies)
-        _ = implies
-        raise NotImplementedError("Implies is not supported.")
-
-    def _convert_boolean_true(
-        self, node: sympy.logic.boolalg.BooleanTrue
-    ) -> LiteralExpression:
-        _ = node
-        return LiteralExpression(True)
-
-    def _convert_boolean_false(
-        self, node: sympy.logic.boolalg.BooleanFalse
-    ) -> LiteralExpression:
-        _ = node
-        return LiteralExpression(False)
-
-    def _convert_commutative_and_associative_binary_operation(
-        self,
-        operation: BinaryOperation,
-        sympy_operation: sympy.Expr | sympy.logic.boolalg.Boolean,
-    ) -> BinaryExpression:
-        left = self.convert(sympy_operation.args[0])
-        right = self.convert(
-            sympy_operation.func(*sympy_operation.args[1:], evaluate=False)
-        )
-        return BinaryExpression(operation, left, right)
-
-    def _convert_two_argument_binary_operation(
-        self,
-        operation: BinaryOperation,
-        sympy_operation: sympy.Expr | sympy.logic.boolalg.Boolean,
-    ) -> BinaryExpression:
-        NUM_REQUIRED_ARGS = 2
-        if len(sympy_operation.args) != NUM_REQUIRED_ARGS:
-            raise ValueError(
-                "Expected a binary operation to have exactly two arguments."
-            )
-        left = self.convert(sympy_operation.args[0])
-        right = self.convert(sympy_operation.args[1])
-        return BinaryExpression(operation, left, right)
-
-    def _convert_symbol(self, symbol: sympy.Symbol) -> IdentifierExpression:
-        symbol_name = symbol.name
-        last_underscore_index = symbol_name.rfind("_")
-        if last_underscore_index == -1:
-            raise RuntimeError(
-                "When converting a symbol from SymPy to an identifier, the "
-                "symbol did not contain an underscore. This typically means "
-                "that the symbol was not produced by the "
-                "ExpressionToSympyConverter, whose `format_identifier` "
-                "encodes identifiers as '<name_hint>_<id>'."
-            )
-        identifier_id = int(symbol_name[last_underscore_index + 1 :])
-        identifier_name_hint = symbol_name[:last_underscore_index]
-        identifier = Identifier.deserialize_from_dict(
-            {"id": identifier_id, "name_hint": identifier_name_hint}
-        )
-        return IdentifierExpression(identifier)
-
-    def _convert_integer(self, int_: sympy.Integer) -> LiteralExpression:
-        return LiteralExpression(int(int_))
-
-    def _convert_float(self, float_: sympy.Float) -> LiteralExpression:
-        return LiteralExpression(float(float_))
-
-    def _convert_rational(self, rational: sympy.Rational) -> Expression:
-        """Lift a non-integer rational to whichever exact IR form represents it.
-
-        A rational that some binary ``float`` equals becomes a
-        float-grammar string literal of its exact decimal text, the form
-        ``LiteralExpression`` stores as an exact ``decimal.Decimal``; that
-        is what lets such a decimal-string literal survive the round trip
-        through SymPy. These are exactly the strings the NumPy evaluator
-        reads: ``coerce_literal_value`` refuses decimal text no binary
-        ``float`` equals rather than round it, and the lift asks the same
-        question before writing text, so it never emits a literal the
-        evaluator refuses. Every other rational -- ``1/10``, whose finite
-        decimal text no binary ``float`` equals, or ``1/3``, which has no
-        finite decimal text at all -- becomes a ``DIVIDE`` of its
-        numerator and denominator, which is exact for every rational SymPy
-        can hand over and so keeps lifting total.
-
-        The float grammar is unsigned, so a negative rational lifted as
-        text becomes a ``NEGATE`` of its magnitude's decimal text -- the
-        IR's own spelling of a negative decimal. A ``DIVIDE`` carries the
-        sign on its integer numerator instead.
-        """
-        numerator = int(rational.p)
-        denominator = int(rational.q)
-        decimal_text = _try_format_rational_as_exact_decimal(
-            abs(numerator), denominator
-        )
-        if decimal_text is None or not is_decimal_text_exactly_binary(decimal_text):
-            return BinaryExpression(
-                BinaryOperation.DIVIDE,
-                LiteralExpression(numerator),
-                LiteralExpression(denominator),
-            )
-        magnitude = LiteralExpression(decimal_text)
-        if numerator < 0:
-            return UnaryExpression(UnaryOperation.NEGATE, magnitude)
-        return magnitude
-
-    def _refuse_complex_infinity(
-        self, complex_infinity: sympy.core.numbers.ComplexInfinity
-    ) -> Expression:
-        """Refuse SymPy's complex infinity, which no IR expression denotes."""
-        raise ComplexInfinityLiftError(
-            f"cannot lift {complex_infinity!r} to an expression: SymPy folds a "
-            "quotient by zero to its directionless complex infinity, and no "
-            "expression denotes that value."
-        )
-
-    def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
-        """Lift a ``sympy.Piecewise`` to a flat ``PiecewiseExpression``.
-
-        All branches but the last become cases, in branch order; the
-        last branch's value becomes ``otherwise``. The last branch's
-        condition must be ``sympy.true``: ``PiecewiseExpression`` is a
-        total function, so a ``Piecewise`` whose final condition is not
-        ``sympy.true`` -- meaning it does not cover its domain -- has no
-        faithful IR representation and raises :class:`PartialPiecewiseError`
-        rather than being silently totalized. A single-branch
-        ``Piecewise`` (the only shape that survives construction with a
-        non-``True`` condition) is rejected the same way; the degenerate
-        case of a single branch whose condition is already ``sympy.true``
-        converts directly to the branch's bare value.
-        """
-        branches = tuple(piecewise.args)
-        if not branches:
-            raise ValueError("Cannot convert an empty Piecewise expression.")
-        *case_branches, (otherwise_value, final_condition) = branches
-        if _is_partial_sympy_piecewise(piecewise):
-            raise PartialPiecewiseError(
-                "cannot lift a partial sympy.Piecewise to PiecewiseExpression: "
-                f"the final branch's condition is {final_condition!r}, not "
-                "sympy.true. PiecewiseExpression is a total function and has "
-                "no faithful representation for a Piecewise that does not "
-                "cover its domain."
-            )
-        if not case_branches:
-            return self.convert(otherwise_value)
-        conditions = [self.convert(condition) for _, condition in case_branches]
-        values = [self.convert(value) for value, _ in case_branches]
-        otherwise = self.convert(otherwise_value)
-        return PiecewiseExpression(tuple(conditions), tuple(values), otherwise)
+    def convert_relational(self, relational: Any) -> Expression:
+        """Convert a SymPy relational, refusing any other node."""
+        if not isinstance(relational, sympy.core.relational.Relational):
+            raise TypeError(f"unsupported relational type: {type(relational)}")
+        return _BACKEND.lift(relational)
 
 
-def convert_sympy_expression_to_expression(
-    sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
-) -> Expression:
+def convert_sympy_expression_to_expression(sympy_expression: Any) -> Expression:
     """Convert a SymPy expression to an expression.
-
-    Lifting a ``sympy.Piecewise`` requires its last branch's condition
-    to be ``sympy.true``: ``PiecewiseExpression`` is a total function,
-    so a ``Piecewise`` whose final condition is not ``sympy.true`` --
-    meaning it does not cover its domain -- has no faithful
-    representation and raises :class:`PartialPiecewiseError`.
-
-    A ``sympy.Rational`` lifts exactly: to a float-grammar string literal
-    when some binary ``float`` equals it, which makes the text one the
-    NumPy evaluator reads, and otherwise to a ``DIVIDE`` of its numerator
-    and denominator. ``sympy.oo`` and ``sympy.nan``
-    lift to the canonical identifiers of the registered ``inf`` and
-    ``nan`` constants, and ``-oo`` to the negation of ``inf``.
-    ``sympy.zoo`` is the one numeric value with no IR counterpart and
-    raises :class:`ComplexInfinityLiftError`.
 
     Args:
         sympy_expression: SymPy expression to convert.
@@ -1672,44 +256,4 @@ def convert_sympy_expression_to_expression(
             contains ``sympy.zoo``.
 
     """
-    converter = SymPyToExpressionConverter()
-    return converter(sympy_expression)
-
-
-class SympySimplifier(Simplifier):
-    """The simplifier of the ``sympy`` package.
-
-    It lowers the expression it is given, whose environment the solver has
-    already substituted, simplifies it with ``sympy.simplify``, and lifts
-    the result. Simplification is best-effort: where ``sympy.simplify``
-    raises ``PrecisionExhausted``, drops a piecewise's otherwise branch
-    because the case conditions before it hold for every real, or cannot
-    compare a piecewise that has a Boolean identifier in a case condition
-    and a branch that is not a real number, the expression is lifted back
-    unsimplified. It holds no state, so one object serves every question.
-    """
-
-    @property
-    @override
-    def name(self) -> str:
-        return "sympy"
-
-    @override
-    def simplify(self, expression: Expression) -> Expression:
-        """Return the sympy simplification of ``expression``.
-
-        Raises:
-            PassExecutionError: Wrapping the originating exception as
-                ``__cause__``: a ``TypeError`` if SymPy auto-evaluates a
-                relational it cannot represent (for example a comparison
-                against ``zoo`` or against NaN); or
-                :class:`ComplexInfinityLiftError` if simplification yields
-                ``sympy.zoo``, which a quotient by zero folds to.
-
-        """
-        sympy_expression = convert_expression_to_sympy_expression(expression)
-        _LOGGER.debug("pre-simplify=%r", sympy_expression)
-        simplified = _try_simplify_sympy_expression(sympy_expression)
-        result = sympy_expression if simplified is None else simplified
-        _LOGGER.debug("post-simplify=%r", result)
-        return convert_sympy_expression_to_expression(result)
+    return SymPyToExpressionConverter()(sympy_expression)

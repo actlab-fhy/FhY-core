@@ -13,9 +13,10 @@ three logical questions and a :class:`Simplifier` for simplification:
 - ``SolverBackend.Z3`` is the z3-solver adapter,
   :class:`~fhy_core.symbolic.expression.passes.z3.Z3Solver`, which needs the
   ``z3-solver`` package (``pip install fhy_core[z3]``);
-- ``SolverBackend.SYMPY`` is the sympy adapter,
+- ``SolverBackend.SYMPY`` is the Rust core's SymPy backend,
   :class:`~fhy_core.symbolic.expression.passes.sympy.SympySimplifier`, which
-  needs the ``sympy`` package (``pip install fhy_core[sympy]``);
+  lowers to SymPy, simplifies and lifts back in Rust and needs the ``sympy``
+  package (``pip install fhy_core[sympy]``);
 - :class:`SmtLib2ProcessSolver` drives any SMT-LIB2 executable, such as
   ``z3 -in`` or ``cvc5 --lang=smt2``, from Rust;
 - a Python subclass of :class:`SmtSolver` or :class:`Simplifier` plugs in any
@@ -24,7 +25,7 @@ three logical questions and a :class:`Simplifier` for simplification:
 The module functions below take ``backend``: ``None`` (the default) asks the
 default solver, which :func:`get_default_solver` returns and
 :func:`set_default_solver` replaces; the constraints and params ask it too.
-Its initial value holds the z3-solver and sympy adapters. A
+Its initial value holds the z3-solver adapter and the SymPy backend. A
 :class:`SolverBackend` member asks its adapter. Neither package is imported
 until a question needs it; a question whose backend's package is missing
 raises :class:`SolverBackendUnavailableError`, never a degraded answer.
@@ -88,6 +89,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from functools import cache
+from typing import cast
 
 from immutabledict import immutabledict
 
@@ -196,6 +198,8 @@ class Simplifier(_rs.SimplifierBase, ABC):
     Subclasses implement :meth:`simplify`, and may override :attr:`name`. A
     :class:`Solver` screens the expression and substitutes the environment
     before it calls ``simplify`` from Rust, once per question.
+    :class:`~fhy_core.symbolic.expression.passes.sympy.SympySimplifier`, a
+    backend implemented in Rust, is registered as a virtual subclass.
     """
 
     @abstractmethod
@@ -218,6 +222,9 @@ class Simplifier(_rs.SimplifierBase, ABC):
     def name(self) -> str:
         """Return the backend's name, which errors and warnings name it by."""
         return type(self).__name__
+
+
+Simplifier.register(_rs.SympySimplifier)
 
 
 _BACKEND_CAPABILITIES: immutabledict[SolverBackend, frozenset[SolverQueryKind]] = (
@@ -303,7 +310,8 @@ def _resolve_adapter(backend: SolverBackend) -> SmtSolver | Simplifier:
         return Z3Solver()
     from .expression.passes.sympy import SympySimplifier  # noqa: PLC0415
 
-    return SympySimplifier()
+    # The Rust backend is a registered virtual subclass of `Simplifier`.
+    return cast(Simplifier, SympySimplifier())
 
 
 @cache
@@ -377,31 +385,12 @@ class _DeferredSmtSolver(SmtSolver):
         return adapter.check(script, timeout_milliseconds=timeout_milliseconds)
 
 
-class _DeferredSimplifier(Simplifier):
-    """The adapter of a shipped simplifier, resolved on the first question."""
-
-    _backend: SolverBackend
-
-    def __init__(self, backend: SolverBackend) -> None:
-        super().__init__()
-        self._backend = backend
-
-    @property
-    @override
-    def name(self) -> str:
-        return self._backend.value
-
-    @override
-    def simplify(self, expression: Expression) -> Expression:
-        adapter = _resolve_adapter(self._backend)
-        assert isinstance(adapter, Simplifier)
-        return adapter.simplify(expression)
-
-
+# The default solver's simplifier is the Rust SymPy backend itself, which
+# imports SymPy on its first question, so importing this module imports none.
 set_default_solver(
     Solver(
         smt_solver=_DeferredSmtSolver(SolverBackend.Z3),
-        simplifier=_DeferredSimplifier(SolverBackend.SYMPY),
+        simplifier=_rs.SympySimplifier(),
     )
 )
 

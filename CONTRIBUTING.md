@@ -518,6 +518,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
+| `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | `fhy_core::solver` (`SympySimplifier`, behind the `sympy` feature) |
 | `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
 
 ### Errors belong to their module

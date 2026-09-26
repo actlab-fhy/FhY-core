@@ -94,7 +94,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.2: the simplify context carries the function registry (core, test-first; `SimplifyContext::from_registry`, `Solver::simplify` taking the context)
   - [x] S12.3: the `sympy` cargo feature and `SympySimplifier`, with its stories and the CI changes (144 new tests; see "S12.2 and S12.3 status")
   - [x] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs; see "S12.4 status")
-  - [ ] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver)
+  - [x] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver), with the migrated tests (`pytest` 7,576 passed)
   - [ ] S12.6: tests migrated, and the interface suite
   - [ ] S12.7: benchmarks after, and docs
 
