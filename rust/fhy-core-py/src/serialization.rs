@@ -57,6 +57,8 @@ pub(crate) enum FieldShape {
     PayloadList,
     /// A literal expression's value: a `str`, `float`, `int` or `bool`.
     Literal,
+    /// A list of `int`s that are not `bool`s, or `None`.
+    OptionalIntList,
 }
 
 impl FieldShape {
@@ -83,6 +85,15 @@ impl FieldShape {
                 }
                 Ok(true)
             }
+            Self::OptionalIntList => {
+                if value.is_none() {
+                    return Ok(true);
+                }
+                let Ok(items) = value.cast::<PyList>() else {
+                    return Ok(false);
+                };
+                Ok(items.iter().all(|item| is_int(&item)))
+            }
             Self::Literal => Ok(value.is_instance_of::<PyString>()
                 || value.is_instance_of::<PyFloat>()
                 || value.is_instance_of::<PyInt>()),
@@ -102,6 +113,10 @@ impl FieldShape {
             Self::OptionalStr => str_type.bitor(py.None()),
             Self::OptionalInt => int_type.bitor(py.None()),
             Self::PayloadList => Ok(py.get_type::<PyList>().into_any()),
+            Self::OptionalIntList => py
+                .get_type::<PyList>()
+                .get_item(py.get_type::<PyInt>())?
+                .bitor(py.None()),
             Self::Literal => str_type
                 .bitor(py.get_type::<PyFloat>())?
                 .bitor(int_type)?

@@ -14,6 +14,7 @@ mod expression;
 mod frozen;
 mod identifier;
 mod interned;
+mod lattice;
 mod op_attribute;
 mod pass;
 mod provenance;
@@ -21,6 +22,7 @@ mod public_class;
 mod serialization;
 mod solver;
 mod term;
+mod types;
 mod value_domain;
 
 /// `fhy_core`'s Rust implementation.
@@ -60,6 +62,8 @@ mod rs_module {
     #[pymodule_export]
     use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
     #[pymodule_export]
+    use super::lattice::{PyLattice, PyPartiallyOrderedSet};
+    #[pymodule_export]
     use super::op_attribute::PyOpAttribute;
     #[pymodule_export]
     use super::pass::{
@@ -83,6 +87,15 @@ mod rs_module {
         PyAlphaRenaming, PyEquivalenceRole, binder_get_free_identifiers,
         binder_is_alpha_equivalent_under, binder_substitute, derived_is_alpha_equivalent_under,
         derived_is_structurally_equivalent, is_identifier_mapping_alpha_equivalent_under,
+    };
+    #[pymodule_export]
+    use super::types::{
+        PyDataTypeBase, PyIndexType, PyNumericalType, PyPrimitiveDataType, PyTemplateDataType,
+        PyTypeBase, PyTypeUnificationEnvironment, get_core_data_type_bit_width,
+        is_weak_core_data_type, promote_core_data_types, promote_primitive_data_types,
+        promote_type_qualifiers, resolve_literal_core_data_type, types_bind_data_template,
+        types_bind_template, types_is_structurally_equivalent, types_substitute_data_template,
+        types_substitute_template, types_unify, types_unify_expression,
     };
     #[pymodule_export]
     use super::value_domain::PyValueDomain;

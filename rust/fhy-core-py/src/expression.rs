@@ -31,7 +31,10 @@ pub(crate) use evaluate::{
     PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
     fold_expression, is_decimal_text_exactly_binary,
 };
-pub(crate) use materialize::{materialize_expression, materialize_substituted};
+pub(crate) use literal::read_big_int;
+pub(crate) use materialize::{
+    materialize_expression, materialize_substituted, materialize_with_known,
+};
 pub(crate) use node::{
     PyBinaryExpression, PyCallExpression, PyExpression, PyIdentifierExpression,
     PyLiteralExpression, PyLogicalExpression, PyPiecewiseExpression, PyUnaryExpression,

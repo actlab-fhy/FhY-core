@@ -234,3 +234,19 @@ pub(crate) fn materialize_substituted<'py>(
     };
     materializer.materialize(result, Some(input.clone()))
 }
+
+/// Return a new Python object of the core tree `expression`, reusing the
+/// object of each node whose Rust handle `known` holds by identity, and
+/// building every other node through the public class of its kind.
+///
+/// # Errors
+///
+/// Raises whatever building a node through its public class raises.
+pub(crate) fn materialize_with_known<'py>(
+    py: Python<'py>,
+    expression: &Expression,
+    known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let mut materializer = Materializer { py, known };
+    materializer.materialize(expression, None)
+}

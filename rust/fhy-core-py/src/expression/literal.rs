@@ -42,7 +42,7 @@ pub(super) fn decimal_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 }
 
 /// Return the `int` of the Python int `value`, which may be of any size.
-pub(super) fn read_big_int(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
+pub(crate) fn read_big_int(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
     if let Ok(small) = value.extract::<i64>() {
         return Ok(BigInt::from(small));
     }

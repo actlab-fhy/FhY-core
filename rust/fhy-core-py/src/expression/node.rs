@@ -315,7 +315,7 @@ pub(crate) struct PyExpression {
 
 impl PyExpression {
     /// Return the public Python class registered for this class.
-    pub(super) fn public_class() -> &'static PublicClass {
+    pub(crate) fn public_class() -> &'static PublicClass {
         static PUBLIC_CLASS: PublicClass = PublicClass::new("Expression");
         &PUBLIC_CLASS
     }
@@ -784,7 +784,7 @@ macro_rules! impl_public_class {
     ($class:ty, $name:literal) => {
         impl $class {
             /// Return the public Python class registered for this class.
-            pub(super) fn public_class() -> &'static PublicClass {
+            pub(crate) fn public_class() -> &'static PublicClass {
                 static PUBLIC_CLASS: PublicClass = PublicClass::new($name);
                 &PUBLIC_CLASS
             }
@@ -1289,6 +1289,13 @@ pub(crate) struct PyIdentifierExpression {
 }
 
 impl_public_class!(PyIdentifierExpression, "IdentifierExpression");
+
+impl PyIdentifierExpression {
+    /// Return the Python `Identifier` the node was built from.
+    pub(crate) fn identifier_object(&self) -> &Py<PyAny> {
+        &self.identifier
+    }
+}
 
 #[pymethods]
 impl PyIdentifierExpression {

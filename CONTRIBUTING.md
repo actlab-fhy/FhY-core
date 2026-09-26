@@ -404,7 +404,12 @@ empty `AlphaRenaming` that `AlphaRenaming.empty()` returns
 (`rust/fhy-core-py/src/term/renaming.rs`), an immutable value built on
 first use, as a public class slot is, approved by the maintainer; the
 derived-equivalence plans stay
-in the Python module's `_PLAN_CACHE` dict. Tests never clear a
+in the Python module's `_PLAN_CACHE` dict. Slice S11 adds a thread-local stack
+of the type-system calls in progress (`rust/fhy-core-py/src/types/adapter.rs`),
+each a context holding the Python objects the call was given, the class of
+its environment, and the first exception a Python-defined type's handler
+raised inside an infallible core comparison; a context lives only for its
+call, so the stack is empty whenever no call runs. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default

@@ -101,7 +101,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [ ] S11a: lattice, poset, the type representations and the dispatchers
     - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
     - [x] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification; 216 new tests, see "S11a.2 implementation notes")
-    - [ ] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
+    - [x] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
     - [ ] S11a.4: the Python switch, and `networkx` out of the dependencies
     - [ ] S11a.5: tests migrated, and the interface suites
     - [ ] S11a.6: benchmarks after, and docs
@@ -13359,3 +13359,22 @@ stay, and S11a.5 migrates them:
 | E the five out-of-tree tests | `extension_takes_part_in_structural_equivalence_and_equality`, `extension_binds_then_substitutes_through_its_inner_type`, `extension_unifies_through_its_inner_type_recording_the_inner_bindings`, `extension_errors_propagate_from_bind_and_unify`, `a_width_violation_inside_an_extension_surfaces_as_the_core_error` | |
 | `test_unification_properties.py` (4), `test_core_properties.py` (the promotion laws) | `unification_properties.rs` (4), `both_promotion_orders_are_lattices_whose_joins_are_the_promotions` | the serialization round trips are the binding's |
 | none | `substitution_reaches_shape_variables_inside_calls_and_piecewise`, `the_occurs_check_looks_inside_every_node_kind`, `substitution_follows_a_chain_of_bindings_and_stops_at_a_cycle`, `a_cycle_of_placeholder_bindings_resolves_to_where_it_closes`, `deep_dimensions_bind_substitute_and_unify_on_a_small_stack`, `long_chain_orders_and_iterates_on_a_small_stack`, `a_built_in_pattern_refuses_an_extension_by_its_kind_name`, `a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule` | new: T-5, cycles, depth, extensions nested in built-ins |
+
+### S11a.3 status
+
+The binding is `rust/fhy-core-py/src/lattice.rs` (`_rs.PartiallyOrderedSet`
+and `_rs.Lattice`) and `rust/fhy-core-py/src/types.rs` with
+`types/classes.rs` (the bases `_rs.Type` and `_rs.DataType` and the four
+built-in classes), `types/environment.rs` (`_rs.TypeUnificationEnvironment`
+and the private `_EnvironmentState` its derived environments are built
+from), `types/adapter.rs` (the extension adapters and the per-call context
+stack), `types/convert.rs`, `types/dispatch.rs` (the dispatchers'
+functions `types_*` and the six promotion helpers), `types/enums.rs` and
+`types/error.rs`, exported from `_rs` and declared in `_rs.pyi`. The
+expression binding lends it `materialize_with_known`, `read_big_int`,
+`PyIdentifierExpression::identifier_object`, and its node classes'
+`public_class`, now `pub(crate)`; the serialization helper gains the field
+shape `OptionalIntList`. CONTRIBUTING's process-global section records the
+context stack. Nothing in Python uses the binding yet, so the suite is
+unchanged (7,556 passed), and the Rust gate passes.
+
