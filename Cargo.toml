@@ -12,7 +12,10 @@ license = "BSD-3-Clause"
 repository = "https://github.com/actlab-fhy/FhY-core.git"
 
 [workspace.dependencies]
-pyo3 = "0.29"
+# The binding's, and the SymPy backend of `fhy_core::solver`, behind
+# fhy-core's off-by-default `sympy` feature. One version for both crates:
+# pyo3-ffi links `python`, so a build holds one.
+pyo3 = { version = "0.29", default-features = false }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 num-bigint = "0.5"

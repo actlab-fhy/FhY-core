@@ -24,7 +24,7 @@ Each module depends only on the modules listed before it, except that `tree` and
   - `expression::pattern`: `Pattern`, `Capture`, the `Rule` trait and `RewriteRule`, and `apply_rewrite_rules`.
   - `expression::passes`: `RewriteRuleApplier`, `ExpressionPrettyFormatter` and `register_expression_passes`.
 - `pass`: `CompilerPass`, `PassManager`, `FixpointPassGroup`, analyses, `Validator`s and the owned `PassRegistry`. An analysis is named by its type, or, when no Rust type names it, such as one a language binding defines, by an `Identifier` (`AnalysisId::of_identifier`, `PassContext::analysis_by_id`). `PassContext::with_detached_analyses` lends a hook's code an owned `DetachedAnalyses` handle to the run's cache.
-- `solver`: `Solver`, which answers satisfiability, implication and universal-validity questions with an `SmtSolver` backend, and simplification with a `Simplifier` backend. It checks each question's symbol types and Boolean positions, refuses the shapes SMT-LIB2 cannot state in this crate's semantics (`Hazard::find`), and encodes a logical question as one `SmtScript`, lowered to SMT-LIB2 with the crate's semantics. `SmtLib2Process` drives any SMT-LIB2 executable, such as `z3 -in` or `cvc5 --lang=smt2`, over its standard input and output.
+- `solver`: `Solver`, which answers satisfiability, implication and universal-validity questions with an `SmtSolver` backend, and simplification with a `Simplifier` backend. It checks each question's symbol types and Boolean positions, refuses the shapes SMT-LIB2 cannot state in this crate's semantics (`Hazard::find`), and encodes a logical question as one `SmtScript`, lowered to SMT-LIB2 with the crate's semantics. `SmtLib2Process` drives any SMT-LIB2 executable, such as `z3 -in` or `cvc5 --lang=smt2`, over its standard input and output, and, with the `sympy` feature, `SympySimplifier` simplifies with SymPy.
 
 ## One copy per process
 
@@ -62,6 +62,19 @@ fhy-core = { version = "0.2", features = ["ndarray"] }
 ```
 
 Every lane is computed as the scalar evaluation of that lane's bindings is, and the result is a new array in the standard layout. An `ArrayKernels` implementation can compute native built-ins over whole arrays instead of the crate's own per-lane kernels; `CoreKernels` uses the crate's. The feature's API names `ndarray` 0.17's types, and it does not raise the minimum Rust version. docs.rs builds the default features.
+
+## The `sympy` feature
+
+`fhy_core::solver::SympySimplifier`, a `Simplifier` that lowers an expression to [SymPy](https://www.sympy.org), simplifies it with `sympy.simplify`, and lifts the result back, is behind the off-by-default `sympy` feature:
+
+```toml
+[dependencies]
+fhy-core = { version = "0.2", features = ["sympy"] }
+```
+
+The feature adds [`pyo3`](https://crates.io/crates/pyo3) 0.29, without its default features and without `auto-initialize`, and pyo3 is part of the feature's public API: `lower`, `lift` and the SymPy-level operations take and return pyo3 types. A build holds one pyo3, since `pyo3-ffi` links `python`, so a crate that also uses pyo3 uses 0.29.
+
+The backend needs a Python interpreter with the `sympy` package at run time, and never starts one on its own. Inside a Python process, such as an extension module, it attaches to the running interpreter. A Rust program starts one with `SympySimplifier::with_embedded_python()`, or `pyo3::Python::initialize()`, before the first simplification; without an interpreter, or without SymPy, each operation fails with `SympyUnavailableError`, and `SympySimplifier::load` tells whether simplification can run. An embedded interpreter is the Python this crate was linked against at build time: pyo3 finds it through `PYO3_PYTHON`, an active virtualenv, or `python3` on `PATH`, and needs its shared libpython. At run time the program finds that libpython on the library search path of its platform (`LD_LIBRARY_PATH` on Linux, when it is not in a system directory), and the embedded interpreter finds SymPy on its default path or on `PYTHONPATH`; it does not read a virtualenv's `pyvenv.cfg`, so a virtualenv's `site-packages` goes on `PYTHONPATH`. The backend loads a small Python prelude of the SymPy classes and hooks only Python code can define, once per interpreter, as the module `_fhy_core_sympy`. The feature does not raise the minimum Rust version. docs.rs builds the default features.
 
 ## License
 

@@ -325,9 +325,13 @@ pattern or is recorded as an accepted cost.
 ## Porting to Rust
 
 *FhY* Core is moving to Rust one module at a time. The Rust code is a
-Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library
-and never depends on PyO3. `rust/fhy-core-py` holds the PyO3 bindings, and
-maturin builds it into the extension module `fhy_core._rs`. A port adds its
+Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library;
+it depends on PyO3 only under its off-by-default `sympy` feature, whose
+`SympySimplifier` drives SymPy (slice S12 of
+`docs/design/python-switch.md`). `rust/fhy-core-py` holds the PyO3
+bindings, and maturin builds it into the extension module `fhy_core._rs`.
+Both crates use the one `pyo3` of the workspace table, since `pyo3-ffi`
+links `python` and a build holds one. A port adds its
 types to `fhy-core` and their bindings to `fhy-core-py`. Every port follows
 these rules.
 
@@ -578,9 +582,32 @@ module. A test that needs a fresh process, because it moves process-global
 state further than an ordinary test tolerates, is its own test target, a
 file `tests/<name>.rs` beside `tests/it/` with exactly one `#[test]` and a
 comment saying why, and it is added to the target list the CI `rust` job
-checks. Today the one such target is `id_cap_decode`, which moves the id
-counter to `ID_CAP`. Nothing re-executes a test binary to get a fresh
+checks. Today there are two: `id_cap_decode`, which moves the id counter
+to `ID_CAP`, and `sympy_unavailable`, which needs a process without a
+Python interpreter. Nothing re-executes a test binary to get a fresh
 process.
+
+The `sympy` feature's stories embed Python and need SymPy, and every
+workspace build enables the feature through the binding, so `cargo test
+--workspace` fails them, with the recipe, when SymPy cannot be imported.
+Build and run them with `PYO3_PYTHON` naming a Python that has a shared
+libpython and the `sympy` package, `PYTHONPATH` naming that Python's
+`site-packages` (an embedded interpreter does not read a virtualenv's
+`pyvenv.cfg`), and `LD_LIBRARY_PATH` naming its libpython's directory when
+the loader does not find it. A Python built without a shared libpython,
+such as a distribution's `python3.11` without `libpython3.11.so`, fails to
+link with `unable to find library -lpython3.11`; a uv-managed CPython has
+one:
+
+```bash
+G=$PWD/target/gate-python
+uv python install --no-bin --install-dir "$G/pythons" 3.11
+uv venv --python "$G"/pythons/cpython-3.11*/bin/python3.11 "$G/venv"
+VIRTUAL_ENV="$G/venv" uv pip install sympy
+export PYO3_PYTHON="$G/venv/bin/python"
+export PYTHONPATH="$G/venv/lib/python3.11/site-packages"
+export LD_LIBRARY_PATH="$(echo "$G"/pythons/cpython-3.11*/lib)"
+```
 
 ### Canonical values keep their identity in Python
 
@@ -588,8 +615,9 @@ When a canonical Rust value, such as an interned `OpAttribute`, reaches
 Python, the binding returns the same Python object for the same canonical
 instance every time, so `is` holds exactly as it does for values interned
 in Python. The binding crate keeps that cache, an `IdentityCache` per
-interned class in `rust/fhy-core-py/src/interned.rs`; the core crate never
-holds Python objects.
+interned class in `rust/fhy-core-py/src/interned.rs`; the core crate holds
+no Python objects, except the SymPy handles that the `sympy` feature's
+`SympySimplifier` loads into its own value.
 
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:

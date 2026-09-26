@@ -92,7 +92,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] N-S12-1 decided as (a) (2026-09-26; see "S12 resolutions")
   - [x] S12.1: SymPy benchmarks and baseline, on today's Python adapter (12 rows; see "S12.1 baseline")
   - [x] S12.2: the simplify context carries the function registry (core, test-first; `SimplifyContext::from_registry`, `Solver::simplify` taking the context)
-  - [ ] S12.3: the `sympy` cargo feature and `SympySimplifier`, test-first, with the CI changes
+  - [x] S12.3: the `sympy` cargo feature and `SympySimplifier`, with its stories and the CI changes (144 new tests; see "S12.2 and S12.3 status")
   - [ ] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs)
   - [ ] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver)
   - [ ] S12.6: tests migrated, and the interface suite
@@ -11467,3 +11467,68 @@ What the numbers show:
 - **A fresh interpreter** that imports `fhy_core` and simplifies once
   takes 444 ms, of which SymPy's import is most of the difference from
   the 203 ms plain import.
+
+### S12.2 and S12.3 status: the context and the `sympy` feature
+
+**S12.2.** `SimplifyContext::from_registry(&FunctionRegistry)` and
+`registry()` join `SimplifyContext::new`. `Solver::simplify` takes the
+context instead of a `SortLookup`, and the binding's facade passes the
+context of its registry snapshot. The three new solver stories were written
+before the change, and failed to compile against the old API.
+
+**S12.3: the manifests.**
+
+- The workspace declares `pyo3 = { version = "0.29", default-features =
+  false }`, and the binding asks for `features = ["macros"]`.
+- `fhy-core` gains `pyo3 = { workspace = true, optional = true }` and
+  `[features] sympy = ["dep:pyo3"]`. Its `include` list gains
+  `/src/**/*.py`, for the prelude.
+- The binding does not enable the feature yet; S12.4 does.
+
+**S12.3: the backend.** `rust/fhy-core/src/solver/sympy.rs` holds
+`SympySimplifier`, with these submodules:
+
+- `sympy/load.rs`: the handles, and publishing the prelude;
+- `sympy/lower.rs`;
+- `sympy/lift.rs`;
+- `sympy/boolean.rs`: the piecewise expansion, the Boolean positions, and
+  `replace` with Rust hooks;
+- `sympy/substitute.rs`: a bottom-up rebuild on a work list, and the
+  substitution;
+- `sympy/simplify.rs`: the masking, the folds, and the best-effort cases;
+- `sympy/error.rs`;
+- `sympy/prelude.py`.
+
+Every public item has the one path `fhy_core::solver::X`: `SympySimplifier`,
+`SympyError`, `SympyErrorKind`, `SympyPhase` and `SympyUnavailableError`.
+
+**Tests.** `tests/it/solver/` gains:
+
+- `sympy_lowering_stories.rs`;
+- `sympy_lifting_stories.rs`;
+- `sympy_simplify_stories.rs`;
+- `sympy_properties.rs`, with the core's evaluator as the oracle.
+
+The shared embedded interpreter and the thread-local patching of a SymPy
+function are in `tests/it/support/sympy.rs`. Together these are 143 tests,
+counting `rstest` cases and the two properties. `tests/sympy_unavailable.rs`,
+with `required-features = ["sympy"]`, is the fresh-process target of
+D-S12-13.
+
+**The Rust gate** passed on this machine with `target/gate-python/env.sh`
+(D-S12-13's recipe, plus the z3 variables of S8.3):
+
+- fmt;
+- clippy `-D warnings` with and without `--all-features`;
+- 3,275 tests with the default features, and 3,452 with `--all-features`;
+- doc `-D warnings`;
+- `cargo deny check`, with nothing added, as D-S12-14 said;
+- `cargo +1.85 check`, and `cargo +1.85 check -p fhy-core --features
+  sympy,z3`.
+
+The CI `rust` job installs sympy into its z3 venv, and exports
+`PYO3_PYTHON`, `PYTHONPATH` and the libpython directory to every later
+step. Its target list becomes `id_cap_decode it sympy_unavailable`, and its
+package-contents pattern admits the prelude. `noxfile.py`'s `SOURCES` and
+ty's `include` gain the prelude's directory, and a new `clippy.toml` lets
+rustdoc write SymPy without backticks.

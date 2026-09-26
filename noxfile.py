@@ -14,7 +14,14 @@ ROOT = pathlib.Path(__file__).parent
 # The golden-corpus generators are the Rust port's equivalence oracle, and the
 # benchmarks back each class's switch to Rust, so both pass the same lint and
 # type gates as the package.
-SOURCES = ["src", "tests", "benchmarks", "rust/fhy-core/tests/golden"]
+SOURCES = [
+    "src",
+    "tests",
+    "benchmarks",
+    "rust/fhy-core/tests/golden",
+    # The SymPy backend's prelude, the one Python module of the core crate.
+    "rust/fhy-core/src/solver/sympy",
+]
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
 # Where the benchmark session saves its runs (gitignored).
 BENCHMARK_DIRECTORY = ROOT / ".benchmarks"

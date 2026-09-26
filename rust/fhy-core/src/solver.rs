@@ -87,6 +87,8 @@ mod error;
 mod process;
 mod screen;
 mod smt;
+#[cfg(feature = "sympy")]
+mod sympy;
 #[cfg(feature = "z3")]
 mod z3;
 
@@ -105,6 +107,8 @@ pub use error::{LoweringError, SolveError};
 pub use process::{ProcessError, SmtLib2Process};
 pub use screen::Hazard;
 pub use smt::{Declaration, Logic, SmtScript};
+#[cfg(feature = "sympy")]
+pub use sympy::{SympyError, SympyErrorKind, SympyPhase, SympySimplifier, SympyUnavailableError};
 #[cfg(feature = "z3")]
 pub use z3::{Z3Solver, Z3TermError};
 

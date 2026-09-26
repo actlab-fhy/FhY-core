@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 fhy-core = { workspace = true, features = ["ndarray"] }
 num-traits = { workspace = true }
 numpy = { workspace = true }
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, features = ["macros"] }
 
 [lints]
 workspace = true

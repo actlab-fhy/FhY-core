@@ -15,6 +15,7 @@ categories = ["compilers", "data-structures"]
 # Python corpus generators. Cargo.toml and Cargo.lock are always included.
 include = [
     "/src/**/*.rs",
+    "/src/**/*.py",
     "/tests/**/*.rs",
     "/tests/golden/*.json",
     "/README.md",
@@ -27,6 +28,7 @@ name = "fhy_core"
 [dependencies]
 libm = { workspace = true }
 ndarray = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 serde = { workspace = true }
@@ -38,6 +40,15 @@ z3 = { workspace = true, optional = true }
 z3 = ["dep:z3"]
 # The array backend of `expression::evaluate` (slice S9).
 ndarray = ["dep:ndarray"]
+# The `SympySimplifier` backend of `fhy_core::solver`, which drives SymPy
+# through pyo3 and needs Python with SymPy at run time (see the README).
+sympy = ["dep:pyo3"]
+
+[[test]]
+# One test in a process without an interpreter, then without SymPy.
+name = "sympy_unavailable"
+path = "tests/sympy_unavailable.rs"
+required-features = ["sympy"]
 
 [dev-dependencies]
 postcard = { workspace = true }
