@@ -36,7 +36,7 @@ impl IntoPyErr for LiteralTextError {
 }
 
 /// Return `decimal.Decimal`.
-pub(super) fn decimal_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+pub(crate) fn decimal_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     CLASS.import(py, "decimal", "Decimal")
 }
@@ -57,7 +57,7 @@ pub(crate) fn read_big_int(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
 }
 
 /// Return the Python `int` of `value`.
-pub(super) fn big_int_to_python<'py>(
+pub(crate) fn big_int_to_python<'py>(
     py: Python<'py>,
     value: &BigInt,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -72,7 +72,7 @@ pub(super) fn big_int_to_python<'py>(
 /// # Errors
 ///
 /// Raises `ValueError` if `value` is not finite or is negative.
-fn read_decimal(value: &Bound<'_, PyAny>) -> PyResult<Decimal> {
+pub(crate) fn read_decimal(value: &Bound<'_, PyAny>) -> PyResult<Decimal> {
     let py = value.py();
     if !value.call_method0(intern!(py, "is_finite"))?.is_truthy()? {
         return Err(PyValueError::new_err(format!(

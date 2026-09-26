@@ -128,7 +128,7 @@ pub(super) fn lowering_error_to_py(py: Python<'_>, error: LoweringError) -> PyEr
 }
 
 /// Return the Python exception of a failed question.
-pub(super) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
+pub(crate) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
     let text = error.to_string();
     match error {
         SolveError::NoCapableBackend(_) => capability_error(py, text),

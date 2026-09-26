@@ -143,6 +143,11 @@ pub(crate) struct PySolver {
 }
 
 impl PySolver {
+    /// Return the core solver.
+    pub(crate) fn core(&self) -> &Solver {
+        &self.solver
+    }
+
     /// Answer `question` for the entry point `context`, logging a refusal or
     /// a backend's `unknown`.
     fn ask(

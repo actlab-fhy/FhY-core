@@ -6,6 +6,7 @@
 //! one flat Python namespace: `PyO3` submodules are attributes, not
 //! importable packages.
 
+mod constraint;
 mod dataclass;
 mod described_tag;
 mod diagnostic;
@@ -30,6 +31,11 @@ mod value_domain;
 mod rs_module {
     use pyo3::prelude::*;
 
+    #[pymodule_export]
+    use super::constraint::{
+        PyEquationConstraint, PyInSetConstraint, PyNotInSetConstraint,
+        does_member_lift_to_expression,
+    };
     #[pymodule_export]
     use super::diagnostic::{PyDiagnostic, PyNote, PyNoteKind, PyValidationReport};
     #[pymodule_export]

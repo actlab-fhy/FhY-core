@@ -31,7 +31,7 @@ pub(crate) use evaluate::{
     PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
     fold_expression, is_decimal_text_exactly_binary,
 };
-pub(crate) use literal::read_big_int;
+pub(crate) use literal::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 pub(crate) use materialize::{
     materialize_expression, materialize_substituted, materialize_with_known,
 };
@@ -55,7 +55,7 @@ pub(crate) use registry::{
     register_native_function, set_registry_state_for_tests, try_get_native_constant_for_identifier,
     try_get_registered_result_sort,
 };
-pub(crate) use screen::{validate_logical_operands, validate_predicate};
+pub(crate) use screen::{non_boolean_operand_error, validate_logical_operands, validate_predicate};
 
 /// Return the `repr` of the Python object of `expression`, such as
 /// `BinaryExpression((add x::7 1))`.

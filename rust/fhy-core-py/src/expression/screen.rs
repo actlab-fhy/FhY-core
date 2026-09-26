@@ -34,6 +34,14 @@ fn non_boolean_operand_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType
     )
 }
 
+/// Return `NonBooleanLogicalOperandError` with `message`.
+pub(crate) fn non_boolean_operand_error(py: Python<'_>, message: String) -> PyErr {
+    match non_boolean_operand_error_class(py).and_then(|class| class.call1((message,))) {
+        Ok(error) => PyErr::from_value(error),
+        Err(error) => error,
+    }
+}
+
 /// Raises `NonBooleanLogicalOperandError` (a `TypeError`) with the core's
 /// text, followed by the `repr` of the operand and of the node taking it:
 /// `operand 0 of a logical and provably denotes a number but sits in a

@@ -124,7 +124,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S13.0: the design (survey, decisions D-S13-1 to D-S13-22, benchmark plan, steps, test plan)
   - [x] S13a.1: constraint benchmarks and baseline (39 rows; see "S13a.1 baseline")
   - [x] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer; 144 new tests)
-  - [ ] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
+  - [x] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
   - [ ] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`
   - [ ] S13a.5: tests migrated, and the interface suite
   - [ ] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`)
@@ -15587,6 +15587,20 @@ was deleted, as in S7.2.
   (22), `equivalence_stories.rs` (9) and `constraint_properties.rs` (5),
   with the helpers in `tests/it/support/constraint.rs`: `TestOpaque`, a
   test-local opaque value, and `RecordingObserver`.
+
+### S13a.3 status
+
+The binding is `rust/fhy-core-py/src/constraint.rs` with
+`constraint/value.rs` (the member and bound-value readers,
+`PyOpaqueValue`, the members' Python values, and the pending-error slot),
+`constraint/observer.rs` (the log records), `constraint/error.rs` (the
+Python exceptions) and `constraint/kinds.rs` (`_rs.EquationConstraint`,
+`_rs.InSetConstraint`, `_rs.NotInSetConstraint` and
+`does_member_lift_to_expression`), exported from `_rs` and declared in
+`_rs.pyi`. The expression binding lends it `read_decimal`,
+`decimal_class`, `big_int_to_python` and `non_boolean_operand_error`; the
+solver binding `solve_error_to_py` and `PySolver::core`. Nothing in Python
+uses it yet, so the suite is unchanged (7,685 passed, 2 xfailed).
 
 ### S13 resume notes
 

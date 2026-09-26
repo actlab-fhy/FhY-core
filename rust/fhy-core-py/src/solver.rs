@@ -12,6 +12,7 @@ mod sympy;
 mod values;
 
 pub(crate) use backends::{PySimplifierBase, PySmtLib2ProcessSolver, PySmtSolverBase};
+pub(crate) use error::solve_error_to_py;
 pub(crate) use facade::PySolver;
 pub(crate) use state::{get_default_solver, set_default_solver};
 pub(crate) use sympy::PySympySimplifier;
