@@ -137,7 +137,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S15.2: core addition, test-first, with Rust tests (`fhy_core::symbol_table`: `SymbolTable`, `Frame`, `SymbolFrame`, `FunctionKeyword`; 59 new tests, see "S15.2 implementation notes")
   - [x] S15.3: the binding (the table, the three frames, the stubs; with the core's `SymbolTable::insert_namespace` for pickling)
   - [x] S15.4: the Python switch (`symbol_table.py` over `_rs`; the README row and CONTRIBUTING's callback exception)
-  - [ ] S15.5: tests migrated, and the interface suite
+  - [x] S15.5: tests migrated (none needed a change), and the interface suite (54)
   - [ ] S15.6: benchmarks after, and docs
 
 ## Goal
