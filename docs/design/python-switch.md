@@ -52,6 +52,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] mypy over the Rust branches (S4.4)
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
+- [ ] S7: the function registry (designed; see "S7: the function registry")
+  - [ ] N-S7-1 to N-S7-3 decided
+  - [ ] S7.1: registry benchmarks and baseline
+  - [ ] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
+  - [ ] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
+  - [ ] S7.4: the Python switch
+  - [ ] S7.5: tests migrated, and the interface suite
+  - [ ] S7.6: benchmarks after, and docs
 
 ## Goal
 
@@ -4589,3 +4597,813 @@ The new `tests/pass_infrastructure/test_pass_infrastructure_rust_binding.py`
 (108 tests) covers the test plan above, except its native-pass items,
 since no pass became native: it pins that `RewriteRuleApplier` runs in a
 pipeline and keeps its input object when nothing fires.
+
+## S7: the function registry
+
+- **Status:** designed 2026-09-25 at 0bc8952. D-S7-1 to D-S7-17 apply the
+  policy the user already set; N-S7-1 to N-S7-3 need the user.
+- **Pattern:** P2 for the three entry classes and for the registry, whose
+  core type is a new owned `FunctionRegistry`. The binding keeps one in
+  module state, so Python keeps its global `register_function` API.
+- **Retires D-S4-4.** S4 kept the registry in Python and gave the Rust
+  screen a `SortLookup` adapter over it (`RegistrySorts`). S7 makes the
+  Rust registry the only one, and the adapter goes.
+
+### Survey: the Python API
+
+The package is `src/fhy_core/symbolic/expression/registry/`, 794 lines.
+`builtins.py` (437) fills it at import, and `errors.py` (227) defines its
+two error classes. It is pure Python over the Rust-backed expressions since
+S4.3a.
+
+| File | Lines | Contents |
+|---|--:|---|
+| `__init__.py` | 69 | re-exports 17 names |
+| `entries.py` | 322 | `RegisteredFunction`, `NativeFunction`, `NativeConstant`, the `RegisteredEntry` and `CallTargetResolver` aliases, the construction checks |
+| `storage.py` | 204 | the three dicts and the lock, the lookups, `set_registry_state_for_tests` |
+| `api.py` | 199 | `register_function`, `register_native_function`, `register_native_constant`, `try_get_registered_result_sort` |
+
+**The entries (`entries.py`).** All three are frozen dataclasses, open to
+direct construction without registering.
+
+- **`RegisteredFunction(name, parameters, parameter_sorts, result_sort,
+  body)`**, a `DerivedEquivalenceMixin`.
+  - `__post_init__` raises `ValueError` for an empty name, for sorts whose
+    count differs from the parameters' (`RegisteredFunction 'f':
+    parameter_sorts length (2) does not match parameters length (1).`),
+    and for a body whose free identifiers are not all parameters or
+    canonical identifiers of registered constants (`RegisteredFunction
+    'f': body references identifiers not in its parameters: x, y.`, sorted
+    by name hint).
+  - The capture check reads the *global* registry at construction, so it
+    is order-dependent: a body naming a constant is refused before the
+    constant is registered and accepted after.
+  - A repeated parameter is accepted. Substitution then keeps the last
+    argument, and a binder frame the last pairing.
+  - A call is a reference by name, so a recursive body is accepted.
+  - `==` and `hash` are the dataclass's, over every field, `name`
+    included; the body compares structurally (D-S4-1).
+- **`NativeFunction(name, parameter_sorts, result_sort, implementation)`.**
+  `implementation` is a Python callable taking and returning `bool`, `int`
+  or `float`. Construction raises `ValueError` for an empty name, or when
+  `inspect.signature` shows the callable cannot take
+  `len(parameter_sorts)` positional arguments. A callable with no
+  inspectable signature (`max`, some `math` functions) is not checked.
+  `==` compares every field, the callable by its own `==`.
+- **`NativeConstant(name, sort, value)`.** `value` is a `bool`, `int` or
+  `float` that `is_python_value_compatible_with_sort` accepts: a `bool`
+  only for `BOOL`, a non-negative `int` for `NAT`, an `int` for `INT`, an
+  `int` or `float` for `REAL`. The entry holds no identifier.
+- Mutating a field raises `dataclasses.FrozenInstanceError`. There is no
+  serialization; default pickling works for picklable callables.
+
+**Storage (`storage.py`).**
+
+- Three module dicts behind one `threading.Lock`: name to entry, constant
+  name to canonical identifier, and canonical identifier to constant.
+- Functions and constants share one namespace.
+- `register_native_constant` mints `Identifier(name)` outside the lock,
+  then publishes the entry and its identifier under it, so no reader sees
+  a constant without its identifier.
+- Every read takes the lock:
+  - `get_registered_entry(name)` returns the stored object, or raises
+    `EntryLookupError("No entry is registered under the name 'x'.")`.
+  - `get_registered_entries()` returns an `immutabledict` snapshot, in
+    registration order.
+  - `is_entry_registered(name)`.
+  - `get_native_constant_identifier(name)` returns the identifier, or
+    raises `EntryLookupError("No native constant is registered under the
+    name 'x'.")`, also for a function's name.
+  - `try_get_native_constant_for_identifier(identifier)` returns the
+    constant, or `None`. It is by identity: an identifier merely named
+    `pi` is an ordinary variable.
+- **`set_registry_state_for_tests(state)`** replaces the whole registry
+  with `state`. A constant keeps its identifier only if `state` holds the
+  very object registered under its name. So a constant registered inside a
+  test stops resolving once the snapshot is restored. The
+  `function_registry_snapshot` fixture in `tests/conftest.py` snapshots
+  with `dict(get_registered_entries())` and restores through it.
+  Built-ins can be dropped this way; one test does
+  (`test_core.py::test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue`).
+
+**Registration (`api.py`).**
+
+- `register_function(name, parameters, parameter_sorts, result_sort,
+  body)` builds the entry, wraps its `ValueError` as
+  `EntryRegistrationError(str(exc))` (a `RuntimeError`), then inserts it.
+  A taken name raises `EntryRegistrationError("A name is already
+  registered: 'f'.")`.
+- `register_native_function` and `register_native_constant` do the same.
+- Registration never type-checks a body, and a body may call a name not
+  yet registered.
+- `try_get_registered_result_sort(name)` returns a function's result sort,
+  or `None` for a constant or an unknown name.
+- The errors: `EntryRegistrationError(RuntimeError)` and
+  `EntryLookupError(KeyError)`, both `register_error`ed. The 14 Python
+  tests that match their messages match only the entry's name.
+
+**The built-ins (`builtins.py`).** Importing the module registers, in this
+order:
+
+1. the four constants `pi`, `e`, `inf`, `nan` (`math` values), so the
+   composed bodies may name them. Their identifiers are the first ids the
+   counter issues, 65,536 to 65,539, and two tests pin those ids, one in a
+   fresh interpreter;
+2. the 19 native functions, `math` callables plus `_exp2` and the builtin
+   `round`, whose banker's rounding a test pins;
+3. the 16 composed functions, each body built from Python-minted
+   parameters.
+
+`BUILTIN_FUNCTIONS` and `BUILTIN_CONSTANTS` are read-only `TypedDict`s
+over `immutabledict`s of the registered entry objects.
+
+**Consumers in `src`.** None mutates the registry; `builtins.py` is its
+only writer.
+
+| Module | Lines | Reads |
+|---|--:|---|
+| `passes/inline.py` | 169 | `FunctionInliner(RewritablePass)`: per call, `get_registered_entry`, dispatch by entry class. It inlines a `RegisteredFunction` by `body.substitute(dict(zip(parameters, arguments)))`, then transforms the result, with an in-progress set that raises `RecursionError`. It checks a native's arity and keeps the call, and refuses a constant with `FunctionArityError` (a `ValueError`, defined here) |
+| `passes/evaluate.py` | 186 | per call, the entry: a `NativeFunction` with literal arguments is folded through `implementation`, its result checked against `result_sort` (`NativeResultSortError`); a `RegisteredFunction` gets a WARNING; constants are folded through `native_lowering.try_get_native_constant_value` |
+| `passes/native_lowering.py` | 118 | `try_get_native_constant_for_identifier` |
+| `passes/z3.py` | 727 | the entry kind, only to word the refusal of a call; the constant screen |
+| `passes/sympy.py` | 1,738 | the entry kind for refusals; constants lowered by entry name (`_NATIVE_CONSTANT_LOWER`), lifted back through `get_native_constant_identifier` |
+| `passes/numpy.py` | 728 | a native's `result_sort` for the cast; entry kinds for the unbound-identifier message; constants |
+| `types/checking/type_checker.py` | 1,513 | `resolve_call_target` (injected, `get_registered_entry` by default): arity and parameter sorts, the result sort; constant types by identifier |
+| `types/checking/body_type_checker.py` | 372 | `check_all_registered_function_bodies` iterates `get_registered_entries()` over the `RegisteredFunction`s, built-ins included, and resolves calls through `get_registered_entry` |
+| `symbolic/solver.py` | 1,687 | `try_get_registered_result_sort` (numeric kind of a call), the constant screen |
+| `constraint/core.py`, `constraint/system.py` | 1,117, 848 | `try_get_native_constant_for_identifier` |
+| `param/core.py` | 2,175 | a parameter may not be a constant's identifier |
+
+`types/checking/__init__.py` (53) and `symbolic/expression/__init__.py`
+(204) re-export. The binding's `expression/screen.rs` (345 lines) is the
+S4 adapter: it collects the Python identifiers of the trees screened, then
+calls `try_get_native_constant_for_identifier` and
+`try_get_registered_result_sort` once per identifier and per name.
+
+**`RegisteredFunction` under binder frames.** `parameters` is declared
+`compared_as_binder(scopes_over=("body",))`, and `name` is
+`excluded_from_equivalence()`. The derived plan compares the sorts by
+value and the parameter counts. Then it extends the Python `AlphaRenaming`
+(a P1 value class, S4.3a) with the frame `dict(zip(self.parameters,
+other.parameters))`, and compares the bodies through
+`Expression.is_alpha_equivalent_under`. That converts the renaming, frames
+included, into the Rust `AlphaRenaming` once per comparison, with the S4.2
+capture rules. A non-injective frame is not equivalent. Structural
+equivalence requires the same parameters. Two tests pin this, and nothing
+in `src` compares entries.
+
+**Probed at 0bc8952.**
+
+- A lookup costs 230 to 300 ns: `get_registered_entry("max")` 229 ns,
+  `try_get_native_constant_for_identifier` 268 to 275 ns, and
+  `try_get_registered_result_sort("max")` 303 ns.
+- **The inliner is exponential in nested calls whose body repeats a
+  parameter.** `max`'s body names `a` twice, so `relu(relu(...(x)))`
+  inlines in 0.2 ms at depth 4, 2.9 ms at 8, 11 ms at 10 and 44 ms at 12;
+  depth 100 did not finish in five minutes. `RewritablePass` walks the
+  substituted body per occurrence, so each level doubles the work,
+  although the result shares the argument.
+
+### Survey: the Rust API
+
+- **`fhy_core::expression::builtins`** (`builtins.rs`, 695 lines) is the
+  catalogue, data only: "it registers nothing, and it does not compute
+  native functions".
+  - `BuiltinFunction` has the 35 functions in catalogue order (16
+    composed, then 19 native), with `iter`, `name`, `parameter_sorts`,
+    `result_sort`, `composed`, `FromStr` and serde by name.
+  - `ComposedFunction` has `function`, `parameters` and `body`. Its
+    parameters are minted lazily, by a `LazyLock`, on the first call that
+    asks for a composed function (R-2), and its body calls only
+    `Callee::Builtin`s.
+  - `BuiltinConstant` (`Pi`, `E`, `Inf`, `Nan`) has `iter`, `name`,
+    `sort` (`Real` for all four) and `value() -> f64`, and **no
+    identifier**.
+- **`Callee`** is `Builtin(BuiltinFunction) | Named(FunctionName)`.
+  `FromStr` routes a built-in's name to `Builtin`. `FunctionName::try_new`
+  refuses `""` (`FunctionNameError::Empty`) and a built-in's name
+  (`Builtin(f)`) (D-9). Constants are not callees, and their names are
+  not reserved.
+- **`SortLookup`** has `native_constant_sort(&Identifier)` and
+  `call_result_sort(&FunctionName)`, both `None` by default;
+  `NoRegisteredSorts` knows nothing. `BooleanScreen` judges
+  `Callee::Builtin(f)` by `f.result_sort()` without asking.
+- **`FunctionSort`** is the closed `Bool | Nat | Int | Real`, with no
+  check of values.
+- **There is no registry, no user-function type, no inliner and no
+  evaluator.** `Expression::substitute` exists. The crate's process-global
+  state is limited to identity (`lib.rs`, CONTRIBUTING "Process-global
+  state is limited to identity"), and every registry but the intern
+  registries is owned, as `PassRegistry` is (F-006).
+- **Rust tests:** `tests/it/expression/builtins_stories.rs` (816 lines,
+  26 tests), `screen_stories.rs` (1,486 lines, 62 tests; 15 mention
+  `SortLookup`), and the callee tests in `builders_stories.rs` (1,005
+  lines).
+
+### Divergences visible from Python
+
+| # | Python today | Rust core |
+|---|---|---|
+| X-1 | Built-ins are ordinary entries registered at import, in the namespace user entries share | a fixed catalogue that nothing registers; built-in function names are reserved (D-9) |
+| X-2 | Each composed built-in has a Python body over Python-minted parameters | a second definition, `ComposedFunction`, over lazily minted parameters. The printed bodies agree; only the result sorts are checked to agree (S4.3a) |
+| X-3 | Native built-ins carry `math` callables; `round` rounds half to even | no implementation |
+| X-4 | A constant owns an identifier, minted at registration; the built-ins' are 65,536 to 65,539, by import order | `BuiltinConstant` has no identifier; `native_constant_sort` leaves identifiers to the caller |
+| X-5 | Names are any non-empty `str`, one namespace for functions and constants | `Callee`/`FunctionName`: built-in names are not user names; constants have no name type |
+| X-6 | `RegisteredFunction`, `NativeFunction`, `NativeConstant` | no user-entry type; `Callee::Named` is only a name |
+| X-7 | Construction checks the name, the sort count and captured identifiers, the last against the global registry; a repeated parameter is accepted | no validation; S4.2's `enter_binder` docs tell a caller pairing parameter lists to refuse a repeated name |
+| X-8 | A lookup returns the entry or raises `EntryLookupError`; entries in registration order | `SortLookup` returns only sorts, as `Option`s |
+| X-9 | The screen asks the Python registry per identifier and per name (D-S4-4) | the screen asks a `SortLookup`; built-in calls come from the catalogue |
+| X-10 | `FunctionInliner` rewrites per occurrence, recursively (exponential above), and raises `EntryLookupError`, `FunctionArityError` or `RecursionError` | no inliner |
+| X-11 | The evaluator folds natives through their callables | no evaluator |
+| X-12 | One global dict behind a lock, replaceable by `set_registry_state_for_tests` | owned, `Send + Sync` values; no test seam needed |
+| X-13 | Dataclass `==`/`hash` over every field; derived binder equivalence without `name` | `ComposedFunction` has no equality |
+| X-14 | Messages are sentences with periods and quotes (`A name is already registered: 'f'.`) | lowercase one-line messages (I.3 rule 3) |
+| X-15 | `dataclasses.FrozenInstanceError` | the Rust-backed classes raise `FrozenMutationError` (S2 to S6) |
+| X-16 | Registration order: constants, natives, composed | catalogue order: composed, then natives |
+| X-17 | Constant values are `bool`, `int` or `float`, checked by `is_python_value_compatible_with_sort` | `LiteralValue` (with `Decimal`); `FunctionSort` checks no value |
+
+Unchanged in meaning: the sort vocabulary, and a call's type from its
+callee's declared sorts; the built-ins' names, signatures, bodies and
+values; constants recognized by identifier identity; one namespace for
+calls; registration that never type-checks a body and accepts forward
+references.
+
+### Consumers and tests
+
+- **`src`.** The 13 modules in the consumer table above, plus
+  `builtins.py`. All of them read through the public lookups. The type
+  checker also takes an injected `resolve_call_target`.
+- **Python tests.** 30 files mention the registry API. About 140 test
+  requests use `function_registry_snapshot`: `test_registry.py` 49,
+  `test_evaluator.py` 25, `test_type_checker_sorts.py` 17,
+  `test_inline_pass.py` 14, `test_body_type_checker.py` 13,
+  `test_registry_body_sweep.py` 10, and 1 to 3 in six more.
+
+  | File | Lines | Tests | Registry references |
+  |---|--:|--:|--:|
+  | `symbolic/expression/test_registry.py` | 1,240 | 74 | 293 |
+  | `symbolic/expression/test_builtins.py` | 627 | 169 | 44 |
+  | `expression/passes/test_evaluator.py` | 651 | 33 | 49 |
+  | `types/checking/test_type_checker_sorts.py` | 398 | 17 | 42 |
+  | `types/checking/test_body_type_checker.py` | 324 | 13 | 39 |
+  | `expression/passes/test_inline_pass.py` | 437 | 19 | 37 |
+  | `types/checking/test_registry_body_sweep.py` | 338 | 10 | 29 |
+  | `symbolic/expression/test_core.py` | 2,916 | 524 | 22 (3 registry tests) |
+  | `expression/passes/test_numpy_evaluator.py` | 1,739 | 153 | 22 |
+  | `symbolic/expression/test_sympy_natives.py` | 421 | 59 | 20 |
+  | `constraint/test_constraint_system.py` | 3,382 | 233 | 13 |
+  | `expression/passes/test_inline_pass_properties.py` | 363 | 4 | 9 |
+  | `symbolic/expression/test_native_stories.py` | 293 | 16 | 6 |
+  | `test_conftest_fixtures.py` | 105 | 12 | 6 |
+  | `symbolic/expression/test_functions_stories.py` | 231 | 6 | 3 |
+  | `types/checking/test_builtin_bodies.py` | 72 | 2 | 5 |
+  | 14 more, 7 references or fewer each (the solver, the z3 and sympy passes, constraints, params, the type checker, `conftest.py`, the strategies) | | | 60 |
+
+- **Rust tests:** as surveyed above; none covers a registry.
+- **Benchmarks.** None covers the registry.
+  `test_call_construction_of_a_user_function` and the three screen rows of
+  `test_expression.py` touch it.
+
+### Pattern choice
+
+- **P2: the registry, `RegisteredFunction`, `NativeFunction` and
+  `NativeConstant`.** The registry holds identity state (canonical
+  constant identifiers), so decision 2's registry rule applies: one
+  registry, in Rust. A Rust screen and a Rust inliner must hold the
+  entries. The binding keeps one core `FunctionRegistry` in module state,
+  next to a table from names to each entry's Python object (N-S7-2).
+- **P1:** `FunctionSort` stays a `StrEnum`, and `Identifier` stays P1.
+- **Plain Python:** the `RegisteredEntry` and `CallTargetResolver`
+  aliases, `is_python_value_compatible_with_sort`, `builtins.py`'s table
+  of native implementations, and every consumer except the inliner's walk.
+
+**Benchmark plan: `benchmarks/test_registry.py` (S7.1).** Registration
+mutates the process registry, so its rows restore a snapshot in
+`pedantic` setup, through a helper `_restore(snapshot)`. The inliner rows
+use `inline_functions`. The nested rows use depth 10, where today's
+inliner takes about 11 ms; depth 100 does not finish today, and the
+"after" run adds it with no baseline. The baseline measures today's
+Python registry.
+
+| Benchmark | Measures |
+|---|---|
+| `test_register_function[small]`, `[deep_body]` | registration of `x + 1`, and of a 100-operation body (the capture check walks it) |
+| `test_register_native_function`, `test_register_native_constant` | the `inspect` arity check; minting the identifier |
+| `test_registered_function_construction`, `_eq`, `_hash`, `_alpha_equivalence` | an entry value: construction, `==`, `hash`, and binder equivalence of two parameter-renamed functions |
+| `test_get_registered_entry[user]`, `[builtin]`, `[miss]` | the lookup a pass makes per call; `[miss]` includes the `EntryLookupError` |
+| `test_is_entry_registered`, `test_try_get_registered_result_sort[user]`, `[miss]` | the solver's and the screen's lookups |
+| `test_try_get_native_constant_for_identifier[hit]`, `[miss]`, `test_get_native_constant_identifier` | the constant lookups the solver and the constraints make per identifier |
+| `test_get_registered_entries` | the snapshot, with 50 user entries |
+| `test_validate_predicate_of_user_calls` | the screen over a conjunction of 100 calls of five user functions and a constant reference: the adapter's cost (D-S7-6) |
+| `test_inline_functions[no_calls]` | S4.1's deep tree, which calls nothing: the pass's floor |
+| `test_inline_functions[nested_builtins]` | `relu` nested 10 deep: X-10 |
+| `test_inline_functions[user_chain]` | ten user functions, each calling the next |
+| `test_inline_functions[shared_dag]` | S4.1's doubling DAG with a `sigmoid` call at its leaf |
+| `test_evaluate_after_inline` | `evaluate_expression(inline_functions(...))` of the user chain with literal arguments: the evaluator's lookup per call |
+| `test_check_all_registered_function_bodies` | the sweep over the built-ins and 20 user functions |
+
+Rerun, not added: `test_call_construction_of_a_user_function` and the
+three `test_validate_*` rows (`test_expression.py`). A slower hot path
+changes pattern, or is recorded as an accepted cost with numbers
+(cross-cutting rule 5). The paths at risk:
+
+- the lookups, which cross into the extension and take a lock where
+  today they take a Python lock and index a dict. They must return the
+  cached entry object, never build one;
+- `try_get_native_constant_for_identifier`, which reads an `Identifier`'s
+  id (P1) before the Rust lookup;
+- registration of a small function, which now builds a Rust definition
+  and converts its fields.
+
+### Decisions (proposed 2026-09-25)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I: owned registries
+  and no global state beyond identity (F-006, CONTRIBUTING), D-9, R-2,
+  and the layering of §I.2.
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+- **D-S7-1: one implementation, no fallback** ("no fallback"). The
+  `registry/` modules become thin public classes and functions over
+  `_rs`. The dataclasses, the three dicts and the lock are deleted, not
+  kept behind a switch. `builtins.py` registers nothing any more.
+- **D-S7-2: the core gains an owned `FunctionRegistry`** (crate
+  conventions: an owned value, as `PassRegistry` is; I.3 rules 3 to 5
+  and 7). It lives in a new `fhy_core::expression::registry` module,
+  which imports no `pass` (§I.2):
+
+  ```rust
+  #[derive(Debug, Clone, Default)]            // Send + Sync; entries Arc-backed
+  pub struct FunctionRegistry { /* registration order + indexes */ }
+  impl FunctionRegistry {
+      pub fn new() -> Self;
+      pub fn register_function(&mut self, function: FunctionDefinition) -> Result<(), RegistrationError>;
+      pub fn register_native_function(&mut self, function: NativeFunction) -> Result<(), RegistrationError>;
+      /// Mints the constant's identifier and returns it.
+      pub fn register_constant(&mut self, constant: NativeConstant) -> Result<Identifier, RegistrationError>;
+      pub fn entry(&self, name: &str) -> Option<RegistryEntry<'_>>;
+      pub fn contains(&self, name: &str) -> bool;
+      pub fn iter(&self) -> impl ExactSizeIterator<Item = RegistryEntry<'_>> + '_;  // registration order
+      pub fn constant_identifier(&self, name: &str) -> Option<&Identifier>;
+      pub fn constant(&self, identifier: &Identifier) -> Option<&NativeConstant>;
+      pub fn result_sort(&self, name: &FunctionName) -> Option<FunctionSort>;
+      pub fn len(&self) -> usize;
+      pub fn is_empty(&self) -> bool;
+      pub fn inline(&self, expression: &Expression) -> Result<Expression, InlineError>;   // D-S7-7
+  }
+  impl SortLookup for FunctionRegistry;
+
+  #[derive(Debug, Clone, Copy)]
+  #[non_exhaustive]
+  pub enum RegistryEntry<'r> { Function(&'r FunctionDefinition), Native(&'r NativeFunction), Constant(&'r NativeConstant, &'r Identifier) }
+
+  #[derive(Debug, Clone)]                     // Arc inside; no PartialEq (as ComposedFunction)
+  pub struct FunctionDefinition { /* name, parameters, parameter_sorts, result_sort, body */ }
+  impl FunctionDefinition {
+      pub fn try_new(name: FunctionName, parameters: impl IntoIterator<Item = Identifier>,
+          parameter_sorts: impl IntoIterator<Item = FunctionSort>, result_sort: FunctionSort,
+          body: Expression) -> Result<Self, FunctionDefinitionError>;
+      // name, parameters, parameter_sorts, result_sort, body
+  }
+  pub struct NativeFunction { /* name, parameter_sorts, result_sort */ }   // new(...), infallible
+  pub struct NativeConstant { /* name, sort, value: LiteralValue */ }       // try_new(...) -> Result<_, ConstantValueError>
+
+  #[non_exhaustive] pub enum FunctionDefinitionError { SortCountMismatch { parameters: usize, sorts: usize }, RepeatedParameter(Identifier) }
+  #[non_exhaustive] pub enum RegistrationError { NameTaken(FunctionName), BuiltinConstantName(BuiltinConstant), CapturedIdentifiers { function: FunctionName, identifiers: Vec<Identifier> } }
+  #[non_exhaustive] pub struct ConstantValueError { /* sort, value */ }
+  #[non_exhaustive] pub enum InlineError { UnknownFunction(FunctionName), ArityMismatch { callee: Callee, expected: usize, actual: usize }, NotCallable(FunctionName), Recursive(FunctionName) }
+  ```
+
+  - Every entry is keyed by a `FunctionName`, constants included, since
+    they share the call namespace. `RegistryEntry` is a borrowed view, so
+    a lookup copies nothing.
+  - Cloning a registry is cheap: the entries are `Arc`s, and a clone is
+    an independent registry.
+  - Every `Display` is one lowercase line, for example `"f" is already
+    registered` or `function "f" captures identifiers that are not its
+    parameters: x, y`.
+  - The core's names follow its own vocabulary (`FunctionDefinition`
+    beside `ComposedFunction`), and the Python names stay (D-S7-9). The
+    exact shape is settled test-first in S7.2.
+- **D-S7-3: built-ins stay in the catalogue, and the registry holds only
+  user entries** (D-9; X-1). The registry refuses a built-in function's
+  name, through `FunctionName`. It also refuses a built-in constant's
+  name (`BuiltinConstantName`), so the one namespace keeps its meaning
+  (D-S4-2: Python refuses `"pi"` today, as a taken name). A built-in is
+  never an entry of a `FunctionRegistry`. How Python sees the built-ins is
+  N-S7-3.
+- **D-S7-4: built-in constants get identifiers in the core, and the
+  screen judges them by the catalogue** (D-9 extended to constants; X-4).
+  - `BuiltinConstant::identifier(self) -> &'static Identifier` and
+    `BuiltinConstant::of_identifier(&Identifier) -> Option<Self>` are
+    added. Where the ids come from is N-S7-1.
+  - `BooleanScreen` judges a built-in constant's identifier by
+    `BuiltinConstant::sort()` without asking the `SortLookup`, as it
+    judges built-in calls.
+  - Registration exempts the four identifiers from the capture check.
+- **D-S7-5: validation follows the owned registry** (D-S4-1; the crate's
+  "no global state"; the S4.2 note on repeated names; X-7).
+  - `FunctionDefinition::try_new` refuses mismatched sort counts and a
+    repeated parameter (new).
+  - Registration refuses a taken name, and a body capturing identifiers
+    that are neither parameters, nor constants of *this* registry, nor
+    built-in constants.
+  - The capture check stays order-dependent, as today, but reads the
+    registry it registers into. A value cannot see a registry, so direct
+    construction of a `RegisteredFunction` no longer runs it.
+  - `NativeConstant::try_new` checks the value with a new
+    `FunctionSort::admits(&LiteralValue)`: `Bool` admits only a Boolean,
+    `Nat` a non-negative integer, `Int` an integer, and `Real` an
+    integer, a float or a decimal. For Python's `bool`, `int` and `float`
+    these are `is_python_value_compatible_with_sort`'s rules, which a
+    test pins.
+- **D-S7-6: the screen reads the Rust registry, and the S4 adapter goes**
+  (D-S4-4 retired; X-9). `validate_logical_operands` and
+  `validate_predicate` screen with the registry snapshot of D-S7-13 as
+  their `SortLookup`, with no Python call. `RegistrySorts`, its
+  identifier-collection walk and its deferred lookup error are deleted.
+  The environment and symbol-type conversions stay.
+- **D-S7-7: inlining moves into the core; evaluation stays Python**
+  (D-S4-1; X-10, X-11; D-S5-12 for the pass).
+  - **`FunctionRegistry::inline`** is data-only: the registry, the
+    catalogue's `ComposedFunction`s and `substitute`.
+    - A call of a composed built-in, or of a user function, is replaced
+      by its body over the inlined arguments, and the result is inlined.
+    - A call of a native built-in or a native user function keeps its
+      node, with its arity checked against the parameter sorts.
+    - A call of a constant's name is `NotCallable`, an unknown name
+      `UnknownFunction`, and a function reached again while its own body
+      is being inlined `Recursive`.
+    - It walks on its own stack and handles each distinct node once, so a
+      tree of any depth works, and X-10's nested calls take linear time
+      in the shared DAG. It returns the input itself when it inlines
+      nothing.
+  - **`FunctionInliner`** stays the registered Python pass
+    `fhy_core.symbolic.expression.inline_functions`. It becomes a
+    `CompilerPass[Expression, Expression]` whose `run_pass` calls the
+    Rust inliner, as D-S5-12 did for `RewriteRuleApplier`.
+    - It is no longer a `RewritablePass`, so `visit_call_expression` and
+      `transform` go.
+    - `did_change` is by identity.
+    - The output is materialized beside the input, as S4.3a's
+      `substitute` result is.
+  - **The errors** are the core's text, under today's classes (D-S4-2):
+    `UnknownFunction` raises `EntryLookupError`, `ArityMismatch` and
+    `NotCallable` raise `FunctionArityError`, and `Recursive` raises
+    `RecursionError`. A pass run wraps each in `PassExecutionError`, with
+    the error as `__cause__`, as S6 does.
+  - **Evaluation stays Python.** The core computes no native function
+    (B3 §3.10), and Python's semantics are pinned: `round` rounds half to
+    even, and results follow the platform's C `math`. `ExpressionEvaluator`
+    stays a Python `RewritablePass` (N-S6-3 (a)) and folds through each
+    entry's `implementation`. The 19 built-ins' `math` callables stay a
+    table in `builtins.py`, which the binding reads once, at import.
+- **D-S7-8: consumers keep reading through the lookups** (D-S4-2; I.8:
+  types, constraints and params are not ported). No consumer in `src`
+  changes, except `inline.py` (D-S7-7), `builtins.py` (D-S7-1, D-S7-7)
+  and the registry package. The type checker's injected
+  `resolve_call_target` and the body sweep keep their code.
+- **D-S7-9: the three entry classes are P2, under their Python names and
+  fields** (decision 2; D-S4-2; S3 to S5 practice; X-6, X-13, X-15).
+  - `RegisteredFunction(name, parameters, parameter_sorts, result_sort,
+    body)`, `NativeFunction(name, parameter_sorts, result_sort,
+    implementation)` and `NativeConstant(name, sort, value)` keep their
+    constructors.
+  - Each keeps its field objects as struct members, so
+    `entry.body is body` and `native.implementation is max` hold.
+  - Each is a `#[pyclass(frozen)]` with a thin public subclass, and a
+    virtual `FrozenMixin`. A mutation raises `FrozenMutationError`, an
+    `AttributeError` like `FrozenInstanceError` (X-15).
+  - `NativeFunction`'s `inspect` arity check stays Python: it is about
+    Python callables, and Rust has none.
+  - `==`, `hash` and `repr` follow the fields, as the dataclasses' did
+    (S5's note on pattern equality). Pickles are a call of the class with
+    its fields.
+  - The binding checks argument types strictly: `TypeError` in S2's style
+    (`RegisteredFunction body must be an Expression, got int.`), for a
+    constant value that is not a `bool`, `int` or `float` too.
+- **D-S7-10: binder equivalence is computed in the binding over the core's
+  `AlphaRenaming`** (D-S4-3; the S4.3a conversion). `RegisteredFunction`
+  implements `is_structurally_equivalent`, `is_alpha_equivalent` and
+  `is_alpha_equivalent_under` itself, with the derived plan's meaning:
+  - `name` is excluded;
+  - the sorts must be equal, and the parameter counts too;
+  - the bodies are compared under a frame pairing the parameters, which
+    `enter_binder` refuses, and the comparison fails, when it is not
+    injective;
+  - structural equivalence requires the same parameters.
+
+  A given Python renaming is converted once, as expressions convert it.
+  The core gains no equality for definitions: `enter_binder` and
+  `Expression::is_alpha_equivalent_under` are enough, and built-in
+  entries, which are `ComposedFunction`s, compare the same way.
+- **D-S7-11: the Python lookup API keeps its names, meaning and object
+  identity** (D-S4-2; X-8). `register_function`,
+  `register_native_function`, `register_native_constant`,
+  `get_registered_entry`, `get_registered_entries`, `is_entry_registered`,
+  `get_native_constant_identifier`,
+  `try_get_native_constant_for_identifier` and
+  `try_get_registered_result_sort` keep their signatures.
+  - A registration returns the object that later lookups return, as
+    today: the binding keeps each entry's Python object beside the Rust
+    registry.
+  - `get_registered_entries()` is an `immutabledict` in registration
+    order.
+  - Their view of the built-ins is N-S7-3.
+- **D-S7-12: errors** (D-S4-1: the core's text under the Python classes;
+  X-14).
+  - A `RegistrationError`, a `FunctionDefinitionError` or a
+    `ConstantValueError` met while registering raises
+    `EntryRegistrationError` with the core's message.
+  - At direct construction, the same errors raise `ValueError`, as the
+    dataclasses did. An empty name raises the core's `FunctionNameError`
+    as `ValueError`, as `CallExpression("")` does.
+  - A lookup miss has no core error (the core returns `Option`), so
+    `EntryLookupError` keeps Python's text. The 14 message-matching tests
+    match names, which the core's texts keep.
+- **D-S7-13: thread safety and snapshots** (S2's rule: no lock held
+  across a call into Python; X-12).
+  - The binding's state is an `Arc` of the registry and the object table
+    behind a `Mutex`. Registration builds the new entry, with no lock
+    held, then locks, clones the `Arc`'d state, inserts, and swaps it in
+    (copy-on-write; registrations are rare).
+  - A lookup locks only to clone the `Arc`. So the screen and the
+    inliner run on one consistent snapshot, with no lock held while they
+    run, even if another thread registers meanwhile.
+- **D-S7-14: `set_registry_state_for_tests` keeps its meaning for user
+  entries** (D-S4-2; X-12).
+  - It rebuilds the user registry from the entries in `state`, whose
+    values are the entry objects themselves.
+  - A constant keeps its identifier only if `state` holds the object
+    registered under its name, as today. Otherwise it is registered
+    anew, with a new identifier.
+  - The built-ins are no state (D-S7-3). A built-in name in `state` is
+    ignored, and a missing one is not removed.
+  - The `function_registry_snapshot` fixture is unchanged. Whether the
+    seam stays at all is part of N-S7-2.
+- **D-S7-15: the built-ins' bodies are the catalogue's** (D-9; X-2). The
+  16 Python bodies in `builtins.py` are deleted, after S7.3's differential
+  check shows each alpha-equivalent to its `ComposedFunction` under the
+  frame pairing the parameters. The built-in entries' parameters are the
+  catalogue's identifiers, so they now draw from the counter lazily, on
+  the first use of any composed built-in (R-2), instead of at import.
+  They are never serialized, so no id is pinned.
+- **D-S7-16: order is registration order for user entries** (D-S4-1 for
+  the built-ins, X-16). Built-ins, where a view lists them (N-S7-3), come
+  in catalogue order: the constants, then the composed functions, then
+  the natives. The sweep's diagnostics stay in the order it lists
+  entries.
+- **D-S7-17: tests are rewritten, not skipped** (the tests rule). The
+  Python behavioral tests stay and are rewritten where a decision changes
+  what they pin, each change recorded with its reason, as S4.4 to S6 did.
+  The core's behavior is specified first by new Rust tests (S7.2), with a
+  traceability table from the Python tests.
+
+### Needs the user
+
+- **N-S7-1: where the built-in constants' identifiers come from** (X-4,
+  D-S7-4). They are serialized: an expression naming `pi` holds its
+  identifier, and a payload read in another process resolves to the
+  constant only if the id is the same there. Python pins 65,536 to
+  65,539, which holds only while the constants take the counter's first
+  ids at import. R-2 made the built-in *parameters* lazy because they are
+  never serialized, which does not hold for constants. The policy does
+  not cover this, since the core has no constant identifiers to follow.
+  - (a) **Reserved ids.** Four entries in `identifier::reserved` and in
+    `identifier.py`'s mirror of it, in a new block for expression
+    constants, `48..64` (`pi` 48, `e` 49, `inf` 50, `nan` 51). They hold
+    in every process and in Rust-only programs, whatever is used first,
+    as D-S2-2 made the shipped tags hold. The two pinned-id tests pin the
+    new ids. A payload that names a constant by 65,536 to 65,539 no
+    longer resolves to it, as D-S2-2 moved the old pins.
+  - (b) **Lazy, as R-2.** A `LazyLock` mints them on first use. The ids
+    depend on what the process did first, so a serialized reference
+    resolves only by chance. The pins are dropped.
+  - (c) **Lazy, forced first at import.** Option (b), with the binding
+    touching the four at initialization, so a Python process keeps 65,536
+    to 65,539 while nothing draws an id before. A Rust-only program gets
+    other ids.
+
+  Recommendation: (a). It is the only option where a serialized constant
+  reference means the same in every process, and it follows D-S2-2. It
+  extends B1's reserved table, which R-2 had cut down to the shipped tags,
+  so it is recorded as a revision of R-2, as D-S2-2 revised R-3.
+- **N-S7-2: the binding's process-global registry** (X-12). CONTRIBUTING
+  ("Process-global state is limited to identity") requires the
+  maintainer's agreement for a new process-global static with interior
+  mutability. This one also differs from every existing kind: it is not
+  append-only, because `set_registry_state_for_tests` replaces it.
+  - (a) **A replaceable static**: D-S7-13's `Mutex<Arc<_>>` in the
+    binding, with `set_registry_state_for_tests` kept as the test seam
+    (D-S7-14), recorded in CONTRIBUTING's section as the one registry the
+    binding holds for the Python API.
+  - (b) **An append-only static.** As D-S2-1 did for the intern
+    registries, `set_registry_state_for_tests` raises
+    `NotImplementedError`. The fixture goes, and each test registers
+    under a unique name. About 140 fixture uses and the pruning test are
+    rewritten.
+  - (c) **A Python registry of P2 entries**, as N-S6-1 (a) kept the pass
+    registry. Then no Rust registry is live, and the screen and the
+    inliner build a core `FunctionRegistry` from the Python dict on every
+    call. That costs linear time in the entries per call, and keeps two
+    representations.
+
+  Recommendation: (a). It is how CONTRIBUTING says a shared instance for
+  the Python API should be held, "in the extension's module state". The
+  core stays free of global state, and the seam keeps the tests
+  isolated. (b) would make the tests depend on name hygiene, and (c)
+  undoes D-S7-6's gain.
+- **N-S7-3: whether the Python lookups see the built-ins** (X-1, D-S7-3).
+  D-S4-1 and D-S4-2 point opposite ways, as they did in N-S5-1: in the
+  core, a built-in is no registry entry, while in Python "registered"
+  means "a call of this name resolves". Every consumer resolves both
+  kinds through one `get_registered_entry` and dispatches by entry class.
+  - (a) **A resolution view.** The lookups consult the catalogue, then
+    the registry.
+    - `BUILTIN_FUNCTIONS` and `BUILTIN_CONSTANTS` stay, holding entry
+      objects the binding builds once, at import. A composed built-in is
+      a `RegisteredFunction` over the catalogue's parameters and body
+      (materialized once), a native built-in a `NativeFunction` with its
+      `math` callable, and a constant a `NativeConstant`.
+    - `get_registered_entries()` lists them first (D-S7-16).
+    - Consumers and the sweep work unchanged. The built-ins cannot be
+      removed, so the `test_core.py` test that drops `max` and `xor` is
+      rewritten.
+  - (b) **Registry only.** The lookups see user entries only, and
+    `get_registered_entry("max")` raises `EntryLookupError`. A new
+    `get_builtin_entry(name)` and `CallExpression.is_builtin` let
+    consumers dispatch. The inliner, evaluator, type checker, the three
+    bridges, the sweep and the constant helpers all change, and so do the
+    `test_builtins.py` registration tests.
+  - (c) (a) for the lookups, but `get_registered_entries()` lists user
+    entries only, and the sweep adds the built-ins itself.
+
+  Recommendation: (a). The meaning a consumer asks for, "what does this
+  call resolve to", is unchanged, so D-S4-2 governs the Python surface,
+  while the core keeps D-9 exactly. (b) moves the distinction into a
+  dozen consumers that the design otherwise leaves untouched (D-S7-8).
+
+### Steps
+
+1. **S7.1: benchmarks.** Add `benchmarks/test_registry.py` as planned
+   above, and record the baseline here, on today's Python registry.
+2. **S7.2: core additions, test-first, with Rust tests.**
+   - The `expression::registry` module of D-S7-2, with its errors.
+   - `FunctionSort::admits`.
+   - `BuiltinConstant::identifier` and `of_identifier`, with the ids
+     N-S7-1 chooses (and, for (a), the reserved entries in Rust and in
+     `identifier.py`, whose mirror test checks them).
+   - The screen's catalogue rule for constants (D-S7-4).
+   - `FunctionRegistry::inline`.
+
+   The tests are written first and fail against `todo!()` stubs, as in
+   S4.2. The crate README and `lib.rs`'s module table list the new
+   module.
+3. **S7.3: the binding.** Add `rust/fhy-core-py/src/expression/registry.rs`
+   with these submodules:
+   - `entries.rs`: the three pyclasses, each holding the Rust value, or
+     for a built-in its catalogue item, and its field objects;
+   - `state.rs`: the module state of D-S7-13, and the built-in entry
+     objects under N-S7-3 (a);
+   - `lookups.rs`: the lookup and registration functions,
+     `set_registry_state_for_tests`, and `inline`.
+
+   `screen.rs` switches to the snapshot (D-S7-6). Everything new goes
+   into `_rs.pyi`. The step ends with the differential check of D-S7-15:
+   a temporary test compares each `builtins.py` body with the catalogue's
+   under the parameter frame, and its result is recorded here.
+4. **S7.4: the Python switch.**
+   - `registry/` becomes the thin layer, and `builtins.py` keeps only the
+     `TypedDict`s and the table of native implementations.
+   - `passes/inline.py` defines `FunctionInliner` over the Rust inliner.
+   - `CONTRIBUTING`'s "Process-global state" section records the
+     registry (N-S7-2), and the README's expression row changes
+     (`FunctionInliner` is no longer a `RewritablePass`).
+5. **S7.5: tests.** Migrate the tests and add the interface suite (the
+   test plan below).
+6. **S7.6: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with `pytest` and `-m "not very_slow"`
+green, the `property` session, `lint` and `type_check` clean,
+`tests/test_rs_stub.py` green, and the Rust gate green (fmt, clippy `-D
+warnings`, tests, doc `-D warnings`, deny, `cargo +1.85 check`).
+
+### Test plan
+
+**Rust tests, written first (S7.2).**
+
+- **`tests/it/expression/registry_stories.rs`:**
+  - registration of each kind, and lookups by name and by identifier;
+  - registration order;
+  - every `FunctionDefinitionError`, `RegistrationError` and
+    `ConstantValueError` variant, with its `Display`;
+  - built-in names refused;
+  - the capture check's order dependence and its exemption of built-in
+    constants;
+  - a constant's minted identifier, and one named like it that is not
+    it;
+  - `result_sort` for each kind;
+  - the `SortLookup` answers;
+  - a clone's independence;
+  - `Send + Sync`, by a compile-time assertion.
+- **`tests/it/expression/inline_stories.rs`:**
+  - user functions, composed built-ins, and nested and chained calls;
+  - a native call kept, with its arity checked;
+  - a constant's name as a callee;
+  - an unknown name;
+  - arity both ways;
+  - self- and mutual recursion;
+  - the input handle itself back when nothing is inlined (`ptr_eq`);
+  - a shared DAG inlined once per distinct node, by a counting check on
+    the output's distinct nodes;
+  - X-10's nested `relu` at depth 1,000 in linear time;
+  - a 100,000-level tree on a small stack.
+- **`tests/it/expression/registry_properties.rs`:**
+  - inlining leaves no call of a composed built-in or a user function;
+  - inlining is idempotent;
+  - an inlined call and the original agree under a reference evaluation
+    of the Boolean built-ins, as the Python property does.
+- **`builtins_stories.rs` and `screen_stories.rs` gain:**
+  - the constants' identifiers: stable, distinct, `of_identifier` as the
+    inverse, and with (a) the reserved ids;
+  - `FunctionSort::admits`'s table;
+  - the screen judging a built-in constant without a lookup.
+
+  A traceability table maps the Python registry, inline and story tests to
+  them, as S4.2's did.
+
+**The interface suite:
+`tests/symbolic/expression/test_registry_rust_binding.py`**, next to
+S4.3a's and S5's, covers what the binding adds over the core:
+
+- **Class structure.**
+  - Each entry class extends its `_rs` class, is a virtual `FrozenMixin`
+    and raises `FrozenMutationError`.
+  - `__match_args__`, reprs and pickles are covered.
+  - `tests/test_rs_stub.py` covers the stubs.
+- **Arguments.** The `TypeError`s, and the `ValueError`s of direct
+  construction with the core's texts.
+- **Identity.** A registration returns the object later lookups return.
+  The fields are the objects given. Under N-S7-3 (a), a built-in's entry
+  is one object across lookups and `BUILTIN_FUNCTIONS`, and its body is
+  built once.
+- **Constants.** Identity lookups; pruning on restore; the pinned
+  identifiers of N-S7-1; and the agreement of the binding's value check
+  (the core's `FunctionSort::admits`) with
+  `is_python_value_compatible_with_sort` over `bool`, `int`, `float`,
+  negatives and `bool`-as-`int`.
+- **Binder equivalence.** The name is excluded, a renamed parameter list
+  is equivalent, a non-injective pairing is not, and a given free
+  renaming is honored.
+- **The screen.** It calls no Python: the test replaces the Python lookup
+  functions with ones that raise, and the screen still judges user calls
+  and constants.
+- **The inliner.**
+  - The error classes and `__cause__` through `PassExecutionError`.
+  - `did_change` is by identity, and the input object comes back when
+    nothing is inlined.
+  - X-10's depth-100 nesting finishes.
+  - The pass is registered, and `CompilerPass.create` builds it.
+- **Threads.** Concurrent registration of distinct names, and of one
+  name, where exactly one wins. A lookup and a screen during
+  registrations see a consistent snapshot.
+- **The built-ins' bodies.** Each printed body is pinned as data, since
+  D-S7-15 deletes the Python bodies that S7.3 compared.
+
+**Migrating the existing tests.** No test is skipped, or deleted without
+a rewrite:
+
+- **`test_registry.py` (74).**
+  - The three frozen tests pin `FrozenMutationError` (D-S7-9).
+  - `test_registered_function_direct_construction_rejects_captured_identifier`
+    becomes a registration test (D-S7-5), and a new test pins that direct
+    construction refuses a repeated parameter.
+  - The pinned-id tests follow N-S7-1.
+  - The snapshot and pruning tests keep their meaning (D-S7-14, pending
+    N-S7-2).
+  - The message tests keep matching names under the core's texts
+    (D-S7-12).
+- **`test_builtins.py` (169)** keeps its meaning under N-S7-3 (a). The
+  parameter and body tests read the catalogue's, and the `round` and
+  `exp2` tests keep pinning Python's `math` semantics (D-S7-7).
+- **`test_core.py`.**
+  - The test that drops `max` and `xor` pins that built-ins cannot be
+    removed (D-S7-3, D-S7-14).
+  - The catalogue-agreement test pins that each built-in entry's sorts
+    are the catalogue's.
+- **`test_inline_pass.py` (19) and its properties (4)** keep their
+  meaning. The error tests pin the core's texts and their classes as
+  `__cause__` (D-S7-7), and the properties also run at depths the old
+  inliner could not reach.
+- **The evaluator, type checker, body checker, sweep, solver, constraint,
+  param and bridge tests** change only where they pin a message or order
+  that D-S7-12 or D-S7-16 changes.
+- **Each rename or rewrite** is recorded here with its reason, as in S4.4
+  to S6.
