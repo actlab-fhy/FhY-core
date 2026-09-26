@@ -99,6 +99,7 @@ from fhy_core.symbolic.expression.registry.entries import (
     RegisteredFunction as _RegisteredFunction,
 )
 from fhy_core.symbolic.expression.sort import FunctionSort
+from fhy_core.symbolic.solver import SatStatus as _SatStatus
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import AlphaRenaming, Term
 from fhy_core.value_domain import ValueDomain as _ValueDomain
@@ -1237,7 +1238,7 @@ class ValidationManager:
 class SmtScript:
     @staticmethod
     def lower(
-        expression: Expression,
+        expression: _Expression,
         symbol_types: Mapping[Identifier, SymbolType] | None = None,
     ) -> SmtScript: ...
     @property
@@ -1255,7 +1256,7 @@ class SatResult:
     @staticmethod
     def unknown(reason: str) -> SatResult: ...
     @property
-    def status(self) -> str: ...
+    def status(self) -> _SatStatus: ...
     @property
     def reason(self) -> str | None: ...
     @override
@@ -1298,20 +1299,20 @@ class Solver:
     def can_answer(self, kind: str) -> bool: ...
     def simplify_expression(
         self,
-        expression: Expression,
-        environment: Mapping[Identifier, Expression] | None = None,
-    ) -> Expression: ...
+        expression: _Expression,
+        environment: Mapping[Identifier, _Expression] | None = None,
+    ) -> _Expression: ...
     def check_expression_satisfiability(
         self,
-        expression: Expression,
+        expression: _Expression,
         symbol_types: Mapping[Identifier, SymbolType],
         *,
         timeout_milliseconds: int | None = None,
     ) -> bool | None: ...
     def does_expression_imply(
         self,
-        antecedent: Expression,
-        consequent: Expression,
+        antecedent: _Expression,
+        consequent: _Expression,
         symbol_types: Mapping[Identifier, SymbolType],
         *,
         timeout_milliseconds: int | None = None,
@@ -1319,7 +1320,7 @@ class Solver:
     def holds_for_all_free_assignments(
         self,
         considered_identifiers: Iterable[Identifier],
-        expression: Expression,
+        expression: _Expression,
         symbol_types: Mapping[Identifier, SymbolType],
         *,
         timeout_milliseconds: int | None = None,
@@ -1327,15 +1328,15 @@ class Solver:
     def assert_holds_for_all_free_assignments(
         self,
         considered_identifiers: Iterable[Identifier],
-        expression: Expression,
+        expression: _Expression,
         symbol_types: Mapping[Identifier, SymbolType],
         *,
         timeout_milliseconds: int | None = None,
     ) -> bool: ...
     def assert_expression_implies(
         self,
-        antecedent: Expression,
-        consequent: Expression,
+        antecedent: _Expression,
+        consequent: _Expression,
         symbol_types: Mapping[Identifier, SymbolType],
         *,
         timeout_milliseconds: int | None = None,

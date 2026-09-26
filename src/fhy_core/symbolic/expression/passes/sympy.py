@@ -1,11 +1,22 @@
-"""Expression passes that interface with SymPy."""
+"""Expression passes that interface with SymPy, and the sympy simplifier.
 
+:class:`SympySimplifier` is the :class:`~fhy_core.symbolic.solver.Simplifier`
+that ``SolverBackend.SYMPY`` names: it lowers an expression to SymPy,
+simplifies it, and lifts the result back. The passes lower, substitute and
+lift on their own too.
+
+Importing this module imports ``sympy``; without the ``sympy`` package it
+raises :class:`~fhy_core.symbolic.solver.SolverBackendUnavailableError`,
+naming the extra to install.
+"""
+
+from fhy_core.symbolic.solver import Simplifier, SolverBackendUnavailableError
 from fhy_core.utils.override import override
 
 __all__ = [
+    "SympySimplifier",
     "convert_expression_to_sympy_expression",
     "convert_sympy_expression_to_expression",
-    "simplify_expression",
     "substitute_sympy_expression_variables",
 ]
 
@@ -15,12 +26,20 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import Any, ClassVar
 
-import sympy  # type: ignore
-import sympy.core.evalf  # type: ignore
-import sympy.functions.elementary.piecewise  # type: ignore
-import sympy.logic  # type: ignore
-import sympy.logic.boolalg  # type: ignore
 from immutabledict import immutabledict
+
+try:
+    import sympy  # type: ignore
+    import sympy.core.evalf  # type: ignore
+    import sympy.functions.elementary.piecewise  # type: ignore
+    import sympy.logic  # type: ignore
+    import sympy.logic.boolalg  # type: ignore
+except ImportError as error:
+    raise SolverBackendUnavailableError(
+        "The sympy solver backend needs the sympy package, which is not "
+        "installed; install it with `pip install fhy_core[sympy]`, or "
+        "`pip install fhy_core[solvers]` for every solver backend."
+    ) from error
 
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -1097,23 +1116,6 @@ def _raise_for_bound_native_constants(bound_constants: Sequence[Identifier]) -> 
     )
 
 
-def _raise_if_environment_binds_a_referenced_native_constant(
-    expression: Expression, environment: Mapping[Identifier, Expression]
-) -> None:
-    """Raise if ``environment`` binds a native constant ``expression`` references."""
-    referenced = expression.get_free_identifiers()
-    bound_constants = sorted(
-        (
-            identifier
-            for identifier in environment
-            if identifier in referenced
-            and try_get_native_constant_for_identifier(identifier) is not None
-        ),
-        key=lambda identifier: identifier.id,
-    )
-    _raise_for_bound_native_constants(bound_constants)
-
-
 def _raise_if_sympy_expression_binds_a_referenced_native_constant(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
     environment: Mapping[Identifier, Expression],
@@ -1674,65 +1676,40 @@ def convert_sympy_expression_to_expression(
     return converter(sympy_expression)
 
 
-def simplify_expression(
-    expression: Expression,
-    environment: Mapping[Identifier, Expression] | None = None,
-) -> Expression:
-    """Simplify an expression.
+class SympySimplifier(Simplifier):
+    """The simplifier of the ``sympy`` package.
 
-    Simplification is best-effort, and the expression is lifted back with
-    ``environment`` substituted but unsimplified in three cases.
-    ``sympy.simplify`` checks relationals numerically at random points, and
-    raises ``PrecisionExhausted`` when a ``floor`` argument is exactly an
-    integer at such a point. It also drops a piecewise's otherwise branch
-    when the case conditions before it already hold for every real, as in
-    ``x < 1 if x > 0 || x < 1, otherwise x > 1``, and no piecewise
-    expression represents what remains. And it cannot simplify a comparison
-    of a piecewise with a Boolean identifier in a case condition and a
-    branch that is not a real number, as in ``(nan if b, otherwise 1) >
-    y``; a complex-infinity branch then fails to lift, as it does anywhere.
-
-    Args:
-        expression: Expression to simplify.
-        environment: Environment to simplify the expression in. Defaults to None.
-
-    Returns:
-        Simplified expression, or the substituted but unsimplified expression
-        in the three cases above.
-
-    Raises:
-        NativeConstantBindingError: If ``environment`` binds a registered
-            native constant's canonical identifier that ``expression``
-            references. The SymPy bridge resolves such an identifier by
-            identity to the constant's own value before any substitution
-            runs, so the binding would otherwise be silently dropped
-            rather than applied.
-        NonBooleanLogicalOperandError: If an operand of a ``LogicalExpression``
-            or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, provably denotes a number, counting an operand
-            ``environment`` binds to one. Simplification refuses the shape
-            before lowering rather than letting SymPy's ``And``/``Or``
-            raise a raw ``TypeError`` on it.
-        PassExecutionError: Wrapping the originating exception as
-            ``__cause__``: a ``TypeError`` if substituting ``environment``
-            makes SymPy auto-evaluate a relational it cannot represent
-            (for example a comparison against ``zoo`` or against NaN); or
-            :class:`ComplexInfinityLiftError` if simplification yields
-            ``sympy.zoo``, which a quotient by zero folds to.
-
+    It lowers the expression it is given, whose environment the solver has
+    already substituted, simplifies it with ``sympy.simplify``, and lifts
+    the result. Simplification is best-effort: where ``sympy.simplify``
+    raises ``PrecisionExhausted``, drops a piecewise's otherwise branch
+    because the case conditions before it hold for every real, or cannot
+    compare a piecewise that has a Boolean identifier in a case condition
+    and a branch that is not a real number, the expression is lifted back
+    unsimplified. It holds no state, so one object serves every question.
     """
-    validate_logical_operands(expression, environment)
-    if environment is not None:
-        _raise_if_environment_binds_a_referenced_native_constant(
-            expression, environment
-        )
-    sympy_expression = convert_expression_to_sympy_expression(expression)
-    if environment is not None:
-        sympy_expression = substitute_sympy_expression_variables(
-            sympy_expression, environment
-        )
-    _LOGGER.debug("pre-simplify=%r", sympy_expression)
-    simplified = _try_simplify_sympy_expression(sympy_expression)
-    result = sympy_expression if simplified is None else simplified
-    _LOGGER.debug("post-simplify=%r", result)
-    return convert_sympy_expression_to_expression(result)
+
+    @property
+    @override
+    def name(self) -> str:
+        return "sympy"
+
+    @override
+    def simplify(self, expression: Expression) -> Expression:
+        """Return the sympy simplification of ``expression``.
+
+        Raises:
+            PassExecutionError: Wrapping the originating exception as
+                ``__cause__``: a ``TypeError`` if SymPy auto-evaluates a
+                relational it cannot represent (for example a comparison
+                against ``zoo`` or against NaN); or
+                :class:`ComplexInfinityLiftError` if simplification yields
+                ``sympy.zoo``, which a quotient by zero folds to.
+
+        """
+        sympy_expression = convert_expression_to_sympy_expression(expression)
+        _LOGGER.debug("pre-simplify=%r", sympy_expression)
+        simplified = _try_simplify_sympy_expression(sympy_expression)
+        result = sympy_expression if simplified is None else simplified
+        _LOGGER.debug("post-simplify=%r", result)
+        return convert_sympy_expression_to_expression(result)

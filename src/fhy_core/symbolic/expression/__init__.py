@@ -102,6 +102,9 @@ __all__ = [
     "validate_predicate",
 ]
 
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
 from .builtins import (
     BUILTIN_CONSTANTS,
     BUILTIN_FUNCTIONS,
@@ -149,12 +152,6 @@ from .errors import (
 from .passes.evaluate import evaluate_expression
 from .passes.inline import FunctionArityError, inline_functions
 from .passes.numpy import evaluate_expression_with_numpy
-from .passes.sympy import (
-    convert_expression_to_sympy_expression,
-    convert_sympy_expression_to_expression,
-    substitute_sympy_expression_variables,
-)
-from .passes.z3 import convert_expression_to_z3_expression
 from .pattern import (
     AlternativesPattern,
     BinaryExpressionPattern,
@@ -202,3 +199,38 @@ from .registry import (
     try_get_registered_result_sort,
 )
 from .sort import FunctionSort, is_python_value_compatible_with_sort
+
+if TYPE_CHECKING:
+    from .passes.sympy import (
+        convert_expression_to_sympy_expression,
+        convert_sympy_expression_to_expression,
+        substitute_sympy_expression_variables,
+    )
+    from .passes.z3 import convert_expression_to_z3_expression
+
+# The bridges import sympy and z3, which are optional (D-S8-16 of
+# docs/design/python-switch.md), so their functions are re-exported on
+# first access rather than at import.
+_LAZY_BRIDGE_EXPORTS: dict[str, str] = {
+    "convert_expression_to_sympy_expression": ".passes.sympy",
+    "convert_sympy_expression_to_expression": ".passes.sympy",
+    "substitute_sympy_expression_variables": ".passes.sympy",
+    "convert_expression_to_z3_expression": ".passes.z3",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Return a bridge function, importing its bridge on first access.
+
+    Raises:
+        AttributeError: For any other name.
+        SolverBackendUnavailableError: If the bridge's package is not
+            installed.
+
+    """
+    module_name = _LAZY_BRIDGE_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value

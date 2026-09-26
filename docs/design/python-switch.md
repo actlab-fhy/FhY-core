@@ -66,7 +66,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend). 224 new tests; the Rust gate passes (3,040); see "S8.2 implementation notes"
   - [x] S8.3: the `z3` cargo feature and its backend, with the CI changes. Built against the z3-solver wheel's libz3 4.16 (D-S8-18's fallback; the local libz3 4.8.7 is below z3-sys's 4.13.3); 3,072 Rust tests with the feature; see "S8.3 status"
   - [x] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs). The suite is unchanged (7,327 passed); see "S8.4 status"
-  - [ ] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports)
+  - [x] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports). 6,228 passed; exactly the four migrated modules (`test_solver.py`, `test_z3_pass.py`, `test_sympy_pass.py`, `test_cross_cutting.py`) fail collection until S8.6
   - [ ] S8.6: tests migrated, and the interface suite
   - [ ] S8.7: optional extras, backend markers and the minimal-install session
   - [ ] S8.8: benchmarks after, and docs

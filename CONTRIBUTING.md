@@ -380,10 +380,21 @@ a call into Python. It is the one kind that is not append-only:
 `set_registry_state_for_tests`, the tests' snapshot seam, replaces it. The
 built-in entries beside it are built once, at import, and never change.
 The core crate stays free of it, as of all global state beyond identity.
-Tests never clear a
+Slice S8 adds, with the maintainer's agreement (N-S8-2 of the design doc),
+the default solver the functions of `fhy_core.symbolic.solver`, and so the
+constraints and params, ask when no backend is named: a
+`Mutex<Option<Py<Solver>>>` (`rust/fhy-core-py/src/solver/state.rs`), set
+when that module is imported and replaced whole by `set_default_solver`;
+the lock is never held across a call into Python, and like the function
+registry it is not append-only. S8 also adds a thread-local stack of the
+simplifications in progress (`rust/fhy-core-py/src/solver/backends.rs`),
+which hands a Python simplifier the objects of its input and environment;
+a frame lives only for its call, so the stack is empty whenever no
+simplification runs. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
-registry through the `function_registry_snapshot` fixture.
+registry through the `function_registry_snapshot` fixture, and the default
+solver after replacing it.
 
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
