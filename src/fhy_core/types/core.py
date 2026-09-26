@@ -38,7 +38,12 @@ from typing import Any, ClassVar
 from fhy_core import _rs
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
 from fhy_core.traits import FrozenMixin
-from fhy_core.traits.frozen import _install_init_wrap
+from fhy_core.traits.frozen import (
+    _FROZEN_FLAG,
+    FrozenMutationError,
+    FrozenValidationError,
+    _install_init_wrap,
+)
 from fhy_core.utils.override import override
 
 from ..error import register_error
@@ -59,10 +64,10 @@ class _FrozenAfterInit:
 
     ``FrozenMixin`` itself cannot be a base beside a Rust-backed class: its
     ``__slots__`` would give the class two instance layouts. So the bases
-    take its methods as they are, freeze a subclass that defines
-    ``__init__`` at the end of the outermost call, and are registered as
-    virtual subclasses of ``FrozenMixin``. The built-in classes are always
-    frozen, through their Rust classes.
+    implement its contract with its flag, freeze a subclass that defines
+    ``__init__`` at the end of the outermost call through its ``__init__``
+    wrap, and are registered as virtual subclasses of ``FrozenMixin``. The
+    built-in classes are always frozen, through their Rust classes.
     """
 
     __slots__ = ()
@@ -79,12 +84,47 @@ class _FrozenAfterInit:
         if cls._FREEZE_ON_INIT and "__init__" in cls.__dict__:
             _install_init_wrap(cls)
 
-    is_frozen = FrozenMixin.is_frozen
-    freeze = FrozenMixin.freeze
-    assert_frozen = FrozenMixin.assert_frozen
-    __setattr__ = FrozenMixin.__setattr__
-    __delattr__ = FrozenMixin.__delattr__
-    __setstate__ = FrozenMixin.__setstate__
+    @property
+    def is_frozen(self) -> bool:
+        """Whether the object is frozen."""
+        try:
+            return bool(object.__getattribute__(self, _FROZEN_FLAG))
+        except AttributeError:
+            return False
+
+    def freeze(self) -> None:
+        """Idempotently transition this instance to the frozen state."""
+        object.__setattr__(self, _FROZEN_FLAG, True)
+
+    def assert_frozen(self) -> None:
+        """Raise ``FrozenValidationError`` unless this instance is frozen."""
+        if not self.is_frozen:
+            raise FrozenValidationError(f"{type(self).__name__} is not frozen.")
+
+    @override
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name != "__orig_class__" and self.is_frozen:
+            raise FrozenMutationError(
+                f'Cannot modify "{name}" on frozen {type(self).__name__}.'
+            )
+        object.__setattr__(self, name, value)
+
+    @override
+    def __delattr__(self, name: str) -> None:
+        if self.is_frozen:
+            raise FrozenMutationError(
+                f'Cannot delete "{name}" on frozen {type(self).__name__}.'
+            )
+        object.__delattr__(self, name)
+
+    def __setstate__(self, state: Any) -> None:
+        """Restore a pickled instance, frozen as it was, without the guard."""
+        dict_state, slots_state = (
+            state if isinstance(state, tuple) and len(state) == 2 else (state, None)  # noqa: PLR2004
+        )
+        for source in (dict_state, slots_state):
+            for name, attribute in (source or {}).items():
+                object.__setattr__(self, name, attribute)
 
 
 class _DispatchedStructuralEquivalence(

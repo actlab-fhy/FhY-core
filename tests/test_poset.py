@@ -37,16 +37,15 @@ def test_basic_non_lattice_has_no_least_upper_bound(
 
 @pytest.fixture
 def basic_poset() -> PartiallyOrderedSet[int]:
-    """Uses the PartiallyOrderedSet class internals to create a poset with two
-    elements.
+    """Return a poset with two ordered elements, built through the public API.
 
     poset: ({1, 2}, <=)
 
     """
     poset = PartiallyOrderedSet[int]()
-    poset._graph.add_node(1)
-    poset._graph.add_node(2)
-    poset._graph.add_edge(1, 2)
+    poset.add_element(1)
+    poset.add_element(2)
+    poset.add_order(1, 2)
     return poset
 
 

@@ -57,9 +57,15 @@ __all__ = [
 ]
 
 from functools import singledispatch
-from typing import Any
+from typing import Any, ClassVar
 
 from fhy_core import _rs
+from fhy_core.traits.frozen import (
+    _CONSTRUCTION_DEPTH_FLAG,
+    FrozenValidationError,
+    _install_init_wrap,
+)
+from fhy_core.utils.override import override
 
 from ..symbolic.expression.core import Expression
 from ..traits import FrozenMixin
@@ -102,14 +108,39 @@ class TypeUnificationEnvironment(_rs.TypeUnificationEnvironment):
     Subclasses may add layer-specific extras (e.g. per-call-site state in a
     type-inferencer) without changing the dispatcher signatures: every
     environment derived from one is an instance of its class, with a copy of
-    its instance attributes. The instance is frozen, so a subclass sets its
-    extras with ``object.__setattr__``, as a frozen dataclass does.
+    its instance attributes. A subclass sets its extras in its own
+    ``__init__``, after which the instance is frozen, as a ``FrozenMixin``
+    subclass is.
 
     Attributes:
         data_type_bindings: Bindings for ``TemplateDataType`` placeholders.
         type_bindings: Bindings for full-type wildcard placeholders.
         expression_bindings: Bindings for shape-variable placeholders.
     """
+
+    _FREEZE_ON_INIT: ClassVar[bool] = True
+
+    @override
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__:
+            _install_init_wrap(cls)
+
+    @property
+    def is_frozen(self) -> bool:
+        """Whether it is frozen: always, except inside a subclass's ``__init__``."""
+        return not vars(self).get(_CONSTRUCTION_DEPTH_FLAG, 0)
+
+    def freeze(self) -> None:
+        """Do nothing: an environment is frozen once constructed."""
+
+    def assert_frozen(self) -> None:
+        """Raise ``FrozenValidationError`` inside a subclass's ``__init__``."""
+        if not self.is_frozen:
+            raise FrozenValidationError(f"{type(self).__name__} is not frozen.")
+
+    __setattr__ = FrozenMixin.__setattr__
+    __delattr__ = FrozenMixin.__delattr__
 
 
 FrozenMixin.register(TypeUnificationEnvironment)

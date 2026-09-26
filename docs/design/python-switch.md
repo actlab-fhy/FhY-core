@@ -102,8 +102,8 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
     - [x] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification; 216 new tests, see "S11a.2 implementation notes")
     - [x] S11a.3: the binding (`PartiallyOrderedSet`, `Lattice`, the type classes, the environment, the six dispatch functions and the extension adapters, the stubs)
-    - [ ] S11a.4: the Python switch, and `networkx` out of the dependencies
-    - [ ] S11a.5: tests migrated, and the interface suites
+    - [x] S11a.4: the Python switch, and `networkx` out of the dependencies
+    - [x] S11a.5: tests migrated, and the interface suites
     - [ ] S11a.6: benchmarks after, and docs
   - [ ] S11b: type checking
     - [ ] S11b.1: type-checking benchmarks, and the baseline
@@ -13377,4 +13377,54 @@ expression binding lends it `materialize_with_known`, `read_big_int`,
 shape `OptionalIntList`. CONTRIBUTING's process-global section records the
 context stack. Nothing in Python uses the binding yet, so the suite is
 unchanged (7,556 passed), and the Rust gate passes.
+
+### S11a.4 and S11a.5 status
+
+The Python switch (fb72b65, marked breaking) made `lattice.py`,
+`utils/poset.py`, `types/core.py` and `types/dispatch.py` the thin layer of
+D-S11-2, removed `networkx` from the dependencies and the lock, and changed
+the README's Types, Lattice and POSET rows and CONTRIBUTING's per-node rule
+(D-S11-9's exception). It left exactly the tests of the migration plan
+failing (3 failed, 29 errors, 7,416 passed); the test commit after it
+migrates them and adds the interface suites. At the end of S11a.5:
+`pytest` 7,611 passed, `-m "not very_slow"` 7,644 passed, `lint` and
+`type_check` clean.
+
+Tests migrated in S11a.5. None was skipped or deleted without a rewrite:
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_poset.py`'s `basic_poset` fixture | same name | built through the public API, not `_graph` |
+| `test_lattice.py`'s `singleton_lattice` and `two_element_lattice` fixtures | same names | built through the public API, not `_poset` |
+| `test_lattice.py::test_empty_lattice_meet`, `test_empty_lattice_join` | `test_empty_lattice_meet_refuses_a_non_member`, `test_empty_lattice_join_refuses_a_non_member` | T-12 |
+| `test_poset_properties.py`: the `networkx.has_path` oracle | `build_poset_and_reachability`, a Floyd-Warshall closure | T-13: `networkx` is no dependency |
+| `types/test_core.py::test_core_data_type_partitions_cover_every_member` | same name | reads the public promotion (every member promotes with itself) instead of the private family sets, which are gone |
+| `types/test_core.py`: the two cross-family promotion pins on `Unsupported` | same names | the core's lowercase `unsupported` (D-S11-14) |
+| `types/checking/test_type_checker.py::test_check_negative_literal_against_unsigned_expected_raises` | same name | the Python checker calls `resolve_literal_core_data_type`, whose text is the core's `literal -1 is incompatible with uint16` |
+| none | `types/test_unification.py::test_substitute_template_substitutes_a_shape_variable_inside_a_call`, `test_unify_expression_occurs_check_looks_inside_calls_and_piecewise` (2) | T-5, new |
+| none | `tests/test_lattice_rust_binding.py` (17), `tests/types/test_types_rust_binding.py` (35) | the interface suites |
+
+Every other test of the in-scope files, the symbol-table tests, and the
+Python checker's other tests passed unchanged on the new classes.
+
+The interface suites cover the test plan: the thin classes, subscripting,
+the virtual `VerifiableMixin`, Python hashing of elements (`1`, `1.0` and
+`True` one element), unhashable elements, each exception's class and text,
+the deterministic iteration, `iter_stable`'s one key call per element and
+its exceptions, the `verify` report's messages, level and source, and the
+objects meets and joins return; the built-in classes' bases, freezing and
+the virtual `FrozenMixin`, a Python-defined type constructing with its
+`__init__` and frozen after it, structural `==` and `hash`, a
+Python-defined part keeping its own `==`, the field objects, the argument
+checks, the reprs, pickling, copying and payloads, the `Ellipsis`
+sentinel, a refused width payload; the environment's objects, constructor
+checks, value semantics and pickles, a subclass and its attributes kept by
+`with_*`, `bind_template` and `unify`, the environment itself returned when
+nothing is learned, the type itself when nothing is substituted, the bound
+objects returned, T-5 through the dispatchers; the handlers the core calls
+for a Python-defined node, the defaults of an unregistered class, a
+Python-defined data type bound and returned as itself, a handler's
+exception as the same object, a deferred comparison error, a
+`KeyboardInterrupt`, a wrong result type, T-6 for a built-in subclass's
+handler; and the helpers' argument checks and returned enum members.
 

@@ -20,7 +20,6 @@ use fhy_core::identifier::Identifier;
 use fhy_core::types::TypeUnificationEnvironment;
 
 use crate::dataclass::{build_argument_type_error, hash_value};
-use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{read_identifier_id, restore_identifier};
 use crate::public_class::PublicClass;
 
@@ -453,9 +452,17 @@ impl PyTypeUnificationEnvironment {
     ///
     /// Raises `TypeError` for a table that is no mapping, a key that is no
     /// `Identifier`, or a value of the wrong kind.
+    ///
+    /// A subclass that defines its own `__init__` receives its constructor
+    /// arguments there: the base then reads none of them and starts empty.
     #[new]
+    #[classmethod]
     #[pyo3(signature = (*args, **kwargs))]
-    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+    fn new(
+        cls: &Bound<'_, PyType>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
         if let Some(state) = kwargs.and_then(|kwargs| kwargs.get_item("_state").ok().flatten()) {
             if let Ok(state) = state.cast::<PyEnvironmentState>() {
                 let taken = state
@@ -477,6 +484,11 @@ impl PyTypeUnificationEnvironment {
             types: HashMap::new(),
             expressions: HashMap::new(),
         };
+        let py = cls.py();
+        let object_init = py.get_type::<PyAny>().getattr(intern!(py, "__init__"))?;
+        if !cls.getattr(intern!(py, "__init__"))?.is(&object_init) {
+            return Ok(Self::from_parts(value, objects));
+        }
         for table in Table::ALL {
             let given = match args.get_item(table.index()) {
                 Ok(given) => Some(given),
@@ -624,8 +636,8 @@ impl PyTypeUnificationEnvironment {
         ))
     }
 
-    /// Pickle as a constructor call of the class with the three tables, and
-    /// the instance attributes of a subclass as the state.
+    /// Pickle as a call of `_from_tables` of the class with the three
+    /// tables, and the instance attributes of a subclass as the state.
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.get();
@@ -646,11 +658,34 @@ impl PyTypeUnificationEnvironment {
         PyTuple::new(
             py,
             [
-                slf.get_type().into_any(),
+                slf.get_type().getattr(intern!(py, "_from_tables"))?,
                 PyTuple::new(py, tables)?.into_any(),
                 state,
             ],
         )
+    }
+
+    /// Return an instance of `cls` holding the three tables, without calling
+    /// a subclass's `__init__`; the pickles' constructor.
+    ///
+    /// Raises `TypeError` as the constructor does.
+    #[classmethod]
+    fn _from_tables<'py>(
+        cls: &Bound<'py, PyType>,
+        data_type_bindings: &Bound<'py, PyAny>,
+        type_bindings: &Bound<'py, PyAny>,
+        expression_bindings: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let mut value = TypeUnificationEnvironment::new();
+        let mut objects = Objects {
+            data_types: HashMap::new(),
+            types: HashMap::new(),
+            expressions: HashMap::new(),
+        };
+        read_table(data_type_bindings, Table::DataTypes, &mut value, &mut objects.data_types)?;
+        read_table(type_bindings, Table::Types, &mut value, &mut objects.types)?;
+        read_table(expression_bindings, Table::Expressions, &mut value, &mut objects.expressions)?;
+        Self::instantiate(cls, value, objects, None)
     }
 
     /// Restore the instance attributes of a subclass.
@@ -661,27 +696,6 @@ impl PyTypeUnificationEnvironment {
         slf.getattr(intern!(slf.py(), "__dict__"))?
             .call_method1(intern!(slf.py(), "update"), (state,))?;
         Ok(())
-    }
-
-    /// Always true: environments are immutable.
-    #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
-        true
-    }
-
-    /// Do nothing: environments are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
-
-    /// Do nothing: environments are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
-
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
-    }
-
-    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
     }
 
     /// Register `cls` as the public class.

@@ -457,7 +457,7 @@ def test_check_negative_literal_against_unsigned_expected_raises() -> None:
 
     with pytest.raises(
         FhYCoreTypeError,
-        match=r"Literal -1 is incompatible with uint16",
+        match=r"literal -1 is incompatible with uint16",
     ):
         checker.check(LiteralExpression(-1), _make_scalar(CoreDataType.UINT16))
 
