@@ -27,14 +27,14 @@ use super::ordered::OrderedMap;
 /// Every walk is a loop, so a long chain of parents needs no stack.
 #[derive(Clone)]
 pub struct SymbolTable<F> {
-    namespaces: OrderedMap<Identifier, NamespaceData<F>>,
+    namespaces: OrderedMap<NamespaceData<F>>,
 }
 
 /// A namespace's parent and its symbols' frames.
 #[derive(Debug, Clone)]
 struct NamespaceData<F> {
     parent: Option<Identifier>,
-    symbols: OrderedMap<Identifier, F>,
+    symbols: OrderedMap<F>,
 }
 
 /// A view of one namespace of a [`SymbolTable`]: its name, its parent and
@@ -390,9 +390,9 @@ impl<F> SymbolTable<F> {
 
     /// Sort the namespaces, and each namespace's symbols, by identifier id.
     pub fn canonicalize(&mut self) {
-        self.namespaces.sort_by_key(Identifier::id);
+        self.namespaces.sort_by_id();
         for data in self.namespaces.values_mut() {
-            data.symbols.sort_by_key(Identifier::id);
+            data.symbols.sort_by_id();
         }
     }
 

@@ -5,6 +5,7 @@
 //! [`SymbolFrame`], so two built-in frames of one class compare in Rust and
 //! any other pair through the left frame's own Python method (D-S15-9).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::exceptions::PyTypeError;
@@ -177,6 +178,9 @@ fn read_identifier(object: &Bound<'_, PyAny>, field: &str) -> PyResult<Identifie
 #[pyclass(subclass, module = "fhy_core._rs", name = "SymbolTable")]
 pub(crate) struct PySymbolTable {
     table: SymbolTable<Entry>,
+    /// The dict `get_namespace` built of each namespace, by the namespace's
+    /// id, until the namespace changes; each call returns a copy.
+    namespace_dicts: HashMap<u64, Py<PyDict>>,
 }
 
 impl PySymbolTable {
@@ -191,6 +195,7 @@ impl PySymbolTable {
             .filter(|parent| !parent.is_none())
             .map(|parent| read_identifier(parent, "parent_namespace_name"))
             .transpose()?;
+        self.namespace_dicts.remove(&namespace.id());
         self.table.add_namespace(namespace, parent).map_err(raise)
     }
 
@@ -204,6 +209,7 @@ impl PySymbolTable {
         let namespace = read_identifier(namespace_name, "namespace_name")?;
         let symbol = read_identifier(symbol_name, "symbol_name")?;
         let entry = Entry::new(symbol_name, frame)?;
+        self.namespace_dicts.remove(&namespace.id());
         self.table
             .add_symbol(&namespace, symbol, entry)
             .map_err(raise)
@@ -243,6 +249,7 @@ impl PySymbolTable {
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         Self {
             table: SymbolTable::new(),
+            namespace_dicts: HashMap::new(),
         }
     }
 
@@ -283,19 +290,30 @@ impl PySymbolTable {
     ///
     /// Raises `SymbolTableError` if the namespace is not defined.
     fn get_namespace<'py>(
-        &self,
-        py: Python<'py>,
+        slf: &Bound<'py, Self>,
         namespace_name: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyDict>> {
+        let py = slf.py();
         let namespace = read_identifier(namespace_name, "namespace_name")?;
-        let Some(view) = self.table.namespace(&namespace) else {
-            return Err(raise(SymbolTableError::NamespaceNotFound { namespace }));
+        let symbols = {
+            let this = slf.borrow();
+            if let Some(symbols) = this.namespace_dicts.get(&namespace.id()) {
+                return symbols.bind(py).copy();
+            }
+            let Some(view) = this.table.namespace(&namespace) else {
+                return Err(raise(SymbolTableError::NamespaceNotFound { namespace }));
+            };
+            let symbols = PyDict::new(py);
+            for (_, entry) in view.iter() {
+                symbols.set_item(entry.0.symbol.bind(py), entry.frame(py))?;
+            }
+            symbols
         };
-        let symbols = PyDict::new(py);
-        for (_, entry) in view.iter() {
-            symbols.set_item(entry.0.symbol.bind(py), entry.frame(py))?;
-        }
-        Ok(symbols)
+        let copy = symbols.copy()?;
+        slf.borrow_mut()
+            .namespace_dicts
+            .insert(namespace.id(), symbols.unbind());
+        Ok(copy)
     }
 
     /// Remove the namespace `namespace_name` and its symbols.
@@ -304,10 +322,11 @@ impl PySymbolTable {
     /// namespace names it as its parent.
     fn remove_namespace(slf: &Bound<'_, Self>, namespace_name: &Bound<'_, PyAny>) -> PyResult<()> {
         let namespace = read_identifier(namespace_name, "namespace_name")?;
-        slf.borrow_mut()
-            .table
-            .remove_namespace(&namespace)
-            .map_err(raise)?;
+        {
+            let mut this = slf.borrow_mut();
+            this.namespace_dicts.remove(&namespace.id());
+            this.table.remove_namespace(&namespace).map_err(raise)?;
+        }
         log_debug(slf.py(), "removed namespace %s", [namespace_name.clone()])
     }
 
@@ -322,10 +341,13 @@ impl PySymbolTable {
     ) -> PyResult<()> {
         let namespace = read_identifier(namespace_name, "namespace_name")?;
         let symbol = read_identifier(symbol_name, "symbol_name")?;
-        slf.borrow_mut()
-            .table
-            .remove_symbol(&namespace, &symbol)
-            .map_err(raise)?;
+        {
+            let mut this = slf.borrow_mut();
+            this.namespace_dicts.remove(&namespace.id());
+            this.table
+                .remove_symbol(&namespace, &symbol)
+                .map_err(raise)?;
+        }
         log_debug(
             slf.py(),
             "removed symbol %s from namespace %s",
@@ -354,7 +376,9 @@ impl PySymbolTable {
             return Ok(());
         }
         let other = other.borrow();
-        slf.borrow_mut().table.update_namespaces(&other.table);
+        let mut this = slf.borrow_mut();
+        this.namespace_dicts.clear();
+        this.table.update_namespaces(&other.table);
         Ok(())
     }
 
@@ -454,6 +478,7 @@ impl PySymbolTable {
     /// Sort the namespaces, and each namespace's symbols, by identifier, in
     /// place.
     fn canonicalize(&mut self) {
+        self.namespace_dicts.clear();
         self.table.canonicalize();
     }
 
@@ -625,7 +650,11 @@ impl PySymbolTable {
             }
             table.insert_namespace(name, parent, symbols);
         }
-        slf.borrow_mut().table = table;
+        {
+            let mut this = slf.borrow_mut();
+            this.namespace_dicts.clear();
+            this.table = table;
+        }
         let instance_dict = state.get_item(1)?;
         if !instance_dict.is_none() {
             let own = slf.getattr(intern!(py, "__dict__"))?;

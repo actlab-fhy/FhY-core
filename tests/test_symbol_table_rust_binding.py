@@ -479,6 +479,40 @@ def test_get_namespace_returns_a_new_dict() -> None:
     assert table.is_symbol_defined_in_namespace(namespace, symbol)
 
 
+def test_get_namespace_reflects_each_change() -> None:
+    """Test `get_namespace` answers from the table after every kind of change."""
+    namespace, first, second = (
+        _identifier("ns", 47),
+        _identifier("a", 48),
+        _identifier("b", 49),
+    )
+    table = SymbolTable()
+    table.add_namespace(namespace)
+    assert table.get_namespace(namespace) == {}
+
+    table.add_symbol(namespace, second, ImportSymbolTableFrame(second))
+    table.add_symbol(namespace, first, ImportSymbolTableFrame(first))
+    assert list(table.get_namespace(namespace)) == [second, first]
+
+    table.canonicalize()
+    assert list(table.get_namespace(namespace)) == [first, second]
+
+    table.remove_symbol(namespace, first)
+    assert list(table.get_namespace(namespace)) == [second]
+
+    source = SymbolTable()
+    source.add_namespace(namespace)
+    table.update_namespaces(source)
+    assert table.get_namespace(namespace) == {}
+
+    table.remove_namespace(namespace)
+    table.add_namespace(namespace)
+    table.add_symbol(namespace, first, ImportSymbolTableFrame(first))
+    assert list(table.get_namespace(namespace)) == [first]
+    restored = pickle.loads(pickle.dumps(table))
+    assert list(restored.get_namespace(namespace)) == [first]
+
+
 @pytest.mark.parametrize(
     ("call", "message"),
     [
