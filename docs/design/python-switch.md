@@ -78,6 +78,16 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S10.4: the Python switch
   - [x] S10.5: tests migrated, and the interface suite
   - [x] S10.6: benchmarks after, and docs
+- [ ] S9: the expression evaluators (designed; see "S9: the expression evaluators")
+  - [ ] N-S9-1 and N-S9-2 decided
+  - [ ] S9.1: evaluator benchmarks and baseline
+  - [ ] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
+  - [ ] S9.3: the `ndarray` cargo feature and the array backend
+  - [ ] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
+  - [ ] S9.5: the Python switch
+  - [ ] S9.6: tests migrated, and the interface suite
+  - [ ] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README
+  - [ ] S9.8: benchmarks after, and docs
 
 ## Goal
 
@@ -8777,3 +8787,1030 @@ z3-solver wheel's libz3 4.16, as S8.3 builds it), clippy `--all-targets
 check`. A single run of the term benchmarks after the rebase found no row
 slower than the table above by more than 15%, so the table stands. The
 commit hashes in this section are the rebased ones.
+
+## S9: the expression evaluators
+
+- **Status:** designed 2026-09-26 at ab05802, in parallel with S8's
+  implementation. D-S9-1 to D-S9-20 apply the policy the user already set
+  and the direction in "Plan after S7" (item 4). N-S9-1 and N-S9-2 need
+  the user.
+- **Pattern:** the evaluation logic moves into a new core module,
+  `fhy_core::expression::evaluate`. One evaluator walk is generic over
+  its values: a scalar backend in every build, and an `ndarray` backend
+  behind an off-by-default `ndarray` cargo feature, which the binding
+  enables. The binding converts NumPy arrays to and from `ndarray` with
+  rust-numpy. The two Python passes become `CompilerPass`es over the core,
+  as S7 did for `FunctionInliner`.
+- **Scope:** `passes/numpy.py`, `passes/evaluate.py`,
+  `passes/native_lowering.py` and `pprint.py`, the native kernels of the
+  19 native built-ins, and the helpers they need. The solver and the z3
+  and sympy passes are S8's.
+- **Revises D-S7-7's "evaluation stays Python"**, which kept the fold in
+  Python because the core computed no native function. S9 gives the core
+  those kernels (D-S9-7).
+
+### Survey: the Python API
+
+The four modules are 1,188 lines, pure Python over the Rust-backed
+expressions and registry.
+
+| File | Lines | Public names |
+|---|--:|---|
+| `passes/numpy.py` | 728 | `evaluate_expression_with_numpy` (`__all__`); `NumpyExpressionEvaluator`, a `VisitablePass` registered as `fhy_core.symbolic.expression.evaluate_with_numpy`; six private tables |
+| `passes/evaluate.py` | 186 | `evaluate_expression`, `ExpressionEvaluator`, a `RewritablePass` registered as `fhy_core.symbolic.expression.evaluate` |
+| `passes/native_lowering.py` | 118 | `coerce_literal_value`, `is_decimal_text_exactly_binary`, `try_get_native_constant_value` |
+| `pprint.py` | 156 | `pformat_expression` (`__all__`), `ExpressionPrettyFormatter`, a `VisitablePass` |
+
+`symbolic/expression/__init__.py` re-exports `evaluate_expression`,
+`evaluate_expression_with_numpy`, `pformat_expression` and the evaluator
+errors. `builtins.py` holds `_NATIVE_IMPLEMENTATIONS`, the 19 `math`
+callables (plus `_exp2` and the builtin `round`) that the fold calls.
+
+**The NumPy evaluator (`numpy.py`).**
+
+- `evaluate_expression_with_numpy(expression, environment)`:
+  1. imports NumPy, or raises `ImportError("NumPy is required for
+     ... pip install fhy_core[numpy].")`;
+  2. runs `inline_functions`, so composed built-ins and user functions
+     disappear;
+  3. reads a `SymbolType` from the dtype kind of each binding the inlined
+     tree references (`b` Boolean, `i`/`u` integer, `f` real; any other
+     kind undeclared), and screens with `validate_logical_operands`;
+  4. refuses an environment binding a referenced native constant
+     (`NativeConstantBindingError`);
+  5. runs `NumpyExpressionEvaluator(environment, numpy)` as a pass.
+
+  Steps 3 and 4 raise directly. Every error in 2 and 5 arrives as
+  `PassExecutionError` with the cause.
+- **The walk** calls one NumPy function per node, over whole arrays:
+  - the 13 binary operations through ufuncs (`true_divide`,
+    `floor_divide`, `mod`, `power`, ...);
+  - `LogicalExpression` by reducing its operands with `logical_and` or
+    `logical_or`, and the three unary operations;
+  - a piecewise as a right-folded chain of `numpy.where`, which evaluates
+    every branch for every element;
+  - 18 native built-ins through ufuncs (`round` is `numpy.round`).
+    `erf`, and so `gelu`, and every user native raise
+    `UnsupportedNumpyLoweringError`.
+- **Values.**
+  - An identifier is `numpy.asarray(binding)`, once per occurrence, or a
+    native constant's value. Anything else raises `UnboundVariableError`,
+    with three wordings: not bound, merely named like a constant, or the
+    name of a registered function.
+  - A literal goes through `coerce_literal_value`. A decimal with no
+    exact binary float raises `StringLiteralPrecisionError`.
+  - Dtypes follow NumPy's promotion. A `float32` input stays `float32`,
+    int64 arithmetic wraps silently, `x // 0` on integers is `0` with a
+    warning, and a Boolean takes part in arithmetic as `0` or `1`.
+- **Casts.** An `INT`-, `NAT`- or `BOOL`-sorted native result (`round`,
+  `floor`, `ceil`) is cast to `int64` or `bool_`. A non-finite value there
+  raises `NonFiniteCastError`. Inside a piecewise branch the offending
+  lanes are recorded in a mask instead, folded through the same `where`
+  chain, and raised only if the selected branch returns one. So
+  `{floor(sqrt(x)) if x >= 0; 0 otherwise}` works. A finite value out of
+  `int64`'s range is cast silently to a platform value.
+- **Guards.** A connective operand and a piecewise condition must be
+  Boolean-dtyped. The static screen of step 3 catches the provably
+  numeric ones. A runtime check catches the rest, for example an object
+  dtype: `NonBooleanLogicalOperandError` for an operand, `TypeError` for
+  a condition, both wrapped.
+- **Floating-point domain errors** follow NumPy: `sqrt(-1)`, `log(0)` and
+  division by zero give `nan` or `inf`, with NumPy's `RuntimeWarning`.
+  NumPy still raises `ValueError` for an integer to a negative integer
+  power.
+- **Results.** A 0-d result is a NumPy or Python scalar, except that a
+  piecewise- or identifier-rooted tree gives a rank-0 `ndarray`. An
+  identifier root returns `asarray` of the binding, which may be the
+  caller's own array. `did_change` is always `True`. Bindings the tree
+  does not reference are ignored, and are never passed to `asarray`.
+
+**The fold (`evaluate.py`).** `ExpressionEvaluator` is a `RewritablePass`
+with two rewrites, bottom-up and once per occurrence:
+
+- A call is looked up with `get_registered_entry`:
+  - an unknown name raises `EntryLookupError`;
+  - a constant's name raises `FunctionArityError`;
+  - a `RegisteredFunction`, composed built-ins included, is kept, and
+    reports a WARNING recommending `inline_functions`;
+  - a `NativeFunction` whose arguments are all literals, after
+    `coerce_literal_value`, is replaced by
+    `LiteralExpression(implementation(*values))`. The result is checked
+    with `is_python_value_compatible_with_sort` (`NativeResultSortError`).
+    Arity is never checked, so `sin(1.0, 2.0)` raises the callable's
+    `TypeError`.
+- An identifier that is a native constant's canonical identifier becomes
+  its value.
+
+Literal arithmetic is not folded. A native's own exception
+(`math.sqrt(-1)`'s `ValueError`, a `ZeroDivisionError`, an
+`OverflowError`) propagates. Every error arrives as `PassExecutionError`
+with the cause.
+
+**`native_lowering.py`.**
+
+- `is_decimal_text_exactly_binary(text)` is `Decimal(text) ==
+  Decimal(float(text))`.
+- `coerce_literal_value(value)` passes `bool`, `int` and `float` through,
+  converts integer-grammar text with `int`, and converts a decimal to
+  `float` only when exact. Otherwise it raises
+  `StringLiteralPrecisionError("cannot coerce decimal literal '0.1' ...")`.
+- `try_get_native_constant_value(identifier)` is the constant's `value`,
+  or `None`.
+- `passes/sympy.py` imports `is_decimal_text_exactly_binary` (it is S8's
+  file).
+
+**`pprint.py`.**
+
+- `pformat_expression(expression, show_id=False, functional=False)`
+  already renders through the core (`Expression._format`, S4.3a).
+- `ExpressionPrettyFormatter(is_id_shown, is_printed_functional)` is the
+  Python `VisitablePass` that N-S6-3 kept for subclasses. It is a second
+  renderer of the core's text, and `test_pretty_formatter_agrees_with_the_core_text`
+  checks the two agree. Its `__call__` refuses a non-`str` result.
+- Its consumers: no `src` module; one benchmark pipeline
+  (`test_mixed_pipeline_over_a_deep_expression`); `test_pprint.py`.
+
+**Consumers in `src`.**
+
+- `pformat_expression`: `types/core.py` (4 calls), `constraint/core.py`
+  (1) and `types/checking/type_checker.py` (1). These are unchanged.
+- The two evaluators have no caller in `src` besides the re-exports. The
+  registry's docstrings mention `evaluate_expression`.
+- `is_decimal_text_exactly_binary`: `passes/sympy.py`.
+
+**Probed at ab05802** (this machine: an i9-7920X with AVX-512, Python
+3.11.13, NumPy 2.4.6; best of five `timeit` repeats):
+
+| Case | Time |
+|---|--:|
+| `evaluate_expression_with_numpy` of `x*x + 2x + 1`, `x` a float | 29.6 µs |
+| the same, over 1,000 floats | 35.4 µs |
+| the same, over 10^6 floats | 6.86 ms (NumPy by hand: 3.56 ms) |
+| `sigmoid(x)`, `x` a float | 56.1 µs |
+| `sigmoid(x)` over 10^6 floats | 3.51 ms |
+| `exp`, `log`, `sqrt`, `tanh`, `sin` over 10^6 floats | 1.07, 1.38, 0.85, 1.96 and 10.0 ms, within 5% of the bare ufunc |
+| `evaluate_expression(exp(1.0))` | 7.25 µs |
+| `evaluate_expression` of S4.1's deep tree (nothing to fold) | 194 µs |
+| `ExpressionPrettyFormatter()` of the deep tree | 223 µs (`pformat_expression`: 8.4 µs) |
+
+- **Scalar environments** pay for the pass lifecycle twice, the screen,
+  and a Python visitor call and a NumPy call per node: about 30 µs for a
+  four-operation tree, against 39 ns for NumPy by hand.
+- **Large arrays** pay NumPy's own cost plus a fixed overhead.
+- **NumPy's float64 `exp`, `log` and `tanh` are SIMD kernels** (AVX-512
+  here). A plain Rust loop over 10^6 floats, built with `rustc -O` for the
+  baseline x86-64 target the wheels use, measured:
+
+  | Kernel | Rust std | NumPy ufunc | Rust / NumPy |
+  |---|--:|--:|--:|
+  | `exp` | 4.84 ms | 1.03 ms | 4.7 |
+  | `ln` | 4.65 ms | 1.35 ms | 3.4 |
+  | `tanh` | 19.0 ms | 1.91 ms | 9.9 |
+  | `sin` | 11.0 ms | 9.88 ms | 1.1 |
+  | `sqrt` | 0.77 ms | 0.80 ms | 1.0 |
+  | fused `x*x + 2x + 1` | 0.68 ms | 3.56 ms (4 ufuncs) | 0.19 |
+  | fused sigmoid | 4.75 ms | 3.51 ms (evaluator) | 1.35 |
+
+  This is N-S9-2.
+
+### Survey: the Rust API
+
+- **No evaluator.** The builtins module says the catalogue "does not
+  compute native functions". Nothing converts a `Decimal` to an `f64`,
+  and nothing depends on `ndarray`.
+- **What the port builds on:**
+  - `FunctionRegistry::inline` (S7), which takes linear time in the
+    distinct nodes and keeps native calls with their arity checked;
+    `FunctionRegistry::constant` and `entry`; `NativeFunction`'s sorts;
+  - `BuiltinConstant::of_identifier` and `value()`, and
+    `BuiltinFunction`'s sorts;
+  - `BooleanScreen` over `SymbolTypes`, and `Expression::free_identifiers`;
+  - `LiteralValue`, `Decimal` (`coefficient`, `exponent`) and
+    `FunctionSort::accepts_literal`, the table the fold's result check
+    needs;
+  - `ExpressionDisplay`/`FormatOptions`, and
+    `expression::passes::ExpressionPrettyFormatter`, a core pass that
+    formats under `FormatOptions`;
+  - `pattern::CallbackError` (D-10);
+  - the operations' documented semantics: `Divide` is the exact real
+    quotient, `FloorDivide` rounds toward negative infinity, and
+    `FloorMod`'s sign follows the divisor (F-010).
+- **Crates** (crates.io, 2026-09-26):
+  - **`numpy` 0.29.0** (rust-numpy) is the release for pyo3 0.29. It is
+    BSD-2-Clause, with `rust-version` 1.83, below our 1.85. It depends on
+    `pyo3 ^0.29` with `macros`, on `ndarray >=0.15, <=0.17`, and on
+    `libc`, `num-complex`, `num-integer`, `num-traits` and `rustc-hash`.
+    It links nothing from NumPy at build time: it loads NumPy's C API
+    from the `_ARRAY_API` capsule on first use, so an extension using it
+    imports without NumPy installed.
+  - **`ndarray` 0.17.2** is MIT OR Apache-2.0, with `rust-version` 1.64.
+    It depends on `matrixmultiply`, `num-complex`, `num-integer`,
+    `num-traits`, `rawpointer` and `portable-atomic`, all MIT or Apache.
+  - **`libm` 0.2.16** is MIT, with `rust-version` 1.63, and has no
+    dependencies. It is the pure-Rust port of musl's libm. `f64::erf` is
+    still unstable (`float_erf`), checked with rustc 1.98.1.
+  - `deny.toml` allows no BSD-2-Clause crate today.
+
+### Consumers and tests
+
+**Python tests.** Counts are collected tests, parametrized cases included:
+
+| File | Lines | Functions | Collected |
+|---|--:|--:|--:|
+| `expression/passes/test_numpy_evaluator.py` | 1,739 | 93 | 153 |
+| `expression/passes/test_evaluator.py` | 651 | 32 | 33 |
+| `expression/passes/test_evaluator_properties.py` | 135 | 3 | 3 |
+| `expression/test_pprint.py` | 499 | 28 | 57 |
+| `expression/test_pprint_properties.py` | 55 | 3 | 3 |
+
+- **`test_numpy_evaluator.py`:**
+  - 19 tests match `PassExecutionError` and its cause;
+  - 12 handle NumPy's warnings: 11 `np.errstate` blocks and one
+    `pytest.warns`;
+  - 5 mention `float32`;
+  - 8 use the private tables, `_cast_to_result_sort` or the class
+    directly;
+  - it imports NumPy through `pytest.importorskip` at module level.
+- **`test_evaluator.py`:** 7 tests match `PassExecutionError`, and most
+  register a user native backed by a `math` callable.
+- **The NumPy evaluator is the oracle of other properties.**
+  `test_solver_properties.py` (10 references),
+  `test_sympy_pass_properties.py` (10), `test_rewrite_properties.py` (4),
+  `test_inline_pass_properties.py` (4), `test_piecewise_properties.py` (2)
+  and `test_strategies_properties.py` (3) compare with it. The integer
+  trees of `tests/strategies/expressions.py` rely on NumPy's int64
+  arithmetic. None of these imports NumPy through `importorskip`.
+- **Also:**
+  - `test_builtins.py` (5 calls of `evaluate_expression`, and
+    `test_seeded_native_implementation_matches_math_callable`, which pins
+    each built-in's `implementation is math.<f>`);
+  - `test_native_stories.py` (8 calls);
+  - `test_pprint.py`'s `_BracketedLiterals` and `_NonStringFormatter`
+    subclasses, and its `get_noop_output` test;
+  - `benchmarks/test_registry.py::test_evaluate_after_inline` and
+    `test_pass_infrastructure.py::test_mixed_pipeline_over_a_deep_expression`.
+
+**Rust tests:** none for evaluation. `pprint_stories.rs` and
+`pprint_properties.rs` cover the display. `inline_stories.rs` and
+`registry_properties.rs` cover the inliner, whose properties evaluate
+Boolean trees with a reference evaluator of their own.
+
+**Benchmarks:** none for either evaluator besides
+`test_evaluate_after_inline`.
+
+### Divergences visible from Python
+
+Where the Rust semantics differ from today's NumPy and `math` ones
+(D-S4-1):
+
+| # | Python today | After S9 |
+|---|---|---|
+| Z-1 | NumPy's dtype promotion: `float32` kept, every integer and float width | three value domains: `bool`, `int64`, `float64`. Narrower inputs are widened, and results are one of the three (D-S9-4) |
+| Z-2 | int64 arithmetic wraps; `x // 0` and `x % 0` on integers are `0` with a warning | an overflow and an integer division by zero are lane failures (D-S9-5, D-S9-6) |
+| Z-3 | a Boolean is `0`/`1` in arithmetic and ordering | refused, as S8's lowering refuses it (Y-4); `==` and `!=` compare Booleans |
+| Z-4 | a finite out-of-range value cast to `int64` becomes a platform value | a lane failure |
+| Z-5 | an error inside an unselected branch: only a non-finite cast is discarded | every lane failure is discarded where a piecewise or a connective does not need that lane (D-S9-6) |
+| Z-6 | `erf` and `gelu` are refused by the NumPy evaluator | computed, with `libm`'s `erf` (D-S9-7) |
+| Z-7 | the fold computes built-ins with `math`: `sqrt(-1)` raises `ValueError`, `exp(1000)` `OverflowError`, `floor(inf)` `OverflowError` | IEEE results (`NaN`, `inf`), and `NonFiniteCastError` for a non-finite value that an integer-sorted result needs (D-S9-7) |
+| Z-8 | the fold never checks arity or argument sorts | it checks both (D-S9-8) |
+| Z-9 | NumPy's `RuntimeWarning`s | no warnings |
+| Z-10 | `evaluate_expression_with_numpy` wraps walk errors in `PassExecutionError` | it raises them directly (D-S9-10); a run of the pass still wraps them |
+| Z-11 | object, complex and string dtypes reach NumPy, and a runtime guard catches some | refused when the environment is converted, with `TypeError` (D-S9-4) |
+| Z-12 | 0-d results: a scalar, or a rank-0 `ndarray` for a piecewise or identifier root | always a NumPy scalar; other results are new arrays, never the caller's (D-S9-13) |
+| Z-13 | the fold's walk is per occurrence and recursive; so is NumPy's | once per distinct node, on the heap, at any depth |
+| Z-14 | messages are sentences (`identifier 'x' is not bound in the environment ...`) | the core's lowercase lines (I.3 rule 3) |
+
+Unchanged in meaning: what is folded and what is kept; the value domains
+of the sorts; constants by identifier identity; the refusal of a bound
+constant; the Boolean screen and when it runs; the non-finite cast rule;
+first-match-wins piecewise; broadcasting; bindings ignored when not
+referenced; NumPy as an optional extra.
+
+### Pattern choice
+
+- **The evaluation logic goes to Rust** (decision 2: logic-rich machinery;
+  the direction). The walk, the kernels, the casts, the lane failures and
+  the checks are specified by Rust tests (decision 4), and Rust users get
+  an evaluator.
+- **No new P2 or P3 class.**
+  - The two passes stay Python `CompilerPass`es whose `run_pass` calls
+    `_rs`, as `FunctionInliner` does (D-S7-7, D-S5-12).
+  - A user native's Python `implementation` is called from Rust through
+    an adapter, once per folded call. This is the fold's per-call
+    callback: it existed before, and it calls a user function, not a
+    visitor, so P3's granularity rule is not at stake.
+- **Plain Python:** `try_get_native_constant_value` and the module
+  functions' docstrings.
+
+**Benchmark plan: `benchmarks/test_evaluate.py` (S9.1).** The baseline
+runs it against today's Python evaluators. Array rows use seeded
+`float64` data, except where a row names another dtype. The deep tree is
+S4.1's, 100 operations over four identifiers. It uses float bindings,
+since its integer products overflow `int64`.
+
+| Benchmark | Measures |
+|---|---|
+| `test_evaluate_expression_of_a_builtin_native_call` | `exp(1.0)`: the fold's floor, one pass run |
+| `test_evaluate_expression_of_a_user_native_call` | a user native backed by `math.atan2`: the Python callback |
+| `test_evaluate_expression_of_the_deep_tree` | nothing to fold: the walk |
+| `test_evaluate_expression_of_nested_native_calls` | ten nested built-in natives over a literal |
+| `test_evaluate_expression_of_constant_references` | a sum of 100 references to `pi` and `e` |
+| `test_evaluate_with_numpy_of_scalars[poly]`, `[sigmoid]`, `[deep_tree]` | scalar environments: the per-call floor |
+| `test_evaluate_with_numpy_of_arrays[poly-1e3]`, `[poly-1e6]` | arithmetic throughput |
+| `test_evaluate_with_numpy_of_arrays[exp-1e6]`, `[tanh-1e6]`, `[sigmoid-1e6]` | native kernel throughput (N-S9-2) |
+| `test_evaluate_with_numpy_of_arrays[piecewise-1e6]` | `{x if x > 0; -x otherwise}`, and a guarded `floor(sqrt(x))` |
+| `test_evaluate_with_numpy_of_arrays[integer-1e6]` | `int64` `x // 7 + x % 5` |
+| `test_evaluate_with_numpy_of_arrays[logical-1e6]` | `(x > 0) && (y < 1) \|\| !(x == y)` over two arrays |
+| `test_evaluate_with_numpy_of_arrays[deep_tree-1e4]` | per-node cost over mid-sized arrays |
+| `test_evaluate_with_numpy_of_float32_arrays` | `poly` over 10^6 `float32`s: the widening copy of Z-1 |
+| `test_evaluate_with_numpy_with_unused_bindings` | 100 bindings, two referenced |
+| `test_pretty_formatter_of_the_deep_tree` | `ExpressionPrettyFormatter()` (N-S9-1) |
+
+Rerun, not added:
+
+- `test_evaluate_after_inline` (`test_registry.py`);
+- `test_mixed_pipeline_over_a_deep_expression`
+  (`test_pass_infrastructure.py`);
+- the three `test_pformat_expression_of_deep_tree` rows
+  (`test_expression.py`).
+
+The verdict follows cross-cutting rule 5. The paths at risk:
+
+- **native-heavy large arrays** (`exp`, `tanh`, `sigmoid`), where the
+  probe shows plain Rust kernels 3 to 10 times slower than NumPy's SIMD
+  ones; that is N-S9-2;
+- **`float32` inputs**, which pay a widening copy (Z-1);
+- **`evaluate_expression` of tiny trees**, whose floor stays one pass run;
+- **environment conversion**, one `numpy.asarray` per referenced binding
+  that is not a Python scalar.
+
+### Decisions (proposed 2026-09-26)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I:
+  - owned values, and no global state beyond identity (F-006,
+    CONTRIBUTING);
+  - `#[non_exhaustive]` errors with one-line lowercase `Display` (I.3
+    rule 3);
+  - the naming rules (I.3 rule 5) and the layering (§I.2);
+  - `unsafe_code = "forbid"` and MSRV 1.85;
+- the user's direction for this slice: the NumPy evaluator in Rust, with
+  the `numpy` crate and `ndarray`, and NumPy imported lazily as an
+  optional extra (cited as "the direction").
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+- **D-S9-1: one implementation, no fallback** ("no fallback"; D-S7-1,
+  D-S8-1).
+  - These are deleted, not kept beside the Rust path:
+    - the NumPy visitor and its tables;
+    - the dtype-kind screen reader;
+    - the deferred non-finite masks;
+    - the `RewritablePass` fold and its visitor methods;
+    - `coerce_literal_value`'s and `is_decimal_text_exactly_binary`'s
+      Python bodies;
+    - `builtins.py`'s table of `math` callables (D-S9-9).
+  - `numpy.py`, `evaluate.py` and `native_lowering.py` become thin
+    layers over `_rs`. `pprint.py` follows N-S9-1.
+- **D-S9-2: a new core module, `fhy_core::expression::evaluate`**
+  (crate conventions; §I.2).
+  - It depends on `expression` with `builtins` and `registry`, never on
+    `pass`, so it sits below `expression::passes`.
+  - The Python paths `passes.evaluate`, `passes.numpy` and
+    `passes.native_lowering` map to it in CONTRIBUTING's table.
+  - The sketch is settled test-first in S9.2, as D-S7-2's and D-S8-2's
+    were:
+
+  ```rust
+  // fhy_core::expression::evaluate
+  #[derive(Debug, Clone, Copy, PartialEq)]
+  pub enum Scalar { Bool(bool), Int(i64), Real(f64) }       // exhaustive: the three domains
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+  pub enum Domain { Bool, Int, Real }                        // exhaustive; SymbolType's meaning
+
+  #[derive(Debug, Clone, Copy)]
+  pub struct Evaluator<'r> { /* &FunctionRegistry */ }
+  impl<'r> Evaluator<'r> {
+      pub fn new(registry: &'r FunctionRegistry) -> Self;
+      /// evaluate.py: fold native calls with literal arguments, resolve constants.
+      pub fn fold(&self, expression: &Expression, natives: &dyn NativeCalls) -> Result<Folding, FoldError>;
+      /// Inline, screen, refuse bound constants, then walk (D-S9-10).
+      pub fn evaluate<S: BuildHasher>(&self, expression: &Expression,
+          environment: &HashMap<Identifier, Scalar, S>) -> Result<Scalar, EvaluationError>;
+      #[cfg(feature = "ndarray")]
+      pub fn evaluate_array<S: BuildHasher>(&self, expression: &Expression,
+          environment: &HashMap<Identifier, ArrayValue<'_>, S>) -> Result<ArrayValue<'static>, EvaluationError>;
+  }
+  pub trait NativeCalls {                                    // user natives only; built-ins are computed here
+      fn call(&self, function: &NativeFunction, arguments: &[LiteralValue]) -> Result<LiteralValue, CallbackError>;
+  }
+  #[derive(Debug, Clone)]
+  pub struct Folding { /* output, not_inlined: Vec<FunctionName> */ }   // output(), into_output(), not_inlined()
+
+  #[cfg(feature = "ndarray")]
+  #[derive(Debug, Clone)]
+  pub enum ArrayValue<'a> {                                  // exhaustive: the three domains
+      Bool(CowArray<'a, bool, IxDyn>), Int(CowArray<'a, i64, IxDyn>), Real(CowArray<'a, f64, IxDyn>),
+  }
+
+  #[non_exhaustive] pub enum EvaluationError {
+      Inline(InlineError), IllTyped(NonBooleanLogicalOperandError), BoundNativeConstant(Vec<Identifier>),
+      Unbound { identifier: Identifier, near_miss: Option<NearMiss> }, InexactDecimal(Decimal),
+      IntegerLiteralOutOfRange(BigInt), Unsupported(Callee), BooleanOperand(Expression),
+      MixedBranches(Expression), Shape { left: Vec<usize>, right: Vec<usize> },
+      Lane { failure: LaneFailure, node: Expression },
+  }
+  #[non_exhaustive] pub enum LaneFailure {
+      IntegerOverflow, DivisionByZero, NegativeIntegerExponent, NonFiniteCast(FunctionSort), OutOfRangeCast(FunctionSort),
+  }
+  #[non_exhaustive] pub enum FoldError {
+      UnknownFunction(FunctionName), NotCallable(FunctionName), Arity { callee: Callee, expected: usize, actual: usize },
+      ArgumentSort { callee: Callee, position: usize, sort: FunctionSort, argument: LiteralValue },
+      ResultSort { function: FunctionName, sort: FunctionSort, value: LiteralValue }, InexactDecimal(Decimal),
+      NonFiniteCast { function: BuiltinFunction, value: f64 }, Native { function: FunctionName, source: CallbackError },
+  }
+  ```
+
+  - `Decimal` gains `to_f64_exact(&self) -> Option<f64>`: the nearest
+    `f64`, and `Some` only when it equals the decimal exactly. This is
+    `is_decimal_text_exactly_binary`'s rule, computed without text.
+  - `BuiltinFunction` gains the native kernels (D-S9-7). The builtins
+    module's "does not compute native functions" becomes "computes its
+    19 native functions".
+  - Every `Display` is one lowercase line naming the node or name:
+    `identifier "x" is not bound`, `integer overflow in (x * y)`,
+    `cannot cast NaN to int`, and so on. The texts keep the phrases the
+    Python message tests match, as D-S7-12's did.
+  - Nothing is global. An `Evaluator` borrows the registry it reads, as
+    the inliner does.
+- **D-S9-3: one walk, generic over its values; a scalar backend always,
+  and an `ndarray` backend behind a feature** (the direction; decision 4;
+  crate conventions; the design question of this slice).
+  - The walk is written once, over a crate-private trait of value
+    operations. It has two implementations:
+    - `Scalar`, in every build;
+    - `ArrayValue`, under `[features] ndarray = ["dep:ndarray"]` with
+      `ndarray = { version = "0.17", optional = true, default-features =
+      false, features = ["std"] }`.
+  - Both call the same per-element kernels, so lane *i* of an array
+    evaluation is, by construction, the scalar evaluation with lane *i*'s
+    bindings. A Rust property pins it.
+  - The walk keeps its pending nodes on the heap and evaluates each
+    distinct node once, as the inliner does.
+  - The binding enables `ndarray`. rust-numpy lives in the binding only,
+    so `fhy-core` never depends on PyO3 (CONTRIBUTING).
+  - `ndarray` 0.17's types appear in the feature's API. The crate is
+    unpublished (I.3 rule 6), and the README says so. docs.rs builds the
+    default features, as for S8's `z3`.
+  - **Rejected alternatives:**
+    - *The evaluator only in the binding:* no Rust test could specify it,
+      Rust users would get nothing, and the fold would still need its
+      kernels in the core.
+    - *A Rust walk calling NumPy's ufuncs per node:* NumPy's semantics
+      instead of Rust's (Z-1 to Z-4 unchanged), against D-S4-1 and the
+      direction.
+    - *An `ndarray`-only evaluator with 0-d arrays for scalars:* every
+      evaluation would need the feature, and every node of a scalar
+      evaluation would allocate.
+- **D-S9-4: three value domains** (D-S4-1: the core's sorts and
+  literals; Z-1, Z-11).
+  - A value is `Bool`, `Int` (`i64`) or `Real` (`f64`), the domains of
+    `SymbolType`.
+  - **Literals:**
+    - a `bool` is `Bool`;
+    - an integer is `Int`, or `IntegerLiteralOutOfRange` outside `i64`;
+    - a float is `Real`;
+    - a decimal is `Real` through `to_f64_exact`, or `InexactDecimal`.
+  - **Constants:** a built-in constant is `Real`, and a user constant
+    converts its `LiteralValue` the same way.
+  - **Array bindings** convert by dtype (the binding, D-S9-12):
+    - `bool_` is `Bool`;
+    - every signed integer width, and unsigned up to 32 bits, is `Int`;
+    - `uint64` is `Int`, or `OverflowError` for a value above
+      `i64::MAX`;
+    - `float16`, `float32` and `float64` are `Real`.
+
+    Object, complex, string, bytes, datetime and void dtypes are
+    refused with `TypeError`, naming the identifier and the dtype.
+  - Narrower inputs are widened, since the core's real domain is `f64`
+    (Z-1). A fourth domain for `float32` could be added later without
+    changing these rules; a benchmark row measures the widening.
+- **D-S9-5: operation semantics** (D-S4-1: the operations' documented
+  meaning, F-010; S8's Y-4 for Booleans; Z-2, Z-3). Mixed `Int` and `Real`
+  operands convert the `Int` to the nearest `f64` in every operation,
+  comparisons included, as S8's `to_real` does.
+
+  | Operation | `Int`, `Int` | with a `Real` |
+  |---|---|---|
+  | `+`, `-`, `*`, negation | checked; overflow is a lane failure | IEEE |
+  | `/` (`Divide`) | the quotient of the two `f64`s, `Real` | IEEE; `x / 0` is `inf` or `NaN` |
+  | `//` (`FloorDivide`) | rounds toward negative infinity; `x // 0` is a lane failure; `i64::MIN // -1` overflows | the floor of the exact quotient, by the `fmod`-based `divmod` NumPy and Python use (`1 // 0.1` is `9`); `x // 0` is IEEE's `a / b` |
+  | `%` (`FloorMod`) | the sign follows the divisor; `x % 0` is a lane failure | `fmod` with the divisor's sign; `x % 0` is `NaN` |
+  | `**` (`Power`) | a non-negative exponent: checked `pow`; a negative one: a lane failure (`ValueError`, as NumPy) | `powf` |
+  | `==`, `!=` | exact | IEEE after conversion |
+  | `<`, `<=`, `>`, `>=` | exact | IEEE after conversion |
+
+  - **Booleans:**
+    - `==` and `!=` compare two `Bool`s;
+    - a `Bool` in arithmetic, in an ordering, beside a number in `==`,
+      under negation or `+x`, or a piecewise whose branches mix `Bool`
+      with a number, is refused (`BooleanOperand`, `MixedBranches`),
+      naming the node;
+    - `Int` and `Real` branches mix as `Real`.
+  - **Connectives and conditions:** a connective reduces its operands in
+    order with `&&` or `||`, and `!` negates. A piecewise selects the
+    first case whose condition holds, per lane.
+  - **Broadcasting** follows NumPy's rules. A shape mismatch is `Shape`,
+    raised as `ValueError`.
+- **D-S9-6: failures are per lane, and a guard discards them** (D-S4-2:
+  it extends today's non-finite deferral to the failures Rust semantics
+  add; Z-2, Z-4, Z-5).
+  - An integer overflow, an integer division by zero, a negative integer
+    exponent, or a cast of a non-finite or out-of-range value to an
+    integer or Boolean sort marks its lane as failed, and the lane
+    carries a zero.
+  - A lane failure is discarded:
+    - by a piecewise, when that lane selects another branch;
+    - by `&&`, when another operand is `false` in that lane;
+    - by `||`, when another operand is `true` in that lane.
+
+    So `{x // y if y != 0; 0 otherwise}` and `(y != 0) && (x // y > 1)`
+    work over integer arrays, as they do with NumPy today (without its
+    garbage lanes). Every other node passes a failure on.
+  - A failure that reaches the result raises `Lane`, for the first
+    failed lane in C order, naming the failing node.
+  - A scalar is one lane, so the scalar backend meets the same rule.
+  - A static refusal (an out-of-range literal, an inexact decimal, a
+    Boolean operand, a shape mismatch) raises at once.
+- **D-S9-7: the native kernels are the core's** (D-S4-1; Z-6, Z-7).
+  - `exp`, `exp2`, `log`, `log2`, `log10`, `sqrt`, the trigonometric and
+    hyperbolic functions, `floor` and `ceil` are the `std` `f64` methods.
+    These call the platform's libm, as Python's `math` does.
+  - `round` is `f64::round_ties_even`, Python's rounding (stable since
+    Rust 1.77).
+  - `erf` is `libm::erf`, a new dependency of `fhy-core` (MIT, no
+    dependencies). `erf` and `gelu` become evaluable over arrays too.
+  - Results are IEEE: `sqrt(-1)` is `NaN`, `log(0)` is `-inf`, and
+    `exp(1000)` is `inf`.
+  - An integer-sorted result (`round`, `floor`, `ceil`) needs a finite
+    value:
+    - the fold makes it an exact `BigInt`, or `NonFiniteCast`;
+    - the evaluator makes it an `i64`, or a lane failure
+      (`NonFiniteCast`, `OutOfRangeCast`).
+  - A built-in's integer argument converts to the nearest `f64`, and
+    becomes `±inf` beyond its range.
+  - How the array evaluator computes the transcendental kernels is
+    N-S9-2.
+- **D-S9-8: the fold** (D-S4-2 for what it folds; D-S4-1 for how;
+  D-S7-7's inliner for the walk; Z-7, Z-8, Z-13). `Evaluator::fold` is
+  data-only, apart from the `NativeCalls` it is given.
+  - It walks bottom-up on its own stack, handles each distinct node
+    once, and returns the input itself when it folds nothing.
+  - **A call:**
+    - an unknown name is `UnknownFunction`, and a constant's name is
+      `NotCallable`;
+    - a composed built-in or a user function is kept, and its name is
+      recorded in `not_inlined`, once, in first-reached order;
+    - a native call whose arguments are all literals is checked for
+      arity and argument sorts (`FunctionSort::accepts_literal`), then
+      folded. A built-in is computed by its kernel, and a user native by
+      `NativeCalls::call`, whose result is checked against the result
+      sort (`ResultSort`).
+  - **A built-in or user constant's identifier** becomes its value.
+  - **Decimals:** a decimal argument converts through `to_f64_exact` or
+    is `InexactDecimal`, as `coerce_literal_value` does.
+  - **Order of checks:** arguments first, then the lookup, then arity,
+    then sorts, then the call, as Python's order (and the inliner's) is.
+- **D-S9-9: the built-in entries' `implementation` is the core's kernel**
+  ("no fallback"; D-S7-9's entry objects; Z-7).
+  - The 19 native built-in entries hold a small Rust-backed callable,
+    `BuiltinNativeImplementation`, instead of a `math` callable:
+    - calling it computes the kernel of D-S9-7 on a `bool`, `int` or
+      `float`, as the fold does;
+    - it has `__name__` and a `repr` naming the function;
+    - it pickles by name;
+    - it compares by identity, one object per built-in.
+  - So `BUILTIN_FUNCTIONS["sqrt"].implementation(-1.0)` agrees with
+    `evaluate_expression`, and no second implementation of a built-in
+    remains. `_NATIVE_IMPLEMENTATIONS` and `_exp2` are deleted, and
+    `NativeFunction._install_builtins()` takes no table.
+  - A user native keeps its Python callable.
+- **D-S9-10: `evaluate_expression_with_numpy` is one call into the
+  extension, and raises its errors directly** (D-S4-2 for the name and
+  signature; S8's Y-7 for unwrapped errors; the benchmark rationale; Z-10).
+  - The call runs these in order:
+    1. the NumPy check (D-S9-11);
+    2. inlining;
+    3. the conversion of the bindings the inlined tree references
+       (D-S9-12);
+    4. the screen, over the `SymbolType`s of the converted domains;
+    5. the bound-constant refusal;
+    6. the walk.
+
+    That is today's order: the conversion takes the place of reading
+    each binding's dtype for the screen.
+  - Every error is raised as its own class (D-S9-14), not wrapped. The
+    function thereby skips two pass lifecycles, a large part of today's
+    30 µs scalar floor.
+  - **`NumpyExpressionEvaluator(environment)`** stays the registered pass
+    `fhy_core.symbolic.expression.evaluate_with_numpy`:
+    - it is a `CompilerPass[Expression, Any]`, no longer a
+      `VisitablePass`;
+    - it snapshots the mapping at construction, and its `run_pass` makes
+      the same call;
+    - the pass framework wraps its errors as it wraps every pass's;
+    - `did_change` stays `True`, and `get_noop_output` still raises;
+    - the `numpy_module` argument goes, since rust-numpy finds NumPy
+      itself;
+    - it now inlines, so it evaluates composed calls instead of refusing
+      them.
+- **D-S9-11: NumPy stays optional and is imported lazily** (the
+  direction; S8's D-S8-15 and D-S8-16 for the pattern).
+  - The extension imports and works without NumPy: rust-numpy touches
+    NumPy's C API only on first use.
+  - `evaluate_expression_with_numpy` and the pass run `import numpy`
+    first, on every call. That honors `sys.modules["numpy"] = None` and
+    costs a `sys.modules` lookup. On failure they raise today's
+    `ImportError`, with its `pip install fhy_core[numpy]` guidance and
+    the original as `__cause__`.
+  - `import fhy_core`, `evaluate_expression` and every other path never
+    import NumPy. A fresh-interpreter test pins that.
+  - The `numpy` extra stays. S9.4 checks the oldest NumPy rust-numpy 0.29
+    supports and gives the extra that lower bound if one is needed.
+  - The marker and the minimal session follow D-S8-17 (S9.7).
+- **D-S9-12: the binding's conversions** (the direction; crate
+  conventions: no `unsafe`; D-S8-11 for detaching).
+  - **Only referenced bindings** of the inlined tree are converted, as
+    today.
+  - **Python values:**
+    - a `bool`, `int` or `float` converts directly, with no NumPy call;
+    - anything else goes through `numpy.asarray`. A `bool_`, `int64` or
+      `float64` array in native byte order is then borrowed as a
+      read-only `ndarray` view, whatever its strides, with no copy;
+    - any other admitted dtype is cast once, by NumPy, to one of the
+      three.
+  - **The result** is an owned `ndarray`, moved into a new NumPy array
+    without a copy (`PyArray::from_owned_array`).
+  - **Threads.** The binding detaches from the interpreter while it
+    walks, so other Python threads run. The input views stay borrowed
+    through rust-numpy's borrow checking; as with NumPy's own ufuncs,
+    another thread writing to an input array meanwhile is the caller's
+    race.
+  - Every rust-numpy call the binding needs is in its safe API. The
+    binding gains `numpy = "0.29"` and uses `numpy::ndarray`, which Cargo
+    unifies with the core's 0.17.
+- **D-S9-13: result types** (D-S4-1; NumPy's scalar convention; Z-12).
+  - `Bool` is `numpy.bool_`, `Int` is `numpy.int64`, and `Real` is
+    `numpy.float64`.
+  - A 0-d result is a NumPy scalar of that type. Any other result is a
+    new C-contiguous, writeable array that owns its data, never an input
+    array.
+- **D-S9-14: errors are the core's text under the Python classes**
+  (D-S4-1, D-S7-12, D-S8-14; Z-14).
+
+  | Core | Python |
+  |---|---|
+  | `Inline` | as S7 maps `InlineError`: `EntryLookupError`, `FunctionArityError`, `RecursionError` |
+  | `IllTyped` | `NonBooleanLogicalOperandError` |
+  | `BoundNativeConstant` | `NativeConstantBindingError` |
+  | `Unbound` | `UnboundVariableError`, keeping the three wordings as `near_miss` |
+  | `InexactDecimal` | `StringLiteralPrecisionError` |
+  | `IntegerLiteralOutOfRange`, `Lane(IntegerOverflow)`, `Lane(OutOfRangeCast)` | `OverflowError` |
+  | `Lane(DivisionByZero)` | `ZeroDivisionError` |
+  | `Lane(NegativeIntegerExponent)`, `Shape` | `ValueError` |
+  | `Lane(NonFiniteCast)`, `FoldError::NonFiniteCast` | `NonFiniteCastError` |
+  | `Unsupported` (a user native in the evaluator) | `UnsupportedNumpyLoweringError` |
+  | `BooleanOperand`, `MixedBranches`, a refused dtype, `ArgumentSort` | `TypeError` |
+  | `FoldError::UnknownFunction` | `EntryLookupError` |
+  | `FoldError::NotCallable`, `FoldError::Arity` | `FunctionArityError` |
+  | `FoldError::ResultSort` | `NativeResultSortError` |
+  | `FoldError::Native` | the implementation's exception itself; `KeyboardInterrupt` passes through |
+
+  `UnsupportedNumpyLoweringError`'s and `NonFiniteCastError`'s docstrings
+  follow Z-6 and D-S9-7.
+- **D-S9-15: `ExpressionEvaluator` becomes a `CompilerPass` over the core
+  fold** (D-S7-7's `FunctionInliner`; D-S5-12; D-S4-2 for the names).
+  - It is `CompilerPass[Expression, Expression]`, registered as today.
+  - Its `run_pass` calls `_rs`, then `report`s one WARNING per name in
+    `not_inlined`, with today's advice to run `inline_functions` first.
+  - `did_change` is by identity, and the output is materialized beside
+    the input, as the inliner's is.
+  - `evaluate_expression` still runs the pass, so its errors stay
+    `PassExecutionError`s with the cause, as `inline_functions`' do.
+  - It is no longer a `RewritablePass`: `visit_identifier_expression`
+    and `visit_call_expression` go.
+- **D-S9-16: `native_lowering.py` keeps its three names** (D-S4-2).
+  - `is_decimal_text_exactly_binary(text)` and
+    `coerce_literal_value(value)` call `_rs`, over `Decimal::to_f64_exact`
+    and the literal conversion, with the core's text in
+    `StringLiteralPrecisionError`. They accept today's inputs:
+    integer- and float-grammar text, `Decimal`, `bool`, `int` and
+    `float`.
+  - `try_get_native_constant_value` stays two lines of Python over the
+    registry lookups.
+  - `passes/sympy.py`'s import is unchanged, so S8's file needs no edit.
+- **D-S9-17: the formatter** follows N-S9-1. `pformat_expression` is
+  unchanged: it already renders through the core.
+- **D-S9-18: Rust tests specify the evaluators first** (the tests rule;
+  S7.2's and S8.2's test-first practice). The fold, the scalar walk, the
+  kernels, the lane failures and the array backend are specified by Rust
+  tests written against `todo!()` stubs, with a traceability table from
+  `test_numpy_evaluator.py`, `test_evaluator.py` and
+  `test_evaluator_properties.py`.
+- **D-S9-19: the Python tests are rewritten, not skipped** (the tests
+  rule). The behavioral tests stay, and change only where a decision
+  changes what they pin; each change is recorded with its reason, as S4.4
+  to S8 did.
+- **D-S9-20: edits to files S8 also changes stay small and additive**
+  (the coordination the user asked for). The branch is rebased onto
+  `dev-rust` after S8 lands.
+  - **Files S9 never touches:** `symbolic/solver.py`, `passes/z3.py`,
+    `passes/sympy.py`, `symbolic/expression/__init__.py`, and S8's
+    Rust modules.
+  - **Shared files, and what S9 adds to each:**
+    - `Cargo.toml`: three `[workspace.dependencies]` lines (`numpy`,
+      `ndarray`, `libm`);
+    - `rust/fhy-core/Cargo.toml`: the `libm` and optional `ndarray`
+      dependencies, and the `ndarray` line of `[features]`, a table S8
+      also creates, for `z3`;
+    - `rust/fhy-core-py/Cargo.toml`: `numpy`, and `features =
+      ["ndarray"]` on `fhy-core`;
+    - `Cargo.lock`: regenerated after the rebase, never hand-merged;
+    - `deny.toml`: `"BSD-2-Clause"` in `allow`, for rust-numpy;
+    - `rust/fhy-core-py/src/lib.rs`: one new `#[pymodule_export]` block;
+    - `src/fhy_core/_rs.pyi`: one new section;
+    - `rust/fhy-core/src/lib.rs`: the `expression` row of the module
+      table;
+    - CONTRIBUTING: the Python-to-Rust table's rows;
+    - the crate README: a feature paragraph beside S8's;
+    - `rust/fhy-core/tests/it/expression.rs`: new test modules, not
+      `main.rs`, which S8 edits.
+  - **The Python-side extras step** (the marker, `conftest.py`,
+    `tests_minimal`, and the README's install line and expression row,
+    which S8.5 and S8.7 edit) is S9.7, done after the rebase on S8's
+    versions.
+  - This checklist entry and this section sit after S8's, so the rebase
+    conflicts only where both append.
+
+### Needs the user
+
+- **N-S9-1: whether `ExpressionPrettyFormatter` stays a Python
+  `VisitablePass`.** N-S6-3 kept it Python for its per-node overrides.
+  This slice's scope names `pprint.py`, and "no fallback" argues against
+  a second renderer of the core's text. The policy does not settle an
+  earlier resolution against a later scope.
+  - (a) **Native.** The class becomes a `CompilerPass[Expression, str]`
+    whose `run_pass` calls the core, with today's constructor. A subclass
+    that defines a `visit_*` method is refused when the class is created,
+    with a `TypeError` naming this decision, so no override is ignored
+    silently. `_BracketedLiterals`, `_NonStringFormatter`, the
+    `get_noop_output` test and the agreement property are rewritten, and
+    the formatter's run takes the pass floor instead of 223 µs.
+  - (b) **Keep N-S6-3.** The formatter stays a Python `VisitablePass`, and
+    S9 changes nothing in `pprint.py`.
+
+  Recommendation: (a). No `src` module subclasses or runs the formatter,
+  the core already owns its text, and the property test exists only
+  because there are two renderers. It records a revision of N-S6-3.
+- **N-S9-2: how the array evaluator computes the transcendental natives**
+  (D-S9-7; cross-cutting rule 5). NumPy dispatches SIMD kernels for
+  float64 `exp`, `log` and `tanh` at run time. The wheels target baseline
+  x86-64, where the probe measured `std`'s kernels 4.7, 3.4 and 9.9 times
+  slower than NumPy's over 10^6 lanes (`sin` 1.1, `sqrt` 1.0). Arithmetic,
+  comparisons and piecewise do not depend on this; scalar environments
+  gain either way.
+  - (a) **The core's kernels everywhere.** One kernel set for the fold,
+    the scalar walk and arrays, specified in Rust. Native-heavy large
+    arrays get slower: about 2 times for `sigmoid`, and 4 to 10 times for
+    a lone `exp` or `tanh`. That is recorded as an accepted cost.
+  - (b) **NumPy's ufuncs as the array kernels of the 14 transcendental
+    natives, plugged in by the binding.**
+    - `sqrt`, `round`, `floor` and `ceil` keep the core's kernels, which
+      match NumPy's speed, and NumPy has no `erf`.
+    - The core's array backend takes an `ArrayKernels` trait whose
+      default is the core's kernels, so Rust users and the Rust tests
+      keep (a).
+    - The binding's implementation reattaches to the interpreter at each
+      native node, hands NumPy the lane array (moved without a copy when
+      it is a temporary; copied when it is a borrowed input), and copies
+      the result back.
+    - Native-heavy arrays stay near today: a lone `exp` over 10^6 lanes
+      is estimated at 1.5 to 1.9 times today's 1.07 ms, and `sigmoid`
+      near today's 3.5 ms.
+    - Array natives keep NumPy's accuracy, which already differs from
+      `math`'s by a few ULPs today, while scalars use the core's.
+  - (c) **(a) now, and SIMD kernels in the core in a later slice**, once
+    a runtime-dispatched kernel set with documented error bounds is
+    chosen. No stable-Rust crate found in this survey provides one.
+
+  Recommendation: (b), since the user named array throughput as a goal,
+  and it is the only option that keeps native-heavy arrays near today's
+  speed while the rest of the walk runs in Rust. (a) is the simpler
+  design if one kernel set matters more than that throughput.
+
+### Steps
+
+1. **S9.1: benchmarks.** Add `benchmarks/test_evaluate.py` as planned
+   above, and record the baseline here, on today's Python evaluators.
+2. **S9.2: core additions, test-first, with Rust tests.**
+   - `fhy_core::expression::evaluate` (`evaluate.rs`) with:
+     - `evaluate/value.rs` (`Scalar`, `Domain`, the literal
+       conversions);
+     - `evaluate/kernel.rs` (the per-element kernels, crate-private);
+     - `evaluate/walk.rs` (the generic walk and its value trait);
+     - `evaluate/fold.rs`;
+     - `evaluate/error.rs`.
+   - `Decimal::to_f64_exact`, and the native kernels on
+     `BuiltinFunction`.
+   - The `libm` dependency.
+   - The tests are written first and fail against `todo!()` stubs, as in
+     S7.2. `lib.rs`, the crate README and CONTRIBUTING's table list the
+     module. Nothing in Python changes, so the suite stays green.
+3. **S9.3: the `ndarray` feature.**
+   - `evaluate/array.rs` under `#[cfg(feature = "ndarray")]`, with its
+     tests under the same `cfg`, and the manifest and README.
+   - Under N-S9-2 (b), the `ArrayKernels` trait.
+   - CI's `rust` job already builds `--all-features`, and `deny` checks
+     the graph; `rust-msrv` checks the workspace, whose binding enables
+     the feature from S9.4 on.
+4. **S9.4: the binding.** Add `rust/fhy-core-py/src/expression/evaluate.rs`
+   with:
+   - `fold.rs`: the `NativeCalls` adapter over the registry state's
+     Python entries, and the `_rs` fold;
+   - `numpy.rs`: the NumPy check, the conversions of D-S9-12, the
+     results of D-S9-13, detaching, and, under N-S9-2 (b), the NumPy
+     kernels;
+   - `builtins.rs`: `BuiltinNativeImplementation` (D-S9-9);
+   - `literal.rs`: the two `native_lowering` functions;
+   - `deny.toml` gains BSD-2-Clause.
+
+   Everything new goes into `_rs.pyi`. Nothing in Python uses it yet, so
+   the suite stays green.
+5. **S9.5: the Python switch** (marked breaking).
+   - `numpy.py`, `evaluate.py` and `native_lowering.py` become the thin
+     layers.
+   - `builtins.py` drops its table.
+   - `pprint.py` follows N-S9-1.
+   - `errors.py`'s two docstrings change.
+
+   The switch lands together with S9.6 when the migration is small
+   enough to review in one commit; otherwise it leaves exactly the tests
+   of the migration table failing, as S7.4 did.
+6. **S9.6: tests.** Migrate the tests and add the interface suite (the
+   test plan below).
+7. **S9.7: after the rebase onto S8.**
+   - A `numpy` marker, and `conftest.py`'s skip for it, in S8's scheme.
+   - `tests_minimal` also leaves NumPy out, and its CI job stays green.
+   - The README's install line and expression row, which S8 rewrites.
+8. **S9.8: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with these green or clean:
+
+- `pytest`, and `-m "not very_slow"`;
+- the `property` session, `lint` and `type_check`;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `-D warnings`, tests, doc `-D warnings`,
+  deny, and `cargo +1.85 check`, with `--all-features` covering
+  `ndarray` from S9.3 on.
+
+### Test plan
+
+**Rust tests, written first (S9.2 and S9.3),** in
+`tests/it/expression/`:
+
+- **`fold_stories.rs`:**
+  - each of the 19 built-ins folded, against pinned `f64` values;
+  - `round` half to even;
+  - integer-sorted results as exact `BigInt`s (`floor(1e300)`), and
+    `NonFiniteCast` for `NaN` and the infinities;
+  - an integer argument's conversion, `±inf` beyond `f64`;
+  - user natives through a recording fake `NativeCalls`: the arguments,
+    once per distinct node, a `ResultSort` refusal, and a callback error
+    kept as the source;
+  - arity and argument sorts;
+  - unknown and not-callable names;
+  - `not_inlined`, once per name in order;
+  - constants, built-in and user, and a look-alike left alone;
+  - inexact decimals;
+  - the input itself back when nothing folds (`ptr_eq`);
+  - a shared DAG folded once per distinct node;
+  - a 100,000-level tree on a small stack;
+  - each `Display`.
+- **`literal_stories.rs` additions:** `to_f64_exact` over `0.5`, `0.1`,
+  long texts, large and small exponents, the subnormal edge, and values
+  beyond `f64::MAX`.
+- **`evaluate_stories.rs` (scalar):**
+  - every row of D-S9-5's table: Python's `divmod` reference values for
+    both signs and both domains, and `1 // 0.1`;
+  - overflow at `i64::MAX` and `i64::MIN`;
+  - the power rules;
+  - mixed promotion in each position;
+  - Boolean refusals and `==` of Booleans;
+  - n-ary connectives, and first-match piecewise;
+  - each lane failure, raised, and discarded by a piecewise and by each
+    connective (D-S9-6);
+  - the static refusals;
+  - the order of the checks: inline errors, then the screen, then the
+    bound-constant refusal, then the walk;
+  - `Unbound` with each near miss;
+  - `erf` and `gelu`;
+  - a deep tree on a small stack.
+- **`evaluate_array_stories.rs`,** under `cfg(feature = "ndarray")`:
+  - broadcasting: 0-d, empty, higher rank, and a mismatch;
+  - result domains;
+  - borrowed views not copied (the output shares nothing with an input,
+    and an input view's pointer is the one given);
+  - lane failures in selected and unselected lanes, and nested
+    piecewise, one story per guard test of `test_numpy_evaluator.py`;
+  - the first failed lane in C order;
+  - a million-lane run;
+  - under N-S9-2 (b), a fake `ArrayKernels` receiving the lanes.
+- **`evaluate_properties.rs`:**
+  - lane *i* of a random array evaluation equals the scalar evaluation
+    of lane *i*'s bindings. The trees use every operation, and the lanes
+    include zeros, `NaN`s, infinities and overflow-prone integers
+    (feature-gated);
+  - folding, then evaluating, agrees with evaluating;
+  - evaluation after inlining agrees with a reference evaluation of the
+    composed built-ins, as `registry_properties.rs` does for Booleans.
+- A traceability table maps the three Python evaluator test files to
+  them, as S4.2, S7.2 and S8.2 did.
+
+**The interface suite,
+`tests/symbolic/expression/passes/test_evaluate_rust_binding.py`,** covers
+what the binding adds over the core:
+
+- **NumPy optional.** In a subprocess with `sys.modules["numpy"] = None`:
+  - `import fhy_core` and `evaluate_expression` work;
+  - `evaluate_expression_with_numpy` raises the guiding `ImportError`.
+
+  A fresh `import fhy_core` leaves `numpy` out of `sys.modules`, and so
+  does a fold.
+- **Conversions:**
+  - every dtype of D-S9-4, admitted or refused, and `uint64` at the edge;
+  - native and swapped byte order, and Fortran order;
+  - negative and zero strides, 0-d, empty;
+  - Python scalars and nested lists;
+  - an unreferenced ragged binding ignored;
+  - a Python `int` beyond `i64`.
+- **Results:** 0-d NumPy scalars of the three types; new, writeable,
+  C-contiguous arrays that own their data; never the input array.
+- **Errors:** each row of D-S9-14 under its class, raised directly by the
+  function and wrapped by a pass run; the order of the checks.
+- **The passes:**
+  - both are registered;
+  - `NumpyExpressionEvaluator` snapshots its environment, and its run
+    inlines;
+  - `ExpressionEvaluator` reports its WARNINGs through `report`, and
+    `did_change` is by identity.
+- **User natives:** the implementation receives Python values; its
+  exception propagates as the same object; `KeyboardInterrupt` passes
+  through; a wrong result type is refused.
+- **Built-in implementations (D-S9-9):**
+  - calling them agrees with the fold;
+  - one object per built-in;
+  - `repr`, pickling, and a `NaN` for `sqrt(-1.0)`.
+- **Threads:** another Python thread makes progress during a large
+  evaluation; concurrent evaluations agree.
+- **The formatter,** per N-S9-1.
+
+**Migrating the existing tests.** No test is skipped, or deleted without
+a rewrite, and each change is recorded with its reason:
+
+- **`test_numpy_evaluator.py` (153):**
+  - The 19 `PassExecutionError` tests match the error itself (D-S9-10).
+  - The 12 `errstate` blocks and warning checks go, or pin that no
+    warning is raised (Z-9).
+  - `test_real_sort_native_preserves_float_width` pins `float64` (Z-1).
+  - The three `_cast_to_result_sort` tests become Rust cast stories;
+    no built-in is `NAT`- or `BOOL`-sorted, so Python cannot reach them.
+  - The four lowering-table tests become behavior tests over every
+    operation and every native built-in.
+  - The two object-dtype backstop tests pin the conversion's `TypeError`
+    (Z-11).
+  - The `erf` and `gelu` refusals pin their values against `math.erf`
+    (Z-6).
+  - The integer-power test keeps `ValueError` under the core's text.
+  - The snapshot test drops the `numpy` argument.
+  - The piecewise- and identifier-root result tests pin scalars (Z-12).
+- **`test_evaluator.py` (33)** keeps its `PassExecutionError`s (D-S9-15).
+  Its message tests follow the core's texts, and a test pins the arity
+  check that replaces the callable's `TypeError` (Z-8).
+- **`test_evaluator_properties.py` (3)** keeps its meaning.
+- **`test_builtins.py`:** the `math`-identity test becomes the agreement
+  of each built-in's `implementation` with `math` on finite in-domain
+  inputs, and with IEEE outside them (D-S9-9). The table-mutation test
+  goes with the table, rewritten to pin that the entries are frozen.
+- **The property oracles** (solver, sympy pass, rewrite, inline,
+  piecewise, strategies) change only where Z-2 or Z-3 changes what they
+  compare. An integer tree whose evaluation overflows `int64` is no
+  sample for a value comparison, and is assumed away or drawn from
+  bounded values. The numpy-reaching tests get the `numpy` marker in
+  S9.7.
+- **`test_pprint.py`** follows N-S9-1.
