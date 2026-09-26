@@ -284,8 +284,8 @@ Each finding follows the test-first discipline:
 - Splitting the crate (decision 13).
 - Porting Python modules that are not yet in Rust (constraint, param,
   types, symbol_table, term).
-  `python-switch.md` revises this for `term` (S10), `types` (S11) and
-  `constraint` (S13).
+  `python-switch.md` revises this for `term` (S10), `types` (S11),
+  `constraint` (S13) and `param` (S16).
 
 ---
 

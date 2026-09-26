@@ -11,6 +11,7 @@ mod expression;
 mod identifier_stories;
 mod interned;
 mod lattice;
+mod param;
 mod pass;
 mod provenance_diagnostic_properties;
 mod provenance_stories;

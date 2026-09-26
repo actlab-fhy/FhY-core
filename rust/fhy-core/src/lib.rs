@@ -9,8 +9,9 @@
 //! [`tree`], [`term`] and [`lattice`] are independent of each other,
 //! [`expression`] and [`pass`] are independent of each other,
 //! [`expression::passes`] joins them, [`solver`] and [`types`] depend on
-//! [`expression`] and not on [`pass`], and [`constraint`] depends on
-//! [`solver`] and not on [`pass`].
+//! [`expression`] and not on [`pass`], [`constraint`] depends on [`solver`]
+//! and not on [`pass`], and [`param`] depends on [`constraint`] and not on
+//! [`pass`].
 //! [`symbol_table`] depends on [`types`].
 //!
 //! | Module | Contents |
@@ -29,6 +30,7 @@
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //! | [`solver`] | questions about expressions answered by pluggable backends: the hazard screen, the SMT-LIB2 lowering, and a backend that drives an SMT-LIB2 executable |
 //! | [`constraint`] | constraints over identifiers, decided under bindings: Boolean equations through the solver's simplifier, and type-strict set membership |
+//! | [`param`] | params' value domains, the integers, the reals and three finite kinds, and the questions they answer: admissibility, feasibility and subsets, by enumeration or through the solver |
 //! | [`types`] | the IR type system: core data types and their promotion, data types, numerical and index types, and template binding, substitution and unification, with extensions; expression type checking in [`types::checking`] |
 //! | [`symbol_table`] | [`SymbolTable`](symbol_table::SymbolTable): namespaces with parents, holding frames for their symbols, and the built-in [`SymbolFrame`](symbol_table::SymbolFrame)s |
 //!
@@ -96,6 +98,7 @@ pub mod identifier;
 pub mod interned;
 pub mod lattice;
 pub mod op_attribute;
+pub mod param;
 pub mod pass;
 pub mod provenance;
 pub mod solver;

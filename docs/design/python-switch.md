@@ -143,7 +143,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S16.0: the design (survey, divergences P-1 to P-14, decisions D-S16-1 to D-S16-22, benchmark plan, steps, test plan)
   - [ ] S16a: values and domains
     - [x] S16a.1: param benchmarks and baseline (55 rows; see "S16a.1 baseline")
-    - [ ] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events)
+    - [x] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events; 141 new tests, see "S16a.2 implementation notes")
     - [ ] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
     - [ ] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests
     - [ ] S16a.5: the interface suite for the domains
@@ -17811,3 +17811,66 @@ numbers measure today's Python package.
   an in-set param decides by enumeration in 87 µs (feasibility) and 250
   µs (subset). Value checks of a bounded natural param take 38 µs, most of
   it SymPy.
+
+### S16a.2 implementation notes
+
+The 141 tests of the new `tests/it/param/` area (counting `rstest`
+cases) were written before the procedures: against `todo!()` stubs of
+`evaluate_constraints`, `are_all_constraints_satisfied`, the feasibility
+and subset procedures, `compute_constraint_implication_subset` and the
+domains' union and intersection, 64 failed (every story of
+`decide_stories.rs`, `algebra_stories.rs` and `custom_stories.rs`, and the
+two brute-force properties); all pass now. The value orders, the six
+kinds' construction and their value-space answers were written with their
+stories (`value_stories.rs`, `domain_stories.rs`), which passed at once
+but for one wrong expectation (`-0.5` orders below `false`); a story that
+expected an integer implication over a float member to be decided was
+rewritten, since the solver's hazard screen refuses the mixed-sort
+comparison, as it does from Python.
+
+- **Layout.** `rust/fhy-core/src/param.rs` with `param/value.rs` (the
+  ordinal order and the tolerant merge sort), `param/domain.rs`
+  (`DomainKind`, `IntervalProfile`, `Side`, the six kinds, `ParamDomain`,
+  `is_bound_expression`), `param/custom.rs` (`CustomDomain`),
+  `param/context.rs` (`ParamContext`, `ParamObserver`, `NoParamObserver`,
+  `ParamEvent`, `ScreenReason`), `param/screen.rs` (screening, renaming,
+  rescoping), `param/decide.rs` (`Evaluation`, `evaluate_constraints`,
+  `are_all_constraints_satisfied`, the procedures,
+  `compute_constraint_implication_subset`), `param/algebra.rs` and
+  `param/error.rs` (`ParamError`, `SetOperation`). `lib.rs`, the crate
+  README and manifest description, CONTRIBUTING's layering list (a ninth
+  layer, after S15's `symbol_table`) and module table, and
+  `rust-workspace.md` §I.8 list the module.
+- **Where the shape differs from D-S16-2's sketch, or fills it in:**
+  - `ParamContext` holds the solver, the registry and the observer, not a
+    `ConstraintContext`: the procedures build the constraint contexts
+    they need, with observers that forward each constraint event as a
+    `ParamEvent::Member` (with the constraint and bindings) or a
+    `ParamEvent::Question` (with the system and symbol types), so the
+    binding can render the records of systems it never saw.
+  - The events are `Member`, `UndecidedMember`, `BridgeFailed`,
+    `Question`, `Screened` (with a `ScreenReason`: `DependentScope`,
+    `ForeignVariable`, `UnliftableMember`, `NoLiftableMember`, `Narrowed`),
+    `EnumerationUndecided`, `SubsetEnumerationUndecided`,
+    `SatisfiedOnInexactSystem`, `ViolatedUnderKindConflation`,
+    `SatisfiabilityUndecided`, `ImplicationUndecided`,
+    `ImplicationDowngraded` and `WitnessOutside`, one per Python record.
+  - The member-by-member evaluation is public as `evaluate_constraints`
+    (an `Evaluation`: the outcome and the deciding member), and the
+    alone-per-member check as `are_all_constraints_satisfied`, which
+    degrades nothing, as the Python helper did not.
+  - Every `ParamDomain` method that may reach a custom domain is
+    fallible, `symbol_type`, `is_value_admissible` and
+    `interval_profile` included; structural equivalence is infallible,
+    as the constraint core's is.
+  - The finite kinds share their members behind an `Arc`, keep a
+    `MemberSet` beside the ordered members for lookup, and expose
+    `values()` and `contains_value`; `PermutationDomain::is_permutation`
+    answers admissibility.
+  - `OpaqueValue::order_against` is the one change to S13's core, a
+    provided method answering `None`.
+  - `is_bound_expression` accepts integer literals only. Python's check
+    also took a `bool` literal (an `int` subclass), which no bound of the
+    package builds.
+  - Screening reports its fidelity as a flag rather than by the identity
+    of the constraints it returns.

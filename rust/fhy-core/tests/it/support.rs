@@ -7,6 +7,7 @@ pub(crate) mod constraint;
 pub(crate) mod expression;
 pub(crate) mod hashing;
 pub(crate) mod lambda;
+pub(crate) mod param;
 pub(crate) mod pass_ir;
 pub(crate) mod pattern;
 pub(crate) mod provenance;

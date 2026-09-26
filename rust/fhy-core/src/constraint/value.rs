@@ -54,6 +54,16 @@ pub trait OpaqueValue: Send + Sync + fmt::Debug {
     /// Return a text equal for equal values, which orders opaque members.
     fn ordering_key(&self) -> Cow<'_, str>;
 
+    /// Return how the value orders against `other` by its producer's own
+    /// order, as an ordinal param orders its values, or `None` when the two
+    /// do not order.
+    ///
+    /// The default orders nothing.
+    fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
+        let _ = other;
+        None
+    }
+
     /// Return the value as [`Any`], so an implementation can recognize its
     /// own values.
     fn as_any(&self) -> &dyn Any;
