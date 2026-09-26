@@ -79,7 +79,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S10.5: tests migrated, and the interface suite
   - [x] S10.6: benchmarks after, and docs
 - [ ] S9: the expression evaluators (designed; see "S9: the expression evaluators")
-  - [ ] N-S9-1 and N-S9-2 decided
+  - [x] N-S9-1 decided as (a), N-S9-2 as (b) (2026-09-26; see "S9 resolutions")
   - [ ] S9.1: evaluator benchmarks and baseline
   - [ ] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
   - [ ] S9.3: the `ndarray` cargo feature and the array backend
@@ -8792,8 +8792,8 @@ commit hashes in this section are the rebased ones.
 
 - **Status:** designed 2026-09-26 at ab05802, in parallel with S8's
   implementation. D-S9-1 to D-S9-20 apply the policy the user already set
-  and the direction in "Plan after S7" (item 4). N-S9-1 and N-S9-2 need
-  the user.
+  and the direction in "Plan after S7" (item 4). N-S9-1 was resolved as
+  (a) and N-S9-2 as (b); see "S9 resolutions".
 - **Pattern:** the evaluation logic moves into a new core module,
   `fhy_core::expression::evaluate`. One evaluator walk is generic over
   its values: a scalar backend in every build, and an `ndarray` backend
@@ -9612,6 +9612,26 @@ Where a decision follows an earlier slice's decision or note, it says so.
   and it is the only option that keeps native-heavy arrays near today's
   speed while the rest of the walk runs in Rust. (a) is the simpler
   design if one kernel set matters more than that throughput.
+
+### S9 resolutions (decided by the user, 2026-09-26)
+
+- **N-S9-1: (a) native.** `ExpressionPrettyFormatter` becomes a
+  `CompilerPass[Expression, str]` whose `run_pass` renders through the
+  core, and a subclass defining a `visit_*` method is refused at class
+  creation. This revises N-S6-3, which kept the formatter a Python
+  `VisitablePass`; N-S6-3's decision for `VisitablePass`,
+  `AnalysisVisitablePass` and `RewritablePass` stands.
+- **N-S9-2: (b) NumPy's ufuncs for the 14 transcendental natives.** The
+  core's array backend takes an `ArrayKernels` trait, whose default is the
+  core's own kernels, so Rust users and the Rust tests keep them. The
+  binding plugs in NumPy's ufuncs for `exp`, `exp2`, `log`, `log2`,
+  `log10`, `sin`, `cos`, `tan`, `arcsin`, `arccos`, `arctan`, `sinh`,
+  `cosh` and `tanh`; `sqrt`, `round`, `floor`, `ceil` and `erf` keep the
+  core's kernels.
+- **`deny.toml` allows BSD-2-Clause**, the license of rust-numpy (the
+  `numpy` crate), with a comment naming this slice. It is the only
+  license S9's crates add: `ndarray`, `libm` and rust-numpy's other
+  dependencies are MIT or Apache-2.0.
 
 ### Steps
 

@@ -22,6 +22,9 @@ ignore = []
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
+    # rust-numpy (the `numpy` crate), which fhy-core-py uses for the NumPy
+    # evaluator (slice S9 of docs/design/python-switch.md).
+    "BSD-2-Clause",
     "BSD-3-Clause",
     "MIT",
     "Unicode-3.0",
