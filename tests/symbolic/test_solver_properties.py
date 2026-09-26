@@ -145,6 +145,7 @@ _RATIONAL_COEFFICIENT_ENVIRONMENT: Final[dict[Identifier, int]] = dict.fromkeys(
         include_piecewise=True,
     )
 )
+@pytest.mark.numpy
 def test_simplify_expression_preserves_evaluation_on_integer_trees(
     tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
 ) -> None:
@@ -174,6 +175,7 @@ def test_simplify_expression_preserves_evaluation_on_integer_trees(
         include_piecewise=True,
     )
 )
+@pytest.mark.numpy
 def test_simplify_expression_preserves_evaluation_on_boolean_trees(
     tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
 ) -> None:
@@ -192,6 +194,7 @@ def test_simplify_expression_preserves_evaluation_on_boolean_trees(
 
 
 @pytest.mark.sympy
+@pytest.mark.numpy
 def test_simplify_expression_preserves_a_rational_coefficient_comparison() -> None:
     """Test simplifying ``21 == 15 * v0`` keeps its truth value at ``v0 = 0``.
 

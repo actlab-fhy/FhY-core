@@ -47,12 +47,18 @@ if find_spec("hypothesis") is not None:
     _hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
 
 
-# The markers of the tests that reach an optional solver backend, with the
-# module each backend imports and the package that provides it. A marked
-# test is skipped when the package is not installed: that is the documented
-# configuration the `tests_minimal` session runs, where an unmarked test
-# reaching a missing backend fails with `SolverBackendUnavailableError`.
-_OPTIONAL_BACKEND_MARKERS = {"z3": ("z3", "z3-solver"), "sympy": ("sympy", "sympy")}
+# The markers of the tests that reach an optional package, a solver backend
+# or NumPy, with the module each imports and the package that provides it.
+# A marked test is skipped when the package is not installed: that is the
+# documented configuration the `tests_minimal` session runs, where an
+# unmarked test reaching a missing backend fails with
+# `SolverBackendUnavailableError`, and one evaluating with NumPy with the
+# NumPy evaluator's `ImportError`.
+_OPTIONAL_BACKEND_MARKERS = {
+    "z3": ("z3", "z3-solver"),
+    "sympy": ("sympy", "sympy"),
+    "numpy": ("numpy", "numpy"),
+}
 
 
 def pytest_collection_modifyitems(

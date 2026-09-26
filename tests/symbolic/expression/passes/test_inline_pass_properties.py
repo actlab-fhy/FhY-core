@@ -38,7 +38,7 @@ from fhy_core.symbolic.expression import (
     inline_functions,
 )
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 

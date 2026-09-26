@@ -74,7 +74,7 @@ from ....strategies.identifiers import (
     build_identifier_pool,
 )
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 _POOL: Final[tuple[Identifier, ...]] = build_identifier_pool(3)
 _BOOLEAN_POOL: Final[tuple[Identifier, ...]] = build_boolean_identifier_pool(2)

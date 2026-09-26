@@ -52,7 +52,7 @@ from ....strategies.identifiers import (
     build_identifier_pool,
 )
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 

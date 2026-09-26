@@ -2741,6 +2741,7 @@ _BOOLEAN_POSITIONS = [
         ),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_keeps_the_branches_after_a_boolean_identifier_condition(
     build_piecewise: Callable[[_PiecewiseVariables], Expression],
     build_position: Callable[[Expression, _PiecewiseVariables], Expression],
@@ -2790,6 +2791,7 @@ def test_simplify_expression_keeps_the_branches_after_a_boolean_identifier_condi
         ),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_keeps_a_condition_comparing_a_branch_identifier(
     build_piecewise: Callable[[_PiecewiseVariables], Expression],
     build_position: Callable[[Expression, _PiecewiseVariables], Expression],
@@ -2837,6 +2839,7 @@ _NUMERIC_PIECEWISE_POSITIONS = [
         pytest.param(lambda v: {v.c.identifier: LiteralExpression(True)}, id="c_bound"),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_compares_a_numeric_piecewise_with_an_identifier_condition(
     build_position: Callable[[Expression, _PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -2878,6 +2881,7 @@ def test_simplify_expression_compares_a_numeric_piecewise_with_an_identifier_con
         ),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_compares_an_identifier_bound_to_a_numeric_piecewise(
     build_value: Callable[[_PiecewiseVariables], Expression],
 ) -> None:
@@ -2937,6 +2941,7 @@ def test_simplify_expression_compares_an_identifier_bound_to_a_numeric_piecewise
         ),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_conjoins_a_boolean_comparison_with_a_relation(
     build_conjunction: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -2959,6 +2964,7 @@ def test_simplify_expression_conjoins_a_boolean_comparison_with_a_relation(
     )
 
 
+@pytest.mark.numpy
 def test_simplify_expression_keeps_a_nan_branch_comparison_as_it_stands() -> None:
     """Test ``(x if y > 0, otherwise 1) > 0`` under ``x = nan`` stays open.
 
@@ -2999,6 +3005,7 @@ def test_simplify_expression_reports_a_complex_infinity_branch_comparison() -> N
     assert isinstance(exc_info.value.__cause__, ComplexInfinityLiftError)
 
 
+@pytest.mark.numpy
 def test_simplify_expression_keeps_a_piecewise_comparison_in_a_case_condition() -> None:
     """Test ``c if (1 if b, otherwise 2) < x, otherwise d`` keeps its truth table.
 
@@ -3043,6 +3050,7 @@ _BOOLEAN_PIECEWISE_BINDING_VALUES = [
 
 @pytest.mark.parametrize("build_position", _BOOLEAN_POSITIONS)
 @pytest.mark.parametrize("build_value", _BOOLEAN_PIECEWISE_BINDING_VALUES)
+@pytest.mark.numpy
 def test_simplify_expression_reads_a_boolean_identifier_bound_to_a_piecewise(
     build_value: Callable[[_PiecewiseVariables], Expression],
     build_position: Callable[[Expression, _PiecewiseVariables], Expression],
@@ -3066,6 +3074,7 @@ def test_simplify_expression_reads_a_boolean_identifier_bound_to_a_piecewise(
 
 
 @pytest.mark.parametrize("build_value", _BOOLEAN_PIECEWISE_BINDING_VALUES)
+@pytest.mark.numpy
 def test_substitute_sympy_variables_compares_a_bound_boolean_piecewise_as_a_boolean(
     build_value: Callable[[_PiecewiseVariables], Expression],
 ) -> None:
@@ -3085,6 +3094,7 @@ def test_substitute_sympy_variables_compares_a_bound_boolean_piecewise_as_a_bool
     ) == _tabulate_with_numpy(expression.substitute(environment), variables)
 
 
+@pytest.mark.numpy
 def test_simplify_expression_keeps_a_bound_piecewise_open_over_its_identifiers() -> (
     None
 ):
@@ -3206,6 +3216,7 @@ def test_simplify_expression_keeps_a_bound_piecewise_open_over_its_identifiers()
         ),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_compares_a_piecewise_with_a_boolean_branch_as_boolean(
     build_comparison: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -3461,6 +3472,7 @@ _COMPARISON_CONDITION_ENVIRONMENTS = [
 
 @pytest.mark.parametrize("build_environment", _COMPARISON_CONDITION_ENVIRONMENTS)
 @pytest.mark.parametrize("build_piecewise", _COMPARISON_CONDITION_NUMERIC_CASES)
+@pytest.mark.numpy
 def test_simplify_expression_evaluates_a_piecewise_comparing_an_identifier(
     build_piecewise: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -3485,6 +3497,7 @@ def test_simplify_expression_evaluates_a_piecewise_comparing_an_identifier(
 
 @pytest.mark.parametrize("build_environment", _COMPARISON_CONDITION_ENVIRONMENTS)
 @pytest.mark.parametrize("build_expression", _COMPARISON_CONDITION_BOOLEAN_CASES)
+@pytest.mark.numpy
 def test_simplify_expression_decides_a_boolean_piecewise_comparing_an_identifier(
     build_expression: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -3549,6 +3562,7 @@ def test_simplify_expression_decides_a_boolean_piecewise_comparing_an_identifier
         ),
     ],
 )
+@pytest.mark.numpy
 def test_substitute_sympy_variables_rebuilds_a_condition_comparing_an_identifier(
     build_piecewise: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -3625,6 +3639,7 @@ _COVERING_CONDITION_CASES = [
 @pytest.mark.parametrize(
     ("build_expression", "build_environment"), _COVERING_CONDITION_CASES
 )
+@pytest.mark.numpy
 def test_simplify_expression_keeps_the_meaning_of_conditions_covering_every_value(
     build_expression: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -3750,6 +3765,7 @@ def _tabulate_x_and_y_with_numpy(
         ),
     ],
 )
+@pytest.mark.numpy
 def test_simplify_expression_compares_many_relation_guarded_piecewise_terms(
     build_left: Callable[[Expression], Expression],
 ) -> None:
@@ -3772,6 +3788,7 @@ def test_simplify_expression_compares_many_relation_guarded_piecewise_terms(
     ) == _tabulate_x_and_y_with_numpy(expression, x, y, x_values, y_values)
 
 
+@pytest.mark.numpy
 def test_simplify_expression_splits_a_piecewise_with_a_nested_boolean_symbol() -> None:
     """Test ``(1 if (b || c) && x > 0, otherwise 2) < y`` keeps its truth table.
 
@@ -3886,6 +3903,7 @@ _PARITY_ENVIRONMENTS = [
 @pytest.mark.parametrize("build_environment", _PARITY_ENVIRONMENTS)
 @pytest.mark.parametrize("build_operation", _PARITY_OPERATIONS)
 @pytest.mark.parametrize("build_piecewise", _PARITY_PIECEWISES)
+@pytest.mark.numpy
 def test_simplify_expression_divides_a_numeric_piecewise_by_its_value(
     build_piecewise: Callable[[_PiecewiseVariables], Expression],
     build_operation: Callable[[Expression], Expression],
@@ -3929,6 +3947,7 @@ def test_simplify_expression_divides_a_numeric_piecewise_by_its_value(
     ],
 )
 @pytest.mark.parametrize("build_environment", _PARITY_ENVIRONMENTS)
+@pytest.mark.numpy
 def test_simplify_expression_compares_the_quotient_of_a_numeric_piecewise(
     build_comparison: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -3945,6 +3964,7 @@ def test_simplify_expression_compares_the_quotient_of_a_numeric_piecewise(
     )
 
 
+@pytest.mark.numpy
 def test_substitute_sympy_variables_divides_a_bound_numeric_piecewise() -> None:
     """Test ``y % -6`` with ``y`` bound to ``(2 if b, otherwise 0)`` keeps values."""
     variables = _create_piecewise_variables()
@@ -4025,6 +4045,7 @@ _NESTED_CONTEXT_CASES = [
 @pytest.mark.parametrize(
     ("build_expression", "build_environment"), _NESTED_CONTEXT_CASES
 )
+@pytest.mark.numpy
 def test_substitute_sympy_variables_keeps_a_nested_piecewise_total(
     build_expression: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -4052,6 +4073,7 @@ def test_substitute_sympy_variables_keeps_a_nested_piecewise_total(
 @pytest.mark.parametrize(
     ("build_expression", "build_environment"), _NESTED_CONTEXT_CASES
 )
+@pytest.mark.numpy
 def test_simplify_expression_keeps_a_substituted_nested_piecewise_total(
     build_expression: Callable[[_PiecewiseVariables], Expression],
     build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
@@ -4108,6 +4130,7 @@ def test_substitute_sympy_variables_keeps_every_nested_piecewise_parity_opaque()
         pytest.param(lambda nested: call("sqrt", nested), id="square_root"),
     ],
 )
+@pytest.mark.numpy
 def test_lowering_a_power_of_a_nested_piecewise_keeps_it_total(
     build_power: Callable[[Expression], Expression],
 ) -> None:
@@ -4168,6 +4191,7 @@ def test_simplify_expression_reports_complex_infinity_under_an_identifier() -> N
     assert isinstance(exc_info.value.__cause__, ComplexInfinityLiftError)
 
 
+@pytest.mark.numpy
 def test_simplify_expression_keeps_a_nan_branch_under_an_identifier() -> None:
     """Test ``(nan if b, otherwise 1) > y`` keeps its truth table unsimplified."""
     variables = _create_piecewise_variables()

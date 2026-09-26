@@ -37,7 +37,7 @@ from ...strategies.literals import (
 )
 from ...strategies.settings import cap_max_examples
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 

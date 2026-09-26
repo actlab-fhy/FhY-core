@@ -45,6 +45,8 @@ from fhy_core.symbolic.solver import simplify_expression
 
 from ..conftest import mock_identifier
 
+pytestmark = pytest.mark.numpy
+
 np = pytest.importorskip("numpy")
 
 

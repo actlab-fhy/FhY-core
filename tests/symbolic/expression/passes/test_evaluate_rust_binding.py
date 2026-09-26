@@ -55,6 +55,8 @@ from fhy_core.symbolic.expression.passes.native_lowering import (
 )
 from fhy_core.symbolic.expression.passes.numpy import NumpyExpressionEvaluator
 
+pytestmark = pytest.mark.numpy
+
 np = pytest.importorskip("numpy")
 
 

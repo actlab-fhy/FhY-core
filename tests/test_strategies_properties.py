@@ -160,7 +160,7 @@ from .strategies.types import (
     draw_template_free_type,
 )
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 

@@ -84,20 +84,22 @@ def tests(session: nox.Session) -> None:
 
 @nox.session
 def tests_minimal(session: nox.Session) -> None:
-    """Run the suite without the optional solver packages, sympy and z3-solver.
+    """Run the suite without the optional packages: sympy, z3-solver and NumPy.
 
-    The tests that reach a solver backend carry the `sympy` or `z3` marker
-    and are skipped here; an unmarked test that reaches a missing backend
-    fails with `SolverBackendUnavailableError`, so a wrong mark cannot hide.
+    The tests that reach a solver backend carry the `sympy` or `z3` marker,
+    and those that evaluate with NumPy the `numpy` marker; they are skipped
+    here. An unmarked test that reaches a missing backend fails with
+    `SolverBackendUnavailableError`, and one that evaluates with NumPy with
+    the NumPy evaluator's `ImportError`, so a wrong mark cannot hide.
     """
     _sync(session, "test-minimal")
     session.run(
         "python",
         "-c",
         "import importlib.util, sys; "
-        "installed = [name for name in ('sympy', 'z3') "
+        "installed = [name for name in ('sympy', 'z3', 'numpy') "
         "if importlib.util.find_spec(name)]; "
-        "sys.exit(f'optional solver packages installed: {installed}' "
+        "sys.exit(f'optional packages installed: {installed}' "
         "if installed else 0)",
     )
     session.run("pytest", "-m", "slow or not slow", *session.posargs)
