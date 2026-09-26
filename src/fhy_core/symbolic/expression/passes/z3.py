@@ -42,9 +42,12 @@ except ImportError as error:
 class Z3Solver(SmtSolver):
     """The SMT backend of the ``z3-solver`` package.
 
-    Each check creates a ``z3.Solver``, applies the timeout with
+    Each check creates a ``z3.SimpleSolver``, applies the timeout with
     ``set(timeout=...)``, reads the script with ``from_string``, and checks
-    it. It holds no state, so one object serves every question.
+    it; a check that runs out of time answers ``unknown`` with the reason
+    ``"timeout"``. A one-shot check needs none of the incremental front end of
+    ``z3.Solver()``, which costs milliseconds to set up. It holds no state,
+    so one object serves every question.
     """
 
     @property
@@ -56,7 +59,7 @@ class Z3Solver(SmtSolver):
     def check(
         self, script: SmtScript, *, timeout_milliseconds: int | None
     ) -> SatResult:
-        solver = z3.Solver()
+        solver = z3.SimpleSolver()
         if timeout_milliseconds is not None:
             solver.set(timeout=timeout_milliseconds)
         solver.from_string(script.text)
@@ -66,7 +69,12 @@ class Z3Solver(SmtSolver):
         elif result == z3.unsat:
             return SatResult.UNSAT
         elif result == z3.unknown:
-            return SatResult.unknown(solver.reason_unknown())
+            reason = solver.reason_unknown()
+            # The simple solver stops at its timeout by canceling the check;
+            # a backend that runs out of time answers "timeout" (D-S8-8).
+            if reason == "canceled" and timeout_milliseconds is not None:
+                reason = "timeout"
+            return SatResult.unknown(reason)
         raise RuntimeError(f"Unexpected Z3 result: {result!r}.")
 
 
