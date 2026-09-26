@@ -13921,3 +13921,256 @@ default-feature solver tests pass; `pytest` 7,685 passed, `-m "not
 very_slow"` 7,718, the `property` session 282, `tests_minimal` 5,734 passed
 and 627 skipped, nox `lint` and `type_check` clean. S12 changed no code S11
 measures, so the benchmarks were not rerun.
+
+## S14: pass verification
+
+- **Status:** design draft, 2026-09-26, at 3a53195. Paused partway by the
+  coordinator; see "S14 resume notes". The survey below is complete; the
+  decisions are drafted; the benchmark plan, steps and test plan are
+  outlines still marked TODO.
+- **Pattern:** the registry's logic moves into a new core type,
+  `fhy_core::pass::VerificationRegistry`, keyed by an IR kind with lookups
+  along a caller-given lineage. The binding holds the one registry the
+  Python API needs in the extension's module state (CONTRIBUTING,
+  "Process-global state"), and the MRO walk, which is Python reflection,
+  stays in the binding. `VerificationAnalysis`, `register_verification`
+  and `VerificationRegistry`'s classmethods stay thin Python over `_rs`.
+- **Scope:** `pass_infrastructure/verification.py` (237 lines), its use
+  from `traits/verifiable.py` (the lazy imports in `VerifiableMixin.__new__`
+  and `verify`), the binding's registry verifier
+  (`rust/fhy-core-py/src/pass/validation.rs`, `RegistryVerifier`), and
+  their tests.
+
+### Survey: the Python API
+
+**`verification.py`** is pure Python over S6's Rust-backed pass classes.
+
+- **`VerificationRegistry`** is a class-level singleton with no instances:
+  a `ClassVar` dict from IR type to a list of pass classes, behind a
+  `Lock`.
+  - `register(ir_type, pass_class)` raises `PassRegistrationError('Cannot
+    register non-CompilerPass type as a verification pass: X.')` for a
+    class that is not a `CompilerPass` subclass. Re-registering the same
+    pair is a no-op; distinct classes append in registration order. It
+    logs DEBUG `registered verification pass X for T`, or `... already
+    registered for T (idempotent)`, and returns `None`.
+  - `get_passes_for(ir_type)` walks `reversed(ir_type.__mro__)` and
+    concatenates each type's list, base first, keeping each class at its
+    first position. It returns a tuple, empty for an unknown type.
+  - A non-type `ir_type` is stored, then fails the log line with
+    `AttributeError` (`__qualname__`); `get_passes_for` of a non-type
+    fails on `__mro__`.
+- **`VerificationAnalysis(Analysis[Any, ValidationReport])`**: `run(ir)`
+  builds a fresh `ValidationManager` of a new instance of each class
+  `get_passes_for(type(ir))` returns and validates `ir`: one
+  `ValidatorRecord` per pass. It returns an empty `ValidationReport` when
+  none is registered. A pass whose constructor raises propagates the
+  exception. It is an ordinary Python analysis, cached per run by S6's
+  cache.
+- **`register_verification(ir_type, name, description)`** is a decorator:
+  the same non-`CompilerPass` check and message, then `register_pass(name,
+  description)` (the Python pass registry of N-S6-1), then
+  `VerificationRegistry.register`.
+- **`run_verification(ir)`** is `VerificationAnalysis().run(ir)`, uncached.
+
+**`traits/verifiable.py`.** `VerifiableMixin.__new__` returns at once when
+the class's own `_verifiable_instantiation_ok` is set; otherwise it accepts
+a class that overrides `verify`, or one for which
+`VerificationRegistry.get_passes_for(cls)` is non-empty, and caches the
+positive result on the class; otherwise it raises `TypeError('Cannot
+instantiate X: ...')`. The default `verify()` is `run_verification(self)`.
+Both reach `verification.py` through lazy imports, because
+`pass_infrastructure` imports `traits`. `Verifiable` (a runtime protocol)
+and `VerificationError` do not touch the registry and are unchanged.
+
+**The binding today.** `RegistryVerifier` (`pass/validation.rs`) is a
+pipeline's default verifier (D-S6-12). For each IR it verifies it calls
+the Python `VerificationRegistry.get_passes_for(type(ir))`, builds each
+class, and runs each as a check into one `ValidatorRecord` named
+`verification`. A constructor that raises fails the verifier at once,
+before the remaining checks.
+
+### Survey: the Rust API
+
+`fhy_core::pass` has no verification registry. B5 removed the global pass
+registry (F-006), and a pipeline verifies with the explicit
+`ValidationManager` that `PassManager::set_verifier` takes (W-10), without
+caching (R-6). The building blocks exist: `Validator<I>`,
+`PassValidator<P>`, `ValidationManager` (collect-all, with the synthesized
+`validator "X" failed without reporting an error: <chain>` text) and
+`ValidatorRecord`. `PassRegistry` is the precedent for an owned registry of
+factories whose identity is a `TypeId`, and `AnalysisId::of_identifier`
+and `NodeIdentity::of_ptr` (S6.2) the precedents for identities of things
+no Rust type names.
+
+### Consumers and tests
+
+- **`src`:** `Lattice` and `SymbolTable` are `VerifiableMixin`s that
+  override `verify`, so they never reach the registry. Nothing in `src`
+  registers a verification pass.
+- **Python tests:** `tests/pass_infrastructure/test_verification.py`
+  (1,570 lines) covers the registry, the analysis, the decorator,
+  `run_verification`, `VerifiableMixin`, and pipeline verification;
+  `test_pass_infrastructure_rust_binding.py` registers one verification
+  pass; `test_core_traits.py` and `test_basic_traits.py` use
+  `VerifiableMixin`. TODO: count the tests per file.
+- **Benchmarks:** `test_run_verification` (12.5 µs after S6) and
+  `test_pass_manager_run_with_verification` (34.1 µs), with
+  `VerifiedBox` and `TwiceVerifiedBox` in `benchmarks/conftest.py`.
+
+### Divergences visible from Python (draft)
+
+| # | Python today | After S14 |
+|---|---|---|
+| V-1 | `ir_type` may be any object; a non-type fails the log line after it was stored | `ir_type` must be a `type`: `TypeError` in S2's style, and nothing is stored |
+| V-2 | a verification pass whose constructor raises propagates out of `run_verification`, `VerificationAnalysis.run` and `verify()`, and stops a pipeline's verifier before its remaining checks | the check fails, collect-all: the report gains the core's `validator "X" failed without reporting an error: <chain>`, and the remaining checks run. `KeyboardInterrupt` still propagates |
+| V-3 | `VerifiableMixin` looks the registry up through a lazy import of `verification.py` | it calls `_rs` directly; no lazy import is left |
+
+Unchanged in meaning: registration order, idempotence, the MRO walk base
+first with each class once, the empty report, one record per pass in
+`run_verification`, one `verification` record in a pipeline, the error
+class and text for a non-`CompilerPass`, and the logging.
+
+### Decisions (draft, 2026-09-26)
+
+Each names the policy it follows: D-S4-1 (Rust semantics where the two
+differ), D-S4-2 (Python names where the meaning is the same), "no
+fallback", "tests rewritten, not skipped", and the crate's conventions in
+`rust-workspace.md` Part I (owned values and no global state beyond
+identity, F-006; the naming rules, I.3 rule 5; the layering, I.2).
+
+- **D-S14-1: one implementation, no fallback** ("no fallback"; D-S6-1).
+  The Python dict, lock and MRO walk are deleted. `verification.py`
+  keeps its four public names as thin layers over `_rs`.
+- **D-S14-2: a core `VerificationRegistry<K, I>` in `fhy_core::pass`**
+  (decision 2: logic-rich machinery goes to Rust; the crate conventions;
+  `PassRegistry` as precedent). An owned registry of validator factories
+  by IR kind `K`, generic over the IR `I`. The sketch, settled test-first
+  in S14.2:
+
+  ```rust
+  // fhy_core::pass (pass/verification.rs)
+  pub struct VerificationRegistry<K, I> { /* kind -> ordered registrations; Arc'd factories */ }
+  impl<K: Eq + Hash, I> VerificationRegistry<K, I> {
+      pub fn new() -> Self;
+      /// Identity `VerifierId::of::<V>()`; returns whether it was added.
+      pub fn register<V: Validator<I> + Send + 'static>(
+          &mut self, kind: K, factory: impl Fn() -> V + Send + Sync + 'static) -> bool;
+      pub fn register_with_id<V: Validator<I> + Send + 'static>(
+          &mut self, kind: K, id: VerifierId, factory: impl Fn() -> V + Send + Sync + 'static) -> bool;
+      /// Distinct registrations along `lineage`, in lineage then registration order.
+      pub fn ids_for<'k>(&self, lineage: impl IntoIterator<Item = &'k K>) -> Vec<VerifierId> where K: 'k;
+      pub fn validators_for<'k>(&self, lineage: impl IntoIterator<Item = &'k K>)
+          -> Vec<Box<dyn Validator<I> + Send>> where K: 'k;
+      pub fn verifier<'k>(&self, lineage: ...) -> ValidationManager<'static, I>;   // named `verification`
+      pub fn verify<'k>(&self, lineage: ..., ir: &I) -> ValidationReport<ValidatorRecord>;
+      pub fn len(&self) -> usize; pub fn is_empty(&self) -> bool;
+  }
+  impl<K: Clone, I> Clone for VerificationRegistry<K, I>;   // factories are shared
+  /// A registration's identity: a validator type, or an object no Rust type names.
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+  pub struct VerifierId(/* TypeId with its name, or an address */);
+  impl VerifierId { pub fn of<V: 'static>() -> Self; pub fn of_ptr<T: ?Sized>(p: *const T) -> Self; }
+  ```
+
+  A registration's identity is `(kind, id)`: registering it again changes
+  nothing and drops the new factory (Python's idempotence). A lookup keeps
+  each id at its first position (Python's deduplication). Rust callers
+  pass the lineage they mean, for example `[&Kind::Any, &Kind::Loop]`, and
+  set `registry.verifier(...)` on a pipeline. The registry is `Send +
+  Sync` (I.3 rule 7) and holds no global state.
+- **D-S14-3: the MRO is Python reflection and stays in the binding** (P3;
+  the task's direction). The binding keys kinds by the type object's
+  address, keeps each registered type and pass class alive, and computes
+  the lineage as `reversed(type(ir).__mro__)`. Registered ids are
+  `VerifierId::of_ptr` of the pass class, with a side table from id to
+  class for `get_passes_for` (S7's registry keeps each entry's Python
+  object beside the core's in the same way).
+- **D-S14-4: the one registry lives in the extension's module state**
+  (CONTRIBUTING: "Where the Python API needs one shared instance, the
+  binding holds it in the extension's module state"). `_rs`'s
+  `pymodule_init` creates it; it is a `Mutex<Arc<_>>` swapped whole on
+  registration, as S7's state is, so the lock is never held across a call
+  into Python. No new Rust `static` with interior mutability is added, so
+  this needs no new agreement; CONTRIBUTING's "Process-global state"
+  section gains a line recording it. TODO when resuming: confirm the
+  binding can reach it without a new static beyond a write-once
+  `PyOnceLock` cache of the module attribute, the kind the binding
+  already uses for imports.
+- **D-S14-5: the `_rs` surface** (D-S4-2 for the Python names; S7's module
+  functions as precedent): `register_verification_pass(ir_type,
+  pass_class) -> bool`, `get_verification_passes_for(ir_type) ->
+  tuple[type, ...]` and `run_verification(ir) -> ValidationReport`.
+  `VerificationRegistry.register` and `get_passes_for` stay classmethods
+  over them, keeping the DEBUG lines (D-S6-5) and returning `None`.
+- **D-S14-6: checks are built when the verifier runs, and a failed
+  construction fails only its check** (D-S4-1: the core's collect-all;
+  V-2). The binding's factory calls the class; a constructor that raises
+  becomes a check that fails with that exception, named after the class's
+  `get_pass_name()`. An exception that is not an `Exception` is recorded
+  and re-raised at the run's boundary, as S6 does.
+- **D-S14-7: arguments are typed** (D-S6-15; V-1). A non-type `ir_type`
+  raises `TypeError`; a class that is not a `CompilerPass` keeps its
+  `PassRegistrationError` and message.
+- **D-S14-8: the pipeline verifier keeps its shape** (D-S6-12 and S6's
+  note): one validator named `verification`, which now runs
+  `validators_for(lineage)` from the module state instead of calling
+  Python's `get_passes_for`.
+- **D-S14-9: `VerificationAnalysis` and `register_verification` stay thin
+  Python** (P3: `VerificationAnalysis` is a Python `Analysis` subclass;
+  `register_verification` composes the Python pass registry of N-S6-1
+  with the Rust one). `run_verification` and `VerificationAnalysis.run`
+  call `_rs.run_verification`.
+- **D-S14-10: `traits/verifiable.py` calls `_rs` directly** (V-3). The
+  lazy imports go, since the registry no longer lives in
+  `pass_infrastructure`. The positive-result cache stays.
+  `test_verifiable_subclass_caches_positive_instantiation_result` patches
+  the `_rs` lookup instead of `VerificationRegistry.get_passes_for`.
+- **D-S14-11: tests are rewritten, not skipped** (the tests rule). New
+  Rust tests come with the core addition; the Python tests change only
+  where V-1 to V-3 change what they pin, each change recorded.
+
+### Benchmark plan (TODO)
+
+Rerun `test_run_verification` and `test_pass_manager_run_with_verification`;
+add rows for `VerificationRegistry.get_passes_for` over a two-level MRO,
+an idempotent `register`, and a default `VerifiableMixin.verify()`.
+
+### Needs the user
+
+TODO: confirm when resuming. As drafted, D-S14-1 to D-S14-11 follow the
+policy, precedent and the task's direction, so the list is expected to be
+empty; D-S14-4 is the one to recheck.
+
+### Steps (TODO)
+
+S14.1 to S14.6 as in the Progress checklist; commit per step, each ending
+with the gates of S9's "Steps".
+
+### Test plan (TODO)
+
+Rust stories in `rust/fhy-core/tests/it/pass/verification_stories.rs`
+(order, idempotence, deduplication along a lineage, `verifier` and
+`verify`, a failing validator collect-all, `Send + Sync`, ids); the
+interface suite `tests/pass_infrastructure/test_verification_rust_binding.py`
+(module state, typed arguments, a raising constructor, `KeyboardInterrupt`,
+threads registering while a pipeline verifies, the stubs); and the
+migration of `test_verification.py` per V-1 to V-3.
+
+### S14 resume notes
+
+Stopped on 2026-09-26 at the coordinator's pause, during phase 1, before
+any build or test run. Done: the reading (the design doc's policy, S6 and
+S9, `rust-workspace.md` Part I, CONTRIBUTING's porting rules, the core
+`pass` module, the binding's `pass/validation.rs`, `verification.py`,
+`verifiable.py` and `test_verification.py`) and this draft. Next:
+
+1. Recheck D-S14-4: how the binding reaches the module-state registry
+   (a `#[pymodule_init]` attribute and a `PyOnceLock` cache of it), and
+   whether the stub test needs the attribute declared.
+2. Finish the TODO sections: test counts per file, the benchmark plan,
+   the steps, the test plan with a traceability table, and "Needs the
+   user".
+3. Recommit the finished design as `docs: design slice S14, pass
+   verification`, tick "S14 design finished", and stop if "Needs the
+   user" is non-empty; otherwise start S14.1.
