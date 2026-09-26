@@ -10245,13 +10245,13 @@ Then, following S8's scheme (D-S8-17):
 
 ### S9 status
 
-S9 was implemented on 2026-09-26 in eleven commits after the design and
+S9 was implemented on 2026-09-26 in nine commits after the design and
 the resolutions: the benchmarks and their baseline; the core evaluator,
 test-first; the `ndarray` backend behind its feature; the binding; the
 Python switch, marked breaking; the migrated tests and the interface
-suite; the performance work the benchmarks called for; the rebase onto
-S8 and S10 (no commit of its own); the `numpy` marker and
-`tests_minimal` without NumPy; and these docs. No test was skipped or
+suite; the performance work the benchmarks called for; the `numpy`
+marker and `tests_minimal` without NumPy, after the rebase onto S8 and
+S10; and these docs, with this correction. No test was skipped or
 deleted without a rewrite. At the end: `pytest tests` 7,556 passed, `-m
 "not very_slow"` 7,589 passed, the `property` session 282 passed, nox
 `tests_minimal` (5,646 passed, 626 skipped), `lint` and `type_check`
@@ -10272,7 +10272,9 @@ benchmark file), exported with `git archive` under `target/` and built
 there; "after" is the S9.7 tree. The two ran three times each,
 interleaved, with a load average of 3 to 10 from other work on the
 machine, and the table lists the best of the three medians. The
-"before" column agrees with the S9.1 table within 10%.
+"before" column agrees with the S9.1 table within 10%, except the two
+single-call fold rows (10.3 and 7.4 µs in S9.1, 6.7 and 6.5 µs here), a
+difference of the load and of the rebased pass framework.
 
 | Benchmark | before | after | after / before |
 |---|--:|--:|--:|
