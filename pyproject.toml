@@ -30,7 +30,6 @@ classifiers = [
 ]
 dependencies = [
    "immutabledict",
-   "networkx",
    "typing_extensions; python_version < '3.13'",
 ]
 

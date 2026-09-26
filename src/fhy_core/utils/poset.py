@@ -1,142 +1,47 @@
-"""Partially ordered set (poset) utility."""
+"""Partially ordered set (poset) utility.
+
+Backed by the Rust implementation (S11a of ``docs/design/python-switch.md``):
+``fhy_core._rs.PartiallyOrderedSet`` keeps the elements in a ``dict`` from
+element to position, so membership follows the elements' own ``__hash__``
+and ``__eq__``, and runs the order over the positions in the Rust core,
+where each element keeps its up-set and asking for an order is a bit test.
+"""
 
 __all__ = ["PartiallyOrderedSet"]
 
-from collections.abc import Callable, Iterator
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
-import networkx as nx  # type: ignore
+from fhy_core import _rs
 
 T = TypeVar("T")
 
 
-class PartiallyOrderedSet(Generic[T]):
-    """A partially ordered set (poset)."""
+class PartiallyOrderedSet(_rs.PartiallyOrderedSet, Generic[T]):
+    """A partially ordered set (poset) of hashable elements.
 
-    _graph: nx.DiGraph
+    The order is the reflexive and transitive closure of the orders added
+    with :meth:`add_order`: every element is at most itself, and
+    :meth:`is_less_than` reads "less than or equal to".
 
-    def __init__(self) -> None:
-        self._graph = nx.DiGraph()
+    Methods:
+        add_element(element): Add an element. Raises ``ValueError`` if it is
+            a member, and ``TypeError`` if it is not hashable.
+        add_order(lower, upper): Order ``lower`` below ``upper``. Raises
+            ``ValueError`` if either is not a member, and ``RuntimeError``
+            if ``upper`` is already at most ``lower``, which includes
+            ``lower == upper``. Adding an order that already holds is
+            accepted and changes nothing.
+        is_less_than(lower, upper): Whether ``lower`` is less than or equal
+            to ``upper``. Raises ``ValueError`` if either is not a member.
+        is_greater_than(lower, upper): Whether ``lower`` is greater than or
+            equal to ``upper``. Raises ``ValueError`` if either is not a
+            member.
+        iter_stable(key=repr): Iterate in a topological order in which,
+            among the elements that can come next, the one with the least
+            ``key(element)`` comes first, and of equal keys the one added
+            first. ``key`` is called once per element.
 
-    def __contains__(self, element: T) -> bool:
-        is_contain = self._graph.has_node(element)
-        if not isinstance(is_contain, bool):
-            raise TypeError(f"Expected bool, but got {type(is_contain)}")
-        return is_contain
-
-    def __iter__(self) -> Iterator[T]:
-        """Iterate elements in some valid topological order.
-
-        The specific permutation among valid topological orders is
-        determined by networkx's internal algorithm and is not stable
-        across networkx versions or across graph mutations. Callers
-        that need a deterministic order should use :meth:`iter_stable`
-        instead.
-        """
-        return iter(nx.topological_sort(self._graph))
-
-    def iter_stable(self, key: Callable[[T], Any] = repr) -> Iterator[T]:
-        """Iterate in a deterministic topological order using ``key`` to break ties.
-
-        Walks the same DAG as :meth:`__iter__` but uses networkx's
-        lexicographical topological sort, breaking ties between nodes at
-        the same topological level by the value of ``key(node)``. The
-        default key (``repr``) yields a stable order for any element
-        whose ``repr`` is itself stable; pass a custom key when the
-        elements have a more natural ordering.
-
-        Args:
-            key: A function from element to a sort key used to break
-                ties between nodes at the same topological level.
-        """
-        return iter(nx.lexicographical_topological_sort(self._graph, key=key))
-
-    def __len__(self) -> int:
-        return len(self._graph.nodes)
-
-    def add_element(self, element: T) -> None:
-        """Add an element to the poset.
-
-        Args:
-            element: The element to add.
-
-        Raises:
-            ValueError: If the element is already a member of the poset.
-
-        """
-        self._check_element_not_in_poset(element)
-        self._graph.add_node(element)
-
-    def add_order(self, lower: T, upper: T) -> None:
-        """Add an order relation between two elements.
-
-        Args:
-            lower: The lesser element.
-            upper: The greater element.
-
-        Raises:
-            ValueError: If either lower or upper is not a member of the poset.
-            RuntimeError: If an order relation already exists between lower and upper.
-
-        """
-        self._check_element_in_poset(lower)
-        self._check_element_in_poset(upper)
-        if nx.has_path(self._graph, upper, lower):
-            raise RuntimeError(
-                f"Expected no order between {lower} and {upper}, but found one."
-            )
-        self._graph.add_edge(lower, upper)
-
-    def is_less_than(self, lower: T, upper: T) -> bool:
-        """Check if one element is less than another.
-
-        Args:
-            lower: The postulated lesser element.
-            upper: The postulated greater element.
-
-        Returns:
-            bool: True if lower is less than upper, False otherwise.
-
-        Raises:
-            ValueError: If either lower or upper is not a member of the poset.
-
-        """
-        self._check_element_in_poset(lower)
-        self._check_element_in_poset(upper)
-        has_path = nx.has_path(self._graph, lower, upper)
-        if not isinstance(has_path, bool):
-            raise TypeError(f"Expected bool, but got {type(has_path)}")
-        return has_path
-
-    def is_greater_than(self, lower: T, upper: T) -> bool:
-        """Check if one element is greater than another.
-
-        Args:
-            lower: The postulated greater element.
-            upper: The postulated lesser element.
-
-        Returns:
-            bool: True if lower is greater than upper, False otherwise.
-
-        Raises:
-            ValueError: If either lower or upper is not a member of the poset.
-
-        """
-        self._check_element_in_poset(lower)
-        self._check_element_in_poset(upper)
-        has_path = nx.has_path(self._graph, upper, lower)
-        if not isinstance(has_path, bool):
-            raise TypeError(f"Expected bool, but got {type(has_path)}")
-        return has_path
-
-    def _check_element_not_in_poset(self, element: T) -> None:
-        if element in self:
-            raise ValueError(
-                f"Expected {element} to not be a member of the poset, but it is."
-            )
-
-    def _check_element_in_poset(self, element: T) -> None:
-        if element not in self:
-            raise ValueError(
-                f"Expected {element} to be a member of the poset, but it is not."
-            )
+    Iterating the poset yields its elements in a topological order in which
+    the element added first comes first among those that can come next, so
+    the order is stable across runs.
+    """

@@ -1,206 +1,45 @@
-"""Lattice (order theory) utility."""
+"""Lattice (order theory) utility.
 
-from fhy_core.utils.override import override
+Backed by the Rust implementation (S11a of ``docs/design/python-switch.md``):
+``fhy_core._rs.Lattice`` keeps its elements as the partially ordered set
+does, and computes meets, joins and the missing bounds in the Rust core.
+"""
 
 __all__ = ["Lattice"]
 
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
-from fhy_core.diagnostic import (
-    Diagnostic,
-    DiagnosticLevel,
-    Note,
-    ValidationReport,
-)
+from fhy_core import _rs
 from fhy_core.traits.verifiable import VerifiableMixin
-from fhy_core.utils.poset import PartiallyOrderedSet
 
 T = TypeVar("T")
 
-_LATTICE_VERIFY_SOURCE = "fhy_core.lattice.Lattice.verify"
+
+class Lattice(_rs.Lattice, Generic[T]):
+    """Lattice (order theory) over hashable elements.
+
+    Any partial order can be held; it is a lattice when every pair of its
+    elements has a unique greatest lower bound (meet) and a unique least
+    upper bound (join).
+
+    Methods:
+        add_element(element), add_order(lower, upper): Build the order, as
+            :class:`~fhy_core.utils.poset.PartiallyOrderedSet` does.
+        get_meet(x, y), get_join(x, y): The meet or join, or ``None`` if
+            there is none or several incomparable candidates. Raise
+            ``ValueError`` if either argument is not a member.
+        has_meet(x, y), has_join(x, y): Whether the meet or join exists.
+        get_least_upper_bound(x, y): The join. Raises ``RuntimeError`` if
+            there is none.
+        is_lattice(): Whether every pair has a meet and a join.
+        verify(): A :class:`~fhy_core.diagnostic.ValidationReport` with one
+            ERROR diagnostic for every ordered pair of elements, in
+            iteration order, that lacks a meet or a join, its meet first; the
+            report is empty for a lattice.
+
+    It is a :class:`~fhy_core.traits.verifiable.VerifiableMixin` by
+    registration, and defines :meth:`verify` itself.
+    """
 
 
-class Lattice(Generic[T], VerifiableMixin):
-    """Lattice (order theory)."""
-
-    _poset: PartiallyOrderedSet[T]
-
-    def __init__(self) -> None:
-        self._poset = PartiallyOrderedSet[T]()
-
-    def __contains__(self, element: T) -> bool:
-        return element in self._poset
-
-    def add_element(self, element: T) -> None:
-        """Add an element to the lattice.
-
-        Args:
-            element: The element to add.
-
-        Raises:
-            ValueError: If the element is already in the lattice.
-
-        """
-        self._poset.add_element(element)
-
-    def add_order(self, lower: T, upper: T) -> None:
-        """Add an order relation between two elements.
-
-        Args:
-            lower: The lesser element.
-            upper: The greater element.
-
-        Raises:
-            ValueError: If either the lower or upper element is not in the
-                lattice.
-            RuntimeError: If the order relation is invalid.
-
-        """
-        self._poset.add_order(lower, upper)
-
-    def is_lattice(self) -> bool:
-        """Return True if the lattice is a valid lattice, False otherwise."""
-        for x in self._poset:
-            for y in self._poset:
-                if not self.has_meet(x, y) or not self.has_join(x, y):
-                    return False
-        return True
-
-    @override
-    def verify(self) -> ValidationReport[Any]:
-        """Verify that this structure is a valid lattice.
-
-        A valid lattice is a poset in which every pair of elements has both a
-        unique greatest lower bound (meet) and a unique least upper bound
-        (join).
-
-        Returns:
-            A :class:`ValidationReport` containing one ERROR diagnostic for
-            every pair of elements that lacks a unique meet or a unique
-            join. The report is empty when the structure is a valid
-            lattice.
-
-        """
-        diagnostics: list[Diagnostic] = []
-
-        def append_error(message: str) -> None:
-            diagnostics.append(
-                Diagnostic(
-                    level=DiagnosticLevel.ERROR,
-                    message=Note(message),
-                    source=_LATTICE_VERIFY_SOURCE,
-                )
-            )
-
-        for x in self._poset:
-            for y in self._poset:
-                if self.get_meet(x, y) is None:
-                    append_error(
-                        f"Lattice has no unique meet for elements {x!r} and {y!r}."
-                    )
-                if self.get_join(x, y) is None:
-                    append_error(
-                        f"Lattice has no unique join for elements {x!r} and {y!r}."
-                    )
-        return ValidationReport(diagnostics=tuple(diagnostics))
-
-    def has_meet(self, x: T, y: T) -> bool:
-        """Check if two elements have a greatest lower bound.
-
-        Args:
-            x: The first element.
-            y: The second element.
-
-        Returns:
-            True if x and y have a greatest lower bound, False otherwise.
-
-        """
-        return self.get_meet(x, y) is not None
-
-    def has_join(self, x: T, y: T) -> bool:
-        """Check if two elements have a least upper bound.
-
-        Args:
-            x: The first element.
-            y: The second element.
-
-        Returns:
-            True if x and y have a least upper bound, False otherwise.
-
-        """
-        return self.get_join(x, y) is not None
-
-    def get_least_upper_bound(self, x: T, y: T) -> T:
-        """Get the least upper bound of two elements.
-
-        Args:
-            x: The first element.
-            y: The second element.
-
-        Returns:
-            The least upper bound of x and y.
-
-        Raises:
-            RuntimeError: If the least upper bound does not exist.
-
-        """
-        join = self.get_join(x, y)
-        if join is None:
-            raise RuntimeError(
-                f"No least upper bound of {x} and {y} found for lattice."
-            )
-        return join
-
-    def get_meet(self, x: T, y: T) -> T | None:
-        """Get the greatest lower bound of two elements.
-
-        Args:
-            x: The first element.
-            y: The second element.
-
-        Returns:
-            The greatest lower bound of x and y, or None if none exists or if
-            multiple incomparable maximal lower bounds exist.
-
-        """
-        lower_bounds = [
-            z
-            for z in self._poset
-            if self._poset.is_less_than(z, x) and self._poset.is_less_than(z, y)
-        ]
-        maximal = [
-            z
-            for z in lower_bounds
-            if not any(z != w and self._poset.is_less_than(z, w) for w in lower_bounds)
-        ]
-        if len(maximal) == 1:
-            return maximal[0]
-        return None
-
-    def get_join(self, x: T, y: T) -> T | None:
-        """Get the least upper bound of two elements.
-
-        Args:
-            x: The first element.
-            y: The second element.
-
-        Returns:
-            The least upper bound of x and y, or None if none exists or if
-            multiple incomparable minimal upper bounds exist.
-
-        """
-        upper_bounds = [
-            z
-            for z in self._poset
-            if self._poset.is_greater_than(z, x) and self._poset.is_greater_than(z, y)
-        ]
-        minimal = [
-            z
-            for z in upper_bounds
-            if not any(
-                z != w and self._poset.is_greater_than(z, w) for w in upper_bounds
-            )
-        ]
-        if len(minimal) == 1:
-            return minimal[0]
-        return None
+VerifiableMixin.register(Lattice)

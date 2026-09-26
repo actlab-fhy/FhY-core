@@ -36,7 +36,10 @@ const OWNER: &str = "TypeUnificationEnvironment";
 
 /// The identifier and value objects of one table's bindings, by the
 /// identifier's id.
-type ObjectTable = HashMap<u64, (Py<PyAny>, Py<PyAny>)>;
+type ObjectTable = HashMap<u64, ObjectPair>;
+
+/// The identifier object and the value object of one binding.
+type ObjectPair = (Py<PyAny>, Py<PyAny>);
 
 /// The objects of the three tables.
 struct Objects {
@@ -132,6 +135,14 @@ impl PyTypeUnificationEnvironment {
     /// Return the core environment.
     pub(crate) fn value(&self) -> &TypeUnificationEnvironment {
         &self.value
+    }
+
+    /// Return the identifier and value objects of `table`, ordered by the
+    /// identifier's id, so views and pickles list them in one order.
+    fn ordered(&self, table: Table) -> Vec<&ObjectPair> {
+        let mut entries: Vec<(&u64, &ObjectPair)> = self.table(table).iter().collect();
+        entries.sort_by_key(|(id, _)| **id);
+        entries.into_iter().map(|(_, entry)| entry).collect()
     }
 
     fn table(&self, table: Table) -> &ObjectTable {
@@ -363,7 +374,7 @@ impl PyTypeUnificationEnvironment {
             return Ok(view.bind(py).clone());
         }
         let entries = PyDict::new(py);
-        for (key, value) in self.table(table).values() {
+        for (key, value) in self.ordered(table) {
             entries.set_item(key.bind(py), value.bind(py))?;
         }
         let view = immutabledict_class(py)?.call1((entries,))?;
@@ -622,7 +633,7 @@ impl PyTypeUnificationEnvironment {
             .into_iter()
             .map(|table| {
                 let entries = PyDict::new(py);
-                for (key, value) in this.table(table).values() {
+                for (key, value) in this.ordered(table) {
                     entries.set_item(key.bind(py), value.bind(py))?;
                 }
                 Ok(entries.into_any())
