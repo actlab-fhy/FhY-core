@@ -19,11 +19,12 @@ use expression_support::{
     build_piecewise_or_panic, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expression::{
-    AlphaRenaming, BinaryOperation, BooleanScreen, Callee, Decimal, Expression, ExpressionKind,
-    FunctionName, FunctionSort, LiteralValue, LogicalOperation, PiecewiseError, SortLookup,
-    SymbolType, UnaryOperation,
+    BinaryOperation, BooleanScreen, Callee, Decimal, Expression, ExpressionKind, FunctionName,
+    FunctionSort, LiteralValue, LogicalOperation, PiecewiseError, SortLookup, SymbolType,
+    UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
+use fhy_core::term::AlphaRenaming;
 use hashing_support::hash_of;
 use proptest::prelude::*;
 use proptest::sample::select;

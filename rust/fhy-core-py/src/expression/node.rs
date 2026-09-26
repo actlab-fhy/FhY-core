@@ -25,8 +25,9 @@ use pyo3::types::{PyBool, PyDict, PyFrozenSet, PyList, PyString, PyTuple, PyType
 
 use fhy_core::expression::{
     BinaryOperation, Callee, Expression, ExpressionKind, FunctionNameError, LogicalOperation,
-    NonInjectiveRenamingError, PiecewiseError, RebuildError, UnaryOperation,
+    PiecewiseError, RebuildError, UnaryOperation,
 };
+use fhy_core::term::NonInjectiveRenamingError;
 
 use crate::dataclass::{build_argument_type_error, collect_tuple, hash_value, read_str};
 use crate::error::{IntoPyErr, IntoPyResult};

@@ -12,12 +12,12 @@ use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::identifier::Identifier;
+use crate::term::{AlphaEquivalence, AlphaRenaming, FreeIdentifiers, Term};
 use crate::tree::{
     BuildIdentityHasher, NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, TraversalOrder,
     Tree, TreeVisitor, rewrite_tree, walk_tree,
 };
 
-use super::alpha::AlphaRenaming;
 use super::callee::Callee;
 use super::error::{PiecewiseError, RebuildError};
 use super::literal::LiteralValue;
@@ -924,3 +924,33 @@ const _: () = {
     assert_send_sync::<Expression>();
     assert_send_sync::<ExpressionKind>();
 };
+
+/// An expression binds nothing, so its alpha equivalence compares every
+/// identifier through the renaming:
+/// [`Expression::is_alpha_equivalent_under`].
+impl AlphaEquivalence for Expression {
+    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+        Expression::is_alpha_equivalent_under(self, other, renaming)
+    }
+}
+
+/// Every identifier an expression references is free:
+/// [`Expression::free_identifiers`].
+impl FreeIdentifiers for Expression {
+    fn free_identifiers(&self) -> HashSet<Identifier> {
+        Expression::free_identifiers(self)
+    }
+}
+
+/// An expression binds nothing, so substitution never captures:
+/// [`Expression::substitute`].
+impl Term for Expression {
+    type SubstituteError = PiecewiseError;
+
+    fn substitute<S: BuildHasher>(
+        &self,
+        replacements: &HashMap<Identifier, Self, S>,
+    ) -> Result<Self, PiecewiseError> {
+        Expression::substitute(self, replacements)
+    }
+}

@@ -18,8 +18,8 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyMapping, PyType};
 
-use fhy_core::expression::AlphaRenaming;
 use fhy_core::identifier::Identifier;
+use fhy_core::term::AlphaRenaming;
 
 use crate::error::IntoPyResult;
 use crate::identifier::restore_identifier;

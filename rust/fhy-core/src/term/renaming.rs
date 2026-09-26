@@ -1,25 +1,28 @@
-//! The renaming that alpha equivalence of expressions is checked under: a
-//! stack of binder frames over a free-identifier renaming.
+//! The renaming that alpha equivalence is checked under: a stack of binder
+//! frames over a free-identifier renaming.
 
 use std::collections::{HashMap, HashSet};
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::Arc;
 
 use crate::identifier::Identifier;
 
-use super::error::{NonInjectiveRenamingError, RenamingPart};
+use super::error::{BinderPairingError, NonInjectiveRenamingError, RenamingPart};
 
 /// The correspondence between identifiers on two sides of a comparison that
-/// [`Expression::is_alpha_equivalent_under`](super::Expression::is_alpha_equivalent_under)
-/// checks two trees against: a stack of binder frames over a free-identifier
+/// [`AlphaEquivalence::is_alpha_equivalent_under`](super::AlphaEquivalence::is_alpha_equivalent_under)
+/// checks two terms against: a stack of binder frames over a free-identifier
 /// renaming.
 ///
 /// - **Binder frames.** A term that binds identifiers, such as a parameter
 ///   list over a body, compares its body with the other term's under one
 ///   more frame, pairing each of its bound identifiers with the other term's
-///   ([`enter_binder`](Self::enter_binder)), and drops the frame after
-///   ([`leave_binder`](Self::leave_binder)). An inner frame shadows outer
-///   ones, and two frames may share an image, as two nested binders may
-///   bind one name.
+///   ([`enter_binders`](Self::enter_binders) or
+///   [`enter_binder`](Self::enter_binder)), and drops the frame after
+///   ([`leave_binder`](Self::leave_binder)); [`extended`](Self::extended)
+///   returns a renaming with one more frame instead. An inner frame shadows
+///   outer ones, and two frames may share an image, as two nested binders
+///   may bind one name.
 /// - **The free renaming** ([`try_new`](Self::try_new)) pairs identifiers
 ///   that no frame binds, for comparing two terms drawn from different
 ///   scopes. An identifier it does not map corresponds only to itself, and
@@ -32,13 +35,19 @@ use super::error::{NonInjectiveRenamingError, RenamingPart};
 /// renaming has no frame and maps nothing, so every identifier corresponds
 /// only to itself.
 ///
+/// The frames and the free renaming are shared between clones, so cloning a
+/// renaming, or extending one by a frame, copies no map. Two renamings are
+/// equal when they have equal free renamings and equal frames in the same
+/// order, an empty frame included, and [`Hash`] agrees with that equality.
+///
 /// # Examples
 ///
 /// ```
 /// use std::collections::HashMap;
 ///
+/// use fhy_core::expression::Expression;
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::expression::{AlphaRenaming, Expression};
+/// use fhy_core::term::AlphaRenaming;
 ///
 /// let (a, b, c) = (Identifier::new("a"), Identifier::new("b"), Identifier::new("c"));
 /// let renaming = AlphaRenaming::try_new(HashMap::from([(a.clone(), c.clone())]))
@@ -54,17 +63,16 @@ use super::error::{NonInjectiveRenamingError, RenamingPart};
 /// frame:
 ///
 /// ```
-/// use std::collections::HashMap;
-///
+/// use fhy_core::expression::Expression;
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::expression::{AlphaRenaming, Expression};
+/// use fhy_core::term::AlphaRenaming;
 ///
 /// let (x, y, z) = (Identifier::new("x"), Identifier::new("y"), Identifier::new("z"));
 /// let mut renaming = AlphaRenaming::default();
 ///
 /// renaming
-///     .enter_binder(HashMap::from([(x.clone(), y.clone())]))
-///     .expect("one pair is injective");
+///     .enter_binders(&[x.clone()], &[y.clone()])
+///     .expect("one identifier on each side pairs");
 /// let left = Expression::from(x) + Expression::from(z.clone());
 /// let right = Expression::from(y.clone()) + Expression::from(z);
 /// assert!(left.is_alpha_equivalent_under(&right, &renaming));
@@ -77,8 +85,8 @@ use super::error::{NonInjectiveRenamingError, RenamingPart};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AlphaRenaming {
     /// The binder frames, outermost first.
-    frames: Vec<Bijection>,
-    free_renaming: Bijection,
+    frames: Vec<Arc<Bijection>>,
+    free_renaming: Arc<Bijection>,
 }
 
 impl AlphaRenaming {
@@ -95,7 +103,10 @@ impl AlphaRenaming {
     ) -> Result<Self, NonInjectiveRenamingError> {
         Ok(Self {
             frames: Vec::new(),
-            free_renaming: Bijection::try_new(free_renaming, RenamingPart::FreeRenaming)?,
+            free_renaming: Arc::new(Bijection::try_new(
+                free_renaming,
+                RenamingPart::FreeRenaming,
+            )?),
         })
     }
 
@@ -106,8 +117,10 @@ impl AlphaRenaming {
     /// Call it before comparing a binder's body and
     /// [`leave_binder`](Self::leave_binder) after. The frame shadows every
     /// outer frame and the free renaming. It may share images with outer
-    /// frames, but a map cannot bind one identifier twice, so a caller
-    /// pairing two parameter lists should refuse a list that repeats one.
+    /// frames. A map cannot bind one identifier twice, so a caller pairing
+    /// two lists of bound identifiers uses
+    /// [`enter_binders`](Self::enter_binders), which refuses a list that
+    /// repeats one.
     ///
     /// # Errors
     ///
@@ -118,9 +131,73 @@ impl AlphaRenaming {
         &mut self,
         bindings: HashMap<Identifier, Identifier, S>,
     ) -> Result<(), NonInjectiveRenamingError> {
-        self.frames
-            .push(Bijection::try_new(bindings, RenamingPart::BinderFrame)?);
+        self.frames.push(Arc::new(Bijection::try_new(
+            bindings,
+            RenamingPart::BinderFrame,
+        )?));
         Ok(())
+    }
+
+    /// Push an innermost binder frame pairing `left[i]`, the `i`-th
+    /// identifier a binder on this side binds, with `right[i]`, the one the
+    /// binder on the other side binds at the same position.
+    ///
+    /// Two empty lists push an empty frame. The frame is otherwise the one
+    /// [`enter_binder`](Self::enter_binder) pushes for the pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BinderPairingError::ArityMismatch`] if the lists have
+    /// different lengths, and [`BinderPairingError::RepeatedIdentifier`] if
+    /// either list holds an identifier more than once, checked on the left
+    /// first. So a binder that binds one identifier twice pairs with no
+    /// binder, itself included. The renaming is then unchanged.
+    pub fn enter_binders(
+        &mut self,
+        left: &[Identifier],
+        right: &[Identifier],
+    ) -> Result<(), BinderPairingError> {
+        if left.len() != right.len() {
+            return Err(BinderPairingError::ArityMismatch {
+                left: left.len(),
+                right: right.len(),
+            });
+        }
+        let mut keys = HashSet::with_capacity(left.len());
+        for identifier in left {
+            if !keys.insert(identifier) {
+                return Err(BinderPairingError::RepeatedIdentifier(identifier.clone()));
+            }
+        }
+        let mut images = HashSet::with_capacity(right.len());
+        for identifier in right {
+            if !images.insert(identifier.clone()) {
+                return Err(BinderPairingError::RepeatedIdentifier(identifier.clone()));
+            }
+        }
+        let images_by_identifier = left.iter().cloned().zip(right.iter().cloned()).collect();
+        self.frames.push(Arc::new(Bijection {
+            images_by_identifier,
+            images,
+        }));
+        Ok(())
+    }
+
+    /// Return this renaming with one more innermost binder frame, the one
+    /// [`enter_binder`](Self::enter_binder) would push for `bindings`,
+    /// leaving `self` unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NonInjectiveRenamingError`] as
+    /// [`enter_binder`](Self::enter_binder) does.
+    pub fn extended<S: BuildHasher>(
+        &self,
+        bindings: HashMap<Identifier, Identifier, S>,
+    ) -> Result<Self, NonInjectiveRenamingError> {
+        let mut extended = self.clone();
+        extended.enter_binder(bindings)?;
+        Ok(extended)
     }
 
     /// Pop the innermost binder frame, returning whether there was one.
@@ -185,7 +262,70 @@ impl AlphaRenaming {
     /// from the default renaming.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.free_renaming.is_empty() && self.frames.iter().all(Bijection::is_empty)
+        self.free_renaming.is_empty() && self.frames.iter().all(|frame| frame.is_empty())
+    }
+
+    /// Return a view of the free renaming.
+    #[must_use]
+    pub fn free_renaming(&self) -> RenamingMap<'_> {
+        RenamingMap {
+            bijection: &self.free_renaming,
+        }
+    }
+
+    /// Return a view of each binder frame, outermost first.
+    #[must_use]
+    pub fn frames(&self) -> impl ExactSizeIterator<Item = RenamingMap<'_>> + DoubleEndedIterator {
+        self.frames
+            .iter()
+            .map(|frame| RenamingMap { bijection: frame })
+    }
+}
+
+/// Hashes the free renaming, then each frame in order, each map by its pairs
+/// in the order of their left identifiers' ids, so equal renamings hash
+/// alike whatever order their maps were built in.
+impl Hash for AlphaRenaming {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.free_renaming.hash_pairs(state);
+        state.write_usize(self.frames.len());
+        for frame in &self.frames {
+            frame.hash_pairs(state);
+        }
+    }
+}
+
+/// A read-only view of one injective map of an [`AlphaRenaming`]: a binder
+/// frame or the free renaming.
+#[derive(Debug, Clone, Copy)]
+pub struct RenamingMap<'a> {
+    bijection: &'a Bijection,
+}
+
+impl<'a> RenamingMap<'a> {
+    /// Return the image of `identifier`, if the map maps it.
+    #[must_use]
+    pub fn get(&self, identifier: &Identifier) -> Option<&'a Identifier> {
+        self.bijection.image_of(identifier)
+    }
+
+    /// Return the pairs of the map, each identifier with its image, in no
+    /// particular order.
+    #[must_use]
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a Identifier, &'a Identifier)> + 'a {
+        self.bijection.images_by_identifier.iter()
+    }
+
+    /// Return the number of identifiers the map maps.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.bijection.images_by_identifier.len()
+    }
+
+    /// Return whether the map maps no identifier.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.bijection.is_empty()
     }
 }
 
@@ -225,5 +365,17 @@ impl Bijection {
 
     fn is_empty(&self) -> bool {
         self.images_by_identifier.is_empty()
+    }
+
+    /// Feed the number of pairs, then the pairs in the order of their keys'
+    /// ids, to `state`, so the hash does not depend on the map's order.
+    fn hash_pairs<H: Hasher>(&self, state: &mut H) {
+        let mut pairs: Vec<(&Identifier, &Identifier)> = self.images_by_identifier.iter().collect();
+        pairs.sort_unstable_by_key(|(key, _)| key.id());
+        state.write_usize(pairs.len());
+        for (key, image) in pairs {
+            key.hash(state);
+            image.hash(state);
+        }
     }
 }

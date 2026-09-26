@@ -16,4 +16,5 @@ mod serde_format_stories;
 mod solver;
 mod support;
 mod tag_type_stories;
+mod term;
 mod tree;

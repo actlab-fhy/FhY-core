@@ -480,7 +480,7 @@ module depends only on the layers before it:
 2. `described_tag`, `value_domain`, `provenance`
 3. `diagnostic` and `op_attribute`, whose tags are `described_tag`
    vocabularies
-4. `tree`
+4. `tree` and `term`, which do not depend on each other
 5. `expression` (with `expression::pattern` and `expression::builtins`) and `pass`, which do
    not depend on each other
 6. `expression::passes`, the passes over expressions, which depends on both,
@@ -508,6 +508,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
+| `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
 
 ### Errors belong to their module
 

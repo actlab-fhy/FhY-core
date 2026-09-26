@@ -1,14 +1,11 @@
 //! Errors raised while building, comparing, or screening expressions.
 //!
 //! [`PiecewiseError`] and [`RebuildError`] refuse a node that would break an
-//! invariant, [`NonInjectiveRenamingError`] a renaming or binder frame that
-//! is not injective, and [`NonBooleanLogicalOperandError`] a number that a
+//! invariant, and [`NonBooleanLogicalOperandError`] a number that a
 //! [`BooleanScreen`](super::BooleanScreen) finds at a [`BooleanPosition`].
 
 use std::error::Error;
 use std::fmt;
-
-use crate::identifier::Identifier;
 
 use super::node::Expression;
 use super::operation::LogicalOperation;
@@ -106,90 +103,6 @@ impl Error for RebuildError {
         }
     }
 }
-
-/// A free-identifier renaming or a binder frame that sends two identifiers
-/// to one image.
-///
-/// Returned by [`AlphaRenaming::try_new`](super::AlphaRenaming::try_new) for
-/// the free renaming and by
-/// [`AlphaRenaming::enter_binder`](super::AlphaRenaming::enter_binder) for a
-/// frame. Displays as `a free-identifier renaming must be injective, but
-/// more than one identifier maps to {name}::{id}`, or `a binder frame must
-/// be injective, but ...` for a frame, with the shared image's name hint and
-/// id.
-///
-/// # Examples
-///
-/// ```
-/// use std::collections::HashMap;
-///
-/// use fhy_core::expression::{AlphaRenaming, RenamingPart};
-/// use fhy_core::identifier::Identifier;
-///
-/// let (a, b, c) = (Identifier::new("a"), Identifier::new("b"), Identifier::new("c"));
-/// let mut renaming = AlphaRenaming::default();
-///
-/// let error = renaming
-///     .enter_binder(HashMap::from([(a, c.clone()), (b, c.clone())]))
-///     .expect_err("a and b share the image c");
-///
-/// assert_eq!(error.image(), &c);
-/// assert_eq!(error.part(), RenamingPart::BinderFrame);
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct NonInjectiveRenamingError {
-    image: Identifier,
-    part: RenamingPart,
-}
-
-impl NonInjectiveRenamingError {
-    pub(super) fn new(image: Identifier, part: RenamingPart) -> Self {
-        Self { image, part }
-    }
-
-    /// Return an image that more than one identifier maps to.
-    #[must_use]
-    pub fn image(&self) -> &Identifier {
-        &self.image
-    }
-
-    /// Return the part of the renaming that is not injective.
-    #[must_use]
-    pub fn part(&self) -> RenamingPart {
-        self.part
-    }
-}
-
-impl fmt::Display for NonInjectiveRenamingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let part = match self.part {
-            RenamingPart::FreeRenaming => "a free-identifier renaming",
-            RenamingPart::BinderFrame => "a binder frame",
-        };
-        write!(
-            f,
-            "{part} must be injective, but more than one identifier maps to {}::{}",
-            self.image.name_hint(),
-            self.image.id()
-        )
-    }
-}
-
-/// The part of an [`AlphaRenaming`](super::AlphaRenaming) a
-/// [`NonInjectiveRenamingError`] refuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum RenamingPart {
-    /// The free-identifier renaming given to
-    /// [`AlphaRenaming::try_new`](super::AlphaRenaming::try_new).
-    FreeRenaming,
-    /// A binder frame given to
-    /// [`AlphaRenaming::enter_binder`](super::AlphaRenaming::enter_binder).
-    BinderFrame,
-}
-
-impl Error for NonInjectiveRenamingError {}
 
 /// Where a Boolean position sits relative to the node that imposes it.
 ///

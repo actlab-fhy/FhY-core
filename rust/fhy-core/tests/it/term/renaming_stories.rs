@@ -12,12 +12,14 @@
 //! these tests enter one frame per binder level and compare the bodies.
 
 use crate::support::expression as expression_support;
+use crate::support::hashing::hash_of;
 
 use std::collections::HashMap;
 
 use expression_support::{build_identifier, build_literal};
-use fhy_core::expression::{AlphaRenaming, Expression, RenamingPart};
+use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
+use fhy_core::term::{AlphaRenaming, BinderPairingError, RenamingPart};
 use rstest::rstest;
 
 /// Return the frame or free renaming pairing each identifier with its image.
@@ -649,4 +651,272 @@ fn binders_alpha_equivalence_is_transitive() {
     }
 
     assert!(non_trivial_triples > 0);
+}
+
+// =============================================================================
+// Extending, sharing and hashing
+// =============================================================================
+
+#[test]
+fn alpha_renaming_extended_leaves_the_receiver_unchanged() {
+    let [x, y] = build_identifiers(["x", "y"]);
+    let renaming = AlphaRenaming::default();
+
+    let extended = renaming
+        .extended(build_map([(&x, &y)]))
+        .expect("one pair is injective");
+
+    assert_eq!(renaming, AlphaRenaming::default());
+    assert_eq!(extended.binder_depth(), 1);
+    assert_eq!(extended.resolve(&x), &y);
+}
+
+#[test]
+fn alpha_renaming_extended_equals_a_clone_that_enters_the_frame() {
+    let [free_a, free_b, x, y] = build_identifiers(["a", "b", "x", "y"]);
+    let renaming = build_renaming(build_map([(&free_a, &free_b)]), Vec::new());
+
+    let extended = renaming
+        .extended(build_map([(&x, &y)]))
+        .expect("one pair is injective");
+    let mut entered = renaming.clone();
+    entered
+        .enter_binder(build_map([(&x, &y)]))
+        .expect("one pair is injective");
+
+    assert_eq!(extended, entered);
+}
+
+#[test]
+fn alpha_renaming_extended_refuses_a_non_injective_frame_as_a_binder_frame() {
+    let [a, b, target] = build_identifiers(["a", "b", "target"]);
+
+    let error = AlphaRenaming::default()
+        .extended(build_map([(&a, &target), (&b, &target)]))
+        .expect_err("a and b share the image");
+
+    assert_eq!(error.part(), RenamingPart::BinderFrame);
+    assert_eq!(error.image(), &target);
+}
+
+#[test]
+fn alpha_renaming_clones_share_frames_without_sharing_changes() {
+    let [x, y, a, b] = build_identifiers(["x", "y", "a", "b"]);
+    let original = build_framed_renaming(vec![build_map([(&x, &y)])]);
+
+    let mut clone = original.clone();
+    clone
+        .enter_binder(build_map([(&a, &b)]))
+        .expect("one pair is injective");
+    let mut popped = original.clone();
+    assert!(popped.leave_binder());
+
+    assert_eq!(original.binder_depth(), 1);
+    assert_eq!(original.resolve(&x), &y);
+    assert_eq!(original.resolve(&a), &a);
+    assert_eq!(clone.resolve(&a), &b);
+    assert_eq!(popped.resolve(&x), &x);
+}
+
+#[test]
+fn alpha_renaming_equal_renamings_built_in_different_orders_hash_alike() {
+    let [
+        free_a,
+        free_b,
+        free_c,
+        free_d,
+        bound_x,
+        bound_y,
+        bound_z,
+        bound_w,
+    ] = build_identifiers(["a", "b", "c", "d", "x", "y", "z", "w"]);
+    let mut forward = HashMap::new();
+    forward.insert(free_a.clone(), free_b.clone());
+    forward.insert(free_c.clone(), free_d.clone());
+    let mut backward = HashMap::new();
+    backward.insert(free_c.clone(), free_d.clone());
+    backward.insert(free_a.clone(), free_b.clone());
+    let frames = || {
+        vec![
+            build_map([(&bound_x, &bound_y), (&bound_z, &bound_w)]),
+            HashMap::new(),
+        ]
+    };
+
+    let left = build_renaming(forward, frames());
+    let right = build_renaming(backward, frames());
+
+    assert_eq!(left, right);
+    assert_eq!(hash_of(&left), hash_of(&right));
+    assert_eq!(
+        hash_of(&AlphaRenaming::default()),
+        hash_of(&AlphaRenaming::default())
+    );
+}
+
+// =============================================================================
+// Views
+// =============================================================================
+
+#[test]
+fn alpha_renaming_views_list_the_free_renaming_and_the_frames_outermost_first() {
+    let [free_a, free_b, x, y, p, q] = build_identifiers(["a", "b", "x", "y", "p", "q"]);
+    let renaming = build_renaming(
+        build_map([(&free_a, &free_b)]),
+        vec![build_map([(&x, &y)]), HashMap::new(), build_map([(&p, &q)])],
+    );
+
+    let free = renaming.free_renaming();
+    let frames: Vec<Vec<(Identifier, Identifier)>> = renaming
+        .frames()
+        .map(|frame| {
+            frame
+                .iter()
+                .map(|(key, image)| (key.clone(), image.clone()))
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(free.iter().collect::<Vec<_>>(), vec![(&free_a, &free_b)]);
+    assert_eq!(free.len(), 1);
+    assert!(!free.is_empty());
+    assert_eq!(free.get(&free_a), Some(&free_b));
+    assert_eq!(free.get(&free_b), None);
+    assert_eq!(renaming.frames().len(), 3);
+    assert_eq!(
+        frames,
+        vec![
+            vec![(x.clone(), y.clone())],
+            Vec::new(),
+            vec![(p.clone(), q.clone())]
+        ]
+    );
+    assert!(
+        renaming
+            .frames()
+            .nth(1)
+            .is_some_and(|frame| frame.is_empty())
+    );
+    assert_eq!(
+        renaming
+            .frames()
+            .next_back()
+            .and_then(|frame| frame.get(&p)),
+        Some(&q)
+    );
+}
+
+#[test]
+fn alpha_renaming_default_views_are_empty() {
+    let renaming = AlphaRenaming::default();
+
+    assert!(renaming.free_renaming().is_empty());
+    assert_eq!(renaming.free_renaming().len(), 0);
+    assert_eq!(renaming.frames().len(), 0);
+}
+
+// =============================================================================
+// Pairing binder lists
+// =============================================================================
+
+#[test]
+fn alpha_renaming_enter_binders_pairs_the_lists_by_position() {
+    let [x, y, a, b] = build_identifiers(["x", "y", "a", "b"]);
+    let mut renaming = AlphaRenaming::default();
+
+    renaming
+        .enter_binders(&[x.clone(), y.clone()], &[a.clone(), b.clone()])
+        .expect("two distinct identifiers on each side pair");
+
+    assert_eq!(
+        renaming,
+        build_framed_renaming(vec![build_map([(&x, &a), (&y, &b)])])
+    );
+    assert!(renaming.is_corresponding(&y, &b));
+    assert!(!renaming.is_corresponding(&y, &a));
+}
+
+#[test]
+fn alpha_renaming_enter_binders_of_two_empty_lists_pushes_an_empty_frame() {
+    let mut renaming = AlphaRenaming::default();
+
+    renaming
+        .enter_binders(&[], &[])
+        .expect("two empty lists pair");
+
+    assert_eq!(renaming.binder_depth(), 1);
+    assert_eq!(renaming, build_framed_renaming(vec![HashMap::new()]));
+}
+
+#[test]
+fn alpha_renaming_enter_binders_refuses_lists_of_different_lengths() {
+    let [x, a, b] = build_identifiers(["x", "a", "b"]);
+    let mut renaming = AlphaRenaming::default();
+
+    let error = renaming
+        .enter_binders(&[x], &[a, b])
+        .expect_err("one identifier does not pair with two");
+
+    assert_eq!(
+        error,
+        BinderPairingError::ArityMismatch { left: 1, right: 2 }
+    );
+    assert_eq!(
+        error.to_string(),
+        "binder lists of 1 and 2 identifiers cannot be paired"
+    );
+    assert_eq!(renaming, AlphaRenaming::default());
+}
+
+#[rstest]
+#[case::on_the_left(true, false)]
+#[case::on_the_right(false, true)]
+#[case::on_both_sides(true, true)]
+fn alpha_renaming_enter_binders_refuses_a_list_that_repeats_an_identifier(
+    #[case] repeats_on_the_left: bool,
+    #[case] repeats_on_the_right: bool,
+) {
+    let [x, y, a, b] = build_identifiers(["x", "y", "a", "b"]);
+    let left = if repeats_on_the_left {
+        vec![x.clone(), x.clone()]
+    } else {
+        vec![x.clone(), y.clone()]
+    };
+    let right = if repeats_on_the_right {
+        vec![a.clone(), a.clone()]
+    } else {
+        vec![a.clone(), b.clone()]
+    };
+    let mut renaming = AlphaRenaming::default();
+
+    let error = renaming
+        .enter_binders(&left, &right)
+        .expect_err("a repeated identifier pairs with nothing");
+
+    let repeated = if repeats_on_the_left { &x } else { &a };
+    assert_eq!(
+        error,
+        BinderPairingError::RepeatedIdentifier(repeated.clone())
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "a binder list repeats the identifier {}::{}",
+            repeated.name_hint(),
+            repeated.id()
+        )
+    );
+    assert_eq!(renaming, AlphaRenaming::default());
+}
+
+#[test]
+fn alpha_renaming_enter_binders_refuses_a_list_that_repeats_an_identifier_against_itself() {
+    let [x] = build_identifiers(["x"]);
+    let mut renaming = AlphaRenaming::default();
+
+    let error = renaming
+        .enter_binders(&[x.clone(), x.clone()], &[x.clone(), x.clone()])
+        .expect_err("a binder repeating an identifier pairs with no binder, itself included");
+
+    assert_eq!(error, BinderPairingError::RepeatedIdentifier(x));
 }

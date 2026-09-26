@@ -73,7 +73,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S10: terms (designed; see "S10: terms")
   - [x] N-S10-1 decided as (a), N-S10-2 as (b)
   - [x] S10.1: term benchmarks and baseline (32 rows; see "S10.1 baseline")
-  - [ ] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
+  - [x] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
   - [ ] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
   - [ ] S10.4: the Python switch
   - [ ] S10.5: tests migrated, and the interface suite
@@ -8423,3 +8423,92 @@ average was about 2, and the table lists the best of three runs' medians.
   `extend` takes 1.3 µs at any depth, since it copies only the tuple of
   frames. An expression compared under ten frames takes 10 µs, most of it
   S4.3a's conversion.
+
+### S10.2 implementation notes
+
+The tests were written first, against stubs of every new method (a
+`todo!()`, or an empty view): 58 of the 107 tests of the new
+`tests/it/term/` area failed, and all pass now. The 49 that passed are the
+43 cases moved from `expression/alpha_stories.rs`, the three moved
+properties, and three that pin what the stubs could not break. A proptest
+regression file written while the stubs failed was deleted, as in S7.2;
+its seeds were stub failures, not findings.
+
+- **Layout.** `rust/fhy-core/src/term.rs` with `term/renaming.rs` (moved
+  from `expression/alpha.rs`), `term/binder.rs` (the four traits),
+  `term/mapping.rs` and `term/error.rs` (the moved
+  `NonInjectiveRenamingError` and `RenamingPart`, and the new
+  `BinderPairingError`). `expression` imports `term`; the two error names
+  and `AlphaRenaming` left its re-exports. The binding changed only its
+  import paths. `lib.rs`, the crate README and CONTRIBUTING's two tables
+  list the module; `term` sits beside `tree` in layer 4.
+- **Where the shape differs from D-S10-2's sketch, or fills it in:**
+  - `BinderPairingError` is `ArityMismatch { left, right }` or
+    `RepeatedIdentifier(Identifier)`, displaying `binder lists of 1 and 2
+    identifiers cannot be paired` and `a binder list repeats the
+    identifier x::7`. Lengths are checked first, then the left list, then
+    the right, so a list repeated on both sides names its left repeat.
+    `enter_binders` builds the frame directly: two distinct lists pair
+    injectively, so it cannot meet `NonInjectiveRenamingError`.
+  - The views are one type, `RenamingMap<'_>` (`get`, `iter`, `len`,
+    `is_empty`), returned by `free_renaming()` and, outermost first, by
+    `frames()`, which is double-ended and exact-size. A map's pairs come in
+    no particular order.
+  - `Hash` feeds the free renaming, the number of frames, then each frame,
+    each map as its length and its pairs sorted by the key's id, so it
+    agrees with the derived `Eq`, which compares maps as sets and counts
+    empty frames and frame order.
+  - The frames and the free renaming are `Arc<Bijection>`s, so `Clone` and
+    `extended` copy one reference per frame. `enter_binder`'s rustdoc now
+    names `enter_binders` for pairing lists (N-S10-2 (b)).
+  - `Binder`'s provided methods are `is_binder_alpha_equivalent_under`,
+    `binder_free_identifiers` and `substitute_avoiding_capture`, with
+    `BinderMixin`'s order of checks: bound counts, child counts, the
+    pairing, then the children in order. A substitution with no applying
+    key returns `self.clone()`, the same handle for an `Arc`-backed node.
+  - `is_mapping_alpha_equivalent_under` takes the left map as an
+    exact-size iterator of pairs, so its values are compared in an order
+    the caller chooses (the Python helper's dict order, D-S10-11), and the
+    right map as a `HashMap`.
+  - `Expression` implements `AlphaEquivalence`, `FreeIdentifiers` and
+    `Term` by forwarding to its inherent methods, which keep their names:
+    an inherent method is found first, so no caller changed.
+- **The laws under N-S10-2 (b).** `binder_properties.rs` checks alpha
+  equivalence against a de Bruijn model that has no form for a term with a
+  repeated binder list. Symmetry, the model and "a repeated binder matches
+  no term" run over all terms. Reflexivity, transitivity and "substitution
+  respects alpha equivalence" run over `build_distinct_term_strategy`,
+  whose lambdas drop a repeated parameter, and each property asserts that
+  precondition before the law. "Substitution never captures" holds for all
+  terms.
+- **S4.2's `Binders` cases stay renaming stories.** They compare expression
+  bodies under frames entered per binder level, which exercises the
+  renaming itself, so they moved unchanged with the file. The `Binder`
+  versions of the same stories are new, over the lambda calculus in
+  `tests/it/support/lambda.rs`, which `binder_stories.rs` and
+  `binder_properties.rs` share.
+- **Tests.** `renaming_stories.rs` (43 moved cases and 14 new, counting
+  `rstest` cases), `renaming_properties.rs` (3 moved properties and 2 new),
+  `binder_stories.rs` (27), `binder_properties.rs` (7) and
+  `mapping_stories.rs` (11).
+
+Traceability of the Python tests to the new Rust tests (`test_binder.py`
+is `B`, `test_alpha_equivalence.py` `A`), extending S4.2's table, whose
+rows keep their Rust tests in `term/renaming_stories.rs`:
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| B `test_identity_lambdas_are_alpha_equivalent`, `test_lambdas_with_distinct_free_bodies_are_not_alpha_equivalent`, `test_lambdas_sharing_a_free_identifier_are_alpha_equivalent`, `test_lambdas_with_different_arity_are_not_alpha_equivalent` | `identity_lambdas_over_different_parameters_are_alpha_equivalent`, `lambdas_over_distinct_free_bodies_are_not_alpha_equivalent`, `lambdas_sharing_a_free_identifier_are_alpha_equivalent`, `lambdas_binding_different_numbers_of_identifiers_are_not_alpha_equivalent` | |
+| B `test_blocks_with_different_statement_counts_are_not_alpha_equivalent`, `test_block_alpha_equivalence_recurses_over_all_statements` | `blocks_with_different_numbers_of_children_are_not_alpha_equivalent`, `block_alpha_equivalence_compares_every_child_under_the_frame` | |
+| B `test_free_identifiers_*`, `test_block_free_identifiers_union_over_all_statements` | `free_identifiers_leave_out_a_bound_parameter`, `free_identifiers_hold_an_unbound_body_reference`, `free_identifiers_are_the_union_over_the_children_minus_the_bound_set` | |
+| B `test_substitute_skips_shadowed_bound_identifier`, `test_substitute_with_no_replacements_returns_self` | `substitute_leaves_a_key_the_lambda_binds_shadowed`, `substitute_with_no_applying_key_returns_the_same_handle` | the same handle, by `Arc::ptr_eq` |
+| B `test_substitute_into_body_without_capture`, `test_substitute_avoids_capture_by_renaming_binder` | `substitute_rewrites_a_free_identifier_of_the_body_in_place`, `substitute_renames_a_binder_that_would_capture_a_replacement`, `substitute_renames_only_the_parameters_a_replacement_would_capture` | |
+| B `test_binder_is_not_alpha_equivalent_to_non_binder` | `a_lambda_is_not_alpha_equivalent_to_a_variable` | |
+| B `test_non_injective_binding_is_not_alpha_equivalent` | `a_lambda_repeating_a_parameter_matches_no_lambda_on_either_side`, `a_lambda_repeating_a_parameter_is_not_alpha_equivalent_to_itself`, `a_repeated_parameter_nested_inside_a_term_makes_the_whole_term_match_nothing`, `alpha_renaming_enter_binders_refuses_a_list_that_repeats_an_identifier` (3 cases) | N-S10-2 (b) |
+| B `test_binder_is_a_term` | none | a Python protocol check |
+| A `test_binder_alpha_equivalence_*` | `lambdas_nested_over_one_name_match_the_inner_binder`, `a_lambda_refuses_to_capture_a_free_identifier`, `lambdas_swapping_their_parameters_and_arguments_are_alpha_equivalent`, `a_lambda_compares_its_free_identifiers_under_the_free_renaming` | beside S4.2's `binders_*` stories |
+| A `test_alpha_equivalence_is_reflexive`, `..._is_symmetric`, `..._is_transitive` | `alpha_equivalence_is_reflexive_on_terms_without_repeated_binders`, `alpha_equivalence_is_symmetric`, `alpha_equivalence_is_transitive_on_terms_without_repeated_binders`, `alpha_equivalence_agrees_with_the_de_bruijn_model` | reflexivity and transitivity under their precondition |
+| A `test_alpha_renaming_extend_returns_new_instance`, `..._does_not_mutate_receiver` | `alpha_renaming_extended_leaves_the_receiver_unchanged`, `alpha_renaming_extended_equals_a_clone_that_enters_the_frame`, `alpha_renaming_clones_share_frames_without_sharing_changes` | `extended` is Python's `extend` |
+| A `test_alpha_renaming_hashable` | `alpha_renaming_equal_renamings_built_in_different_orders_hash_alike`, `alpha_renaming_hash_agrees_with_equality` | S4.2 had no Rust test |
+| A `test_mapping_helper_*` (11) | `mapping_stories.rs` (11) | the order of value comparisons is new |
+| none | `alpha_renaming_views_*`, `alpha_renaming_enter_binders_*`, `a_binder_over_expressions_*`, `expression_through_the_traits_agrees_with_its_methods`, `substitution_*` | new: the views, the pairing, a binder over expressions, the traits on `Expression`, substitution laws |

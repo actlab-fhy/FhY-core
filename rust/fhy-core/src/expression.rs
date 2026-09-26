@@ -11,7 +11,6 @@ pub mod passes;
 pub mod pattern;
 pub mod registry;
 
-mod alpha;
 mod build;
 mod callee;
 mod display;
@@ -24,13 +23,9 @@ mod sort;
 mod symbol_type;
 mod wire;
 
-pub use alpha::AlphaRenaming;
 pub use callee::{Callee, FunctionName, FunctionNameError};
 pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
-pub use error::{
-    BooleanPosition, NonBooleanLogicalOperandError, NonInjectiveRenamingError, PiecewiseError,
-    RebuildError, RenamingPart,
-};
+pub use error::{BooleanPosition, NonBooleanLogicalOperandError, PiecewiseError, RebuildError};
 pub use literal::{Decimal, LiteralTextError, LiteralValue};
 pub use node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,

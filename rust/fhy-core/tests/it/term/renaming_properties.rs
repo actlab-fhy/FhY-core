@@ -1,13 +1,17 @@
 //! Property tests for `AlphaRenaming` with binder frames: correspondence is
 //! symmetric under the inverse renaming, agrees with a de Bruijn reading of
-//! the frames, and leaving a frame undoes entering it.
+//! the frames, and leaving a frame undoes entering it; the hash agrees with
+//! equality; and pairing two binder lists accepts exactly the lists of one
+//! length that repeat no identifier.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-use fhy_core::expression::AlphaRenaming;
 use fhy_core::identifier::Identifier;
+use fhy_core::term::AlphaRenaming;
 use proptest::prelude::*;
+
+use crate::support::hashing::hash_of;
 
 /// The identifiers the generated renamings map among, few enough that
 /// frames and the free renaming often share keys and images.
@@ -93,6 +97,21 @@ fn is_corresponding_by_binding_frames(
     }
 }
 
+/// Return `map` rebuilt by inserting its pairs in the reverse of its
+/// iteration order.
+fn reverse_insertion(map: &HashMap<Identifier, Identifier>) -> HashMap<Identifier, Identifier> {
+    let mut pairs: Vec<_> = map
+        .iter()
+        .map(|(key, image)| (key.clone(), image.clone()))
+        .collect();
+    pairs.reverse();
+    let mut rebuilt = HashMap::with_capacity(pairs.len());
+    for (key, image) in pairs {
+        rebuilt.insert(key, image);
+    }
+    rebuilt
+}
+
 fn build_pairs_strategy() -> impl Strategy<Value = Vec<(usize, usize)>> {
     prop::collection::vec((0..POOL.len(), 0..POOL.len()), 0..4)
 }
@@ -163,5 +182,63 @@ proptest! {
 
         prop_assert!(renaming.leave_binder());
         prop_assert_eq!(renaming, before);
+    }
+
+    /// Test two renamings built from the same pairs, in opposite orders,
+    /// are equal and hash alike, and that renamings the generator builds
+    /// equal hash alike.
+    #[test]
+    fn alpha_renaming_hash_agrees_with_equality(
+        free_pairs in build_pairs_strategy(),
+        frame_pairs in build_frames_strategy(),
+        other_free_pairs in build_pairs_strategy(),
+        other_frame_pairs in build_frames_strategy(),
+    ) {
+        let free = build_injective_map(&free_pairs);
+        let frames: Vec<_> = frame_pairs.iter().map(|pairs| build_injective_map(pairs)).collect();
+        let reordered_free: HashMap<_, _> = reverse_insertion(&free);
+        let reordered_frames: Vec<HashMap<_, _>> = frames
+            .iter()
+            .map(reverse_insertion)
+            .collect();
+        let renaming = build_renaming(&free, &frames);
+        let reordered = build_renaming(&reordered_free, &reordered_frames);
+        let other = build_renaming(
+            &build_injective_map(&other_free_pairs),
+            &other_frame_pairs.iter().map(|pairs| build_injective_map(pairs)).collect::<Vec<_>>(),
+        );
+
+        prop_assert_eq!(&renaming, &reordered);
+        prop_assert_eq!(hash_of(&renaming), hash_of(&reordered));
+        if renaming == other {
+            prop_assert_eq!(hash_of(&renaming), hash_of(&other));
+        }
+    }
+
+    /// Test `enter_binders` accepts exactly two lists of one length that
+    /// repeat no identifier, and then pushes the frame of their pairs.
+    #[test]
+    fn alpha_renaming_enter_binders_accepts_exactly_the_lists_without_repeats(
+        left in prop::collection::vec(0..POOL.len(), 0..4),
+        right in prop::collection::vec(0..POOL.len(), 0..4),
+    ) {
+        let left: Vec<Identifier> = left.into_iter().map(|index| POOL[index].clone()).collect();
+        let right: Vec<Identifier> = right.into_iter().map(|index| POOL[index].clone()).collect();
+        let is_distinct = |list: &[Identifier]| list.iter().collect::<HashSet<_>>().len() == list.len();
+        let mut renaming = AlphaRenaming::default();
+
+        let result = renaming.enter_binders(&left, &right);
+
+        let pairs = left.len() == right.len() && is_distinct(&left) && is_distinct(&right);
+        prop_assert_eq!(result.is_ok(), pairs);
+        if pairs {
+            let mut expected = AlphaRenaming::default();
+            expected
+                .enter_binder(left.iter().cloned().zip(right.iter().cloned()).collect::<HashMap<_, _>>())
+                .expect("distinct lists pair injectively");
+            prop_assert_eq!(renaming, expected);
+        } else {
+            prop_assert_eq!(renaming, AlphaRenaming::default());
+        }
     }
 }

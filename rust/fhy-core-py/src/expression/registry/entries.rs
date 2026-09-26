@@ -19,8 +19,9 @@ use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction, ComposedF
 use fhy_core::expression::registry::{
     ConstantValueError, FunctionDefinition, FunctionDefinitionError, NativeConstant, NativeFunction,
 };
-use fhy_core::expression::{AlphaRenaming, Expression, FunctionName, FunctionSort, LiteralValue};
+use fhy_core::expression::{Expression, FunctionName, FunctionSort, LiteralValue};
 use fhy_core::identifier::Identifier;
+use fhy_core::term::AlphaRenaming;
 
 use crate::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,

@@ -6,7 +6,7 @@ This crate is the Rust implementation of the `fhy_core` Python package, which re
 
 ## Modules
 
-Each module depends only on the modules listed before it, except that `expression` and `pass` are independent of each other, `expression::passes` joins them, and `solver` depends on `expression` and not on `pass`. Each public item has exactly one public path.
+Each module depends only on the modules listed before it, except that `tree` and `term` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, and `solver` depends on `expression` and not on `pass`. Each public item has exactly one public path.
 
 - `identifier`: `Identifier`, a name hint paired with a process-unique id.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical value per key.
@@ -16,6 +16,7 @@ Each module depends only on the modules listed before it, except that `expressio
 - `value_domain`: `ValueDomain`, an open, hierarchical classification of the values an operation handles. The shipped defaults are `ValueDomain::data()` and `ValueDomain::address()`.
 - `provenance`: `Position`, `Span` and `Provenance`, where a value came from.
 - `tree`: `NodeHandle` and its `NodeIdentity`, from an `Arc` or from a pointer to a foreign object, the `Tree` trait, and iterative walks (`walk_tree`) and memoized rewrites (`rewrite_tree`) over any tree-shaped IR.
+- `term`: `AlphaRenaming`, the correspondence of identifiers between two terms under comparison, and the traits of terms: `AlphaEquivalence`, `FreeIdentifiers`, `Term`, and `Binder`, which derives alpha equivalence, free identifiers and capture-avoiding substitution for a node that binds identifiers; a binder list that repeats an identifier pairs with none. `is_mapping_alpha_equivalent_under` compares identifier-keyed maps.
 - `expression`: `Expression`, its node kinds, builders, literals and analyses, and `BooleanScreen`.
   - `expression::builtins`: the catalogue of built-in functions and constants. Each constant has a fixed identifier from the reserved block (`BuiltinConstant::identifier`), so a reference to it means the same in every process.
   - `expression::registry`: the owned `FunctionRegistry` of user functions (`FunctionDefinition`), native functions (`NativeFunction`) and constants (`NativeConstant`), which implements the screen's `SortLookup`, and `FunctionRegistry::inline`, which replaces calls of composed built-ins and user functions by their bodies in time linear in the distinct nodes.

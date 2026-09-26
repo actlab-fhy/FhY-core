@@ -2,8 +2,6 @@
 //! form, text forms, built-ins, the function registry and inlining, passes,
 //! and the patterns over them.
 
-mod alpha_properties;
-mod alpha_stories;
 mod builders_stories;
 mod builtins_stories;
 mod inline_stories;

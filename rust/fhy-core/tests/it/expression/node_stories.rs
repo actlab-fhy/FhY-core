@@ -16,10 +16,11 @@ use expression_support::{
 };
 use fhy_core::expression::builtins::BuiltinFunction;
 use fhy_core::expression::{
-    AlphaRenaming, BinaryOperation, Expression, ExpressionKind, LiteralValue, LogicalOperation,
-    PiecewiseError, RebuildError, UnaryOperation,
+    BinaryOperation, Expression, ExpressionKind, LiteralValue, LogicalOperation, PiecewiseError,
+    RebuildError, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
+use fhy_core::term::AlphaRenaming;
 use hashing_support::hash_of;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};

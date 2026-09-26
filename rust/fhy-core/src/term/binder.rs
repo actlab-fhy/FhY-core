@@ -1,0 +1,289 @@
+//! The traits of terms: alpha equivalence, free identifiers, substitution,
+//! and the binders that introduce a scope.
+
+use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasher;
+
+use crate::identifier::Identifier;
+
+use super::renaming::AlphaRenaming;
+
+/// Comparison of two terms up to a consistent renaming of the identifiers
+/// they bind, and of their free identifiers by an [`AlphaRenaming`].
+///
+/// Implementations are reflexive, symmetric and transitive on terms whose
+/// binders bind each identifier once. A term that binds one identifier
+/// twice in one binder list is alpha-equivalent to no term, itself included,
+/// since [`AlphaRenaming::enter_binders`] pairs its list with none.
+pub trait AlphaEquivalence {
+    /// Return whether `self` and `other` are alpha-equivalent when their
+    /// identifiers correspond by `renaming`.
+    ///
+    /// A binder compares its scoped children under `renaming` with one more
+    /// frame pairing its bound identifiers with `other`'s; a reference asks
+    /// [`AlphaRenaming::is_corresponding`]; any other term passes `renaming`
+    /// on to its children unchanged.
+    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool;
+
+    /// Return whether `self` and `other` are alpha-equivalent with no binder
+    /// in scope, so their free identifiers correspond only to themselves.
+    fn is_alpha_equivalent(&self, other: &Self) -> bool {
+        self.is_alpha_equivalent_under(other, &AlphaRenaming::default())
+    }
+}
+
+/// A term that reports the identifiers occurring free in it.
+pub trait FreeIdentifiers {
+    /// Return the identifiers that occur in this term outside every binder
+    /// of them.
+    fn free_identifiers(&self) -> HashSet<Identifier>;
+}
+
+/// A term a [`Binder`] scopes over: it compares by alpha equivalence,
+/// reports its free identifiers, and substitutes terms for them.
+pub trait Term: AlphaEquivalence + FreeIdentifiers + Clone {
+    /// The error a substitution that would build an invalid term returns.
+    type SubstituteError;
+
+    /// Return this term with every free occurrence of a key of
+    /// `replacements` replaced by its value, simultaneously and without
+    /// capturing a free identifier of a value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubstituteError`](Self::SubstituteError) if the result
+    /// would not be a valid term.
+    fn substitute<S: BuildHasher>(
+        &self,
+        replacements: &HashMap<Identifier, Self, S>,
+    ) -> Result<Self, Self::SubstituteError>;
+}
+
+/// A node that binds identifiers over its scoped children, such as a lambda
+/// over its body or a function over its parameters.
+///
+/// An implementation gives the bound identifiers and the scoped children,
+/// and two ways to rebuild the node. The provided methods derive alpha
+/// equivalence, free identifiers and capture-avoiding substitution from
+/// them; a term type with a binder variant calls them from its
+/// [`AlphaEquivalence`], [`FreeIdentifiers`] and [`Term`] implementations.
+///
+/// # Examples
+///
+/// A lambda over one body, in a term language of variables and lambdas:
+///
+/// ```
+/// use std::collections::{HashMap, HashSet};
+/// use std::convert::Infallible;
+/// use std::hash::BuildHasher;
+///
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::term::{AlphaEquivalence, AlphaRenaming, Binder, FreeIdentifiers, Term};
+///
+/// #[derive(Debug, Clone)]
+/// enum Lambda {
+///     Var(Identifier),
+///     Lam(Lam),
+/// }
+///
+/// #[derive(Debug, Clone)]
+/// struct Lam {
+///     parameters: Vec<Identifier>,
+///     body: Vec<Lambda>,
+/// }
+///
+/// impl Binder for Lam {
+///     type Child = Lambda;
+///     type RebuildError = Infallible;
+///
+///     fn bound_identifiers(&self) -> &[Identifier] {
+///         &self.parameters
+///     }
+///
+///     fn scoped_children(&self) -> &[Lambda] {
+///         &self.body
+///     }
+///
+///     fn rename_bound_identifier(&self, old: &Identifier, new: Identifier) -> Result<Self, Infallible> {
+///         let parameters = self.parameters.iter()
+///             .map(|parameter| if parameter == old { new.clone() } else { parameter.clone() })
+///             .collect();
+///         let renamed = HashMap::from([(old.clone(), Lambda::Var(new))]);
+///         let body = self.body.iter().map(|child| child.substitute(&renamed)).collect::<Result<_, _>>()?;
+///         Ok(Lam { parameters, body })
+///     }
+///
+///     fn rebuild_with_scoped_children(&self, body: Vec<Lambda>) -> Result<Self, Infallible> {
+///         Ok(Lam { parameters: self.parameters.clone(), body })
+///     }
+/// }
+///
+/// impl AlphaEquivalence for Lambda {
+///     fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+///         match (self, other) {
+///             (Lambda::Var(left), Lambda::Var(right)) => renaming.is_corresponding(left, right),
+///             (Lambda::Lam(left), Lambda::Lam(right)) => left.is_binder_alpha_equivalent_under(right, renaming),
+///             _ => false,
+///         }
+///     }
+/// }
+///
+/// impl FreeIdentifiers for Lambda {
+///     fn free_identifiers(&self) -> HashSet<Identifier> {
+///         match self {
+///             Lambda::Var(identifier) => HashSet::from([identifier.clone()]),
+///             Lambda::Lam(lam) => lam.binder_free_identifiers(),
+///         }
+///     }
+/// }
+///
+/// impl Term for Lambda {
+///     type SubstituteError = Infallible;
+///
+///     fn substitute<S: BuildHasher>(&self, replacements: &HashMap<Identifier, Self, S>) -> Result<Self, Infallible> {
+///         match self {
+///             Lambda::Var(identifier) => Ok(replacements.get(identifier).cloned().unwrap_or_else(|| self.clone())),
+///             Lambda::Lam(lam) => Ok(Lambda::Lam(lam.substitute_avoiding_capture(replacements)?)),
+///         }
+///     }
+/// }
+///
+/// let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+/// let identity_x = Lambda::Lam(Lam { parameters: vec![x.clone()], body: vec![Lambda::Var(x.clone())] });
+/// let identity_y = Lambda::Lam(Lam { parameters: vec![y.clone()], body: vec![Lambda::Var(y.clone())] });
+/// assert!(identity_x.is_alpha_equivalent(&identity_y));
+///
+/// // Substituting `x` for `y` in `\x. y` renames the binder, so `x` stays free.
+/// let constant = Lambda::Lam(Lam { parameters: vec![x.clone()], body: vec![Lambda::Var(y.clone())] });
+/// let substituted = constant.substitute(&HashMap::from([(y, Lambda::Var(x.clone()))]))?;
+/// assert_eq!(substituted.free_identifiers(), HashSet::from([x]));
+/// # Ok::<(), Infallible>(())
+/// ```
+pub trait Binder: Clone {
+    /// The type of the scoped children.
+    type Child: Term;
+    /// The error rebuilding the node, or substituting into its children,
+    /// returns.
+    type RebuildError: From<<Self::Child as Term>::SubstituteError>;
+
+    /// Return the identifiers this node binds over its scoped children, in
+    /// order.
+    fn bound_identifiers(&self) -> &[Identifier];
+
+    /// Return the children the bound identifiers are in scope for.
+    fn scoped_children(&self) -> &[Self::Child];
+
+    /// Return this node with its bound identifier `old` renamed to `new`,
+    /// in the bound identifiers and in every scoped child.
+    ///
+    /// `new` is fresh: it occurs nowhere in the node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RebuildError`](Self::RebuildError) if the node cannot be
+    /// rebuilt.
+    fn rename_bound_identifier(
+        &self,
+        old: &Identifier,
+        new: Identifier,
+    ) -> Result<Self, Self::RebuildError>;
+
+    /// Return this node with its scoped children replaced by `children`,
+    /// positionally, and its bound identifiers unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RebuildError`](Self::RebuildError) if the node cannot be
+    /// rebuilt from `children`.
+    fn rebuild_with_scoped_children(
+        &self,
+        children: Vec<Self::Child>,
+    ) -> Result<Self, Self::RebuildError>;
+
+    /// Return whether `other` is this node up to renaming its bound
+    /// identifiers, with free identifiers corresponding by `renaming`.
+    ///
+    /// The two must bind as many identifiers and have as many scoped
+    /// children. Then each pair of children is compared under `renaming`
+    /// with one more frame pairing the bound identifiers by position
+    /// ([`AlphaRenaming::enter_binders`]); a pairing it refuses, such as a
+    /// list that repeats an identifier, is not equivalent.
+    fn is_binder_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+        let (bound, other_bound) = (self.bound_identifiers(), other.bound_identifiers());
+        if bound.len() != other_bound.len() {
+            return false;
+        }
+        let (children, other_children) = (self.scoped_children(), other.scoped_children());
+        if children.len() != other_children.len() {
+            return false;
+        }
+        let mut extended = renaming.clone();
+        if extended.enter_binders(bound, other_bound).is_err() {
+            return false;
+        }
+        children
+            .iter()
+            .zip(other_children)
+            .all(|(child, other_child)| child.is_alpha_equivalent_under(other_child, &extended))
+    }
+
+    /// Return the free identifiers of the scoped children, minus the bound
+    /// identifiers.
+    fn binder_free_identifiers(&self) -> HashSet<Identifier> {
+        let mut free = HashSet::new();
+        for child in self.scoped_children() {
+            free.extend(child.free_identifiers());
+        }
+        for bound in self.bound_identifiers() {
+            free.remove(bound);
+        }
+        free
+    }
+
+    /// Return this node with every free occurrence of a key of
+    /// `replacements` in its scoped children replaced by its value.
+    ///
+    /// A key this node binds is shadowed and does not apply. When no key
+    /// applies, the result is a clone of `self`. Otherwise each bound
+    /// identifier that is free in an applying value is first renamed to a
+    /// fresh identifier with the same name hint
+    /// ([`rename_bound_identifier`](Self::rename_bound_identifier)), so the
+    /// binder captures none of them. Then each scoped child is substituted,
+    /// and the node is rebuilt from the results.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RebuildError`](Self::RebuildError) if renaming, a child's
+    /// substitution, or rebuilding fails.
+    fn substitute_avoiding_capture<S: BuildHasher>(
+        &self,
+        replacements: &HashMap<Identifier, Self::Child, S>,
+    ) -> Result<Self, Self::RebuildError> {
+        let bound: HashSet<&Identifier> = self.bound_identifiers().iter().collect();
+        let active: HashMap<Identifier, Self::Child> = replacements
+            .iter()
+            .filter(|(identifier, _)| !bound.contains(identifier))
+            .map(|(identifier, term)| (identifier.clone(), term.clone()))
+            .collect();
+        if active.is_empty() {
+            return Ok(self.clone());
+        }
+        let mut capturable = HashSet::new();
+        for term in active.values() {
+            capturable.extend(term.free_identifiers());
+        }
+        let mut safe = self.clone();
+        for bound_identifier in self.bound_identifiers() {
+            if capturable.contains(bound_identifier) {
+                let fresh = Identifier::new(bound_identifier.name_hint());
+                safe = safe.rename_bound_identifier(bound_identifier, fresh)?;
+            }
+        }
+        let children = safe
+            .scoped_children()
+            .iter()
+            .map(|child| child.substitute(&active))
+            .collect::<Result<Vec<_>, _>>()?;
+        safe.rebuild_with_scoped_children(children)
+    }
+}
