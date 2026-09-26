@@ -16826,10 +16826,9 @@ machine with Python 3.11.13 and pytest-benchmark 5.3.0.
 - **Serialization** gains less, 1.1 to 1.6 times: each frame's envelope, and
   each type's family dispatch on decoding, stay Python.
 
-**Two rows are slower than 10%, flagged for the maintainer's verdict**
-(cross-cutting rule 5; CONTRIBUTING "Replacing a Python class"). Neither
-path has a caller in `src`, which is the kind of slowdown the direction
-accepts, but the verdict is the maintainer's:
+**Two rows are slower than 10%; the maintainer accepted both on
+2026-09-26** (cross-cutting rule 5; CONTRIBUTING "Replacing a Python
+class"). Neither path has a caller in `src`:
 
 | Benchmark | after / before | Why | Who pays it |
 |---|--:|---|---|
@@ -16932,5 +16931,5 @@ The suite is green (7,763 passed), slow tests pass (7,796), properties
 pass (282), `tests_minimal` passes (5,812 passed, 627 skipped), lint and
 mypy are clean, and the Rust gate passes (3,826; 3,858 with all features).
 Every benchmark row is faster, or within noise, except
-`get_namespace` (1.52) and `update_namespaces` (1.88), which await the
-maintainer's verdict.
+`get_namespace` (1.52) and `update_namespaces` (1.88), which the
+maintainer accepted.
