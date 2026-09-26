@@ -395,7 +395,11 @@ registry it is not append-only. S8 also adds a thread-local stack of the
 simplifications in progress (`rust/fhy-core-py/src/solver/backends.rs`),
 which hands a Python simplifier the objects of its input and environment;
 a frame lives only for its call, so the stack is empty whenever no
-simplification runs. Tests never clear a
+simplification runs. Slice S10 adds one write-once slot, the shared
+empty `AlphaRenaming` that `AlphaRenaming.empty()` returns
+(`rust/fhy-core-py/src/term/renaming.rs`), an immutable value built on
+first use, as a public class slot is; the derived-equivalence plans stay
+in the Python module's `_PLAN_CACHE` dict. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default

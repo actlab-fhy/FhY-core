@@ -70,14 +70,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.6: tests migrated, and the interface suite (57). The suite is green (7,387 passed), `-m "not very_slow"` 7,420, properties 281; see "S8.5 and S8.6 status"
   - [x] S8.7: optional extras, backend markers and the minimal-install session. `tests_minimal` passes (5,764 passed, 608 skipped); the suite 7,389 passed; see "S8.7 status"
   - [x] S8.8: benchmarks after, and docs (every solver row faster, or within 10%, after c0af152; see "S8 benchmarks")
-- [ ] S10: terms (designed; see "S10: terms")
+- [x] S10: terms (N-S10-1 resolved as (a), N-S10-2 as (b)). The suite is green (7,376 passed), slow tests pass (7,409), properties pass (281), lint and mypy are clean, and the Rust gate passes (2,872)
   - [x] N-S10-1 decided as (a), N-S10-2 as (b)
   - [x] S10.1: term benchmarks and baseline (32 rows; see "S10.1 baseline")
   - [x] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
   - [x] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
   - [x] S10.4: the Python switch
   - [x] S10.5: tests migrated, and the interface suite
-  - [ ] S10.6: benchmarks after, and docs
+  - [x] S10.6: benchmarks after, and docs
 
 ## Goal
 
@@ -7503,10 +7503,11 @@ Left for later, as the design says:
 
 ## S10: terms
 
-- **Status:** designed 2026-09-26 at ab05802. D-S10-1 to D-S10-16 apply
-  the policy the user already set and the user's direction for this slice
-  ("port the `fhy_core.term` package to Rust"). The user resolved N-S10-1
-  as (a) and N-S10-2 as (b); see "S10 resolutions".
+- **Status:** designed 2026-09-26 at ab05802, and implemented the same
+  day; see "S10 status" below. D-S10-1 to D-S10-16 apply the policy the
+  user already set and the user's direction for this slice ("port the
+  `fhy_core.term` package to Rust"). The user resolved N-S10-1 as (a) and
+  N-S10-2 as (b); see "S10 resolutions".
 - **Pattern:** the logic moves into a new core module, `fhy_core::term`,
   which takes over `AlphaRenaming` from `fhy_core::expression` and adds
   traits for alpha equivalence, free identifiers, terms and binders.
@@ -8580,3 +8581,174 @@ their arguments, exceptions from user code, native expressions and
 identifiers, repeated binder fields (scoped or not), argument types, the
 roles as `_rs.EquivalenceRole` values, and the unknown-scope text; and the
 mapping helper's order, a raising value, and a key of the wrong type.
+
+### S10 status
+
+S10 was implemented on 2026-09-26 in eight commits after the design: the
+user's decisions (e2bb157); the benchmarks and their baseline (b5ba528);
+the core module, test-first (d9bb627); the binding (e7a178b); the Python
+switch, marked breaking (6c96ec4); the new tests and the interface suite
+(4fcda7a); faster identifier and map reading, which the benchmarks called
+for (529cabb); and these docs. No test was skipped or deleted. At the end:
+`pytest` 7,376 passed, `-m "not very_slow"` 7,409 passed, the `property`
+session 281 passed, nox `lint` and `type_check` clean,
+`tests/test_rs_stub.py` green, and the Rust gate green (fmt, clippy
+`--all-targets -D warnings`, 2,872 tests, doc `-D warnings`, deny,
+`cargo +1.85 check`).
+
+### S10 benchmarks (before and after)
+
+Median time per call, from the worktree's environment, `pytest
+benchmarks/test_term.py <the three reruns> -n 0 --benchmark-only`, on the
+S0 machine with Python 3.11.13 and pytest-benchmark 5.3.0. "Before" is
+b5ba528, the S10.1 baseline's tree, exported with `git archive` under
+`target/` and built there; "after" is the S10.6 tree. The two ran three
+times each, interleaved (before, then after, in each round), with a load
+average of 3 to 8 (other builds shared the machine), and the table lists
+the best of the three medians. The "before" column agrees with the S10.1
+table within 8%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_alpha_renaming_empty` | 958 ns | 57 ns | 0.06 |
+| `test_alpha_renaming_with_free_renaming[1]` | 1.29 µs | 710 ns | 0.55 |
+| `test_alpha_renaming_with_free_renaming[50]` | 4.65 µs | 16.6 µs | 3.58 |
+| `test_alpha_renaming_extend[depth_1]` | 1.36 µs | 664 ns | 0.49 |
+| `test_alpha_renaming_extend[depth_10]` | 1.41 µs | 872 ns | 0.62 |
+| `test_alpha_renaming_resolve[frame]` | 323 ns | 171 ns | 0.53 |
+| `test_alpha_renaming_resolve[free]` | 428 ns | 204 ns | 0.48 |
+| `test_alpha_renaming_resolve[identity]` | 353 ns | 169 ns | 0.48 |
+| `test_are_identifiers_alpha_equivalent[frame]` | 462 ns | 321 ns | 0.69 |
+| `test_are_identifiers_alpha_equivalent[capture]` | 323 ns | 245 ns | 0.76 |
+| `test_alpha_renaming_eq` | 1.43 µs | 101 ns | 0.07 |
+| `test_alpha_renaming_hash` | 315 ns | 147 ns | 0.47 |
+| `test_binder_alpha_equivalence[flat]` | 5.24 µs | 2.43 µs | 0.46 |
+| `test_binder_alpha_equivalence[nested_10]` | 29.4 µs | 19.1 µs | 0.65 |
+| `test_binder_free_identifiers` | 1.28 µs | 2.58 µs | 2.01 |
+| `test_binder_substitute[no_capture]` | 2.39 µs | 3.2 µs | 1.34 |
+| `test_binder_substitute[capture]` | 8.47 µs | 9.05 µs | 1.07 |
+| `test_derived_structural_equivalence_of_a_deep_tree` | 2.18 ms | 37 µs | 0.02 |
+| `test_derived_alpha_equivalence_of_a_deep_tree` | 2.37 ms | 37.6 µs | 0.02 |
+| `test_derived_alpha_equivalence_of_binders` | 8.11 µs | 2.59 µs | 0.32 |
+| `test_derived_equivalence_over_expressions` | 17 µs | 11.1 µs | 0.65 |
+| `test_mapping_helper` | 51.3 µs | 30 µs | 0.59 |
+| `test_param_alpha_equivalence[integer]` | 32.6 µs | 5.52 µs | 0.17 |
+| `test_param_alpha_equivalence[natural_between]` | 63.6 µs | 8.53 µs | 0.13 |
+| `test_param_structural_equivalence` | 41.2 µs | 6.57 µs | 0.16 |
+| `test_param_construction_between_bounds` | 75.1 µs | 64.6 µs | 0.86 |
+| `test_constraint_structural_equivalence` | 3.84 µs | 1.3 µs | 0.34 |
+| `test_symbol_table_structural_equivalence` | 860.8 µs | 187.2 µs | 0.22 |
+| `test_expression_alpha_equivalence_under_frames[1]` | 1.45 µs | 269 ns | 0.18 |
+| `test_expression_alpha_equivalence_under_frames[10]` | 10.3 µs | 520 ns | 0.05 |
+| `test_alpha_equivalence_under_free_renaming_of_deep_trees` (rerun) | 8.95 µs | 6.63 µs | 0.74 |
+| `test_registered_function_alpha_equivalence` (rerun) | 846 ns | 658 ns | 0.78 |
+| `test_identifier_expression_construction` (rerun) | 437 ns | 372 ns | 0.85 |
+
+The hot paths the plan put at risk are faster, and the consumers are
+where S10 pays off:
+
+- **The derived engine** walks the 100-addition trees 59 to 63 times
+  faster (2.2 ms to 37 µs), a binder over a 100-operation expression 1.5
+  times, and `\x. x` against `\y. y` 3.1 times. Its consumers follow: a
+  param comparison is 5.9 to 7.5 times faster (33 to 64 µs down to 5.5 to
+  8.5 µs), a constraint comparison 3 times, and two 20-variable symbol
+  tables 4.6 times. Building a bounded param, which dedupes its constraints
+  structurally but spends most of its time elsewhere, is 14% faster.
+- **The renaming.** `resolve` and the correspondence, which hand-written
+  hooks call from Python, take 0.5 to 0.8 times as long; `extend` 0.5 to
+  0.6; `==` 14 times less and `hash` half, since both are Rust's; and
+  `empty()` returns one object. An expression compared under a framed
+  renaming no longer converts it: 5.4 times faster under one frame, 20
+  times under ten.
+- **`BinderMixin` comparisons** are 1.5 to 2.2 times faster, although the
+  core calls the Python hooks, and the mapping helper 1.7 times.
+- **The reruns.** Expressions under a free renaming and function entries
+  compare 1.3 times faster (no conversion), and identifier expressions are
+  built 15% faster, from the faster identifier reading of 529cabb.
+
+**Three rows are slower than 10%, and are recorded as accepted costs**
+(cross-cutting rule 5), for the maintainer to confirm (CONTRIBUTING
+"Replacing a Python class"):
+
+| Benchmark | after / before | Why | Who pays it |
+|---|--:|---|---|
+| `test_alpha_renaming_with_free_renaming[50]` | 3.6 | each key and value becomes a Rust identifier (about 160 ns per pair) and is kept with its Python object, where Python copied the dict into an `immutabledict` in C. One pair is 1.8 times faster | building a free renaming of many pairs: no module in `src` does; tests and benchmarks do, once per comparison |
+| `test_binder_free_identifiers` | 2.0 | the identifiers cross into Rust and back: the children's frozensets become Rust sets, and the result becomes Python objects again | `BinderMixin.get_free_identifiers`, which no module in `src` uses |
+| `test_binder_substitute[no_capture]` | 1.3 | the same crossings for the capturable set, plus a Python dict built per child call | `BinderMixin.substitute`, likewise; with a capture it is within 7% |
+
+`BinderMixin` has no consumer in `src`, and N-S10-1 (a) chose one
+implementation of its algorithms, in the core, over keeping Python's. The
+first 529cabb pass removed part of each cost: an exact `Identifier` is now
+read through its instance attributes, not its properties (98 against
+10 ns per read, measured), and a dict is iterated directly.
+
+### S10 implementation notes
+
+Choices the decisions left open, made while implementing S10.3 to S10.6,
+and where the shape differs from the plan (S10.2's are in its own notes):
+
+- **The identifier objects.** `_rs.AlphaRenaming` keeps, beside the Rust
+  renaming, a chain of tables from ids to the Python identifier objects
+  given as keys or images, one table per extension, shared between
+  renamings, and dropped on the heap so a long chain cannot overflow the
+  stack. `resolve` returns the newest object held for the image's id, or
+  its argument when nothing maps it; two equal identifiers in different
+  frames are one id, so it may return the equal object of another frame.
+  Pickling rebuilds the maps from these objects, so an unpickled renaming
+  resolves to equal identifiers.
+- **Stricter arguments (Z-2).** A key, value, resolved identifier, bound
+  identifier, reference field or replacement key that is not an
+  `Identifier` raises `TypeError` in S2's style (`AlphaRenaming key must be
+  an Identifier, got str.`, `BinderMixin bound identifier must be an
+  Identifier, got str.`, `compared_as_binder identifier must be ...`,
+  `compared_as_reference identifier must be ...`); Python accepted any
+  hashable. A mapping argument that is not a mapping raises `TypeError`.
+  A `Mock(spec=Identifier)` passes, through the properties, since only an
+  exact `Identifier` takes the attribute fast path.
+- **The shared empty renaming** is a write-once slot, recorded in
+  CONTRIBUTING's "Process-global state" section: it is immutable, like the
+  public-class slots. The derived plans stay in the Python module's
+  `_PLAN_CACHE` dict, so the engine adds no Rust static for them; a plan
+  is an unexported `_rs.EquivalencePlan` object there.
+- **The adapters' error context** (D-S10-7). Each entry function creates
+  one context for its call. A hook's exception is kept, the adapter
+  answers `false`, an empty set or an empty list, every later hook call is
+  skipped, and the entry raises the exception itself; a
+  `KeyboardInterrupt` is kept and raised the same way. The bound
+  identifiers and children are read on first use, so a comparison reads
+  them in `BinderMixin`'s order: both bound lists, the arity check, then
+  both child lists.
+- **What the adapters hand back to Python.** A child is compared under a
+  new `AlphaRenaming` object built from the core's extended renaming and
+  the objects seen so far, or under the given object when the core passes
+  the given renaming on. The results of `rename_bound_identifier` and
+  `rebuild_with_scoped_children` are not type-checked, as Python did not.
+  A fresh identifier is minted by the core (`Identifier::new`) and built
+  in Python through `Identifier.deserialize_from_dict`.
+- **Native paths.** An `_rs.Expression` whose class keeps
+  `_rs.Expression`'s method is compared by the core without calling
+  Python, in the adapters and in the derived engine; so is an exact
+  `Identifier` by id in the engine's `==`, and a nested value whose class
+  keeps `DerivedEquivalenceMixin`'s method, walked on the engine's own
+  stack. Every other value is asked in Python.
+- **The engine's capability checks** ask the value, as a
+  runtime-checkable protocol does (a `Mock` carries its attributes on the
+  instance), and the answers are cached per class for one call.
+- **A binder field that scopes over nothing** still has its pairing
+  checked, so a repeated identifier there makes the node alpha-equivalent
+  to nothing; Python checked a pairing only while extending a scoped
+  field. This is D-S10-10's "pairs with nothing" for every binder field,
+  pinned by `test_derived_binder_repeating_an_identifier_matches_nothing`.
+- **Roles.** `_rs.EquivalenceRole` has the static constructors `value`,
+  `reference`, `binder`, `excluded` and `explicit`, and the getters `kind`,
+  `key`, `scopes_over` and `comparator`, and a `repr` such as
+  `EquivalenceRole.reference()`. A binder's `scopes_over` must hold `str`s
+  (`TypeError`). An object under the metadata key that is not a role
+  compares by the default dispatch, as before.
+- **The stub.** `_rs.pyi` declares `AlphaRenaming`, `EquivalenceRole` and
+  the six functions, and types the renaming parameters of the expression,
+  tag and entry classes with the stub's `AlphaRenaming`, which is now the
+  public class.
+- **Follow-ups, not done here.** `Binder` for `FunctionDefinition` and
+  `ComposedFunction` (D-S10-14); a Rust counterpart of the derived plan
+  for Rust IR, which would be a derive macro in a second crate (D-S10-8).
