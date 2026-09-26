@@ -112,14 +112,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11b.4: the Python switch
     - [x] S11b.5: tests migrated, and the interface suite
     - [x] S11b.6: benchmarks after, and docs (every row faster; see "S11b benchmarks")
-- [ ] S14: pass verification (`verification.py` and its use from `traits/verifiable.py`; "Needs the user" is empty)
+- [x] S14: pass verification (`verification.py` and its use from `traits/verifiable.py`; "Needs the user" is empty). The suite is green (7,708 passed), slow tests pass (7,741), properties pass (282), `tests_minimal` passes (5,757 passed, 627 skipped), lint and mypy are clean, and the Rust gate passes (3,765; 3,797 with all features)
   - [x] S14 design (D-S14-1 to D-S14-12; see "S14: pass verification")
   - [x] S14.1: verification benchmarks and baseline (5 rows; see "S14.1 baseline")
   - [x] S14.2: core addition, test-first, with Rust tests (`fhy_core::pass::VerificationRegistry`, `VerifierId`; 27 new tests, see "S14.2 implementation notes")
   - [x] S14.3: the binding (the registry in the extension's module state, the pipeline verifier over it, the stubs; landed with S14.4 in cb959f5)
   - [x] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`; cb959f5)
-  - [ ] S14.5: tests migrated, and the interface suite
-  - [ ] S14.6: benchmarks after, and docs
+  - [x] S14.5: tests migrated, and the interface suite (23; see "S14.3 to S14.5 status")
+  - [x] S14.6: benchmarks after, and docs (every row faster or within noise; see "S14 benchmarks")
 
 ## Goal
 
@@ -13932,9 +13932,10 @@ measures, so the benchmarks were not rerun.
 
 ## S14: pass verification
 
-- **Status:** designed 2026-09-26 at 6aadb23 (dev-rust with S11 and S12).
-  D-S14-1 to D-S14-12 apply the policy the user already set, and "Needs
-  the user" is empty.
+- **Status:** designed 2026-09-26 at 6aadb23 (dev-rust with S11 and S12),
+  and implemented the same day; see "S14 status" below. D-S14-1 to
+  D-S14-12 apply the policy the user already set, and "Needs the user" is
+  empty.
 - **Pattern:** the registry's logic moves into a new core type,
   `fhy_core::pass::VerificationRegistry`. It is keyed by an IR kind, and
   its lookups follow a lineage of kinds that the caller gives. The
@@ -14403,3 +14404,168 @@ S11. The shape follows D-S14-2, with these choices:
 The Rust gate is green: fmt, clippy `-D warnings` both ways, 3,765 tests
 (3,797 with all features), doc `-D warnings` both ways, deny, and
 `cargo +1.85 check` both ways. Python is unchanged in this step.
+
+### S14.3 to S14.5 status
+
+S14.3 to S14.5 were implemented on 2026-09-26 in two commits. The first
+is the binding with the Python switch, marked breaking (cb959f5). The
+second is the migrated test and the new interface suite (d63092e). No test
+was skipped or deleted. At the end:
+
+- `pytest`: 7,708 passed. The interface suite adds 23 tests, from 20
+  functions.
+- `-m "not very_slow"`: 7,741 passed.
+- The `property` session: 282 passed.
+- `tests_minimal`: 5,757 passed, 627 skipped.
+- `lint` and `type_check` are clean (mypy `--strict`; `ty` stays
+  advisory), and `tests/test_rs_stub.py` is green.
+- The Rust gate is green: fmt, clippy `-D warnings` both ways, 3,765
+  tests (3,797 with all features), doc `-D warnings` both ways, deny, and
+  `cargo +1.85 check` both ways. It ran in the environment of
+  `target/gate-env.sh`, without the tooling pyenv on `PATH`.
+
+### S14 benchmarks (before and after)
+
+These are median times per call, from `.venv/bin/python -m pytest
+benchmarks/test_pass_infrastructure.py -n 0 --benchmark-only` on the S0
+machine, with Python 3.11.13 and pytest-benchmark 5.3.0.
+
+- "Before" is 59ae1eb (the S14.1 tree, before any registry change): its
+  `src` was exported with `git archive` under `target/before`, beside the
+  extension built from it, and put first on `PYTHONPATH`.
+- "After" is the S14.5 tree.
+- The two ran three times each, interleaved, at a load average of 12 to
+  18, and the table lists the best of the three medians. The whole file
+  was rerun, since every pipeline runs the registry verifier by default.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_verification_registry_register_again` | 762 ns | 637 ns | 0.84 |
+| `test_verification_registry_get_passes_for` | 1.05 µs | 573 ns | 0.55 |
+| `test_verifiable_mixin_verify` | 11.5 µs | 3.2 µs | 0.27 |
+| `test_run_verification` | 12.7 µs | 5.2 µs | 0.41 |
+| `test_pass_manager_run_with_verification` | 33.1 µs | 29.5 µs | 0.89 |
+| `test_pass_manager_run_of_5_passes` | 25.7 µs | 22.5 µs | 0.87 |
+| `test_pass_manager_run_of_50_passes` | 211.8 µs | 193.0 µs | 0.91 |
+| `test_pass_manager_fixpoint_group_of_10_iterations` | 46.0 µs | 37.9 µs | 0.82 |
+| `test_analysis_preserved_across_5_passes` | 34.9 µs | 32.5 µs | 0.93 |
+| `test_mixed_pipeline_over_a_deep_expression` | 49.1 µs | 46.7 µs | 0.95 |
+| `test_validation_manager_validate_of_10_validators` | 151.9 µs | 153.5 µs | 1.01 |
+| `test_compiler_pass_execute` | 2.6 µs | 2.6 µs | 1.00 |
+| `test_compiler_pass_call` | 2.1 µs | 2.2 µs | 1.01 |
+| `test_compiler_pass_execute_with_every_hook_overridden` | 3.9 µs | 3.8 µs | 0.98 |
+| `test_compiler_pass_execute_skipped` | 2.7 µs | 2.6 µs | 0.96 |
+| `test_compiler_pass_execute_failing` | 53.4 µs | 52.8 µs | 0.99 |
+| `test_compiler_pass_report_of_100_diagnostics` | 1.81 ms | 1.80 ms | 0.99 |
+| `test_compiler_pass_create` | 543 ns | 524 ns | 0.96 |
+| `test_analysis_manager_cache_hit` | 760 ns | 732 ns | 0.96 |
+
+Every row is faster, or within noise (at most 1.01). No row is slower by
+more than 10%, so the design stands and no cost needs accepting
+(cross-cutting rule 5):
+
+- **The registry.** A lookup costs 0.57 µs instead of 1.05 µs: one call
+  into `_rs`, the `__mro__` read and hash lookups, instead of a Python
+  walk under a lock. An idempotent registration costs 0.64 µs instead of
+  0.76 µs, most of it the DEBUG call the classmethod keeps.
+- **Verification** runs 2.5 to 3.6 times faster. `run_verification` and
+  the default `verify()` no longer build a Python `ValidationManager` or
+  construct `Identifier`s in Python. They make one call into Rust, which
+  builds each check and runs it as `ValidationManager.validate` would.
+- **Pipelines** are 5 to 18% faster. The registry verifier no longer calls
+  the Python `get_passes_for` for the input and for each changed output.
+  The pipelines without registered passes gain too, since they paid for
+  that call on every verification.
+- **Unchanged rows.** The single-pass, validation and diagnostic rows run
+  code S14 does not change. Their ratios of 0.96 to 1.01 are the noise of
+  this load.
+
+### S14 implementation notes
+
+These are the choices the decisions left open, made while implementing
+S14.3 to S14.5, and the places where the shape differs from the plan:
+
+- **S14.3 and S14.4 landed in one commit.** Moving the pipeline's
+  registry verifier onto the Rust registry broke pipeline verification
+  for as long as Python still registered into its own dict: nine tests of
+  `test_verification.py` failed with the binding alone. The binding and
+  the switch are therefore one commit, cb959f5, as S9.5 allowed for a
+  small switch.
+- **Module layout.** `rust/fhy-core-py/src/pass/verification.rs` holds
+  the module-state class (`VerificationRegistryState`, not exported from
+  `_rs`), the three functions, the checks built by a lookup, and the
+  registry verifier, which moved there from `validation.rs`.
+  `validation.rs` shares `run_check` and a new `fail_validator` with it;
+  `fail_validator` is the failure path that `PythonValidator` used alone
+  before.
+- **The state** is a `RegistryState`: the core's
+  `VerificationRegistry<usize, PyIr>`, keyed by the address of the IR
+  type, plus two maps of `Arc<Py<PyType>>`. One maps each id to its pass
+  class, and the other each kind to its IR type, and both keep those
+  objects alive.
+  - A registration first checks `ids_for([&kind])` for the id, so an
+    idempotent registration changes and clones nothing. A new one
+    mutates the state through `Arc::make_mut` under the lock, which
+    clones it only when a lookup still holds the old version.
+  - The factories and the maps never call Python while the lock is held.
+  - The binding reaches the attribute through a `PyOnceLock` import cache
+    of `fhy_core._rs._verification_registry`.
+- **The lineage** is PyO3's `PyType::mro()`, the type's `tp_mro`, which is
+  what `__mro__` returns, reversed.
+- **Checks built by a lookup** (D-S14-6).
+  - A check that was built is the S6 `PythonPass` run through the
+    four-hook `run_check`.
+  - A check that could not be built keeps the exception and is named
+    after the class's `get_pass_name()`, then its `__name__`, then
+    `verification pass`. Its `validate` fails through `fail_validator`,
+    which logs the core's synthesized text with the exception, as a
+    failing `Validator` does. It also records an exception that is not an
+    `Exception`, so the run's boundary raises it.
+  - An object that the class returns but that is not a pass counts as a
+    construction failure too.
+  - The registry verifier stops at an interrupt, before the next check.
+- **The arguments.** The binding checks `issubclass(pass_class,
+  CompilerPassBase)`, the Rust base every `CompilerPass` has. A non-class
+  is named by its `repr`, as `getattr(..., '__qualname__', repr(...))`
+  did. `register_verification` is unchanged: its own check runs before
+  `register_pass`, so a class that is not a pass is registered in
+  neither registry.
+- **`verification.py`** no longer imports `ValidationManager` or `Lock`,
+  and `VerificationRegistry` has no `ClassVar`s.
+  `VerificationAnalysis.run` and `run_verification` both call
+  `_rs.run_verification`, so the analysis still caches per node in a
+  pipeline.
+- **`traits/verifiable.py`** imports `_rs` at the top, beside
+  `fhy_core.error`, and calls it through the module, so a test can patch
+  `_rs.get_verification_passes_for` and `_rs.run_verification`.
+
+Tests migrated in S14.5 (`test_verification.py` is `F`). Every other test
+kept its name and meaning; none was skipped or deleted.
+
+| Test | Now | Reason |
+|---|---|---|
+| F `test_verifiable_subclass_caches_positive_instantiation_result` | same name | D-S14-10: it patches `_rs.get_verification_passes_for`, the lookup `VerifiableMixin` calls, instead of `VerificationRegistry.get_passes_for` |
+
+The new `tests/pass_infrastructure/test_verification_rust_binding.py`
+(23 tests) covers the test plan's interface suite, with one exception: it
+has no registration for `object`, since that pass would run on every IR
+of every other test in the process and would make every
+`VerifiableMixin` subclass instantiable. The diamond test covers the
+reversed `__mro__` instead.
+
+### S14 status
+
+S14 was implemented on 2026-09-26 on port/s14-pass-verification, on top
+of dev-rust at dfd940a, in these commits:
+
+- the design (2e6ef1d, 6aadb23, 368985f);
+- the benchmarks and baseline (59ae1eb);
+- the core addition (473345a);
+- the binding with the switch (cb959f5);
+- the tests (d63092e);
+- these notes.
+
+The suite is green (7,708 passed), slow tests pass (7,741), properties
+pass (282), `tests_minimal` passes (5,757 passed, 627 skipped), lint and
+mypy are clean, and the Rust gate passes (3,765; 3,797 with all features).
+Every benchmark row is faster, or within noise.
