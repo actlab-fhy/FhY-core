@@ -97,7 +97,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver), with the migrated tests (`pytest` 7,576 passed)
   - [x] S12.6: tests migrated, and the interface suite (21; see "S12.5 and S12.6 status")
   - [x] S12.7: benchmarks after, and docs (every row faster or within 10%; see "S12 benchmarks")
-- [ ] S11: types, in two parts (see "S11: types"; "Needs the user" is empty)
+- [x] S11: types, in two parts (see "S11: types"; "Needs the user" is empty). S11a's three slower rows (`==` and `hash` of a type, a frame's hash; T-1's structural semantics) await the maintainer's acceptance; see "S11a benchmarks"
   - [x] S11a: lattice, poset, the type representations and the dispatchers. The suite is green (7,611 passed), slow tests pass (7,644), properties pass (282), `tests_minimal` passes (5,701 passed, 626 skipped), lint and mypy are clean, and the Rust gate passes (3,492; 3,524 with all features)
     - [x] S11a.1: type, lattice and poset benchmarks, and the baseline (41 rows; see "S11a.1 baseline")
     - [x] S11a.2: core additions, test-first, with Rust tests (`fhy_core::lattice`; `fhy_core::types`: the core types, promotion, the classes, the extension traits, the environment, binding, substitution and unification; 216 new tests, see "S11a.2 implementation notes")
@@ -105,13 +105,13 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11a.4: the Python switch, and `networkx` out of the dependencies
     - [x] S11a.5: tests migrated, and the interface suites
     - [x] S11a.6: benchmarks after, and docs (every row faster or within 10% except `==` and `hash` of a type and a frame's hash, T-1's structural semantics; see "S11a benchmarks")
-  - [ ] S11b: type checking
+  - [x] S11b: type checking. The suite is green (7,644 passed), slow tests pass (7,677), properties pass (282), `tests_minimal` passes (5,734 passed, 626 skipped), lint and mypy are clean, and the Rust gate passes (3,586; 3,618 with all features)
     - [x] S11b.1: type-checking benchmarks, and the baseline (13 rows; see "S11b.1 baseline")
     - [x] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
     - [x] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
     - [x] S11b.4: the Python switch
     - [x] S11b.5: tests migrated, and the interface suite
-    - [ ] S11b.6: benchmarks after, and docs
+    - [x] S11b.6: benchmarks after, and docs (every row faster; see "S11b benchmarks")
 
 ## Goal
 
@@ -11840,7 +11840,8 @@ workflow's new steps first run on the next pull request.
 
 ## S11: types
 
-- **Status:** designed 2026-09-26 at c93f76f. D-S11-1 to D-S11-25 apply
+- **Status:** designed 2026-09-26 at c93f76f, and implemented the same
+  day; see "S11a status" and "S11b status" below. D-S11-1 to D-S11-25 apply
   the policy the user already set and the user's direction for this slice:
   port the order utilities and the `fhy_core.types` package to Rust, as
   much as possible, with small slowdowns on uncalled paths accepted.
@@ -13677,7 +13678,7 @@ Where the shape differs from D-S11-20's sketch, or fills it in:
   sweep checks the composed built-ins in catalogue order and then the
   registry's functions in registration order, as Python's sweep over
   `get_registered_entries()` did.
-- **Tests.** `tests/it/types/checking/`: `checker_stories.rs` (76,
+- **Tests.** `tests/it/types/checking/`: `checker_stories.rs` (80,
   counting `rstest` cases), `sort_stories.rs` (4), `body_stories.rs` (8)
   and `checker_properties.rs` (1), plus one doc test.
 
@@ -13787,3 +13788,112 @@ framed; the sort tables' answers and argument checks, the literal texts;
 the body pass with a custom resolver, its text and cause, mismatched
 parameter sorts; the sweep's levels, source, messages and order; and a
 10,000-level expression.
+
+### S11b status
+
+S11b was implemented on 2026-09-26 in six commits after S11a: the
+benchmarks and their baseline (662b8a2); the core's
+`fhy_core::types::checking`, test-first (593cd6f); the binding (e8d9cd5);
+the Python switch, marked breaking (22318f5); the migrated tests and the
+interface suite (61439ad); and these docs. No test was skipped or deleted
+without a rewrite. At the end: `pytest` 7,644 passed, `-m "not very_slow"`
+7,677 passed, the `property` session 282 passed, `tests_minimal` 5,734
+passed and 626 skipped, nox `lint` and `type_check` clean,
+`tests/test_rs_stub.py` green, and the Rust gate green: fmt, clippy
+`--all-targets -D warnings` with and without `--all-features`, 3,586 tests
+and 3,618 with all features (the `z3` feature against the z3-solver
+wheel's libz3 4.16, as S8.3 builds it), doc `-D warnings`, the
+public-paths checks, deny, and `cargo +1.85 check` with and without the
+`z3` feature. Every benchmark row is faster (see "S11b benchmarks").
+
+### S11b benchmarks (before and after)
+
+Median time per call of `benchmarks/test_type_checking.py` with the two
+reruns (`benchmarks/test_registry.py::test_check_all_registered_function_bodies`
+and `benchmarks/test_term.py::test_symbol_table_structural_equivalence`),
+`pytest <those> -n 0 --benchmark-only`, on the S0 machine with Python
+3.11.13 and pytest-benchmark 5.3.0. "Before" is 662b8a2, the S11b.1
+baseline's tree, exported with `git archive` under `target/` and built
+there; "after" is the S11b.5 tree. The two ran three times each,
+interleaved, with a load average of about 2, and the table lists the best
+of the three medians; the "before" column agrees with the S11b.1 table
+within 5%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_check_all_registered_function_bodies` | 1.22 ms | 10.9 µs | 0.01 |
+| `test_check_expression_type[literal_into_int8]` | 8.09 µs | 955 ns | 0.12 |
+| `test_check_expression_type[x_plus_1]` | 15.7 µs | 1.68 µs | 0.11 |
+| `test_check_registered_function_body` | 44.7 µs | 4.9 µs | 0.11 |
+| `test_expression_type_checker_pass_call` | 22.2 µs | 3.55 µs | 0.16 |
+| `test_symbol_table_structural_equivalence` | 134.3 µs | 124.6 µs | 0.93 |
+| `test_synthesize_expression_type[identifier]` | 4.16 µs | 752 ns | 0.18 |
+| `test_synthesize_expression_type[x_plus_1]` | 19.5 µs | 1.55 µs | 0.08 |
+| `test_synthesize_expression_type_of_the_deep_tree` | 1.12 ms | 38.2 µs | 0.03 |
+| `test_synthesize_of_calls` | 499.0 µs | 21 µs | 0.04 |
+| `test_synthesize_of_index_arithmetic` | 24.5 µs | 6.25 µs | 0.25 |
+| `test_synthesize_with_a_python_resolver` | 24.9 µs | 2.83 µs | 0.11 |
+| `test_type_error_of_a_failing_check` | 14.2 µs | 4.18 µs | 0.29 |
+
+**Verdict:** every row is faster, none slower than 10%, so no row needs the
+maintainer. The deep tree, about 200 nodes with 51 identifier
+references, takes 38 µs, most of it the Python lookup calls and reading
+their results; a call node costs about 1 µs through the registry's fast
+path, and the sweep no longer calls Python at all. The index row keeps the most Python work: building
+the shifted index type's bound expressions as Python objects. The
+symbol-table row does not run the checker, and is unchanged within noise.
+
+### S11b implementation notes
+
+Choices the decisions left open, made while implementing S11b.3 to
+S11b.6, and where the shape differs from the plan (S11b.2's are in its own
+notes):
+
+- **`visit` stays, as an alias of `synthesize`.** `ExpressionTypeChecker`
+  lost its `visit_*` hooks (D-S11-20), but `visit(expression)`, the
+  public entry `VisitablePass` gave it, is kept: 71 tests and any caller
+  that treated the checker as a visitor call it, and it is no per-node
+  hook, so the subclass refusal, which matches `visit_*` as S9's does,
+  leaves it alone.
+- **The identifier objects.** The lookup receives the caller's own
+  `Identifier` objects: on the first lookup the binding walks the
+  expression's Python children once, each shared node once, and maps each
+  identifier reference's id to its object. An identifier the tree does not
+  hold, which the checker never asks for, would be built through
+  `Identifier.deserialize_from_dict`. `KeyError`, and so
+  `EntryLookupError`, means unbound, as before. The result must be a
+  `tuple` of a `Type` and a `TypeQualifier`; Python unpacked any
+  two-element iterable, and a list is now a `TypeError` (T-15).
+- **The fast path** is taken when the resolver `is` the registry's
+  `get_registered_entry`. An unknown name there raises the error the
+  Rust `get_registered_entry` raises, so a deferred call's
+  `EntryLookupError` and a framed error's text are the same as through a
+  Python resolver that delegates to it. The framed text quotes the lookup
+  error's message, `call to unknown function 'f': No entry is registered
+  under the name 'f'.`, where Python interpolated the `KeyError`'s quoted
+  `repr`.
+- **Custom resolvers** are called with the callee's name, a built-in's
+  included, as Python passed `function_name`. The entry's sorts are read
+  from the Rust entry classes, `read_call_target` in the registry binding;
+  a result that is no entry raises `TypeError` through the lookup's error
+  path.
+- **Body checks.** `RegisteredFunctionBodyTypeChecker.check` is one
+  `_rs.types_check_function_body` call. Its `EntryRegistrationError`
+  carries the core's lowercase text, ``function 'f' body failed to
+  type-check: ...``, where Python wrote `Function 'f' body ...` with a
+  final period (T-4), and keeps the checker's `FhYCoreTypeError` or
+  `NotImplementedError`, or the lookup's `EntryLookupError`, as its
+  `__cause__`, as Python's `raise ... from` did. Parameters and sorts of
+  different lengths raise `ValueError`, as Python's `zip(strict=True)`
+  did. The sweep builds its `ValidationReport` in Rust.
+- **Literal helper.** `get_core_data_type_from_literal_type` keeps
+  refusing a `str` with `NotImplementedError`, in the binding, since a
+  Rust literal is never a string (S11b.2); its texts are lowercase,
+  `string literals are not yet supported` and ``unsupported literal type:
+  <class 'list'>``.
+- **The registry binding** lends `read_call_target`, `read_sort` and
+  `RegistryState`, and the node binding `PyExpression::children`, now
+  `pub(crate)`.
+- **Not done here, as planned:** a serde form of `Type` and `DataType`
+  (D-S11-16); iterative chasing of an expression-binding chain deeper than
+  the stack (S11a.2's notes).
