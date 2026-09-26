@@ -1916,7 +1916,6 @@ class ConstraintSystem:
     @override
     def __delattr__(self, name: str) -> None: ...
 
-
 class ImportSymbolTableFrame(_SymbolTableFrame):
     def __init__(self, name: Identifier) -> None: ...
     @override
