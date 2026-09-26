@@ -80,7 +80,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S10.6: benchmarks after, and docs
 - [ ] S9: the expression evaluators (designed; see "S9: the expression evaluators")
   - [x] N-S9-1 decided as (a), N-S9-2 as (b) (2026-09-26; see "S9 resolutions")
-  - [ ] S9.1: evaluator benchmarks and baseline
+  - [x] S9.1: evaluator benchmarks and baseline (26 rows; see "S9.1 baseline")
   - [ ] S9.2: core additions, test-first, with Rust tests (`fhy_core::expression::evaluate`: the values, the kernels, the walk, the fold; `Decimal::to_f64_exact`)
   - [ ] S9.3: the `ndarray` cargo feature and the array backend
   - [ ] S9.4: the evaluator binding (the rust-numpy conversions, the fold's adapter, the built-in implementations, the stubs)
@@ -9632,6 +9632,62 @@ Where a decision follows an earlier slice's decision or note, it says so.
   `numpy` crate), with a comment naming this slice. It is the only
   license S9's crates add: `ndarray`, `libm` and rust-numpy's other
   dependencies are MIT or Apache-2.0.
+
+### S9.1 baseline (2026-09-26, da8a9c1 plus the new benchmarks)
+
+`benchmarks/test_evaluate.py` implements the benchmark plan above. The
+piecewise row has a second case, `guarded-1e6`, the guarded
+`floor(sqrt(x))` the plan names beside it. The integer row draws `int64`s
+in [-10^6, 10^6), and the deep-tree rows bind floats in [0, 1).
+
+Median time per call, from `.venv/bin/python -m pytest
+benchmarks/test_evaluate.py <the rerun rows> -n 0 --benchmark-only` in the
+worktree's own environment (the release build uv installs), measuring
+today's Python evaluators and formatter. The machine is the S0 one, with
+Python 3.11.13, NumPy 2.4.6 and pytest-benchmark 5.3.0. The load average
+was below 1.6, and the table lists the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_evaluate_expression_of_a_builtin_native_call` | 10.3 µs |
+| `test_evaluate_expression_of_a_user_native_call` | 7.4 µs |
+| `test_evaluate_expression_of_the_deep_tree` | 196 µs |
+| `test_evaluate_expression_of_nested_native_calls` | 37.7 µs |
+| `test_evaluate_expression_of_constant_references` | 397 µs |
+| `test_evaluate_with_numpy_of_scalars[poly]` | 30.7 µs |
+| `test_evaluate_with_numpy_of_scalars[sigmoid]` | 55.6 µs |
+| `test_evaluate_with_numpy_of_scalars[deep_tree]` | 484 µs |
+| `test_evaluate_with_numpy_of_arrays[poly-1e3]` | 35.5 µs |
+| `test_evaluate_with_numpy_of_arrays[poly-1e6]` | 6.71 ms |
+| `test_evaluate_with_numpy_of_arrays[exp-1e6]` | 890 µs |
+| `test_evaluate_with_numpy_of_arrays[tanh-1e6]` | 1.76 ms |
+| `test_evaluate_with_numpy_of_arrays[sigmoid-1e6]` | 5.83 ms |
+| `test_evaluate_with_numpy_of_arrays[piecewise-1e6]` | 12.85 ms |
+| `test_evaluate_with_numpy_of_arrays[guarded-1e6]` | 20.42 ms |
+| `test_evaluate_with_numpy_of_arrays[integer-1e6]` | 19.99 ms |
+| `test_evaluate_with_numpy_of_arrays[logical-1e6]` | 2.02 ms |
+| `test_evaluate_with_numpy_of_arrays[deep_tree-1e4]` | 758 µs |
+| `test_evaluate_with_numpy_of_float32_arrays` | 1.67 ms |
+| `test_evaluate_with_numpy_with_unused_bindings` | 42.1 µs |
+| `test_pretty_formatter_of_the_deep_tree` | 246 µs |
+| `test_evaluate_after_inline` | 62.1 µs |
+| `test_mixed_pipeline_over_a_deep_expression` | 286 µs |
+| `test_pformat_expression_of_deep_tree[symbolic]` | 8.3 µs |
+| `test_pformat_expression_of_deep_tree[functional]` | 7.8 µs |
+| `test_pformat_expression_of_deep_tree[show_id]` | 10.1 µs |
+
+- **The fold** costs 10 µs for one built-in call and 7 µs for a user
+  native; the walk over the 191-node deep tree 196 µs, and the sum of 100
+  constant references 397 µs, a Python visitor call per occurrence.
+- **Scalar environments** cost 31 µs for the polynomial and 484 µs for
+  the deep tree: a Python visitor call and a NumPy call per node.
+- **Arrays.** The million-element polynomial takes 6.7 ms, NumPy's four
+  temporaries; `exp` and `tanh` are NumPy's SIMD kernels, 0.9 and 1.8 ms.
+  The piecewise rows take 13 and 20 ms: two `numpy.where`s per case, the
+  non-finite masks and the casts. The integer row takes 20 ms, NumPy's
+  integer floor division and modulo.
+- **The formatter** takes 246 µs over the deep tree, where
+  `pformat_expression` takes 8 µs.
 
 ### Steps
 
