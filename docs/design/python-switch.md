@@ -106,7 +106,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11a.5: tests migrated, and the interface suites
     - [x] S11a.6: benchmarks after, and docs (every row faster or within 10% except `==` and `hash` of a type and a frame's hash, T-1's structural semantics; see "S11a benchmarks")
   - [ ] S11b: type checking
-    - [ ] S11b.1: type-checking benchmarks, and the baseline
+    - [x] S11b.1: type-checking benchmarks, and the baseline (13 rows; see "S11b.1 baseline")
     - [ ] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
     - [ ] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
     - [ ] S11b.4: the Python switch
@@ -13588,4 +13588,47 @@ notes):
 - **Not done here, as planned:** a serde form of `Type` and `DataType`
   (D-S11-16); iterative chasing of an expression-binding chain deeper than
   the stack (S11a.2's notes).
+
+### S11b.1 baseline (2026-09-26, 5209ed0 plus the new benchmarks)
+
+`benchmarks/test_type_checking.py` implements S11b's benchmark plan. The
+identifiers are looked up through a dict's `__getitem__`; the call row
+compares 20 calls, alternating the built-in `max` and a registered user
+function; the Python-resolver row resolves through a function that calls
+`get_registered_entry`, so it is not the registry's own lookup; the error
+row fails to check `x + 1.5` against `int32` and catches the error. The
+table reruns the S7 sweep row and the S10 symbol-table row.
+
+Median time per call, from `.venv/bin/python -m pytest
+benchmarks/test_type_checking.py <the two reruns> -n 0 --benchmark-only`
+in the worktree's environment, measuring the Python checker over S11a's
+Rust types, whose promotion already runs in Rust (S11a.1 measured
+`synthesize_expression_type` of `x + 1` at 276 µs and the deep tree at
+33 ms, over the Python promotion). The machine is the S0 one, with Python
+3.11.13 and pytest-benchmark 5.3.0; the load average was about 2, and the
+table lists the best of three runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_check_all_registered_function_bodies` | 1.2 ms |
+| `test_check_expression_type[literal_into_int8]` | 7.81 µs |
+| `test_check_expression_type[x_plus_1]` | 15.5 µs |
+| `test_check_registered_function_body` | 43 µs |
+| `test_expression_type_checker_pass_call` | 21.9 µs |
+| `test_symbol_table_structural_equivalence` | 130.7 µs |
+| `test_synthesize_expression_type[identifier]` | 4.11 µs |
+| `test_synthesize_expression_type[x_plus_1]` | 19.2 µs |
+| `test_synthesize_expression_type_of_the_deep_tree` | 1.14 ms |
+| `test_synthesize_of_calls` | 492.6 µs |
+| `test_synthesize_of_index_arithmetic` | 24.3 µs |
+| `test_synthesize_with_a_python_resolver` | 23.9 µs |
+| `test_type_error_of_a_failing_check` | 13.6 µs |
+
+- **The walk** costs about 11 µs a node over the deep tree: the checker's
+  Python recursion, its context-manager frames, and a Python call per
+  identifier.
+- **Calls** cost 25 µs each, mostly the registry lookup and the entry's
+  sorts read through Python.
+- **The body checks** cost 43 µs for one body, and the sweep 1.2 ms over the
+  built-ins' bodies.
 
