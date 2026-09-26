@@ -55,6 +55,8 @@ from fhy_core.term import DerivedEquivalenceMixin
 from fhy_core.traits import FrozenMixin
 from fhy_core.utils.override import override
 
+from .members import ConstraintMember, MemberCollection
+
 _LOGGER = get_logger(__name__)
 """The logger the Rust binding writes this module's records to."""
 
@@ -299,6 +301,17 @@ class Constraint(
     def __str__(self) -> str: ...
 
 
+def _copy_attributes(instance: object, public: type, native: type, *names: str) -> None:
+    """Copy the attributes `names` of `instance` from its Rust class into its slots.
+
+    Called by a leaf's ``__init__``, after the Rust class built the value:
+    the slot descriptors of the public class shadow the Rust class's
+    getters, so an attribute read afterwards is a slot read.
+    """
+    for name in names:
+        getattr(public, name).__set__(instance, getattr(native, name).__get__(instance))
+
+
 @register_serializable(type_id="equation_constraint")
 class EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable):
     """Boolean-expression predicate over the expression's free identifiers.
@@ -338,7 +351,12 @@ class EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable):
 
     """
 
-    __slots__ = ()
+    # The attributes are copied into slots on construction, so reading one
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("expression",)
+
+    def __init__(self, expression: Expression) -> None:
+        _copy_attributes(self, EquationConstraint, _rs.EquationConstraint, "expression")
 
 
 @register_serializable(type_id="in_set_constraint")
@@ -371,7 +389,16 @@ class InSetConstraint(_rs.InSetConstraint, WrappedFamilySerializable):
 
     """
 
-    __slots__ = ()
+    # The attributes are copied into slots on construction, so reading one
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("members", "values", "variable")
+
+    def __init__(
+        self, variable: Identifier, values: "MemberCollection[ConstraintMember]"
+    ) -> None:
+        _copy_attributes(
+            self, InSetConstraint, _rs.InSetConstraint, "members", "values", "variable"
+        )
 
 
 @register_serializable(type_id="not_in_set_constraint")
@@ -389,7 +416,21 @@ class NotInSetConstraint(_rs.NotInSetConstraint, WrappedFamilySerializable):
 
     """
 
-    __slots__ = ()
+    # The attributes are copied into slots on construction, so reading one
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("members", "values", "variable")
+
+    def __init__(
+        self, variable: Identifier, values: "MemberCollection[ConstraintMember]"
+    ) -> None:
+        _copy_attributes(
+            self,
+            NotInSetConstraint,
+            _rs.NotInSetConstraint,
+            "members",
+            "values",
+            "variable",
+        )
 
 
 # The leaves are registered, not derived: `Constraint`'s bases carry an

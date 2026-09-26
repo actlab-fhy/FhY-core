@@ -22,7 +22,7 @@ from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
 from fhy_core.traits import FrozenMixin
 
-from .core import Constraint
+from .core import Constraint, _copy_attributes
 
 _LOGGER = get_logger(__name__)
 """The logger the Rust binding writes this module's records to."""
@@ -108,7 +108,12 @@ class ConstraintSystem(_rs.ConstraintSystem, WrappedFamilySerializable):
     disagree on a system the screens refuse but substitution decides.
     """
 
-    __slots__ = ()
+    # The members are copied into a slot on construction, so reading them
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("constraints",)
+
+    def __init__(self, constraints: tuple[Constraint, ...]) -> None:
+        _copy_attributes(self, ConstraintSystem, _rs.ConstraintSystem, "constraints")
 
 
 FrozenMixin.register(ConstraintSystem)
