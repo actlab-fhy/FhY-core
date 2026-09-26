@@ -569,18 +569,21 @@ impl PySymbolTable {
         Ok(table)
     }
 
-    /// Pickle as the class, called with no arguments, and a state of the
+    /// Pickle as a new instance of the class, made without calling its
+    /// `__init__`, as `copyreg.__newobj__` makes one, and a state of the
     /// namespaces and the instance dictionary of a subclass.
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+        static NEW_OBJECT: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
         let py = slf.py();
         let instance_dict = match slf.getattr(intern!(py, "__dict__")) {
             Ok(instance_dict) => instance_dict,
             Err(_no_dict) => py.None().into_bound(py),
         };
         let state = PyTuple::new(py, [slf.borrow().state(py)?.into_any(), instance_dict])?;
-        Ok((slf.get_type(), PyTuple::empty(py), state))
+        let new_object = NEW_OBJECT.import(py, "copyreg", "__newobj__")?.clone();
+        Ok((new_object, PyTuple::new(py, [slf.get_type()])?, state))
     }
 
     /// Restore the table from the state `__reduce__` returned, without

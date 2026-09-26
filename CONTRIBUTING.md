@@ -492,6 +492,10 @@ affected types document this; decoding is not ordered to prevent it.
   once per such node it meets, since only Python can answer for a class
   Python defines; a class without a handler takes the core's default rule
   with no call into Python.
+  The third is `fhy_core.symbol_table` (D-S15-9): the core table asks a
+  frame Python defines, a `SymbolTableFrame` subclass, its own
+  `is_structurally_equivalent` and `serialize_to_dict` once per such frame
+  it holds, and reads its `name` once when it is added.
 - Keep no fallback. The package requires the extension: importing
   `fhy_core` raises `ImportError` when `fhy_core._rs` is missing, fails to
   import, or does not match the package version (`fhy_core._extension`).
