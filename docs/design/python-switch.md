@@ -112,6 +112,14 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11b.4: the Python switch
     - [x] S11b.5: tests migrated, and the interface suite
     - [x] S11b.6: benchmarks after, and docs (every row faster; see "S11b benchmarks")
+- [ ] S14: pass verification (`verification.py` and its use from `traits/verifiable.py`). Design in progress, paused 2026-09-26; see "S14 resume notes"
+  - [ ] S14 design finished (the TODO sections completed; "Needs the user" checked)
+  - [ ] S14.1: verification benchmarks and baseline
+  - [ ] S14.2: core addition, test-first, with Rust tests (`fhy_core::pass::VerificationRegistry`, `VerifierId`)
+  - [ ] S14.3: the binding (the registry in the extension's module state, the pipeline verifier over it, the stubs)
+  - [ ] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`)
+  - [ ] S14.5: tests migrated, and the interface suite
+  - [ ] S14.6: benchmarks after, and docs
 
 ## Goal
 
