@@ -95,7 +95,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S12.3: the `sympy` cargo feature and `SympySimplifier`, with its stories and the CI changes (144 new tests; see "S12.2 and S12.3 status")
   - [x] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs; see "S12.4 status")
   - [x] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver), with the migrated tests (`pytest` 7,576 passed)
-  - [ ] S12.6: tests migrated, and the interface suite
+  - [x] S12.6: tests migrated, and the interface suite (21; see "S12.5 and S12.6 status")
   - [ ] S12.7: benchmarks after, and docs
 
 ## Goal
@@ -11564,3 +11564,65 @@ rustdoc write SymPy without backticks.
 - **Nothing in Python uses the class yet.** `pytest` has 7,556 passed, and
   the Rust gate passes. `cargo test --workspace` now runs the SymPy
   stories: 3,420 tests.
+
+### S12.5 and S12.6 status
+
+**The Python switch** (1d4f7db, marked breaking) made `passes/sympy.py` thin
+Python over `_rs.SympySimplifier`:
+
+- `SympySimplifier` is the native class.
+- A module-level backend is loaded at import, which publishes the prelude.
+- The three registered passes call `lower`, `substitute_symbols` and `lift`.
+- The four functions keep their signatures, screens and phases.
+- `solver.py` registers the class with `Simplifier`, and resolves
+  `SolverBackend.SYMPY` to one backend.
+- The default solver holds a native `SympySimplifier()` in place of
+  `_DeferredSimplifier`, which is deleted.
+- The bridge no longer imports `native_lowering`.
+- The Python README's solver row names the Rust backend, and
+  CONTRIBUTING's table maps the bridge to `fhy_core::solver`.
+
+Only `test_sympy_pass.py` failed collection. The same commit migrates it,
+since the migration is small. The whole suite passed:
+
+- `pytest`: 7,576 passed;
+- `-m "not very_slow"`: 7,609 passed.
+
+The interface suite, `tests/symbolic/expression/passes/test_sympy_rust_binding.py`
+(21 tests), covers:
+
+- **The class:** its registration, frozenness, finality, name, `repr` and
+  pickle.
+- **The unavailable path:** in a subprocess without SymPy, construction
+  imports nothing, and a question raises `SolverBackendUnavailableError`,
+  whose cause is the `ImportError`.
+- **The native path:** a profile hook sees no frame of `passes/sympy.py`
+  during a `Solver`'s simplification.
+- **Registry constants:** a user constant is read from the registry.
+- **The methods:** they agree with the bridge's functions.
+- **Every row of D-S12-11:** the pass names of wrapped failures, the
+  unwrapped screen and bound-constant errors, the mapped lifting
+  exceptions, the `Implies` warning, a raw `sympy.simplify` failure, and a
+  `KeyboardInterrupt` passing through.
+- **Pickles:** lowered `round` and piecewise nodes pickle in the process,
+  and load in a fresh one once the bridge is imported.
+- **Resolution:** `SolverBackend.SYMPY` resolves to one object, and the
+  default solver holds a native backend.
+- **Threads:** eight threads share one backend.
+
+Tests migrated. None was skipped or deleted without a rewrite:
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_sympy_pass.py`'s imports of `_NATIVE_FUNCTION_LOWER`, `_NATIVE_CONSTANT_LOWER`, `_NATIVE_CONSTANT_LIFT` and `_ParityOpaquePiecewise` | `_PARITY_OPAQUE_PIECEWISE`, the type of a lowered piecewise | D-S12-1 deletes the Python tables and class |
+| `test_native_lookup_table_item_assignment_raises_type_error` (3) | `test_every_native_builtin_has_a_sympy_lowering` (19), `test_every_builtin_constant_lowers_and_lifts_as_itself` (4) | the tables are Rust matches, which cannot be mutated, so their coverage is pinned instead |
+| `test_sympy_converter_visit_literal_unsupported_value_raises` | `test_sympy_lowering_refuses_a_value_that_is_no_expression` | no Python visitor (Y-S12-2); the boundary refuses a non-expression |
+| `test_sympy_two_argument_helper_rejects_wrong_arg_count` | same name | through `convert_expr`, since `_convert_pow` is gone; the core's lowercase text (Y-S12-3) |
+| `test_sympy_to_expression_convert_commutative_op_zero_arg_returns_identity` (2), `..._one_arg_unwraps` (2) | same names | through `convert_expr`, since `_convert_add` and `_convert_mul` are gone |
+| the four unsupported-type `match=` tests, and the two `Implies` tests | same names | the core's lowercase phrases (Y-S12-3) |
+| `test_simplify_expression_raises_when_the_unsimplified_form_is_partial` | `test_simplify_expression_keeps_the_input_when_simplify_leaves_a_partial_piecewise` | Y-S12-6: patching the Python module's lowering no longer reaches the backend, and the lowering never builds a partial piecewise, so a partial form can only come from `sympy.simplify`, where the fallback keeps the input |
+| none | `test_sympy_rust_binding.py` (21) | the interface suite |
+
+`test_sympy_natives.py`, `test_sympy_pass_properties.py`,
+`test_cross_cutting.py`, the solver suites, and the constraint and param
+tests pass unchanged. At the end: `pytest` 7,597 passed.
