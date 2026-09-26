@@ -88,6 +88,15 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S9.6: tests migrated, and the interface suite
   - [x] S9.7: after the rebase onto S8: the `numpy` marker, `tests_minimal` without NumPy, and the README. `tests_minimal` passes (5,646 passed, 626 skipped)
   - [x] S9.8: benchmarks after, and docs (every row faster or within 10% except `float32` arrays, 1.62, an accepted cost, accepted by the maintainer; see "S9 benchmarks")
+- [ ] S12: the Rust SymPy simplifier backend (designed 2026-09-26; see "S12: the Rust SymPy simplifier backend")
+  - [ ] N-S12-1 decided
+  - [ ] S12.1: SymPy benchmarks and baseline, on today's Python adapter
+  - [ ] S12.2: the simplify context carries the function registry (core, test-first)
+  - [ ] S12.3: the `sympy` cargo feature and `SympySimplifier`, test-first, with the CI changes
+  - [ ] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs)
+  - [ ] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver)
+  - [ ] S12.6: tests migrated, and the interface suite
+  - [ ] S12.7: benchmarks after, and docs
 
 ## Goal
 
@@ -10356,3 +10365,1003 @@ Choices the decisions left open, made while implementing S9.5 to S9.8
 - **Without NumPy**, the 27 test functions S9.7 marks are the only
   unmarked ones that reached NumPy; they failed the same way before S9,
   since the Python evaluator raised the same `ImportError`.
+
+## S12: the Rust SymPy simplifier backend
+
+- **Status:** designed 2026-09-26 at c93f76f. D-S12-1 to D-S12-18 apply
+  the policy the user already set, the precedent of S8 to S10, and the
+  user's direction in "Plan after S7", item 2: a Rust `Simplifier` over
+  SymPy through pyo3, behind an off-by-default `sympy` cargo feature of
+  `fhy-core`, with pyo3 optional and without `auto-initialize`, which the
+  Python binding then uses too, so one copy of the mapping is left. N-S12-1
+  needs the user. Nothing is implemented yet.
+- **Pattern:** the lowering to SymPy, the simplify call with its
+  workarounds, and the lifting back move into the core, as
+  `fhy_core::solver::SympySimplifier` under the feature. In Python it
+  becomes a Rust implementation of the P3 `Simplifier` ABC, as
+  `SmtLib2ProcessSolver` is of `SmtSolver`. `passes/sympy.py` keeps its
+  public names as thin Python over it.
+- **Scope.** `src/fhy_core/symbolic/expression/passes/sympy.py` and the
+  sympy wiring of `symbolic/solver.py`. This supersedes "Plan after S7",
+  item 3 ("the sympy adapter stays, but only for Python"), which described
+  S8. The rest of the solver, and the z3 adapter, are unchanged.
+- **Coordination.** S9 (the evaluators) and S11 (types) run in parallel,
+  and this branch is rebased onto `dev-rust` after S9 lands. "Coordination
+  with S9 and S11" below lists the shared files and the one S9 item S12
+  uses.
+
+### Survey: the Python API
+
+**`passes/sympy.py` (1,715 lines)** imports `sympy` at module level
+and raises `SolverBackendUnavailableError` without it (D-S8-16). It
+exports four names and registers three passes:
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `ExpressionToSympyConverter` | `VisitablePass[Expression, Any]`, `fhy_core.symbolic.expression.to_sympy` | the lowering: one `visit_*` method per node kind, class tables of operators, and the static `format_identifier` (`<name_hint>_<id>`) |
+| `SympyVariableSubstitutionPass(replacements)` | `CompilerPass`, `...substitute_sympy_variables` | a simultaneous, `xreplace`-like substitution of sympy symbols that keeps every Boolean position Boolean |
+| `SymPyToExpressionConverter` | `CompilerPass`, `...from_sympy` | the lifting: `convert`, `convert_expr`, `convert_bool` and `convert_relational` over three first-match dispatch tables |
+| `convert_expression_to_sympy_expression(expression)` | function | `validate_logical_operands`, then the converter pass |
+| `substitute_sympy_expression_variables(sympy_expression, environment)` | function | refuses a bound native constant free in the expression (`NativeConstantBindingError`), lowers each value, runs the substitution pass |
+| `convert_sympy_expression_to_expression(sympy_expression)` | function | the lifting pass |
+| `SympySimplifier` | Python `Simplifier` (S8) | lowers, runs `_try_simplify_sympy_expression`, lifts; `name` is `"sympy"` |
+
+`fhy_core.symbolic.expression` re-exports the three functions lazily
+(PEP 562), and `solver.py` resolves `SolverBackend.SYMPY` to a cached
+`SympySimplifier()` (`_resolve_adapter`). The default solver holds
+`_DeferredSimplifier(SYMPY)`, a Python backend that resolves the adapter
+on its first question and delegates to it, so `import fhy_core` imports no
+sympy.
+
+**The mapping.**
+
+- **Lowering.** `bool` to `sympy.true`/`false`; `int` to `Integer`;
+  `float` to `Float` (a non-finite one to `oo`, `-oo` or `nan`); a
+  `Decimal` to the exact `Rational` (through `Fraction`).
+  - An identifier becomes `Symbol("<name_hint>_<id>")`, and a native
+    constant's canonical identifier its value: `pi`, `E`, `oo` and `nan`
+    for the built-ins, and a user constant's `bool`, `int` or `float` value
+    as a sympy number.
+  - The operators are `operator.*`, except `FLOOR_DIVIDE` as `floor(x/y)`,
+    `LOGICAL_NOT` as `sympy.Not`, and `And`/`Or` as the sympy constructors,
+    never the bitwise `&`/`|`.
+  - A piecewise becomes a `_ParityOpaquePiecewise` with a final `True`
+    branch, built with `evaluate=False`.
+  - The 19 native built-ins lower through `_NATIVE_FUNCTION_LOWER`
+    (`round` through the `sympy.Function` `_SYMPY_ROUND`, whose `eval` hook
+    folds only an integer argument).
+  - Any other call is refused with a `TypeError`, whose text depends on
+    what the registry says the name is: an expression-bodied function
+    ("call `inline_functions` first"), a constant, a native function
+    without a lowering, or unknown.
+- **Lifting**, in order: the constants (`oo`, `nan`, `pi`, `E`; `-oo` as
+  the negation of `inf`); the 15 native function classes; `Pow(x, 1/2)` as
+  `sqrt`; then the dispatch.
+  - `Add` and `Mul` fold to the right; `Mod` and `Pow` are binary.
+  - `Integer` becomes an `int` literal and `Float` a `float` literal. A
+    `Rational` becomes the decimal-string literal of its value when its
+    decimal expansion ends and a binary `float` equals it (through
+    `native_lowering.is_decimal_text_exactly_binary`), and `DIVIDE` of its
+    numerator and denominator otherwise; a negative one is negated.
+  - A `Symbol` becomes the identifier restored from its name. A name
+    without `_` raises `RuntimeError`.
+  - `Xor`, `Nor`, `Nand` and `ITE` lift through their definitions;
+    `Implies` logs a WARNING and raises `NotImplementedError`.
+  - `zoo` raises `ComplexInfinityLiftError`, and a piecewise without a
+    final `True` raises `PartialPiecewiseError`.
+- **The workarounds**, each pinned by tests:
+  1. `_ParityOpaquePiecewise`, a `sympy.Piecewise` subclass. It hides
+     parity, since SymPy 1.14's `Mul._eval_is_integer` misjudges a
+     quotient of a known-even value. Its `eval` refuses to leave a partial
+     piecewise, and its `_eval_simplify` rebuilds plain piecewise nodes
+     as itself.
+  2. A Boolean piecewise is expanded into connectives
+     (`_convert_piecewise_to_sympy_boolean`) wherever SymPy needs a
+     `Boolean`. This avoids both `ITE` routes, which drop branches.
+  3. An `Eq`/`Ne` of a symbol and a relational has its symbol side
+     negated and its relation inverted.
+  4. A piecewise inside a piecewise condition is folded.
+  5. A piecewise is folded out of a relational whose piecewise has a bare
+     symbol in a Boolean position. The fold's `TypeError` becomes
+     `_UnfoldableRelationalError`.
+  6. A piecewise is folded out of `Mod`, `floor` and `ceiling`.
+  7. While `sympy.simplify` runs, each comparison between Booleans is
+     masked as a `Dummy`.
+  8. During substitution, the Boolean positions of each rebuilt node are
+     converted.
+- **Best effort.** `PrecisionExhausted`, `_UnfoldableRelationalError`, and
+  a simplified result holding a partial piecewise each keep the
+  unsimplified form, with a DEBUG log. Every other failure propagates.
+- **Errors, by phase.**
+  - The screen's `NonBooleanLogicalOperandError` is raised unwrapped.
+  - A failure while lowering, substituting or lifting runs inside a pass,
+    so it arrives as `PassExecutionError` with the cause: a `TypeError`
+    from SymPy, `ComplexInfinityLiftError` or `PartialPiecewiseError`.
+  - A failure of `sympy.simplify` itself propagates raw.
+  - `simplify_expression(..., backend=SYMPY)` sees the same, through the
+    adapter.
+- **Every walk is recursive Python.** The lowering is a visitor call per
+  node, and the workarounds are `sympy.replace` calls with Python lambdas.
+
+**Where the time goes.** This was one `timeit` probe of today's adapter,
+under load, not a baseline:
+- `simplify_expression` of `x < 10` with `x` bound took 99 µs.
+- The adapter's own `simplify` took 42 µs of that:
+  - lowering the ground comparison, 20 µs;
+  - the workaround pipeline, 19 µs, wrapped around a cached
+    `sympy.simplify` of 2.6 µs;
+  - the rest was lifting.
+- The remainder of the 99 µs was the facade, the substitution and the
+  deferred adapter's extra hop through Python.
+- Lowering the 100-operation deep tree of `test_expression.py` took
+  916 µs, and lifting it back 137 µs.
+
+### Survey: the Rust API
+
+- **`Simplifier`** (`solver/backend.rs`, D-S8-3 with S8.2's note):
+  `name()` and `simplify(&Expression, &SimplifyContext<'_>) ->
+  Result<Expression, BackendError>`, `Send + Sync + Debug`.
+  `SimplifyContext` is a `Copy` struct with private fields, so it can grow.
+  Today it carries only `&dyn SortLookup`, which gives the sorts of native
+  constants and call results, but not a constant's value or what kind of
+  entry a name is.
+- **`Solver::simplify(expression, environment, sorts: &dyn SortLookup)`**
+  screens, refuses a bound native constant, substitutes, and builds the
+  context from `sorts`. The binding calls it detached, with the registry
+  snapshot of S7 as the `SortLookup`, and materializes the result beside
+  the input (`materialize_substituted`) unless a Python simplifier
+  returned the object.
+- **What the lowering and lifting need exists:**
+  - `LiteralValue` (`Bool`, `Int(BigInt)`, `Float(f64)`, `Decimal`, with
+    `coefficient()` and `exponent()`);
+  - `BuiltinConstant::of_identifier`, `identifier()` and `value()`, and
+    `BuiltinFunction` with its 19 natives;
+  - `FunctionRegistry::constant(&Identifier)`, which holds the value, and
+    `entry(name)`, which gives the entry's kind;
+  - `Identifier::try_restore(id, name_hint)`, and
+    `BooleanScreen::check_logical_operands`.
+- **From S9:**
+  - `Decimal::to_f64_exact() -> Option<f64>`, which is
+    `is_decimal_text_exactly_binary`'s rule computed without text;
+  - `fhy_core::expression::evaluate`, a Rust oracle for the properties.
+- **The binding's backends** (`fhy-core-py/src/solver/backends.rs`):
+  - `SimplifierBase`, and the Python adapter `PythonSimplifier`, which
+    attaches once per question;
+  - `build_simplifier`, which wraps any `SimplifierBase` instance in that
+    adapter;
+  - `SmtLib2ProcessSolver`, the model of a native backend: an `extends =
+    SmtSolverBase` pyclass holding the core value, which a `Solver` calls
+    without Python.
+- **The binding's error mapping** (`solver/error.rs`) downcasts a
+  backend's `BackendError`. A `PyErr` is raised as itself, and anything
+  else becomes `SolverBackendError`.
+- **Nothing in the core touches Python.** CONTRIBUTING says
+  `rust/fhy-core` "never depends on PyO3" and "the core crate never holds
+  Python objects". The user's direction revises both for the feature
+  (D-S12-2).
+
+### Survey: pyo3 0.29 and embedding
+
+Checked on crates.io and in the 0.29.2 sources on 2026-09-26:
+
+- **Versions.** pyo3 0.29.2 (2026-08-05) is the latest release, and the
+  lock file's. Its `rust-version` is 1.83, below the crate's MSRV of 1.85.
+  Python 3.8 is the minimum, and 3.13t is dropped in favor of 3.14t.
+  `pyo3-ffi` declares `links = "python"`, so a build graph holds exactly
+  one pyo3-ffi, and so one pyo3 minor version.
+- **Features.** `default = ["macros"]`, and `auto-initialize` is a
+  separate opt-in. `extension-module` is deprecated. `pyo3-build-config`
+  leaves libpython unlinked when `PYO3_BUILD_EXTENSION_MODULE` is set,
+  which maturin 1.9.4 and later do for a wheel build. So a plain `cargo
+  build` or `cargo test` links libpython, and a wheel does not. Its
+  `num-bigint` feature targets num-bigint 0.4, while the crate uses 0.5.
+- **The interpreter.**
+  - `Python::attach` panics when the interpreter is not initialized and
+    `auto-initialize` is off.
+  - `Python::try_attach` returns `None` in that case, and also while the
+    interpreter finalizes or during a GC traversal.
+  - `Python::initialize()` is a safe function. It initializes with signal
+    handling disabled, and does nothing if Python is already running.
+  - `py.detach` releases the GIL.
+  - `Py<T>` is `Send + Sync`. It is `Clone` only with the `py-clone`
+    feature, which `clone_ref(py)` replaces.
+  - Dropping a `Py<T>` while not attached queues the decref.
+  - `PyOnceLock<T>` is a GIL-aware once-cell that can be a struct field.
+  - `PyCFunction::new_closure` turns a `Fn + Send + 'static` Rust closure
+    into a Python callable, and needs no `macros`.
+  - `PyModule::from_code` runs source through `PyImport_ExecCodeModuleEx`,
+    which puts the module in `sys.modules`.
+- **Finding the interpreter at build time:** `PYO3_PYTHON`, then an active
+  virtualenv, then `python`, then `python3` on `PATH`.
+  - Dynamic embedding needs that Python's shared libpython at link time,
+    and at run time on the loader's path.
+  - SymPy must be importable by the embedded interpreter. An embedded
+    interpreter does not read a virtualenv's `pyvenv.cfg`, so a venv's
+    site-packages reach it only through `PYTHONPATH`.
+- **Probes on this machine**, in `target/scratch`, with one binary that
+  embeds Python, imports SymPy and simplifies `x + x - x`:
+  - **The known issue, reproduced.** With the tooling pyenv's
+    `python3.11` (deadsnakes 3.11.13, `Py_ENABLE_SHARED=1` but no
+    `libpython3.11.so` installed) the link fails: `rust-lld: error: unable
+    to find library -lpython3.11`.
+  - **The system `python3.10`** ships `libpython3.10.so`. A venv of it with
+    sympy 1.14, as `PYO3_PYTHON`, links. The binary runs with that venv's
+    site-packages on `PYTHONPATH`, and fails with `ModuleNotFoundError`
+    without it.
+  - **A uv-managed CPython 3.11.16** ships `lib/libpython3.11.so`. It
+    links, and runs with `LD_LIBRARY_PATH` set to that `lib`.
+  - **`Python::try_attach` before `Python::initialize()`** returns `None`,
+    without a panic.
+  - **Feature unification**, in a two-member scratch workspace where `b`
+    enables `a/extra`: `cargo test -p a` builds `a` without `extra`, and
+    `cargo test --workspace` builds it with `extra`.
+
+### Consumers and tests
+
+| File | Lines | Functions | Collected | What changes |
+|---|--:|--:|--:|---|
+| `expression/passes/test_sympy_pass.py` | 4,659 | 141 | 627 | imports three private tables and `_ParityOpaquePiecewise`; 50 calls of `convert_expr`, `convert_bool` or `convert_relational`; one `visit_literal_expression`; four `monkeypatch.setattr(sympy, "simplify", ...)`, which the backend must keep reaching; one patch of `convert_expression_to_sympy_expression`, which it cannot; texts matched by `match=` |
+| `expression/passes/test_sympy_pass_properties.py` | 304 | 6 | 6 | none expected |
+| `expression/test_sympy_natives.py` | 426 | 21 | 59 | `test_lowered_round_node_lifts_after_a_pickle_round_trip` (Y-S12-1) |
+| `expression/test_cross_cutting.py` | 193 | 6 | 20 | the registrations stay |
+| `symbolic/test_solver.py` | | | | `test_simplify_expression_matches_direct_bridge_pipeline` compares with `SympySimplifier` |
+| `symbolic/test_solver_rust_binding.py` | | | | the adapter identity, `name`, availability, the default solver's simplifier name and the lazy imports keep holding |
+| constraint and param tests | | | 351 (S8 probe) | reach sympy through the default solver; unchanged |
+
+`test_native_stories.py` and `test_piecewise_properties.py` import the
+bridge inside their tests. Markers stay as S8.7 set them: a test marked
+`sympy` still reaches SymPy.
+
+**Benchmarks:** `benchmarks/test_solver.py` has four simplification
+rows (the ground comparison, `x + x - x`, the equation constraint, the
+nat param) and the import row. Nothing measures the bridge functions on
+their own.
+
+### Divergences visible from Python
+
+| # | Python today | After S12 |
+|---|---|---|
+| Y-S12-1 | the `round` function and the parity-opaque piecewise class live in `passes/sympy.py`, so a pickle of a lowered expression holding either loads wherever `fhy_core` is installed | they live in the core's prelude module `_fhy_core_sympy` (D-S12-7). A pickle holding either loads in a process where a SymPy backend has loaded, which importing `passes.sympy` does. A pickle written before S12 names the old module path and no longer loads |
+| Y-S12-2 | `ExpressionToSympyConverter` is a `VisitablePass` with `visit_*` methods and operator tables | a thin `CompilerPass` over the core; `format_identifier`, `get_noop_output` and the registration stay (D-S12-10) |
+| Y-S12-3 | error texts of the Python bridge (`Unsupported node type: ...`, `Cannot lower an expression-bodied function call ...`) | the core's one-line lowercase texts, keeping the phrases the tests match; the classes and the `PassExecutionError` wrapping stay (D-S12-11) |
+| Y-S12-4 | a real user constant holding a decimal would lower to `sympy.Float` of it | its exact `Rational`, as a decimal literal lowers (D-S4-1) |
+| Y-S12-5 | a tree deeper than Python's recursion limit raises `RecursionError` in the bridge's own walks | the lowering, lifting and substitution walks keep their work on the heap; SymPy's own recursion is unchanged |
+| Y-S12-6 | patching `passes.sympy.convert_expression_to_sympy_expression` changes what `SympySimplifier` lowers | the backend calls no function of the Python module; patching `sympy.simplify` still reaches it (D-S12-8) |
+| Y-S12-7 | `SympySimplifier` is a Python class, which a user can subclass | a native class, frozen and not subclassable, registered with `Simplifier`, as `SmtLib2ProcessSolver` is |
+| Y-S12-8 | the default solver's simplifier is `_DeferredSimplifier`, a Python backend | a native `SympySimplifier`, which imports SymPy on its first question |
+| Y-S12-9 | the best-effort cases log at DEBUG on the bridge's logger | not logged: the core does not log (D-S8-14). The `Implies` WARNING stays, written by the binding |
+
+Unchanged in meaning:
+- every lowered form, simplification result and lifted form, the
+  best-effort cases included;
+- the symbol naming;
+- the exception classes, and the phases that wrap them;
+- the lazy imports;
+- the markers.
+
+### Pattern choice
+
+- **The mapping goes to Rust.** The user's direction places the lowering,
+  the simplify call with its workarounds, and the lifting in a Rust
+  `Simplifier`, and wants one copy of the mapping. So the Python bridge
+  keeps no walk of its own.
+- **P3, Rust implementation.**
+  - `_rs.SympySimplifier` is an `#[pyclass(extends = SimplifierBase,
+    frozen)]` holding an `Arc` of the core backend. It is registered with
+    the `Simplifier` ABC.
+  - `build_simplifier` recognizes it and hands the `Solver` the core
+    value, so a question runs from the facade into SymPy with no Python
+    hop.
+  - The granularity rule holds: no user Python code is called per node.
+    The backend's own per-node calls into SymPy are its lowering, as the
+    z3 crate's are libz3's.
+- **Plain Python over `_rs`:** the four public names, the three
+  registered passes, the import guard and the texts that name pip extras
+  stay in `passes/sympy.py`.
+- **One Python file in the core.** SymPy is extended by subclassing and by
+  hook functions, which only Python code can define. That file is a small
+  prelude the backend loads (D-S12-7).
+
+### Decisions (proposed 2026-09-26)
+
+Each names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ.
+- D-S4-2: Python names where the meaning is the same.
+- "No fallback".
+- "Tests rewritten, not skipped".
+- The crate's conventions in `rust-workspace.md` Part I:
+  - one public path per item, and the layering (§I.2);
+  - `#[non_exhaustive]` errors with one-line lowercase `Display` (I.3
+    rule 3), and the naming rules (I.3 rule 5);
+  - every change allowed but classified (I.3 rule 6, since the crate is
+    unpublished);
+  - no global state beyond identity, and MSRV 1.85.
+- The binding patterns, and cross-cutting rules 5 to 7.
+- "The direction": the user's choice in "Plan after S7", item 2, and this
+  slice's brief.
+
+Where a decision follows an earlier slice's decision or note, it says so.
+
+- **D-S12-1: one mapping, in the core; no fallback** ("no fallback";
+  the direction; D-S8-1).
+  - These are deleted from `passes/sympy.py`:
+    - the tables `_NATIVE_FUNCTION_LOWER`,
+      `_NATIVE_FUNCTION_LIFT_DISPATCH`, `_NATIVE_CONSTANT_LOWER` and
+      `_NATIVE_CONSTANT_LIFT`;
+    - `_SYMPY_ROUND` and `_ParityOpaquePiecewise`;
+    - every helper of the lowering, lifting, substitution and workaround
+      walks;
+    - the visitor and dispatch bodies;
+    - the Python `SympySimplifier` class.
+  - `solver.py` loses `_DeferredSimplifier`.
+  - `passes/sympy.py` stops importing `native_lowering`.
+  - The Python API that stays is D-S12-10's.
+- **D-S12-2: pyo3 in the core, behind the `sympy` feature** (the
+  direction; crate conventions).
+  - The workspace table becomes `pyo3 = { version = "0.29",
+    default-features = false }`. The binding asks for `features =
+    ["macros"]`. The core gains `pyo3 = { workspace = true, optional =
+    true }` and `[features] sympy = ["dep:pyo3"]`.
+  - One entry in the workspace table keeps both crates on one version.
+    `links = "python"` would refuse two versions anyway.
+  - The core needs no pyo3 feature. `intern!`, `PyOnceLock` and
+    `PyCFunction::new_closure` need no `macros`. pyo3's `num-bigint`
+    feature is left off, since it targets num-bigint 0.4; the backend
+    converts a `BigInt` through `i64` or decimal text, as the binding's
+    `big_int_to_python` does.
+  - pyo3 is a public dependency under the feature, since `lower` and
+    `lift` take pyo3 types (D-S12-4). The crate README says so.
+  - The feature leaves the MSRV at 1.85, since pyo3 0.29 needs 1.83.
+  - CONTRIBUTING changes in two places:
+    - "Porting to Rust" now says that `rust/fhy-core` depends on PyO3
+      only under the off-by-default `sympy` feature;
+    - "Canonical values keep their identity in Python" now says that the
+      core holds no Python objects outside that feature's
+      `SympySimplifier`, which holds its SymPy handles.
+- **D-S12-3: the binding enables `fhy-core/sympy`** (the direction;
+  D-S9's `ndarray` precedent).
+  - `fhy-core-py` depends on `fhy-core` with `features = ["sympy"]`,
+    beside S9's `"ndarray"`.
+  - Cargo unifies features over the packages a command selects (the
+    probe above):
+    - every workspace build (`cargo build`, `clippy`, `doc` and `test
+      --workspace`) compiles the backend and its stories;
+    - `cargo test -p fhy-core`, `golden_expanded`, the packaged-crate test
+      and docs.rs build the default features.
+  - In a wheel, maturin sets `PYO3_BUILD_EXTENSION_MODULE`, so the one
+    pyo3 in the extension links no libpython. The core's backend then
+    attaches to the host interpreter, as the binding does.
+  - The rejected alternative was a binding feature that maturin enables
+    through `[tool.maturin] features`. It would keep plain workspace tests
+    free of SymPy, but it puts `cfg` branches in the binding, and a build
+    without the feature leaves `SolverBackend.SYMPY` without a backend.
+    N-S12-1 treats the test-time consequence.
+- **D-S12-4: the core's public API** (crate conventions; D-S8-9's
+  shape for `Z3Solver`). Everything below is under `#[cfg(feature =
+  "sympy")]` in a new private `solver/sympy.rs` (with `sympy/load.rs`,
+  `lower.rs`, `lift.rs`, `simplify.rs`, `error.rs` and `prelude.py`),
+  and each item has the one path `fhy_core::solver::X`. S12.3 settles the
+  sketch test-first, as D-S8-2's was:
+
+  ```rust
+  #[derive(Debug, Default)]
+  #[non_exhaustive]
+  pub struct SympySimplifier { /* PyOnceLock<Handles>: the sympy module, cached classes, the prelude */ }
+  impl SympySimplifier {
+      pub fn new() -> Self;                                         // loads nothing
+      pub fn with_embedded_python() -> Self;                        // Python::initialize(), then new()
+      pub fn load(&self) -> Result<(), SympyUnavailableError>;      // import SymPy and the prelude now
+      pub fn lower<'py>(&self, py: Python<'py>, expression: &Expression,
+          context: &SimplifyContext<'_>) -> Result<Bound<'py, PyAny>, SympyError>;
+      pub fn lift(&self, object: &Bound<'_, PyAny>) -> Result<Expression, SympyError>;
+      pub fn simplify_object<'py>(&self, object: &Bound<'py, PyAny>) -> Result<Bound<'py, PyAny>, SympyError>;
+      pub fn substitute<'py>(&self, object: &Bound<'py, PyAny>,
+          environment: &HashMap<Identifier, Expression>, context: &SimplifyContext<'_>)
+          -> Result<Bound<'py, PyAny>, SympyError>;
+      pub fn substitute_symbols<'py>(&self, object: &Bound<'py, PyAny>,
+          replacements: &Bound<'py, PyDict>) -> Result<Bound<'py, PyAny>, SympyError>;
+  }
+  impl Simplifier for SympySimplifier { /* name "sympy"; attach, lower, simplify_object, lift */ }
+
+  #[non_exhaustive] pub enum SympyUnavailableError { NoInterpreter, MissingSympy(PyErr) }
+  #[non_exhaustive] pub enum SympyPhase { Lowering, Simplification, Substitution, Lifting }
+  #[non_exhaustive] pub enum SympyError {
+      Unavailable(SympyUnavailableError),
+      IllTyped(NonBooleanLogicalOperandError),         // the screen of `lower`
+      CallNeedsInlining(Callee), ConstantCalled(FunctionName),
+      NoSympyLowering(FunctionName), UnknownFunction(FunctionName),
+      ConstantValueUnknown(Identifier),                // a context without a registry
+      BoundNativeConstant(Vec<Identifier>),            // `substitute`
+      ComplexInfinity, PartialPiecewise(String), UnsupportedNode(String),
+      Implies, UnnamedSymbol(String),
+      Python { phase: SympyPhase, source: PyErr },     // an exception SymPy raised
+  }
+  impl SympyError { pub fn phase(&self) -> SympyPhase; }
+  ```
+
+  - `lower` runs `BooleanScreen::check_logical_operands` with the
+    context's sorts first, as `SmtScript::lower` runs its checks. The
+    facade has screened already, and `Simplifier::simplify` lowers
+    without repeating the screen.
+  - `simplify_object` is the best-effort simplification of D-S12-8, from
+    SymPy to SymPy. `substitute` is `substitute_sympy_expression_variables`,
+    and `substitute_symbols` is the substitution pass. The Python API
+    reaches the mapping through these, so it has one copy.
+  - The `Simplifier` implementation attaches once, then lowers,
+    simplifies and lifts. It returns a `SympyError` boxed as the
+    `BackendError`, which the binding downcasts.
+  - `SympySimplifier` is `Send + Sync`, since its handles are `Py`s, and
+    it is not `Clone`, since cloning a `Py` needs the GIL. The binding
+    shares it behind an `Arc`.
+  - Every `Display` is one lowercase line naming the node or name. The
+    texts keep the phrases the Python message tests match, as D-S7-12's
+    did.
+- **D-S12-5: no interpreter, no SymPy, and the embedding helper** (the
+  direction: pyo3 without `auto-initialize`; "no fallback"; crate
+  conventions: no global state, D-S8-15).
+  - **Nothing initializes Python implicitly.**
+    - Every entry point attaches through `Python::try_attach`. With no
+      interpreter it answers `SympyUnavailableError::NoInterpreter`, and
+      never panics.
+    - A failing `import sympy` answers `MissingSympy`, holding the
+      `ImportError`.
+    - Either one reaches a `Solver` as `SolveError::Backend`, at query
+      time, never as a degraded answer.
+  - **Loading is lazy and per value.**
+    - `new()` imports nothing, so the Python default solver can hold one
+      without importing SymPy at `import fhy_core` (D-S8-16).
+    - The first operation loads SymPy's module, the classes the lifting
+      dispatches on, and the prelude into the value's `PyOnceLock`.
+      Only success is kept, so a later call retries a failed import, as
+      `functools.cache` retries today's `_resolve_adapter`.
+  - **The capability query** is `load()`: `Ok` means that simplification
+    can run. The binding's `is_backend_available(SYMPY)` keeps its
+    meaning over it.
+  - **The embedding helper** is `SympySimplifier::with_embedded_python()`,
+    an explicit opt-in.
+    - It calls the safe `Python::initialize()`, which does nothing inside
+      a running interpreter, such as an extension module, and then
+      returns `new()`.
+    - The embedded interpreter is the one linked at build time (through
+      `PYO3_PYTHON` or `PATH`), and it runs without signal handlers.
+    - It finds SymPy through `PYTHONPATH` or `PYTHONHOME`, and a
+      non-system libpython through the loader's path (`LD_LIBRARY_PATH`
+      on Linux). The crate README documents this with the probe's recipe.
+    - A pure-Rust user can instead call `pyo3::Python::initialize()`
+      themselves.
+    - The core never finalizes the interpreter.
+- **D-S12-6: attaching, threads and signals** (D-S8-11's detaching;
+  crate conventions: `Send + Sync` backends).
+  - Each operation attaches once for its whole run, since building and
+    walking SymPy objects needs the GIL throughout.
+  - The binding's facade still detaches around `Solver::simplify` (S8.4),
+    and the backend attaches again inside. The backend never holds a Rust
+    lock across a call into Python.
+  - Several threads may share one backend. Their SymPy work runs one at a
+    time on the GIL, as it does in Python today.
+  - An exception raised inside SymPy, `KeyboardInterrupt` included,
+    returns as `SympyError::Python` with the `PyErr` itself. The binding
+    re-raises it (D-S12-11).
+- **D-S12-7: the prelude, the one Python file in the core** (the
+  direction; crate conventions: no global state in Rust).
+  - **The file.** `solver/sympy/prelude.py` holds only what SymPy's
+    extension points require Python code for:
+    - `ParityOpaquePiecewise`, with `eval`, `_eval_is_even`,
+      `_eval_is_odd` and `_eval_simplify`;
+    - `hide_piecewise_parity` and `holds_partial_piecewise`, which those
+      methods call;
+    - the `round` function and its plain-function `eval` hook, which keeps
+      a lowered node picklable.
+
+    That is about 70 lines. The Rust side calls the same functions, so
+    nothing is duplicated.
+  - **Loading.**
+    - It is compiled in with `include_str!`.
+    - On the first load in an interpreter, the backend runs it into a new
+      module object and publishes that with
+      `sys.modules.setdefault("_fhy_core_sympy", module)`, which is atomic
+      under the GIL.
+    - Every backend then uses the module that won, so every lowered
+      piecewise has one class.
+    - The state is the interpreter's module table, not a Rust `static`,
+      so CONTRIBUTING's global-state section gains nothing.
+  - **Tooling.** The crate's `include` list and CI's package-contents
+    pattern gain this one `.py` file. `noxfile.py`'s `SOURCES` gains its
+    directory, so `ruff` and `mypy` check it.
+  - **Pickles.** Y-S12-1 records the consequence for pickles.
+- **D-S12-8: the mapping keeps today's semantics** (D-S4-2: the same
+  meaning, pinned by 627 tests; D-S4-1 where the core's values differ).
+  - **The tables.** Each table of the survey becomes a Rust `match` over
+    `BuiltinFunction`, `BuiltinConstant`, `LiteralValue` and the operation
+    enums.
+  - **Literals and constants.**
+    - A user constant lowers to its value exactly as a literal of that
+      value lowers, through the context's registry. A decimal becomes a
+      `Rational` (Y-S12-4).
+    - A rational lifts through S9's `Decimal::to_f64_exact` in place of
+      `is_decimal_text_exactly_binary`.
+    - A symbol lifts through `Identifier::try_restore`, which advances the
+      counter as today's `deserialize_from_dict` does.
+  - **The workarounds**, one for one:
+    - The prelude holds workaround 1 and the `round` hook.
+    - Workarounds 2 to 8 and the best-effort cases are Rust.
+    - Each `sympy.replace` stays a `replace` call, with a
+      `PyCFunction::new_closure` predicate and replacement, so SymPy's
+      traversal rules are unchanged.
+    - The masking dummies are SymPy `Dummy`s.
+  - **What is read when.**
+    - The backend caches the classes it dispatches on.
+    - It reads the functions it calls on a whole expression
+      (`sympy.simplify` and `piecewise_fold`) from the module on each
+      call, as the Python bridge did, so the four tests that patch
+      `sympy.simplify` keep working.
+  - **Deep trees.** The lowering, the lifting, and the Boolean-position
+    walks of the substitution keep their pending nodes on the heap, as
+    the core's other walks do (Y-S12-5).
+  - **Optimizations.** A walk may skip SymPy work it can prove changes
+    nothing, such as the three piecewise folds of a tree without a
+    piecewise. Each such shortcut is pinned by a story comparing its
+    output with the unshortened path.
+- **D-S12-9: the simplify context carries the function registry, and
+  `Solver::simplify` takes the context** (crate conventions: I.3 rule 6;
+  S8.2's note, which kept the context open for "the sorts of native
+  constants and named functions, and perhaps their values"; D-S8-2's
+  `ask(question, &QueryContext)` shape).
+  - `SimplifyContext::from_registry(&FunctionRegistry)` reads both sorts
+    and entries from one registry, and `registry() ->
+    Option<&FunctionRegistry>` returns it.
+  - `SimplifyContext::new(&dyn SortLookup)` stays, with no registry. The
+    SymPy backend then refuses a user constant as
+    `ConstantValueUnknown`, and names every call it cannot lower
+    `UnknownFunction`.
+  - `Solver::simplify(expression, environment, context:
+    &SimplifyContext<'_>)` replaces the `sorts` parameter. It screens
+    with `context.sorts()`, and passes the context through.
+  - The binding passes `SimplifyContext::from_registry` of its snapshot,
+    built inside the detached closure, as S8.4's `QueryContext` is.
+  - This lands in S12.2 without the feature, since it is independent of
+    SymPy. The breaking change has two call sites: the binding's facade,
+    and the solver stories. `Simplifier` itself does not change.
+- **D-S12-10: the Python API keeps its names** (D-S4-2; D-S5-9 for new
+  names; D-S9's pass precedent).
+  - `SympySimplifier` is `_rs.SympySimplifier`, re-exported from
+    `passes/sympy.py`.
+    - It is a native `Simplifier` with `name` `"sympy"` and
+      `simplify(expression)`, the whole pipeline over the registry
+      snapshot.
+    - It has the Rust names `lower(expression)`, `lift(sympy_expression)`,
+      `substitute(sympy_expression, environment)` and
+      `substitute_symbols(sympy_expression, replacements)`.
+    - It pickles as a call. Construction loads nothing.
+  - **The four functions keep their signatures and phases.**
+    `convert_expression_to_sympy_expression` screens with
+    `validate_logical_operands`, then runs the converter pass.
+    `substitute_sympy_expression_variables` returns a Python `bool` as it
+    stands, then runs the substitution. `convert_sympy_expression_to_expression`
+    runs the lifting pass.
+  - **The three registered passes stay**, as thin `CompilerPass`es over a
+    module-level `SympySimplifier()`:
+    - `ExpressionToSympyConverter` keeps the static `format_identifier`;
+    - `SymPyToExpressionConverter` keeps `convert`, and `convert_expr`,
+      `convert_bool` and `convert_relational`, which check the node's
+      SymPy kind in Python and then lift;
+    - both keep `get_noop_output`;
+    - the `visit_*` methods and the class tables go (Y-S12-2), as S9
+      dropped `ExpressionEvaluator`'s visitor methods;
+    - the module-level backend is loaded when `passes/sympy.py` is
+      imported, since that import has imported SymPy already, so the
+      prelude module exists wherever the bridge has been imported.
+  - **Resolution.**
+    - `SolverBackend.SYMPY` resolves, through `_resolve_adapter`, to one
+      `SympySimplifier`, after importing `passes/sympy.py` for its import
+      guard.
+    - The default solver holds its own `SympySimplifier()` directly
+      (Y-S12-8).
+    - `get_backend_capabilities` and `is_backend_available` are
+      unchanged in meaning.
+    - `SolverBackend` gains no member. D-S8-3 expected a new member for
+      "the later Rust CAS backend", but this backend is the same CAS
+      under the same name.
+  - **Stubs.** Everything new goes into `_rs.pyi`.
+- **D-S12-11: errors keep their Python classes and phases** (D-S4-2;
+  D-S7-12 for texts; this refines D-S8-14's row "`Backend` from a Rust
+  backend", which the SymPy backend no longer follows, since its failures
+  have a Python meaning today).
+
+  | Core | Python |
+  |---|---|
+  | `Unavailable(MissingSympy)` | `SolverBackendUnavailableError`, with today's message naming `fhy_core[sympy]` and `fhy_core[solvers]` (the binding's text) |
+  | `Unavailable(NoInterpreter)` | cannot arise inside the extension; mapped to `SolverBackendError` |
+  | `IllTyped` | `NonBooleanLogicalOperandError`, unwrapped |
+  | `BoundNativeConstant` | `NativeConstantBindingError`, unwrapped, as today's check before the pass |
+  | `CallNeedsInlining`, `ConstantCalled`, `NoSympyLowering`, `UnknownFunction`, `ConstantValueUnknown` | `TypeError`, inside `PassExecutionError` from the lowering pass |
+  | `ComplexInfinity` | `ComplexInfinityLiftError`, inside `PassExecutionError` from the lifting pass |
+  | `PartialPiecewise` | `PartialPiecewiseError`, likewise |
+  | `UnsupportedNode` | `TypeError`, likewise |
+  | `Implies` | `NotImplementedError`, likewise, after the binding logs today's WARNING on the bridge's logger |
+  | `UnnamedSymbol` | `RuntimeError`, likewise |
+  | `Python { phase: Lowering, Substitution or Lifting }` | the exception itself, inside `PassExecutionError` from that phase's pass |
+  | `Python { phase: Simplification }` | the exception itself, raw, as `sympy.simplify`'s failures are today |
+
+  - "Inside `PassExecutionError`" means what the pass infrastructure
+    raises today, naming the registered pass, with the error as
+    `__cause__`. The thin passes get it by raising the mapped error from
+    `run_pass`. `simplify_expression` gets the same wrapping from the
+    binding, keyed on the phase.
+  - A `BaseException` that is not an `Exception`, such as
+    `KeyboardInterrupt`, is never wrapped.
+- **D-S12-12: imports stay lazy** (D-S8-16).
+  - `import fhy_core` imports no SymPy. `passes/sympy.py` keeps its
+    module-level guard, since importing the bridge without SymPy raising
+    `SolverBackendUnavailableError` is pinned.
+  - Constructing `_rs.SympySimplifier` imports nothing.
+  - The fresh-interpreter test and `test_import_graph.py` keep passing.
+- **D-S12-13: testing the feature under `cargo test`** (the tests rule;
+  D-S8-19's `cfg` stories; D-S8-18's CI pattern; CONTRIBUTING's
+  fresh-process rule).
+  - **The stories.** They sit under `cfg(feature = "sympy")` in
+    `tests/it/solver/`.
+    - A support helper builds one `SympySimplifier::with_embedded_python()`
+      for the binary and calls `load()`.
+    - Without SymPy, that call fails with a message naming `PYO3_PYTHON`,
+      `PYTHONPATH` and the recipe, under N-S12-1 (a).
+    - The tests share one interpreter, and the GIL serializes them.
+  - **A fresh-process target.** `tests/sympy_unavailable.rs`, with
+    `required-features = ["sympy"]`, is one `#[test]` in a fresh process:
+    - `NoInterpreter` before any initialization;
+    - then, after `Python::initialize()` with `sys.modules["sympy"] =
+      None`, `MissingSympy`;
+    - then a `load()` that succeeds once the entry is removed.
+
+    CI's integration-target list becomes `id_cap_decode it
+    sympy_unavailable`.
+  - **The CI `rust` job.**
+    - The step that installs z3-solver into a venv also installs sympy,
+      and exports `PYO3_PYTHON` (that venv's interpreter) and `PYTHONPATH`
+      (its site-packages). The runner's Python has a shared libpython,
+      since the job already links it for the binding.
+    - `cargo test --workspace --locked --all-features` then runs the
+      stories.
+    - The `rust-msrv` job needs no change (`cargo +1.85 check`, which also
+      builds the feature through the binding), and neither does the
+      packaged-crate test (default features).
+  - **Locally.** The known `-lpython3.11` failure comes from the tooling's
+    deadsnakes 3.11, which has no `libpython3.11.so`. The Rust gate
+    therefore runs with a Python that has one:
+    - `PYO3_PYTHON` set to a `python3.10` venv holding sympy, and
+      `PYTHONPATH` set to its site-packages;
+    - or a uv-managed CPython, with `LD_LIBRARY_PATH` set to its `lib`.
+
+    CONTRIBUTING's porting section records the recipe.
+- **D-S12-14: `deny.toml` does not change** (D-S8-9's reasoning).
+  - `cargo deny` checks the workspace graph with `all-features = true`.
+    pyo3 and its tree (`pyo3-ffi`, `pyo3-build-config`, `pyo3-macros`,
+    `target-lexicon` and the rest) are already in that graph through the
+    binding.
+  - The feature adds no crate, since no pyo3 feature is enabled
+    (D-S12-2). So the licenses, bans and sources pass unchanged, which
+    S12.3 confirms with `cargo deny check`.
+  - A downstream crate enabling `sympy` gets pyo3 without `macros`, under
+    MIT OR Apache-2.0.
+- **D-S12-15: the Rust tests specify the backend first** (the tests
+  rule; S7.2's and S8.2's test-first practice).
+  - The lowering, lifting, substitution, workarounds, best-effort cases,
+    errors and loading are specified by Rust tests written against
+    `todo!()` stubs.
+  - A traceability table maps `test_sympy_pass.py`,
+    `test_sympy_natives.py` and `test_sympy_pass_properties.py` to them.
+- **D-S12-16: the Python tests are rewritten, not skipped** (the tests
+  rule; D-S8-20).
+  - The behavioral tests stay, and now run through the Rust backend.
+  - A test changes only where a decision changes what it pins, and each
+    change is recorded with its reason.
+- **D-S12-17: benchmarks before and after** (cross-cutting rule 5;
+  CONTRIBUTING's 10%). See the plan below. A row more than 10% slower is
+  optimized, or recorded as an accepted cost for the maintainer.
+- **D-S12-18: docs.**
+  - The crate README gains a "The `sympy` feature" section beside "The
+    `z3` feature": what it adds, the public pyo3 dependency, embedding,
+    finding SymPy, and the link recipe. docs.rs keeps the default
+    features.
+  - CONTRIBUTING changes as D-S12-2 and D-S12-13 say, and its
+    Python-to-Rust table maps `symbolic.expression.passes.sympy` to
+    `fhy_core::solver` (`SympySimplifier`).
+  - The Python README's expression and solver rows name the Rust-backed
+    SymPy backend.
+
+### Benchmark plan
+
+`benchmarks/test_sympy.py` is new in S12.1. The baseline runs it against
+today's Python bridge. Every call whose spelling changes sits in a helper
+marked with its decision. The trees reuse `test_expression.py`'s deep tree
+(100 operations over four identifiers).
+
+| Benchmark | Measures |
+|---|---|
+| `test_lower_to_sympy_of_a_deep_tree` | `convert_expression_to_sympy_expression` of the deep tree: the lowering's throughput, a Python visitor before and the Rust walk after |
+| `test_lift_from_sympy_of_a_deep_tree` | `convert_sympy_expression_to_expression` of its lowered form |
+| `test_substitute_sympy_variables_of_a_deep_tree` | `substitute_sympy_expression_variables` binding the four identifiers |
+| `test_sympy_simplifier_of_a_ground_comparison` | `SympySimplifier().simplify(3 < 10)`: the backend alone, without the facade |
+| `test_simplify_expression_of_a_bound_piecewise` | a piecewise with Boolean case conditions, bound: the piecewise workarounds |
+| `test_simplify_expression_of_a_boolean_comparison` | `(x < 1) == b`, bound: the masking of Boolean comparisons |
+| `test_first_simplification_in_a_fresh_interpreter` | a fresh interpreter importing `fhy_core` and simplifying once, five rounds through `pedantic`: the import, the lazy load and the prelude |
+
+The rows of `benchmarks/test_solver.py` are compared too:
+
+- `test_simplify_expression_of_a_ground_comparison`, the param validation
+  path;
+- `test_simplify_expression_symbolic`;
+- `test_equation_constraint_evaluate_with_bindings`;
+- `test_nat_param_is_value_valid`;
+- `test_import_fhy_core`, which must not import SymPy.
+
+The paths at risk:
+
+- **The lowering.** It trades a Python visitor call per node for a Rust
+  call into SymPy per node. SymPy's constructors dominate either way, so
+  the lowering should gain by the visitor's overhead, about half of the
+  deep tree's 916 µs.
+- **The workaround walks** (19 µs of the ground comparison) become Rust
+  closures called by SymPy's `replace`, or are skipped where D-S12-8
+  allows.
+- **The lifting** becomes Rust dispatch on cached classes.
+- **Simplification** loses the deferred adapter's hop into Python and
+  back. Every simplification row is expected to be faster, while
+  `sympy.simplify` itself does not change.
+- **The fresh-interpreter row** adds the prelude's load, a few
+  milliseconds once per process against SymPy's 208 ms import.
+
+### Needs the user
+
+- **N-S12-1: what the SymPy stories do when no SymPy is importable.**
+  Every workspace build enables the feature (D-S12-3), so `cargo test
+  --workspace` runs the stories. Today, the only extra that command needs
+  is a linkable libpython for the binding's test harness; with this
+  change it would also need SymPy on the embedded interpreter's path. The
+  precedents point two ways:
+  - the `z3` feature's stories simply require libz3;
+  - the process backend's real-solver tests run only when
+    `FHY_SMT_SOLVER` names a solver, and CI sets it.
+  - (a) **Required.** Under the feature, the stories fail when SymPy
+    cannot be imported, with a message giving the recipe. CI cannot pass
+    them by accident, but every local `cargo test --workspace` needs
+    `PYTHONPATH` (and, on this machine, `PYO3_PYTHON`).
+  - (b) **Opt-in by environment**, as `FHY_SMT_SOLVER` is. The stories
+    run when `FHY_SYMPY_TESTS=1`, which CI's `rust` job sets, and pass
+    without running otherwise. Local runs need nothing, but a local run
+    can go green without testing the backend.
+  - (c) **A maturin-only binding feature** (D-S12-3's rejected
+    alternative). Plain workspace builds have no backend, and
+    `--all-features` has it, which CI already uses. The binding gains
+    `cfg` branches, and a build of the extension without the feature has
+    no SymPy backend.
+
+  Recommendation: (a). It is the only option in which a green Rust gate
+  always means the backend was tested, as the `z3` feature's gate does.
+  The local cost is one pair of environment variables, which the gate
+  already needs on this machine for the binding's harness, since the
+  tooling Python has no shared libpython.
+
+### Steps
+
+1. **S12.1: benchmarks.** Add `benchmarks/test_sympy.py` as planned
+   above, and record the baseline here on today's Python bridge, with the
+   `test_solver.py` rows beside it.
+2. **S12.2: the simplify context** (D-S12-9), in the core, test-first,
+   without the feature:
+   - `SimplifyContext::from_registry` and `registry()`;
+   - `Solver::simplify` taking the context;
+   - the solver stories and the binding's facade call site.
+
+   The Python suite stays green.
+3. **S12.3: the `sympy` feature**, test-first, against `todo!()` stubs:
+   - the manifests (D-S12-2);
+   - `solver/sympy.rs` with its submodules and `prelude.py`;
+   - the stories and the fresh-process target;
+   - the crate README, the `include` list and the package-contents
+     pattern;
+   - `noxfile.py`'s `SOURCES`;
+   - the CI `rust` job (D-S12-13).
+
+   The step ends with the Rust gate green with the feature, and with
+   `cargo deny check`.
+4. **S12.4: the binding.**
+   - `fhy-core-py` enables `sympy` (D-S12-3).
+   - `solver/sympy.rs` holds `_rs.SympySimplifier`, and
+     `build_simplifier` learns it.
+   - `solver/error.rs` gains D-S12-11's mapping and the `Implies`
+     warning.
+   - Everything new goes into `_rs.pyi`.
+
+   Nothing in Python uses it yet, so the suite stays green.
+5. **S12.5: the Python switch** (marked breaking). `passes/sympy.py`
+   becomes the thin layer of D-S12-10, and `solver.py` loses
+   `_DeferredSimplifier`. It lands with S12.6 when the migration is small
+   enough to review in one commit. Otherwise it leaves exactly the tests
+   of the migration list failing, as S7.4 did.
+6. **S12.6: tests.** Migrate the tests and add the interface suite (the
+   test plan below).
+7. **S12.7: benchmarks after,** recorded here with the verdict, then the
+   status, the implementation notes, the docs of D-S12-18, and this
+   checklist.
+
+Commit per step. Every step ends with these green:
+
+- `pytest`, and `pytest -m "not very_slow"`;
+- the `property` session and `tests_minimal`;
+- `lint` and `type_check`, clean;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `-D warnings` with and without
+  `--all-features`, tests with the default features and with
+  `--all-features`, doc `-D warnings`, deny, and `cargo +1.85 check`.
+
+The feature is built from S12.3 on.
+
+### Test plan
+
+**Rust tests, written first (S12.2 and S12.3),** in `tests/it/solver/`:
+
+- **`solver_stories.rs` (S12.2):**
+  - `from_registry` gives the facade's screen the registry's sorts;
+  - a simplifier receives the context the solver was given, its registry
+    included;
+  - `new(sorts)` has no registry.
+- **`sympy_lowering_stories.rs`**, pinned by SymPy's `srepr` text:
+  - each literal form: a big integer, `0.1` as its binary `Float`, the
+    non-finite floats, and a decimal as its exact `Rational`;
+  - the symbol naming;
+  - the built-in constants, and a user constant of each sort through a
+    registry, a decimal included;
+  - `ConstantValueUnknown` without a registry;
+  - each operation, with `FLOOR_DIVIDE` as `floor` of a quotient and
+    `LOGICAL_NOT` as `Not`;
+  - n-ary `And`/`Or`, with a Boolean piecewise operand expanded;
+  - `Eq`/`Ne` of Booleans, with a piecewise operand expanded;
+  - a piecewise as `ParityOpaquePiecewise` with its final `True` branch;
+  - conditions with a negated symbol side, and folded piecewise
+    conditions;
+  - the 19 natives, `round`'s integer fold, and the four call refusals
+    with their texts;
+  - the screen's refusal before any SymPy call;
+  - a 100,000-level tree lowering on a small stack, where SymPy allows
+    it.
+- **`sympy_lifting_stories.rs`:**
+  - `Add` and `Mul` folded to the right;
+  - `Mod`, `Pow`, and `sqrt` from `Pow(x, 1/2)`;
+  - the 15 native classes;
+  - the constants, and `-oo` as the negation of `inf`;
+  - the rational rule: decimal text or `DIVIDE`, and the sign;
+  - `Float`, and a big `Integer`;
+  - a symbol restored, with the counter advanced past it, and a name
+    without `_`;
+  - `Xor`, `Nor`, `Nand` and `ITE`;
+  - the refusals, each with its text: `zoo`, a partial piecewise,
+    `Implies`, and an unsupported node;
+  - a deep SymPy tree lifting on a small stack.
+- **`sympy_simplify_stories.rs`:**
+  - ground comparisons deciding to `true` or `false`;
+  - each workaround's pinned example from `test_sympy_pass.py`: the
+    parity cases of SymPy 1.14, the partial-evaluation skip, the masked
+    Boolean comparisons, the folds out of relationals and integer parts;
+  - each best-effort case. `PrecisionExhausted` is forced by patching
+    `sympy.simplify` through `py.run` in the embedded interpreter, as the
+    Python tests patch it;
+  - `sympy.simplify` read at call time;
+  - the substitution: simultaneous, keeping Boolean positions Boolean,
+    and refusing a bound constant;
+  - the phases of `SympyError`;
+  - `name()`;
+  - a `Solver` holding the backend, end to end;
+  - eight threads sharing one backend;
+  - `KeyboardInterrupt` raised from a patched `sympy.simplify` returning
+    as `SympyError::Python`;
+  - the prelude loaded once and shared by two backends, and a lowered
+    `round` node pickling within the process.
+- **`sympy_properties.rs`:**
+  - a random ground integer or Boolean tree simplifies to the literal
+    S9's evaluator computes;
+  - lifting the lowering of a random screened tree gives an expression
+    whose evaluation at random bindings agrees with the original's;
+  - substituting in SymPy agrees with substituting in the core.
+- **`tests/sympy_unavailable.rs`:** the fresh-process target of D-S12-13.
+- **A traceability table**, as S8.2's, from `test_sympy_pass.py`,
+  `test_sympy_natives.py` and `test_sympy_pass_properties.py`.
+
+**The interface suite,
+`tests/symbolic/expression/passes/test_sympy_rust_binding.py`,** covers
+what the binding adds over the core:
+
+- **The class.**
+  - `SympySimplifier` extends `SimplifierBase`, is a registered
+    `Simplifier`, is frozen and refuses subclassing, is named `sympy`,
+    and pickles.
+  - Construction imports no SymPy. This is checked in a subprocess with
+    `sys.modules["sympy"] = None`, where construction succeeds and
+    `simplify` raises `SolverBackendUnavailableError` with its message.
+- **The native path.**
+  - A `Solver` holding it calls no Python backend: a counting
+    `sys.setprofile` hook sees no Python frame of `passes/sympy.py` during
+    `simplify_expression`.
+  - The result is materialized beside the input.
+- **The methods.** `lower`, `lift`, `substitute` and
+  `substitute_symbols` each agree with the public function over them.
+- **Errors.** Each row of D-S12-11, including the pass named by
+  `PassExecutionError`, the unwrapped screen and constant errors, a raw
+  simplification failure, `KeyboardInterrupt` passing through, and the
+  `Implies` warning.
+- **Pickles.** A lowered `round` node and a lowered piecewise pickle
+  within the process, and load in a fresh one after `passes.sympy` is
+  imported (Y-S12-1).
+- **Resolution.** `SolverBackend.SYMPY` resolves to one object, the
+  default solver's simplifier is a `SympySimplifier`, and
+  `is_backend_available` holds.
+- **Threads.** Concurrent simplifications from several threads through
+  one backend.
+
+**Migrating the existing tests.** No test is skipped or deleted without a
+rewrite, and each change is recorded with its reason:
+
+- **`test_sympy_pass.py` (627).**
+  - The imports of `_NATIVE_CONSTANT_LIFT`, `_NATIVE_CONSTANT_LOWER`,
+    `_NATIVE_FUNCTION_LOWER` and `_ParityOpaquePiecewise` go.
+    - The table tests become checks over the public lowering and lifting
+      of every built-in name and constant.
+    - The parity class is reached as the type of a lowered piecewise.
+  - `test_sympy_converter_visit_literal_unsupported_value_raises`
+    becomes a check that the lowering refuses a value that is no
+    `Expression`, since there is no Python visitor (Y-S12-2).
+  - The test that patches `convert_expression_to_sympy_expression` to
+    reach the partial-piecewise fallback patches `sympy.simplify` to
+    return a partial piecewise instead (Y-S12-6).
+  - `match=` texts follow the core's texts where they differ (Y-S12-3).
+  - The rest keep their meaning.
+- **`test_sympy_natives.py` (59).** The pickle test keeps its meaning
+  within the process.
+- **`test_sympy_pass_properties.py` (6), `test_cross_cutting.py` (20) and
+  the constraint and param tests:** unchanged.
+- **`test_solver.py`.**
+  `test_simplify_expression_matches_direct_bridge_pipeline` compares with
+  the native `SympySimplifier`.
+- **`test_solver_rust_binding.py`.** The adapter and default-solver tests
+  keep their assertions. The S8 interface tests of a Python
+  `Simplifier` keep using their fakes.
+
+### Coordination with S9 and S11
+
+This branch is rebased onto `dev-rust` after S9, so its edits to shared
+files stay small and additive:
+
+- **S9 items S12 uses:**
+  - `Decimal::to_f64_exact` (D-S12-8);
+  - the evaluator, as the properties' oracle.
+
+  S12.3 starts after the rebase. If it has to start before, a private
+  equivalent stands in, and the rebase replaces it.
+- **`native_lowering.py`:** S12 stops importing it from
+  `passes/sympy.py` and never edits it. After the rebase, one sentence of
+  its module docstring may still describe the Python lifter. If so, it is
+  corrected in S12.7, on S9's version.
+- **`Cargo.toml`:** the one `pyo3` line of the workspace table. S9 adds
+  the `numpy`, `ndarray` and `libm` lines.
+- **`rust/fhy-core/Cargo.toml`:**
+  - the optional `pyo3` line;
+  - `sympy` in `[features]`, beside `z3` and S9's `ndarray`;
+  - the prelude in `include`.
+- **`rust/fhy-core-py/Cargo.toml`:** `features = ["macros"]` on `pyo3`,
+  and `"sympy"` beside S9's `"ndarray"` on `fhy-core`.
+- **`Cargo.lock`:** regenerated after the rebase, never hand-merged.
+- **Untouched:** `deny.toml` (D-S12-14), `pyproject.toml` (the `sympy`
+  extra and markers stay as S8.7 set them), and `tests/conftest.py`.
+- **Additive edits:**
+  - the binding's `lib.rs` (one `#[pymodule_export]` line);
+  - `_rs.pyi` (one block);
+  - CONTRIBUTING (D-S12-2, D-S12-13 and one table row);
+  - the crate README (one feature section);
+  - `noxfile.py` (one `SOURCES` entry);
+  - the CI workflow (the install step's two exports, the target list, and
+    the package-contents pattern).
+- **This document:** this section, appended, and one entry at the end of
+  the Progress checklist.
+- **S11 (types)** uses neither the simplifier nor the SymPy bridge, and
+  S12 does not use types, so no code depends across the two.
