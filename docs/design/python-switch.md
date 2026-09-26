@@ -8667,8 +8667,9 @@ where S10 pays off:
   built 15% faster, from the faster identifier reading of bac34da.
 
 **Three rows are slower than 10%, and are recorded as accepted costs**
-(cross-cutting rule 5), for the maintainer to confirm (CONTRIBUTING
-"Replacing a Python class"):
+(cross-cutting rule 5). The maintainer accepted them on 2026-09-26, as
+part of moving the term package to Rust (CONTRIBUTING "Replacing a
+Python class"):
 
 | Benchmark | after / before | Why | Who pays it |
 |---|--:|---|---|
@@ -8707,7 +8708,7 @@ and where the shape differs from the plan (S10.2's are in its own notes):
   exact `Identifier` takes the attribute fast path.
 - **The shared empty renaming** is a write-once slot, recorded in
   CONTRIBUTING's "Process-global state" section: it is immutable, like the
-  public-class slots. The derived plans stay in the Python module's
+  public-class slots. The maintainer approved it on 2026-09-26. The derived plans stay in the Python module's
   `_PLAN_CACHE` dict, so the engine adds no Rust static for them; a plan
   is an unexported `_rs.EquivalencePlan` object there.
 - **The adapters' error context** (D-S10-7). Each entry function creates

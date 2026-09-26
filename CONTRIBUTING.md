@@ -398,7 +398,8 @@ a frame lives only for its call, so the stack is empty whenever no
 simplification runs. Slice S10 adds one write-once slot, the shared
 empty `AlphaRenaming` that `AlphaRenaming.empty()` returns
 (`rust/fhy-core-py/src/term/renaming.rs`), an immutable value built on
-first use, as a public class slot is; the derived-equivalence plans stay
+first use, as a public class slot is, approved by the maintainer; the
+derived-equivalence plans stay
 in the Python module's `_PLAN_CACHE` dict. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
