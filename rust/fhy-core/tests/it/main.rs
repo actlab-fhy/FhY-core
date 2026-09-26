@@ -5,6 +5,7 @@
 //! process with every other: none clears a process-global registry, and
 //! none moves the identifier counter further than the ids it allocates.
 
+mod constraint;
 mod diagnostic_stories;
 mod expression;
 mod identifier_stories;

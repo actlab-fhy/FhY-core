@@ -516,6 +516,8 @@ module depends only on the layers before it:
    and `solver`, the questions about expressions and their backends, which
    depends on `expression` and never on `pass`; and `types`, the IR type system, which
    depends on `expression` and never on `pass`
+7. `constraint`, the constraints over identifiers, which depends on `solver`
+   and never on `pass`
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -544,6 +546,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.lattice`, `fhy_core.utils.poset` | `fhy_core::lattice` |
 | `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
 | `fhy_core.types.checking` | `fhy_core::types::checking`; the body-check pass stays a Python `CompilerPass` over it |
+| `fhy_core.symbolic.constraint` | `fhy_core::constraint`; the Python-defined constraints and the member objects only Python compares reach it through the binding's adapters |
 
 ### Errors belong to their module
 

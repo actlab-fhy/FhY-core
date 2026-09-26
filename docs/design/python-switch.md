@@ -123,7 +123,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S13: constraints (designed; "Needs the user" is empty; rebased onto S11 and S12 by the coordinator; see "S13 resume notes")
   - [x] S13.0: the design (survey, decisions D-S13-1 to D-S13-22, benchmark plan, steps, test plan)
   - [x] S13a.1: constraint benchmarks and baseline (39 rows; see "S13a.1 baseline")
-  - [ ] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer)
+  - [x] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer; 144 new tests)
   - [ ] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
   - [ ] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`
   - [ ] S13a.5: tests migrated, and the interface suite
@@ -15533,6 +15533,60 @@ Python 3.11.13 and pytest-benchmark 5.3.0, and the load average was 7 to
   structural equivalence over 20 set constraints 1.5 ms.
 - **Evaluation** is cheap for sets (about 5 µs), and dominated by SymPy for
   equations: 37 µs ground, 5.1 ms with a residual.
+
+### S13a.2 implementation notes
+
+The tests were written first, against stubs of every new method that
+decides something (a `todo!()`): 134 of the 144 tests of the new
+`tests/it/constraint/` area failed, and all pass now. The 10 that passed
+pin `Value::is_member_shaped`, `Value::check_hashable`,
+`Value::from_literal` and the scope accessors, which the stubs
+implemented. A proptest regression file written while the stubs failed
+was deleted, as in S7.2.
+
+- **Layout.** `rust/fhy-core/src/constraint.rs` (`Constraint`, `Outcome`)
+  with `constraint/value.rs` (`Value`, `Member`, `MemberKind`,
+  `MemberSet`, `Opaque`, `OpaqueValue`, `MemberError`),
+  `constraint/binding.rs` (`Binding`, `Bindings`), `constraint/context.rs`
+  (`ConstraintContext`, `Observer`, `NoObserver`, `Event`),
+  `constraint/equation.rs`, `constraint/set.rs` (`SetConstraint`,
+  `Polarity`), `constraint/key.rs` and `constraint/error.rs`
+  (`ConstraintError`, `UnusableBindingReason`). `lib.rs`, the crate
+  README and manifest description, CONTRIBUTING's layering list (a new
+  seventh layer) and module table, and `rust-workspace.md` §I.8 list the
+  module.
+- **Where the shape differs from D-S13-2's sketch, or fills it in:**
+  - `OpaqueValue` has `type_name`, `is_member_shaped`, `is_equal`,
+    `check_hashable`, `ordering_key` and `as_any`. `is_equal` is
+    infallible, so equivalence stays infallible; the binding keeps a
+    raising `==` and raises it after the call (D-S13-3). A member stores
+    its opaque value's key when it is built, so ordering never calls the
+    producer again, and looking up a bound value that holds an opaque
+    value compares it with each member instead of computing its key.
+  - `Member` is opaque and read through `kind()`, a `MemberKind` view.
+    `Member::try_from_value` refuses a NaN, a decimal or a value that is
+    not member-shaped, in pre-order, with `MemberError`.
+  - `MemberSet` is a sorted vector: kinds rank `bool`, `float`,
+    `frozenset`, `int`, `str`, `tuple`, then opaque; floats order by
+    `total_cmp` (members hold no NaN and no negative zero), strings by
+    code point, containers element by element; opaque members by key,
+    stable among equal keys. Two sets are equal when they have the same
+    size and each holds the other's members.
+  - `ConstraintContext::new(&Solver)` with `with_registry` and
+    `with_observer`; `is_native_constant` reads the built-in constants and
+    the registry. `Observer: Sync`, so a question can later run detached.
+  - `Bindings` keeps the order bindings were made in, so the first
+    unusable one in scope is the one reported, as Python's dict order
+    decided.
+  - The keys are `equation|<tree>`, the tree rendered in pre-order as
+    `kind[data](children)`, and `in_set|<id>|{<members>}` or
+    `not_in_set|...`, each member as `kind:value` with strings and opaque
+    keys quoted, so the text is injective.
+- **Tests.** `value_stories.rs` (46, counting `rstest` cases),
+  `set_stories.rs` (34), `equation_stories.rs` (28), `key_stories.rs`
+  (22), `equivalence_stories.rs` (9) and `constraint_properties.rs` (5),
+  with the helpers in `tests/it/support/constraint.rs`: `TestOpaque`, a
+  test-local opaque value, and `RecordingObserver`.
 
 ### S13 resume notes
 

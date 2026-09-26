@@ -3,6 +3,7 @@
 //! Every helper is `pub(crate)`, so one that no test uses is reported as
 //! dead code.
 
+pub(crate) mod constraint;
 pub(crate) mod expression;
 pub(crate) mod hashing;
 pub(crate) mod lambda;

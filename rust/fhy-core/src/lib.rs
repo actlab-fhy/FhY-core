@@ -8,8 +8,9 @@
 //! Each module depends only on the modules listed before it, except that
 //! [`tree`], [`term`] and [`lattice`] are independent of each other,
 //! [`expression`] and [`pass`] are independent of each other,
-//! [`expression::passes`] joins them, and [`solver`] and [`types`] depend on
-//! [`expression`] and not on [`pass`].
+//! [`expression::passes`] joins them, [`solver`] and [`types`] depend on
+//! [`expression`] and not on [`pass`], and [`constraint`] depends on
+//! [`solver`] and not on [`pass`].
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -26,6 +27,7 @@
 //! | [`expression`] | symbolic expressions, their builders and analyses; the built-in catalogue in [`expression::builtins`], the owned registry of user functions and constants, and inlining, in [`expression::registry`], folding and evaluation in [`expression::evaluate`], patterns and rewrite rules in [`expression::pattern`], and the passes over expressions in [`expression::passes`] |
 //! | [`pass`] | compiler passes, pipelines, fixpoint groups, analyses, validators and the pass registry |
 //! | [`solver`] | questions about expressions answered by pluggable backends: the hazard screen, the SMT-LIB2 lowering, and a backend that drives an SMT-LIB2 executable |
+//! | [`constraint`] | constraints over identifiers, decided under bindings: Boolean equations through the solver's simplifier, and type-strict set membership |
 //! | [`types`] | the IR type system: core data types and their promotion, data types, numerical and index types, and template binding, substitution and unification, with extensions; expression type checking in [`types::checking`] |
 //!
 //! Each public item has exactly one public path.
@@ -84,6 +86,7 @@
 //! crate does not depend on `serde_json`, so depending on it changes nothing
 //! about how another crate's JSON numbers parse or compare.
 
+pub mod constraint;
 pub mod described_tag;
 pub mod diagnostic;
 pub mod expression;
