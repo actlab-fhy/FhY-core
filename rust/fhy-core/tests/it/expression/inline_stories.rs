@@ -363,9 +363,7 @@ fn inline_refuses_a_call_of_a_constant() {
 }
 
 #[rstest]
-fn inline_refuses_a_call_of_a_builtin_constant(
-    #[values("pi", "e", "inf", "nan")] constant: &str,
-) {
+fn inline_refuses_a_call_of_a_builtin_constant(#[values("pi", "e", "inf", "nan")] constant: &str) {
     let registry = FunctionRegistry::new();
 
     let error = registry

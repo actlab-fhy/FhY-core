@@ -23,7 +23,8 @@ use fhy_core::expression::{AlphaRenaming, Expression, FunctionName, FunctionSort
 use fhy_core::identifier::Identifier;
 
 use crate::dataclass::{
-    OptionalArgument, build_argument_type_error, collect_tuple, format_dataclass_repr, read_str,
+    OptionalArgument, build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
+    read_str,
 };
 use crate::error::{IntoPyErr, IntoPyResult};
 use crate::frozen::build_frozen_mutation_error;
@@ -174,22 +175,6 @@ fn require<'py>(
     }
 }
 
-/// Return whether `left` and `right`, tuples of the same fields, are equal,
-/// or `NotImplemented` unless both entries have exactly the same class, as a
-/// dataclass's `__eq__` does.
-fn compare_fields<'py>(
-    object: &Bound<'py, PyAny>,
-    other: &Bound<'py, PyAny>,
-    fields: impl Fn(&Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let py = object.py();
-    if !object.get_type().is(other.get_type()) {
-        return Ok(py.NotImplemented().into_bound(py));
-    }
-    let is_equal = fields(object)?.eq(fields(other)?)?;
-    Ok(PyBool::new(py, is_equal).to_owned().into_any())
-}
-
 /// Implement the `#[pymethods]` of an entry class: its own `methods`, and
 /// the frozen members, equality, hashing, `repr`, pickling and the public
 /// class slot, from its `fields` method returning the tuple of its dataclass
@@ -238,14 +223,17 @@ macro_rules! impl_entry_protocols {
                 slf: &Bound<'py, Self>,
                 other: &Bound<'py, PyAny>,
             ) -> PyResult<Bound<'py, PyAny>> {
-                compare_fields(slf.as_any(), other, |object| {
-                    object.cast::<Self>()?.get().fields(object.py())
-                })
+                let py = slf.py();
+                if !slf.get_type().is(other.get_type()) {
+                    return Ok(py.NotImplemented().into_bound(py));
+                }
+                let is_equal = slf.get().has_equal_fields(other.cast::<Self>()?.get(), py)?;
+                Ok(PyBool::new(py, is_equal).to_owned().into_any())
             }
 
             /// Return the hash of the fields, as a frozen dataclass does.
-            fn __hash__(slf: &Bound<'_, Self>) -> PyResult<isize> {
-                slf.get().fields(slf.py())?.hash()
+            fn __hash__(slf: &Bound<'_, Self>) -> PyResult<u64> {
+                slf.get().hash_fields(slf.py())
             }
 
             fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
@@ -356,6 +344,33 @@ impl PyRegisteredFunction {
                 self.body.bind(py).clone(),
             ],
         )
+    }
+
+    /// Return whether `other`'s fields equal this entry's: the same name,
+    /// parameters, sorts and a structurally equal body. The Rust values
+    /// answer as the field objects' `==` would, without calling Python.
+    fn has_equal_fields(&self, other: &Self, py: Python<'_>) -> PyResult<bool> {
+        Ok(
+            self.name.bind(py).to_str()? == other.name.bind(py).to_str()?
+                && self.rust_parameters() == other.rust_parameters()
+                && self.rust_parameter_sorts() == other.rust_parameter_sorts()
+                && self.rust_result_sort() == other.rust_result_sort()
+                && self.rust_body() == other.rust_body(),
+        )
+    }
+
+    /// Return the hash of the fields: the name, the parameters' ids, the
+    /// sorts and the body's structural hash.
+    fn hash_fields(&self, py: Python<'_>) -> PyResult<u64> {
+        let parameter_ids: Vec<u64> = self.rust_parameters().iter().map(Identifier::id).collect();
+        let hash = hash_value(&(
+            self.name.bind(py).to_str()?,
+            parameter_ids,
+            self.rust_parameter_sorts(),
+            self.rust_result_sort(),
+            self.body.bind(py).hash()?,
+        ));
+        Ok(hash)
     }
 
     /// Return whether this is a built-in's entry.
@@ -656,6 +671,17 @@ impl PyNativeFunction {
         )
     }
 
+    /// Return whether `other`'s fields equal this entry's, by Python `==`.
+    fn has_equal_fields(&self, other: &Self, py: Python<'_>) -> PyResult<bool> {
+        self.fields(py)?.eq(other.fields(py)?)
+    }
+
+    /// Return the hash of the field tuple.
+    fn hash_fields(&self, py: Python<'_>) -> PyResult<u64> {
+        let hash = i64::try_from(self.fields(py)?.hash()?)?;
+        Ok(u64::from_ne_bytes(hash.to_ne_bytes()))
+    }
+
     /// Return whether this is a built-in's entry.
     fn is_builtin(&self) -> bool {
         matches!(self.source, NativeSource::Builtin)
@@ -841,6 +867,17 @@ impl PyNativeConstant {
                 self.value.bind(py).clone(),
             ],
         )
+    }
+
+    /// Return whether `other`'s fields equal this entry's, by Python `==`.
+    fn has_equal_fields(&self, other: &Self, py: Python<'_>) -> PyResult<bool> {
+        self.fields(py)?.eq(other.fields(py)?)
+    }
+
+    /// Return the hash of the field tuple.
+    fn hash_fields(&self, py: Python<'_>) -> PyResult<u64> {
+        let hash = i64::try_from(self.fields(py)?.hash()?)?;
+        Ok(u64::from_ne_bytes(hash.to_ne_bytes()))
     }
 
     /// Return whether this is a built-in's entry.
