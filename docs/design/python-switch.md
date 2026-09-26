@@ -61,7 +61,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S7.5: tests migrated, and the interface suite
   - [x] S7.6: benchmarks after, and docs
 - [ ] S8: the solver and its backends (designed; see "S8: the solver and its backends")
-  - [ ] N-S8-1 and N-S8-2 decided
+  - [x] N-S8-1 decided as (a), N-S8-2 as (b)
   - [ ] S8.1: solver benchmarks and baseline
   - [ ] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend)
   - [ ] S8.3: the `z3` cargo feature and its backend, with the CI changes
@@ -5927,7 +5927,16 @@ above):
 2. **A CAS backend for simplification.** Research the most widely used
    computer algebra system that can be driven from Rust, with a license
    that allows it as an optional dependency, and build a Rust backend for
-   it.
+   it. The research (2026-09-25) ranked SymPy first: it is the most used
+   open-source CAS by far (BSD-3) and the only candidate that covers
+   floor, mod, min, max, piecewise, Booleans and assumptions. The user
+   chose **SymPy through pyo3**: a Rust `Simplifier` behind an
+   off-by-default `sympy` cargo feature of `fhy-core` (pyo3 optional,
+   without `auto-initialize`), which needs Python with SymPy at run time.
+   The Python binding can then use the same Rust backend, leaving one
+   copy of the mapping. Runners-up were SymEngine (MIT C++, fast, but
+   dead Rust bindings, no symbolic Mod and a weak simplify) and egg or
+   egglog (rewriting, not a CAS).
 3. **The sympy adapter stays,** but only for Python.
 4. **S9: the numpy evaluator in Rust.** It uses the `numpy` crate with
    `ndarray`; numpy is imported lazily, so it stays an optional extra.
@@ -6686,7 +6695,8 @@ Where a decision follows an earlier slice's decision or note, it says so.
 
 ### Needs the user
 
-- **N-S8-1: when `sympy` and `z3-solver` become optional extras.** Both
+- **N-S8-1 (resolved 2026-09-25 by the user, as option (a)): when
+  `sympy` and `z3-solver` become optional extras.** Both
   are required in `pyproject.toml` today. D-S8-16 makes both lazy either
   way, so the question is only what `pip install fhy_core` brings. The
   catch is sympy: it is today's only simplifier, and every param with an
@@ -6708,8 +6718,8 @@ Where a decision follows an earlier slice's decision or note, it says so.
   params, and saves the 208 ms sympy import either way. (a) is the full
   "optional like Python" state, at the price of breaking value validation
   for a plain install until the CAS slice.
-- **N-S8-2: the default backends, and whether constraints and params can
-  use a plugged one.** The module functions default to `backend=Z3` or
+- **N-S8-2 (resolved 2026-09-25 by the user, as option (b)): the default
+  backends, and whether constraints and params can use a plugged one.** The module functions default to `backend=Z3` or
   `SYMPY`, and `constraint` and `param` call them with the defaults. So a
   backend a user builds, such as an `SmtLib2ProcessSolver` for cvc5, a
   Python `SmtSolver`, or the later Rust CAS, reaches only direct calls of
