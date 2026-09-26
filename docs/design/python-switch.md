@@ -53,8 +53,9 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] slow callee-name parsing in the core: a user-function call is built in 1.6 us, down from 4.1 us, because the variant-name parser no longer formats serde's list of variants
   - [x] platform wheels in the release workflow, now that the extension is required (S4.4). `python-release.yml` builds maturin wheels for Linux (x86_64 and aarch64, manylinux), macOS (x86_64 and arm64) and Windows x64, one per CPython 3.10 to 3.14, plus an sdist, and publishes them all with trusted publishing. The builds and a wheel install were checked locally; the workflow itself first runs on the next release
 - [ ] S7: the function registry (designed; see "S7: the function registry")
-  - [ ] N-S7-1 to N-S7-3 decided
-  - [ ] S7.1: registry benchmarks and baseline
+  - S7 in progress: done S7.1; next S7.2 (the Rust tests first)
+  - [x] N-S7-1 to N-S7-3 decided (2026-09-25; see "S7 resolutions")
+  - [x] S7.1: registry benchmarks and baseline
   - [ ] S7.2: core additions, test-first, with Rust tests (`FunctionRegistry`, `FunctionSort::admits`, built-in constant identifiers, the screen's constant rule, `FunctionRegistry::inline`)
   - [ ] S7.3: the registry binding, the screen on the Rust registry, and the built-in bodies' differential check
   - [ ] S7.4: the Python switch
@@ -5424,6 +5425,79 @@ a rewrite:
   catalogue first, then the registry. `BUILTIN_FUNCTIONS` and
   `BUILTIN_CONSTANTS` hold entry objects built once, at import, and the
   consumers are unchanged.
+
+### S7.1 baseline (2026-09-25, f051be9 plus the new benchmarks)
+
+`benchmarks/test_registry.py` implements the benchmark plan above.
+
+- **Registration rows** restore the snapshot before each of their 2,000
+  rounds (`pedantic` with `_restore` as setup), so each round registers
+  into the same registry. The `Benchmark` protocol in
+  `benchmarks/conftest.py` gained `pedantic`.
+- **The other rows** that register user entries restore the snapshot
+  after the benchmark, through a `snapshot` fixture.
+- **The screened conjunction** joins 100 calls of five Boolean user
+  functions and a reference to a Boolean user constant.
+- **The user chain** is ten functions, each adding one to a call of the
+  next. The evaluator row uses a chain of ten functions each flooring a
+  call of the next, called with a literal, so the evaluator folds one
+  native call per level after inlining; the evaluator folds no
+  arithmetic, so the first chain would leave nothing to fold.
+
+Median time per call, from `.nox/benchmark-3-11/bin/python -m pytest
+benchmarks -k "test_registry or call_construction_of_a_user or
+test_validate" -n 0 --benchmark-only`, the benchmark session's
+environment, measuring today's pure-Python registry and inliner. The
+machine is the S0 one, with Python 3.11.13 and pytest-benchmark 5.3.0.
+The load average was about 0.6, and the table lists the best of three
+runs' medians.
+
+| Benchmark | before |
+|---|--:|
+| `test_register_function[small]` | 3.38 µs |
+| `test_register_function[deep_body]` | 12.9 µs |
+| `test_register_native_function` | 70.8 µs |
+| `test_register_native_constant` | 5.65 µs |
+| `test_registered_function_construction` | 2.56 µs |
+| `test_registered_function_eq` | 514 ns |
+| `test_registered_function_hash` | 319 ns |
+| `test_registered_function_alpha_equivalence` | 50.9 µs |
+| `test_get_registered_entry[user]` | 247 ns |
+| `test_get_registered_entry[builtin]` | 249 ns |
+| `test_get_registered_entry[miss]` | 670 ns |
+| `test_is_entry_registered` | 245 ns |
+| `test_try_get_registered_result_sort[user]` | 324 ns |
+| `test_try_get_registered_result_sort[miss]` | 570 ns |
+| `test_try_get_native_constant_for_identifier[hit]` | 295 ns |
+| `test_try_get_native_constant_for_identifier[miss]` | 295 ns |
+| `test_get_native_constant_identifier` | 247 ns |
+| `test_get_registered_entries` | 1.11 µs |
+| `test_validate_predicate_of_user_calls` | 31.7 µs |
+| `test_inline_functions[no_calls]` | 188.5 µs |
+| `test_inline_functions[nested_builtins]` | 11.2 ms |
+| `test_inline_functions[user_chain]` | 110.0 µs |
+| `test_inline_functions[shared_dag]` | 17.4 ms |
+| `test_evaluate_after_inline` | 166.2 µs |
+| `test_check_all_registered_function_bodies` | 7.18 ms |
+| `test_call_construction_of_a_user_function` (rerun) | 1.42 µs |
+| `test_validate_logical_operands_of_deep_conjunction` (rerun) | 72.8 µs |
+| `test_validate_predicate_of_nested_piecewise` (rerun) | 16.7 µs |
+| `test_validate_predicate_of_comparison` (rerun) | 1.48 µs |
+
+- **Lookups** cost 245 to 325 ns, a miss of `get_registered_entry` 670 ns
+  with its `EntryLookupError`.
+- **Registration** of a small function takes 3.4 µs, of a 100-operation
+  body 12.9 µs (the capture check walks it), and of a native function
+  71 µs, almost all of it `inspect.signature`.
+- **The inliner** is where the registry is slow. Even the tree with no
+  call takes 189 µs, the Python walk over 191 nodes. `relu` nested ten deep
+  takes 11.2 ms, doubling per level (X-10), and the DAG with one `sigmoid`
+  call at its leaf 17.4 ms, since the walk rewrites each of its 2,047
+  occurrences.
+- **The binder equivalence** of two functions takes 51 µs, most of it the
+  derived plan in Python around one Rust comparison of the bodies.
+- **The sweep** over the 16 composed built-ins and 20 user functions takes
+  7.2 ms.
 
 ## Plan after S7 (the user, 2026-09-25)
 

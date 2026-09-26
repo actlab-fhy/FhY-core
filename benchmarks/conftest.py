@@ -93,6 +93,17 @@ class Benchmark(Protocol):
     ) -> _T:
         """Time repeated calls of ``function`` and return one call's result."""
 
+    def pedantic(
+        self,
+        target: Callable[..., _T],
+        *,
+        setup: Callable[[], object] | None = None,
+        rounds: int = 1,
+        iterations: int = 1,
+        warmup_rounds: int = 0,
+    ) -> _T:
+        """Time ``rounds`` calls of ``target``, each after a call of ``setup``."""
+
 
 # ---------------------------------------------------------------------------
 # Identifier
