@@ -360,6 +360,34 @@ impl<F> SymbolTable<F> {
         }
     }
 
+    /// Set `namespace`'s parent and symbols, replacing the namespace in
+    /// place if it is defined and adding it at the end otherwise, without
+    /// checking anything.
+    ///
+    /// This restores a table from its parts, such as a saved table's
+    /// namespaces in order, whatever state it was in: a symbol an ancestor
+    /// also defines, or a parent chain that cycles, which
+    /// [`add_symbol`](Self::add_symbol) refuses to build. A later symbol of
+    /// `symbols` replaces an earlier one of the same identifier.
+    pub fn insert_namespace(
+        &mut self,
+        namespace: Identifier,
+        parent: Option<Identifier>,
+        symbols: impl IntoIterator<Item = (Identifier, F)>,
+    ) {
+        let mut ordered = OrderedMap::new();
+        for (symbol, frame) in symbols {
+            ordered.insert(symbol, frame);
+        }
+        self.namespaces.insert(
+            namespace,
+            NamespaceData {
+                parent,
+                symbols: ordered,
+            },
+        );
+    }
+
     /// Sort the namespaces, and each namespace's symbols, by identifier id.
     pub fn canonicalize(&mut self) {
         self.namespaces.sort_by_key(Identifier::id);

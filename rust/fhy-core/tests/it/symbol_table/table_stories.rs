@@ -575,6 +575,44 @@ fn update_namespaces_sets_a_parent_only_where_the_other_table_names_one() {
     assert_eq!(parent_of(&added), None);
 }
 
+#[test]
+fn insert_namespace_restores_any_state_without_checks() {
+    let [a, b, symbol, other] = identifiers(["a", "b", "symbol", "other"]);
+    let mut table = SymbolTable::new();
+    table.insert_namespace(
+        a.clone(),
+        Some(b.clone()),
+        [(symbol.clone(), import(&symbol))],
+    );
+    table.insert_namespace(
+        b.clone(),
+        Some(a.clone()),
+        [
+            (symbol.clone(), import(&other)),
+            (other.clone(), import(&other)),
+        ],
+    );
+
+    assert_eq!(namespace_names(&table), [a.clone(), b.clone()]);
+    assert_eq!(symbol_names(&table, &b), [symbol.clone(), other.clone()]);
+    assert_eq!(table.lookup(&a, &symbol), Ok(Some(&import(&symbol))));
+    assert_eq!(table.violations().len(), 3, "{:?}", table.violations());
+
+    table.insert_namespace(
+        a.clone(),
+        None,
+        [
+            (other.clone(), import(&symbol)),
+            (other.clone(), import(&other)),
+        ],
+    );
+
+    assert_eq!(namespace_names(&table), [a.clone(), b]);
+    assert_eq!(table.namespace(&a).and_then(|view| view.parent()), None);
+    assert_eq!(symbol_names(&table, &a), std::slice::from_ref(&other));
+    assert_eq!(table.lookup(&a, &other), Ok(Some(&import(&other))));
+}
+
 // ---------------------------------------------------------------------------
 // Canonical order
 // ---------------------------------------------------------------------------
