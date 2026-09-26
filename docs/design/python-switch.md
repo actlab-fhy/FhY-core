@@ -120,8 +120,17 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S14.4: the Python switch (`verification.py` and `traits/verifiable.py` over `_rs`; cb959f5)
   - [x] S14.5: tests migrated, and the interface suite (23; see "S14.3 to S14.5 status")
   - [x] S14.6: benchmarks after, and docs (every row faster or within noise; see "S14 benchmarks")
-- [ ] S13: constraints (design in progress; see "S13 resume notes")
-  - [ ] S13.0: the design (survey, decisions, benchmark plan, "Needs the user", steps, test plan)
+- [ ] S13: constraints (designed; "Needs the user" is empty; waiting for the rebase onto S12, see "S13 resume notes")
+  - [x] S13.0: the design (survey, decisions D-S13-1 to D-S13-22, benchmark plan, steps, test plan)
+  - [ ] S13a.1: constraint benchmarks and baseline
+  - [ ] S13a.2: core additions, test-first (`fhy_core::constraint`: values, members, the three kinds, keys, the context and observer)
+  - [ ] S13a.3: the constraint binding (the value reader, opaque values, the three pyclasses, the log records, the stubs)
+  - [ ] S13a.4: the Python switch of `core.py`, `members.py` and `ordering.py`
+  - [ ] S13a.5: tests migrated, and the interface suite
+  - [ ] S13b.1: the system's core, test-first (`ConstraintSystem`, `CustomConstraint`)
+  - [ ] S13b.2: the system's binding
+  - [ ] S13b.3: the Python switch of `system.py`, with its tests
+  - [ ] S13b.4: benchmarks after, and docs
 
 ## Goal
 
@@ -14574,73 +14583,907 @@ Every benchmark row is faster, or within noise.
 
 ## S13: constraints
 
-- **Status:** design in progress (2026-09-26, from 3a53195). Only the
-  survey is under way; no decision is proposed yet. See "S13 resume
-  notes" for where the work stopped.
-- **Scope:** `src/fhy_core/symbolic/constraint/` (`core.py` 1,117 lines,
-  `members.py` 527, `ordering.py` 65, `system.py` 848, `errors.py` 35,
-  `__init__.py` 66): a core in `rust/fhy-core` on `fhy_core::solver`,
-  `fhy_core::term` and `fhy_core::expression`, and a binding in
-  `rust/fhy-core-py`. `symbolic/param` is the next slice, so the Rust API
-  is to be designed with it in mind.
+- **Status:** designed 2026-09-26 from 3a53195. D-S13-1 to D-S13-22 apply
+  the policy the user already set, the precedent of S7 to S10, and the
+  user's direction for this slice: port as much of the package to Rust as
+  possible, accepting small slowdowns on paths nothing calls. "Needs the
+  user" is empty. The branch has not yet been rebased onto `dev-rust`, and
+  so not onto S12 either; see "S13 resume notes".
+- **Scope:** `src/fhy_core/symbolic/constraint/`, 2,658 lines: `core.py`
+  (1,117), `members.py` (527), `system.py` (848), `ordering.py` (65),
+  `errors.py` (35) and `__init__.py` (66). The core goes in `rust/fhy-core`,
+  on `fhy_core::solver`, `fhy_core::term` and `fhy_core::expression`, and
+  the binding in `rust/fhy-core-py`. `symbolic/param` is the next slice, so
+  the Rust API is shaped for it (D-S13-20).
+- **Split:**
+  - **S13a** ports the members, the outcome, and the three constraint
+    kinds, with their evaluation, conversion, ordering keys, equivalence
+    and serialization.
+  - **S13b** ports `ConstraintSystem`: canonical order, the conjunction,
+    and the solver-backed questions. It also adds the extension point for
+    Python-defined constraints (D-S13-5).
+  - Between the two, the Python `ConstraintSystem` runs over the
+    Rust-backed constraints, bottom-up (cross-cutting rule 7).
+- **Pattern:**
+  - The logic moves into a new core module, `fhy_core::constraint`.
+  - The three constraint kinds and the system are P2: thin Python
+    subclasses of pyclasses.
+  - `Constraint` stays a Python ABC that third parties subclass. A
+    Python-defined constraint reaches the core system through a P3 adapter
+    (D-S13-5).
+  - Members that only Python can compare, such as user `Serializable`
+    values, reach the core as opaque values behind an adapter (D-S13-3).
+  - `ConstraintOutcome`, `SymbolicPredicate`, the error classes and the
+    member type aliases stay Python.
 
-### Survey so far (TODO: complete)
+### Survey: the Python API
 
-- **Consumers in `src`:** only `symbolic/param` (`core.py` and
-  `domains.py`, public names only: `Constraint`, `ConstraintBindings`,
-  `ConstraintError`, `ConstraintOutcome`, `ConstraintSystem`,
-  `EquationConstraint`, `InSetConstraint`, `NotInSetConstraint`,
-  `create_constraint_system`, `does_member_lift_to_expression`), and the
-  namespace re-export in `symbolic/__init__.py`.
-- **Solver use:** `EquationConstraint.evaluate_with_bindings` simplifies
-  through `simplify_expression`; `ConstraintSystem` asks
-  `check_expression_satisfiability` and `does_expression_imply`, and
-  checks `validate_timeout_milliseconds`. Six places in
-  `test_constraint_system.py` patch `system.check_expression_satisfiability`
-  (S8's survey), which a Rust system would no longer call through Python.
-- **Members** may be `str`, `int`, `float` (NaN refused, `-0.0` stored as
-  `0.0`), `bool`, `tuple` and `frozenset` of members, or any `Serializable`
-  and hashable Python object, compared type-strictly
-  (`type(a) is type(b) and a == b`). The last kind is a user value no port
-  will move to Rust, which the core's member type must admit without
-  holding Python objects itself (an open design point).
-- **Third-party constraints:** `Constraint` documents a subclassing
-  contract (six abstract methods), and
-  `tests/symbolic/constraint/test_abstract_contract.py` defines a dataclass
-  subclass overriding them. Whether a `ConstraintSystem` must accept such a
-  member decides whether the core's constraint type is closed (an open
-  design point).
-- **Python-text-dependent orders:** members are ordered by a Python-`repr`
-  key (`members`, `__repr__`, `__str__`, serialization,
-  `convert_to_expression`), and systems by `build_ordering_key()`, a
-  string built from Python class names and literal keys.
-- **Tests:** `tests/symbolic/constraint/` has 21 modules (about 11,000
-  lines; `test_constraint_system.py` alone 3,358), and 40 param modules
-  exercise constraints through the param API. The per-file survey (private
-  names, message, log, `repr` and key pins, subclasses, patches, markers)
-  was running when the work paused, and is to be redone.
-- **Benchmarks:** `benchmarks/test_solver.py` has two constraint rows
-  (`test_equation_constraint_evaluate_with_bindings`,
-  `test_constraint_system_check_implication`) and `benchmarks/test_term.py`
-  one (`test_constraint_structural_equivalence`); a
-  `benchmarks/test_constraint.py` is planned.
+`__init__.py` re-exports 14 names. The package is organized by concern:
+
+| File | Public names | Contents |
+|---|---|---|
+| `errors.py` | `ConstraintError(ValueError)`, `MissingSymbolTypeError(ValueError)`, both `register_error`ed | |
+| `members.py` | `ConstraintMember` (type alias), `MemberCollection` (runtime-checkable protocol), `does_member_lift_to_expression` | member validation, `_TypedMember` (type-strict `==` and `hash`), wrapping and unwrapping, the NaN refusal, the canonical member order and its key, the member codec, rendering |
+| `core.py` | `ConstraintBindings` (alias), `ConstraintOutcome` (`Enum`), `SymbolicPredicate` (runtime-checkable protocol), `Constraint` (ABC), `EquationConstraint`, `InSetConstraint`, `NotInSetConstraint` | binding coercion, the native-constant binding refusal and its WARNING, set-membership evaluation |
+| `ordering.py` | none | `_build_expression_ordering_key` |
+| `system.py` | `create_constraint_system`, `ConstraintSystem` | the symbol-type coverage checks, the tri-state classification, the conjunction, the decided-leaf partition, the solver-backed questions |
+
+**Members.**
+
+- A member is one of:
+  - a `str`, `int`, `float` or `bool`;
+  - a `tuple` or `frozenset` of members;
+  - a `Serializable` that is also `Hashable`.
+- These are refused, each with `ConstraintError` and a Python sentence:
+  - `None`, bare or nested;
+  - an unhashable container;
+  - any other type;
+  - a NaN float at any depth;
+  - a member whose `hash` raises;
+  - a collection that is a `str`, `bytes` or `bytearray` (it would be
+    split into its elements), or a `Mapping` (its values would be lost).
+- Numbers are normalized:
+  - an `int` or `float` subclass (`IntEnum`, NumPy `float64`) is stored as
+    the exact `int` or `float` that `LiteralExpression` holds for it;
+  - `-0.0` is stored as `0.0`.
+- Comparison is type-strict: `type(a) is type(b) and a == b`, at every
+  depth. So `True`, `1` and `1.0` are three members.
+- **Orders.** Each place that shows several members sorts them its own way:
+
+  | Where | Order |
+  |---|---|
+  | `members` | by a type-tagged key such as `int:1`, `str:'a'`, or `module.Class:<repr of serialize_to_dict()>`, compared as strings, so `10` sorts before `2` |
+  | `repr`, `str` | by each member's `repr` text |
+  | `convert_to_expression`, for its leaves | by `repr` of the wrapped member |
+  | the wire | by `repr` of each serialized dict |
+  | `values` (the field) | the frozenset's iteration order, which depends on insertion and hash seed |
+
+- **Lifting.** `does_member_lift_to_expression` answers whether a member
+  lifts to a `LiteralExpression`. A `str`, a non-`LiteralType` and a value
+  the constructor refuses do not.
+
+**Outcome and bindings.**
+
+- `ConstraintOutcome` has `SATISFIED`, `VIOLATED` and `UNDECIDED`, and its
+  `__bool__` raises.
+- `ConstraintBindings` is `Mapping[Identifier, Expression | LiteralType]`.
+  Set constraints also accept any value that could be a member, such as a
+  tuple or a `Serializable`.
+
+**`Constraint` (ABC).** Its bases are `SymbolicPredicate`,
+`WrappedFamilySerializable`, `FrozenMixin`, `DerivedEquivalenceMixin` and
+`ABC`.
+
+- Six abstract methods: `get_free_identifiers`, `evaluate_with_bindings`,
+  `convert_to_expression`, `build_ordering_key`, `__repr__`, `__str__`.
+- `is_satisfied_with_bindings` is concrete: it is true only for
+  `SATISFIED`.
+- The docstring documents a subclassing contract for third parties, which
+  the tests use.
+
+**`EquationConstraint(expression)`**, a frozen dataclass whose scope is
+the expression's free identifiers.
+
+- `evaluate_with_bindings`:
+  1. keeps only the bindings in scope, and never inspects the rest;
+  2. coerces each value: an `Expression` passes; a `LiteralType` lifts to
+     a `LiteralExpression`; anything else raises `ConstraintError`, naming
+     the identifier, the `repr` and the type;
+  3. screens with `validate_predicate(expression, environment)`;
+  4. refuses a bound native constant: WARNING on
+     `fhy_core.symbolic.constraint.core`, answer `UNDECIDED`;
+  5. calls `simplify_expression(expression, environment)`, whose result
+     reads as:
+     - a `bool` literal: `SATISFIED` or `VIOLATED`;
+     - another literal: raises `NonBooleanLogicalOperandError`;
+     - anything else: `UNDECIDED`, logged at DEBUG when free identifiers
+       remain, and at WARNING when none do.
+- `convert_to_expression` returns the expression.
+- The key is `EquationConstraint|<tree key>`.
+- `repr` is `EquationConstraint(expression=<repr>)`, and `str` is
+  `pformat_expression`.
+
+**`InSetConstraint` and `NotInSetConstraint(variable, values)`**, frozen
+dataclasses over `_SetConstraint`, which differ only in polarity.
+
+- Construction:
+  - `variable` must be an `Identifier`;
+  - `values` is normalized, then stored as a tuple of raw members;
+  - a cached `_members` frozenset of wrapped members is seeded at
+    construction, and `members` is a cached canonical tuple.
+- The scope is `{variable}`.
+- `evaluate_with_bindings` reads `variable` once with `Mapping.get`:
+  - unbound: `UNDECIDED`, DEBUG;
+  - a `LiteralExpression`: decided by its normalized value (a `Decimal`
+    matches no member);
+  - another `Expression`: `UNDECIDED`, DEBUG;
+  - a raw value: validated as a member-shaped value, then decided by
+    type-strict membership;
+  - `variable` a native constant: `UNDECIDED`, WARNING, after the checks
+    that raise.
+- `convert_to_expression`:
+  - an empty set gives `False` (`True` for not-in);
+  - one member gives `variable == m` (`!=`);
+  - several give a flat `or` (`and`);
+  - a member that does not lift raises `ConstraintError`.
+- The key is `<Kind>|<variable id>|{<sorted member keys>}`.
+- `repr` is `InSetConstraint(x::0, values={1, 2})`, and `str` is
+  `x in {1, 2}` (`not in`).
+- Structural equivalence is derived from the fields: `variable` is
+  `compared_as_reference()`, and `values` is
+  `compared_as_value(key=_wrap_member_collection)`.
+- Each leaf is `register_serializable`ed, with wire data
+  `{"variable": ..., "values": [<wrapped members>]}`, and has
+  `construct_from_fields`.
+
+**`ConstraintSystem(constraints)`**, a frozen dataclass with `eq=False`,
+so `==` and `hash` are identity.
+
+- The members must be `Constraint`s. They are sorted by
+  `build_ordering_key()`, stably, and duplicates are kept.
+- The scope is the union of the members' scopes.
+- `evaluate_with_bindings` snapshots the mapping with `dict(bindings)`,
+  then evaluates the members in order:
+  - it stops at the first `VIOLATED`;
+  - it logs each `UNDECIDED` member at DEBUG on
+    `fhy_core.symbolic.constraint.system`.
+- `convert_to_expression`: an empty system gives `True`, one member gives
+  its expression, and several give a flat `and`.
+- `check_satisfiability(symbol_types, *, timeout_milliseconds)` checks, in
+  order:
+  1. the timeout;
+  2. an empty system answers `SATISFIED`;
+  3. the member conversions;
+  4. that the symbol types cover the conjunction
+     (`MissingSymbolTypeError`, the names sorted by name hint; a native
+     constant needs none);
+  5. `validate_predicate` of each member, in order;
+  6. the question, through `check_expression_satisfiability`.
+- `check_satisfiability_with_bindings` adds, before the question:
+  1. every binding is coerced;
+  2. a set leaf whose variable is bound to a literal is a decided leaf, and
+     the other members are the residual;
+  3. the symbol types cover what substitution will leave free;
+  4. each residual member is screened with the environment;
+  5. a bound native constant in scope answers `UNDECIDED` (WARNING);
+  6. the decided leaves are folded;
+  7. the residual is substituted and asked about.
+- `check_implication` checks the timeout, converts both sides, checks
+  their symbol types, screens every member of `self` and then of `other`,
+  and asks `does_expression_imply`.
+- `_classify_solver_answer` maps `None` to `UNDECIDED`.
+- The system is `register_serializable`ed as `constraint_system`, with
+  data `{"constraints": [...]}`.
+
+### Survey: the Rust API
+
+- **Nothing models a constraint.** `rust-workspace.md` §I.8 lists
+  `constraint` as a non-goal, which the user's direction for this slice
+  replaces.
+- **What the port builds on:**
+  - `fhy_core::solver::Solver`:
+    - `ask` with `Question::Satisfiability` and `Question::Implication`;
+    - `simplify`, which after S12 takes a `SimplifyContext` carrying the
+      `FunctionRegistry`;
+    - `Answer`, `UnknownReason` and `Hazard`, and `SolveError`.
+  - `fhy_core::term`: `AlphaRenaming`, and the `AlphaEquivalence`,
+    `FreeIdentifiers` and `Term` traits.
+  - `fhy_core::expression`:
+    - `Expression`, with structural `==` and `Hash`, `free_identifiers`
+      and `substitute`;
+    - `LiteralValue` (`Bool`, `Int(BigInt)`, `Float(f64)`, `Decimal`) and
+      its text parser;
+    - `BooleanScreen`: `check_predicate` and `check_logical_operands`,
+      with an environment and symbol types;
+    - `SortLookup`, and the `FunctionRegistry` (S7), which knows the
+      native constants;
+    - `SymbolType`.
+- **The binding** has the default solver (N-S8-2 (b), `solver/state.rs`),
+  the registry snapshot (S7), the identifier fast paths (S10), the
+  expression materializers (S8), the frozen and public-class helpers, and
+  S10's pattern of deferring errors from Python hooks.
+
+### Consumers and tests
+
+**`src`.**
+
+- Only `symbolic/param` uses the package (`core.py` and `domains.py`), and
+  it uses only public names. `symbolic/__init__.py` re-exports the package
+  as a namespace.
+- Param wraps constraints and never subclasses them. It dispatches with
+  `isinstance` on the three kinds, and raises `ConstraintError` for any
+  other kind.
+- What param reads:
+  - `members`, whose order drives the order of candidates and of log text;
+  - `values`, only to rebuild a constraint with `type(c)(new, c.values)`;
+  - `variable`, `expression` and `constraints`;
+  - `get_free_identifiers` and `convert_to_expression`;
+  - `is_structurally_equivalent`, to dedupe;
+  - `does_member_lift_to_expression`.
+- Solver-backed calls:
+  - `check_satisfiability` and `check_implication`, with one-identifier
+    INT or REAL symbol types and no timeout;
+  - `evaluate_with_bindings` through `evaluate_system_outcome`, which
+    reads `PassExecutionError` as `UNDECIDED` and lets `ConstraintError`
+    and `NonBooleanLogicalOperandError` propagate.
+- Param relies on object identity:
+  - `domains.py:578` tests whether screening narrowed a constraint with
+    `screened is not constraint`;
+  - its tests compare tuples of constraints with `==`, which means
+    identity for `eq=False` classes;
+  - so a system must return the objects it was given.
+- Param's `repr`, messages and logs embed `repr(constraint)`, and its
+  tests match `str(param)` substrings such as `">= 0"`.
+- `Param.variable` is a `compared_as_binder(scopes_over=("constraint_system",))`
+  field, so the system is compared under a renaming.
+- Param's wire embeds the system's
+  `{"__type__": "constraint_system", "__data__": {"constraints": [...]}}`.
+
+**Python tests.** `tests/symbolic/constraint/` has 795 collected tests in
+20 modules and 9,423 lines. Of those, 53 are marked `z3`, 107 `sympy`,
+21 both, and 9 `property`.
+
+| File | Collected | What changes |
+|---|--:|---|
+| `test_constraint_system.py` | 233 | 7 places patch `system.check_expression_satisfiability` (one more is in param's `test_param_intersection.py`); two third-party members (`_ProbeConstraint`); message pins |
+| `test_set_constraints.py` | 154 | `_wrap_member_collection` patched (10 cases); `dataclasses.replace`; `left.values != right.values` preconditions |
+| `test_bindings_evaluation.py` | 102 | log pins on `...constraint.core`; messages naming `repr(value)` and the type |
+| `test_equation_constraint.py` | 81 | exception types; `PassExecutionError` with a `TypeError` cause (:423, :437) |
+| `test_serialization.py` | 47 | the wire's member order (:224); `construct_from_fields` |
+| `test_structural_equivalence.py` | 41 | `values` preconditions; a non-dataclass third-party constraint |
+| `test_member_validation.py` | 35 | Python-typed messages |
+| `test_convert_to_expression.py` | 24 | the leaf order (:569) |
+| `test_ordering_key.py` | 19 | relational tests only, plus one third-party key |
+| the other 11 modules | 59 | contracts, freezing, the protocol, user stories, properties |
+
+- **Private names used by code:**
+  - the `core` module's `_wrap_member_collection`, which a test patches;
+  - the `_members` field name, in a `FrozenMutationError` test;
+  - the patch target `fhy_core.symbolic.constraint.system.check_expression_satisfiability`.
+- **Logger names pinned:** `fhy_core.symbolic.constraint.core`,
+  `fhy_core.symbolic.constraint.system` and `fhy_core.symbolic.solver`.
+- **Third-party constraints:**
+  - `_ProbeConstraint` and `_ThirdPartyConstraint` sit inside systems;
+  - `_ConcreteConstraint` and dynamic `type()` stubs pin the abstract
+    methods;
+  - a non-dataclass subclass must raise `EquivalenceDerivationError`;
+  - `test_param_intersection.py:645` uses one too.
+- **Outside the package:**
+  - `test_serialization_pins.py` holds golden JSON for each kind and for a
+    system, whose members are already in canonical order;
+  - also `test_pickle_round_trips_properties.py`,
+    `test_solver_rust_binding.py` (a plugged backend answering
+    `check_implication`), `test_error.py`, `test_import_graph.py` and
+    `test_namespace.py`;
+  - `tests/strategies/constraints.py` builds the strategies.
+- **Param tests:** 26 of the 40 param modules import constraint names.
+  About 174 of about 779 functions build constraints directly.
+
+**Benchmarks.**
+
+- `benchmarks/test_solver.py` has
+  `test_equation_constraint_evaluate_with_bindings` and
+  `test_constraint_system_check_implication`.
+- `benchmarks/test_term.py` has `test_constraint_structural_equivalence`,
+  plus the param rows that reach constraints.
+
+### Divergences visible from Python
+
+| # | Python today | After S13 |
+|---|---|---|
+| C-1 | `values` is in frozenset iteration order | the canonical member order, the same as `members`, whatever the construction order (D-S13-4) |
+| C-2 | members sort by a string key (`10` before `2`), and `repr`, the expression's leaves and the wire each sort by `repr` text | one canonical order everywhere: by kind (`bool`, `float`, `frozenset`, `int`, `str`, `tuple`, then opaque values), then by value (numbers numerically, strings by code point, containers element-wise, opaque values by their adapter's key) (D-S13-4) |
+| C-3 | the three kinds are dataclasses (`dataclasses.replace`, `fields`) | P2 classes without dataclass machinery. `construct_from_fields` stays; `dataclasses.replace` raises `TypeError` (D-S13-9) |
+| C-4 | a raw binding outside every kind's shape is refused by the member that reads it, in canonical order | unchanged; each value is read once, when the member reads it (D-S13-7) |
+| C-5 | `build_ordering_key()` of a built-in kind is Python text (`EquationConstraint\|NodeType[..](..)`) | the core's key text, which has the same guarantee: equal exactly for structurally equivalent constraints (D-S13-6) |
+| C-6 | the texts of errors with a core counterpart are Python sentences | the core's one-line lowercase texts, under the same Python classes; argument-shape errors, which have no core counterpart, keep Python's texts (D-S13-14) |
+| C-7 | missing symbol types are named by name hint, sorted by name | named as `name::id`, sorted by id, as S8's `KeyError` names them (D-S13-14) |
+| C-8 | the system asks through the module function `system.check_expression_satisfiability`, which tests patch | the core asks the default solver directly; tests plug a fake backend (D-S13-12) |
+| C-9 | a simplifier's failure inside `evaluate_with_bindings` arrives as whatever the solver function raised | the same, through S8's and S12's mapping |
+| C-10 | the derived walks and member comparisons recurse in Python | Rust on the heap, except user `==`, `hash` and third-party hooks |
+
+Unchanged in meaning:
+
+- the three kinds and their scopes;
+- type-strict membership and number normalization, and the NaN refusal;
+- the order of checks in every entry point, and the lazy reading of
+  bindings;
+- the native-constant refusals and their log records (logger, level,
+  what they name);
+- the outcomes and their folds, including stopping at the first
+  violation;
+- the lowering to expressions, apart from leaf order;
+- the wire shapes and type ids;
+- identity `==` and `hash`, freezing, and pickling;
+- `ConstraintOutcome`, `SymbolicPredicate`, and the error classes.
+
+### Pattern choice
+
+- **Core: `fhy_core::constraint`** (decision 2: logic-rich; the
+  direction). Members, evaluation, conversion, ordering, equivalence, the
+  conjunction and the questions move there with Rust tests. Param's Rust
+  port will hold these types.
+- **P2:**
+  - `_rs.EquationConstraint`, `_rs.InSetConstraint` and
+    `_rs.NotInSetConstraint`, as `#[pyclass(subclass, frozen)]`. The
+    public classes are `class EquationConstraint(_rs.EquationConstraint,
+    Constraint)`, and so on. Each pyclass implements every method the ABC
+    declares, plus the equivalence and serialization hooks. Its methods
+    come first in the MRO, so the ABC's abstract methods are satisfied and
+    the Python mixins' state-free defaults are shadowed.
+  - `_rs.ConstraintSystem`, likewise, under `ConstraintSystem`.
+- **P3:** a Python-defined `Constraint` inside a system is driven through
+  an adapter implementing the core's `CustomConstraint` trait (D-S13-5).
+  A user member value that only Python can compare is driven through an
+  adapter implementing `OpaqueValue` (D-S13-3).
+- **Stays Python (P1 or plain):**
+  - `ConstraintOutcome` (P1, converted at the boundary, as S8 kept
+    `SolverBackend`);
+  - `SymbolicPredicate` and `MemberCollection` (protocols, D-S10-6);
+  - `ConstraintMember` and `ConstraintBindings` (aliases);
+  - the `Constraint` ABC (D-S13-5);
+  - `ConstraintError` and `MissingSymbolTypeError`;
+  - `create_constraint_system`.
+
+**Benchmark plan: `benchmarks/test_constraint.py` (S13a.1).** It uses the
+public API only. The baseline measures today's Python package.
+
+| Benchmark | Measures |
+|---|---|
+| `test_equation_constraint_construction`, `test_set_constraint_construction[4]`, `[100]`, `[tuples]`, `[serializable]` | construction and normalization; opaque members |
+| `test_set_constraint_members`, `test_set_constraint_values` | the accessors |
+| `test_set_constraint_evaluate_with_bindings[member]`, `[non_member]`, `[unbound]`, `[literal_expression]`, `[serializable]` | type-strict membership; an opaque `==` |
+| `test_equation_constraint_evaluate_with_bindings[ground]`, `[partial]` | through the simplifier (the ground case reruns S8's row) |
+| `test_set_constraint_convert_to_expression[50]` | the lowering |
+| `test_constraint_build_ordering_key[equation]`, `[set_100]` | the keys |
+| `test_constraint_structural_equivalence[set_100]`, `test_constraint_alpha_equivalence[equation]` | equivalence |
+| `test_constraint_serialize_to_dict[set_100]`, `test_constraint_deserialize_from_dict[set_100]`, `test_constraint_pickle_round_trip` | serialization |
+| `test_constraint_repr[set_100]` | rendering |
+| `test_constraint_system_construction[20]` | the canonical sort |
+| `test_constraint_system_evaluate_with_bindings[sets_20]`, `[mixed]` | the conjunction |
+| `test_constraint_system_check_satisfiability_of_bounds`, `test_constraint_system_check_satisfiability_with_bindings` | the questions (S13b) |
+| `test_constraint_system_serialize_to_dict[20]`, `test_constraint_system_structural_equivalence[20]` | the system's value paths |
+
+Reruns, not added:
+
+- from `test_solver.py`: `test_equation_constraint_evaluate_with_bindings`,
+  `test_constraint_system_check_implication`, `test_nat_param_is_value_valid`
+  and `test_int_param_intersection_feasibility`;
+- from `test_term.py`: `test_constraint_structural_equivalence`,
+  `test_param_alpha_equivalence[...]`, `test_param_structural_equivalence`
+  and `test_param_construction_between_bounds`.
+
+The verdict follows cross-cutting rule 5. The paths at risk are:
+
+- **opaque members**, whose `==` and `hash` now cross from Rust into
+  Python;
+- **the accessors `values` and `members`**, which build Python objects
+  from core members on first read;
+- **small constraints**, whose construction gains a crossing into the
+  extension;
+- **third-party members of a system**, whose hooks the core calls through
+  the adapter.
+
+### Decisions (proposed 2026-09-26)
+
+Each decision names the policy it follows:
+
+- D-S4-1: Rust semantics where the two differ;
+- D-S4-2: Python names where the meaning is the same;
+- "no fallback";
+- "tests rewritten, not skipped";
+- the crate's conventions in `rust-workspace.md` Part I: one public path
+  per item, the layering (§I.2), `#[non_exhaustive]` errors with a
+  one-line lowercase `Display` (I.3 rule 3), the naming rules (rule 5),
+  and no global state beyond identity;
+- P1 to P3, and cross-cutting rules 5 to 7;
+- the direction: port as much as possible, and small slowdowns on
+  uncalled paths are acceptable.
+
+Where a decision follows an earlier slice, it says so.
+
+- **D-S13-1: one implementation, no fallback** ("no fallback"; D-S7-1,
+  D-S8-1, D-S10-1).
+  - These are deleted, not kept beside the Rust path:
+    - `ordering.py`;
+    - `_TypedMember` and every private helper of `members.py` and
+      `core.py`;
+    - the dataclass bodies of the three kinds;
+    - the private helpers and the method bodies of `system.py`.
+  - These stay Python:
+    - `members.py`: `ConstraintMember`, `MemberCollection`, and
+      `does_member_lift_to_expression` as a call into `_rs`;
+    - `core.py`: `ConstraintBindings`, `ConstraintOutcome`,
+      `SymbolicPredicate`, the `Constraint` ABC, the three thin classes,
+      and the module logger;
+    - `system.py`: `create_constraint_system`, the thin
+      `ConstraintSystem`, and its logger.
+  - The two loggers stay because the binding logs on those names
+    (D-S13-13).
+- **D-S13-2: a new core module, `fhy_core::constraint`** (one public
+  path; §I.2; the direction).
+  - It depends on `expression` (with `registry`), `solver` and `term`,
+    never on `pass`. So it sits after `solver` in CONTRIBUTING's
+    layering list.
+  - Its row maps `fhy_core.symbolic.constraint` to `fhy_core::constraint`,
+    and §I.8's non-goal is revised for it.
+  - The sketch is settled test-first in S13a.2 and S13b.2, as D-S8-2's
+    was:
+
+  ```rust
+  // fhy_core::constraint
+  pub enum Value { Bool(bool), Int(BigInt), Float(f64), Decimal(Decimal), Str(String),
+                   Tuple(Vec<Value>), Set(ValueSet), Opaque(OpaqueValue) }       // a bound or member value
+  pub struct Member(/* a Value: no Decimal, no NaN at any depth, -0.0 as 0.0 */);  // try_from(Value)
+  pub struct MemberSet { /* deduplicated, canonical order (D-S13-4) */ }
+  pub trait OpaqueValue: Send + Sync + fmt::Debug {                                 // D-S13-3
+      fn kind_key(&self) -> Cow<'_, str>;                   // the type's identity, for type-strict ==
+      fn is_equal(&self, other: &dyn OpaqueValue) -> bool;
+      fn member_hash(&self) -> Result<u64, OpaqueError>;
+      fn ordering_key(&self) -> Cow<'_, str>;
+      fn describe(&self) -> Cow<'_, str>;                   // for error texts
+      fn is_member_shaped(&self) -> bool;
+      fn as_any(&self) -> &dyn Any;
+  }
+  pub enum Binding { Expression(Expression), Value(Value) }
+  pub struct Bindings { /* HashMap<Identifier, Binding> */ }
+
+  #[expect(clippy::exhaustive_enums)] pub enum Outcome { Satisfied, Violated, Undecided }
+  pub struct Context<'a> { /* &Solver, &FunctionRegistry, symbol types, limits, &dyn Observer */ }
+  pub trait Observer { fn undecided(&self, event: &Event<'_>) {} }                // D-S13-13; no-op default
+  #[non_exhaustive] pub enum Event<'a> { Unbound { .. }, SymbolicBinding { .. },
+      BoundNativeConstants { .. }, Residual { .. }, UndecidedMember { .. }, Refused { .. }, GaveUp { .. } }
+
+  pub struct EquationConstraint { /* Expression */ }
+  pub struct SetConstraint { /* variable, MemberSet, Polarity */ }   // in-set and not-in-set
+  #[non_exhaustive] pub enum Polarity { In, NotIn }
+  #[non_exhaustive] pub enum Constraint {
+      Equation(EquationConstraint), Set(SetConstraint), Custom(Arc<dyn CustomConstraint>),  // S13b
+  }
+  impl Constraint {
+      pub fn free_identifiers(&self) -> HashSet<Identifier>;
+      pub fn evaluate(&self, bindings: &Bindings, context: &Context<'_>) -> Result<Outcome, ConstraintError>;
+      pub fn to_expression(&self) -> Result<Expression, ConstraintError>;
+      pub fn ordering_key(&self) -> Cow<'_, str>;
+      pub fn is_structurally_equivalent(&self, other: &Self) -> bool;
+  }
+  impl AlphaEquivalence for Constraint { .. }
+  pub trait CustomConstraint: Send + Sync + fmt::Debug { /* the six hooks, equivalence, as_any */ }
+
+  pub struct ConstraintSystem { /* Vec<Constraint>, canonical order */ }            // S13b
+  impl ConstraintSystem {
+      pub fn new(constraints: impl IntoIterator<Item = Constraint>) -> Result<Self, ConstraintError>;
+      pub fn constraints(&self) -> &[Constraint];
+      pub fn evaluate(..); pub fn to_expression(..);
+      pub fn check_satisfiability(&self, context: &Context<'_>) -> Result<Outcome, ConstraintError>;
+      pub fn check_satisfiability_with_bindings(&self, bindings: &Bindings, context: &Context<'_>) -> ..;
+      pub fn check_implication(&self, other: &Self, context: &Context<'_>) -> ..;
+  }
+  #[non_exhaustive] pub enum ConstraintError { MissingSymbolTypes(Vec<Identifier>), IllTyped(..),
+      NonBooleanResult(Expression), UnusableBinding { .. }, UnliftableMember(Member),
+      NanMember, UnhashableMember(..), Solve(SolveError), Custom(CallbackError) }
+  ```
+
+  - `Outcome` stays exhaustive: a question has exactly three answers, as
+    with S8's `Answer`.
+  - The reasons for an undecided outcome go to the `Observer` rather than
+    into `Outcome`, so a system that goes on to a violation still reports
+    the members it found undecided on the way, as Python logs them today.
+- **D-S13-3: members and bound values are core values; user values are
+  opaque** (decision 2; D-S4-1; P3's adapter rules; S7's user-native
+  implementations and S8's Python backends as precedent for Python
+  objects behind a core trait).
+  - `Value` covers every shape Python can bind or store.
+  - `Member` is a `Value` that can be a member: no `Decimal`, no NaN at
+    any depth, and `-0.0` normalized.
+  - Type-strict equality is the derived structure: `Bool`, `Int` and
+    `Float` never compare equal to each other.
+  - An `Opaque` value is compared through `OpaqueValue`:
+    - equal `kind_key`s and `is_equal`;
+    - hashed by `member_hash`.
+  - The core never names Python. The binding's `PyOpaqueValue` holds the
+    object:
+    - `kind_key` is the type's qualified name plus its id;
+    - `is_equal` is `==` under the interpreter;
+    - `member_hash` is `hash`, computed once;
+    - `ordering_key` is today's `module.Class:<repr(serialize_to_dict())>`;
+    - `describe` is its `repr` and type name.
+  - The binding reads a Python value into a `Value`:
+    - `bool`, `int` (and subclasses), `float` (and subclasses),
+      `Decimal`, `str`, `tuple` and `frozenset` become core values, with
+      S13's normalization;
+    - anything else becomes an opaque value. It is member-shaped only when
+      it is a `Serializable` and `Hashable`.
+  - Calling a user's `==` and `hash` from Rust is not a per-node visitor
+    callback: it asks a user value a question only it can answer, as S9's
+    fold calls a user native once per folded call. So P3's granularity
+    rule is not at stake.
+  - A raising `==` follows S10's deferred-error pattern: the adapter keeps
+    the exception, the comparison answers `false`, and the binding raises
+    that exception.
+- **D-S13-4: one canonical member order** (D-S4-1; C-1, C-2).
+  - `MemberSet` deduplicates by type-strict equality and keeps members in
+    one total order:
+    1. by kind: `bool`, `float`, `frozenset`, `int`, `str`, `tuple`, then
+       opaque values (the pinned kind order of
+       `test_set_constraints.py:590` is kept);
+    2. within a kind, by value: `false` before `true`, numbers
+       numerically, strings by code point, tuples element-wise, sets by
+       their canonical element sequences, and opaque values by
+       `ordering_key` and then insertion order.
+  - `values`, `members`, `repr`, `str`, the leaves of
+    `convert_to_expression` and the wire all use it.
+  - Decoding accepts any order, so every payload written before S13 still
+    decodes. Golden payloads whose members are already in canonical order,
+    as `test_serialization_pins.py`'s are, do not change.
+- **D-S13-5: `Constraint` stays an open Python ABC; a Python-defined
+  constraint is a P3 member of the core system** (P3; D-S10-7's reason
+  for a Python base; D-S4-2).
+  - The ABC keeps its bases, its six abstract methods, and the concrete
+    `is_satisfied_with_bindings`.
+  - It keeps no pyclass base, because third parties subclass it as frozen
+    dataclasses and a pyclass base would impose a native layout, as
+    D-S10-7 found for `BinderMixin`.
+  - The three native kinds put their pyclass first in the MRO.
+  - In S13b, a `Constraint` that is not a native kind becomes
+    `Constraint::Custom(PyCustomConstraint)` when a system is built. Its
+    key is read once. The core calls its hooks as the system needs them:
+    - `evaluate_with_bindings` with a Python dict rebuilt from the
+      snapshot, whose opaque values are the objects given;
+    - `get_free_identifiers`, `convert_to_expression`,
+      `is_structurally_equivalent` and `is_alpha_equivalent_under`.
+  - A member is one plugged component, called once per question, like a
+    pass in a pipeline, so the granularity rule holds.
+  - The adapter rules of D-S8-11 and D-S10-7 hold:
+    - an exception propagates as the same object;
+    - a `KeyboardInterrupt` passes through;
+    - a result of the wrong type raises `TypeError` in S2's style.
+- **D-S13-6: ordering keys are the core's strings** (D-S4-1 for the text;
+  D-S4-2 for the method; C-5).
+  - `Constraint::ordering_key` is a string that is equal for two
+    constraints exactly when they are structurally equivalent, and it
+    starts with the kind: `equation|`, `in_set|` or `not_in_set|`.
+  - The equation key renders the tree in pre-order with each node's data:
+    a literal's canonical value, an identifier's id, an operation, a
+    callee.
+  - The system sorts its members stably by comparing keys as strings, so
+    a third party's Python key sorts among the native ones, as it does
+    today.
+- **D-S13-7: bindings are read lazily, as today** (D-S4-2; C-4).
+  - The binding reads the mapping once, as `dict(bindings)` does, with
+    each key read once, and turns each entry into a core `Binding` without
+    judging it.
+  - Only the member that reads a value judges it:
+    - an equation refuses, in its scope, a value that is not an
+      expression or a literal the core's literal grammar accepts
+      (`UnusableBinding`);
+    - a set constraint refuses a value that is not member-shaped, and an
+      unhashable one.
+  - So which member raises, and whether a value outside every scope is
+    ever inspected, is unchanged, and a value a third party accepts stays
+    usable.
+- **D-S13-8: evaluation is the core's, with Python's order of checks**
+  (D-S4-2; "tests rewritten, not skipped").
+  - An equation, in order:
+    1. keeps the in-scope bindings and lifts literal values;
+    2. screens with `BooleanScreen::check_predicate` and the environment;
+    3. refuses bound native constants (an event and `Undecided`);
+    4. calls `Solver::simplify` with S12's `SimplifyContext`;
+    5. classifies the result as today, with `NonBooleanResult` for a
+       literal that is not a Boolean.
+  - A set constraint, in order: unbound; then the literal or symbolic
+    expression; then the value's shape and hash; then the native-constant
+    refusal; then membership.
+- **D-S13-9: the three kinds are P2 under their Python names** (P2;
+  D-S4-2; C-3; D-S10-5 for identity-preserving objects).
+  - `EquationConstraint(expression)`, `InSetConstraint(variable, values)`
+    and `NotInSetConstraint(variable, values)` keep their constructors,
+    keyword names, attributes, `members`, methods, `repr`, `str`,
+    `construct_from_fields`, and the `ConstraintError` texts for argument
+    shapes (D-S13-14).
+  - Each object keeps the Python objects it was given: the expression,
+    the variable, and opaque members. So `expression` and `variable`
+    return them. `values` and `members` build their tuples once, on first
+    read.
+  - Instances are frozen (`FrozenMutationError`, naming the attribute).
+    `==` and `hash` stay identity, as `eq=False` gave, so tuples of
+    constraints compare as before.
+  - They pickle as a call of their class with their fields, and
+    `copy`/`deepcopy` return equal constraints.
+  - `is_structurally_equivalent` and `is_alpha_equivalent_under` are the
+    core's `==` and `AlphaEquivalence`, following D-S10-13: a Rust-backed
+    class implements the core traits and does not need the derived
+    engine.
+- **D-S13-10: serialization keeps the wire format** (cross-cutting rule 4;
+  D-S13-4).
+  - The binding writes and reads the `__type__`/`__data__` envelope and
+    today's data shapes: `{"expression": ...}`,
+    `{"variable": ..., "values": [...]}` and `{"constraints": [...]}`.
+  - Members go through the Python serialization framework's
+    `serialize_registry_wrapped_value` and
+    `deserialize_registry_wrapped_value`, which the binding calls, since
+    the framework stays Python.
+  - Deserialization re-validates through the constructor, raising today's
+    `Deserialization*Error` classes.
+- **D-S13-11: `ConstraintSystem` is P2** (P2; D-S4-2).
+  - The constructor takes any iterable, refuses a member that is not a
+    `Constraint` with today's text, sorts stably by key, and keeps
+    duplicates.
+  - `constraints` returns the objects given, in canonical order.
+  - `==` and `hash` are identity; the system is frozen and pickles as a
+    call.
+  - `evaluate_with_bindings`, `is_satisfied_with_bindings`,
+    `convert_to_expression`, the three questions, `repr`, `str` and the
+    equivalences are the core's.
+  - It keeps `SymbolicPredicate`, `WrappedFamilySerializable` and the
+    frozen contract as Python bases or virtual registrations, as S4 did.
+- **D-S13-12: the questions go through the default solver**
+  (N-S8-2 (b); D-S8-13; C-8).
+  - The binding builds the core's `Context` from:
+    - `get_default_solver()`;
+    - the registry snapshot;
+    - the symbol types;
+    - the limits, from `validate_timeout_milliseconds`, checked first as
+      today.
+  - The core checks, in Python's order, and then calls `Solver::ask`.
+  - A plugged backend reaches constraints as it does today.
+  - The seven places that patch `system.check_expression_satisfiability`
+    plug a fake `SmtSolver` into the default solver instead (S8's
+    fixture), recording calls and timeouts or answering `unknown`.
+- **D-S13-13: the core reports and the binding logs** (D-S8-14: "the
+  core does not log").
+  - The core reports each undecided cause to the `Observer` in the
+    `Context`, at the moment Python logs it today.
+  - The binding's observer writes today's records, with the same logger,
+    level and Python `repr`s:
+    - on `fhy_core.symbolic.constraint.core`: the unbound variable, the
+      symbolic binding, the native-constant refusal, and the residual;
+    - on `fhy_core.symbolic.constraint.system`: the undecided member, and
+      the system's refusal;
+    - on `fhy_core.symbolic.solver`: hazards and `unknown`, with S8's
+      `warn_hazard` and `warn_unknown`, naming
+      `check_expression_satisfiability` or `does_expression_imply`.
+  - Rust users get a no-op observer by default.
+- **D-S13-14: errors** (D-S4-1; D-S7-12; D-S8-14; CONTRIBUTING "Errors
+  belong to their module"; C-6, C-7).
+
+  | Core | Python |
+  |---|---|
+  | `ConstraintError::MissingSymbolTypes` | `MissingSymbolTypeError`, the core's text (`name::id`, sorted by id) |
+  | `IllTyped`, `NonBooleanResult` | `NonBooleanLogicalOperandError` |
+  | `UnusableBinding`, `UnliftableMember`, `NanMember`, `UnhashableMember` | `ConstraintError`, the core's text, naming the value by the adapter's `repr` for opaque values |
+  | `Solve(SolveError)` | S8's mapping, with S12's for simplification |
+  | `Custom` | the Python exception itself |
+
+  Argument shapes the core's types rule out keep Python's `ConstraintError`
+  texts, since they have no core counterpart (D-S7-12, D-S10-12):
+  - a non-`Expression`, a non-`Identifier` variable, or a non-`Constraint`
+    member;
+  - `None`, an unhashable container, an unknown type, or a `Mapping` or
+    `str` given as the collection.
+- **D-S13-15: `ConstraintOutcome` stays a Python `Enum`, converted at the
+  boundary** (P1; S8's `SolverBackend`). The binding returns its members
+  by identity, cached once.
+- **D-S13-16: the two loggers, the `Constraint` ABC and the protocols
+  stay where they are** (D-S4-2; D-S10-6), so imports, `isinstance`,
+  `issubclass` and the pinned logger names keep working.
+- **D-S13-17: threads.** The core types are `Send + Sync`. A question runs
+  detached from the interpreter, as S8's do, and the adapters attach again
+  for their calls. The core holds no state between calls.
+- **D-S13-18: no new process-global state.** Python objects live in the
+  pyclass objects and the adapters. The third party's bindings are rebuilt
+  from the snapshot (D-S13-5), not kept on a thread-local stack.
+- **D-S13-19: the Rust tests specify the core first** (the tests rule;
+  S7.2's practice). There is a traceability table from the Python
+  constraint tests.
+- **D-S13-20: shaped for param** (the direction). Param's Rust port will:
+  - hold `Constraint` and `ConstraintSystem` values;
+  - match on `Constraint::Equation` and `Constraint::Set` with `Polarity`;
+  - rebuild with `EquationConstraint::new` and `SetConstraint::new`;
+  - read `members()` and `variable()`;
+  - ask the questions with a `Context` built once per question.
+  `does_member_lift_to_expression` is `Member::lifts_to_expression`. Param's
+  identity checks keep working, since the binding returns the objects it
+  holds.
+- **D-S13-21: the Python tests are rewritten, not skipped** (the tests
+  rule). The behavioral tests stay, and change only where C-1 to C-10
+  change what they pin. Each change is recorded with its reason.
+- **D-S13-22: split into S13a and S13b** (the task's size rule;
+  cross-cutting rule 7). S13a ports what `core.py`, `members.py` and
+  `ordering.py` define, and leaves `system.py` Python over the new
+  classes. S13b ports `system.py`, with `Constraint::Custom`.
+
+### Needs the user
+
+None. The decisions that could have needed the user are covered by the
+policy and precedent:
+
+- **Python objects behind core traits:** S7's user natives and S8's
+  backends.
+- **Calls to user `==` and `hash`:** S9's user-native call rule.
+- **The third-party member adapter:** P3.
+- **The order and text divergences:** D-S4-1.
+- **The patched solver function:** "tests rewritten", with S8's fake
+  backends.
+- **New process-global state:** none is added.
+
+### Steps
+
+1. **S13a.1: benchmarks.** Add `benchmarks/test_constraint.py`, and record
+   the baseline on today's package.
+2. **S13a.2: the core, test-first.**
+   - Add `fhy_core::constraint` (`constraint.rs`) with `constraint/value.rs`
+     (values, members, member sets, `OpaqueValue`),
+     `constraint/binding.rs`, `constraint/context.rs` (the context, the
+     observer, the events), `constraint/equation.rs`, `constraint/set.rs`,
+     `constraint/key.rs` and `constraint/error.rs`.
+   - Update `lib.rs`, the crate README and CONTRIBUTING's tables.
+   - Nothing in Python changes.
+3. **S13a.3: the binding.** Add `rust/fhy-core-py/src/constraint.rs` with:
+   - `value.rs`: the Python reader, `PyOpaqueValue`, and the materializer;
+   - `outcome.rs`;
+   - `kinds.rs`: the three pyclasses;
+   - `observer.rs`: the log records;
+   - `error.rs`.
+
+   Update `_rs.pyi` too.
+4. **S13a.4: the Python switch of `core.py`, `members.py` and
+   `ordering.py`** (marked breaking). It lands together with S13a.5 if the
+   migration is small enough.
+5. **S13a.5: tests.** Migrate the tests, and add the interface suite
+   `tests/symbolic/constraint/test_constraint_rust_binding.py`.
+6. **S13b.1: the system's core, test-first.** Add `constraint/system.rs`
+   and `constraint/custom.rs`.
+7. **S13b.2: the system's binding.** Add `system.rs` and `custom.rs`.
+8. **S13b.3: the Python switch of `system.py`, with its tests** (marked
+   breaking).
+9. **S13b.4: benchmarks after, and docs.** Record the verdict, then the
+   status, the implementation notes and this checklist.
+
+Commit per step. Every step ends with these green:
+
+- `pytest` and `-m "not very_slow"`;
+- the `property` session and `tests_minimal`;
+- `lint` and `type_check`;
+- `tests/test_rs_stub.py`;
+- the Rust gate: fmt, clippy `-D warnings` with and without
+  `--all-features`, tests with the default features and with all of them,
+  doc, deny, and `cargo +1.85 check`.
+
+### Test plan
+
+**Rust tests, written first,** in `tests/it/constraint/`.
+
+- **`value_stories.rs`:**
+  - type-strict equality at every depth;
+  - number normalization;
+  - the NaN refusal, with `Display`;
+  - deduplication;
+  - the canonical order of D-S13-4, for each kind and for mixed kinds;
+  - opaque values through a test-local `OpaqueValue` (equal kinds, a
+    colliding hash, a raising hash);
+  - `lifts_to_expression`.
+- **`equation_stories.rs`:** each step of D-S13-8 against the fake
+  simplifier of `tests/it/support/solver.rs`:
+  - scope filtering;
+  - literal lifting and its grammar refusals;
+  - the predicate screen with the environment;
+  - the native-constant refusal and its event;
+  - the Boolean, non-Boolean and residual results, with their events;
+  - the simplifier receiving the substituted expression.
+- **`set_stories.rs`:**
+  - the evaluation order;
+  - literal-expression and `Decimal` bindings;
+  - member-shaped, unshaped and unhashable values;
+  - both polarities;
+  - `to_expression` (empty, one member, several, a member that does not
+    lift).
+- **`key_stories.rs`:** keys equal exactly on structural equivalence
+  (NaN, `-0.0`, number subclasses, hash-colliding opaque values), and
+  distinct otherwise.
+- **`equivalence_stories.rs`:** structural and alpha equivalence of each
+  kind, the set's variable under a renaming.
+- **`system_stories.rs` (S13b):**
+  - the canonical sort, stable, keeping duplicates;
+  - the fold stopping at the first violation, with the events;
+  - each question's order of checks;
+  - the decided-leaf partition;
+  - the residual's symbol types;
+  - the fake `SmtSolver`'s scripts and answers;
+  - hazards and `unknown` as events;
+  - a custom member through a test-local `CustomConstraint`.
+- **`constraint_properties.rs`:**
+  - membership agrees with a reference type-strict matcher;
+  - the key is constant on equivalence classes;
+  - the system's order is independent of construction order;
+  - satisfiability agrees with brute force, under a real solver
+    (feature-gated, as S8's properties are).
+- **A traceability table** from the Python constraint tests.
+
+**The interface suite (`test_constraint_rust_binding.py`):**
+
+- the class structure: pyclass first in the MRO, the ABC satisfied,
+  frozen, identity `==`;
+- the objects given come back (`expression`, `variable`, opaque members,
+  the system's `constraints`);
+- the Python reader for every value kind, including number subclasses,
+  NumPy scalars, `Mock` identifiers and the single-read mapping;
+- opaque `==` raising and `hash` raising;
+- a `KeyboardInterrupt` passing through;
+- each log record;
+- each error row;
+- pickling and copying;
+- the third-party adapter's calls, and how often it is called;
+- threads.
+
+**Migrating the existing tests.** Each change is recorded with its
+reason:
+
+- **`test_set_constraints.py`:**
+  - the `_wrap_member_collection` patch (10 cases) becomes a check that
+    repeated reads return the same tuple object, and a Rust story that
+    membership reads the stored set (D-S13-1);
+  - the `values` preconditions (C-1) now assert equal `values`;
+  - `dataclasses.replace` becomes a new construction (C-3);
+  - the canonical-order test keeps its expected order.
+- **`test_structural_equivalence.py`, `test_ordering_key.py`,
+  `test_serialization.py`:** the `values` preconditions (C-1), and the
+  wire order at `test_serialization.py:224` (C-2).
+- **`test_convert_to_expression.py`:** the leaf order at :569 becomes
+  `[3, 7, 9, 12]` (C-2).
+- **`test_constraint_system.py`** (S13b):
+  - the seven patches of `system.check_expression_satisfiability`, and
+    param's one, plug a fake backend (C-8);
+  - the missing-symbol-type name parsing reads `name::id` (C-7);
+  - message pins with a core counterpart are rewritten to the core's text
+    (C-6).
+- **`test_equation_constraint.py`:** the two `PassExecutionError` cause
+  tests, where S12's simplifier raises something else (C-9).
+- **Everything else is expected to pass unchanged:**
+  - the log tests (D-S13-13);
+  - the third-party tests (D-S13-5);
+  - `test_abstract_contract.py`, `test_freezing.py`,
+    `test_symbolic_predicate.py`, `test_contract_absence.py`;
+  - the serialization pins;
+  - the param tests.
 
 ### S13 resume notes
 
-Paused on 2026-09-26 at the coordinator's request, before any decision
-was written. Done: the policy and precedent reading (the Goal, P1 to P3,
-the cross-cutting rules, S8, S10 and S9 in full, `rust-workspace.md`
-Part I, CONTRIBUTING "Porting to Rust"), the reading of the whole
-constraint package, the core solver facade and the binding's default
-solver (`solver/state.rs`, `solver/facade.rs`, `solver/backends.rs`),
-and the worktree's `.venv` (`uv sync --group dev --group bench`). Next:
-
-1. redo the two surveys: the constraint tests file by file, and param's
-   use of the constraint API (member types in `param/values.py`, fields,
-   roles, renaming, screened systems, bindings);
-2. write the survey sections, the divergences, the pattern choice, the
-   decisions D-S13-x, the benchmark plan, "Needs the user", the steps and
-   the test plan, replacing this subsection's TODOs;
-3. commit the full design, and stop there if "Needs the user" is
-   non-empty.
-
+- **Stopped:** after committing this design, at the step "rebase onto
+  `dev-rust` (125507b, S12)".
+- **Blocker:** the permission system denied the rebase, and also reading
+  the shared gate script `target/tooling/gate-env.sh`, so this branch
+  still stands on 3a53195. The task's standing rules also forbid a rebase
+  without the user.
+- **Next:**
+  1. The user rebases this branch onto `dev-rust`, or authorizes the
+     rebase. The design doc then conflicts only additively, at the end of
+     the checklist and after S12's section.
+  2. Set up the gate environment (`gate-env.sh` copied into this worktree's
+     `target/`, with the z3 paths, `FHY_SMT_SOLVER` and `CARGO_TARGET_DIR`
+     pointing here).
+  3. Check the decisions that name S12 (D-S13-8, D-S13-14, C-9) against
+     S12's actual `SimplifyContext` and error mapping.
+  4. Start S13a.1.
+- **Scratch:** the survey notes are in `target/s13-param-survey-notes.txt`
+  and `target/s13-test-survey-notes.txt` (gitignored).
