@@ -341,7 +341,7 @@ impl PyExpression {
     }
 
     /// Return the Rust handle.
-    pub(super) fn expression(&self) -> &Expression {
+    pub(crate) fn expression(&self) -> &Expression {
         &self.expression
     }
 

@@ -58,7 +58,7 @@ mod hook_bit {
 /// # Errors
 ///
 /// Raises `TypeError` with Python's message, `X() takes no arguments`.
-pub(super) fn refuse_unused_arguments(
+pub(crate) fn refuse_unused_arguments(
     cls: &Bound<'_, PyType>,
     args: &Bound<'_, PyTuple>,
     kwargs: Option<&Bound<'_, PyDict>>,

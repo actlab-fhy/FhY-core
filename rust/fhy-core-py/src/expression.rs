@@ -12,6 +12,8 @@
 //!
 //! The `pattern` submodule binds the core's patterns and rewrite rules (S5),
 //! and the `registry` submodule the function registry and inlining (S7).
+//! The solver binding (S8) reads expressions, the registry snapshot and the
+//! materializer through the crate-visible items below.
 
 mod alpha;
 mod literal;
@@ -24,6 +26,7 @@ mod registry;
 mod screen;
 mod text;
 
+pub(crate) use materialize::{materialize_expression, materialize_substituted};
 pub(crate) use node::{
     PyBinaryExpression, PyCallExpression, PyExpression, PyIdentifierExpression,
     PyLiteralExpression, PyLogicalExpression, PyPiecewiseExpression, PyUnaryExpression,
@@ -35,6 +38,7 @@ pub(crate) use pattern::{
     PyPredicatePattern, PyRewriteRule, PyRuleBase, PyUnaryExpressionPattern, PyWildcardPattern,
     apply_rewrite_rules,
 };
+pub(crate) use registry::snapshot as registry_snapshot;
 pub(crate) use registry::{
     PyNativeConstant, PyNativeFunction, PyRegisteredFunction, get_native_constant_identifier,
     get_registered_entries, get_registered_entry, inline_functions, is_entry_registered,
@@ -43,3 +47,9 @@ pub(crate) use registry::{
     try_get_registered_result_sort,
 };
 pub(crate) use screen::{validate_logical_operands, validate_predicate};
+
+/// Return the `repr` of the Python object of `expression`, such as
+/// `BinaryExpression((add x::7 1))`.
+pub(crate) fn render_expression_repr(expression: &fhy_core::expression::Expression) -> String {
+    text::render_kind_repr(expression)
+}

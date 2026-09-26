@@ -65,7 +65,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.1: solver benchmarks and baseline (14 rows; see "S8.1 baseline")
   - [x] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend). 224 new tests; the Rust gate passes (3,040); see "S8.2 implementation notes"
   - [x] S8.3: the `z3` cargo feature and its backend, with the CI changes. Built against the z3-solver wheel's libz3 4.16 (D-S8-18's fallback; the local libz3 4.8.7 is below z3-sys's 4.13.3); 3,072 Rust tests with the feature; see "S8.3 status"
-  - [ ] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs)
+  - [x] S8.4: the solver binding (the P3 bases and adapters, `Solver`, `SatResult`, the stubs). The suite is unchanged (7,327 passed); see "S8.4 status"
   - [ ] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports)
   - [ ] S8.6: tests migrated, and the interface suite
   - [ ] S8.7: optional extras, backend markers and the minimal-install session
@@ -7169,3 +7169,66 @@ the solver-backed properties run on `Z3Solver`. The Rust gate: fmt,
 clippy `-D warnings` with and without `--all-features`, 3,072 tests with
 the feature and 3,040 without, doc `-D warnings`, deny, `cargo +1.85
 check`.
+
+### S8.4 status: the binding
+
+The binding is `rust/fhy-core-py/src/solver.rs` with `solver/backends.rs`
+(`SmtSolverBase`, `SimplifierBase`, the two adapters, and
+`SmtLib2ProcessSolver`), `solver/values.rs` (`SmtScript`, `SatResult`,
+and the conversions of symbol types and query kinds), `solver/facade.rs`
+(`Solver`), `solver/error.rs` (D-S8-14's mapping and the warnings) and
+`solver/state.rs` (the default solver of N-S8-2 (b)), exported from `_rs`
+and declared in `_rs.pyi`. The expression binding lends it the registry
+snapshot, `PyExpression::expression`, and a new
+`materialize_substituted`; `refuse_unused_arguments` of the pass binding
+is shared. Nothing in Python uses it yet, so the suite is unchanged
+(7,327 passed), and the Rust gate passes (3,072 tests with the feature).
+
+Choices made here:
+
+- **`SmtScript.lower(expression, symbol_types=None)`** is a static method,
+  the core's `SmtScript::lower` with its errors mapped (`KeyError`,
+  `NonBooleanLogicalOperandError`, `NativeConstantLoweringError`,
+  `TypeError`). `convert_expression_to_smtlib2` and
+  `convert_expression_to_z3_expression` (S8.5) are built on it. A script
+  is not picklable.
+- **The Python `SmtSolver` adapter** hands the hook a new `SmtScript`
+  holding a copy of the core script, whose `text` and `declarations` are
+  built on first access, and `timeout_milliseconds` as an `int` or
+  `None`. A hook's exception propagates as the same object, a
+  `KeyboardInterrupt` included, and a result other than a `SatResult`
+  raises `TypeError` naming the class (`Fake.check must return a
+  SatResult, got int.`). A backend's `name` is read only when an error or
+  a warning needs it.
+- **Simplification keeps the objects.** Each `simplify_expression` pushes
+  a frame on a thread-local stack with the input's object and the
+  environment's value objects; the adapter materializes the substituted
+  expression beside them, so the hook receives the input object itself
+  when nothing is bound and the bound value objects in place, and the
+  object the hook returns is the object the caller gets. A nested
+  question inside a hook gets its own frame.
+- **Every question runs detached** from the interpreter, as D-S8-11 asks
+  for a native backend; a Python backend attaches again for its one call.
+  The detached closure builds its `QueryContext` from owned values, since
+  the context's lookups are trait objects that are not `Send`.
+- **The order in a `Solver` method**: the capability (the core's
+  `NoCapableBackend` as `SolverCapabilityError`), then
+  `timeout_milliseconds` through the Python `validate_timeout_milliseconds`
+  (a value at or above `2**64` raises the same `ValueError`), then the
+  core's checks.
+- **Warnings** are logged on `fhy_core.symbolic.solver` through
+  `get_logger`: `<entry point>: <hazard text>: node <repr>; identifier
+  sorts at that node: x::7: INT. The expression is not handed to the
+  solver; bounding timeout_milliseconds cannot change this outcome.`, and
+  `<entry point>: the backend z3 answered unknown (timeout)` for a
+  backend's `unknown`, for the lenient and the strict entry points alike.
+- **The strict companions' `UndecidableError`** keeps the phrase the
+  Python tests match (`refused by the solver seam's hazard screen`) and
+  the `hazard_screen` reason, and names the backend for `unknown`, whose
+  reason is the backend's.
+- **The default solver** is a `Mutex<Option<Py<Solver>>>`, unset until
+  `fhy_core.symbolic.solver` sets it at import; `get_default_solver`
+  raises `RuntimeError` before then.
+- **`SatResult.status`** returns a member of the Python `SatStatus` of
+  `fhy_core.symbolic.solver`, which S8.5 adds; the stub declares it as
+  `str` until then.

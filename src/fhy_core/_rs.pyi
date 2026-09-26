@@ -1229,3 +1229,116 @@ class ValidationManager:
     def validators(self) -> tuple[_Validator[Any] | _CompilerPass[Any, Any], ...]: ...
     def add(self, validator: _Validator[Any] | _CompilerPass[Any, Any]) -> None: ...
     def validate(self, ir: Any) -> _ValidationReport[_ValidatorRecord]: ...
+
+# ---------------------------------------------------------------------------
+# The solver (S8)
+# ---------------------------------------------------------------------------
+
+class SmtScript:
+    @staticmethod
+    def lower(
+        expression: Expression,
+        symbol_types: Mapping[Identifier, SymbolType] | None = None,
+    ) -> SmtScript: ...
+    @property
+    def text(self) -> str: ...
+    @property
+    def logic(self) -> str: ...
+    @property
+    def declarations(self) -> tuple[tuple[Identifier, str, SymbolType], ...]: ...
+    @property
+    def value_sort(self) -> SymbolType | None: ...
+
+class SatResult:
+    SAT: SatResult
+    UNSAT: SatResult
+    @staticmethod
+    def unknown(reason: str) -> SatResult: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def reason(self) -> str | None: ...
+    @override
+    def __eq__(self, other: object) -> bool: ...
+    @override
+    def __hash__(self) -> int: ...
+    def __reduce__(self) -> tuple[Any, ...]: ...
+
+class SmtSolverBase:
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+
+class SimplifierBase:
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+
+class SmtLib2ProcessSolver(SmtSolverBase):
+    def __new__(
+        cls, program: str | PathLike[str], args: Iterable[str] | None = None
+    ) -> Self: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def program(self) -> str: ...
+    @property
+    def args(self) -> tuple[str, ...]: ...
+    def check(
+        self, script: SmtScript, *, timeout_milliseconds: int | None = None
+    ) -> SatResult: ...
+
+class Solver:
+    def __new__(
+        cls,
+        smt_solver: SmtSolverBase | None = None,
+        simplifier: SimplifierBase | None = None,
+    ) -> Self: ...
+    @property
+    def smt_solver(self) -> SmtSolverBase | None: ...
+    @property
+    def simplifier(self) -> SimplifierBase | None: ...
+    def can_answer(self, kind: str) -> bool: ...
+    def simplify_expression(
+        self,
+        expression: Expression,
+        environment: Mapping[Identifier, Expression] | None = None,
+    ) -> Expression: ...
+    def check_expression_satisfiability(
+        self,
+        expression: Expression,
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None: ...
+    def does_expression_imply(
+        self,
+        antecedent: Expression,
+        consequent: Expression,
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None: ...
+    def holds_for_all_free_assignments(
+        self,
+        considered_identifiers: Iterable[Identifier],
+        expression: Expression,
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None: ...
+    def assert_holds_for_all_free_assignments(
+        self,
+        considered_identifiers: Iterable[Identifier],
+        expression: Expression,
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool: ...
+    def assert_expression_implies(
+        self,
+        antecedent: Expression,
+        consequent: Expression,
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool: ...
+
+def get_default_solver() -> Solver: ...
+def set_default_solver(solver: Solver) -> None: ...

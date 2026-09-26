@@ -39,7 +39,7 @@ mod scope;
 mod validation;
 
 pub(crate) use analysis::{PyAnalysisBase, PyPreservedAnalyses};
-pub(crate) use compiler_pass::PyCompilerPassBase;
+pub(crate) use compiler_pass::{PyCompilerPassBase, refuse_unused_arguments};
 pub(crate) use context::PyAnalysisManager;
 pub(crate) use manager::{PyFixpointPassGroup, PyPassManager};
 pub(crate) use records::{

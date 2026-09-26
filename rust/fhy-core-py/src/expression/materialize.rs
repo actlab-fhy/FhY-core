@@ -200,7 +200,7 @@ pub(super) fn materialize_beside<'py>(
 /// # Errors
 ///
 /// Raises whatever building a node through its public class raises.
-pub(super) fn materialize_expression<'py>(
+pub(crate) fn materialize_expression<'py>(
     py: Python<'py>,
     expression: &Expression,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -209,4 +209,28 @@ pub(super) fn materialize_expression<'py>(
         known: HashMap::new(),
     };
     materializer.materialize(expression, None)
+}
+
+/// Return the Python object of `result`, the tree the core built from the
+/// expression `input` by substituting replacements whose Python objects
+/// `known` holds by the identity of their Rust handles: the object of a
+/// replacement, or of a subtree of `input` the core kept in place, is
+/// reused.
+///
+/// # Errors
+///
+/// Raises whatever building a node through its public class raises.
+pub(crate) fn materialize_substituted<'py>(
+    input: &Bound<'py, PyExpression>,
+    result: &Expression,
+    known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if Expression::ptr_eq(result, input.get().expression()) {
+        return Ok(input.clone().into_any());
+    }
+    let mut materializer = Materializer {
+        py: input.py(),
+        known,
+    };
+    materializer.materialize(result, Some(input.clone()))
 }
