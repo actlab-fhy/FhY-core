@@ -12,8 +12,11 @@
 //! - `enums.rs`: `CoreDataType` and `TypeQualifier`, which stay Python
 //!   enums (D-S11-12).
 //! - `error.rs`: the Python exceptions of the core's errors (D-S11-14).
+//! - `checking.rs`: the type checker, the body checks and the sort tables
+//!   (S11b, D-S11-20 to D-S11-22).
 
 mod adapter;
+mod checking;
 mod classes;
 mod convert;
 mod dispatch;
@@ -21,6 +24,11 @@ mod enums;
 mod environment;
 mod error;
 
+pub(crate) use checking::{
+    get_core_data_type_from_literal_type, get_result_core_data_type_for_sort,
+    is_core_data_type_compatible_with_sort, types_check_all_function_bodies,
+    types_check_expression, types_check_function_body,
+};
 pub(crate) use classes::{
     PyDataTypeBase, PyIndexType, PyNumericalType, PyPrimitiveDataType, PyTemplateDataType,
     PyTypeBase,

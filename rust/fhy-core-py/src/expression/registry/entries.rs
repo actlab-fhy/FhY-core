@@ -22,6 +22,7 @@ use fhy_core::expression::registry::{
 use fhy_core::expression::{Expression, FunctionName, FunctionSort, LiteralValue};
 use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
+use fhy_core::types::checking::CallTarget;
 
 use crate::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
@@ -81,7 +82,7 @@ fn sort_index(sort: FunctionSort) -> usize {
 }
 
 /// Return the Python `FunctionSort` member of `sort`.
-pub(super) fn sort_to_python(py: Python<'_>, sort: FunctionSort) -> PyResult<Bound<'_, PyAny>> {
+pub(crate) fn sort_to_python(py: Python<'_>, sort: FunctionSort) -> PyResult<Bound<'_, PyAny>> {
     static MEMBERS: PyOnceLock<[Py<PyAny>; 4]> = PyOnceLock::new();
     let members = MEMBERS.get_or_try_init(py, || -> PyResult<[Py<PyAny>; 4]> {
         let class = sort_class(py)?;
@@ -102,7 +103,11 @@ pub(super) fn sort_to_python(py: Python<'_>, sort: FunctionSort) -> PyResult<Bou
 /// # Errors
 ///
 /// Raises `TypeError` if `value` is not a `FunctionSort`.
-fn read_sort(value: &Bound<'_, PyAny>, owner: &str, field: &str) -> PyResult<FunctionSort> {
+pub(crate) fn read_sort(
+    value: &Bound<'_, PyAny>,
+    owner: &str,
+    field: &str,
+) -> PyResult<FunctionSort> {
     let py = value.py();
     if value.is_instance(sort_class(py)?)? {
         let text = value.getattr(intern!(py, "value"))?;
@@ -955,3 +960,58 @@ impl_entry_protocols!(PyNativeConstant, "NativeConstant", {
         })
     }
 });
+
+// ---------------------------------------------------------------------------
+// Call targets
+// ---------------------------------------------------------------------------
+
+/// Return what the entry `object` is as a type checker's call target, or
+/// `None` if it is no entry: a function with its Rust sorts, or a
+/// constant.
+///
+/// # Errors
+///
+/// Raises `TypeError` if a native built-in's sorts are no `FunctionSort`s,
+/// which the class never builds.
+pub(crate) fn read_call_target(object: &Bound<'_, PyAny>) -> PyResult<Option<CallTarget>> {
+    let py = object.py();
+    if let Ok(function) = object.cast::<PyRegisteredFunction>() {
+        let function = function.get();
+        return Ok(Some(CallTarget::Function {
+            name: function.name.bind(py).to_str()?.to_owned(),
+            parameter_sorts: function.rust_parameter_sorts().to_vec(),
+            result_sort: function.rust_result_sort(),
+        }));
+    }
+    if let Ok(function) = object.cast::<PyNativeFunction>() {
+        let function = function.get();
+        let name = function.name.bind(py).to_str()?.to_owned();
+        return Ok(Some(match function.declaration() {
+            Some(declaration) => CallTarget::Function {
+                name,
+                parameter_sorts: declaration.parameter_sorts().to_vec(),
+                result_sort: declaration.result_sort(),
+            },
+            None => CallTarget::Function {
+                parameter_sorts: function
+                    .parameter_sorts
+                    .bind(py)
+                    .iter()
+                    .map(|sort| read_sort(&sort, "NativeFunction", "parameter_sorts"))
+                    .collect::<PyResult<Vec<_>>>()?,
+                result_sort: read_sort(
+                    function.result_sort.bind(py),
+                    "NativeFunction",
+                    "result_sort",
+                )?,
+                name,
+            },
+        }));
+    }
+    if let Ok(constant) = object.cast::<PyNativeConstant>() {
+        return Ok(Some(CallTarget::Constant {
+            name: constant.get().name.bind(py).to_str()?.to_owned(),
+        }));
+    }
+    Ok(None)
+}

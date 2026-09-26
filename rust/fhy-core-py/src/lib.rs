@@ -98,6 +98,12 @@ mod rs_module {
         types_substitute_template, types_unify, types_unify_expression,
     };
     #[pymodule_export]
+    use super::types::{
+        get_core_data_type_from_literal_type, get_result_core_data_type_for_sort,
+        is_core_data_type_compatible_with_sort, types_check_all_function_bodies,
+        types_check_expression, types_check_function_body,
+    };
+    #[pymodule_export]
     use super::value_domain::PyValueDomain;
 
     /// Set the extension's `__version__` to the crate version, which the

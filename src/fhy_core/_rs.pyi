@@ -1654,3 +1654,30 @@ def promote_type_qualifiers(
 def resolve_literal_core_data_type(
     literal: bool | int | float, core_data_type: _CoreDataType
 ) -> _CoreDataType: ...
+
+# S11b: type checking.
+
+def types_check_expression(
+    expression: _Expression,
+    expected_type: Any | None,
+    get_identifier_type: Callable[[Identifier], tuple[Any, _TypeQualifier]],
+    resolve_call_target: Callable[[str], Any],
+    defer_on_unknown_call: bool,
+) -> tuple[Any, _TypeQualifier]: ...
+def types_check_function_body(
+    name: str,
+    parameters: Sequence[Identifier],
+    parameter_sorts: Sequence[FunctionSort],
+    result_sort: FunctionSort,
+    body: _Expression,
+    resolve_call_target: Callable[[str], Any],
+    defer_unresolved_calls: bool,
+) -> None: ...
+def types_check_all_function_bodies() -> _ValidationReport[Any]: ...
+def is_core_data_type_compatible_with_sort(
+    core_data_type: _CoreDataType, sort: FunctionSort
+) -> bool: ...
+def get_result_core_data_type_for_sort(sort: FunctionSort) -> _CoreDataType: ...
+def get_core_data_type_from_literal_type(
+    literal: bool | int | float | Decimal | str,
+) -> _CoreDataType: ...

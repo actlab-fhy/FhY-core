@@ -108,7 +108,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [ ] S11b: type checking
     - [x] S11b.1: type-checking benchmarks, and the baseline (13 rows; see "S11b.1 baseline")
     - [x] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
-    - [ ] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
+    - [x] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
     - [ ] S11b.4: the Python switch
     - [ ] S11b.5: tests migrated, and the interface suite
     - [ ] S11b.6: benchmarks after, and docs
@@ -13701,4 +13701,40 @@ Traceability of the Python checking tests (`test_type_checker.py` is `T`,
 | `test_body_type_checker.py` (13), `test_registry_body_sweep.py` (10), `test_builtin_bodies.py` (2) | `body_stories.rs` (8) | the pass mechanics stay Python |
 | `test_type_checker_properties.py` (3) | `synthesis_agrees_with_the_promotion_of_the_leaves` | |
 | none | `a_callback_error_passes_through`, `a_deep_expression_checks_on_a_small_stack` | new |
+
+### S11b.3 status
+
+The binding is `rust/fhy-core-py/src/types/checking.rs`: `_rs.types_check_expression`
+(synthesis, or checking when an expected type is given, with the deferral
+flag), `_rs.types_check_function_body`, `_rs.types_check_all_function_bodies`
+(the sweep's `ValidationReport`, built in Rust under today's source),
+`_rs.is_core_data_type_compatible_with_sort`,
+`_rs.get_result_core_data_type_for_sort` and
+`_rs.get_core_data_type_from_literal_type`, declared in `_rs.pyi`. It
+holds the two lookup adapters:
+
+- **Identifier types** call the Python lookup with the caller's own
+  `Identifier` objects, which it collects from the expression's identifier
+  references on the first lookup, each shared node once. `KeyError`
+  (including `EntryLookupError`) means unbound; a result that is no
+  `(Type, TypeQualifier)` pair raises `TypeError`; any other exception
+  propagates as the same object, boxed through the core's
+  `CallbackError`.
+- **Call targets** resolve through the registry snapshot when the resolver
+  is the registry's `get_registered_entry`, calling no Python. An unknown
+  name there takes the error the Rust `get_registered_entry` raises, so
+  the text and the class are the same as through a Python resolver. Any
+  other resolver is called with the callee's name, and its entry is read
+  natively (`read_call_target` in the registry binding); its
+  `EntryLookupError` is an unknown call, and another exception, or a
+  result that is no entry (`TypeError`), propagates.
+
+The checker's `Rule` error raises `FhYCoreTypeError`, or
+`NotImplementedError` when unsupported; a deferred unknown call raises the
+lookup's `EntryLookupError` unframed; a lookup's failure raises its own
+exception. A body-check failure raises `EntryRegistrationError` with the
+core's text and the checker's or lookup's exception as `__cause__`. The
+registry binding lends `read_call_target`, `read_sort`, `RegistryState` and
+`PyExpression::children`, now `pub(crate)`. Nothing in Python uses the
+binding yet, so the suite is unchanged (7,611 passed).
 

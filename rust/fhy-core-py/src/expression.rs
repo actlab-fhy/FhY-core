@@ -46,12 +46,13 @@ pub(crate) use pattern::{
     PyPredicatePattern, PyRewriteRule, PyRuleBase, PyUnaryExpressionPattern, PyWildcardPattern,
     apply_rewrite_rules,
 };
+pub(crate) use registry::RegistryState;
 pub(crate) use registry::snapshot as registry_snapshot;
 pub(crate) use registry::{
     PyNativeConstant, PyNativeFunction, PyRegisteredFunction, get_native_constant_identifier,
     get_registered_entries, get_registered_entry, inline_functions, is_entry_registered,
-    register_function, register_native_constant, register_native_function,
-    set_registry_state_for_tests, try_get_native_constant_for_identifier,
+    read_call_target, read_sort, register_function, register_native_constant,
+    register_native_function, set_registry_state_for_tests, try_get_native_constant_for_identifier,
     try_get_registered_result_sort,
 };
 pub(crate) use screen::{validate_logical_operands, validate_predicate};

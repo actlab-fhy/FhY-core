@@ -339,7 +339,7 @@ impl PyExpression {
     }
 
     /// Return the children's Python objects, in visiting order.
-    pub(super) fn children<'py>(&self, py: Python<'py>) -> &Bound<'py, PyTuple> {
+    pub(crate) fn children<'py>(&self, py: Python<'py>) -> &Bound<'py, PyTuple> {
         self.children.bind(py)
     }
 

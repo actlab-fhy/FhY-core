@@ -14,7 +14,9 @@ mod entries;
 mod lookups;
 mod state;
 
-pub(crate) use entries::{PyNativeConstant, PyNativeFunction, PyRegisteredFunction};
+pub(crate) use entries::{
+    PyNativeConstant, PyNativeFunction, PyRegisteredFunction, read_call_target, read_sort,
+};
 pub(super) use lookups::{arity_error, inline_error_to_python, lookup_error};
 pub(crate) use lookups::{
     get_native_constant_identifier, get_registered_entries, get_registered_entry, inline_functions,
@@ -22,5 +24,5 @@ pub(crate) use lookups::{
     set_registry_state_for_tests, try_get_native_constant_for_identifier,
     try_get_registered_result_sort,
 };
-pub(super) use state::RegistryState;
+pub(crate) use state::RegistryState;
 pub(crate) use state::snapshot;
