@@ -109,8 +109,8 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S11b.1: type-checking benchmarks, and the baseline (13 rows; see "S11b.1 baseline")
     - [x] S11b.2: core additions, test-first, with Rust tests (`fhy_core::types::checking`: the checker, the sort tables, the body checks, `CallTargets` for `FunctionRegistry`)
     - [x] S11b.3: the binding (the lookup adapters, the registry fast path, the checker and body-check functions, the stubs)
-    - [ ] S11b.4: the Python switch
-    - [ ] S11b.5: tests migrated, and the interface suite
+    - [x] S11b.4: the Python switch
+    - [x] S11b.5: tests migrated, and the interface suite
     - [ ] S11b.6: benchmarks after, and docs
 
 ## Goal
@@ -13738,3 +13738,52 @@ registry binding lends `read_call_target`, `read_sort`, `RegistryState` and
 `PyExpression::children`, now `pub(crate)`. Nothing in Python uses the
 binding yet, so the suite is unchanged (7,611 passed).
 
+
+### S11b.4 and S11b.5 status
+
+The Python switch (22318f5, marked breaking) made `type_checker.py`,
+`sort_compatibility.py` and `body_type_checker.py` the thin layer of
+D-S11-2: `ExpressionTypeChecker` is a `CompilerPass` whose `synthesize`,
+`check`, `visit` and pass call run the core's checker, and whose
+`__init_subclass__` refuses a `visit_*` method with a `TypeError` naming
+D-S11-20; `RegisteredFunctionBodyTypeChecker` stays a Python pass whose
+`check` calls the core; the sweep is one call. The README's Types row and
+CONTRIBUTING's module table gained the checking layer. It left exactly the
+tests of the migration plan failing (2 failed and 1 collection error); the
+test commit after it migrates them and adds the interface suite. At the
+end of S11b.5: `pytest` 7,644 passed.
+
+Tests migrated in S11b.5. None was skipped or deleted without a rewrite
+(`test_type_checker.py` is `T`, `test_body_type_checker.py` `Body`):
+
+| Test | Now | Reason |
+|---|---|---|
+| T the three framing tests | same names | the lowercase frame, ``type error while inferring the type of `...` `` (D-S11-21) |
+| T `test_get_core_data_type_from_literal_type_rejects_decimal_literal`, `test_synthesize_decimal_literal_expression_is_rejected` | same names | the core's `decimal literals are not yet supported` |
+| T `test_get_core_data_type_from_literal_type_rejects_unsupported_type` | same name | the core's lowercase `unsupported literal type: <class 'list'>` |
+| T `test_get_primitive_data_type_rejects_non_primitive_data_type` | `test_template_typed_identifier_is_no_value_type` | the private helper is gone; the same refusal through the public API |
+| T `test_get_numeric_literal_value_rejects_bool_literal` | `test_decimal_literal_checked_against_a_concrete_type_is_no_numeric_literal` | the private helper is gone; its one reachable refusal |
+| T `test_get_real_float_for_bit_width_raises_when_no_match` | `test_true_division_of_the_widest_integers_is_the_widest_real_float` | the private helper is gone; no integer is wider than 64 bits, so the refusal is unreachable, and the test pins the widest lookup instead |
+| T `test_type_check_context_type_error_with_empty_stack` | `test_every_checker_error_is_framed_by_the_root` | the private context is gone; every error is framed |
+| T `test_infer_rejects_unsupported_expression_subclass` | `test_infer_rejects_non_expression_argument` | T-3, T-15: a `Mock(spec=Expression)` is no expression, a `TypeError` |
+| T `test_unary_expression_with_unknown_operation_raises_not_implemented` | `test_unary_expression_with_unknown_operation_is_refused_at_construction`, `test_unary_expression_checks_by_its_core_operation` | the core's operations are exhaustive: the node refuses a non-member (`ValueError`), and a Python override of `operation` is not what the checker reads |
+| Body `test_check_rejects_body_synthesizing_non_numerical_type` | `test_check_rejects_body_using_an_unsupported_construct` | the test patched `ExpressionTypeChecker.synthesize`, which the body check no longer calls. No body over scalar parameters synthesizes a non-scalar type, so the guard is the Rust story `a_body_whose_type_is_no_scalar_displays_the_type`; the test takes the reachable branch beside it, with its `NotImplementedError` cause |
+| Body `test_check_rejects_body_synthesizing_non_primitive_data_type` | `test_check_refuses_an_unresolved_call_without_deferral` | as above; the reachable unknown-call branch, with its `EntryLookupError` cause. The template-type refusal is `test_template_typed_identifier_is_no_value_type` |
+| none | `tests/types/checking/test_checking_rust_binding.py` (32) | the interface suite |
+
+Every other checking test, the symbol-table tests, the registry stories and
+`test_strategies_properties.py` passed unchanged. The interface suite
+covers the test plan: the pass shape, the refused `visit_*` subclass and an
+accepted plain one, the pass call, `synthesize` and `visit` agreeing; the
+identifier lookup called once per occurrence with the caller's objects,
+the looked-up type handed back as itself, `KeyError` as unbound, another
+exception and a `KeyboardInterrupt` as the same object, four wrong result
+shapes, a Python-defined type refused as a value; a custom resolver called
+once per call node, the registry's fast path agreeing with it, an unknown
+call framed or deferred through both, a resolver's `EntryLookupError` and
+other exception as the same object, a non-entry result, a called constant;
+a non-type expected type, the sub-expression frame, `NotImplementedError`
+framed; the sort tables' answers and argument checks, the literal texts;
+the body pass with a custom resolver, its text and cause, mismatched
+parameter sorts; the sweep's levels, source, messages and order; and a
+10,000-level expression.
