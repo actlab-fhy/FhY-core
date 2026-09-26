@@ -70,7 +70,8 @@ mod rs_module {
         PyAnalysisBase, PyAnalysisManager, PyCompilerPassBase, PyFixpointGroupRecord,
         PyFixpointIterationRecord, PyFixpointPassGroup, PyPassManager, PyPassManagerResult,
         PyPassResult, PyPassRunRecord, PyPreservedAnalyses, PyValidationManager, PyValidatorBase,
-        PyValidatorRecord,
+        PyValidatorRecord, get_verification_passes_for, register_verification_pass,
+        run_verification,
     };
     #[pymodule_export]
     use super::provenance::{
@@ -107,9 +108,14 @@ mod rs_module {
     use super::value_domain::PyValueDomain;
 
     /// Set the extension's `__version__` to the crate version, which the
-    /// package compares with its own when it is imported.
+    /// package compares with its own when it is imported, and create the
+    /// verification registry of the Python API in the module's state.
     #[pymodule_init]
     fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
-        module.add("__version__", env!("CARGO_PKG_VERSION"))
+        module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+        module.add(
+            super::pass::REGISTRY_ATTRIBUTE,
+            Py::new(module.py(), super::pass::PyVerificationRegistry::new())?,
+        )
     }
 }

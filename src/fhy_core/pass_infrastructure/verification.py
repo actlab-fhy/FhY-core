@@ -1,28 +1,29 @@
-"""Verification registry, analysis, and auto-verification helpers.
+"""Verification registry, analysis, and pipeline-verification helpers.
 
 Exposes:
 
 - :class:`VerificationRegistry`: type-keyed registry of verification
   pass classes.
 - :class:`VerificationAnalysis`: an :class:`Analysis` that runs the
-  registered pipeline for an IR and returns a
-  :class:`ValidationReport`.
+  registered passes for an IR and returns a :class:`ValidationReport`.
 - :func:`register_verification`: decorator that registers a
   ``CompilerPass`` subclass as a verification pass.
-- :func:`run_verification`: helper used by
-  :meth:`fhy_core.traits.VerifiableMixin.verify`.
+- :func:`run_verification`: runs the registered passes for an IR; the
+  default :meth:`fhy_core.traits.VerifiableMixin.verify` does the same.
 
 Verification passes are ``CompilerPass`` subclasses whose only effect
-is to ``report(...)`` structural diagnostics about an IR. They run
-through :class:`ValidationManager`, inheriting its collect-all behavior.
-A :class:`PassManager` verifies its input and every changed output with
+is to ``report(...)`` structural diagnostics about an IR. They run as
+checks, as a :class:`ValidationManager` runs them, collect-all. A
+:class:`PassManager` verifies its input and every changed output with
 the passes registered for the IR's type, unless its verifier is replaced;
 a verification pass runs as a check, so it never verifies anything
 itself.
 
-:class:`VerificationRegistry` is a class-level singleton: all state
-lives in ``ClassVar`` attributes, there are no instances, and every
-method is a classmethod.
+The registry is the Rust core's ``fhy_core::pass::VerificationRegistry``,
+held in the extension's module state (S14 of
+``docs/design/python-switch.md``). It keys registrations by IR type and
+looks them up along ``reversed(type(ir).__mro__)``. The classes here are
+thin layers over ``fhy_core._rs``.
 """
 
 from fhy_core.utils.override import override
@@ -35,15 +36,14 @@ __all__ = [
 ]
 
 from collections.abc import Callable
-from threading import Lock
-from typing import Any, ClassVar, TypeVar
+from typing import Any, TypeVar
 
+from fhy_core import _rs
 from fhy_core.diagnostic import ValidationReport
 from fhy_core.logger import get_logger
 
 from .core import CompilerPass, PassRegistrationError, register_pass
 from .manager import Analysis
-from .validation import ValidationManager
 
 _LOGGER = get_logger(__name__)
 
@@ -51,23 +51,22 @@ _PassClassT = TypeVar("_PassClassT", bound=type[CompilerPass[Any, Any]])
 
 
 class VerificationRegistry:
-    """Class-level singleton registry of verification pass classes.
+    """Registry of verification pass classes, keyed by IR type.
 
     A verification pass is a ``CompilerPass`` subclass that reports
     structural-invariant diagnostics about an IR. Registrations are
     keyed by IR ``type``; lookups walk the IR's MRO so subclasses
     inherit base-class verification passes.
 
-    All state lives in ``ClassVar`` attributes; there are no instances.
-    The class itself is the registry.
+    The class has no instances and holds no state: the one registry is
+    the Rust core's, in the extension's module state, and every method is
+    a classmethod over it. It keeps the registered types and classes
+    alive.
 
     Registration is module-load-time by convention. Late registration
     during a pipeline run does not invalidate the :class:`VerificationAnalysis`
     results that run cached already.
     """
-
-    _passes_by_type: ClassVar[dict[type, list[type[CompilerPass[Any, Any]]]]] = {}
-    _lock: ClassVar[Lock] = Lock()
 
     @classmethod
     def register(
@@ -88,30 +87,19 @@ class VerificationRegistry:
                 methods call ``self.report(...)``.
 
         Raises:
+            TypeError: If ``ir_type`` is not a type.
             PassRegistrationError: If ``pass_class`` is not a
                 ``CompilerPass`` subclass.
 
         """
-        if not (isinstance(pass_class, type) and issubclass(pass_class, CompilerPass)):
-            raise PassRegistrationError(
-                f"Cannot register non-CompilerPass type as a verification pass: "
-                f"{getattr(pass_class, '__qualname__', repr(pass_class))}."
-            )
-        with cls._lock:
-            bucket = cls._passes_by_type.setdefault(ir_type, [])
-            if pass_class in bucket:
-                _LOGGER.debug(
-                    "verification pass %s already registered for %s (idempotent)",
-                    pass_class.__qualname__,
-                    ir_type.__qualname__,
-                )
-                return
-            bucket.append(pass_class)
-            _LOGGER.debug(
-                "registered verification pass %s for %s",
-                pass_class.__qualname__,
-                ir_type.__qualname__,
-            )
+        is_new = _rs.register_verification_pass(ir_type, pass_class)
+        _LOGGER.debug(
+            "registered verification pass %s for %s"
+            if is_new
+            else "verification pass %s already registered for %s (idempotent)",
+            pass_class.__qualname__,
+            ir_type.__qualname__,
+        )
 
     @classmethod
     def get_passes_for(cls, ir_type: type) -> tuple[type[CompilerPass[Any, Any]], ...]:
@@ -129,27 +117,22 @@ class VerificationRegistry:
         Returns:
             A tuple of pass classes in execution order, possibly empty.
 
+        Raises:
+            TypeError: If ``ir_type`` is not a type.
+
         """
-        with cls._lock:
-            seen: set[type[CompilerPass[Any, Any]]] = set()
-            ordered: list[type[CompilerPass[Any, Any]]] = []
-            for mro_cls in reversed(ir_type.__mro__):
-                for pass_cls in cls._passes_by_type.get(mro_cls, ()):
-                    if pass_cls in seen:
-                        continue
-                    seen.add(pass_cls)
-                    ordered.append(pass_cls)
-            return tuple(ordered)
+        return _rs.get_verification_passes_for(ir_type)
 
 
 class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
-    """Analysis that runs the verification pipeline for an IR.
+    """Analysis that runs the verification passes for an IR.
 
-    Builds a fresh :class:`ValidationManager` from
-    :meth:`VerificationRegistry.get_passes_for(type(ir))` and runs it
-    against the IR. The aggregated :class:`ValidationReport` is the
-    analysis result. When no passes are registered for the IR's type
-    (or any of its base classes), the report is empty.
+    Runs a new instance of each class
+    :meth:`VerificationRegistry.get_passes_for(type(ir))` returns as a
+    check against the IR, as a :class:`ValidationManager` would. The
+    aggregated :class:`ValidationReport`, with one record per pass, is the
+    analysis result. When no passes are registered for the IR's type (or
+    any of its base classes), the report is empty.
 
     Has a stable ``analysis_name``, so a pipeline run caches its result
     per IR node, and carries it to a pass's output when the pass preserves
@@ -160,6 +143,9 @@ class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
     def run(self, ir: Any) -> ValidationReport[Any]:
         """Run every registered verification pass for ``type(ir)``.
 
+        A pass class whose construction raises fails its check, and the
+        other passes still run.
+
         Args:
             ir: The IR to verify.
 
@@ -167,13 +153,7 @@ class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
             The aggregated :class:`ValidationReport`.
 
         """
-        pass_classes = VerificationRegistry.get_passes_for(type(ir))
-        if not pass_classes:
-            return ValidationReport()
-        manager: ValidationManager[Any] = ValidationManager()
-        for pass_class in pass_classes:
-            manager.add(pass_class())
-        return manager.validate(ir)
+        return _rs.run_verification(ir)
 
 
 def register_verification(
@@ -224,7 +204,8 @@ def register_verification(
 def run_verification(ir: Any) -> ValidationReport[Any]:
     """Run the verification pipeline for ``ir`` and return the report.
 
-    Computes the report afresh on every call.
+    Computes the report afresh on every call. A pass class whose
+    construction raises fails its check, and the other passes still run.
 
     Args:
         ir: The IR to verify.
@@ -234,4 +215,4 @@ def run_verification(ir: Any) -> ValidationReport[Any]:
         are registered for ``type(ir)`` or any of its base classes.
 
     """
-    return VerificationAnalysis().run(ir)
+    return _rs.run_verification(ir)

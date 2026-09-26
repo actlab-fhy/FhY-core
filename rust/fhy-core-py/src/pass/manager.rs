@@ -27,7 +27,8 @@ use super::error::error_to_python;
 use super::ir::PyIr;
 use super::records::PyPassManagerResult;
 use super::scope::ScopeGuard;
-use super::validation::{PyValidationManager, build_registry_verifier, read_pipeline_name};
+use super::validation::{PyValidationManager, read_pipeline_name};
+use super::verification::build_registry_verifier;
 
 /// Lock `mutex`, ignoring poisoning: a panic cannot leave a list of Python
 /// objects inconsistent.

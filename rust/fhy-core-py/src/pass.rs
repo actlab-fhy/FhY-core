@@ -26,6 +26,9 @@
 //! never reaches Python: the frame holds the diagnostics the hook reports
 //! and a detached handle to the run's analysis cache, and expires when the
 //! hook returns.
+//!
+//! The verification registry of the Python API lives in the extension's
+//! module state, and a pipeline's default verifier looks each IR up in it.
 
 mod analysis;
 mod compiler_pass;
@@ -37,6 +40,7 @@ mod manager;
 mod records;
 mod scope;
 mod validation;
+mod verification;
 
 pub(crate) use analysis::{PyAnalysisBase, PyPreservedAnalyses};
 pub(crate) use compiler_pass::{PyCompilerPassBase, refuse_unused_arguments};
@@ -47,3 +51,7 @@ pub(crate) use records::{
     PyPassRunRecord, PyValidatorRecord,
 };
 pub(crate) use validation::{PyValidationManager, PyValidatorBase};
+pub(crate) use verification::{
+    PyVerificationRegistry, REGISTRY_ATTRIBUTE, get_verification_passes_for,
+    register_verification_pass, run_verification,
+};

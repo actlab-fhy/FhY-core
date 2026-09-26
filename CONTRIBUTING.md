@@ -409,7 +409,17 @@ of the type-system calls in progress (`rust/fhy-core-py/src/types/adapter.rs`),
 each a context holding the Python objects the call was given, the class of
 its environment, and the first exception a Python-defined type's handler
 raised inside an infallible core comparison; a context lives only for its
-call, so the stack is empty whenever no call runs. Tests never clear a
+call, so the stack is empty whenever no call runs. Slice S14 moves the
+verification registry of `fhy_core.pass_infrastructure.verification`,
+which was a class-level dict of the Python `VerificationRegistry`, into the
+extension's module state: `pymodule_init` sets the private attribute
+`fhy_core._rs._verification_registry` to a `Mutex<Arc<_>>` of the core's
+owned `VerificationRegistry` and the Python objects its keys stand for
+(`rust/fhy-core-py/src/pass/verification.rs`), which the binding reaches
+through a write-once import cache. A registration swaps in a new state
+whole, and the lock is never held across a call into Python. It is
+append-only, as the dict was, and adds no Rust `static` with interior
+mutability. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default

@@ -1,7 +1,8 @@
 //! `fhy_core._rs.ValidatorBase`, the base of the Python `Validator` ABC
 //! (P3; D-S6-13), `fhy_core._rs.ValidationManager` (P2), and the
-//! validators the binding runs: Python validators, Python passes as checks,
-//! and the registry verifier of a pipeline (D-S6-12).
+//! validators the binding runs: Python validators and Python passes as
+//! checks. The registry verifier of a pipeline (D-S6-12) is in
+//! `verification.rs`.
 //!
 //! A pass runs as a check as the core's `PassValidator` runs one:
 //! `validate_input`, `should_run` then `get_noop_output`, `run_pass`, and
@@ -14,7 +15,6 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note};
@@ -34,12 +34,9 @@ use super::error::chain_of_exception;
 use super::ir::PyIr;
 use super::scope::{self, ScopeGuard};
 
-/// The name of the validator a pipeline verifies its IR with by default.
-const REGISTRY_VERIFIER_NAME: &str = "verification";
-
 /// Run `pass` over `ir` as a check, reporting into `cx`, and report the
 /// failure diagnostic of a hook that fails.
-fn run_check(
+pub(super) fn run_check(
     py: Python<'_>,
     pass: &mut PythonPass,
     ir: &PyIr,
@@ -106,38 +103,40 @@ impl PythonValidator {
             name: name.to_str()?.to_owned(),
         })
     }
+}
 
-    /// Return the failure of `validate` raising `error`, logging the error
-    /// the core synthesizes when the validator reported none.
-    fn fail(&self, py: Python<'_>, error: PyErr, cx: &PassContext<'_>) -> PassFailure {
-        if !error.is_instance_of::<pyo3::exceptions::PyException>(py) {
-            scope::record_interrupt(error.clone_ref(py));
-        }
-        let chain = chain_of_exception(py, &error);
-        let reported_error = cx
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.level() == DiagnosticLevel::Error);
-        if !reported_error {
-            let text = format!(
-                "validator {:?} failed without reporting an error: {chain}",
-                self.name
-            );
-            let diagnostic = fhy_core::diagnostic::Diagnostic::error(
-                Note::with_other_kind(text),
-                self.name.clone(),
-            );
-            let exception = error.value(py).clone().into_any();
-            if let Err(logging_error) = log_diagnostic(py, &diagnostic, Some(&exception)) {
-                logging_error.write_unraisable(py, None);
-            }
-        }
-        Box::new(HookFailure {
-            python_hook: "validate",
-            error,
-            chain,
-        })
+/// Return the failure of the validator `name` that raised `error`, logging
+/// the error the core synthesizes when the validator reported none into
+/// `cx`, and recording an exception that is not an `Exception` so the run's
+/// boundary raises it.
+pub(super) fn fail_validator(
+    py: Python<'_>,
+    name: &str,
+    error: PyErr,
+    cx: &PassContext<'_>,
+) -> PassFailure {
+    if !error.is_instance_of::<pyo3::exceptions::PyException>(py) {
+        scope::record_interrupt(error.clone_ref(py));
     }
+    let chain = chain_of_exception(py, &error);
+    let reported_error = cx
+        .diagnostics()
+        .iter()
+        .any(|diagnostic| diagnostic.level() == DiagnosticLevel::Error);
+    if !reported_error {
+        let text = format!("validator {name:?} failed without reporting an error: {chain}");
+        let diagnostic =
+            fhy_core::diagnostic::Diagnostic::error(Note::with_other_kind(text), name.to_owned());
+        let exception = error.value(py).clone().into_any();
+        if let Err(logging_error) = log_diagnostic(py, &diagnostic, Some(&exception)) {
+            logging_error.write_unraisable(py, None);
+        }
+    }
+    Box::new(HookFailure {
+        python_hook: "validate",
+        error,
+        chain,
+    })
 }
 
 impl Validator<PyIr> for PythonValidator {
@@ -159,61 +158,8 @@ impl Validator<PyIr> for PythonValidator {
             report_into(py, cx, reported);
             match result {
                 Ok(_) => Ok(()),
-                Err(error) => Err(self.fail(py, error, cx)),
+                Err(error) => Err(fail_validator(py, &self.name, error, cx)),
             }
-        })
-    }
-}
-
-/// Return the verification pass classes registered for the type of `ir`:
-/// `VerificationRegistry.get_passes_for(type(ir))`.
-fn registered_verification_passes<'py>(ir: &Bound<'py, PyAny>) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    static REGISTRY: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    let py = ir.py();
-    REGISTRY
-        .import(
-            py,
-            "fhy_core.pass_infrastructure.verification",
-            "VerificationRegistry",
-        )?
-        .call_method1(intern!(py, "get_passes_for"), (ir.get_type(),))?
-        .try_iter()?
-        .collect()
-}
-
-/// The verifier a pipeline runs by default: it checks the IR with a new
-/// instance of each verification pass registered for the IR's type, as a
-/// `ValidationManager` of them would, into one record.
-struct RegistryVerifier;
-
-impl Validator<PyIr> for RegistryVerifier {
-    fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed(REGISTRY_VERIFIER_NAME)
-    }
-
-    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        Python::attach(|py| {
-            let into_failure = |error: PyErr| {
-                let chain = error.to_string();
-                Box::new(HookFailure {
-                    python_hook: "validate",
-                    error,
-                    chain,
-                }) as PassFailure
-            };
-            let classes = registered_verification_passes(ir.bind(py)).map_err(into_failure)?;
-            let mut failure = None;
-            for class in classes {
-                let pass = class.call0().map_err(into_failure)?;
-                let pass = pass
-                    .cast_into::<PyCompilerPassBase>()
-                    .map_err(|error| into_failure(error.into()))?;
-                let mut check = PythonPass::new(&pass, false).map_err(into_failure)?;
-                if let Err(error) = run_check(py, &mut check, ir, cx) {
-                    failure = Some(error);
-                }
-            }
-            failure.map_or(Ok(()), Err)
         })
     }
 }
@@ -237,13 +183,6 @@ fn build_manager(
         }
     }
     Ok(manager)
-}
-
-/// Return the core's validation pipeline of the registry verifier.
-pub(super) fn build_registry_verifier() -> ValidationManager<'static, PyIr> {
-    let mut manager = ValidationManager::new(Identifier::new(REGISTRY_VERIFIER_NAME));
-    manager.add(RegistryVerifier);
-    manager
 }
 
 /// The base of the Python `Validator` ABC.
