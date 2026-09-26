@@ -45,6 +45,8 @@ from fhy_core.provenance import Provenance as _Provenance
 from fhy_core.provenance import Span as _Span
 from fhy_core.provenance import UnknownProvenance as _UnknownProvenance
 from fhy_core.serialization import SerializedDict
+from fhy_core.symbol_table import FunctionKeyword as _FunctionKeyword
+from fhy_core.symbol_table import SymbolTableFrame as _SymbolTableFrame
 from fhy_core.symbolic.constraint.core import Constraint as _Constraint
 from fhy_core.symbolic.constraint.core import (
     ConstraintBindings as _ConstraintBindings,
@@ -105,8 +107,6 @@ from fhy_core.symbolic.expression.registry.entries import (
 from fhy_core.symbolic.expression.registry.entries import (
     RegisteredFunction as _RegisteredFunction,
 )
-from fhy_core.symbol_table import FunctionKeyword as _FunctionKeyword
-from fhy_core.symbol_table import SymbolTableFrame as _SymbolTableFrame
 from fhy_core.symbolic.expression.sort import FunctionSort
 from fhy_core.symbolic.solver import SatStatus as _SatStatus
 from fhy_core.symbolic.solver import Simplifier as _Simplifier
