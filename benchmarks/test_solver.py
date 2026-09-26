@@ -6,18 +6,20 @@ changes sits in a helper marked with its decision:
 
 - :func:`_ask_an_instant_backend` asks a satisfiability question of a
   backend that answers at once, so the row measures the screens and the
-  checks around the backend. Before S8 it replaces the z3 bridge's
+  checks around the backend. Before S8 it replaced the z3 bridge's
   implication; after S8 it asks a ``Solver`` holding a Python
-  ``SmtSolver`` that answers ``sat`` (D-S8-11).
+  ``SmtSolver`` that answers ``sat`` (D-S8-11), so the row also lowers the
+  question and calls the backend once.
 
 The trees reuse the expression benchmarks' deep tree, 100 operations over
-four identifiers. ``test_import_fhy_core`` times a fresh interpreter
-importing the package, five rounds (D-S8-16).
+four identifiers. ``test_lower_to_smtlib2_of_a_deep_tree`` exists only
+after S8. ``test_import_fhy_core`` times a fresh interpreter importing the
+package, five rounds (D-S8-16).
 """
 
 import subprocess
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 
 import pytest
 
@@ -37,6 +39,7 @@ from fhy_core.symbolic.param import (
     create_natural_param,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
+from fhy_core.utils.override import override
 
 from .conftest import Benchmark
 from .test_expression import (
@@ -56,28 +59,29 @@ _BOUND_IDENTIFIER_COUNT = 5
 _IMPORT_ROUNDS = 5
 
 
+class _InstantSmtSolver(solver.SmtSolver):
+    """An SMT backend that finds every script satisfiable at once."""
+
+    @override
+    def check(
+        self, script: solver.SmtScript, *, timeout_milliseconds: int | None
+    ) -> solver.SatResult:
+        return solver.SatResult.SAT
+
+
+_INSTANT_SOLVER = solver.Solver(smt_solver=_InstantSmtSolver())
+
+
 def _ask_an_instant_backend(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> bool | None:
     """Ask whether `expression` is satisfiable of a backend that answers at once.
 
-    D-S8-11: before S8 the z3 bridge's implication is replaced by a
-    function answering ``False`` (nothing contradicts the expression), so
-    the call runs the capability, timeout, symbol-type, ill-typedness and
-    hazard checks, and no solver.
+    D-S8-11: a ``Solver`` holding a Python ``SmtSolver`` that answers
+    ``sat``, so the call runs the capability, timeout, symbol-type,
+    ill-typedness and hazard checks, the lowering, and one Python call.
     """
-    return solver.check_expression_satisfiability(expression, symbol_types)
-
-
-@pytest.fixture()
-def _instant_backend(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Make the z3 bridge's implication answer at once (D-S8-11: before S8)."""
-    monkeypatch.setattr(
-        solver,
-        "_z3_does_expression_imply",
-        lambda *_arguments, **_keywords: False,
-    )
-    yield
+    return _INSTANT_SOLVER.check_expression_satisfiability(expression, symbol_types)
 
 
 @pytest.fixture()
@@ -106,7 +110,6 @@ def x() -> Identifier:
     return Identifier("x")
 
 
-@pytest.mark.usefixtures("_instant_backend")
 def test_screen_of_a_deep_predicate(
     benchmark: Benchmark,
     deep_tree: Expression,
@@ -124,6 +127,15 @@ def test_lower_to_z3_of_a_deep_tree(
 ) -> None:
     """Benchmark lowering the deep tree to a z3 term."""
     benchmark(convert_expression_to_z3_expression, deep_tree, deep_symbol_types)
+
+
+def test_lower_to_smtlib2_of_a_deep_tree(
+    benchmark: Benchmark,
+    deep_tree: Expression,
+    deep_symbol_types: dict[Identifier, SymbolType],
+) -> None:
+    """Benchmark lowering the deep tree to SMT-LIB2 text (after S8 only)."""
+    benchmark(solver.convert_expression_to_smtlib2, deep_tree, deep_symbol_types)
 
 
 def test_check_satisfiability_of_bounds(benchmark: Benchmark, x: Identifier) -> None:

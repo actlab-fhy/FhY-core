@@ -60,7 +60,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S7.4: the Python switch
   - [x] S7.5: tests migrated, and the interface suite
   - [x] S7.6: benchmarks after, and docs
-- [ ] S8: the solver and its backends (designed; see "S8: the solver and its backends")
+- [x] S8: the solver and its backends (N-S8-1 resolved as (a), N-S8-2 as (b)). The suite is green (7,389 passed), slow tests pass (7,422), properties pass (282), `tests_minimal` passes (5,764 passed, 608 skipped), lint and mypy are clean, `tests-3.13` passes with `FORCE_COLOR=1`, and the Rust gate passes (3,040; 3,072 with the `z3` feature)
   - [x] N-S8-1 decided as (a), N-S8-2 as (b)
   - [x] S8.1: solver benchmarks and baseline (14 rows; see "S8.1 baseline")
   - [x] S8.2: core additions, test-first, with Rust tests (`fhy_core::solver`: the screens, the SMT-LIB2 lowering, the backend traits, the facade, the process backend). 224 new tests; the Rust gate passes (3,040); see "S8.2 implementation notes"
@@ -69,7 +69,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S8.5: the Python switch (the z3-solver and sympy adapters, lazy imports). 6,228 passed; exactly the four migrated modules (`test_solver.py`, `test_z3_pass.py`, `test_sympy_pass.py`, `test_cross_cutting.py`) fail collection until S8.6
   - [x] S8.6: tests migrated, and the interface suite (57). The suite is green (7,387 passed), `-m "not very_slow"` 7,420, properties 281; see "S8.5 and S8.6 status"
   - [x] S8.7: optional extras, backend markers and the minimal-install session. `tests_minimal` passes (5,764 passed, 608 skipped); the suite 7,389 passed; see "S8.7 status"
-  - [ ] S8.8: benchmarks after, and docs
+  - [x] S8.8: benchmarks after, and docs (every solver row faster, or within 10%, after c0af152; see "S8 benchmarks")
 
 ## Goal
 
@@ -5945,9 +5945,10 @@ above):
 
 ## S8: the solver and its backends
 
-- **Status:** designed 2026-09-25 at 17a5502. D-S8-1 to D-S8-20 apply the
-  policy the user already set and the direction in "Plan after S7".
-  N-S8-1 and N-S8-2 need the user.
+- **Status:** designed 2026-09-25 at 17a5502, with D-S8-1 to D-S8-20
+  applying the policy the user already set and the direction in "Plan
+  after S7"; N-S8-1 and N-S8-2 were decided by the user as (a) and (b).
+  Implemented 2026-09-26 in ten commits; see "S8 status".
 - **Pattern:** the query logic moves into a new core module,
   `fhy_core::solver`. Its two backend traits, one for SMT solving and one
   for simplification, are P3: Python implementations are driven through
@@ -7343,3 +7344,151 @@ Tests changed in S8.7 beyond their marks:
 
 At the end of S8.7: `tests_minimal` 5,764 passed and 608 skipped, `pytest`
 7,389 passed, `lint` and `type_check` clean.
+
+### S8 status
+
+S8 was implemented on 2026-09-26 in ten commits: the benchmarks and their
+baseline (ab05802); the core's solver, test-first (aebf889); the `z3`
+feature (8da2be5); the binding (e33df12) and a stub fix after it
+(3e49df9); the Python switch, marked breaking (7b2d574); the migrated
+tests and the interface suite (869e41a); the optional extras, the markers
+and the minimal session, marked breaking (3559b79); the z3 adapter's
+simple solver, which the benchmarks called for (c0af152); and these docs,
+with the benchmark rows of the new API. No test was skipped or deleted
+without a rewrite. At the end: `pytest` 7,389 passed, `-m "not
+very_slow"` 7,422 passed, the `property` session 282 passed,
+`tests_minimal` 5,764 passed and 608 skipped, `lint` and `type_check`
+clean, `tests/test_rs_stub.py` green, `FORCE_COLOR=1 nox -s tests-3.13`
+green (7,140 passed), and the Rust gate green (fmt, clippy `-D warnings`
+with and without `--all-features`, 3,040 tests and 3,072 with the `z3`
+feature, doc `-D warnings`, deny, `cargo +1.85 check` with and without
+the feature, and the packaging checks). The `z3` feature is built
+against the libz3 4.16 of the z3-solver wheel (S8.3); the CI workflow's
+new steps, the `rust` job's z3 installation and the `tests-minimal` job,
+first run on the next pull request.
+
+### S8 benchmarks (before and after)
+
+Median time per call of `benchmarks/test_solver.py`, `pytest
+benchmarks/test_solver.py -n 0 --benchmark-only`, on the S0 machine with
+Python 3.11.13 and pytest-benchmark 5.3.0. "Before" is ab05802, the S8.1
+baseline's tree, exported with `git archive` under `target/` and built
+there with the same z3-solver (4.16) and sympy (1.14); "after" is the
+S8.8 tree in the benchmark session's environment. The two ran three times
+each, interleaved, with a load average of 8 to 15 from other work on the
+machine, and the table lists the best of the three medians; the "before"
+column agrees with the S8.1 table within 8%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_screen_of_a_deep_predicate` | 503.3 µs | 80.6 µs | 0.16 |
+| `test_lower_to_z3_of_a_deep_tree` | 2.14 ms | 384.8 µs | 0.18 |
+| `test_lower_to_smtlib2_of_a_deep_tree` | - | 68.2 µs | - |
+| `test_check_satisfiability_of_bounds` | 1.63 ms | 443.6 µs | 0.27 |
+| `test_check_satisfiability_of_a_conjunction_of_50_bounds` | 6.01 ms | 917.1 µs | 0.15 |
+| `test_does_expression_imply_of_bounds` | 1.38 ms | 428.4 µs | 0.31 |
+| `test_holds_for_all_free_assignments_with_a_witness` | 1.40 ms | 952.0 µs | 0.68 |
+| `test_check_satisfiability_refused_by_the_screen` | 50.1 µs | 27.1 µs | 0.54 |
+| `test_simplify_expression_of_a_ground_comparison` | 139.4 µs | 71.6 µs | 0.51 |
+| `test_simplify_expression_symbolic` | 72.6 µs | 77.7 µs | 1.07 |
+| `test_equation_constraint_evaluate_with_bindings` | 147.6 µs | 60.1 µs | 0.41 |
+| `test_constraint_system_check_implication` | 1.39 ms | 445.0 µs | 0.32 |
+| `test_nat_param_is_value_valid` | 147.5 µs | 61.5 µs | 0.42 |
+| `test_int_param_intersection_feasibility` | 2.10 ms | 675.0 µs | 0.32 |
+| `test_import_fhy_core` | 509 ms | 221 ms | 0.43 |
+
+Every row is faster or within the 10% CONTRIBUTING allows, so the pattern
+choice stands and no cost needs the maintainer (cross-cutting rule 5):
+
+- **The first run after the switch** had four rows slower: the smallest
+  satisfiability question 1.61 times (2.65 against 1.65 ms), the param
+  intersection 1.48, and the two implications 1.14 and 1.18. The Rust
+  part of a question costs a few microseconds (the lowering of `0 < x &&
+  x < 10` takes 3 µs, its text 5 µs); the rest was z3's. A default
+  `z3.Solver()` sets up its incremental, tactic-driven front end, about
+  3 ms a check, and asserting `e` and answering `sat` took longer there
+  than the bridge's closed `ForAll` encoding answering `unsat`. The adapter
+  now checks with `z3.SimpleSolver()` (c0af152), the SMT kernel alone,
+  which decides these scripts in 0.4 to 0.5 ms.
+- **The screens** are 6 times faster: one Rust call over the tree, where
+  five recursive Python walks repeated their classifications per node. The
+  row now also lowers the question and calls a Python backend once.
+- **The z3 lowering** of the deep tree is 5.6 times faster, the Rust
+  lowering and one parse against a Python visitor call per node; the
+  SMT-LIB2 text alone takes 68 µs.
+- **The questions** are 1.5 to 6.6 times faster, the 50 bounds most, since
+  the old encoding quantified every identifier; the witness question
+  gains least, since its `forall` is z3's work either way.
+- **Simplification** of a bound comparison, and the constraint and param
+  value checks over it, are about twice as fast: the facade substitutes in
+  Rust (Y-9) and sympy lowers a smaller tree. The symbolic `x + x - x`,
+  which substitutes nothing, takes 1.07 times as long: sympy's own work
+  dominates, and the binding adds the crossing into Rust and back into
+  the Python adapter, the few microseconds the plan expected.
+- **Importing `fhy_core`** takes 221 ms in a fresh interpreter, down from
+  509 ms, since neither sympy nor z3 is imported (D-S8-16).
+
+### S8 implementation notes
+
+Choices the decisions left open, made while implementing S8.5 to S8.8
+(S8.2's, S8.3's and S8.4's are in their own notes above):
+
+- **The default solver's backends are deferred.** Its initial value holds
+  `_DeferredSmtSolver(SolverBackend.Z3)` and
+  `_DeferredSimplifier(SolverBackend.SYMPY)`, Python backends that resolve
+  the named adapter on their first question and delegate to it, named
+  `z3` and `sympy`. So importing `fhy_core.symbolic.solver` imports
+  neither package, and a missing one raises
+  `SolverBackendUnavailableError` from the question that needs it. The
+  adapters are created once, by `functools.cache` (`_resolve_adapter`),
+  and so is the `Solver` of each named member; `is_backend_available`
+  tries to resolve the adapter.
+- **A named backend keeps the Python capability text.** `backend=Z3` for a
+  simplification still raises `Backend <SolverBackend.Z3: 'z3'> cannot
+  answer ...`, checked against the static table before any solver is
+  asked; a solver without a capable backend, the default one included,
+  raises the core's `the backends of this solver cannot answer ...`.
+- **The new names live in `fhy_core.symbolic.solver`:** `SatStatus`,
+  `SolverBackendError`, `SolverBackendUnavailableError` (both
+  `register_error`ed), `convert_expression_to_smtlib2`,
+  `is_backend_available`, and the binding's classes and functions. The two
+  bridges import the ABCs and the error from it; since the solver module
+  imports them only when a question needs them, there is no import cycle.
+- **`convert_expression_to_z3_expression`** reads a Boolean expression's
+  term as the script's one assertion, and a named value's as the second
+  argument of `(= value e)`; the identifier map holds `z3.Int`,
+  `z3.Real` or `z3.Bool` constants of the declared symbols, which z3
+  identifies with the parsed ones by name and sort.
+- **z3's SMT-LIB2 parser is lenient**: `from_string` and
+  `parse_smt2_string` coerce `(= true 1)` to `If(True, 1, 0) == 1` rather
+  than refusing it, so the lowering must never write a Boolean where a
+  number is required. The Boolean-coercion screen stays for that reason,
+  and two characterization tests in `test_z3_pass.py` pin it.
+- **The simple solver** reports running out of time as `canceled`; the
+  adapter maps that reason to `timeout` when a timeout was set (D-S8-8).
+  The Rust `Z3Solver` keeps the `z3` crate's default solver; switching it
+  to the SMT kernel (`Tactic::new("smt").solver()`) would match the Python
+  adapter, and is a possible follow-up, since the published wheels never
+  enable the feature.
+- **The sympy bridge** lost its `simplify_expression` and the helper only
+  that function used; `SympySimplifier` lowers, simplifies with the
+  unchanged best-effort cases, and lifts.
+- **The stub** types `Solver.smt_solver` and `Solver.simplifier` as the
+  Python ABCs, which every backend is an instance or a registered virtual
+  subclass of, and `SatResult.status` as `SatStatus`.
+- **The markers** were set by probing, as S8.7 records; the design's
+  counts (474 `z3` marks, 76 unmarked users) came from the old solver, so
+  the new counts (395 `z3`, 1,104 `sympy`) are not comparable one to one.
+
+Left for later, as the design says:
+
+- **D-S8-5's follow-up**: with Y-1 and Y-2, the partial-operation screen
+  could narrow to what SMT-LIB2 cannot say (a zero or non-literal divisor,
+  an unsafe exponent). That changes which questions are decided, so it is
+  a separate change with its own tests.
+- **The Rust CAS backend** of the next slice: SymPy through pyo3, behind
+  an off-by-default `sympy` feature of `fhy-core`. The `Simplifier` trait
+  takes a `SimplifyContext` (S8.2), so it can plug in, and gain what it
+  needs from the context, without changing the trait or the facade.
+- **Sessions and models** (`push`/`pop`, a `get_model`): non-goals of
+  D-S8-8; a later `SmtSession` trait can add them.
