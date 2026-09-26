@@ -16757,7 +16757,7 @@ order fixed in 855611b); the Python switch, marked breaking (0a675b9); and
 the interface suite (460b738). No existing test was skipped, deleted or
 changed. At the end, after the S15.6 optimizations:
 
-- `pytest`: 7,763 passed. The interface suite adds 55 tests, from 34
+- `pytest`: 7,763 passed. The interface suite adds 55 tests, from 32
   functions.
 - `-m "not very_slow"`: 7,796 passed.
 - The `property` session: 282 passed.
