@@ -20,6 +20,7 @@ mod provenance;
 mod public_class;
 mod serialization;
 mod solver;
+mod term;
 mod value_domain;
 
 /// `fhy_core`'s Rust implementation.
@@ -71,6 +72,12 @@ mod rs_module {
     use super::solver::{
         PySatResult, PySimplifierBase, PySmtLib2ProcessSolver, PySmtScript, PySmtSolverBase,
         PySolver, get_default_solver, set_default_solver,
+    };
+    #[pymodule_export]
+    use super::term::{
+        PyAlphaRenaming, PyEquivalenceRole, binder_get_free_identifiers,
+        binder_is_alpha_equivalent_under, binder_substitute, derived_is_alpha_equivalent_under,
+        derived_is_structurally_equivalent, is_identifier_mapping_alpha_equivalent_under,
     };
     #[pymodule_export]
     use super::value_domain::PyValueDomain;

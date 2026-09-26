@@ -74,7 +74,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] N-S10-1 decided as (a), N-S10-2 as (b)
   - [x] S10.1: term benchmarks and baseline (32 rows; see "S10.1 baseline")
   - [x] S10.2: core additions, test-first, with Rust tests (`fhy_core::term`: `AlphaRenaming` moved there with shared frames, `Hash`, `extended` and `enter_binders`; the `AlphaEquivalence`, `FreeIdentifiers`, `Term` and `Binder` traits; the mapping comparison)
-  - [ ] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
+  - [x] S10.3: the term binding (`AlphaRenaming`, the `Binder` adapter, the derived-equivalence engine and its roles, the mapping helper, the stubs)
   - [ ] S10.4: the Python switch
   - [ ] S10.5: tests migrated, and the interface suite
   - [ ] S10.6: benchmarks after, and docs
@@ -8512,3 +8512,17 @@ rows keep their Rust tests in `term/renaming_stories.rs`:
 | A `test_alpha_renaming_hashable` | `alpha_renaming_equal_renamings_built_in_different_orders_hash_alike`, `alpha_renaming_hash_agrees_with_equality` | S4.2 had no Rust test |
 | A `test_mapping_helper_*` (11) | `mapping_stories.rs` (11) | the order of value comparisons is new |
 | none | `alpha_renaming_views_*`, `alpha_renaming_enter_binders_*`, `a_binder_over_expressions_*`, `expression_through_the_traits_agrees_with_its_methods`, `substitution_*` | new: the views, the pairing, a binder over expressions, the traits on `Expression`, substitution laws |
+
+### S10.3 status
+
+The binding is `rust/fhy-core-py/src/term.rs` with `term/renaming.rs`
+(`_rs.AlphaRenaming` and the identifier-object tables), `term/adapter.rs`
+(the context, `PyTerm` and `PyBinder` over the core traits),
+`term/binder.rs` and `term/mapping.rs` (the functions `BinderMixin` and the
+mapping helper call), and `term/derived.rs` (`_rs.EquivalenceRole`, the
+plans and the walks). Everything new is exported from `_rs` and declared in
+`_rs.pyi`, whose import of the Python `AlphaRenaming` is aliased until the
+switch. `NonInjectiveRenamingError`'s `IntoPyErr` moved from
+`expression/node.rs` to `term/renaming.rs`, and `PyExpression` exposes its
+handle and structural equality to the crate. Nothing in Python uses the
+binding yet, so the suite is unchanged (7,327 passed).

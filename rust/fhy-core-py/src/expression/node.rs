@@ -27,7 +27,6 @@ use fhy_core::expression::{
     BinaryOperation, Callee, Expression, ExpressionKind, FunctionNameError, LogicalOperation,
     PiecewiseError, RebuildError, UnaryOperation,
 };
-use fhy_core::term::NonInjectiveRenamingError;
 
 use crate::dataclass::{build_argument_type_error, collect_tuple, hash_value, read_str};
 use crate::error::{IntoPyErr, IntoPyResult};
@@ -67,13 +66,6 @@ impl IntoPyErr for RebuildError {
 
 /// Raises `ValueError` with the core's text.
 impl IntoPyErr for FunctionNameError {
-    fn into_py_err(self) -> PyErr {
-        PyValueError::new_err(self.to_string())
-    }
-}
-
-/// Raises `ValueError` with the core's text.
-impl IntoPyErr for NonInjectiveRenamingError {
     fn into_py_err(self) -> PyErr {
         PyValueError::new_err(self.to_string())
     }
@@ -361,7 +353,7 @@ impl PyExpression {
     /// Compares the Rust trees, after two shortcuts: shared handles are
     /// equal, and expressions whose hashes are both known and differ are
     /// not.
-    fn is_equal(&self, other: &Self) -> bool {
+    pub(crate) fn is_structurally_equal(&self, other: &Self) -> bool {
         if Expression::ptr_eq(&self.expression, &other.expression) {
             return true;
         }
@@ -383,7 +375,7 @@ impl PyExpression {
         let py = slf.py();
         match other.cast::<Self>() {
             Ok(other) => {
-                let is_equal = slf.get().is_equal(other.get());
+                let is_equal = slf.get().is_structurally_equal(other.get());
                 PyBool::new(py, is_equal == expected).to_owned().into_any()
             }
             Err(_not_an_expression) => py.NotImplemented().into_bound(py),
@@ -517,7 +509,7 @@ impl PyExpression {
     fn is_structurally_equivalent(&self, other: &Bound<'_, PyAny>) -> bool {
         other
             .cast::<Self>()
-            .is_ok_and(|other| self.is_equal(other.get()))
+            .is_ok_and(|other| self.is_structurally_equal(other.get()))
     }
 
     /// Return whether `other` is this expression up to no renaming, which
@@ -541,7 +533,7 @@ impl PyExpression {
         };
         let renaming = read_alpha_renaming(renaming)?;
         if renaming.is_empty() {
-            return Ok(self.is_equal(other.get()));
+            return Ok(self.is_structurally_equal(other.get()));
         }
         Ok(self
             .expression
