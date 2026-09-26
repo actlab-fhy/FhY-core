@@ -15746,7 +15746,7 @@ system.
 
 ### S13 status
 
-S13 was implemented on 2026-09-26 in twelve commits after the design
+S13 was implemented on 2026-09-26 in eleven commits after the design
 (abe7c57, e94db01, both rebased by the coordinator onto dfd940a):
 
 - the benchmarks and their baseline (3bf48fc);
@@ -15936,3 +15936,10 @@ Left for later:
 - **The third-party key TODO** in `Constraint.build_ordering_key` (deriving
   it from the field schema) stays, for Python-defined constraints.
 
+### S13 resume notes
+
+Nothing is pending: every step of the checklist is done. The branch stands
+on `dev-rust` at dfd940a, where the coordinator rebased it, so a later
+rebase meets only additive conflicts: in this document, the module tables
+of `lib.rs`, the crate README and CONTRIBUTING, the binding's `lib.rs`, and
+the stub.
