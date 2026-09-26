@@ -6,6 +6,7 @@ use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
+use crate::expression::registry::FunctionRegistry;
 use crate::expression::{Expression, NoRegisteredSorts, SortLookup};
 
 use super::smt::SmtScript;
@@ -98,27 +99,75 @@ pub trait Simplifier: Send + Sync + fmt::Debug {
 
 /// What a [`Simplifier`] is told about a simplification besides the
 /// expression: the sorts of the native constants and named functions the
-/// expression may refer to.
+/// expression may refer to, and, when it has one, the registry holding
+/// them.
+///
+/// A backend that lowers an expression to another system reads a user
+/// constant's value, and what kind of entry a called name is, from the
+/// [`registry`](Self::registry). A context built from sorts alone has no
+/// registry, and such a backend refuses what it would need one for.
 ///
 /// It is a struct rather than more parameters, so that it can carry more
 /// without changing the trait.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::expression::registry::{FunctionRegistry, NativeConstant};
+/// use fhy_core::expression::{FunctionName, FunctionSort, NoRegisteredSorts};
+/// use fhy_core::solver::SimplifyContext;
+///
+/// let mut registry = FunctionRegistry::new();
+/// let answer = registry.register_constant(NativeConstant::try_new(
+///     FunctionName::try_new("answer")?,
+///     FunctionSort::Int,
+///     42,
+/// )?)?;
+///
+/// let context = SimplifyContext::from_registry(&registry);
+/// assert_eq!(context.sorts().native_constant_sort(&answer), Some(FunctionSort::Int));
+/// assert!(context.registry().is_some());
+/// assert!(SimplifyContext::new(&NoRegisteredSorts).registry().is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy)]
 pub struct SimplifyContext<'a> {
     sorts: &'a dyn SortLookup,
+    registry: Option<&'a FunctionRegistry>,
 }
 
 impl<'a> SimplifyContext<'a> {
     /// Return the context reading native constants and named functions'
-    /// result sorts from `sorts`.
+    /// result sorts from `sorts`, with no registry.
     #[must_use]
     pub fn new(sorts: &'a dyn SortLookup) -> Self {
-        Self { sorts }
+        Self {
+            sorts,
+            registry: None,
+        }
+    }
+
+    /// Return the context reading sorts, constants' values and entries from
+    /// `registry`.
+    #[must_use]
+    pub fn from_registry(registry: &'a FunctionRegistry) -> Self {
+        Self {
+            sorts: registry,
+            registry: Some(registry),
+        }
     }
 
     /// Return the sorts of native constants and named functions.
     #[must_use]
     pub fn sorts(&self) -> &'a dyn SortLookup {
         self.sorts
+    }
+
+    /// Return the registry the context was built from, or `None` for a
+    /// context built from sorts alone.
+    #[must_use]
+    pub fn registry(&self) -> Option<&'a FunctionRegistry> {
+        self.registry
     }
 }
 

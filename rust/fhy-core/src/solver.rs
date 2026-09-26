@@ -437,11 +437,12 @@ impl Solver {
     /// that no Boolean position of the expression holds a number, counting
     /// an identifier bound to one, as
     /// [`BooleanScreen::check_logical_operands`](crate::expression::BooleanScreen::check_logical_operands)
-    /// judges it with `environment`; and that `environment` binds no native
-    /// constant the expression refers to. It then substitutes
-    /// `environment` with [`Expression::substitute`] and hands the result
-    /// to the simplifier, which receives `expression` itself when
-    /// `environment` binds none of its identifiers.
+    /// judges it with `environment` and the sorts of `context`; and that
+    /// `environment` binds no native constant the expression refers to. It
+    /// then substitutes `environment` with [`Expression::substitute`] and
+    /// hands the result and `context` to the simplifier, which receives
+    /// `expression` itself when `environment` binds none of its
+    /// identifiers.
     ///
     /// # Errors
     ///
@@ -454,8 +455,9 @@ impl Solver {
         &self,
         expression: &Expression,
         environment: &HashMap<Identifier, Expression, S>,
-        sorts: &dyn SortLookup,
+        context: &SimplifyContext<'_>,
     ) -> Result<Expression, SolveError> {
+        let sorts = context.sorts();
         let simplifier = self
             .simplifier
             .as_ref()
@@ -481,7 +483,7 @@ impl Solver {
             .substitute(environment)
             .map_err(SolveError::Substitution)?;
         simplifier
-            .simplify(&substituted, &SimplifyContext::new(sorts))
+            .simplify(&substituted, context)
             .map_err(|source| SolveError::Backend {
                 backend: simplifier.name().into_owned(),
                 source,

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
@@ -96,6 +97,7 @@ impl SmtSolver for RecordingSmtSolver {
 pub(crate) struct RecordingSimplifier {
     result: Option<Result<Expression, FakeBackendError>>,
     inputs: Mutex<Vec<Expression>>,
+    registry_sizes: Mutex<Vec<Option<usize>>>,
 }
 
 impl RecordingSimplifier {
@@ -104,6 +106,7 @@ impl RecordingSimplifier {
         Arc::new(Self {
             result: None,
             inputs: Mutex::new(Vec::new()),
+            registry_sizes: Mutex::new(Vec::new()),
         })
     }
 
@@ -112,6 +115,7 @@ impl RecordingSimplifier {
         Arc::new(Self {
             result: Some(Ok(result)),
             inputs: Mutex::new(Vec::new()),
+            registry_sizes: Mutex::new(Vec::new()),
         })
     }
 
@@ -120,12 +124,22 @@ impl RecordingSimplifier {
         Arc::new(Self {
             result: Some(Err(FakeBackendError(message.to_owned()))),
             inputs: Mutex::new(Vec::new()),
+            registry_sizes: Mutex::new(Vec::new()),
         })
     }
 
     /// Return every input so far, in order.
     pub(crate) fn inputs(&self) -> Vec<Expression> {
         self.inputs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Return the size of the registry each simplification's context
+    /// held, or `None` for a context without one, in order.
+    pub(crate) fn registry_sizes(&self) -> Vec<Option<usize>> {
+        self.registry_sizes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -145,8 +159,12 @@ impl Simplifier for RecordingSimplifier {
     fn simplify(
         &self,
         expression: &Expression,
-        _context: &SimplifyContext<'_>,
+        context: &SimplifyContext<'_>,
     ) -> Result<Expression, BackendError> {
+        self.registry_sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(context.registry().map(FunctionRegistry::len));
         self.inputs
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

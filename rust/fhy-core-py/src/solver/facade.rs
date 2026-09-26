@@ -18,7 +18,8 @@ use pyo3::types::PyMapping;
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
-    Answer, CheckLimits, QueryContext, QueryKind, Question, SolveError, Solver, UnknownReason,
+    Answer, CheckLimits, QueryContext, QueryKind, Question, SimplifyContext, SolveError, Solver,
+    UnknownReason,
 };
 
 use crate::expression::{PyExpression, materialize_substituted, registry_snapshot};
@@ -341,7 +342,13 @@ impl PySolver {
             .map(|(handle, object)| (handle.identity(), object.bind(py).clone()))
             .collect();
         let (result, returned) = run_simplification(input.clone().unbind(), known, || {
-            py.detach(|| solver.simplify(&rust_input, &bindings, registry.registry()))
+            py.detach(|| {
+                solver.simplify(
+                    &rust_input,
+                    &bindings,
+                    &SimplifyContext::from_registry(registry.registry()),
+                )
+            })
         });
         let result = result.map_err(|error| solve_error_to_py(py, error))?;
         if let Some(returned) = returned {

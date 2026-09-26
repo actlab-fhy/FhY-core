@@ -13,7 +13,7 @@ use fhy_core::expression::{Expression, FunctionName, FunctionSort, NoRegisteredS
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
     Answer, CheckLimits, Hazard, LoweringError, QueryContext, QueryKind, Question, SatResult,
-    SolveError, Solver, UnknownReason,
+    SimplifyContext, SolveError, Solver, UnknownReason,
 };
 use rstest::rstest;
 
@@ -95,7 +95,7 @@ fn missing_backend_is_reported_before_every_other_check() {
         .simplify(
             &ill_typed_and_undeclared,
             &HashMap::new(),
-            &NoRegisteredSorts,
+            &SimplifyContext::new(&NoRegisteredSorts),
         );
 
     assert!(matches!(
@@ -603,7 +603,7 @@ fn simplification_substitutes_the_environment_before_the_simplifier() {
         .simplify(
             &expression,
             &HashMap::from([(x, build_literal(3))]),
-            &NoRegisteredSorts,
+            &SimplifyContext::new(&NoRegisteredSorts),
         )
         .expect("simplified");
 
@@ -620,14 +620,18 @@ fn simplifier_receives_the_expression_itself_when_nothing_is_bound() {
 
     let unbound = simplifier
         .solver()
-        .simplify(&expression, &HashMap::new(), &NoRegisteredSorts)
+        .simplify(
+            &expression,
+            &HashMap::new(),
+            &SimplifyContext::new(&NoRegisteredSorts),
+        )
         .expect("simplified");
     let unrelated = simplifier
         .solver()
         .simplify(
             &expression,
             &HashMap::from([(y, build_literal(1))]),
-            &NoRegisteredSorts,
+            &SimplifyContext::new(&NoRegisteredSorts),
         )
         .expect("simplified");
 
@@ -648,7 +652,7 @@ fn simplification_screens_with_the_environment() {
         .simplify(
             &reference.and(build_literal(true)),
             &HashMap::from([(b, build_literal(1))]),
-            &NoRegisteredSorts,
+            &SimplifyContext::new(&NoRegisteredSorts),
         )
         .expect_err("a number bound into a connective");
 
@@ -666,7 +670,11 @@ fn simplification_refuses_binding_a_referenced_native_constant() {
 
     let error = simplifier
         .solver()
-        .simplify(&expression, &environment, &NoRegisteredSorts)
+        .simplify(
+            &expression,
+            &environment,
+            &SimplifyContext::new(&NoRegisteredSorts),
+        )
         .expect_err("refused");
 
     assert!(matches!(error, SolveError::BoundNativeConstant(ids) if ids == vec![pi]));
@@ -681,17 +689,109 @@ fn simplification_accepts_binding_an_unreferenced_native_constant() {
     let result = simplifier.solver().simplify(
         &reference.greater(0),
         &HashMap::from([(e, build_literal(2)), (x, build_literal(1))]),
-        &NoRegisteredSorts,
+        &SimplifyContext::new(&NoRegisteredSorts),
     );
 
     assert_eq!(result.expect("simplified"), build_literal(1).greater(0));
 }
 
 #[test]
+fn simplification_screens_with_the_sorts_of_a_registry_context() {
+    let mut registry = FunctionRegistry::new();
+    let answer = registry
+        .register_constant(
+            NativeConstant::try_new(
+                FunctionName::try_new("answer").expect("a name"),
+                FunctionSort::Int,
+                42,
+            )
+            .expect("a constant"),
+        )
+        .expect("registered");
+    let (b, reference) = build_identifier("b");
+    let simplifier = RecordingSimplifier::identity();
+
+    let error = simplifier
+        .solver()
+        .simplify(
+            &reference.and(Expression::from(answer)),
+            &HashMap::from([(b, build_literal(true))]),
+            &SimplifyContext::from_registry(&registry),
+        )
+        .expect_err("an integer constant in a connective");
+
+    assert!(matches!(error, SolveError::IllTyped(_)));
+    assert!(simplifier.inputs().is_empty());
+}
+
+#[test]
+fn simplifier_receives_the_registry_of_the_context() {
+    let mut registry = FunctionRegistry::new();
+    registry
+        .register_constant(
+            NativeConstant::try_new(
+                FunctionName::try_new("answer").expect("a name"),
+                FunctionSort::Int,
+                42,
+            )
+            .expect("a constant"),
+        )
+        .expect("registered");
+    let simplifier = RecordingSimplifier::identity();
+
+    simplifier
+        .solver()
+        .simplify(
+            &build_literal(1),
+            &HashMap::new(),
+            &SimplifyContext::from_registry(&registry),
+        )
+        .expect("simplified");
+    simplifier
+        .solver()
+        .simplify(
+            &build_literal(1),
+            &HashMap::new(),
+            &SimplifyContext::new(&registry),
+        )
+        .expect("simplified");
+
+    assert_eq!(simplifier.registry_sizes(), vec![Some(1), None]);
+}
+
+#[test]
+fn simplify_context_reads_sorts_from_its_registry() {
+    let mut registry = FunctionRegistry::new();
+    let answer = registry
+        .register_constant(
+            NativeConstant::try_new(
+                FunctionName::try_new("answer").expect("a name"),
+                FunctionSort::Bool,
+                true,
+            )
+            .expect("a constant"),
+        )
+        .expect("registered");
+
+    let context = SimplifyContext::from_registry(&registry);
+
+    assert_eq!(
+        context.sorts().native_constant_sort(&answer),
+        Some(FunctionSort::Bool)
+    );
+    assert!(context.registry().is_some_and(|held| held.len() == 1));
+    assert!(SimplifyContext::default().registry().is_none());
+}
+
+#[test]
 fn simplifier_failure_is_a_backend_error() {
     let error = RecordingSimplifier::failing("no")
         .solver()
-        .simplify(&build_literal(1), &HashMap::new(), &NoRegisteredSorts)
+        .simplify(
+            &build_literal(1),
+            &HashMap::new(),
+            &SimplifyContext::new(&NoRegisteredSorts),
+        )
         .expect_err("fails");
 
     assert!(matches!(error, SolveError::Backend { backend, .. } if backend == "recording"));

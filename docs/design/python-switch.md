@@ -91,7 +91,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S12: the Rust SymPy simplifier backend (designed 2026-09-26; see "S12: the Rust SymPy simplifier backend")
   - [x] N-S12-1 decided as (a) (2026-09-26; see "S12 resolutions")
   - [x] S12.1: SymPy benchmarks and baseline, on today's Python adapter (12 rows; see "S12.1 baseline")
-  - [ ] S12.2: the simplify context carries the function registry (core, test-first)
+  - [x] S12.2: the simplify context carries the function registry (core, test-first; `SimplifyContext::from_registry`, `Solver::simplify` taking the context)
   - [ ] S12.3: the `sympy` cargo feature and `SympySimplifier`, test-first, with the CI changes
   - [ ] S12.4: the binding enables the feature (`_rs.SympySimplifier`, the error mapping, the stubs)
   - [ ] S12.5: the Python switch (the thin `passes/sympy.py`, the default solver)
