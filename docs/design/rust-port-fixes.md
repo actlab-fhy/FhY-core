@@ -2594,7 +2594,8 @@ commit (the code of `dac8ab1`):
   reads the free identifiers of the binder's children, one more round of
   hooks for a Python-defined binder. Keeping the pinned identity (`result is
   binder`) needs that walk, so it stays; a cheaper test of whether a key
-  occurs would need a new hook.
+  occurs would need a new hook. The maintainer accepted this cost on
+  2026-09-27.
 - **An unreproduced hang.** One full `pytest tests` run, right after the
   extension was rebuilt for R2-005b, stopped with every xdist worker idle on
   a futex. It was killed; six full runs since, with a per-test timeout, all
