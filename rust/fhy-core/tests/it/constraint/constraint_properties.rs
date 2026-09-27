@@ -249,6 +249,38 @@ proptest! {
         prop_assert_eq!(left.key(), left.clone().key());
     }
 
+    /// Keys are equal exactly when equations are structurally equivalent,
+    /// over pairs whose sharing differs: each side is a generated tree with
+    /// one identifier replaced by a generated subtree through `substitute`,
+    /// which shares the subtree at every place the identifier occurs, and
+    /// the right side is also compared unshared.
+    #[test]
+    fn keys_are_equal_exactly_when_constraints_are_structurally_equivalent(
+        left in build_expression_strategy(true),
+        right in build_expression_strategy(true),
+        replacement in build_expression_strategy(true),
+    ) {
+        let substituted = |tree: &Expression| {
+            let mapping: HashMap<Identifier, Expression> = tree
+                .free_identifiers()
+                .into_iter()
+                .take(1)
+                .map(|identifier| (identifier, replacement.clone()))
+                .collect();
+            tree.substitute(&mapping).unwrap_or_else(|_| tree.clone())
+        };
+        let (left, right) = (substituted(&left), substituted(&right));
+        let unshared = crate::support::expression::copy_deeply(&right);
+        let [left, right, unshared] = [left, right, unshared]
+            .map(|tree| Constraint::from(EquationConstraint::new(tree)));
+
+        prop_assert_eq!(
+            left.key() == right.key(),
+            left.is_structurally_equivalent(&right)
+        );
+        prop_assert_eq!(right.key(), unshared.key());
+    }
+
     #[test]
     fn system_satisfiability_agrees_with_brute_force(
         bounds in prop::collection::vec(build_bound_strategy(), 1..5),

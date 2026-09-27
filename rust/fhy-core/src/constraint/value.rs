@@ -18,7 +18,7 @@ use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 
-use crate::expression::{BigInt, Decimal, LiteralValue};
+use crate::expression::{BigInt, Decimal, LiteralValue, write_float};
 use crate::foreign::{BoxError, ForeignPart, Part, impl_part, is_same_part};
 
 /// A value only its producer can compare.
@@ -200,7 +200,7 @@ impl fmt::Display for Value {
         match self {
             Self::Bool(value) => write!(f, "{value}"),
             Self::Int(value) => write!(f, "{value}"),
-            Self::Float(value) => write!(f, "{value}"),
+            Self::Float(value) => write_float(*value, f),
             Self::Decimal(value) => write!(f, "{value}"),
             Self::Str(value) => write!(f, "{value:?}"),
             Self::Tuple(values) => write_tuple(f, values),
@@ -523,7 +523,7 @@ impl fmt::Display for Member {
         match &self.0 {
             MemberValue::Bool(value) => write!(f, "{value}"),
             MemberValue::Int(value) => write!(f, "{value}"),
-            MemberValue::Float(value) => write!(f, "{value}"),
+            MemberValue::Float(value) => write_float(*value, f),
             MemberValue::Str(value) => write!(f, "{value:?}"),
             MemberValue::Tuple(members) => write_tuple(f, members),
             MemberValue::FrozenSet(members) => write!(f, "{members}"),

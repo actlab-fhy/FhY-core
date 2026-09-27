@@ -2,7 +2,7 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "fd8856d45dda58642e45dea44a3eb966d10c5ebd",
+  "git_commit": "40dfb54505929997d809d9ce0026225f9d6a41f8",
   "python_version": "3.11.16 (main, Sep 24 2026, 17:56:40) [Clang 22.1.3 ]",
   "generator_command": "uv run --no-sync python rust/fhy-core/tests/golden/generate_serialization_cases.py"
  },
@@ -179,7 +179,7 @@
    "name": "literal_float_tiny",
    "class": "fhy_core.symbolic.expression.core.LiteralExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005\"}}]}",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"5e-324\"}}]}",
    "foreign": []
   },
   {
@@ -207,7 +207,7 @@
    "name": "piecewise_expression",
    "class": "fhy_core.symbolic.expression.core.PiecewiseExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}},{\"literal\":{\"int\":\"1\"}},{\"literal\":{\"int\":\"-5\"}},{\"binary\":{\"operation\":\"less\",\"left\":0,\"right\":4}},{\"literal\":{\"int\":\"2\"}},{\"literal\":{\"int\":\"0\"}},{\"piecewise\":{\"cases\":[[2,3],[5,6]],\"otherwise\":7}}]}",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}},{\"literal\":{\"int\":\"1\"}},{\"literal\":{\"int\":\"-5\"}},{\"binary\":{\"operation\":\"less\",\"left\":0,\"right\":4}},{\"literal\":{\"int\":\"2\"}},{\"piecewise\":{\"cases\":[[2,3],[5,6]],\"otherwise\":1}}]}",
    "foreign": []
   },
   {
@@ -522,7 +522,7 @@
    "name": "random_0000",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"literal\":{\"decimal\":\"826.31\"}},{\"literal\":{\"float\":\"1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"add\",\"left\":2,\"right\":3}},{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"decimal\":\"834.764\"}},{\"binary\":{\"operation\":\"less\",\"left\":5,\"right\":6}},{\"unary\":{\"operation\":\"negate\",\"operand\":7}},{\"binary\":{\"operation\":\"less\",\"left\":4,\"right\":8}}]}",
+   "v2": "{\"nodes\":[{\"literal\":{\"decimal\":\"826.31\"}},{\"literal\":{\"float\":\"1e300\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"add\",\"left\":2,\"right\":3}},{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"decimal\":\"834.764\"}},{\"binary\":{\"operation\":\"less\",\"left\":5,\"right\":6}},{\"unary\":{\"operation\":\"negate\",\"operand\":7}},{\"binary\":{\"operation\":\"less\",\"left\":4,\"right\":8}}]}",
    "foreign": []
   },
   {
@@ -536,7 +536,7 @@
    "name": "random_0002",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62001,\"name_hint\":\"v1\"}},{\"literal\":{\"float\":\"0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"less\",\"left\":2,\"right\":3}},{\"literal\":{\"bool\":true}},{\"unary\":{\"operation\":\"negate\",\"operand\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}},{\"binary\":{\"operation\":\"subtract\",\"left\":4,\"right\":7}}]}",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62001,\"name_hint\":\"v1\"}},{\"literal\":{\"float\":\"5e-324\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"less\",\"left\":2,\"right\":3}},{\"literal\":{\"bool\":true}},{\"unary\":{\"operation\":\"negate\",\"operand\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}},{\"binary\":{\"operation\":\"subtract\",\"left\":4,\"right\":7}}]}",
    "foreign": []
   },
   {
@@ -557,14 +557,14 @@
    "name": "random_0005",
    "class": "fhy_core.symbolic.expression.core.UnaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"270402799576694868274\"}},{\"literal\":{\"float\":\"1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"literal\":{\"float\":\"0.5\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}}]}",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"270402799576694868274\"}},{\"literal\":{\"float\":\"1e300\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"literal\":{\"float\":\"0.5\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}}]}",
    "foreign": []
   },
   {
    "name": "random_0006",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"float\":\"1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"decimal\":\"21.635\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"literal\":{\"bool\":false}},{\"literal\":{\"decimal\":\"496.749\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":5,\"right\":6}},{\"binary\":{\"operation\":\"less\",\"left\":4,\"right\":7}}]}",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"float\":\"1e300\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"decimal\":\"21.635\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"literal\":{\"bool\":false}},{\"literal\":{\"decimal\":\"496.749\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":5,\"right\":6}},{\"binary\":{\"operation\":\"less\",\"left\":4,\"right\":7}}]}",
    "foreign": []
   },
   {
@@ -585,14 +585,14 @@
    "name": "random_0009",
    "class": "fhy_core.symbolic.expression.core.UnaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"}},{\"literal\":{\"decimal\":\"491.076\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}},{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"int\":\"73010634630222817602\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":3,\"right\":4}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}}]}",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"1e300\"}},{\"literal\":{\"decimal\":\"491.076\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}},{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"int\":\"73010634630222817602\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":3,\"right\":4}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}}]}",
    "foreign": []
   },
   {
    "name": "random_0010",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"inf\"}},{\"identifier\":{\"id\":62006,\"name_hint\":\"v6\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"float\":\"inf\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":3}}]}",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"inf\"}},{\"identifier\":{\"id\":62006,\"name_hint\":\"v6\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":0}}]}",
    "foreign": []
   },
   {
@@ -634,7 +634,7 @@
    "name": "random_0016",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
-   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005\"}},{\"identifier\":{\"id\":62004,\"name_hint\":\"v4\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"unary\":{\"operation\":\"negate\",\"operand\":2}},{\"literal\":{\"int\":\"-583552179942011031951\"}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}},{\"binary\":{\"operation\":\"add\",\"left\":3,\"right\":5}}]}",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"5e-324\"}},{\"identifier\":{\"id\":62004,\"name_hint\":\"v4\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"unary\":{\"operation\":\"negate\",\"operand\":2}},{\"literal\":{\"int\":\"-583552179942011031951\"}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}},{\"binary\":{\"operation\":\"add\",\"left\":3,\"right\":5}}]}",
    "foreign": []
   },
   {
@@ -656,6 +656,13 @@
    "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
    "rust_type": "Constraint",
    "v2": "{\"in_set\":{\"variable\":{\"id\":62005,\"name_hint\":\"v5\"},\"values\":[{\"bool\":true},{\"int\":\"-29\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "value_frozenset_of_tuples",
+   "class": "builtins.frozenset",
+   "rust_type": "Value",
+   "v2": "{\"frozen_set\":[{\"tuple\":[{\"float\":\"2.5\"},{\"bool\":true}]},{\"tuple\":[{\"float\":\"1e300\"},{\"float\":\"0\"}]},{\"tuple\":[{\"int\":\"1\"},{\"str\":\"a\"}]},{\"tuple\":[{\"tuple\":[]},{\"tuple\":[{\"int\":\"3\"}]}]}]}",
    "foreign": []
   }
  ]

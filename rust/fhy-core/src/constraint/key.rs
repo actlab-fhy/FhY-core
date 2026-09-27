@@ -1,16 +1,25 @@
 //! Canonical ordering keys: texts equal for two constraints exactly when
 //! they are structurally equivalent.
 //!
-//! An equation's key renders its tree in pre-order, each node as its kind,
-//! its own data and its parenthesized children: a literal's canonical
-//! value, an identifier's id, an operation, or a callee. A set
-//! constraint's key is its polarity, its variable's id and its members'
-//! keys in canonical order. Every text a key embeds is quoted, so no two
-//! different constraints render alike.
+//! An equation's key is `equation|` and its expression's canonical node
+//! table under structural equivalence (S-1 of
+//! `docs/design/rust-port-fixes.md`): each distinct node once, in
+//! post-order of first visit with the root last, `;`-separated, as
+//! `kind[data](i,j,…)` with its children by table index. A literal writes
+//! its canonical value (`int:1`, `float:1e300`, every NaN as `float:NaN` and
+//! both zeros as `float:0`), an identifier its id, an operation its name,
+//! and a callee `builtin:<name>` or `named:"<name>"`, the name quoted. So
+//! `x + x` keys as `equation|identifier[7]();binary[add](0,0)` however its
+//! leaves are shared, and a key is linear in the distinct nodes of its
+//! expression. A set constraint's key is its polarity, its variable's id and
+//! its members' keys in canonical order. Every text a key embeds is quoted,
+//! so no two different constraints render alike.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
-use crate::expression::{Expression, ExpressionKind, LiteralValue};
+use crate::expression::{
+    Callee, CanonicalTable, Equivalence, Expression, ExpressionKind, LiteralValue, write_float,
+};
 
 use super::set::{Polarity, SetConstraint};
 use super::value::{Member, MemberKind};
@@ -50,25 +59,15 @@ impl fmt::Display for SetKey<'_> {
     }
 }
 
-/// One step of the pre-order rendering of a tree.
-enum Step<'a> {
-    Node(&'a Expression),
-    Text(&'static str),
-}
-
-/// Write the key of the tree `expression`, on a work list, so a deep tree
-/// renders on a small stack.
+/// Write the key of the expression `expression`: its canonical node table
+/// under structural equivalence, each entry as `kind[data](children)`.
 fn write_expression_key(expression: &Expression, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut pending = vec![Step::Node(expression)];
-    while let Some(step) = pending.pop() {
-        let node = match step {
-            Step::Text(text) => {
-                f.write_str(text)?;
-                continue;
-            }
-            Step::Node(node) => node,
-        };
-        match node.kind() {
+    let table = CanonicalTable::build(expression, Equivalence::Structural);
+    for (index, entry) in table.nodes().iter().enumerate() {
+        if index > 0 {
+            f.write_str(";")?;
+        }
+        match entry.node.kind() {
             ExpressionKind::Unary(unary) => write!(f, "unary[{}]", unary.operation().as_str())?,
             ExpressionKind::Binary(binary) => {
                 write!(f, "binary[{}]", binary.operation().as_str())?;
@@ -83,19 +82,49 @@ fn write_expression_key(expression: &Expression, f: &mut fmt::Formatter<'_>) -> 
                 f.write_str("]")?;
             }
             ExpressionKind::Piecewise(_) => f.write_str("piecewise[]")?,
-            ExpressionKind::Call(call) => write!(f, "call[{:?}]", call.callee().name())?,
-        }
-        f.write_str("(")?;
-        pending.push(Step::Text(")"));
-        let children: Vec<&Expression> = node.children().collect();
-        for (index, child) in children.iter().enumerate().rev() {
-            pending.push(Step::Node(child));
-            if index > 0 {
-                pending.push(Step::Text(","));
+            ExpressionKind::Call(call) => {
+                f.write_str("call[")?;
+                write_callee_key(call.callee(), f)?;
+                f.write_str("]")?;
             }
         }
+        f.write_str("(")?;
+        for (position, child) in entry.children.iter().enumerate() {
+            if position > 0 {
+                f.write_str(",")?;
+            }
+            write!(f, "{child}")?;
+        }
+        f.write_str(")")?;
     }
     Ok(())
+}
+
+/// Write the key of `callee`: `builtin:<name>` for a built-in, whose names
+/// are fixed words, and `named:"<name>"` for another function, the name
+/// quoted.
+fn write_callee_key(callee: &Callee, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match callee {
+        Callee::Builtin(function) => write!(f, "builtin:{}", function.name()),
+        Callee::Named(name) => {
+            f.write_str("named:")?;
+            write_quoted(name.as_str(), f)
+        }
+    }
+}
+
+/// Write `text` between double quotes, with each `"` and `\` escaped by a
+/// backslash, so the quoted text ends at its closing quote and two texts
+/// quote alike exactly when they are equal.
+fn write_quoted(text: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_char('"')?;
+    for character in text.chars() {
+        if matches!(character, '"' | '\\') {
+            f.write_char('\\')?;
+        }
+        f.write_char(character)?;
+    }
+    f.write_char('"')
 }
 
 /// Write the key of the literal `value`: equal for equal literals, whose
@@ -104,8 +133,10 @@ fn write_literal_key(value: &LiteralValue, f: &mut fmt::Formatter<'_>) -> fmt::R
     match value {
         LiteralValue::Bool(value) => write!(f, "bool:{value}"),
         LiteralValue::Int(value) => write!(f, "int:{value}"),
-        LiteralValue::Float(value) if value.is_nan() => f.write_str("float:nan"),
-        LiteralValue::Float(value) => write!(f, "float:{}", value + 0.0),
+        LiteralValue::Float(value) => {
+            f.write_str("float:")?;
+            write_float(value + 0.0, f)
+        }
         LiteralValue::Decimal(value) => write!(f, "decimal:{value}"),
     }
 }
@@ -117,7 +148,10 @@ fn write_member_key(member: &Member, f: &mut fmt::Formatter<'_>) -> fmt::Result 
     match member.kind() {
         MemberKind::Bool(value) => write!(f, "bool:{value}"),
         MemberKind::Int(value) => write!(f, "int:{value}"),
-        MemberKind::Float(value) => write!(f, "float:{value}"),
+        MemberKind::Float(value) => {
+            f.write_str("float:")?;
+            write_float(value, f)
+        }
         MemberKind::Str(value) => write!(f, "str:{value:?}"),
         MemberKind::Tuple(members) => {
             f.write_str("tuple(")?;

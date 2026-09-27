@@ -17,7 +17,9 @@
 //! the Python binding, is an opaque value, a [`Part<dyn OpaqueValue>`](crate::foreign::Part).
 //!
 //! Each constraint has a canonical ordering key, a text equal for two
-//! constraints exactly when they are structurally equivalent. A
+//! constraints exactly when they are structurally equivalent. An
+//! equation's key writes its expression's distinct nodes once each, as a
+//! table, so it is linear in them however the expression shares. A
 //! [`CustomConstraint`], held in a [`Part`], answers
 //! through fallible hooks, except the `eq_part` and `hash_part` behind
 //! `==`: its failure is a [`ConstraintError::Custom`], so the key a

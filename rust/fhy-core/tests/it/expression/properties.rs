@@ -199,6 +199,15 @@ fn build_pool_permutation(
 /// children, and of its children and the children before it in the walk,
 /// are one node: the sharing pattern a round trip must keep.
 fn collect_sharing(expression: &Expression) -> Vec<Vec<usize>> {
+    collect_sharing_by(expression, Expression::ptr_eq)
+}
+
+/// Return the pattern of [`collect_sharing`], with two children one node
+/// when `is_one` says so.
+fn collect_sharing_by(
+    expression: &Expression,
+    is_one: impl Fn(&Expression, &Expression) -> bool,
+) -> Vec<Vec<usize>> {
     let mut seen: Vec<&Expression> = Vec::new();
     let mut pattern = Vec::new();
     let mut pending = vec![expression];
@@ -207,7 +216,7 @@ fn collect_sharing(expression: &Expression) -> Vec<Vec<usize>> {
             .children()
             .map(|child| {
                 seen.iter()
-                    .position(|earlier| Expression::ptr_eq(earlier, child))
+                    .position(|earlier| is_one(earlier, child))
                     .unwrap_or_else(|| {
                         seen.push(child);
                         pending.push(child);
@@ -448,21 +457,46 @@ proptest! {
     }
 
     /// Test a JSON and a postcard round trip of a DAG keep its structure
-    /// and its sharing: wherever two children of the input's nodes are one
-    /// node, the output's are one node, and nowhere else.
+    /// and share exactly its equal subtrees: wherever two children of the
+    /// input's nodes encode alike, the output's are one node, and nowhere
+    /// else (R2-011's canonical encoding).
     #[test]
-    fn expression_wire_round_trip_preserves_structure_and_sharing(
+    fn expression_wire_round_trip_preserves_structure_and_shares_equal_subtrees(
         dag in build_expression_dag_strategy(),
     ) {
         let text = serde_json::to_string(&dag).expect("every DAG serializes");
         let from_text: Expression = serde_json::from_str(&text).expect("the text decodes");
         let bytes = postcard::to_allocvec(&dag).expect("every DAG serializes");
         let from_bytes: Expression = postcard::from_bytes(&bytes).expect("the bytes decode");
+        let encoded = |expression: &Expression| {
+            serde_json::to_string(expression).expect("every DAG serializes")
+        };
 
-        let expected = collect_sharing(&dag);
+        let expected = collect_sharing_by(&dag, |left, right| encoded(left) == encoded(right));
+        prop_assert_eq!(encoded(&from_text), text.clone(), "decoding and encoding again is the identity");
         for restored in [&from_text, &from_bytes] {
             prop_assert_eq!(restored, &dag);
             prop_assert_eq!(collect_sharing(restored), expected.clone());
+        }
+    }
+
+    /// Test equal expressions encode to equal bytes, in JSON and in
+    /// postcard, however they share: a DAG and its unshared copy, and the
+    /// copy with each of its subtrees equal to an earlier one shared
+    /// (decoded from the table). The pairs hold the same literals at the
+    /// same places, so no pair differs in a zero's sign, where the wire
+    /// keeps equal expressions apart.
+    #[test]
+    fn equal_expressions_encode_to_equal_bytes(dag in build_expression_dag_strategy()) {
+        let copy = copy_deeply(&dag);
+        let text = serde_json::to_string(&dag).expect("every DAG serializes");
+        let bytes = postcard::to_allocvec(&dag).expect("every DAG serializes");
+        let decoded: Expression = serde_json::from_str(&text).expect("the text decodes");
+
+        for equal in [&copy, &decoded] {
+            prop_assert_eq!(equal, &dag);
+            prop_assert_eq!(serde_json::to_string(equal).expect("serializes"), text.clone());
+            prop_assert_eq!(postcard::to_allocvec(equal).expect("serializes"), bytes.clone());
         }
     }
 

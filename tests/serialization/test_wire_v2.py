@@ -55,7 +55,12 @@ from .foreign_parts import GoldenDomain, GoldenEven, GoldenToken, GoldenType
 _CORPUS = (
     Path(__file__).parents[2] / "rust/fhy-core/tests/golden/serialization_cases.json"
 )
-_CASES: list[dict[str, Any]] = json.loads(_CORPUS.read_text(encoding="utf-8"))["cases"]
+_ALL_CASES: list[dict[str, Any]] = json.loads(_CORPUS.read_text(encoding="utf-8"))[
+    "cases"
+]
+# A member value is no ``Serializable``: ``serialize_value`` writes it.
+_CASES = [case for case in _ALL_CASES if case["rust_type"] != "Value"]
+_VALUE_CASES = [case for case in _ALL_CASES if case["rust_type"] == "Value"]
 
 
 def _class_of(case: dict[str, Any]) -> type[Serializable]:
@@ -82,6 +87,25 @@ def test_a_corpus_text_reads_and_writes_back_byte_identically(
         cls.deserialize(
             from_json.serialize(SerializationFormat.BINARY), SerializationFormat.BINARY
         ).to_json()
+        == text
+    )
+
+
+@pytest.mark.parametrize(
+    "case", _VALUE_CASES, ids=[case["name"] for case in _VALUE_CASES]
+)
+def test_a_corpus_value_reads_and_writes_back_byte_identically(
+    case: dict[str, Any],
+) -> None:
+    """Test each golden member value decodes and writes back as its V2 text."""
+    text = case["v2"]
+
+    value = deserialize_value(json.loads(text))
+
+    assert type(value).__name__ == case["class"].rpartition(".")[2]
+    assert serialize_value(value) == json.loads(text)
+    assert (
+        json.dumps(serialize_value(value), separators=(",", ":"), ensure_ascii=False)
         == text
     )
 

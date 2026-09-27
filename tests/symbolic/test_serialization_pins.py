@@ -627,11 +627,11 @@ _GOLDEN_V2_TEXTS: dict[str, str] = {
         '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}}]}'
     ),
     "literal_expression": ('{"nodes":[{"literal":{"int":"1"}}]}'),
+    # The two literals `0` are one node of the canonical table (R2-011).
     "piecewise_expression": (
         '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}},{"literal":{"int'
         '":"0"}},{"binary":{"operation":"greater","left":0,"right":1}},{"litera'
-        'l":{"int":"1"}},{"literal":{"int":"0"}},{"piecewise":{"cases":[[2,3]],'
-        '"otherwise":4}}]}'
+        'l":{"int":"1"}},{"piecewise":{"cases":[[2,3]],"otherwise":1}}]}'
     ),
     "call_expression": (
         '{"nodes":[{"literal":{"int":"4"}},{"call":{"callee":{"builtin":"sqrt"}'

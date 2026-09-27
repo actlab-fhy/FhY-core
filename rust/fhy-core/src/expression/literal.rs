@@ -30,21 +30,30 @@ use super::sort::FunctionSort;
 /// `-0.0` equals `0.0`.
 ///
 /// `Display` follows Rust conventions: `true` or `false` for a Boolean, the
-/// decimal digits of an integer with a leading `-` when negative, a float as
-/// `{}` writes an `f64` (`1.5`, `1` for `1.0`, `10000000000000000` for
-/// `1e16`, `NaN`, `inf`, `-inf`, `-0`), and a decimal positionally (`1.5`,
-/// `100`, `0.5`). So unequal literals may display alike: `1`, `1.0` and the
-/// decimal `1` all display as `1`.
+/// decimal digits of an integer with a leading `-` when negative, a float in
+/// its canonical text, and a decimal positionally (`1.5`, `100`, `0.5`). So
+/// unequal literals may display alike: `1`, `1.0` and the decimal `1` all
+/// display as `1`.
+///
+/// A float's canonical text is `NaN`, `inf` or `-inf` for the non-finite
+/// values, `0` or `-0` for the zeros, Rust's shortest round-trip positional
+/// text (`{}`: `1.5`, `1` for `1.0`, `0.00001`) when the magnitude lies in
+/// `[1e-5, 1e16)`, and otherwise Rust's shortest round-trip exponent text
+/// (`{:e}`: `1e16`, `9.9e-6`, `1e300`, `5e-324`,
+/// `1.7976931348623157e308`). Every text the crate writes of a float,
+/// on the wire, in a key or in a message, is this one.
 ///
 /// Serializes externally tagged by the lowercase variant name, every number
 /// as a string: `{"bool": true}`, `{"int": "-12"}` with the decimal digits
-/// of any integer, `{"float": "1.5"}` with the text `{}` writes for the
-/// `f64` (`"NaN"`, `"inf"` and `"-inf"` included, so every float literal
+/// of any integer, `{"float": "1.5"}` with the float's canonical text
+/// (`"NaN"`, `"inf"` and `"-inf"` included, so every float literal
 /// serializes in every format), and `{"decimal": "1.5"}` with the decimal's
-/// `Display` text. Deserializing reads an integer string only in the form
-/// `-?(0|[1-9][0-9]*)`, other than `"-0"`, a float string through
-/// [`f64::from_str`](std::str::FromStr), and a decimal string through the
-/// literal grammar of [`Decimal`]'s `FromStr`.
+/// `Display` text. Deserializing reads only canonical texts: an integer
+/// string in the form `-?(0|[1-9][0-9]*)`, other than `"-0"`; a float string
+/// that [`f64::from_str`](std::str::FromStr) reads and that is the canonical
+/// text of the float it reads, so `"1e5"`, `"+1.5"`, `".5"` and `"nan"` are
+/// refused; and a decimal string of the literal grammar of [`Decimal`]'s
+/// `FromStr` that is the decimal's `Display` text, so `"00.10"` is refused.
 ///
 /// # Examples
 ///
@@ -78,7 +87,7 @@ pub enum LiteralValue {
     /// included.
     Float(
         #[serde(
-            serialize_with = "serialize_display_text",
+            serialize_with = "float_text::serialize",
             deserialize_with = "float_text::deserialize"
         )]
         f64,
@@ -192,10 +201,46 @@ impl fmt::Display for LiteralValue {
         match self {
             Self::Bool(value) => write!(f, "{value}"),
             Self::Int(value) => write!(f, "{value}"),
-            Self::Float(value) => write!(f, "{value}"),
+            Self::Float(value) => write_float(*value, f),
             Self::Decimal(value) => write!(f, "{value}"),
         }
     }
+}
+
+/// The least magnitude a float's canonical text writes positionally.
+const POSITIONAL_FLOOR: f64 = 1e-5;
+
+/// The least magnitude, above the positional ones, a float's canonical text
+/// writes with an exponent.
+const POSITIONAL_CEILING: f64 = 1e16;
+
+/// Write the canonical text of `value` (S-2 of
+/// `docs/design/rust-port-fixes.md`): `NaN`, `inf` and `-inf`; `0` and `-0`;
+/// Rust's shortest round-trip positional text for a magnitude in
+/// `[1e-5, 1e16)`; and Rust's shortest round-trip exponent text otherwise.
+///
+/// Every float text the crate writes goes through it: the literal and
+/// constraint wire forms, `Display`, ordering keys and messages.
+pub(crate) fn write_float(value: f64, f: &mut impl fmt::Write) -> fmt::Result {
+    let magnitude = value.abs();
+    let is_positional = value.is_infinite()
+        || value == 0.0
+        || (POSITIONAL_FLOOR..POSITIONAL_CEILING).contains(&magnitude);
+    if value.is_nan() {
+        f.write_str("NaN")
+    } else if is_positional {
+        // `inf`, `-inf`, `0` and `-0` are what `{}` writes too.
+        write!(f, "{value}")
+    } else {
+        write!(f, "{value:e}")
+    }
+}
+
+/// Return the canonical text of `value`, as [`write_float`] writes it.
+pub(crate) fn float_to_text(value: f64) -> String {
+    let mut text = String::new();
+    write_float(value, &mut text).unwrap_or_else(|_| unreachable!("a string takes any text"));
+    text
 }
 
 impl FunctionSort {
@@ -263,8 +308,9 @@ impl fmt::Display for LiteralTextError {
 
 impl Error for LiteralTextError {}
 
-/// Serialize `value` as the string its `Display` writes: the decimal digits
-/// of an integer, or the shortest text that reads back as a float.
+/// Serialize `value` as the string its `Display` writes, such as the
+/// decimal digits of an integer; a float serializes through
+/// [`float_text::serialize`] instead.
 pub(crate) fn serialize_display_text<T: fmt::Display, S: serde::Serializer>(
     value: &T,
     serializer: S,
@@ -312,13 +358,34 @@ pub(crate) mod integer_text {
     }
 }
 
-/// The wire form of a float literal: the text `{}` writes for it, which
+/// The wire form of a float literal: its canonical text, which
 /// `f64::from_str` reads back to the same value.
 pub(crate) mod float_text {
     use std::fmt;
     use std::num::ParseFloatError;
 
+    use serde::Serializer;
     use serde::de::{self, Deserializer, Visitor};
+
+    use super::{float_to_text, write_float};
+
+    /// Serialize `value` as its canonical text.
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's `serialize_with` passes the field by reference"
+    )]
+    pub(crate) fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&CanonicalFloat(*value))
+    }
+
+    /// Displays as the canonical text of the float.
+    struct CanonicalFloat(f64);
+
+    impl fmt::Display for CanonicalFloat {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write_float(self.0, f)
+        }
+    }
 
     struct FloatTextVisitor;
 
@@ -330,9 +397,16 @@ pub(crate) mod float_text {
         }
 
         fn visit_str<E: de::Error>(self, text: &str) -> Result<f64, E> {
-            text.parse().map_err(|_refused: ParseFloatError| {
+            let value: f64 = text.parse().map_err(|_refused: ParseFloatError| {
                 E::custom(format_args!("invalid float literal {text:?}"))
-            })
+            })?;
+            let canonical = float_to_text(value);
+            if canonical != text {
+                return Err(E::custom(format_args!(
+                    "invalid float literal {text:?}: not canonical, expected {canonical:?}"
+                )));
+            }
+            Ok(value)
         }
     }
 

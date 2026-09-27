@@ -82,7 +82,7 @@ enum ValueRepr {
     ),
     Float(
         #[serde(
-            serialize_with = "serialize_display_text",
+            serialize_with = "float_text::serialize",
             deserialize_with = "float_text::deserialize"
         )]
         f64,

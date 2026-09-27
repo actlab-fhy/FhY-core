@@ -78,9 +78,9 @@ onto `dev-rust` before continuing.
 - [x] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding: `489acef`
 - [x] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests: `e7614ee`
 - [x] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed: `f1f9d1a`
-- [x] R2-029b (F2-029, `expression`): error-text tables and small stories: this commit
+- [x] R2-029b (F2-029, `expression`): error-text tables and small stories: `40dfb54`
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
-- [ ] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration
+- [x] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration: this commit
 - [ ] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order
 - [ ] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key
 - [ ] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing
@@ -3325,6 +3325,78 @@ new finding.
   and the last rewritten child, and a rebuild with no rewritten child
   blames the last firing.
 - **Python-visible changes:** none.
+
+**The wire group: R2-011, R2-036, R2-001a and R2-046a** (one commit, J-4).
+- **S-1, `expression/canonical.rs`.** `CanonicalTable::build(root,
+  Equivalence)` walks post-order on a work list, memoizes shared handles by
+  `NodeIdentity`, and hash-conses each node by `(data, child indices)` in
+  one `HashMap`, so it is linear in the distinct handles and never
+  compares deeply. `Wire` compares floats by bits with one NaN, and
+  identifiers by id and name hint (call: the wire writes the hint, so two
+  identifiers of one id and different hints, which only `try_restore` can
+  make, stay two nodes; the `Serialize` rustdoc names this beside J-5's
+  zeros). `Structural` folds the zeros and compares identifiers by id.
+- **R2-011.** `encode_nodes` serializes the `Wire` table; the decoder was
+  already sharing every repeated index. The property that the round trip
+  kept the input's sharing now asserts the canonical sharing: two children
+  are one node after the round trip exactly when they encode alike, and
+  decoding then encoding is the identity.
+- **R2-036 (S-2).** `write_float` (crate-private, `expression/literal.rs`)
+  writes every float text: `LiteralValue`'s `Display`, the literal and
+  constraint wire forms (`float_text::serialize` replaces
+  `serialize_display_text` for floats), the member and value `Display` of
+  `constraint/value.rs` (Track A's file, one line each), and the key texts.
+  The decoders refuse a float text that is not its value's canonical text,
+  and a decimal text that is not its `Display` text, with the spec's
+  messages. `Decimal`'s own `Deserialize` is canonical, so every decimal a
+  payload holds, a param's bound included, is read canonically; no writer
+  in the repository wrote another text. The one existing story that read a
+  padded decimal text (`expression_literal_reads_a_text_as_a_normalized_decimal`)
+  now pins the refusal, and the float texts of `1e16`, `1e22`, `1e-7` and
+  `1.2345678901234568e17` in the display and pprint pins changed.
+- **R2-001a.** `equation_key` renders the `Structural` table as
+  `kind[data](i,j,…)`, `;`-separated. A literal keeps today's key text with
+  S-2's floats, `+ 0.0` folding the zero, so NaN keys as `float:NaN`
+  (today's `float:nan` went with the rest of the float text). A callee is
+  `builtin:<name>` or `named:"<name>"`, quoted by the crate-private
+  `write_quoted` (`"` and `\` backslash-escaped). Member floats of set keys
+  use S-2's text. No Rust pin compared an equation key's text, so the new
+  stories pin it: `x + x`, `f(x)`, `max(x, 1)`, and floats.
+- **R2-046a.** The generator gains `value_frozenset_of_tuples`, a
+  frozenset of four tuples over ints, floats (`1e300` and `-0.0`), a
+  string, a Boolean and nested tuples, written by `serialize_value` (a
+  member value is no `Serializable`) with the class `builtins.frozenset`;
+  the Rust replay's `Value` arm now runs. The member canonicalization writes
+  `-0.0` inside a set as `0`, which the case pins. In Track E's
+  `tests/serialization/test_wire_v2.py`, the class-based replay skips the
+  `Value` cases, and a new test replays them through `deserialize_value`
+  and `serialize_value` (additive).
+- **The regeneration.** One run of the generator: 16 of the committed V2
+  texts changed (the extreme floats of the literal and random cases, and
+  the tables where an equal subtree now repeats, such as the piecewise
+  fixture's two literal `0`s), and the `Value` case was added; the
+  expanded corpus (`golden_expanded`, 2,000 random cases) replays. The V2
+  pin of the piecewise fixture in `test_serialization_pins.py` changed the
+  same way. No other V2 pin held a repeated subtree or an extreme float.
+- **R2-042 and R2-032b** did not join the commit; they are next and are
+  checked against the corpus there.
+- **Test-first.** With the source changes stashed, 29 of the 38 new wire,
+  literal and key cases failed at the base (the others are canonical texts
+  the base already wrote or refused); the depth-64 key story needs no
+  proof, as the base's key is exponential.
+- **Other tracks' files**, additively: `constraint/value.rs` (two
+  `Display` lines), `tests/serialization/test_wire_v2.py`, and the
+  revision bullets of `rust-workspace.md` (D-6, D-7 and R-16, B3 §5.6) and
+  `python-switch.md` (W-12, D-S13-6), and CONTRIBUTING's float sentence.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | V2 wrote a node once per handle, so equal expressions built with different sharing wrote different texts; a decoded value shared only what the payload shared | each distinct node is written once, so equal expressions write the same text, except for a zero's sign; a decoded value shares every repeated subtree | `test_a_fixture_writes_its_golden_v2_text[piecewise_expression]` (repinned), the corpus replay |
+  | floats outside `[1e-5, 1e16)` were written positionally in V2, `str()`, `pformat_expression` and messages (`1e300` as 301 digits) | with an exponent: `1e300`, `5e-324`, `1e16`, `1e-7` | `test_pformat_literal_renders_the_core_text` (repinned), `test_str_of_an_extreme_float_literal_is_its_canonical_text` (new) |
+  | V2 read any float text Rust parses (`"1e5"`, `"+1.5"`, `"nan"`) and any decimal of the grammar (`"1.50"`) | only the canonical text; another raises `DeserializationValueError` naming the canonical text | the Rust stories; no Python writer produced another text |
+  | `build_ordering_key()` of an equation rendered the tree in pre-order, a callee by its `Debug` text | the node table: `equation|identifier[7]();literal[int:1]();binary[add](0,1);...`, `call[builtin:max]`, `call[named:"f"]`; a depth-40 doubling DAG keys at once | `test_an_equation_key_is_its_expressions_node_table`, `test_a_depth_40_doubling_dag_constraint_builds_promptly` (new) |
+  | a system's members sorted by the old key text | by the new one, so a system's V2 member order can differ | the corpus replay |
 
 ### Track C notes
 

@@ -3,7 +3,9 @@
 Writes, for one object of each serializable class and variant, and for
 values holding Python-defined parts, the class, the Rust type of its value,
 the canonical V2 text ``to_json()`` writes, and the type ids of the foreign
-parts it holds. The Rust replay
+parts it holds. A member value (a Rust ``Value``), which is no
+``Serializable``, is written by ``serialize_value``, its class being the
+Python type of the value. The Rust replay
 (``rust/fhy-core/tests/it/serialization_golden.rs``) reads each text into its
 Rust type and writes it back byte-identically, so Python's and Rust's
 serialization cannot drift apart (slice S17 of
@@ -43,7 +45,11 @@ from fhy_core.diagnostic import Note, NoteKind  # noqa: E402
 from fhy_core.identifier import Identifier  # noqa: E402
 from fhy_core.op_attribute import OpAttribute  # noqa: E402
 from fhy_core.provenance import Position, Provenance, Span  # noqa: E402
-from fhy_core.serialization import Serializable  # noqa: E402
+from fhy_core.serialization import (  # noqa: E402
+    Serializable,
+    deserialize_value,
+    serialize_value,
+)
 from fhy_core.symbol_table import (  # noqa: E402
     SymbolTable,
     SymbolTableFrame,
@@ -275,6 +281,37 @@ def _random_cases(seed: int, count: int, max_nodes: int) -> dict[str, Serializab
     return cases
 
 
+def _value_cases() -> dict[str, Any]:
+    """Return member values, each serialized as a Rust ``Value``."""
+    return {
+        "value_frozenset_of_tuples": frozenset(
+            {(1, "a"), (2.5, True), (1e300, -0.0), ((), (3,))}
+        ),
+    }
+
+
+def _canonical_text(payload: Any) -> str:
+    """Return the canonical V2 text of `payload`, as ``to_json()`` writes it."""
+    return json.dumps(
+        payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+
+
+def _build_value_case(name: str, value: Any) -> dict[str, Any]:
+    """Return the corpus case of the member value `value`, checked to round-trip."""
+    text = _canonical_text(serialize_value(value))
+    decoded = deserialize_value(json.loads(text))
+    if decoded != value or _canonical_text(serialize_value(decoded)) != text:
+        raise AssertionError(f"case {name} does not round-trip: {text}")
+    return {
+        "name": name,
+        "class": f"builtins.{type(value).__name__}",
+        "rust_type": "Value",
+        "v2": text,
+        "foreign": _foreign_type_ids(json.loads(text)),
+    }
+
+
 def _build_case(name: str, instance: Serializable) -> dict[str, Any]:
     """Return the corpus case of `instance`, checked to round-trip."""
     text = instance.to_json()
@@ -314,7 +351,10 @@ def main() -> None:
     }
     document = {
         "provenance": build_provenance(_REPOSITORY_ROOT, GENERATOR_COMMAND),
-        "cases": [_build_case(name, instance) for name, instance in cases.items()],
+        "cases": [
+            *(_build_case(name, instance) for name, instance in cases.items()),
+            *(_build_value_case(name, value) for name, value in _value_cases().items()),
+        ],
     }
     write_document(arguments.output, document)
 

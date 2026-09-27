@@ -643,7 +643,9 @@ concepts defined in both languages at once, today `identifier` and
 `interned`. Code that exists only to match Python starts its doc comment
 with "Matches the Python implementation:". Everywhere else, Rust
 conventions decide: `true`/`false`, Rust's shortest round-trip float
-formatting, lowercase error messages, `Display` impls instead of Python
+formatting (positional for a magnitude in `[1e-5, 1e16)` and with an
+exponent outside it, such as `1e300`, the one text the core writes of a
+float), lowercase error messages, `Display` impls instead of Python
 `repr` emulation, and names without `get_` or `list_` prefixes, with
 shipped defaults as associated functions such as
 `OpAttribute::commutative()`. Rustdoc describes Rust behavior and does not

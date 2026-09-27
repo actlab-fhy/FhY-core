@@ -185,7 +185,10 @@ fn expression_serializes_operations_by_wire_name() {
 #[case::zero(LiteralValue::from(0), json!({"int": "0"}))]
 #[case::float(LiteralValue::from(1.5), json!({"float": "1.5"}))]
 #[case::integral_float(LiteralValue::from(1.0), json!({"float": "1"}))]
-#[case::large_float(LiteralValue::from(1e16), json!({"float": "10000000000000000"}))]
+#[case::large_float(LiteralValue::from(1e16), json!({"float": "1e16"}))]
+#[case::largest_positional_float(LiteralValue::from(9_999_999_999_999_998.0), json!({"float": "9999999999999998"}))]
+#[case::small_float(LiteralValue::from(1e-5), json!({"float": "0.00001"}))]
+#[case::smaller_float(LiteralValue::from(9.9e-6), json!({"float": "9.9e-6"}))]
 #[case::negative_zero(LiteralValue::from(-0.0), json!({"float": "-0"}))]
 #[case::nan(LiteralValue::from(f64::NAN), json!({"float": "NaN"}))]
 #[case::infinity(LiteralValue::from(f64::INFINITY), json!({"float": "inf"}))]
@@ -260,30 +263,119 @@ fn expression_float_literal_round_trips_exactly(#[case] value: f64) {
     }
 }
 
+/// Test a decimal text decodes only in its canonical form, the one its
+/// `Display` writes: a padded or pointed text is refused, naming the
+/// canonical text.
 #[rstest]
 #[case::trailing_zeros("1.50", "1.5")]
 #[case::leading_zeros("007", "7")]
 #[case::leading_point(".5", "0.5")]
 #[case::trailing_point("1.", "1")]
-fn expression_literal_reads_a_text_as_a_normalized_decimal(
+fn expression_literal_refuses_a_decimal_text_that_is_not_canonical(
     #[case] text: &str,
-    #[case] expected: &str,
+    #[case] canonical: &str,
 ) {
-    let table = build_table([build_literal_node(&json!({"decimal": text}))]);
-
-    let restored = decode(table).expect("a decimal text decodes");
-
+    assert_refused(
+        &build_table([build_literal_node(&json!({"decimal": text}))]),
+        &format!("invalid decimal literal {text:?}: not canonical, expected {canonical:?}"),
+    );
+    let restored = decode(build_table([build_literal_node(
+        &json!({"decimal": canonical}),
+    )]))
+    .expect("the canonical text decodes");
     let LiteralValue::Decimal(decimal) = expect_literal(&restored) else {
         panic!("a decimal text decodes as a decimal");
     };
-    assert_eq!(decimal.to_string(), expected);
+    assert_eq!(decimal.to_string(), canonical);
 }
 
 // =============================================================================
-// Round trips
+// Canonical encoding (R2-011)
 // =============================================================================
 
-/// Test a multi-case piecewise round-trips through a JSON value.
+#[test]
+fn x_plus_x_encodes_alike_from_one_leaf_or_two() {
+    let x = Identifier::new("x");
+    let leaf = Expression::from(x.clone());
+    let shared = &leaf + &leaf;
+    let repeated = Expression::from(x.clone()) + Expression::from(x.clone());
+
+    assert_eq!(encode(&shared), encode(&repeated));
+    assert_eq!(
+        encode(&repeated),
+        build_table([
+            build_identifier_node(&x),
+            json!({"binary": {"operation": "add", "left": 0, "right": 0}}),
+        ])
+    );
+}
+
+/// Test `s * s` encodes alike whether both operands are one `s = x + 1` or
+/// `s` built twice, the audit's pair of 184 and 302 bytes, and in the
+/// smaller size.
+#[test]
+fn s_times_s_encodes_alike_however_s_was_built() {
+    let x = Identifier::new("x");
+    let s = Expression::from(x.clone()) + 1;
+    let rebuilt = Expression::from(x) + 1;
+
+    let shared = serde_json::to_string(&(&s * &s)).expect("serializes");
+    let apart = serde_json::to_string(&(&s * &rebuilt)).expect("serializes");
+
+    assert_eq!(shared, apart);
+    assert!(apart.len() < 200, "{} bytes: {apart}", apart.len());
+}
+
+/// Test `-0.0` and `0.0`, which are `==`, stay two nodes on the wire, so
+/// `1 / -0.0` decodes as itself: the one place equal expressions encode
+/// apart.
+#[test]
+fn a_negative_and_a_positive_zero_stay_apart_on_the_wire() {
+    let (_, x) = build_identifier("x");
+    let signed = (&x + build_literal(-0.0)) * (&x + build_literal(0.0));
+
+    let restored = decode(encode(&signed)).expect("the table decodes");
+
+    assert_eq!(encode(&restored), encode(&signed));
+    let ExpressionKind::Binary(product) = restored.kind() else {
+        panic!("a product");
+    };
+    assert!(!Expression::ptr_eq(product.left(), product.right()));
+    assert_eq!(
+        encode(&(Expression::from(1.0) / build_literal(-0.0))),
+        build_table([
+            build_literal_node(&json!({"float": "1"})),
+            build_literal_node(&json!({"float": "-0"})),
+            json!({"binary": {"operation": "divide", "left": 0, "right": 1}}),
+        ])
+    );
+}
+
+/// Test decoding shares every repeated subtree: two separately built,
+/// equal operands decode as one node.
+#[test]
+fn a_decoded_expression_shares_every_repeated_subtree() {
+    let (_, x) = build_identifier("x");
+    let left = (&x + 1) * 2;
+    let right = (&x + 1) * 2;
+    let tree = Expression::call(BuiltinFunction::Max, [left, right.clone(), -right]);
+
+    let restored = decode(encode(&tree)).expect("the table decodes");
+
+    let ExpressionKind::Call(call) = restored.kind() else {
+        panic!("a call");
+    };
+    let [first, second, third] = call.arguments() else {
+        panic!("three arguments");
+    };
+    assert!(Expression::ptr_eq(first, second));
+    let ExpressionKind::Unary(negation) = third.kind() else {
+        panic!("a negation");
+    };
+    assert!(Expression::ptr_eq(negation.operand(), first));
+    assert_eq!(encode(&restored)["nodes"].as_array().map(Vec::len), Some(7));
+}
+
 #[test]
 fn expression_piecewise_round_trips_through_a_json_value() {
     let expression = Expression::piecewise(

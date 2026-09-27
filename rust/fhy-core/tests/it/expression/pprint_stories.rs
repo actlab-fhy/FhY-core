@@ -338,11 +338,14 @@ fn expression_display_writes_a_logical_node_in_both_notations(
 #[case::tenth(LiteralValue::from(0.1), "0.1")]
 #[case::third(LiteralValue::from(1.0 / 3.0), "0.3333333333333333")]
 #[case::large_float(LiteralValue::from(1e15), "1000000000000000")]
-#[case::larger_float(LiteralValue::from(1e16), "10000000000000000")]
-#[case::long_mantissa(LiteralValue::from(1.234_567_890_123_456_8e17), "123456789012345680")]
-#[case::float_1e22(LiteralValue::from(1e22), "10000000000000000000000")]
+#[case::larger_float(LiteralValue::from(1e16), "1e16")]
+#[case::long_mantissa(
+    LiteralValue::from(1.234_567_890_123_456_8e17),
+    "1.2345678901234568e17"
+)]
+#[case::float_1e22(LiteralValue::from(1e22), "1e22")]
 #[case::small_float(LiteralValue::from(0.0001), "0.0001")]
-#[case::smaller_float(LiteralValue::from(1e-7), "0.0000001")]
+#[case::smaller_float(LiteralValue::from(1e-7), "1e-7")]
 #[case::negative_zero(LiteralValue::from(-0.0), "-0")]
 #[case::nan(LiteralValue::from(f64::NAN), "NaN")]
 #[case::infinity(LiteralValue::from(f64::INFINITY), "inf")]

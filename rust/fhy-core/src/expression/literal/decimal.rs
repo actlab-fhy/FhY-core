@@ -236,12 +236,21 @@ impl Visitor<'_> for DecimalTextVisitor {
     }
 
     fn visit_str<E: de::Error>(self, text: &str) -> Result<Decimal, E> {
-        text.parse().map_err(E::custom)
+        let decimal: Decimal = text.parse().map_err(E::custom)?;
+        let canonical = decimal.to_string();
+        if canonical != text {
+            return Err(E::custom(format_args!(
+                "invalid decimal literal {text:?}: not canonical, expected {canonical:?}"
+            )));
+        }
+        Ok(decimal)
     }
 }
 
 /// Deserializes from a string in the literal grammar, as
-/// [`FromStr`](std::str::FromStr) parses it.
+/// [`FromStr`](std::str::FromStr) parses it, that is the decimal's
+/// [`Display`](fmt::Display) text, the text serialization writes: `"1.5"`
+/// is read, and `"1.50"`, `"01.5"` and `".5"` are refused as not canonical.
 impl<'de> Deserialize<'de> for Decimal {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_str(DecimalTextVisitor)

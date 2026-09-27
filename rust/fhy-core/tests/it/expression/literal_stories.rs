@@ -473,8 +473,8 @@ fn literal_value_distinct_literals_are_unequal(#[case] left: &str, #[case] right
 )]
 #[case::float("f:1.5", "1.5")]
 #[case::integral_float("f:1.0", "1")]
-#[case::large_float("f:1e16", "10000000000000000")]
-#[case::larger_float("f:1.2345678901234568e17", "123456789012345680")]
+#[case::large_float("f:1e16", "1e16")]
+#[case::larger_float("f:1.2345678901234568e17", "1.2345678901234568e17")]
 #[case::small_float("f:0.00001", "0.00001")]
 #[case::negative_zero("f:-0.0", "-0")]
 #[case::nan("f:NaN", "NaN")]
@@ -805,4 +805,102 @@ fn decimal_to_f64_exact_keeps_the_smallest_subnormal() {
     let decimal: Decimal = text.parse().expect("decimal text");
 
     assert_eq!(decimal.to_f64_exact(), Some(smallest));
+}
+
+// =============================================================================
+// Canonical float and decimal text (R2-036)
+// =============================================================================
+
+/// Return a float literal's wire value.
+fn float_wire(value: f64) -> serde_json::Value {
+    serde_json::to_value(LiteralValue::from(value)).expect("every float serializes")
+}
+
+/// Test a float's text is Rust's shortest round-trip text, positional for a
+/// magnitude in `[1e-5, 1e16)` and with an exponent outside it, in
+/// `Display` and on the wire alike.
+#[rstest]
+#[case::huge(1e300, "1e300")]
+#[case::smallest_subnormal(5e-324, "5e-324")]
+#[case::largest(f64::MAX, "1.7976931348623157e308")]
+#[case::ceiling(1e16, "1e16")]
+#[case::below_the_ceiling(9_999_999_999_999_998.0, "9999999999999998")]
+#[case::floor(1e-5, "0.00001")]
+#[case::below_the_floor(9.9e-6, "9.9e-6")]
+#[case::negative_huge(-2.5e20, "-2.5e20")]
+#[case::ordinary(1.5, "1.5")]
+#[case::integral(3.0, "3")]
+#[case::zero(0.0, "0")]
+#[case::negative_zero(-0.0, "-0")]
+#[case::nan(f64::NAN, "NaN")]
+#[case::infinity(f64::INFINITY, "inf")]
+#[case::negative_infinity(f64::NEG_INFINITY, "-inf")]
+fn float_text_is_canonical(#[case] value: f64, #[case] text: &str) {
+    assert_eq!(LiteralValue::from(value).to_string(), text);
+    assert_eq!(float_wire(value), serde_json::json!({"float": text}));
+}
+
+/// Test a float text `f64::from_str` reads but that is not the canonical
+/// text of its value is refused, naming the canonical text.
+#[rstest]
+#[case::infinity_spelled_out("Infinity", "inf")]
+#[case::plus_infinity("+inf", "inf")]
+#[case::positional_exponent("1e5", "100000")]
+#[case::plus_sign("+1.5", "1.5")]
+#[case::leading_point(".5", "0.5")]
+#[case::trailing_point("5.", "5")]
+#[case::capital_exponent("1E-2", "0.01")]
+#[case::lowercase_nan("nan", "NaN")]
+#[case::negative_nan("-NaN", "NaN")]
+#[case::padded("00.10", "0.1")]
+#[case::long_positional("10000000000000000", "1e16")]
+fn non_canonical_float_text_is_refused(#[case] text: &str, #[case] canonical: &str) {
+    let error = serde_json::from_value::<LiteralValue>(serde_json::json!({"float": text}))
+        .expect_err("the text is not canonical");
+
+    assert_eq!(
+        error.to_string(),
+        format!("invalid float literal {text:?}: not canonical, expected {canonical:?}")
+    );
+}
+
+/// Test a decimal text of the literal grammar that is not the decimal's
+/// `Display` text is refused, naming the canonical text, and the canonical
+/// one is read.
+#[rstest]
+#[case::trailing_zero("1.50", "1.5")]
+#[case::leading_zero("01.5", "1.5")]
+#[case::leading_point(".5", "0.5")]
+#[case::trailing_point("5.", "5")]
+#[case::padded_zero("00.00", "0")]
+#[case::integral_fraction("100.0", "100")]
+fn non_canonical_decimal_text_is_refused(#[case] text: &str, #[case] canonical: &str) {
+    let error = serde_json::from_value::<LiteralValue>(serde_json::json!({"decimal": text}))
+        .expect_err("the text is not canonical");
+    let read = serde_json::from_value::<LiteralValue>(serde_json::json!({"decimal": canonical}))
+        .expect("the canonical text is read");
+
+    assert_eq!(
+        error.to_string(),
+        format!("invalid decimal literal {text:?}: not canonical, expected {canonical:?}")
+    );
+    assert_eq!(read.to_string(), canonical);
+}
+
+proptest::proptest! {
+    /// Every `f64` round-trips through its canonical text, which is a fixed
+    /// point: the text of the value read is the text read.
+    #[test]
+    fn every_float_round_trips_through_its_canonical_text(bits in proptest::prelude::any::<u64>()) {
+        let value = f64::from_bits(bits);
+        let wire = float_wire(value);
+
+        let read: LiteralValue = serde_json::from_value(wire.clone()).expect("the canonical text is read");
+
+        let LiteralValue::Float(read) = read else {
+            panic!("a float literal reads as a float");
+        };
+        proptest::prop_assert!(read.to_bits() == value.to_bits() || (read.is_nan() && value.is_nan()));
+        proptest::prop_assert_eq!(float_wire(read), wire);
+    }
 }

@@ -4,7 +4,9 @@
 //!
 //! The cases are ported from `test_ordering_key.py`.
 
-use fhy_core::constraint::{Constraint, EquationConstraint, Polarity, SetConstraint, Value};
+use fhy_core::constraint::{
+    Constraint, ConstraintSystem, EquationConstraint, Polarity, SetConstraint, Value,
+};
 use fhy_core::expression::{Decimal, Expression, LiteralValue};
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -173,4 +175,83 @@ fn literal_values_the_key_distinguishes_are_unequal_literals() {
             equation(Expression::literal(true).equals(Expression::literal(right))).key()
         );
     }
+}
+
+// =============================================================================
+// The table key (R2-001a)
+// =============================================================================
+
+#[test]
+fn a_doubling_dag_of_depth_64_keys_in_linear_size() {
+    let x = Expression::from(Identifier::new("x"));
+    let dag = crate::support::expression::build_doubling_dag(&x, 64);
+
+    let constraint = equation(dag.equals(0));
+    let key = constraint.key();
+
+    assert!(key.len() < 64 * 48, "{} bytes", key.len());
+    let system = ConstraintSystem::new([constraint]).expect("the key is linear");
+    assert_eq!(system.constraints().len(), 1);
+}
+
+#[test]
+fn keys_are_equal_however_the_expression_is_shared() {
+    let x = Identifier::new("x");
+    let leaf = Expression::from(x.clone());
+    let shared = equation((&leaf + &leaf).equals(0));
+    let repeated = equation((Expression::from(x.clone()) + Expression::from(x.clone())).equals(0));
+
+    assert_eq!(shared.key(), repeated.key());
+    assert_eq!(
+        repeated.key(),
+        format!(
+            "equation|identifier[{}]();binary[add](0,0);literal[int:0]();binary[equal](1,2)",
+            x.id()
+        )
+    );
+}
+
+#[test]
+fn a_callee_key_is_its_stable_text() {
+    let x = Identifier::try_restore(7, "x").expect("below the cap");
+    let reference = Expression::from(x);
+    let named = equation(
+        Expression::call(
+            fhy_core::expression::FunctionName::new("f").expect("a name"),
+            [reference.clone()],
+        )
+        .greater(0),
+    );
+    let builtin = equation(
+        Expression::call(
+            fhy_core::expression::builtins::BuiltinFunction::Max,
+            [reference, Expression::literal(1)],
+        )
+        .greater(0),
+    );
+
+    assert_eq!(
+        named.key(),
+        r#"equation|identifier[7]();call[named:"f"](0);literal[int:0]();binary[greater](1,2)"#
+    );
+    assert_eq!(
+        builtin.key(),
+        "equation|identifier[7]();literal[int:1]();call[builtin:max](0,1);literal[int:0]();\
+         binary[greater](2,3)"
+    );
+}
+
+#[test]
+fn a_float_key_is_its_canonical_text_with_one_zero_and_one_nan() {
+    let x = Identifier::try_restore(7, "x").expect("below the cap");
+    let reference = Expression::from(x);
+    let key = |value: f64| equation(reference.equals(Expression::literal(value))).key();
+
+    assert_eq!(
+        key(1e300),
+        "equation|identifier[7]();literal[float:1e300]();binary[equal](0,1)"
+    );
+    assert_eq!(key(-0.0), key(0.0));
+    assert!(key(0.0).contains("literal[float:0]()"));
+    assert!(key(-f64::NAN).contains("literal[float:NaN]()"));
 }

@@ -37,6 +37,11 @@ fn text_of(value: &impl serde::Serialize) -> String {
 #[case::integral_float(Value::Float(2.0), r#"{"float":"2"}"#)]
 #[case::nan(Value::Float(f64::NAN), r#"{"float":"NaN"}"#)]
 #[case::infinity(Value::Float(f64::NEG_INFINITY), r#"{"float":"-inf"}"#)]
+#[case::huge_float(Value::Float(1e300), r#"{"float":"1e300"}"#)]
+#[case::tiny_float(Value::Float(5e-324), r#"{"float":"5e-324"}"#)]
+#[case::ceiling_float(Value::Float(1e16), r#"{"float":"1e16"}"#)]
+#[case::floor_float(Value::Float(1e-5), r#"{"float":"0.00001"}"#)]
+#[case::negative_zero(Value::Float(-0.0), r#"{"float":"-0"}"#)]
 #[case::decimal(decimal("100.0"), r#"{"decimal":"100"}"#)]
 #[case::str(Value::Str("é\"".to_owned()), r#"{"str":"é\""}"#)]
 #[case::tuple(
@@ -317,4 +322,17 @@ fn a_value_nested_too_deep_is_refused_with_the_depth_message() {
     assert_eq!(error.to_string(), "value nesting exceeds 128 levels");
     let error = serde_json::from_value::<ValueData>(tree).expect_err("too deep");
     assert_eq!(error.to_string(), "value nesting exceeds 128 levels");
+}
+
+/// Test a member float's text is read only in its canonical form (R2-036).
+#[test]
+fn a_member_float_text_that_is_not_canonical_is_refused() {
+    let error = serde_json::from_str::<Value>(r#"{"float":"1e5"}"#).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains(r#"invalid float literal "1e5": not canonical, expected "100000""#),
+        "{error}"
+    );
 }

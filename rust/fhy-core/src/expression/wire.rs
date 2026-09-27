@@ -1,15 +1,13 @@
 //! Serialization of expressions as a flat table of their distinct nodes.
 
-use std::collections::HashMap;
-
 use serde::de::{self, Deserializer};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::identifier::Identifier;
-use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
 use super::callee::Callee;
+use super::canonical::{CanonicalTable, Equivalence};
 use super::literal::LiteralValue;
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
@@ -121,50 +119,21 @@ fn build_wire_node(node: &Expression, children: Vec<u64>) -> WireNodeRef<'_> {
     }
 }
 
-/// One step of encoding: visit a node, or write it once its children are
-/// written.
-enum EncodeStep<'a> {
-    Visit(&'a Expression),
-    Write(&'a Expression, usize),
-}
-
-/// Return the table of `root`: each distinct node once, in post-order of
-/// first visit, the root last.
-///
-/// Only a node that may be shared is looked up by identity, since a node
-/// with one handle is reached once.
+/// Return the table of `root`: each distinct node under
+/// [`Equivalence::Wire`] once, in post-order of first visit, the root last.
 fn encode_nodes(root: &Expression) -> Vec<WireNodeRef<'_>> {
-    let mut nodes: Vec<WireNodeRef<'_>> = Vec::new();
-    let mut written: HashMap<NodeIdentity, u64, BuildIdentityHasher> = HashMap::default();
-    let mut indices: Vec<u64> = Vec::new();
-    let mut pending = vec![EncodeStep::Visit(root)];
-    while let Some(step) = pending.pop() {
-        match step {
-            EncodeStep::Visit(node) => {
-                if let Some(&index) = node
-                    .is_shared()
-                    .then(|| written.get(&node.identity()))
-                    .flatten()
-                {
-                    indices.push(index);
-                    continue;
-                }
-                let children: Vec<&Expression> = node.children().collect();
-                pending.push(EncodeStep::Write(node, children.len()));
-                pending.extend(children.into_iter().rev().map(EncodeStep::Visit));
-            }
-            EncodeStep::Write(node, child_count) => {
-                let children = indices.split_off(indices.len() - child_count);
-                let index = to_wire_index(nodes.len());
-                nodes.push(build_wire_node(node, children));
-                if node.is_shared() {
-                    written.insert(node.identity(), index);
-                }
-                indices.push(index);
-            }
-        }
-    }
-    nodes
+    CanonicalTable::build(root, Equivalence::Wire)
+        .nodes()
+        .iter()
+        .map(|entry| {
+            let children = entry
+                .children
+                .iter()
+                .map(|&child| to_wire_index(child))
+                .collect();
+            build_wire_node(entry.node, children)
+        })
+        .collect()
 }
 
 /// An expression serializes as a table of its distinct nodes,
@@ -185,9 +154,15 @@ fn encode_nodes(root: &Expression) -> Vec<WireNodeRef<'_>> {
 /// So `x + 1`, with `x` of id 41, serializes as
 /// `{"nodes":[{"identifier":{"id":41,"name_hint":"x"}},{"literal":{"int":"1"}},{"binary":{"operation":"add","left":0,"right":1}}]}`.
 ///
-/// A node shared by several parents is written once, and decoding shares
-/// it again, so a DAG such as `x(k+1) = xk + xk` serializes in space and
-/// time linear in its distinct nodes. Neither direction recurses once per
+/// The table is canonical: it holds each distinct node once, whether the
+/// expression shares it or repeats it, so equal expressions encode to
+/// equal bytes however they were built, except where they differ in a
+/// zero's sign (`-0.0 == 0.0`, but `1 / -0.0` is not `1 / 0.0`, so the wire
+/// keeps the sign) or, for two identifiers of one id, in a name hint. A
+/// repeated subtree is written once, and decoding shares every node that
+/// more than one later node refers to, so a DAG such as `x(k+1) = xk + xk`
+/// serializes in space and time linear in its distinct nodes, and a decoded
+/// value shares every repeated subtree. Neither direction recurses once per
 /// tree level, and the serde nesting depth is the same for every tree, so
 /// a tree of any depth round-trips through any format on a small stack.
 /// Serialization never fails for a well-formed serializer: every literal,

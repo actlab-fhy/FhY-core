@@ -63,6 +63,24 @@ def test_pformat_expression_renders_symbolic_form(
 
 
 @pytest.mark.parametrize(
+    ("value", "expected_text"),
+    [
+        (1e300, "1e300"),
+        (5e-324, "5e-324"),
+        (1.7976931348623157e308, "1.7976931348623157e308"),
+        (1e16, "1e16"),
+        (1e-5, "0.00001"),
+        (9.9e-6, "9.9e-6"),
+    ],
+)
+def test_str_of_an_extreme_float_literal_is_its_canonical_text(
+    value: float, expected_text: str
+) -> None:
+    """Test ``str`` writes a float outside ``[1e-5, 1e16)`` with an exponent."""
+    assert str(LiteralExpression(value)) == expected_text
+
+
+@pytest.mark.parametrize(
     "value, expected_text",
     [
         pytest.param(True, "true", id="true"),
@@ -73,8 +91,14 @@ def test_pformat_expression_renders_symbolic_form(
         pytest.param(1.0, "1", id="integral_float"),
         pytest.param(1.5, "1.5", id="float"),
         pytest.param(-0.0, "-0", id="negative_zero"),
-        pytest.param(1e16, "10000000000000000", id="large_float"),
-        pytest.param(1e-7, "0.0000001", id="small_float"),
+        pytest.param(1e16, "1e16", id="large_float"),
+        pytest.param(
+            9_999_999_999_999_998.0, "9999999999999998", id="positional_float"
+        ),
+        pytest.param(1e-5, "0.00001", id="smallest_positional_float"),
+        pytest.param(1e-7, "1e-7", id="small_float"),
+        pytest.param(1e300, "1e300", id="huge_float"),
+        pytest.param(5e-324, "5e-324", id="subnormal_float"),
         pytest.param(math.nan, "NaN", id="nan"),
         pytest.param(math.inf, "inf", id="infinity"),
         pytest.param(-math.inf, "-inf", id="negative_infinity"),

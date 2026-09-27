@@ -11,6 +11,7 @@ import copy
 import logging
 import pickle
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -404,6 +405,41 @@ def test_bindings_that_are_no_mapping_are_refused(x: Identifier) -> None:
 
     with pytest.raises(TypeError, match="mapping"):
         constraint.evaluate_with_bindings([(x, 1)])  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Ordering keys (R2-001a)
+# =============================================================================
+
+
+def test_an_equation_key_is_its_expressions_node_table() -> None:
+    """Test ``build_ordering_key`` of ``x + 1 == 0``: each distinct node once."""
+    x = Identifier("x")
+    constraint = EquationConstraint(
+        (IdentifierExpression(x) + LiteralExpression(1)).equals(0)
+    )
+
+    assert constraint.build_ordering_key() == (
+        f"equation|identifier[{x.id}]();literal[int:1]();binary[add](0,1);"
+        "literal[int:0]();binary[equal](2,3)"
+    )
+
+
+def test_a_depth_40_doubling_dag_constraint_builds_promptly() -> None:
+    """Test a constraint over a DAG of 2**41 - 1 occurrences keys at once."""
+    node: Expression = IdentifierExpression(Identifier("x"))
+    for _ in range(40):
+        node = node + node
+
+    started = time.perf_counter()
+    constraint = EquationConstraint(node.equals(0))
+    system = ConstraintSystem((constraint,))
+    key = constraint.build_ordering_key()
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0
+    assert len(key) < 40 * 48
+    assert len(system.constraints) == 1
 
 
 # =============================================================================

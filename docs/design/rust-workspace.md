@@ -210,6 +210,23 @@ the Part II text, this table governs; each such difference is also listed in
   Python file at all. S12 had added the SymPy prelude,
   `src/solver/sympy/prelude.py`, to the package list; it moved with the
   backend into the binding (`docs/design/rust-port-fixes.md` R2-005a).
+- **Revised (R2-011, 2026-09-27), D-6:** the node list holds each distinct
+  node once, hash-consed by wire identity (floats by bits with every NaN
+  one, identifiers by id and name hint), still in post-order of first
+  visit with the root last. So equal expressions encode to equal bytes
+  however they share, except where they differ in a zero's sign (J-5 of
+  `docs/design/rust-port-fixes.md`), and decoding shares every repeated
+  subtree. The encoder and the ordering keys build one canonical table
+  (`expression/canonical.rs`, S-1).
+- **Revised (R2-036, 2026-09-27), D-7 and R-16:** a float's text is Rust's
+  shortest round-trip text, positional (`{}`) for a magnitude in
+  `[1e-5, 1e16)` and with an exponent (`{:e}`) outside it, and `NaN`,
+  `inf`, `-inf`, `0`, `-0`; the wire, `Display`, keys and messages all
+  write it, member floats of constraints included. Decoding reads a float
+  with `f64::from_str` and refuses a text that is not the canonical text
+  of the value it reads (`"1e5"`, `"+1.5"`, `"nan"`), and a decimal text
+  that is not its `Display` text (`"1.50"`); S-2 of
+  `docs/design/rust-port-fixes.md`.
 
 ## I.6 Implementation order
 
@@ -3538,6 +3555,10 @@ exposes only the two identifier-counter functions.
   listing it fails to compile.
 
 #### 5.6 Wire format (S-2, F-003, F-012)
+
+- **Revised (R2-011, 2026-09-27):** the node list is canonical: each node
+  distinct under wire identity once, in post-order of first visit, not
+  each distinct handle (D-6's revision in §I.5).
 
 - **Shape.** Plain derives over private shapes, with no envelope:
   ```rust

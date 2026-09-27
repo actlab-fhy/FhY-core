@@ -15284,6 +15284,12 @@ Where a decision follows an earlier slice, it says so.
   - The system sorts its members stably by comparing keys as strings, so
     a third party's Python key sorts among the native ones, as it does
     today.
+  - **Revised (R2-001a, 2026-09-27):** the equation key renders the
+    expression's canonical node table under structural equivalence, each
+    distinct node once as `kind[data](i,j,…)`, `;`-separated, so it is
+    linear in the distinct nodes; a callee writes `builtin:<name>` or
+    `named:"<name>"`. The kind prefixes are unchanged
+    (`docs/design/rust-port-fixes.md` R2-001a).
 - **D-S13-7: bindings are read lazily, as today** (D-S4-2; C-4).
   - The binding reads the mapping once, as `dict(bindings)` does, with
     each key read once, and turns each entry into a core `Binding` without
@@ -19902,6 +19908,11 @@ Divergences found during implementation, beyond W-1 to W-11:
 | W-12 | a `Serializable` member was keyed by `repr` of its V1 payload | by `repr` of its V2 payload, in every version |
 | W-13 | the core wrote `Provenance::Unknown` as `"unknown"` and a value domain as a bare list | `{"unknown": {}}`, `{"levels": [..]}`; the real domain `{"real": {}}` |
 | W-14 | a malformed nested payload in a V1 document raised V1's error | the same, and a V1 document can no longer nest a V2 payload |
+
+- **Revised (R2-011, 2026-09-27), W-12:** the V2 payload a `Serializable`
+  member is keyed by no longer depends on how an expression it holds
+  shares its nodes, since the encoding is canonical
+  (`docs/design/rust-port-fixes.md` R2-011).
 
 Decisions made during implementation, recorded here as the task allows:
 
