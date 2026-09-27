@@ -78,6 +78,30 @@ fn build_system_member_strategy() -> BoxedStrategy<Constraint> {
     .boxed()
 }
 
+/// Return a strategy for built-in constraints over `x` and `y`: equations
+/// and set constraints over generated values.
+fn build_built_in_constraint_strategy() -> BoxedStrategy<Constraint> {
+    static VARIABLES: std::sync::LazyLock<[Identifier; 2]> =
+        std::sync::LazyLock::new(|| [Identifier::new("x"), Identifier::new("y")]);
+    prop_oneof![
+        build_expression_strategy(true)
+            .prop_map(|expression| Constraint::from(EquationConstraint::new(expression))),
+        (
+            prop::sample::select(VARIABLES.to_vec()),
+            prop::sample::select(vec![Polarity::In, Polarity::NotIn]),
+            prop::collection::vec(build_value_strategy(), 1..3),
+        )
+            .prop_map(|(variable, polarity, values)| {
+                Constraint::from(SetConstraint::new(
+                    variable,
+                    crate::support::constraint::member_set(values),
+                    polarity,
+                ))
+            }),
+    ]
+    .boxed()
+}
+
 fn hash_of(system: &ConstraintSystem) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -343,6 +367,26 @@ proptest! {
         prop_assert_eq!(keys(&forward), keys(&backward));
         prop_assert!(forward.is_structurally_equivalent(&backward));
         prop_assert_eq!(hash_of(&forward), hash_of(&backward));
+    }
+
+    /// `Ord` for constraints is a total order that agrees with
+    /// equivalence (R2-032b): equal exactly for equivalent constraints,
+    /// antisymmetric, transitive, and the order of their keys.
+    #[test]
+    fn constraint_order_is_total_and_agrees_with_equivalence(
+        a in build_built_in_constraint_strategy(),
+        b in build_built_in_constraint_strategy(),
+        c in build_built_in_constraint_strategy(),
+    ) {
+        use std::cmp::Ordering;
+        prop_assert_eq!(a.cmp(&b) == Ordering::Equal, a == b);
+        prop_assert_eq!(a.cmp(&b), b.cmp(&a).reverse());
+        prop_assert_eq!(a.partial_cmp(&b), Some(a.cmp(&b)));
+        prop_assert_eq!(a.cmp(&b), a.key().cmp(&b.key()));
+        prop_assert_eq!(a.cmp(&a.clone()), Ordering::Equal);
+        if a <= b && b <= c {
+            prop_assert!(a <= c);
+        }
     }
 
     #[test]

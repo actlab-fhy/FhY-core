@@ -65,6 +65,7 @@ mod value;
 pub mod wire;
 
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -272,6 +273,38 @@ impl Hash for Constraint {
             Self::Set(constraint) => constraint.hash(state),
             Self::Custom(constraint) => constraint.hash(state),
         }
+    }
+}
+
+impl Ord for Constraint {
+    /// Compare the canonical ordering keys, the order a
+    /// [`ConstraintSystem`] sorts its members in.
+    ///
+    /// Keys are equal exactly when constraints are structurally
+    /// equivalent, for every built-in kind and every conforming custom
+    /// constraint (whose [`ordering_key`](CustomConstraint::ordering_key)
+    /// is equal exactly when [`eq_part`](CustomConstraint::eq_part) holds),
+    /// so the order is total and agrees with `==`. A built-in kind's key is
+    /// computed for the comparison, in time linear in the distinct nodes of
+    /// its expression; a custom constraint whose key fails is outside the
+    /// contract, and sorts after every constraint whose key does not, equal
+    /// to any other such constraint.
+    fn cmp(&self, other: &Self) -> Ordering {
+        if Self::ptr_eq(self, other) {
+            return Ordering::Equal;
+        }
+        let rank = |constraint: &Self| {
+            let key = constraint.ordering_key().ok();
+            (key.is_none(), key)
+        };
+        rank(self).cmp(&rank(other))
+    }
+}
+
+impl PartialOrd for Constraint {
+    /// Compare as [`Ord`] does.
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

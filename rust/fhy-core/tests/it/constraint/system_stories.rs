@@ -938,3 +938,44 @@ fn params_over_colliding_members_are_equivalent_in_either_order() {
     assert!(forward.is_structurally_equivalent(&backward));
     assert_eq!(forward, backward);
 }
+
+// =============================================================================
+// Ord for constraints (R2-032b)
+// =============================================================================
+
+#[test]
+fn constraints_order_by_their_keys_in_a_b_tree_set() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let constraints = [
+        not_in_set(&x, &[3]),
+        equation(Expression::from(y.clone()).less(2)),
+        in_set(&x, &[1, 2]),
+        in_set(&x, &[2, 1]),
+        equation(Expression::from(y).less(2)),
+    ];
+
+    let set: std::collections::BTreeSet<Constraint> = constraints.iter().cloned().collect();
+
+    assert_eq!(set.len(), 3, "equivalent constraints are one element");
+    let keys: Vec<String> = set.iter().map(ConstraintKey::key).collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(keys, sorted);
+    let system = ConstraintSystem::new(constraints).expect("no key fails");
+    let mut members = system.constraints().to_vec();
+    members.dedup();
+    assert_eq!(members, set.into_iter().collect::<Vec<_>>());
+}
+
+#[test]
+fn a_custom_constraint_orders_by_its_key_and_one_whose_key_fails_orders_last() {
+    let x = Identifier::new("x");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let custom = TestCustom::build("probe", Expression::literal(true), Outcome::Satisfied, &log);
+    let failing = Failing(FailingHook::Key).into_constraint();
+    let built_in = in_set(&x, &[1]);
+
+    assert_eq!(custom.cmp(&built_in), custom.key().cmp(&built_in.key()));
+    assert_eq!(failing.cmp(&built_in), std::cmp::Ordering::Greater);
+    assert_eq!(failing.cmp(&custom), std::cmp::Ordering::Greater);
+}

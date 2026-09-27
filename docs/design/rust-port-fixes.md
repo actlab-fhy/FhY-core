@@ -81,8 +81,8 @@ onto `dev-rust` before continuing.
 - [x] R2-029b (F2-029, `expression`): error-text tables and small stories: `40dfb54`
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
 - [x] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration: `2385e94`
-- [x] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order: this commit
-- [ ] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key
+- [x] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order: `77197df`
+- [x] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key: this commit
 - [ ] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing
 - [ ] Track B status: gates green; counts recorded; landed as `<hash>`
 
@@ -3428,6 +3428,27 @@ new finding.
   | Before | After | Tests |
   |---|---|---|
   | two systems (or params) with the same members, two of them unequal members whose keys collide, were unequal when given in the other order | equal, and they hash alike; within a run of colliding keys, equal members sit together | the Rust stories; no Python test built colliding keys |
+
+**R2-032b.**
+- **No cached key (deviation).** J-8 has `Ord` compare cached keys, and J-2
+  caches a key "in the member or constraint". Track A cached the opaque
+  member's key in its `Member`, but a `Constraint` holds no key: its
+  `Custom` variant is a bare `Part<dyn CustomConstraint>`, and caching
+  there would change that public variant (Track A's type). So `Ord`
+  computes the two keys for each comparison: a built-in kind's key is
+  linear in its distinct nodes since R2-001a, and a custom one asks its
+  hook. A custom constraint whose key fails is outside J-7's contract, and
+  `Ord` puts it after every constraint whose key does not fail, equal to
+  any other such one, so the order stays total; `ConstraintSystem::new`
+  still refuses such a member with its error. `new` sorts by the keys it
+  reads once, which is the order `Ord` defines, rather than calling `Ord`,
+  which would read each key once per comparison.
+- **Tests.** The property `constraint_order_is_total_and_agrees_with_equivalence`
+  (equal exactly when `==`, antisymmetric, transitive, `partial_cmp`, and
+  the keys' order) over equations and set constraints, a `BTreeSet`
+  story, and a story that a custom constraint orders by its key and one
+  whose key fails orders last.
+- **Python-visible changes:** none; the binding's classes define no order.
 
 ### Track C notes
 

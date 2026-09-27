@@ -19,7 +19,8 @@ use super::error::ConstraintError;
 use super::{Constraint, Outcome};
 
 /// The conjunction of constraints, in canonical order: sorted by their
-/// ordering keys, duplicates kept. Cloning one shares it.
+/// ordering keys, the order [`Constraint`]'s `Ord` defines, duplicates
+/// kept. Cloning one shares it.
 ///
 /// Keys are equal exactly when constraints are equivalent, for every
 /// conforming [`CustomConstraint`](super::CustomConstraint) and
@@ -39,7 +40,8 @@ pub struct ConstraintSystem {
 
 impl ConstraintSystem {
     /// Return the system of `constraints`, reading each member's ordering
-    /// key once.
+    /// key once and sorting by the keys, as [`Constraint`]'s `Ord` compares
+    /// them.
     ///
     /// # Errors
     ///
