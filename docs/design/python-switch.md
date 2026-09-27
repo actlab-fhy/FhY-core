@@ -160,7 +160,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
 - [ ] S17: serialization, in two parts (one canonical format, V2, the core's serde; V1 deprecated, readable and writable on request until its removal release; see "S17: serialization")
   - [x] S17.0: the design (survey, divergences W-1 to W-11, decisions D-S17-1 to D-S17-24, benchmark plan, steps, test plan)
   - [x] N-S17-1 decided as (a), N-S17-2 as (a), N-S17-3 as (c) (2026-09-26; see "S17 resolutions"; D-S17-16, D-S17-19 and D-S17-20 revised, D-S17-25 added)
-  - [ ] S17.1: serialization benchmarks and the V1 baseline; the frozen pickle corpus and today's V1 payloads
+  - [x] S17.1: serialization benchmarks and the V1 baseline (67 rows; see "S17.1 baseline"); the frozen pickle corpus and today's V1 payloads (57 objects, 229 tests)
   - [ ] S17a: the core
     - [ ] S17a.1: `fhy_core::foreign` (`Foreign`, `Resolve`, `NoForeign`, `ForeignError`) and `to_foreign` on the five extension traits, test-first
     - [ ] S17a.2: serde for types and the symbol table (the wire types and their `build`), test-first
@@ -19432,3 +19432,103 @@ Commit per step. Every step ends with these green:
 - **Everything else is expected to pass unchanged:** round trips (they
   compare objects, not payloads), the contract suite, the engine's codec
   tests, the registry tests, and the pickle properties.
+
+### S17.1 baseline (2026-09-26, b4e6550 plus the new benchmarks)
+
+`benchmarks/test_serialization.py` implements the benchmark plan, with its
+own Python-defined classes: `_Kernel` (a derived dataclass nesting an
+expression), `_EvenConstraint` (a Python-defined constraint) and `_Level`
+(a registered `Serializable` member value). One case differs from the
+plan: `wide_expression` is a balanced sum of 1,000 terms, about 10 levels
+deep, since V1's writer recurses once per level and a chain of 1,000
+additions exceeds Python's recursion limit (V2's flat table has no such
+limit). The `v2` rows skip until S17b. `target/bench.sh` runs the file and
+the reruns (`-k "serializ or pickle or json or round_trip"` over
+`test_expression.py`, `test_types.py`, `test_constraint.py`,
+`test_symbol_table.py`, `test_param.py`, `test_provenance.py` and
+`test_identifier.py`, which also selects four unrelated rows whose names
+contain "serializable"), each with `-n 0 --benchmark-only`, from a copy of
+the tree under `target/before` with the extension built at b4e6550, and
+the table lists the best of three medians. The machine is the S0 one, with
+Python 3.11.16 and pytest-benchmark 5.3.0; the load average was 10 to 14
+from other work.
+
+S17.1 also writes the frozen inputs of D-S17-19 and D-S17-20 from today's
+code: `tests/serialization/frozen_fixtures.py` builds 57 objects (every
+class and variant, over fixed ids from 61,000), and
+`tests/serialization/data/pickles_v1.json` and `data/v1_payloads.json`
+hold their pickles (protocols 2 and 5) and V1 payloads.
+`tests/serialization/test_frozen_v1.py` (229 tests) checks that each
+pickle loads and each payload decodes to an equivalent object, and that
+V1 writing reproduces each payload; it runs inside
+`wire_version(WireVersion.V1)` once that exists.
+
+| Benchmark | before |
+|---|---|
+| `test_bytes_round_trip[deep_expression-v1]` | 1.38 ms |
+| `test_bytes_round_trip[param_ordinal_20-v1]` | 175.00 µs |
+| `test_constraint_deserialize_from_dict` | 231.85 µs |
+| `test_constraint_pickle_round_trip` | 23.12 µs |
+| `test_constraint_serialize_to_dict` | 16.78 µs |
+| `test_constraint_system_serialize_to_dict` | 50.90 µs |
+| `test_deserialize_from_dict[v1-constraint_system_20]` | 817.08 µs |
+| `test_deserialize_from_dict[v1-deep_expression]` | 278.12 µs |
+| `test_deserialize_from_dict[v1-foreign]` | 656.19 µs |
+| `test_deserialize_from_dict[v1-kernel]` | 16.40 µs |
+| `test_deserialize_from_dict[v1-literals]` | 120.29 µs |
+| `test_deserialize_from_dict[v1-param_ordinal_20]` | 92.59 µs |
+| `test_deserialize_from_dict[v1-provenance]` | 154.13 µs |
+| `test_deserialize_from_dict[v1-set_constraint_100]` | 233.89 µs |
+| `test_deserialize_from_dict[v1-symbol_table_20]` | 1.10 ms |
+| `test_deserialize_from_dict[v1-type]` | 23.59 µs |
+| `test_deserialize_from_dict[v1-wide_expression]` | 4.97 ms |
+| `test_deserialize_from_dict_of_deep_tree` | 294.79 µs |
+| `test_domain_construction[ordinal_serializable]` | 305.07 µs |
+| `test_frame_deserialize_from_dict` | 53.95 µs |
+| `test_frame_serialize_to_dict` | 2.58 µs |
+| `test_identifier_deserialize_from_dict` | 3.73 µs |
+| `test_identifier_pickle_round_trip` | 9.96 µs |
+| `test_json_round_trip[v1-constraint_system_20]` | 1.16 ms |
+| `test_json_round_trip[v1-deep_expression]` | 1.34 ms |
+| `test_json_round_trip[v1-foreign]` | 927.30 µs |
+| `test_json_round_trip[v1-kernel]` | 44.31 µs |
+| `test_json_round_trip[v1-literals]` | 1.14 ms |
+| `test_json_round_trip[v1-param_ordinal_20]` | 162.38 µs |
+| `test_json_round_trip[v1-provenance]` | 250.79 µs |
+| `test_json_round_trip[v1-set_constraint_100]` | 468.21 µs |
+| `test_json_round_trip[v1-symbol_table_20]` | 1.49 ms |
+| `test_json_round_trip[v1-type]` | 51.76 µs |
+| `test_json_round_trip[v1-wide_expression]` | 16.85 ms |
+| `test_json_round_trip_of_deep_tree` | 1.33 ms |
+| `test_param_assignment_deserialize_from_dict` | 123.70 µs |
+| `test_param_deserialize_from_dict` | 173.33 µs |
+| `test_param_is_value_valid[serializable-value4]` | 4.51 µs |
+| `test_param_pickle_round_trip` | 28.42 µs |
+| `test_param_serialize_to_dict` | 7.39 µs |
+| `test_pickle_round_trip_of_deep_tree` | 203.55 µs |
+| `test_provenance_dict_round_trip[call_site]` | 50.16 µs |
+| `test_provenance_dict_round_trip[file]` | 19.88 µs |
+| `test_provenance_dict_round_trip[fused]` | 52.34 µs |
+| `test_provenance_dict_round_trip[named]` | 33.56 µs |
+| `test_provenance_dict_round_trip[unknown]` | 2.07 µs |
+| `test_serialize_to_dict[v1-constraint_system_20]` | 37.52 µs |
+| `test_serialize_to_dict[v1-deep_expression]` | 121.18 µs |
+| `test_serialize_to_dict[v1-foreign]` | 35.93 µs |
+| `test_serialize_to_dict[v1-kernel]` | 2.47 µs |
+| `test_serialize_to_dict[v1-literals]` | 133.51 µs |
+| `test_serialize_to_dict[v1-param_ordinal_20]` | 4.49 µs |
+| `test_serialize_to_dict[v1-provenance]` | 8.92 µs |
+| `test_serialize_to_dict[v1-set_constraint_100]` | 16.89 µs |
+| `test_serialize_to_dict[v1-symbol_table_20]` | 32.95 µs |
+| `test_serialize_to_dict[v1-type]` | 2.05 µs |
+| `test_serialize_to_dict[v1-wide_expression]` | 1.49 ms |
+| `test_serialize_to_dict_of_deep_tree` | 128.50 µs |
+| `test_set_constraint_construction[serializable]` | 17.96 µs |
+| `test_set_constraint_evaluate_with_bindings[serializable]` | 2.18 µs |
+| `test_symbol_table_deserialize_from_dict` | 1.12 ms |
+| `test_symbol_table_pickle_round_trip` | 184.79 µs |
+| `test_symbol_table_serialize_to_dict` | 33.72 µs |
+| `test_type_deserialize_from_dict` | 16.03 µs |
+| `test_type_pickle_round_trip` | 9.34 µs |
+| `test_type_serialize_to_dict` | 1.85 µs |
+| `test_value_round_trip[v1]` | 195.36 µs |
