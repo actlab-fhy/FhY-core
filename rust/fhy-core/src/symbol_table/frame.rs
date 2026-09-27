@@ -16,7 +16,8 @@ pub trait Frame {
 }
 
 /// The frame of an imported symbol.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImportFrame {
     name: Identifier,
 }

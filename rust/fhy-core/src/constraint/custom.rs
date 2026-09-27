@@ -9,6 +9,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::expression::Expression;
+use crate::foreign::{Foreign, ForeignError};
 use crate::identifier::Identifier;
 use crate::term::AlphaRenaming;
 
@@ -56,6 +57,18 @@ pub trait CustomConstraint: Send + Sync + fmt::Debug {
         other: &dyn CustomConstraint,
         renaming: &AlphaRenaming,
     ) -> bool;
+
+    /// Return the constraint as a [`Foreign`] part, for serialization.
+    ///
+    /// # Errors
+    ///
+    /// The default returns [`ForeignError::NoWireForm`]: the constraint
+    /// cannot be serialized.
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Err(ForeignError::NoWireForm {
+            type_name: "custom constraint".to_owned(),
+        })
+    }
 
     /// Return the constraint as [`Any`], so an implementation can recognize
     /// its own constraints.

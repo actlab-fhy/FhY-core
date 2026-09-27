@@ -14,11 +14,14 @@
 //! [`pass`].
 //! [`symbol_table`] depends on [`types`].
 //! [`stack`] and [`scope`] depend on no other module, each other included.
+//! [`foreign`] depends on no other module; the open types of [`types`],
+//! [`constraint`] and [`param`] use it.
 //!
 //! | Module | Contents |
 //! |---|---|
 //! | [`identifier`] | [`Identifier`](identifier::Identifier): a name hint and a process-unique id |
 //! | [`interned`] | [`InternRegistry`](interned::InternRegistry) and [`Canonical`](interned::Canonical): one canonical value per key |
+//! | [`foreign`] | [`Foreign`](foreign::Foreign): the serialized form of a part another implementation defines, and the [`Resolve`](foreign::Resolve)rs that build it back |
 //! | [`described_tag`] | [`DescribedTag`](described_tag::DescribedTag): open vocabulary entries, a name and a description |
 //! | [`diagnostic`] | diagnostics, notes and their [`NoteKind`](diagnostic::NoteKind)s, and validation reports |
 //! | [`op_attribute`] | [`OpAttribute`](op_attribute::OpAttribute): open semantic tags on operations |
@@ -88,15 +91,26 @@
 //! [`Canonical<T>`](interned::Canonical) interns the value. A decode that
 //! fails partway may leave both effects behind for the parts it already
 //! decoded; they only ever add ids and canonical values, so they never
-//! invalidate an existing one. The `__type__`/`__data__` envelope of
-//! Python's serialization framework belongs to the Python binding. This
-//! crate does not depend on `serde_json`, so depending on it changes nothing
+//! invalidate an existing one.
+//!
+//! A type that can hold a part defined outside this crate, an extension
+//! type, a custom constraint or domain, or an opaque value, serializes the
+//! part as a [`Foreign`](foreign::Foreign), which the part's own
+//! `to_foreign` gives; its `Deserialize` refuses the part by its type id.
+//! Its wire form in the module's `wire` submodule
+//! ([`types::wire`], [`symbol_table::wire`], [`constraint::wire`],
+//! [`param::wire`]) reads the same shape and builds the value with a
+//! [`Resolve`](foreign::Resolve)r of the parts. The Python binding writes
+//! these shapes as the Python package's wire format, and keeps the older
+//! `__type__`/`__data__` envelope format until it is removed. This crate
+//! does not depend on `serde_json`, so depending on it changes nothing
 //! about how another crate's JSON numbers parse or compare.
 
 pub mod constraint;
 pub mod described_tag;
 pub mod diagnostic;
 pub mod expression;
+pub mod foreign;
 pub mod identifier;
 pub mod interned;
 pub mod lattice;

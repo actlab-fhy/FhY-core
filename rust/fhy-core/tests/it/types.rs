@@ -5,6 +5,7 @@
 mod checking;
 mod data_type_stories;
 mod extension_stories;
+mod serde_stories;
 mod type_stories;
 mod unification_properties;
 mod unification_stories;

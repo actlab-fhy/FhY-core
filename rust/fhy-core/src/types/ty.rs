@@ -1,6 +1,7 @@
 //! Types: numerical arrays, index ranges, and types defined outside this
 //! crate.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -48,7 +49,8 @@ struct NumericalParts {
     clippy::exhaustive_enums,
     reason = "a dimension is an expression or the wildcard, as in Python's shapes"
 )]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Dimension {
     /// A dimension of the given extent.
     Expression(Expression),

@@ -5,6 +5,7 @@
 
 pub(crate) mod constraint;
 pub(crate) mod expression;
+pub(crate) mod foreign;
 pub(crate) mod hashing;
 pub(crate) mod lambda;
 pub(crate) mod param;

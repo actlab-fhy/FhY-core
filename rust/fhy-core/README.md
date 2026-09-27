@@ -6,10 +6,11 @@ This crate is the Rust implementation of the `fhy_core` Python package, which re
 
 ## Modules
 
-Each module depends only on the modules listed before it, except that `tree`, `term` and `lattice` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, `solver` and `types` depend on `expression` and not on `pass`, `constraint` depends on `solver` and not on `pass`, and `param` depends on `constraint` and not on `pass`. `stack` and `scope` depend on no other module, each other included. Each public item has exactly one public path.
+Each module depends only on the modules listed before it, except that `tree`, `term` and `lattice` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, `solver` and `types` depend on `expression` and not on `pass`, `constraint` depends on `solver` and not on `pass`, and `param` depends on `constraint` and not on `pass`. `stack` and `scope` depend on no other module, each other included, and so does `foreign`. Each public item has exactly one public path.
 
 - `identifier`: `Identifier`, a name hint paired with a process-unique id.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical value per key.
+- `foreign`: `Foreign`, the serialized form of a part another implementation defines (an extension type, a custom constraint or domain, an opaque value): its type id and its own payload as text. A type holding such parts serializes them through their `to_foreign`, and its wire form (`types::wire`, `symbol_table::wire`, `constraint::wire`, `param::wire`) builds them back with a `Resolve`r; the types' own `Deserialize` refuses them (`NoForeign`).
 - `described_tag`: `DescribedTag<K>`, an open vocabulary entry named by an `Identifier`, and the sealed `TagKind` of its vocabularies.
 - `diagnostic`: `Diagnostic`, `Note` and its `NoteKind`, and `ValidationReport`.
 - `op_attribute`: `OpAttribute`, an open tag attached to compiler operations. The shipped defaults are `OpAttribute::commutative()`, `OpAttribute::associative()`, `OpAttribute::pure()` and `OpAttribute::elementwise()`.

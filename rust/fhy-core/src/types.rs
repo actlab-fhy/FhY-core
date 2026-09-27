@@ -50,6 +50,7 @@ mod extension;
 mod qualifier;
 mod ty;
 mod unify;
+pub mod wire;
 
 pub use core_data_type::CoreDataType;
 pub use data_type::{DataType, TemplateDataType};

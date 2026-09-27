@@ -454,6 +454,19 @@ id, and a `Canonical<T>` interns its value. A decode that fails partway may
 leave the counter advanced and some canonical values registered. The
 affected types document this; decoding is not ordered to prevent it.
 
+A type with an open variant, one that holds a part another implementation
+defines (a `Type` or `DataType` extension, a custom constraint or domain,
+an opaque value), serializes that part as a `fhy_core::foreign::Foreign`:
+the type id its implementation registered under and its own payload as
+text, from the trait's `to_foreign`, whose default refuses. Its module's
+`wire` submodule defines the shape once, as a plain data type that derives
+both traits with the parts left as `Foreign`s; `Serialize` converts the
+value into it, and its `build` method takes a `Resolve`r of the parts and
+builds through the public constructors, so decoding validates what
+construction validates. The type's own `Deserialize` builds with
+`NoForeign`, which refuses every part by its type id. The core never reads
+a part's payload and holds no resolver of its own.
+
 ### Replacing a Python class
 
 - Port bottom-up. A class switches to Rust only once everything it holds
@@ -513,7 +526,8 @@ Each public item has exactly one public path, every `pub use` is explicit
 (no globs), and CI rejects an item re-exported under a second path. A
 module depends only on the layers before it:
 
-1. `identifier`, `interned`
+1. `identifier`, `interned`, and `foreign`, the serialized form of parts other
+   implementations define
 2. `described_tag`, `value_domain`, `provenance`
 3. `diagnostic` and `op_attribute`, whose tags are `described_tag`
    vocabularies

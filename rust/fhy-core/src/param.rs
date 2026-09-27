@@ -59,6 +59,7 @@ mod interval;
 mod parameter;
 mod screen;
 mod value;
+pub mod wire;
 
 pub use assignment::ParamAssignment;
 pub use context::{NoParamObserver, ParamContext, ParamEvent, ParamObserver, ScreenReason};

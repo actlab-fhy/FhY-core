@@ -28,6 +28,7 @@ pub use callee::{Callee, FunctionName, FunctionNameError};
 pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
 pub use error::{BooleanPosition, NonBooleanLogicalOperandError, PiecewiseError, RebuildError};
 pub use literal::{Decimal, LiteralTextError, LiteralValue};
+pub(crate) use literal::{float_text, integer_text, serialize_display_text};
 pub use node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
     PiecewiseExpression, UnaryExpression,

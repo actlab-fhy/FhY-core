@@ -265,7 +265,7 @@ impl Error for LiteralTextError {}
 
 /// Serialize `value` as the string its `Display` writes: the decimal digits
 /// of an integer, or the shortest text that reads back as a float.
-fn serialize_display_text<T: fmt::Display, S: serde::Serializer>(
+pub(crate) fn serialize_display_text<T: fmt::Display, S: serde::Serializer>(
     value: &T,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -273,7 +273,7 @@ fn serialize_display_text<T: fmt::Display, S: serde::Serializer>(
 }
 
 /// The wire form of an integer literal: its decimal digits as a string.
-mod integer_text {
+pub(crate) mod integer_text {
     use std::fmt;
 
     use num_bigint::BigInt;
@@ -305,7 +305,7 @@ mod integer_text {
         }
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<BigInt, D::Error> {
         deserializer.deserialize_str(IntegerTextVisitor)
@@ -314,7 +314,7 @@ mod integer_text {
 
 /// The wire form of a float literal: the text `{}` writes for it, which
 /// `f64::from_str` reads back to the same value.
-mod float_text {
+pub(crate) mod float_text {
     use std::fmt;
     use std::num::ParseFloatError;
 
@@ -336,7 +336,7 @@ mod float_text {
         }
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
         deserializer.deserialize_str(FloatTextVisitor)
     }
 }

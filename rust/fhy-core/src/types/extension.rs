@@ -13,6 +13,8 @@ use std::borrow::Cow;
 use std::fmt;
 use std::hash::Hasher;
 
+use crate::foreign::{Foreign, ForeignError};
+
 use super::data_type::DataType;
 use super::environment::TypeUnificationEnvironment;
 use super::error::UnificationError;
@@ -28,6 +30,18 @@ pub trait TypeExtension: fmt::Debug + fmt::Display + Send + Sync {
     /// Return `self` as [`Any`], so its implementer can recover its own
     /// type.
     fn as_any(&self) -> &dyn Any;
+
+    /// Return the type as a [`Foreign`] part, for serialization.
+    ///
+    /// # Errors
+    ///
+    /// The default returns [`ForeignError::NoWireForm`]: the type
+    /// cannot be serialized.
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Err(ForeignError::NoWireForm {
+            type_name: self.type_name().into_owned(),
+        })
+    }
 
     /// Return whether `other` is structurally equivalent to this type. The
     /// default answers `false`.
@@ -93,6 +107,18 @@ pub trait DataTypeExtension: fmt::Debug + fmt::Display + Send + Sync {
     /// Return `self` as [`Any`], so its implementer can recover its own
     /// type.
     fn as_any(&self) -> &dyn Any;
+
+    /// Return the data type as a [`Foreign`] part, for serialization.
+    ///
+    /// # Errors
+    ///
+    /// The default returns [`ForeignError::NoWireForm`]: the data type
+    /// cannot be serialized.
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Err(ForeignError::NoWireForm {
+            type_name: self.type_name().into_owned(),
+        })
+    }
 
     /// Return whether `other` is structurally equivalent to this data type.
     /// The default answers `false`.

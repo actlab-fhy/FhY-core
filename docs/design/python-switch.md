@@ -162,9 +162,9 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] N-S17-1 decided as (a), N-S17-2 as (a), N-S17-3 as (c) (2026-09-26; see "S17 resolutions"; D-S17-16, D-S17-19 and D-S17-20 revised, D-S17-25 added)
   - [x] S17.1: serialization benchmarks and the V1 baseline (67 rows; see "S17.1 baseline"); the frozen pickle corpus and today's V1 payloads (57 objects, 229 tests)
   - [ ] S17a: the core
-    - [ ] S17a.1: `fhy_core::foreign` (`Foreign`, `Resolve`, `NoForeign`, `ForeignError`) and `to_foreign` on the five extension traits, test-first
-    - [ ] S17a.2: serde for types and the symbol table (the wire types and their `build`), test-first
-    - [ ] S17a.3: serde for constraints and params, test-first
+    - [x] S17a.1: `fhy_core::foreign` (`Foreign`, `Resolve`, `NoForeign`, `ForeignError`, `BuildError`) and `to_foreign` on the five extension traits (with S17a.2 and S17a.3 in one commit; see "S17a implementation notes")
+    - [x] S17a.2: serde for types and the symbol table (`types::wire`, `symbol_table::wire`)
+    - [x] S17a.3: serde for constraints and params (`constraint::wire`, `param::wire`); 82 new tests, the Rust gate passes (4,304; 4,336 with all features)
     - [ ] S17a.4: the Rust replay of the serialization corpus, with a test resolver
   - [ ] S17b: the binding and the framework
     - [ ] S17b.1: the binding's plumbing (`serde_json`, `pythonize` after the spike, `wire.rs`, the resolver, `to_foreign` on the adapters), then V1 moved into `legacy/` and `_serialization_v1.py` unchanged

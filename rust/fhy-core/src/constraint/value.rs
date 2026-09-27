@@ -19,6 +19,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::expression::{BigInt, Decimal, LiteralValue};
+use crate::foreign::{Foreign, ForeignError};
 
 /// The error an [`OpaqueValue`] reports, such as an exception its producer
 /// raised.
@@ -62,6 +63,18 @@ pub trait OpaqueValue: Send + Sync + fmt::Debug {
     fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
         let _ = other;
         None
+    }
+
+    /// Return the value as a [`Foreign`] part, for serialization.
+    ///
+    /// # Errors
+    ///
+    /// The default returns [`ForeignError::NoWireForm`]: the value
+    /// cannot be serialized.
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Err(ForeignError::NoWireForm {
+            type_name: self.type_name().into_owned(),
+        })
     }
 
     /// Return the value as [`Any`], so an implementation can recognize its

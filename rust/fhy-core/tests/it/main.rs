@@ -8,6 +8,7 @@
 mod constraint;
 mod diagnostic_stories;
 mod expression;
+mod foreign_stories;
 mod identifier_stories;
 mod interned;
 mod lattice;

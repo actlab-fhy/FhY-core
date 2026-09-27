@@ -6,6 +6,7 @@ use std::fmt;
 
 use crate::constraint::{Constraint, CustomError, Outcome, Value};
 use crate::expression::SymbolType;
+use crate::foreign::{Foreign, ForeignError};
 use crate::identifier::Identifier;
 
 use super::domain::{IntervalProfile, ParamDomain, Side};
@@ -111,6 +112,18 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
 
     /// Return whether `other` is a structurally identical domain.
     fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool;
+
+    /// Return the domain as a [`Foreign`] part, for serialization.
+    ///
+    /// # Errors
+    ///
+    /// The default returns [`ForeignError::NoWireForm`]: the domain
+    /// cannot be serialized.
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Err(ForeignError::NoWireForm {
+            type_name: "custom domain".to_owned(),
+        })
+    }
 
     /// Return the domain as [`Any`], so an implementation can recognize its
     /// own domains.

@@ -41,6 +41,7 @@ mod error;
 mod frame;
 mod ordered;
 mod table;
+pub mod wire;
 
 pub use error::{SymbolTableError, Violation};
 pub use frame::{Frame, FunctionFrame, FunctionKeyword, ImportFrame, SymbolFrame, VariableFrame};

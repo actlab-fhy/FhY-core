@@ -53,6 +53,7 @@ mod key;
 mod set;
 mod system;
 mod value;
+pub mod wire;
 
 use std::collections::HashSet;
 use std::sync::Arc;
