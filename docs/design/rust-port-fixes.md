@@ -113,7 +113,7 @@ onto `dev-rust` before continuing.
 - [ ] R2-N5 (xdist stall): reproduce or clear the 99% stall; account for the missing tests
 - [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails (`44a2c00`)
 - [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
-- [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python
+- [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python (`6f57090`; its extra blank line, which `ruff format` refuses, fixed forward in the next commit)
 - [ ] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
 - [ ] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
 - [ ] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented

@@ -117,7 +117,6 @@ _advance_counter_past: Callable[[int], None] = _rs.advance_identifier_counter_pa
 _next_id: Callable[[], int] = _rs.next_identifier_id
 
 
-
 @final
 @register_serializable(type_id="id")
 class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
