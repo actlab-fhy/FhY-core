@@ -69,8 +69,8 @@ onto `dev-rust` before continuing.
 
 ### Track B: `expression` (expressions, the wire and the corpus; lands 3rd)
 
-- [x] B0: worktree `port/fix2-expression` created; the baseline gates recorded (the worktree is `fix-b-expression`, branch `fix/b-expression`; see Track B notes): this commit
-- [ ] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed
+- [x] B0: worktree `port/fix2-expression` created; the baseline gates recorded (the worktree is `fix-b-expression`, branch `fix/b-expression`; see Track B notes): `4403638`
+- [x] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed: this commit
 - [ ] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing
 - [ ] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`
 - [ ] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`
@@ -3098,6 +3098,16 @@ after the pre-rebase items. Its `.venv` is its own (`uv sync --group dev
 matches the Track D status: `cargo test --workspace` 4,565 passed, 2
 ignored; `--all-features` 4,601; fmt and clippy `-D warnings` both ways
 clean; `pytest tests` 8,313 passed, 2 xfailed.
+
+**R2-N3.** Checked at `a9ef7b5`: `AlternativesPattern.match_under` returns
+the first alternative's bindings, and `BinaryExpressionPattern.match_under`
+matches the right operand under that one result, so Python never
+backtracked into a later alternative; no code change. The new rstest
+`alternatives_commit_to_the_first_match` (and its Python twin in
+`test_pattern_rust_binding.py`) pins `Binary(Add, Alt[Capture(c, _), _],
+Capture(c))` failing on `1 + 2` and matching `2 + 2`, beside the existing
+`pattern_alternatives_commits_to_the_first_match`, which pins the
+failing case over `any_literal`. Both passed at their first run.
 
 ### Track C notes
 

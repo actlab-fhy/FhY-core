@@ -335,6 +335,36 @@ def test_a_call_pattern_compares_callees() -> None:
     assert CallExpressionPattern("f", None).match(Expression.call("g", a)) is None
 
 
+@pytest.mark.parametrize(
+    ("left", "matches"),
+    [(1, False), (2, True)],
+    ids=["the_right_operand_differs", "the_operands_are_equal"],
+)
+def test_alternatives_commit_to_the_first_match(left: int, matches: bool) -> None:
+    """Test an alternative is committed choice, as before the switch.
+
+    In ``1 + 2`` the first alternative binds ``c`` to ``1`` and the right
+    operand fails; the wildcard alternative is not tried.
+    """
+    c = Capture("c")
+    pattern = BinaryExpressionPattern(
+        BinaryOperation.ADD,
+        AlternativesPattern((CapturePattern(c), WildcardPattern())),
+        CapturePattern(c),
+    )
+    expression = BinaryExpression(
+        BinaryOperation.ADD, LiteralExpression(left), LiteralExpression(2)
+    )
+
+    result = pattern.match(expression)
+
+    if matches:
+        assert result is not None
+        assert result[c] is expression.left
+    else:
+        assert result is None
+
+
 def test_match_refuses_a_value_that_is_not_an_expression() -> None:
     """Test ``match`` of a non-expression raises ``TypeError``."""
     with pytest.raises(TypeError, match=r"Pattern\.match expression must be an"):

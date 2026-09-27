@@ -1684,6 +1684,32 @@ fn pattern_alternatives_commits_to_the_first_match() {
     assert!(result.is_none(), "got {result:?}");
 }
 
+/// Test `c + c` through an alternative `[c, _]` on the left is committed
+/// choice, as the Python matcher before the switch was: in `1 + 2` the
+/// first alternative binds `c` to `1`, the right operand then fails, and
+/// the wildcard alternative, which would let `c` bind `2`, is never tried.
+/// `2 + 2` matches through the first alternative.
+#[rstest]
+#[case::the_right_operand_differs(1, None)]
+#[case::the_operands_are_equal(2, Some(2))]
+fn alternatives_commit_to_the_first_match(#[case] left: i64, #[case] bound: Option<i64>) {
+    let c = Capture::new("c");
+    let pattern = Pattern::binary(
+        BinaryOperation::Add,
+        Pattern::alternatives([Pattern::capture(&c), Pattern::wildcard()]),
+        Pattern::capture(&c),
+    );
+    let expression =
+        Expression::new_binary(BinaryOperation::Add, build_literal(left), build_literal(2));
+
+    let result = match_infallibly(&pattern, &expression);
+
+    assert_eq!(
+        result.map(|bindings| bindings[&c].clone()),
+        bound.map(build_literal)
+    );
+}
+
 /// Test an alternatives pattern of 10,000 failing branches before a
 /// matching one finds the match and binds only its captures.
 #[test]
