@@ -1,7 +1,17 @@
 //! Core data structures for the `FhY` compiler: identifiers, interned
-//! vocabularies, diagnostics and provenance, symbolic expressions with
-//! patterns and rewrite rules, tree traversals, and a compiler-pass
-//! framework.
+//! vocabularies and the serialized form of foreign parts, diagnostics and
+//! provenance, tree traversals, terms and lattices, symbolic expressions
+//! with patterns and rewrite rules, a compiler-pass framework, a solver
+//! with pluggable backends, constraints and params, the IR type system, a
+//! symbol table, and a stack and a scope.
+//!
+//! # Features
+//!
+//! The default features hold everything but two backends, each behind an
+//! off-by-default feature: `z3`, the `solver::Z3Solver` backend, which
+//! links libz3, and `ndarray`, the array evaluation of
+//! [`expression::evaluate`]. The documentation on docs.rs shows both and
+//! marks the items each feature adds.
 //!
 //! # Modules
 //!
@@ -80,7 +90,8 @@
 //! # Serialization
 //!
 //! Every public type that implements `Serialize` also implements
-//! `Deserialize`, with a plain serde shape documented on the type. The
+//! `Deserialize`, or its [`Canonical<T>`](interned::Canonical) does, with a
+//! plain serde shape documented on the type. The
 //! impls work with self-describing formats such as JSON and with
 //! non-self-describing ones such as postcard. The integers and floats of an
 //! [`Expression`](expression::Expression)'s literals, which a format may not hold
@@ -105,6 +116,8 @@
 //! `__type__`/`__data__` envelope format until it is removed. This crate
 //! does not depend on `serde_json`, so depending on it changes nothing
 //! about how another crate's JSON numbers parse or compare.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod constraint;
 pub mod described_tag;

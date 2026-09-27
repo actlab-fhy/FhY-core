@@ -261,23 +261,29 @@ const fn index_logical_operation(operation: LogicalOperation) -> usize {
     }
 }
 
-const _: () = {
-    let mut index = 0;
-    while index < ALL_UNARY_OPERATIONS.len() {
-        assert!(index_unary_operation(ALL_UNARY_OPERATIONS[index]) == index);
-        index += 1;
+/// The lists hold every variant once, in declaration order: checked when
+/// the test compiles, in an inline `const` block, which Rust 1.85's
+/// dead-code lint, unlike a `const _` item's, counts as a use.
+#[test]
+fn every_operation_is_listed_in_order() {
+    const {
+        let mut index = 0;
+        while index < ALL_UNARY_OPERATIONS.len() {
+            assert!(index_unary_operation(ALL_UNARY_OPERATIONS[index]) == index);
+            index += 1;
+        }
+        let mut index = 0;
+        while index < ALL_BINARY_OPERATIONS.len() {
+            assert!(index_binary_operation(ALL_BINARY_OPERATIONS[index]) == index);
+            index += 1;
+        }
+        let mut index = 0;
+        while index < ALL_LOGICAL_OPERATIONS.len() {
+            assert!(index_logical_operation(ALL_LOGICAL_OPERATIONS[index]) == index);
+            index += 1;
+        }
     }
-    let mut index = 0;
-    while index < ALL_BINARY_OPERATIONS.len() {
-        assert!(index_binary_operation(ALL_BINARY_OPERATIONS[index]) == index);
-        index += 1;
-    }
-    let mut index = 0;
-    while index < ALL_LOGICAL_OPERATIONS.len() {
-        assert!(index_logical_operation(ALL_LOGICAL_OPERATIONS[index]) == index);
-        index += 1;
-    }
-};
+}
 
 /// Callees the generated calls use: every built-in function and two named
 /// functions no catalogue knows.

@@ -1,6 +1,6 @@
 [package]
 name = "fhy-core"
-description = "Core IR building blocks for the FhY compiler: identifiers, interned tags, diagnostics, symbolic expressions, rewrite rules, a pass manager, a solver with pluggable backends, constraints, params, lattices and the IR type system."
+description = "Core IR building blocks for the FhY compiler: identifiers, interned tags, diagnostics, symbolic expressions, rewrite rules, a pass manager, a solver with pluggable backends, constraints, params, lattices, the IR type system, a symbol table, and a stack and a scope."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,6 +23,13 @@ include = [
 
 [lib]
 name = "fhy_core"
+
+[package.metadata.docs.rs]
+# Both optional backends, so docs.rs shows their items, each marked with
+# the feature it needs (`doc(cfg)` under `--cfg docsrs`). z3-sys builds
+# without libz3 for rustdoc, which links nothing.
+features = ["ndarray", "z3"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 libm = { workspace = true }

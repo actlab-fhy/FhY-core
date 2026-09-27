@@ -24,6 +24,7 @@ use super::{EvaluationError, Prepared};
     reason = "the three domains of the value kinds, which callers match"
 )]
 #[derive(Debug, Clone)]
+#[cfg_attr(docsrs, doc(cfg(feature = "ndarray")))]
 pub enum ArrayBinding<'a> {
     /// Booleans.
     Bool(ArrayViewD<'a, bool>),
@@ -62,6 +63,7 @@ impl ArrayBinding<'_> {
     reason = "the three domains of the value kinds, which callers match"
 )]
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(docsrs, doc(cfg(feature = "ndarray")))]
 pub enum ArrayValue {
     /// Booleans.
     Bool(ArrayD<bool>),
@@ -98,6 +100,7 @@ impl ArrayValue {
 ///
 /// An implementation must compute each lane of its output from the same
 /// lane of its input, with the output's shape the input's.
+#[cfg_attr(docsrs, doc(cfg(feature = "ndarray")))]
 pub trait ArrayKernels {
     /// Return whether [`native`](Self::native) computes `function`; the
     /// evaluator's own kernel computes it otherwise.
@@ -124,6 +127,7 @@ pub trait ArrayKernels {
     reason = "a stateless unit type that callers name as a value"
 )]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(docsrs, doc(cfg(feature = "ndarray")))]
 pub struct CoreKernels;
 
 impl ArrayKernels for CoreKernels {
@@ -140,6 +144,7 @@ impl ArrayKernels for CoreKernels {
     }
 }
 
+#[cfg_attr(docsrs, doc(cfg(feature = "ndarray")))]
 impl Prepared<'_> {
     /// Return the value of the expression over the arrays of
     /// `environment`, broadcast together as `NumPy` broadcasts, computing

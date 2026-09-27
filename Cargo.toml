@@ -9,7 +9,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Christopher Priebe <cpriebe@ucsd.edu>"]
 license = "BSD-3-Clause"
-repository = "https://github.com/actlab-fhy/FhY-core.git"
+repository = "https://github.com/actlab-fhy/FhY-core"
 
 [workspace.dependencies]
 # The binding's, which also holds the SymPy backend; fhy-core has no pyo3.
@@ -36,6 +36,8 @@ z3 = "0.21"
 fhy-core = { path = "rust/fhy-core" }
 
 [workspace.lints.rust]
+# docs.rs builds with `--cfg docsrs` (fhy-core's `[package.metadata.docs.rs]`).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 missing_docs = "warn"
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"

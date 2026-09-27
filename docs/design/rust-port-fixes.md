@@ -62,8 +62,8 @@ onto `dev-rust` before continuing.
 - [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object (`2aea756`)
 - [x] R2-039 (F2-039): a versioned, hash-checked prelude module (`c12b485`)
 - [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories (`2fc3546`)
-- [x] R2-029d (F2-029, `solver`): error-text tables and small stories
-- [ ] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift
+- [x] R2-029d (F2-029, `solver`): error-text tables and small stories (`1fef465`)
+- [x] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
 - [ ] Track D status: gates green; counts recorded; landed as `<hash>`
 
@@ -2861,6 +2861,43 @@ premise holds for expressions but not for set constraints:
   `is_ok()`.
 - **B's R2-010** rewords four `LoweringError` texts; per §I.7.1 B updates
   these pins on its rebase.
+
+**R2-009.**
+- **docs.rs features: `["ndarray", "z3"]`.** `DOCS_RS=1 cargo doc -p
+  fhy-core --no-deps --features z3,ndarray` succeeds in a shell with no
+  libz3, no `z3` executable and no z3 entry for `pkg-config`: z3-sys's
+  build script tolerates a failed probe, and rustdoc links nothing. The
+  `--cfg docsrs` build needs a nightly rustdoc (`feature(doc_cfg)`); no
+  nightly is installed here, so it was checked with `RUSTC_BOOTSTRAP=1` on
+  stable, locally only: it builds with `-D warnings`, and `Z3Solver`,
+  `ArrayValue` and `Prepared::evaluate_array` carry the "Available on crate
+  feature" marking.
+- **`doc(cfg)`** is on the gated items themselves (`Z3Solver`,
+  `Z3TermError`, `ArrayBinding`, `ArrayValue`, `ArrayKernels`,
+  `CoreKernels`, and the `impl Prepared` block of `evaluate_array`); their
+  `pub use`s inherit it.
+- **The 1.85 `dead_code` warnings** came from helpers used only inside
+  `const _: () = { .. }` items, which 1.85's lint does not count. The
+  `Send + Sync` assertions of `interned.rs` became a `#[test]`, and the two
+  list-order checks became `#[test]`s whose bodies are inline `const`
+  blocks, so they still fail at compile time; three tests more (4,378).
+  The edits in `tests/it/expression/vocabulary_stories.rs` and
+  `tests/it/support/expression.rs` (Track B's) are confined to those
+  blocks.
+- **CI.** `rust` gains a "Per-Crate Linting" step (clippy on `fhy-core`
+  alone, three ways) and builds the default-feature docs of `fhy-core`
+  before the workspace's; the docs step's comment now says what each
+  build is. `rust-msrv` gains "Build fhy-core's Targets on the MSRV", the
+  three `cargo check -p fhy-core --all-targets` runs under `RUSTFLAGS=-D
+  warnings`, which needs no libz3 since `check` links nothing. All replayed
+  locally, clean.
+- **Drift.** The crate summary names every area and gains a "Features"
+  section (`solver::Z3Solver` is code text there, since it exists only
+  under `z3`); the serialization claim reads "…or its `Canonical<T>`
+  does"; the description names the symbol table, stack and scope; the
+  workspace `repository` drops `.git`; the README's two "docs.rs builds the
+  default features" sentences say docs.rs builds each feature and marks
+  its items.
 
 **Python-visible changes** (§I.2 rule 6):
 

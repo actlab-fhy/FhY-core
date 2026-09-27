@@ -57,7 +57,7 @@ The minimum supported Rust version is 1.85.
 fhy-core = { version = "0.2", features = ["z3"] }
 ```
 
-The `z3-sys` crate links libz3 4.13.3 or newer. By default it finds a system libz3 through `pkg-config`. To choose another link method, enable it on your own `z3` dependency, which Cargo's feature unification applies to this crate's: `vendored` builds libz3 from source, `gh-release` downloads a z3 release, and `vcpkg` uses vcpkg. To link a libz3 you already have, such as the one the `z3-solver` Python wheel ships, set `Z3_LIBRARY_PATH_OVERRIDE` to its directory, `Z3_SYS_Z3_VERSION` to its version when neither `pkg-config` nor a `z3` executable on `PATH` reports it, and the library search path of your platform (`LD_LIBRARY_PATH` on Linux) to the same directory when running. The feature does not raise the minimum Rust version. docs.rs builds the default features.
+The `z3-sys` crate links libz3 4.13.3 or newer. By default it finds a system libz3 through `pkg-config`. To choose another link method, enable it on your own `z3` dependency, which Cargo's feature unification applies to this crate's: `vendored` builds libz3 from source, `gh-release` downloads a z3 release, and `vcpkg` uses vcpkg. To link a libz3 you already have, such as the one the `z3-solver` Python wheel ships, set `Z3_LIBRARY_PATH_OVERRIDE` to its directory, `Z3_SYS_Z3_VERSION` to its version when neither `pkg-config` nor a `z3` executable on `PATH` reports it, and the library search path of your platform (`LD_LIBRARY_PATH` on Linux) to the same directory when running. The feature does not raise the minimum Rust version. docs.rs builds the crate with this feature, and marks the items it adds.
 
 Without the feature, `SmtLib2Process` drives a z3 executable (`z3 -in`) or any other SMT-LIB2 solver (`cvc5 --lang=smt2`) over its standard input and output.
 
@@ -70,7 +70,7 @@ Without the feature, `SmtLib2Process` drives a z3 executable (`z3 -in`) or any o
 fhy-core = { version = "0.2", features = ["ndarray"] }
 ```
 
-Every lane is computed as the scalar evaluation of that lane's bindings is, and the result is a new array in the standard layout. An `ArrayKernels` implementation can compute native built-ins over whole arrays instead of the crate's own per-lane kernels; `CoreKernels` uses the crate's. The feature's API names `ndarray` 0.17's types, and it does not raise the minimum Rust version. docs.rs builds the default features.
+Every lane is computed as the scalar evaluation of that lane's bindings is, and the result is a new array in the standard layout. An `ArrayKernels` implementation can compute native built-ins over whole arrays instead of the crate's own per-lane kernels; `CoreKernels` uses the crate's. The feature's API names `ndarray` 0.17's types, and it does not raise the minimum Rust version. docs.rs builds the crate with this feature, and marks the items it adds.
 
 ## License
 

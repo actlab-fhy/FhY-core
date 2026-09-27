@@ -6,8 +6,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-/// Compile-time check that `T` can be shared and sent across threads, for use
-/// in a `const _: () = { ... };` item.
+/// Compile-time check that `T` can be shared and sent across threads: a
+/// call compiles only when it can.
 pub(crate) const fn assert_send_sync<T: Send + Sync>() {}
 
 /// Return `value`'s hash under the default hasher.

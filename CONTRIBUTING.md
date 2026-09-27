@@ -243,13 +243,22 @@ before opening a release pull request.
 
 The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
 requires both. `rust` runs `cargo fmt --all --check`, `cargo clippy
---workspace --all-targets --all-features --locked -- -D warnings`, `cargo
-test --workspace --locked --all-features`, and `cargo package --locked -p
-fhy-core`, then unpacks the packaged crate and runs `cargo test --locked`
-in it, so the tests pass on the crate as a consumer receives it.
-`rust-msrv` runs `cargo check --workspace --lib --locked` on the
-`rust-version` in `Cargo.toml`, so the MSRV covers both `fhy-core` and the
-PyO3 binding crate `fhy-core-py`. That version is a promise to the crate's
+--workspace --all-targets --all-features --locked -- -D warnings`, and,
+since a workspace build unifies the binding's features into `fhy-core`,
+`cargo clippy -p fhy-core --all-targets` with no features and with each
+feature alone; `cargo test --workspace --locked --all-features`; `cargo
+doc -p fhy-core --no-deps` with the default features and `cargo doc
+--workspace --no-deps`, both with `-D warnings`; and `cargo package
+--locked -p fhy-core`, then unpacks the packaged crate and runs `cargo
+test --locked` in it, so the tests pass on the crate as a consumer
+receives it. docs.rs builds `fhy-core` with both features and `--cfg
+docsrs` (`[package.metadata.docs.rs]`), so each feature's items carry a
+`doc(cfg)` marking: a new item behind a feature gets
+`#[cfg_attr(docsrs, doc(cfg(feature = "...")))]`. `rust-msrv` runs `cargo
+check --workspace --lib --locked` on the `rust-version` in `Cargo.toml`,
+so the MSRV covers both `fhy-core` and the PyO3 binding crate
+`fhy-core-py`, and `cargo check -p fhy-core --all-targets` with no features
+and with each feature alone, with `-D warnings`. That version is a promise to the crate's
 consumers, so `.cargo/config.toml` has the resolver fall back to dependency
 releases that build on it and `cargo update` keeps `Cargo.lock` within it.
 

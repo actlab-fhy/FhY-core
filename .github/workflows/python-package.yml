@@ -97,6 +97,14 @@ jobs:
         # it; clippy only checks, so that costs no libpython. fhy-core has no
         # pyo3.
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Per-Crate Linting
+        # A workspace build unifies the binding's features into fhy-core, so
+        # the crate is also linted as a dependent builds it: with no
+        # features, and with each feature alone.
+        run: |
+          for features in "" "--features z3" "--features ndarray"; do
+            cargo clippy -p fhy-core --all-targets --locked $features -- -D warnings
+          done
       - name: Integration Test Targets
         # Every integration test shares the `it` binary. A test that needs a
         # fresh process is its own single-test target and is listed here on
@@ -125,12 +133,16 @@ jobs:
         # backend against the z3 executable instead.
         run: 'cargo test --locked -p fhy-core --test it solver::'
       - name: Documentation
-        # Fresh docs, so the public-paths check below reads no stale page.
-        # The default features, as docs.rs builds them.
+        # fhy-core alone with its default features, as a dependent without
+        # features builds it, then the workspace, whose features the binding
+        # unifies and whose fresh docs the public-paths check below reads.
+        # docs.rs builds fhy-core with both features and `--cfg docsrs`
+        # (`[package.metadata.docs.rs]`), which only a nightly rustdoc takes.
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
           rm -rf target/doc
+          cargo doc -p fhy-core --no-deps --locked
           cargo doc --workspace --no-deps --locked
       - name: Public Paths
         # Each public item has exactly one path: no glob re-exports, no module
@@ -227,6 +239,16 @@ jobs:
         # and would otherwise win over the toolchain installed here.
         run: |
           cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --locked
+      - name: Build fhy-core's Targets on the MSRV
+        # The crate alone, with its tests, with no features and with each
+        # feature alone, as a dependent on the MSRV builds it; a warning the
+        # MSRV's lints raise fails the step.
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          for features in "" "--features z3" "--features ndarray"; do
+            cargo +${{ steps.toolchain.outputs.name }} check -p fhy-core --all-targets --locked $features
+          done
 
   config:
     runs-on: ubuntu-latest

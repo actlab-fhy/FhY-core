@@ -1304,13 +1304,15 @@ mod tests {
         assert!(debug_text.contains("InternRegistry"), "got {debug_text}");
     }
 
-    /// The public types stay usable from multiple threads.
-    const _: () = {
+    /// The public types stay usable from multiple threads. A test, not a
+    /// `const _` item, so Rust 1.85's dead-code lint sees the helper used.
+    #[test]
+    fn public_types_are_send_and_sync() {
         assert_send_sync::<Canonical<Tag>>();
         assert_send_sync::<InternRegistry<Tag>>();
         assert_send_sync::<InternOutcome<Tag>>();
         assert_send_sync::<NotInternedError<String>>();
-    };
+    }
 
     /// Test concurrent interning of one key yields exactly one canonical
     /// instance, shared by every caller.

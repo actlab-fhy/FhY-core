@@ -8,7 +8,7 @@
 //!   constant by its value, keeping every other node;
 //! - [`evaluate`](Evaluator::evaluate) computes an expression's value over
 //!   an environment binding its free identifiers: to [`Scalar`]s, or, with
-//!   the `ndarray` feature, to arrays ([`Prepared::evaluate_array`]).
+//!   the `ndarray` feature, to arrays (`Prepared::evaluate_array`).
 //!
 //! # Semantics
 //!

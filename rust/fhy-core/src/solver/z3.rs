@@ -46,6 +46,7 @@ use crate::foreign::BoxError;
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(docsrs, doc(cfg(feature = "z3")))]
 pub struct Z3Solver;
 
 impl Z3Solver {
@@ -78,6 +79,7 @@ impl SmtSolver for Z3Solver {
 /// A term the z3 library cannot build, which only a malformed script holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
+#[cfg_attr(docsrs, doc(cfg(feature = "z3")))]
 pub struct Z3TermError {
     text: String,
 }

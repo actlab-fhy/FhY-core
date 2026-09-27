@@ -57,18 +57,24 @@ const fn index_function_sort(sort: FunctionSort) -> usize {
     }
 }
 
-const _: () = {
-    let mut index = 0;
-    while index < ALL_SYMBOL_TYPES.len() {
-        assert!(index_symbol_type(ALL_SYMBOL_TYPES[index]) == index);
-        index += 1;
+/// The lists hold every variant once, in declaration order: checked when
+/// the test compiles, in an inline `const` block, which Rust 1.85's
+/// dead-code lint, unlike a `const _` item's, counts as a use.
+#[test]
+fn every_symbol_type_and_function_sort_is_listed_in_order() {
+    const {
+        let mut index = 0;
+        while index < ALL_SYMBOL_TYPES.len() {
+            assert!(index_symbol_type(ALL_SYMBOL_TYPES[index]) == index);
+            index += 1;
+        }
+        let mut index = 0;
+        while index < ALL_FUNCTION_SORTS.len() {
+            assert!(index_function_sort(ALL_FUNCTION_SORTS[index]) == index);
+            index += 1;
+        }
     }
-    let mut index = 0;
-    while index < ALL_FUNCTION_SORTS.len() {
-        assert!(index_function_sort(ALL_FUNCTION_SORTS[index]) == index);
-        index += 1;
-    }
-};
+}
 
 /// Every wire word of the four vocabularies, plus near misses of each: the
 /// candidate strings the membership tests feed to deserialization.
