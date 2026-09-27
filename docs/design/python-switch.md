@@ -141,7 +141,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S15.6: benchmarks after, and docs (every row faster or within noise except `get_namespace` and `update_namespaces`; see "S15 benchmarks")
 - [ ] S16: params, in two parts (see "S16: params"; "Needs the user" is empty)
   - [x] S16.0: the design (survey, divergences P-1 to P-14, decisions D-S16-1 to D-S16-22, benchmark plan, steps, test plan)
-  - [ ] S16a: values and domains
+  - [x] S16a: values and domains. The suite is green (7,821 passed), slow tests pass (7,854), properties pass (282), `tests_minimal` passes (5,868 passed, 629 skipped), lint and mypy are clean, and the Rust gate passes (4,080; 4,112 with all features)
     - [x] S16a.1: param benchmarks and baseline (55 rows; see "S16a.1 baseline")
     - [x] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events; 141 new tests, see "S16a.2 implementation notes")
     - [x] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
