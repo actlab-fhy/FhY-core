@@ -15334,6 +15334,14 @@ Where a decision follows an earlier slice, it says so.
 - **D-S13-18: no new process-global state.** Python objects live in the
   pyclass objects and the adapters. The third party's bindings are rebuilt
   from the snapshot (D-S13-5), not kept on a thread-local stack.
+  - **Revised (R2-023, 2026-09-27):** the pending-error slot keeps the
+    first exception of a call, except that an exception that is not an
+    `Exception`, such as `KeyboardInterrupt` or `SystemExit`, replaces a
+    kept `Exception`. Once an exception is pending, an opaque value's `==`
+    and `<`, a lazily computed ordering key, and a Python-defined
+    constraint's or domain's comparison and scope answer their fallback
+    without calling Python, and a failed lazy key is not cached. See
+    `docs/design/rust-port-fixes.md` R2-023.
 - **D-S13-19: the Rust tests specify the core first** (the tests rule;
   S7.2's practice). There is a traceability table from the Python
   constraint tests.

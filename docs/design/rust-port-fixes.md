@@ -37,8 +37,8 @@ onto `dev-rust` before continuing.
 
 ### Track A: `api` (the breaking API batch; lands 1st)
 
-- [x] A0: worktree `port/fix2-api` created; the baseline gates recorded (the worktree is `fix-a-api`, branch `fix/a-api`; see Track A notes)
-- [ ] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key
+- [x] A0: worktree `port/fix2-api` created; the baseline gates recorded (the worktree is `fix-a-api`, branch `fix/a-api`; see Track A notes): `fd19340`
+- [x] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key
 - [ ] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode
 - [ ] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence
 - [ ] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers
@@ -2180,6 +2180,33 @@ maintainer created them). Its `.venv` is its own (`uv sync --group dev
 A clean copy of the base (`git archive 111df20` into `target/base-src`,
 with its own `.venv`) serves the baseline's Python gates, the benchmarks'
 "before" runs, and the check that each bug's new tests fail at the base.
+
+**R2-023.**
+- **Where the pending check sits.** An opaque value's `is_equal` and
+  `order_against`, its lazy `ordering_key`, and a Python-defined
+  constraint's `free_identifiers`, `is_structurally_equivalent` and
+  `is_alpha_equivalent_under` answer their fallback without calling Python
+  once an exception is pending. So does a Python-defined domain's
+  `is_structurally_equivalent`, the one other hook that answers a fallback
+  and keeps its exception. The observers still log: their records are not
+  comparisons, and an exception they raise still takes the slot's rule.
+- **The lazy key.** No Python path keys one adapter twice: every read of a
+  Python value builds a fresh `PyOpaqueValue`, and a stored value's key is
+  computed when the member is built. So the "fails once, then succeeds"
+  pin is a binding unit test of the key cell (`cached_key`), not a Python
+  test. R2-004 then makes the key fallible and computes it once, in
+  `Member::try_from` (J-2).
+- **Binding unit tests.** `fhy-core-py` gains its first `#[cfg(test)]`
+  module (`constraint/value.rs`), which embeds the gate Python through
+  `Python::initialize` and needs no `fhy_core` import. It runs under
+  `cargo test --workspace`, with the gate environment.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | after a member's `==` raised, every later member's `==` still ran in that call | none runs; the first exception is raised | `test_no_member_equality_runs_after_the_first_exception` |
+  | a `KeyboardInterrupt` or `SystemExit` raised after a kept `Exception` was lost | it replaces the kept `Exception` and is raised | binding unit test `the_first_exception_is_kept_until_an_interrupt_replaces_it` |
+  | a `KeyboardInterrupt` from the first member's `==` was raised, and later members' `==` still ran | it is raised, and nothing runs after it | `test_a_keyboard_interrupt_from_the_first_member_is_raised_alone` |
 
 ### Track D notes
 

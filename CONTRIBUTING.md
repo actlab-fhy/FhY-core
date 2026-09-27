@@ -423,7 +423,10 @@ mutability. Slice S13 adds a
 thread-local slot (`rust/fhy-core-py/src/constraint/value.rs`) holding the
 first exception a Python member's `==`, or a Python-defined constraint's
 comparison, raised during one call into the constraint core, which the call
-raises when the core returns; it is empty whenever no such call runs.
+raises when the core returns; an exception that is not an `Exception`, such
+as `KeyboardInterrupt`, replaces a kept `Exception`, and once one is kept no
+comparison calls Python again during that call. It is empty whenever no
+such call runs.
 Slice S17 reuses that slot for the exception a Python-defined part's
 serialization hook raises while the core serializes or resolves it
 (`rust/fhy-core-py/src/wire.rs`); the wire version is a Python context

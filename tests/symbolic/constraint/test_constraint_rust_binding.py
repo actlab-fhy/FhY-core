@@ -452,6 +452,73 @@ def test_a_keyboard_interrupt_from_an_opaque_equality_passes_through(
         constraint.evaluate_with_bindings(_bind(x, _Touchy(KeyboardInterrupt())))
 
 
+_TAGGED_CALLS: list[str] = []
+"""The tags of the ``_Tagged`` members whose ``==`` ran, in order."""
+
+
+@register_serializable(type_id="tests.constraint_binding.tagged")
+class _Tagged(Serializable):
+    """A ``Serializable`` member that records its ``==`` and raises its error."""
+
+    def __init__(self, tag: str, error: BaseException | None) -> None:
+        self.tag = tag
+        self.error = error
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        _TAGGED_CALLS.append(self.tag)
+        if self.error is not None:
+            raise self.error
+        return NotImplemented
+
+    @override
+    def __hash__(self) -> int:
+        return hash(self.tag)
+
+    @override
+    def __repr__(self) -> str:
+        return f"_Tagged({self.tag})"
+
+    @override
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"tag": self.tag}
+
+    @classmethod
+    @override
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "_Tagged":
+        return cls(str(data["tag"]), None)
+
+
+def test_no_member_equality_runs_after_the_first_exception(x: Identifier) -> None:
+    """Test the first exception of a call stops the comparisons that follow it."""
+    first = ValueError("first")
+    constraint = InSetConstraint(
+        x, [_Tagged("a", first), _Tagged("b", KeyboardInterrupt())]
+    )
+    _TAGGED_CALLS.clear()
+
+    with pytest.raises(ValueError, match="first") as raised:
+        constraint.evaluate_with_bindings(_bind(x, _Tagged("v", None)))
+
+    assert raised.value is first
+    assert _TAGGED_CALLS == ["a"]
+
+
+def test_a_keyboard_interrupt_from_the_first_member_is_raised_alone(
+    x: Identifier,
+) -> None:
+    """Test a ``KeyboardInterrupt`` raised first is raised, and nothing runs after it."""
+    constraint = InSetConstraint(
+        x, [_Tagged("a", KeyboardInterrupt()), _Tagged("b", ValueError("later"))]
+    )
+    _TAGGED_CALLS.clear()
+
+    with pytest.raises(KeyboardInterrupt):
+        constraint.evaluate_with_bindings(_bind(x, _Tagged("v", None)))
+
+    assert _TAGGED_CALLS == ["a"]
+
+
 # =============================================================================
 # Evaluation through the default solver
 # =============================================================================

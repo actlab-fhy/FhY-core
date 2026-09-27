@@ -8,7 +8,9 @@
 //! member sees the objects it saw before; bindings the core built itself,
 //! with no source, reach it as a dict rebuilt from them (D-S16-15). An exception a hook raises
 //! propagates as the same object; a comparison that raises answers `false`
-//! and its exception is raised when the core returns.
+//! and its exception is raised when the core returns. Once an exception is
+//! pending, the hooks that answer a fallback answer it without calling
+//! Python.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -30,7 +32,7 @@ use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::term::PyAlphaRenaming;
 
 use super::kinds::outcome_to_python;
-use super::value::{record_pending_error, type_name, value_to_python};
+use super::value::{has_pending_error, record_pending_error, type_name, value_to_python};
 
 /// The Python form of a system's bindings: the snapshot of the caller's
 /// mapping.
@@ -148,6 +150,9 @@ pub(crate) fn read_outcome(
 
 impl CustomConstraint for PyCustomConstraint {
     fn free_identifiers(&self) -> HashSet<Identifier> {
+        if has_pending_error() {
+            return HashSet::new();
+        }
         Python::attach(|py| -> PyResult<HashSet<Identifier>> {
             let object = self.object.bind(py);
             let identifiers = object.call_method0(intern!(py, "get_free_identifiers"))?;
@@ -206,6 +211,9 @@ impl CustomConstraint for PyCustomConstraint {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
+        if has_pending_error() {
+            return false;
+        }
         Python::attach(|py| {
             self.object
                 .bind(py)
@@ -229,6 +237,9 @@ impl CustomConstraint for PyCustomConstraint {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
+        if has_pending_error() {
+            return false;
+        }
         Python::attach(|py| {
             renaming_to_python(py, renaming)
                 .and_then(|renaming| {

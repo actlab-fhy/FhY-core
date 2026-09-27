@@ -14,7 +14,10 @@
 //! compares it with Python's `==`, after `type(a) is type(b)`. A comparison
 //! that raises answers `false` and keeps its exception in a per-thread
 //! slot, which the entry point that started the comparison raises when the
-//! core returns (S10's deferred-error pattern).
+//! core returns (S10's deferred-error pattern). Once an exception is kept,
+//! no comparison calls Python again during that call, and an exception that
+//! is not an `Exception`, such as `KeyboardInterrupt`, replaces a kept one
+//! that is.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -23,7 +26,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::OnceLock;
 
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -39,14 +42,41 @@ thread_local! {
     static PENDING_ERROR: RefCell<Option<PyErr>> = const { RefCell::new(None) };
 }
 
-/// Keep `error` as the pending exception, unless one is kept already.
+/// Return whether `error` should replace the kept exception `kept`: only an
+/// exception that is not an `Exception`, such as `KeyboardInterrupt` or
+/// `SystemExit`, outranks one that is.
+fn outranks(py: Python<'_>, error: &PyErr, kept: &PyErr) -> bool {
+    kept.is_instance_of::<PyException>(py) && !error.is_instance_of::<PyException>(py)
+}
+
+/// Keep `error` as the pending exception, unless one is kept already that
+/// it does not outrank: an exception that is not an `Exception` replaces a
+/// kept `Exception`, and otherwise the first one is kept.
 pub(crate) fn record_pending_error(error: PyErr) {
-    PENDING_ERROR.with(|pending| {
-        let mut pending = pending.borrow_mut();
-        if pending.is_none() {
-            *pending = Some(error);
-        }
+    Python::attach(|py| {
+        let mut error = Some(error);
+        let replaced = PENDING_ERROR.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            let replaces = match (pending.as_ref(), error.as_ref()) {
+                (None, _) => true,
+                (Some(kept), Some(error)) => outranks(py, error, kept),
+                (Some(_), None) => false,
+            };
+            if replaces {
+                pending.replace(error.take()?)
+            } else {
+                None
+            }
+        });
+        // Dropped outside the borrow: a finalizer may run Python.
+        drop((replaced, error));
     });
+}
+
+/// Return whether an exception is pending on this thread, so no further
+/// comparison may call Python during the current call.
+pub(crate) fn has_pending_error() -> bool {
+    PENDING_ERROR.with(|pending| pending.borrow().is_some())
 }
 
 /// Run `call`, and return the exception an opaque value raised during it,
@@ -220,11 +250,15 @@ impl OpaqueValue for PyOpaqueValue {
         self.is_member_shaped
     }
 
-    /// Compare with `type(a) is type(b) and a == b`.
+    /// Compare with `type(a) is type(b) and a == b`; once an exception is
+    /// pending, answer `false` without calling Python.
     fn is_equal(&self, other: &dyn OpaqueValue) -> bool {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
+        if has_pending_error() {
+            return false;
+        }
         Python::attach(|py| {
             if !self.class.bind(py).is(other.class.bind(py)) {
                 return false;
@@ -245,21 +279,20 @@ impl OpaqueValue for PyOpaqueValue {
     }
 
     fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Borrowed(self.key.get_or_init(|| {
-            Python::attach(|py| {
-                build_ordering_key(self.object.bind(py)).unwrap_or_else(|error| {
-                    record_pending_error(error);
-                    String::new()
-                })
-            })
-        }))
+        cached_key(&self.key, || {
+            Python::attach(|py| build_ordering_key(self.object.bind(py)))
+        })
     }
 
     /// Order with Python's `<`, both ways: `Less` when `self < other`,
     /// `Greater` when `other < self`, and `Equal` otherwise. A comparison
-    /// that raises answers `None`, and its exception is kept.
+    /// that raises answers `None`, and its exception is kept; once an
+    /// exception is pending, answer `None` without calling Python.
     fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
         let other = other.as_any().downcast_ref::<Self>()?;
+        if has_pending_error() {
+            return None;
+        }
         Python::attach(|py| {
             let (left, right) = (self.object.bind(py), other.object.bind(py));
             let ordering = left.lt(right).and_then(|is_less| {
@@ -291,6 +324,27 @@ impl OpaqueValue for PyOpaqueValue {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Return the key `cell` holds, or compute it with `compute` and keep it.
+///
+/// A key that fails to compute answers the empty key, keeps its exception,
+/// and is not kept, so a later call computes it again; once an exception is
+/// pending, the empty key is answered without calling `compute`.
+fn cached_key(cell: &OnceLock<String>, compute: impl FnOnce() -> PyResult<String>) -> Cow<'_, str> {
+    if let Some(key) = cell.get() {
+        return Cow::Borrowed(key);
+    }
+    if has_pending_error() {
+        return Cow::Owned(String::new());
+    }
+    match compute() {
+        Ok(key) => Cow::Borrowed(cell.get_or_init(|| key)),
+        Err(error) => {
+            record_pending_error(error);
+            Cow::Owned(String::new())
+        }
     }
 }
 
@@ -561,5 +615,99 @@ pub(crate) fn member_to_python<'py>(
             .downcast_ref::<PyOpaqueValue>()
             .map(|value| value.object().bind(py).clone())
             .ok_or_else(|| PyTypeError::new_err("an opaque member has no Python object")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pyo3::exceptions::{PyKeyboardInterrupt, PySystemExit, PyValueError};
+
+    use super::*;
+
+    /// Return the type name of the exception `raised`, or `None`.
+    fn raised_name(py: Python<'_>, raised: Option<&PyErr>) -> Option<String> {
+        raised.map(|error| error.get_type(py).name().unwrap().to_string())
+    }
+
+    #[test]
+    fn the_first_exception_is_kept_until_an_interrupt_replaces_it() {
+        Python::initialize();
+        Python::attach(|py| {
+            let ((), raised) = capture_pending_errors(|| {
+                record_pending_error(PyValueError::new_err("first"));
+                record_pending_error(PyTypeError::new_err("second"));
+            });
+            assert_eq!(
+                raised_name(py, raised.as_ref()).as_deref(),
+                Some("ValueError")
+            );
+
+            let ((), raised) = capture_pending_errors(|| {
+                record_pending_error(PyValueError::new_err("first"));
+                record_pending_error(PyKeyboardInterrupt::new_err(()));
+                record_pending_error(PySystemExit::new_err(()));
+                record_pending_error(PyTypeError::new_err("later"));
+            });
+            assert_eq!(
+                raised_name(py, raised.as_ref()).as_deref(),
+                Some("KeyboardInterrupt")
+            );
+        });
+    }
+
+    #[test]
+    fn a_pending_exception_is_reported_and_restored_around_a_call() {
+        Python::initialize();
+        Python::attach(|py| {
+            let ((), outer) = capture_pending_errors(|| {
+                record_pending_error(PyValueError::new_err("outer"));
+                let ((), inner) = capture_pending_errors(|| {
+                    assert!(!has_pending_error());
+                    record_pending_error(PyTypeError::new_err("inner"));
+                    assert!(has_pending_error());
+                });
+                assert_eq!(
+                    raised_name(py, inner.as_ref()).as_deref(),
+                    Some("TypeError")
+                );
+                assert!(has_pending_error());
+            });
+            assert_eq!(
+                raised_name(py, outer.as_ref()).as_deref(),
+                Some("ValueError")
+            );
+            assert!(!has_pending_error());
+        });
+    }
+
+    #[test]
+    fn a_failed_key_is_not_kept() {
+        Python::initialize();
+        let cell = OnceLock::new();
+        let (key, raised) = capture_pending_errors(|| {
+            cached_key(&cell, || Err(PyValueError::new_err("once"))).into_owned()
+        });
+        assert_eq!(key, "");
+        assert!(raised.is_some());
+        assert!(cell.get().is_none());
+
+        let (key, raised) =
+            capture_pending_errors(|| cached_key(&cell, || Ok("real".to_owned())).into_owned());
+        assert_eq!(key, "real");
+        assert!(raised.is_none());
+        assert_eq!(cell.get().map(String::as_str), Some("real"));
+    }
+
+    #[test]
+    fn no_key_is_computed_while_an_exception_is_pending() {
+        Python::initialize();
+        let cell = OnceLock::new();
+        let ((), raised) = capture_pending_errors(|| {
+            record_pending_error(PyValueError::new_err("first"));
+            let key = cached_key(&cell, || panic!("computed while an exception is pending"));
+            assert_eq!(key, "");
+        });
+        assert!(raised.is_some());
+        assert!(cell.get().is_none());
     }
 }

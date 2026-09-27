@@ -21,7 +21,8 @@ use fhy_core::identifier::Identifier;
 use fhy_core::param::{CustomDomain, IntervalProfile, ParamDomain, Side};
 
 use crate::constraint::{
-    read_constraint, read_outcome, record_pending_error, type_name, value_to_python,
+    has_pending_error, read_constraint, read_outcome, record_pending_error, type_name,
+    value_to_python,
 };
 
 use super::objects::{
@@ -280,6 +281,9 @@ impl CustomDomain for PyCustomDomain {
     }
 
     fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool {
+        if has_pending_error() {
+            return false;
+        }
         Python::attach(|py| {
             domain_to_python(py, other)
                 .and_then(|other| {
