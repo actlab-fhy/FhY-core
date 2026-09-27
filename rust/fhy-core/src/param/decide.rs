@@ -637,14 +637,29 @@ impl Iterator for Permutations<'_> {
     }
 }
 
-/// Return the values a finite `domain` enumerates: its members, or its
-/// permutations.
-fn finite_values(domain: &ParamDomain) -> Option<Box<dyn Iterator<Item = Value> + '_>> {
+/// Return the values a finite `domain` enumerates for a side holding
+/// `constraints`: its members, or its permutations.
+///
+/// A value valid for the side is a member of each of its in-set
+/// constraints, so with one present a permutation domain enumerates the
+/// in-set candidates that are permutations, not all `n!` permutations.
+fn finite_values<'d>(
+    domain: &'d ParamDomain,
+    constraints: &[Constraint],
+) -> Option<Box<dyn Iterator<Item = Value> + 'd>> {
     match domain {
         ParamDomain::Ordinal(domain) => Some(Box::new(domain.values().iter().map(member_value))),
         ParamDomain::Categorical(domain) => {
             Some(Box::new(domain.values().iter().map(member_value)))
         }
+        ParamDomain::Permutation(permutations) if has_in_set(constraints) => Some(Box::new(
+            in_set_candidates(constraints)
+                .iter()
+                .map(member_value)
+                .filter(|value| permutations.is_permutation(value))
+                .collect::<Vec<Value>>()
+                .into_iter(),
+        )),
         ParamDomain::Permutation(domain) => Some(Box::new(Permutations::new(domain.values()))),
         _ => None,
     }
@@ -672,7 +687,7 @@ pub(super) fn has_feasible_value(
             .has_feasible_value(side, context)
             .map_err(ParamError::Custom),
         _ => {
-            let Some(values) = finite_values(domain) else {
+            let Some(values) = finite_values(domain, side.constraints()) else {
                 return Ok(Outcome::Undecided);
             };
             for value in values {
@@ -730,7 +745,7 @@ pub(super) fn feasibility_subset(
             let other_constraints = restricted(other_domain, other)?;
             let own = Side::new(&own_constraints, own.variable());
             let other = Side::new(&other_constraints, other.variable());
-            let Some(values) = finite_values(own_domain) else {
+            let Some(values) = finite_values(own_domain, own.constraints()) else {
                 return Ok(Outcome::Violated);
             };
             for value in values {

@@ -98,8 +98,8 @@ onto `dev-rust` before continuing.
 - [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph: `ad15163`
 - [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution: `0d5f5ba`
 - [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`: `0abc3fb`
-- [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction
-- [ ] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations
+- [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction: `7f3e8db`
+- [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations
 - [ ] R2-028 (F2-028): param and constraint decision-rule tests in Rust
 - [ ] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables
 - [ ] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories
@@ -3823,6 +3823,18 @@ finding.
   | assigning `-1` to a natural param raised "violates constraint" | it raises "is not admissible" | `test_assignment_payload_rejects_only_a_provable_violation` |
   | a numeric procedure with a Python-defined domain on the other side asked it only its sort and values | it also asks its implied constraints | the Rust custom stories |
   | the `IntegerDomain` and `IntervalIntegerDomain` docstrings said `non_negative` does not change admissibility | they say every domain-level procedure respects it | none |
+
+**R2-038c.** `finite_values` takes the side's constraints: with an in-set
+constraint present, a permutation domain enumerates `in_set_candidates`
+(held by every in-set and by no not-in-set constraint) filtered by
+`is_permutation`, and otherwise every permutation as before; feasibility
+and the finite subset both go through it. A valid value is a member of
+every in-set constraint, so the answers cannot change, which
+`permutation_questions_agree_with_brute_force` checks for n up to 5
+against every permutation. `a_permutation_param_with_a_singleton_in_set_decides_at_n_10`
+decides feasibility, infeasibility and a subset at n = 10 in well under
+its 100 ms bound; at the base it did not finish within the five-minute
+limit the check ran under. **Behavior change:** none.
 
 ### Track E notes
 

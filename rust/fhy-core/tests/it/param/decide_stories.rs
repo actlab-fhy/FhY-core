@@ -314,6 +314,52 @@ fn permutation_feasibility_enumerates_the_permutations() {
     );
 }
 
+/// A permutation domain of ten members has 3,628,800 permutations; with an
+/// in-set constraint of one, feasibility and subset enumerate that one
+/// candidate (F2-038), where they walked every permutation.
+#[test]
+fn a_permutation_param_with_a_singleton_in_set_decides_at_n_10() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let members: Vec<i64> = (0..10).collect();
+    let domain =
+        ParamDomain::from(PermutationDomain::new(ints(members.clone())).expect("permutation"));
+    let reversed = Value::Tuple(ints(members.iter().rev().copied()));
+    let only_reversed = [in_set(&x, [reversed.clone(), int(99)])];
+    let excluded = [
+        in_set(&x, [reversed.clone()]),
+        not_in_set(&x, [reversed.clone()]),
+    ];
+    let other_side = [in_set(&y, [reversed])];
+
+    let start = std::time::Instant::now();
+    let feasible = domain
+        .has_feasible_value(Side::new(&only_reversed, &x), &context)
+        .expect("decides");
+    let infeasible = domain
+        .has_feasible_value(Side::new(&excluded, &x), &context)
+        .expect("decides");
+    let subset = domain
+        .feasibility_subset(
+            Side::new(&only_reversed, &x),
+            &domain,
+            Side::new(&other_side, &y),
+            &context,
+        )
+        .expect("decides");
+    let elapsed = start.elapsed();
+
+    assert_eq!(feasible, Outcome::Satisfied);
+    assert_eq!(infeasible, Outcome::Violated);
+    assert_eq!(subset, Outcome::Satisfied);
+    assert!(
+        elapsed < std::time::Duration::from_millis(100),
+        "{elapsed:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Feasibility of numeric domains
 // ---------------------------------------------------------------------------

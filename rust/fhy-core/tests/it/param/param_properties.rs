@@ -261,3 +261,133 @@ proptest! {
         }
     }
 }
+
+/// Return the permutations of `0..n`, each as a list of positions.
+fn all_permutations(n: i64) -> Vec<Vec<i64>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut result = Vec::new();
+    for shorter in all_permutations(n - 1) {
+        for position in 0..=shorter.len() {
+            let mut longer = shorter.clone();
+            longer.insert(position, n - 1);
+            result.push(longer);
+        }
+    }
+    result
+}
+
+/// Return the tuple value of `permutation`.
+fn permutation_value(permutation: &[i64]) -> Value {
+    Value::Tuple(permutation.iter().map(|value| int(*value)).collect())
+}
+
+/// A permutation domain's side: in-set constraints, each over some of the
+/// permutations and possibly a non-permutation, and not-in-set ones.
+#[derive(Debug, Clone)]
+struct PermutationSide {
+    in_sets: Vec<Vec<usize>>,
+    not_in_sets: Vec<Vec<usize>>,
+    with_stray: bool,
+}
+
+fn permutation_side() -> impl Strategy<Value = PermutationSide> {
+    let picks = || proptest::collection::vec(proptest::collection::vec(0_usize..120, 0..6), 0..3);
+    (picks(), picks(), any::<bool>()).prop_map(|(in_sets, not_in_sets, with_stray)| {
+        PermutationSide {
+            in_sets,
+            not_in_sets,
+            with_stray,
+        }
+    })
+}
+
+impl PermutationSide {
+    fn constraints(&self, x: &Identifier, permutations: &[Vec<i64>]) -> Vec<Constraint> {
+        let pick = |indices: &[usize]| -> Vec<Value> {
+            indices
+                .iter()
+                .map(|index| permutation_value(&permutations[index % permutations.len()]))
+                .collect()
+        };
+        let mut constraints = Vec::new();
+        for indices in &self.in_sets {
+            let mut members = pick(indices);
+            if self.with_stray {
+                members.push(Value::Tuple(vec![int(7)]));
+            }
+            if !members.is_empty() {
+                constraints.push(in_set(x, members));
+            }
+        }
+        for indices in &self.not_in_sets {
+            let members = pick(indices);
+            if !members.is_empty() {
+                constraints.push(not_in_set(x, members));
+            }
+        }
+        constraints
+    }
+
+    /// Return whether `permutation` satisfies the side, by brute force.
+    fn admits(&self, permutation: usize, permutations: &[Vec<i64>]) -> bool {
+        let holds = |indices: &Vec<usize>| {
+            indices
+                .iter()
+                .any(|index| index % permutations.len() == permutation)
+        };
+        self.in_sets
+            .iter()
+            .filter(|indices| !indices.is_empty() || self.with_stray)
+            .all(holds)
+            && !self.not_in_sets.iter().any(holds)
+    }
+}
+
+proptest! {
+    /// Permutation feasibility and subset, which enumerate the in-set
+    /// candidates when there are some, agree with a walk over every
+    /// permutation (F2-038).
+    #[test]
+    fn permutation_questions_agree_with_brute_force(
+        n in 1_i64..=5,
+        own in permutation_side(),
+        other in permutation_side(),
+    ) {
+        let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+        let (solver, _smt) = scripted_solver(SatResult::Sat);
+        let observer = RecordingParamObserver::default();
+        let context = context(&solver, &observer);
+        let permutations = all_permutations(n);
+        let domain = ParamDomain::from(
+            fhy_core::param::PermutationDomain::new((0..n).map(int).collect()).expect("members"),
+        );
+        let own_constraints = own.constraints(&x, &permutations);
+        let other_constraints = other.constraints(&y, &permutations);
+
+        let feasible = domain
+            .has_feasible_value(Side::new(&own_constraints, &x), &context)
+            .expect("decides");
+        let subset = domain
+            .feasibility_subset(
+                Side::new(&own_constraints, &x),
+                &domain,
+                Side::new(&other_constraints, &y),
+                &context,
+            )
+            .expect("decides");
+
+        let own_admits: Vec<usize> =
+            (0..permutations.len()).filter(|index| own.admits(*index, &permutations)).collect();
+        prop_assert_eq!(
+            feasible,
+            if own_admits.is_empty() { Outcome::Violated } else { Outcome::Satisfied }
+        );
+        let is_subset = own_admits.iter().all(|index| other.admits(*index, &permutations));
+        prop_assert_eq!(
+            subset,
+            if is_subset { Outcome::Satisfied } else { Outcome::Violated }
+        );
+    }
+}
