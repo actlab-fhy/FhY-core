@@ -5,6 +5,7 @@
 mod algebra_stories;
 mod custom_stories;
 mod decide_stories;
+mod decision_rule_stories;
 mod domain_stories;
 mod error_stories;
 mod error_text_stories;

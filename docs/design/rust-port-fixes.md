@@ -99,8 +99,8 @@ onto `dev-rust` before continuing.
 - [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution: `0d5f5ba`
 - [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`: `0abc3fb`
 - [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction: `7f3e8db`
-- [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations
-- [ ] R2-028 (F2-028): param and constraint decision-rule tests in Rust
+- [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations: `d33c5ef`
+- [x] R2-028 (F2-028): param and constraint decision-rule tests in Rust
 - [ ] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables
 - [ ] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories
 - [ ] `[rebase]` onto `dev-rust` after Tracks D and B land
@@ -3835,6 +3835,38 @@ against every permutation. `a_permutation_param_with_a_singleton_in_set_decides_
 decides feasibility, infeasibility and a subset at n = 10 in well under
 its 100 ms bound; at the base it did not finish within the five-minute
 limit the check ran under. **Behavior change:** none.
+
+**R2-028.** Tests only; every new test passed at its first run, so no new
+finding.
+- **Where.** The param rules are in a new `tests/it/param/decision_rule_stories.rs`.
+  The constraint rules are in a new `tests/it/constraint/decision_rule_stories.rs`,
+  with one `mod` line in `tests/it/constraint.rs`: `tests/it/constraint/*`
+  is Track B's (§I.7.1), so the edit is a new file rather than changes to
+  `constraint_properties.rs`, and the opaque-member membership property is
+  a property of its own beside the existing one, not a widening of it.
+- **The three probes, adopted** from the TYP scratch crate, rewritten for
+  Track A's constructors (`Sign`, `ZeroInclusion`, `Inclusivity`) and for
+  `checked_*` returning `Result`: the interval hull of `+`, `-`, `*`,
+  reversed `-` and negation over unbounded, natural and exclusive operands
+  (500 cases; a spec the builder refuses is rejected, not skipped); finite
+  union and intersection, and integer intersection with a natural side;
+  and numeric feasibility and subset against the real solver, gated by
+  `real_solver()` as the z3 properties are. Counted with a probe, not
+  committed: of 300 cases, 264 feasibility and 235 subset answers are
+  decided (the audit's "about 85%").
+- **Rstests:** `x <= 5` and `5 >= x` (and `x >= 1`, `1 <= x`) bound an
+  interval param alike under `checked_neg` and `checked_add`; a context's
+  registry makes a registered native constant's identifier known, and
+  refused as a param's variable; categorical subsets (order, more
+  categories, disjoint, against an ordinal, type-strict `1` against
+  `True`); assignment equivalence for every `Value` kind, the zeros equal,
+  a NaN equal to nothing but `==` itself, `1` against `True` in a tuple
+  and a frozen set; opaque membership alone, colliding keys, inside a
+  tuple (by position) and a frozen set (in any order).
+- **Properties:** opaque members against a type-strict reference;
+  rebinding an identifier keeps its first position with the last value;
+  a system with one member on an unbound identifier is undecided unless a
+  decided member is violated.
 
 ### Track E notes
 

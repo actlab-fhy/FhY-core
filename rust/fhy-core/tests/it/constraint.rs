@@ -2,6 +2,7 @@
 //! set constraints, their keys and equivalence, and their properties.
 
 mod constraint_properties;
+mod decision_rule_stories;
 mod equation_stories;
 mod equivalence_stories;
 mod error_text_stories;
