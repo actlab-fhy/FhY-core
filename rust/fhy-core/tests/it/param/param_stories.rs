@@ -13,10 +13,11 @@ use fhy_core::param::{
 };
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use fhy_core::solver::{SatResult, Solver};
-use fhy_core::term::AlphaEquivalence;
 use rstest::rstest;
 
+use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{int, text};
+use crate::support::lambda::Alpha;
 use crate::support::param::{
     RecordingParamObserver, above, at_least, at_most, context, float, in_set, ints, less_than,
     not_in_set, scripted_solver,
@@ -57,11 +58,7 @@ fn between(domain: ParamDomain, lower: i64, upper: i64, context: &ParamContext<'
 /// Return the ordering keys of `param`'s constraints, which name each
 /// constraint's variable by id.
 fn keys(param: &Param) -> Vec<String> {
-    param
-        .constraints()
-        .iter()
-        .map(Constraint::ordering_key)
-        .collect()
+    param.constraints().iter().map(ConstraintKey::key).collect()
 }
 
 /// Return the effective bounds `(min, max)` of an integer param's
@@ -135,7 +132,7 @@ fn param_accepts_a_dependent_constraint_whose_scope_holds_its_variable() {
     )
     .expect("a dependent constraint attaches");
 
-    assert_eq!(keys(&param), [less_than(&x, &y).ordering_key()]);
+    assert_eq!(keys(&param), [less_than(&x, &y).key()]);
 }
 
 #[test]
@@ -173,10 +170,7 @@ fn param_drops_equivalent_constraints_and_orders_them_canonically() {
     )
     .expect("a param");
 
-    let mut expected = vec![
-        at_most(&x, 9).ordering_key(),
-        at_least(&x, 1).ordering_key(),
-    ];
+    let mut expected = vec![at_most(&x, 9).key(), at_least(&x, 1).key()];
     expected.sort();
     assert_eq!(keys(&param), expected);
 }
@@ -200,9 +194,9 @@ fn param_appends_the_domain_s_implied_constraints_once() {
     let positive =
         Param::new(natural_domain(false), x.clone(), Vec::new(), &context).expect("a param");
 
-    assert_eq!(keys(&implied), [at_least(&x, 0).ordering_key()]);
-    assert_eq!(keys(&given), [at_least(&x, 0).ordering_key()]);
-    assert_eq!(keys(&positive), [above(&x, 0).ordering_key()]);
+    assert_eq!(keys(&implied), [at_least(&x, 0).key()]);
+    assert_eq!(keys(&given), [at_least(&x, 0).key()]);
+    assert_eq!(keys(&positive), [above(&x, 0).key()]);
 }
 
 #[test]
@@ -510,7 +504,7 @@ fn questions_are_the_domain_s() {
     );
     assert!(
         numeric
-            .is_value_set_subset(&between(integer_domain(), 5, 6, &context))
+            .is_value_set_subset(&between(integer_domain(), 5, 6, &context), &context)
             .expect("answers")
     );
     assert_eq!(smt.checks().len(), 1);
@@ -667,12 +661,12 @@ fn arithmetic_renders_bounds_as_the_left_operand_prefers() {
         .expect("adds");
 
     let v = sum.variable();
-    let mut expected = vec![above(v, 0).ordering_key(), {
+    let mut expected = vec![above(v, 0).key(), {
         let below = Constraint::from(fhy_core::constraint::EquationConstraint::new(
             fhy_core::expression::Expression::from(v)
                 .less(fhy_core::expression::Expression::literal(integer(12))),
         ));
-        below.ordering_key()
+        below.key()
     }];
     expected.sort();
     assert_eq!(keys(&sum), expected);
@@ -807,9 +801,9 @@ fn params_are_equivalent_structurally_and_under_a_renaming() {
 
     assert!(left.is_structurally_equivalent(&left));
     assert!(!left.is_structurally_equivalent(&right));
-    assert!(left.is_alpha_equivalent(&right));
-    assert!(!left.is_alpha_equivalent(&wider));
-    assert!(!left.is_alpha_equivalent(&real));
+    assert!(left.alpha_equivalent(&right));
+    assert!(!left.alpha_equivalent(&wider));
+    assert!(!left.alpha_equivalent(&real));
 }
 
 #[test]
@@ -868,7 +862,7 @@ fn assignment_values_compare_type_strictly() {
     let truth = ParamAssignment::new(param, Value::Bool(true), &context).expect("admissible");
 
     assert!(!one.is_structurally_equivalent(&truth));
-    assert!(one.is_alpha_equivalent(&one.clone()));
+    assert!(one.alpha_equivalent(&one.clone()));
 }
 
 #[test]

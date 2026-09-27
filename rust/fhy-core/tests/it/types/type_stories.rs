@@ -2,6 +2,7 @@
 //! as structural equality, structural equivalence, and `Display`.
 
 use crate::support::hashing::hash_of;
+use crate::support::types::Equivalent;
 use crate::support::types::{
     array, constrained_template, identifier_dimension, index, literal_dimension, scalar, template,
 };
@@ -123,7 +124,7 @@ fn separately_built_equal_types_are_equal_and_hash_alike() {
     for (left, right) in pairs {
         assert_eq!(left, right);
         assert_eq!(hash_of(&left), hash_of(&right));
-        assert!(left.is_structurally_equivalent(&right));
+        assert!(left.is_equivalent(&right));
     }
 }
 
@@ -144,14 +145,14 @@ fn types_differing_anywhere_are_unequal_and_not_equivalent() {
     ];
     for other in others {
         assert_ne!(base, other);
-        assert!(!base.is_structurally_equivalent(&other));
-        assert!(!other.is_structurally_equivalent(&base));
+        assert!(!base.is_equivalent(&other));
+        assert!(!other.is_equivalent(&base));
     }
 }
 
 #[test]
 fn index_types_differing_in_the_stride_are_not_equivalent() {
-    assert!(!index(0, 10, 1).is_structurally_equivalent(&index(0, 10, 2)));
+    assert!(!index(0, 10, 1).is_equivalent(&index(0, 10, 2)));
 }
 
 #[test]
@@ -159,13 +160,11 @@ fn templates_are_equivalent_only_with_the_same_identifier_and_widths() {
     let t = Identifier::new("T");
     let same_name = Identifier::new("T");
 
-    assert!(template(&t).is_structurally_equivalent(&template(&t)));
-    assert!(!template(&t).is_structurally_equivalent(&template(&same_name)));
-    assert!(!template(&t).is_structurally_equivalent(&constrained_template(&t, &[8])));
-    assert!(
-        constrained_template(&t, &[8]).is_structurally_equivalent(&constrained_template(&t, &[8]))
-    );
-    assert!(!DataType::Primitive(CoreDataType::Int8).is_structurally_equivalent(&template(&t)));
+    assert!(template(&t).is_equivalent(&template(&t)));
+    assert!(!template(&t).is_equivalent(&template(&same_name)));
+    assert!(!template(&t).is_equivalent(&constrained_template(&t, &[8])));
+    assert!(constrained_template(&t, &[8]).is_equivalent(&constrained_template(&t, &[8])));
+    assert!(!DataType::Primitive(CoreDataType::Int8).is_equivalent(&template(&t)));
 }
 
 #[test]

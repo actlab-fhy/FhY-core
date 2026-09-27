@@ -9,6 +9,7 @@ use fhy_core::expression::{Decimal, Expression, LiteralValue};
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
+use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{TestOpaque, int, int_set, member_set, text};
 use crate::support::expression::{build_deep_sum, build_parsed_literal};
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
@@ -27,17 +28,17 @@ fn keys_start_with_the_kind() {
 
     assert!(
         equation(Expression::from(x.clone()).less(1))
-            .ordering_key()
+            .key()
             .starts_with("equation|")
     );
     assert!(
         Constraint::from(SetConstraint::new(x.clone(), int_set([1]), Polarity::In))
-            .ordering_key()
+            .key()
             .starts_with("in_set|")
     );
     assert!(
         Constraint::from(SetConstraint::new(x, int_set([1]), Polarity::NotIn))
-            .ordering_key()
+            .key()
             .starts_with("not_in_set|")
     );
 }
@@ -52,8 +53,8 @@ fn equal_literals_key_alike(#[case] left: Expression, #[case] right: Expression)
     let reference = Expression::from(x);
 
     assert_eq!(
-        equation(reference.equals(left)).ordering_key(),
-        equation(reference.equals(right)).ordering_key()
+        equation(reference.equals(left)).key(),
+        equation(reference.equals(right)).key()
     );
 }
 
@@ -67,7 +68,7 @@ fn equations_built_apart_over_one_identifier_key_alike() {
         ]))
     };
 
-    assert_eq!(build().ordering_key(), build().ordering_key());
+    assert_eq!(build().key(), build().key());
 }
 
 #[rstest]
@@ -85,18 +86,14 @@ fn equations_built_apart_over_one_identifier_key_alike() {
     Expression::literal(true).equals(decimal("0.100000000000000000000000000002"))
 )]
 fn different_equations_key_apart(#[case] left: Expression, #[case] right: Expression) {
-    assert_ne!(
-        equation(left).ordering_key(),
-        equation(right).ordering_key()
-    );
+    assert_ne!(equation(left).key(), equation(right).key());
 }
 
 #[test]
 fn set_keys_hold_the_polarity_the_variable_and_the_members() {
     let (x, y) = (Identifier::new("x"), Identifier::new("y"));
     let key = |variable: &Identifier, members: &[i64], polarity| {
-        SetConstraint::new(variable.clone(), int_set(members.iter().copied()), polarity)
-            .ordering_key()
+        SetConstraint::new(variable.clone(), int_set(members.iter().copied()), polarity).key()
     };
 
     assert_eq!(
@@ -125,9 +122,7 @@ fn set_keys_hold_the_polarity_the_variable_and_the_members() {
 #[case::a_string_holding_a_separator(text("a,b"), Value::Tuple(vec![text("a"), text("b")]))]
 fn different_members_key_apart(#[case] left: Value, #[case] right: Value) {
     let x = Identifier::new("x");
-    let key = |value: Value| {
-        SetConstraint::new(x.clone(), member_set([value]), Polarity::In).ordering_key()
-    };
+    let key = |value: Value| SetConstraint::new(x.clone(), member_set([value]), Polarity::In).key();
 
     assert_ne!(key(left), key(right));
 }
@@ -144,7 +139,7 @@ fn colliding_opaque_members_key_alike_in_either_order() {
             ]),
             Polarity::In,
         )
-        .ordering_key()
+        .key()
     };
 
     assert_eq!(key(1, 2), key(2, 1));
@@ -155,7 +150,7 @@ fn equation_key_is_computed_on_a_small_stack() {
     let key = run_on_small_stack(|| {
         let x = Expression::from(Identifier::new("x"));
         let deep = build_deep_sum(&x, SMALL_STACK_DEPTH).less(0);
-        let key = equation(deep).ordering_key();
+        let key = equation(deep).key();
         key.len()
     });
 
@@ -174,8 +169,8 @@ fn literal_values_the_key_distinguishes_are_unequal_literals() {
     for (left, right) in pairs {
         assert_ne!(left, right);
         assert_ne!(
-            equation(Expression::literal(true).equals(Expression::literal(left))).ordering_key(),
-            equation(Expression::literal(true).equals(Expression::literal(right))).ordering_key()
+            equation(Expression::literal(true).equals(Expression::literal(left))).key(),
+            equation(Expression::literal(true).equals(Expression::literal(right))).key()
         );
     }
 }

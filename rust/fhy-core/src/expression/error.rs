@@ -54,6 +54,14 @@ impl fmt::Display for PiecewiseError {
 
 impl Error for PiecewiseError {}
 
+/// A term comparison of expressions cannot fail, so a binder over
+/// expressions can rebuild with a [`PiecewiseError`].
+impl From<std::convert::Infallible> for PiecewiseError {
+    fn from(never: std::convert::Infallible) -> Self {
+        match never {}
+    }
+}
+
 /// A node that could not be rebuilt from new children.
 ///
 /// # Examples

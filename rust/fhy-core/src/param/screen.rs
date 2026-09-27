@@ -31,11 +31,16 @@ pub(super) struct Screened {
 /// does. Each drop or narrowing is reported as [`ParamEvent::Screened`];
 /// a constraint of another kind is dropped without an event. Any drop or
 /// narrowing makes the system inexact.
+///
+/// # Errors
+///
+/// Returns [`ParamError::Constraint`] if building the system fails, which a
+/// system of built-in constraints never does.
 pub(super) fn screen(
     constraints: &[Constraint],
     variable: &Identifier,
     context: &ParamContext<'_>,
-) -> Screened {
+) -> Result<Screened, ParamError> {
     let mut members = Vec::with_capacity(constraints.len());
     let mut is_exact = true;
     let report = |constraint: &Constraint, reason: ScreenReason<'_>| {
@@ -99,10 +104,10 @@ pub(super) fn screen(
             _ => is_exact = false,
         }
     }
-    Screened {
-        system: ConstraintSystem::new(members),
+    Ok(Screened {
+        system: ConstraintSystem::new(members).map_err(ParamError::Constraint)?,
         is_exact,
-    }
+    })
 }
 
 /// Return `expression` with `old` replaced by a reference to `new`.
@@ -162,7 +167,7 @@ pub(super) fn rename_system(
         .iter()
         .map(|constraint| rename_constraint(constraint, old, new))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ConstraintSystem::new(renamed))
+    ConstraintSystem::new(renamed).map_err(ParamError::Constraint)
 }
 
 /// Return `constraints` with each equation's `operand` replaced by

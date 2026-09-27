@@ -7,10 +7,11 @@ use std::collections::HashMap;
 use fhy_core::constraint::{Constraint, EquationConstraint, Polarity, SetConstraint, Value};
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
-use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
+use fhy_core::term::AlphaRenaming;
 use rstest::rstest;
 
 use crate::support::constraint::{TestOpaque, int, int_set, member_set};
+use crate::support::lambda::Alpha;
 
 fn renaming(pairs: &[(&Identifier, &Identifier)]) -> AlphaRenaming {
     AlphaRenaming::new(
@@ -39,8 +40,8 @@ fn equations_are_alpha_equivalent_under_a_renaming_of_their_identifiers() {
     let left = Constraint::from(EquationConstraint::new(Expression::from(x.clone()).less(1)));
     let right = Constraint::from(EquationConstraint::new(Expression::from(y.clone()).less(1)));
 
-    assert!(left.is_alpha_equivalent_under(&right, &renaming(&[(&x, &y)])));
-    assert!(!left.is_alpha_equivalent(&right));
+    assert!(left.alpha_equivalent_under(&right, &renaming(&[(&x, &y)])));
+    assert!(!left.alpha_equivalent(&right));
     assert!(!left.is_structurally_equivalent(&right));
 }
 
@@ -116,6 +117,6 @@ fn constraints_of_different_kinds_are_not_equivalent() {
     let set = Constraint::from(SetConstraint::new(x, int_set([1]), Polarity::In));
 
     assert!(!equation.is_structurally_equivalent(&set));
-    assert!(!equation.is_alpha_equivalent(&set));
+    assert!(!equation.alpha_equivalent(&set));
     assert!(equation.is_structurally_equivalent(&equation.clone()));
 }

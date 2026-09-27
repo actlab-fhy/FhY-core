@@ -11,6 +11,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use fhy_core::foreign::Part;
+
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -89,7 +91,7 @@ pub(crate) fn read_member(member: &Bound<'_, PyAny>) -> PyResult<Constraint> {
             ),
         ));
     }
-    Ok(Constraint::Custom(Arc::new(PyCustomConstraint::new(
+    Ok(Constraint::Custom(Part::new(PyCustomConstraint::new(
         member,
     )?)))
 }
@@ -262,11 +264,15 @@ fn read_members<'py>(
     for member in constraints.try_iter()? {
         let member = member?;
         let constraint = read_member(&member)?;
-        members.push((constraint.ordering_key(), constraint, member));
+        let key = constraint
+            .ordering_key()
+            .map_err(|error| constraint_error_to_py(py, error, None))?;
+        members.push((key, constraint, member));
     }
     members.sort_by(|(left, _, _), (right, _, _)| left.cmp(right));
     let objects = PyTuple::new(py, members.iter().map(|(_, _, object)| object))?;
-    let core = ConstraintSystem::new(members.into_iter().map(|(_, constraint, _)| constraint));
+    let core = ConstraintSystem::new(members.into_iter().map(|(_, constraint, _)| constraint))
+        .map_err(|error| constraint_error_to_py(py, error, None))?;
     Ok((core, objects))
 }
 
@@ -685,7 +691,8 @@ impl PyConstraintSystem {
                             left_member,
                             right_member,
                             &core_renaming,
-                        ),
+                        )
+                        .map_err(|error| constraint_error_to_py(py, error, None))?,
                         None => left_member.is_structurally_equivalent(right_member),
                     },
                 };

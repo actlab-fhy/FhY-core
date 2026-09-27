@@ -20,6 +20,7 @@ use fhy_core::types::{
 };
 
 use crate::dataclass::{build_argument_type_error, collect_tuple, hash_value};
+use crate::error::IntoPyErr;
 use crate::expression::PyExpression;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{deserialize_identifier, restore_identifier};
@@ -461,8 +462,12 @@ impl PyPrimitiveDataType {
     fn is_structurally_equivalent(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         let value = self.value();
         run_in_context(other.py(), None, |_context| {
-            Ok(read_data_type_value(other)
-                .is_some_and(|other| value.is_structurally_equivalent(&other)))
+            match read_data_type_value(other) {
+                Some(other) => value
+                    .is_structurally_equivalent(&other)
+                    .map_err(IntoPyErr::into_py_err),
+                None => Ok(false),
+            }
         })
     }
 
@@ -685,8 +690,12 @@ impl PyTemplateDataType {
     fn is_structurally_equivalent(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         let value = self.value();
         run_in_context(other.py(), None, |_context| {
-            Ok(read_data_type_value(other)
-                .is_some_and(|other| value.is_structurally_equivalent(&other)))
+            match read_data_type_value(other) {
+                Some(other) => value
+                    .is_structurally_equivalent(&other)
+                    .map_err(IntoPyErr::into_py_err),
+                None => Ok(false),
+            }
         })
     }
 
@@ -934,11 +943,11 @@ impl PyNumericalType {
     /// equivalent data type over equal dimensions.
     fn is_structurally_equivalent(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         let value = self.value();
-        run_in_context(other.py(), None, |_context| {
-            Ok(
-                read_type_value(other)
-                    .is_some_and(|other| value.is_structurally_equivalent(&other)),
-            )
+        run_in_context(other.py(), None, |_context| match read_type_value(other) {
+            Some(other) => value
+                .is_structurally_equivalent(&other)
+                .map_err(IntoPyErr::into_py_err),
+            None => Ok(false),
         })
     }
 
@@ -1177,11 +1186,11 @@ impl PyIndexType {
     /// stride.
     fn is_structurally_equivalent(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
         let value = self.value();
-        run_in_context(other.py(), None, |_context| {
-            Ok(
-                read_type_value(other)
-                    .is_some_and(|other| value.is_structurally_equivalent(&other)),
-            )
+        run_in_context(other.py(), None, |_context| match read_type_value(other) {
+            Some(other) => value
+                .is_structurally_equivalent(&other)
+                .map_err(IntoPyErr::into_py_err),
+            None => Ok(false),
         })
     }
 

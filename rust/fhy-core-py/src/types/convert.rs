@@ -5,7 +5,7 @@
 //! of its parts, so a value the core hands back unchanged becomes the
 //! object it came from; any other value is built through its public class.
 
-use std::sync::Arc;
+use fhy_core::foreign::Part;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyEllipsis, PyList};
@@ -36,7 +36,7 @@ pub(crate) fn read_type_value(object: &Bound<'_, PyAny>) -> Option<Type> {
         return Some(index.get().value());
     }
     if object.is_instance_of::<PyTypeBase>() {
-        return Some(Type::Extension(Arc::new(PyTypeAdapter::new(
+        return Some(Type::Extension(Part::new(PyTypeAdapter::new(
             object.clone().unbind(),
         ))));
     }
@@ -53,7 +53,7 @@ pub(crate) fn read_data_type_value(object: &Bound<'_, PyAny>) -> Option<DataType
         return Some(template.get().value());
     }
     if object.is_instance_of::<PyDataTypeBase>() {
-        return Some(DataType::Extension(Arc::new(PyDataTypeAdapter::new(
+        return Some(DataType::Extension(Part::new(PyDataTypeAdapter::new(
             object.clone().unbind(),
         ))));
     }
@@ -219,7 +219,7 @@ pub(crate) fn data_type_to_python<'py>(
     data_type: &DataType,
 ) -> PyResult<Bound<'py, PyAny>> {
     if let DataType::Extension(extension) = data_type {
-        if let Some(adapter) = extension.as_any().downcast_ref::<PyDataTypeAdapter>() {
+        if let Some(adapter) = extension.get().as_any().downcast_ref::<PyDataTypeAdapter>() {
             return Ok(adapter.object().bind(py).clone());
         }
     }
@@ -268,7 +268,7 @@ pub(crate) fn type_to_python<'py>(
     value: &Type,
 ) -> PyResult<Bound<'py, PyAny>> {
     if let Type::Extension(extension) = value {
-        if let Some(adapter) = extension.as_any().downcast_ref::<PyTypeAdapter>() {
+        if let Some(adapter) = extension.get().as_any().downcast_ref::<PyTypeAdapter>() {
             return Ok(adapter.object().bind(py).clone());
         }
     }

@@ -7,6 +7,7 @@
 use std::convert::Infallible;
 
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
+use crate::support::types::Equivalent;
 use crate::support::types::scalar;
 
 use fhy_core::identifier::Identifier;
@@ -916,8 +917,8 @@ fn built_in_frames_compare_structurally() {
         table
     };
 
-    assert!(build(TypeQualifier::State).is_structurally_equivalent(&build(TypeQualifier::State)));
-    assert!(!build(TypeQualifier::State).is_structurally_equivalent(&build(TypeQualifier::Input)));
+    assert!(build(TypeQualifier::State).is_equivalent(&build(TypeQualifier::State)));
+    assert!(!build(TypeQualifier::State).is_equivalent(&build(TypeQualifier::Input)));
 }
 
 // ---------------------------------------------------------------------------

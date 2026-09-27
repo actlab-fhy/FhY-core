@@ -3,7 +3,7 @@
 
 use fhy_core::constraint::{Constraint, Outcome, Value};
 use fhy_core::expression::SymbolType;
-use fhy_core::foreign::BoxError;
+use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     CustomDomain, IntegerDomain, IntervalProfile, OrdinalDomain, Param, ParamContext, ParamDomain,
@@ -54,7 +54,9 @@ fn custom_domain_answers_through_its_hooks() {
             .expect("answers")
             .is_none()
     );
+    let (twin, _twin_handle) = EvenDomain::build(false);
     assert!(domain.is_structurally_equivalent(&domain));
+    assert!(domain.is_structurally_equivalent(&twin));
 
     assert_eq!(
         handle.calls(),
@@ -67,8 +69,9 @@ fn custom_domain_answers_through_its_hooks() {
             "interval_profile",
             "has_feasible_value",
             "union",
-            "is_structurally_equivalent",
-        ]
+            "eq_part",
+        ],
+        "the same part is equal without asking its hook"
     );
 }
 
@@ -138,7 +141,7 @@ fn custom_domain_failures_propagate() {
     ));
     assert!(matches!(
         ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
-            .is_value_set_subset(&domain),
+            .is_value_set_subset(&domain, &context),
         Err(ParamError::Custom(_))
     ));
 }
@@ -173,7 +176,7 @@ impl RecordingDomain {
             is_failing,
         });
         let handle = std::sync::Arc::clone(&domain);
-        (ParamDomain::Custom(domain), handle)
+        (ParamDomain::Custom(Part::from_arc(domain)), handle)
     }
 
     /// Return the calls so far, and forget them.
@@ -190,6 +193,12 @@ impl RecordingDomain {
         } else {
             Ok(())
         }
+    }
+}
+
+impl ForeignPart for RecordingDomain {
+    fn type_name(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed("RecordingDomain")
     }
 }
 
@@ -222,7 +231,11 @@ impl CustomDomain for RecordingDomain {
         Ok(None)
     }
 
-    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, BoxError> {
+    fn is_value_set_subset(
+        &self,
+        other: &ParamDomain,
+        _context: &ParamContext<'_>,
+    ) -> Result<bool, BoxError> {
         self.record(format!("is_value_set_subset({})", other.kind().name()))?;
         Ok(true)
     }
@@ -232,6 +245,7 @@ impl CustomDomain for RecordingDomain {
         own: Side<'_>,
         other_domain: &ParamDomain,
         other: Side<'_>,
+        _context: &ParamContext<'_>,
     ) -> Result<Outcome, BoxError> {
         self.record(format!(
             "feasibility_subset({}, {}, {})",
@@ -242,7 +256,11 @@ impl CustomDomain for RecordingDomain {
         Ok(Outcome::Satisfied)
     }
 
-    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, BoxError> {
+    fn has_feasible_value(
+        &self,
+        side: Side<'_>,
+        _context: &ParamContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         self.record(format!("has_feasible_value({})", describe_side(side)))?;
         Ok(Outcome::Satisfied)
     }
@@ -253,6 +271,7 @@ impl CustomDomain for RecordingDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         self.record(format!(
             "union({}, {}, {}, {})",
@@ -270,6 +289,7 @@ impl CustomDomain for RecordingDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         self.record(format!(
             "intersection({}, {}, {}, {})",
@@ -281,16 +301,12 @@ impl CustomDomain for RecordingDomain {
         Ok((other_domain.clone(), Vec::new()))
     }
 
-    fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool {
-        self.calls.lock().expect("unpoisoned").push(format!(
-            "is_structurally_equivalent({})",
-            other.kind().name()
-        ));
-        matches!(other, ParamDomain::Custom(other) if other.as_any().is::<Self>())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn eq_part(&self, other: &dyn CustomDomain) -> bool {
+        self.calls
+            .lock()
+            .expect("unpoisoned")
+            .push("eq_part".to_owned());
+        other.as_any().is::<Self>()
     }
 }
 
@@ -319,7 +335,7 @@ fn a_custom_domain_on_the_left_answers_each_set_procedure_through_its_hook() {
         ["validate_constraint(x)", "implied_constraints(x)"]
     );
 
-    assert!(own.is_value_set_subset(&other).expect("answers"));
+    assert!(own.is_value_set_subset(&other, &context).expect("answers"));
     assert_eq!(handle.take_calls(), ["is_value_set_subset(integer)"]);
 
     assert_eq!(
@@ -351,15 +367,16 @@ fn a_custom_domain_on_the_left_answers_each_set_procedure_through_its_hook() {
         "the intersection first asks whether the operands coerce to intervals"
     );
 
+    let (twin, _twin_handle) = RecordingDomain::build(false);
     assert!(own.domain().is_structurally_equivalent(&domain));
     assert!(!own.is_structurally_equivalent(&other));
     assert_eq!(
         handle.take_calls(),
-        [
-            "is_structurally_equivalent(custom)",
-            "is_structurally_equivalent(integer)"
-        ]
+        Vec::<String>::new(),
+        "the same part, or a built-in domain, needs no hook"
     );
+    assert!(own.domain().is_structurally_equivalent(&twin));
+    assert_eq!(handle.take_calls(), ["eq_part"]);
 }
 
 #[test]
@@ -383,10 +400,18 @@ fn a_custom_domain_on_the_right_is_asked_only_what_the_left_side_needs() {
     let custom = param_over(domain, "y", &context);
     handle.take_calls();
 
-    assert!(integer.is_value_set_subset(&custom).expect("answers"));
+    assert!(
+        integer
+            .is_value_set_subset(&custom, &context)
+            .expect("answers")
+    );
     assert_eq!(handle.take_calls(), ["symbol_type"]);
 
-    assert!(!ordinal.is_value_set_subset(&custom).expect("answers"));
+    assert!(
+        !ordinal
+            .is_value_set_subset(&custom, &context)
+            .expect("answers")
+    );
     assert!(!integer.is_structurally_equivalent(&custom));
     let union = integer.union(&custom, Identifier::new("u"), &context);
     assert!(
@@ -422,7 +447,9 @@ fn a_failing_custom_domain_s_error_surfaces_from_each_set_procedure() {
     assert_eq!(handle.take_calls(), ["implied_constraints(x)"]);
 
     let failures = [
-        domain.is_value_set_subset(other.domain()).map(|_| ()),
+        domain
+            .is_value_set_subset(other.domain(), &context)
+            .map(|_| ()),
         domain
             .feasibility_subset(
                 Side::new(&[], &x),
@@ -450,7 +477,7 @@ fn a_failing_custom_domain_s_error_surfaces_from_each_set_procedure() {
             )
             .map(|_| ()),
         ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
-            .is_value_set_subset(&domain)
+            .is_value_set_subset(&domain, &context)
             .map(|_| ()),
     ];
 

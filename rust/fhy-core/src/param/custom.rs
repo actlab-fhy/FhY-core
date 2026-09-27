@@ -1,22 +1,26 @@
 //! [`CustomDomain`]: a domain of a kind this module does not define, such
 //! as one a language binding defines.
 
-use std::any::Any;
-use std::fmt;
+use std::hash::Hasher;
 
 use crate::constraint::{Constraint, Outcome, Value};
 use crate::expression::SymbolType;
-use crate::foreign::BoxError;
-use crate::foreign::{Foreign, ForeignError};
+use crate::foreign::{BoxError, ForeignPart, impl_part, is_same_part};
 use crate::identifier::Identifier;
 
+use super::context::ParamContext;
 use super::domain::{IntervalProfile, ParamDomain, Side};
 
 /// A domain of a kind this module does not define.
 ///
 /// It answers what the built-in kinds answer, each through its own hook,
 /// and the procedures of this module call the hooks as they need them.
-pub trait CustomDomain: Send + Sync + fmt::Debug {
+/// The procedures that decide or build pass their [`ParamContext`], so an
+/// implementation can ask the solver, report events, or call this
+/// module's own procedures. Every hook but [`eq_part`](Self::eq_part) and
+/// [`hash_part`](Self::hash_part) is fallible, and a failure is the error
+/// of the operation that asked, as [`ParamError::Custom`](super::ParamError::Custom).
+pub trait CustomDomain: ForeignPart {
     /// Return the sort the solver reasons about the domain's values in, or
     /// `None` for a non-numeric domain.
     ///
@@ -62,7 +66,11 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, BoxError>;
+    fn is_value_set_subset(
+        &self,
+        other: &ParamDomain,
+        context: &ParamContext<'_>,
+    ) -> Result<bool, BoxError>;
 
     /// Decide whether `own`'s constrained set is a subset of `other`'s.
     ///
@@ -74,6 +82,7 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         own: Side<'_>,
         other_domain: &ParamDomain,
         other: Side<'_>,
+        context: &ParamContext<'_>,
     ) -> Result<Outcome, BoxError>;
 
     /// Decide whether some admissible value satisfies `side`'s constraints.
@@ -81,7 +90,11 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, BoxError>;
+    fn has_feasible_value(
+        &self,
+        side: Side<'_>,
+        context: &ParamContext<'_>,
+    ) -> Result<Outcome, BoxError>;
 
     /// Return the domain and constraints of the union of the two value
     /// sets, over `variable`, or `None` if the kind represents no union.
@@ -95,6 +108,7 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
+        context: &ParamContext<'_>,
     ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError>;
 
     /// Return the domain and constraints of the intersection of the two
@@ -109,24 +123,25 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
+        context: &ParamContext<'_>,
     ) -> Result<(ParamDomain, Vec<Constraint>), BoxError>;
 
-    /// Return whether `other` is a structurally identical domain.
-    fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool;
-
-    /// Return the domain as a [`Foreign`] part, for serialization.
+    /// Return whether `other` is a structurally identical domain, for `==`
+    /// on a [`Part<dyn CustomDomain>`](crate::foreign::Part) and for
+    /// [`ParamDomain::is_structurally_equivalent`].
     ///
-    /// # Errors
-    ///
-    /// The default returns [`ForeignError::NoWireForm`]: the domain
-    /// cannot be serialized.
-    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
-        Err(ForeignError::NoWireForm {
-            type_name: "custom domain".to_owned(),
-        })
+    /// It must be an equivalence relation, symmetric included, and agree
+    /// with [`hash_part`](Self::hash_part). The default is identity: the
+    /// same domain.
+    fn eq_part(&self, other: &dyn CustomDomain) -> bool {
+        is_same_part(self, other)
     }
 
-    /// Return the domain as [`Any`], so an implementation can recognize its
-    /// own domains.
-    fn as_any(&self) -> &dyn Any;
+    /// Feed the domain's hash to `state`, consistently with
+    /// [`eq_part`](Self::eq_part). The default feeds nothing.
+    fn hash_part(&self, state: &mut dyn Hasher) {
+        let _ = state;
+    }
 }
+
+impl_part!(CustomDomain);

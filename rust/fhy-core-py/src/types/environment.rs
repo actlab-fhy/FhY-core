@@ -20,6 +20,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::types::TypeUnificationEnvironment;
 
 use crate::dataclass::{build_argument_type_error, hash_value};
+use crate::error::IntoPyErr;
 use crate::identifier::{read_identifier_id, restore_identifier};
 use crate::public_class::PublicClass;
 
@@ -593,7 +594,9 @@ impl PyTypeUnificationEnvironment {
             return Ok(false);
         };
         run_in_context(other.py(), None, |_context| {
-            Ok(self.value.is_structurally_equivalent(&other.get().value))
+            self.value
+                .is_structurally_equivalent(&other.get().value)
+                .map_err(IntoPyErr::into_py_err)
         })
     }
 

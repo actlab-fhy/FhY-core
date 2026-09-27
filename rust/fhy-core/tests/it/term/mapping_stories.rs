@@ -7,6 +7,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::term::{AlphaEquivalence, AlphaRenaming, is_mapping_alpha_equivalent_under};
@@ -33,29 +34,36 @@ fn leaf(payload: i64) -> Leaf<'static> {
 }
 
 impl AlphaEquivalence for Leaf<'_> {
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+    type Error = Infallible;
+
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, Infallible> {
         if let Some(log) = self.log {
             log.borrow_mut().push(self.payload);
         }
-        self.payload == other.payload
+        Ok(self.payload == other.payload
             && match (&self.reference, &other.reference) {
                 (Some(left), Some(right)) => renaming.is_corresponding(left, right),
                 (None, None) => true,
                 _ => false,
-            }
+            })
     }
 }
 
-fn compare<V: AlphaEquivalence>(
+fn compare<V: AlphaEquivalence<Error = Infallible>>(
     left: &[(Identifier, V)],
     right: &HashMap<Identifier, V>,
     renaming: &AlphaRenaming,
 ) -> bool {
-    is_mapping_alpha_equivalent_under(
+    let Ok(answer) = is_mapping_alpha_equivalent_under(
         left.iter().map(|(key, value)| (key, value)),
         right,
         renaming,
-    )
+    );
+    answer
 }
 
 #[test]

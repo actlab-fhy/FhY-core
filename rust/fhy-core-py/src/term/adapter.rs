@@ -2,13 +2,13 @@
 //! (D-S10-7).
 //!
 //! A [`PyTerm`] is any Python object with the `Term` protocol's methods,
-//! and a [`PyBinder`] a `BinderMixin` instance. The core's traits are
-//! infallible where comparing and collecting free identifiers is
-//! concerned, while a Python hook can raise. So every adapter of one call
-//! shares a [`Context`]: the first exception a hook raises is kept there, the
-//! adapter answers `false` or an empty set so the core stops where Python
-//! would have, every later hook call is skipped, and the entry function
-//! raises the kept exception when the core returns.
+//! and a [`PyBinder`] a `BinderMixin` instance. A comparison, a scope or a
+//! substitution whose hook raises returns the exception as its error. The
+//! binder's bound identifiers and scoped children are the exception: the
+//! core reads them as slices, which cannot fail, so every adapter of one
+//! call shares a [`Context`] that keeps the first exception those reads
+//! raise, and the next fallible hook, or the entry function when the core
+//! returns, raises it; no hook runs after it.
 //!
 //! The context also keeps the Python object of every identifier the hooks
 //! returned, so a renaming the core extends can be handed back to Python
@@ -75,6 +75,15 @@ impl<'py> Context<'py> {
         let mut kept = self.error.borrow_mut();
         if kept.is_none() {
             *kept = Some(error);
+        }
+    }
+
+    /// Return the kept error, if a binder's bound identifiers or children
+    /// failed to read, so no hook runs after it.
+    pub(super) fn check(&self) -> PyResult<()> {
+        match self.error.borrow_mut().take() {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
 
@@ -229,21 +238,24 @@ impl<'py> PyTerm<'py> {
 }
 
 impl AlphaEquivalence for PyTerm<'_> {
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
-        if self.context.has_failed() {
-            return false;
-        }
-        self.context.record(self.compare(other, renaming), false)
+    type Error = PyErr;
+
+    /// Ask the object's `is_alpha_equivalent_under`, or the core for an
+    /// expression that does not override it; its exception is the error.
+    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> PyResult<bool> {
+        self.context.check()?;
+        self.compare(other, renaming)
     }
 }
 
 impl FreeIdentifiers for PyTerm<'_> {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
-        if self.context.has_failed() {
-            return HashSet::new();
-        }
-        self.context
-            .record(self.read_free_identifiers(), HashSet::new())
+    type Error = PyErr;
+
+    /// Return the object's `get_free_identifiers`; its exception is the
+    /// error.
+    fn free_identifiers(&self) -> PyResult<HashSet<Identifier>> {
+        self.context.check()?;
+        self.read_free_identifiers()
     }
 }
 
@@ -254,9 +266,7 @@ impl Term for PyTerm<'_> {
         &self,
         replacements: &HashMap<Identifier, Self, S>,
     ) -> PyResult<Self> {
-        if let Some(error) = self.context.error.borrow_mut().take() {
-            return Err(error);
-        }
+        self.context.check()?;
         let py = self.object.py();
         let mapping = PyDict::new(py);
         for (identifier, term) in replacements {
@@ -321,14 +331,6 @@ impl<'py> PyBinder<'py> {
             .map(|child| Ok(PyTerm::new(child?, &self.context)))
             .collect()
     }
-
-    /// Return the kept error, if a hook raised, so no hook runs after it.
-    fn check(&self) -> PyResult<()> {
-        match self.context.error.borrow_mut().take() {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
 }
 
 impl<'py> Binder for PyBinder<'py> {
@@ -354,7 +356,7 @@ impl<'py> Binder for PyBinder<'py> {
     }
 
     fn rename_bound_identifier(&self, old: &Identifier, new: Identifier) -> PyResult<Self> {
-        self.check()?;
+        self.context.check()?;
         let py = self.object.py();
         let new_object = identifier_to_python(py, &new)?;
         self.context.remember(&new, &new_object);
@@ -366,7 +368,7 @@ impl<'py> Binder for PyBinder<'py> {
     }
 
     fn rebuild_with_scoped_children(&self, children: Vec<PyTerm<'py>>) -> PyResult<Self> {
-        self.check()?;
+        self.context.check()?;
         let py = self.object.py();
         let children = PyList::new(py, children.iter().map(PyTerm::object))?;
         let result = self

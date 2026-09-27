@@ -69,5 +69,5 @@ pub(crate) fn is_identifier_mapping_alpha_equivalent_under(
         &right,
         renaming.get().value().renaming(),
     );
-    context.finish(is_equivalent)
+    context.finish(is_equivalent?)
 }

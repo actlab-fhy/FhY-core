@@ -22,19 +22,25 @@ pub struct ConstraintSystem {
 }
 
 impl ConstraintSystem {
-    /// Return the system of `constraints`.
-    pub fn new(constraints: impl IntoIterator<Item = Constraint>) -> Self {
+    /// Return the system of `constraints`, reading each member's ordering
+    /// key once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConstraintError::Custom`] for a custom member whose key
+    /// fails.
+    pub fn new(constraints: impl IntoIterator<Item = Constraint>) -> Result<Self, ConstraintError> {
         let mut keyed: Vec<(String, Constraint)> = constraints
             .into_iter()
-            .map(|constraint| (constraint.ordering_key(), constraint))
-            .collect();
+            .map(|constraint| Ok((constraint.ordering_key()?, constraint)))
+            .collect::<Result<_, ConstraintError>>()?;
         keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
-        Self {
+        Ok(Self {
             constraints: keyed
                 .into_iter()
                 .map(|(_, constraint)| constraint)
                 .collect(),
-        }
+        })
     }
 
     /// Return the members, in canonical order.
@@ -289,14 +295,27 @@ impl ConstraintSystem {
 }
 
 impl AlphaEquivalence for ConstraintSystem {
+    type Error = ConstraintError;
+
     /// Compare the members pairwise, in order, under `renaming`.
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
-        self.constraints.len() == other.constraints.len()
-            && self
-                .constraints
-                .iter()
-                .zip(other.constraints.iter())
-                .all(|(left, right)| left.is_alpha_equivalent_under(right, renaming))
+    ///
+    /// # Errors
+    ///
+    /// Returns the first custom member's failure, in order.
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, ConstraintError> {
+        if self.constraints.len() != other.constraints.len() {
+            return Ok(false);
+        }
+        for (left, right) in self.constraints.iter().zip(other.constraints.iter()) {
+            if !left.is_alpha_equivalent_under(right, renaming)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 

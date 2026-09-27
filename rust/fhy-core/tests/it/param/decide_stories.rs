@@ -15,6 +15,7 @@ use fhy_core::param::{
 };
 use fhy_core::solver::SatResult;
 
+use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{TestCustom, int, text};
 use crate::support::param::{
     EvaluatingSimplifier, RecordedParamEvent, RecordingParamObserver, above, at_least, at_most,
@@ -94,9 +95,7 @@ fn evaluation_lets_a_later_violation_decide_over_an_undecided_member() {
     assert!(
         observer
             .events()
-            .contains(&RecordedParamEvent::UndecidedMember(
-                dependent.ordering_key()
-            ))
+            .contains(&RecordedParamEvent::UndecidedMember(dependent.key()))
     );
 }
 
@@ -119,11 +118,11 @@ fn evaluation_names_the_first_undecided_member() {
     assert_eq!(evaluation.deciding_member(), Some(1));
     let events = observer.events();
     assert!(events.contains(&RecordedParamEvent::Member(
-        constraints[1].ordering_key(),
+        constraints[1].key(),
         "residual".to_owned()
     )));
     assert!(events.contains(&RecordedParamEvent::Member(
-        constraints[2].ordering_key(),
+        constraints[2].key(),
         "unbound".to_owned()
     )));
 }
@@ -146,8 +145,8 @@ fn evaluation_counts_an_undecidable_failure_as_undecided() {
     assert_eq!(evaluation.outcome(), Outcome::Violated);
     assert_eq!(evaluation.deciding_member(), Some(1));
     let events = observer.events();
-    assert!(events.contains(&RecordedParamEvent::BridgeFailed(failing.ordering_key())));
-    assert!(events.contains(&RecordedParamEvent::UndecidedMember(failing.ordering_key())));
+    assert!(events.contains(&RecordedParamEvent::BridgeFailed(failing.key())));
+    assert!(events.contains(&RecordedParamEvent::UndecidedMember(failing.key())));
 }
 
 #[test]
@@ -389,11 +388,7 @@ fn numeric_feasibility_downgrades_a_satisfied_answer_on_an_inexact_system() {
     assert_eq!(
         observer.param_events(),
         [
-            RecordedParamEvent::Screened(
-                dependent.ordering_key(),
-                x.clone(),
-                "dependent_scope".to_owned()
-            ),
+            RecordedParamEvent::Screened(dependent.key(), x.clone(), "dependent_scope".to_owned()),
             RecordedParamEvent::SatisfiedOnInexactSystem(x),
         ]
     );
@@ -472,7 +467,7 @@ fn screening_narrows_a_not_in_set_constraint_to_its_liftable_members() {
     assert_eq!(
         observer.param_events(),
         [RecordedParamEvent::Screened(
-            mixed.ordering_key(),
+            mixed.key(),
             x,
             "narrowed:[\"int:3\"]:[\"str:a\"]".to_owned()
         )]
@@ -494,7 +489,7 @@ fn screening_drops_a_not_in_set_constraint_without_a_liftable_member() {
     assert_eq!(outcome, Outcome::Undecided);
     assert_eq!(
         observer.param_events()[0],
-        RecordedParamEvent::Screened(strings.ordering_key(), x, "no_liftable_member".to_owned())
+        RecordedParamEvent::Screened(strings.key(), x, "no_liftable_member".to_owned())
     );
 }
 
@@ -514,7 +509,7 @@ fn screening_drops_a_set_constraint_on_another_variable() {
     assert_eq!(outcome, Outcome::Undecided);
     assert_eq!(
         observer.param_events()[0],
-        RecordedParamEvent::Screened(foreign.ordering_key(), x, "foreign_variable".to_owned())
+        RecordedParamEvent::Screened(foreign.key(), x, "foreign_variable".to_owned())
     );
 }
 

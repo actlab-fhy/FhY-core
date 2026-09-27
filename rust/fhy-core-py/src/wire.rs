@@ -17,7 +17,6 @@
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
@@ -27,8 +26,8 @@ use pyo3::types::{PyByteArray, PyBytes, PyDict, PyString, PyType};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use fhy_core::constraint::{Constraint, CustomConstraint, Opaque, Value};
-use fhy_core::foreign::{BuildError, Foreign, ForeignError, Resolve};
+use fhy_core::constraint::{Constraint, CustomConstraint, OpaqueValue, Value};
+use fhy_core::foreign::{BuildError, Foreign, ForeignError, Part, Resolve};
 use fhy_core::param::{CustomDomain, ParamDomain};
 use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 
@@ -433,8 +432,8 @@ fn wrong_kind(py: Python<'_>, foreign: &Foreign, expected: &str) -> ForeignError
     )
 }
 
-impl Resolve<Opaque> for PyResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Opaque, ForeignError> {
+impl Resolve<Part<dyn OpaqueValue>> for PyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, false)?;
             match read_opaque_member(&object) {
@@ -446,8 +445,8 @@ impl Resolve<Opaque> for PyResolver {
     }
 }
 
-impl Resolve<Arc<dyn CustomConstraint>> for PyResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn CustomConstraint>, ForeignError> {
+impl Resolve<Part<dyn CustomConstraint>> for PyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, true)?;
             match read_constraint(&object) {
@@ -459,8 +458,8 @@ impl Resolve<Arc<dyn CustomConstraint>> for PyResolver {
     }
 }
 
-impl Resolve<Arc<dyn CustomDomain>> for PyResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn CustomDomain>, ForeignError> {
+impl Resolve<Part<dyn CustomDomain>> for PyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, true)?;
             match crate::param::read_domain_object(&object) {
@@ -472,8 +471,8 @@ impl Resolve<Arc<dyn CustomDomain>> for PyResolver {
     }
 }
 
-impl Resolve<Arc<dyn TypeExtension>> for PyResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn TypeExtension>, ForeignError> {
+impl Resolve<Part<dyn TypeExtension>> for PyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn TypeExtension>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, true)?;
             match crate::types::read_type_value(&object) {
@@ -484,8 +483,8 @@ impl Resolve<Arc<dyn TypeExtension>> for PyResolver {
     }
 }
 
-impl Resolve<Arc<dyn DataTypeExtension>> for PyResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn DataTypeExtension>, ForeignError> {
+impl Resolve<Part<dyn DataTypeExtension>> for PyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn DataTypeExtension>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, true)?;
             match crate::types::read_data_type_value(&object) {

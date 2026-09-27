@@ -390,6 +390,26 @@ def test_python_defined_domain_is_driven_by_the_core() -> None:
     ]
 
 
+class _ScopeError(Exception):
+    """Raised by ``_UnscopedConstraint.get_free_identifiers``."""
+
+
+class _UnscopedConstraint(_RecordingConstraint):
+    """A Python-defined constraint whose scope raises."""
+
+    @override
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        raise _ScopeError("no scope")
+
+
+def test_a_python_constraint_whose_scope_raises_is_refused_with_its_error() -> None:
+    """Test a scope that raises is the param's error, not an empty scope."""
+    x = Identifier("x")
+
+    with pytest.raises(_ScopeError, match="no scope"):
+        create_integer_param(name=x, constraints=[_UnscopedConstraint(frozenset({x}))])
+
+
 def test_python_defined_constraint_receives_the_bindings_snapshot() -> None:
     """Test a Python constraint in a param sees the value and bindings given."""
     x, y = Identifier("x"), Identifier("y")

@@ -2,8 +2,9 @@
 //! admit, which constraints they allow, what they imply, their profiles,
 //! value-set subsets and equivalence, and bound expressions.
 
-use fhy_core::constraint::{Opaque, Value};
+use fhy_core::constraint::Value;
 use fhy_core::expression::{BigInt, Decimal, Expression, SymbolType};
+use fhy_core::foreign::Part;
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, IntervalProfile,
@@ -12,6 +13,7 @@ use fhy_core::param::{
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use rstest::rstest;
 
+use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{TestOpaque, int, text};
 use crate::support::param::{
     Level, above, at_least, boolean, describe_all, float, in_set, ints, less_than, literal,
@@ -397,15 +399,12 @@ fn non_negative_integer_domains_imply_a_sign_bound(
                 } else {
                     above(&x, 0)
                 };
-                bound.ordering_key()
+                bound.key()
             })
             .into_iter()
             .collect();
         assert_eq!(
-            implied
-                .iter()
-                .map(fhy_core::constraint::Constraint::ordering_key)
-                .collect::<Vec<_>>(),
+            implied.iter().map(ConstraintKey::key).collect::<Vec<_>>(),
             expected
         );
     }
@@ -489,12 +488,24 @@ fn numeric_value_sets_are_subsets_within_one_sort() {
     ));
     let real = ParamDomain::from(RealDomain);
 
-    assert!(integer.is_value_set_subset(&interval).expect("native"));
-    assert!(interval.is_value_set_subset(&integer).expect("native"));
-    assert!(!integer.is_value_set_subset(&real).expect("native"));
+    assert!(
+        integer
+            .is_value_set_subset(&interval, &native_context())
+            .expect("native")
+    );
+    assert!(
+        interval
+            .is_value_set_subset(&integer, &native_context())
+            .expect("native")
+    );
+    assert!(
+        !integer
+            .is_value_set_subset(&real, &native_context())
+            .expect("native")
+    );
     assert!(
         !real
-            .is_value_set_subset(&ordinal(ints([1])))
+            .is_value_set_subset(&ordinal(ints([1])), &native_context())
             .expect("native")
     );
 }
@@ -503,27 +514,27 @@ fn numeric_value_sets_are_subsets_within_one_sort() {
 fn finite_value_sets_are_subsets_by_type_strict_membership() {
     assert!(
         ordinal(ints([1, 2]))
-            .is_value_set_subset(&ordinal(ints([1, 2, 3])))
+            .is_value_set_subset(&ordinal(ints([1, 2, 3])), &native_context())
             .expect("native")
     );
     assert!(
         !ordinal(ints([1, 2]))
-            .is_value_set_subset(&ordinal(vec![int(1), float(2.0)]))
+            .is_value_set_subset(&ordinal(vec![int(1), float(2.0)]), &native_context())
             .expect("native")
     );
     assert!(
         !ordinal(ints([1]))
-            .is_value_set_subset(&categorical(ints([1])))
+            .is_value_set_subset(&categorical(ints([1])), &native_context())
             .expect("native")
     );
     assert!(
         permutation(ints([1, 2]))
-            .is_value_set_subset(&permutation(ints([2, 1])))
+            .is_value_set_subset(&permutation(ints([2, 1])), &native_context())
             .expect("native")
     );
     assert!(
         !permutation(ints([1, 2]))
-            .is_value_set_subset(&permutation(ints([1, 2, 3])))
+            .is_value_set_subset(&permutation(ints([1, 2, 3])), &native_context())
             .expect("native")
     );
 }
@@ -572,7 +583,7 @@ fn domains_are_equivalent_by_kind_and_contents() {
 
 #[test]
 fn domains_share_their_values_when_cloned() {
-    let domain = OrdinalDomain::new(vec![Value::Opaque(Opaque::new(TestOpaque::token(1)))])
+    let domain = OrdinalDomain::new(vec![Value::Opaque(Part::new(TestOpaque::token(1)))])
         .expect("an ordinal domain");
     let clone = domain.clone();
 
@@ -610,4 +621,12 @@ fn bound_expressions_compare_an_identifier_with_an_integer_literal() {
     ] {
         assert!(!is_bound_expression(&other), "{other}");
     }
+}
+
+/// Return the context of a solver with no backend, which a question about
+/// built-in domains never asks.
+fn native_context() -> fhy_core::param::ParamContext<'static> {
+    static SOLVER: std::sync::LazyLock<fhy_core::solver::Solver> =
+        std::sync::LazyLock::new(fhy_core::solver::Solver::new);
+    fhy_core::param::ParamContext::new(&SOLVER)
 }

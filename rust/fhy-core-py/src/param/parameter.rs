@@ -822,7 +822,7 @@ impl PyParam {
         with_pending_errors(|| {
             slf.get()
                 .core
-                .is_value_set_subset(&other)
+                .is_value_set_subset(&other, &super::domains::value_set_context())
                 .map_err(|error| param_error_to_py(py, error, None))
         })
     }
@@ -1156,11 +1156,12 @@ impl PyParam {
         let Ok(other) = other.cast::<Self>() else {
             return Ok(false);
         };
+        let py = slf.py();
         with_pending_errors(|| {
-            Ok(slf
-                .get()
+            slf.get()
                 .core
-                .is_alpha_equivalent_under(&other.get().core, renaming.get().value().renaming()))
+                .is_alpha_equivalent_under(&other.get().core, renaming.get().value().renaming())
+                .map_err(|error| param_error_to_py(py, error, None))
         })
     }
 
@@ -1172,7 +1173,13 @@ impl PyParam {
         let Ok(other) = other.cast::<Self>() else {
             return Ok(false);
         };
-        with_pending_errors(|| Ok(slf.get().core.is_alpha_equivalent(&other.get().core)))
+        let py = slf.py();
+        with_pending_errors(|| {
+            slf.get()
+                .core
+                .is_alpha_equivalent(&other.get().core)
+                .map_err(|error| param_error_to_py(py, error, None))
+        })
     }
 
     /// Always true: params are immutable.
@@ -1698,11 +1705,12 @@ impl PyParamAssignment {
         let Ok(other) = other.cast::<Self>() else {
             return Ok(false);
         };
+        let py = slf.py();
         with_pending_errors(|| {
-            Ok(slf
-                .get()
+            slf.get()
                 .core
-                .is_alpha_equivalent_under(&other.get().core, renaming.get().value().renaming()))
+                .is_alpha_equivalent_under(&other.get().core, renaming.get().value().renaming())
+                .map_err(|error| param_error_to_py(py, error, None))
         })
     }
 
@@ -1714,7 +1722,13 @@ impl PyParamAssignment {
         let Ok(other) = other.cast::<Self>() else {
             return Ok(false);
         };
-        with_pending_errors(|| Ok(slf.get().core.is_alpha_equivalent(&other.get().core)))
+        let py = slf.py();
+        with_pending_errors(|| {
+            slf.get()
+                .core
+                .is_alpha_equivalent(&other.get().core)
+                .map_err(|error| param_error_to_py(py, error, None))
+        })
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {

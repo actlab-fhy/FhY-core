@@ -46,6 +46,7 @@ pub(super) fn constraint_class_name(py: Python<'_>, constraint: &Constraint) -> 
             _ => "InSetConstraint".to_owned(),
         },
         Constraint::Custom(custom) => custom
+            .get()
             .as_any()
             .downcast_ref::<PyCustomConstraint>()
             .map_or_else(
@@ -92,6 +93,7 @@ pub(crate) fn constraint_to_python<'py>(
             ))
         }
         Constraint::Custom(custom) => custom
+            .get()
             .as_any()
             .downcast_ref::<PyCustomConstraint>()
             .map(|custom| custom.object().bind(py).clone())
@@ -188,7 +190,7 @@ pub(super) fn read_domain(domain: &Bound<'_, PyAny>) -> ParamDomain {
     if let Ok(domain) = domain.cast::<PyPermutationDomain>() {
         return domain.get().core();
     }
-    ParamDomain::Custom(std::sync::Arc::new(PyCustomDomain::new(domain)))
+    ParamDomain::Custom(fhy_core::foreign::Part::new(PyCustomDomain::new(domain)))
 }
 
 /// Return the core domain of the Python `ParamDomain` `object`, as
@@ -254,6 +256,7 @@ pub(crate) fn domain_to_python<'py>(
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Custom(custom) => custom
+            .get()
             .as_any()
             .downcast_ref::<PyCustomDomain>()
             .map(|custom| custom.object().bind(py).clone())

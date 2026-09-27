@@ -807,7 +807,8 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
         expected: &Type,
     ) -> Result<()> {
         if let (Type::Index(_), Type::Index(_)) = (actual, expected) {
-            if !actual.is_structurally_equivalent(expected) {
+            // Index types are equivalent exactly when they are equal.
+            if actual != expected {
                 return Err(self.error(
                     at,
                     TypeRuleKind::ExpectedType,
@@ -1021,7 +1022,8 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
         match (left, right) {
             (Type::Index(_), Type::Index(_)) => {
                 if is_equality(operation) {
-                    if !left.is_structurally_equivalent(right) {
+                    // Index types are equivalent exactly when they are equal.
+                    if left != right {
                         return Err(self.error(
                             node,
                             TypeRuleKind::Index,

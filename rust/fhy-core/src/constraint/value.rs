@@ -8,37 +8,46 @@
 //!
 //! Equality is type-strict: a Boolean, an integer and a float never compare
 //! equal, whatever they hold. A value only its producer can compare, such as
-//! a user object of the Python binding, is an [`Opaque`] value behind the
-//! [`OpaqueValue`] trait.
+//! a user object of the Python binding, is an opaque value: a
+//! [`Part<dyn OpaqueValue>`](Part).
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::hash::Hasher;
 
 use crate::expression::{BigInt, Decimal, LiteralValue};
-use crate::foreign::{BoxError, Foreign, ForeignError};
+use crate::foreign::{BoxError, ForeignPart, Part, impl_part, is_same_part};
 
 /// A value only its producer can compare.
 ///
-/// Two opaque values are equal when [`is_equal`](Self::is_equal) says so;
+/// Two opaque values are equal when [`eq_part`](Self::eq_part) says so;
 /// the implementation decides whether values of different types can be. A
 /// member-shaped opaque value can be a [`Member`], ordered after every
-/// other kind by its [`ordering_key`](Self::ordering_key).
-pub trait OpaqueValue: Send + Sync + fmt::Debug {
-    /// Return the name of the value's type, for messages.
-    fn type_name(&self) -> Cow<'_, str>;
-
-    /// Return whether the value can be a member of a set constraint.
+/// other kind by its [`ordering_key`](Self::ordering_key), which the member
+/// reads once, when it is built.
+pub trait OpaqueValue: ForeignPart {
+    /// Return whether the value can be a member of a set constraint: a fact
+    /// fixed when the value is built, which calls no code of its producer.
     fn is_member_shaped(&self) -> bool;
 
-    /// Return whether the value equals `other`.
+    /// Return whether the value equals `other`, for `==` on a
+    /// [`Part<dyn OpaqueValue>`](Part).
     ///
-    /// It must be an equivalence relation, and agree with
-    /// [`ordering_key`](Self::ordering_key): equal values have equal keys.
-    fn is_equal(&self, other: &dyn OpaqueValue) -> bool;
+    /// It must be an equivalence relation, symmetric included, and agree
+    /// with [`ordering_key`](Self::ordering_key) and
+    /// [`hash_part`](Self::hash_part): equal values have equal keys and
+    /// hashes. The default is identity: the same value.
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
+        is_same_part(self, other)
+    }
+
+    /// Feed the value's hash to `state`, consistently with
+    /// [`eq_part`](Self::eq_part). The default feeds nothing.
+    fn hash_part(&self, state: &mut dyn Hasher) {
+        let _ = state;
+    }
 
     /// Check that the value can be looked up in a set, as a bound value
     /// is before its membership is decided.
@@ -49,70 +58,28 @@ pub trait OpaqueValue: Send + Sync + fmt::Debug {
     fn check_hashable(&self) -> Result<(), BoxError>;
 
     /// Return a text equal for equal values, which orders opaque members.
-    fn ordering_key(&self) -> Cow<'_, str>;
+    ///
+    /// A member reads it once, when it is built.
+    ///
+    /// # Errors
+    ///
+    /// Returns the producer's error, which fails building the member.
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError>;
 
     /// Return how the value orders against `other` by its producer's own
     /// order, as an ordinal param orders its values, or `None` when the two
     /// do not order.
     ///
-    /// The default orders nothing.
-    fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
-        let _ = other;
-        None
-    }
-
-    /// Return the value as a [`Foreign`] part, for serialization.
-    ///
     /// # Errors
     ///
-    /// The default returns [`ForeignError::NoWireForm`]: the value
-    /// cannot be serialized.
-    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
-        Err(ForeignError::NoWireForm {
-            type_name: self.type_name().into_owned(),
-        })
-    }
-
-    /// Return the value as [`Any`], so an implementation can recognize its
-    /// own values.
-    fn as_any(&self) -> &dyn Any;
-}
-
-/// A shared handle to an [`OpaqueValue`].
-#[derive(Clone)]
-pub struct Opaque(Arc<dyn OpaqueValue>);
-
-impl Opaque {
-    /// Wrap `value`.
-    #[must_use]
-    pub fn new(value: impl OpaqueValue + 'static) -> Self {
-        Self(Arc::new(value))
-    }
-
-    /// Wrap the shared `value`.
-    #[must_use]
-    pub fn from_arc(value: Arc<dyn OpaqueValue>) -> Self {
-        Self(value)
-    }
-
-    /// Return the value.
-    #[must_use]
-    pub fn get(&self) -> &dyn OpaqueValue {
-        &*self.0
-    }
-
-    /// Return whether the value equals `other`'s.
-    #[must_use]
-    pub fn is_equal(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0) || self.0.is_equal(&*other.0)
+    /// Returns the producer's error. The default orders nothing.
+    fn order_against(&self, other: &dyn OpaqueValue) -> Result<Option<Ordering>, BoxError> {
+        let _ = other;
+        Ok(None)
     }
 }
 
-impl fmt::Debug for Opaque {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
+impl_part!(OpaqueValue);
 
 /// A value bound to an identifier, besides an expression.
 ///
@@ -143,7 +110,7 @@ pub enum Value {
     /// An unordered collection of values.
     FrozenSet(Vec<Value>),
     /// A value only its producer can compare.
-    Opaque(Opaque),
+    Opaque(Part<dyn OpaqueValue>),
 }
 
 impl From<LiteralValue> for Value {
@@ -204,7 +171,7 @@ impl Value {
 }
 
 /// Why a [`Value`] cannot be a [`Member`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum MemberError {
     /// The value is, or holds, a NaN, which is unequal to itself.
@@ -215,6 +182,14 @@ pub enum MemberError {
     NotMemberShaped {
         /// The name of the opaque value's type.
         type_name: String,
+    },
+    /// The value is, or holds, an opaque value whose
+    /// [`ordering_key`](OpaqueValue::ordering_key) failed.
+    OrderingKey {
+        /// The name of the opaque value's type.
+        type_name: String,
+        /// The producer's error.
+        source: BoxError,
     },
 }
 
@@ -232,11 +207,21 @@ impl fmt::Display for MemberError {
                 f,
                 "a member is, or holds, a value of type {type_name}, which is no member kind"
             ),
+            Self::OrderingKey { type_name, .. } => {
+                write!(f, "the ordering key of a member of type {type_name} failed")
+            }
         }
     }
 }
 
-impl Error for MemberError {}
+impl Error for MemberError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::OrderingKey { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// A value a set constraint can hold: a Boolean, an integer, a float, a
 /// string, a tuple of members, a set of members, or a member-shaped opaque
@@ -256,7 +241,7 @@ enum MemberValue {
     Str(String),
     Tuple(Vec<Member>),
     FrozenSet(MemberSet),
-    Opaque(Opaque, String),
+    Opaque(Part<dyn OpaqueValue>, String),
 }
 
 /// A view of a [`Member`]'s kind and contents.
@@ -279,7 +264,7 @@ pub enum MemberKind<'a> {
     /// A set of members.
     FrozenSet(&'a MemberSet),
     /// A member-shaped opaque value.
-    Opaque(&'a Opaque),
+    Opaque(&'a Part<dyn OpaqueValue>),
 }
 
 impl TryFrom<Value> for Member {
@@ -291,10 +276,10 @@ impl TryFrom<Value> for Member {
     ///
     /// Returns [`MemberError`] if `value` is, or holds, a NaN, a decimal or
     /// an opaque value that is not member-shaped, whichever comes first in
-    /// pre-order.
+    /// pre-order, or an opaque value whose ordering key fails.
     fn try_from(value: Value) -> Result<Self, MemberError> {
         check_member(&value)?;
-        Ok(build_member(value))
+        build_member(value)
     }
 }
 
@@ -427,7 +412,7 @@ fn compare_sequences(left: &[Member], right: &[Member]) -> Ordering {
 /// place are equal, pairwise; members without opaque values are.
 fn are_opaque_parts_equal(left: &Member, right: &Member) -> bool {
     match (&left.0, &right.0) {
-        (MemberValue::Opaque(left, _), MemberValue::Opaque(right, _)) => left.is_equal(right),
+        (MemberValue::Opaque(left, _), MemberValue::Opaque(right, _)) => left == right,
         (MemberValue::Tuple(left), MemberValue::Tuple(right)) => left
             .iter()
             .zip(right)
@@ -461,22 +446,40 @@ fn check_member(value: &Value) -> Result<(), MemberError> {
 ///
 /// The recursion follows the nesting of containers, which a caller builds
 /// by hand and is shallow.
-fn build_member(value: Value) -> Member {
-    Member(match value {
+fn build_member(value: Value) -> Result<Member, MemberError> {
+    Ok(Member(match value {
         Value::Bool(value) => MemberValue::Bool(value),
         Value::Int(value) => MemberValue::Int(value),
         Value::Float(value) => MemberValue::Float(value + 0.0),
         Value::Str(value) => MemberValue::Str(value),
-        Value::Tuple(values) => MemberValue::Tuple(values.into_iter().map(build_member).collect()),
-        Value::FrozenSet(values) => {
-            MemberValue::FrozenSet(values.into_iter().map(build_member).collect())
-        }
+        Value::Tuple(values) => MemberValue::Tuple(
+            values
+                .into_iter()
+                .map(build_member)
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::FrozenSet(values) => MemberValue::FrozenSet(
+            values
+                .into_iter()
+                .map(build_member)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .collect(),
+        ),
         Value::Opaque(value) => {
-            let key = value.get().ordering_key().into_owned();
+            let key = match value.get().ordering_key() {
+                Ok(key) => key.into_owned(),
+                Err(source) => {
+                    return Err(MemberError::OrderingKey {
+                        type_name: value.get().type_name().into_owned(),
+                        source,
+                    });
+                }
+            };
             MemberValue::Opaque(value, key)
         }
         Value::Decimal(_) => unreachable!("a checked value holds no decimal"),
-    })
+    }))
 }
 
 /// Return whether `value` is, or holds, an opaque value.
@@ -523,7 +526,7 @@ fn is_value_equal_to_member(value: &Value, member: &Member) -> bool {
                 })
         }
         (Value::Opaque(value), MemberValue::Opaque(member, _)) => {
-            value.get().is_member_shaped() && member.is_equal(value)
+            value.get().is_member_shaped() && member == value
         }
         _ => false,
     }

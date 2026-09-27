@@ -1,21 +1,18 @@
 //! Test implementations of the open traits that have a wire form, and a
 //! resolver that reads them back.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::Hasher;
-use std::sync::Arc;
 
 use fhy_core::constraint::{
-    Bindings, Constraint, CustomConstraint, Opaque, OpaqueValue, Outcome, Value,
+    Bindings, Constraint, ConstraintContext, CustomConstraint, OpaqueValue, Outcome, Value,
 };
 use fhy_core::expression::{Expression, SymbolType};
-use fhy_core::foreign::BoxError;
-use fhy_core::foreign::{Foreign, ForeignError, Resolve};
+use fhy_core::foreign::{BoxError, Foreign, ForeignError, ForeignPart, Part, Resolve};
 use fhy_core::identifier::Identifier;
-use fhy_core::param::{CustomDomain, IntervalProfile, ParamDomain, Side};
+use fhy_core::param::{CustomDomain, IntervalProfile, ParamContext, ParamDomain, Side};
 use fhy_core::term::AlphaRenaming;
 use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 
@@ -50,7 +47,7 @@ pub(crate) struct NamedType(pub(crate) String);
 impl NamedType {
     /// Return the extension type labelled `label`.
     pub(crate) fn build(label: &str) -> Type {
-        Type::Extension(Arc::new(Self(label.to_owned())))
+        Type::Extension(Part::new(Self(label.to_owned())))
     }
 }
 
@@ -60,28 +57,9 @@ impl fmt::Display for NamedType {
     }
 }
 
-impl TypeExtension for NamedType {
+impl ForeignPart for NamedType {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed("NamedType")
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn eq_extension(&self, other: &dyn TypeExtension) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<Self>()
-            .is_some_and(|other| other.0 == self.0)
-    }
-
-    fn hash_extension(&self, state: &mut dyn Hasher) {
-        state.write(self.0.as_bytes());
-    }
-
-    fn is_structurally_equivalent(&self, other: &Type) -> bool {
-        matches!(other, Type::Extension(other) if self.eq_extension(other.as_ref()))
     }
 
     fn to_foreign(&self) -> Result<Foreign, ForeignError> {
@@ -92,6 +70,19 @@ impl TypeExtension for NamedType {
     }
 }
 
+impl TypeExtension for NamedType {
+    fn eq_part(&self, other: &dyn TypeExtension) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| other.0 == self.0)
+    }
+
+    fn hash_part(&self, state: &mut dyn Hasher) {
+        state.write(self.0.as_bytes());
+    }
+}
+
 /// A data type named by its label, whose foreign part is its label.
 #[derive(Debug)]
 pub(crate) struct NamedDataType(pub(crate) String);
@@ -99,7 +90,7 @@ pub(crate) struct NamedDataType(pub(crate) String);
 impl NamedDataType {
     /// Return the extension data type labelled `label`.
     pub(crate) fn build(label: &str) -> DataType {
-        DataType::Extension(Arc::new(Self(label.to_owned())))
+        DataType::Extension(Part::new(Self(label.to_owned())))
     }
 }
 
@@ -109,28 +100,26 @@ impl fmt::Display for NamedDataType {
     }
 }
 
-impl DataTypeExtension for NamedDataType {
+impl ForeignPart for NamedDataType {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed("NamedDataType")
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Ok(Foreign::new(NAMED_DATA_TYPE, self.0.as_str()))
     }
+}
 
-    fn eq_extension(&self, other: &dyn DataTypeExtension) -> bool {
+impl DataTypeExtension for NamedDataType {
+    fn eq_part(&self, other: &dyn DataTypeExtension) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
             .is_some_and(|other| other.0 == self.0)
     }
 
-    fn hash_extension(&self, state: &mut dyn Hasher) {
+    fn hash_part(&self, state: &mut dyn Hasher) {
         state.write(self.0.as_bytes());
-    }
-
-    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
-        Ok(Foreign::new(NAMED_DATA_TYPE, self.0.as_str()))
     }
 }
 
@@ -144,15 +133,13 @@ impl fmt::Display for SilentType {
     }
 }
 
-impl TypeExtension for SilentType {
+impl ForeignPart for SilentType {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed("SilentType")
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
+
+impl TypeExtension for SilentType {}
 
 /// A data type with no wire form: its trait's default `to_foreign`.
 #[derive(Debug)]
@@ -164,15 +151,13 @@ impl fmt::Display for SilentDataType {
     }
 }
 
-impl DataTypeExtension for SilentDataType {
+impl ForeignPart for SilentDataType {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed("SilentDataType")
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
+
+impl DataTypeExtension for SilentDataType {}
 
 /// An opaque value equal to another of the same payload, whose foreign
 /// part is its payload's digits.
@@ -182,20 +167,26 @@ pub(crate) struct WireToken(pub(crate) i64);
 impl WireToken {
     /// Return the opaque value of `payload`.
     pub(crate) fn value(payload: i64) -> Value {
-        Value::Opaque(Opaque::new(Self(payload)))
+        Value::Opaque(Part::new(Self(payload)))
     }
 }
 
-impl OpaqueValue for WireToken {
+impl ForeignPart for WireToken {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed("WireToken")
     }
 
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Ok(Foreign::new(TOKEN, self.0.to_string()))
+    }
+}
+
+impl OpaqueValue for WireToken {
     fn is_member_shaped(&self) -> bool {
         true
     }
 
-    fn is_equal(&self, other: &dyn OpaqueValue) -> bool {
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
@@ -206,16 +197,8 @@ impl OpaqueValue for WireToken {
         Ok(())
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Owned(format!("WireToken:{}", self.0))
-    }
-
-    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
-        Ok(Foreign::new(TOKEN, self.0.to_string()))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Owned(format!("WireToken:{}", self.0)))
     }
 }
 
@@ -227,16 +210,30 @@ pub(crate) struct WireCustom(pub(crate) String);
 impl WireCustom {
     /// Return the custom constraint labelled `label`.
     pub(crate) fn build(label: &str) -> Constraint {
-        Constraint::Custom(Arc::new(Self(label.to_owned())))
+        Constraint::Custom(Part::new(Self(label.to_owned())))
+    }
+}
+
+impl ForeignPart for WireCustom {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("WireCustom")
+    }
+
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Ok(Foreign::new(CUSTOM, self.0.as_str()))
     }
 }
 
 impl CustomConstraint for WireCustom {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
-        HashSet::new()
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, BoxError> {
+        Ok(HashSet::new())
     }
 
-    fn evaluate(&self, _bindings: &Bindings) -> Result<Outcome, BoxError> {
+    fn evaluate(
+        &self,
+        _bindings: &Bindings,
+        _context: &ConstraintContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         Ok(Outcome::Satisfied)
     }
 
@@ -244,11 +241,11 @@ impl CustomConstraint for WireCustom {
         Ok(Expression::literal(true))
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Owned(format!("wire|{}", self.0))
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Owned(format!("wire|{}", self.0)))
     }
 
-    fn is_structurally_equivalent(&self, other: &dyn CustomConstraint) -> bool {
+    fn eq_part(&self, other: &dyn CustomConstraint) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
@@ -259,16 +256,8 @@ impl CustomConstraint for WireCustom {
         &self,
         other: &dyn CustomConstraint,
         _renaming: &AlphaRenaming,
-    ) -> bool {
-        self.is_structurally_equivalent(other)
-    }
-
-    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
-        Ok(Foreign::new(CUSTOM, self.0.as_str()))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    ) -> Result<bool, BoxError> {
+        Ok(self.eq_part(other))
     }
 }
 
@@ -280,7 +269,17 @@ pub(crate) struct WireDomain(pub(crate) String);
 impl WireDomain {
     /// Return the custom domain labelled `label`.
     pub(crate) fn build(label: &str) -> ParamDomain {
-        ParamDomain::Custom(Arc::new(Self(label.to_owned())))
+        ParamDomain::Custom(Part::new(Self(label.to_owned())))
+    }
+}
+
+impl ForeignPart for WireDomain {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("WireDomain")
+    }
+
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Ok(Foreign::new(DOMAIN, self.0.as_str()))
     }
 }
 
@@ -309,7 +308,11 @@ impl CustomDomain for WireDomain {
         Ok(None)
     }
 
-    fn is_value_set_subset(&self, _other: &ParamDomain) -> Result<bool, BoxError> {
+    fn is_value_set_subset(
+        &self,
+        _other: &ParamDomain,
+        _context: &ParamContext<'_>,
+    ) -> Result<bool, BoxError> {
         Ok(false)
     }
 
@@ -318,11 +321,16 @@ impl CustomDomain for WireDomain {
         _own: Side<'_>,
         _other_domain: &ParamDomain,
         _other: Side<'_>,
+        _context: &ParamContext<'_>,
     ) -> Result<Outcome, BoxError> {
         Ok(Outcome::Undecided)
     }
 
-    fn has_feasible_value(&self, _side: Side<'_>) -> Result<Outcome, BoxError> {
+    fn has_feasible_value(
+        &self,
+        _side: Side<'_>,
+        _context: &ParamContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         Ok(Outcome::Satisfied)
     }
 
@@ -332,6 +340,7 @@ impl CustomDomain for WireDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         Ok(None)
     }
@@ -342,24 +351,16 @@ impl CustomDomain for WireDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         Ok((Self::build(&self.0), Vec::new()))
     }
 
-    fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool {
-        matches!(
-            other,
-            ParamDomain::Custom(other)
-                if other.as_any().downcast_ref::<Self>().is_some_and(|other| other.0 == self.0)
-        )
-    }
-
-    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
-        Ok(Foreign::new(DOMAIN, self.0.as_str()))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn eq_part(&self, other: &dyn CustomDomain) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| other.0 == self.0)
     }
 }
 
@@ -381,36 +382,36 @@ fn read<'a>(foreign: &'a Foreign, type_id: &str) -> Result<&'a str, ForeignError
     Ok(foreign.data())
 }
 
-impl Resolve<Arc<dyn TypeExtension>> for TestResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn TypeExtension>, ForeignError> {
-        Ok(Arc::new(NamedType(read(foreign, NAMED_TYPE)?.to_owned())))
+impl Resolve<Part<dyn TypeExtension>> for TestResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn TypeExtension>, ForeignError> {
+        Ok(Part::new(NamedType(read(foreign, NAMED_TYPE)?.to_owned())))
     }
 }
 
-impl Resolve<Arc<dyn DataTypeExtension>> for TestResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn DataTypeExtension>, ForeignError> {
-        Ok(Arc::new(NamedDataType(
+impl Resolve<Part<dyn DataTypeExtension>> for TestResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn DataTypeExtension>, ForeignError> {
+        Ok(Part::new(NamedDataType(
             read(foreign, NAMED_DATA_TYPE)?.to_owned(),
         )))
     }
 }
 
-impl Resolve<Opaque> for TestResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Opaque, ForeignError> {
+impl Resolve<Part<dyn OpaqueValue>> for TestResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
         let payload = read(foreign, TOKEN)?;
         let payload = payload.parse().map_err(|_refused| failed(TOKEN))?;
-        Ok(Opaque::new(WireToken(payload)))
+        Ok(Part::new(WireToken(payload)))
     }
 }
 
-impl Resolve<Arc<dyn CustomConstraint>> for TestResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn CustomConstraint>, ForeignError> {
-        Ok(Arc::new(WireCustom(read(foreign, CUSTOM)?.to_owned())))
+impl Resolve<Part<dyn CustomConstraint>> for TestResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
+        Ok(Part::new(WireCustom(read(foreign, CUSTOM)?.to_owned())))
     }
 }
 
-impl Resolve<Arc<dyn CustomDomain>> for TestResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Arc<dyn CustomDomain>, ForeignError> {
-        Ok(Arc::new(WireDomain(read(foreign, DOMAIN)?.to_owned())))
+impl Resolve<Part<dyn CustomDomain>> for TestResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
+        Ok(Part::new(WireDomain(read(foreign, DOMAIN)?.to_owned())))
     }
 }

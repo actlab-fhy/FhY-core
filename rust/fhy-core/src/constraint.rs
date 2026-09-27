@@ -14,10 +14,15 @@
 //! which a constraint judges only when it reads it. Why an outcome is
 //! undecided is reported to the [`ConstraintContext`]'s [`ConstraintObserver`] as an
 //! [`ConstraintEvent`]. A value only its producer can compare, such as an object of
-//! the Python binding, is an [`Opaque`] value.
+//! the Python binding, is an opaque value, a [`Part<dyn OpaqueValue>`](crate::foreign::Part).
 //!
 //! Each constraint has a canonical ordering key, a text equal for two
-//! constraints exactly when they are structurally equivalent.
+//! constraints exactly when they are structurally equivalent. A
+//! [`CustomConstraint`], held in a [`Part`], answers
+//! through fallible hooks, except the `eq_part` and `hash_part` behind
+//! `==`: its failure is a [`ConstraintError::Custom`], so the key a
+//! [`ConstraintSystem`] reads once when it is built, and a constraint's
+//! scope, can fail.
 //!
 //! # Examples
 //!
@@ -55,10 +60,11 @@ mod system;
 mod value;
 pub mod wire;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use crate::expression::Expression;
+use crate::foreign::Part;
 use crate::identifier::Identifier;
 use crate::term::{AlphaEquivalence, AlphaRenaming, FreeIdentifiers};
 
@@ -69,7 +75,7 @@ pub use equation::EquationConstraint;
 pub use error::{ConstraintError, UnusableBindingReason};
 pub use set::{Polarity, SetConstraint};
 pub use system::ConstraintSystem;
-pub use value::{Member, MemberError, MemberKind, MemberSet, Opaque, OpaqueValue, Value};
+pub use value::{Member, MemberError, MemberKind, MemberSet, OpaqueValue, Value};
 
 /// The answer to whether a constraint holds.
 #[expect(
@@ -95,7 +101,7 @@ pub enum Constraint {
     /// Membership of one identifier's value in a set, or its absence.
     Set(SetConstraint),
     /// A constraint of a kind defined elsewhere.
-    Custom(Arc<dyn CustomConstraint>),
+    Custom(Part<dyn CustomConstraint>),
 }
 
 impl Constraint {
@@ -108,18 +114,25 @@ impl Constraint {
                 Expression::ptr_eq(left.expression(), right.expression())
             }
             (Self::Set(left), Self::Set(right)) => SetConstraint::ptr_eq(left, right),
-            (Self::Custom(left), Self::Custom(right)) => Arc::ptr_eq(left, right),
+            (Self::Custom(left), Self::Custom(right)) => Part::ptr_eq(left, right),
             _ => false,
         }
     }
 
     /// Return the scope: every identifier the constraint refers to.
-    #[must_use]
-    pub fn free_identifiers(&self) -> HashSet<Identifier> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConstraintError::Custom`] for a custom constraint that
+    /// fails; a built-in kind never fails.
+    pub fn free_identifiers(&self) -> Result<HashSet<Identifier>, ConstraintError> {
         match self {
-            Self::Equation(constraint) => constraint.free_identifiers(),
-            Self::Set(constraint) => constraint.free_identifiers(),
-            Self::Custom(constraint) => constraint.free_identifiers(),
+            Self::Equation(constraint) => Ok(constraint.free_identifiers()),
+            Self::Set(constraint) => Ok(constraint.free_identifiers()),
+            Self::Custom(constraint) => constraint
+                .get()
+                .free_identifiers()
+                .map_err(ConstraintError::Custom),
         }
     }
 
@@ -138,7 +151,8 @@ impl Constraint {
             Self::Equation(constraint) => constraint.evaluate(bindings, context),
             Self::Set(constraint) => constraint.evaluate(bindings, context),
             Self::Custom(constraint) => constraint
-                .evaluate(bindings)
+                .get()
+                .evaluate(bindings, context)
                 .map_err(ConstraintError::Custom),
         }
     }
@@ -154,17 +168,28 @@ impl Constraint {
         match self {
             Self::Equation(constraint) => Ok(constraint.expression().clone()),
             Self::Set(constraint) => constraint.to_expression(),
-            Self::Custom(constraint) => constraint.to_expression().map_err(ConstraintError::Custom),
+            Self::Custom(constraint) => constraint
+                .get()
+                .to_expression()
+                .map_err(ConstraintError::Custom),
         }
     }
 
     /// Return the canonical ordering key.
-    #[must_use]
-    pub fn ordering_key(&self) -> String {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConstraintError::Custom`] for a custom constraint whose
+    /// key fails; a built-in kind never fails.
+    pub fn ordering_key(&self) -> Result<String, ConstraintError> {
         match self {
-            Self::Equation(constraint) => constraint.ordering_key(),
-            Self::Set(constraint) => constraint.ordering_key(),
-            Self::Custom(constraint) => constraint.ordering_key().into_owned(),
+            Self::Equation(constraint) => Ok(constraint.ordering_key()),
+            Self::Set(constraint) => Ok(constraint.ordering_key()),
+            Self::Custom(constraint) => constraint
+                .get()
+                .ordering_key()
+                .map(Cow::into_owned)
+                .map_err(ConstraintError::Custom),
         }
     }
 
@@ -174,34 +199,47 @@ impl Constraint {
         match (self, other) {
             (Self::Equation(left), Self::Equation(right)) => left.is_structurally_equivalent(right),
             (Self::Set(left), Self::Set(right)) => left.is_structurally_equivalent(right),
-            (Self::Custom(left), Self::Custom(right)) => {
-                left.is_structurally_equivalent(right.as_ref())
-            }
+            (Self::Custom(left), Self::Custom(right)) => left == right,
             _ => false,
         }
     }
 }
 
 impl AlphaEquivalence for Constraint {
+    type Error = ConstraintError;
+
     /// Compare two constraints of the same kind: equations by their
     /// expressions, set constraints by their polarity, their members and
-    /// the correspondence of their variables.
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
-        match (self, other) {
+    /// the correspondence of their variables, and custom constraints
+    /// through their hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConstraintError::Custom`] for a custom constraint's
+    /// failure.
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, ConstraintError> {
+        Ok(match (self, other) {
             (Self::Equation(left), Self::Equation(right)) => {
                 left.is_alpha_equivalent_under(right, renaming)
             }
             (Self::Set(left), Self::Set(right)) => left.is_alpha_equivalent_under(right, renaming),
-            (Self::Custom(left), Self::Custom(right)) => {
-                left.is_alpha_equivalent_under(right.as_ref(), renaming)
-            }
+            (Self::Custom(left), Self::Custom(right)) => left
+                .get()
+                .is_alpha_equivalent_under(right.get(), renaming)
+                .map_err(ConstraintError::Custom)?,
             _ => false,
-        }
+        })
     }
 }
 
 impl FreeIdentifiers for Constraint {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
+    type Error = ConstraintError;
+
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, ConstraintError> {
         Self::free_identifiers(self)
     }
 }

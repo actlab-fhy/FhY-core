@@ -95,9 +95,21 @@ impl ParamAssignment {
 }
 
 impl AlphaEquivalence for ParamAssignment {
+    type Error = ParamError;
+
     /// Compare the params under `renaming`, and the values type-strictly.
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
-        self.param.is_alpha_equivalent_under(&other.param, renaming)
-            && are_values_equal(&self.value, &other.value)
+    ///
+    /// # Errors
+    ///
+    /// Returns the params' comparison error.
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, ParamError> {
+        Ok(self
+            .param
+            .is_alpha_equivalent_under(&other.param, renaming)?
+            && are_values_equal(&self.value, &other.value))
     }
 }

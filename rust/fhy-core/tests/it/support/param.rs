@@ -2,20 +2,19 @@
 //! evaluates ground expressions, an observer that records its events, a
 //! test-local custom domain, and opaque values with an order.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Constraint, ConstraintError, ConstraintEvent, EquationConstraint, Member, MemberKind, Opaque,
+    Constraint, ConstraintError, ConstraintEvent, EquationConstraint, Member, MemberKind,
     OpaqueValue, Outcome, Polarity, SetConstraint, Value,
 };
 use fhy_core::expression::evaluate::{Evaluator, Scalar};
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{BigInt, Expression, LiteralValue, SymbolType};
-use fhy_core::foreign::BoxError;
+use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     CustomDomain, IntervalProfile, ParamContext, ParamDomain, ParamEvent, ParamObserver,
@@ -23,7 +22,7 @@ use fhy_core::param::{
 };
 use fhy_core::solver::{SatResult, Simplifier, SimplifyContext, SmtSolver, Solver};
 
-use super::constraint::{TestValueError, member_set};
+use super::constraint::{ConstraintKey, TestValueError, member_set};
 use super::solver::{FakeBackendError, RecordingSmtSolver};
 
 /// Return the Boolean value `value`.
@@ -107,7 +106,10 @@ pub(crate) fn describe(member: &Member) -> String {
             "frozenset:{{{}}}",
             members.iter().map(describe).collect::<Vec<_>>().join(",")
         ),
-        MemberKind::Opaque(value) => format!("opaque:{}", value.get().ordering_key()),
+        MemberKind::Opaque(value) => format!(
+            "opaque:{}",
+            value.get().ordering_key().expect("a test value has a key")
+        ),
     }
 }
 
@@ -268,13 +270,9 @@ impl RecordedParamEvent {
         match *event {
             ParamEvent::Member {
                 constraint, event, ..
-            } => Self::Member(constraint.ordering_key(), event_name(event)),
-            ParamEvent::UndecidedMember { constraint } => {
-                Self::UndecidedMember(constraint.ordering_key())
-            }
-            ParamEvent::BridgeFailed { constraint, .. } => {
-                Self::BridgeFailed(constraint.ordering_key())
-            }
+            } => Self::Member(constraint.key(), event_name(event)),
+            ParamEvent::UndecidedMember { constraint } => Self::UndecidedMember(constraint.key()),
+            ParamEvent::BridgeFailed { constraint, .. } => Self::BridgeFailed(constraint.key()),
             ParamEvent::Question { system, event, .. } => {
                 Self::Question(system.constraints().len(), event_name(event))
             }
@@ -283,7 +281,7 @@ impl RecordedParamEvent {
                 variable,
                 reason,
             } => Self::Screened(
-                constraint.ordering_key(),
+                constraint.key(),
                 variable.clone(),
                 match reason {
                     ScreenReason::DependentScope => "dependent_scope".to_owned(),
@@ -415,7 +413,7 @@ pub(crate) struct Level {
 impl Level {
     /// Return the level `payload` of type `Level`.
     pub(crate) fn value(payload: i64) -> Value {
-        Value::Opaque(Opaque::new(Self {
+        Value::Opaque(Part::new(Self {
             type_name: "Level",
             payload,
         }))
@@ -423,23 +421,25 @@ impl Level {
 
     /// Return the level `payload` of another type, `Grade`.
     pub(crate) fn grade(payload: i64) -> Value {
-        Value::Opaque(Opaque::new(Self {
+        Value::Opaque(Part::new(Self {
             type_name: "Grade",
             payload,
         }))
     }
 }
 
-impl OpaqueValue for Level {
+impl ForeignPart for Level {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed(self.type_name)
     }
+}
 
+impl OpaqueValue for Level {
     fn is_member_shaped(&self) -> bool {
         true
     }
 
-    fn is_equal(&self, other: &dyn OpaqueValue) -> bool {
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
@@ -450,17 +450,15 @@ impl OpaqueValue for Level {
         Ok(())
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Owned(format!("{}:{}", self.type_name, self.payload))
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Owned(format!("{}:{}", self.type_name, self.payload)))
     }
 
-    fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
-        let other = other.as_any().downcast_ref::<Self>()?;
-        (other.type_name == self.type_name).then(|| self.payload.cmp(&other.payload))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn order_against(&self, other: &dyn OpaqueValue) -> Result<Option<Ordering>, BoxError> {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return Ok(None);
+        };
+        Ok((other.type_name == self.type_name).then(|| self.payload.cmp(&other.payload)))
     }
 }
 
@@ -471,20 +469,22 @@ pub(crate) struct Hand(pub(crate) u8);
 impl Hand {
     /// Return the hand `index` modulo three.
     pub(crate) fn value(index: u8) -> Value {
-        Value::Opaque(Opaque::new(Self(index % 3)))
+        Value::Opaque(Part::new(Self(index % 3)))
+    }
+}
+
+impl ForeignPart for Hand {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("Hand")
     }
 }
 
 impl OpaqueValue for Hand {
-    fn type_name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Hand")
-    }
-
     fn is_member_shaped(&self) -> bool {
         true
     }
 
-    fn is_equal(&self, other: &dyn OpaqueValue) -> bool {
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
@@ -495,23 +495,21 @@ impl OpaqueValue for Hand {
         Ok(())
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Owned(format!("Hand:{}", self.0))
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Owned(format!("Hand:{}", self.0)))
     }
 
-    fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
-        let other = other.as_any().downcast_ref::<Self>()?;
-        Some(if self.0 == other.0 {
+    fn order_against(&self, other: &dyn OpaqueValue) -> Result<Option<Ordering>, BoxError> {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return Ok(None);
+        };
+        Ok(Some(if self.0 == other.0 {
             Ordering::Equal
         } else if (self.0 + 1) % 3 == other.0 {
             Ordering::Less
         } else {
             Ordering::Greater
-        })
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+        }))
     }
 }
 
@@ -531,7 +529,7 @@ impl EvenDomain {
             is_failing,
         });
         (
-            ParamDomain::Custom(Arc::clone(&domain) as Arc<dyn CustomDomain>),
+            ParamDomain::Custom(Part::from_arc(Arc::clone(&domain) as Arc<dyn CustomDomain>)),
             domain,
         )
     }
@@ -555,6 +553,12 @@ impl EvenDomain {
         } else {
             Ok(())
         }
+    }
+}
+
+impl ForeignPart for EvenDomain {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("EvenDomain")
     }
 }
 
@@ -587,7 +591,11 @@ impl CustomDomain for EvenDomain {
         Ok(None)
     }
 
-    fn is_value_set_subset(&self, _other: &ParamDomain) -> Result<bool, BoxError> {
+    fn is_value_set_subset(
+        &self,
+        _other: &ParamDomain,
+        _context: &ParamContext<'_>,
+    ) -> Result<bool, BoxError> {
         self.record("is_value_set_subset")?;
         Ok(false)
     }
@@ -597,12 +605,17 @@ impl CustomDomain for EvenDomain {
         _own: Side<'_>,
         _other_domain: &ParamDomain,
         _other: Side<'_>,
+        _context: &ParamContext<'_>,
     ) -> Result<Outcome, BoxError> {
         self.record("feasibility_subset")?;
         Ok(Outcome::Undecided)
     }
 
-    fn has_feasible_value(&self, _side: Side<'_>) -> Result<Outcome, BoxError> {
+    fn has_feasible_value(
+        &self,
+        _side: Side<'_>,
+        _context: &ParamContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         self.record("has_feasible_value")?;
         Ok(Outcome::Satisfied)
     }
@@ -613,6 +626,7 @@ impl CustomDomain for EvenDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         self.record("union")?;
         Ok(None)
@@ -624,22 +638,18 @@ impl CustomDomain for EvenDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         self.record("intersection")?;
-        Ok((
-            ParamDomain::Custom(Arc::new(Self::default()) as Arc<dyn CustomDomain>),
-            Vec::new(),
-        ))
+        Ok((ParamDomain::Custom(Part::new(Self::default())), Vec::new()))
     }
 
-    fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool {
-        self.record("is_structurally_equivalent")
-            .expect("equivalence of a failing domain is not asked");
-        matches!(other, ParamDomain::Custom(other) if other.as_any().is::<Self>())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn eq_part(&self, other: &dyn CustomDomain) -> bool {
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push("eq_part".to_owned());
+        other.as_any().is::<Self>()
     }
 }
 

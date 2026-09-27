@@ -1,18 +1,17 @@
 //! Helpers of the constraint tests: members and values, a test-local
 //! opaque value, and an observer that records its events.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Bindings, Constraint, ConstraintEvent, ConstraintObserver, CustomConstraint, Member, MemberSet,
-    Opaque, OpaqueValue, Outcome, Value,
+    Bindings, Constraint, ConstraintContext, ConstraintEvent, ConstraintObserver, CustomConstraint,
+    Member, MemberSet, OpaqueValue, Outcome, Value,
 };
 use fhy_core::expression::{BigInt, Expression};
-use fhy_core::foreign::BoxError;
+use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::QueryKind;
 use fhy_core::term::AlphaRenaming;
@@ -104,22 +103,24 @@ impl TestOpaque {
         }
     }
 
-    /// Return this value as an [`Opaque`] value.
+    /// Return this value as an opaque value.
     pub(crate) fn into_value(self) -> Value {
-        Value::Opaque(Opaque::new(self))
+        Value::Opaque(Part::new(self))
+    }
+}
+
+impl ForeignPart for TestOpaque {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self.type_name)
     }
 }
 
 impl OpaqueValue for TestOpaque {
-    fn type_name(&self) -> Cow<'_, str> {
-        Cow::Borrowed(self.type_name)
-    }
-
     fn is_member_shaped(&self) -> bool {
         self.is_member_shaped
     }
 
-    fn is_equal(&self, other: &dyn OpaqueValue) -> bool {
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
@@ -137,12 +138,8 @@ impl OpaqueValue for TestOpaque {
         }
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.key)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Borrowed(&self.key))
     }
 }
 
@@ -230,7 +227,7 @@ impl TestCustom {
         outcome: Outcome,
         log: &Arc<Mutex<Vec<String>>>,
     ) -> Constraint {
-        Constraint::Custom(Arc::new(Self {
+        Constraint::Custom(Part::new(Self {
             label: label.to_owned(),
             expression,
             outcome,
@@ -239,12 +236,22 @@ impl TestCustom {
     }
 }
 
+impl ForeignPart for TestCustom {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("TestCustom")
+    }
+}
+
 impl CustomConstraint for TestCustom {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
-        self.expression.free_identifiers()
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, BoxError> {
+        Ok(self.expression.free_identifiers())
     }
 
-    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, BoxError> {
+    fn evaluate(
+        &self,
+        bindings: &Bindings,
+        _context: &ConstraintContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         let source = bindings
             .source()
             .and_then(|source| source.downcast_ref::<String>())
@@ -260,11 +267,11 @@ impl CustomConstraint for TestCustom {
         Ok(self.expression.clone())
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Owned(format!("custom|{}", self.label))
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Owned(format!("custom|{}", self.label)))
     }
 
-    fn is_structurally_equivalent(&self, other: &dyn CustomConstraint) -> bool {
+    fn eq_part(&self, other: &dyn CustomConstraint) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
@@ -275,11 +282,120 @@ impl CustomConstraint for TestCustom {
         &self,
         other: &dyn CustomConstraint,
         _renaming: &AlphaRenaming,
-    ) -> bool {
-        self.is_structurally_equivalent(other)
+    ) -> Result<bool, BoxError> {
+        Ok(self.eq_part(other))
+    }
+}
+
+/// The ordering key of a constraint whose key cannot fail, as every
+/// built-in and test constraint's.
+pub(crate) trait ConstraintKey {
+    /// Return the key.
+    fn key(&self) -> String;
+}
+
+impl ConstraintKey for Constraint {
+    fn key(&self) -> String {
+        self.ordering_key()
+            .expect("the constraint's key does not fail")
+    }
+}
+
+impl ConstraintKey for fhy_core::constraint::SetConstraint {
+    fn key(&self) -> String {
+        self.ordering_key()
+    }
+}
+
+impl ConstraintKey for fhy_core::constraint::EquationConstraint {
+    fn key(&self) -> String {
+        self.ordering_key()
+    }
+}
+
+/// Which hook of a [`Failing`] part fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailingHook {
+    /// The ordering key.
+    Key,
+    /// The scope (a custom constraint's free identifiers).
+    Scope,
+}
+
+/// An opaque value and a custom constraint whose `hook` fails with a
+/// [`TestValueError`] naming it, and whose other hooks answer.
+#[derive(Debug)]
+pub(crate) struct Failing(pub(crate) FailingHook);
+
+impl Failing {
+    /// Return the failure of `hook`.
+    fn fail(hook: &str) -> BoxError {
+        Box::new(TestValueError(format!("the {hook} failed")))
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
+    /// Return this part as an opaque value.
+    pub(crate) fn into_value(self) -> Value {
+        Value::Opaque(Part::new(self))
+    }
+
+    /// Return this part as a custom constraint.
+    pub(crate) fn into_constraint(self) -> Constraint {
+        Constraint::Custom(Part::new(self))
+    }
+}
+
+impl ForeignPart for Failing {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("Failing")
+    }
+}
+
+impl OpaqueValue for Failing {
+    fn is_member_shaped(&self) -> bool {
+        true
+    }
+
+    fn check_hashable(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        match self.0 {
+            FailingHook::Key => Err(Self::fail("key")),
+            FailingHook::Scope => Ok(Cow::Borrowed("Failing")),
+        }
+    }
+}
+
+impl CustomConstraint for Failing {
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, BoxError> {
+        match self.0 {
+            FailingHook::Scope => Err(Self::fail("scope")),
+            FailingHook::Key => Ok(HashSet::new()),
+        }
+    }
+
+    fn evaluate(
+        &self,
+        _bindings: &Bindings,
+        _context: &ConstraintContext<'_>,
+    ) -> Result<Outcome, BoxError> {
+        Ok(Outcome::Satisfied)
+    }
+
+    fn to_expression(&self) -> Result<Expression, BoxError> {
+        Ok(Expression::literal(true))
+    }
+
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        OpaqueValue::ordering_key(self)
+    }
+
+    fn is_alpha_equivalent_under(
+        &self,
+        _other: &dyn CustomConstraint,
+        _renaming: &AlphaRenaming,
+    ) -> Result<bool, BoxError> {
+        Ok(false)
     }
 }

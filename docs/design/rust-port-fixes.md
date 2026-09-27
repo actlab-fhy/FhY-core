@@ -43,8 +43,8 @@ onto `dev-rust` before continuing.
 - [x] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence: `82935f7`
 - [x] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers: `9473515`
 - [x] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python): `3f9c59b`
-- [x] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error
-- [ ] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`
+- [x] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error: `0b44aa2`, `450fa2c`, `dcf2022`
+- [x] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`
 - [ ] R2-006 (F2-006): `ParamError` split by family
 - [ ] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits
 - [ ] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized
@@ -2330,6 +2330,81 @@ finding.
   arise, since coercion yields an interval operand.
 - **Python-visible changes:** none. `test_non_interval_params_return_not_implemented_from_each_operator`
   pins the `NotImplemented` answers.
+
+**R2-004.**
+- **`Part::new` (call).** One generic `Part::<T>::new(part: impl
+  IntoPart<T>)`, where the crate-private `impl_part!` implements the public
+  `IntoPart<dyn Trait>` for every implementor of each extension trait. An
+  inherent `new` per `Part<dyn Trait>` was tried first: with five of them,
+  `Part::new(x)` is ambiguous (E0034) and every caller would have to name
+  the trait object.
+- **No `Deref` on `Part`.** `part.get()` reaches the part, so
+  `part.as_any()` does not compile and cannot return the handle's own
+  `Any` (S-3's hazard); `as_any_on_a_part_downcasts_to_the_implementation`
+  pins both.
+- **The `this` argument (call).** The binding hooks of `TypeExtension` and
+  `DataTypeExtension` (`bind_template`, `substitute_template`, `unify`)
+  take `this: &Type` (or `&DataType`), the value the extension is the part
+  of, so the provided bodies can call `types::default_bind_template`,
+  `default_substitute_template` and `default_unify` (and
+  `default_bind_data_template`, `default_substitute_data_template`), which
+  answer with the very handle; a hook sees only `&self`, not its `Arc`.
+- **Fallible structural equivalence.** `Type::is_structurally_equivalent`
+  and `DataType::is_structurally_equivalent` return
+  `Result<bool, UnificationError>`, the extension's failure as
+  `UnificationError::Extension`. That reached, additively in other tracks'
+  files, `TypeUnificationEnvironment::is_structurally_equivalent`,
+  `VariableFrame`, `FunctionFrame`, `SymbolFrame` and
+  `SymbolTable<SymbolFrame>::is_structurally_equivalent` (all now
+  `Result<bool, UnificationError>`), and the checker's two index-type
+  comparisons, which compare with `==`, the same relation for index types.
+- **Other ripples.** `Member::try_from` is fallible on a key
+  (`MemberError::OrderingKey`, which drops `MemberError`'s `Clone`,
+  `PartialEq` and `Eq`); `Constraint::free_identifiers` and
+  `Constraint::ordering_key` return `Result`; `ConstraintSystem::new`
+  returns `Result` (J-2), and the param procedures that build systems map
+  it to `ParamError::Constraint` (Track C's `screen.rs`, `decide.rs`, a `?`
+  each); ordinal sorting takes a fallible comparison;
+  `ParamDomain::is_value_set_subset` and `Param::is_value_set_subset` take
+  the `ParamContext` the hook needs; `is_mapping_alpha_equivalent_under`
+  returns the value comparison's error. A binder over expressions rebuilds
+  with `PiecewiseError`, which gains `From<Infallible>`.
+- **Equality of custom parts.** `ParamDomain` and `Constraint` equivalence
+  ask a custom part only against another custom part, through `==` on the
+  `Part` (same part first, then `eq_part`); a custom domain against a
+  built-in one is not equivalent, without a call.
+- **The binding.** Its adapters implement the new traits, and a raised
+  exception becomes the hook's `Err`, boxing the `PyErr`, which the entry
+  function's error mapping unboxes. The side channels:
+  - `constraint/value.rs`'s slot now serves the hooks behind `==` only
+    (`PyOpaqueValue::eq_part`, a Python constraint's and a Python domain's
+    `is_structurally_equivalent`);
+  - `types/adapter.rs`'s context keeps only `==` and `hash` exceptions;
+  - the term adapter's comparisons and scopes return their exceptions.
+    Its context still keeps the exception of a binder's
+    `get_bound_identifiers` and `get_scoped_children`, which the core
+    reads as slices (`Binder::bound_identifiers`/`scoped_children`, not
+    fallible under J-3); the next fallible hook raises it. Reading them
+    eagerly would remove that, but would change the hook calls the
+    Python tests pin (children are read only when the arities match).
+  - **Deviation:** `wire.rs`'s slot stays for a part's serialization hook,
+    not only for `==`/`hash`: `to_foreign` runs inside serde's
+    `Serialize`, whose error carries only text. Recorded under D-S17-22.
+  - A failing lazy key is now the hook's error, so the R2-023 unit test of
+    a key skipped while an exception is pending is gone; the key cell's
+    no-caching test stays.
+  - A `TypeError` from an ordinal value's `<` is still chained under the
+    order error, now read from `ParamError::Custom`.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a Python-defined domain's `is_structurally_equivalent` was asked about a built-in domain on the right of a param's comparison | a built-in domain on the right is not equivalent, without a call | `test_a_python_defined_domain_on_the_right_is_asked_only_its_sort` |
+  | serializing a bound opaque value whose key raised fell back to the value's form, the exception left in the slot | the exception is raised | none; no Python test reaches a lazily keyed member |
+
+  The spec's expected change, a raising custom scope, was already raised
+  as itself through the slot; `test_a_python_constraint_whose_scope_raises_is_refused_with_its_error`
+  pins it.
 
 ### Track D notes
 

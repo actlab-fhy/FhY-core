@@ -129,35 +129,79 @@ impl Binder for Lam {
 }
 
 impl AlphaEquivalence for Lambda {
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+    type Error = Infallible;
+
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, Infallible> {
         match (self, other) {
-            (Self::Var(left), Self::Var(right)) => renaming.is_corresponding(left, right),
+            (Self::Var(left), Self::Var(right)) => Ok(renaming.is_corresponding(left, right)),
             (
                 Self::App(left_function, left_argument),
                 Self::App(right_function, right_argument),
-            ) => {
-                left_function.is_alpha_equivalent_under(right_function, renaming)
-                    && left_argument.is_alpha_equivalent_under(right_argument, renaming)
-            }
+            ) => Ok(
+                left_function.is_alpha_equivalent_under(right_function, renaming)?
+                    && left_argument.is_alpha_equivalent_under(right_argument, renaming)?,
+            ),
             (Self::Lam(left), Self::Lam(right)) => {
                 left.is_binder_alpha_equivalent_under(right, renaming)
             }
-            _ => false,
+            _ => Ok(false),
         }
     }
 }
 
 impl FreeIdentifiers for Lambda {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
+    type Error = Infallible;
+
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, Infallible> {
         match self {
-            Self::Var(identifier) => HashSet::from([identifier.clone()]),
+            Self::Var(identifier) => Ok(HashSet::from([identifier.clone()])),
             Self::App(function, argument) => {
-                let mut free = function.free_identifiers();
-                free.extend(argument.free_identifiers());
-                free
+                let mut free = function.free_identifiers()?;
+                free.extend(argument.free_identifiers()?);
+                Ok(free)
             }
             Self::Lam(lam) => lam.binder_free_identifiers(),
         }
+    }
+}
+
+/// The answers of [`AlphaEquivalence`] for a comparison that does not fail
+/// in a test.
+pub(crate) trait Alpha: AlphaEquivalence {
+    /// Return whether `self` and `other` are alpha-equivalent.
+    fn alpha_equivalent(&self, other: &Self) -> bool;
+
+    /// Return whether `self` and `other` are alpha-equivalent under
+    /// `renaming`.
+    fn alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool;
+}
+
+impl<T: AlphaEquivalence> Alpha for T {
+    fn alpha_equivalent(&self, other: &Self) -> bool {
+        self.is_alpha_equivalent(other)
+            .expect("the comparison does not fail")
+    }
+
+    fn alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+        self.is_alpha_equivalent_under(other, renaming)
+            .expect("the comparison does not fail")
+    }
+}
+
+/// The answer of [`FreeIdentifiers`] for a term whose scope does not fail
+/// in a test.
+pub(crate) trait Free: FreeIdentifiers {
+    /// Return the free identifiers.
+    fn free(&self) -> HashSet<Identifier>;
+}
+
+impl<T: FreeIdentifiers> Free for T {
+    fn free(&self) -> HashSet<Identifier> {
+        self.free_identifiers().expect("the scope does not fail")
     }
 }
 

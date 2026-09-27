@@ -9,7 +9,9 @@ use fhy_core::constraint::{Member, MemberError, MemberKind, MemberSet, Value};
 use fhy_core::expression::{Decimal, LiteralValue};
 use rstest::rstest;
 
-use crate::support::constraint::{TestOpaque, int, int_set, member, member_set, text};
+use crate::support::constraint::{
+    Failing, FailingHook, TestOpaque, TestValueError, int, int_set, member, member_set, text,
+};
 
 fn decimal(text: &str) -> Value {
     Value::Decimal(text.parse::<Decimal>().expect("a decimal text"))
@@ -53,7 +55,7 @@ fn members_compare_type_strictly_inside_containers() {
 fn member_refuses_a_nan_at_any_depth(#[case] value: Value) {
     let error = Member::try_from(value).expect_err("a NaN is no member");
 
-    assert_eq!(error, MemberError::Nan);
+    assert!(matches!(error, MemberError::Nan), "{error:?}");
     assert!(error.to_string().contains("NaN"), "{error}");
 }
 
@@ -61,10 +63,8 @@ fn member_refuses_a_nan_at_any_depth(#[case] value: Value) {
 #[case::bare(decimal("1.5"))]
 #[case::in_a_tuple(Value::Tuple(vec![decimal("1")]))]
 fn member_refuses_a_decimal_at_any_depth(#[case] value: Value) {
-    assert_eq!(
-        Member::try_from(value).expect_err("a decimal is no member"),
-        MemberError::Decimal
-    );
+    let error = Member::try_from(value).expect_err("a decimal is no member");
+    assert!(matches!(error, MemberError::Decimal), "{error:?}");
 }
 
 #[test]
@@ -77,11 +77,9 @@ fn member_refuses_an_opaque_value_that_is_not_member_shaped() {
 
     let error = Member::try_from(value).expect_err("not member-shaped");
 
-    assert_eq!(
-        error,
-        MemberError::NotMemberShaped {
-            type_name: "Token".to_owned()
-        }
+    assert!(
+        matches!(&error, MemberError::NotMemberShaped { type_name } if type_name == "Token"),
+        "{error:?}"
     );
     assert_eq!(
         error.to_string(),
@@ -248,7 +246,11 @@ fn opaque_members_order_by_key_keeping_the_given_order_among_equal_keys() {
     let payloads: Vec<String> = members
         .iter()
         .map(|member| match member.kind() {
-            MemberKind::Opaque(value) => value.get().ordering_key().into_owned(),
+            MemberKind::Opaque(value) => value
+                .get()
+                .ordering_key()
+                .expect("a test value has a key")
+                .into_owned(),
             other => panic!("expected an opaque member, got {other:?}"),
         })
         .collect();
@@ -368,4 +370,23 @@ fn value_of_a_literal_keeps_its_kind() {
         Value::from(LiteralValue::Bool(true)),
         Value::Bool(true)
     ));
+}
+
+#[test]
+fn a_failing_opaque_key_fails_member_construction() {
+    let nested = Value::Tuple(vec![int(1), Failing(FailingHook::Key).into_value()]);
+
+    let error = Member::try_from(nested).expect_err("the key fails");
+
+    let MemberError::OrderingKey { type_name, source } = &error else {
+        panic!("an ordering-key error, got {error:?}");
+    };
+    assert_eq!(type_name, "Failing");
+    assert_eq!(source.to_string(), "the key failed");
+    assert!(source.downcast_ref::<TestValueError>().is_some());
+    assert_eq!(
+        error.to_string(),
+        "the ordering key of a member of type Failing failed"
+    );
+    assert!(std::error::Error::source(&error).is_some());
 }

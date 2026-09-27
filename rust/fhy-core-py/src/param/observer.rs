@@ -145,7 +145,12 @@ fn screened_message(
     let rendered = constraint_repr(py, constraint);
     Ok(match reason {
         ScreenReason::DependentScope => {
-            let mut scope: Vec<_> = constraint.free_identifiers().into_iter().collect();
+            // A screened constraint is an equation, whose scope cannot fail.
+            let mut scope: Vec<_> = constraint
+                .free_identifiers()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
             scope.sort_by_key(fhy_core::identifier::Identifier::id);
             let objects = scope
                 .iter()

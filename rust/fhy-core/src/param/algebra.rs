@@ -114,7 +114,8 @@ pub(super) fn union(
             )))
         }
         ParamDomain::Custom(custom) => custom
-            .union(own, other_domain, other, variable)
+            .get()
+            .union(own, other_domain, other, variable, context)
             .map_err(ParamError::Custom),
         _ => Ok(None),
     }
@@ -144,7 +145,8 @@ pub(super) fn intersection(
 ) -> Result<(ParamDomain, Vec<Constraint>), ParamError> {
     if let ParamDomain::Custom(custom) = own_domain {
         return custom
-            .intersection(own, other_domain, other, variable)
+            .get()
+            .intersection(own, other_domain, other, variable, context)
             .map_err(ParamError::Custom);
     }
     require_same_kind(SetOperation::Intersection, own_domain, other_domain)?;
@@ -181,8 +183,8 @@ pub(super) fn intersection(
             merge_intersection_constraints(own, other, variable)?,
         )),
         (ParamDomain::Permutation(_), ParamDomain::Permutation(_)) => {
-            if !(own_domain.is_value_set_subset(other_domain)?
-                && other_domain.is_value_set_subset(own_domain)?)
+            if !(own_domain.is_value_set_subset(other_domain, context)?
+                && other_domain.is_value_set_subset(own_domain, context)?)
             {
                 return Err(ParamError::DifferentPermutationMembers);
             }

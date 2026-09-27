@@ -11,6 +11,7 @@ use fhy_core::param::{
 };
 use fhy_core::solver::SatResult;
 
+use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{TestCustom, int, text};
 use crate::support::param::{
     RecordingParamObserver, at_least, context, describe_all, in_set, ints, less_than, not_in_set,
@@ -380,17 +381,17 @@ fn intersection_of_numeric_domains_rescopes_both_sides_onto_the_result() {
             )
             .expect("intersects");
 
-    let keys: Vec<String> = constraints.iter().map(Constraint::ordering_key).collect();
+    let keys: Vec<String> = constraints.iter().map(ConstraintKey::key).collect();
     assert_eq!(
         keys,
         [
-            at_least(&z, 0).ordering_key(),
+            at_least(&z, 0).key(),
             Constraint::from(fhy_core::constraint::EquationConstraint::new(
                 reference(&z).less(reference(&z))
             ))
-            .ordering_key(),
-            in_set(&z, ints([1, 2])).ordering_key(),
-            less_than(&z, &w).ordering_key(),
+            .key(),
+            in_set(&z, ints([1, 2])).key(),
+            less_than(&z, &w).key(),
         ]
     );
 }

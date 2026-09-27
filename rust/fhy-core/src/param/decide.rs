@@ -225,10 +225,11 @@ fn evaluate_candidate(
 }
 
 /// Return the equations of `side` in the canonical order of their system.
-fn canonical_equations(side: Side<'_>) -> Vec<Constraint> {
-    ConstraintSystem::new(equations(side.constraints()))
+fn canonical_equations(side: Side<'_>) -> Result<Vec<Constraint>, ParamError> {
+    Ok(ConstraintSystem::new(equations(side.constraints()))
+        .map_err(ParamError::Constraint)?
         .constraints()
-        .to_vec()
+        .to_vec())
 }
 
 /// Decide feasibility from each in-set candidate's outcome: satisfied at
@@ -240,7 +241,7 @@ fn decide_feasibility_by_enumeration(
     side: Side<'_>,
     context: &ParamContext<'_>,
 ) -> Result<Outcome, ParamError> {
-    let equations = canonical_equations(side);
+    let equations = canonical_equations(side)?;
     let mut undecided = Vec::new();
     for candidate in in_set_candidates(side.constraints()) {
         match evaluate_candidate(domain, side.variable(), &equations, &candidate, context)? {
@@ -285,7 +286,7 @@ fn evaluate_candidate_against_other(
         }
     }
     evaluate_constraints(
-        &canonical_equations(other),
+        &canonical_equations(other)?,
         &bind(other.variable(), value),
         context,
     )
@@ -301,7 +302,7 @@ fn decide_subset_by_enumerating_own(
     other: Side<'_>,
     context: &ParamContext<'_>,
 ) -> Result<Outcome, ParamError> {
-    let equations = canonical_equations(own);
+    let equations = canonical_equations(own)?;
     let mut undecided = Vec::new();
     for candidate in in_set_candidates(own.constraints()) {
         let own_outcome =
@@ -361,7 +362,7 @@ fn does_own_admit_a_value_outside(
     symbol_type: SymbolType,
     context: &ParamContext<'_>,
 ) -> Result<bool, ParamError> {
-    let Screened { system, is_exact } = screen(own.constraints(), own.variable(), context);
+    let Screened { system, is_exact } = screen(own.constraints(), own.variable(), context)?;
     if !is_exact {
         return Ok(false);
     }
@@ -374,7 +375,7 @@ fn does_own_admit_a_value_outside(
     }
     let mut members = renamed.constraints().to_vec();
     members.push(Constraint::from(exclusion));
-    let witness = ConstraintSystem::new(members);
+    let witness = ConstraintSystem::new(members).map_err(ParamError::Constraint)?;
     if ask_satisfiability(&witness, &common, symbol_type, context)? != Outcome::Satisfied {
         return Ok(false);
     }
@@ -437,7 +438,7 @@ pub fn compute_constraint_implication_subset(
         return decide_subset_by_enumerating_own(own_domain, own, other_domain, other, context);
     }
     if has_in_set(other.constraints()) {
-        let equations = canonical_equations(other);
+        let equations = canonical_equations(other)?;
         let mut permitted = Vec::new();
         for candidate in in_set_candidates(other.constraints()) {
             let outcome = evaluate_candidate(
@@ -456,8 +457,8 @@ pub fn compute_constraint_implication_subset(
         }
     }
     let common = Identifier::new("var");
-    let own_screened = screen(own.constraints(), own.variable(), context);
-    let other_screened = screen(other.constraints(), other.variable(), context);
+    let own_screened = screen(own.constraints(), own.variable(), context)?;
+    let other_screened = screen(other.constraints(), other.variable(), context)?;
     let antecedent = rename_system(&own_screened.system, own.variable(), &common)?;
     let consequent = rename_system(&other_screened.system, other.variable(), &common)?;
     let symbol_types = HashMap::from([(common.clone(), symbol_type)]);
@@ -513,7 +514,7 @@ fn numeric_has_feasible_value(
         return decide_feasibility_by_enumeration(domain, side, context);
     }
     let variable = side.variable();
-    let Screened { system, is_exact } = screen(side.constraints(), variable, context);
+    let Screened { system, is_exact } = screen(side.constraints(), variable, context)?;
     let outcome = ask_satisfiability(&system, variable, symbol_type, context)?;
     if outcome == Outcome::Satisfied && !is_exact {
         context.notify(&ParamEvent::SatisfiedOnInexactSystem { variable });
@@ -604,7 +605,10 @@ pub(super) fn has_feasible_value(
             numeric_has_feasible_value(domain, SymbolType::Int, side, context)
         }
         ParamDomain::Real(_) => numeric_has_feasible_value(domain, SymbolType::Real, side, context),
-        ParamDomain::Custom(custom) => custom.has_feasible_value(side).map_err(ParamError::Custom),
+        ParamDomain::Custom(custom) => custom
+            .get()
+            .has_feasible_value(side, context)
+            .map_err(ParamError::Custom),
         _ => {
             let Some(values) = finite_values(domain) else {
                 return Ok(Outcome::Undecided);
@@ -646,7 +650,8 @@ pub(super) fn feasibility_subset(
             )
         }
         ParamDomain::Custom(custom) => custom
-            .feasibility_subset(own, other_domain, other)
+            .get()
+            .feasibility_subset(own, other_domain, other, context)
             .map_err(ParamError::Custom),
         _ => {
             let is_same_kind = own_domain.kind() == other_domain.kind();

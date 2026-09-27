@@ -35,7 +35,7 @@ pub(crate) fn binder_is_alpha_equivalent_under(
     let right = PyBinder::new(other.clone(), &context);
     let is_equivalent =
         left.is_binder_alpha_equivalent_under(&right, renaming.get().value().renaming());
-    context.finish(is_equivalent)
+    context.finish(is_equivalent?)
 }
 
 /// Return the free identifiers of the binder `binder`'s scoped children,
@@ -50,7 +50,7 @@ pub(crate) fn binder_get_free_identifiers<'py>(
     let py = binder.py();
     let context = Context::new(py, None);
     let free = PyBinder::new(binder.clone(), &context).binder_free_identifiers();
-    let free = context.finish(free)?;
+    let free = context.finish(free?)?;
     let objects = free
         .iter()
         .map(|identifier| context.object_of(identifier))

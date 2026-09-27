@@ -191,7 +191,8 @@ fn a_system_round_trips_in_canonical_order_with_its_foreign_parts() {
         ),
         WireCustom::build("even"),
         Constraint::Equation(EquationConstraint::new(Expression::literal(true))),
-    ]);
+    ])
+    .expect("every member has a key");
     let text = text_of(&system);
 
     let data: ConstraintSystemData = serde_json::from_str(&text).expect("reads");
@@ -214,7 +215,8 @@ fn a_system_without_foreign_parts_round_trips_through_plain_serde() {
     let system = ConstraintSystem::new([
         build_set(Polarity::NotIn, vec![Value::Int(3.into())]),
         Constraint::Equation(EquationConstraint::new(Expression::literal(false))),
-    ]);
+    ])
+    .expect("every member has a key");
 
     let decoded: ConstraintSystem = serde_json::from_str(&text_of(&system)).expect("decodes");
 

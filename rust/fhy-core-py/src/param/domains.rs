@@ -67,6 +67,15 @@ pub(super) fn run_with_context<T: Send>(
     })
 }
 
+/// Return the context of a value-set question: a solver without backends,
+/// which the built-in domains never ask, and which a Python-defined domain,
+/// whose hook takes no context, never sees.
+pub(super) fn value_set_context() -> ParamContext<'static> {
+    static SOLVER: std::sync::LazyLock<fhy_core::solver::Solver> =
+        std::sync::LazyLock::new(fhy_core::solver::Solver::new);
+    ParamContext::new(&SOLVER)
+}
+
 /// Run `question` as [`run_with_context`] does, naming `other` as the other
 /// domain of a set operation in its errors.
 pub(super) fn run_question<T: Send>(
@@ -184,7 +193,7 @@ impl DomainState {
         let other = read_domain(other);
         with_pending_errors(|| {
             self.core
-                .is_value_set_subset(&other)
+                .is_value_set_subset(&other, &value_set_context())
                 .map_err(|error| param_error_to_py(py, error, None))
         })
     }

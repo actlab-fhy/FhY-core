@@ -2,6 +2,7 @@
 //! templated arrays.
 
 use crate::support::hashing::hash_of;
+use crate::support::types::Equivalent;
 use crate::support::types::{array, literal_dimension, template};
 
 use fhy_core::expression::Expression;
@@ -99,6 +100,6 @@ proptest! {
 
         prop_assert_eq!(&left, &right);
         prop_assert_eq!(hash_of(&left), hash_of(&right));
-        prop_assert!(left.is_structurally_equivalent(&right));
+        prop_assert!(left.is_equivalent(&right));
     }
 }

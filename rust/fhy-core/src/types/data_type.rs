@@ -4,6 +4,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::foreign::Part;
 use crate::identifier::Identifier;
 
 use super::core_data_type::CoreDataType;
@@ -13,8 +14,8 @@ use super::extension::DataTypeExtension;
 /// The element type of a [`NumericalType`](super::NumericalType).
 ///
 /// `==` and `Hash` are structural for the built-in variants, and go
-/// through [`DataTypeExtension::eq_extension`] and
-/// [`DataTypeExtension::hash_extension`] for an extension. `Display` writes
+/// through [`DataTypeExtension::eq_part`] and
+/// [`DataTypeExtension::hash_part`] for an extension. `Display` writes
 /// a primitive type's name, a template's name hint, and an extension's own
 /// text.
 #[derive(Debug, Clone)]
@@ -25,7 +26,7 @@ pub enum DataType {
     /// A placeholder for a data type, bound during template binding.
     Template(TemplateDataType),
     /// A data type defined outside this crate.
-    Extension(Arc<dyn DataTypeExtension>),
+    Extension(Part<dyn DataTypeExtension>),
 }
 
 /// A placeholder for a data type, identified by its [`Identifier`], with an
@@ -87,7 +88,7 @@ impl DataType {
         match self {
             Self::Primitive(_) => "PrimitiveDataType".to_owned(),
             Self::Template(_) => "TemplateDataType".to_owned(),
-            Self::Extension(extension) => extension.type_name().into_owned(),
+            Self::Extension(extension) => extension.get().type_name().into_owned(),
         }
     }
 }
@@ -109,9 +110,7 @@ impl PartialEq for DataType {
         match (self, other) {
             (Self::Primitive(left), Self::Primitive(right)) => left == right,
             (Self::Template(left), Self::Template(right)) => left == right,
-            (Self::Extension(left), Self::Extension(right)) => {
-                Arc::ptr_eq(left, right) || left.eq_extension(right.as_ref())
-            }
+            (Self::Extension(left), Self::Extension(right)) => left == right,
             _ => false,
         }
     }
@@ -125,7 +124,7 @@ impl Hash for DataType {
         match self {
             Self::Primitive(core_data_type) => core_data_type.hash(state),
             Self::Template(template) => template.hash(state),
-            Self::Extension(extension) => extension.hash_extension(state),
+            Self::Extension(extension) => extension.hash(state),
         }
     }
 }
@@ -135,7 +134,7 @@ impl fmt::Display for DataType {
         match self {
             Self::Primitive(core_data_type) => write!(f, "{core_data_type}"),
             Self::Template(template) => write!(f, "{}", template.identifier),
-            Self::Extension(extension) => write!(f, "{extension}"),
+            Self::Extension(extension) => write!(f, "{}", extension.get()),
         }
     }
 }

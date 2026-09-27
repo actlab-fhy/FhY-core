@@ -31,15 +31,13 @@
 //! # Ok::<(), serde_json::Error>(())
 //! ```
 
-use std::sync::Arc;
-
 use serde::de::{self, Deserializer};
 use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::constraint::wire::{ConstraintResolver, ConstraintSystemData, ValueData};
-use crate::constraint::{Member, Opaque, Value};
-use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Resolve};
+use crate::constraint::{Member, OpaqueValue, Value};
+use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
 use crate::identifier::Identifier;
 use crate::solver::Solver;
 
@@ -54,9 +52,9 @@ use super::interval::Inclusivity;
 use super::parameter::Param;
 
 /// The resolvers a param's foreign parts need.
-pub trait ParamResolver: ConstraintResolver + Resolve<Arc<dyn CustomDomain>> {}
+pub trait ParamResolver: ConstraintResolver + Resolve<Part<dyn CustomDomain>> {}
 
-impl<R: ConstraintResolver + Resolve<Arc<dyn CustomDomain>> + ?Sized> ParamResolver for R {}
+impl<R: ConstraintResolver + Resolve<Part<dyn CustomDomain>> + ?Sized> ParamResolver for R {}
 
 /// The wire form of a [`ParamDomain`], its foreign parts unresolved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,7 +135,7 @@ fn member_value(member: &Member) -> Value {
     }
 }
 
-fn build_values<R: Resolve<Opaque> + ?Sized>(
+fn build_values<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
     values: Vec<ValueData>,
     resolver: &R,
 ) -> Result<Vec<Value>, BuildError> {
@@ -177,7 +175,7 @@ impl ParamDomainData {
             ParamDomain::Permutation(domain) => DomainRepr::Permutation(PermutationRepr {
                 ordered_members: of_values(domain.values())?,
             }),
-            ParamDomain::Custom(domain) => DomainRepr::Custom(domain.to_foreign()?),
+            ParamDomain::Custom(domain) => DomainRepr::Custom(domain.get().to_foreign()?),
         }))
     }
 

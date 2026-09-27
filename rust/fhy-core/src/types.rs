@@ -13,7 +13,12 @@
 //!   [`unify_expressions`], bind placeholders into a
 //!   [`TypeUnificationEnvironment`] and read them back.
 //! - [`TypeExtension`] and [`DataTypeExtension`] let types defined outside
-//!   this crate take part in every operation.
+//!   this crate take part in every operation, each held in a
+//!   [`Part`](crate::foreign::Part). Their hooks are fallible, except the
+//!   `eq_part` and `hash_part` behind `==` and `Hash`, so a failing hook is
+//!   an [`UnificationError::Extension`], which structural equivalence
+//!   returns too; a hook left to its default runs the public default rule
+//!   ([`default_bind_template`] and the others).
 //! - [`checking`] type-checks expressions against the type system, and holds
 //!   function bodies to their declared result sorts.
 //!
@@ -62,4 +67,7 @@ pub use error::{
 pub use extension::{DataTypeExtension, TypeExtension};
 pub use qualifier::TypeQualifier;
 pub use ty::{Dimension, IndexType, NumericalType, Type};
-pub use unify::unify_expressions;
+pub use unify::{
+    default_bind_data_template, default_bind_template, default_substitute_data_template,
+    default_substitute_template, default_unify, unify_expressions,
+};

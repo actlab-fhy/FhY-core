@@ -7,7 +7,7 @@
 //! equivalence hook, which the core cannot fail, answers `false` and keeps
 //! its exception in S13's pending-error slot.
 
-use std::any::Any;
+use std::borrow::Cow;
 use std::fmt;
 
 use pyo3::exceptions::PyTypeError;
@@ -17,9 +17,9 @@ use pyo3::types::{PyString, PyTuple};
 
 use fhy_core::constraint::{Constraint, Outcome, Value};
 use fhy_core::expression::SymbolType;
-use fhy_core::foreign::BoxError;
+use fhy_core::foreign::{BoxError, ForeignPart};
 use fhy_core::identifier::Identifier;
-use fhy_core::param::{CustomDomain, IntervalProfile, ParamDomain, Side};
+use fhy_core::param::{CustomDomain, IntervalProfile, ParamContext, ParamDomain, Side};
 
 use crate::constraint::{
     has_pending_error, read_constraint, read_outcome, record_pending_error, type_name,
@@ -125,6 +125,16 @@ fn read_symbol_type(
         })
 }
 
+impl ForeignPart for PyCustomDomain {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Owned(Python::attach(|py| type_name(self.object.bind(py))))
+    }
+
+    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
+        crate::wire::foreign_of(&self.object, true)
+    }
+}
+
 impl CustomDomain for PyCustomDomain {
     fn symbol_type(&self) -> Result<Option<SymbolType>, BoxError> {
         self.call(|py, object| {
@@ -185,7 +195,11 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, BoxError> {
+    fn is_value_set_subset(
+        &self,
+        other: &ParamDomain,
+        _context: &ParamContext<'_>,
+    ) -> Result<bool, BoxError> {
         self.call(|py, object| {
             object
                 .call_method1(
@@ -201,6 +215,7 @@ impl CustomDomain for PyCustomDomain {
         own: Side<'_>,
         other_domain: &ParamDomain,
         other: Side<'_>,
+        _context: &ParamContext<'_>,
     ) -> Result<Outcome, BoxError> {
         self.call(|py, object| {
             let (own_constraints, own_variable) = side_arguments(py, own)?;
@@ -219,7 +234,11 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, BoxError> {
+    fn has_feasible_value(
+        &self,
+        side: Side<'_>,
+        _context: &ParamContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         self.call(|py, object| {
             let (constraints, variable) = side_arguments(py, side)?;
             let outcome =
@@ -234,6 +253,7 @@ impl CustomDomain for PyCustomDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         self.call(|py, object| {
             let (own_constraints, own_variable) = side_arguments(py, own)?;
@@ -262,6 +282,7 @@ impl CustomDomain for PyCustomDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
+        _context: &ParamContext<'_>,
     ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         self.call(|py, object| {
             let (own_constraints, own_variable) = side_arguments(py, own)?;
@@ -281,30 +302,29 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool {
+    /// Ask the object's `is_structurally_equivalent` about another
+    /// Python-defined domain. It cannot fail, so an exception answers
+    /// `false` and is kept for the entry function to raise; once one is
+    /// pending, answer `false` without calling Python.
+    fn eq_part(&self, other: &dyn CustomDomain) -> bool {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return false;
+        };
         if has_pending_error() {
             return false;
         }
         Python::attach(|py| {
-            domain_to_python(py, other)
-                .and_then(|other| {
-                    self.object
-                        .bind(py)
-                        .call_method1(intern!(py, "is_structurally_equivalent"), (other,))
-                })
+            self.object
+                .bind(py)
+                .call_method1(
+                    intern!(py, "is_structurally_equivalent"),
+                    (other.object.bind(py),),
+                )
                 .and_then(|answer| answer.is_truthy())
                 .unwrap_or_else(|error| {
                     record_pending_error(error);
                     false
                 })
         })
-    }
-
-    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, true)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

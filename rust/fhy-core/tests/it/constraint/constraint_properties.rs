@@ -20,6 +20,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::solver::{CheckLimits, SmtSolver, Solver};
 use proptest::prelude::*;
 
+use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{int, member, text};
 use crate::support::expression::build_expression_strategy;
 
@@ -228,7 +229,7 @@ proptest! {
         ));
 
         prop_assert_eq!(
-            left.ordering_key() == right.ordering_key(),
+            left.key() == right.key(),
             left.is_structurally_equivalent(&right)
         );
     }
@@ -242,10 +243,10 @@ proptest! {
         let right = Constraint::from(EquationConstraint::new(right));
 
         prop_assert_eq!(
-            left.ordering_key() == right.ordering_key(),
+            left.key() == right.key(),
             left.is_structurally_equivalent(&right)
         );
-        prop_assert_eq!(left.ordering_key(), left.clone().ordering_key());
+        prop_assert_eq!(left.key(), left.clone().key());
     }
 
     #[test]
@@ -256,7 +257,7 @@ proptest! {
             return Ok(());
         };
         let x = Identifier::new("x");
-        let system = ConstraintSystem::new(bounds.iter().map(|bound| bound.to_constraint(&x)));
+        let system = ConstraintSystem::new(bounds.iter().map(|bound| bound.to_constraint(&x))).expect("every member has a key");
         let solver = Solver::new().with_shared_smt_solver(backend);
         let symbol_types = HashMap::from([(x, SymbolType::Int)]);
         let limits = CheckLimits::new().with_timeout(Duration::from_secs(2));

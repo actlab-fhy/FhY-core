@@ -97,7 +97,7 @@ impl Param {
         Ok(Self(Arc::new(ParamInner {
             domain,
             variable,
-            system: ConstraintSystem::new(accumulated),
+            system: ConstraintSystem::new(accumulated).map_err(ParamError::Constraint)?,
         })))
     }
 
@@ -318,8 +318,12 @@ impl Param {
     /// # Errors
     ///
     /// Returns what [`ParamDomain::is_value_set_subset`] returns.
-    pub fn is_value_set_subset(&self, other: &Self) -> Result<bool, ParamError> {
-        self.domain().is_value_set_subset(other.domain())
+    pub fn is_value_set_subset(
+        &self,
+        other: &Self,
+        context: &ParamContext<'_>,
+    ) -> Result<bool, ParamError> {
+        self.domain().is_value_set_subset(other.domain(), context)
     }
 
     /// Return the param over `variable` admitting exactly the values valid
@@ -542,11 +546,21 @@ impl Param {
 }
 
 impl AlphaEquivalence for Param {
+    type Error = ParamError;
+
     /// Compare the domains structurally, then the constraints under
     /// `renaming` extended by the two variables, which the param binds.
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::Constraint`] for a custom constraint's failure.
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, ParamError> {
         if !self.domain().is_structurally_equivalent(other.domain()) {
-            return false;
+            return Ok(false);
         }
         let mut extended = renaming.clone();
         if extended
@@ -556,10 +570,11 @@ impl AlphaEquivalence for Param {
             )
             .is_err()
         {
-            return false;
+            return Ok(false);
         }
         self.constraint_system()
             .is_alpha_equivalent_under(other.constraint_system(), &extended)
+            .map_err(ParamError::Constraint)
     }
 }
 
@@ -570,7 +585,11 @@ fn validate_constraint(
     variable: &Identifier,
     constraint: &Constraint,
 ) -> Result<(), ParamError> {
-    if !constraint.free_identifiers().contains(variable) {
+    if !constraint
+        .free_identifiers()
+        .map_err(ParamError::Constraint)?
+        .contains(variable)
+    {
         return Err(ParamError::OutOfScope {
             constraint: constraint.clone(),
             variable: variable.clone(),

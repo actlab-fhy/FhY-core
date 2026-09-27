@@ -7,6 +7,7 @@ use num_bigint::BigInt;
 use num_traits::FromPrimitive;
 
 use crate::constraint::{Member, MemberKind, Value};
+use crate::foreign::BoxError;
 
 /// Return the value `member` holds.
 pub(crate) fn member_value(member: &Member) -> Value {
@@ -87,38 +88,42 @@ fn is_number(member: &Member) -> bool {
 /// Return how two leaf members order in an ordinal domain, before ties are
 /// broken: numbers numerically, strings by code point, opaque values by
 /// their producer's order, and `None` for a pair that does not order.
-fn compare_ordinal_values(left: &Member, right: &Member) -> Option<Ordering> {
+fn compare_ordinal_values(left: &Member, right: &Member) -> Result<Option<Ordering>, BoxError> {
     if is_number(left) && is_number(right) {
-        return compare_numbers(left, right);
+        return Ok(compare_numbers(left, right));
     }
     match (left.kind(), right.kind()) {
-        (MemberKind::Str(left), MemberKind::Str(right)) => Some(left.cmp(right)),
+        (MemberKind::Str(left), MemberKind::Str(right)) => Ok(Some(left.cmp(right))),
         (MemberKind::Opaque(left), MemberKind::Opaque(right)) => {
             left.get().order_against(right.get())
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
 /// Return how two leaf members order in an ordinal domain: by value, then
 /// equal values by kind (`bool`, `float`, `int`); `Equal` for values the
 /// order does not tell apart, and `None` for values that do not order.
-pub(crate) fn compare_ordinal(left: &Member, right: &Member) -> Option<Ordering> {
-    let ordering = compare_ordinal_values(left, right)?;
-    Some(ordering.then_with(|| tie_rank(left).cmp(&tie_rank(right))))
+///
+/// # Errors
+///
+/// Returns an opaque value's error from ordering it.
+pub(crate) fn compare_ordinal(left: &Member, right: &Member) -> Result<Option<Ordering>, BoxError> {
+    Ok(compare_ordinal_values(left, right)?
+        .map(|ordering| ordering.then_with(|| tie_rank(left).cmp(&tie_rank(right)))))
 }
 
 /// Sort `items` stably by `compare`, merging runs bottom-up.
 ///
 /// A comparison that is not a total order gives some order, never a
-/// panic, which [`slice::sort_by`] does not promise. The first `None` the
-/// comparison answers stops the sort and is returned as `Err`. The runs
-/// merged are of indices, so no item is cloned; the items move once, into
-/// the order found.
-pub(crate) fn sort_tolerantly<T>(
+/// panic, which [`slice::sort_by`] does not promise. The first error the
+/// comparison answers stops the sort and is returned. The runs merged are
+/// of indices, so no item is cloned; the items move once, into the order
+/// found.
+pub(crate) fn sort_tolerantly<T, E>(
     items: Vec<T>,
-    mut compare: impl FnMut(&T, &T) -> Option<Ordering>,
-) -> Result<Vec<T>, ()> {
+    mut compare: impl FnMut(&T, &T) -> Result<Ordering, E>,
+) -> Result<Vec<T>, E> {
     let length = items.len();
     let mut current: Vec<usize> = (0..length).collect();
     let mut merged = Vec::with_capacity(length);
@@ -131,16 +136,12 @@ pub(crate) fn sort_tolerantly<T>(
             let end = (start + 2 * width).min(length);
             let (mut left, mut right) = (start, middle);
             while left < middle && right < end {
-                match compare(&items[current[right]], &items[current[left]]) {
-                    None => return Err(()),
-                    Some(Ordering::Less) => {
-                        merged.push(current[right]);
-                        right += 1;
-                    }
-                    Some(_) => {
-                        merged.push(current[left]);
-                        left += 1;
-                    }
+                if compare(&items[current[right]], &items[current[left]])? == Ordering::Less {
+                    merged.push(current[right]);
+                    right += 1;
+                } else {
+                    merged.push(current[left]);
+                    left += 1;
                 }
             }
             merged.extend_from_slice(&current[left..middle]);
@@ -185,7 +186,7 @@ pub(crate) fn are_values_equal(left: &Value, right: &Value) -> bool {
                     .iter()
                     .all(|value| left.iter().any(|other| are_values_equal(value, other)))
         }
-        (Value::Opaque(left), Value::Opaque(right)) => left.is_equal(right),
+        (Value::Opaque(left), Value::Opaque(right)) => left == right,
         _ => false,
     }
 }

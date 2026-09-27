@@ -37,14 +37,21 @@ use super::renaming::AlphaRenaming;
 /// let renaming = AlphaRenaming::new(HashMap::from([(a, b), (x, y)]))
 ///     .expect("the renaming is injective");
 ///
-/// assert!(is_mapping_alpha_equivalent_under(&left, &right, &renaming));
-/// assert!(!is_mapping_alpha_equivalent_under(&left, &right, &AlphaRenaming::default()));
+/// let Ok(is_equivalent) = is_mapping_alpha_equivalent_under(&left, &right, &renaming);
+/// assert!(is_equivalent);
+/// let Ok(is_equivalent) =
+///     is_mapping_alpha_equivalent_under(&left, &right, &AlphaRenaming::default());
+/// assert!(!is_equivalent);
 /// ```
+///
+/// # Errors
+///
+/// Returns the first value comparison's error.
 pub fn is_mapping_alpha_equivalent_under<'a, V, L, S>(
     left: L,
     right: &HashMap<Identifier, V, S>,
     renaming: &AlphaRenaming,
-) -> bool
+) -> Result<bool, V::Error>
 where
     V: AlphaEquivalence + 'a,
     L: IntoIterator<Item = (&'a Identifier, &'a V)>,
@@ -53,14 +60,14 @@ where
 {
     let left = left.into_iter();
     if left.len() != right.len() {
-        return false;
+        return Ok(false);
     }
     let mut resolved_pairs = Vec::with_capacity(left.len());
     let mut resolved_keys = HashSet::with_capacity(left.len());
     for (key, value) in left {
         let resolved = renaming.resolve(key);
         if !resolved_keys.insert(resolved) {
-            return false;
+            return Ok(false);
         }
         resolved_pairs.push((key, resolved, value));
     }
@@ -69,13 +76,14 @@ where
         .map(|(_, resolved, _)| right.get(*resolved))
         .collect::<Option<Vec<&V>>>()
     else {
-        return false;
+        return Ok(false);
     };
-    resolved_pairs
-        .iter()
-        .zip(right_values)
-        .all(|((key, resolved, value), right_value)| {
-            renaming.is_corresponding(key, resolved)
-                && value.is_alpha_equivalent_under(right_value, renaming)
-        })
+    for ((key, resolved, value), right_value) in resolved_pairs.iter().zip(right_values) {
+        if !renaming.is_corresponding(key, resolved)
+            || !value.is_alpha_equivalent_under(right_value, renaming)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

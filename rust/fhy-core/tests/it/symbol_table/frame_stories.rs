@@ -1,6 +1,7 @@
 //! Tests for the built-in frames and `FunctionKeyword`.
 
 use crate::support::hashing::hash_of;
+use crate::support::types::Equivalent;
 use crate::support::types::{array, identifier_dimension, scalar};
 
 use fhy_core::identifier::Identifier;
@@ -125,29 +126,23 @@ fn structural_equivalence_compares_kinds_names_and_types() {
         ))
     };
 
-    assert!(import.is_structurally_equivalent(&SymbolFrame::from(ImportFrame::new(x.clone()))));
+    assert!(import.is_equivalent(&SymbolFrame::from(ImportFrame::new(x.clone()))));
+    assert!(!import.is_equivalent(&SymbolFrame::from(ImportFrame::new(Identifier::new("x")))));
+    assert!(!import.is_equivalent(&variable(scalar(CoreDataType::Int32))));
     assert!(
-        !import
-            .is_structurally_equivalent(&SymbolFrame::from(ImportFrame::new(Identifier::new("x"))))
-    );
-    assert!(!import.is_structurally_equivalent(&variable(scalar(CoreDataType::Int32))));
-    assert!(
-        variable(scalar(CoreDataType::Int32))
-            .is_structurally_equivalent(&variable(scalar(CoreDataType::Int32)))
+        variable(scalar(CoreDataType::Int32)).is_equivalent(&variable(scalar(CoreDataType::Int32)))
     );
     assert!(
         !variable(scalar(CoreDataType::Int32))
-            .is_structurally_equivalent(&variable(scalar(CoreDataType::Int64)))
+            .is_equivalent(&variable(scalar(CoreDataType::Int64)))
     );
     let signature = vec![(TypeQualifier::Input, scalar(CoreDataType::Int32))];
-    assert!(function(signature.clone()).is_structurally_equivalent(&function(signature.clone())));
-    assert!(!function(signature).is_structurally_equivalent(&function(vec![])));
+    assert!(function(signature.clone()).is_equivalent(&function(signature.clone())));
+    assert!(!function(signature).is_equivalent(&function(vec![])));
     assert!(
-        !function(vec![(TypeQualifier::Input, scalar(CoreDataType::Int32))])
-            .is_structurally_equivalent(&function(vec![(
-                TypeQualifier::Output,
-                scalar(CoreDataType::Int32)
-            )]))
+        !function(vec![(TypeQualifier::Input, scalar(CoreDataType::Int32))]).is_equivalent(
+            &function(vec![(TypeQualifier::Output, scalar(CoreDataType::Int32))])
+        )
     );
 }
 
@@ -157,8 +152,8 @@ fn the_variants_answer_structural_equivalence_alone() {
     let variable = VariableFrame::new(x.clone(), scalar(CoreDataType::Int32), TypeQualifier::State);
     let function = FunctionFrame::new(x, FunctionKeyword::Procedure, []);
 
-    assert!(variable.is_structurally_equivalent(&variable.clone()));
-    assert!(function.is_structurally_equivalent(&function.clone()));
+    assert!(variable.is_equivalent(&variable.clone()));
+    assert!(function.is_equivalent(&function.clone()));
 }
 
 #[test]

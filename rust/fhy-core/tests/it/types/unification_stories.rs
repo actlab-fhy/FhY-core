@@ -6,6 +6,7 @@
 
 use crate::support::expression::build_call_or_panic;
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
+use crate::support::types::Equivalent;
 use crate::support::types::{
     array, constrained_template, identifier_dimension, index, literal_dimension, scalar, template,
 };
@@ -72,7 +73,7 @@ fn with_helpers_return_new_environments_and_leave_the_receiver_alone() {
         Some(&Expression::from(4))
     );
     for extended in [&with_data_type, &with_type, &with_expression] {
-        assert!(!environment.is_structurally_equivalent(extended));
+        assert!(!environment.is_equivalent(extended));
     }
 }
 
@@ -84,10 +85,10 @@ fn environment_equivalence_compares_bindings_by_value() {
     let with_float = empty().with_data_type_binding(t, float32());
     let with_expression = empty().with_expression_binding(n, Expression::from(4));
 
-    assert!(with_int.is_structurally_equivalent(&with_int_again));
+    assert!(with_int.is_equivalent(&with_int_again));
     assert_eq!(with_int, with_int_again);
-    assert!(!with_int.is_structurally_equivalent(&with_float));
-    assert!(!with_int.is_structurally_equivalent(&with_expression));
+    assert!(!with_int.is_equivalent(&with_float));
+    assert!(!with_int.is_equivalent(&with_expression));
 }
 
 #[test]
@@ -96,7 +97,7 @@ fn environment_equivalence_distinguishes_type_bindings() {
     let left = empty().with_type_binding(u.clone(), scalar(CoreDataType::Int32));
     let right = empty().with_type_binding(u, scalar(CoreDataType::Float32));
 
-    assert!(!left.is_structurally_equivalent(&right));
+    assert!(!left.is_equivalent(&right));
 }
 
 #[test]
@@ -106,9 +107,9 @@ fn chained_with_helpers_produce_distinct_environments() {
     let second = first.with_expression_binding(n.clone(), Expression::from(4));
     let third = second.with_expression_binding(n, Expression::from(8));
 
-    assert!(!first.is_structurally_equivalent(&second));
-    assert!(!second.is_structurally_equivalent(&third));
-    assert!(!first.is_structurally_equivalent(&third));
+    assert!(!first.is_equivalent(&second));
+    assert!(!second.is_equivalent(&third));
+    assert!(!first.is_equivalent(&third));
 }
 
 #[test]
@@ -351,7 +352,7 @@ fn repeated_consistent_data_type_binding_changes_nothing() {
         .bind_template(&int32(), &environment)
         .expect("binds");
 
-    assert!(environment.is_structurally_equivalent(&again));
+    assert!(environment.is_equivalent(&again));
 }
 
 #[test]
@@ -843,7 +844,7 @@ fn a_bound_placeholder_resolves_to_its_binding_first() {
             .expect("unifies");
 
     assert_eq!(unified, Expression::from(1) + 2);
-    assert!(next.is_structurally_equivalent(&environment));
+    assert!(next.is_equivalent(&environment));
 }
 
 #[test]

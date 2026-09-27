@@ -27,14 +27,12 @@
 //! # Ok::<(), serde_json::Error>(())
 //! ```
 
-use std::sync::Arc;
-
 use serde::de::{self, Deserializer};
 use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::expression::Expression;
-use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Resolve};
+use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
 use crate::identifier::Identifier;
 
 use super::core_data_type::CoreDataType;
@@ -77,12 +75,12 @@ enum DataTypeRepr {
 
 /// The resolvers a type's extension parts need.
 pub trait TypeResolver:
-    Resolve<Arc<dyn TypeExtension>> + Resolve<Arc<dyn DataTypeExtension>>
+    Resolve<Part<dyn TypeExtension>> + Resolve<Part<dyn DataTypeExtension>>
 {
 }
 
-impl<R: Resolve<Arc<dyn TypeExtension>> + Resolve<Arc<dyn DataTypeExtension>> + ?Sized> TypeResolver
-    for R
+impl<R: Resolve<Part<dyn TypeExtension>> + Resolve<Part<dyn DataTypeExtension>> + ?Sized>
+    TypeResolver for R
 {
 }
 
@@ -154,7 +152,7 @@ impl DataTypeRepr {
         Ok(match data_type {
             DataType::Primitive(core) => Self::Primitive(*core),
             DataType::Template(template) => Self::Template(template.clone()),
-            DataType::Extension(extension) => Self::Extension(extension.to_foreign()?),
+            DataType::Extension(extension) => Self::Extension(extension.get().to_foreign()?),
         })
     }
 }
@@ -175,7 +173,7 @@ impl Type {
         Ok(TypeData(match self {
             Self::Numerical(numerical) => TypeRepr::Numerical(NumericalRepr::of(numerical)?),
             Self::Index(index) => TypeRepr::Index(index.clone()),
-            Self::Extension(extension) => TypeRepr::Extension(extension.to_foreign()?),
+            Self::Extension(extension) => TypeRepr::Extension(extension.get().to_foreign()?),
         }))
     }
 }

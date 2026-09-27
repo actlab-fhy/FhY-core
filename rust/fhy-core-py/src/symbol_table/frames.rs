@@ -25,6 +25,7 @@ use fhy_core::types::{Type, TypeQualifier};
 use crate::dataclass::{
     build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
 };
+use crate::error::IntoPyErr;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{deserialize_identifier, restore_identifier, serialize_identifier};
 use crate::serialization::{
@@ -131,17 +132,18 @@ fn compare_values(
     right: &SymbolFrame,
     structural: bool,
 ) -> PyResult<bool> {
-    let answer = || {
+    let answer = || -> PyResult<bool> {
         if structural {
             left.is_structurally_equivalent(right)
+                .map_err(IntoPyErr::into_py_err)
         } else {
-            left == right
+            Ok(left == right)
         }
     };
     if !left.may_call_python() && !right.may_call_python() {
-        return Ok(answer());
+        return answer();
     }
-    run_in_context(py, None, |_context| Ok(answer()))
+    run_in_context(py, None, |_context| answer())
 }
 
 /// Return whether two built-in frames of one class are structurally

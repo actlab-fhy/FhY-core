@@ -6,13 +6,13 @@
 //! built. `evaluate_with_bindings` receives the Python snapshot of the
 //! caller's mapping, which the core carries as the bindings' source, so the
 //! member sees the objects it saw before; bindings the core built itself,
-//! with no source, reach it as a dict rebuilt from them (D-S16-15). An exception a hook raises
-//! propagates as the same object; a comparison that raises answers `false`
-//! and its exception is raised when the core returns. Once an exception is
-//! pending, the hooks that answer a fallback answer it without calling
-//! Python.
+//! with no source, reach it as a dict rebuilt from them (D-S16-15). An
+//! exception a hook raises propagates as the same object: it is the hook's
+//! error, except that `is_structurally_equivalent`, which backs the core's
+//! equality and cannot fail, answers `false` and keeps its exception for
+//! the entry function to raise. Once an exception is pending, the hooks
+//! answer a fallback without calling Python.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
@@ -22,9 +22,9 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
-use fhy_core::constraint::{Binding, Bindings, CustomConstraint, Outcome};
+use fhy_core::constraint::{Binding, Bindings, ConstraintContext, CustomConstraint, Outcome};
 use fhy_core::expression::Expression;
-use fhy_core::foreign::BoxError;
+use fhy_core::foreign::{BoxError, ForeignPart};
 use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
 
@@ -149,10 +149,22 @@ pub(crate) fn read_outcome(
     )))
 }
 
+impl ForeignPart for PyCustomConstraint {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Owned(Python::attach(|py| type_name(self.object.bind(py))))
+    }
+
+    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
+        crate::wire::foreign_of(&self.object, true)
+    }
+}
+
 impl CustomConstraint for PyCustomConstraint {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
+    /// Return the object's `get_free_identifiers`; once an exception is
+    /// pending, the empty scope, without calling Python.
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, BoxError> {
         if has_pending_error() {
-            return HashSet::new();
+            return Ok(HashSet::new());
         }
         Python::attach(|py| -> PyResult<HashSet<Identifier>> {
             let object = self.object.bind(py);
@@ -164,13 +176,14 @@ impl CustomConstraint for PyCustomConstraint {
                 })
                 .collect()
         })
-        .unwrap_or_else(|error| {
-            record_pending_error(error);
-            HashSet::new()
-        })
+        .map_err(|error| Box::new(error) as BoxError)
     }
 
-    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, BoxError> {
+    fn evaluate(
+        &self,
+        bindings: &Bindings,
+        _context: &ConstraintContext<'_>,
+    ) -> Result<Outcome, BoxError> {
         Python::attach(|py| -> PyResult<Outcome> {
             let object = self.object.bind(py);
             let mapping = match bindings
@@ -204,11 +217,15 @@ impl CustomConstraint for PyCustomConstraint {
         .map_err(|error| Box::new(error) as BoxError)
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.key)
+    /// Return the key read when the adapter was built.
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Borrowed(&self.key))
     }
 
-    fn is_structurally_equivalent(&self, other: &dyn CustomConstraint) -> bool {
+    /// Ask the object's `is_structurally_equivalent`. It cannot fail, so an
+    /// exception answers `false` and is kept for the entry function to
+    /// raise; once one is pending, answer `false` without calling Python.
+    fn eq_part(&self, other: &dyn CustomConstraint) -> bool {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
@@ -230,16 +247,18 @@ impl CustomConstraint for PyCustomConstraint {
         })
     }
 
+    /// Ask the object's `is_alpha_equivalent_under`; once an exception is
+    /// pending, answer `false` without calling Python.
     fn is_alpha_equivalent_under(
         &self,
         other: &dyn CustomConstraint,
         renaming: &AlphaRenaming,
-    ) -> bool {
+    ) -> Result<bool, BoxError> {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
-            return false;
+            return Ok(false);
         };
         if has_pending_error() {
-            return false;
+            return Ok(false);
         }
         Python::attach(|py| {
             renaming_to_python(py, renaming)
@@ -250,18 +269,7 @@ impl CustomConstraint for PyCustomConstraint {
                     )
                 })
                 .and_then(|answer| answer.is_truthy())
-                .unwrap_or_else(|error| {
-                    record_pending_error(error);
-                    false
-                })
         })
-    }
-
-    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, true)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+        .map_err(|error| Box::new(error) as BoxError)
     }
 }

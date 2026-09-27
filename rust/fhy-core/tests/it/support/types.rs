@@ -50,3 +50,33 @@ pub(crate) fn index(
 ) -> Type {
     Type::Index(IndexType::new(lower.into(), upper.into(), stride.into()))
 }
+
+/// Structural equivalence of a value whose comparison cannot fail, as no
+/// test type extension's does.
+pub(crate) trait Equivalent {
+    /// Return whether `self` and `other` are structurally equivalent.
+    fn is_equivalent(&self, other: &Self) -> bool;
+}
+
+macro_rules! impl_equivalent {
+    ($($Type:ty),+ $(,)?) => {
+        $(
+            impl Equivalent for $Type {
+                fn is_equivalent(&self, other: &Self) -> bool {
+                    self.is_structurally_equivalent(other)
+                        .expect("the comparison runs no failing extension")
+                }
+            }
+        )+
+    };
+}
+
+impl_equivalent!(
+    Type,
+    DataType,
+    fhy_core::types::TypeUnificationEnvironment,
+    fhy_core::symbol_table::SymbolFrame,
+    fhy_core::symbol_table::VariableFrame,
+    fhy_core::symbol_table::FunctionFrame,
+    fhy_core::symbol_table::SymbolTable<fhy_core::symbol_table::SymbolFrame>,
+);

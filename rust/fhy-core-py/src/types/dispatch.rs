@@ -108,10 +108,13 @@ pub(crate) fn types_is_structurally_equivalent(
             return Ok(false);
         };
         if !left.may_call_python() && !right.may_call_python() {
-            return Ok(left.is_structurally_equivalent(&right));
+            return left
+                .is_structurally_equivalent(&right)
+                .map_err(IntoPyErr::into_py_err);
         }
         return run_in_context(py, None, |_context| {
-            Ok(left.is_structurally_equivalent(&right))
+            left.is_structurally_equivalent(&right)
+                .map_err(IntoPyErr::into_py_err)
         });
     }
     if let Some(left) = read_data_type_value(left) {
@@ -119,10 +122,13 @@ pub(crate) fn types_is_structurally_equivalent(
             return Ok(false);
         };
         if !left.may_call_python() && !right.may_call_python() {
-            return Ok(left.is_structurally_equivalent(&right));
+            return left
+                .is_structurally_equivalent(&right)
+                .map_err(IntoPyErr::into_py_err);
         }
         return run_in_context(py, None, |_context| {
-            Ok(left.is_structurally_equivalent(&right))
+            left.is_structurally_equivalent(&right)
+                .map_err(IntoPyErr::into_py_err)
         });
     }
     Ok(false)

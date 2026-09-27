@@ -407,8 +407,8 @@ derived-equivalence plans stay
 in the Python module's `_PLAN_CACHE` dict. Slice S11 adds a thread-local stack
 of the type-system calls in progress (`rust/fhy-core-py/src/types/adapter.rs`),
 each a context holding the Python objects the call was given, the class of
-its environment, and the first exception a Python-defined type's handler
-raised inside an infallible core comparison; a context lives only for its
+its environment, and the first exception a Python-defined type's `==` or
+`hash` raised inside the core's infallible equality or hashing; a context lives only for its
 call, so the stack is empty whenever no call runs. Slice S14 moves the
 verification registry of `fhy_core.pass_infrastructure.verification`,
 which was a class-level dict of the Python `VerificationRegistry`, into the
@@ -422,8 +422,9 @@ append-only, as the dict was, and adds no Rust `static` with interior
 mutability. Slice S13 adds a
 thread-local slot (`rust/fhy-core-py/src/constraint/value.rs`) holding the
 first exception a Python member's `==`, or a Python-defined constraint's
-comparison, raised during one call into the constraint core, which the call
-raises when the core returns; an exception that is not an `Exception`, such
+or domain's structural equivalence, raised during one call into the core,
+which the call raises when the core returns: those back the core's
+infallible `==`, while every other hook's exception is its own error; an exception that is not an `Exception`, such
 as `KeyboardInterrupt`, replaces a kept `Exception`, and once one is kept no
 comparison calls Python again during that call. It is empty whenever no
 such call runs.
@@ -468,9 +469,10 @@ affected types document this; decoding is not ordered to prevent it.
 
 A type with an open variant, one that holds a part another implementation
 defines (a `Type` or `DataType` extension, a custom constraint or domain,
-an opaque value), serializes that part as a `fhy_core::foreign::Foreign`:
-the type id its implementation registered under and its own payload as
-text, from the trait's `to_foreign`, whose default refuses. Its module's
+an opaque value), holds it in a `fhy_core::foreign::Part`, and serializes
+that part as a `fhy_core::foreign::Foreign`: the type id its
+implementation registered under and its own payload as text, from the
+`to_foreign` of the `ForeignPart` supertrait, whose default refuses. Its module's
 `wire` submodule defines the shape once, as a plain data type that derives
 both traits with the parts left as `Foreign`s; `Serialize` converts the
 value into it, and its `build` method takes a `Resolve`r of the parts and

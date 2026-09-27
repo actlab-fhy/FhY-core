@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use fhy_core::constraint::wire::ValueData;
-use fhy_core::constraint::{Member, Value};
+use fhy_core::constraint::{Member, MemberError, Value};
 
 use crate::constraint::{read_bound_value, value_to_python};
 
@@ -20,8 +20,16 @@ pub(crate) fn serialize_wire_value<'py>(value: &Bound<'py, PyAny>) -> PyResult<B
     let py = value.py();
     let core = read_bound_value(value)?;
     if core.is_member_shaped() {
-        if let Ok(member) = Member::try_from(core.clone()) {
-            return to_dict(py, &member);
+        match Member::try_from(core.clone()) {
+            Ok(member) => return to_dict(py, &member),
+            // An opaque value whose key raised: raise its exception.
+            Err(MemberError::OrderingKey { source, .. }) => {
+                return Err(match source.downcast::<PyErr>() {
+                    Ok(error) => *error,
+                    Err(other) => pyo3::exceptions::PyRuntimeError::new_err(other.to_string()),
+                });
+            }
+            Err(_not_a_member) => {}
         }
     }
     to_dict(py, &core)

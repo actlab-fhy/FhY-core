@@ -5,8 +5,6 @@
 use crate::support::foreign::{NamedDataType, NamedType, REFUSED, SilentType, TestResolver};
 use crate::support::types::{array, constrained_template, index, scalar, template};
 
-use std::sync::Arc;
-
 use fhy_core::expression::Expression;
 use fhy_core::foreign::{BuildError, ForeignError};
 use fhy_core::identifier::Identifier;
@@ -201,7 +199,7 @@ fn a_part_the_resolver_refuses_fails_the_build() {
 
 #[test]
 fn an_extension_without_a_wire_form_fails_to_serialize_with_its_name() {
-    let ty = Type::Extension(Arc::new(SilentType));
+    let ty = Type::Extension(fhy_core::foreign::Part::new(SilentType));
 
     let message = serde_json::to_string(&ty)
         .expect_err("it has no wire form")

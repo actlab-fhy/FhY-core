@@ -940,16 +940,24 @@ const _: () = {
 /// identifier through the renaming:
 /// [`Expression::is_alpha_equivalent_under`].
 impl AlphaEquivalence for Expression {
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
-        Expression::is_alpha_equivalent_under(self, other, renaming)
+    type Error = Infallible;
+
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, Infallible> {
+        Ok(Expression::is_alpha_equivalent_under(self, other, renaming))
     }
 }
 
 /// Every identifier an expression references is free:
 /// [`Expression::free_identifiers`].
 impl FreeIdentifiers for Expression {
-    fn free_identifiers(&self) -> HashSet<Identifier> {
-        Expression::free_identifiers(self)
+    type Error = Infallible;
+
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, Infallible> {
+        Ok(Expression::free_identifiers(self))
     }
 }
 

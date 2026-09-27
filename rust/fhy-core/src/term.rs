@@ -11,8 +11,11 @@
 //! - [`is_mapping_alpha_equivalent_under`] compares two maps keyed by
 //!   identifiers.
 //!
-//! An [`Expression`](crate::expression::Expression) is a term that binds
-//! nothing.
+//! A comparison or a scope that runs code another implementation defines
+//! can fail, with the trait's associated `Error`. An
+//! [`Expression`](crate::expression::Expression) is a term that binds
+//! nothing, and cannot fail: its errors are
+//! [`Infallible`](std::convert::Infallible).
 
 mod binder;
 mod error;

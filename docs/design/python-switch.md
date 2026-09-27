@@ -12752,6 +12752,13 @@ Where a decision follows an earlier slice's decision or note, it says so.
     built-in type, and `hash` stays consistent with `==`.
   - The public bases define no `__eq__` of their own, so a Python
     subclass inherits `object`'s, as today.
+  - **Revised (R2-004, 2026-09-27):** `eq_extension`/`hash_extension` are
+    now `eq_part`/`hash_part` of every extension trait, over a
+    `Part<dyn ...>` handle. They stay infallible, so the adapter's context
+    keeps only the first exception of a Python `==` or `hash`. Every other
+    hook, structural equivalence and the handlers included, returns its
+    exception as its error (`UnificationError::Extension`). See
+    `docs/design/rust-port-fixes.md` R2-004.
   - **Revised (R2-022, 2026-09-27):** a Rust extension's default
     `is_structurally_equivalent` is its `eq_extension` against another
     extension, so an extension with no overrides is equivalent to itself,
@@ -15325,6 +15332,11 @@ Where a decision follows an earlier slice, it says so.
   | `Solve(SolveError)` | S8's mapping, with S12's for simplification |
   | `Custom` | the Python exception itself |
 
+  - **Revised (R2-004, 2026-09-27):** a Python-defined part's failing
+    hook reaches the core as `ConstraintError::Custom` (or
+    `MemberError::OrderingKey` for an opaque key), boxing the `PyErr`, and
+    the entry function raises it as itself.
+
   Argument shapes the core's types rule out keep Python's `ConstraintError`
   texts, since they have no core counterpart (D-S7-12, D-S10-12):
   - a non-`Expression`, a non-`Identifier` variable, or a non-`Constraint`
@@ -15343,6 +15355,11 @@ Where a decision follows an earlier slice, it says so.
 - **D-S13-18: no new process-global state.** Python objects live in the
   pyclass objects and the adapters. The third party's bindings are rebuilt
   from the snapshot (D-S13-5), not kept on a thread-local stack.
+  - **Revised (R2-004, 2026-09-27):** the slot now serves only the
+    hooks behind the core's infallible `==`: an opaque member's `eq_part`
+    and a Python-defined constraint's or domain's structural equivalence.
+    Scope, keys, ordering and alpha equivalence return their exceptions as
+    errors.
   - **Revised (R2-023, 2026-09-27):** the pending-error slot keeps the
     first exception of a call, except that an exception that is not an
     `Exception`, such as `KeyboardInterrupt` or `SystemExit`, replaces a
@@ -19231,6 +19248,11 @@ and cross-cutting rules 4 to 7.
   serialization hooks is a thread-local like S13's, empty whenever no
   serialization runs, and gets its line in CONTRIBUTING's list. The core
   gains none.
+  - **Revised (R2-004, 2026-09-27):** the slot stays for the serialization
+    hooks, although `to_foreign` is not an equality hook: a part serializes
+    inside serde's `Serialize`, whose error carries only text, so the
+    `PyErr` cannot travel in it. See `docs/design/rust-port-fixes.md`, Track
+    A notes, R2-004.
 - **D-S17-23: tests** (the tests rule; S7.2's practice). The core's serde
   is specified by Rust tests first, against `todo!()` stubs. The Python
   tests are rewritten, not skipped: a test pinning V1 writing runs inside

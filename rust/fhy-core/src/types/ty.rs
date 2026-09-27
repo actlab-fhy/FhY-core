@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::expression::{Expression, FormatOptions, IdentifierStyle};
+use crate::foreign::Part;
 
 use super::data_type::DataType;
 use super::extension::TypeExtension;
@@ -15,7 +16,7 @@ use super::extension::TypeExtension;
 ///
 /// Cloning a numerical or index type shares it. `==` and `Hash` are
 /// structural for the built-in variants, and go through
-/// [`TypeExtension::eq_extension`] and [`TypeExtension::hash_extension`] for
+/// [`TypeExtension::eq_part`] and [`TypeExtension::hash_part`] for
 /// an extension. `Display` writes a numerical type as `int32[4, (N::7 +
 /// 1)]`, an index type as `index(0:N::7:1)`, with identifier ids, and an
 /// extension through its own `Display`.
@@ -27,7 +28,7 @@ pub enum Type {
     /// An index range, as a Python `range(start, stop, step)`.
     Index(IndexType),
     /// A type defined outside this crate.
-    Extension(Arc<dyn TypeExtension>),
+    Extension(Part<dyn TypeExtension>),
 }
 
 /// A numerical array type: a data type over a shape of dimensions.
@@ -162,7 +163,7 @@ impl Type {
         match self {
             Self::Numerical(_) => "NumericalType".to_owned(),
             Self::Index(_) => "IndexType".to_owned(),
-            Self::Extension(extension) => extension.type_name().into_owned(),
+            Self::Extension(extension) => extension.get().type_name().into_owned(),
         }
     }
 
@@ -172,7 +173,7 @@ impl Type {
         match (this, other) {
             (Self::Numerical(left), Self::Numerical(right)) => NumericalType::ptr_eq(left, right),
             (Self::Index(left), Self::Index(right)) => IndexType::ptr_eq(left, right),
-            (Self::Extension(left), Self::Extension(right)) => Arc::ptr_eq(left, right),
+            (Self::Extension(left), Self::Extension(right)) => Part::ptr_eq(left, right),
             _ => false,
         }
     }
@@ -236,9 +237,7 @@ impl PartialEq for Type {
         match (self, other) {
             (Self::Numerical(left), Self::Numerical(right)) => left == right,
             (Self::Index(left), Self::Index(right)) => left == right,
-            (Self::Extension(left), Self::Extension(right)) => {
-                Arc::ptr_eq(left, right) || left.eq_extension(right.as_ref())
-            }
+            (Self::Extension(left), Self::Extension(right)) => left == right,
             _ => false,
         }
     }
@@ -252,7 +251,7 @@ impl Hash for Type {
         match self {
             Self::Numerical(numerical) => numerical.hash(state),
             Self::Index(index) => index.hash(state),
-            Self::Extension(extension) => extension.hash_extension(state),
+            Self::Extension(extension) => extension.hash(state),
         }
     }
 }
@@ -304,7 +303,7 @@ impl fmt::Display for Type {
         match self {
             Self::Numerical(numerical) => write!(f, "{numerical}"),
             Self::Index(index) => write!(f, "{index}"),
-            Self::Extension(extension) => write!(f, "{extension}"),
+            Self::Extension(extension) => write!(f, "{}", extension.get()),
         }
     }
 }

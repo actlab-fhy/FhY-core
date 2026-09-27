@@ -12,10 +12,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use fhy_core::identifier::Identifier;
-use fhy_core::term::{AlphaEquivalence, Binder, FreeIdentifiers, Term};
+use fhy_core::term::{Binder, Term};
 use proptest::prelude::*;
 
-use crate::support::lambda::{Lam, Lambda, app};
+use crate::support::lambda::{Alpha, Free, Lam, Lambda, app};
 
 /// The identifiers the generated terms bind and reference, few enough that
 /// binders often shadow each other and capture is often possible.
@@ -166,10 +166,7 @@ fn substitute_as_before(term: &Lambda, replacements: &HashMap<Identifier, Lambda
             if active.is_empty() {
                 return term.clone();
             }
-            let capturable: HashSet<Identifier> = active
-                .values()
-                .flat_map(FreeIdentifiers::free_identifiers)
-                .collect();
+            let capturable: HashSet<Identifier> = active.values().flat_map(Free::free).collect();
             let mut safe = lam.clone();
             for bound_identifier in lam.bound_identifiers() {
                 if capturable.contains(bound_identifier) {
@@ -205,7 +202,7 @@ proptest! {
         let result = term.substitute(&replacements).expect("infallible");
         let before = substitute_as_before(&term, &replacements);
 
-        prop_assert!(result.is_alpha_equivalent(&before), "{result:?} against {before:?}");
+        prop_assert!(result.alpha_equivalent(&before), "{result:?} against {before:?}");
     }
 
     /// Test alpha equivalence holds exactly when both terms have one de
@@ -219,8 +216,8 @@ proptest! {
         let right_form = to_de_bruijn(&right, &mut Vec::new());
         let expected = left_form.is_some() && left_form == right_form;
 
-        prop_assert_eq!(left.is_alpha_equivalent(&right), expected);
-        prop_assert_eq!(left.is_alpha_equivalent(&refresh(&right)), expected);
+        prop_assert_eq!(left.alpha_equivalent(&right), expected);
+        prop_assert_eq!(left.alpha_equivalent(&refresh(&right)), expected);
     }
 
     /// Test alpha equivalence is symmetric, repeated binders included.
@@ -231,7 +228,7 @@ proptest! {
     ) {
         let right = if left == right { refresh(&left) } else { right };
 
-        prop_assert_eq!(left.is_alpha_equivalent(&right), right.is_alpha_equivalent(&left));
+        prop_assert_eq!(left.alpha_equivalent(&right), right.alpha_equivalent(&left));
     }
 
     /// Test a term whose binder list repeats an identifier is
@@ -255,10 +252,10 @@ proptest! {
         };
         prop_assert!(has_repeated_binder(&term));
 
-        prop_assert!(!term.is_alpha_equivalent(&term));
-        prop_assert!(!term.is_alpha_equivalent(&term.clone()));
-        prop_assert!(!term.is_alpha_equivalent(&other));
-        prop_assert!(!other.is_alpha_equivalent(&term));
+        prop_assert!(!term.alpha_equivalent(&term));
+        prop_assert!(!term.alpha_equivalent(&term.clone()));
+        prop_assert!(!term.alpha_equivalent(&other));
+        prop_assert!(!other.alpha_equivalent(&term));
     }
 
     /// Test alpha equivalence is reflexive, and implied by structural
@@ -269,8 +266,8 @@ proptest! {
     ) {
         prop_assert!(!has_repeated_binder(&term), "the precondition of the law");
 
-        prop_assert!(term.is_alpha_equivalent(&term));
-        prop_assert!(term.is_alpha_equivalent(&term.clone()));
+        prop_assert!(term.alpha_equivalent(&term));
+        prop_assert!(term.alpha_equivalent(&term.clone()));
     }
 
     /// Test alpha equivalence is transitive over renamed copies, on terms
@@ -283,9 +280,9 @@ proptest! {
         let renamed = refresh(&term);
         let renamed_again = refresh(&renamed);
 
-        prop_assert!(term.is_alpha_equivalent(&renamed));
-        prop_assert!(renamed.is_alpha_equivalent(&renamed_again));
-        prop_assert!(term.is_alpha_equivalent(&renamed_again));
+        prop_assert!(term.alpha_equivalent(&renamed));
+        prop_assert!(renamed.alpha_equivalent(&renamed_again));
+        prop_assert!(term.alpha_equivalent(&renamed_again));
     }
 
     /// Test substituting into two alpha-equivalent terms gives
@@ -303,7 +300,7 @@ proptest! {
         let left = term.substitute(&replacements).expect("infallible");
         let right = refresh(&term).substitute(&replacements).expect("infallible");
 
-        prop_assert!(left.is_alpha_equivalent(&right));
+        prop_assert!(left.alpha_equivalent(&right));
     }
 
     /// Test a substitution captures nothing: the result's free identifiers
@@ -316,14 +313,14 @@ proptest! {
         key in 0..POOL.len(),
     ) {
         let key = POOL[key].clone();
-        let mut expected = term.free_identifiers();
+        let mut expected = term.free();
         if expected.remove(&key) {
-            expected.extend(replacement.free_identifiers());
+            expected.extend(replacement.free());
         }
         let replacements = HashMap::from([(key, replacement)]);
 
         let result = term.substitute(&replacements).expect("infallible");
 
-        prop_assert_eq!(result.free_identifiers(), expected);
+        prop_assert_eq!(result.free(), expected);
     }
 }

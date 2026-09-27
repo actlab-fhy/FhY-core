@@ -23,14 +23,23 @@ impl DataType {
     /// type, the same template (identifier and widths), or, when either side
     /// is an extension, what its [`is_structurally_equivalent`](super::DataTypeExtension::is_structurally_equivalent)
     /// answers about the other side, the left one's when both are.
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &DataType) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for an extension that fails.
+    pub fn is_structurally_equivalent(&self, other: &DataType) -> Result<bool> {
         match (self, other) {
-            (Self::Primitive(left), Self::Primitive(right)) => left == right,
-            (Self::Template(left), Self::Template(right)) => left == right,
-            (Self::Extension(extension), _) => extension.is_structurally_equivalent(other),
-            (_, Self::Extension(extension)) => extension.is_structurally_equivalent(self),
-            _ => false,
+            (Self::Primitive(left), Self::Primitive(right)) => Ok(left == right),
+            (Self::Template(left), Self::Template(right)) => Ok(left == right),
+            (Self::Extension(extension), _) => extension
+                .get()
+                .is_structurally_equivalent(other)
+                .map_err(UnificationError::Extension),
+            (_, Self::Extension(extension)) => extension
+                .get()
+                .is_structurally_equivalent(self)
+                .map_err(UnificationError::Extension),
+            _ => Ok(false),
         }
     }
 
@@ -65,19 +74,7 @@ impl DataType {
                     actual: actual.kind_name(),
                 }),
             },
-            Self::Extension(extension) => extension
-                .bind_template(actual, environment)
-                .unwrap_or_else(|| {
-                    if self.is_structurally_equivalent(actual) {
-                        Ok(environment.clone())
-                    } else {
-                        Err(UnificationError::DataTypeMismatch {
-                            operation: TypeOperation::Bind,
-                            expected: self.clone(),
-                            actual: actual.clone(),
-                        })
-                    }
-                }),
+            Self::Extension(extension) => extension.get().bind_template(self, actual, environment),
         }
     }
 
@@ -98,11 +95,48 @@ impl DataType {
                 .cloned()
                 .unwrap_or_else(|| self.clone())),
             Self::Primitive(_) => Ok(self.clone()),
-            Self::Extension(extension) => extension
-                .substitute_template(environment)
-                .unwrap_or_else(|| Ok(self.clone())),
+            Self::Extension(extension) => extension.get().substitute_template(self, environment),
         }
     }
+}
+
+/// Bind the data type `this`, as a pattern, against `actual` by the default
+/// rule of an extension without a rule of its own: `actual` must be
+/// structurally equivalent, and nothing is bound.
+///
+/// # Errors
+///
+/// Returns [`UnificationError::DataTypeMismatch`] if `actual` is not
+/// equivalent, and an extension's error.
+pub fn default_bind_data_template(
+    this: &DataType,
+    actual: &DataType,
+    environment: &TypeUnificationEnvironment,
+) -> Result<TypeUnificationEnvironment> {
+    if this.is_structurally_equivalent(actual)? {
+        Ok(environment.clone())
+    } else {
+        Err(UnificationError::DataTypeMismatch {
+            operation: TypeOperation::Bind,
+            expected: this.clone(),
+            actual: actual.clone(),
+        })
+    }
+}
+
+/// Return the data type `this` with its placeholders substituted by the
+/// default rule of an extension without a rule of its own: `this`
+/// unchanged.
+///
+/// # Errors
+///
+/// Never fails; the signature is the hook's.
+pub fn default_substitute_data_template(
+    this: &DataType,
+    environment: &TypeUnificationEnvironment,
+) -> Result<DataType> {
+    let _ = environment;
+    Ok(this.clone())
 }
 
 /// Bind the template `template` against `actual`.
@@ -125,7 +159,7 @@ fn bind_template_data_type(
     let identifier = template.identifier();
     match environment.data_type_binding(identifier) {
         None => Ok(environment.with_data_type_binding(identifier.clone(), actual.clone())),
-        Some(bound) if !bound.is_structurally_equivalent(actual) => {
+        Some(bound) if !bound.is_structurally_equivalent(actual)? => {
             Err(UnificationError::ConflictingDataTypeBinding {
                 identifier: identifier.clone(),
                 bound: bound.clone(),
@@ -168,20 +202,29 @@ impl Type {
     ///   through its
     ///   [`is_structurally_equivalent`](super::TypeExtension::is_structurally_equivalent),
     ///   the left one when both are.
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &Type) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for an extension that fails.
+    pub fn is_structurally_equivalent(&self, other: &Type) -> Result<bool> {
         match (self, other) {
             (Self::Numerical(left), Self::Numerical(right)) => {
-                NumericalType::ptr_eq(left, right)
-                    || (left
-                        .data_type()
-                        .is_structurally_equivalent(right.data_type())
-                        && left.shape() == right.shape())
+                Ok(NumericalType::ptr_eq(left, right)
+                    || (left.shape() == right.shape()
+                        && left
+                            .data_type()
+                            .is_structurally_equivalent(right.data_type())?))
             }
-            (Self::Index(left), Self::Index(right)) => left == right,
-            (Self::Extension(extension), _) => extension.is_structurally_equivalent(other),
-            (_, Self::Extension(extension)) => extension.is_structurally_equivalent(self),
-            _ => false,
+            (Self::Index(left), Self::Index(right)) => Ok(left == right),
+            (Self::Extension(extension), _) => extension
+                .get()
+                .is_structurally_equivalent(other)
+                .map_err(UnificationError::Extension),
+            (_, Self::Extension(extension)) => extension
+                .get()
+                .is_structurally_equivalent(self)
+                .map_err(UnificationError::Extension),
+            _ => Ok(false),
         }
     }
 
@@ -224,11 +267,7 @@ impl Type {
                     bind_dimension(pattern.upper_bound(), actual.upper_bound(), &environment)?;
                 bind_dimension(pattern.stride(), actual.stride(), &environment)
             }
-            Self::Extension(extension) => extension
-                .bind_template(actual, environment)
-                .unwrap_or_else(|| {
-                    self.check_default_equivalence(TypeOperation::Bind, actual, environment)
-                }),
+            Self::Extension(extension) => extension.get().bind_template(self, actual, environment),
         }
     }
 
@@ -290,9 +329,7 @@ impl Type {
                 }
                 Ok(Self::Index(IndexType::new(lower, upper, stride)))
             }
-            Self::Extension(extension) => extension
-                .substitute_template(environment)
-                .unwrap_or_else(|| Ok(self.clone())),
+            Self::Extension(extension) => extension.get().substitute_template(self, environment),
         }
     }
 
@@ -340,12 +377,7 @@ impl Type {
                     environment,
                 ))
             }
-            Self::Extension(extension) => {
-                extension.unify(actual, environment).unwrap_or_else(|| {
-                    self.check_default_equivalence(TypeOperation::Unify, actual, environment)
-                        .map(|environment| (self.clone(), environment))
-                })
-            }
+            Self::Extension(extension) => extension.get().unify(self, actual, environment),
         }
     }
 
@@ -366,7 +398,7 @@ impl Type {
         actual: &Type,
         environment: &TypeUnificationEnvironment,
     ) -> Result<TypeUnificationEnvironment> {
-        if self.is_structurally_equivalent(actual) {
+        if self.is_structurally_equivalent(actual)? {
             Ok(environment.clone())
         } else {
             Err(UnificationError::TypeMismatch {
@@ -378,12 +410,60 @@ impl Type {
     }
 }
 
+/// Bind the type `this`, as a pattern, against `actual` by the default rule
+/// of an extension without a rule of its own: `actual` must be structurally
+/// equivalent, and nothing is bound.
+///
+/// # Errors
+///
+/// Returns [`UnificationError::TypeMismatch`] if `actual` is not
+/// equivalent, and an extension's error.
+pub fn default_bind_template(
+    this: &Type,
+    actual: &Type,
+    environment: &TypeUnificationEnvironment,
+) -> Result<TypeUnificationEnvironment> {
+    this.check_default_equivalence(TypeOperation::Bind, actual, environment)
+}
+
+/// Return the type `this` with its placeholders substituted by the default
+/// rule of an extension without a rule of its own: `this` unchanged, the
+/// same handle.
+///
+/// # Errors
+///
+/// Never fails; the signature is the hook's.
+pub fn default_substitute_template(
+    this: &Type,
+    environment: &TypeUnificationEnvironment,
+) -> Result<Type> {
+    let _ = environment;
+    Ok(this.clone())
+}
+
+/// Unify the type `this`, as the expected one, with `actual` by the default
+/// rule of an extension without a rule of its own: `actual` must be
+/// structurally equivalent, and the result is `this`, with nothing bound.
+///
+/// # Errors
+///
+/// Returns [`UnificationError::TypeMismatch`] if `actual` is not
+/// equivalent, and an extension's error.
+pub fn default_unify(
+    this: &Type,
+    actual: &Type,
+    environment: &TypeUnificationEnvironment,
+) -> Result<(Type, TypeUnificationEnvironment)> {
+    this.check_default_equivalence(TypeOperation::Unify, actual, environment)
+        .map(|environment| (this.clone(), environment))
+}
+
 /// Return whether two data types are the same handle, or equal built-in
 /// values, so a substitution that changed nothing keeps its input.
 fn is_same_data_type(left: &DataType, right: &DataType) -> bool {
     match (left, right) {
         (DataType::Extension(left), DataType::Extension(right)) => {
-            std::sync::Arc::ptr_eq(left, right)
+            crate::foreign::Part::ptr_eq(left, right)
         }
         _ => left == right,
     }
@@ -415,7 +495,7 @@ fn bind_numerical(
         if let DataType::Template(template) = pattern.data_type() {
             let identifier = template.identifier();
             if let Some(bound) = environment.type_binding(identifier) {
-                if !bound.is_structurally_equivalent(actual) {
+                if !bound.is_structurally_equivalent(actual)? {
                     return Err(UnificationError::ConflictingTypeBinding {
                         identifier: identifier.clone(),
                         bound: bound.clone(),
@@ -529,7 +609,7 @@ fn unify_data_types(
         }
         (DataType::Template(_), _) => Ok((right.clone(), left.bind_template(right, environment)?)),
         (_, DataType::Template(_)) => Ok((left.clone(), right.bind_template(left, environment)?)),
-        _ if left.is_structurally_equivalent(right) => Ok((left.clone(), environment.clone())),
+        _ if left.is_structurally_equivalent(right)? => Ok((left.clone(), environment.clone())),
         _ => Err(UnificationError::DataTypeMismatch {
             operation: TypeOperation::Unify,
             expected: left.clone(),

@@ -43,8 +43,10 @@ impl From<Value> for Binding {
 /// Binding an identifier again replaces its binding and keeps its place.
 ///
 /// Bindings may also carry their caller's own form of them, its
-/// [`source`](Self::source), which a [`CustomConstraint`](super::CustomConstraint)
-/// can read back, since it may decide from values the core does not model.
+/// [`source`](Self::source). It is the channel of a language binding's own
+/// adapter: a binding that builds the bindings reads its source back in
+/// its [`CustomConstraint`](super::CustomConstraint)s, which may decide from
+/// values the core does not model. Core code never reads it.
 #[derive(Clone, Default)]
 pub struct Bindings {
     entries: Vec<(Identifier, Binding)>,
@@ -106,6 +108,9 @@ impl Bindings {
     }
 
     /// Return the caller's own form of the bindings, if it gave one.
+    ///
+    /// Only the binding that set it reads it (see the type's documentation);
+    /// a Rust implementor decides from the bindings themselves.
     #[must_use]
     pub fn source(&self) -> Option<&(dyn Any + Send + Sync)> {
         self.source.as_deref()

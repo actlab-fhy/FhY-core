@@ -44,14 +44,12 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use std::sync::Arc;
-
 use serde::de::{self, Deserializer};
 use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::expression::{BigInt, Decimal, float_text, integer_text, serialize_display_text};
-use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Resolve};
+use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
 use crate::identifier::Identifier;
 
 use super::Constraint;
@@ -59,7 +57,7 @@ use super::custom::CustomConstraint;
 use super::equation::EquationConstraint;
 use super::set::{Polarity, SetConstraint};
 use super::system::ConstraintSystem;
-use super::value::{Member, MemberKind, MemberSet, Opaque, Value};
+use super::value::{Member, MemberKind, MemberSet, OpaqueValue, Value};
 
 /// The wire form of a [`Value`] or a [`Member`], its opaque parts
 /// unresolved.
@@ -272,7 +270,10 @@ impl ValueRepr {
         })
     }
 
-    fn build<R: Resolve<Opaque> + ?Sized>(self, resolver: &R) -> Result<Value, BuildError> {
+    fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<Value, BuildError> {
         Ok(match self {
             Self::Bool(value) => Value::Bool(value),
             Self::Int(value) => Value::Int(value),
@@ -286,7 +287,7 @@ impl ValueRepr {
     }
 }
 
-fn build_values<R: Resolve<Opaque> + ?Sized>(
+fn build_values<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
     values: Vec<ValueRepr>,
     resolver: &R,
 ) -> Result<Vec<Value>, BuildError> {
@@ -300,7 +301,7 @@ fn of_members(members: &MemberSet) -> Result<Vec<ValueRepr>, ForeignError> {
     members.iter().map(ValueRepr::of_member).collect()
 }
 
-fn build_member_set<R: Resolve<Opaque> + ?Sized>(
+fn build_member_set<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
     values: Vec<ValueRepr>,
     resolver: &R,
 ) -> Result<MemberSet, BuildError> {
@@ -327,7 +328,10 @@ impl ValueData {
     /// # Errors
     ///
     /// Returns [`BuildError::Foreign`] for a part `resolver` refuses.
-    pub fn build<R: Resolve<Opaque> + ?Sized>(self, resolver: &R) -> Result<Value, BuildError> {
+    pub fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<Value, BuildError> {
         self.0.build(resolver)
     }
 
@@ -338,7 +342,7 @@ impl ValueData {
     /// Returns [`BuildError::Foreign`] for a part `resolver` refuses, and
     /// [`BuildError::Invalid`] with the [`MemberError`](super::MemberError)
     /// of a value that is no member.
-    pub fn build_member<R: Resolve<Opaque> + ?Sized>(
+    pub fn build_member<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
         self,
         resolver: &R,
     ) -> Result<Member, BuildError> {
@@ -416,9 +420,15 @@ struct EquationWire {
 }
 
 /// The resolvers a constraint's foreign parts need.
-pub trait ConstraintResolver: Resolve<Opaque> + Resolve<Arc<dyn CustomConstraint>> {}
+pub trait ConstraintResolver:
+    Resolve<Part<dyn OpaqueValue>> + Resolve<Part<dyn CustomConstraint>>
+{
+}
 
-impl<R: Resolve<Opaque> + Resolve<Arc<dyn CustomConstraint>> + ?Sized> ConstraintResolver for R {}
+impl<R: Resolve<Part<dyn OpaqueValue>> + Resolve<Part<dyn CustomConstraint>> + ?Sized>
+    ConstraintResolver for R
+{
+}
 
 /// The wire form of a [`Constraint`], its foreign parts unresolved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -461,7 +471,7 @@ impl ConstraintData {
                     Polarity::NotIn => ConstraintRepr::NotInSet(repr),
                 }
             }
-            Constraint::Custom(custom) => ConstraintRepr::Custom(custom.to_foreign()?),
+            Constraint::Custom(custom) => ConstraintRepr::Custom(custom.get().to_foreign()?),
         }))
     }
 
@@ -566,7 +576,7 @@ impl ConstraintSystemData {
             .into_iter()
             .map(|constraint| constraint.build(resolver))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(ConstraintSystem::new(constraints))
+        ConstraintSystem::new(constraints).map_err(BuildError::invalid)
     }
 }
 

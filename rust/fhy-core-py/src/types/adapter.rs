@@ -5,15 +5,16 @@
 //! [`PyTypeAdapter`] or [`PyDataTypeAdapter`] over the object. For each hook
 //! the adapter asks the dispatcher of `fhy_core.types.dispatch` which handler
 //! serves the object's class: when it is the dispatcher's default, no
-//! handler was registered, and the adapter answers `None`, so the core
-//! applies its default rule without calling Python; otherwise it calls the
-//! handler with the Python objects and converts its result back.
+//! handler was registered, and the adapter runs the core's default rule
+//! (`fhy_core::types::default_*`) without calling Python; otherwise it calls
+//! the handler with the Python objects and converts its result back. A
+//! handler's exception is the hook's error.
 //!
-//! The core's equality, hashing and structural equivalence are infallible,
-//! while a Python handler or `==` can raise. So every entry function that
-//! runs the core over such values runs in a [`Context`]: the first exception
-//! an infallible hook meets is kept there, the hook answers `false`, and the
-//! entry raises it when the core returns. The context also carries the
+//! The core's equality and hashing are infallible, while a Python `==` or
+//! `hash` can raise. So every entry function that runs the core over such
+//! values runs in a [`Context`]: the first exception `eq_part` or
+//! `hash_part` meets is kept there, the hook answers `false`, and the entry
+//! raises it when the core returns. The context also carries the
 //! Python objects the call was given, so the values the core returns are
 //! handed back as those objects where they are unchanged, and the class of
 //! the environment the call was given, which every environment it builds
@@ -21,7 +22,6 @@
 //! progress, so a nested call, from a handler, gets its own; it is empty
 //! whenever no call runs.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -33,10 +33,12 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyTuple, PyType};
 
-use fhy_core::foreign::BoxError;
+use fhy_core::foreign::{BoxError, ForeignPart};
 use fhy_core::tree::NodeIdentity;
 use fhy_core::types::{
     DataType, DataTypeExtension, Type, TypeExtension, TypeUnificationEnvironment, UnificationError,
+    default_bind_data_template, default_bind_template, default_substitute_data_template,
+    default_substitute_template, default_unify,
 };
 
 use super::convert;
@@ -298,7 +300,7 @@ impl fmt::Display for PyTypeAdapter {
     }
 }
 
-impl TypeExtension for PyTypeAdapter {
+impl ForeignPart for PyTypeAdapter {
     fn type_name(&self) -> Cow<'_, str> {
         class_name(&self.object)
     }
@@ -306,57 +308,54 @@ impl TypeExtension for PyTypeAdapter {
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
         crate::wire::foreign_of(&self.object, true)
     }
+}
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn is_structurally_equivalent(&self, other: &Type) -> bool {
+impl TypeExtension for PyTypeAdapter {
+    /// Ask the handler registered for the object's class, or answer the
+    /// dispatcher's default, `false`, without calling Python; a handler's
+    /// exception is the error.
+    fn is_structurally_equivalent(&self, other: &Type) -> Result<bool, BoxError> {
         Python::attach(|py| {
             let context = current_context();
             if context.has_failed() {
-                return false;
+                return Ok(false);
             }
-            let result = (|| -> PyResult<bool> {
-                let object = self.object.bind(py);
-                let Some(handler) = user_handler(object, Hook::IsStructurallyEquivalent)? else {
-                    return Ok(false);
-                };
-                let other = convert::type_to_python(py, &context, other)?;
-                handler.call1((object, other))?.is_truthy()
-            })();
-            result.unwrap_or_else(|error| {
-                context.fail(error);
-                false
-            })
+            let object = self.object.bind(py);
+            let Some(handler) = user_handler(object, Hook::IsStructurallyEquivalent)? else {
+                return Ok(false);
+            };
+            let other = convert::type_to_python(py, &context, other)?;
+            handler.call1((object, other))?.is_truthy()
         })
+        .map_err(|error: PyErr| Box::new(error) as BoxError)
     }
 
-    fn eq_extension(&self, other: &dyn TypeExtension) -> bool {
+    fn eq_part(&self, other: &dyn TypeExtension) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
             .is_some_and(|other| objects_equal(&self.object, &other.object))
     }
 
-    fn hash_extension(&self, state: &mut dyn Hasher) {
+    fn hash_part(&self, state: &mut dyn Hasher) {
         hash_object(&self.object, state);
     }
 
     fn bind_template(
         &self,
+        this: &Type,
         actual: &Type,
         environment: &TypeUnificationEnvironment,
-    ) -> Option<Result<TypeUnificationEnvironment, UnificationError>> {
+    ) -> Result<TypeUnificationEnvironment, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
             let object = self.object.bind(py);
-            let handler = match user_handler(object, Hook::BindTemplate) {
-                Ok(Some(handler)) => handler,
-                Ok(None) => return None,
-                Err(error) => return Some(Err(extension_error(error))),
+            let Some(handler) =
+                user_handler(object, Hook::BindTemplate).map_err(extension_error)?
+            else {
+                return default_bind_template(this, actual, environment);
             };
-            let result = (|| -> PyResult<TypeUnificationEnvironment> {
+            (|| -> PyResult<TypeUnificationEnvironment> {
                 let actual = convert::type_to_python(py, &context, actual)?;
                 let environment = convert::environment_to_python(py, &context, environment)?;
                 let result = handler.call1((object, actual, environment))?;
@@ -368,48 +367,48 @@ impl TypeExtension for PyTypeAdapter {
                         &result,
                     )
                 })
-            })();
-            Some(result.map_err(extension_error))
+            })()
+            .map_err(extension_error)
         })
     }
 
     fn substitute_template(
         &self,
+        this: &Type,
         environment: &TypeUnificationEnvironment,
-    ) -> Option<Result<Type, UnificationError>> {
+    ) -> Result<Type, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
             let object = self.object.bind(py);
-            let handler = match user_handler(object, Hook::SubstituteTemplate) {
-                Ok(Some(handler)) => handler,
-                Ok(None) => return None,
-                Err(error) => return Some(Err(extension_error(error))),
+            let Some(handler) =
+                user_handler(object, Hook::SubstituteTemplate).map_err(extension_error)?
+            else {
+                return default_substitute_template(this, environment);
             };
-            let result = (|| -> PyResult<Type> {
+            (|| -> PyResult<Type> {
                 let environment = convert::environment_to_python(py, &context, environment)?;
                 let result = handler.call1((object, environment))?;
                 convert::read_type(&context, &result)?.ok_or_else(|| {
                     build_result_type_error(object, "substitute_template", "a Type", &result)
                 })
-            })();
-            Some(result.map_err(extension_error))
+            })()
+            .map_err(extension_error)
         })
     }
 
     fn unify(
         &self,
+        this: &Type,
         actual: &Type,
         environment: &TypeUnificationEnvironment,
-    ) -> Option<Result<(Type, TypeUnificationEnvironment), UnificationError>> {
+    ) -> Result<(Type, TypeUnificationEnvironment), UnificationError> {
         Python::attach(|py| {
             let context = current_context();
             let object = self.object.bind(py);
-            let handler = match user_handler(object, Hook::Unify) {
-                Ok(Some(handler)) => handler,
-                Ok(None) => return None,
-                Err(error) => return Some(Err(extension_error(error))),
+            let Some(handler) = user_handler(object, Hook::Unify).map_err(extension_error)? else {
+                return default_unify(this, actual, environment);
             };
-            let result = (|| -> PyResult<(Type, TypeUnificationEnvironment)> {
+            (|| -> PyResult<(Type, TypeUnificationEnvironment)> {
                 let actual = convert::type_to_python(py, &context, actual)?;
                 let environment = convert::environment_to_python(py, &context, environment)?;
                 let result = handler.call1((object, actual, environment))?;
@@ -430,8 +429,8 @@ impl TypeExtension for PyTypeAdapter {
                 let environment =
                     convert::read_environment(&context, &pair.get_item(1)?).ok_or_else(wrong)?;
                 Ok((unified, environment))
-            })();
-            Some(result.map_err(extension_error))
+            })()
+            .map_err(extension_error)
         })
     }
 }
@@ -464,7 +463,7 @@ impl fmt::Display for PyDataTypeAdapter {
     }
 }
 
-impl DataTypeExtension for PyDataTypeAdapter {
+impl ForeignPart for PyDataTypeAdapter {
     fn type_name(&self) -> Cow<'_, str> {
         class_name(&self.object)
     }
@@ -472,57 +471,54 @@ impl DataTypeExtension for PyDataTypeAdapter {
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
         crate::wire::foreign_of(&self.object, true)
     }
+}
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn is_structurally_equivalent(&self, other: &DataType) -> bool {
+impl DataTypeExtension for PyDataTypeAdapter {
+    /// Ask the handler registered for the object's class, or answer the
+    /// dispatcher's default, `false`, without calling Python; a handler's
+    /// exception is the error.
+    fn is_structurally_equivalent(&self, other: &DataType) -> Result<bool, BoxError> {
         Python::attach(|py| {
             let context = current_context();
             if context.has_failed() {
-                return false;
+                return Ok(false);
             }
-            let result = (|| -> PyResult<bool> {
-                let object = self.object.bind(py);
-                let Some(handler) = user_handler(object, Hook::IsStructurallyEquivalent)? else {
-                    return Ok(false);
-                };
-                let other = convert::data_type_to_python(py, &context, other)?;
-                handler.call1((object, other))?.is_truthy()
-            })();
-            result.unwrap_or_else(|error| {
-                context.fail(error);
-                false
-            })
+            let object = self.object.bind(py);
+            let Some(handler) = user_handler(object, Hook::IsStructurallyEquivalent)? else {
+                return Ok(false);
+            };
+            let other = convert::data_type_to_python(py, &context, other)?;
+            handler.call1((object, other))?.is_truthy()
         })
+        .map_err(|error: PyErr| Box::new(error) as BoxError)
     }
 
-    fn eq_extension(&self, other: &dyn DataTypeExtension) -> bool {
+    fn eq_part(&self, other: &dyn DataTypeExtension) -> bool {
         other
             .as_any()
             .downcast_ref::<Self>()
             .is_some_and(|other| objects_equal(&self.object, &other.object))
     }
 
-    fn hash_extension(&self, state: &mut dyn Hasher) {
+    fn hash_part(&self, state: &mut dyn Hasher) {
         hash_object(&self.object, state);
     }
 
     fn bind_template(
         &self,
+        this: &DataType,
         actual: &DataType,
         environment: &TypeUnificationEnvironment,
-    ) -> Option<Result<TypeUnificationEnvironment, UnificationError>> {
+    ) -> Result<TypeUnificationEnvironment, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
             let object = self.object.bind(py);
-            let handler = match user_handler(object, Hook::BindDataTemplate) {
-                Ok(Some(handler)) => handler,
-                Ok(None) => return None,
-                Err(error) => return Some(Err(extension_error(error))),
+            let Some(handler) =
+                user_handler(object, Hook::BindDataTemplate).map_err(extension_error)?
+            else {
+                return default_bind_data_template(this, actual, environment);
             };
-            let result = (|| -> PyResult<TypeUnificationEnvironment> {
+            (|| -> PyResult<TypeUnificationEnvironment> {
                 let actual = convert::data_type_to_python(py, &context, actual)?;
                 let environment = convert::environment_to_python(py, &context, environment)?;
                 let result = handler.call1((object, actual, environment))?;
@@ -534,24 +530,25 @@ impl DataTypeExtension for PyDataTypeAdapter {
                         &result,
                     )
                 })
-            })();
-            Some(result.map_err(extension_error))
+            })()
+            .map_err(extension_error)
         })
     }
 
     fn substitute_template(
         &self,
+        this: &DataType,
         environment: &TypeUnificationEnvironment,
-    ) -> Option<Result<DataType, UnificationError>> {
+    ) -> Result<DataType, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
             let object = self.object.bind(py);
-            let handler = match user_handler(object, Hook::SubstituteDataTemplate) {
-                Ok(Some(handler)) => handler,
-                Ok(None) => return None,
-                Err(error) => return Some(Err(extension_error(error))),
+            let Some(handler) =
+                user_handler(object, Hook::SubstituteDataTemplate).map_err(extension_error)?
+            else {
+                return default_substitute_data_template(this, environment);
             };
-            let result = (|| -> PyResult<DataType> {
+            (|| -> PyResult<DataType> {
                 let environment = convert::environment_to_python(py, &context, environment)?;
                 let result = handler.call1((object, environment))?;
                 convert::read_data_type(&context, &result)?.ok_or_else(|| {
@@ -562,8 +559,8 @@ impl DataTypeExtension for PyDataTypeAdapter {
                         &result,
                     )
                 })
-            })();
-            Some(result.map_err(extension_error))
+            })()
+            .map_err(extension_error)
         })
     }
 }

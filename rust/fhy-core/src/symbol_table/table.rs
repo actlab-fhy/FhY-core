@@ -5,6 +5,7 @@ use std::convert::Infallible;
 use std::fmt;
 
 use crate::identifier::Identifier;
+use crate::types::UnificationError;
 
 use super::error::{SymbolTableError, Violation};
 use super::frame::{Frame, SymbolFrame};
@@ -533,12 +534,13 @@ impl<F> SymbolTable<F> {
 impl SymbolTable<SymbolFrame> {
     /// Return whether `other` is equivalent, comparing frames with
     /// [`SymbolFrame::is_structurally_equivalent`].
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
-        self.is_equivalent_by(other, |left, right| {
-            Ok::<_, Infallible>(left.is_structurally_equivalent(right))
-        })
-        .unwrap_or_else(|never| match never {})
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for a type extension that
+    /// fails.
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, UnificationError> {
+        self.is_equivalent_by(other, SymbolFrame::is_structurally_equivalent)
     }
 }
 

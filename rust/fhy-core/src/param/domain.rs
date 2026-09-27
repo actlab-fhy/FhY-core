@@ -4,9 +4,12 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::constraint::{Constraint, EquationConstraint, Member, MemberSet, Outcome, Value};
+use crate::constraint::{
+    Constraint, EquationConstraint, Member, MemberError, MemberSet, Outcome, Value,
+};
 use crate::error::impl_from_name;
 use crate::expression::{BinaryOperation, Expression, ExpressionKind, LiteralValue, SymbolType};
+use crate::foreign::Part;
 use crate::identifier::Identifier;
 
 use super::context::ParamContext;
@@ -349,7 +352,12 @@ fn read_leaf_values(
     }
     values
         .into_iter()
-        .map(|value| Member::try_from(value).map_err(|_nan| ParamError::NanValue(kind)))
+        .map(|value| {
+            Member::try_from(value).map_err(|error| match error {
+                MemberError::OrderingKey { source, .. } => ParamError::Custom(source),
+                _ => ParamError::NanValue(kind),
+            })
+        })
         .collect()
 }
 
@@ -378,8 +386,11 @@ impl OrdinalDomain {
     /// [`ParamError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, ParamError> {
         let members = read_leaf_values(DomainKind::Ordinal, values, true)?;
-        let sorted = sort_tolerantly(members, compare_ordinal)
-            .map_err(|()| ParamError::IncomparableValues)?;
+        let sorted = sort_tolerantly(members, |left, right| {
+            compare_ordinal(left, right)
+                .map_err(ParamError::Custom)?
+                .ok_or(ParamError::IncomparableValues)
+        })?;
         build_finite_values(DomainKind::Ordinal, sorted).map(|values| Self(Arc::new(values)))
     }
 
@@ -493,7 +504,7 @@ pub enum ParamDomain {
     /// The permutations of a fixed set of members.
     Permutation(PermutationDomain),
     /// A domain of a kind defined elsewhere.
-    Custom(Arc<dyn CustomDomain>),
+    Custom(Part<dyn CustomDomain>),
 }
 
 impl From<IntegerDomain> for ParamDomain {
@@ -585,7 +596,7 @@ impl ParamDomain {
             Self::Integer(_) | Self::IntervalInteger(_) => Some(SymbolType::Int),
             Self::Real(_) => Some(SymbolType::Real),
             Self::Ordinal(_) | Self::Categorical(_) | Self::Permutation(_) => None,
-            Self::Custom(domain) => domain.symbol_type().map_err(ParamError::Custom)?,
+            Self::Custom(domain) => domain.get().symbol_type().map_err(ParamError::Custom)?,
         })
     }
 
@@ -610,6 +621,7 @@ impl ParamDomain {
             Self::Categorical(domain) => domain.contains_value(value),
             Self::Permutation(domain) => domain.is_permutation(value),
             Self::Custom(domain) => domain
+                .get()
                 .is_value_admissible(value)
                 .map_err(ParamError::Custom)?,
         })
@@ -649,6 +661,7 @@ impl ParamDomain {
                 }
             }
             Self::Custom(domain) => domain
+                .get()
                 .validate_constraint(constraint, variable)
                 .map_err(ParamError::Custom),
         }
@@ -675,6 +688,7 @@ impl ParamDomain {
                 Vec::new()
             }
             Self::Custom(domain) => domain
+                .get()
                 .implied_constraints(variable)
                 .map_err(ParamError::Custom)?,
         })
@@ -702,7 +716,10 @@ impl ParamDomain {
                 prefer_inclusive: domain.prefer_inclusive,
             }),
             Self::Real(_) | Self::Ordinal(_) | Self::Categorical(_) | Self::Permutation(_) => None,
-            Self::Custom(domain) => domain.interval_profile().map_err(ParamError::Custom)?,
+            Self::Custom(domain) => domain
+                .get()
+                .interval_profile()
+                .map_err(ParamError::Custom)?,
         })
     }
 
@@ -714,7 +731,11 @@ impl ParamDomain {
     /// # Errors
     ///
     /// Returns [`ParamError::Custom`] for a custom domain that fails.
-    pub fn is_value_set_subset(&self, other: &Self) -> Result<bool, ParamError> {
+    pub fn is_value_set_subset(
+        &self,
+        other: &Self,
+        context: &ParamContext<'_>,
+    ) -> Result<bool, ParamError> {
         Ok(match self {
             Self::Integer(_) | Self::IntervalInteger(_) | Self::Real(_) => {
                 let own = self.symbol_type()?;
@@ -740,7 +761,8 @@ impl ParamDomain {
                 _ => false,
             },
             Self::Custom(domain) => domain
-                .is_value_set_subset(other)
+                .get()
+                .is_value_set_subset(other, context)
                 .map_err(ParamError::Custom)?,
         })
     }
@@ -845,7 +867,7 @@ impl ParamDomain {
             (Self::Ordinal(left), Self::Ordinal(right)) => left.values() == right.values(),
             (Self::Categorical(left), Self::Categorical(right)) => left.0.lookup == right.0.lookup,
             (Self::Permutation(left), Self::Permutation(right)) => left.values() == right.values(),
-            (Self::Custom(left), _) => left.is_structurally_equivalent(other),
+            (Self::Custom(left), Self::Custom(right)) => left == right,
             _ => false,
         }
     }

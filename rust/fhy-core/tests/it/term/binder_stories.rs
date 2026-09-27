@@ -14,7 +14,7 @@ use fhy_core::expression::{Expression, PiecewiseError};
 use fhy_core::identifier::Identifier;
 use fhy_core::term::{AlphaEquivalence, AlphaRenaming, Binder, FreeIdentifiers, Term};
 
-use crate::support::lambda::{Lam, Lambda, app, block, expect_lam, lam, var};
+use crate::support::lambda::{Alpha, Free, Lam, Lambda, app, block, expect_lam, lam, var};
 
 fn build_identifiers<const N: usize>(names: [&str; N]) -> [Identifier; N] {
     names.map(Identifier::new)
@@ -28,28 +28,28 @@ fn build_identifiers<const N: usize>(names: [&str; N]) -> [Identifier; N] {
 fn identity_lambdas_over_different_parameters_are_alpha_equivalent() {
     let [x, y] = build_identifiers(["x", "y"]);
 
-    assert!(lam([&x], var(&x)).is_alpha_equivalent(&lam([&y], var(&y))));
+    assert!(lam([&x], var(&x)).alpha_equivalent(&lam([&y], var(&y))));
 }
 
 #[test]
 fn lambdas_over_distinct_free_bodies_are_not_alpha_equivalent() {
     let [x, y, a, b] = build_identifiers(["x", "y", "a", "b"]);
 
-    assert!(!lam([&x], var(&a)).is_alpha_equivalent(&lam([&y], var(&b))));
+    assert!(!lam([&x], var(&a)).alpha_equivalent(&lam([&y], var(&b))));
 }
 
 #[test]
 fn lambdas_sharing_a_free_identifier_are_alpha_equivalent() {
     let [x, y, shared] = build_identifiers(["x", "y", "shared"]);
 
-    assert!(lam([&x], var(&shared)).is_alpha_equivalent(&lam([&y], var(&shared))));
+    assert!(lam([&x], var(&shared)).alpha_equivalent(&lam([&y], var(&shared))));
 }
 
 #[test]
 fn lambdas_binding_different_numbers_of_identifiers_are_not_alpha_equivalent() {
     let [x, y, z] = build_identifiers(["x", "y", "z"]);
 
-    assert!(!lam([&x], var(&x)).is_alpha_equivalent(&lam([&y, &z], var(&y))));
+    assert!(!lam([&x], var(&x)).alpha_equivalent(&lam([&y, &z], var(&y))));
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn blocks_with_different_numbers_of_children_are_not_alpha_equivalent() {
     let one = block([&x], vec![var(&x)]);
     let two = block([&y], vec![var(&y), var(&y)]);
 
-    assert!(!one.is_alpha_equivalent(&two));
+    assert!(!one.alpha_equivalent(&two));
 }
 
 #[test]
@@ -70,8 +70,8 @@ fn block_alpha_equivalence_compares_every_child_under_the_frame() {
     let right = block([&y], vec![var(&y), var(&y)]);
     let mismatch = block([&y], vec![var(&y), var(&free)]);
 
-    assert!(left.is_alpha_equivalent(&right));
-    assert!(!left.is_alpha_equivalent(&mismatch));
+    assert!(left.alpha_equivalent(&right));
+    assert!(!left.alpha_equivalent(&mismatch));
 }
 
 #[test]
@@ -80,8 +80,8 @@ fn lambdas_nested_over_one_name_match_the_inner_binder() {
 
     let left = lam([&x], lam([&x], var(&x)));
 
-    assert!(left.is_alpha_equivalent(&lam([&a], lam([&b], var(&b)))));
-    assert!(!left.is_alpha_equivalent(&lam([&a], lam([&b], var(&a)))));
+    assert!(left.alpha_equivalent(&lam([&a], lam([&b], var(&b)))));
+    assert!(!left.alpha_equivalent(&lam([&a], lam([&b], var(&a)))));
 }
 
 #[test]
@@ -89,8 +89,8 @@ fn a_lambda_refuses_to_capture_a_free_identifier() {
     let [x, y] = build_identifiers(["x", "y"]);
 
     // `\x. y` binds nothing its body uses; `\y. y` is the identity.
-    assert!(!lam([&x], var(&y)).is_alpha_equivalent(&lam([&y], var(&y))));
-    assert!(!lam([&y], var(&y)).is_alpha_equivalent(&lam([&x], var(&y))));
+    assert!(!lam([&x], var(&y)).alpha_equivalent(&lam([&y], var(&y))));
+    assert!(!lam([&y], var(&y)).alpha_equivalent(&lam([&x], var(&y))));
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn lambdas_swapping_their_parameters_and_arguments_are_alpha_equivalent() {
     let left = lam([&x, &y], app(var(&x), var(&y)));
     let right = lam([&b, &a], app(var(&b), var(&a)));
 
-    assert!(left.is_alpha_equivalent(&right));
+    assert!(left.alpha_equivalent(&right));
 }
 
 #[test]
@@ -112,15 +112,15 @@ fn a_lambda_compares_its_free_identifiers_under_the_free_renaming() {
     let left = lam([&x], app(var(&x), var(&free_a)));
     let right = lam([&y], app(var(&y), var(&free_b)));
 
-    assert!(left.is_alpha_equivalent_under(&right, &renaming));
-    assert!(!left.is_alpha_equivalent(&right));
+    assert!(left.alpha_equivalent_under(&right, &renaming));
+    assert!(!left.alpha_equivalent(&right));
 }
 
 #[test]
 fn a_lambda_is_not_alpha_equivalent_to_a_variable() {
     let [x] = build_identifiers(["x"]);
 
-    assert!(!lam([&x], var(&x)).is_alpha_equivalent(&var(&x)));
+    assert!(!lam([&x], var(&x)).alpha_equivalent(&var(&x)));
 }
 
 // =============================================================================
@@ -134,9 +134,9 @@ fn a_lambda_repeating_a_parameter_matches_no_lambda_on_either_side() {
     let repeats = lam([&x, &x], var(&x));
     let distinct = lam([&a, &b], var(&b));
 
-    assert!(!repeats.is_alpha_equivalent(&distinct));
-    assert!(!distinct.is_alpha_equivalent(&repeats));
-    assert!(!lam([&x, &y], var(&x)).is_alpha_equivalent(&lam([&a, &a], var(&a))));
+    assert!(!repeats.alpha_equivalent(&distinct));
+    assert!(!distinct.alpha_equivalent(&repeats));
+    assert!(!lam([&x, &y], var(&x)).alpha_equivalent(&lam([&a, &a], var(&a))));
 }
 
 #[test]
@@ -144,8 +144,8 @@ fn a_lambda_repeating_a_parameter_is_not_alpha_equivalent_to_itself() {
     let [x] = build_identifiers(["x"]);
     let repeats = lam([&x, &x], var(&x));
 
-    assert!(!repeats.is_alpha_equivalent(&repeats));
-    assert!(!repeats.is_alpha_equivalent(&repeats.clone()));
+    assert!(!repeats.alpha_equivalent(&repeats));
+    assert!(!repeats.alpha_equivalent(&repeats.clone()));
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn a_repeated_parameter_nested_inside_a_term_makes_the_whole_term_match_nothing(
     let [x, f] = build_identifiers(["x", "f"]);
     let term = app(var(&f), lam([&x, &x], var(&x)));
 
-    assert!(!term.is_alpha_equivalent(&term.clone()));
+    assert!(!term.alpha_equivalent(&term.clone()));
 }
 
 // =============================================================================
@@ -164,14 +164,14 @@ fn a_repeated_parameter_nested_inside_a_term_makes_the_whole_term_match_nothing(
 fn free_identifiers_leave_out_a_bound_parameter() {
     let [x] = build_identifiers(["x"]);
 
-    assert_eq!(lam([&x], var(&x)).free_identifiers(), HashSet::new());
+    assert_eq!(lam([&x], var(&x)).free(), HashSet::new());
 }
 
 #[test]
 fn free_identifiers_hold_an_unbound_body_reference() {
     let [x, y] = build_identifiers(["x", "y"]);
 
-    assert_eq!(lam([&x], var(&y)).free_identifiers(), HashSet::from([y]));
+    assert_eq!(lam([&x], var(&y)).free(), HashSet::from([y]));
 }
 
 #[test]
@@ -181,11 +181,8 @@ fn free_identifiers_are_the_union_over_the_children_minus_the_bound_set() {
     let nested = lam([&x], app(var(&x), app(var(&y), var(&z))));
     let multi = block([&x], vec![var(&x), var(&y), var(&z)]);
 
-    assert_eq!(
-        nested.free_identifiers(),
-        HashSet::from([y.clone(), z.clone()])
-    );
-    assert_eq!(multi.free_identifiers(), HashSet::from([y, z]));
+    assert_eq!(nested.free(), HashSet::from([y.clone(), z.clone()]));
+    assert_eq!(multi.free(), HashSet::from([y, z]));
 }
 
 // =============================================================================
@@ -247,8 +244,8 @@ fn substitute_renames_a_binder_that_would_capture_a_replacement() {
     assert_ne!(fresh, &x);
     assert_eq!(fresh.name_hint(), "x");
     assert_eq!(renamed.body(), &[var(&x)]);
-    assert_eq!(result.free_identifiers(), HashSet::from([x.clone()]));
-    assert!(!result.is_alpha_equivalent(&lam([&x], var(&x))));
+    assert_eq!(result.free(), HashSet::from([x.clone()]));
+    assert!(!result.alpha_equivalent(&lam([&x], var(&x))));
 }
 
 #[test]
@@ -263,7 +260,7 @@ fn substitute_renames_only_the_parameters_a_replacement_would_capture() {
     let renamed = expect_lam(&result);
     assert_ne!(renamed.parameters()[0], x);
     assert_eq!(renamed.parameters()[1], z);
-    assert!(result.is_alpha_equivalent(&lam([&y, &z], app(var(&y), app(var(&z), var(&x))))));
+    assert!(result.alpha_equivalent(&lam([&y, &z], app(var(&y), app(var(&z), var(&x))))));
 }
 
 /// A lambda whose `rename_bound_identifier` records each identifier it is
@@ -435,8 +432,11 @@ fn a_binder_over_expressions_compares_its_bodies_under_the_parameter_frame() {
         bodies: vec![Expression::from(y.clone()) + Expression::from(z.clone())],
     };
 
-    assert!(left.is_binder_alpha_equivalent_under(&right, &AlphaRenaming::default()));
-    assert_eq!(left.binder_free_identifiers(), HashSet::from([z]));
+    assert_eq!(
+        left.is_binder_alpha_equivalent_under(&right, &AlphaRenaming::default()),
+        Ok(true)
+    );
+    assert_eq!(left.binder_free_identifiers(), Ok(HashSet::from([z])));
 }
 
 #[test]
@@ -452,12 +452,18 @@ fn a_binder_over_expressions_substitutes_without_capture() {
         .expect("a sum never breaks a piecewise");
 
     assert_ne!(result.parameters[0], x);
-    assert_eq!(result.binder_free_identifiers(), HashSet::from([x.clone()]));
+    assert_eq!(
+        result.binder_free_identifiers(),
+        Ok(HashSet::from([x.clone()]))
+    );
     let expected = Function {
         parameters: vec![y.clone()],
         bodies: vec![Expression::from(y) + Expression::from(x)],
     };
-    assert!(result.is_binder_alpha_equivalent_under(&expected, &AlphaRenaming::default()));
+    assert_eq!(
+        result.is_binder_alpha_equivalent_under(&expected, &AlphaRenaming::default()),
+        Ok(true)
+    );
 }
 
 #[test]
@@ -496,15 +502,14 @@ fn expression_through_the_traits_agrees_with_its_methods() {
         .expect("one pair");
     let replacements = HashMap::from([(z.clone(), Expression::from(2))]);
 
-    assert!(AlphaEquivalence::is_alpha_equivalent_under(
-        &left, &right, &renaming
-    ));
-    assert!(!AlphaEquivalence::is_alpha_equivalent(&left, &right));
-    assert!(AlphaEquivalence::is_alpha_equivalent(&left, &left.clone()));
-    assert_eq!(
-        FreeIdentifiers::free_identifiers(&left),
-        left.free_identifiers()
-    );
+    let Ok(under_renaming) = AlphaEquivalence::is_alpha_equivalent_under(&left, &right, &renaming);
+    let Ok(without_renaming) = AlphaEquivalence::is_alpha_equivalent(&left, &right);
+    let Ok(with_itself) = AlphaEquivalence::is_alpha_equivalent(&left, &left.clone());
+    let Ok(free) = FreeIdentifiers::free_identifiers(&left);
+    assert!(under_renaming);
+    assert!(!without_renaming);
+    assert!(with_itself);
+    assert_eq!(free, left.free_identifiers());
     assert_eq!(
         Term::substitute(&left, &replacements).expect("no piecewise"),
         left.substitute(&replacements).expect("no piecewise")

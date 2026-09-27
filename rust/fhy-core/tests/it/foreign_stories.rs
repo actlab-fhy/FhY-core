@@ -5,14 +5,16 @@ use std::error::Error;
 use std::sync::Arc;
 
 use crate::support::constraint::{TestCustom, TestOpaque};
-use crate::support::foreign::{NAMED_TYPE, REFUSED, SilentDataType, SilentType, TestResolver};
+use crate::support::foreign::{
+    NAMED_TYPE, NamedType, REFUSED, SilentDataType, SilentType, TestResolver,
+};
 use crate::support::param::EvenDomain;
 
-use fhy_core::constraint::{Constraint, CustomConstraint, Outcome};
+use fhy_core::constraint::{Constraint, CustomConstraint, OpaqueValue, Outcome, Value};
 use fhy_core::expression::Expression;
-use fhy_core::foreign::{BuildError, Foreign, ForeignError, NoForeign, Resolve};
-use fhy_core::param::ParamDomain;
-use fhy_core::types::{DataTypeExtension, TypeExtension};
+use fhy_core::foreign::{BuildError, Foreign, ForeignError, ForeignPart, NoForeign, Part, Resolve};
+use fhy_core::param::{CustomDomain, ParamDomain};
+use fhy_core::types::{DataTypeExtension, Type, TypeExtension};
 
 #[test]
 fn a_foreign_part_serializes_as_its_type_id_and_text() {
@@ -62,7 +64,7 @@ fn no_foreign_refuses_every_part_by_its_type_id() {
 
 #[test]
 fn a_failed_part_names_its_type_id_and_keeps_its_cause() {
-    let refused: Result<Arc<dyn TypeExtension>, ForeignError> =
+    let refused: Result<Part<dyn TypeExtension>, ForeignError> =
         TestResolver.resolve(&Foreign::new(NAMED_TYPE, REFUSED));
 
     let error = refused.expect_err("the payload is refused");
@@ -100,7 +102,7 @@ fn a_build_error_shows_its_underlying_error() {
 
 #[test]
 fn a_type_extension_has_no_wire_form_by_default() {
-    let error = SilentType.to_foreign().expect_err("the default has none");
+    let error = ForeignPart::to_foreign(&SilentType).expect_err("the default has none");
 
     assert!(matches!(&error, ForeignError::NoWireForm { type_name } if type_name == "SilentType"));
     assert_eq!(error.to_string(), "`SilentType` has no wire form");
@@ -108,9 +110,7 @@ fn a_type_extension_has_no_wire_form_by_default() {
 
 #[test]
 fn a_data_type_extension_has_no_wire_form_by_default() {
-    let error = SilentDataType
-        .to_foreign()
-        .expect_err("the default has none");
+    let error = ForeignPart::to_foreign(&SilentDataType).expect_err("the default has none");
 
     assert!(
         matches!(&error, ForeignError::NoWireForm { type_name } if type_name == "SilentDataType")
@@ -119,37 +119,70 @@ fn a_data_type_extension_has_no_wire_form_by_default() {
 
 #[test]
 fn an_opaque_value_has_no_wire_form_by_default() {
-    let error = fhy_core::constraint::OpaqueValue::to_foreign(&TestOpaque::token(1))
-        .expect_err("the default has none");
+    let error = ForeignPart::to_foreign(&TestOpaque::token(1)).expect_err("the default has none");
 
     assert!(matches!(&error, ForeignError::NoWireForm { type_name } if type_name == "Token"));
 }
 
 #[test]
-fn a_custom_constraint_has_no_wire_form_by_default() {
+fn no_wire_form_names_the_custom_type() {
     let log = Arc::default();
     let Constraint::Custom(custom) =
         TestCustom::build("c", Expression::literal(true), Outcome::Satisfied, &log)
     else {
         unreachable!("the builder returns a custom constraint")
     };
-
-    let error = CustomConstraint::to_foreign(custom.as_ref()).expect_err("the default has none");
-
-    assert!(
-        matches!(&error, ForeignError::NoWireForm { type_name } if type_name == "custom constraint")
-    );
-}
-
-#[test]
-fn a_custom_domain_has_no_wire_form_by_default() {
     let (ParamDomain::Custom(domain), _) = EvenDomain::build(false) else {
         unreachable!("the builder returns a custom domain")
     };
 
-    let error = domain.to_foreign().expect_err("the default has none");
+    let constraint_error = custom.get().to_foreign().expect_err("the default has none");
+    let domain_error = domain.get().to_foreign().expect_err("the default has none");
 
     assert!(
-        matches!(&error, ForeignError::NoWireForm { type_name } if type_name == "custom domain")
+        matches!(&constraint_error, ForeignError::NoWireForm { type_name } if type_name == "TestCustom")
     );
+    assert_eq!(
+        constraint_error.to_string(),
+        "`TestCustom` has no wire form"
+    );
+    assert!(
+        matches!(&domain_error, ForeignError::NoWireForm { type_name } if type_name == "EvenDomain")
+    );
+}
+
+#[test]
+fn as_any_on_a_part_downcasts_to_the_implementation() {
+    let Type::Extension(part) = NamedType::build("n") else {
+        unreachable!("the builder returns an extension type")
+    };
+    let Value::Opaque(opaque) = TestOpaque::token(3).into_value() else {
+        unreachable!("the builder returns an opaque value")
+    };
+
+    let named = part.get().as_any().downcast_ref::<NamedType>();
+    let through_the_trait =
+        fhy_core::foreign::AsAny::as_any(part.get()).downcast_ref::<NamedType>();
+    let token = opaque.get().as_any().downcast_ref::<TestOpaque>();
+
+    assert_eq!(named.map(|named| named.0.as_str()), Some("n"));
+    assert!(through_the_trait.is_some());
+    assert_eq!(token.map(|token| token.payload), Some(3));
+    // The handle's own `Any` is the `Part`, not the implementation.
+    assert!(
+        fhy_core::foreign::AsAny::as_any(&part)
+            .downcast_ref::<NamedType>()
+            .is_none()
+    );
+}
+
+#[test]
+fn every_part_handle_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    assert_send_sync::<Part<dyn OpaqueValue>>();
+    assert_send_sync::<Part<dyn CustomConstraint>>();
+    assert_send_sync::<Part<dyn CustomDomain>>();
+    assert_send_sync::<Part<dyn TypeExtension>>();
+    assert_send_sync::<Part<dyn DataTypeExtension>>();
 }

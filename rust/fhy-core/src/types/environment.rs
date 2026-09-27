@@ -9,6 +9,7 @@ use crate::expression::Expression;
 use crate::identifier::Identifier;
 
 use super::data_type::DataType;
+use super::error::UnificationError;
 use super::ty::Type;
 
 /// The placeholder bindings learned while binding, substituting or unifying
@@ -120,21 +121,24 @@ impl TypeUnificationEnvironment {
 
     /// Return whether `other` binds the same identifiers in each table, to
     /// structurally equivalent values.
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
-        is_table_equivalent(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for an extension that fails.
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, UnificationError> {
+        Ok(is_table_equivalent(
             &self.data_type_bindings,
             &other.data_type_bindings,
             DataType::is_structurally_equivalent,
-        ) && is_table_equivalent(
+        )? && is_table_equivalent(
             &self.type_bindings,
             &other.type_bindings,
             Type::is_structurally_equivalent,
-        ) && is_table_equivalent(
+        )? && is_table_equivalent(
             &self.expression_bindings,
             &other.expression_bindings,
-            PartialEq::eq,
-        )
+            |left, right| Ok(left == right),
+        )?)
     }
 }
 
@@ -142,14 +146,18 @@ impl TypeUnificationEnvironment {
 fn is_table_equivalent<V>(
     left: &HashMap<Identifier, V>,
     right: &HashMap<Identifier, V>,
-    is_equivalent: impl Fn(&V, &V) -> bool,
-) -> bool {
-    left.len() == right.len()
-        && left.iter().all(|(identifier, value)| {
-            right
-                .get(identifier)
-                .is_some_and(|other| is_equivalent(value, other))
-        })
+    is_equivalent: impl Fn(&V, &V) -> Result<bool, UnificationError>,
+) -> Result<bool, UnificationError> {
+    if left.len() != right.len() {
+        return Ok(false);
+    }
+    for (identifier, value) in left {
+        match right.get(identifier) {
+            Some(other) if is_equivalent(value, other)? => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 /// Return the order-independent hash of a table's entries.

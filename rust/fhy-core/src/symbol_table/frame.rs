@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::impl_name_text;
 use crate::identifier::Identifier;
-use crate::types::{Type, TypeQualifier};
+use crate::types::{Type, TypeQualifier, UnificationError};
 
 /// A value a [`SymbolTable`](super::SymbolTable) holds for a symbol.
 pub trait Frame {
@@ -64,11 +64,15 @@ impl VariableFrame {
 
     /// Return whether `other` names the same variable, with the same
     /// qualifier and a structurally equivalent type.
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
-        self.name == other.name
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for a type extension that
+    /// fails.
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, UnificationError> {
+        Ok(self.name == other.name
             && self.qualifier == other.qualifier
-            && self.ty.is_structurally_equivalent(&other.ty)
+            && self.ty.is_structurally_equivalent(&other.ty)?)
     }
 }
 
@@ -112,17 +116,28 @@ impl FunctionFrame {
     /// Return whether `other` names the same function, with the same
     /// keyword and a signature of the same qualifiers and structurally
     /// equivalent types.
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.keyword == other.keyword
-            && self.signature.len() == other.signature.len()
-            && self.signature.iter().zip(other.signature.iter()).all(
-                |((left_qualifier, left_type), (right_qualifier, right_type))| {
-                    left_qualifier == right_qualifier
-                        && left_type.is_structurally_equivalent(right_type)
-                },
-            )
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for a type extension that
+    /// fails.
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, UnificationError> {
+        if self.name != other.name
+            || self.keyword != other.keyword
+            || self.signature.len() != other.signature.len()
+        {
+            return Ok(false);
+        }
+        for ((left_qualifier, left_type), (right_qualifier, right_type)) in
+            self.signature.iter().zip(other.signature.iter())
+        {
+            if left_qualifier != right_qualifier
+                || !left_type.is_structurally_equivalent(right_type)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -146,13 +161,17 @@ impl SymbolFrame {
     /// Return whether `other` is a frame of the same kind whose fields are
     /// equal, with types compared by
     /// [`Type::is_structurally_equivalent`].
-    #[must_use]
-    pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnificationError::Extension`] for a type extension that
+    /// fails.
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, UnificationError> {
         match (self, other) {
-            (Self::Import(left), Self::Import(right)) => left == right,
+            (Self::Import(left), Self::Import(right)) => Ok(left == right),
             (Self::Variable(left), Self::Variable(right)) => left.is_structurally_equivalent(right),
             (Self::Function(left), Self::Function(right)) => left.is_structurally_equivalent(right),
-            _ => false,
+            _ => Ok(false),
         }
     }
 }

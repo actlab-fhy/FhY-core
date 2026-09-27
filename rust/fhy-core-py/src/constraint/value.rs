@@ -19,7 +19,6 @@
 //! is not an `Exception`, such as `KeyboardInterrupt`, replaces a kept one
 //! that is.
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -32,8 +31,8 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple, PyType};
 
-use fhy_core::constraint::{Member, MemberKind, Opaque, OpaqueValue, Value};
-use fhy_core::foreign::BoxError;
+use fhy_core::constraint::{Member, MemberKind, OpaqueValue, Value};
+use fhy_core::foreign::{BoxError, ForeignPart, Part};
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 
@@ -242,18 +241,26 @@ fn build_ordering_key(value: &Bound<'_, PyAny>) -> PyResult<String> {
     Ok(format!("{module}.{qualified_name}:{}", payload.repr()?))
 }
 
-impl OpaqueValue for PyOpaqueValue {
+impl ForeignPart for PyOpaqueValue {
     fn type_name(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.type_name)
     }
 
+    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
+        crate::wire::foreign_of(&self.object, false)
+    }
+}
+
+impl OpaqueValue for PyOpaqueValue {
     fn is_member_shaped(&self) -> bool {
         self.is_member_shaped
     }
 
     /// Compare with `type(a) is type(b) and a == b`; once an exception is
-    /// pending, answer `false` without calling Python.
-    fn is_equal(&self, other: &dyn OpaqueValue) -> bool {
+    /// pending, answer `false` without calling Python. A comparison that
+    /// raises answers `false` and keeps its exception, which the entry
+    /// function raises: `==` on a part cannot fail.
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
@@ -279,20 +286,25 @@ impl OpaqueValue for PyOpaqueValue {
             .map_err(|error| Box::new(error) as BoxError)
     }
 
-    fn ordering_key(&self) -> Cow<'_, str> {
+    /// Return the key computed when the member was read, or compute and
+    /// keep it; a key that raises is the error, and is not kept.
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
         cached_key(&self.key, || {
             Python::attach(|py| build_ordering_key(self.object.bind(py)))
         })
+        .map_err(|error| Box::new(error) as BoxError)
     }
 
     /// Order with Python's `<`, both ways: `Less` when `self < other`,
     /// `Greater` when `other < self`, and `Equal` otherwise. A comparison
-    /// that raises answers `None`, and its exception is kept; once an
-    /// exception is pending, answer `None` without calling Python.
-    fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
-        let other = other.as_any().downcast_ref::<Self>()?;
+    /// that raises is the error; once an exception is pending, answer
+    /// `None` without calling Python.
+    fn order_against(&self, other: &dyn OpaqueValue) -> Result<Option<Ordering>, BoxError> {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return Ok(None);
+        };
         if has_pending_error() {
-            return None;
+            return Ok(None);
         }
         Python::attach(|py| {
             let (left, right) = (self.object.bind(py), other.object.bind(py));
@@ -309,44 +321,26 @@ impl OpaqueValue for PyOpaqueValue {
                     })
                 }
             });
-            match ordering {
-                Ok(ordering) => Some(ordering),
-                Err(error) => {
-                    record_pending_error(error);
-                    None
-                }
-            }
+            ordering
+                .map(Some)
+                .map_err(|error| Box::new(error) as BoxError)
         })
-    }
-
-    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, false)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
 /// Return the key `cell` holds, or compute it with `compute` and keep it.
 ///
-/// A key that fails to compute answers the empty key, keeps its exception,
-/// and is not kept, so a later call computes it again; once an exception is
-/// pending, the empty key is answered without calling `compute`.
-fn cached_key(cell: &OnceLock<String>, compute: impl FnOnce() -> PyResult<String>) -> Cow<'_, str> {
+/// A key that fails to compute is the error, and is not kept, so a later
+/// call computes it again.
+fn cached_key(
+    cell: &OnceLock<String>,
+    compute: impl FnOnce() -> PyResult<String>,
+) -> PyResult<Cow<'_, str>> {
     if let Some(key) = cell.get() {
-        return Cow::Borrowed(key);
+        return Ok(Cow::Borrowed(key));
     }
-    if has_pending_error() {
-        return Cow::Owned(String::new());
-    }
-    match compute() {
-        Ok(key) => Cow::Borrowed(cell.get_or_init(|| key)),
-        Err(error) => {
-            record_pending_error(error);
-            Cow::Owned(String::new())
-        }
-    }
+    let key = compute()?;
+    Ok(Cow::Borrowed(cell.get_or_init(|| key)))
 }
 
 /// Return the member-shaped opaque value of the `Serializable` `value`,
@@ -357,7 +351,7 @@ fn cached_key(cell: &OnceLock<String>, compute: impl FnOnce() -> PyResult<String
 /// Raises what computing the key raises.
 pub(crate) fn read_opaque_member(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     let key = build_ordering_key(value)?;
-    Ok(Value::Opaque(Opaque::new(PyOpaqueValue::new(
+    Ok(Value::Opaque(Part::new(PyOpaqueValue::new(
         value,
         true,
         Some(key),
@@ -404,7 +398,7 @@ pub(crate) fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<B
 
 /// Return the opaque value of `object`, member-shaped as told.
 fn build_opaque(object: &Bound<'_, PyAny>, is_member_shaped: bool) -> Value {
-    Value::Opaque(Opaque::new(PyOpaqueValue::new(
+    Value::Opaque(Part::new(PyOpaqueValue::new(
         object,
         is_member_shaped,
         None,
@@ -519,7 +513,7 @@ pub(crate) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     }
     if is_serializable_hashable(value)? {
         let key = build_ordering_key(value)?;
-        return Ok(Value::Opaque(Opaque::new(PyOpaqueValue::new(
+        return Ok(Value::Opaque(Part::new(PyOpaqueValue::new(
             value,
             true,
             Some(key),
@@ -685,30 +679,12 @@ mod tests {
     fn a_failed_key_is_not_kept() {
         Python::initialize();
         let cell = OnceLock::new();
-        let (key, raised) = capture_pending_errors(|| {
-            cached_key(&cell, || Err(PyValueError::new_err("once"))).into_owned()
-        });
-        assert_eq!(key, "");
-        assert!(raised.is_some());
+
+        cached_key(&cell, || Err(PyValueError::new_err("once"))).expect_err("the key fails");
         assert!(cell.get().is_none());
 
-        let (key, raised) =
-            capture_pending_errors(|| cached_key(&cell, || Ok("real".to_owned())).into_owned());
+        let key = cached_key(&cell, || Ok("real".to_owned())).expect("computes");
         assert_eq!(key, "real");
-        assert!(raised.is_none());
         assert_eq!(cell.get().map(String::as_str), Some("real"));
-    }
-
-    #[test]
-    fn no_key_is_computed_while_an_exception_is_pending() {
-        Python::initialize();
-        let cell = OnceLock::new();
-        let ((), raised) = capture_pending_errors(|| {
-            record_pending_error(PyValueError::new_err("first"));
-            let key = cached_key(&cell, || panic!("computed while an exception is pending"));
-            assert_eq!(key, "");
-        });
-        assert!(raised.is_some());
-        assert!(cell.get().is_none());
     }
 }

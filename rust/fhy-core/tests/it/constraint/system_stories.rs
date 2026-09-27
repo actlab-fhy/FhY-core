@@ -17,11 +17,13 @@ use fhy_core::expression::builtins::BuiltinConstant;
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{CheckLimits, QueryKind, SatResult, Solver};
-use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
+use fhy_core::term::AlphaRenaming;
 
+use crate::support::constraint::{ConstraintKey, Failing, FailingHook, TestValueError};
 use crate::support::constraint::{
     RecordedEvent, RecordingObserver, TestCustom, bind, int, int_set, member_set, text,
 };
+use crate::support::lambda::Alpha;
 use crate::support::solver::{RecordingSmtSolver, build_symbol_types, quoted_symbol};
 
 fn equation(expression: Expression) -> Constraint {
@@ -95,12 +97,13 @@ fn members_are_sorted_by_key_keeping_duplicates() {
     let second = in_set(&x, &[2]);
     let third = equation(Expression::from(x.clone()).less(1));
 
-    let system = ConstraintSystem::new([first, second.clone(), third, second]);
+    let system = ConstraintSystem::new([first, second.clone(), third, second])
+        .expect("every member has a key");
 
     let keys: Vec<String> = system
         .constraints()
         .iter()
-        .map(Constraint::ordering_key)
+        .map(ConstraintKey::key)
         .collect();
     let mut sorted = keys.clone();
     sorted.sort();
@@ -118,12 +121,13 @@ fn a_custom_member_sorts_among_the_built_in_kinds_by_its_key() {
         in_set(&x, &[1]),
         custom,
         equation(Expression::literal(true)),
-    ]);
+    ])
+    .expect("every member has a key");
 
     let keys: Vec<String> = system
         .constraints()
         .iter()
-        .map(Constraint::ordering_key)
+        .map(ConstraintKey::key)
         .collect();
     assert_eq!(keys[0], "custom|probe");
     assert!(keys[1].starts_with("equation|"));
@@ -150,7 +154,8 @@ fn evaluation_stops_at_the_first_violated_member_in_order() {
             Outcome::Satisfied,
             &log,
         ),
-    ]);
+    ])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.evaluate(&Bindings::new(), &harness.context());
@@ -171,11 +176,13 @@ fn an_undecided_member_makes_the_system_undecided_unless_a_later_one_is_violated
             Outcome::Satisfied,
             &log,
         ),
-    ]);
+    ])
+    .expect("every member has a key");
     let violated = ConstraintSystem::new([
         in_set(&x, &[1]),
         TestCustom::build("z_last", Expression::literal(true), Outcome::Violated, &log),
-    ]);
+    ])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let first = undecided.evaluate(&Bindings::new(), &harness.context());
@@ -200,7 +207,8 @@ fn an_undecided_member_makes_the_system_undecided_unless_a_later_one_is_violated
 #[test]
 fn every_member_satisfied_satisfies_the_system() {
     let x = Identifier::new("x");
-    let system = ConstraintSystem::new([in_set(&x, &[1, 2]), not_in_set(&x, &[3])]);
+    let system = ConstraintSystem::new([in_set(&x, &[1, 2]), not_in_set(&x, &[3])])
+        .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.evaluate(&bind([(x, Binding::Value(int(2)))]), &harness.context());
@@ -212,7 +220,7 @@ fn every_member_satisfied_satisfies_the_system() {
 #[test]
 fn a_member_error_is_the_system_error() {
     let x = Identifier::new("x");
-    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let system = ConstraintSystem::new([in_set(&x, &[1])]).expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
     let unusable = Value::Decimal("1".parse().expect("a decimal"));
 
@@ -235,7 +243,8 @@ fn a_custom_member_receives_the_bindings_with_their_source() {
         Expression::literal(true),
         Outcome::Satisfied,
         &log,
-    )]);
+    )])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
     let bindings = Bindings::new().with_source(Arc::new("the caller's".to_owned()));
 
@@ -256,11 +265,16 @@ fn the_empty_system_is_true_one_member_is_itself_and_several_their_conjunction()
     let bound = Expression::from(x.clone()).less(1);
     let other = Expression::from(x).greater(0);
 
-    let empty = ConstraintSystem::new([]).to_expression().expect("converts");
+    let empty = ConstraintSystem::new([])
+        .expect("every member has a key")
+        .to_expression()
+        .expect("converts");
     let one = ConstraintSystem::new([equation(bound.clone())])
+        .expect("every member has a key")
         .to_expression()
         .expect("converts");
     let two = ConstraintSystem::new([equation(bound.clone()), equation(other.clone())])
+        .expect("every member has a key")
         .to_expression()
         .expect("converts");
 
@@ -280,11 +294,9 @@ fn the_empty_system_is_true_one_member_is_itself_and_several_their_conjunction()
 fn the_empty_system_is_satisfiable_without_asking_the_solver() {
     let harness = Harness::answering(SatResult::Unsat);
 
-    let outcome = ConstraintSystem::new([]).check_satisfiability(
-        &HashMap::new(),
-        CheckLimits::new(),
-        &harness.context(),
-    );
+    let outcome = ConstraintSystem::new([])
+        .expect("every member has a key")
+        .check_satisfiability(&HashMap::new(), CheckLimits::new(), &harness.context());
 
     assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
     assert!(harness.scripts().is_empty());
@@ -296,7 +308,8 @@ fn satisfiability_asks_about_the_conjunction_and_reads_each_answer() {
     let system = ConstraintSystem::new([
         equation(Expression::from(x.clone()).greater(0)),
         in_set(&x, &[1, 2]),
-    ]);
+    ])
+    .expect("every member has a key");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
 
     for (answer, expected) in [
@@ -319,7 +332,7 @@ fn satisfiability_asks_about_the_conjunction_and_reads_each_answer() {
 #[test]
 fn an_unknown_answer_is_undecided_and_reported() {
     let x = Identifier::new("x");
-    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let system = ConstraintSystem::new([in_set(&x, &[1])]).expect("every member has a key");
     let harness = Harness::answering(SatResult::Unknown {
         reason: "timeout".to_owned(),
     });
@@ -345,7 +358,8 @@ fn a_hazard_is_undecided_and_reported_without_asking_the_backend() {
     let (x, y) = (Identifier::new("x"), Identifier::new("y"));
     let system = ConstraintSystem::new([equation(
         (&Expression::from(x.clone()) / Expression::from(y.clone())).greater(0),
-    )]);
+    )])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.check_satisfiability(
@@ -369,7 +383,8 @@ fn a_conversion_error_comes_before_missing_symbol_types() {
         x,
         member_set([text("a")]),
         Polarity::In,
-    ))]);
+    ))])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome =
@@ -388,7 +403,8 @@ fn missing_symbol_types_come_before_ill_typedness_and_skip_native_constants() {
     let system = ConstraintSystem::new([
         equation(&Expression::from(y.clone()) + 1),
         equation(Expression::from(x.clone()).less(pi)),
-    ]);
+    ])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome =
@@ -408,7 +424,8 @@ fn missing_symbol_types_come_before_ill_typedness_and_skip_native_constants() {
 #[test]
 fn an_ill_typed_member_is_refused_naming_its_own_expression() {
     let x = Identifier::new("x");
-    let system = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 1)]);
+    let system = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 1)])
+        .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.check_satisfiability(
@@ -427,7 +444,7 @@ fn an_ill_typed_member_is_refused_naming_its_own_expression() {
 #[test]
 fn the_limits_reach_the_backend() {
     let x = Identifier::new("x");
-    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let system = ConstraintSystem::new([in_set(&x, &[1])]).expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
     let limits = CheckLimits::new().with_timeout(Duration::from_millis(2500));
 
@@ -452,7 +469,8 @@ fn a_violated_decided_set_member_answers_without_the_solver() {
     let system = ConstraintSystem::new([
         in_set(&x, &[1, 2]),
         equation(Expression::from(y.clone()).greater(0)),
-    ]);
+    ])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.check_satisfiability_with_bindings(
@@ -469,7 +487,8 @@ fn a_violated_decided_set_member_answers_without_the_solver() {
 #[test]
 fn decided_set_members_alone_answer_their_fold() {
     let x = Identifier::new("x");
-    let system = ConstraintSystem::new([in_set(&x, &[1, 2]), not_in_set(&x, &[3])]);
+    let system = ConstraintSystem::new([in_set(&x, &[1, 2]), not_in_set(&x, &[3])])
+        .expect("every member has a key");
     let harness = Harness::answering(SatResult::Unsat);
 
     let outcome = system.check_satisfiability_with_bindings(
@@ -492,7 +511,8 @@ fn the_residual_is_substituted_and_needs_symbol_types_for_what_it_leaves_free() 
     );
     let system = ConstraintSystem::new([equation(
         Expression::from(x.clone()).less(Expression::from(y.clone())),
-    )]);
+    )])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
     let bindings = bind([
         (x.clone(), Binding::Value(int(1))),
@@ -528,7 +548,7 @@ fn the_residual_is_substituted_and_needs_symbol_types_for_what_it_leaves_free() 
 #[test]
 fn every_binding_must_be_an_expression_or_a_literal() {
     let (x, y) = (Identifier::new("x"), Identifier::new("y"));
-    let system = ConstraintSystem::new([in_set(&x, &[1])]);
+    let system = ConstraintSystem::new([in_set(&x, &[1])]).expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.check_satisfiability_with_bindings(
@@ -550,7 +570,8 @@ fn a_bound_native_constant_the_system_refers_to_is_undecided_and_reported() {
     let x = Identifier::new("x");
     let system = ConstraintSystem::new([equation(
         Expression::from(x.clone()).less(Expression::from(pi.clone())),
-    )]);
+    )])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Sat);
 
     let outcome = system.check_satisfiability_with_bindings(
@@ -574,7 +595,8 @@ fn satisfied_leaves_and_an_undecided_residual_are_undecided() {
     let system = ConstraintSystem::new([
         in_set(&x, &[1]),
         equation(Expression::from(y.clone()).greater(0)),
-    ]);
+    ])
+    .expect("every member has a key");
     let harness = Harness::answering(SatResult::Unknown {
         reason: "incomplete".to_owned(),
     });
@@ -594,12 +616,14 @@ fn an_empty_system_with_bindings_is_satisfiable_without_reading_them() {
     let x = Identifier::new("x");
     let harness = Harness::answering(SatResult::Unsat);
 
-    let outcome = ConstraintSystem::new([]).check_satisfiability_with_bindings(
-        &bind([(x, Binding::Value(Value::Tuple(vec![])))]),
-        &HashMap::new(),
-        CheckLimits::new(),
-        &harness.context(),
-    );
+    let outcome = ConstraintSystem::new([])
+        .expect("every member has a key")
+        .check_satisfiability_with_bindings(
+            &bind([(x, Binding::Value(Value::Tuple(vec![])))]),
+            &HashMap::new(),
+            CheckLimits::new(),
+            &harness.context(),
+        );
 
     assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
 }
@@ -612,9 +636,11 @@ fn an_empty_system_with_bindings_is_satisfiable_without_reading_them() {
 fn implication_asks_about_a_counterexample_and_reads_each_answer() {
     let x = Identifier::new("x");
     let antecedent =
-        ConstraintSystem::new([equation(Expression::from(x.clone()).greater_equal(1))]);
+        ConstraintSystem::new([equation(Expression::from(x.clone()).greater_equal(1))])
+            .expect("every member has a key");
     let consequent =
-        ConstraintSystem::new([equation(Expression::from(x.clone()).greater_equal(0))]);
+        ConstraintSystem::new([equation(Expression::from(x.clone()).greater_equal(0))])
+            .expect("every member has a key");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
 
     for (answer, expected) in [
@@ -639,8 +665,10 @@ fn implication_asks_about_a_counterexample_and_reads_each_answer() {
 #[test]
 fn implication_screens_every_member_of_this_system_before_the_other() {
     let x = Identifier::new("x");
-    let antecedent = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 1)]);
-    let consequent = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 2)]);
+    let antecedent = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 1)])
+        .expect("every member has a key");
+    let consequent = ConstraintSystem::new([equation(&Expression::from(x.clone()) + 2)])
+        .expect("every member has a key");
     let harness = Harness::answering(SatResult::Unsat);
 
     let outcome = antecedent.check_implication(
@@ -659,8 +687,10 @@ fn implication_screens_every_member_of_this_system_before_the_other() {
 #[test]
 fn implication_needs_symbol_types_for_both_sides() {
     let (x, y) = (Identifier::new("x"), Identifier::new("y"));
-    let antecedent = ConstraintSystem::new([equation(Expression::from(x.clone()).greater(0))]);
-    let consequent = ConstraintSystem::new([equation(Expression::from(y.clone()).greater(0))]);
+    let antecedent = ConstraintSystem::new([equation(Expression::from(x.clone()).greater(0))])
+        .expect("every member has a key");
+    let consequent = ConstraintSystem::new([equation(Expression::from(y.clone()).greater(0))])
+        .expect("every member has a key");
     let harness = Harness::answering(SatResult::Unsat);
 
     let outcome = antecedent.check_implication(
@@ -686,21 +716,53 @@ fn systems_are_equivalent_member_by_member_in_canonical_order() {
     let left = ConstraintSystem::new([
         in_set(&x, &[1]),
         equation(Expression::from(x.clone()).less(3)),
-    ]);
+    ])
+    .expect("every member has a key");
     let right = ConstraintSystem::new([
         equation(Expression::from(x.clone()).less(3)),
         in_set(&x, &[1]),
-    ]);
+    ])
+    .expect("every member has a key");
     let renamed = ConstraintSystem::new([
         in_set(&y, &[1]),
         equation(Expression::from(y.clone()).less(3)),
-    ]);
-    let shorter = ConstraintSystem::new([in_set(&x, &[1])]);
+    ])
+    .expect("every member has a key");
+    let shorter = ConstraintSystem::new([in_set(&x, &[1])]).expect("every member has a key");
     let renaming = AlphaRenaming::new(HashMap::from([(x, y)])).expect("injective");
 
     assert!(left.is_structurally_equivalent(&right));
     assert!(!left.is_structurally_equivalent(&shorter));
     assert!(!left.is_structurally_equivalent(&renamed));
-    assert!(left.is_alpha_equivalent_under(&renamed, &renaming));
-    assert!(!left.is_alpha_equivalent(&renamed));
+    assert!(left.alpha_equivalent_under(&renamed, &renaming));
+    assert!(!left.alpha_equivalent(&renamed));
+}
+
+#[test]
+fn a_failing_custom_key_fails_system_construction() {
+    let x = Identifier::new("x");
+
+    let error = ConstraintSystem::new([
+        in_set(&x, &[1]),
+        Failing(FailingHook::Key).into_constraint(),
+    ])
+    .expect_err("the key fails");
+
+    let ConstraintError::Custom(source) = &error else {
+        panic!("a custom error, got {error:?}");
+    };
+    assert!(source.downcast_ref::<TestValueError>().is_some());
+    assert_eq!(source.to_string(), "the key failed");
+}
+
+#[test]
+fn a_failing_custom_scope_is_an_error_not_a_closed_constraint() {
+    let constraint = Failing(FailingHook::Scope).into_constraint();
+
+    let error = constraint.free_identifiers().expect_err("the scope fails");
+
+    let ConstraintError::Custom(source) = &error else {
+        panic!("a custom error, got {error:?}");
+    };
+    assert_eq!(source.to_string(), "the scope failed");
 }

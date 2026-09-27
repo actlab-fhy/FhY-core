@@ -101,15 +101,27 @@ pub(super) fn ordinal_error_to_py(
     error: ParamError,
     raised: Option<PyErr>,
 ) -> PyErr {
+    let chain_under_incomparable = |raised: PyErr| {
+        let refused = PyTypeError::new_err(ParamError::IncomparableValues.to_string());
+        refused.set_cause(py, Some(raised));
+        refused
+    };
     match (error, raised) {
-        (error @ ParamError::IncomparableValues, Some(raised))
+        (ParamError::IncomparableValues, Some(raised))
             if raised.is_instance_of::<PyTypeError>(py) =>
         {
-            let refused = PyTypeError::new_err(error.to_string());
-            refused.set_cause(py, Some(raised));
-            refused
+            chain_under_incomparable(raised)
         }
         (_, Some(raised)) => raised,
+        // A value's `<` that raised: a `TypeError` means the values do not
+        // order, as the order error says.
+        (ParamError::Custom(source), None) => match source.downcast::<PyErr>() {
+            Ok(raised) if raised.is_instance_of::<PyTypeError>(py) => {
+                chain_under_incomparable(*raised)
+            }
+            Ok(raised) => *raised,
+            Err(other) => param_error_to_py(py, ParamError::Custom(other), None),
+        },
         (error, None) => param_error_to_py(py, error, None),
     }
 }

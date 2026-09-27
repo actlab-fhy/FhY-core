@@ -5,7 +5,10 @@
 //!   arithmetic), the reals ([`RealDomain`]), a finite ordered set
 //!   ([`OrdinalDomain`]), a finite unordered set ([`CategoricalDomain`]),
 //!   the permutations of a fixed set ([`PermutationDomain`]), or a domain
-//!   defined elsewhere ([`CustomDomain`]).
+//!   defined elsewhere ([`CustomDomain`]), held in a
+//!   [`Part`](crate::foreign::Part). A custom domain's hooks are fallible,
+//!   their failure a [`ParamError::Custom`], and the procedures that decide
+//!   or build hand them the [`ParamContext`].
 //! - A domain decides which values it admits and which constraints it
 //!   allows, and answers the questions about a set of constraints over one
 //!   variable, a [`Side`]: whether some value satisfies them, and whether

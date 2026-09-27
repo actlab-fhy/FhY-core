@@ -2,6 +2,7 @@
 //! and the binders that introduce a scope.
 
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use std::hash::BuildHasher;
 
 use crate::identifier::Identifier;
@@ -15,7 +16,16 @@ use super::renaming::AlphaRenaming;
 /// binders bind each identifier once. A term that binds one identifier
 /// twice in one binder list is alpha-equivalent to no term, itself included,
 /// since [`AlphaRenaming::enter_binders`] pairs its list with none.
+///
+/// A comparison that runs code another implementation defines can fail,
+/// with the term's [`Error`](Self::Error). A term whose comparison cannot
+/// fail, such as an [`Expression`](crate::expression::Expression), uses
+/// [`Infallible`](std::convert::Infallible), and its callers write
+/// `let Ok(is_equivalent) = ...;`.
 pub trait AlphaEquivalence {
+    /// The error a comparison fails with.
+    type Error: Error + Send + Sync + 'static;
+
     /// Return whether `self` and `other` are alpha-equivalent when their
     /// identifiers correspond by `renaming`.
     ///
@@ -23,20 +33,45 @@ pub trait AlphaEquivalence {
     /// frame pairing its bound identifiers with `other`'s; a reference asks
     /// [`AlphaRenaming::is_corresponding`]; any other term passes `renaming`
     /// on to its children unchanged.
-    fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool;
+    ///
+    /// # Errors
+    ///
+    /// Returns the term's error when a comparison it runs fails.
+    fn is_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, Self::Error>;
 
     /// Return whether `self` and `other` are alpha-equivalent with no binder
     /// in scope, so their free identifiers correspond only to themselves.
-    fn is_alpha_equivalent(&self, other: &Self) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`is_alpha_equivalent_under`](Self::is_alpha_equivalent_under)
+    /// returns.
+    fn is_alpha_equivalent(&self, other: &Self) -> Result<bool, Self::Error> {
         self.is_alpha_equivalent_under(other, &AlphaRenaming::default())
     }
 }
 
 /// A term that reports the identifiers occurring free in it.
+///
+/// Reporting them can fail, with the term's [`Error`](Self::Error), when it
+/// runs code another implementation defines; an
+/// [`Expression`](crate::expression::Expression) uses
+/// [`Infallible`](std::convert::Infallible).
 pub trait FreeIdentifiers {
+    /// The error reporting the identifiers fails with.
+    type Error: Error + Send + Sync + 'static;
+
     /// Return the identifiers that occur in this term outside every binder
     /// of them.
-    fn free_identifiers(&self) -> HashSet<Identifier>;
+    ///
+    /// # Errors
+    ///
+    /// Returns the term's error when code it runs fails.
+    fn free_identifiers(&self) -> Result<HashSet<Identifier>, Self::Error>;
 }
 
 /// A term a [`Binder`] scopes over: it compares by alpha equivalence,
@@ -119,19 +154,23 @@ pub trait Term: AlphaEquivalence + FreeIdentifiers + Clone {
 /// }
 ///
 /// impl AlphaEquivalence for Lambda {
-///     fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+///     type Error = Infallible;
+///
+///     fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> Result<bool, Infallible> {
 ///         match (self, other) {
-///             (Lambda::Var(left), Lambda::Var(right)) => renaming.is_corresponding(left, right),
+///             (Lambda::Var(left), Lambda::Var(right)) => Ok(renaming.is_corresponding(left, right)),
 ///             (Lambda::Lam(left), Lambda::Lam(right)) => left.is_binder_alpha_equivalent_under(right, renaming),
-///             _ => false,
+///             _ => Ok(false),
 ///         }
 ///     }
 /// }
 ///
 /// impl FreeIdentifiers for Lambda {
-///     fn free_identifiers(&self) -> HashSet<Identifier> {
+///     type Error = Infallible;
+///
+///     fn free_identifiers(&self) -> Result<HashSet<Identifier>, Infallible> {
 ///         match self {
-///             Lambda::Var(identifier) => HashSet::from([identifier.clone()]),
+///             Lambda::Var(identifier) => Ok(HashSet::from([identifier.clone()])),
 ///             Lambda::Lam(lam) => lam.binder_free_identifiers(),
 ///         }
 ///     }
@@ -151,20 +190,23 @@ pub trait Term: AlphaEquivalence + FreeIdentifiers + Clone {
 /// let (x, y) = (Identifier::new("x"), Identifier::new("y"));
 /// let identity_x = Lambda::Lam(Lam { parameters: vec![x.clone()], body: vec![Lambda::Var(x.clone())] });
 /// let identity_y = Lambda::Lam(Lam { parameters: vec![y.clone()], body: vec![Lambda::Var(y.clone())] });
-/// assert!(identity_x.is_alpha_equivalent(&identity_y));
+/// let Ok(is_equivalent) = identity_x.is_alpha_equivalent(&identity_y);
+/// assert!(is_equivalent);
 ///
 /// // Substituting `x` for `y` in `\x. y` renames the binder, so `x` stays free.
 /// let constant = Lambda::Lam(Lam { parameters: vec![x.clone()], body: vec![Lambda::Var(y.clone())] });
 /// let substituted = constant.substitute(&HashMap::from([(y, Lambda::Var(x.clone()))]))?;
-/// assert_eq!(substituted.free_identifiers(), HashSet::from([x]));
+/// assert_eq!(substituted.free_identifiers()?, HashSet::from([x]));
 /// # Ok::<(), Infallible>(())
 /// ```
 pub trait Binder: Clone {
     /// The type of the scoped children.
     type Child: Term;
-    /// The error rebuilding the node, or substituting into its children,
-    /// returns.
-    type RebuildError: From<<Self::Child as Term>::SubstituteError>;
+    /// The error rebuilding the node, substituting into its children,
+    /// comparing them or reporting their free identifiers returns.
+    type RebuildError: From<<Self::Child as Term>::SubstituteError>
+        + From<<Self::Child as AlphaEquivalence>::Error>
+        + From<<Self::Child as FreeIdentifiers>::Error>;
 
     /// Return the identifiers this node binds over its scoped children, in
     /// order.
@@ -208,36 +250,50 @@ pub trait Binder: Clone {
     /// with one more frame pairing the bound identifiers by position
     /// ([`AlphaRenaming::enter_binders`]); a pairing it refuses, such as a
     /// list that repeats an identifier, is not equivalent.
-    fn is_binder_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first child comparison's error.
+    fn is_binder_alpha_equivalent_under(
+        &self,
+        other: &Self,
+        renaming: &AlphaRenaming,
+    ) -> Result<bool, Self::RebuildError> {
         let (bound, other_bound) = (self.bound_identifiers(), other.bound_identifiers());
         if bound.len() != other_bound.len() {
-            return false;
+            return Ok(false);
         }
         let (children, other_children) = (self.scoped_children(), other.scoped_children());
         if children.len() != other_children.len() {
-            return false;
+            return Ok(false);
         }
         let mut extended = renaming.clone();
         if extended.enter_binders(bound, other_bound).is_err() {
-            return false;
+            return Ok(false);
         }
-        children
-            .iter()
-            .zip(other_children)
-            .all(|(child, other_child)| child.is_alpha_equivalent_under(other_child, &extended))
+        for (child, other_child) in children.iter().zip(other_children) {
+            if !child.is_alpha_equivalent_under(other_child, &extended)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Return the free identifiers of the scoped children, minus the bound
     /// identifiers.
-    fn binder_free_identifiers(&self) -> HashSet<Identifier> {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first child's error.
+    fn binder_free_identifiers(&self) -> Result<HashSet<Identifier>, Self::RebuildError> {
         let mut free = HashSet::new();
         for child in self.scoped_children() {
-            free.extend(child.free_identifiers());
+            free.extend(child.free_identifiers()?);
         }
         for bound in self.bound_identifiers() {
             free.remove(bound);
         }
-        free
+        Ok(free)
     }
 
     /// Return this node with every free occurrence of a key of
@@ -275,7 +331,7 @@ pub trait Binder: Clone {
         }
         let mut free = HashSet::new();
         for child in self.scoped_children() {
-            free.extend(child.free_identifiers());
+            free.extend(child.free_identifiers()?);
         }
         let active: HashMap<Identifier, Self::Child> = unshadowed
             .into_iter()
@@ -287,7 +343,7 @@ pub trait Binder: Clone {
         }
         let mut capturable = HashSet::new();
         for term in active.values() {
-            capturable.extend(term.free_identifiers());
+            capturable.extend(term.free_identifiers()?);
         }
         let mut safe = self.clone();
         let mut renamed = HashSet::new();
