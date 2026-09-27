@@ -601,6 +601,7 @@ def test_constraints_pickle_and_copy_as_equivalent_constraints(build: Any) -> No
         assert restored.is_structurally_equivalent(constraint)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_a_payload_in_another_order_decodes_to_the_canonical_order() -> None:
     """Test a payload written before S13, in ``repr`` order, still decodes."""
     x = Identifier("x")

@@ -932,8 +932,22 @@ def test_serializable_deserialize_binary_rejects_class_mismatch(
 # =============================================================================
 
 
-def test_to_json_returns_sorted_keys_by_default(dummy_span: _DummySpan) -> None:
-    """Test `to_json()` emits keys in alphabetical order by default."""
+def test_to_json_keeps_the_order_written_by_default(dummy_span: _DummySpan) -> None:
+    """Test `to_json()` writes the canonical V2 text, keys in the order written."""
+    assert dummy_span.to_json() == '{"lo":1,"hi":2}'
+
+
+def test_to_json_sorts_keys_when_asked(dummy_span: _DummySpan) -> None:
+    """Test `to_json(sort_keys=True)` re-formats the text with sorted keys."""
+    payload = dummy_span.to_json(sort_keys=True)
+    assert payload.index('"hi"') < payload.index('"lo"')
+
+
+@pytest.mark.usefixtures("v1_wire")
+def test_to_json_returns_sorted_keys_by_default_under_v1(
+    dummy_span: _DummySpan,
+) -> None:
+    """Test `to_json()` emits keys in alphabetical order by default under V1."""
     payload = dummy_span.to_json()
     assert payload.index('"hi"') < payload.index('"lo"')
 
@@ -1103,7 +1117,7 @@ def test_binary_envelope_carries_expected_fields_per_codec(
     obj = request.getfixturevalue(obj_fixture)
     magic, version, codec_u8, type_id, payload = _parse_envelope(obj.to_bytes())
     assert magic == b"FhYS"
-    assert version == 1
+    assert version == 2
     assert codec_u8 == _CODEC_TO_U8[type(obj).get_binary_codec()]
     assert type_id == type(obj).get_serialization_class_type_id()
     assert _decode_envelope_payload(payload, obj) == {"lo": obj.lo, "hi": obj.hi}
@@ -1177,6 +1191,7 @@ def test_default_serialize_to_binary_rejects_non_json_codec(
         dummy_span.serialize_to_binary(codec=BinaryPayloadCodec.CUSTOM)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_default_serialize_to_binary_emits_sorted_json_keys(
     dummy_span: _DummySpan,
 ) -> None:
@@ -1310,6 +1325,7 @@ def test_dump_to_binary_rejects_overlong_type_id() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_wrapped_family_serialize_emits_type_and_data_envelope(
     custom_node: _CustomNode,
 ) -> None:

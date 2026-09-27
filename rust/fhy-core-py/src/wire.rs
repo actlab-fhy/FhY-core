@@ -36,6 +36,14 @@ use crate::constraint::{
     read_constraint, read_opaque_member, record_pending_error, with_pending_errors,
 };
 
+mod families;
+mod values;
+
+pub(crate) use families::{
+    decode_wire_family, decode_wire_family_json, encode_wire_dict, encode_wire_json,
+};
+pub(crate) use values::{deserialize_wire_value, serialize_wire_value};
+
 /// The Python module of the serialization framework.
 const MODULE: &str = "fhy_core.serialization";
 
@@ -69,14 +77,27 @@ pub(crate) fn is_writing_v1(py: Python<'_>) -> PyResult<bool> {
 }
 
 /// Return whether `data` is a V1 family payload: a dict holding an
-/// envelope key, as the framework's `_is_v1_envelope` decides.
+/// envelope key, or any payload nested in a V1 payload being read, as the
+/// framework's `_is_v1_envelope` decides.
 pub(crate) fn is_v1_payload(data: &Bound<'_, PyAny>) -> bool {
+    let py = data.py();
+    if is_reading_v1(py) {
+        return true;
+    }
     let Ok(data) = data.cast::<PyDict>() else {
         return false;
     };
-    let py = data.py();
     data.contains(intern!(py, "__type__")).unwrap_or(false)
         || data.contains(intern!(py, "__data__")).unwrap_or(false)
+}
+
+/// Return whether a V1 payload is being read in this context.
+pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
+    static READING: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    framework(py, &READING, "_READING_V1")
+        .and_then(|flag| flag.call_method0(intern!(py, "get")))
+        .and_then(|value| value.is_truthy())
+        .unwrap_or(false)
 }
 
 /// Warn that a reader of `cls` met a deprecated V1 payload.
@@ -129,6 +150,11 @@ fn serialization_error(py: Python<'_>, message: String) -> PyErr {
     }
 }
 
+/// Return the `SerializationError` of a foreign part that failed.
+pub(crate) fn foreign_error(py: Python<'_>, error: &ForeignError) -> PyErr {
+    serialization_error(py, error.to_string())
+}
+
 /// Return the name of the class `cls`, or `?`.
 fn class_name(cls: &Bound<'_, PyType>) -> String {
     cls.name()
@@ -156,8 +182,17 @@ pub(crate) fn to_dict<'py, T: Serialize + ?Sized>(
     py: Python<'py>,
     value: &T,
 ) -> PyResult<Bound<'py, PyAny>> {
-    static LOADS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let text = to_json(py, value)?;
+    loads(py, &text)
+}
+
+/// Return `json.loads(text)`.
+///
+/// # Errors
+///
+/// Raises what `json.loads` raises.
+pub(crate) fn loads<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    static LOADS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     LOADS.import(py, "json", "loads")?.call1((text,))
 }
 
@@ -468,8 +503,8 @@ pub(crate) fn write_v1_envelope<'py>(object: &Bound<'py, PyAny>) -> PyResult<Bou
 /// # Errors
 ///
 /// Raises what `read` raises, and the warning when warnings are errors.
-pub(crate) fn reading_v1<'py, T>(
-    cls: &Bound<'py, PyType>,
+pub(crate) fn reading_v1<T>(
+    cls: &Bound<'_, PyType>,
     read: impl FnOnce() -> PyResult<T>,
 ) -> PyResult<T> {
     static READING: PyOnceLock<Py<PyAny>> = PyOnceLock::new();

@@ -127,6 +127,11 @@ mod rs_module {
     };
     #[pymodule_export]
     use super::value_domain::PyValueDomain;
+    #[pymodule_export]
+    use super::wire::{
+        decode_wire_family, decode_wire_family_json, deserialize_wire_value, encode_wire_dict,
+        encode_wire_json, serialize_wire_value,
+    };
 
     /// Set the extension's `__version__` to the crate version, which the
     /// package compares with its own when it is imported, and create the

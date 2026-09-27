@@ -21,6 +21,7 @@ from .conftest import mock_identifier
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     "value",
     [

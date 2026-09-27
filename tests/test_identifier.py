@@ -693,6 +693,7 @@ def test_python_reserved_table_matches_the_rust_table() -> None:
     assert _read_python_reserved_table() == rust_entries
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     ("tag", "reserved_id", "name_hint"),
     [

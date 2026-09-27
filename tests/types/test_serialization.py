@@ -35,6 +35,7 @@ ELLIPSIS_SHAPE_DIMENSION_TYPE_ID = "__numerical_type_shape_ellipsis__"
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_primitive_data_type_dict_serialization() -> None:
     """Test primitive data types can be serialized/deserialized via a dictionary."""
     for core_data_type in CoreDataType:
@@ -76,6 +77,7 @@ def test_template_data_type_dict_serialization_without_widths() -> None:
     assert deserialized.widths is None
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_numerical_type_dict_serialization() -> None:
     """Test numerical types can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
@@ -111,6 +113,7 @@ def test_numerical_type_dict_serialization() -> None:
     assert deserialized_shape[1].is_structurally_equivalent(shape[1])
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_index_type_dict_serialization() -> None:
     """Test index types can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
@@ -136,6 +139,7 @@ def test_index_type_dict_serialization() -> None:
     )
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_index_type_with_stride_serialization() -> None:
     """Test index types with stride can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
@@ -160,6 +164,7 @@ def test_index_type_with_stride_serialization() -> None:
     assert index_type_deserialized.stride.is_structurally_equivalent(stride)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_numerical_type_full_shape_wildcard_round_trips_through_serialization() -> None:
     """Test a numerical type with shape ``[...]`` round-trips structurally."""
     numerical_type = NumericalType(PrimitiveDataType(CoreDataType.INT32), [...])
@@ -185,6 +190,7 @@ def test_numerical_type_full_shape_wildcard_round_trips_through_serialization() 
     assert deserialized.is_structurally_equivalent(numerical_type)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_numerical_type_per_dimension_wildcard_round_trips_through_serialization() -> (
     None
 ):

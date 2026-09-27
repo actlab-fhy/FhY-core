@@ -49,7 +49,7 @@ procedures' WARNING and DEBUG records are logged on this module's logger.
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias
 
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
@@ -272,6 +272,8 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
     exactly one domain and delegates all kind-specific behavior to it.
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
+
     @property
     @abstractmethod
     def symbol_type(self) -> SymbolType | None:
@@ -487,6 +489,8 @@ class IntegerDomain(_rs.IntegerDomain, WrappedFamilySerializable):
     unless the domain is non-negative, where it would mean nothing.
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
+
     __slots__ = ("non_negative", "zero_included")
 
     def __init__(self, non_negative: bool = False, zero_included: bool = True) -> None:
@@ -508,6 +512,8 @@ class RealDomain(_rs.RealDomain, WrappedFamilySerializable):
     ``bool`` and ``int`` are not admissible.
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
+
     __slots__ = ()
 
 
@@ -522,6 +528,8 @@ class IntervalIntegerDomain(_rs.IntervalIntegerDomain, WrappedFamilySerializable
     ``prefer_inclusive`` selects how arithmetic results render their bounds.
     ``non_negative`` adds the natural-number implied constraint.
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
 
     __slots__ = ("non_negative", "prefer_inclusive", "zero_included")
 
@@ -556,6 +564,8 @@ class OrdinalDomain(_rs.OrdinalDomain, WrappedFamilySerializable):
     admitted, and it has no place in a total order. An infinity is kept.
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
+
     __slots__ = ("sorted_values",)
 
     def __init__(self, sorted_values: Sequence[OrdinalValue]) -> None:
@@ -573,6 +583,8 @@ class CategoricalDomain(_rs.CategoricalDomain, WrappedFamilySerializable):
     (``True`` and ``1``).
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
+
     __slots__ = ("categories",)
 
     def __init__(self, categories: Sequence[CategoricalValue]) -> None:
@@ -586,6 +598,8 @@ class PermutationDomain(_rs.PermutationDomain, WrappedFamilySerializable):
     A NaN member is refused: it is unequal to itself, so no permutation
     could place it and the domain would admit no value at all.
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
 
     __slots__ = ("ordered_members",)
 

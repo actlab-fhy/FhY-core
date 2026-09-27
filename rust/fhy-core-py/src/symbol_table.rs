@@ -13,5 +13,6 @@ mod table;
 
 pub(crate) use frames::{
     PyFunctionSymbolTableFrame, PyImportSymbolTableFrame, PyVariableSymbolTableFrame,
+    frame_from_wire, frame_wire_data,
 };
 pub(crate) use table::PySymbolTable;

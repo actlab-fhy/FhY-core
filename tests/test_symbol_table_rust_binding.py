@@ -284,6 +284,7 @@ def test_frame_arguments_are_checked(build: Any, message: str) -> None:
         build()
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_frame_payloads_are_todays_wire_format() -> None:
     """Test each frame's payload, pinned as the dataclass wrote it."""
     name = _identifier("x", 14)

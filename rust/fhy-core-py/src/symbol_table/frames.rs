@@ -895,3 +895,111 @@ impl PyFunctionSymbolTableFrame {
         ))
     }
 }
+
+// ---------------------------------------------------------------------------
+// The V2 wire format
+// ---------------------------------------------------------------------------
+
+/// Return the public frame class `name` of `fhy_core.symbol_table`.
+fn public_frame_class<'py>(
+    py: Python<'py>,
+    cell: &'static PyOnceLock<Py<PyType>>,
+    name: &str,
+) -> PyResult<&'py Bound<'py, PyType>> {
+    cell.import(py, MODULE, name)
+}
+
+/// Return the wire form of the frame object `object`: a built-in frame's
+/// core frame, or a Python-defined frame's foreign part.
+///
+/// # Errors
+///
+/// Raises the exception a Python-defined frame's hooks raise.
+pub(crate) fn frame_wire_data(
+    object: &Bound<'_, PyAny>,
+) -> PyResult<fhy_core::symbol_table::wire::SymbolFrameData> {
+    use fhy_core::symbol_table::wire::SymbolFrameData;
+    crate::constraint::with_pending_errors(|| {
+        match read_frame_value(object) {
+            Some(frame) => SymbolFrameData::of(&frame),
+            None => {
+                crate::wire::foreign_of(&object.clone().unbind(), true).map(SymbolFrameData::custom)
+            }
+        }
+        .map_err(|error| crate::wire::foreign_error(object.py(), &error))
+    })
+}
+
+/// Return a new Python object of the built-in frame `frame`, built through
+/// its public class, as a V2 payload decodes.
+///
+/// # Errors
+///
+/// Raises what building the object raises.
+pub(crate) fn frame_to_python<'py>(
+    py: Python<'py>,
+    frame: &SymbolFrame,
+) -> PyResult<Bound<'py, PyAny>> {
+    static IMPORT: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    static VARIABLE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    static FUNCTION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    let type_object = |value: &Type| {
+        crate::types::run_in_context(py, None, |context| {
+            crate::types::type_to_python(py, context, value)
+        })
+    };
+    match frame {
+        SymbolFrame::Import(frame) => public_frame_class(py, &IMPORT, "ImportSymbolTableFrame")?
+            .call1((crate::identifier::identifier_to_python(py, frame.name())?,)),
+        SymbolFrame::Variable(frame) => {
+            public_frame_class(py, &VARIABLE, "VariableSymbolTableFrame")?.call1((
+                crate::identifier::identifier_to_python(py, frame.name())?,
+                type_object(frame.ty())?,
+                crate::types::type_qualifier_to_python(py, frame.qualifier())?,
+            ))
+        }
+        SymbolFrame::Function(frame) => {
+            let signature = frame
+                .signature()
+                .iter()
+                .map(|(qualifier, value)| {
+                    PyTuple::new(
+                        py,
+                        [
+                            crate::types::type_qualifier_to_python(py, *qualifier)?,
+                            type_object(value)?,
+                        ],
+                    )
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            public_frame_class(py, &FUNCTION, "FunctionSymbolTableFrame")?.call1((
+                crate::identifier::identifier_to_python(py, frame.name())?,
+                keyword_to_python(py, frame.keyword())?,
+                PyTuple::new(py, signature)?,
+            ))
+        }
+        _ => Err(pyo3::exceptions::PyTypeError::new_err(
+            "a frame of an unknown kind",
+        )),
+    }
+}
+
+/// Return the Python object of the frame wire form `data`: a built-in
+/// frame built through its public class, or a Python-defined frame its
+/// registered class decodes.
+///
+/// # Errors
+///
+/// Raises `DeserializationValueError` for a type extension the registry
+/// cannot resolve, and what decoding a Python-defined frame raises.
+pub(crate) fn frame_from_wire<'py>(
+    cls: &Bound<'py, PyType>,
+    data: fhy_core::symbol_table::wire::SymbolFrameData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    if let Some(foreign) = data.foreign() {
+        return crate::wire::resolve_frame(py, foreign);
+    }
+    let frame = crate::wire::build(cls, || data.build(&crate::wire::PyResolver))?;
+    frame_to_python(py, &frame)
+}

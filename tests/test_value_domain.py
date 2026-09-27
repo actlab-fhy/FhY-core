@@ -283,6 +283,7 @@ def test_value_domain_deserialize_does_not_warn_when_descriptions_match(
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_value_domain_deserialize_rejects_a_conflicting_parent() -> None:
     """Test deserializing a canonical name under a different parent raises."""
     canonical = ValueDomain(
@@ -319,6 +320,7 @@ def test_value_domain_deserialize_rejects_a_parent_dropped_from_the_payload() ->
         ValueDomain.deserialize_from_dict(payload)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_value_domain_deserialize_accepts_a_description_only_mismatch_with_parent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

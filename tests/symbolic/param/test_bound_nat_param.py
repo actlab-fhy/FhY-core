@@ -82,6 +82,7 @@ def test_bound_nat_param_init_defaults_to_prefer_inclusive_true() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.sympy
 def test_bound_nat_param_serialization_round_trip_preserves_constraints() -> None:
     """Test interval-natural param round-trips through dict serialization."""
@@ -125,6 +126,7 @@ def test_bound_nat_param_deserialize_rejects_payload_with_malformed_domain_data(
         Param.deserialize_from_dict(payload)
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.sympy
 def test_bound_nat_param_deserialize_recovers_zero_exclusion_without_constraint() -> (
     None

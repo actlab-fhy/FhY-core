@@ -516,6 +516,7 @@ def test_pattern_matching_uses_the_dataclass_fields() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_payloads_keep_the_python_shapes() -> None:
     """Test the payloads nest the envelope and the dataclass field shapes."""
     source = FileProvenance(Path("a.fhy"), Span(0, 3, None, Position(1, 4)))
@@ -596,6 +597,7 @@ def test_malformed_payload_raises_the_python_structure_error(
     )
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_invalid_payload_value_raises_the_deserialization_value_error() -> None:
     """Test a constructor `ValueError` becomes `DeserializationValueError`."""
     data: SerializedDict = {
@@ -697,6 +699,7 @@ _EXPECTED_PAYLOADS: list[SerializedDict] = [
 ]
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_payloads_keep_the_pinned_json_text() -> None:
     """Test every shape serializes to its pinned JSON text, keys sorted."""
     payloads = [provenance.to_json() for provenance in _build_provenances()]

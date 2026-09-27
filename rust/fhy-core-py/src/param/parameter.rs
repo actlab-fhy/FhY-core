@@ -18,6 +18,7 @@ use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::constraint::{Binding, Constraint, ConstraintError, Outcome, Value};
 use fhy_core::expression::{ExpressionKind, LiteralValue};
+use fhy_core::param::wire::{ParamAssignmentData, ParamData};
 use fhy_core::param::{
     BoundSide, Operand, Param, ParamAssignment, ParamContext, ParamDomain, ParamError, ValueCheck,
 };
@@ -43,7 +44,7 @@ use crate::term::read_renaming;
 
 use super::domains::run_with_context;
 use super::error::{param_error, param_error_to_py};
-use super::objects::{constraint_to_python, read_domain};
+use super::objects::{constraint_to_python, domain_to_python, read_domain};
 use super::value::{read_candidate, to_tuple};
 
 /// The module of the public param classes.
@@ -1210,8 +1211,76 @@ impl PyParam {
         ))
     }
 
-    /// Return the payload `{"domain": .., "variable": .., "constraint_system": ..}`.
-    fn serialize_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    /// Return the V2 payload `{"domain", "variable", "constraint_system"}`,
+    /// the core's, or the V1 payload inside `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        crate::wire::write_dict(
+            slf.as_any(),
+            || Ok(slf.get().serialize_v1(py)?.into_any()),
+            || Ok(slf.get().core.clone()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text unless
+    /// `indent` or `sort_keys` re-formats it or V1 is written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            Ok(slf.get().core.clone())
+        })
+    }
+
+    /// Return the param of a payload: a V2 payload, or a V1 payload, whose
+    /// domain is an envelope, which warns.
+    ///
+    /// Raises the serialization framework's errors for a malformed payload.
+    #[classmethod]
+    fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if is_v1_param_payload(data) {
+            return crate::wire::reading_v1(cls, || Self::deserialize_v1(cls, data));
+        }
+        let wire: ParamData = crate::wire::parse_dict(cls, data)?;
+        decode_param(cls, wire)
+    }
+
+    /// Return the param of the JSON text `payload`.
+    #[classmethod]
+    fn from_json<'py>(
+        cls: &Bound<'py, PyType>,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::read_json(cls, payload, |text| {
+            let wire: ParamData = crate::wire::parse(cls, text)?;
+            decode_param(cls, wire)
+        })
+    }
+
+    /// Build the param of the decoded fields.
+    #[classmethod]
+    fn construct_from_fields<'py>(
+        cls: &Bound<'py, PyType>,
+        fields: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let keywords = PyDict::new(cls.py());
+        keywords.update(fields.cast::<pyo3::types::PyMapping>()?)?;
+        cls.call((), Some(&keywords))
+    }
+}
+
+impl PyParam {
+    /// Return the V1 payload `{"domain": .., "variable": ..,
+    /// "constraint_system": ..}`.
+    ///
+    /// V1: removed with the V1 wire format.
+    fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let payload = PyDict::new(py);
         payload.set_item(
             intern!(py, "domain"),
@@ -1234,11 +1303,11 @@ impl PyParam {
         Ok(payload)
     }
 
-    /// Return the param of a payload.
+    /// Return the param of a V1 payload.
     ///
     /// Raises the serialization framework's errors for a malformed payload.
-    #[classmethod]
-    fn deserialize_from_dict<'py>(
+    /// V1: removed with the V1 wire format.
+    fn deserialize_v1<'py>(
         cls: &Bound<'py, PyType>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1273,17 +1342,51 @@ impl PyParam {
         )?;
         construct_from_decoded_fields(cls, &fields)
     }
+}
 
-    /// Build the param of the decoded fields.
-    #[classmethod]
-    fn construct_from_fields<'py>(
-        cls: &Bound<'py, PyType>,
-        fields: &Bound<'py, PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let keywords = PyDict::new(cls.py());
-        keywords.update(fields.cast::<pyo3::types::PyMapping>()?)?;
-        cls.call((), Some(&keywords))
-    }
+/// Return whether `data` is a V1 param payload: a dict whose domain is an
+/// envelope.
+fn is_v1_param_payload(data: &Bound<'_, PyAny>) -> bool {
+    crate::wire::is_reading_v1(data.py())
+        || data
+            .get_item("domain")
+            .is_ok_and(|domain| crate::wire::is_v1_payload(&domain))
+}
+
+/// Return the Python `ConstraintSystem` of the system wire form `data`.
+fn decode_system<'py>(
+    cls: &Bound<'py, PyType>,
+    data: fhy_core::constraint::wire::ConstraintSystemData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    let members = data
+        .into_constraints()
+        .into_iter()
+        .map(|data| {
+            let constraint = crate::wire::build(cls, || data.build(&crate::wire::PyResolver))?;
+            constraint_to_python(py, &constraint)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    system_class(py)?.call1((PyTuple::new(py, members)?,))
+}
+
+/// Return the param of the wire form `wire`, built as its V1 payload is,
+/// through `cls.construct_from_fields`.
+fn decode_param<'py>(cls: &Bound<'py, PyType>, wire: ParamData) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    let (domain, variable, system) = wire.into_parts();
+    let domain = crate::wire::build(cls, || domain.build(&crate::wire::PyResolver))?;
+    let fields = PyDict::new(py);
+    fields.set_item(intern!(py, "domain"), domain_to_python(py, &domain)?)?;
+    fields.set_item(
+        intern!(py, "variable"),
+        crate::identifier::identifier_to_python(py, &variable)?,
+    )?;
+    fields.set_item(
+        intern!(py, "constraint_system"),
+        decode_system(cls, system)?,
+    )?;
+    construct_from_decoded_fields(cls, &fields)
 }
 
 /// Return the feasibility of `this`, asked detached.
@@ -1669,8 +1772,96 @@ impl PyParamAssignment {
         build_assignment(param, value)
     }
 
-    /// Return the payload `{"param": .., "value": ..}`.
-    fn serialize_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    /// Return the V2 payload `{"param", "value"}`, the core's, or the V1
+    /// payload inside `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        crate::wire::write_dict(
+            slf.as_any(),
+            || Ok(slf.get().serialize_v1(py)?.into_any()),
+            || Ok(slf.get().core.clone()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text unless
+    /// `indent` or `sort_keys` re-formats it or V1 is written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            Ok(slf.get().core.clone())
+        })
+    }
+
+    /// Return the assignment of a payload, rejecting only a value that is
+    /// provably invalid: a V2 payload, or a V1 payload, whose value is an
+    /// envelope, which warns.
+    ///
+    /// Raises the serialization framework's errors for a malformed payload.
+    #[classmethod]
+    fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if is_v1_assignment_payload(data) {
+            return crate::wire::reading_v1(cls, || Self::deserialize_v1(cls, data));
+        }
+        let wire: ParamAssignmentData = crate::wire::parse_dict(cls, data)?;
+        decode_assignment(cls, wire)
+    }
+
+    /// Return the assignment of the JSON text `payload`.
+    #[classmethod]
+    fn from_json<'py>(
+        cls: &Bound<'py, PyType>,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::read_json(cls, payload, |text| {
+            let wire: ParamAssignmentData = crate::wire::parse(cls, text)?;
+            decode_assignment(cls, wire)
+        })
+    }
+
+    /// Rebuild an assignment of decoded fields, rejecting only a value that
+    /// is provably invalid: inadmissible, or violating a constraint.
+    #[classmethod]
+    fn construct_from_fields<'py>(
+        cls: &Bound<'py, PyType>,
+        fields: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let _ = cls;
+        let py = fields.py();
+        let param = fields.get_item("param")?;
+        let value = fields.get_item("value")?;
+        let param = param.cast::<PyParam>()?;
+        if !PyParam::admits(param, &value)? {
+            return Err(PyParam::value_error(
+                param,
+                &value,
+                ValueCheck::Inadmissible,
+            ));
+        }
+        if let (Outcome::Violated, Some(member)) = PyParam::evaluate(param, &value, None)? {
+            return Err(PyParam::value_error(
+                param,
+                &value,
+                ValueCheck::Violated { member },
+            ));
+        }
+        let normalized = PyParam::normalize(param, &value)?;
+        let _ = py;
+        build_assignment(param, &normalized)
+    }
+}
+
+impl PyParamAssignment {
+    /// Return the V1 payload `{"param": .., "value": ..}`.
+    ///
+    /// V1: removed with the V1 wire format.
+    fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         static SERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
         let serialize = SERIALIZE.import(
             py,
@@ -1691,12 +1882,12 @@ impl PyParamAssignment {
         Ok(payload)
     }
 
-    /// Return the assignment of a payload, rejecting only a value that is
+    /// Return the assignment of a V1 payload, rejecting only a value that is
     /// provably invalid.
     ///
     /// Raises the serialization framework's errors for a malformed payload.
-    #[classmethod]
-    fn deserialize_from_dict<'py>(
+    /// V1: removed with the V1 wire format.
+    fn deserialize_v1<'py>(
         cls: &Bound<'py, PyType>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -1737,35 +1928,34 @@ impl PyParamAssignment {
         fields.set_item(intern!(py, "value"), value)?;
         construct_from_decoded_fields(cls, &fields)
     }
+}
 
-    /// Rebuild an assignment of decoded fields, rejecting only a value that
-    /// is provably invalid: inadmissible, or violating a constraint.
-    #[classmethod]
-    fn construct_from_fields<'py>(
-        cls: &Bound<'py, PyType>,
-        fields: &Bound<'py, PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let _ = cls;
-        let py = fields.py();
-        let param = fields.get_item("param")?;
-        let value = fields.get_item("value")?;
-        let param = param.cast::<PyParam>()?;
-        if !PyParam::admits(param, &value)? {
-            return Err(PyParam::value_error(
-                param,
-                &value,
-                ValueCheck::Inadmissible,
-            ));
-        }
-        if let (Outcome::Violated, Some(member)) = PyParam::evaluate(param, &value, None)? {
-            return Err(PyParam::value_error(
-                param,
-                &value,
-                ValueCheck::Violated { member },
-            ));
-        }
-        let normalized = PyParam::normalize(param, &value)?;
-        let _ = py;
-        build_assignment(param, &normalized)
-    }
+/// Return whether `data` is a V1 assignment payload: a dict whose value,
+/// or whose param's domain, is an envelope.
+fn is_v1_assignment_payload(data: &Bound<'_, PyAny>) -> bool {
+    crate::wire::is_reading_v1(data.py())
+        || data
+            .get_item("value")
+            .is_ok_and(|value| crate::wire::is_v1_payload(&value))
+        || data
+            .get_item("param")
+            .is_ok_and(|param| is_v1_param_payload(&param))
+}
+
+/// Return the assignment of the wire form `wire`, built as its V1 payload
+/// is, through `cls.construct_from_fields`.
+fn decode_assignment<'py>(
+    cls: &Bound<'py, PyType>,
+    wire: ParamAssignmentData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    let (param, value) = wire.into_parts();
+    let value = crate::wire::build(cls, || value.build(&crate::wire::PyResolver))?;
+    let fields = PyDict::new(py);
+    fields.set_item(intern!(py, "param"), decode_param(param_class(py)?, param)?)?;
+    fields.set_item(
+        intern!(py, "value"),
+        crate::constraint::value_to_python(py, &value)?,
+    )?;
+    construct_from_decoded_fields(cls, &fields)
 }

@@ -466,6 +466,7 @@ def test_param_survives_duplication(duplicate: Any) -> None:
     assert duplicated.is_alpha_equivalent(param)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_param_payload_keeps_its_shape() -> None:
     """Test a param's payload is its three fields, and a malformed one is refused."""
     param = create_ordinal_param([2, 1])

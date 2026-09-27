@@ -351,6 +351,7 @@ def test_integer_domain_canonicalizes_zero_included_when_not_non_negative() -> N
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.sympy
 def test_nat_param_serialization_round_trip_preserves_constraints() -> None:
     """Test natural param round-trips through dict serialization with constraints."""
@@ -381,6 +382,7 @@ def test_nat_param_deserialize_round_trip_preserves_zero_inclusion_flag() -> Non
     assert restored.is_value_valid(0)
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.sympy
 def test_nat_param_deserialize_recovers_zero_exclusion_without_stored_constraint() -> (
     None

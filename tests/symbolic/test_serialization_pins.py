@@ -553,13 +553,17 @@ def test_golden_blob_deserializes_to_an_equivalent_instance(
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     "expression, expected_data",
     [
         pytest.param(
             IdentifierExpression(_x) % LiteralExpression(3),
             {
-                "left": IdentifierExpression(_x).serialize_to_dict(),
+                "left": {
+                    "__type__": "identifier_expression",
+                    "__data__": {"identifier": {"id": 60000, "name_hint": "x"}},
+                },
                 "operation": "floor_mod",
                 "right": {"__data__": {"value": 3}, "__type__": "literal_expression"},
             },

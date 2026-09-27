@@ -581,6 +581,7 @@ def test_kind_survives_duplication(
     assert duplicated.is_structurally_equivalent(domain)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_payload_in_another_order_decodes_to_the_canonical_order() -> None:
     """Test a categorical payload listing its values in any order decodes."""
     payload = CategoricalDomain(("a", "b")).serialize_to_dict()

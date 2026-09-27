@@ -62,7 +62,7 @@ pub(super) fn constraint_class_name(py: Python<'_>, constraint: &Constraint) -> 
 /// # Errors
 ///
 /// Raises what building the object raises.
-pub(super) fn constraint_to_python<'py>(
+pub(crate) fn constraint_to_python<'py>(
     py: Python<'py>,
     constraint: &Constraint,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -215,7 +215,7 @@ pub(super) fn read_domain_object(object: &Bound<'_, PyAny>) -> PyResult<ParamDom
 /// # Errors
 ///
 /// Raises what building the object raises.
-pub(super) fn domain_to_python<'py>(
+pub(crate) fn domain_to_python<'py>(
     py: Python<'py>,
     domain: &ParamDomain,
 ) -> PyResult<Bound<'py, PyAny>> {

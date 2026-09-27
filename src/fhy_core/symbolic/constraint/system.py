@@ -17,6 +17,8 @@ __all__ = [
     "create_constraint_system",
 ]
 
+from typing import ClassVar
+
 from fhy_core import _rs
 from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
@@ -107,6 +109,8 @@ class ConstraintSystem(_rs.ConstraintSystem, WrappedFamilySerializable):
     simplifier instead, which these screens do not cover, so the two can
     disagree on a system the screens refuse but substitution decides.
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint_system"
 
     # The members are copied into a slot on construction, so reading them
     # costs a slot read rather than a call into the extension.

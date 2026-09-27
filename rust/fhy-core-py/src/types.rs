@@ -43,5 +43,5 @@ pub(crate) use environment::PyTypeUnificationEnvironment;
 // For the symbol table's frames (S15), which hold types and qualifiers.
 pub(crate) use adapter::run_in_context;
 pub(crate) use classes::MayCallPython;
-pub(crate) use convert::{read_data_type_value, read_type_value};
+pub(crate) use convert::{read_data_type_value, read_type_value, type_to_python};
 pub(crate) use enums::{read_type_qualifier, type_qualifier_to_python};

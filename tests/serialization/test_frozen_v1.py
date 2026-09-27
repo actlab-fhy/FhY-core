@@ -43,7 +43,7 @@ def _v1() -> Iterator[None]:
         if wire_version is None:
             yield
         else:
-            with wire_version(serialization.WireVersion.V1):  # type: ignore[attr-defined]
+            with wire_version(serialization.WireVersion.V1):
                 yield
 
 

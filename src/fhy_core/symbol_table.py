@@ -26,6 +26,7 @@ __all__ = [
 
 from abc import ABC
 from dataclasses import dataclass
+from typing import ClassVar
 
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
@@ -62,6 +63,8 @@ class SymbolTableFrame(
     field and derived equivalence.
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "symbol_frame"
+
     name: Identifier
 
 
@@ -82,6 +85,8 @@ class ImportSymbolTableFrame(_rs.ImportSymbolTableFrame, WrappedFamilySerializab
 
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "symbol_frame"
+
     __slots__ = ()
 
 
@@ -95,6 +100,8 @@ class VariableSymbolTableFrame(_rs.VariableSymbolTableFrame, WrappedFamilySerial
         type_qualifier: Its ``TypeQualifier``.
 
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "symbol_frame"
 
     __slots__ = ()
 
@@ -110,6 +117,8 @@ class FunctionSymbolTableFrame(_rs.FunctionSymbolTableFrame, WrappedFamilySerial
             pair, from whatever iterable was given; empty by default.
 
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "symbol_frame"
 
     __slots__ = ()
 

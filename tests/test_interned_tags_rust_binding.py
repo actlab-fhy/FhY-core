@@ -236,6 +236,7 @@ def test_require_interned_raises_the_python_key_error(cls: type[_Tag]) -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 @_TAG_CLASSES
 def test_serialize_to_dict_keeps_the_python_payload_shape(cls: type[_Tag]) -> None:
     """Test the payload keeps the Python `serialize_to_dict` shape."""
@@ -245,6 +246,7 @@ def test_serialize_to_dict_keeps_the_python_payload_shape(cls: type[_Tag]) -> No
     assert tag.serialize_to_dict() == _build_payload(name, "desc", cls)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_value_domain_payload_nests_its_parent_chain() -> None:
     """Test a domain's payload nests its parent's payload, up to the root."""
     middle = ValueDomain(Identifier("binding-middle"), "middle", parent=DATA_DOMAIN)

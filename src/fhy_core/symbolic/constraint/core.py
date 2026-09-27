@@ -44,7 +44,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from enum import Enum, auto
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import ClassVar, Protocol, TypeAlias, runtime_checkable
 
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
@@ -181,6 +181,8 @@ class Constraint(
           identifies the kind and the scope.
 
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
 
     @abstractmethod
     @override
@@ -351,6 +353,8 @@ class EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable):
 
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
+
     # The attributes are copied into slots on construction, so reading one
     # costs a slot read rather than a call into the extension.
     __slots__ = ("expression",)
@@ -389,6 +393,8 @@ class InSetConstraint(_rs.InSetConstraint, WrappedFamilySerializable):
 
     """
 
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
+
     # The attributes are copied into slots on construction, so reading one
     # costs a slot read rather than a call into the extension.
     __slots__ = ("members", "values", "variable")
@@ -415,6 +421,8 @@ class NotInSetConstraint(_rs.NotInSetConstraint, WrappedFamilySerializable):
         values: The members, in canonical order.
 
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
 
     # The attributes are copied into slots on construction, so reading one
     # costs a slot read rather than a call into the extension.

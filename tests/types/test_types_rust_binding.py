@@ -319,6 +319,7 @@ def test_types_pickle_copy_and_serialize_round_trip(value: Any) -> None:
     assert family.deserialize_from_dict(value.serialize_to_dict()) == value
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_a_wildcard_dimension_serializes_as_the_sentinel() -> None:
     """Test `Ellipsis` becomes the sentinel payload."""
     payload: Any = NumericalType(_int32(), [...]).serialize_to_dict()
@@ -328,6 +329,7 @@ def test_a_wildcard_dimension_serializes_as_the_sentinel() -> None:
     ]
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_a_payload_with_a_non_positive_width_is_refused() -> None:
     """Test deserialization refuses a width of zero."""
     payload = TemplateDataType(Identifier("T"), widths=[8]).serialize_to_dict()

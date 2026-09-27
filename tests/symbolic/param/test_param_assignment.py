@@ -309,6 +309,7 @@ def test_permutation_validate_value_normalizes_list_before_constraint_check() ->
         param.validate_value([3, 2, 1])
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.sympy
 def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:
     """Test assignment deserialization fails when payload value violates constraints."""
@@ -327,6 +328,7 @@ def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_rejects_value_field_with_wrong_shaped_dict() -> None:
     """Test a wrong-shaped wrapped ``value`` dict is rejected as a structure error.
 
@@ -347,6 +349,7 @@ def test_assignment_deserialize_rejects_value_field_with_wrong_shaped_dict() -> 
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_wraps_value_field_value_error_as_value_error() -> None:
     """Test a wrapped-value validation failure surfaces as `DeserializationValueError`.
 
@@ -378,6 +381,7 @@ def test_assignment_deserialize_rejects_payload_missing_param_field() -> None:
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_rejects_payload_missing_value_field() -> None:
     """Test a payload missing the ``value`` field is rejected as malformed."""
     payload = {"param": create_integer_param().serialize_to_dict()}
@@ -400,6 +404,7 @@ def test_assignment_deserialize_rejects_payload_with_param_not_serialized_dict()
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_rejects_payload_with_value_not_serialized_dict() -> (
     None
 ):
@@ -521,6 +526,7 @@ def test_direct_construction_raises_for_a_number_in_a_case_condition() -> None:
         ParamAssignment(param, 3)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_deserialization_refuses_a_number_in_a_case_condition() -> None:
     """Test deserialization refuses an ill-typed payload rather than accepting it.
 

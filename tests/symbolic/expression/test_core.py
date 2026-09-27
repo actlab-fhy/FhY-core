@@ -1507,6 +1507,7 @@ def test_piecewise_expression_hash_is_defined_and_structural() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_literal_expression_round_trips_through_serialize_to_dict() -> None:
     """Test `LiteralExpression` (hand-written codec) round-trips with its dict shape.
 
@@ -1526,6 +1527,7 @@ def test_literal_expression_round_trips_through_serialize_to_dict() -> None:
     assert restored.is_structurally_equivalent(expression)
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     ("value", "expected_payload_value"),
     [
@@ -1597,6 +1599,7 @@ def test_deserialize_literal_rejects_invalid_data_shape(
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_piecewise_expression_serialize_to_dict_carries_pinned_type_id() -> None:
     """Test ``PiecewiseExpression`` serializes under the ``piecewise_expression`` id."""
     expression = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)

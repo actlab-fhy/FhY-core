@@ -649,6 +649,7 @@ def test_convert_to_expression_propagates_constraint_error_from_a_member() -> No
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_serialize_to_dict_uses_the_pinned_type_id() -> None:
     """Test the wrapped envelope uses the pinned `constraint_system` type id."""
     system = create_constraint_system()
@@ -705,6 +706,7 @@ def test_empty_system_round_trips_through_dict_serialization() -> None:
     assert rebuilt.constraints == ()
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_wire_members_are_emitted_in_canonical_order() -> None:
     """Test serialized members are emitted in the same order as `constraints`."""
     x = mock_identifier("x", 0)
@@ -740,6 +742,7 @@ def test_deserialize_data_from_dict_rejects_non_list_constraints_field() -> None
         ConstraintSystem.deserialize_data_from_dict({"constraints": "not-a-list"})
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_deserialize_data_from_dict_rejects_malformed_member_entry() -> None:
     """Test a malformed member entry raises a deserialization error."""
     with pytest.raises(
@@ -751,6 +754,7 @@ def test_deserialize_data_from_dict_rejects_malformed_member_entry() -> None:
         )
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_json_serialization_rejects_a_nan_literal() -> None:
     """Test a NaN-valued literal propagates the module's NaN-rejection contract."""
     x = mock_identifier("x", 0)

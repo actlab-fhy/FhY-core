@@ -69,6 +69,7 @@ def _set_domain_to_non_dict(payload: dict[str, Any]) -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     "corrupt_payload",
     [
@@ -103,6 +104,7 @@ def test_rejects_payload_with_structural_fault(
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_rejects_finite_domain_with_unwrapped_value() -> None:
     """Test an ordinal payload with an unwrapped (raw) value is rejected.
 

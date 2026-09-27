@@ -1022,6 +1022,7 @@ def test_set_constraint_rejects_a_declared_numpy_float64_nan_member(
         factory(mock_identifier("x", 0), {np.float64("nan")})
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("kind", SET_KINDS)
 def test_set_constraint_deserialize_rejects_a_tampered_nan_member(
     kind: type[InSetConstraint | NotInSetConstraint],

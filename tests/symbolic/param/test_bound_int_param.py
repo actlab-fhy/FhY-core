@@ -981,6 +981,7 @@ def _valid_bound_int_payload() -> dict[str, Any]:
     return param.serialize_to_dict()
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     "mutate",
     [

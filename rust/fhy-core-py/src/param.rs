@@ -26,6 +26,7 @@ pub(crate) use functions::{
     are_all_constraints_satisfied, compute_constraint_implication_subset, evaluate_system_outcome,
     is_bound_expression,
 };
+pub(crate) use objects::{constraint_to_python, domain_to_python};
 pub(crate) use parameter::{PyParam, PyParamAssignment, check_param_bounds_are_ordered};
 
 /// Return the core domain of the Python domain `object`: a built-in kind's

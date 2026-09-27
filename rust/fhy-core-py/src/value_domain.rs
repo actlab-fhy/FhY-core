@@ -336,37 +336,41 @@ impl PyValueDomain {
         )?)
     }
 
-    /// Pickle as the payload, so unpickling returns the canonical domain.
+    /// Pickle as the V2 payload, so unpickling returns the canonical domain.
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, (Bound<'py, PyDict>,))> {
+    ) -> PyResult<(Bound<'py, PyAny>, (Bound<'py, PyAny>,))> {
         let py = slf.py();
         Ok((
             slf.get_type()
                 .getattr(intern!(py, "deserialize_from_dict"))?,
-            (slf.get().serialize_to_dict(py)?,),
+            (crate::wire::to_dict(py, &*slf.get().domain)?,),
         ))
     }
 
-    /// Return the payload `{"name": .., "description": .., "parent": ..}`,
-    /// with the parent's payload nested, or `None` for a root.
-    fn serialize_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let mut chain = vec![&*self.domain];
-        while let Some(parent) = chain[chain.len() - 1].parent() {
-            chain.push(parent);
-        }
-        let mut parent_payload = py.None().into_bound(py);
-        for domain in chain.into_iter().rev() {
-            let payload = PyDict::new(py);
-            payload.set_item(
-                intern!(py, "name"),
-                serialize_identifier(py, domain.name())?,
-            )?;
-            payload.set_item(intern!(py, "description"), domain.description())?;
-            payload.set_item(intern!(py, "parent"), parent_payload)?;
-            parent_payload = payload.into_any();
-        }
-        Ok(parent_payload.cast_into::<PyDict>()?)
+    /// Return the V2 payload `{"levels": [{"name", "description"}, ..]}`,
+    /// the core's chain, root first; or the V1 payload inside
+    /// `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        crate::wire::write_dict(
+            slf.as_any(),
+            || Ok(slf.get().serialize_v1(py)?.into_any()),
+            || Ok(slf.get().domain.clone()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text unless
+    /// `indent` or `sort_keys` re-formats it or V1 is written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            Ok(slf.get().domain.clone())
+        })
     }
 
     /// Return the canonical domain for `key`, or `None` if none is
@@ -422,9 +426,92 @@ impl PyValueDomain {
     }
 
     /// Return the canonical domain for a payload, registering it, and its
-    /// ancestors, unless they are registered.
+    /// ancestors, unless they are registered: a V2 payload of its levels,
+    /// root first, or a V1 payload, which nests the parent and warns.
     #[classmethod]
     fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = cls.py();
+        let is_v1 = crate::wire::is_reading_v1(py)
+            || data
+                .cast::<PyDict>()
+                .is_ok_and(|data| !data.contains(intern!(py, "levels")).unwrap_or(false));
+        if is_v1 {
+            return crate::wire::reading_v1(cls, || Self::deserialize_v1(cls, data));
+        }
+        let [levels] = read_payload_fields(cls, data, [("levels", FieldShape::PayloadList)])?;
+        let mut parent = py.None().into_bound(py);
+        let levels = levels.cast::<pyo3::types::PyList>()?;
+        if levels.is_empty() {
+            return Err(PyErr::from_value(
+                crate::serialization::deserialization_value_error_class(py)?.call1((
+                    cls,
+                    "levels",
+                    "a non-empty list of levels",
+                    levels,
+                ))?,
+            ));
+        }
+        for level in levels.iter() {
+            let [name, description] = read_payload_fields(
+                cls,
+                &level,
+                [
+                    ("name", FieldShape::Payload),
+                    ("description", FieldShape::Str),
+                ],
+            )?;
+            let name = deserialize_identifier(&name)?;
+            parent = Self::construct(cls, &name, &description, &parent)?;
+        }
+        Ok(parent)
+    }
+
+    /// Raise `NotImplementedError`: the Rust registry is append-only.
+    #[classmethod]
+    fn clear_interned_registry(cls: &Bound<'_, PyType>) -> PyResult<()> {
+        raise_registry_append_only(cls, "clear_interned_registry")
+    }
+
+    /// Raise `NotImplementedError`: the Rust registry is append-only, so
+    /// the shipped domains are never unregistered.
+    #[classmethod]
+    fn register_default_instances(cls: &Bound<'_, PyType>) -> PyResult<()> {
+        raise_registry_append_only(cls, "register_default_instances")
+    }
+}
+
+impl PyValueDomain {
+    /// Return the V1 payload `{"name": .., "description": .., "parent":
+    /// ..}`, with the parent's payload nested, or `None` for a root.
+    ///
+    /// V1: removed with the V1 wire format.
+    fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let mut chain = vec![&*self.domain];
+        while let Some(parent) = chain[chain.len() - 1].parent() {
+            chain.push(parent);
+        }
+        let mut parent_payload = py.None().into_bound(py);
+        for domain in chain.into_iter().rev() {
+            let payload = PyDict::new(py);
+            payload.set_item(
+                intern!(py, "name"),
+                serialize_identifier(py, domain.name())?,
+            )?;
+            payload.set_item(intern!(py, "description"), domain.description())?;
+            payload.set_item(intern!(py, "parent"), parent_payload)?;
+            parent_payload = payload.into_any();
+        }
+        Ok(parent_payload.cast_into::<PyDict>()?)
+    }
+
+    /// Return the canonical domain for a V1 payload, registering it, and
+    /// its ancestors, unless they are registered.
+    ///
+    /// V1: removed with the V1 wire format.
+    fn deserialize_v1<'py>(
         cls: &Bound<'py, PyType>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
@@ -441,21 +528,8 @@ impl PyValueDomain {
         let parent = if parent.is_none() {
             parent
         } else {
-            Self::deserialize_from_dict(cls, &parent)?
+            Self::deserialize_v1(cls, &parent)?
         };
         Self::construct(cls, &name, &description, &parent)
-    }
-
-    /// Raise `NotImplementedError`: the Rust registry is append-only.
-    #[classmethod]
-    fn clear_interned_registry(cls: &Bound<'_, PyType>) -> PyResult<()> {
-        raise_registry_append_only(cls, "clear_interned_registry")
-    }
-
-    /// Raise `NotImplementedError`: the Rust registry is append-only, so
-    /// the shipped domains are never unregistered.
-    #[classmethod]
-    fn register_default_instances(cls: &Bound<'_, PyType>) -> PyResult<()> {
-        raise_registry_append_only(cls, "register_default_instances")
     }
 }

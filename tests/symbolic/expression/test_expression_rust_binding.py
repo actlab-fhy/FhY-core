@@ -254,6 +254,7 @@ def test_a_shared_dag_is_compared_and_hashed_in_time_linear_in_its_nodes() -> No
     assert node != other
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_a_deep_payload_decodes_in_one_pass() -> None:
     """Test decoding a payload deeper than the recursion limit.
 
