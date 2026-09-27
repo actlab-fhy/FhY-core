@@ -152,11 +152,11 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
     - [x] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite (24 tests)
     - [x] S16b.4: benchmarks after, and docs (two rows slower than 10%, flagged: the pickle round trip, 1.16, and `repr`, 1.11; see "S16 benchmarks")
-- [ ] S18: scope and stack, two native implementations (P1, the `Identifier` model; "Needs the user" is empty; see "S18: scope and stack")
+- [x] S18: scope and stack, two native implementations (P1, the `Identifier` model; "Needs the user" is empty; see "S18: scope and stack"). The suite is green (7,902 passed), lint and mypy are clean, and the Rust gate passes (4,222 tests; 4,254 with all features); Python is unchanged, so there are no benchmarks
   - [x] S18.0: the design (survey, decisions D-S18-1 to D-S18-10, steps, the shared case list)
   - [x] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties (35 new tests, all failing against the `todo!()` stubs first; the Rust gate passes, 4,222 tests; 4,254 with all features)
   - [x] S18.2: the Python stories the case list adds (K-10, S-5), and the docs (`pytest tests` 7,902 passed; lint and mypy are clean)
-  - [ ] S18.3: status and implementation notes
+  - [x] S18.3: status and implementation notes (see "S18 status")
 
 ## Goal
 
@@ -18460,3 +18460,73 @@ The Rust models are a `Vec<T>` and a `Vec<HashMap<char, i32>>` over
 random operation sequences (push, pop, define, and every query), as the
 Python state machines' models are; each step compares the result, and
 the depth or length after it.
+
+### S18 status
+
+S18 was implemented on 2026-09-26 in three commits after the design
+(9ea321b, from 4fb588b):
+
+- the core's `fhy_core::stack` and `fhy_core::scope`, test-first
+  (1443713): the 35 stories and properties were written first and all
+  failed against `todo!()` stubs, then passed;
+- the Python stories for K-10 and S-5, and the docs of D-S18-10
+  (a7956c6);
+- these docs.
+
+Python's `scope.py` and `stack.py` are unchanged, so there are no
+benchmarks (D-S18-9); `_rs`, its stub and `fhy-core-py` are unchanged
+(D-S18-1). No test was skipped or deleted. At the end:
+
+- `pytest tests`: 7,902 passed, 2 xfailed;
+- nox `lint` and `type_check`: clean;
+- the Rust gate, with `target/gate-env.sh` and without the tooling
+  environment on `PATH`: fmt; clippy `--all-targets -D warnings` with and
+  without `--all-features`; `cargo test --workspace`: 4,222 tests,
+  `--all-features`: 4,254 (35 new integration tests and the two modules'
+  doctests); doc `-D warnings` both ways; `cargo deny check`; and
+  `cargo +1.85 check --workspace`, and `-p fhy-core --all-features`.
+
+### S18 implementation notes
+
+Choices the decisions left open, made while implementing S18.1 and
+S18.2:
+
+- **`Scope`'s `PartialEq` and `Eq` are written by hand,** with
+  `K: Hash + Eq` bounds, since a derive would bound only `K: PartialEq`
+  and `HashMap`'s equality needs the hash; the struct itself stays
+  unbounded, so `new` and `Default` need nothing of `K` or `V`
+  (D-S18-7).
+- **`RootFramePopError` cannot be built outside the crate** (it is
+  `#[non_exhaustive]`), so the stories match it as
+  `Err(RootFramePopError { .. })` and read its `Display` from a real
+  refusal, as the types stories treat `TemplateWidthError`.
+- **The drop guard of `with_frame` is private** (`RestoreDepth`): it
+  holds the `&mut Scope` and the entry count of inner frames, the body is
+  called through a reborrow of it, and its `Drop` truncates the inner
+  frames, which is a no-op when the body popped below the entry depth
+  (D-S18-6).
+- **`Stack::new` is a `const fn`;** `Scope::new` cannot be, since
+  `HashMap::new` is not const on 1.85.
+- **`Stack::iter` and the other queries are `#[must_use]`,** as clippy's
+  pedantic `must_use_candidate` asks.
+- **Two stories are Rust-only additions** to the case list's rows, not new
+  cases: `keyed_queries_take_a_borrowed_form_of_the_key` (the `Borrow`
+  signatures of D-S18-3) and
+  `root_frame_pop_error_displays_one_lowercase_line` (the error's text,
+  D-S18-4). Python has neither concept.
+- **The proptest seeds** recorded while the stories failed against the
+  stubs (both `ops = []`) were committed with 1443713 by mistake and
+  removed in a7956c6; they described the stubs, not the implementation.
+- **Divergences as the design listed them** (Q-1 to Q-8) are the only
+  differences between the two implementations; the traceability table in
+  "Test plan: the shared case list" maps every case to its Rust and
+  Python tests, and holds as implemented.
+
+### S18 resume notes
+
+Nothing is pending. The branch stands on 4fb588b. S17 (serialization) is
+designed in parallel; the conflicts to expect on a rebase are additive:
+this document (the checklist and the appended sections), `lib.rs`'s
+module list, the crate README and CONTRIBUTING (the layer list, where
+`stack` and `scope` are the tenth layer, the module table, and the parity
+section).
