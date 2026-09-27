@@ -53,7 +53,7 @@ onto `dev-rust` before continuing.
 
 ### Track D: `solver` (the SymPy move and build infrastructure; lands 2nd)
 
-- [ ] D0: worktree `port/fix2-solver` created; the baseline gates recorded
+- [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes)
 - [ ] R2-015 (F2-015): control characters in name hints mapped before they reach a solver
 - [ ] R2-014 (F2-014): the process backend's timeout bounds the whole call
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped
@@ -2590,7 +2590,18 @@ commit (the code of `dac8ab1`):
 
 ### Track D notes
 
-(none yet)
+**D0, the worktree and the baseline.** The maintainer created the worktree
+as `~/Projects/FhY-core-worktrees/fix-d-solver` on branch `fix/d-solver`,
+from `dev-rust` at `111df20`, in place of §I.2 rule 7's
+`fix2-solver`/`port/fix2-solver`; the names are the only difference. Its
+`.venv` is its own (`uv sync --group dev --group bench`), and its
+`target/gate-env.sh` copy points `CARGO_TARGET_DIR` into its own `target/`.
+The baseline at `111df20`, which differs from `d976522` only in documents,
+matches §I.8.2's: fmt and clippy (both ways) clean; `cargo test
+--workspace` 4,305 passed; `pytest tests` 8,281 passed (2 xfailed). The
+all-features run was the first to see R2-015's new tests, which failed as
+intended (5 lowering cases and the z3 story, the latter with z3's
+`CString::new(..).unwrap()` panic at `z3-0.21.1/src/symbol.rs:14`).
 
 ### Track B notes
 
