@@ -18530,3 +18530,849 @@ this document (the checklist and the appended sections), `lib.rs`'s
 module list, the crate README and CONTRIBUTING (the layer list, where
 `stack` and `scope` are the tenth layer, the module table, and the parity
 section).
+
+## S17: serialization
+
+- **Status:** designed 2026-09-26 from 4fb588b. D-S17-1 to D-S17-24 apply
+  the policy, the precedent of S4 to S16, and the user's direction for
+  this slice: "We need a way for Python serialization to match Rust
+  serialization if possible... so maybe serialization needs to be updated;
+  we should keep the old serialization though for backwards
+  compatibility." "Needs the user" has three items (N-S17-1 to N-S17-3);
+  the decisions below assume their recommended options, and each names
+  what changes under the others.
+- **Scope:** the wire format of every `Serializable` class, not a module
+  port. It touches `src/fhy_core/serialization.py` (1,928 lines), the
+  payload code of every Rust-backed class in `rust/fhy-core-py`, and the
+  serde impls of `rust/fhy-core`: new ones for the types, symbol-table,
+  constraint and param modules, which have none today.
+- **The idea in one paragraph.** Today there are two formats: the Python
+  one (the `__type__`/`__data__` envelope, called **V1** below), which the
+  binding writes for every Rust-backed class, and the core's plain serde
+  one, which nothing in Python sees. After S17 there is one canonical
+  format, **V2**: exactly what the core's serde writes. Rust-backed classes
+  write and read it by calling the core's serde; Python-defined classes
+  write it through the framework; a Python-defined part inside a Rust
+  value (a third-party constraint, domain, type, frame or set member)
+  travels as a tagged **foreign** part that the binding fills in. V1 stays
+  readable, and writable on request.
+- **Split** (D-S17-24):
+  - **S17a** is the core: serde for every remaining type, the foreign
+    part, the open wire types. Nothing in Python changes.
+  - **S17b** is the binding and the Python framework: V2 as the default,
+    V1 moved aside and frozen, the golden corpus of both formats.
+- **Pattern:** the P2 classes keep their pyclasses and delegate their
+  payloads to the core's serde. A Python-defined part inside a Rust value
+  is driven through a P3-style adapter (D-S17-11). The framework
+  (`Serializable`, the derivation engine, the registry) stays Python.
+
+### Survey: the Python framework
+
+`serialization.py` provides, in order:
+
+- **The payload types** `SerializedValue`, `SerializedDict`,
+  `SerializedObject` and their guards `is_serialized_value` (lists only,
+  never tuples) and `is_serialized_dict`.
+- **Formats** (`SerializationFormat`): `DICT`, `JSON` (UTF-8 text of the
+  dict; `to_json` sorts keys by default, uses `json.dumps`'s default `", "`
+  and `": "` separators, escapes non-ASCII, and refuses NaN and the
+  infinities with `SerializationValueError`), and `BINARY`: the envelope
+  `MAGIC "FhYS" | VERSION u8 = 1 | CODEC u8 | type_id | payload`, whose
+  codec is `JSON` (sorted, compact JSON of the dict) or `CUSTOM`.
+- **Errors:** eleven classes under `SerializationError`, all
+  `register_error`ed. Decoders raise `DeserializationDictStructureError`
+  (with the expected and actual field types) and `DeserializationValueError`
+  (a one-argument message form and a four-argument field form).
+- **The registry:** `register_serializable(cls, type_id=..., alias=...)`
+  maps a type id to a class, refuses duplicates, and supports legacy
+  aliases. Lookup is registry-only unless `from_bytes` opts into
+  `allow_import_fallback` (prefix-restricted). 39 ids are registered by the
+  package: `id`, `position`, `span`, the five `provenance.*`,
+  `op_attribute`, `note_kind`, `diagnostic_note`, `value_domain`, seven
+  expression kinds, three constraint kinds and `constraint_system`, six
+  domain kinds, `param`, `param_assignment`, four type kinds, three frame
+  kinds and `symbol_table`. One more id, `__numerical_type_shape_ellipsis__`,
+  is a sentinel inside a shape, not a class.
+- **The envelope:** `WrappedFamilySerializable.serialize_to_dict` writes
+  `{"__type__": <type id>, "__data__": serialize_data_to_dict()}`, and
+  `deserialize_from_dict` checks the exact key set, resolves the id through
+  the registry, checks family membership, and calls the concrete class's
+  `deserialize_data_from_dict`.
+- **Registry-wrapped values** (public): `serialize_registry_wrapped_value`
+  encodes a `bool`, `int`, `str`, `float`, `tuple`, `frozenset` or
+  `Serializable` as an envelope with the ids `builtins.bool` and so on, or
+  the value's type id, frozenset items sorted by `repr`. Constraint members,
+  domain members and assignment values use it.
+- **The derivation engine:** a `@dataclass` `Serializable` derives both
+  dict methods from its fields' resolved hints through `FieldCodec`s
+  (scalars, `Optional`, `tuple[T, ...]`/`list`/`frozenset`, nested
+  `Serializable`s, enums by value or name, paths as POSIX text, and
+  per-field codecs through `field(metadata={"serialize_codec": ...})`),
+  with `register_field_codec`, `make_field_codec`, `make_enum_field_codec`
+  and `make_labeled_enum_field_codec` for third parties. The engine is
+  format-neutral: it writes a class's own fields and calls nested
+  `serialize_to_dict`s.
+- **What third parties register:** their own `Serializable` dataclasses and
+  families; `Constraint`, `ParamDomain`, `Type`/`DataType` and
+  `SymbolTableFrame` subclasses (the open ABCs); and `Serializable` values
+  used as set members, domain members and assignment values.
+
+### Survey: the binding
+
+- `rust/fhy-core-py/src/serialization.rs` (267 lines) holds the framework
+  pieces the Rust-backed classes use: the field-shape checks and the
+  structure error of the derived path (`read_payload_fields`,
+  `FieldShape`), `construct_from_decoded_fields`, and lookups of the
+  framework's classes. Its module doc states the current rule: the core
+  serializes in serde shapes, and the envelope and the Python field shapes
+  belong to the binding.
+- Every Rust-backed class writes its V1 payload by hand, walking its Python
+  objects: `serialize_data_to_dict` and `deserialize_data_from_dict` on the
+  expression nodes (`expression/node.rs`, with the one-pass decoder of
+  nested envelopes in `expression/payload.rs`), provenance, the constraint
+  kinds and system, the domains, `Param` and `ParamAssignment`, the four
+  type kinds (with the `Ellipsis` sentinel), the frames and the table;
+  `serialize_to_dict`/`deserialize_from_dict` on `Position`, `Span`,
+  `Note`, the two tag kinds and `ValueDomain`. Members and values go
+  through the framework's registry-wrapped functions.
+- **Pickling** is independent of the wire almost everywhere: `__reduce__`
+  is a call of the class (or a private `_restore`, `_from_fields`,
+  `_from_parts`) with Python objects. Only `Identifier`, `OpAttribute`,
+  `NoteKind` and `ValueDomain` pickle as `deserialize_from_dict(<V1
+  payload>)`. The pass managers and `MatchBindings` refuse pickling.
+- The binding has no serde dependency of its own: `rust/fhy-core-py`
+  depends on `fhy-core`, `num-traits`, `numpy` and `pyo3`.
+
+### Survey: the Rust core
+
+- **Has serde** (Pattern A to E of `rust-workspace.md` B2 §5.1, each with a
+  JSON and a postcard round trip): `Identifier`, `DescribedTag`
+  (`OpAttribute`, `NoteKind`) and `ValueDomain` through `Canonical<_>`,
+  `Note`, `Position`, `Span`, `Provenance` and its four payload structs,
+  `Expression` (the flat post-order node table, D-6), `LiteralValue`,
+  `Decimal`, `Callee`/`FunctionName`, the three operation enums,
+  `BuiltinFunction`, `BuiltinConstant`, `SymbolType`, `FunctionSort`,
+  `CoreDataType`, `TypeQualifier` and `FunctionKeyword`.
+- **Has none:** `Type`, `NumericalType`, `IndexType`, `Dimension`,
+  `DataType`, `TemplateDataType` (D-S11-16: "an extension variant has
+  none"); `SymbolFrame` and its three frames and `SymbolTable<F>` (D-S15-5,
+  since `Type` has none); everything in `constraint` (`Value`, `Member`,
+  `MemberSet`, `EquationConstraint`, `SetConstraint`, `Constraint`,
+  `ConstraintSystem`); everything in `param` (the six domains,
+  `ParamDomain`, `Param`, `ParamAssignment`). `Diagnostic`, the pass types,
+  `lattice` and `term` are not serialized in Python either.
+- **The open variants:** `Type::Extension(Arc<dyn TypeExtension>)`,
+  `DataType::Extension(Arc<dyn DataTypeExtension>)`,
+  `Constraint::Custom(Arc<dyn CustomConstraint>)`,
+  `ParamDomain::Custom(Arc<dyn CustomDomain>)`, and the opaque values
+  (`Value::Opaque`, the opaque `Member`) behind `OpaqueValue`. The binding's
+  `SymbolTable<F>` holds its own frame type, which covers Python-defined
+  `SymbolTableFrame` subclasses. Each is how a Python-defined class reaches
+  the core.
+- **The rules** (CONTRIBUTING "Serialization is plain serde", §I.3 rule 2):
+  no `tag`, `untagged`, `flatten`, `skip_serializing_if` or
+  `deserialize_any` in `src`, no `serde_json` type (a dev-dependency only),
+  JSON and postcard round trips for every type, `BigInt` as a decimal
+  string, the decode side effects of `Identifier` and `Canonical<T>`
+  documented, and "the `__type__`/`__data__` envelope lives only in
+  `fhy-core-py`".
+- **Floats** serialize as strings in Rust's `{}` form (D-7): measured with
+  a probe on this commit, `1.5` is `"1.5"`, `2.0` is `"2"`, `-0.0` is
+  `"-0"`, NaN is `"NaN"`, and `1e300` is the 301-character positional text.
+  `{}` is round-trip exact but positional, never exponent notation.
+
+### Survey: the two formats today
+
+JSON of the same values, from the Python package and from a Rust probe
+against `fhy-core` on 4fb588b (`x` has id 60000):
+
+| Value | V1 (Python today) | Core serde |
+|---|---|---|
+| `Identifier` | `{"id":60000,"name_hint":"x"}` | the same |
+| `Position`, `Span`, `Note`, `OpAttribute`, `NoteKind` | `{"line":1,"column":2}` and so on | the same (key order aside) |
+| `ValueDomain` | `{"name":..,"description":..,"parent":<nested or null>}` | a root-first list of `{"name","description"}` (R-4) |
+| `UnknownProvenance()` | `{"__type__":"provenance.unknown","__data__":{}}` | `"unknown"` |
+| `FusedProvenance` | `...provenance.fused... {"sources", "metadata"}` | `{"fused":{"sources":[..],"label":..}}` (D-16) |
+| `x > 0` | nested envelopes: `{"__type__":"binary_expression","__data__":{"left":{..},"operation":"greater","right":{"__type__":"literal_expression","__data__":{"value":0}}}}` | `{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}},{"literal":{"int":"0"}},{"binary":{"operation":"greater","left":0,"right":1}}]}` |
+| literal `1.5`, `2**100`, `Decimal("100")` | `1.5`, `1267650600228229401496703205376` (JSON numbers), `"100.0"` | `{"float":"1.5"}`, `{"int":"1267..."}`, `{"decimal":"100"}` |
+| literal `nan` | refused (`SerializationValueError`) | `{"float":"NaN"}` |
+| `sqrt(4)` | `{"function_name":"sqrt","arguments":[..]}` | `{"call":{"callee":{"builtin":"sqrt"},"arguments":[..]}}` in the table |
+| a set member `1` | `{"__type__":"builtins.int","__data__":1}` | none (no serde) |
+| types, frames, table, constraints, domains, params | envelopes (types with the `Ellipsis` sentinel) | none |
+
+So `Identifier`, `Position`, `Span`, `Note` and the two tag kinds already
+match. `Provenance`, `ValueDomain` and every expression differ in shape,
+and everything above expressions has no Rust form at all.
+
+Today's costs, from the slices' "after" benchmarks: a deep expression
+tree serializes to a dict in 114 µs and decodes in 262 µs (S4.3a); a type
+in 1.5 µs and 13 µs (S11a); a 100-member set constraint in 16 µs and
+220 µs, and a 20-member system in 50 µs (S13); a 20-variable symbol table
+in 32 µs and 1.04 ms (S15); a param in 7 µs and 170 µs (S16).
+
+### Consumers and tests
+
+- **Inside the package,** nothing parses payloads except the classes
+  themselves; the only other users are the registry-wrapped functions
+  (members, values) and `constraint/members.py`'s ordering key of a
+  `Serializable` member (`module.Class:<repr of serialize_to_dict()>`).
+- **Downstream FhY packages** store payloads, register their own classes,
+  and nest the package's values in their dataclasses. Stored V1 payloads
+  must keep loading (the user's direction).
+- **Tests.** The files that pin payloads, by the number of payload
+  references: `tests/serialization/test_core.py` (85, the framework),
+  `tests/symbolic/test_serialization_pins.py` (61: 19 pinned type ids and
+  one golden V1 blob each), `tests/types/test_serialization.py` (33),
+  `tests/serialization/test_serialization_derive.py` (31, the engine),
+  `tests/symbolic/expression/test_core.py` (25),
+  `tests/test_provenance_rust_binding.py` (23),
+  `tests/symbolic/constraint/test_serialization.py` (22),
+  `tests/test_symbol_table_rust_binding.py` (20),
+  `tests/symbolic/param/test_param_assignment.py` (18), and about 30 more
+  with a few each. `tests/serialization/test_serialization_contract.py`
+  round-trips 12 representative classes through every format.
+- **Golden corpora:** only `rust/fhy-core/tests/golden/interned_cases.json`
+  (the interned oracle) exists; `tests/test_golden_corpora.py` regenerates
+  it and `golden_expanded` replays an expanded one. No corpus pins either
+  wire format.
+- **Benchmarks:** serialization rows in `test_expression.py` (dict both
+  ways, JSON round trip, pickle), `test_types.py`, `test_constraint.py`,
+  `test_symbol_table.py`, `test_param.py`, `test_provenance.py` and
+  `test_identifier.py`. None measures the framework on a Python-defined
+  class, the registry-wrapped values, or binary.
+
+### What "matching" means
+
+**One canonical format, V2: the core's serde data model** (D-S17-1).
+
+- **The data model** is serde's: structs are maps in declaration order,
+  enums are externally tagged in `snake_case` (`"unit"` or
+  `{"variant": data}`), no self-describing features, so every type also
+  round-trips through postcard.
+- **The text** is JSON as `serde_json::to_string` writes it: compact, keys
+  in declaration order, UTF-8, the standard escapes.
+- **The guarantee for Rust-defined values** (M-1). For a value built only
+  from kinds the core defines, Python's `to_json()` is byte-identical to
+  `serde_json::to_string` of the core value, `serialize_to_dict()` equals
+  `json.loads` of that text, and each side reads the other's output into
+  an equal value. V2 holds no JSON float in any Rust-defined shape (floats,
+  big integers and decimals are strings), so Python's `json.dumps` with
+  compact separators and `ensure_ascii=False` writes those subtrees
+  byte-identically too; a probe confirmed it for control characters,
+  U+007F, U+2028, non-BMP characters and escapes.
+- **Values holding Python-defined parts** (M-2). The Rust-defined structure
+  around a part is the same; the part is a foreign part, `{"type_id": ..,
+  "data": ..}`, in the open variant (`{"custom": ..}`, `{"extension": ..}`,
+  `{"opaque": ..}`). The binding writes and resolves it. A Rust program
+  without a resolver refuses it with a one-line error naming the type id,
+  since it has no implementation of the part anyway.
+- **Python-defined classes on their own** (M-3) keep their own dict shape.
+  Their canonical text is `json.dumps` with compact separators, insertion
+  (declaration) order, `ensure_ascii=False` and `allow_nan=False`.
+- **Not byte-level:** the DICT format is Python objects, so it matches by
+  value; `to_json(indent=.., sort_keys=True)` re-formats the canonical
+  text; the binary envelope is Python's own container (D-S17-2).
+
+### Divergences visible from Python
+
+With N-S17-1 as (a):
+
+| # | Python today | After S17 |
+|---|---|---|
+| W-1 | `serialize_to_dict`, `to_json`, `to_bytes` and `serialize` write V1 | they write V2; V1 inside `wire_version(WireVersion.V1)` (D-S17-13) |
+| W-2 | families are `{"__type__": id, "__data__": data}` | the core's enum form: `{"file": {..}}`, `"unknown"`, `{"numerical": {..}}`; a pure-Python family writes `{type_id: data}` (D-S17-3) |
+| W-3 | an expression is nested envelopes, a shared subtree written at every use | the flat node table, each shared node once (D-6) |
+| W-4 | literal numbers are JSON numbers, a decimal `"1.5"` or `"100.0"` | `{"int": "12"}`, `{"float": "1.5"}`, `{"decimal": "100"}` (D-7, D-S17-5) |
+| W-5 | a NaN or infinite float literal cannot be serialized | it serializes as `{"float": "NaN"}` and so on |
+| W-6 | members and values are `{"__type__": "builtins.int", "__data__": 1}` | `{"int": "1"}`, `{"str": "a"}`, `{"tuple": [..]}`, `{"opaque": <foreign>}` |
+| W-7 | a Python-defined part is an envelope holding its dict | a foreign part holding its canonical JSON text (N-S17-2) |
+| W-8 | `ValueDomain` nests its parent; `FusedProvenance` writes `metadata`; the `Ellipsis` sentinel | a root-first list; `label`; `"wildcard"` |
+| W-9 | `to_json()` sorts keys, uses `", "`/`": "`, escapes non-ASCII | the canonical text (D-S17-18) |
+| W-10 | binary blobs carry envelope version 1 | version 2, with the canonical JSON payload; version 1 still reads |
+| W-11 | a malformed payload raises the V1 structure and value errors | a malformed V2 payload raises `DeserializationValueError` with the core's one-line text; a malformed V1 payload raises exactly what it raises today (D-S17-17) |
+
+Unchanged: the payloads of `Identifier`, `Position`, `Span`, `Note`,
+`NoteKind` and `OpAttribute`; every type id and the registry;
+`register_serializable`, the derivation engine and its codec API; the
+registry-wrapped functions (as V1 functions); pickles and their reduce
+values; the V1 readers and their errors; `Serializable` subclassing.
+
+### Pattern choice
+
+- **Core** (decision 2; the direction): serde for every remaining type, in
+  `rust/fhy-core` with Rust tests; one new module, `fhy_core::foreign`, for
+  the foreign part (D-S17-7).
+- **P2, unchanged classes:** every Rust-backed class's `serialize_to_dict`,
+  `deserialize_from_dict`, `to_json` and `from_json` call the core's serde
+  on the value it holds (D-S17-10). No new pyclass.
+- **P3-style adapter:** the adapters that already carry Python-defined
+  parts into the core (`PyCustomConstraint`, `PyCustomDomain`,
+  `PyOpaqueValue`, the type-extension adapters, the binding's frame type)
+  gain the foreign hook, and one resolver builds them back (D-S17-11).
+- **Stays Python:** `Serializable`, `WrappedFamilySerializable`, the
+  engine, the registry, the errors, and V1 (moved aside, D-S17-15).
+
+### Benchmark plan
+
+**`benchmarks/test_serialization.py` (S17.1)**, public API only, with its
+own Python-defined classes: `_Kernel`, a derived dataclass with a `str`,
+an `int` and an `Expression` field; `_EvenConstraint`, a Python-defined
+`Constraint`; `_Level`, a `Serializable` member value. Each row is
+parametrized by version, `[v1-..]` and `[v2-..]`; the baseline records the
+`v1` rows on today's package (`v2` does not exist yet).
+
+| Benchmark | Cases |
+|---|---|
+| `test_serialize_to_dict[<version>-<case>]` | `deep_expression` (the existing deep tree), `wide_expression` (a 1,000-term sum), `literals` (100 float, big-integer and decimal literals), `provenance` (a fusion of 10 files), `type` (`int32[4, N]`), `set_constraint_100`, `constraint_system_20`, `param_ordinal_20`, `symbol_table_20`, `kernel`, `foreign` (a system of 10 constraints, one `_EvenConstraint`, and a set of 20 `_Level` members) |
+| `test_deserialize_from_dict[<version>-<case>]` | the same cases |
+| `test_json_round_trip[<version>-<case>]` | the same cases |
+| `test_bytes_round_trip[<version>-deep_expression]`, `[..-param_ordinal_20]` | the binary envelope |
+| `test_value_round_trip[<version>]` | 100 mixed members through the V1 registry-wrapped functions and the V2 `serialize_value`/`deserialize_value` |
+
+Reruns, not added: the serialization and pickle rows of
+`test_expression.py`, `test_types.py`, `test_constraint.py`,
+`test_symbol_table.py`, `test_param.py`, `test_provenance.py` and
+`test_identifier.py`. They call the default writers, so after S17 they
+measure V2 against today's V1.
+
+The verdict follows cross-cutting rule 5:
+
+- the default path (`v2` after, and the reruns) against today's `v1`: at
+  most 10% slower on every row, or the maintainer decides;
+- the legacy path (`v1` after) against today's `v1`: at most 10% slower,
+  since moving V1 must not slow it.
+
+The paths at risk:
+
+- **decoding** V2, which parses into the core value and then materializes
+  every Python object the public API exposes (each expression node, each
+  member), where V1 built the Python objects directly;
+- **the dict form**, built from serde (through pythonize or through
+  `json.loads` of serde's text, D-S17-10) where V1 built dicts directly;
+- **foreign parts**, which cost a canonical `json.dumps` and a
+  `json.loads` more than V1's nested dict;
+- **the version check** each Rust-backed writer makes (a context-variable
+  read, D-S17-13);
+- **floats with large exponents**, whose D-7 text is long (301 characters
+  for `1e300`).
+
+The expected gains: `to_json` and `from_json` of a Rust-backed value never
+build the intermediate dict; shared expression subtrees are written once;
+and V2 has no nested envelope to check per node.
+
+### Decisions (proposed 2026-09-26)
+
+Each decision names the policy it follows: the user's direction above,
+D-S4-1 (Rust semantics where the two differ), D-S4-2 (Python names where
+the meaning is the same), "no fallback" (here: one writer per version),
+"tests rewritten, not skipped", the crate's conventions (`rust-workspace.md`
+Part I and CONTRIBUTING: plain serde, JSON and postcard, one public path,
+`#[non_exhaustive]` errors with one-line lowercase `Display`, no global
+state beyond identity), the signed decisions D-6, D-7 and D-16, P1 to P3,
+and cross-cutting rules 4 to 7.
+
+**The format.**
+
+- **D-S17-1: one canonical format, V2, defined by the core's serde**
+  (the direction; decision 4 of the crate: plain serde). "Matching" is M-1
+  to M-3 of "What matching means". The core is the only writer of
+  Rust-defined shapes, so Python cannot drift from Rust: a Rust-backed
+  class never builds a V2 payload by hand.
+- **D-S17-2: the formats Python exposes stay DICT, JSON and BINARY;
+  postcard is not exposed.**
+  - JSON is the interchange format; DICT is `json.loads` of it.
+  - BINARY keeps the `FhYS` envelope, whose version byte becomes 2 for a
+    V2 payload: the canonical JSON bytes under codec `JSON`, the Python
+    type id in the header. Version 1 blobs keep decoding through V1.
+    `CUSTOM` codecs are unchanged.
+  - postcard stays the crate's non-JSON test format (D-17). A Python
+    postcard codec would carry foreign parts only as text, would have to
+    know each class's Rust type at decode, and no consumer asks for
+    compactness. It is a follow-up if one does.
+- **D-S17-3: type tags are serde's external tags** (D-S4-1; the direction).
+  - A Rust-backed family writes its core enum: the variant name as the
+    tag, scoped by the family (`{"file": ..}` in a provenance, `{"custom":
+    ..}` in a constraint). Python type ids do not appear in V2 payloads of
+    Rust-defined values.
+  - A pure-Python `WrappedFamilySerializable` family writes `{type_id:
+    data}`, the form serde gives an enum whose variants are the type ids.
+  - A Python-defined subclass of a Rust-backed open family (`Constraint`,
+    `ParamDomain`, `Type`, `DataType`, `SymbolTableFrame`) writes the
+    family's foreign variant, also on its own: `MyConstraint.to_json()` is
+    `{"custom": {"type_id": .., "data": ..}}`, as serializing a
+    `Constraint` holding it is in Rust.
+  - Python type ids remain for the registry, the binary header, foreign
+    parts and V1. The 19 pinned ids of `test_serialization_pins.py` stay
+    pinned.
+- **D-S17-4: field names are Python's where the meaning is the same, else
+  the core's** (D-S4-2, D-S4-1, D-16). The V2 shapes, settled test-first in
+  S17a:
+
+  | Type | V2 (JSON) |
+  |---|---|
+  | `Identifier`, `NoteKind`, `OpAttribute`, `Note`, `Position`, `Span` | today's (they already match) |
+  | `ValueDomain` | `[{"name", "description"}, ..]`, root first (R-4) |
+  | `Provenance` | `"unknown"`, `{"file": {"file_path", "span"}}`, `{"named": {"name", "child"}}`, `{"call_site": {"callee", "caller"}}`, `{"fused": {"sources", "label"}}` (B2) |
+  | `Expression` | `{"nodes": [..]}`, post-order (D-6); literals `{"bool": b}`, `{"int": "12"}`, `{"float": "1.5"}`, `{"decimal": "1.5"}`; callees `{"builtin": "sqrt"}`, `{"named": "f"}` |
+  | `Type` | `{"numerical": {"data_type", "shape"}}`, `{"index": {"lower_bound", "upper_bound", "stride"}}`, `{"extension": <foreign>}` |
+  | `Dimension` | `{"expression": <expression>}`, `"wildcard"` |
+  | `DataType` | `{"primitive": "int32"}`, `{"template": {"identifier", "widths"}}` (`widths` a list or `null`), `{"extension": <foreign>}` |
+  | frames | `{"import": {"name"}}`, `{"variable": {"name", "type", "type_qualifier"}}`, `{"function": {"name", "keyword", "signature": [{"type_qualifier", "type"}, ..]}}`, `{"custom": <foreign>}` |
+  | `SymbolTable` | today's shape: `{"namespaces": [{"namespace_name", "parent_namespace_name", "symbols": [{"symbol_name", "frame"}]}]}` |
+  | members, values | `{"bool": b}`, `{"int": "1"}`, `{"float": "2.5"}`, `{"str": "a"}`, `{"tuple": [..]}`, `{"frozen_set": [..]}`, `{"opaque": <foreign>}`; values also `{"decimal": ..}` |
+  | constraints | `{"equation": {"expression"}}`, `{"in_set": {"variable", "values"}}`, `{"not_in_set": {"variable", "values"}}`, `{"custom": <foreign>}` |
+  | `ConstraintSystem` | `{"constraints": [..]}` |
+  | domains | `{"integer": {"non_negative", "zero_included"}}`, `{"interval_integer": {"prefer_inclusive", "non_negative", "zero_included"}}`, `"real"`, `{"ordinal": {"sorted_values"}}`, `{"categorical": {"categories"}}`, `{"permutation": {"ordered_members"}}`, `{"custom": <foreign>}` |
+  | `Param`, `ParamAssignment` | `{"domain", "variable", "constraint_system"}`, `{"param", "value"}` |
+  | foreign part | `{"type_id": "<registered id>", "data": "<canonical JSON text>"}` |
+
+  Canonically ordered parts (set members, system constraints, categories)
+  are written in the canonical order of D-S13-4 and D-S16-4, and read in
+  any order.
+- **D-S17-5: numbers** (D-7; §I.3 rule 2; CONTRIBUTING).
+  - Floats are D-7's strings, so every float literal and float member
+    serializes, NaN and the infinities included (W-5). D-7's positional
+    text is kept: it is signed, round-trip exact, and only long for
+    exponents far from zero, which literals rarely have.
+  - Integers of any size are decimal strings; decimals are their
+    `Display` text (`"100"`, not V1's `"100.0"`: the tag already says
+    decimal).
+  - Fixed-width integers (ids, node indices, positions, widths) are JSON
+    numbers, as today.
+  - Numbers inside a Python-defined class's own payload are that class's
+    business; `allow_nan=False` still applies there.
+- **D-S17-6: identifiers and ids across processes are unchanged**
+  (decision 3 of the crate: `identifier` is dual-defined). Both languages
+  write `{"id", "name_hint"}` and restore the exact id, advancing the
+  process's counter; ids stay process-local, so documents from two
+  processes may reuse an id, as today. Shipped tags hold their reserved
+  ids in every process and language. An expression shared by identity is
+  written once and decoded with the same sharing (D-6); two equal subtrees
+  built apart are written twice, so byte identity holds for the same core
+  value, not for every structurally equal one.
+
+**The core.**
+
+- **D-S17-7: a new core module, `fhy_core::foreign`** (one public path;
+  layer 1, beside `identifier` and `interned`, since it depends on nothing
+  but serde):
+
+  ```rust
+  // fhy_core::foreign
+  #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+  #[serde(deny_unknown_fields)]
+  pub struct Foreign { type_id: Arc<str>, data: Arc<str> }   // data: the part's canonical JSON text
+  impl Foreign { pub fn new(type_id: impl Into<Arc<str>>, data: impl Into<Arc<str>>) -> Self;
+                 pub fn type_id(&self) -> &str; pub fn data(&self) -> &str; }
+  pub trait Resolve<T> { fn resolve(&self, foreign: &Foreign) -> Result<T, ForeignError>; }
+  #[derive(Debug, Clone, Copy, Default)] pub struct NoForeign;           // refuses every part
+  impl<T> Resolve<T> for NoForeign { .. }
+  #[non_exhaustive] pub enum ForeignError {
+      Unresolved { type_id: String },                                    // "no implementation for foreign part `x`"
+      NoWireForm { type_name: String },                                  // a part that cannot serialize itself
+      Failed { type_id: String, source: Box<dyn Error + Send + Sync> },
+  }
+  ```
+
+  The core never parses `data`; it is text under N-S17-2 (a). `Resolve<T>`
+  is generic over its target, so each module bounds it with its own trait
+  objects and `foreign` knows none of them (the layering).
+- **D-S17-8: the extension-variant problem, settled: a hook to write, a
+  resolver to read** (the direction; §I.3 rule 2; supersedes D-S11-16's and
+  D-S15-5's "no serde form").
+  - **Writing.** `TypeExtension`, `DataTypeExtension`, `OpaqueValue`,
+    `CustomConstraint` and `CustomDomain` gain one provided method, `fn
+    to_foreign(&self) -> Result<Foreign, ForeignError>`, whose default
+    answers `NoWireForm`. The open variant serializes the `Foreign` it
+    returns; an error becomes the serializer's error. An additive change
+    to each trait.
+  - **Reading.** Each type that can hold an open part gets a public
+    **wire type** (Pattern F, new): `fhy_core::types::wire::{TypeData,
+    DataTypeData, DimensionData}`, `fhy_core::symbol_table::wire::{
+    SymbolTableData<D>, SymbolFrameData}`, `fhy_core::constraint::wire::{
+    MemberData, ValueData, ConstraintData, ConstraintSystemData}` and
+    `fhy_core::param::wire::{ParamDomainData, ParamData,
+    ParamAssignmentData}`. A wire type is plain data that derives
+    `Deserialize` in the V2 shape, with foreign parts as `Foreign`, and has
+    `fn build<R>(self, resolver: &R) -> Result<X, _>`, bounded by
+    `Resolve<Arc<dyn TypeExtension>>` and so on, which resolves each part
+    and builds through the public constructors, so decoding validates
+    exactly as construction does.
+  - **Plain `Deserialize`** of each such type is its wire type built with
+    `NoForeign`, so a Rust program reads every Rust-defined value and
+    refuses a foreign part by name. The binding builds with its own
+    resolver.
+  - **Why not the alternatives:** a thread-local resolver in the core is
+    new global state; `DeserializeSeed` through every container means a
+    hand-written seed per type; a placeholder part the core decodes into
+    would have to answer questions it cannot (an ordinal domain of
+    placeholder values has no order); a binding-only decoder would define
+    every container's shape twice.
+  - `SymbolFrame` stays closed. `SymbolFrameData` still carries a
+    `Custom(Foreign)` variant, so the one shape definition covers the
+    binding's Python-defined frames; `SymbolFrame`'s own build refuses it.
+- **D-S17-9: serde for every remaining core type** (CONTRIBUTING; the
+  tests rule).
+  - `Type`, `NumericalType`, `IndexType`, `Dimension`, `DataType`,
+    `TemplateDataType`, `SymbolFrame` and its three frames, `SymbolTable<F>`
+    (for `F: Serialize`), `Value`, `Member`, `MemberSet`,
+    `EquationConstraint`, `SetConstraint`, `Constraint`, `ConstraintSystem`,
+    the six domains, `ParamDomain`, `Param` and `ParamAssignment`.
+  - Closed types use Patterns A to C. Serialization writes through
+    borrowed twins, as the expression wire does, and cloning nothing.
+    Validated types decode through their constructors, so a payload
+    outside a type's invariants (an empty or incomparable ordinal domain,
+    a non-positive width, a bound gate) fails with the constructor's error
+    as the decode error.
+  - Each has a JSON and a postcard round trip; the open ones also round
+    trip with a test resolver.
+
+**The binding and the framework.**
+
+- **D-S17-10: Rust-backed classes delegate to serde** (P2; D-S17-1).
+  - `serialize_to_dict` builds the dict from the core value's serde. The
+    binding gains two dependencies: `serde_json` (the binding may name its
+    types; the core's rule is unchanged, and no serde_json feature is
+    enabled) and `pythonize` 0.29, which converts serde to Python objects
+    directly. S17b.1 compares pythonize with `json.loads` of serde's text,
+    and keeps pythonize only if it wins and yields lists, never tuples
+    (`is_serialized_value` refuses tuples). Either way
+    `serialize_to_dict() == json.loads(to_json())` is a test.
+  - `to_json` is `serde_json::to_string` of the core value; `from_json`
+    parses straight into the wire type. Neither builds the dict.
+  - `deserialize_from_dict` and `from_json` decode into the wire type (or
+    the closed type), build with the binding's resolver, and materialize
+    the Python objects with the existing materializers
+    (`materialize_expression`, `type_to_python`, `member_to_python`, the
+    constraint and domain builders), which return an adapter's own Python
+    object for each resolved part.
+- **D-S17-11: Python-defined parts go through the adapters** (P3; D-S8-11,
+  D-S10-7, D-S13-5 adapter rules; CONTRIBUTING "Call back into Python per
+  hook").
+  - **Writing:** an adapter's `to_foreign` calls the object's
+    `get_serialization_class_type_id()` and its own payload,
+    `serialize_data_to_dict()` for a family member and `serialize_to_dict()`
+    otherwise, under V2, and dumps it canonically (M-3). One call per part.
+  - **Reading:** the resolver looks the type id up in the registry only
+    (no import fallback), calls the class's `deserialize_data_from_dict` or
+    `deserialize_from_dict` with `json.loads(data)`, and wraps the object in
+    its adapter.
+  - An object whose class is not a registered `Serializable` raises
+    `SerializationTypeError`; an unknown id raises `UnknownTypeIdError`; an
+    exception the hook raises propagates as itself, through a thread-local
+    pending-error slot like S13's, and a `KeyboardInterrupt` passes
+    through; a hook returning the wrong type raises `TypeError` in S2's
+    style.
+- **D-S17-12: Python-defined classes take part through the framework**
+  (the direction).
+  - The derivation engine is unchanged; it is format-neutral, and nested
+    fields follow the active version through their own writers.
+  - `WrappedFamilySerializable` writes `{type_id: data}` under V2 and the
+    envelope under V1; its reader detects which (D-S17-14).
+  - The families of D-S17-3 that are Rust-backed and open write the foreign
+    form for their Python-defined subclasses; each base names its foreign
+    variant in a class attribute.
+  - `fhy_core.serialization` gains `serialize_value(value)` and
+    `deserialize_value(data)`, the V2 counterparts of the registry-wrapped
+    functions, through the core's `Value` serde. The V1 functions keep
+    their names and behavior.
+- **D-S17-13: the version is a context, V2 by default** (N-S17-1 (a)).
+  - `fhy_core.serialization.WireVersion` (`V1`, `V2`) and a context manager
+    `wire_version(version)` over a `contextvars.ContextVar`, with
+    `current_wire_version()`. Every writer consults it: the Rust-backed
+    classes, `WrappedFamilySerializable`, the binary envelope. So a V1
+    document is V1 all the way down, including third-party classes'
+    nested calls, with no new parameter on any hook.
+  - Readers ignore it: they accept both versions (D-S17-14).
+  - The context is per thread and per task, so a V1 write never leaks into
+    another thread.
+- **D-S17-14: readers detect the version per class, at the root**
+  (the direction: keep reading V1).
+
+  | Class | Read as V1 when |
+  |---|---|
+  | `Identifier`, `Position`, `Span`, `Note`, `NoteKind`, `OpAttribute` | never needed: both versions are the same |
+  | `ValueDomain` | the payload is a dict (V2 is a list) |
+  | every family (expressions, provenance, types, data types, frames, domains, constraints, `ConstraintSystem`, pure-Python families) | the payload is exactly the two-key envelope |
+  | `Param` | its `domain` is an envelope |
+  | `ParamAssignment` | its `value` is an envelope |
+  | `SymbolTable` | some frame is an envelope (a table without frames reads the same in both) |
+  | Python-defined plain classes | no difference at their own level; nested fields detect themselves |
+
+  No V2 payload holds a two-key `{"__type__", "__data__"}` map: foreign
+  data is text, and every V2 tag map has one key. So detection is exact and
+  costs one look at the root. V2 decoding is strict (serde's
+  `deny_unknown_fields`); V1 decoding is today's code, whose nested calls
+  detect again per node, so a V1 document with V2 parts inside also reads.
+- **D-S17-15: V1 moves aside, unchanged, and is frozen** (the direction;
+  "no fallback": each version has one writer).
+  - Python: the envelope, the registry-wrapped functions and binary
+    version 1 move into a private module, `fhy_core/_serialization_v1.py`;
+    `fhy_core.serialization` re-exports the public names, so no import
+    changes.
+  - Binding: every class's V1 payload code, the one-pass expression
+    decoder and `serialization.rs`'s field shapes move into
+    `rust/fhy-core-py/src/legacy/`, one file per concept.
+  - The move is its own commit, before V2 lands, with the suite green and
+    no test changed. Afterwards V1 changes only to be deleted (N-S17-3):
+    its texts, errors and quirks stay exactly as they are.
+- **D-S17-16: the deprecation path** (N-S17-3 (a)). The V1 reader stays as
+  long as the package exists, pinned by the frozen corpus. Writing V1 emits
+  a `DeprecationWarning` from S17 on, once per `wire_version(V1)` block,
+  and the V1 writer is removed in the release the maintainer names
+  (proposed: 0.4.0), taking `_serialization_v1.py`'s writers and the
+  `legacy` writers with it.
+- **D-S17-17: errors** (D-S4-1; D-S7-12; CONTRIBUTING "Errors belong to
+  their module").
+
+  | Failure | Python |
+  |---|---|
+  | a V2 payload serde refuses (unknown variant or field, a missing field, a wrong type) | `DeserializationValueError`, serde's one-line text |
+  | a V2 payload a constructor refuses on build | `DeserializationValueError`, the core's text, chained to the constructor's error |
+  | text or bytes that are not JSON or UTF-8 | `MalformedPayloadError`, as today |
+  | an unknown foreign type id | `UnknownTypeIdError`, as today |
+  | a part that cannot serialize (unregistered class; `NoWireForm`) | `SerializationTypeError` |
+  | a Python hook raising | the exception itself |
+  | any V1 failure | exactly today's class and text |
+
+- **D-S17-18: `to_json` writes the canonical text** (M-1; W-9). Its
+  signature becomes `to_json(*, indent=None, sort_keys=False)`: with no
+  arguments it returns the canonical text; `indent` or `sort_keys=True`
+  re-formats it with `json.dumps` (`ensure_ascii=False`, `allow_nan=False`),
+  equal by value. Under V1 it writes today's text.
+- **D-S17-19: pickling is unchanged** (the direction; D-S16-9's forms).
+  Reduce values are not routed through the wire, so pickle speed and
+  stability do not depend on it. Every callable an existing pickle names
+  keeps accepting what it passes; `ValueDomain`'s pickle keeps passing its
+  V1 payload, which its reader still accepts, so a pickle written after
+  S17 also loads before it. A frozen pickle corpus, written by today's code
+  in S17.1, pins that old pickles load.
+- **D-S17-20: the golden corpus pins both versions** (CONTRIBUTING "Freeze
+  the golden corpus"; R-11).
+  - Serialization is now defined in both languages (both read and write
+    V2; Python also writes V1 and the foreign parts), so it earns a
+    corpus: `rust/fhy-core/tests/golden/generate_serialization_cases.py`
+    writes `serialization_cases.json`, a list of cases, each with its
+    class, its Rust type, its V1 payload and its V2 canonical text, over
+    fixed ids: every class, every variant, every literal kind (NaN, big
+    integers, decimals), shared subtrees, the `Ellipsis` dimension, and
+    foreign parts of each open family.
+  - `tests/test_golden_corpora.py` regenerates and compares it, as for the
+    interned corpus. The Rust replay (`tests/it/foreign/golden.rs`) reads
+    every V2 text into its Rust type and writes it back byte-identically,
+    and checks that each foreign case is refused by name without a
+    resolver and round-trips with a test resolver. `golden_expanded` gains
+    an entry for random seeded cases.
+  - When the V1 writer is removed, the generator's V1 half freezes: the
+    committed V1 payloads stay as a fixed regression corpus for the reader.
+  - `test_serialization_pins.py` keeps its 19 golden V1 blobs as reader
+    pins, and gains the V2 text of the same values.
+  - CONTRIBUTING's rule changes from "today `identifier` and `interned`" to
+    include serialization, with the reason.
+- **D-S17-21: the rules that named the envelope are revised** (the
+  direction). Cross-cutting rule 4 becomes: a switched class writes V2,
+  the core's serde, and reads V1 too. §I.3 rule 2's "the envelope lives
+  only in `fhy-core-py`" becomes "the V1 envelope lives only in the
+  binding's `legacy` module". CONTRIBUTING's "Serialization is plain serde"
+  gains Pattern F, the foreign part and the resolver, and loses the
+  sentence that the binding adds the envelope. The README's row for the
+  trait describes V2, V1 and `wire_version`.
+- **D-S17-22: no new process-global state** (CONTRIBUTING). The version is
+  a Python context variable. The binding's pending-error slot for
+  serialization hooks is a thread-local like S13's, empty whenever no
+  serialization runs, and gets its line in CONTRIBUTING's list. The core
+  gains none.
+- **D-S17-23: tests** (the tests rule; S7.2's practice). The core's serde
+  is specified by Rust tests first, against `todo!()` stubs. The Python
+  tests are rewritten, not skipped: a test pinning V1 writing runs inside
+  `wire_version(V1)`; a test pinning a class's current payload is rewritten
+  to V2; each change is recorded with its reason.
+- **D-S17-24: split into S17a and S17b** (the task's size rule;
+  cross-cutting rule 7). S17a is the core only, so its serde is settled and
+  reviewed before any Python payload changes.
+
+### Needs the user
+
+Three decisions change what users see in their stored data and APIs, and
+no earlier decision covers them.
+
+- **N-S17-1: what the writers produce by default after S17.**
+  - (a) V2. `serialize_to_dict`, `to_json`, `to_bytes` and `serialize`
+    write V2; V1 is written inside `wire_version(WireVersion.V1)`; readers
+    take both.
+  - (b) V1 for one more release. V2 is written inside
+    `wire_version(WireVersion.V2)`, and the default flips in the next
+    release.
+  - (c) V2 only through new methods (for example `to_wire_json`); the
+    existing methods write V1 for good.
+
+  Recommendation: (a). It is what the direction asks for; the package
+  already changed its payloads in S4 (D-S4-5) without a transition; every
+  stored V1 payload keeps loading; and a consumer that needs V1 bytes gets
+  them with one `with` block. (b) delays matching by a release for no
+  reader's benefit. (c) doubles the API, and third-party hooks, which nest
+  `serialize_to_dict`, would stay V1.
+- **N-S17-2: how a Python-defined part's payload sits inside a V2
+  document.**
+  - (a) As canonical JSON text in a string: `{"custom": {"type_id":
+    "pkg.Even", "data": "{\"modulus\":2}"}}`.
+  - (b) As nested JSON: `{"custom": {"type_id": "pkg.Even", "data":
+    {"modulus": 2}}}`.
+  - (c) As a tagged value tree the core defines: `"data": {"map":
+    [["modulus", {"int": "2"}]]}`.
+
+  Recommendation: (a). It keeps every core type serializable in every
+  format without an exception to the plain-serde rule, keeps D-S17-14's
+  version detection exact (no V1-looking dict can hide in V2), and a Rust
+  tool carries the part verbatim. The cost is readability of foreign parts
+  only: their JSON is escaped. (b) reads best, but needs `deserialize_any`
+  in the core, so documents holding foreign parts become JSON-only, which
+  is an exception to the signed rule; and V2 detection would have to look
+  past foreign data. (c) is format-generic but verbose and unlike any JSON
+  a person writes.
+- **N-S17-3: how long V1 lives.**
+  - (a) The V1 reader stays for good, pinned by the frozen corpus; writing
+    V1 warns (`DeprecationWarning`) from S17 on, and the V1 writer is
+    removed in a release the maintainer names (proposed: 0.4.0).
+  - (b) Both stay for good, without a warning.
+  - (c) Both are removed after one deprecation release.
+
+  Recommendation: (a). Stored data never becomes unreadable, which is the
+  point of the direction, while the second writer, which every future
+  shape change would otherwise have to follow, has an end.
+
+Decided by the policy, not asked:
+
+- **postcard is not exposed to Python** (D-S17-2): nothing needs it yet.
+- **Floats keep D-7's text**, a signed decision; V2 inherits it.
+- **Field names and tags** follow D-S4-1, D-S4-2 and D-16 (D-S17-3,
+  D-S17-4).
+- **New dependencies** (`serde_json` and `pythonize` in the binding only)
+  follow the crate's license list and the precedent of S8 and S9.
+- **No new process-global state** (D-S17-22).
+
+### Steps
+
+1. **S17.1: benchmarks and frozen inputs.** Add
+   `benchmarks/test_serialization.py` and record the V1 baseline on
+   today's package. Write, with today's code, the frozen pickle corpus
+   (`tests/serialization/data/pickles.json`: base64 pickles, protocols 2
+   and 5, of one object per class over fixed ids) and today's V1 payloads
+   of the corpus's cases, so the move of D-S17-15 and the generator's V1
+   half are checked against the code before them.
+2. **S17a.1: `fhy_core::foreign` and the hooks, test-first.** `Foreign`,
+   `Resolve`, `NoForeign`, `ForeignError`, and `to_foreign` on the five
+   traits. Update `lib.rs`, the crate README and CONTRIBUTING's layer list.
+3. **S17a.2: serde for types and the symbol table, test-first.** The wire
+   types of D-S17-8 and the impls of D-S17-9.
+4. **S17a.3: serde for constraints and params, test-first.**
+5. **S17a.4: the Rust side of the golden corpus.** The replay test and its
+   test resolver, reading cases written by hand until S17b.4 generates
+   them. Nothing in Python has changed yet.
+6. **S17b.1: the binding's plumbing.** The two dependencies, a `wire.rs`
+   (dict and JSON conversion, the error mapping, the pending-error slot),
+   the resolver, and `to_foreign` on every adapter; the pythonize spike.
+   Then the move of D-S17-15, as its own commit, with the suite unchanged.
+7. **S17b.2: the Python framework.** `WireVersion`, `wire_version`,
+   detection, the V2 envelope of pure-Python families and the foreign form
+   of open families, `serialize_value`/`deserialize_value`, binary version
+   2, `to_json`'s canonical text, the deprecation warning.
+8. **S17b.3: the switch of each Rust-backed class to V2** (marked
+   breaking), one commit per concept (provenance and tags; expressions;
+   types; symbol table; constraints; params), each with its migrated
+   tests and the stub.
+9. **S17b.4: the golden corpus and the interface suites.** The generator
+   and its committed corpus, the `golden_expanded` entry, and
+   `tests/serialization/test_wire_v2.py` and `test_wire_v1.py`.
+10. **S17b.5: benchmarks after, and docs.** The verdict, the rule and
+    README changes of D-S17-21, the status and implementation notes, and
+    this checklist.
+
+Commit per step. Every step ends with these green:
+
+- `pytest` and `-m "not very_slow"`;
+- the `property` session and `tests_minimal`;
+- `lint` and `type_check`;
+- `tests/test_rs_stub.py` and `tests/test_golden_corpora.py`;
+- the Rust gate: fmt, clippy `-D warnings` with and without
+  `--all-features`, tests with the default features and with all of them,
+  doc, deny, and `cargo +1.85 check`; `golden_expanded` from S17b.4 on.
+
+### Test plan
+
+**Rust tests, written first.**
+
+- **`tests/it/foreign/`:** `foreign_stories.rs` (`Foreign`'s JSON and
+  postcard round trips and `Display`; `NoForeign` refusing by type id;
+  each trait's default `to_foreign` answering `NoWireForm`, and a
+  serializer surfacing it), and `golden.rs` (D-S17-20).
+- **Per module, beside the existing stories:** `types/serde_stories.rs`,
+  `symbol_table/serde_stories.rs`, `constraint/serde_stories.rs`,
+  `param/serde_stories.rs`, each with:
+  - the JSON text of every variant, pinned, as D-S17-4 lists it;
+  - JSON and postcard round trips, and properties over generated values
+    (encode then decode is the identity, and encoding is deterministic);
+  - decoding in any order, re-encoding in the canonical order;
+  - every constructor refusal reached through decoding (an empty or
+    incomparable ordinal domain, duplicate categories, a non-positive
+    width, a native-constant param variable), with the constructor's error;
+  - an open part through a test-local extension, custom constraint,
+    custom domain and opaque value: refused by plain `Deserialize`,
+    written through `to_foreign`, rebuilt through a test resolver, and a
+    hook's error surfacing from the serializer;
+  - big integers, NaN, the infinities and `-0.0` in members and values.
+- **Traceability:** the V1 tests have no Rust counterpart (V1 is the
+  binding's); the new tests trace to D-S17-4 to D-S17-9.
+
+**The Python interface suites.**
+
+- **`tests/serialization/test_wire_v2.py`:**
+  - for one object of each of the 39 classes (and each variant):
+    `to_json()` equals the corpus's V2 text, `serialize_to_dict() ==
+    json.loads(to_json())`, and `from_json`, `deserialize_from_dict` and the
+    binary round trip rebuild an equivalent object;
+  - a third-party derived dataclass nesting a Rust-backed value, and a
+    pure-Python family, in both versions;
+  - foreign parts of each open family and of set members, domain members
+    and assignment values: written once per part, resolved through the
+    registry only, an unknown id, an unregistered class, a hook raising
+    (the same object), a `KeyboardInterrupt` passing through;
+  - `serialize_value` and `deserialize_value` for every value kind;
+  - V2 decode errors (W-11) and their texts;
+  - NaN and infinite float literals round-tripping;
+  - the canonical text's escapes against `serde_json`'s, and `indent` and
+    `sort_keys` re-formatting;
+  - `wire_version` per thread.
+- **`tests/serialization/test_wire_v1.py`:**
+  - the V1 writer's output equals the corpus's V1 payloads, all the way
+    down through third-party nested calls, and warns once per block;
+  - every V1 payload of the corpus and of the 19 pins decodes to the same
+    object as its V2 text;
+  - D-S17-14's detection table, row by row, including a V1 document with
+    V2 parts inside;
+  - binary version 1 blobs decode.
+- **Pickles:** every entry of the frozen pickle corpus loads to an
+  equivalent object, and a pickle written now matches today's reduce
+  value.
+
+**Migrating the existing tests.** Each change is recorded with its reason:
+
+- **Tests pinning V1 writing** (`test_serialization_pins.py`'s shapes,
+  `test_payload_data_follows_the_rust_semantics`, the envelope tests of
+  `tests/serialization/test_core.py`, `test_serialization_derive.py`'s
+  family tests, `tests/types/test_serialization.py`,
+  `tests/symbolic/constraint/test_serialization.py`, the payload tests of
+  the `*_rust_binding.py` suites): run inside `wire_version(V1)`, or gain
+  a V2 twin where the test is about the class rather than the version.
+- **Tests pinning a malformed payload's error:** keep their V1 input and
+  text; V2 inputs get D-S17-17's texts.
+- **The canonical text's key order** (`test_to_json_returns_sorted_keys_by_default`,
+  `test_default_serialize_to_binary_emits_sorted_json_keys`): rewritten to
+  W-9 (declaration order unless `sort_keys=True`). The NaN refusals
+  (`test_to_json_rejects_nan_and_infinity`,
+  `test_to_bytes_rejects_nan_and_infinity`) serialize a Python-defined
+  class's own float, so they stay as they are; W-5 is a new test.
+- **The binary envelope tests:** version 2, with version 1 decoding.
+- **Everything else is expected to pass unchanged:** round trips (they
+  compare objects, not payloads), the contract suite, the engine's codec
+  tests, the registry tests, and the pickle properties.
