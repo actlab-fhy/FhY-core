@@ -112,30 +112,33 @@ pub(crate) fn compare_ordinal(left: &Member, right: &Member) -> Option<Ordering>
 ///
 /// A comparison that is not a total order gives some order, never a
 /// panic, which [`slice::sort_by`] does not promise. The first `None` the
-/// comparison answers stops the sort and is returned as `Err`.
-pub(crate) fn sort_tolerantly<T: Clone>(
+/// comparison answers stops the sort and is returned as `Err`. The runs
+/// merged are of indices, so no item is cloned; the items move once, into
+/// the order found.
+pub(crate) fn sort_tolerantly<T>(
     items: Vec<T>,
     mut compare: impl FnMut(&T, &T) -> Option<Ordering>,
 ) -> Result<Vec<T>, ()> {
-    let mut current = items;
-    let length = current.len();
+    let length = items.len();
+    let mut current: Vec<usize> = (0..length).collect();
+    let mut merged = Vec::with_capacity(length);
     let mut width = 1;
     while width < length {
-        let mut merged = Vec::with_capacity(length);
+        merged.clear();
         let mut start = 0;
         while start < length {
             let middle = (start + width).min(length);
             let end = (start + 2 * width).min(length);
             let (mut left, mut right) = (start, middle);
             while left < middle && right < end {
-                match compare(&current[right], &current[left]) {
+                match compare(&items[current[right]], &items[current[left]]) {
                     None => return Err(()),
                     Some(Ordering::Less) => {
-                        merged.push(current[right].clone());
+                        merged.push(current[right]);
                         right += 1;
                     }
                     Some(_) => {
-                        merged.push(current[left].clone());
+                        merged.push(current[left]);
                         left += 1;
                     }
                 }
@@ -144,10 +147,14 @@ pub(crate) fn sort_tolerantly<T: Clone>(
             merged.extend_from_slice(&current[right..end]);
             start = end;
         }
-        current = merged;
+        std::mem::swap(&mut current, &mut merged);
         width *= 2;
     }
-    Ok(current)
+    let mut slots: Vec<Option<T>> = items.into_iter().map(Some).collect();
+    Ok(current
+        .into_iter()
+        .filter_map(|index| slots[index].take())
+        .collect())
 }
 
 /// Return whether two values are equal type-strictly: of one kind and
