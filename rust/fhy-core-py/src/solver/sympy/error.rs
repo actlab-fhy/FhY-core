@@ -5,17 +5,12 @@ use std::fmt;
 
 use pyo3::PyErr;
 
-use crate::expression::{Callee, FunctionName, NonBooleanLogicalOperandError};
-use crate::identifier::Identifier;
+use fhy_core::expression::{Callee, FunctionName, NonBooleanLogicalOperandError};
+use fhy_core::identifier::Identifier;
 
 /// Why the SymPy backend cannot run.
 #[derive(Debug)]
-#[non_exhaustive]
-pub enum SympyUnavailableError {
-    /// No Python interpreter is initialized in this process, so there is
-    /// nothing to attach to. See
-    /// [`SympySimplifier::with_embedded_python`](super::SympySimplifier::with_embedded_python).
-    NoInterpreter,
+pub(crate) enum SympyUnavailableError {
     /// Importing SymPy failed; the error is Python's.
     MissingSympy(PyErr),
     /// SymPy imported, but loading what the backend reads from it, or its
@@ -27,7 +22,6 @@ impl fmt::Display for SympyUnavailableError {
     /// Write one lowercase line naming what is missing.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoInterpreter => f.write_str("no python interpreter is initialized"),
             Self::MissingSympy(_) => f.write_str("the sympy package cannot be imported"),
             Self::Incompatible(_) => {
                 f.write_str("the sympy package does not provide what the backend needs")
@@ -39,7 +33,6 @@ impl fmt::Display for SympyUnavailableError {
 impl Error for SympyUnavailableError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::NoInterpreter => None,
             Self::MissingSympy(error) | Self::Incompatible(error) => Some(error),
         }
     }
@@ -47,8 +40,7 @@ impl Error for SympyUnavailableError {
 
 /// The phase of the backend's work an error arose in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum SympyPhase {
+pub(crate) enum SympyPhase {
     /// Lowering an expression to SymPy.
     Lowering,
     /// Simplifying a SymPy object.
@@ -62,8 +54,7 @@ pub enum SympyPhase {
 impl SympyPhase {
     /// Return the phase's name: `"lowering"`, `"simplification"`,
     /// `"substitution"` or `"lifting"`.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Lowering => "lowering",
             Self::Simplification => "simplification",
@@ -81,8 +72,7 @@ impl fmt::Display for SympyPhase {
 
 /// What went wrong in a [`SympyError`].
 #[derive(Debug)]
-#[non_exhaustive]
-pub enum SympyErrorKind {
+pub(crate) enum SympyErrorKind {
     /// The backend cannot run.
     Unavailable(SympyUnavailableError),
     /// A Boolean position of the expression to lower provably holds a
@@ -102,6 +92,9 @@ pub enum SympyErrorKind {
     /// A reference to a user constant whose value the context does not
     /// know, since it holds no registry.
     ConstantValueUnknown(Identifier),
+    /// A built-in constant SymPy has no value for; the catalogue is
+    /// `#[non_exhaustive]`, and every constant it holds today has one.
+    UnsupportedConstant(Identifier),
     /// A substitution binds native constants the object refers to.
     BoundNativeConstant(Vec<Identifier>),
     /// SymPy's complex infinity, which no expression denotes.
@@ -134,33 +127,29 @@ pub enum SympyErrorKind {
 
 /// A failure of the SymPy backend: what went wrong, and in which phase.
 #[derive(Debug)]
-pub struct SympyError {
+pub(crate) struct SympyError {
     phase: SympyPhase,
     kind: SympyErrorKind,
 }
 
 impl SympyError {
     /// Return the error of `kind` in `phase`.
-    #[must_use]
-    pub fn new(phase: SympyPhase, kind: SympyErrorKind) -> Self {
+    pub(crate) fn new(phase: SympyPhase, kind: SympyErrorKind) -> Self {
         Self { phase, kind }
     }
 
     /// Return the phase the error arose in.
-    #[must_use]
-    pub fn phase(&self) -> SympyPhase {
+    pub(crate) fn phase(&self) -> SympyPhase {
         self.phase
     }
 
     /// Return what went wrong.
-    #[must_use]
-    pub fn kind(&self) -> &SympyErrorKind {
+    pub(crate) fn kind(&self) -> &SympyErrorKind {
         &self.kind
     }
 
     /// Return what went wrong, consuming the error.
-    #[must_use]
-    pub fn into_kind(self) -> SympyErrorKind {
+    pub(crate) fn into_kind(self) -> SympyErrorKind {
         self.kind
     }
 }
@@ -199,6 +188,9 @@ impl fmt::Display for SympyError {
                 f,
                 "the value of the native constant {identifier:?} is unknown without a registry"
             ),
+            SympyErrorKind::UnsupportedConstant(identifier) => {
+                write!(f, "the built-in constant {identifier:?} has no sympy value")
+            }
             SympyErrorKind::BoundNativeConstant(identifiers) => {
                 f.write_str(
                     "cannot bind the native constants the expression refers to, \

@@ -325,15 +325,16 @@ pattern or is recorded as an accepted cost.
 ## Porting to Rust
 
 *FhY* Core is moving to Rust one module at a time. The Rust code is a
-Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library;
-it depends on PyO3 only under its off-by-default `sympy` feature, whose
-`SympySimplifier` drives SymPy (slice S12 of
-`docs/design/python-switch.md`). `rust/fhy-core-py` holds the PyO3
-bindings, and maturin builds it into the extension module `fhy_core._rs`.
-Both crates use the one `pyo3` of the workspace table, since `pyo3-ffi`
-links `python` and a build holds one. A port adds its
-types to `fhy-core` and their bindings to `fhy-core-py`. Every port follows
-these rules.
+Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library,
+with no PyO3 and no Python at build or test time. `rust/fhy-core-py` holds
+the PyO3 bindings, and maturin builds it into the extension module
+`fhy_core._rs`; it also holds the SymPy backend, `solver::sympy`, a
+`fhy_core::solver::Simplifier` that drives SymPy in the interpreter the
+extension runs in (slice S12 of `docs/design/python-switch.md`, moved there
+by R2-005a of `docs/design/rust-port-fixes.md`). The workspace table holds
+the one `pyo3`, since `pyo3-ffi` links `python` and a build holds one. A
+port adds its types to `fhy-core` and their bindings to `fhy-core-py`.
+Every port follows these rules.
 
 ### One extension module per process
 
@@ -588,7 +589,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
-| `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | `fhy_core::solver` (`SympySimplifier`, behind the `sympy` feature) |
+| `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | the binding (`fhy-core-py`'s `solver::sympy`), a `fhy_core::solver::Simplifier` |
 | `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
 | `fhy_core.lattice`, `fhy_core.utils.poset` | `fhy_core::lattice` |
 | `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
@@ -665,22 +666,25 @@ module. A test that needs a fresh process, because it moves process-global
 state further than an ordinary test tolerates, is its own test target, a
 file `tests/<name>.rs` beside `tests/it/` with exactly one `#[test]` and a
 comment saying why, and it is added to the target list the CI `rust` job
-checks. Today there are two: `id_cap_decode`, which moves the id counter
-to `ID_CAP`, and `sympy_unavailable`, which needs a process without a
-Python interpreter. Nothing re-executes a test binary to get a fresh
-process.
+checks. Today there is one: `id_cap_decode`, which moves the id counter
+to `ID_CAP`. Nothing re-executes a test binary to get a fresh process; a
+test that needs a process without SymPy is a Python subprocess test
+(`test_missing_sympy_reports_unavailable`).
 
-The `sympy` feature's stories embed Python and need SymPy, and every
-workspace build enables the feature through the binding, so `cargo test
---workspace` fails them, with the recipe, when SymPy cannot be imported.
-Build and run them with `PYO3_PYTHON` naming a Python that has a shared
-libpython and the `sympy` package, `PYTHONPATH` naming that Python's
-`site-packages` (an embedded interpreter does not read a virtualenv's
-`pyvenv.cfg`), and `LD_LIBRARY_PATH` naming its libpython's directory when
-the loader does not find it. A Python built without a shared libpython,
-such as a distribution's `python3.11` without `libpython3.11.so`, fails to
-link with `unable to find library -lpython3.11`; a uv-managed CPython has
-one:
+`fhy-core` needs no Python: `cargo test -p fhy-core`, with any features,
+runs in a shell with no Python environment at all. The binding's tests do:
+the SymPy backend's stories are `#[cfg(test)]` modules of `fhy-core-py`'s
+`solver::sympy`, and `cargo test -p fhy-core-py`, and so `cargo test
+--workspace`, builds a test binary that links libpython, embeds an
+interpreter and imports SymPy, and fails them, with the recipe, when SymPy
+cannot be imported. Build and run them with `PYO3_PYTHON` naming a Python
+that has a shared libpython and the `sympy` package, `PYTHONPATH` naming
+that Python's `site-packages` (an embedded interpreter does not read a
+virtualenv's `pyvenv.cfg`), and `LD_LIBRARY_PATH` naming its libpython's
+directory when the loader does not find it. A Python built without a
+shared libpython, such as a distribution's `python3.11` without
+`libpython3.11.so`, fails to link with `unable to find library
+-lpython3.11`; a uv-managed CPython has one:
 
 ```bash
 G=$PWD/target/gate-python
@@ -699,8 +703,7 @@ Python, the binding returns the same Python object for the same canonical
 instance every time, so `is` holds exactly as it does for values interned
 in Python. The binding crate keeps that cache, an `IdentityCache` per
 interned class in `rust/fhy-core-py/src/interned.rs`; the core crate holds
-no Python objects, except the SymPy handles that the `sympy` feature's
-`SympySimplifier` loads into its own value.
+no Python objects.
 
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:

@@ -1,6 +1,5 @@
 //! Stories for simplifying with SymPy, [`SympySimplifier`] as a
-//! [`Simplifier`] and its SymPy-level operations, under the `sympy`
-//! feature: decided comparisons, the workarounds, the best-effort cases,
+//! [`Simplifier`] and its SymPy-level operations: decided comparisons, the workarounds, the best-effort cases,
 //! the substitution, the phases of errors, threads, and the prelude.
 
 use std::collections::HashMap;
@@ -10,16 +9,15 @@ use std::thread;
 use fhy_core::expression::builtins::BuiltinConstant;
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Expression, ExpressionKind, LiteralValue, NoRegisteredSorts};
-use fhy_core::solver::{
-    Simplifier, SimplifyContext, SolveError, Solver, SympyError, SympyErrorKind, SympyPhase,
-    SympySimplifier,
-};
+use fhy_core::solver::{Simplifier, SimplifyContext, SolveError, Solver};
 use pyo3::exceptions::PyKeyboardInterrupt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::support::expression::{build_identifier, build_literal};
-use crate::support::sympy::{attached, backend, evaluate, srepr, with_patched_sympy};
+use super::test_support::{
+    attached, backend, build_identifier, build_literal, evaluate, srepr, with_patched_sympy,
+};
+use super::{SympyError, SympyErrorKind, SympyPhase, SympySimplifier};
 
 /// Return the solver holding a new SymPy backend.
 fn solver() -> Solver {
@@ -413,6 +411,6 @@ fn load_succeeds_and_debug_names_the_backend() {
     let fresh = SympySimplifier::new();
     backend();
 
-    fresh.load().expect("loaded");
+    attached(|py| fresh.load(py)).expect("loaded");
     assert!(format!("{fresh:?}").starts_with("SympySimplifier"));
 }

@@ -10798,6 +10798,15 @@ Where a decision follows an earlier slice's decision or note, it says so.
     - "Canonical values keep their identity in Python" now says that the
       core holds no Python objects outside that feature's
       `SympySimplifier`, which holds its SymPy handles.
+  - **Revised (R2-005a, 2026-09-27):** the backend moved into the binding,
+    `fhy-core-py/src/solver/sympy/`, with every item `pub(crate)` (F2-005:
+    pyo3 made a public, breaking dependency of a crate headed for
+    crates.io, and a downstream crate on another pyo3 could not enable the
+    feature). The core has no pyo3, no `sympy` feature and no Python file;
+    `fhy_core::solver::{SympySimplifier, SympyError, SympyErrorKind,
+    SympyPhase, SympyUnavailableError}` are gone. CONTRIBUTING's two
+    places say the core has no PyO3 and holds no Python objects. See
+    `docs/design/rust-port-fixes.md` R2-005a.
 - **D-S12-3: the binding enables `fhy-core/sympy`** (the direction;
   D-S9's `ndarray` precedent).
   - `fhy-core-py` depends on `fhy-core` with `features = ["sympy"]`,
@@ -10816,6 +10825,10 @@ Where a decision follows an earlier slice's decision or note, it says so.
     free of SymPy, but it puts `cfg` branches in the binding, and a build
     without the feature leaves `SolverBackend.SYMPY` without a backend.
     N-S12-1 treats the test-time consequence.
+  - **Revised (R2-005a, 2026-09-27):** there is no feature to enable: the binding holds the
+    backend and depends on `fhy-core` with `features = ["ndarray"]` only.
+    Every workspace build still compiles the backend and its stories, now
+    as the binding's; `cargo test -p fhy-core` builds no Python at all.
 - **D-S12-4: the core's public API** (crate conventions; D-S8-9's
   shape for `Z3Solver`). Everything below is under `#[cfg(feature =
   "sympy")]` in a new private `solver/sympy.rs` (with `sympy/load.rs`,
@@ -11130,6 +11143,18 @@ Where a decision follows an earlier slice's decision or note, it says so.
     With the `z3` feature too, `LD_LIBRARY_PATH` also names the
     z3-solver wheel's `lib` (S8.3). CONTRIBUTING's porting section records
     the recipe, which nothing outside the worktree needs.
+  - **Revised (R2-005a, 2026-09-27):** the stories are `#[cfg(test)]` modules of the
+    binding's `solver::sympy`, run by `cargo test -p fhy-core-py` in an
+    interpreter the test binary embeds (`Python::initialize()` in their
+    support module); `with_embedded_python` and
+    `SympyUnavailableError::NoInterpreter` are gone, since the binding
+    always runs inside an interpreter. `tests/sympy_unavailable.rs` is
+    deleted: its missing-SymPy half is the Python subprocess test
+    `test_missing_sympy_reports_unavailable`, and its no-interpreter half
+    has nothing left to test. CI's integration-target list is
+    `id_cap_decode it`. The recipe still serves `cargo test --workspace`,
+    for the binding's tests; `fhy-core` needs none of `PYO3_PYTHON`,
+    `PYTHONPATH` or libpython on `LD_LIBRARY_PATH`.
 - **D-S12-14: `deny.toml` does not change** (D-S8-9's reasoning).
   - `cargo deny` checks the workspace graph with `all-features = true`.
     pyo3 and its tree (`pyo3-ffi`, `pyo3-build-config`, `pyo3-macros`,
@@ -11247,6 +11272,10 @@ The paths at risk:
   `PYO3_PYTHON`, `PYTHONPATH`, and `LD_LIBRARY_PATH` where the linked
   libpython is not on the loader's path. There is no opt-in variable.
   D-S12-13 records the recipe for CI and for this machine.
+  - **Revised (R2-005a, 2026-09-27):** "wherever the feature is enabled" now reads "wherever
+    the binding's tests build", which is every workspace test run; the
+    rule is otherwise unchanged. `cargo test -p fhy-core` never needs
+    SymPy.
 
 ### S12 rebase onto S9 (2026-09-26)
 
@@ -11884,6 +11913,10 @@ The Rust gate is green with `target/gate-python/env.sh` (D-S12-13):
 
 Every benchmark row is faster, or within 10% (see "S12 benchmarks"). The CI
 workflow's new steps first run on the next pull request.
+
+- **Revised (R2-005a, 2026-09-27):** the backend now lives in the binding, and the core
+  has no pyo3 and no `sympy` feature (D-S12-2, D-S12-3, D-S12-13 and
+  N-S12-1 carry the revision). The counts above are S12's.
 
   copies, so the core's semantics are unchanged.
 - **`pformat_expression` refuses a non-expression** with `TypeError`;

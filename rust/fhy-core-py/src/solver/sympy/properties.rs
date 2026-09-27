@@ -1,5 +1,5 @@
-//! Properties of the SymPy backend, under the `sympy` feature, with the
-//! core's evaluator as the oracle: a ground integer or Boolean tree
+//! Properties of the SymPy backend, with the core's evaluator as the
+//! oracle: a ground integer or Boolean tree
 //! simplifies to the literal it evaluates to, and lifting the lowering of a
 //! tree over identifiers gives an expression that evaluates the same at any
 //! binding.
@@ -10,10 +10,11 @@ use fhy_core::expression::evaluate::{Evaluator, Scalar};
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Expression, LogicalOperation};
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::{SimplifyContext, Solver, SympySimplifier};
+use fhy_core::solver::{SimplifyContext, Solver};
 use proptest::prelude::*;
 
-use crate::support::sympy::{attached, backend};
+use super::SympySimplifier;
+use super::test_support::{attached, backend};
 
 /// Return a small integer tree over `leaves`.
 fn integer_tree(leaves: BoxedStrategy<Expression>) -> BoxedStrategy<Expression> {

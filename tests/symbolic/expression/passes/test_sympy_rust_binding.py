@@ -137,6 +137,37 @@ def test_constructing_the_backend_imports_nothing_and_its_question_reports_sympy
     assert "fhy_core[sympy]" in message
 
 
+@pytest.mark.subprocess
+def test_missing_sympy_reports_unavailable() -> None:
+    """Test a missing SymPy fails ``load``, and a later load succeeds.
+
+    The fresh-process half of the Rust target the SymPy backend's move into
+    the binding removed: the backend keeps no failed load, so once SymPy
+    imports, the same backend loads and simplifies.
+    """
+    completed = _run_python(
+        """
+        import sys
+        sys.modules["sympy"] = None
+        from fhy_core import _rs
+        from fhy_core.symbolic.expression import LiteralExpression
+        from fhy_core.symbolic.solver import SolverBackendUnavailableError
+        backend = _rs.SympySimplifier()
+        try:
+            backend.load()
+        except SolverBackendUnavailableError as error:
+            print(isinstance(error.__cause__, ImportError))
+        del sys.modules["sympy"]
+        backend.load()
+        simplified = backend.simplify(LiteralExpression(1))
+        print(simplified.is_structurally_equivalent(LiteralExpression(1)))
+        """
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["True", "True"]
+
+
 # =============================================================================
 # The native path
 # =============================================================================

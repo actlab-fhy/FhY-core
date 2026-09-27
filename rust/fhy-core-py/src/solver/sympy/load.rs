@@ -6,7 +6,7 @@ use std::ffi::CString;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use crate::expression::builtins::BuiltinFunction;
+use fhy_core::expression::builtins::BuiltinFunction;
 
 use super::error::SympyUnavailableError;
 

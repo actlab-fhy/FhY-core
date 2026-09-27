@@ -215,7 +215,7 @@ const ON_TIME: Duration = Duration::from_millis(1500);
 fn check_with_short_timeout(
     backend: &SmtLib2Process,
     script: &SmtScript,
-) -> (Result<SatResult, BackendError>, Duration) {
+) -> (Result<SatResult, BoxError>, Duration) {
     let started = Instant::now();
     let result = backend.check(script, &CheckLimits::new().with_timeout(SHORT_TIMEOUT));
     (result, started.elapsed())

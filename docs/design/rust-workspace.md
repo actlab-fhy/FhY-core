@@ -206,6 +206,10 @@ the Part II text, this table governs; each such difference is also listed in
   `CustomError`, `BackendError`, `PassFailure`), so `types` and `evaluate`
   no longer import the pattern module for it. See
   `docs/design/rust-port-fixes.md` R2-007.
+- **Revised (R2-005a, 2026-09-27), D-19:** the published crate ships no
+  Python file at all. S12 had added the SymPy prelude,
+  `src/solver/sympy/prelude.py`, to the package list; it moved with the
+  backend into the binding (`docs/design/rust-port-fixes.md` R2-005a).
 
 ## I.6 Implementation order
 

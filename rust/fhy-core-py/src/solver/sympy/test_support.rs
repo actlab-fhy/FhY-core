@@ -1,5 +1,5 @@
-//! The embedded interpreter and the SymPy backend the `sympy` feature's
-//! stories share.
+//! The embedded interpreter, the SymPy backend and the expression builders
+//! the SymPy backend's stories share.
 //!
 //! The stories need Python with SymPy (N-S12-1 of
 //! `docs/design/python-switch.md`, resolved as required): without it,
@@ -7,29 +7,48 @@
 
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
-use fhy_core::solver::SympySimplifier;
+use fhy_core::expression::{Expression, LiteralValue};
+use fhy_core::identifier::Identifier;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::SympySimplifier;
+
 /// What a story needs to run, when SymPy cannot be loaded.
-const RECIPE: &str = "the sympy feature's stories need Python with SymPy. Build and run \
+const RECIPE: &str = "the SymPy backend's stories need Python with SymPy. Build and run \
      them with PYO3_PYTHON naming a Python that has a shared libpython and the sympy \
      package, PYTHONPATH naming that Python's site-packages (an embedded interpreter \
      does not read a virtualenv's pyvenv.cfg), and LD_LIBRARY_PATH naming the \
-     directory of its libpython when the loader does not find it; D-S12-13 of \
-     docs/design/python-switch.md records the recipe for CI and for a development \
-     machine";
+     directory of its libpython when the loader does not find it; CONTRIBUTING's \
+     \"Rust test layout\" records the recipe";
 
-/// The backend the stories share, in an embedded interpreter.
+/// The backend the stories share, in an interpreter this test binary
+/// embeds. The interpreter runs without signal handlers and is never
+/// finalized.
 static BACKEND: LazyLock<SympySimplifier> = LazyLock::new(|| {
-    let backend = SympySimplifier::with_embedded_python();
-    if let Err(error) = backend.load() {
+    Python::initialize();
+    let backend = SympySimplifier::new();
+    if let Err(error) = Python::attach(|py| backend.load(py)) {
         let cause = std::error::Error::source(&error)
             .map_or_else(String::new, |source| format!(": {source}"));
         panic!("{RECIPE}. Loading SymPy failed: {error}{cause}");
     }
     backend
 });
+
+/// Mint an identifier named `name` and return it with a reference to it.
+#[must_use]
+pub(crate) fn build_identifier(name: &str) -> (Identifier, Expression) {
+    let identifier = Identifier::new(name);
+    let reference = Expression::from(identifier.clone());
+    (identifier, reference)
+}
+
+/// Return a literal expression holding `value`.
+#[must_use]
+pub(crate) fn build_literal(value: impl Into<LiteralValue>) -> Expression {
+    Expression::from(value.into())
+}
 
 /// Serializes the stories that replace a SymPy function for their own
 /// thread, so each restores the function it replaced.

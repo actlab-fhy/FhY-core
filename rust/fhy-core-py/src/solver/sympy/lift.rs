@@ -1,16 +1,15 @@
 //! Lifting SymPy objects to expressions.
 
-use num_bigint::{BigInt, Sign};
-use num_traits::{One, Signed};
+use num_traits::{One, Signed, Zero};
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple};
 
-use crate::expression::builtins::{BuiltinConstant, BuiltinFunction};
-use crate::expression::{
-    BinaryOperation, Decimal, Expression, LiteralValue, LogicalOperation, UnaryOperation,
+use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
+use fhy_core::expression::{
+    BigInt, BinaryOperation, Decimal, Expression, LiteralValue, LogicalOperation, UnaryOperation,
 };
-use crate::identifier::Identifier;
+use fhy_core::identifier::Identifier;
 
 use super::boolean::Fallible;
 use super::error::SympyErrorKind;
@@ -394,7 +393,7 @@ pub(super) fn lift_rational(numerator: &BigInt, denominator: &BigInt) -> Express
     if let Some(decimal) = exact_decimal(numerator.abs(), denominator) {
         if decimal.to_f64_exact().is_some() {
             let magnitude = Expression::literal(LiteralValue::Decimal(decimal));
-            return if numerator.sign() == Sign::Minus {
+            return if numerator.is_negative() {
                 Expression::new_unary(UnaryOperation::Negate, magnitude)
             } else {
                 magnitude
@@ -412,7 +411,7 @@ pub(super) fn lift_rational(numerator: &BigInt, denominator: &BigInt) -> Express
 fn split_off(mut value: BigInt, prime: u32) -> (u32, BigInt) {
     let prime = BigInt::from(prime);
     let mut exponent = 0;
-    while (&value % &prime).sign() == Sign::NoSign {
+    while (&value % &prime).is_zero() {
         value /= &prime;
         exponent += 1;
     }

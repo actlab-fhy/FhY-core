@@ -1,13 +1,5 @@
-//! A simplifier that runs SymPy through an embedded or host Python
-//! interpreter, behind the `sympy` feature.
-
-mod boolean;
-mod error;
-mod lift;
-mod load;
-mod lower;
-mod simplify;
-mod substitute;
+//! The SymPy backend: a `Simplifier` that runs SymPy in the interpreter the
+//! extension module runs in.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -19,28 +11,31 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString};
 
-use crate::expression::{BooleanScreen, Expression};
-use crate::identifier::Identifier;
+use fhy_core::expression::builtins::BuiltinConstant;
+use fhy_core::expression::{BooleanScreen, Expression, SortLookup};
+use fhy_core::identifier::Identifier;
+use fhy_core::foreign::BoxError;
+use fhy_core::solver::{Simplifier, SimplifyContext};
 
-use super::backend::{Simplifier, SimplifyContext};
-use super::screen::is_native_constant;
-use crate::foreign::BoxError;
+use super::error::{SympyError, SympyErrorKind, SympyPhase, SympyUnavailableError};
+use super::load::Handles;
+use super::{lift, lower, simplify, substitute};
 
-pub use error::{SympyError, SympyErrorKind, SympyPhase, SympyUnavailableError};
-
-use load::Handles;
+/// Return whether `identifier` is a native constant's: a built-in
+/// constant's, or one `sorts` reports, as the core's hazard screen judges
+/// it.
+fn is_native_constant(identifier: &Identifier, sorts: &dyn SortLookup) -> bool {
+    BuiltinConstant::of_identifier(identifier).is_some()
+        || sorts.native_constant_sort(identifier).is_some()
+}
 
 /// A [`Simplifier`] that lowers an expression to SymPy, simplifies it with
 /// `sympy.simplify`, and lifts the result back.
 ///
-/// It needs a Python interpreter with the `sympy` package at run time, and
-/// never starts one on its own: inside a Python process, such as the
-/// `fhy_core` extension module, it attaches to the running interpreter,
-/// and a Rust program starts one first, with
-/// [`with_embedded_python`](Self::with_embedded_python) or
-/// `pyo3::Python::initialize`. Without an interpreter, or without SymPy,
-/// every operation fails with [`SympyUnavailableError`], and
-/// [`load`](Self::load) tells whether simplification can run.
+/// It runs in the interpreter the extension module runs in, and needs the
+/// `sympy` package there. Without SymPy, every operation fails with
+/// [`SympyUnavailableError`], and [`load`](Self::load) tells whether
+/// simplification can run.
 ///
 /// Nothing is imported until the first operation, which imports SymPy and
 /// loads the backend's prelude, a small Python module of the SymPy classes
@@ -71,56 +66,18 @@ use load::Handles;
 ///   `-oo` and `nan` become the built-in constants. Complex infinity and a
 ///   piecewise without a final `True` branch are refused.
 ///
-/// # Examples
-///
-/// ```no_run
-/// use std::collections::HashMap;
-///
-/// use fhy_core::expression::Expression;
-/// use fhy_core::expression::registry::FunctionRegistry;
-/// use fhy_core::identifier::Identifier;
-/// use fhy_core::solver::{SimplifyContext, Solver, SympySimplifier};
-///
-/// let simplifier = SympySimplifier::with_embedded_python();
-/// simplifier.load()?;
-/// let x = Identifier::new("x");
-/// let registry = FunctionRegistry::new();
-/// let solver = Solver::new().with_simplifier(simplifier);
-///
-/// let decided = solver.simplify(
-///     &Expression::from(x.clone()).greater(0),
-///     &HashMap::from([(x, Expression::literal(3))]),
-///     &SimplifyContext::from_registry(&registry),
-/// )?;
-///
-/// assert_eq!(decided, Expression::literal(true));
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub struct SympySimplifier {
+/// The stories in `simplify_stories.rs` show it at work, through a
+/// `Solver` and alone.
+pub(crate) struct SympySimplifier {
     handles: PyOnceLock<Arc<Handles>>,
 }
 
 impl SympySimplifier {
     /// Return the backend, loading nothing.
-    #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             handles: PyOnceLock::new(),
         }
-    }
-
-    /// Start an embedded Python interpreter if none is running, and return
-    /// the backend.
-    ///
-    /// The interpreter is the one this crate was linked against (found
-    /// through `PYO3_PYTHON`, or `python3` on `PATH`, at build time), and
-    /// runs without signal handlers. It finds SymPy on its default path or
-    /// through `PYTHONPATH`. Inside a running interpreter this starts
-    /// nothing. The interpreter is never finalized.
-    #[must_use]
-    pub fn with_embedded_python() -> Self {
-        Python::initialize();
-        Self::new()
     }
 
     /// Import SymPy and load the backend's prelude now, if no operation
@@ -128,11 +85,9 @@ impl SympySimplifier {
     ///
     /// # Errors
     ///
-    /// Returns [`SympyUnavailableError`] when no interpreter is running or
-    /// SymPy cannot be loaded.
-    pub fn load(&self) -> Result<(), SympyUnavailableError> {
-        Python::try_attach(|py| self.handles(py).map(drop))
-            .unwrap_or(Err(SympyUnavailableError::NoInterpreter))
+    /// Returns [`SympyUnavailableError`] when SymPy cannot be loaded.
+    pub(crate) fn load(&self, py: Python<'_>) -> Result<(), SympyUnavailableError> {
+        self.handles(py).map(drop)
     }
 
     /// Return the loaded handles, loading them first if needed.
@@ -159,7 +114,7 @@ impl SympySimplifier {
     /// for; `ConstantValueUnknown` for a user constant of a context
     /// without a registry; `PartialPiecewise` for a Boolean piecewise
     /// without an otherwise branch; and any exception SymPy raises.
-    pub fn lower<'py>(
+    pub(crate) fn lower<'py>(
         &self,
         py: Python<'py>,
         expression: &Expression,
@@ -182,7 +137,7 @@ impl SympySimplifier {
     ///
     /// Returns a [`SympyError`] in [`SympyPhase::Lifting`] for an object no
     /// expression denotes, or of a kind the lifting does not know.
-    pub fn lift(&self, object: &Bound<'_, PyAny>) -> Result<Expression, SympyError> {
+    pub(crate) fn lift(&self, object: &Bound<'_, PyAny>) -> Result<Expression, SympyError> {
         let phase = SympyPhase::Lifting;
         let handles = self.handles_in(object.py(), phase)?;
         lift::Lifter::new(handles)
@@ -197,7 +152,7 @@ impl SympySimplifier {
     ///
     /// Returns a [`SympyError`] in [`SympyPhase::Simplification`] for any
     /// other failure, such as an exception `sympy.simplify` raises.
-    pub fn simplify_object<'py>(
+    pub(crate) fn simplify_object<'py>(
         &self,
         object: &Bound<'py, PyAny>,
     ) -> Result<Bound<'py, PyAny>, SympyError> {
@@ -219,7 +174,7 @@ impl SympySimplifier {
     /// the context's sorts, whose symbol `object` holds free, and any
     /// exception a rebuilt node raises; and in [`SympyPhase::Lowering`] the
     /// errors of [`lower`](Self::lower) for a value.
-    pub fn substitute<'py, S: BuildHasher>(
+    pub(crate) fn substitute<'py, S: BuildHasher>(
         &self,
         object: &Bound<'py, PyAny>,
         environment: &HashMap<Identifier, Expression, S>,
@@ -279,7 +234,7 @@ impl SympySimplifier {
     /// Returns a [`SympyError`] in [`SympyPhase::Substitution`] for an
     /// exception a rebuilt node raises, such as SymPy refusing a
     /// comparison with complex infinity.
-    pub fn substitute_symbols<'py>(
+    pub(crate) fn substitute_symbols<'py>(
         &self,
         object: &Bound<'py, PyAny>,
         replacements: &Bound<'py, PyAny>,
@@ -331,13 +286,7 @@ impl Simplifier for SympySimplifier {
         expression: &Expression,
         context: &SimplifyContext<'_>,
     ) -> Result<Expression, BoxError> {
-        Python::try_attach(|py| self.simplify_attached(py, expression, context))
-            .unwrap_or_else(|| {
-                Err(SympyError::new(
-                    SympyPhase::Lowering,
-                    SympyErrorKind::Unavailable(SympyUnavailableError::NoInterpreter),
-                ))
-            })
+        Python::attach(|py| self.simplify_attached(py, expression, context))
             .map_err(|error| Box::new(error) as BoxError)
     }
 }

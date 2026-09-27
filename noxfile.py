@@ -19,8 +19,8 @@ SOURCES = [
     "tests",
     "benchmarks",
     "rust/fhy-core/tests/golden",
-    # The SymPy backend's prelude, the one Python module of the core crate.
-    "rust/fhy-core/src/solver/sympy",
+    # The SymPy backend's prelude, the one Python module of the binding crate.
+    "rust/fhy-core-py/src/solver/sympy",
 ]
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
 # Where the benchmark session saves its runs (gitignored).

@@ -14,7 +14,7 @@ name = "fhy_core_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-fhy-core = { workspace = true, features = ["ndarray", "sympy"] }
+fhy-core = { workspace = true, features = ["ndarray"] }
 num-traits = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["macros"] }
@@ -22,6 +22,12 @@ pyo3 = { workspace = true, features = ["macros"] }
 # core values with serde, as JSON text.
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# The SymPy backend's stories and properties (J-10 of
+# docs/design/rust-port-fixes.md), which run in an embedded interpreter.
+proptest = { workspace = true }
+rstest = { workspace = true }
 
 [lints]
 workspace = true

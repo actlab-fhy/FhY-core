@@ -15,7 +15,5 @@ pub(crate) mod pattern;
 pub(crate) mod provenance;
 pub(crate) mod solver;
 pub(crate) mod stack;
-#[cfg(feature = "sympy")]
-pub(crate) mod sympy;
 pub(crate) mod tree_ir;
 pub(crate) mod types;

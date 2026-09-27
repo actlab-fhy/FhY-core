@@ -1,11 +1,46 @@
-//! `fhy_core._rs.SympySimplifier`: the core's SymPy backend as a native
-//! `Simplifier` (D-S12-10), and the Python exceptions of its errors
-//! (D-S12-11).
+//! The SymPy backend (S12, moved from the core by R2-005a of
+//! `docs/design/rust-port-fixes.md`), and `fhy_core._rs.SympySimplifier`,
+//! the backend as a native `Simplifier` (D-S12-10), with the Python
+//! exceptions of its errors (D-S12-11).
 //!
-//! A `Solver` holding one simplifies in Rust, from the facade into SymPy,
-//! with no Python backend between. Its methods expose the core's SymPy-level
-//! operations, over which `fhy_core.symbolic.expression.passes.sympy`
-//! defines the bridge's functions and passes.
+//! [`SympySimplifier`] lowers an expression to SymPy, simplifies it, and
+//! lifts the result, in the interpreter the extension runs in; its
+//! submodules are the lowering, the lifting, the substitution, the
+//! simplification's workarounds, the Boolean positions they share, the
+//! loading of SymPy and of the prelude (`prelude.py`, the Python module of
+//! the classes and hooks only Python code can define), and the errors. A
+//! `Solver` holding the pyclass simplifies in Rust, from the facade into
+//! SymPy, with no Python backend between. Its methods expose the backend's
+//! SymPy-level operations, over which
+//! `fhy_core.symbolic.expression.passes.sympy` defines the bridge's
+//! functions and passes.
+//!
+//! The backend's stories are this module's `#[cfg(test)]` submodules, run
+//! by `cargo test -p fhy-core-py` in an interpreter the test binary embeds
+//! (J-10 of the fixes spec); they need Python with SymPy.
+
+mod boolean;
+mod error;
+mod lift;
+mod load;
+mod lower;
+mod simplifier;
+mod simplify;
+mod substitute;
+
+#[cfg(test)]
+mod lifting_stories;
+#[cfg(test)]
+mod lowering_stories;
+#[cfg(test)]
+mod properties;
+#[cfg(test)]
+mod simplify_stories;
+#[cfg(test)]
+mod test_support;
+
+pub(crate) use error::{SympyError, SympyErrorKind, SympyPhase, SympyUnavailableError};
+pub(crate) use simplifier::SympySimplifier;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,9 +55,7 @@ use pyo3::types::{PyDict, PyMapping, PyTuple, PyType};
 
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::{
-    SimplifyContext, SympyError, SympyErrorKind, SympyPhase, SympySimplifier, SympyUnavailableError,
-};
+use fhy_core::solver::SimplifyContext;
 
 use crate::error::IntoPyErr;
 use crate::expression::{
@@ -39,7 +72,7 @@ fn pass_name(phase: SympyPhase) -> Option<&'static str> {
         SympyPhase::Lowering => Some("fhy_core.symbolic.expression.to_sympy"),
         SympyPhase::Substitution => Some("fhy_core.symbolic.expression.substitute_sympy_variables"),
         SympyPhase::Lifting => Some("fhy_core.symbolic.expression.from_sympy"),
-        _ => None,
+        SympyPhase::Simplification => None,
     }
 }
 
@@ -69,7 +102,6 @@ const UNAVAILABLE_MESSAGE: &str = "The sympy solver backend needs the sympy pack
 /// Return the exception of `error` raised in `phase`, unwrapped.
 fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
     static UNAVAILABLE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static BACKEND: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     static BINDING: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     static COMPLEX_INFINITY: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     static PARTIAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
@@ -77,13 +109,6 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
     const ERRORS: &str = "fhy_core.symbolic.expression.errors";
     let text = error.to_string();
     match error.into_kind() {
-        SympyErrorKind::Unavailable(SympyUnavailableError::NoInterpreter) => build_error(
-            py,
-            &BACKEND,
-            SOLVER,
-            "SolverBackendError",
-            "the backend \"sympy\" failed: no python interpreter is initialized".to_owned(),
-        ),
         SympyErrorKind::Unavailable(unavailable) => {
             let error = build_error(
                 py,
@@ -92,11 +117,9 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
                 "SolverBackendUnavailableError",
                 UNAVAILABLE_MESSAGE.to_owned(),
             );
-            if let SympyUnavailableError::MissingSympy(cause)
-            | SympyUnavailableError::Incompatible(cause) = unavailable
-            {
-                error.set_cause(py, Some(cause));
-            }
+            let (SympyUnavailableError::MissingSympy(cause)
+            | SympyUnavailableError::Incompatible(cause)) = unavailable;
+            error.set_cause(py, Some(cause));
             error
         }
         SympyErrorKind::IllTyped(error) => error.into_py_err(),
@@ -205,7 +228,7 @@ pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -
     }
 }
 
-/// The core's SymPy backend: a `Simplifier` that lowers an expression to
+/// The SymPy backend: a `Simplifier` that lowers an expression to
 /// SymPy, simplifies it best-effort, and lifts the result.
 ///
 /// Constructing it imports nothing; its first operation imports SymPy, and
@@ -260,7 +283,7 @@ impl PySympySimplifier {
     ///
     /// Raises `SolverBackendUnavailableError` when SymPy is not installed.
     fn load(&self, py: Python<'_>) -> PyResult<()> {
-        self.backend.load().map_err(|error| {
+        self.backend.load(py).map_err(|error| {
             sympy_error_to_py(
                 py,
                 SympyError::new(SympyPhase::Lowering, SympyErrorKind::Unavailable(error)),

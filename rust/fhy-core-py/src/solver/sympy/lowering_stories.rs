@@ -1,5 +1,5 @@
-//! Stories for lowering expressions to SymPy, [`SympySimplifier::lower`],
-//! under the `sympy` feature: each literal form, identifiers and
+//! Stories for lowering expressions to SymPy, [`SympySimplifier::lower`]:
+//! each literal form, identifiers and
 //! constants, each operation, the Boolean positions, piecewise nodes, the
 //! native built-ins, the refusals, and deep trees.
 
@@ -12,12 +12,12 @@ use fhy_core::expression::{
     LogicalOperation, NoRegisteredSorts,
 };
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::{SimplifyContext, SympyErrorKind, SympyPhase};
+use fhy_core::solver::SimplifyContext;
 use pyo3::prelude::*;
 use rstest::rstest;
 
-use crate::support::expression::{build_identifier, build_literal};
-use crate::support::sympy::{attached, backend, evaluate, srepr};
+use super::test_support::{attached, backend, build_identifier, build_literal, evaluate, srepr};
+use super::{SympyErrorKind, SympyPhase};
 
 /// Return the `srepr` of the lowering of `expression` with no registry.
 fn lowered(expression: &Expression) -> String {

@@ -17,11 +17,12 @@ use pyo3::types::{PyDict, PyType};
 
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::{Hazard, LoweringError, SolveError, SympyError};
+use fhy_core::solver::{Hazard, LoweringError, SolveError};
 
 use crate::error::IntoPyErr;
 use crate::expression::render_expression_repr;
 
+use super::sympy::SympyError;
 use super::values::symbol_type_name;
 
 /// Import the class `name` of the module `module` once.

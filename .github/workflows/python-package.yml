@@ -68,12 +68,13 @@ jobs:
         # Ubuntu does not ship, so the job links the libz3 of the z3-solver
         # wheel (D-S8-18). The wheel's z3 executable runs the process
         # backend's stories against a real solver (FHY_SMT_SOLVER).
-        # The sympy feature, which every workspace build enables through the
-        # binding, embeds the venv's Python: pyo3 links it (PYO3_PYTHON) and
-        # the embedded interpreter finds SymPy on PYTHONPATH, since it does
-        # not read the venv's pyvenv.cfg (D-S12-13). GITHUB_ENV hands both to
-        # every later step, so each cargo test that builds the workspace runs
-        # the SymPy stories, which fail without SymPy (N-S12-1).
+        # SymPy serves the binding's tests: fhy-core-py holds the SymPy
+        # backend, and its stories embed the venv's Python, which pyo3 links
+        # (PYO3_PYTHON), and find SymPy on PYTHONPATH, since an embedded
+        # interpreter does not read the venv's pyvenv.cfg (D-S12-13). fhy-core
+        # itself needs no Python. GITHUB_ENV hands both to every later step,
+        # so each cargo test that builds the binding runs the SymPy stories,
+        # which fail without SymPy (N-S12-1).
         run: |
           python3 -m venv "$RUNNER_TEMP/z3"
           "$RUNNER_TEMP/z3/bin/pip" install --quiet z3-solver sympy
@@ -93,15 +94,15 @@ jobs:
         run: cargo fmt --all --check
       - name: Code Linting
         # fhy-core-py pulls in pyo3, so the workspace clippy run also checks
-        # it; clippy only checks, so that costs no libpython.
+        # it; clippy only checks, so that costs no libpython. fhy-core has no
+        # pyo3.
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Integration Test Targets
         # Every integration test shares the `it` binary. A test that needs a
         # fresh process is its own single-test target and is listed here on
-        # purpose: id_cap_decode moves the global id counter to the cap, and
-        # sympy_unavailable needs a process without an interpreter.
+        # purpose: id_cap_decode moves the global id counter to the cap.
         run: |
-          expected="id_cap_decode it sympy_unavailable"
+          expected="id_cap_decode it"
           actual="$(cargo metadata --no-deps --format-version 1 --locked | python3 -c '
           import json, sys
           metadata = json.load(sys.stdin)
@@ -115,8 +116,9 @@ jobs:
       - name: Unit, Integration & Doc Testing
         # pyo3 leaves libpython unlinked only when maturin sets
         # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
-        # build links the runner's Python and the fhy-core-py test binaries
-        # run. --all-features builds the z3 feature and runs its stories.
+        # build links the runner's Python and the fhy-core-py test binary,
+        # which holds the SymPy backend's stories, runs. --all-features builds
+        # the z3 feature and runs its stories.
         run: cargo test --workspace --locked --all-features
       - name: Default-Feature Testing
         # The solver's stories without the z3 feature run the process
@@ -157,11 +159,11 @@ jobs:
         # would receive it and build the library from it.
         run: cargo package --locked -p fhy-core
       - name: Package Contents
-        # The include list ships Rust sources, tests and golden JSON, and the
-        # SymPy backend's prelude, the one Python file the crate compiles in.
+        # The include list ships Rust sources, tests and golden JSON, and no
+        # Python file: the SymPy backend and its prelude live in the binding.
         run: |
           unexpected="$(cargo package --list --locked -p fhy-core | grep -Ev \
-            '^(Cargo\.toml(\.orig)?|Cargo\.lock|\.cargo_vcs_info\.json|README\.md|LICENSE|src/.+\.rs|src/solver/sympy/prelude\.py|tests/.+\.rs|tests/golden/[a-z_]+\.json)$' || true)"
+            '^(Cargo\.toml(\.orig)?|Cargo\.lock|\.cargo_vcs_info\.json|README\.md|LICENSE|src/.+\.rs|tests/.+\.rs|tests/golden/[a-z_]+\.json)$' || true)"
           if [[ -n "$unexpected" ]]; then
             echo "::error::the package ships unexpected files: $unexpected"
             exit 1

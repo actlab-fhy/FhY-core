@@ -57,7 +57,7 @@ onto `dev-rust` before continuing.
 - [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver (`f969a81`)
 - [x] R2-014 (F2-014): the process backend's timeout bounds the whole call (`35fae05`)
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped — **held for the maintainer**: dropping it makes params and set constraints report false proofs (Track D notes, N-D1)
-- [ ] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature
+- [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature
 - [ ] R2-016 (F2-016): negative powers lift as divisions
 - [ ] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object
 - [ ] R2-039 (F2-039): a versioned, hash-checked prelude module
@@ -2702,11 +2702,61 @@ premise holds for expressions but not for set constraints:
   `test_constraint_system.py` go back to their base pins, and the param
   story above passes unchanged.
 
+**R2-005a, the move.**
+- **Layout.** The pyclass file `fhy-core-py/src/solver/sympy.rs` is the
+  module root, as specified; the core's `solver/sympy.rs`, the
+  `SympySimplifier` itself, became the submodule `simplifier.rs` beside
+  `boolean`, `error`, `lift`, `load`, `lower`, `simplify`, `substitute`
+  and `prelude.py`. The stories are `lifting_stories`, `lowering_stories`,
+  `simplify_stories` and `properties`, with `test_support` holding the
+  embedded interpreter, the SymPy helpers and copies of
+  `build_identifier`/`build_literal`. `git mv` keeps each file's history.
+- **"Every import is public" was not quite so.** Four uses needed a
+  public spelling:
+  - `solver::screen::is_native_constant` (`pub(super)` in the core): the
+    binding has a two-line copy over `BuiltinConstant::of_identifier` and
+    `SortLookup::native_constant_sort`;
+  - `tree::BuildIdentityHasher` (`pub(crate)`): the lowering's memo uses
+    the standard hasher (the benchmarks below measure it);
+  - `num_bigint::Sign` (num-bigint is no dependency of the binding):
+    `Signed::is_negative` and `Zero::is_zero` from num-traits, which the
+    binding has;
+  - `BuiltinConstant` is `#[non_exhaustive]` outside the core, so the
+    constant match gained a wildcard arm and the error kind
+    `SympyErrorKind::UnsupportedConstant`, unreachable today.
+- **The API.** `load` takes `py`, since no call attaches on its own any
+  more, and `Simplifier::simplify` attaches with `Python::attach`. The
+  `no_run` rustdoc example went with `with_embedded_python`: the binding
+  is a `cdylib`, whose docs run no doc-tests, so the doc points at the
+  stories.
+- **One edit in Track E's `pyproject.toml`:** `[tool.uv] cache-keys` gains
+  `rust/fhy-core-py/src/**/*.py`, since the binding compiles the prelude
+  in and uv would otherwise reuse a stale extension after a prelude edit
+  (true of the core's copy before, and needed by R2-039).
+- **Counts.** `cargo test --workspace` goes from 4,315 to 4,313: the 143
+  stories now run as `fhy-core-py`'s unit tests, `sympy_unavailable` is
+  gone, and so is the one `no_run` doc-test. `pytest tests` gains
+  `test_missing_sympy_reports_unavailable` (8,287).
+- **The gate recipe.** `cargo test -p fhy-core --all-features` passes in a
+  shell whose environment is only `HOME`, a `PATH` of cargo and `/usr/bin`,
+  the z3 variables and `FHY_SMT_SOLVER` (3,677 + 120 + 8 + 1 tests), and
+  `cargo tree -p fhy-core --all-features` holds no pyo3. The workspace
+  still needs `PYO3_PYTHON`, `PYTHONPATH` and libpython on
+  `LD_LIBRARY_PATH` for the binding's tests, so the variables of
+  `gate-env.sh` stay; its comment in this worktree says so, and the shared
+  `target/tooling/gate-env.sh` wants the same comment. CI's `rust` job
+  keeps its environment for the same reason.
+- **Checks replayed:** the CI target list (`id_cap_decode it`), `cargo
+  package` and the Package Contents pattern without the prelude (no `.py`
+  in the list), and `cargo deny check` (ok, with the `syn` duplicate
+  warning of the base).
+
 **Python-visible changes** (§I.2 rule 6):
 
 | Item | Old | New | Tests |
 |---|---|---|---|
 | R2-015 | a name hint's control characters were written into its quoted SMT-LIB2 symbol (`SmtScript.text`, `convert_expression_to_smtlib2`, the declarations' `symbol`); a NUL made the z3-solver adapter raise `Z3Exception` | each is written as `_` | `test_a_control_character_name_hint_answers_the_same_on_every_backend` (new) |
+| R2-005a | none in behavior; `SolverBackend.SYMPY`'s backend lives in the extension as before | the same objects, from the binding's own module | `test_missing_sympy_reports_unavailable` (new) |
 | R2-014 | `SmtLib2ProcessSolver.check` could outlast its timeout (a solver that stops reading, closes stdout without exiting, exits slowly, or leaves a grandchild), and a solver that printed `success` failed with `SolverBackendError` | the timeout bounds the call; the first line written is `(set-option :print-success false)`; `success` lines before the answer are skipped; the class docstring says so | the Rust stories; the Python process-backend tests unchanged |
 
 ### Track B notes

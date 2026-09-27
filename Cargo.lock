@@ -97,7 +97,6 @@ dependencies = [
  "num-traits",
  "postcard",
  "proptest",
- "pyo3",
  "rstest",
  "serde",
  "serde_json",
@@ -111,7 +110,9 @@ dependencies = [
  "fhy-core",
  "num-traits",
  "numpy",
+ "proptest",
  "pyo3",
+ "rstest",
  "serde",
  "serde_json",
 ]

@@ -1,5 +1,5 @@
 //! Stories for lifting SymPy objects to expressions,
-//! [`SympySimplifier::lift`], under the `sympy` feature: sums and
+//! [`SympySimplifier::lift`]: sums and
 //! products, the native functions, constants, numbers, symbols, the
 //! connectives and relationals, the refusals, and deep objects.
 
@@ -8,11 +8,10 @@ use fhy_core::expression::{
     BigInt, BinaryOperation, Decimal, Expression, LiteralValue, LogicalOperation, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
-use fhy_core::solver::{SympyErrorKind, SympyPhase};
 use rstest::rstest;
 
-use crate::support::expression::{build_identifier, build_literal};
-use crate::support::sympy::{attached, backend, evaluate};
+use super::test_support::{attached, backend, build_identifier, build_literal, evaluate};
+use super::{SympyErrorKind, SympyPhase};
 
 /// Return the lifting of the Python expression `source`.
 fn lifted(source: &str) -> Expression {

@@ -3,20 +3,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyTuple};
 
-use crate::expression::builtins::{BuiltinConstant, BuiltinFunction};
-use crate::expression::registry::RegistryEntry;
-use crate::expression::{
-    BinaryOperation, Callee, Decimal, Expression, ExpressionKind, LiteralValue, LogicalOperation,
-    UnaryOperation,
+use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
+use fhy_core::expression::registry::RegistryEntry;
+use fhy_core::expression::{
+    BigInt, BinaryOperation, Callee, Decimal, Expression, ExpressionKind, LiteralValue,
+    LogicalOperation, UnaryOperation,
 };
-use crate::identifier::Identifier;
-use crate::solver::SimplifyContext;
-use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
+use fhy_core::identifier::Identifier;
+use fhy_core::solver::SimplifyContext;
+use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use super::boolean::{Fallible, comparison_operands, condition, to_boolean};
 use super::error::SympyErrorKind;
@@ -91,8 +90,7 @@ impl<'h, 'c> Lowerer<'h, 'c> {
         py: Python<'py>,
         root: &Expression,
     ) -> Fallible<Bound<'py, PyAny>> {
-        let mut memo: HashMap<NodeIdentity, Bound<'py, PyAny>, BuildIdentityHasher> =
-            HashMap::default();
+        let mut memo: HashMap<NodeIdentity, Bound<'py, PyAny>> = HashMap::new();
         let mut pending: Vec<(&Expression, bool)> = vec![(root, false)];
         while let Some((node, is_expanded)) = pending.pop() {
             if memo.contains_key(&node.identity()) {
@@ -254,6 +252,7 @@ impl<'h, 'c> Lowerer<'h, 'c> {
                 BuiltinConstant::E => &handles.e,
                 BuiltinConstant::Inf => &handles.infinity,
                 BuiltinConstant::Nan => &handles.nan,
+                _ => return Err(SympyErrorKind::UnsupportedConstant(identifier.clone())),
             };
             return Ok(value.bind(py).clone());
         }

@@ -72,13 +72,15 @@ manifest-path = "rust/fhy-core-py/Cargo.toml"
 
 [tool.uv]
 # uv reuses a built project unless one of these changes, so list the Rust
-# sources the extension is compiled from alongside the default pyproject.toml.
+# sources the extension is compiled from alongside the default pyproject.toml,
+# and the SymPy backend's prelude, which the binding compiles in.
 cache-keys = [
    { file = "pyproject.toml" },
    { file = "Cargo.toml" },
    { file = "Cargo.lock" },
    { file = "rust/*/Cargo.toml" },
    { file = "rust/**/*.rs" },
+   { file = "rust/fhy-core-py/src/**/*.py" },
 ]
 
 [tool.pytest.ini_options]
