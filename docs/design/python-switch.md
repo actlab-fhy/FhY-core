@@ -6582,6 +6582,9 @@ Where a decision follows an earlier slice's decision or note, it says so.
   - A refusal is a `LoweringError` (`#[non_exhaustive]`), which the
     facade only meets for calls, since the screens refuse the other
     shapes first.
+  - **Revised (R2-015, 2026-09-27):** every control character
+    (`char::is_control`) of a name hint becomes `_` too, as `|` and `\`
+    do, so a symbol is printable text and a NUL never reaches a solver.
 - **D-S8-7: the questions are encoded by the facade** (D-S4-2: the same
   questions; D-S4-1: the core's encoding; Y-6). Each is one script:
 

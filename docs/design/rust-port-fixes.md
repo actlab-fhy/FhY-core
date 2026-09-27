@@ -55,8 +55,8 @@ onto `dev-rust` before continuing.
 
 - [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes; `9146d0b`)
 - [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver (`f969a81`)
-- [x] R2-014 (F2-014): the process backend's timeout bounds the whole call
-- [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped
+- [x] R2-014 (F2-014): the process backend's timeout bounds the whole call (`35fae05`)
+- [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped — **held for the maintainer**: dropping it makes params and set constraints report false proofs (Track D notes, N-D1)
 - [ ] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature
 - [ ] R2-016 (F2-016): negative powers lift as divisions
 - [ ] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object
@@ -2640,6 +2640,67 @@ the z3-solver adapter when it is installed; at the base the adapter raised
 - **A side effect of the own process group:** a terminal's interrupt no
   longer reaches the solver, which the rustdoc says. The caller still
   bounds the check by its timeout.
+
+**N-D1: R2-040 is held, because dropping the hazard makes the constraint
+and param layers report false proofs.** R2-040 was implemented in full
+(the variant and the numeric-kind classifier removed; the Rust stories,
+the property and 33 Python tests rewritten to pin the answers; all gates
+green) and then taken back out before committing, since the resolution's
+premise holds for expressions but not for set constraints:
+- **The premise.** F2-040 reasons that "the crate's evaluator equates"
+  `x_int == 1.0` with `x_int == 1`, so the refusal loses nothing. That is
+  true of expressions, and of equation constraints, which evaluate as
+  expressions.
+- **What it misses.** Membership in a set constraint is type-strict
+  (`constraint/value.rs`: a Boolean, an integer and a float never compare
+  equal, so `2 ∉ {2.0}`), but `SetConstraint::to_expression` lowers it to
+  `x == 2.0`, which the solver decides by value. The hazard was what kept
+  the two apart for every solver question, and the param layer relies on
+  it: `param/decide.rs` downgrades answers resting on float members only
+  over the REAL sort, with this comment's reasoning, and leaves INT to the
+  screen.
+- **The false proofs, with the hazard dropped** (probes kept in
+  `target/logs/probe_nd2.py` and `probe_nd3.py` of this worktree):
+  - `create_integer_param_between(2, 2)` with `NotInSetConstraint(v,
+    {2.0})`: `is_value_valid(2)` is `True`, but `check_feasibility()` is
+    `VIOLATED` and `is_empty()` is `True`. At the base it is `UNDECIDED`.
+  - the integer param `x ∉ {2.0}` against the integer param `y != 2`:
+    `check_subset` is `SATISFIED`, although `x = 2` is admitted by the
+    one and not the other. At the base it is `UNDECIDED`.
+  - `InSetConstraint(x, {3.0})` with `x` bound to `y + 1` for an INT `y`:
+    `check_satisfiability_with_bindings` is `SATISFIED`, while
+    `evaluate_with_bindings({x: 3})` is `VIOLATED`. At the base it is
+    `UNDECIDED`, and `test_check_satisfiability_with_bindings_does_not_
+    contradict_literal_violation` pins that.
+  - The Rust story `param::decide_stories::integer_implication_leaves_a_
+    float_member_to_the_solver_s_screen` is the one Rust test that fails;
+    its question happens to be answered correctly, but its comment names
+    this reliance.
+- **Why this track does not decide it.** Every repair is a design choice
+  in files other tracks own (`constraint/set.rs`, `constraint/system.rs`,
+  `param/decide.rs`), and the choice is the maintainer's:
+  1. keep the refusal for set constraints only: the numeric-kind
+     classifier stays as a crate-private check, which the constraint
+     system applies to the expressions its set members lower to (with
+     their bindings substituted), answering `UNDECIDED` as today, while the
+     solver itself, and so `fhy_core.symbolic.solver` and equation
+     constraints, answer mixed equalities by value. This is the smallest
+     change that implements F2-040's intent without a false proof;
+  2. lower set members kind-faithfully from the variable's sort (an INT
+     variable is never a float member), which works for identifiers but
+     not for a binding to an expression of unknown kind, nor for the REAL
+     sort, which `param` says conflates kinds;
+  3. extend `param/decide.rs`'s downgrades to the INT sort and add the
+     same to `ConstraintSystem`, answer by answer;
+  4. keep hazard 5 as it is (revise the resolution).
+- **The work is kept** as `target/r2-040-wip.patch` in this worktree
+  (untracked), a diff against `35fae05` whose `rust-port-fixes.md` hunk
+  this note supersedes, for whichever option is chosen:
+  the screen change, the admission stories, `x_int_equal_to_1_0_is_answered`,
+  the z3 story, the property against the evaluator, and the 33 Python
+  rewrites. Under option 1 the three set-constraint rewrites in
+  `test_constraint_system.py` go back to their base pins, and the param
+  story above passes unchanged.
 
 **Python-visible changes** (§I.2 rule 6):
 
