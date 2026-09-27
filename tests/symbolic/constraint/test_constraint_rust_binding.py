@@ -42,6 +42,7 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     NonBooleanLogicalOperandError,
 )
+from fhy_core.symbolic.param import create_integer_param
 from fhy_core.symbolic.solver import (
     SatResult,
     Simplifier,
@@ -50,7 +51,7 @@ from fhy_core.symbolic.solver import (
     set_default_solver,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
-from fhy_core.term import excluded_from_equivalence
+from fhy_core.term import AlphaRenaming, excluded_from_equivalence
 from fhy_core.traits import FrozenMixin, FrozenMutationError
 from fhy_core.utils.override import override
 
@@ -899,6 +900,81 @@ def test_systems_with_python_members_compare_through_their_methods(
     assert left.is_alpha_equivalent(right)
     assert not left.is_structurally_equivalent(other)
     assert not left.is_structurally_equivalent(create_constraint_system())
+
+
+_COMPARISONS: list[tuple[Any, ...]] = []
+"""The comparisons asked of `_Comparing` members, in order, with what they got."""
+
+
+@dataclass(frozen=True, eq=False)
+class _Comparing(_Probe):
+    """A Python-defined constraint whose comparisons record what they receive."""
+
+    scope: frozenset[Identifier] = field(
+        default=frozenset(), metadata=excluded_from_equivalence()
+    )
+
+    @override
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        return self.scope
+
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool:
+        _COMPARISONS.append(("is_structurally_equivalent", other))
+        return isinstance(other, _Comparing) and other.label == self.label
+
+    @override
+    def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
+        _COMPARISONS.append(("is_alpha_equivalent_under", other, renaming))
+        return isinstance(other, _Comparing) and other.label == self.label
+
+
+def test_a_python_constraint_compares_through_its_own_methods(x: Identifier) -> None:
+    """Test a system asks a Python member's comparisons, passing the other member."""
+    left, right = _Comparing("same"), _Comparing("same")
+    left_system = create_constraint_system(left)
+    right_system = create_constraint_system(right)
+    _COMPARISONS.clear()
+
+    assert left_system.is_structurally_equivalent(right_system)
+    assert left_system.is_alpha_equivalent(right_system)
+    assert not left_system.is_structurally_equivalent(
+        create_constraint_system(_Comparing("other"))
+    )
+
+    ((structural, other), (alpha, alpha_other, renaming), (_, different)) = _COMPARISONS
+    assert (structural, alpha) == (
+        "is_structurally_equivalent",
+        "is_alpha_equivalent_under",
+    )
+    assert other is right
+    assert alpha_other is right
+    assert renaming == AlphaRenaming.empty()
+    assert isinstance(different, _Comparing)
+    assert different.label == "other"
+
+
+def test_a_python_constraint_in_a_param_is_compared_under_the_variables_renaming() -> (
+    None
+):
+    """Test a param's alpha equivalence hands its member the variables' pairing."""
+    x, y = Identifier("x"), Identifier("y")
+    left = create_integer_param(
+        name=x, constraints=[_Comparing("c", scope=frozenset({x}))]
+    )
+    right = create_integer_param(
+        name=y, constraints=[_Comparing("c", scope=frozenset({y}))]
+    )
+    _COMPARISONS.clear()
+
+    assert left.is_alpha_equivalent(right)
+
+    ((hook, other, renaming),) = _COMPARISONS
+    assert hook == "is_alpha_equivalent_under"
+    assert isinstance(other, _Comparing)
+    assert other.scope == frozenset({y})
+    assert renaming.are_identifiers_alpha_equivalent(x, y)
+    assert not renaming.are_identifiers_alpha_equivalent(x, x)
 
 
 def test_system_pickles_and_round_trips_its_payload() -> None:

@@ -1,13 +1,16 @@
 //! Stories of a custom domain: the procedures reach it through its hooks,
 //! and its failures propagate.
 
-use fhy_core::constraint::Outcome;
+use fhy_core::constraint::{Constraint, CustomError, Outcome, Value};
 use fhy_core::expression::SymbolType;
 use fhy_core::identifier::Identifier;
-use fhy_core::param::{IntegerDomain, OrdinalDomain, ParamDomain, ParamError, Side};
+use fhy_core::param::{
+    CustomDomain, IntegerDomain, IntervalProfile, OrdinalDomain, Param, ParamContext, ParamDomain,
+    ParamError, Side,
+};
 use fhy_core::solver::SatResult;
 
-use crate::support::constraint::int;
+use crate::support::constraint::{TestValueError, int};
 use crate::support::param::{
     EvenDomain, RecordingParamObserver, at_least, context, in_set, ints, scripted_solver,
 };
@@ -135,4 +138,334 @@ fn custom_domain_failures_propagate() {
         ParamDomain::from(IntegerDomain::new(false, true)).is_value_set_subset(&domain),
         Err(ParamError::Custom(_))
     ));
+}
+
+// =============================================================================
+// A recording domain, driven on either side of the set procedures
+// =============================================================================
+
+/// A custom domain that records each hook it is asked, with what it
+/// received, and fails every hook when told to.
+#[derive(Debug, Default)]
+struct RecordingDomain {
+    calls: std::sync::Mutex<Vec<String>>,
+    is_failing: bool,
+}
+
+/// Return a short text of `side`: its variable's name hint and its number
+/// of constraints.
+fn describe_side(side: Side<'_>) -> String {
+    format!(
+        "{}/{}",
+        side.variable().name_hint(),
+        side.constraints().len()
+    )
+}
+
+impl RecordingDomain {
+    /// Return the domain, as a `ParamDomain`, and a handle on its calls.
+    fn build(is_failing: bool) -> (ParamDomain, std::sync::Arc<Self>) {
+        let domain = std::sync::Arc::new(Self {
+            calls: std::sync::Mutex::default(),
+            is_failing,
+        });
+        let handle = std::sync::Arc::clone(&domain);
+        (ParamDomain::Custom(domain), handle)
+    }
+
+    /// Return the calls so far, and forget them.
+    fn take_calls(&self) -> Vec<String> {
+        std::mem::take(&mut *self.calls.lock().expect("unpoisoned"))
+    }
+
+    /// Record `call`, and fail if told to.
+    fn record(&self, call: String) -> Result<(), CustomError> {
+        let failure = format!("{call} failed");
+        self.calls.lock().expect("unpoisoned").push(call);
+        if self.is_failing {
+            Err(Box::new(TestValueError(failure)))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl CustomDomain for RecordingDomain {
+    fn symbol_type(&self) -> Result<Option<SymbolType>, CustomError> {
+        self.record("symbol_type".to_owned())?;
+        Ok(Some(SymbolType::Int))
+    }
+
+    fn is_value_admissible(&self, _value: &Value) -> Result<bool, CustomError> {
+        self.record("is_value_admissible".to_owned())?;
+        Ok(true)
+    }
+
+    fn validate_constraint(
+        &self,
+        _constraint: &Constraint,
+        variable: &Identifier,
+    ) -> Result<(), CustomError> {
+        self.record(format!("validate_constraint({})", variable.name_hint()))
+    }
+
+    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, CustomError> {
+        self.record(format!("implied_constraints({})", variable.name_hint()))?;
+        Ok(Vec::new())
+    }
+
+    fn interval_profile(&self) -> Result<Option<IntervalProfile>, CustomError> {
+        self.record("interval_profile".to_owned())?;
+        Ok(None)
+    }
+
+    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, CustomError> {
+        self.record(format!("is_value_set_subset({})", other.kind().name()))?;
+        Ok(true)
+    }
+
+    fn feasibility_subset(
+        &self,
+        own: Side<'_>,
+        other_domain: &ParamDomain,
+        other: Side<'_>,
+    ) -> Result<Outcome, CustomError> {
+        self.record(format!(
+            "feasibility_subset({}, {}, {})",
+            describe_side(own),
+            other_domain.kind().name(),
+            describe_side(other)
+        ))?;
+        Ok(Outcome::Satisfied)
+    }
+
+    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, CustomError> {
+        self.record(format!("has_feasible_value({})", describe_side(side)))?;
+        Ok(Outcome::Satisfied)
+    }
+
+    fn union(
+        &self,
+        own: Side<'_>,
+        other_domain: &ParamDomain,
+        other: Side<'_>,
+        variable: &Identifier,
+    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, CustomError> {
+        self.record(format!(
+            "union({}, {}, {}, {})",
+            describe_side(own),
+            other_domain.kind().name(),
+            describe_side(other),
+            variable.name_hint()
+        ))?;
+        Ok(Some((other_domain.clone(), Vec::new())))
+    }
+
+    fn intersection(
+        &self,
+        own: Side<'_>,
+        other_domain: &ParamDomain,
+        other: Side<'_>,
+        variable: &Identifier,
+    ) -> Result<(ParamDomain, Vec<Constraint>), CustomError> {
+        self.record(format!(
+            "intersection({}, {}, {}, {})",
+            describe_side(own),
+            other_domain.kind().name(),
+            describe_side(other),
+            variable.name_hint()
+        ))?;
+        Ok((other_domain.clone(), Vec::new()))
+    }
+
+    fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool {
+        self.calls.lock().expect("unpoisoned").push(format!(
+            "is_structurally_equivalent({})",
+            other.kind().name()
+        ));
+        matches!(other, ParamDomain::Custom(other) if other.as_any().is::<Self>())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Return the param over `domain` whose variable is named `name`, with one
+/// bound on it.
+fn param_over(domain: ParamDomain, name: &str, context: &ParamContext<'_>) -> Param {
+    let variable = Identifier::new(name);
+    let bound = at_least(&variable, 0);
+    Param::new(domain, variable, [bound], context).expect("the domain allows the bound")
+}
+
+#[test]
+fn a_custom_domain_on_the_left_answers_each_set_procedure_through_its_hook() {
+    let (domain, handle) = RecordingDomain::build(false);
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let own = param_over(domain.clone(), "x", &context);
+    let other = param_over(
+        ParamDomain::from(IntegerDomain::new(false, true)),
+        "y",
+        &context,
+    );
+    assert_eq!(
+        handle.take_calls(),
+        ["validate_constraint(x)", "implied_constraints(x)"]
+    );
+
+    assert!(own.is_value_set_subset(&other).expect("answers"));
+    assert_eq!(handle.take_calls(), ["is_value_set_subset(integer)"]);
+
+    assert_eq!(
+        own.check_subset(&other, &context).expect("decides"),
+        Outcome::Satisfied
+    );
+    assert_eq!(
+        handle.take_calls(),
+        ["feasibility_subset(x/1, integer, y/1)"]
+    );
+
+    let union = own
+        .union(&other, Identifier::new("u"), &context)
+        .expect("the hook builds the union");
+    assert!(union.domain().is_structurally_equivalent(other.domain()));
+    assert_eq!(handle.take_calls(), ["union(x/1, integer, y/1, u)"]);
+
+    let intersection = own
+        .intersection(&other, Identifier::new("i"), &context)
+        .expect("the hook builds the intersection");
+    assert!(
+        intersection
+            .domain()
+            .is_structurally_equivalent(other.domain())
+    );
+    assert_eq!(
+        handle.take_calls(),
+        ["interval_profile", "intersection(x/1, integer, y/1, i)"],
+        "the intersection first asks whether the operands coerce to intervals"
+    );
+
+    assert!(own.domain().is_structurally_equivalent(&domain));
+    assert!(!own.is_structurally_equivalent(&other));
+    assert_eq!(
+        handle.take_calls(),
+        [
+            "is_structurally_equivalent(custom)",
+            "is_structurally_equivalent(integer)"
+        ]
+    );
+}
+
+#[test]
+fn a_custom_domain_on_the_right_is_asked_only_what_the_left_side_needs() {
+    let (domain, handle) = RecordingDomain::build(false);
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let integer = param_over(
+        ParamDomain::from(IntegerDomain::new(false, true)),
+        "x",
+        &context,
+    );
+    let ordinal = Param::new(
+        ParamDomain::from(OrdinalDomain::new(ints([1, 2])).expect("ordinal")),
+        Identifier::new("x"),
+        [],
+        &context,
+    )
+    .expect("an ordinal param");
+    let custom = param_over(domain, "y", &context);
+    handle.take_calls();
+
+    assert!(integer.is_value_set_subset(&custom).expect("answers"));
+    assert_eq!(handle.take_calls(), ["symbol_type"]);
+
+    assert!(!ordinal.is_value_set_subset(&custom).expect("answers"));
+    assert!(!integer.is_structurally_equivalent(&custom));
+    let union = integer.union(&custom, Identifier::new("u"), &context);
+    assert!(
+        matches!(union, Err(ParamError::UnsupportedUnion(_))),
+        "{union:?}"
+    );
+    let intersection = integer.intersection(&custom, Identifier::new("i"), &context);
+    assert!(
+        matches!(intersection, Err(ParamError::KindMismatch { .. })),
+        "{intersection:?}"
+    );
+    assert_eq!(
+        handle.take_calls(),
+        ["interval_profile"],
+        "only the intersection asks, whether the right side coerces to an interval"
+    );
+}
+
+#[test]
+fn a_failing_custom_domain_s_error_surfaces_from_each_set_procedure() {
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let other = param_over(
+        ParamDomain::from(IntegerDomain::new(false, true)),
+        "y",
+        &context,
+    );
+    let (domain, handle) = RecordingDomain::build(true);
+    let x = Identifier::new("x");
+    let own = Param::new(domain.clone(), x.clone(), [], &context);
+    assert!(matches!(own, Err(ParamError::Custom(_))));
+    assert_eq!(handle.take_calls(), ["implied_constraints(x)"]);
+
+    let failures = [
+        domain.is_value_set_subset(other.domain()).map(|_| ()),
+        domain
+            .feasibility_subset(
+                Side::new(&[], &x),
+                other.domain(),
+                Side::new(other.constraints(), other.variable()),
+                &context,
+            )
+            .map(|_| ()),
+        domain
+            .union(
+                Side::new(&[], &x),
+                other.domain(),
+                Side::new(&[], &x),
+                &x,
+                &context,
+            )
+            .map(|_| ()),
+        domain
+            .intersection(
+                Side::new(&[], &x),
+                other.domain(),
+                Side::new(&[], &x),
+                &x,
+                &context,
+            )
+            .map(|_| ()),
+        ParamDomain::from(IntegerDomain::new(false, true))
+            .is_value_set_subset(&domain)
+            .map(|_| ()),
+    ];
+
+    for failure in failures {
+        let Err(ParamError::Custom(source)) = failure else {
+            panic!("a custom error, got {failure:?}");
+        };
+        assert!(source.downcast_ref::<TestValueError>().is_some());
+        assert!(source.to_string().ends_with(" failed"), "{source}");
+    }
+    assert_eq!(
+        handle.take_calls(),
+        [
+            "is_value_set_subset(integer)",
+            "feasibility_subset(x/0, integer, y/1)",
+            "union(x/0, integer, x/0, x)",
+            "intersection(x/0, integer, x/0, x)",
+            "symbol_type",
+        ]
+    );
 }

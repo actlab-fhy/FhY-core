@@ -41,8 +41,8 @@ onto `dev-rust` before continuing.
 - [x] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key: `83c1caa`
 - [x] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode: `68b326d`
 - [x] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence: `82935f7`
-- [x] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers
-- [ ] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python)
+- [x] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers: `9473515`
+- [x] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python)
 - [ ] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error
 - [ ] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`
 - [ ] R2-006 (F2-006): `ParamError` split by family
@@ -2270,6 +2270,23 @@ with its own `.venv`) serves the baseline's Python gates, the benchmarks'
   | Before | After | Tests |
   |---|---|---|
   | a substitution whose key the binder does not mention, but whose value mentions a bound identifier, renamed the binder and rebuilt it | the binder is returned as itself, and only `get_bound_identifiers` and `get_scoped_children` run | `test_binder_substitution_of_a_key_it_does_not_mention_renames_nothing` |
+
+**R2-025.** Tests only; every new test passed at its first run, so no new
+finding.
+- **Rust** (`tests/it/param/custom_stories.rs`): a `RecordingDomain` that
+  records each hook with what it received. On the left, each set procedure
+  reaches its own hook once, with the param's side, the other domain and
+  the result's variable. The intersection first asks `interval_profile`,
+  since interval operands coerce before intersecting. On the right, a
+  built-in left side asks only `symbol_type` (subset) and
+  `interval_profile` (intersection). A failing hook surfaces as
+  `ParamError::Custom` carrying the implementor's error.
+- **Python:** `test_domain_rust_binding.py` drives a counting
+  Python-defined domain the same way, including an exception and a
+  `KeyboardInterrupt` raised as themselves. `test_constraint_rust_binding.py`
+  records a Python constraint's `is_structurally_equivalent` and
+  `is_alpha_equivalent_under`, and through a param, that the renaming it
+  receives pairs the two variables.
 
 ### Track D notes
 

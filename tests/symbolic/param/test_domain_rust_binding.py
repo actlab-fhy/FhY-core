@@ -39,6 +39,7 @@ from fhy_core.symbolic.param import (
     IntervalIntegerDomain,
     IntervalProfile,
     OrdinalDomain,
+    Param,
     ParamDomain,
     ParamError,
     PermutationDomain,
@@ -413,6 +414,144 @@ def test_python_defined_domain_exception_propagates() -> None:
 def test_structural_equivalence_is_false_against_a_python_defined_domain() -> None:
     """Test a native domain is not equivalent to a Python-defined one."""
     assert not IntegerDomain().is_structurally_equivalent(_EvenDomain())
+
+
+class _CountingDomain(_EvenDomain):
+    """A Python-defined domain that counts each set hook and what it received."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        # The domain is frozen once built, so a test arms it through this list.
+        self.failure: list[BaseException] = []
+
+    def _record(self, hook: str, *received: Any) -> None:
+        self.calls.append((hook, received))
+        if self.failure:
+            raise self.failure[0]
+
+    @override
+    def is_value_set_subset(self, other: ParamDomain) -> bool:
+        self._record("is_value_set_subset", other)
+        return True
+
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+    ) -> ConstraintOutcome:
+        self._record(
+            "compute_feasibility_subset",
+            len(own_constraints),
+            own_variable,
+            other,
+            len(other_constraints),
+            other_variable,
+        )
+        return ConstraintOutcome.SATISFIED
+
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]] | None:
+        self._record("compute_union", own_variable, other, other_variable, variable)
+        return other, ()
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        self._record(
+            "compute_intersection", own_variable, other, other_variable, variable
+        )
+        return other, ()
+
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool:
+        self._record("is_structurally_equivalent", other)
+        return other is self
+
+
+def _hooks(domain: _CountingDomain) -> list[str]:
+    """Return the set hooks `domain` was asked, in order, and forget its calls."""
+    hooks = [
+        hook
+        for hook, _ in domain.calls
+        if hook not in {"symbol_type", "is_value_admissible", "validate_constraint"}
+    ]
+    domain.calls.clear()
+    return hooks
+
+
+def test_each_set_procedure_asks_a_python_defined_domain_once() -> None:
+    """Test the set procedures reach a Python-defined domain's hooks, once each."""
+    x, y, u, i = (Identifier(name) for name in "xyui")
+    domain = _CountingDomain()
+    own: Param[int] = Param(domain, x)
+    other: Param[int] = Param(_EvenDomain(), y)
+    domain.calls.clear()
+
+    assert own.is_value_set_subset(other)
+    assert _hooks(domain) == ["is_value_set_subset"]
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
+    assert domain.calls == [("compute_feasibility_subset", (0, x, other.domain, 0, y))]
+    domain.calls.clear()
+    assert own.union(other, u).domain is other.domain
+    assert domain.calls == [("compute_union", (x, other.domain, y, u))]
+    domain.calls.clear()
+    assert own.intersection(other, i).domain is other.domain
+    assert _hooks(domain) == ["compute_intersection"]
+    assert own.is_structurally_equivalent(Param(domain, x))
+    assert _hooks(domain) == ["is_structurally_equivalent"]
+
+
+def test_a_python_defined_domain_on_the_right_is_asked_only_its_sort() -> None:
+    """Test a native left operand asks a Python-defined right one only its sort."""
+    domain = _CountingDomain()
+    native: Param[int] = Param(IntegerDomain(), Identifier("x"))
+    custom: Param[int] = Param(domain, Identifier("y"))
+    domain.calls.clear()
+
+    assert native.is_value_set_subset(custom)
+    assert not native.is_structurally_equivalent(custom)
+    assert domain.calls == [("symbol_type", ())]
+
+
+@pytest.mark.parametrize("error", [_Raising("hook failed"), KeyboardInterrupt()])
+def test_a_python_defined_domain_s_set_hook_raises_through_each_procedure(
+    error: BaseException,
+) -> None:
+    """Test the exception a set hook raises reaches the caller as itself."""
+    x, y = Identifier("x"), Identifier("y")
+    domain = _CountingDomain()
+    own: Param[int] = Param(domain, x)
+    other: Param[int] = Param(_EvenDomain(), y)
+    domain.failure.append(error)
+
+    for procedure in (
+        lambda: own.is_value_set_subset(other),
+        lambda: own.check_subset(other),
+        lambda: own.union(other),
+        lambda: own.intersection(other),
+    ):
+        with pytest.raises(type(error)) as raised:
+            procedure()
+        assert raised.value is error
 
 
 # =============================================================================
