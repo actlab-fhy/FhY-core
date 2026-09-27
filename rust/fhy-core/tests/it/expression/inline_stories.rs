@@ -549,7 +549,11 @@ fn inline_refuses_a_substitution_that_breaks_a_piecewise_condition() {
         "{error:?}"
     );
     assert_eq!(error.to_string(), "inlining built an invalid piecewise");
-    assert!(std::error::Error::source(&error).is_some());
+    assert_eq!(
+        std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<PiecewiseError>()),
+        Some(&PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })
+    );
 }
 
 // ---------------------------------------------------------------------------

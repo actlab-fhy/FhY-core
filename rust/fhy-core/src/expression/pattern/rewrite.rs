@@ -612,3 +612,110 @@ const _: () = {
     assert_send_sync::<RewriteOutcome>();
     assert_send_sync::<RewriteError>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::error::{PiecewiseError, RebuildError};
+    use super::super::super::node::Expression;
+    use super::{BoxError, FiredRule, Rule, RuleApplier};
+    use crate::identifier::Identifier;
+    use crate::tree::NodeHandle;
+
+    /// A rule that never fires; the blame stories record firings by hand.
+    struct Declines;
+
+    impl Rule for Declines {
+        fn apply(&self, _expression: &Expression) -> Result<Option<Expression>, BoxError> {
+            Ok(None)
+        }
+    }
+
+    /// Record that the rule at `rule_index` returned `replacement`.
+    fn record(
+        applier: &mut RuleApplier<'_, Declines>,
+        replacement: &Expression,
+        rule_index: usize,
+    ) {
+        applier.fired.push(FiredRule {
+            rule_index,
+            name: None,
+        });
+        applier
+            .replacements
+            .insert(replacement.identity(), (replacement.clone(), rule_index));
+    }
+
+    fn leaf(name: &str) -> Expression {
+        Expression::from(Identifier::new(name))
+    }
+
+    /// Test a refused rebuild whose rewritten child is itself rebuilt
+    /// around a replaced grandchild blames the grandchild's rule, not the
+    /// rule that fired last.
+    #[test]
+    fn a_refused_rebuild_blames_the_rule_of_a_rewritten_grandchild() {
+        let rules = [Declines, Declines];
+        let mut applier = RuleApplier::new(&rules);
+        let (a, b, c, z) = (leaf("a"), leaf("b"), leaf("c"), leaf("z"));
+        let node = (&a + &b) * &c;
+        record(&mut applier, &z, 1);
+        record(&mut applier, &leaf("elsewhere"), 0);
+        let children = [&z + &b, c];
+
+        let blamed = applier.find_blamed_rule(
+            &node,
+            &children,
+            &RebuildError::ChildCount {
+                expected: 2,
+                actual: 3,
+            },
+        );
+
+        assert_eq!(blamed, 1);
+    }
+
+    /// Test a refused condition rebuilt around a replaced grandchild blames
+    /// that grandchild's rule, following the refused child first.
+    #[test]
+    fn a_refused_condition_blames_the_rule_of_its_rewritten_grandchild() {
+        let rules = [Declines, Declines, Declines];
+        let mut applier = RuleApplier::new(&rules);
+        let (a, b, p, q) = (leaf("a"), leaf("b"), leaf("p"), leaf("q"));
+        let node =
+            Expression::piecewise([(!&p, a.clone())], b.clone()).expect("a negated condition");
+        record(&mut applier, &q, 2);
+        let rewritten_value = leaf("v");
+        record(&mut applier, &rewritten_value, 0);
+        let children = [!&q, rewritten_value, b];
+
+        let blamed = applier.find_blamed_rule(
+            &node,
+            &children,
+            &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }),
+        );
+
+        assert_eq!(blamed, 2, "the condition's grandchild, not the last child");
+    }
+
+    /// Test a rebuild with no rewritten child to follow blames the rule
+    /// that fired last.
+    #[test]
+    fn a_refused_rebuild_without_a_rewritten_child_blames_the_last_firing() {
+        let rules = [Declines, Declines];
+        let mut applier = RuleApplier::new(&rules);
+        let (a, b) = (leaf("a"), leaf("b"));
+        let node = &a + &b;
+        record(&mut applier, &leaf("elsewhere"), 1);
+
+        let blamed = applier.find_blamed_rule(
+            &node,
+            &[a, b],
+            &RebuildError::ChildCount {
+                expected: 2,
+                actual: 3,
+            },
+        );
+
+        assert_eq!(blamed, 1);
+    }
+}

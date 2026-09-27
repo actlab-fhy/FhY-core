@@ -327,7 +327,15 @@ fn no_native_calls_fails_every_user_native() {
         .fold(&call(name("twice"), [build_literal(3)]), &NoNativeCalls)
         .expect_err("no implementation");
 
-    assert!(matches!(error, FoldError::Native { .. }));
+    let FoldError::Native { function, source } = &error else {
+        panic!("a native failure, got {error:?}");
+    };
+    assert_eq!(function, &name("twice"));
+    assert_eq!(
+        source.to_string(),
+        r#"native function "twice" has no implementation"#
+    );
+    assert_eq!(error.to_string(), r#"native function "twice" failed"#);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +405,11 @@ fn fold_checks_the_arguments_before_the_call_taking_them() {
 
     let error = fold(&tree).expect_err("the argument fails first");
 
-    assert!(matches!(error, FoldError::NonFiniteCast { .. }));
+    let FoldError::NonFiniteCast { function, value } = error else {
+        panic!("a non-finite cast, got {error:?}");
+    };
+    assert_eq!(function, BuiltinFunction::Round);
+    assert!(value.is_nan(), "round(nan) is {value}");
 }
 
 #[test]

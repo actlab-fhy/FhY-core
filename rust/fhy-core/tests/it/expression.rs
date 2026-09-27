@@ -4,6 +4,7 @@
 
 mod builders_stories;
 mod builtins_stories;
+mod error_text_stories;
 #[cfg(feature = "ndarray")]
 mod evaluate_array_stories;
 mod evaluate_properties;

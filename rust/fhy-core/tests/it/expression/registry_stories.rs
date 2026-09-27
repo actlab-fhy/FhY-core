@@ -747,7 +747,10 @@ fn registry_clone_keeps_the_constants_identifiers() {
     let copy = original.clone();
 
     assert_eq!(copy.constant_identifier("c"), Some(&identifier));
-    assert!(copy.constant(&identifier).is_some());
+    assert_eq!(
+        copy.constant(&identifier),
+        Some(&declare_constant("c", FunctionSort::Int, 1))
+    );
 }
 
 #[test]
@@ -779,7 +782,10 @@ fn retain_keeps_the_chosen_entries_in_order_with_their_identifiers() {
 
     assert_eq!(names_in_order(&registry), ["kept", "f"]);
     assert_eq!(registry.constant_identifier("kept"), Some(&kept_constant));
-    assert!(registry.constant(&kept_constant).is_some());
+    assert_eq!(
+        registry.constant(&kept_constant),
+        Some(&declare_constant("kept", FunctionSort::Int, 1))
+    );
     assert!(registry.constant(&dropped_constant).is_none());
     assert!(registry.constant_identifier("dropped").is_none());
     assert!(registry.entry("g").is_none());

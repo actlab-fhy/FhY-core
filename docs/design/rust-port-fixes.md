@@ -77,8 +77,8 @@ onto `dev-rust` before continuing.
 - [x] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node: `9ac5ba7`
 - [x] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding: `489acef`
 - [x] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests: `e7614ee`
-- [x] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed: this commit
-- [ ] R2-029b (F2-029, `expression`): error-text tables and small stories
+- [x] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed: `f1f9d1a`
+- [x] R2-029b (F2-029, `expression`): error-text tables and small stories: this commit
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
 - [ ] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration
 - [ ] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order
@@ -3299,6 +3299,32 @@ new finding.
 - **Python-visible changes:** none; the variant was never produced, so the
   `NonBooleanLogicalOperandError` it mapped to still comes from the
   screen.
+
+**R2-029b.** Tests only; every new test passed at its first run.
+- **Tables.** `tests/it/expression/error_text_stories.rs` holds one rstest
+  table per error type of the three files: `PiecewiseError`,
+  `RebuildError`, `BooleanPosition`'s phrases and
+  `NonBooleanLogicalOperandError`; `FunctionDefinitionError` (both
+  pluralizations), `ConstantValueError`, `RegistrationError` and
+  `InlineError`; `LaneFailure`, `EvaluationError` (each variant, R2-012's
+  and R2-010's included, the three `Unbound` near misses, and a lane with
+  and without an index) and `FoldError`. Each checks `to_string()` and the
+  source's type through `support/error_text.rs`, and a story checks that
+  `EvaluationError::Inline` passes the inlining error's own source on.
+- **Tightened.** `no_native_calls_fails_every_user_native` matches the
+  function and the source's text; `fold_checks_the_arguments_before_the_call_taking_them`
+  the function and the NaN; the two registry stories compare the constant
+  itself instead of `is_some()`; and the inlining story downcasts its
+  source to the `PiecewiseError`.
+- **Rewrite blame through a grandchild** is not reachable through
+  `apply_rewrite_rules`: its only refusal names a condition that is a
+  literal, which a rule returned directly. So the three stories are unit
+  tests of `RuleApplier::find_blamed_rule` in `pattern/rewrite.rs`,
+  recording replacements by hand: a child rebuilt around a replaced
+  grandchild blames the grandchild's rule, through both the refused child
+  and the last rewritten child, and a rebuild with no rewritten child
+  blames the last firing.
+- **Python-visible changes:** none.
 
 ### Track C notes
 
