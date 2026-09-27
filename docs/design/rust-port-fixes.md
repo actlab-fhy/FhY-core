@@ -75,8 +75,8 @@ onto `dev-rust` before continuing.
 - [x] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`: `9900487`
 - [x] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`: `d77f7ec`
 - [x] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node: `9ac5ba7`
-- [x] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding: this commit
-- [ ] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests
+- [x] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding: `489acef`
+- [x] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests: this commit
 - [ ] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed
 - [ ] R2-029b (F2-029, `expression`): error-text tables and small stories
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
@@ -3245,6 +3245,36 @@ failing case over `any_literal`. Both passed at their first run.
   |---|---|---|
   | error messages naming a node wrote its full text, which for a DAG never finished; `str()` of a decoded doubling DAG hung | a node is written up to 64 occurrences, then `…`; `str()` above a million occurrences writes the first thousand, then `…` | `test_str_of_a_decoded_doubling_dag_is_bounded` (new) |
   | a lane failure of `evaluate_expression_with_numpy` read `integer division by zero in (x // y)` | `integer division by zero at lane 2 in (x // y)`, the first failed lane in C order | no Python test pinned the array text |
+
+**R2-026a.** Tests only, and every new test passed at its first run, so no
+new finding.
+- **Generators.** `tree_strategies` draws `+x` and Boolean piecewise
+  nodes. Rstests evaluate `+3`, `+2.5`, `+(-0.0)` and Boolean piecewise
+  selections as scalars, and `+x` over integer and real arrays and a
+  Boolean piecewise over Boolean arrays.
+- **IEEE edges.** `real_floor_division_and_modulo_follow_numpy_at_the_ieee_edges`
+  holds the 13 rows of `kernel_probe.rs`, with NumPy 2's `floor_divide`
+  and `mod` results, compared by bits (every NaN alike).
+  `integer_floor_division_and_modulo_agree_with_an_i128_oracle` checks the
+  quotient and remainder against `i128`, and the zero-divisor and
+  `i64::MIN // -1` failures.
+- **Chunks (call).** The chunk size is a parameter of the crate-private
+  `Prepared::evaluate_array_in_chunks`, which `evaluate_array` calls with
+  65,536. Since only the crate can reach it, the "lane property with chunks
+  of 1 to 3 lanes" is a unit property of `evaluate/array.rs`: over eleven
+  trees reaching each node kind, lane failures and the guards that drop
+  them, and 1 to 9 random lanes, a chunked evaluation equals the whole one,
+  the failed lane's index included. `chunk_probe.rs` is the story
+  `a_chunked_evaluation_equals_the_scalar_evaluation_of_every_lane`: its
+  300,003 lanes fail at lane 200,003, the third chunk, and every lane
+  before it matches the scalar evaluation. It is the suite's slowest story,
+  about 20 s in a debug build, from 200,000 scalar evaluations that each
+  re-run the Boolean screen.
+- **Array bindings.** Boolean and transposed real bindings of 15 and
+  120,300 lanes (below and above one chunk), and `MisshapenKernels`, whose
+  wrong shape is `EvaluationError::Kernel` with the shape text as its
+  source.
+- **Python-visible changes:** none.
 
 ### Track C notes
 

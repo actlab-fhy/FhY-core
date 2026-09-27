@@ -85,6 +85,9 @@ fn tree_strategies(depth: u32) -> (BoxedStrategy<Expression>, BoxedStrategy<Expr
             numeric
                 .clone()
                 .prop_map(|operand| Expression::new_unary(UnaryOperation::Negate, operand)),
+            numeric
+                .clone()
+                .prop_map(|operand| Expression::new_unary(UnaryOperation::Positive, operand)),
             (select(NATIVES.to_vec()), numeric.clone())
                 .prop_map(|(function, argument)| Expression::call(function, [argument])),
             (boolean.clone(), numeric.clone(), numeric.clone()).prop_map(
@@ -110,6 +113,12 @@ fn tree_strategies(depth: u32) -> (BoxedStrategy<Expression>, BoxedStrategy<Expr
             (boolean.clone(), boolean.clone())
                 .prop_map(|(left, right)| Expression::any([left, right])),
             boolean.clone().prop_map(|operand| !operand),
+            (boolean.clone(), boolean.clone(), boolean.clone()).prop_map(
+                |(condition, value, otherwise)| {
+                    Expression::piecewise([(condition, value)], otherwise)
+                        .expect("a valid piecewise")
+                }
+            ),
         ]
         .boxed();
         (next_numeric, next_boolean)
@@ -218,6 +227,59 @@ proptest! {
         let sign = if a > 0.0 { 1 } else if a < 0.0 { -1 } else { 0 };
         prop_assert!(is_same_scalar(value(BuiltinFunction::Sign, &[a]), Scalar::Int(sign)));
         prop_assert_eq!(value(BuiltinFunction::Sigmoid, &[a]), Scalar::Real(1.0 / (1.0 + (-a).exp())));
+    }
+}
+
+/// Return floor division and modulo of `a` by `b`, computed in `i128`, each
+/// as its value or the text of its lane failure.
+fn integer_divmod_oracle(a: i64, b: i64) -> (Result<i64, &'static str>, Result<i64, &'static str>) {
+    if b == 0 {
+        let failure = Err("integer division by zero");
+        return (failure, failure);
+    }
+    let (a, b) = (i128::from(a), i128::from(b));
+    let mut quotient = a / b;
+    if (a % b != 0) && ((a < 0) != (b < 0)) {
+        quotient -= 1;
+    }
+    let remainder = a - quotient * b;
+    let fit = |value: i128| i64::try_from(value).map_err(|_overflow| "integer overflow");
+    (fit(quotient), fit(remainder))
+}
+
+/// Return an integer evaluation's value, or the text of its lane failure.
+fn integer_outcome(result: &Result<Scalar, EvaluationError>) -> Result<i64, String> {
+    match result {
+        Ok(Scalar::Int(value)) => Ok(*value),
+        Err(EvaluationError::Lane { failure, .. }) => Err(failure.to_string()),
+        other => panic!("an integer or a lane failure, got {other:?}"),
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    /// Integer floor division and modulo satisfy `a == (a // b) * b + a % b`
+    /// with the remainder taking the divisor's sign, as an `i128` oracle
+    /// computes them; a zero divisor and `i64::MIN // -1` fail their lane.
+    #[test]
+    fn integer_floor_division_and_modulo_agree_with_an_i128_oracle(
+        a in prop_oneof![any::<i64>(), -7_i64..8, select(vec![i64::MIN, i64::MAX])],
+        b in prop_oneof![any::<i64>(), -7_i64..8, select(vec![0_i64, -1, i64::MIN, i64::MAX])],
+    ) {
+        let registry = FunctionRegistry::new();
+        let evaluator = Evaluator::new(&registry);
+        let environment = HashMap::from([
+            (IDENTIFIERS[0].clone(), Scalar::Int(a)),
+            (IDENTIFIERS[1].clone(), Scalar::Int(b)),
+        ]);
+        let [n, m] = [&IDENTIFIERS[0], &IDENTIFIERS[1]].map(|identifier| Expression::from(identifier.clone()));
+        let divide = evaluator.evaluate(&n.floor_divide(&m), &environment);
+        let modulo = evaluator.evaluate(&n.floor_mod(&m), &environment);
+        let (quotient, remainder) = integer_divmod_oracle(a, b);
+
+        prop_assert_eq!(integer_outcome(&divide), quotient.map_err(str::to_owned));
+        prop_assert_eq!(integer_outcome(&modulo), remainder.map_err(str::to_owned));
     }
 }
 

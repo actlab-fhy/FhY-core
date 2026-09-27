@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use fhy_core::expression::builtins::BuiltinFunction;
 use fhy_core::expression::evaluate::{
     ArrayBinding, ArrayKernels, ArrayValue, CoreKernels, EvaluationError, Evaluator, LaneFailure,
+    Scalar,
 };
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Callee, Expression, SymbolType};
@@ -705,4 +706,232 @@ fn a_lane_error_names_its_lane_in_the_whole_result_when_its_value_broadcasts() {
         matches!(error, EvaluationError::Lane { lane: Some(3), .. }),
         "{error:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Unary plus, Boolean piecewise, Boolean and transposed bindings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unary_plus_of_integers_and_reals_is_the_operand() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let integers = array![3_i64, -4].into_dyn();
+    let reals = array![2.5, -0.0].into_dyn();
+
+    let plus_integers = evaluate(
+        &x_reference.positive(),
+        vec![(&x, ArrayBinding::Int(integers.view()))],
+    );
+    let plus_reals = expect_real(
+        evaluate(
+            &y_reference.positive(),
+            vec![(&y, ArrayBinding::Real(reals.view()))],
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(expect_int(plus_integers.unwrap()), integers);
+    assert_eq!(
+        plus_reals
+            .iter()
+            .map(|lane| lane.to_bits())
+            .collect::<Vec<_>>(),
+        [2.5_f64.to_bits(), (-0.0_f64).to_bits()]
+    );
+}
+
+#[test]
+fn a_boolean_piecewise_selects_booleans_per_lane() {
+    let (p, p_reference) = build_identifier("p");
+    let (q, q_reference) = build_identifier("q");
+    let conditions = array![true, false, true].into_dyn();
+    let values = array![false, true, true].into_dyn();
+    let tree = piecewise(vec![(p_reference, q_reference.clone())], !&q_reference);
+
+    let result = evaluate(
+        &tree,
+        vec![
+            (&p, ArrayBinding::Bool(conditions.view())),
+            (&q, ArrayBinding::Bool(values.view())),
+        ],
+    );
+
+    assert_eq!(
+        expect_bool(result.unwrap()),
+        array![false, false, true].into_dyn()
+    );
+}
+
+/// Test Boolean and transposed real bindings, of a lane count below the
+/// chunk size and of one above it, evaluate as their lanes say.
+#[rstest::rstest]
+#[case::below_the_chunk_size(3, 5)]
+#[case::above_the_chunk_size(300, 401)]
+fn boolean_and_transposed_bindings_evaluate_lane_by_lane(
+    #[case] rows: usize,
+    #[case] columns: usize,
+) {
+    let (p, p_reference) = build_identifier("p");
+    let (r, r_reference) = build_identifier("r");
+    let booleans = ArrayD::from_shape_fn(IxDyn(&[rows, columns]), |index| {
+        (index[0] + index[1]) % 3 == 0
+    });
+    let storage = ArrayD::from_shape_fn(IxDyn(&[columns, rows]), |index| {
+        f64::from(u32::try_from(index[0] * 10 + index[1]).unwrap())
+    });
+    let transposed = storage.t();
+    let tree = piecewise(vec![(p_reference, r_reference.clone())], -&r_reference);
+
+    let result = expect_real(
+        evaluate(
+            &tree,
+            vec![
+                (&p, ArrayBinding::Bool(booleans.view())),
+                (&r, ArrayBinding::Real(transposed.view().into_dyn())),
+            ],
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(result.shape(), [rows, columns]);
+    assert!(result.is_standard_layout());
+    for row in 0..rows {
+        for column in 0..columns {
+            let lane = transposed[[row, column]];
+            let expected = if booleans[[row, column]] { lane } else { -lane };
+            assert_eq!(result[[row, column]].to_bits(), expected.to_bits());
+        }
+    }
+}
+
+/// Kernels computing `exp` that return an array of the wrong shape.
+struct MisshapenKernels;
+
+impl ArrayKernels for MisshapenKernels {
+    fn handles(&self, function: BuiltinFunction) -> bool {
+        function == BuiltinFunction::Exp
+    }
+
+    fn native(
+        &self,
+        _function: BuiltinFunction,
+        argument: CowArray<'_, f64, IxDyn>,
+    ) -> Result<ArrayD<f64>, BoxError> {
+        Ok(ArrayD::zeros(IxDyn(&[argument.len() + 1])))
+    }
+}
+
+#[test]
+fn a_kernel_returning_the_wrong_shape_is_an_error() {
+    let (x, reference) = build_identifier("x");
+    let values = array![1.0, 2.0].into_dyn();
+
+    let error = evaluate_with(
+        &call(BuiltinFunction::Exp, [reference]),
+        vec![(&x, ArrayBinding::Real(values.view()))],
+        &MisshapenKernels,
+    )
+    .expect_err("the kernel's shape is refused");
+
+    assert!(
+        matches!(
+            &error,
+            EvaluationError::Kernel {
+                function: BuiltinFunction::Exp,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "the array kernel of exp failed");
+    assert_eq!(
+        std::error::Error::source(&error).map(ToString::to_string),
+        Some("the kernel returned shape [3] for an argument of shape [2]".to_owned())
+    );
+}
+
+/// Test a chunked evaluation of 300,003 lanes, over a column binding, a
+/// row binding and a transposed one, with lane failures that a connective
+/// or a piecewise discards in some lanes only, equals the scalar evaluation
+/// of every lane (the audit's `chunk_probe`).
+#[test]
+fn a_chunked_evaluation_equals_the_scalar_evaluation_of_every_lane() {
+    let (x, ex) = build_identifier("x");
+    let (y, ey) = build_identifier("y");
+    let (r, er) = build_identifier("r");
+    let guard = ex.not_equals(0_i64).and(Expression::any([
+        Expression::from(10_i64).floor_divide(&ex).greater(&ey),
+        Expression::from(1_i64)
+            .floor_divide(&ex - 1_i64)
+            .equals(0_i64),
+    ]));
+    let tree = piecewise(
+        vec![
+            (guard, ex.floor_mod(7_i64) + &ey),
+            (er.greater(0.5), call(BuiltinFunction::Floor, [&er * 100.0])),
+        ],
+        (&ex + 5_i64).floor_divide(&ey - 1_i64),
+    );
+    let (rows, columns) = (3, 100_001);
+    let xs = ArrayD::from_shape_fn(IxDyn(&[columns]), |index| {
+        i64::try_from(index[0] % 11).unwrap() - 5
+    });
+    let ys = ArrayD::from_shape_fn(IxDyn(&[rows, 1]), |index| {
+        i64::try_from(index[0]).unwrap() - 1
+    });
+    let storage = ArrayD::from_shape_fn(IxDyn(&[columns, rows]), |index| {
+        f64::from(u32::try_from((index[0] * 7 + index[1] * 3) % 10).unwrap()) / 10.0
+    });
+    let rs = storage.t();
+    let registry = FunctionRegistry::new();
+    let prepared = Evaluator::new(&registry).prepare(&tree).unwrap();
+    let environment = HashMap::from([
+        (x.clone(), ArrayBinding::Int(xs.view())),
+        (y.clone(), ArrayBinding::Int(ys.view())),
+        (r.clone(), ArrayBinding::Real(rs.view())),
+    ]);
+
+    let array = prepared.evaluate_array(&environment, &CoreKernels);
+
+    let mut first_failure = None;
+    let mut expected = Vec::with_capacity(rows * columns);
+    let mut scalars = HashMap::new();
+    for row in 0..rows {
+        for column in 0..columns {
+            scalars.insert(x.clone(), Scalar::Int(xs[[column]]));
+            scalars.insert(y.clone(), Scalar::Int(ys[[row, 0]]));
+            scalars.insert(r.clone(), Scalar::Real(rs[[row, column]]));
+            match prepared.evaluate(&scalars) {
+                Ok(Scalar::Int(value)) => expected.push(value),
+                Ok(other) => panic!("an integer lane, got {other:?}"),
+                Err(error) => {
+                    first_failure.get_or_insert((row * columns + column, error.to_string()));
+                    expected.push(0);
+                }
+            }
+        }
+    }
+    match (array, first_failure) {
+        (Ok(ArrayValue::Int(values)), None) => {
+            assert_eq!(values.shape(), [rows, columns]);
+            assert!(values.iter().copied().eq(expected));
+        }
+        (Err(error), Some((lane, text))) => {
+            let EvaluationError::Lane {
+                lane: Some(failed), ..
+            } = &error
+            else {
+                panic!("a lane failure, got {error:?}");
+            };
+            assert_eq!(*failed, lane);
+            assert_eq!(
+                error.to_string(),
+                text.replacen(" in ", &format!(" at lane {lane} in "), 1)
+            );
+        }
+        (array, first_failure) => {
+            panic!("array {array:?} against the first scalar failure {first_failure:?}")
+        }
+    }
 }

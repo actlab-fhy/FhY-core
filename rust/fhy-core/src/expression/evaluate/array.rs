@@ -168,6 +168,22 @@ impl Prepared<'_> {
         environment: &HashMap<Identifier, ArrayBinding<'_>, S>,
         kernels: &dyn ArrayKernels,
     ) -> Result<ArrayValue, EvaluationError> {
+        self.evaluate_array_in_chunks(environment, kernels, CHUNK_LANES)
+    }
+
+    /// Return what [`evaluate_array`](Self::evaluate_array) returns,
+    /// evaluating more than `chunk_lanes` lanes `chunk_lanes` at a time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_lanes` is zero.
+    pub(super) fn evaluate_array_in_chunks<S: BuildHasher + Sync>(
+        &self,
+        environment: &HashMap<Identifier, ArrayBinding<'_>, S>,
+        kernels: &dyn ArrayKernels,
+        chunk_lanes: usize,
+    ) -> Result<ArrayValue, EvaluationError> {
+        assert!(chunk_lanes > 0, "a chunk has lanes");
         self.check(
             |identifier| environment.get(identifier).map(ArrayBinding::symbol_type),
             |identifier| environment.contains_key(identifier),
@@ -182,7 +198,7 @@ impl Prepared<'_> {
             shape = broadcast_shape(&shape, binding.shape())?;
         }
         let lane_count = lane_count(&shape)?;
-        if lane_count <= CHUNK_LANES {
+        if lane_count <= chunk_lanes {
             let lanes = ArrayLanes {
                 kernels,
                 shape: shape.clone(),
@@ -201,8 +217,8 @@ impl Prepared<'_> {
             })
             .collect::<Result<_, EvaluationError>>()?;
         let mut output: Option<Output> = None;
-        for start in (0..lane_count).step_by(CHUNK_LANES) {
-            let length = CHUNK_LANES.min(lane_count - start);
+        for start in (0..lane_count).step_by(chunk_lanes) {
+            let length = chunk_lanes.min(lane_count - start);
             for (_, source) in &mut sources {
                 source.advance(length);
             }
@@ -785,9 +801,104 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
 
 #[cfg(test)]
 mod tests {
-    use ndarray::{ArrayD, IxDyn, arr1};
+    use std::collections::HashMap;
 
-    use super::{ArrayBinding, ChunkSource};
+    use ndarray::{Array1, ArrayD, IxDyn, arr1};
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    use crate::expression::builtins::BuiltinFunction;
+    use crate::expression::evaluate::Evaluator;
+    use crate::expression::node::Expression;
+    use crate::expression::registry::FunctionRegistry;
+    use crate::identifier::Identifier;
+
+    use super::{ArrayBinding, ArrayValue, ChunkSource, CoreKernels, EvaluationError};
+
+    /// Return trees over an integer `n`, a real `r` and a Boolean `p` that
+    /// reach each kind of node, lane failures in some lanes, and guards
+    /// that discard them.
+    fn build_trees(n: &Expression, r: &Expression, p: &Expression) -> Vec<Expression> {
+        let piecewise = |cases: Vec<(Expression, Expression)>, otherwise: Expression| {
+            Expression::piecewise(cases, otherwise).expect("a valid piecewise")
+        };
+        vec![
+            n + r,
+            n.floor_divide(n - 1),
+            n.floor_divide(n) + n.floor_divide(-1),
+            piecewise(vec![(p.clone(), n * 2)], r.clone()),
+            piecewise(
+                vec![(n.not_equals(0), Expression::from(10).floor_divide(n))],
+                n.clone(),
+            ),
+            p.and(n.greater(0)),
+            Expression::any([n.equals(0), Expression::from(1).floor_divide(n).equals(0)]),
+            Expression::call(BuiltinFunction::Floor, [r * 100.0]) + n,
+            -n,
+            r.positive(),
+            piecewise(vec![(p.clone(), p.clone())], n.less(r)),
+        ]
+    }
+
+    /// Return a comparable summary of an array evaluation's outcome, every
+    /// NaN alike.
+    fn summarize(result: &Result<ArrayValue, EvaluationError>) -> String {
+        match result {
+            Ok(ArrayValue::Real(lanes)) => {
+                let bits: Vec<u64> = lanes
+                    .iter()
+                    .map(|lane| if lane.is_nan() { 0 } else { lane.to_bits() })
+                    .collect();
+                format!("real {:?} {bits:?}", lanes.shape())
+            }
+            Ok(other) => format!("{other:?}"),
+            Err(error) => format!("error: {error}"),
+        }
+    }
+
+    fn lane_values() -> impl Strategy<Value = (i64, f64, bool)> {
+        (
+            prop_oneof![-3_i64..4, select(vec![0_i64, i64::MAX, i64::MIN])],
+            prop_oneof![
+                -3.0_f64..3.0,
+                select(vec![-0.0, f64::NAN, f64::INFINITY, 1e300])
+            ],
+            any::<bool>(),
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// Evaluating a few lanes one to three at a time gives what one
+        /// evaluation of them all gives, the first failed lane included.
+        #[test]
+        fn chunks_of_one_to_three_lanes_evaluate_as_one_evaluation(
+            tree in 0_usize..11,
+            lanes in proptest::collection::vec(lane_values(), 1..10),
+            chunk_lanes in 1_usize..4,
+        ) {
+            let identifiers = [Identifier::new("n"), Identifier::new("r"), Identifier::new("p")];
+            let [n, r, p] = identifiers.clone().map(Expression::from);
+            let tree = &build_trees(&n, &r, &p)[tree];
+            let integers: Array1<i64> = lanes.iter().map(|lane| lane.0).collect();
+            let reals: Array1<f64> = lanes.iter().map(|lane| lane.1).collect();
+            let booleans: Array1<bool> = lanes.iter().map(|lane| lane.2).collect();
+            let [n, r, p] = identifiers;
+            let environment = HashMap::from([
+                (n, ArrayBinding::Int(integers.view().into_dyn())),
+                (r, ArrayBinding::Real(reals.view().into_dyn())),
+                (p, ArrayBinding::Bool(booleans.view().into_dyn())),
+            ]);
+            let registry = FunctionRegistry::new();
+            let prepared = Evaluator::new(&registry).prepare(tree).expect("the tree inlines");
+
+            let whole = prepared.evaluate_array(&environment, &CoreKernels);
+            let chunked = prepared.evaluate_array_in_chunks(&environment, &CoreKernels, chunk_lanes);
+
+            prop_assert_eq!(summarize(&chunked), summarize(&whole), "{}", tree);
+        }
+    }
 
     /// Return the lanes of `binding`, which must hold integers.
     fn expect_int_lanes(binding: &ArrayBinding<'_>) -> Vec<i64> {

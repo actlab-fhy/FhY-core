@@ -820,3 +820,84 @@ fn a_lane_error_on_a_63_level_doubling_dag_displays_in_bounded_size() {
         "{error:?}"
     );
 }
+
+// =============================================================================
+// Unary plus, Boolean piecewise, and the IEEE edges of floor division
+// =============================================================================
+
+/// Return whether two scalars are the same value, every NaN equal and the
+/// zeros told apart by their sign.
+fn is_same_scalar(left: Scalar, right: Scalar) -> bool {
+    match (left, right) {
+        (Scalar::Real(a), Scalar::Real(b)) => {
+            a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+        }
+        _ => left == right,
+    }
+}
+
+/// Test `+x` is `x` for an integer and a real, and a piecewise with
+/// Boolean branches selects a Boolean.
+#[rstest]
+#[case::plus_an_integer(Expression::from(3).positive(), Scalar::Int(3))]
+#[case::plus_a_real(Expression::from(2.5).positive(), Scalar::Real(2.5))]
+#[case::plus_a_negative_zero(Expression::from(-0.0).positive(), Scalar::Real(-0.0))]
+#[case::boolean_piecewise_first_case(
+    piecewise(vec![(build_literal(true), build_literal(false))], build_literal(true)),
+    Scalar::Bool(false)
+)]
+#[case::boolean_piecewise_otherwise(
+    piecewise(vec![(Expression::from(1).less(0), build_literal(false))], build_literal(true)),
+    Scalar::Bool(true)
+)]
+fn unary_plus_and_boolean_piecewise_evaluate(#[case] tree: Expression, #[case] expected: Scalar) {
+    let value = evaluate(&tree, &[]).expect("the tree evaluates");
+
+    assert!(is_same_scalar(value, expected), "{value:?} != {expected:?}");
+}
+
+/// Test real floor division and modulo at the IEEE edges agree with
+/// `NumPy`'s `floor_divide` and `mod` (2.x), the sign of a zero and every
+/// NaN included.
+#[rstest]
+#[case::zero_by_negative_one(0.0, -1.0, -0.0, -0.0)]
+#[case::negative_zero_by_one(-0.0, 1.0, -0.0, 0.0)]
+#[case::five_by_infinity(5.0, f64::INFINITY, 0.0, 5.0)]
+#[case::negative_five_by_infinity(-5.0, f64::INFINITY, -1.0, f64::INFINITY)]
+#[case::five_by_negative_infinity(5.0, f64::NEG_INFINITY, -1.0, f64::NEG_INFINITY)]
+#[case::infinity_by_one(f64::INFINITY, 1.0, f64::NAN, f64::NAN)]
+#[case::one_by_zero(1.0, 0.0, f64::INFINITY, f64::NAN)]
+#[case::negative_one_by_zero(-1.0, 0.0, f64::NEG_INFINITY, f64::NAN)]
+#[case::zero_by_zero(0.0, 0.0, f64::NAN, f64::NAN)]
+#[case::nan_by_one(f64::NAN, 1.0, f64::NAN, f64::NAN)]
+#[case::one_by_nan(1.0, f64::NAN, f64::NAN, f64::NAN)]
+#[case::tiny_by_huge(-1e-300, 1e300, -1.0, 1e300)]
+#[case::seven_by_negative_zero(7.0, -0.0, f64::NEG_INFINITY, f64::NAN)]
+fn real_floor_division_and_modulo_follow_numpy_at_the_ieee_edges(
+    #[case] numerator: f64,
+    #[case] denominator: f64,
+    #[case] quotient: f64,
+    #[case] remainder: f64,
+) {
+    let divide = evaluate_binary(
+        BinaryOperation::FloorDivide,
+        Scalar::Real(numerator),
+        Scalar::Real(denominator),
+    )
+    .expect("real floor division never fails");
+    let modulo = evaluate_binary(
+        BinaryOperation::FloorMod,
+        Scalar::Real(numerator),
+        Scalar::Real(denominator),
+    )
+    .expect("real modulo never fails");
+
+    assert!(
+        is_same_scalar(divide, Scalar::Real(quotient)),
+        "{numerator} // {denominator} = {divide:?}"
+    );
+    assert!(
+        is_same_scalar(modulo, Scalar::Real(remainder)),
+        "{numerator} % {denominator} = {modulo:?}"
+    );
+}
