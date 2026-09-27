@@ -76,8 +76,8 @@ onto `dev-rust` before continuing.
 - [x] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`: `d77f7ec`
 - [x] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node: `9ac5ba7`
 - [x] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding: `489acef`
-- [x] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests: this commit
-- [ ] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed
+- [x] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests: `e7614ee`
+- [x] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed: this commit
 - [ ] R2-029b (F2-029, `expression`): error-text tables and small stories
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
 - [ ] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration
@@ -3275,6 +3275,30 @@ new finding.
   wrong shape is `EvaluationError::Kernel` with the shape text as its
   source.
 - **Python-visible changes:** none.
+- **An unreproduced failure.** One `cargo test --workspace --all-features`
+  run during this item reported one failed test in one binary, with the
+  output piped through `-q`, so the test is not known; six full runs
+  since, back to back, passed. Other tracks were building on the machine,
+  and the timing-bounded process-backend stories (R2-014) are the likely
+  candidate.
+
+**R2-047a.**
+- **`EvaluationError::NumberAsBoolean`** is deleted, and so is the
+  binding's mapping and its now unused `non_boolean_operand_error`
+  helper. The walk's three sites (a number under `!`, in a connective, as
+  a piecewise condition) are `unreachable!`, naming the Boolean screen that
+  `Prepared::evaluate` and `evaluate_array` run first;
+  `a_number_in_a_boolean_position_is_ill_typed` pins `!x`, `all(x, p)` and
+  `piecewise(x -> 1, 0)` as `IllTyped`, and passed at the base.
+- **`arithmetic`** takes the two integer lane containers; `binary` routes
+  integers to it, Booleans to `BooleanArithmetic`, and marks the real case
+  `unreachable!`, which `combine` sends to `real_arithmetic`. `unary` keeps
+  only its live arms (a Boolean under `-` or `+`, and an integer negation);
+  `combine` handles the rest. `logical` loses its unused node argument.
+- **Coverage** stays without a gate (§I.10).
+- **Python-visible changes:** none; the variant was never produced, so the
+  `NonBooleanLogicalOperandError` it mapped to still comes from the
+  screen.
 
 ### Track C notes
 

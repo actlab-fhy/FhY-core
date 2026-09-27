@@ -901,3 +901,23 @@ fn real_floor_division_and_modulo_follow_numpy_at_the_ieee_edges(
         "{numerator} % {denominator} = {modulo:?}"
     );
 }
+
+/// Test a number in a Boolean position is refused by the Boolean screen as
+/// `IllTyped` before the walk runs, for a negation, a connective and a
+/// piecewise condition alike: the walk never meets one.
+#[rstest]
+#[case::negation(|x: &Expression, _: &Expression| !x)]
+#[case::connective(|x: &Expression, p: &Expression| Expression::all([x.clone(), p.clone()]))]
+#[case::piecewise_condition(|x: &Expression, _: &Expression| piecewise(vec![(x.clone(), Expression::from(1))], 0))]
+fn a_number_in_a_boolean_position_is_ill_typed(
+    #[case] build: fn(&Expression, &Expression) -> Expression,
+) {
+    let (x, x_reference) = build_identifier("x");
+    let (p, p_reference) = build_identifier("p");
+    let tree = build(&x_reference, &p_reference);
+
+    let error = evaluate(&tree, &[(&x, Scalar::Int(1)), (&p, Scalar::Bool(true))])
+        .expect_err("a number is no Boolean");
+
+    assert!(matches!(error, EvaluationError::IllTyped(_)), "{error:?}");
+}

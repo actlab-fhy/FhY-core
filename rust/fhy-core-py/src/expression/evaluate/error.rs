@@ -46,7 +46,6 @@ macro_rules! expression_error_fn {
 
 expression_error_fn!(native_constant_binding_error, "NativeConstantBindingError");
 expression_error_fn!(native_result_sort_error, "NativeResultSortError");
-expression_error_fn!(non_boolean_operand_error, "NonBooleanLogicalOperandError");
 expression_error_fn!(non_finite_cast_error, "NonFiniteCastError");
 expression_error_fn!(
     string_literal_precision_error,
@@ -78,7 +77,6 @@ pub(super) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError)
         EvaluationError::BooleanArithmetic(_) | EvaluationError::MixedBranches(_) => {
             PyTypeError::new_err(message)
         }
-        EvaluationError::NumberAsBoolean(_) => non_boolean_operand_error(py, &message),
         EvaluationError::Shape { .. } | EvaluationError::BroadcastTooLarge { .. } => {
             PyValueError::new_err(message)
         }

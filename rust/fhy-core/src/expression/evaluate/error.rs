@@ -141,11 +141,6 @@ pub enum EvaluationError {
     /// written up to 64 node occurrences and then `…`, as every node an
     /// evaluation error names is.
     BooleanArithmetic(Expression),
-    /// A number is used as a Boolean: an operand of a connective or of a
-    /// negation, or a piecewise condition, which the screen did not refuse.
-    ///
-    /// Displays as `a number is used as a boolean in (x && 1)`.
-    NumberAsBoolean(Expression),
     /// A piecewise's branches mix Booleans and numbers.
     ///
     /// Displays as `the branches of {...} mix booleans and numbers`.
@@ -246,11 +241,6 @@ impl fmt::Display for EvaluationError {
                 "a boolean is used as a number in {}",
                 Bounded::message(node)
             ),
-            Self::NumberAsBoolean(node) => write!(
-                f,
-                "a number is used as a boolean in {}",
-                Bounded::message(node)
-            ),
             Self::MixedBranches(node) => write!(
                 f,
                 "the branches of {} mix booleans and numbers",
@@ -296,7 +286,6 @@ impl Error for EvaluationError {
             | Self::IntegerOutOfRange(_)
             | Self::Unsupported(_)
             | Self::BooleanArithmetic(_)
-            | Self::NumberAsBoolean(_)
             | Self::MixedBranches(_)
             | Self::Shape { .. }
             | Self::BroadcastTooLarge { .. }

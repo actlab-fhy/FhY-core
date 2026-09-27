@@ -307,7 +307,7 @@ where
                 }
                 self.binary(node, binary.operation(), &left, &right)
             }
-            ExpressionKind::Logical(logical) => self.logical(node, logical.operation(), &arguments),
+            ExpressionKind::Logical(logical) => self.logical(logical.operation(), &arguments),
             ExpressionKind::Piecewise(_) => self.piecewise(node, &arguments),
             ExpressionKind::Call(call) => {
                 let Callee::Builtin(function) = call.callee() else {
@@ -502,17 +502,9 @@ where
         operation: UnaryOperation,
         operand: &Value<L>,
     ) -> Result<Value<L>, EvaluationError> {
-        let lanes = self.lanes;
         let (data, own) = match (operation, &operand.data) {
-            (UnaryOperation::LogicalNot, Data::Bool(value)) => {
-                (Data::Bool(lanes.map1(value, |x| !x)), None)
-            }
-            (UnaryOperation::LogicalNot, _) => {
-                return Err(EvaluationError::NumberAsBoolean(node.clone()));
-            }
-            (_, Data::Bool(_)) => return Err(EvaluationError::BooleanArithmetic(node.clone())),
-            (UnaryOperation::Positive, _) => {
-                unreachable!("`combine` passes a numeric operand of `+` through")
+            (UnaryOperation::Negate | UnaryOperation::Positive, Data::Bool(_)) => {
+                return Err(EvaluationError::BooleanArithmetic(node.clone()));
             }
             (UnaryOperation::Negate, Data::Int(value)) => {
                 let (lanes, own) = self.try_map1(node, value, |x: i64| {
@@ -520,9 +512,10 @@ where
                 });
                 (Data::Int(lanes), own)
             }
-            (UnaryOperation::Negate, Data::Real(value)) => {
-                (Data::Real(lanes.map1(value, |x: f64| -x)), None)
-            }
+            _ => unreachable!(
+                "`combine` evaluates a negated real, a numeric `+` and a Boolean `!`, and the \
+                 Boolean screen refuses a number under `!`"
+            ),
         };
         let failures = self.merge([operand.failures.as_ref(), own.as_ref()])?;
         Ok(Value { data, failures })
@@ -542,7 +535,13 @@ where
                 None,
             )
         } else {
-            self.arithmetic(node, operation, &left.data, &right.data)?
+            match (&left.data, &right.data) {
+                (Data::Int(a), Data::Int(b)) => self.arithmetic(node, operation, a, b)?,
+                (Data::Bool(_), _) | (_, Data::Bool(_)) => {
+                    return Err(EvaluationError::BooleanArithmetic(node.clone()));
+                }
+                _ => unreachable!("`combine` evaluates real arithmetic"),
+            }
         };
         let failures = self.merge([
             left.failures.as_ref(),
@@ -581,70 +580,42 @@ where
         Ok(Data::Bool(result))
     }
 
-    /// Evaluate an arithmetic operation.
+    /// Evaluate an arithmetic operation over integers; real arithmetic is
+    /// [`real_arithmetic`](Self::real_arithmetic).
     fn arithmetic(
         &mut self,
         node: &Expression,
         operation: BinaryOperation,
-        left: &Data<L>,
-        right: &Data<L>,
+        a: &L::Of<i64>,
+        b: &L::Of<i64>,
     ) -> Result<WithFailures<L, Data<L>>, EvaluationError> {
         let lanes = self.lanes;
-        match (left, right) {
-            (Data::Bool(_), _) | (_, Data::Bool(_)) => {
-                Err(EvaluationError::BooleanArithmetic(node.clone()))
+        let (result, own) = match operation {
+            BinaryOperation::Divide => {
+                let quotient =
+                    lanes.map2(a, b, |x, y| kernel::int_to_real(x) / kernel::int_to_real(y))?;
+                return Ok((Data::Real(quotient), None));
             }
-            (Data::Int(a), Data::Int(b)) => {
-                let (result, own) = match operation {
-                    BinaryOperation::Divide => {
-                        let quotient = lanes
-                            .map2(a, b, |x, y| kernel::int_to_real(x) / kernel::int_to_real(y))?;
-                        return Ok((Data::Real(quotient), None));
-                    }
-                    BinaryOperation::Add => self.try_map2(node, a, b, |x: i64, y: i64| {
-                        x.checked_add(y).ok_or(LaneFailure::IntegerOverflow)
-                    })?,
-                    BinaryOperation::Subtract => self.try_map2(node, a, b, |x: i64, y: i64| {
-                        x.checked_sub(y).ok_or(LaneFailure::IntegerOverflow)
-                    })?,
-                    BinaryOperation::Multiply => self.try_map2(node, a, b, |x: i64, y: i64| {
-                        x.checked_mul(y).ok_or(LaneFailure::IntegerOverflow)
-                    })?,
-                    BinaryOperation::FloorDivide => {
-                        self.try_map2(node, a, b, kernel::int_floor_divide)?
-                    }
-                    BinaryOperation::FloorMod => {
-                        self.try_map2(node, a, b, kernel::int_floor_mod)?
-                    }
-                    BinaryOperation::Power => self.try_map2(node, a, b, kernel::int_power)?,
-                    _ => unreachable!("comparisons are not arithmetic"),
-                };
-                Ok((Data::Int(result), own))
-            }
-            _ => {
-                let (Some(a), Some(b)) = (self.reals(left), self.reals(right)) else {
-                    unreachable!("neither side is Boolean");
-                };
-                let (a, b) = (a.get(), b.get());
-                let result = match operation {
-                    BinaryOperation::Add => lanes.map2(a, b, |x: f64, y: f64| x + y)?,
-                    BinaryOperation::Subtract => lanes.map2(a, b, |x: f64, y: f64| x - y)?,
-                    BinaryOperation::Multiply => lanes.map2(a, b, |x: f64, y: f64| x * y)?,
-                    BinaryOperation::Divide => lanes.map2(a, b, |x: f64, y: f64| x / y)?,
-                    BinaryOperation::FloorDivide => lanes.map2(a, b, kernel::real_floor_divide)?,
-                    BinaryOperation::FloorMod => lanes.map2(a, b, kernel::real_floor_mod)?,
-                    BinaryOperation::Power => lanes.map2(a, b, f64::powf)?,
-                    _ => unreachable!("comparisons are not arithmetic"),
-                };
-                Ok((Data::Real(result), None))
-            }
-        }
+            BinaryOperation::Add => self.try_map2(node, a, b, |x: i64, y: i64| {
+                x.checked_add(y).ok_or(LaneFailure::IntegerOverflow)
+            })?,
+            BinaryOperation::Subtract => self.try_map2(node, a, b, |x: i64, y: i64| {
+                x.checked_sub(y).ok_or(LaneFailure::IntegerOverflow)
+            })?,
+            BinaryOperation::Multiply => self.try_map2(node, a, b, |x: i64, y: i64| {
+                x.checked_mul(y).ok_or(LaneFailure::IntegerOverflow)
+            })?,
+            BinaryOperation::FloorDivide => self.try_map2(node, a, b, kernel::int_floor_divide)?,
+            BinaryOperation::FloorMod => self.try_map2(node, a, b, kernel::int_floor_mod)?,
+            BinaryOperation::Power => self.try_map2(node, a, b, kernel::int_power)?,
+            _ => unreachable!("comparisons are not arithmetic"),
+        };
+        Ok((Data::Int(result), own))
     }
 
     /// Evaluate a conjunction or a disjunction.
     fn logical(
         &mut self,
-        node: &Expression,
         operation: LogicalOperation,
         operands: &[Rc<Value<L>>],
     ) -> Result<Value<L>, EvaluationError> {
@@ -652,7 +623,7 @@ where
         let mut booleans = Vec::with_capacity(operands.len());
         for operand in operands {
             let Data::Bool(value) = &operand.data else {
-                return Err(EvaluationError::NumberAsBoolean(node.clone()));
+                unreachable!("the Boolean screen refuses a number in a connective")
             };
             booleans.push(value);
         }
@@ -708,7 +679,7 @@ where
         let mut branches: Vec<&Value<L>> = Vec::with_capacity(cases.len() / 2 + 1);
         for pair in cases.chunks(2) {
             let Data::Bool(condition) = &pair[0].data else {
-                return Err(EvaluationError::NumberAsBoolean(node.clone()));
+                unreachable!("the Boolean screen refuses a number as a piecewise condition")
             };
             conditions.push((condition, pair[0].failures.as_ref()));
             branches.push(&pair[1]);
