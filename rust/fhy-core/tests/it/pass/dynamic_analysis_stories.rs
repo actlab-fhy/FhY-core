@@ -14,10 +14,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
     AnalysisId, CompilerPass, DetachedAnalyses, DetachedAnalysesExpired, ExecutePass, PassContext,
-    PassFailure, PassManager, PreservedAnalyses,
+    PassManager, PreservedAnalyses,
 };
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis};
 
@@ -345,11 +346,11 @@ struct AddOnePreserving<'a> {
 }
 
 impl CompilerPass<BoxIr> for AddOnePreserving<'_> {
-    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         Ok(ir.derive(ir.value() + 1))
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 
@@ -358,7 +359,7 @@ impl CompilerPass<BoxIr> for AddOnePreserving<'_> {
         _input: &BoxIr,
         _output: &BoxIr,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Ok(PreservedAnalyses::none().preserve_id(self.kept.clone()))
     }
 }
@@ -404,13 +405,13 @@ struct ComputeOnOutput<'a> {
 }
 
 impl CompilerPass<BoxIr> for ComputeOnOutput<'_> {
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         let output = ir.derive(ir.value() + 1);
         cx.analysis_by_id(&output, self.id, |ir| count_successor(ir, self.runs));
         Ok(output)
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 
@@ -419,7 +420,7 @@ impl CompilerPass<BoxIr> for ComputeOnOutput<'_> {
         _input: &BoxIr,
         _output: &BoxIr,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Ok(PreservedAnalyses::none().preserve_id(self.id.clone()))
     }
 }

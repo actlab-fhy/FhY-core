@@ -8,10 +8,11 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Bindings, Constraint, CustomConstraint, CustomError, Event, Member, MemberSet, Observer,
-    Opaque, OpaqueError, OpaqueValue, Outcome, Value,
+    Bindings, Constraint, CustomConstraint, Event, Member, MemberSet, Observer, Opaque,
+    OpaqueValue, Outcome, Value,
 };
 use fhy_core::expression::{BigInt, Expression};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::QueryKind;
 use fhy_core::term::AlphaRenaming;
@@ -125,7 +126,7 @@ impl OpaqueValue for TestOpaque {
             .is_some_and(|other| other.type_name == self.type_name && other.payload == self.payload)
     }
 
-    fn check_hashable(&self) -> Result<(), OpaqueError> {
+    fn check_hashable(&self) -> Result<(), BoxError> {
         if self.is_hashable {
             Ok(())
         } else {
@@ -241,7 +242,7 @@ impl CustomConstraint for TestCustom {
         self.expression.free_identifiers()
     }
 
-    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, CustomError> {
+    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, BoxError> {
         let source = bindings
             .source()
             .and_then(|source| source.downcast_ref::<String>())
@@ -253,7 +254,7 @@ impl CustomConstraint for TestCustom {
         Ok(self.outcome)
     }
 
-    fn to_expression(&self) -> Result<Expression, CustomError> {
+    fn to_expression(&self) -> Result<Expression, BoxError> {
         Ok(self.expression.clone())
     }
 

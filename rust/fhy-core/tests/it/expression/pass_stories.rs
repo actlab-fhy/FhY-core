@@ -17,13 +17,13 @@ use fhy_core::expression::passes::{
     ExpressionPrettyFormatter, RewriteRuleApplier, register_expression_passes,
 };
 use fhy_core::expression::pattern::{
-    CallbackError, Capture, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
-    apply_rewrite_rules,
+    Capture, MatchBindings, Pattern, RewriteError, RewriteRule, Rule, apply_rewrite_rules,
 };
 use fhy_core::expression::{
     BinaryOperation, Expression, ExpressionKind, FormatOptions, IdentifierStyle, LiteralValue,
     Notation, PiecewiseError, RebuildError,
 };
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
     CompilerPass, ExecutePass, FailureClass, FixpointIterationRecord, FixpointPassGroup, PassError,
@@ -48,7 +48,7 @@ fn build_move_zero_right_rule() -> RewriteRule {
         move |bindings: &MatchBindings| {
             let x = bindings
                 .get(&x)
-                .ok_or_else(|| CallbackError::from(ProbeError("unbound capture")))?;
+                .ok_or_else(|| BoxError::from(ProbeError("unbound capture")))?;
             Ok(Expression::new_binary(BinaryOperation::Add, x, 0))
         },
     )
@@ -326,10 +326,10 @@ fn rewrite_rule_applier_did_change_compares_identity() {
 /// of the run hook whose source is the rule's callback error.
 #[rstest]
 #[case::guard(RewriteRule::new(Pattern::wildcard(), rewrite_to_literal(0)).with_guard(
-    |_: &MatchBindings| Err(CallbackError::from(ProbeError("guard failed")))
+    |_: &MatchBindings| Err(BoxError::from(ProbeError("guard failed")))
 ), "guard failed")]
 #[case::rewrite(RewriteRule::new(Pattern::wildcard(), |_: &MatchBindings| {
-    Err(CallbackError::from(ProbeError("rewrite failed")))
+    Err(BoxError::from(ProbeError("rewrite failed")))
 }), "rewrite failed")]
 fn rewrite_rule_applier_execute_fails_with_the_callback_error(
     #[case] failing: RewriteRule,
@@ -456,7 +456,7 @@ fn rewrite_rule_applier_converges_in_a_fixpoint_group_with_an_identity_rule() {
 struct ZeroToOne;
 
 impl Rule for ZeroToOne {
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         let is_zero = matches!(expression.kind(), ExpressionKind::Literal(value) if *value == LiteralValue::from(0));
         Ok(is_zero.then(|| build_literal(1)))
     }

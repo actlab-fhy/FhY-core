@@ -18,12 +18,13 @@ use expression_support::{
     expect_binary, expect_piecewise, expect_unary,
 };
 use fhy_core::expression::pattern::{
-    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
+    Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule, Rule,
     apply_rewrite_rules,
 };
 use fhy_core::expression::{
     BinaryOperation, Expression, ExpressionKind, PiecewiseError, RebuildError, UnaryOperation,
 };
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use pattern_support::{
     ProbeError, build_identity_rule, build_plus_zero, build_x_minus_x_rule, build_x_plus_zero_rule,
@@ -64,12 +65,12 @@ fn build_constant_rule(value: i64) -> RewriteRule {
     RewriteRule::new(Pattern::wildcard(), rewrite_to_literal(value))
 }
 
-fn fail_guard(_: &MatchBindings) -> Result<bool, CallbackError> {
-    Err(CallbackError::from(ProbeError("guard failed")))
+fn fail_guard(_: &MatchBindings) -> Result<bool, BoxError> {
+    Err(BoxError::from(ProbeError("guard failed")))
 }
 
-fn fail_rewrite(_: &MatchBindings) -> Result<Expression, CallbackError> {
-    Err(CallbackError::from(ProbeError("rewrite failed")))
+fn fail_rewrite(_: &MatchBindings) -> Result<Expression, BoxError> {
+    Err(BoxError::from(ProbeError("rewrite failed")))
 }
 
 /// Return the build error inside `error`, with the responsible rule's index
@@ -83,7 +84,7 @@ fn expect_rebuild_error(error: &RewriteError) -> (usize, Option<&str>, &RebuildE
 
 /// Return the callback error inside `error`, with the failing rule's index
 /// and name.
-fn expect_callback_error(error: &RewriteError) -> (usize, Option<&str>, &CallbackError) {
+fn expect_callback_error(error: &RewriteError) -> (usize, Option<&str>, &BoxError) {
     let RewriteError::Callback { source, .. } = error else {
         panic!("expected a callback failure, got {error:?}");
     };
@@ -373,7 +374,7 @@ fn rewrite_rule_apply_guard_sees_the_bindings(
     .with_guard(move |bindings| {
         let bound = bindings
             .get(&x)
-            .ok_or_else(|| CallbackError::from(ProbeError("unbound")))?;
+            .ok_or_else(|| BoxError::from(ProbeError("unbound")))?;
         Ok(matches!(bound.kind(), ExpressionKind::Literal(_)))
     });
 
@@ -405,7 +406,7 @@ fn rewrite_rule_apply_returns_the_rewrite_error() {
 #[test]
 fn rewrite_rule_apply_returns_the_predicate_error() {
     let rule = RewriteRule::new(
-        Pattern::try_predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
+        Pattern::try_predicate(|_| Err(BoxError::from(ProbeError("predicate failed")))),
         rewrite_to_literal(0),
     );
 
@@ -864,7 +865,7 @@ struct SubstituteValues<'e> {
 }
 
 impl Rule for SubstituteValues<'_> {
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         let ExpressionKind::Identifier(identifier) = expression.kind() else {
             return Ok(None);
         };
@@ -883,8 +884,8 @@ impl Rule for SubstituteValues<'_> {
 struct FailingRule;
 
 impl Rule for FailingRule {
-    fn apply(&self, _: &Expression) -> Result<Option<Expression>, CallbackError> {
-        Err(CallbackError::from(ProbeError("native rule failed")))
+    fn apply(&self, _: &Expression) -> Result<Option<Expression>, BoxError> {
+        Err(BoxError::from(ProbeError("native rule failed")))
     }
 }
 
@@ -1032,7 +1033,7 @@ fn apply_rewrite_rules_reports_a_failing_rewrite_with_its_rule() {
 #[test]
 fn apply_rewrite_rules_reports_a_failing_predicate_with_its_rule() {
     let failing = RewriteRule::new(
-        Pattern::try_predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
+        Pattern::try_predicate(|_| Err(BoxError::from(ProbeError("predicate failed")))),
         rewrite_to_literal(0),
     )
     .with_name("probing");

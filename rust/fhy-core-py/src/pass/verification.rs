@@ -21,10 +21,9 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyTuple, PyType};
 
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
-use fhy_core::pass::{
-    PassContext, PassFailure, ValidationManager, Validator, VerificationRegistry, VerifierId,
-};
+use fhy_core::pass::{PassContext, ValidationManager, Validator, VerificationRegistry, VerifierId};
 
 use crate::dataclass::build_argument_type_error;
 
@@ -154,7 +153,7 @@ impl Validator<PyIr> for VerificationCheck {
         }
     }
 
-    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Python::attach(|py| match self {
             Self::Built(pass) => run_check(py, pass, ir, cx),
             Self::Unbuilt { name, error } => {
@@ -166,7 +165,7 @@ impl Validator<PyIr> for VerificationCheck {
 }
 
 /// Return the failure of the registry verifier that `error` stopped.
-fn verifier_failure(error: PyErr) -> PassFailure {
+fn verifier_failure(error: PyErr) -> BoxError {
     let chain = error.to_string();
     Box::new(HookFailure {
         python_hook: "validate",
@@ -185,7 +184,7 @@ impl Validator<PyIr> for RegistryVerifier {
         Cow::Borrowed(REGISTRY_VERIFIER_NAME)
     }
 
-    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Python::attach(|py| {
             let state = registry(py).map_err(verifier_failure)?.get().snapshot();
             let lineage = lineage_of(&ir.bind(py).get_type());

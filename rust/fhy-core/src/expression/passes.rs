@@ -8,7 +8,8 @@
 use std::borrow::Cow;
 
 use crate::diagnostic::DiagnosticLevel;
-use crate::pass::{CompilerPass, PassContext, PassFailure, PassRegistrationError, PassRegistry};
+use crate::foreign::BoxError;
+use crate::pass::{CompilerPass, PassContext, PassRegistrationError, PassRegistry};
 
 use super::display::FormatOptions;
 use super::node::Expression;
@@ -112,21 +113,17 @@ impl<R: Rule> CompilerPass<Expression> for RewriteRuleApplier<R> {
         Cow::Borrowed(RewriteRuleApplier::DESCRIPTION)
     }
 
-    fn run(
-        &mut self,
-        ir: &Expression,
-        cx: &mut PassContext<'_>,
-    ) -> Result<Expression, PassFailure> {
+    fn run(&mut self, ir: &Expression, cx: &mut PassContext<'_>) -> Result<Expression, BoxError> {
         let RuleRun { output, fired } = run_rewrite_rules(ir, &self.rules);
         for name in fired.iter().filter_map(FiredRule::name) {
             let message = format!("applied rewrite rule {name:?}");
             cx.report_text(DiagnosticLevel::Info, message, None);
         }
         self.fired = fired;
-        output.map_err(|error| Box::new(error) as PassFailure)
+        output.map_err(|error| Box::new(error) as BoxError)
     }
 
-    fn did_change(&mut self, input: &Expression, output: &Expression) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &Expression, output: &Expression) -> Result<bool, BoxError> {
         Ok(!Expression::ptr_eq(input, output))
     }
 }
@@ -174,11 +171,11 @@ impl ExpressionPrettyFormatter {
 }
 
 impl CompilerPass<Expression, String> for ExpressionPrettyFormatter {
-    fn run(&mut self, ir: &Expression, _cx: &mut PassContext<'_>) -> Result<String, PassFailure> {
+    fn run(&mut self, ir: &Expression, _cx: &mut PassContext<'_>) -> Result<String, BoxError> {
         Ok(ir.display(self.options).to_string())
     }
 
-    fn did_change(&mut self, _input: &Expression, _output: &String) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &Expression, _output: &String) -> Result<bool, BoxError> {
         Ok(true)
     }
 }

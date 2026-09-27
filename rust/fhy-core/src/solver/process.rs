@@ -12,8 +12,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::backend::{BackendError, CheckLimits, SatResult, SmtSolver};
+use super::backend::{CheckLimits, SatResult, SmtSolver};
 use super::smt::SmtScript;
+use crate::foreign::BoxError;
 
 /// An [`SmtSolver`] that runs an SMT-LIB2 executable for each check, such
 /// as `z3 -in` or `cvc5 --lang=smt2`.
@@ -97,7 +98,7 @@ impl SmtSolver for SmtLib2Process {
     /// # Errors
     ///
     /// Returns a [`ProcessError`], boxed.
-    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BackendError> {
+    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BoxError> {
         let mut child = Command::new(&self.program)
             .args(&self.args)
             .stdin(Stdio::piped())

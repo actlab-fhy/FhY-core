@@ -64,14 +64,12 @@ use crate::term::{AlphaEquivalence, AlphaRenaming, FreeIdentifiers};
 
 pub use binding::{Binding, Bindings};
 pub use context::{ConstraintContext, Event, NoObserver, Observer};
-pub use custom::{CustomConstraint, CustomError};
+pub use custom::CustomConstraint;
 pub use equation::EquationConstraint;
 pub use error::{ConstraintError, UnusableBindingReason};
 pub use set::{Polarity, SetConstraint};
 pub use system::ConstraintSystem;
-pub use value::{
-    Member, MemberError, MemberKind, MemberSet, Opaque, OpaqueError, OpaqueValue, Value,
-};
+pub use value::{Member, MemberError, MemberKind, MemberSet, Opaque, OpaqueValue, Value};
 
 /// The answer to whether a constraint holds.
 #[expect(

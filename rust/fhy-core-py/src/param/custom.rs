@@ -15,8 +15,9 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 
-use fhy_core::constraint::{Constraint, CustomError, Outcome, Value};
+use fhy_core::constraint::{Constraint, Outcome, Value};
 use fhy_core::expression::SymbolType;
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{CustomDomain, IntervalProfile, ParamDomain, Side};
 
@@ -52,9 +53,9 @@ impl PyCustomDomain {
     fn call<T>(
         &self,
         hook: impl FnOnce(Python<'_>, &Bound<'_, PyAny>) -> PyResult<T>,
-    ) -> Result<T, CustomError> {
+    ) -> Result<T, BoxError> {
         Python::attach(|py| hook(py, self.object.bind(py)))
-            .map_err(|error| Box::new(error) as CustomError)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 }
 
@@ -125,14 +126,14 @@ fn read_symbol_type(
 }
 
 impl CustomDomain for PyCustomDomain {
-    fn symbol_type(&self) -> Result<Option<SymbolType>, CustomError> {
+    fn symbol_type(&self) -> Result<Option<SymbolType>, BoxError> {
         self.call(|py, object| {
             let value = object.getattr(intern!(py, "symbol_type"))?;
             read_symbol_type(object, &value)
         })
     }
 
-    fn is_value_admissible(&self, value: &Value) -> Result<bool, CustomError> {
+    fn is_value_admissible(&self, value: &Value) -> Result<bool, BoxError> {
         self.call(|py, object| {
             object
                 .call_method1(
@@ -147,7 +148,7 @@ impl CustomDomain for PyCustomDomain {
         &self,
         constraint: &Constraint,
         variable: &Identifier,
-    ) -> Result<(), CustomError> {
+    ) -> Result<(), BoxError> {
         self.call(|py, object| {
             object.call_method1(
                 intern!(py, "validate_constraint"),
@@ -160,7 +161,7 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, CustomError> {
+    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, BoxError> {
         self.call(|py, object| {
             object
                 .call_method1(
@@ -173,7 +174,7 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn interval_profile(&self) -> Result<Option<IntervalProfile>, CustomError> {
+    fn interval_profile(&self) -> Result<Option<IntervalProfile>, BoxError> {
         self.call(|py, object| {
             let profile = object.call_method0(intern!(py, "get_interval_profile"))?;
             if profile.is_none() {
@@ -184,7 +185,7 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, CustomError> {
+    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, BoxError> {
         self.call(|py, object| {
             object
                 .call_method1(
@@ -200,7 +201,7 @@ impl CustomDomain for PyCustomDomain {
         own: Side<'_>,
         other_domain: &ParamDomain,
         other: Side<'_>,
-    ) -> Result<Outcome, CustomError> {
+    ) -> Result<Outcome, BoxError> {
         self.call(|py, object| {
             let (own_constraints, own_variable) = side_arguments(py, own)?;
             let (other_constraints, other_variable) = side_arguments(py, other)?;
@@ -218,7 +219,7 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
-    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, CustomError> {
+    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, BoxError> {
         self.call(|py, object| {
             let (constraints, variable) = side_arguments(py, side)?;
             let outcome =
@@ -233,7 +234,7 @@ impl CustomDomain for PyCustomDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
-    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, CustomError> {
+    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         self.call(|py, object| {
             let (own_constraints, own_variable) = side_arguments(py, own)?;
             let (other_constraints, other_variable) = side_arguments(py, other)?;
@@ -261,7 +262,7 @@ impl CustomDomain for PyCustomDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
-    ) -> Result<(ParamDomain, Vec<Constraint>), CustomError> {
+    ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         self.call(|py, object| {
             let (own_constraints, own_variable) = side_arguments(py, own)?;
             let (other_constraints, other_variable) = side_arguments(py, other)?;

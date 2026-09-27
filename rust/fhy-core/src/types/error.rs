@@ -4,8 +4,8 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::pattern::CallbackError;
 use crate::expression::{BigInt, Expression, FormatOptions, IdentifierStyle, LiteralValue};
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 use super::core_data_type::CoreDataType;
@@ -301,7 +301,7 @@ pub enum UnificationError {
     /// A wildcard dimension in a unification.
     WildcardInUnification,
     /// A type or data type defined outside this crate failed.
-    Extension(CallbackError),
+    Extension(BoxError),
 }
 
 /// Write `expression` with its identifiers' ids.

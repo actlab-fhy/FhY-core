@@ -1,8 +1,9 @@
 //! Stories of a custom domain: the procedures reach it through its hooks,
 //! and its failures propagate.
 
-use fhy_core::constraint::{Constraint, CustomError, Outcome, Value};
+use fhy_core::constraint::{Constraint, Outcome, Value};
 use fhy_core::expression::SymbolType;
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     CustomDomain, IntegerDomain, IntervalProfile, OrdinalDomain, Param, ParamContext, ParamDomain,
@@ -179,7 +180,7 @@ impl RecordingDomain {
     }
 
     /// Record `call`, and fail if told to.
-    fn record(&self, call: String) -> Result<(), CustomError> {
+    fn record(&self, call: String) -> Result<(), BoxError> {
         let failure = format!("{call} failed");
         self.calls.lock().expect("unpoisoned").push(call);
         if self.is_failing {
@@ -191,12 +192,12 @@ impl RecordingDomain {
 }
 
 impl CustomDomain for RecordingDomain {
-    fn symbol_type(&self) -> Result<Option<SymbolType>, CustomError> {
+    fn symbol_type(&self) -> Result<Option<SymbolType>, BoxError> {
         self.record("symbol_type".to_owned())?;
         Ok(Some(SymbolType::Int))
     }
 
-    fn is_value_admissible(&self, _value: &Value) -> Result<bool, CustomError> {
+    fn is_value_admissible(&self, _value: &Value) -> Result<bool, BoxError> {
         self.record("is_value_admissible".to_owned())?;
         Ok(true)
     }
@@ -205,21 +206,21 @@ impl CustomDomain for RecordingDomain {
         &self,
         _constraint: &Constraint,
         variable: &Identifier,
-    ) -> Result<(), CustomError> {
+    ) -> Result<(), BoxError> {
         self.record(format!("validate_constraint({})", variable.name_hint()))
     }
 
-    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, CustomError> {
+    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, BoxError> {
         self.record(format!("implied_constraints({})", variable.name_hint()))?;
         Ok(Vec::new())
     }
 
-    fn interval_profile(&self) -> Result<Option<IntervalProfile>, CustomError> {
+    fn interval_profile(&self) -> Result<Option<IntervalProfile>, BoxError> {
         self.record("interval_profile".to_owned())?;
         Ok(None)
     }
 
-    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, CustomError> {
+    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, BoxError> {
         self.record(format!("is_value_set_subset({})", other.kind().name()))?;
         Ok(true)
     }
@@ -229,7 +230,7 @@ impl CustomDomain for RecordingDomain {
         own: Side<'_>,
         other_domain: &ParamDomain,
         other: Side<'_>,
-    ) -> Result<Outcome, CustomError> {
+    ) -> Result<Outcome, BoxError> {
         self.record(format!(
             "feasibility_subset({}, {}, {})",
             describe_side(own),
@@ -239,7 +240,7 @@ impl CustomDomain for RecordingDomain {
         Ok(Outcome::Satisfied)
     }
 
-    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, CustomError> {
+    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, BoxError> {
         self.record(format!("has_feasible_value({})", describe_side(side)))?;
         Ok(Outcome::Satisfied)
     }
@@ -250,7 +251,7 @@ impl CustomDomain for RecordingDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
-    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, CustomError> {
+    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         self.record(format!(
             "union({}, {}, {}, {})",
             describe_side(own),
@@ -267,7 +268,7 @@ impl CustomDomain for RecordingDomain {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
-    ) -> Result<(ParamDomain, Vec<Constraint>), CustomError> {
+    ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         self.record(format!(
             "intersection({}, {}, {}, {})",
             describe_side(own),

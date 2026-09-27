@@ -4,8 +4,9 @@
 use std::any::Any;
 use std::fmt;
 
-use crate::constraint::{Constraint, CustomError, Outcome, Value};
+use crate::constraint::{Constraint, Outcome, Value};
 use crate::expression::SymbolType;
+use crate::foreign::BoxError;
 use crate::foreign::{Foreign, ForeignError};
 use crate::identifier::Identifier;
 
@@ -22,14 +23,14 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn symbol_type(&self) -> Result<Option<SymbolType>, CustomError>;
+    fn symbol_type(&self) -> Result<Option<SymbolType>, BoxError>;
 
     /// Return whether `value` lies in the domain's value set.
     ///
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn is_value_admissible(&self, value: &Value) -> Result<bool, CustomError>;
+    fn is_value_admissible(&self, value: &Value) -> Result<bool, BoxError>;
 
     /// Refuse `constraint` on `variable` if the domain forbids it.
     ///
@@ -40,28 +41,28 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         &self,
         constraint: &Constraint,
         variable: &Identifier,
-    ) -> Result<(), CustomError>;
+    ) -> Result<(), BoxError>;
 
     /// Return the constraints the domain imposes on `variable`.
     ///
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, CustomError>;
+    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, BoxError>;
 
     /// Return what interval arithmetic reads from the domain, or `None`.
     ///
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn interval_profile(&self) -> Result<Option<IntervalProfile>, CustomError>;
+    fn interval_profile(&self) -> Result<Option<IntervalProfile>, BoxError>;
 
     /// Return whether the domain's value set is a subset of `other`'s.
     ///
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, CustomError>;
+    fn is_value_set_subset(&self, other: &ParamDomain) -> Result<bool, BoxError>;
 
     /// Decide whether `own`'s constrained set is a subset of `other`'s.
     ///
@@ -73,14 +74,14 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         own: Side<'_>,
         other_domain: &ParamDomain,
         other: Side<'_>,
-    ) -> Result<Outcome, CustomError>;
+    ) -> Result<Outcome, BoxError>;
 
     /// Decide whether some admissible value satisfies `side`'s constraints.
     ///
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, CustomError>;
+    fn has_feasible_value(&self, side: Side<'_>) -> Result<Outcome, BoxError>;
 
     /// Return the domain and constraints of the union of the two value
     /// sets, over `variable`, or `None` if the kind represents no union.
@@ -94,7 +95,7 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
-    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, CustomError>;
+    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError>;
 
     /// Return the domain and constraints of the intersection of the two
     /// value sets, over `variable`.
@@ -108,7 +109,7 @@ pub trait CustomDomain: Send + Sync + fmt::Debug {
         other_domain: &ParamDomain,
         other: Side<'_>,
         variable: &Identifier,
-    ) -> Result<(ParamDomain, Vec<Constraint>), CustomError>;
+    ) -> Result<(ParamDomain, Vec<Constraint>), BoxError>;
 
     /// Return whether `other` is a structurally identical domain.
     fn is_structurally_equivalent(&self, other: &ParamDomain) -> bool;

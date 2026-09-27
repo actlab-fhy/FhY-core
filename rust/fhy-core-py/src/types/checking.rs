@@ -19,8 +19,8 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
-use fhy_core::expression::pattern::CallbackError;
 use fhy_core::expression::{Callee, ExpressionKind, FunctionName, FunctionSort, LiteralValue};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::tree::NodeHandle;
 use fhy_core::types::checking::{
@@ -103,7 +103,7 @@ fn build_error(class: PyResult<&Bound<'_, PyType>>, message: String) -> PyErr {
 
 /// Return the lookup's own exception boxed in `error`, or a `RuntimeError`
 /// with its text when it is no Python exception.
-fn callback_to_python(error: CallbackError) -> PyErr {
+fn callback_to_python(error: BoxError) -> PyErr {
     match error.downcast::<PyErr>() {
         Ok(error) => *error,
         Err(other) => PyRuntimeError::new_err(other.to_string()),
@@ -241,9 +241,9 @@ impl IdentifierTypes for PythonIdentifierTypes<'_, '_> {
     fn identifier_type(
         &self,
         identifier: &Identifier,
-    ) -> Result<Option<(Type, TypeQualifier)>, CallbackError> {
+    ) -> Result<Option<(Type, TypeQualifier)>, BoxError> {
         self.look_up(identifier)
-            .map_err(|error| -> CallbackError { Box::new(error) })
+            .map_err(|error| -> BoxError { Box::new(error) })
     }
 }
 

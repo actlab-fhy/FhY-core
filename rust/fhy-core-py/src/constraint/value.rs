@@ -32,7 +32,8 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple, PyType};
 
-use fhy_core::constraint::{Member, MemberKind, Opaque, OpaqueError, OpaqueValue, Value};
+use fhy_core::constraint::{Member, MemberKind, Opaque, OpaqueValue, Value};
+use fhy_core::foreign::BoxError;
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 
@@ -273,9 +274,9 @@ impl OpaqueValue for PyOpaqueValue {
         })
     }
 
-    fn check_hashable(&self) -> Result<(), OpaqueError> {
+    fn check_hashable(&self) -> Result<(), BoxError> {
         Python::attach(|py| self.object.bind(py).hash().map(|_hash| ()))
-            .map_err(|error| Box::new(error) as OpaqueError)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 
     fn ordering_key(&self) -> Cow<'_, str> {

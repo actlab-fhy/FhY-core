@@ -200,6 +200,13 @@ the Part II text, this table governs; each such difference is also listed in
 | D-19 | The published crate ships `src/`, `tests/`, the interned golden JSON, the README and the license, and never the Python generators | no |
 | D-20 | The renames and the CONTRIBUTING text land in step 0. CONTRIBUTING carries a one-line note, "migration in progress, see `docs/design/rust-workspace.md`", which step 6 removes | yes (R-25): adds the note |
 
+- **Revised (R2-007, 2026-09-27), D-10:** the boxed error is one alias,
+  `fhy_core::foreign::BoxError`, in layer 1. It replaces `CallbackError`,
+  and the four later aliases of the same type (`OpaqueError`,
+  `CustomError`, `BackendError`, `PassFailure`), so `types` and `evaluate`
+  no longer import the pattern module for it. See
+  `docs/design/rust-port-fixes.md` R2-007.
+
 ## I.6 Implementation order
 
 This follows B6 §5.1, adjusted by R-2 and R-7. Each step leaves the

@@ -10,7 +10,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::expression::Expression;
-use fhy_core::expression::pattern::{CallbackError, RewriteRule};
+use fhy_core::expression::pattern::RewriteRule;
+use fhy_core::foreign::BoxError;
 
 use crate::dataclass::{compare_as_dataclass, format_dataclass_repr, hash_value};
 use crate::frozen::build_frozen_mutation_error;
@@ -512,7 +513,7 @@ impl PythonRule {
     ///
     /// Returns the exception `apply` raises, and a `TypeError` for a result
     /// that is neither an `Expression` nor `None`.
-    pub(super) fn apply(&self, node: &Expression) -> Result<Option<Expression>, CallbackError> {
+    pub(super) fn apply(&self, node: &Expression) -> Result<Option<Expression>, BoxError> {
         Python::attach(|py| -> PyResult<Option<Expression>> {
             let object = current_object_of(py, node)?;
             let rule = self.object.bind(py);

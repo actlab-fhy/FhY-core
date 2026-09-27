@@ -1,20 +1,13 @@
 //! The compiler-pass trait, its guarded lifecycle, and the outcome of a run.
 
+use crate::foreign::BoxError;
 use std::any::type_name;
 use std::borrow::Cow;
-use std::error::Error;
 
 use super::context::PassContext;
 use super::error::{PassError, PassHook, render_chain};
 use super::preserved::PreservedAnalyses;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
-
-/// The error a pass hook returns: any error, boxed.
-///
-/// The lifecycle wraps a hook's error in a [`PassError`] naming the pass and
-/// the hook, nesting it when it is a [`PassError`] itself, as a pass that
-/// runs another pass returns.
-pub type PassFailure = Box<dyn Error + Send + Sync + 'static>;
 
 /// Return whether `character` may appear in an identifier or a number.
 fn is_identifier_char(character: char) -> bool {
@@ -206,16 +199,17 @@ pub fn short_type_name<T: ?Sized>() -> Cow<'static, str> {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PassFailure};
+/// use fhy_core::pass::{CompilerPass, ExecutePass, PassContext};
+/// use fhy_core::foreign::BoxError;
 ///
 /// struct Increment;
 ///
 /// impl CompilerPass<i64> for Increment {
-///     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+///     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
 ///         Ok(ir + 1)
 ///     }
 ///
-///     fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+///     fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
 ///         Ok(input != output)
 ///     }
 /// }
@@ -248,7 +242,7 @@ pub trait CompilerPass<I, O = I> {
     /// # Errors
     ///
     /// Returns an error to reject `ir`. By default, accepts every input.
-    fn validate_input(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         let _ = (ir, cx);
         Ok(())
     }
@@ -266,7 +260,7 @@ pub trait CompilerPass<I, O = I> {
     ///
     /// Returns an error if the decision cannot be made. By default, the pass
     /// always runs.
-    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, PassFailure> {
+    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, BoxError> {
         let _ = (ir, cx);
         Ok(None)
     }
@@ -276,7 +270,7 @@ pub trait CompilerPass<I, O = I> {
     /// # Errors
     ///
     /// Returns an error if the transformation fails.
-    fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure>;
+    fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, BoxError>;
 
     /// Check the output after the pass ran.
     ///
@@ -288,7 +282,7 @@ pub trait CompilerPass<I, O = I> {
         input: &I,
         output: &O,
         cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         let _ = (input, output, cx);
         Ok(())
     }
@@ -298,7 +292,7 @@ pub trait CompilerPass<I, O = I> {
     /// # Errors
     ///
     /// Returns an error if the comparison fails.
-    fn did_change(&mut self, input: &I, output: &O) -> Result<bool, PassFailure>;
+    fn did_change(&mut self, input: &I, output: &O) -> Result<bool, BoxError>;
 
     /// Return the analyses the run leaves valid for `output`.
     ///
@@ -312,7 +306,7 @@ pub trait CompilerPass<I, O = I> {
         input: &I,
         output: &O,
         changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         let _ = (input, output);
         Ok(if changed {
             PreservedAnalyses::none()
@@ -333,15 +327,15 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for &mut P {
         (**self).description()
     }
 
-    fn validate_input(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         (**self).validate_input(ir, cx)
     }
 
-    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, PassFailure> {
+    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, BoxError> {
         (**self).skip(ir, cx)
     }
 
-    fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
+    fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, BoxError> {
         (**self).run(ir, cx)
     }
 
@@ -350,11 +344,11 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for &mut P {
         input: &I,
         output: &O,
         cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         (**self).validate_output(input, output, cx)
     }
 
-    fn did_change(&mut self, input: &I, output: &O) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &I, output: &O) -> Result<bool, BoxError> {
         (**self).did_change(input, output)
     }
 
@@ -363,7 +357,7 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for &mut P {
         input: &I,
         output: &O,
         changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         (**self).preserved_analyses(input, output, changed)
     }
 }
@@ -378,15 +372,15 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for Box<P> {
         (**self).description()
     }
 
-    fn validate_input(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         (**self).validate_input(ir, cx)
     }
 
-    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, PassFailure> {
+    fn skip(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<Option<O>, BoxError> {
         (**self).skip(ir, cx)
     }
 
-    fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, PassFailure> {
+    fn run(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<O, BoxError> {
         (**self).run(ir, cx)
     }
 
@@ -395,11 +389,11 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for Box<P> {
         input: &I,
         output: &O,
         cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         (**self).validate_output(input, output, cx)
     }
 
-    fn did_change(&mut self, input: &I, output: &O) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &I, output: &O) -> Result<bool, BoxError> {
         (**self).did_change(input, output)
     }
 
@@ -408,7 +402,7 @@ impl<I, O, P: CompilerPass<I, O> + ?Sized> CompilerPass<I, O> for Box<P> {
         input: &I,
         output: &O,
         changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         (**self).preserved_analyses(input, output, changed)
     }
 }
@@ -488,7 +482,7 @@ pub(super) struct LifecycleResult<O> {
 ///
 /// The error carries no diagnostics yet: the caller moves the context's
 /// diagnostics into it, or keeps them in the context.
-fn wrap_hook_failure(failure: PassFailure, hook: PassHook, cx: &mut PassContext<'_>) -> PassError {
+fn wrap_hook_failure(failure: BoxError, hook: PassHook, cx: &mut PassContext<'_>) -> PassError {
     let pass_name = cx.shared_pass_name();
     let message = format!(
         "pass {pass_name:?} failed in {hook}: {}",
@@ -500,7 +494,7 @@ fn wrap_hook_failure(failure: PassFailure, hook: PassHook, cx: &mut PassContext<
 
 /// Return the value of a hook's `result`, or its error as a [`PassError`].
 fn guard_hook<T>(
-    result: Result<T, PassFailure>,
+    result: Result<T, BoxError>,
     hook: PassHook,
     cx: &mut PassContext<'_>,
 ) -> Result<T, PassError> {

@@ -9,18 +9,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Constraint, ConstraintError, CustomError, EquationConstraint, Event, Member, MemberKind,
-    Opaque, OpaqueError, OpaqueValue, Outcome, Polarity, SetConstraint, Value,
+    Constraint, ConstraintError, EquationConstraint, Event, Member, MemberKind, Opaque,
+    OpaqueValue, Outcome, Polarity, SetConstraint, Value,
 };
 use fhy_core::expression::evaluate::{Evaluator, Scalar};
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{BigInt, Expression, LiteralValue, SymbolType};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     CustomDomain, IntervalProfile, ParamContext, ParamDomain, ParamEvent, ParamObserver,
     ScreenReason, Side,
 };
-use fhy_core::solver::{BackendError, SatResult, Simplifier, SimplifyContext, SmtSolver, Solver};
+use fhy_core::solver::{SatResult, Simplifier, SimplifyContext, SmtSolver, Solver};
 
 use super::constraint::{TestValueError, member_set};
 use super::solver::{FakeBackendError, RecordingSmtSolver};
@@ -151,7 +152,7 @@ impl Simplifier for EvaluatingSimplifier {
         &self,
         expression: &Expression,
         _context: &SimplifyContext<'_>,
-    ) -> Result<Expression, BackendError> {
+    ) -> Result<Expression, BoxError> {
         self.inputs
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -161,7 +162,7 @@ impl Simplifier for EvaluatingSimplifier {
         }
         let value = Evaluator::new(&self.registry)
             .evaluate(expression, &HashMap::<Identifier, Scalar>::new())
-            .map_err(|error| Box::new(FakeBackendError(error.to_string())) as BackendError)?;
+            .map_err(|error| Box::new(FakeBackendError(error.to_string())) as BoxError)?;
         Ok(Expression::literal(match value {
             Scalar::Bool(value) => LiteralValue::Bool(value),
             Scalar::Int(value) => LiteralValue::Int(BigInt::from(value)),
@@ -445,7 +446,7 @@ impl OpaqueValue for Level {
             .is_some_and(|other| other.type_name == self.type_name && other.payload == self.payload)
     }
 
-    fn check_hashable(&self) -> Result<(), OpaqueError> {
+    fn check_hashable(&self) -> Result<(), BoxError> {
         Ok(())
     }
 
@@ -490,7 +491,7 @@ impl OpaqueValue for Hand {
             .is_some_and(|other| other.0 == self.0)
     }
 
-    fn check_hashable(&self) -> Result<(), OpaqueError> {
+    fn check_hashable(&self) -> Result<(), BoxError> {
         Ok(())
     }
 
@@ -544,7 +545,7 @@ impl EvenDomain {
     }
 
     /// Record `hook`, and fail if told to.
-    fn record(&self, hook: &str) -> Result<(), CustomError> {
+    fn record(&self, hook: &str) -> Result<(), BoxError> {
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -558,12 +559,12 @@ impl EvenDomain {
 }
 
 impl CustomDomain for EvenDomain {
-    fn symbol_type(&self) -> Result<Option<SymbolType>, CustomError> {
+    fn symbol_type(&self) -> Result<Option<SymbolType>, BoxError> {
         self.record("symbol_type")?;
         Ok(Some(SymbolType::Int))
     }
 
-    fn is_value_admissible(&self, value: &Value) -> Result<bool, CustomError> {
+    fn is_value_admissible(&self, value: &Value) -> Result<bool, BoxError> {
         self.record("is_value_admissible")?;
         Ok(matches!(value, Value::Int(number) if number % 2 == BigInt::from(0)))
     }
@@ -572,21 +573,21 @@ impl CustomDomain for EvenDomain {
         &self,
         _constraint: &Constraint,
         _variable: &Identifier,
-    ) -> Result<(), CustomError> {
+    ) -> Result<(), BoxError> {
         self.record("validate_constraint")
     }
 
-    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, CustomError> {
+    fn implied_constraints(&self, variable: &Identifier) -> Result<Vec<Constraint>, BoxError> {
         self.record("implied_constraints")?;
         Ok(vec![at_least(variable, 0)])
     }
 
-    fn interval_profile(&self) -> Result<Option<IntervalProfile>, CustomError> {
+    fn interval_profile(&self) -> Result<Option<IntervalProfile>, BoxError> {
         self.record("interval_profile")?;
         Ok(None)
     }
 
-    fn is_value_set_subset(&self, _other: &ParamDomain) -> Result<bool, CustomError> {
+    fn is_value_set_subset(&self, _other: &ParamDomain) -> Result<bool, BoxError> {
         self.record("is_value_set_subset")?;
         Ok(false)
     }
@@ -596,12 +597,12 @@ impl CustomDomain for EvenDomain {
         _own: Side<'_>,
         _other_domain: &ParamDomain,
         _other: Side<'_>,
-    ) -> Result<Outcome, CustomError> {
+    ) -> Result<Outcome, BoxError> {
         self.record("feasibility_subset")?;
         Ok(Outcome::Undecided)
     }
 
-    fn has_feasible_value(&self, _side: Side<'_>) -> Result<Outcome, CustomError> {
+    fn has_feasible_value(&self, _side: Side<'_>) -> Result<Outcome, BoxError> {
         self.record("has_feasible_value")?;
         Ok(Outcome::Satisfied)
     }
@@ -612,7 +613,7 @@ impl CustomDomain for EvenDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
-    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, CustomError> {
+    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         self.record("union")?;
         Ok(None)
     }
@@ -623,7 +624,7 @@ impl CustomDomain for EvenDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
-    ) -> Result<(ParamDomain, Vec<Constraint>), CustomError> {
+    ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         self.record("intersection")?;
         Ok((
             ParamDomain::Custom(Arc::new(Self::default()) as Arc<dyn CustomDomain>),

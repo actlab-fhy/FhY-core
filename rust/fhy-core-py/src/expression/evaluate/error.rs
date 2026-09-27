@@ -9,7 +9,7 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 
 use fhy_core::expression::evaluate::{EvaluationError, FoldError, LaneFailure};
-use fhy_core::expression::pattern::CallbackError;
+use fhy_core::foreign::BoxError;
 
 use crate::error::IntoPyErr;
 
@@ -57,7 +57,7 @@ expression_error_fn!(unsupported_lowering_error, "UnsupportedNumpyLoweringError"
 
 /// Return the Python exception a callback error carries: the exception the
 /// callback raised, unchanged.
-pub(super) fn callback_error_to_python(error: CallbackError) -> PyErr {
+pub(super) fn callback_error_to_python(error: BoxError) -> PyErr {
     match error.downcast::<PyErr>() {
         Ok(error) => *error,
         Err(error) => PyRuntimeError::new_err(error.to_string()),

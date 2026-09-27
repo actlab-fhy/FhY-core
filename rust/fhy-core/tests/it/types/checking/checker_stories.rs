@@ -988,8 +988,7 @@ fn a_callback_error_passes_through() {
         fn identifier_type(
             &self,
             _identifier: &Identifier,
-        ) -> Result<Option<(Type, TypeQualifier)>, fhy_core::expression::pattern::CallbackError>
-        {
+        ) -> Result<Option<(Type, TypeQualifier)>, fhy_core::foreign::BoxError> {
             Err("lookup failed".into())
         }
     }

@@ -83,10 +83,10 @@ use super::builtins::BuiltinConstant;
 use super::callee::Callee;
 use super::literal::LiteralValue;
 use super::node::Expression;
-use super::pattern::CallbackError;
 use super::registry::{FunctionRegistry, NativeFunction};
 use super::screen::BooleanScreen;
 use super::symbol_type::SymbolType;
+use crate::foreign::BoxError;
 use lanes::ScalarLanes;
 use walk::{Data, Walk};
 
@@ -112,7 +112,7 @@ pub trait NativeCalls {
         &self,
         function: &NativeFunction,
         arguments: &[LiteralValue],
-    ) -> Result<LiteralValue, CallbackError>;
+    ) -> Result<LiteralValue, BoxError>;
 }
 
 /// The [`NativeCalls`] with no implementation: every call of a native user
@@ -129,7 +129,7 @@ impl NativeCalls for NoNativeCalls {
         &self,
         function: &NativeFunction,
         _arguments: &[LiteralValue],
-    ) -> Result<LiteralValue, CallbackError> {
+    ) -> Result<LiteralValue, BoxError> {
         Err(format!(
             "native function {:?} has no implementation",
             function.name().as_str()

@@ -43,7 +43,8 @@ enum Slot {
 /// use std::sync::{Arc, Mutex};
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass::{AnalysisId, CompilerPass, DetachedAnalyses, ExecutePass, PassContext, PassFailure};
+/// use fhy_core::pass::{AnalysisId, CompilerPass, DetachedAnalyses, ExecutePass, PassContext};
+/// use fhy_core::foreign::BoxError;
 /// use fhy_core::tree::{NodeHandle, NodeIdentity};
 ///
 /// #[derive(Clone)]
@@ -61,7 +62,7 @@ enum Slot {
 /// }
 ///
 /// impl CompilerPass<Value> for KeepAnalyses {
-///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, PassFailure> {
+///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, BoxError> {
 ///         let doubled = cx.with_detached_analyses(|analyses| {
 ///             *self.kept.lock().unwrap() = Some(analyses.clone());
 ///             analyses.analysis_by_id(ir, &self.id, |ir| *ir.0 * 2)
@@ -69,7 +70,7 @@ enum Slot {
 ///         Ok(Value(Arc::new(*doubled)))
 ///     }
 ///
-///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, PassFailure> {
+///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, BoxError> {
 ///         Ok(input.0 != output.0)
 ///     }
 /// }

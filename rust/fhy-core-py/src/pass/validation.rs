@@ -18,8 +18,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
-use fhy_core::pass::{CompilerPass, PassContext, PassFailure, ValidationManager, Validator};
+use fhy_core::pass::{CompilerPass, PassContext, ValidationManager, Validator};
 
 use crate::dataclass::build_argument_type_error;
 use crate::identifier::{new_python_identifier, read_identifier_id, restore_identifier};
@@ -41,8 +42,8 @@ pub(super) fn run_check(
     pass: &mut PythonPass,
     ir: &PyIr,
     cx: &mut PassContext<'_>,
-) -> Result<(), PassFailure> {
-    let result = (|| -> Result<(), PassFailure> {
+) -> Result<(), BoxError> {
+    let result = (|| -> Result<(), BoxError> {
         pass.validate_input(ir, cx)?;
         if pass.skip(ir, cx)?.is_some() {
             return Ok(());
@@ -53,7 +54,7 @@ pub(super) fn run_check(
     if result.is_err() {
         if let Some(failure) = pass.take_failure() {
             report_check_failure(py, pass, &failure, cx)
-                .map_err(|error| Box::new(error) as PassFailure)?;
+                .map_err(|error| Box::new(error) as BoxError)?;
         }
     }
     result
@@ -69,7 +70,7 @@ impl Validator<PyIr> for PassCheck {
         CompilerPass::name(&self.pass)
     }
 
-    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Python::attach(|py| run_check(py, &mut self.pass, ir, cx))
     }
 }
@@ -114,7 +115,7 @@ pub(super) fn fail_validator(
     name: &str,
     error: PyErr,
     cx: &PassContext<'_>,
-) -> PassFailure {
+) -> BoxError {
     if !error.is_instance_of::<pyo3::exceptions::PyException>(py) {
         scope::record_interrupt(error.clone_ref(py));
     }
@@ -144,7 +145,7 @@ impl Validator<PyIr> for PythonValidator {
         Cow::Owned(self.name.clone())
     }
 
-    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Python::attach(|py| {
             if scope::is_interrupted() {
                 return Err(build_interrupted_failure("validate"));

@@ -19,11 +19,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::expression::{BigInt, Decimal, LiteralValue};
-use crate::foreign::{Foreign, ForeignError};
-
-/// The error an [`OpaqueValue`] reports, such as an exception its producer
-/// raised.
-pub type OpaqueError = Box<dyn Error + Send + Sync + 'static>;
+use crate::foreign::{BoxError, Foreign, ForeignError};
 
 /// A value only its producer can compare.
 ///
@@ -50,7 +46,7 @@ pub trait OpaqueValue: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns the producer's error when it cannot be.
-    fn check_hashable(&self) -> Result<(), OpaqueError>;
+    fn check_hashable(&self) -> Result<(), BoxError>;
 
     /// Return a text equal for equal values, which orders opaque members.
     fn ordering_key(&self) -> Cow<'_, str>;
@@ -190,7 +186,7 @@ impl Value {
     /// # Errors
     ///
     /// Returns the first opaque value's error, in pre-order.
-    pub fn check_hashable(&self) -> Result<(), OpaqueError> {
+    pub fn check_hashable(&self) -> Result<(), BoxError> {
         let mut pending = vec![self];
         while let Some(value) = pending.pop() {
             match value {

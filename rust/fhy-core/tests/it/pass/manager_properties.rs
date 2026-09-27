@@ -8,10 +8,10 @@ use crate::support::pass_ir;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
-    CompilerPass, FixpointPassGroup, PassContext, PassFailure, PassManager, PipelineRecord,
-    PreservedAnalyses,
+    CompilerPass, FixpointPassGroup, PassContext, PassManager, PipelineRecord, PreservedAnalyses,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis};
@@ -31,7 +31,7 @@ impl NodeHandle for ListIr {
 struct DecrementPositive;
 
 impl CompilerPass<ListIr> for DecrementPositive {
-    fn run(&mut self, ir: &ListIr, _cx: &mut PassContext<'_>) -> Result<ListIr, PassFailure> {
+    fn run(&mut self, ir: &ListIr, _cx: &mut PassContext<'_>) -> Result<ListIr, BoxError> {
         let values =
             ir.0.iter()
                 .map(|value| if *value > 0 { value - 1 } else { *value })
@@ -39,7 +39,7 @@ impl CompilerPass<ListIr> for DecrementPositive {
         Ok(ListIr(Arc::new(values)))
     }
 
-    fn did_change(&mut self, input: &ListIr, output: &ListIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &ListIr, output: &ListIr) -> Result<bool, BoxError> {
         Ok(input.0 != output.0)
     }
 }
@@ -74,11 +74,11 @@ fn arbitrary_cache_step() -> impl Strategy<Value = CacheStep> {
 struct AddPreservingDouble(i64);
 
 impl CompilerPass<BoxIr> for AddPreservingDouble {
-    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         Ok(ir.derive(ir.value() + self.0))
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 
@@ -87,7 +87,7 @@ impl CompilerPass<BoxIr> for AddPreservingDouble {
         _input: &BoxIr,
         _output: &BoxIr,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Ok(PreservedAnalyses::none().preserve::<DoubleAnalysis>())
     }
 }
@@ -97,13 +97,13 @@ impl CompilerPass<BoxIr> for AddPreservingDouble {
 struct ComputeOnOutput(i64);
 
 impl CompilerPass<BoxIr> for ComputeOnOutput {
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         let output = ir.derive(ir.value() + self.0);
         cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 
@@ -112,7 +112,7 @@ impl CompilerPass<BoxIr> for ComputeOnOutput {
         _input: &BoxIr,
         _output: &BoxIr,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Ok(PreservedAnalyses::none())
     }
 }

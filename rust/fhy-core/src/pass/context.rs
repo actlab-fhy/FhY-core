@@ -118,7 +118,8 @@ impl<'a> PassContext<'a> {
     /// use std::sync::Arc;
     ///
     /// use fhy_core::identifier::Identifier;
-    /// use fhy_core::pass::{AnalysisId, CompilerPass, ExecutePass, PassContext, PassFailure};
+    /// use fhy_core::pass::{AnalysisId, CompilerPass, ExecutePass, PassContext};
+    /// use fhy_core::foreign::BoxError;
     /// use fhy_core::tree::{NodeHandle, NodeIdentity};
     ///
     /// #[derive(Clone)]
@@ -133,11 +134,11 @@ impl<'a> PassContext<'a> {
     /// struct Negate(AnalysisId);
     ///
     /// impl CompilerPass<Value> for Negate {
-    ///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, PassFailure> {
+    ///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, BoxError> {
     ///         Ok(Value(cx.analysis_by_id(ir, &self.0, |ir| -*ir.0)))
     ///     }
     ///
-    ///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, PassFailure> {
+    ///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, BoxError> {
     ///         Ok(input.0 != output.0)
     ///     }
     /// }

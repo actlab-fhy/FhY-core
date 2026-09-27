@@ -22,8 +22,9 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
-use fhy_core::constraint::{Binding, Bindings, CustomConstraint, CustomError, Outcome};
+use fhy_core::constraint::{Binding, Bindings, CustomConstraint, Outcome};
 use fhy_core::expression::Expression;
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
 
@@ -169,7 +170,7 @@ impl CustomConstraint for PyCustomConstraint {
         })
     }
 
-    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, CustomError> {
+    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, BoxError> {
         Python::attach(|py| -> PyResult<Outcome> {
             let object = self.object.bind(py);
             let mapping = match bindings
@@ -182,10 +183,10 @@ impl CustomConstraint for PyCustomConstraint {
             let outcome = object.call_method1(intern!(py, "evaluate_with_bindings"), (mapping,))?;
             read_outcome(object, &outcome)
         })
-        .map_err(|error| Box::new(error) as CustomError)
+        .map_err(|error| Box::new(error) as BoxError)
     }
 
-    fn to_expression(&self) -> Result<Expression, CustomError> {
+    fn to_expression(&self) -> Result<Expression, BoxError> {
         Python::attach(|py| -> PyResult<Expression> {
             let object = self.object.bind(py);
             let expression = object.call_method0(intern!(py, "convert_to_expression"))?;
@@ -200,7 +201,7 @@ impl CustomConstraint for PyCustomConstraint {
                     ))
                 })
         })
-        .map_err(|error| Box::new(error) as CustomError)
+        .map_err(|error| Box::new(error) as BoxError)
     }
 
     fn ordering_key(&self) -> Cow<'_, str> {

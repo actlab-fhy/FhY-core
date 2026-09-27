@@ -10,7 +10,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fhy_core::pass::{Analysis, CompilerPass, PassContext, PassFailure};
+use fhy_core::foreign::BoxError;
+use fhy_core::pass::{Analysis, CompilerPass, PassContext};
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 /// Analysis run counts shared by a node and every node derived from it.
@@ -117,7 +118,7 @@ impl Analysis for ParityAnalysis {
 
 /// The hook of a [`ClosurePass`].
 type RunHook<'a> =
-    Box<dyn FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + Send + 'a>;
+    Box<dyn FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, BoxError> + Send + 'a>;
 
 /// A pass over the toy IR named explicitly, whose run is a closure and which
 /// reports a change exactly when the output holds a different value.
@@ -130,7 +131,7 @@ impl<'a> ClosurePass<'a> {
     /// Build the pass `name` whose run is `run`.
     pub(crate) fn new(
         name: &str,
-        run: impl FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, PassFailure> + Send + 'a,
+        run: impl FnMut(&BoxIr, &mut PassContext<'_>) -> Result<BoxIr, BoxError> + Send + 'a,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -152,11 +153,11 @@ impl CompilerPass<BoxIr> for ClosurePass<'_> {
         Cow::Owned(self.name.clone())
     }
 
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         (self.run)(ir, cx)
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 }

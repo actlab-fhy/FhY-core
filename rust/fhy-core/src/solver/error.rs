@@ -10,7 +10,7 @@ use crate::expression::{
 use crate::identifier::Identifier;
 
 use super::QueryKind;
-use super::backend::BackendError;
+use crate::foreign::BoxError;
 
 /// Write `identifiers` as `name::id` items separated by commas.
 pub(super) fn write_identifiers(
@@ -67,7 +67,7 @@ pub enum SolveError {
         /// The backend's [`name`](super::SmtSolver::name).
         backend: String,
         /// What it reported.
-        source: BackendError,
+        source: BoxError,
     },
 }
 

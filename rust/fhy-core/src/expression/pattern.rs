@@ -9,12 +9,12 @@
 //! and [`RewriteRuleApplier`](super::passes::RewriteRuleApplier) does the
 //! same as a compiler pass. Callbacks supplied by the caller (predicates,
 //! guards, rewrites and native rules) are fallible; their
-//! [`CallbackError`]s end a match or a walk.
+//! [`BoxError`](crate::foreign::BoxError)s end a match or a walk.
 
 mod matching;
 mod rewrite;
 
-pub use self::matching::{CallbackError, Capture, MatchBindings, Pattern};
+pub use self::matching::{Capture, MatchBindings, Pattern};
 pub use self::rewrite::{
     FiredRule, RewriteError, RewriteOutcome, RewriteRule, Rule, apply_rewrite_rules,
 };

@@ -3,8 +3,8 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::pattern::CallbackError;
 use crate::expression::{Expression, FormatOptions, FunctionName, FunctionSort, IdentifierStyle};
+use crate::foreign::BoxError;
 
 use super::super::core_data_type::CoreDataType;
 use super::super::ty::Type;
@@ -97,10 +97,10 @@ pub enum CallTargetError {
         /// Why, in words.
         message: String,
         /// The lookup's own error, when it has one.
-        source: Option<CallbackError>,
+        source: Option<BoxError>,
     },
     /// The lookup failed.
-    Callback(CallbackError),
+    Callback(BoxError),
 }
 
 impl fmt::Display for CallTargetError {
@@ -144,7 +144,7 @@ pub enum TypeCheckError {
     /// lookup's own error, unframed.
     UnknownCall(CallTargetError),
     /// An identifier or call target lookup failed.
-    Callback(CallbackError),
+    Callback(BoxError),
 }
 
 /// Write `expression` with its identifiers' ids.
@@ -231,7 +231,7 @@ pub enum BodyCheckError {
         sort: FunctionSort,
     },
     /// A call target lookup failed.
-    Callback(CallbackError),
+    Callback(BoxError),
 }
 
 impl fmt::Display for BodyCheckError {

@@ -5,19 +5,15 @@
 use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::error::Error;
 use std::fmt;
 
 use crate::expression::Expression;
-use crate::foreign::{Foreign, ForeignError};
+use crate::foreign::{BoxError, Foreign, ForeignError};
 use crate::identifier::Identifier;
 use crate::term::AlphaRenaming;
 
 use super::Outcome;
 use super::binding::Bindings;
-
-/// The error a [`CustomConstraint`] reports.
-pub type CustomError = Box<dyn Error + Send + Sync + 'static>;
 
 /// A constraint of a kind this module does not define, such as one a
 /// language binding defines.
@@ -35,14 +31,14 @@ pub trait CustomConstraint: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, CustomError>;
+    fn evaluate(&self, bindings: &Bindings) -> Result<Outcome, BoxError>;
 
     /// Return the expression equivalent to the constraint.
     ///
     /// # Errors
     ///
     /// Returns the implementation's error.
-    fn to_expression(&self) -> Result<Expression, CustomError>;
+    fn to_expression(&self) -> Result<Expression, BoxError>;
 
     /// Return the canonical ordering key: equal for structurally
     /// equivalent constraints, and distinct from the built-in kinds' keys.

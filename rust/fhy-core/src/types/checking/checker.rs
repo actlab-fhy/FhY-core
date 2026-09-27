@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::hash::BuildHasher;
 
 use crate::expression::builtins::BuiltinConstant;
-use crate::expression::pattern::CallbackError;
 use crate::expression::registry::{FunctionRegistry, RegistryEntry};
 use crate::expression::{
     BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FunctionSort, LiteralValue,
     LogicalOperation, SortLookup, UnaryOperation,
 };
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 use super::super::core_data_type::CoreDataType;
@@ -35,14 +35,14 @@ pub trait IdentifierTypes {
     fn identifier_type(
         &self,
         identifier: &Identifier,
-    ) -> std::result::Result<Option<Typed>, CallbackError>;
+    ) -> std::result::Result<Option<Typed>, BoxError>;
 }
 
 impl<S: BuildHasher> IdentifierTypes for HashMap<Identifier, Typed, S> {
     fn identifier_type(
         &self,
         identifier: &Identifier,
-    ) -> std::result::Result<Option<Typed>, CallbackError> {
+    ) -> std::result::Result<Option<Typed>, BoxError> {
         Ok(self.get(identifier).cloned())
     }
 }

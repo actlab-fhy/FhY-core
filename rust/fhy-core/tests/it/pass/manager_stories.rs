@@ -14,12 +14,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, ValidationReport};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
     CompilerPass, ExecutePass, FailureClass, FixpointGroupRecord, FixpointPassGroup, PassContext,
-    PassError, PassErrorKind, PassFailure, PassHook, PassManager, PassRegistry, PassRunRecord,
-    PipelineRecord, PreservedAnalyses, ValidationManager, Validator, ValidatorRecord,
-    VerificationPoint,
+    PassError, PassErrorKind, PassHook, PassManager, PassRegistry, PassRunRecord, PipelineRecord,
+    PreservedAnalyses, ValidationManager, Validator, ValidatorRecord, VerificationPoint,
 };
 use pass_ir::{BoxIr, ClosurePass, DoubleAnalysis, ParityAnalysis};
 use rstest::rstest;
@@ -103,7 +103,7 @@ fn build_group<'p>(name: &str, max_iterations: usize) -> FixpointPassGroup<'p, B
 struct NegativeValueCheck;
 
 impl Validator<BoxIr> for NegativeValueCheck {
-    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         if ir.value() < 0 {
             cx.report_text(
                 DiagnosticLevel::Error,
@@ -122,7 +122,7 @@ struct CountingCheck {
 }
 
 impl Validator<BoxIr> for CountingCheck {
-    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.invocations += 1;
         Ok(())
     }
@@ -235,11 +235,11 @@ fn pass_run_record_holds_the_outcome_of_the_run() {
 struct PreserveDoubleOnly;
 
 impl CompilerPass<BoxIr> for PreserveDoubleOnly {
-    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         Ok(ir.derive(ir.value() + 1))
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 
@@ -248,7 +248,7 @@ impl CompilerPass<BoxIr> for PreserveDoubleOnly {
         _input: &BoxIr,
         _output: &BoxIr,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Ok(PreservedAnalyses::none().preserve::<DoubleAnalysis>())
     }
 }
@@ -313,19 +313,15 @@ struct AddOneUpTo {
 }
 
 impl CompilerPass<BoxIr> for AddOneUpTo {
-    fn skip(
-        &mut self,
-        ir: &BoxIr,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<Option<BoxIr>, PassFailure> {
+    fn skip(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<Option<BoxIr>, BoxError> {
         Ok((ir.value() > self.limit).then(|| ir.clone()))
     }
 
-    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         Ok(ir.derive(ir.value() + 1))
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 }
@@ -594,11 +590,11 @@ fn pass_manager_keeps_results_computed_on_a_pass_output() {
 struct ClaimChangeKeepNode;
 
 impl CompilerPass<BoxIr> for ClaimChangeKeepNode {
-    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         Ok(ir.clone())
     }
 
-    fn did_change(&mut self, _input: &BoxIr, _output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &BoxIr, _output: &BoxIr) -> Result<bool, BoxError> {
         Ok(true)
     }
 }
@@ -630,13 +626,13 @@ fn pass_manager_keeps_results_of_an_output_that_is_its_input() {
 struct ComputeOnOutputPreservingDouble;
 
 impl CompilerPass<BoxIr> for ComputeOnOutputPreservingDouble {
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         let output = ir.derive(ir.value() + 1);
         cx.analysis::<DoubleAnalysis>(&output);
         Ok(output)
     }
 
-    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &BoxIr, output: &BoxIr) -> Result<bool, BoxError> {
         Ok(input.value() != output.value())
     }
 
@@ -645,7 +641,7 @@ impl CompilerPass<BoxIr> for ComputeOnOutputPreservingDouble {
         _input: &BoxIr,
         _output: &BoxIr,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Ok(PreservedAnalyses::none().preserve::<DoubleAnalysis>())
     }
 }
@@ -1333,11 +1329,11 @@ fn pass_manager_verifier_blames_the_pass_that_produced_invalid_output() {
 struct SilentCorruption;
 
 impl CompilerPass<BoxIr> for SilentCorruption {
-    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, PassFailure> {
+    fn run(&mut self, ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<BoxIr, BoxError> {
         Ok(ir.derive(-5))
     }
 
-    fn did_change(&mut self, _input: &BoxIr, _output: &BoxIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &BoxIr, _output: &BoxIr) -> Result<bool, BoxError> {
         Ok(false)
     }
 }
@@ -1381,7 +1377,7 @@ fn pass_manager_verifier_validates_changed_outputs_inside_a_group() {
 struct DoubleReadingCheck;
 
 impl Validator<BoxIr> for DoubleReadingCheck {
-    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         cx.analysis::<DoubleAnalysis>(ir);
         Ok(())
     }

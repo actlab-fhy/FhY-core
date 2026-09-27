@@ -10,43 +10,21 @@
 //! Matching is one-shot and anchored at the root: [`Pattern::matches`]
 //! tests the given expression only and never searches its subexpressions.
 //! Structural mismatches are not errors; only a predicate supplied by the
-//! caller can fail, with a [`CallbackError`].
+//! caller can fail, with a [`BoxError`].
 
 use std::collections::hash_map::DefaultHasher;
-use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::sync::Arc;
 
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 use super::super::callee::Callee;
 use super::super::literal::LiteralValue;
 use super::super::node::{Expression, ExpressionKind};
 use super::super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
-
-/// The failure of a caller-supplied callback: a pattern predicate, a rewrite
-/// rule's guard, or a rewrite rule's rewrite.
-///
-/// It is the callback's own error, boxed: `?` converts any error type, a
-/// `String` or a `&str` into it, and `downcast_ref` recovers the error the
-/// callback returned. A match or a rewrite walk returns it unchanged.
-///
-/// # Examples
-///
-/// ```
-/// use fhy_core::expression::{Expression, LiteralValue};
-/// use fhy_core::expression::pattern::{CallbackError, Pattern};
-///
-/// let refusing = Pattern::try_predicate(|_| Err(CallbackError::from("no verdict")));
-///
-/// let result = refusing.matches(&Expression::from(LiteralValue::from(1)));
-///
-/// let error = result.expect_err("the predicate fails");
-/// assert_eq!(error.to_string(), "no verdict");
-/// ```
-pub type CallbackError = Box<dyn Error + Send + Sync + 'static>;
 
 /// A handle a pattern binds a matched expression to.
 ///
@@ -112,7 +90,7 @@ impl fmt::Display for Capture {
 }
 
 /// A Boolean test over a candidate expression, supplied by the caller.
-type PredicateFn = Arc<dyn Fn(&Expression) -> Result<bool, CallbackError> + Send + Sync>;
+type PredicateFn = Arc<dyn Fn(&Expression) -> Result<bool, BoxError> + Send + Sync>;
 
 /// A caller-supplied predicate, opaque to `Debug`.
 #[derive(Clone)]
@@ -166,7 +144,7 @@ enum PatternKind {
 fn match_each<'a>(
     pairs: impl IntoIterator<Item = (&'a Pattern, &'a Expression)>,
     bindings: &mut MatchBindings,
-) -> Result<bool, CallbackError> {
+) -> Result<bool, BoxError> {
     for (pattern, expression) in pairs {
         if !pattern.match_into(expression, bindings)? {
             return Ok(false);
@@ -181,7 +159,7 @@ fn match_list(
     patterns: Option<&[Pattern]>,
     expressions: &[Expression],
     bindings: &mut MatchBindings,
-) -> Result<bool, CallbackError> {
+) -> Result<bool, BoxError> {
     let Some(patterns) = patterns else {
         return Ok(true);
     };
@@ -478,7 +456,7 @@ impl Pattern {
     #[must_use]
     pub fn try_predicate<F>(predicate: F) -> Self
     where
-        F: Fn(&Expression) -> Result<bool, CallbackError> + Send + Sync + 'static,
+        F: Fn(&Expression) -> Result<bool, BoxError> + Send + Sync + 'static,
     {
         Self::from_kind(PatternKind::Predicate(Predicate(Arc::new(predicate))))
     }
@@ -502,9 +480,9 @@ impl Pattern {
     ///
     /// # Errors
     ///
-    /// Returns the [`CallbackError`] of the first predicate that fails;
+    /// Returns the [`BoxError`] of the first predicate that fails;
     /// matching stops there.
-    pub fn matches(&self, expression: &Expression) -> Result<Option<MatchBindings>, CallbackError> {
+    pub fn matches(&self, expression: &Expression) -> Result<Option<MatchBindings>, BoxError> {
         let mut bindings = MatchBindings::new();
         Ok(self
             .match_into(expression, &mut bindings)?
@@ -516,9 +494,9 @@ impl Pattern {
     ///
     /// # Errors
     ///
-    /// Returns the [`CallbackError`] of the first predicate that fails;
+    /// Returns the [`BoxError`] of the first predicate that fails;
     /// matching stops there.
-    pub fn is_match(&self, expression: &Expression) -> Result<bool, CallbackError> {
+    pub fn is_match(&self, expression: &Expression) -> Result<bool, BoxError> {
         Ok(self.matches(expression)?.is_some())
     }
 
@@ -532,7 +510,7 @@ impl Pattern {
         &self,
         expression: &Expression,
         bindings: &mut MatchBindings,
-    ) -> Result<bool, CallbackError> {
+    ) -> Result<bool, BoxError> {
         let mark = bindings.len();
         let is_match = self.match_node(expression, bindings)?;
         if !is_match {
@@ -547,7 +525,7 @@ impl Pattern {
         &self,
         expression: &Expression,
         bindings: &mut MatchBindings,
-    ) -> Result<bool, CallbackError> {
+    ) -> Result<bool, BoxError> {
         match (&*self.0, expression.kind()) {
             (PatternKind::Wildcard, _) => Ok(true),
             (PatternKind::Captured { pattern, capture }, _) => {

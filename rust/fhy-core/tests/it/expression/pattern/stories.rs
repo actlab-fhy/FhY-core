@@ -18,11 +18,12 @@ use expression_support::{
     build_literal, build_parsed_literal,
 };
 use fhy_core::expression::builtins::BuiltinFunction;
-use fhy_core::expression::pattern::{CallbackError, Capture, MatchBindings, Pattern};
+use fhy_core::expression::pattern::{Capture, MatchBindings, Pattern};
 use fhy_core::expression::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FunctionName, FunctionNameError,
     LiteralTextError, LiteralValue, LogicalOperation, PiecewiseError, RebuildError, UnaryOperation,
 };
+use fhy_core::foreign::BoxError;
 use hashing_support::hash_of;
 use pattern_support::{ProbeError, expect_probe_error};
 use rstest::rstest;
@@ -124,7 +125,7 @@ fn build_counting_predicate(calls: &Arc<AtomicUsize>, verdict: bool) -> Pattern 
 
 /// Return a predicate pattern failing with the [`ProbeError`] `message`.
 fn build_failing_predicate(message: &'static str) -> Pattern {
-    Pattern::try_predicate(move |_| Err(CallbackError::from(ProbeError(message))))
+    Pattern::try_predicate(move |_| Err(BoxError::from(ProbeError(message))))
 }
 
 /// Return the pattern matching `build_deep_sum(leaf, depth)` exactly, with
@@ -1795,9 +1796,9 @@ fn pattern_matches_is_deterministic(
 /// Test a callback error built from text displays the text and has no
 /// source.
 #[rstest]
-#[case::from_str(CallbackError::from("no verdict"))]
-#[case::from_string(CallbackError::from(String::from("no verdict")))]
-fn callback_error_from_text_displays_the_text(#[case] error: CallbackError) {
+#[case::from_str(BoxError::from("no verdict"))]
+#[case::from_string(BoxError::from(String::from("no verdict")))]
+fn callback_error_from_text_displays_the_text(#[case] error: BoxError) {
     let message = error.to_string();
 
     assert_eq!(message, "no verdict");
@@ -1808,7 +1809,7 @@ fn callback_error_from_text_displays_the_text(#[case] error: CallbackError) {
 /// downcast to it.
 #[test]
 fn callback_error_downcasts_to_the_wrapped_error() {
-    let error = CallbackError::from(ProbeError("probe"));
+    let error = BoxError::from(ProbeError("probe"));
 
     let message = error.to_string();
     let downcast = error.downcast::<ProbeError>();
@@ -1817,52 +1818,52 @@ fn callback_error_downcasts_to_the_wrapped_error() {
     assert_eq!(downcast.ok().as_deref(), Some(&ProbeError("probe")));
 }
 
-fn fail_with_a_probe_error() -> Result<(), CallbackError> {
+fn fail_with_a_probe_error() -> Result<(), BoxError> {
     Err(ProbeError("probe"))?
 }
 
-fn fail_with_a_piecewise_error() -> Result<(), CallbackError> {
+fn fail_with_a_piecewise_error() -> Result<(), BoxError> {
     Expression::piecewise(Vec::<(Expression, Expression)>::new(), build_literal(0))?;
     Ok(())
 }
 
-fn fail_with_a_rebuild_error() -> Result<(), CallbackError> {
+fn fail_with_a_rebuild_error() -> Result<(), BoxError> {
     build_simple_binary(BinaryOperation::Add).rebuild_with_children(Vec::new())?;
     Ok(())
 }
 
-fn fail_with_a_function_name_error() -> Result<(), CallbackError> {
+fn fail_with_a_function_name_error() -> Result<(), BoxError> {
     FunctionName::try_new("")?;
     Ok(())
 }
 
-fn fail_with_a_literal_text_error() -> Result<(), CallbackError> {
+fn fail_with_a_literal_text_error() -> Result<(), BoxError> {
     LiteralValue::parse_text("abc")?;
     Ok(())
 }
 
 #[rstest]
-#[case::probe_error(fail_with_a_probe_error, |error: &CallbackError| {
+#[case::probe_error(fail_with_a_probe_error, |error: &BoxError| {
     error.downcast_ref::<ProbeError>() == Some(&ProbeError("probe"))
 })]
-#[case::piecewise_error(fail_with_a_piecewise_error, |error: &CallbackError| {
+#[case::piecewise_error(fail_with_a_piecewise_error, |error: &BoxError| {
     error.downcast_ref::<PiecewiseError>() == Some(&PiecewiseError::NoCases)
 })]
-#[case::rebuild_error(fail_with_a_rebuild_error, |error: &CallbackError| {
+#[case::rebuild_error(fail_with_a_rebuild_error, |error: &BoxError| {
     error.downcast_ref::<RebuildError>()
         == Some(&RebuildError::ChildCount { expected: 2, actual: 0 })
 })]
-#[case::function_name_error(fail_with_a_function_name_error, |error: &CallbackError| {
+#[case::function_name_error(fail_with_a_function_name_error, |error: &BoxError| {
     error.downcast_ref::<FunctionNameError>() == Some(&FunctionNameError::Empty)
 })]
-#[case::literal_text_error(fail_with_a_literal_text_error, |error: &CallbackError| {
+#[case::literal_text_error(fail_with_a_literal_text_error, |error: &BoxError| {
     error
         .downcast_ref::<LiteralTextError>()
         .is_some_and(|wrapped| wrapped.text() == "abc")
 })]
 fn callback_error_converts_from_any_error_with_question_mark(
-    #[case] fail: fn() -> Result<(), CallbackError>,
-    #[case] holds_the_error: fn(&CallbackError) -> bool,
+    #[case] fail: fn() -> Result<(), BoxError>,
+    #[case] holds_the_error: fn(&BoxError) -> bool,
 ) {
     let error = fail().expect_err("the callback fails");
 

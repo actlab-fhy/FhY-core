@@ -35,7 +35,7 @@ mod verification;
 
 pub use adapters::{RewritePass, WalkPass};
 pub use analysis::Analysis;
-pub use compiler_pass::{CompilerPass, ExecutePass, PassFailure, PassOutcome, short_type_name};
+pub use compiler_pass::{CompilerPass, ExecutePass, PassOutcome, short_type_name};
 pub use context::PassContext;
 pub use detached::{DetachedAnalyses, DetachedAnalysesExpired};
 pub use error::{FailureClass, PassError, PassErrorKind, PassHook, VerificationPoint};

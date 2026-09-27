@@ -8,7 +8,8 @@ use crate::support::pass_ir;
 
 use std::borrow::Cow;
 
-use fhy_core::pass::{PassContext, PassFailure, Validator, VerificationRegistry, VerifierId};
+use fhy_core::foreign::BoxError;
+use fhy_core::pass::{PassContext, Validator, VerificationRegistry, VerifierId};
 use pass_ir::BoxIr;
 use proptest::prelude::*;
 
@@ -26,7 +27,7 @@ impl Validator<BoxIr> for Indexed {
         Cow::Owned(self.0.to_string())
     }
 
-    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Ok(())
     }
 }

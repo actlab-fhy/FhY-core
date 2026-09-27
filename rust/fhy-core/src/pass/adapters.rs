@@ -7,8 +7,9 @@
 use std::borrow::Cow;
 use std::error::Error;
 
-use super::compiler_pass::{CompilerPass, PassFailure, short_type_name};
+use super::compiler_pass::{CompilerPass, short_type_name};
 use super::context::PassContext;
+use crate::foreign::BoxError;
 use crate::tree::{Rewriter, TraversalOrder, Tree, TreeVisitor, rewrite_tree, walk_tree};
 
 /// A pass that walks its input with a [`TreeVisitor`] and never changes it.
@@ -89,17 +90,17 @@ impl<N, V> CompilerPass<N, ()> for WalkPass<V>
 where
     N: Tree,
     V: for<'a> TreeVisitor<N, PassContext<'a>>,
-    for<'a> <V as TreeVisitor<N, PassContext<'a>>>::Error: Into<PassFailure>,
+    for<'a> <V as TreeVisitor<N, PassContext<'a>>>::Error: Into<BoxError>,
 {
     fn name(&self) -> Cow<'static, str> {
         short_type_name::<V>()
     }
 
-    fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         walk_tree(&mut self.visitor, ir, self.order, cx).map_err(Into::into)
     }
 
-    fn did_change(&mut self, _input: &N, _output: &()) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &N, _output: &()) -> Result<bool, BoxError> {
         Ok(false)
     }
 }
@@ -194,11 +195,11 @@ where
         short_type_name::<R>()
     }
 
-    fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<N, PassFailure> {
-        rewrite_tree(&mut self.rewriter, ir, cx).map_err(|error| Box::new(error) as PassFailure)
+    fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<N, BoxError> {
+        rewrite_tree(&mut self.rewriter, ir, cx).map_err(|error| Box::new(error) as BoxError)
     }
 
-    fn did_change(&mut self, input: &N, output: &N) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &N, output: &N) -> Result<bool, BoxError> {
         Ok(input.identity() != output.identity())
     }
 }

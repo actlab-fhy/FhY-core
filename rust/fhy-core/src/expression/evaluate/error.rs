@@ -9,9 +9,9 @@ use crate::expression::callee::{Callee, FunctionName};
 use crate::expression::error::{NonBooleanLogicalOperandError, PiecewiseError};
 use crate::expression::literal::{Decimal, LiteralValue};
 use crate::expression::node::Expression;
-use crate::expression::pattern::CallbackError;
 use crate::expression::registry::InlineError;
 use crate::expression::sort::FunctionSort;
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 /// Why an unbound identifier is probably not the variable it looks like.
@@ -175,7 +175,7 @@ pub enum EvaluationError {
         /// The built-in function the kernel computes.
         function: BuiltinFunction,
         /// The kernel's error.
-        source: CallbackError,
+        source: BoxError,
     },
 }
 
@@ -332,7 +332,7 @@ pub enum FoldError {
         /// The function.
         function: FunctionName,
         /// The implementation's error.
-        source: CallbackError,
+        source: BoxError,
     },
 }
 

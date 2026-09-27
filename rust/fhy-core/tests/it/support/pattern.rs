@@ -4,10 +4,11 @@ use std::error::Error;
 use std::fmt;
 
 use fhy_core::expression::pattern::{
-    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteOutcome, RewriteRule, Rule,
+    Capture, FiredRule, MatchBindings, Pattern, RewriteOutcome, RewriteRule, Rule,
     apply_rewrite_rules,
 };
 use fhy_core::expression::{BinaryOperation, Expression, LiteralValue};
+use fhy_core::foreign::BoxError;
 
 /// An error a test callback fails with, recognizable after propagation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +28,7 @@ impl Error for ProbeError {}
 ///
 /// Panics if `error` wraps another error type.
 #[must_use]
-pub(crate) fn expect_probe_error(error: &CallbackError) -> &ProbeError {
+pub(crate) fn expect_probe_error(error: &BoxError) -> &ProbeError {
     error
         .downcast_ref::<ProbeError>()
         .unwrap_or_else(|| panic!("expected a ProbeError, got {error:?}"))
@@ -62,20 +63,20 @@ pub(crate) fn describe_fired(fired: &[FiredRule]) -> Vec<(usize, Option<&str>)> 
 /// when `capture` is unbound.
 pub(crate) fn rewrite_to_capture(
     capture: &Capture,
-) -> impl Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync + 'static {
+) -> impl Fn(&MatchBindings) -> Result<Expression, BoxError> + Send + Sync + 'static {
     let capture = capture.clone();
     move |bindings| {
         bindings
             .get(&capture)
             .cloned()
-            .ok_or_else(|| CallbackError::from(ProbeError("unbound capture")))
+            .ok_or_else(|| BoxError::from(ProbeError("unbound capture")))
     }
 }
 
 /// Return a rewrite returning a literal holding `value`.
 pub(crate) fn rewrite_to_literal(
     value: i64,
-) -> impl Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync + 'static {
+) -> impl Fn(&MatchBindings) -> Result<Expression, BoxError> + Send + Sync + 'static {
     move |_| Ok(Expression::from(LiteralValue::from(value)))
 }
 

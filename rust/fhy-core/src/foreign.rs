@@ -41,6 +41,32 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+/// Any error, boxed: the error a hook or a callback that another
+/// implementation defines reports.
+///
+/// It is the implementor's own error: `?` converts any error type, a
+/// `String` or a `&str` into it, and `downcast_ref` recovers the error the
+/// implementation returned. Each module wraps it in its own error type,
+/// such as [`ConstraintError::Custom`](crate::constraint::ConstraintError::Custom),
+/// [`SolveError::Backend`](crate::solver::SolveError::Backend) or a
+/// [`PassError`](crate::pass::PassError), which returns it as its source.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::expression::{Expression, LiteralValue};
+/// use fhy_core::expression::pattern::Pattern;
+/// use fhy_core::foreign::BoxError;
+///
+/// let refusing = Pattern::try_predicate(|_| Err(BoxError::from("no verdict")));
+///
+/// let result = refusing.matches(&Expression::from(LiteralValue::from(1)));
+///
+/// let error = result.expect_err("the predicate fails");
+/// assert_eq!(error.to_string(), "no verdict");
+/// ```
+pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
+
 /// A serialized part another implementation defines: the type id it is
 /// registered under and its payload, as that implementation's own text.
 ///
@@ -124,7 +150,7 @@ pub enum ForeignError {
         /// The part's type id, or its type's name when it has no id.
         type_id: String,
         /// The implementation's error.
-        source: Box<dyn Error + Send + Sync + 'static>,
+        source: BoxError,
     },
 }
 
@@ -159,7 +185,7 @@ pub enum BuildError {
     Foreign(ForeignError),
     /// The data breaks an invariant of the value; the error is the one its
     /// constructor returns.
-    Invalid(Box<dyn Error + Send + Sync + 'static>),
+    Invalid(BoxError),
 }
 
 impl BuildError {

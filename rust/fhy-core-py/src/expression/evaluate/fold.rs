@@ -7,8 +7,8 @@ use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple};
 
 use fhy_core::expression::LiteralValue;
 use fhy_core::expression::evaluate::{Evaluator, NativeCalls};
-use fhy_core::expression::pattern::CallbackError;
 use fhy_core::expression::registry::NativeFunction;
+use fhy_core::foreign::BoxError;
 
 use super::super::literal::{literal_to_python, read_big_int};
 use super::super::materialize::materialize_beside;
@@ -56,7 +56,7 @@ impl NativeCalls for PythonNatives<'_, '_> {
         &self,
         function: &NativeFunction,
         arguments: &[LiteralValue],
-    ) -> Result<LiteralValue, CallbackError> {
+    ) -> Result<LiteralValue, BoxError> {
         let py = self.py;
         let run = || -> PyResult<LiteralValue> {
             let implementation = self
@@ -75,7 +75,7 @@ impl NativeCalls for PythonNatives<'_, '_> {
             let result = implementation.call1(PyTuple::new(py, values)?)?;
             self.read_result(function, &result)
         };
-        run().map_err(|error| Box::new(error) as CallbackError)
+        run().map_err(|error| Box::new(error) as BoxError)
     }
 }
 

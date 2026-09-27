@@ -23,9 +23,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::expression::Expression;
+use fhy_core::foreign::BoxError;
 use fhy_core::solver::{
-    BackendError, CheckLimits, SatResult, Simplifier, SimplifyContext, SmtLib2Process, SmtScript,
-    SmtSolver,
+    CheckLimits, SatResult, Simplifier, SimplifyContext, SmtLib2Process, SmtScript, SmtSolver,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
@@ -144,7 +144,7 @@ impl SmtSolver for PythonSmtSolver {
     ///
     /// Fails with the exception it raises, unchanged, and with a
     /// `TypeError` for a result that is not a `SatResult`.
-    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BackendError> {
+    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BoxError> {
         Python::attach(|py| -> PyResult<SatResult> {
             let object = self.object.bind(py);
             let script = Bound::new(py, PySmtScript::new(script.clone()))?;
@@ -163,7 +163,7 @@ impl SmtSolver for PythonSmtSolver {
                 ))),
             }
         })
-        .map_err(|error| Box::new(error) as BackendError)
+        .map_err(|error| Box::new(error) as BoxError)
     }
 }
 
@@ -267,7 +267,7 @@ impl Simplifier for PythonSimplifier {
         &self,
         expression: &Expression,
         _context: &SimplifyContext<'_>,
-    ) -> Result<Expression, BackendError> {
+    ) -> Result<Expression, BoxError> {
         Python::attach(|py| -> PyResult<Expression> {
             let object = self.object.bind(py);
             let input = current_input_object(py, expression)?;
@@ -285,7 +285,7 @@ impl Simplifier for PythonSimplifier {
             record_result(result.unbind());
             Ok(handle)
         })
-        .map_err(|error| Box::new(error) as BackendError)
+        .map_err(|error| Box::new(error) as BoxError)
     }
 }
 

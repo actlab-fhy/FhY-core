@@ -12,8 +12,9 @@ use num_traits::Signed;
 
 use crate::expression::SymbolType;
 
-use super::backend::{BackendError, CheckLimits, SatResult, SmtSolver};
+use super::backend::{CheckLimits, SatResult, SmtSolver};
 use super::smt::{Operator, SmtScript, Term, TermId};
+use crate::foreign::BoxError;
 
 /// An [`SmtSolver`] that decides a script with the z3 library, linked
 /// through the `z3` crate.
@@ -61,7 +62,7 @@ impl SmtSolver for Z3Solver {
         Cow::Borrowed("z3")
     }
 
-    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BackendError> {
+    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BoxError> {
         let mut config = Config::new();
         if let Some(timeout) = limits.timeout() {
             let milliseconds = u64::try_from(timeout.as_millis())
@@ -70,7 +71,7 @@ impl SmtSolver for Z3Solver {
             config.set_timeout_msec(milliseconds);
         }
         with_z3_config(&config, || check_in_context(script))
-            .map_err(|error| Box::new(error) as BackendError)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 }
 

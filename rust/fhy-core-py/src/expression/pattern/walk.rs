@@ -12,8 +12,9 @@ use pyo3::types::{PyList, PyType};
 
 use fhy_core::expression::Expression;
 use fhy_core::expression::pattern::{
-    CallbackError, RewriteError, RewriteRule, Rule, apply_rewrite_rules as apply_core_rules,
+    RewriteError, RewriteRule, Rule, apply_rewrite_rules as apply_core_rules,
 };
+use fhy_core::foreign::BoxError;
 
 use crate::error::IntoPyErr;
 
@@ -96,7 +97,7 @@ struct WalkRule<'f> {
 }
 
 impl Rule for WalkRule<'_> {
-    fn apply(&self, node: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, node: &Expression) -> Result<Option<Expression>, BoxError> {
         let replacement = match &self.kind {
             WalkRuleKind::Native(rule) => rule.apply(node)?,
             WalkRuleKind::Python(rule) => rule.apply(node)?,

@@ -103,16 +103,17 @@ fn is_blank(text: &str) -> bool {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass::{CompilerPass, PassContext, PassFailure, PassRegistry};
+/// use fhy_core::pass::{CompilerPass, PassContext, PassRegistry};
+/// use fhy_core::foreign::BoxError;
 ///
 /// struct Negate;
 ///
 /// impl CompilerPass<i64> for Negate {
-///     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+///     fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
 ///         Ok(-ir)
 ///     }
 ///
-///     fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+///     fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
 ///         Ok(input != output)
 ///     }
 /// }

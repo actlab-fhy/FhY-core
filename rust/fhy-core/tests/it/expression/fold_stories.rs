@@ -10,11 +10,11 @@ use std::collections::HashSet;
 
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::evaluate::{Evaluator, FoldError, NativeCalls, NoNativeCalls};
-use fhy_core::expression::pattern::CallbackError;
 use fhy_core::expression::registry::{
     FunctionDefinition, FunctionRegistry, NativeConstant, NativeFunction,
 };
 use fhy_core::expression::{BigInt, Callee, Expression, FunctionName, FunctionSort, LiteralValue};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 use rstest::rstest;
@@ -46,7 +46,7 @@ impl NativeCalls for RecordingNatives {
         &self,
         function: &NativeFunction,
         arguments: &[LiteralValue],
-    ) -> Result<LiteralValue, CallbackError> {
+    ) -> Result<LiteralValue, BoxError> {
         self.calls
             .borrow_mut()
             .push((function.name().as_str().to_owned(), arguments.to_vec()));

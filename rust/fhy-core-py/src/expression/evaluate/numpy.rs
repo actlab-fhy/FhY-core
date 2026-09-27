@@ -25,9 +25,9 @@ use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::evaluate::{
     ArrayBinding, ArrayKernels, ArrayValue, Evaluator, Prepared, Scalar,
 };
-use fhy_core::expression::pattern::CallbackError;
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Callee, ExpressionKind};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 
 use crate::identifier::read_identifier_id;
@@ -334,9 +334,9 @@ impl ArrayKernels for NumpyKernels {
         &self,
         function: BuiltinFunction,
         argument: CowArray<'_, f64, IxDyn>,
-    ) -> Result<ArrayD<f64>, CallbackError> {
+    ) -> Result<ArrayD<f64>, BoxError> {
         Python::attach(|py| self.compute(py, function, argument))
-            .map_err(|error| Box::new(error) as CallbackError)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 }
 

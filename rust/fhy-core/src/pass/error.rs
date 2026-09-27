@@ -5,10 +5,10 @@ use std::error::Error;
 use std::fmt;
 use std::num::NonZeroUsize;
 
-use super::compiler_pass::PassFailure;
 use super::manager::PipelineRecord;
 use super::validation::ValidatorRecord;
 use crate::diagnostic::{Diagnostic, ValidationReport};
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 /// Return the message of `error` followed by the message of each of its
@@ -106,7 +106,7 @@ enum Failure {
     Hook {
         pass_name: Cow<'static, str>,
         hook: PassHook,
-        source: PassFailure,
+        source: BoxError,
     },
     Nested {
         pass_name: Cow<'static, str>,
@@ -144,18 +144,17 @@ struct Inner {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::pass::{
-///     CompilerPass, ExecutePass, FailureClass, PassContext, PassErrorKind, PassFailure, PassHook,
-/// };
+/// use fhy_core::pass::{CompilerPass, ExecutePass, FailureClass, PassContext, PassErrorKind, PassHook};
+/// use fhy_core::foreign::BoxError;
 ///
 /// struct Refuse;
 ///
 /// impl CompilerPass<i64> for Refuse {
-///     fn run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+///     fn run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
 ///         Err("division by zero".into())
 ///     }
 ///
-///     fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+///     fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
 ///         Ok(input != output)
 ///     }
 /// }
@@ -191,7 +190,7 @@ impl PassError {
     pub(super) fn from_hook_failure(
         pass_name: Cow<'static, str>,
         hook: PassHook,
-        failure: PassFailure,
+        failure: BoxError,
     ) -> Self {
         let failure = match failure.downcast::<Self>() {
             Ok(inner) => Failure::Nested {

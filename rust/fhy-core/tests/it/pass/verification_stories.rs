@@ -11,10 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fhy_core::diagnostic::{DiagnosticLevel, ValidationReport};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{
-    CompilerPass, PassContext, PassError, PassErrorKind, PassFailure, PassManager, Validator,
-    ValidatorRecord, VerificationPoint, VerificationRegistry, VerifierId,
+    CompilerPass, PassContext, PassError, PassErrorKind, PassManager, Validator, ValidatorRecord,
+    VerificationPoint, VerificationRegistry, VerifierId,
 };
 use pass_ir::{BoxIr, ClosurePass};
 
@@ -40,7 +41,7 @@ impl<const TAG: u8> Validator<BoxIr> for Check<TAG> {
         Cow::Owned(format!("check-{TAG}"))
     }
 
-    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         cx.report_text(DiagnosticLevel::Warning, format!("check-{TAG} ran"), None);
         if ir.value() < 0 {
             cx.report_text(
@@ -57,7 +58,7 @@ impl<const TAG: u8> Validator<BoxIr> for Check<TAG> {
 struct Crash;
 
 impl Validator<BoxIr> for Crash {
-    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Err("the check could not finish".into())
     }
 }
@@ -71,7 +72,7 @@ impl Validator<BoxIr> for Tagged {
         Cow::Borrowed(self.0)
     }
 
-    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Ok(())
     }
 }

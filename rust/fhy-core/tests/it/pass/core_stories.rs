@@ -16,9 +16,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind};
+use fhy_core::foreign::BoxError;
 use fhy_core::pass::{
     Analysis, AnalysisId, CompilerPass, CreatePassError, ExecutePass, FailureClass, PassContext,
-    PassError, PassErrorKind, PassFailure, PassHook, PassInfo, PassRegistrationError, PassRegistry,
+    PassError, PassErrorKind, PassHook, PassInfo, PassRegistrationError, PassRegistry,
     PreservedAnalyses,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
@@ -42,7 +43,7 @@ impl fmt::Display for HookFailure {
 impl Error for HookFailure {}
 
 /// Build the hook error reported as `message`.
-fn fail(message: &str) -> PassFailure {
+fn fail(message: &str) -> BoxError {
     Box::new(HookFailure(message.to_owned()))
 }
 
@@ -50,11 +51,11 @@ fn fail(message: &str) -> PassFailure {
 struct Increment;
 
 impl CompilerPass<i64> for Increment {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Ok(ir + 1)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -63,11 +64,11 @@ impl CompilerPass<i64> for Increment {
 struct KeepInteger;
 
 impl CompilerPass<i64> for KeepInteger {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Ok(*ir)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -83,7 +84,7 @@ struct RecordingPass {
 
 impl RecordingPass {
     /// Record a call of `hook`, failing it if it is the failing hook.
-    fn record(&mut self, hook: PassHook) -> Result<(), PassFailure> {
+    fn record(&mut self, hook: PassHook) -> Result<(), BoxError> {
         self.calls.push(hook.as_str().to_owned());
         if self.fails_in == Some(hook) {
             return Err(fail("recorded failure"));
@@ -93,16 +94,16 @@ impl RecordingPass {
 }
 
 impl CompilerPass<i64> for RecordingPass {
-    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.record(PassHook::ValidateInput)
     }
 
-    fn skip(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+    fn skip(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, BoxError> {
         self.record(PassHook::Skip)?;
         Ok(self.skips.then_some(*ir))
     }
 
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         self.record(PassHook::Run)?;
         Ok(ir + 1)
     }
@@ -112,11 +113,11 @@ impl CompilerPass<i64> for RecordingPass {
         _input: &i64,
         _output: &i64,
         _cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         self.record(PassHook::ValidateOutput)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         self.record(PassHook::DidChange)?;
         Ok(input != output)
     }
@@ -126,7 +127,7 @@ impl CompilerPass<i64> for RecordingPass {
         _input: &i64,
         _output: &i64,
         changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         self.calls
             .push(format!("preserved_analyses(changed={changed})"));
         Ok(PreservedAnalyses::none())
@@ -140,7 +141,7 @@ struct FailingHookPass {
 
 impl FailingHookPass {
     /// Fail if `hook` is the failing hook.
-    fn check(&self, hook: PassHook) -> Result<(), PassFailure> {
+    fn check(&self, hook: PassHook) -> Result<(), BoxError> {
         if self.hook == hook {
             return Err(fail(&format!("{hook}-broken")));
         }
@@ -149,16 +150,16 @@ impl FailingHookPass {
 }
 
 impl CompilerPass<i64> for FailingHookPass {
-    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.check(PassHook::ValidateInput)
     }
 
-    fn skip(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+    fn skip(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, BoxError> {
         self.check(PassHook::Skip)?;
         Ok(None)
     }
 
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         self.check(PassHook::Run)?;
         Ok(ir + 1)
     }
@@ -168,11 +169,11 @@ impl CompilerPass<i64> for FailingHookPass {
         _input: &i64,
         _output: &i64,
         _cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         self.check(PassHook::ValidateOutput)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         self.check(PassHook::DidChange)?;
         Ok(input != output)
     }
@@ -182,7 +183,7 @@ impl CompilerPass<i64> for FailingHookPass {
         _input: &i64,
         _output: &i64,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         self.check(PassHook::PreservedAnalyses)?;
         Ok(PreservedAnalyses::none())
     }
@@ -192,15 +193,15 @@ impl CompilerPass<i64> for FailingHookPass {
 struct RejectInput;
 
 impl CompilerPass<i64> for RejectInput {
-    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Err(fail("rejected"))
     }
 
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Ok(*ir)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -209,11 +210,11 @@ impl CompilerPass<i64> for RejectInput {
 struct CrashInRun;
 
 impl CompilerPass<i64> for CrashInRun {
-    fn run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Err(fail("crashed"))
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -269,7 +270,7 @@ impl HandOverPass {
     }
 
     /// Hand over the failure if `hook` is the handing hook.
-    fn check(&mut self, hook: PassHook) -> Result<(), PassFailure> {
+    fn check(&mut self, hook: PassHook) -> Result<(), BoxError> {
         if self.hook == hook {
             if let Some(failure) = self.failure.take() {
                 return Err(Box::new(failure));
@@ -284,16 +285,16 @@ impl CompilerPass<i64> for HandOverPass {
         Cow::Borrowed(self.name)
     }
 
-    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.check(PassHook::ValidateInput)
     }
 
-    fn skip(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+    fn skip(&mut self, _ir: &i64, _cx: &mut PassContext<'_>) -> Result<Option<i64>, BoxError> {
         self.check(PassHook::Skip)?;
         Ok(None)
     }
 
-    fn run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         cx.report_text(DiagnosticLevel::Warning, "handing over", None);
         self.check(PassHook::Run)?;
         Ok(ir + 1)
@@ -304,11 +305,11 @@ impl CompilerPass<i64> for HandOverPass {
         _input: &i64,
         _output: &i64,
         _cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         self.check(PassHook::ValidateOutput)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         self.check(PassHook::DidChange)?;
         Ok(input != output)
     }
@@ -318,7 +319,7 @@ impl CompilerPass<i64> for HandOverPass {
         _input: &i64,
         _output: &i64,
         _changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         self.check(PassHook::PreservedAnalyses)?;
         Ok(PreservedAnalyses::none())
     }
@@ -330,12 +331,12 @@ struct LevelReportPass {
 }
 
 impl CompilerPass<i64> for LevelReportPass {
-    fn run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         cx.report_text(self.level, "level-test-message", None);
         Ok(*ir)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -423,16 +424,16 @@ fn execute_skipped_run_outputs_the_skip_output() {
     struct SkippedPass;
 
     impl CompilerPass<i64> for SkippedPass {
-        fn skip(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<Option<i64>, PassFailure> {
+        fn skip(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<Option<i64>, BoxError> {
             cx.report_text(DiagnosticLevel::Info, "skip requested", None);
             Ok(Some(ir + 100))
         }
 
-        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
             Ok(ir + 1)
         }
 
-        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
             Ok(input != output)
         }
     }
@@ -558,12 +559,12 @@ fn execute_failure_keeps_the_diagnostics_emitted_before_it() {
     struct WarnThenCrash;
 
     impl CompilerPass<i64> for WarnThenCrash {
-        fn run(&mut self, _ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+        fn run(&mut self, _ir: &i64, cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
             cx.report_text(DiagnosticLevel::Warning, "heads-up", None);
             Err(fail("boom"))
         }
 
-        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
             Ok(input != output)
         }
     }
@@ -1050,11 +1051,11 @@ fn node_handle_identity_follows_the_node() {
 struct GenericNamedPass<T>(PhantomData<T>);
 
 impl<T> CompilerPass<i64> for GenericNamedPass<T> {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Ok(*ir)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -1082,11 +1083,11 @@ impl CompilerPass<i64> for NamedPass {
         Cow::Borrowed(self.description)
     }
 
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Ok(*ir)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -1171,12 +1172,12 @@ struct StatefulIncrement {
 }
 
 impl CompilerPass<i64> for StatefulIncrement {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         self.runs += 1;
         Ok(ir + self.runs)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
@@ -1185,38 +1186,39 @@ impl CompilerPass<i64> for StatefulIncrement {
 struct TwoIrPass;
 
 impl CompilerPass<i64> for TwoIrPass {
-    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+    fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
         Ok(*ir)
     }
 
-    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
 
 impl CompilerPass<String> for TwoIrPass {
-    fn run(&mut self, ir: &String, _cx: &mut PassContext<'_>) -> Result<String, PassFailure> {
+    fn run(&mut self, ir: &String, _cx: &mut PassContext<'_>) -> Result<String, BoxError> {
         Ok(ir.clone())
     }
 
-    fn did_change(&mut self, input: &String, output: &String) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &String, output: &String) -> Result<bool, BoxError> {
         Ok(input != output)
     }
 }
 
 /// Two pass types that share a name, from two modules.
 mod first {
-    use super::{CompilerPass, PassContext, PassFailure};
+    use super::{CompilerPass, PassContext};
+    use fhy_core::foreign::BoxError;
 
     /// Adds one to an integer.
     pub(super) struct Fold;
 
     impl CompilerPass<i64> for Fold {
-        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
             Ok(ir + 1)
         }
 
-        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
             Ok(input != output)
         }
     }
@@ -1224,17 +1226,18 @@ mod first {
 
 /// The second of the two same-named pass types.
 mod second {
-    use super::{CompilerPass, PassContext, PassFailure};
+    use super::{CompilerPass, PassContext};
+    use fhy_core::foreign::BoxError;
 
     /// Adds two to an integer.
     pub(super) struct Fold;
 
     impl CompilerPass<i64> for Fold {
-        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, PassFailure> {
+        fn run(&mut self, ir: &i64, _cx: &mut PassContext<'_>) -> Result<i64, BoxError> {
             Ok(ir + 2)
         }
 
-        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, PassFailure> {
+        fn did_change(&mut self, input: &i64, output: &i64) -> Result<bool, BoxError> {
             Ok(input != output)
         }
     }

@@ -449,7 +449,8 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 /// use std::sync::Arc;
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass::{CompilerPass, PassContext, PassFailure, PassManager};
+/// use fhy_core::pass::{CompilerPass, PassContext, PassManager};
+/// use fhy_core::foreign::BoxError;
 /// use fhy_core::tree::{NodeHandle, NodeIdentity};
 ///
 /// #[derive(Clone, Debug)]
@@ -464,11 +465,11 @@ impl<I: NodeHandle> PipelineRun<'_, '_, I> {
 /// struct Double;
 ///
 /// impl CompilerPass<Value> for Double {
-///     fn run(&mut self, ir: &Value, _cx: &mut PassContext<'_>) -> Result<Value, PassFailure> {
+///     fn run(&mut self, ir: &Value, _cx: &mut PassContext<'_>) -> Result<Value, BoxError> {
 ///         Ok(Value(Arc::new(*ir.0 * 2)))
 ///     }
 ///
-///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, PassFailure> {
+///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, BoxError> {
 ///         Ok(input.0 != output.0)
 ///     }
 /// }

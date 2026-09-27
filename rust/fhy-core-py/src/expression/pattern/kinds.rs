@@ -19,8 +19,9 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyString, PyTuple, PyType};
 
-use fhy_core::expression::pattern::{CallbackError, Pattern};
+use fhy_core::expression::pattern::Pattern;
 use fhy_core::expression::{BinaryOperation, Callee, LogicalOperation, UnaryOperation};
+use fhy_core::foreign::BoxError;
 
 use crate::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, compare_as_dataclass,
@@ -42,13 +43,13 @@ use super::objects::{ActiveTable, current_object_of};
 const SHALLOW_DEPTH: usize = 64;
 
 /// Return the callback error carrying the Python exception `error`.
-pub(super) fn into_callback_error(error: PyErr) -> CallbackError {
+pub(super) fn into_callback_error(error: PyErr) -> BoxError {
     Box::new(error)
 }
 
 /// Return the Python exception a callback error carries: the exception a
 /// callback raised, unchanged.
-pub(super) fn callback_error_to_py(error: CallbackError) -> PyErr {
+pub(super) fn callback_error_to_py(error: BoxError) -> PyErr {
     match error.downcast::<PyErr>() {
         Ok(error) => *error,
         Err(error) => pyo3::exceptions::PyRuntimeError::new_err(error.to_string()),

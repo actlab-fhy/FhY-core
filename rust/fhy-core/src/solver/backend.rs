@@ -1,8 +1,8 @@
 //! The backend traits a [`Solver`](super::Solver) delegates to, and the
 //! values they exchange with it.
 
+use crate::foreign::BoxError;
 use std::borrow::Cow;
-use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
@@ -10,13 +10,6 @@ use crate::expression::registry::FunctionRegistry;
 use crate::expression::{Expression, NoRegisteredSorts, SortLookup};
 
 use super::smt::SmtScript;
-
-/// The error a backend reports: any error, boxed.
-///
-/// The [`Solver`](super::Solver) wraps it in
-/// [`SolveError::Backend`](super::SolveError::Backend) with the backend's
-/// name, and returns it as that error's source.
-pub type BackendError = Box<dyn Error + Send + Sync + 'static>;
 
 /// A backend that decides SMT-LIB2 scripts: whether their assertions can
 /// hold together.
@@ -34,7 +27,8 @@ pub type BackendError = Box<dyn Error + Send + Sync + 'static>;
 /// ```
 /// use std::borrow::Cow;
 ///
-/// use fhy_core::solver::{BackendError, CheckLimits, SatResult, SmtScript, SmtSolver};
+/// use fhy_core::solver::{CheckLimits, SatResult, SmtScript, SmtSolver};
+/// use fhy_core::foreign::BoxError;
 ///
 /// /// A backend that finds every script satisfiable.
 /// #[derive(Debug)]
@@ -45,7 +39,7 @@ pub type BackendError = Box<dyn Error + Send + Sync + 'static>;
 ///         Cow::Borrowed("optimist")
 ///     }
 ///
-///     fn check(&self, _script: &SmtScript, _limits: &CheckLimits) -> Result<SatResult, BackendError> {
+///     fn check(&self, _script: &SmtScript, _limits: &CheckLimits) -> Result<SatResult, BoxError> {
 ///         Ok(SatResult::Sat)
 ///     }
 /// }
@@ -65,7 +59,7 @@ pub trait SmtSolver: Send + Sync + fmt::Debug {
     /// Returns any failure of the backend itself: one that is not an
     /// answer, such as a solver that cannot be run or that reports an
     /// error.
-    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BackendError>;
+    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BoxError>;
 }
 
 /// A backend that simplifies expressions.
@@ -94,7 +88,7 @@ pub trait Simplifier: Send + Sync + fmt::Debug {
         &self,
         expression: &Expression,
         context: &SimplifyContext<'_>,
-    ) -> Result<Expression, BackendError>;
+    ) -> Result<Expression, BoxError>;
 }
 
 /// What a [`Simplifier`] is told about a simplification besides the

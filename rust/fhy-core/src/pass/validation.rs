@@ -5,10 +5,11 @@ use std::borrow::Cow;
 use std::fmt;
 
 use super::analysis::AnalysisCache;
-use super::compiler_pass::{CompilerPass, PassFailure, run_check, short_type_name};
+use super::compiler_pass::{CompilerPass, run_check, short_type_name};
 use super::context::PassContext;
 use super::error::render_chain;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel, Note, ValidationReport};
+use crate::foreign::BoxError;
 use crate::identifier::{HasIdentifier, Identifier};
 
 /// A collect-all check over IR of type `I`.
@@ -24,12 +25,13 @@ use crate::identifier::{HasIdentifier, Identifier};
 /// ```
 /// use fhy_core::diagnostic::DiagnosticLevel;
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::pass::{PassContext, PassFailure, ValidationManager, Validator};
+/// use fhy_core::pass::{PassContext, ValidationManager, Validator};
+/// use fhy_core::foreign::BoxError;
 ///
 /// struct NonNegative;
 ///
 /// impl Validator<i64> for NonNegative {
-///     fn validate(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+///     fn validate(&mut self, ir: &i64, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
 ///         if *ir < 0 {
 ///             cx.report_text(DiagnosticLevel::Error, format!("{ir} is negative"), None);
 ///         }
@@ -60,7 +62,7 @@ pub trait Validator<I> {
     /// Returns an error if the validator cannot finish the check. The
     /// [`ValidationManager`] then records the validator as failed, and adds
     /// an error diagnostic unless the validator reported one.
-    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure>;
+    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError>;
 }
 
 /// Forward to the borrowed validator, so a pipeline can run a validator its
@@ -70,7 +72,7 @@ impl<I, V: Validator<I> + ?Sized> Validator<I> for &mut V {
         (**self).name()
     }
 
-    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         (**self).validate(ir, cx)
     }
 }
@@ -81,7 +83,7 @@ impl<I, V: Validator<I> + ?Sized> Validator<I> for Box<V> {
         (**self).name()
     }
 
-    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         (**self).validate(ir, cx)
     }
 }
@@ -165,8 +167,8 @@ impl<I, P: CompilerPass<I, ()>> Validator<I> for PassValidator<P> {
         self.pass.name()
     }
 
-    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        run_check(&mut self.pass, ir, cx).map_err(|error| Box::new(error) as PassFailure)
+    fn validate(&mut self, ir: &I, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
+        run_check(&mut self.pass, ir, cx).map_err(|error| Box::new(error) as BoxError)
     }
 }
 
@@ -215,7 +217,7 @@ impl ValidatorRecord {
 
 /// Return the error diagnostic for the validator `validator_name` that failed
 /// with `error` without reporting an error itself.
-fn synthesize_silent_failure(validator_name: Cow<'static, str>, error: &PassFailure) -> Diagnostic {
+fn synthesize_silent_failure(validator_name: Cow<'static, str>, error: &BoxError) -> Diagnostic {
     let message = format!(
         "validator {validator_name:?} failed without reporting an error: {}",
         render_chain(error.as_ref())

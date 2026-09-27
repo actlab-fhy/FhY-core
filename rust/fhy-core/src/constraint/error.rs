@@ -9,8 +9,8 @@ use crate::expression::{
 use crate::identifier::Identifier;
 use crate::solver::SolveError;
 
-use super::custom::CustomError;
-use super::value::{Member, MemberKind, OpaqueError};
+use super::value::{Member, MemberKind};
+use crate::foreign::BoxError;
 
 /// Why a constraint cannot use the value bound to an identifier in its
 /// scope.
@@ -27,7 +27,7 @@ pub enum UnusableBindingReason {
     /// member, and the value is neither.
     NotMemberShaped,
     /// A set constraint needs to look the value up, and it cannot be.
-    Unhashable(OpaqueError),
+    Unhashable(BoxError),
 }
 
 /// A constraint that cannot be evaluated or converted.
@@ -62,7 +62,7 @@ pub enum ConstraintError {
     /// Substituting the bindings into a system's residual failed.
     Substitution(PiecewiseError),
     /// A [`CustomConstraint`](super::CustomConstraint) failed.
-    Custom(CustomError),
+    Custom(BoxError),
 }
 
 impl fmt::Display for ConstraintError {

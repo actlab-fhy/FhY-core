@@ -9,10 +9,11 @@ use crate::support::pass_ir;
 use std::borrow::Cow;
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationReport};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
-    CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PassValidator,
-    ValidationManager, Validator, ValidatorRecord,
+    CompilerPass, ExecutePass, PassContext, PassError, PassValidator, ValidationManager, Validator,
+    ValidatorRecord,
 };
 use pass_ir::{BoxIr, DoubleAnalysis};
 use rstest::rstest;
@@ -63,7 +64,7 @@ impl Validator<BoxIr> for ScriptedValidator {
         Cow::Borrowed(self.name)
     }
 
-    fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         for step in self.steps.drain(..) {
             match step {
                 Step::Report {
@@ -86,11 +87,11 @@ impl CompilerPass<BoxIr, ()> for ScriptedValidator {
         Cow::Borrowed(self.name)
     }
 
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.validate(ir, cx)
     }
 
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, BoxError> {
         Ok(false)
     }
 }
@@ -108,19 +109,15 @@ fn report(level: DiagnosticLevel, message: &'static str) -> Step {
 struct RejectInput;
 
 impl CompilerPass<BoxIr, ()> for RejectInput {
-    fn validate_input(
-        &mut self,
-        _ir: &BoxIr,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Err("rejected".into())
     }
 
-    fn run(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn run(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Ok(())
     }
 
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, BoxError> {
         Ok(false)
     }
 }
@@ -129,11 +126,11 @@ impl CompilerPass<BoxIr, ()> for RejectInput {
 struct CrashInRun;
 
 impl CompilerPass<BoxIr, ()> for CrashInRun {
-    fn run(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn run(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Err("crashed".into())
     }
 
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, BoxError> {
         Ok(false)
     }
 }
@@ -389,7 +386,7 @@ fn validation_manager_keeps_a_structured_note() {
     struct NoteValidator;
 
     impl Validator<BoxIr> for NoteValidator {
-        fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
             let note = Note::new("structured-message", NoteKind::suggestion().clone());
             cx.report(Diagnostic::error(note, "NoteValidator"));
             Ok(())
@@ -610,21 +607,17 @@ struct HookRecordingCheck {
 }
 
 impl CompilerPass<BoxIr, ()> for HookRecordingCheck {
-    fn validate_input(
-        &mut self,
-        _ir: &BoxIr,
-        _cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.calls.push("validate_input");
         Ok(())
     }
 
-    fn skip(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<Option<()>, PassFailure> {
+    fn skip(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<Option<()>, BoxError> {
         self.calls.push("skip");
         Ok(self.skips.then_some(()))
     }
 
-    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn run(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         self.calls.push("run");
         if ir.value() < 0 {
             cx.report_text(DiagnosticLevel::Error, "negative", None);
@@ -637,12 +630,12 @@ impl CompilerPass<BoxIr, ()> for HookRecordingCheck {
         _input: &BoxIr,
         _output: &(),
         _cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         self.calls.push("validate_output");
         Ok(())
     }
 
-    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, _input: &BoxIr, _output: &()) -> Result<bool, BoxError> {
         self.calls.push("did_change");
         Ok(false)
     }
@@ -696,7 +689,7 @@ fn pass_validator_ends_the_check_at_a_skip() {
 struct PanickingValidator;
 
 impl Validator<BoxIr> for PanickingValidator {
-    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate(&mut self, _ir: &BoxIr, _cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         panic!("the validator panics");
     }
 }
@@ -816,7 +809,7 @@ fn validation_manager_runs_validators_without_an_analysis_cache() {
     struct TwiceReading;
 
     impl Validator<BoxIr> for TwiceReading {
-        fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        fn validate(&mut self, ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
             cx.analysis::<DoubleAnalysis>(ir);
             cx.analysis::<DoubleAnalysis>(ir);
             Ok(())
@@ -840,7 +833,7 @@ fn validation_manager_validates_afresh_on_every_call() {
     }
 
     impl Validator<BoxIr> for CountingWarner {
-        fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+        fn validate(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
             self.runs += 1;
             cx.report_text(DiagnosticLevel::Warning, "again", None);
             Ok(())

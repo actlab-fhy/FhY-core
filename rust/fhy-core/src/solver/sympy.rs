@@ -22,8 +22,9 @@ use pyo3::types::{PyDict, PyString};
 use crate::expression::{BooleanScreen, Expression};
 use crate::identifier::Identifier;
 
-use super::backend::{BackendError, Simplifier, SimplifyContext};
+use super::backend::{Simplifier, SimplifyContext};
 use super::screen::is_native_constant;
+use crate::foreign::BoxError;
 
 pub use error::{SympyError, SympyErrorKind, SympyPhase, SympyUnavailableError};
 
@@ -328,7 +329,7 @@ impl Simplifier for SympySimplifier {
         &self,
         expression: &Expression,
         context: &SimplifyContext<'_>,
-    ) -> Result<Expression, BackendError> {
+    ) -> Result<Expression, BoxError> {
         Python::try_attach(|py| self.simplify_attached(py, expression, context))
             .unwrap_or_else(|| {
                 Err(SympyError::new(
@@ -336,6 +337,6 @@ impl Simplifier for SympySimplifier {
                     SympyErrorKind::Unavailable(SympyUnavailableError::NoInterpreter),
                 ))
             })
-            .map_err(|error| Box::new(error) as BackendError)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 }

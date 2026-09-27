@@ -11,9 +11,9 @@ use fhy_core::expression::builtins::BuiltinFunction;
 use fhy_core::expression::evaluate::{
     ArrayBinding, ArrayKernels, ArrayValue, CoreKernels, EvaluationError, Evaluator, LaneFailure,
 };
-use fhy_core::expression::pattern::CallbackError;
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Callee, Expression, SymbolType};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use ndarray::{ArrayD, CowArray, IxDyn, arr0, array};
 
@@ -326,7 +326,7 @@ impl ArrayKernels for RecordingKernels {
         &self,
         function: BuiltinFunction,
         argument: CowArray<'_, f64, IxDyn>,
-    ) -> Result<ArrayD<f64>, CallbackError> {
+    ) -> Result<ArrayD<f64>, BoxError> {
         self.arguments.borrow_mut().push((
             function,
             argument.iter().copied().collect(),

@@ -4,7 +4,8 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::constraint::{Constraint, ConstraintError, CustomError};
+use crate::constraint::{Constraint, ConstraintError};
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 use super::domain::DomainKind;
@@ -149,7 +150,7 @@ pub enum ParamError {
     /// A constraint failed to evaluate or convert.
     Constraint(ConstraintError),
     /// A [`CustomDomain`](super::CustomDomain) failed.
-    Custom(CustomError),
+    Custom(BoxError),
 }
 
 impl fmt::Display for ParamError {

@@ -8,8 +8,8 @@ use std::marker::PhantomData;
 use ndarray::{ArrayD, ArrayViewD, CowArray, IxDyn, Zip};
 
 use crate::expression::builtins::BuiltinFunction;
-use crate::expression::pattern::CallbackError;
 use crate::expression::symbol_type::SymbolType;
+use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
 use super::error::LaneFailure;
@@ -114,7 +114,7 @@ pub trait ArrayKernels {
         &self,
         function: BuiltinFunction,
         argument: CowArray<'_, f64, IxDyn>,
-    ) -> Result<ArrayD<f64>, CallbackError>;
+    ) -> Result<ArrayD<f64>, BoxError>;
 }
 
 /// The [`ArrayKernels`] that compute nothing, so an array evaluation uses
@@ -135,7 +135,7 @@ impl ArrayKernels for CoreKernels {
         &self,
         function: BuiltinFunction,
         _argument: CowArray<'_, f64, IxDyn>,
-    ) -> Result<ArrayD<f64>, CallbackError> {
+    ) -> Result<ArrayD<f64>, BoxError> {
         Err(format!("no array kernel computes {}", function.name()).into())
     }
 }

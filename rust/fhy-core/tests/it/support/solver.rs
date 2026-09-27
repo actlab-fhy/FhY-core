@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{Expression, SymbolType};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
-    BackendError, CheckLimits, SatResult, Simplifier, SimplifyContext, SmtScript, SmtSolver, Solver,
+    CheckLimits, SatResult, Simplifier, SimplifyContext, SmtScript, SmtSolver, Solver,
 };
 
 /// An error a fake backend reports.
@@ -80,14 +81,14 @@ impl SmtSolver for RecordingSmtSolver {
         Cow::Borrowed("recording")
     }
 
-    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BackendError> {
+    fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BoxError> {
         self.checks
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push((script.to_string(), *limits));
         self.answer
             .clone()
-            .map_err(|error| Box::new(error) as BackendError)
+            .map_err(|error| Box::new(error) as BoxError)
     }
 }
 
@@ -160,7 +161,7 @@ impl Simplifier for RecordingSimplifier {
         &self,
         expression: &Expression,
         context: &SimplifyContext<'_>,
-    ) -> Result<Expression, BackendError> {
+    ) -> Result<Expression, BoxError> {
         self.registry_sizes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -171,9 +172,7 @@ impl Simplifier for RecordingSimplifier {
             .push(expression.clone());
         match &self.result {
             None => Ok(expression.clone()),
-            Some(result) => result
-                .clone()
-                .map_err(|error| Box::new(error) as BackendError),
+            Some(result) => result.clone().map_err(|error| Box::new(error) as BoxError),
         }
     }
 }

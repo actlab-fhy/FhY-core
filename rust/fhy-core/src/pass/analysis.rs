@@ -26,7 +26,8 @@ use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 /// ```
 /// use std::sync::Arc;
 ///
-/// use fhy_core::pass::{Analysis, CompilerPass, ExecutePass, PassContext, PassFailure};
+/// use fhy_core::pass::{Analysis, CompilerPass, ExecutePass, PassContext};
+/// use fhy_core::foreign::BoxError;
 /// use fhy_core::tree::{NodeHandle, NodeIdentity};
 ///
 /// #[derive(Clone)]
@@ -53,11 +54,11 @@ use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 /// struct HalveEven;
 ///
 /// impl CompilerPass<Value> for HalveEven {
-///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, PassFailure> {
+///     fn run(&mut self, ir: &Value, cx: &mut PassContext<'_>) -> Result<Value, BoxError> {
 ///         Ok(if *cx.analysis::<IsEven>(ir) { Value(Arc::new(*ir.0 / 2)) } else { ir.clone() })
 ///     }
 ///
-///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, PassFailure> {
+///     fn did_change(&mut self, input: &Value, output: &Value) -> Result<bool, BoxError> {
 ///         Ok(input.0 != output.0)
 ///     }
 /// }

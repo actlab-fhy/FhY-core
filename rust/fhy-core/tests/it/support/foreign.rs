@@ -9,10 +9,10 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use fhy_core::constraint::{
-    Bindings, Constraint, CustomConstraint, CustomError, Opaque, OpaqueError, OpaqueValue, Outcome,
-    Value,
+    Bindings, Constraint, CustomConstraint, Opaque, OpaqueValue, Outcome, Value,
 };
 use fhy_core::expression::{Expression, SymbolType};
+use fhy_core::foreign::BoxError;
 use fhy_core::foreign::{Foreign, ForeignError, Resolve};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{CustomDomain, IntervalProfile, ParamDomain, Side};
@@ -202,7 +202,7 @@ impl OpaqueValue for WireToken {
             .is_some_and(|other| other.0 == self.0)
     }
 
-    fn check_hashable(&self) -> Result<(), OpaqueError> {
+    fn check_hashable(&self) -> Result<(), BoxError> {
         Ok(())
     }
 
@@ -236,11 +236,11 @@ impl CustomConstraint for WireCustom {
         HashSet::new()
     }
 
-    fn evaluate(&self, _bindings: &Bindings) -> Result<Outcome, CustomError> {
+    fn evaluate(&self, _bindings: &Bindings) -> Result<Outcome, BoxError> {
         Ok(Outcome::Satisfied)
     }
 
-    fn to_expression(&self) -> Result<Expression, CustomError> {
+    fn to_expression(&self) -> Result<Expression, BoxError> {
         Ok(Expression::literal(true))
     }
 
@@ -285,11 +285,11 @@ impl WireDomain {
 }
 
 impl CustomDomain for WireDomain {
-    fn symbol_type(&self) -> Result<Option<SymbolType>, CustomError> {
+    fn symbol_type(&self) -> Result<Option<SymbolType>, BoxError> {
         Ok(Some(SymbolType::Int))
     }
 
-    fn is_value_admissible(&self, value: &Value) -> Result<bool, CustomError> {
+    fn is_value_admissible(&self, value: &Value) -> Result<bool, BoxError> {
         Ok(matches!(value, Value::Int(_)))
     }
 
@@ -297,19 +297,19 @@ impl CustomDomain for WireDomain {
         &self,
         _constraint: &Constraint,
         _variable: &Identifier,
-    ) -> Result<(), CustomError> {
+    ) -> Result<(), BoxError> {
         Ok(())
     }
 
-    fn implied_constraints(&self, _variable: &Identifier) -> Result<Vec<Constraint>, CustomError> {
+    fn implied_constraints(&self, _variable: &Identifier) -> Result<Vec<Constraint>, BoxError> {
         Ok(Vec::new())
     }
 
-    fn interval_profile(&self) -> Result<Option<IntervalProfile>, CustomError> {
+    fn interval_profile(&self) -> Result<Option<IntervalProfile>, BoxError> {
         Ok(None)
     }
 
-    fn is_value_set_subset(&self, _other: &ParamDomain) -> Result<bool, CustomError> {
+    fn is_value_set_subset(&self, _other: &ParamDomain) -> Result<bool, BoxError> {
         Ok(false)
     }
 
@@ -318,11 +318,11 @@ impl CustomDomain for WireDomain {
         _own: Side<'_>,
         _other_domain: &ParamDomain,
         _other: Side<'_>,
-    ) -> Result<Outcome, CustomError> {
+    ) -> Result<Outcome, BoxError> {
         Ok(Outcome::Undecided)
     }
 
-    fn has_feasible_value(&self, _side: Side<'_>) -> Result<Outcome, CustomError> {
+    fn has_feasible_value(&self, _side: Side<'_>) -> Result<Outcome, BoxError> {
         Ok(Outcome::Satisfied)
     }
 
@@ -332,7 +332,7 @@ impl CustomDomain for WireDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
-    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, CustomError> {
+    ) -> Result<Option<(ParamDomain, Vec<Constraint>)>, BoxError> {
         Ok(None)
     }
 
@@ -342,7 +342,7 @@ impl CustomDomain for WireDomain {
         _other_domain: &ParamDomain,
         _other: Side<'_>,
         _variable: &Identifier,
-    ) -> Result<(ParamDomain, Vec<Constraint>), CustomError> {
+    ) -> Result<(ParamDomain, Vec<Constraint>), BoxError> {
         Ok((Self::build(&self.0), Vec::new()))
     }
 

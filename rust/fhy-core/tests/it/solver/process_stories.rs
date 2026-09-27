@@ -8,10 +8,11 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use fhy_core::expression::{Expression, NoRegisteredSorts, SymbolType};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
-    Answer, BackendError, CheckLimits, ProcessError, QueryContext, Question, SatResult,
-    SmtLib2Process, SmtScript, SmtSolver, Solver, UnknownReason,
+    Answer, CheckLimits, ProcessError, QueryContext, Question, SatResult, SmtLib2Process,
+    SmtScript, SmtSolver, Solver, UnknownReason,
 };
 
 use crate::support::expression::{build_identifier, build_literal};
@@ -43,12 +44,12 @@ fn build_script() -> (Identifier, SmtScript) {
 }
 
 /// Check the script of `x > 0` with `backend` and no limits.
-fn check(backend: &SmtLib2Process) -> Result<SatResult, BackendError> {
+fn check(backend: &SmtLib2Process) -> Result<SatResult, BoxError> {
     backend.check(&build_script().1, &CheckLimits::new())
 }
 
 /// Return the process error `result` fails with.
-fn expect_process_error(result: Result<SatResult, BackendError>) -> ProcessError {
+fn expect_process_error(result: Result<SatResult, BoxError>) -> ProcessError {
     let error = result.expect_err("the check fails");
     *error
         .downcast::<ProcessError>()

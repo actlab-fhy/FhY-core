@@ -23,7 +23,8 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{Diagnostic, Note};
-use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PassFailure, PreservedAnalyses};
+use fhy_core::foreign::BoxError;
+use fhy_core::pass::{CompilerPass, ExecutePass, PassContext, PreservedAnalyses};
 
 use crate::diagnostic::{borrow_python_diagnostic, diagnostic_to_python, level_to_python};
 
@@ -107,7 +108,7 @@ fn lifecycle_logger(py: Python<'_>, name: &str) -> PyResult<Option<Py<PyAny>>> {
     Ok((!logger.is_none()).then(|| logger.unbind()))
 }
 
-/// The error a Python hook raised, as the hook's [`PassFailure`].
+/// The error a Python hook raised, as the hook's [`BoxError`].
 ///
 /// It renders as the exception does, `ValueError: boom`, or as the chain
 /// of a pass error the binding raised, which names Python hooks.
@@ -154,7 +155,7 @@ pub(super) fn report_into(py: Python<'_>, cx: &mut PassContext<'_>, reported: Ve
 /// Return the error of a hook that did not run because an exception that
 /// is not an `Exception` interrupted the run; the run's boundary raises
 /// that exception instead.
-pub(super) fn build_interrupted_failure(python_hook: &'static str) -> PassFailure {
+pub(super) fn build_interrupted_failure(python_hook: &'static str) -> BoxError {
     Box::new(HookFailure {
         python_hook,
         error: PyRuntimeError::new_err("the run was interrupted"),
@@ -262,7 +263,7 @@ impl PythonPass {
 
     /// Return the failure of `hook` raising `error`, recording it in the
     /// run's scope.
-    fn fail(&mut self, py: Python<'_>, hook: &'static str, error: PyErr) -> PassFailure {
+    fn fail(&mut self, py: Python<'_>, hook: &'static str, error: PyErr) -> BoxError {
         let exception = error.value(py).clone().into_any().unbind();
         if !error.is_instance_of::<PyException>(py) {
             scope::record_interrupt(error.clone_ref(py));
@@ -316,7 +317,7 @@ impl PythonPass {
         hook: &'static str,
         cx: Option<&mut PassContext<'_>>,
         call: impl FnOnce(&Bound<'py, PyAny>) -> PyResult<R>,
-    ) -> Result<R, PassFailure> {
+    ) -> Result<R, BoxError> {
         if scope::is_interrupted() {
             return Err(build_interrupted_failure(hook));
         }
@@ -384,7 +385,7 @@ impl CompilerPass<PyIr> for PythonPass {
         Cow::Owned(self.name.clone())
     }
 
-    fn validate_input(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+    fn validate_input(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
         Python::attach(|py| {
             if let Err(error) = self.start_run(py, ir) {
                 return Err(self.fail(py, "validate_input", error));
@@ -399,7 +400,7 @@ impl CompilerPass<PyIr> for PythonPass {
         })
     }
 
-    fn skip(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<Option<PyIr>, PassFailure> {
+    fn skip(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<Option<PyIr>, BoxError> {
         if !self.overrides(hook_bit::SHOULD_RUN) {
             return Ok(None);
         }
@@ -422,7 +423,7 @@ impl CompilerPass<PyIr> for PythonPass {
         })
     }
 
-    fn run(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<PyIr, PassFailure> {
+    fn run(&mut self, ir: &PyIr, cx: &mut PassContext<'_>) -> Result<PyIr, BoxError> {
         Python::attach(|py| {
             let output = self.call_hook(py, "run_pass", Some(cx), |pass| {
                 pass.call_method1(intern!(py, "run_pass"), (ir.bind(py),))
@@ -436,7 +437,7 @@ impl CompilerPass<PyIr> for PythonPass {
         input: &PyIr,
         output: &PyIr,
         cx: &mut PassContext<'_>,
-    ) -> Result<(), PassFailure> {
+    ) -> Result<(), BoxError> {
         if !self.overrides(hook_bit::VALIDATE_OUTPUT) {
             return Ok(());
         }
@@ -451,7 +452,7 @@ impl CompilerPass<PyIr> for PythonPass {
         })
     }
 
-    fn did_change(&mut self, input: &PyIr, output: &PyIr) -> Result<bool, PassFailure> {
+    fn did_change(&mut self, input: &PyIr, output: &PyIr) -> Result<bool, BoxError> {
         Python::attach(|py| {
             if self.overrides(hook_bit::DID_CHANGE) {
                 return self.call_hook(py, "did_change", None, |pass| {
@@ -469,7 +470,7 @@ impl CompilerPass<PyIr> for PythonPass {
         input: &PyIr,
         output: &PyIr,
         changed: bool,
-    ) -> Result<PreservedAnalyses, PassFailure> {
+    ) -> Result<PreservedAnalyses, BoxError> {
         Python::attach(|py| {
             let preserved = if self.overrides(hook_bit::GET_PRESERVED_ANALYSES) {
                 self.call_hook(py, "get_preserved_analyses", None, |pass| {

@@ -13,18 +13,18 @@ use std::sync::Arc;
 
 use super::super::error::RebuildError;
 use super::super::node::Expression;
-use super::matching::{CallbackError, MatchBindings, Pattern};
+use super::matching::{MatchBindings, Pattern};
+use crate::foreign::BoxError;
 use crate::tree::{
     BuildIdentityHasher, NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree,
 };
 
 /// A rewrite: the replacement built from a match's bindings, or `None` to
 /// decline.
-type RewriteFn =
-    Arc<dyn Fn(&MatchBindings) -> Result<Option<Expression>, CallbackError> + Send + Sync>;
+type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Option<Expression>, BoxError> + Send + Sync>;
 
 /// A guard: whether a rule may fire on a match's bindings.
-type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
+type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, BoxError> + Send + Sync>;
 
 /// A rewrite tried at the root of one expression.
 ///
@@ -41,13 +41,14 @@ type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send 
 ///
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::expression::{Expression, ExpressionKind, LiteralValue};
-/// use fhy_core::expression::pattern::{CallbackError, Rule, apply_rewrite_rules};
+/// use fhy_core::expression::pattern::{Rule, apply_rewrite_rules};
+/// use fhy_core::foreign::BoxError;
 ///
 /// /// Replaces each known identifier with its value.
 /// struct Substitute<'v>(&'v HashMap<Identifier, i64>);
 ///
 /// impl Rule for Substitute<'_> {
-///     fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+///     fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
 ///         let ExpressionKind::Identifier(identifier) = expression.kind() else {
 ///             return Ok(None);
 ///         };
@@ -74,7 +75,7 @@ pub trait Rule {
     ///
     /// Returns an error to stop the walk trying the rule;
     /// [`apply_rewrite_rules`] reports it as [`RewriteError::Callback`].
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError>;
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError>;
 
     /// Return the rule's name, used in firings and errors, or `None` for an
     /// unnamed rule. By default, `None`.
@@ -84,7 +85,7 @@ pub trait Rule {
 }
 
 impl<R: Rule + ?Sized> Rule for &R {
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         (**self).apply(expression)
     }
 
@@ -94,7 +95,7 @@ impl<R: Rule + ?Sized> Rule for &R {
 }
 
 impl<R: Rule + ?Sized> Rule for Box<R> {
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         (**self).apply(expression)
     }
 
@@ -104,7 +105,7 @@ impl<R: Rule + ?Sized> Rule for Box<R> {
 }
 
 impl<R: Rule + ?Sized> Rule for Arc<R> {
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         (**self).apply(expression)
     }
 
@@ -308,7 +309,7 @@ impl RewriteRule {
     #[must_use]
     pub fn new<F>(pattern: Pattern, rewrite: F) -> Self
     where
-        F: Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync + 'static,
+        F: Fn(&MatchBindings) -> Result<Expression, BoxError> + Send + Sync + 'static,
     {
         Self::new_partial(pattern, move |bindings| rewrite(bindings).map(Some))
     }
@@ -318,7 +319,7 @@ impl RewriteRule {
     #[must_use]
     pub fn new_partial<F>(pattern: Pattern, rewrite: F) -> Self
     where
-        F: Fn(&MatchBindings) -> Result<Option<Expression>, CallbackError> + Send + Sync + 'static,
+        F: Fn(&MatchBindings) -> Result<Option<Expression>, BoxError> + Send + Sync + 'static,
     {
         Self {
             pattern,
@@ -337,7 +338,7 @@ impl RewriteRule {
     #[must_use]
     pub fn with_guard<G>(mut self, guard: G) -> Self
     where
-        G: Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync + 'static,
+        G: Fn(&MatchBindings) -> Result<bool, BoxError> + Send + Sync + 'static,
     {
         self.guards.push(Arc::new(guard));
         self
@@ -369,9 +370,9 @@ impl RewriteRule {
     ///
     /// # Errors
     ///
-    /// Returns the [`CallbackError`] of a failing predicate in the pattern,
+    /// Returns the [`BoxError`] of a failing predicate in the pattern,
     /// of a guard, or of the rewrite, unchanged.
-    pub fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    pub fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         let Some(bindings) = self.pattern.matches(expression)? else {
             return Ok(None);
         };
@@ -386,7 +387,7 @@ impl RewriteRule {
 }
 
 impl Rule for RewriteRule {
-    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, CallbackError> {
+    fn apply(&self, expression: &Expression) -> Result<Option<Expression>, BoxError> {
         Self::apply(self, expression)
     }
 
@@ -491,7 +492,7 @@ pub enum RewriteError {
         /// The name of the failing rule, or `None` for an unnamed rule.
         rule_name: Option<Arc<str>>,
         /// The callback's error.
-        source: CallbackError,
+        source: BoxError,
     },
     /// A node could not be rebuilt from its rewritten children, such as a
     /// piecewise whose case condition a rule rewrote to a literal other than

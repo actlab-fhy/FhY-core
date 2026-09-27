@@ -161,7 +161,8 @@ impl<I> Clone for Registration<I> {
 ///
 /// ```
 /// use fhy_core::diagnostic::DiagnosticLevel;
-/// use fhy_core::pass::{PassContext, PassFailure, Validator, VerificationRegistry};
+/// use fhy_core::pass::{PassContext, Validator, VerificationRegistry};
+/// use fhy_core::foreign::BoxError;
 ///
 /// #[derive(PartialEq, Eq, Hash)]
 /// enum Kind {
@@ -173,7 +174,7 @@ impl<I> Clone for Registration<I> {
 /// struct NonNegative;
 ///
 /// impl Validator<f64> for Finite {
-///     fn validate(&mut self, ir: &f64, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+///     fn validate(&mut self, ir: &f64, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
 ///         if !ir.is_finite() {
 ///             cx.report_text(DiagnosticLevel::Error, "not finite", None);
 ///         }
@@ -182,7 +183,7 @@ impl<I> Clone for Registration<I> {
 /// }
 ///
 /// impl Validator<f64> for NonNegative {
-///     fn validate(&mut self, ir: &f64, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
+///     fn validate(&mut self, ir: &f64, cx: &mut PassContext<'_>) -> Result<(), BoxError> {
 ///         if *ir < 0.0 {
 ///             cx.report_text(DiagnosticLevel::Error, "negative", None);
 ///         }

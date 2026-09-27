@@ -49,10 +49,8 @@
 //!
 //! use fhy_core::expression::{Expression, SymbolType};
 //! use fhy_core::identifier::Identifier;
-//! use fhy_core::solver::{
-//!     Answer, BackendError, CheckLimits, QueryContext, Question, SatResult, SmtScript,
-//!     SmtSolver, Solver,
-//! };
+//! use fhy_core::solver::{Answer, CheckLimits, QueryContext, Question, SatResult, SmtScript, SmtSolver, Solver};
+//! use fhy_core::foreign::BoxError;
 //!
 //! /// A backend that finds every script satisfiable.
 //! #[derive(Debug)]
@@ -63,7 +61,7 @@
 //!         Cow::Borrowed("optimist")
 //!     }
 //!
-//!     fn check(&self, _script: &SmtScript, _limits: &CheckLimits) -> Result<SatResult, BackendError> {
+//!     fn check(&self, _script: &SmtScript, _limits: &CheckLimits) -> Result<SatResult, BoxError> {
 //!         Ok(SatResult::Sat)
 //!     }
 //! }
@@ -102,7 +100,7 @@ use crate::expression::{
 };
 use crate::identifier::Identifier;
 
-pub use backend::{BackendError, CheckLimits, SatResult, Simplifier, SimplifyContext, SmtSolver};
+pub use backend::{CheckLimits, SatResult, Simplifier, SimplifyContext, SmtSolver};
 pub use error::{LoweringError, SolveError};
 pub use process::{ProcessError, SmtLib2Process};
 pub use screen::Hazard;

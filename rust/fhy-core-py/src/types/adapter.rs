@@ -33,7 +33,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyTuple, PyType};
 
-use fhy_core::expression::pattern::CallbackError;
+use fhy_core::foreign::BoxError;
 use fhy_core::tree::NodeIdentity;
 use fhy_core::types::{
     DataType, DataTypeExtension, Type, TypeExtension, TypeUnificationEnvironment, UnificationError,
@@ -191,7 +191,7 @@ fn user_handler<'py>(
 
 /// Box the exception of a handler as the core's extension error.
 fn extension_error(error: PyErr) -> UnificationError {
-    let boxed: CallbackError = Box::new(error);
+    let boxed: BoxError = Box::new(error);
     UnificationError::Extension(boxed)
 }
 
