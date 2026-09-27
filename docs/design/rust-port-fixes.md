@@ -48,8 +48,8 @@ onto `dev-rust` before continuing.
 - [x] R2-006 (F2-006): `ParamError` split by family: `d03ac7c`
 - [x] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits: `b6ccb30`
 - [x] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized: `fa89655`
-- [x] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories
-- [ ] Track A status: gates green; counts recorded; landed as `<hash>`
+- [x] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories: `dac8ab1`
+- [x] Track A status: gates green; counts recorded (Track A notes); landed as `<hash>`: ready on `fix/a-api`, the hash is recorded when it lands
 
 ### Track D: `solver` (the SymPy move and build infrastructure; lands 2nd)
 
@@ -2545,6 +2545,48 @@ finding.
   and one that a context without an observer evaluates past a failing
   simplifier.
 - No test found a bug. **Python-visible changes:** none.
+
+**Track A status: the gates at the head.** On the tree of the status
+commit (the code of `dac8ab1`):
+
+| Gate | Result | At `111df20` |
+|---|---|---|
+| `cargo test --workspace` | 4,481 passed, 2 ignored | 4,305 |
+| `cargo test --workspace --all-features` | 4,513 passed, 2 ignored | 4,337 |
+| fmt; clippy `-D warnings`, both ways and per feature | clean | clean |
+| `cargo doc --workspace` `-D warnings`; the public-paths check of CI | clean | clean |
+| `cargo doc -p fhy-core` alone, `--features z3`, `--features sympy` | the known `Prepared::evaluate_array` link only (`--features ndarray` clean) | the same |
+| `cargo deny check`; `cargo package` | clean | clean |
+| `cargo +1.85 check`, workspace lib and per feature | the known `dead_code` warnings only, as many as at the base | the same |
+| `pytest tests` | 8,305 passed, 2 xfailed | 8,281 |
+| `pytest tests -m "not very_slow"` | 8,338 passed, 2 xfailed | 8,314 |
+| nox `property` | 282 passed | 282 |
+| nox `tests_minimal` | 6,339 passed, 642 skipped | 6,315 |
+| nox `lint`, `type_check`, `golden_expanded` | green | green |
+| `pytest -p no:xdist` of the constraint, domain, param, checking, types and term `*_rust_binding.py` suites | 264 passed | |
+| attribution grep of the commits and the diff | nothing | |
+
+- **Benchmarks** (`test_constraint.py`, `test_param.py`, `test_types.py`,
+  `test_term.py`; medians, the base's `target/base-src` build and the head's
+  run back to back, then the rows over 10% rerun twice, alternating head and
+  base). Of 144 rows the median moved by -1%. Seven rows were over 10% in
+  the first run; five of them, all under 1.1 us, were within noise in the
+  reruns (`test_constraint_alpha_equivalence`, both
+  `test_param_alpha_equivalence` tables, `test_promote_core_data_types[integer]`,
+  `test_variable_symbol_table_frame_construction`,
+  `test_symbol_table_structural_equivalence`). **Flagged:**
+  `test_term.py::test_binder_substitute[no_capture]` (+27% to +35%, 3.3 us
+  to 4.2 us) and `[capture]` (+18% to +30%, 9.5 us to 11.3 us). That is
+  R2-035's fix: to return a binder whose children do not mention a key as
+  itself, and to rename only for a key that applies, the substitution now
+  reads the free identifiers of the binder's children, one more round of
+  hooks for a Python-defined binder. Keeping the pinned identity (`result is
+  binder`) needs that walk, so it stays; a cheaper test of whether a key
+  occurs would need a new hook.
+- **An unreproduced hang.** One full `pytest tests` run, right after the
+  extension was rebuilt for R2-005b, stopped with every xdist worker idle on
+  a futex. It was killed; six full runs since, with a per-test timeout, all
+  passed in about 20 s. No test was identified.
 
 ### Track D notes
 
