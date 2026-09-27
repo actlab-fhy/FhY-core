@@ -12752,6 +12752,15 @@ Where a decision follows an earlier slice's decision or note, it says so.
     built-in type, and `hash` stays consistent with `==`.
   - The public bases define no `__eq__` of their own, so a Python
     subclass inherits `object`'s, as today.
+  - **Revised (R2-022, 2026-09-27):** a Rust extension's default
+    `is_structurally_equivalent` is its `eq_extension` against another
+    extension, so an extension with no overrides is equivalent to itself,
+    binds and unifies with itself. The core asks an extension whichever
+    side it is on, so equivalence is symmetric, and the rustdoc requires
+    `eq_extension` to be symmetric. The binding's adapter keeps Python's
+    dispatcher default (`False` for a class with no handler), and a
+    Python-defined type's handler now also answers when it is the right
+    operand. See `docs/design/rust-port-fixes.md` R2-022.
 - **D-S11-11: the built-in classes are P2, under their Python names and
   constructors** (decision 2; D-S4-2; D-S7-9; X-15; T-2, T-3, T-7).
   - `_rs.Type` and `_rs.DataType` are `#[pyclass(subclass)]` bases whose

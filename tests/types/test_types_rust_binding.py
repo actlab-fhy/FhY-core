@@ -517,6 +517,33 @@ def test_a_python_defined_type_without_handlers_takes_the_default_rules() -> Non
         unify(bare, bare, TypeUnificationEnvironment.empty())
 
 
+class _Int32Alias(_Unserializable, DataType):
+    """A data type structurally equivalent to ``int32``."""
+
+
+@is_structurally_equivalent.register
+def _(left: _Int32Alias, right: object) -> bool:
+    return isinstance(right, _Int32Alias) or (
+        isinstance(right, PrimitiveDataType)
+        and right.core_data_type is CoreDataType.INT32
+    )
+
+
+def test_a_built_in_type_against_a_python_defined_one_asks_its_handler() -> None:
+    """Test equivalence is symmetric: the Python-defined side answers either way."""
+    tagged = _Tagged("dense", _array(2))
+    _Tagged.calls.clear()
+
+    assert not is_structurally_equivalent(_array(2), tagged)
+    assert _Tagged.calls == ["is_structurally_equivalent"]
+    assert is_structurally_equivalent(
+        NumericalType(_int32()), NumericalType(_Int32Alias())
+    )
+    assert is_structurally_equivalent(
+        NumericalType(_Int32Alias()), NumericalType(_int32())
+    )
+
+
 def test_a_python_defined_data_type_binds_to_a_template_and_back() -> None:
     """Test a Python-defined data type is bound and handed back as itself."""
     t = Identifier("T")

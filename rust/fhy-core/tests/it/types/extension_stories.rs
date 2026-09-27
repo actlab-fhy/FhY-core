@@ -289,7 +289,8 @@ fn an_extension_without_rules_takes_the_default_rules() {
     let unified = first.unify(&second, &empty()).expect_err("not equivalent");
     let substituted = first.substitute_template(&empty()).expect("substitutes");
 
-    assert!(!first.is_structurally_equivalent(&first));
+    assert!(!first.is_structurally_equivalent(&second));
+    assert!(!second.is_structurally_equivalent(&first));
     assert!(matches!(
         bound,
         UnificationError::TypeMismatch {
@@ -340,11 +341,12 @@ fn a_data_type_extension_without_rules_takes_the_default_rules() {
 #[test]
 fn a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule() {
     let data_type = DataType::Extension(Arc::new(BareData));
+    let other = DataType::Extension(Arc::new(BareData));
     let pattern = array(data_type.clone(), [literal_dimension(1)]);
 
     let error = pattern
-        .bind_template(&pattern, &empty())
-        .expect_err("the extension is not equivalent to itself");
+        .bind_template(&array(other, [literal_dimension(1)]), &empty())
+        .expect_err("two bare extensions are not equivalent");
     let t = Identifier::new("T");
     let environment = array(template(&t), [literal_dimension(1)])
         .bind_template(&pattern, &empty())
@@ -352,4 +354,190 @@ fn a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule() {
 
     assert!(matches!(error, UnificationError::DataTypeMismatch { .. }));
     assert_eq!(environment.data_type_binding(&t), Some(&data_type));
+}
+
+/// A type that stands for another type: equivalent to it, and to an alias
+/// of an equivalent type.
+#[derive(Debug)]
+struct Alias(Type);
+
+impl fmt::Display for Alias {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "alias of {}", self.0)
+    }
+}
+
+impl TypeExtension for Alias {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("Alias")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn is_structurally_equivalent(&self, other: &Type) -> bool {
+        match other {
+            Type::Extension(extension) => match extension.as_any().downcast_ref::<Alias>() {
+                Some(other) => self.0.is_structurally_equivalent(&other.0),
+                None => self.0.is_structurally_equivalent(other),
+            },
+            _ => self.0.is_structurally_equivalent(other),
+        }
+    }
+}
+
+/// A data type that stands for another data type, as [`Alias`] does.
+#[derive(Debug)]
+struct DataAlias(DataType);
+
+impl fmt::Display for DataAlias {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "alias of {}", self.0)
+    }
+}
+
+impl DataTypeExtension for DataAlias {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("DataAlias")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn is_structurally_equivalent(&self, other: &DataType) -> bool {
+        match other {
+            DataType::Extension(extension) => {
+                match extension.as_any().downcast_ref::<DataAlias>() {
+                    Some(other) => self.0.is_structurally_equivalent(&other.0),
+                    None => self.0.is_structurally_equivalent(other),
+                }
+            }
+            _ => self.0.is_structurally_equivalent(other),
+        }
+    }
+}
+
+#[test]
+fn an_extension_without_overrides_is_equivalent_to_itself() {
+    let bare: Type = Type::Extension(Arc::new(Bare("a")));
+    let bare_data = DataType::Extension(Arc::new(BareData));
+
+    assert!(bare.is_structurally_equivalent(&bare));
+    assert!(bare.is_structurally_equivalent(&bare.clone()));
+    assert!(bare_data.is_structurally_equivalent(&bare_data.clone()));
+    assert!(!bare.is_structurally_equivalent(&Type::Extension(Arc::new(Bare("a")))));
+}
+
+#[test]
+fn an_extension_without_overrides_unifies_with_itself() {
+    let bare: Type = Type::Extension(Arc::new(Bare("a")));
+
+    let environment = bare
+        .bind_template(&bare.clone(), &empty())
+        .expect("binds itself");
+    let (unified, unified_environment) = bare.unify(&bare.clone(), &empty()).expect("unifies");
+
+    assert_eq!(environment, empty());
+    assert!(Type::ptr_eq(&unified, &bare));
+    assert_eq!(unified_environment, empty());
+}
+
+#[test]
+fn equal_extension_types_bind_as_templates() {
+    let data_type = DataType::Extension(Arc::new(BareData));
+    let left = array(data_type.clone(), [literal_dimension(4)]);
+    let right = array(data_type, [literal_dimension(4)]);
+
+    assert_eq!(left, right);
+    let environment = left
+        .bind_template(&right, &empty())
+        .expect("equal types bind");
+    let (unified, _) = left.unify(&right, &empty()).expect("equal types unify");
+
+    assert_eq!(environment, empty());
+    assert_eq!(unified, right);
+}
+
+#[test]
+fn a_numerical_type_against_an_extension_asks_the_extension() {
+    let plain = array(int32(), [literal_dimension(2)]);
+    let alias: Type = Type::Extension(Arc::new(Alias(plain.clone())));
+    let data_alias = DataType::Extension(Arc::new(DataAlias(int32())));
+
+    assert!(alias.is_structurally_equivalent(&plain));
+    assert!(plain.is_structurally_equivalent(&alias));
+    assert!(int32().is_structurally_equivalent(&data_alias));
+    assert!(data_alias.is_structurally_equivalent(&int32()));
+    assert!(
+        array(int32(), [literal_dimension(2)])
+            .is_structurally_equivalent(&array(data_alias, [literal_dimension(2)]))
+    );
+    assert!(!plain.is_structurally_equivalent(&Type::Extension(Arc::new(Bare("a")))));
+}
+
+/// Return a strategy of data types: primitives and aliases of them, and
+/// bare extensions. An alias stands only for a primitive, since a bare
+/// extension, knowing nothing of aliases, could not answer symmetrically.
+fn data_type_strategy() -> impl proptest::strategy::Strategy<Value = DataType> {
+    use proptest::prelude::*;
+    let bare = DataType::Extension(Arc::new(BareData));
+    let primitive = prop_oneof![
+        Just(int32()),
+        Just(DataType::Primitive(CoreDataType::Float32)),
+    ]
+    .prop_recursive(2, 4, 1, |inner| {
+        inner.prop_map(|data_type| DataType::Extension(Arc::new(DataAlias(data_type))))
+    });
+    prop_oneof![
+        primitive,
+        Just(bare),
+        Just(DataType::Extension(Arc::new(BareData))),
+    ]
+}
+
+/// Return a strategy of types: numerical types over
+/// [`data_type_strategy`] and aliases of them, and bare and tagged
+/// extensions.
+fn type_strategy() -> impl proptest::strategy::Strategy<Value = Type> {
+    use proptest::prelude::*;
+    let numerical = (data_type_strategy(), 0_usize..2)
+        .prop_map(|(data_type, rank)| array(data_type, (0..rank).map(|_| literal_dimension(2))))
+        .prop_recursive(2, 4, 1, |inner| {
+            inner.prop_map(|inner| Type::Extension(Arc::new(Alias(inner))))
+        });
+    prop_oneof![
+        numerical,
+        Just(Type::Extension(Arc::new(Bare("shared")))),
+        Just(Type::Extension(Arc::new(Bare("fresh")))),
+        Just(tagged("dense", array(int32(), []))),
+    ]
+}
+
+proptest::proptest! {
+    #[test]
+    fn structural_equivalence_is_symmetric_over_extensions(
+        left in type_strategy(),
+        right in type_strategy(),
+    ) {
+        proptest::prop_assert_eq!(
+            left.is_structurally_equivalent(&right),
+            right.is_structurally_equivalent(&left),
+            "{} against {}", left, right
+        );
+        proptest::prop_assert!(left.is_structurally_equivalent(&left.clone()));
+    }
+
+    #[test]
+    fn data_type_equivalence_is_symmetric_over_extensions(
+        left in data_type_strategy(),
+        right in data_type_strategy(),
+    ) {
+        proptest::prop_assert_eq!(
+            left.is_structurally_equivalent(&right),
+            right.is_structurally_equivalent(&left),
+            "{} against {}", left, right
+        );
+    }
 }

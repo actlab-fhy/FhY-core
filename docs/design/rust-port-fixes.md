@@ -39,8 +39,8 @@ onto `dev-rust` before continuing.
 
 - [x] A0: worktree `port/fix2-api` created; the baseline gates recorded (the worktree is `fix-a-api`, branch `fix/a-api`; see Track A notes): `fd19340`
 - [x] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key: `83c1caa`
-- [x] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode
-- [ ] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence
+- [x] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode: `68b326d`
+- [x] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence
 - [ ] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers
 - [ ] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python)
 - [ ] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error
@@ -2223,6 +2223,36 @@ with its own `.venv`) serves the baseline's Python gates, the benchmarks'
   that deep already hit serde_json's own limit, so only a payload decoded
   from a Python dict reaches the new text; R2-013c's reader limit sits in
   front of it.
+
+**R2-022.**
+- **The default** is `eq_extension` against another extension and `false`
+  against a built-in part, so it follows an overridden `eq_extension`, as
+  S-3's table has it for `eq_part` after R2-004.
+- **Symmetry.** `Type::is_structurally_equivalent` and
+  `DataType::is_structurally_equivalent` ask a right-hand extension about
+  the left side when the left side is built in; two extensions still ask
+  the left one, whose rustdoc now requires a symmetric answer. The
+  property draws numerical types over primitives, bare extensions and
+  aliases, bare and tagged types, and aliases of numerical types. An
+  alias of a bare extension is left out: the bare one, knowing nothing of
+  aliases, cannot answer symmetrically, which is the implementor's
+  contract, not the core's.
+- **Rewritten pins.** `an_extension_without_rules_takes_the_default_rules`
+  asserted `!first.is_structurally_equivalent(&first)`, and
+  `a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule`
+  expected a type to fail to bind itself. Both now use two distinct bare
+  extensions.
+- **The binding** keeps Python's dispatcher default: a Python-defined type
+  or data type with no `is_structurally_equivalent` handler is equivalent
+  to nothing, itself included, as before the switch. So only Rust
+  implementors see the reflexive default.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `is_structurally_equivalent(built_in, python_defined)` answered `False` without calling Python | the Python-defined operand's handler answers, with the operands swapped | `test_a_built_in_type_against_a_python_defined_one_asks_its_handler` |
+- **Fixed forward:** `83c1caa` (R2-023) left one test docstring 89
+  characters long, which ruff's E501 refuses; this commit shortens it.
 
 ### Track D notes
 

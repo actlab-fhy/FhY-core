@@ -43,15 +43,25 @@ pub trait TypeExtension: fmt::Debug + fmt::Display + Send + Sync {
         })
     }
 
-    /// Return whether `other` is structurally equivalent to this type. The
-    /// default answers `false`.
+    /// Return whether `other` is structurally equivalent to this type.
+    ///
+    /// The core asks the extension whichever side it is on, so the answer
+    /// must be symmetric: an extension equivalent to a built-in type or to
+    /// another extension must answer so when asked about it. The default is
+    /// [`eq_extension`](Self::eq_extension) against an extension, and
+    /// `false` against a built-in type, so an extension is equivalent to
+    /// itself.
     fn is_structurally_equivalent(&self, other: &Type) -> bool {
-        let _ = other;
-        false
+        match other {
+            Type::Extension(other) => self.eq_extension(&**other),
+            _ => false,
+        }
     }
 
     /// Return whether `other` equals this type, for `==` on [`Type`]. The
     /// default is identity: the same extension object.
+    ///
+    /// It must be an equivalence relation, symmetric included, as `==` is.
     fn eq_extension(&self, other: &dyn TypeExtension) -> bool {
         std::ptr::addr_eq(std::ptr::from_ref(self), std::ptr::from_ref(other))
     }
@@ -121,14 +131,23 @@ pub trait DataTypeExtension: fmt::Debug + fmt::Display + Send + Sync {
     }
 
     /// Return whether `other` is structurally equivalent to this data type.
-    /// The default answers `false`.
+    ///
+    /// The core asks the extension whichever side it is on, so the answer
+    /// must be symmetric. The default is
+    /// [`eq_extension`](Self::eq_extension) against an extension, and
+    /// `false` against a built-in data type, so an extension is equivalent
+    /// to itself.
     fn is_structurally_equivalent(&self, other: &DataType) -> bool {
-        let _ = other;
-        false
+        match other {
+            DataType::Extension(other) => self.eq_extension(&**other),
+            _ => false,
+        }
     }
 
     /// Return whether `other` equals this data type, for `==` on
     /// [`DataType`]. The default is identity: the same extension object.
+    ///
+    /// It must be an equivalence relation, symmetric included, as `==` is.
     fn eq_extension(&self, other: &dyn DataTypeExtension) -> bool {
         std::ptr::addr_eq(std::ptr::from_ref(self), std::ptr::from_ref(other))
     }

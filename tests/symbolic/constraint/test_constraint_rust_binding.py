@@ -507,7 +507,7 @@ def test_no_member_equality_runs_after_the_first_exception(x: Identifier) -> Non
 def test_a_keyboard_interrupt_from_the_first_member_is_raised_alone(
     x: Identifier,
 ) -> None:
-    """Test a ``KeyboardInterrupt`` raised first is raised, and nothing runs after it."""
+    """Test a first ``KeyboardInterrupt`` is raised, and nothing runs after it."""
     constraint = InSetConstraint(
         x, [_Tagged("a", KeyboardInterrupt()), _Tagged("b", ValueError("later"))]
     )

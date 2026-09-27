@@ -20,15 +20,16 @@ type Result<T> = std::result::Result<T, UnificationError>;
 
 impl DataType {
     /// Return whether `other` is structurally equivalent: the same core data
-    /// type, the same template (identifier and widths), or, for an
-    /// extension, what its [`is_structurally_equivalent`](super::DataTypeExtension::is_structurally_equivalent)
-    /// answers.
+    /// type, the same template (identifier and widths), or, when either side
+    /// is an extension, what its [`is_structurally_equivalent`](super::DataTypeExtension::is_structurally_equivalent)
+    /// answers about the other side, the left one's when both are.
     #[must_use]
     pub fn is_structurally_equivalent(&self, other: &DataType) -> bool {
         match (self, other) {
             (Self::Primitive(left), Self::Primitive(right)) => left == right,
             (Self::Template(left), Self::Template(right)) => left == right,
             (Self::Extension(extension), _) => extension.is_structurally_equivalent(other),
+            (_, Self::Extension(extension)) => extension.is_structurally_equivalent(self),
             _ => false,
         }
     }
@@ -163,8 +164,10 @@ impl Type {
     /// - Numerical types need equivalent data types and shapes of one rank
     ///   whose dimensions are equal expressions, or both the wildcard.
     /// - Index types need equal bounds and strides.
-    /// - An extension answers through its
-    ///   [`is_structurally_equivalent`](super::TypeExtension::is_structurally_equivalent).
+    /// - When either side is an extension, it answers about the other side
+    ///   through its
+    ///   [`is_structurally_equivalent`](super::TypeExtension::is_structurally_equivalent),
+    ///   the left one when both are.
     #[must_use]
     pub fn is_structurally_equivalent(&self, other: &Type) -> bool {
         match (self, other) {
@@ -177,6 +180,7 @@ impl Type {
             }
             (Self::Index(left), Self::Index(right)) => left == right,
             (Self::Extension(extension), _) => extension.is_structurally_equivalent(other),
+            (_, Self::Extension(extension)) => extension.is_structurally_equivalent(self),
             _ => false,
         }
     }
