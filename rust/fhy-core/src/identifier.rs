@@ -740,8 +740,8 @@ mod tests {
                         Identifier::new("out-of-range-child").id()
                     );
                     serde_json::from_str::<Canonical<ValueDomain>>(&format!(
-                        "[{{\"name\":{identifier},\"description\":\"d\"}},\
-                         {{\"name\":{valid},\"description\":\"d\"}}]"
+                        "{{\"levels\":[{{\"name\":{identifier},\"description\":\"d\"}},\
+                         {{\"name\":{valid},\"description\":\"d\"}}]}}"
                     ))
                     .map(drop)
                 }

@@ -303,6 +303,10 @@ impl TypeExtension for PyTypeAdapter {
         class_name(&self.object)
     }
 
+    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
+        crate::wire::foreign_of(&self.object, true)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -463,6 +467,10 @@ impl fmt::Display for PyDataTypeAdapter {
 impl DataTypeExtension for PyDataTypeAdapter {
     fn type_name(&self) -> Cow<'_, str> {
         class_name(&self.object)
+    }
+
+    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
+        crate::wire::foreign_of(&self.object, true)
     }
 
     fn as_any(&self) -> &dyn Any {

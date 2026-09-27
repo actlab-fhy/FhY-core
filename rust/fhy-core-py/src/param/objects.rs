@@ -191,6 +191,24 @@ pub(super) fn read_domain(domain: &Bound<'_, PyAny>) -> ParamDomain {
     ParamDomain::Custom(std::sync::Arc::new(PyCustomDomain::new(domain)))
 }
 
+/// Return the core domain of the Python `ParamDomain` `object`, as
+/// [`read_domain`] reads it.
+///
+/// # Errors
+///
+/// Raises `TypeError` for an object that is not a `ParamDomain`.
+pub(super) fn read_domain_object(object: &Bound<'_, PyAny>) -> PyResult<ParamDomain> {
+    static PARAM_DOMAIN: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    let py = object.py();
+    if !object.is_instance(public_class(py, &PARAM_DOMAIN, DOMAINS, "ParamDomain")?)? {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "expected a ParamDomain, got {}",
+            crate::constraint::type_name(object)
+        )));
+    }
+    Ok(read_domain(object))
+}
+
 /// Return a Python object of `domain`: a custom domain's own object, and a
 /// new instance of the public class of a built-in kind.
 ///

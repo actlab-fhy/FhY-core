@@ -166,17 +166,25 @@ fn encode_chain(levels: &[(&Identifier, &str)]) -> Value {
         .iter()
         .map(|&(name, description)| Level { name, description })
         .collect();
-    serde_json::to_value(levels).expect("the chain encodes")
+    serde_json::json!({"levels": levels})
 }
 
-fn build_deep_levels(names: &[Identifier]) -> Vec<Level<'_>> {
-    names
-        .iter()
-        .map(|name| Level {
-            name,
-            description: "deep",
-        })
-        .collect()
+/// The map a domain's chain of levels encodes as.
+#[derive(serde::Serialize)]
+struct Levels<'a> {
+    levels: Vec<Level<'a>>,
+}
+
+fn build_deep_levels(names: &[Identifier]) -> Levels<'_> {
+    Levels {
+        levels: names
+            .iter()
+            .map(|name| Level {
+                name,
+                description: "deep",
+            })
+            .collect(),
+    }
 }
 
 /// Test decoding a chain of three domains no registry knows registers every
@@ -235,7 +243,7 @@ fn a_rejected_payload_leaves_the_canonical_domain_unchanged() {
     let canonical =
         ValueDomain::register_root(name.clone(), "registered").expect("the domain registers");
     let mut payload = encode_chain(&[(&name, "rejected")]);
-    payload[0]["unexpected"] = json!(1);
+    payload["levels"][0]["unexpected"] = json!(1);
 
     let result = serde_json::from_value::<Canonical<ValueDomain>>(payload);
 

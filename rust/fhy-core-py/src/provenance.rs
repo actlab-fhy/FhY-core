@@ -939,12 +939,123 @@ impl PyProvenance {
         Err(build_frozen_mutation_error(slf, "delete", name)?)
     }
 
+    /// Return the V2 payload, the core's: `{"unknown": {}}`, `{"file":
+    /// {"file_path", "span"}}`, `{"named": {"name", "child"}}`,
+    /// `{"call_site": {"callee", "caller"}}` or `{"fused": {"sources",
+    /// "label"}}`; or the V1 envelope inside `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::write_dict(
+            slf.as_any(),
+            || crate::wire::write_v1_envelope(slf.as_any()),
+            || Ok(slf.get().provenance.clone()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text unless
+    /// `indent` or `sort_keys` re-formats it or V1 is written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            Ok(slf.get().provenance.clone())
+        })
+    }
+
+    /// Return the provenance of the payload `data`, an instance of `cls`:
+    /// a V2 payload, or a V1 envelope, which warns.
+    #[classmethod]
+    fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if crate::wire::is_v1_payload(data) {
+            return crate::wire::read_v1_envelope(cls, data);
+        }
+        let provenance: Provenance = crate::wire::parse_dict(cls, data)?;
+        crate::wire::check_instance(cls, provenance_to_python(cls.py(), &provenance)?)
+    }
+
+    /// Return the provenance of the JSON text `payload`, an instance of
+    /// `cls`.
+    #[classmethod]
+    fn from_json<'py>(
+        cls: &Bound<'py, PyType>,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::read_json(cls, payload, |text| {
+            let provenance: Provenance = crate::wire::parse(cls, text)?;
+            crate::wire::check_instance(cls, provenance_to_python(cls.py(), &provenance)?)
+        })
+    }
+
     /// Register `cls` as the public class.
     ///
     /// Raises `RuntimeError` if another public class is registered.
     #[classmethod]
     fn _register_public_class(cls: &Bound<'_, PyType>) -> PyResult<()> {
         Self::public_class().register(cls)
+    }
+}
+
+/// Return the Python object of the position `position`.
+fn position_to_python(py: Python<'_>, position: Option<Position>) -> PyResult<Bound<'_, PyAny>> {
+    match position {
+        None => Ok(py.None().into_bound(py)),
+        Some(position) => PyPosition::public_class()
+            .get(py)?
+            .call1((position.line().get(), position.column().get())),
+    }
+}
+
+/// Return the Python object of the span `span`.
+fn span_to_python<'py>(py: Python<'py>, span: Option<&Span>) -> PyResult<Bound<'py, PyAny>> {
+    let Some(span) = span else {
+        return Ok(py.None().into_bound(py));
+    };
+    PySpan::public_class().get(py)?.call1((
+        span.start_offset(),
+        span.end_offset(),
+        position_to_python(py, span.start_position())?,
+        position_to_python(py, span.end_position())?,
+    ))
+}
+
+/// Return a new Python object of the core `provenance`, built through the
+/// public class of each variant, as a V2 payload decodes.
+///
+/// # Errors
+///
+/// Raises what building an object raises.
+fn provenance_to_python<'py>(
+    py: Python<'py>,
+    provenance: &Provenance,
+) -> PyResult<Bound<'py, PyAny>> {
+    match provenance {
+        Provenance::Unknown => PyUnknownProvenance::public_class().get(py)?.call0(),
+        Provenance::File(file) => PyFileProvenance::public_class().get(py)?.call1((
+            path_class(py)?.call1((file.file_path(),))?,
+            span_to_python(py, file.span())?,
+        )),
+        Provenance::Named(named) => PyNamedProvenance::public_class()
+            .get(py)?
+            .call1((named.name(), provenance_to_python(py, named.child())?)),
+        Provenance::CallSite(call_site) => PyCallSiteProvenance::public_class().get(py)?.call1((
+            provenance_to_python(py, call_site.callee())?,
+            provenance_to_python(py, call_site.caller())?,
+        )),
+        Provenance::Fused(fused) => {
+            let sources = fused
+                .sources()
+                .iter()
+                .map(|source| provenance_to_python(py, source))
+                .collect::<PyResult<Vec<_>>>()?;
+            PyFusedProvenance::public_class()
+                .get(py)?
+                .call1((PyTuple::new(py, sources)?, fused.label()))
+        }
     }
 }
 

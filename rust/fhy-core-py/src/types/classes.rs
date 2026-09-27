@@ -174,6 +174,56 @@ impl PyTypeBase {
     fn _register_public_class(cls: &Bound<'_, PyType>) -> PyResult<()> {
         Self::public_class().register(cls)
     }
+    /// Return the V2 payload, the core's type form (a Python-defined
+    /// subclass writes its foreign part under `"extension"`), or the V1
+    /// envelope inside `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::write_dict(
+            slf.as_any(),
+            || crate::wire::write_v1_envelope(slf.as_any()),
+            || own_type_value(slf.as_any()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text unless
+    /// `indent` or `sort_keys` re-formats it or V1 is written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            own_type_value(slf.as_any())
+        })
+    }
+
+    /// Return the type of the payload `data`, an instance of `cls`: a V2
+    /// payload, whose extension part the registry resolves, or a V1
+    /// envelope, which warns.
+    #[classmethod]
+    fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if crate::wire::is_v1_payload(data) {
+            return crate::wire::read_v1_envelope(cls, data);
+        }
+        let wire: fhy_core::types::wire::TypeData = crate::wire::parse_dict(cls, data)?;
+        decode_type(cls, wire)
+    }
+
+    /// Return the type of the JSON text `payload`, an instance of `cls`.
+    #[classmethod]
+    fn from_json<'py>(
+        cls: &Bound<'py, PyType>,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::read_json(cls, payload, |text| {
+            let wire: fhy_core::types::wire::TypeData = crate::wire::parse(cls, text)?;
+            decode_type(cls, wire)
+        })
+    }
 }
 
 impl PyTypeBase {
@@ -207,6 +257,56 @@ impl PyDataTypeBase {
     fn _register_public_class(cls: &Bound<'_, PyType>) -> PyResult<()> {
         Self::public_class().register(cls)
     }
+    /// Return the V2 payload, the core's data type form (a Python-defined
+    /// subclass writes its foreign part under `"extension"`), or the V1
+    /// envelope inside `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::write_dict(
+            slf.as_any(),
+            || crate::wire::write_v1_envelope(slf.as_any()),
+            || own_data_type_value(slf.as_any()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text unless
+    /// `indent` or `sort_keys` re-formats it or V1 is written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            own_data_type_value(slf.as_any())
+        })
+    }
+
+    /// Return the data type of the payload `data`, an instance of `cls`: a V2
+    /// payload, whose extension part the registry resolves, or a V1
+    /// envelope, which warns.
+    #[classmethod]
+    fn deserialize_from_dict<'py>(
+        cls: &Bound<'py, PyType>,
+        data: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if crate::wire::is_v1_payload(data) {
+            return crate::wire::read_v1_envelope(cls, data);
+        }
+        let wire: fhy_core::types::wire::DataTypeData = crate::wire::parse_dict(cls, data)?;
+        decode_data_type(cls, wire)
+    }
+
+    /// Return the data type of the JSON text `payload`, an instance of `cls`.
+    #[classmethod]
+    fn from_json<'py>(
+        cls: &Bound<'py, PyType>,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::read_json(cls, payload, |text| {
+            let wire: fhy_core::types::wire::DataTypeData = crate::wire::parse(cls, text)?;
+            decode_data_type(cls, wire)
+        })
+    }
 }
 
 impl PyDataTypeBase {
@@ -215,6 +315,43 @@ impl PyDataTypeBase {
         static PUBLIC_CLASS: PublicClass = PublicClass::new("DataType");
         &PUBLIC_CLASS
     }
+}
+
+/// Return the core type of the type object `object`.
+fn own_type_value(object: &Bound<'_, PyAny>) -> PyResult<Type> {
+    read_type_value(object).ok_or_else(|| PyTypeError::new_err("not a Type"))
+}
+
+/// Return the core data type of the data-type object `object`.
+fn own_data_type_value(object: &Bound<'_, PyAny>) -> PyResult<DataType> {
+    read_data_type_value(object).ok_or_else(|| PyTypeError::new_err("not a DataType"))
+}
+
+/// Return the object of the type wire form `wire`, an instance of `cls`.
+fn decode_type<'py>(
+    cls: &Bound<'py, PyType>,
+    wire: fhy_core::types::wire::TypeData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    let value = crate::wire::build(cls, || wire.build(&crate::wire::PyResolver))?;
+    let object = run_in_context(py, None, |context| {
+        super::convert::type_to_python(py, context, &value)
+    })?;
+    crate::wire::check_instance(cls, object)
+}
+
+/// Return the object of the data-type wire form `wire`, an instance of
+/// `cls`.
+fn decode_data_type<'py>(
+    cls: &Bound<'py, PyType>,
+    wire: fhy_core::types::wire::DataTypeData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = cls.py();
+    let value = crate::wire::build(cls, || wire.build(&crate::wire::PyResolver))?;
+    let object = run_in_context(py, None, |context| {
+        super::convert::data_type_to_python(py, context, &value)
+    })?;
+    crate::wire::check_instance(cls, object)
 }
 
 // ---------------------------------------------------------------------------

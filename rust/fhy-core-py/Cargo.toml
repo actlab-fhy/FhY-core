@@ -18,6 +18,10 @@ fhy-core = { workspace = true, features = ["ndarray", "sympy"] }
 num-traits = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["macros"] }
+# The V2 wire format (slice S17): the Rust-backed classes serialize their
+# core values with serde, as JSON text.
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

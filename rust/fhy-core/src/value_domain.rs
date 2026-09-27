@@ -34,9 +34,10 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, requir
 /// their descriptions say. Registration keeps one parent per name, so the
 /// name decides the parent too.
 ///
-/// A domain encodes as the flat list of its chain, root first, each level
-/// written as `{"name": <identifier>, "description": ..}`, so encoding and
-/// decoding take no stack per level. Only a [`Canonical<ValueDomain>`]
+/// A domain encodes as `{"levels": [..]}`, the flat list of its chain, root
+/// first, each level written as `{"name": <identifier>, "description": ..}`,
+/// so encoding and decoding take no stack per level, and a domain encodes
+/// as a map. Only a [`Canonical<ValueDomain>`]
 /// decodes: it registers each level under the one before it, root first,
 /// and fails with the [`ValueDomainConflict`] of the first level whose name
 /// is registered under another parent, leaving the levels before it
@@ -249,7 +250,19 @@ impl std::error::Error for ValueDomainConflict {}
 
 impl Serialize for ValueDomain {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let chain: Vec<&Self> = self.chain().collect();
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("ValueDomain", 1)?;
+        state.serialize_field("levels", &ChainRef(self))?;
+        state.end()
+    }
+}
+
+/// A domain's chain of levels, root first, borrowed for encoding.
+struct ChainRef<'a>(&'a ValueDomain);
+
+impl Serialize for ChainRef<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let chain: Vec<&ValueDomain> = self.0.chain().collect();
         serializer.collect_seq(chain.into_iter().rev().map(|domain| LevelRef {
             name: &domain.name,
             description: &domain.description,
@@ -277,11 +290,27 @@ struct Level {
     description: String,
 }
 
+/// A domain's chain of levels, decoded one level at a time.
+struct Chain(Canonical<ValueDomain>);
+
+impl<'de> Deserialize<'de> for Chain {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_seq(ChainVisitor).map(Chain)
+    }
+}
+
+/// The map a domain encodes as.
+#[derive(Deserialize)]
+#[serde(rename = "ValueDomain", deny_unknown_fields)]
+struct ChainWire {
+    levels: Chain,
+}
+
 /// Decodes the flat chain a [`ValueDomain`] encodes as, one level at a time,
 /// registering each level under the one before it.
 impl<'de> Deserialize<'de> for Canonical<ValueDomain> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_seq(ChainVisitor)
+        ChainWire::deserialize(deserializer).map(|wire| wire.levels.0)
     }
 }
 
@@ -872,7 +901,10 @@ mod tests {
 
         let encoded = serde_json::to_value(&*domain).unwrap();
 
-        assert_eq!(encoded, json!([encode_level(&name, "a description")]));
+        assert_eq!(
+            encoded,
+            json!({"levels": [encode_level(&name, "a description")]})
+        );
     }
 
     #[test]
@@ -888,10 +920,10 @@ mod tests {
 
         assert_eq!(
             encoded,
-            json!([
+            json!({"levels": [
                 encode_level(&parent_name, "the parent"),
                 encode_level(&child_name, "the child"),
-            ])
+            ]})
         );
     }
 
@@ -917,7 +949,7 @@ mod tests {
     #[test]
     fn decoding_an_unregistered_name_registers_the_decoded_domain() {
         let name = Identifier::new("never-registered");
-        let payload = json!([encode_level(&name, "fresh from decode")]);
+        let payload = json!({"levels": [encode_level(&name, "fresh from decode")]});
 
         let restored: Canonical<ValueDomain> = serde_json::from_value(payload).unwrap();
 
@@ -945,7 +977,7 @@ mod tests {
         let name = Identifier::new("divergent-description");
         let canonical =
             ValueDomain::register_root(name.clone(), "original description").expect("fresh");
-        let payload = json!([encode_level(&name, "divergent description")]);
+        let payload = json!({"levels": [encode_level(&name, "divergent description")]});
 
         let restored: Canonical<ValueDomain> = serde_json::from_value(payload).unwrap();
 
@@ -958,10 +990,10 @@ mod tests {
         let name = Identifier::new("divergent-description-parented");
         let canonical = ValueDomain::register_child(name.clone(), "original", ValueDomain::data())
             .expect("the name is fresh");
-        let payload = json!([
+        let payload = json!({"levels": [
             encode_level(ValueDomain::data().name(), "data"),
             encode_level(&name, "divergent"),
-        ]);
+        ]});
 
         let restored: Canonical<ValueDomain> = serde_json::from_value(payload).unwrap();
 
@@ -974,10 +1006,10 @@ mod tests {
         let name = Identifier::new("conflicting-parent");
         let canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
             .expect("the name is fresh");
-        let payload = json!([
+        let payload = json!({"levels": [
             encode_level(ValueDomain::address().name(), "address"),
             encode_level(&name, "desc"),
-        ]);
+        ]});
 
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload).unwrap_err();
 
@@ -994,7 +1026,7 @@ mod tests {
         let name = Identifier::new("dropped-parent");
         let _canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
             .expect("the name is fresh");
-        let payload = json!([encode_level(&name, "desc")]);
+        let payload = json!({"levels": [encode_level(&name, "desc")]});
 
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload).unwrap_err();
 
@@ -1009,10 +1041,10 @@ mod tests {
         let name = Identifier::new("reported-conflict");
         let _canonical = ValueDomain::register_child(name.clone(), "desc", ValueDomain::data())
             .expect("the name is fresh");
-        let payload = json!([
+        let payload = json!({"levels": [
             encode_level(ValueDomain::address().name(), "address"),
             encode_level(&name, "desc"),
-        ]);
+        ]});
 
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload).unwrap_err();
 
@@ -1033,11 +1065,11 @@ mod tests {
             ValueDomain::register_child(conflicting.clone(), "desc", ValueDomain::data())
                 .expect("the name is fresh");
         let [root, leaf] = ["rejected-chain-root", "rejected-chain-leaf"].map(Identifier::new);
-        let payload = json!([
+        let payload = json!({"levels": [
             encode_level(&root, "root"),
             encode_level(&conflicting, "desc"),
             encode_level(&leaf, "leaf"),
-        ]);
+        ]});
 
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload);
 
@@ -1070,7 +1102,7 @@ mod tests {
             }
             replacement => level = replacement,
         }
-        let payload = json!([level]);
+        let payload = json!({"levels": [level]});
 
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload).unwrap_err();
 
@@ -1078,13 +1110,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::empty(json!([]), "invalid length 0")]
-    #[case::a_map(json!({"name": 1}), "invalid type: map")]
-    #[case::null(json!(null), "invalid type: null")]
+    #[case::empty(json!({"levels": []}), "invalid length 0")]
+    #[case::a_map(json!({"levels": {"name": 1}}), "invalid type: map")]
+    #[case::null(json!({"levels": null}), "invalid type: null")]
     fn decoding_a_payload_that_is_not_a_chain_is_rejected(
         #[case] payload: Value,
         #[case] expected_message: &str,
     ) {
+        // A map without `levels` is refused too.
+        serde_json::from_value::<Canonical<ValueDomain>>(json!({"name": 1})).unwrap_err();
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload).unwrap_err();
 
         assert!(error.to_string().contains(expected_message), "{error}");
@@ -1098,10 +1132,10 @@ mod tests {
 
     #[test]
     fn a_parent_with_an_out_of_range_id_is_rejected() {
-        let payload = json!([
+        let payload = json!({"levels": [
             {"name": {"id": u64::MAX, "name_hint": "max"}, "description": "desc"},
             encode_level(&Identifier::new("out-of-range-parent"), "desc"),
-        ]);
+        ]});
 
         let error = serde_json::from_value::<Canonical<ValueDomain>>(payload).unwrap_err();
 

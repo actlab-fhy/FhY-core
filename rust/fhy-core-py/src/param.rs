@@ -27,3 +27,15 @@ pub(crate) use functions::{
     is_bound_expression,
 };
 pub(crate) use parameter::{PyParam, PyParamAssignment, check_param_bounds_are_ordered};
+
+/// Return the core domain of the Python domain `object`: a built-in kind's
+/// own, and a custom domain for any other `ParamDomain`.
+///
+/// # Errors
+///
+/// Raises `TypeError` for an object that is not a `ParamDomain`.
+pub(crate) fn read_domain_object(
+    object: &pyo3::Bound<'_, pyo3::PyAny>,
+) -> pyo3::PyResult<fhy_core::param::ParamDomain> {
+    objects::read_domain_object(object)
+}

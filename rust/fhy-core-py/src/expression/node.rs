@@ -36,7 +36,7 @@ use crate::public_class::PublicClass;
 use crate::serialization::{FieldShape, construct_from_decoded_fields, read_payload_fields};
 
 use super::literal::{literal_to_python, read_literal};
-use super::materialize::substitute;
+use super::materialize::{materialize_expression, substitute};
 use super::operation::{PythonOperation, operation_from_python, operation_to_python};
 use super::payload::deserialize_expression_payload;
 use super::text::{render_formatted, render_repr};
@@ -540,18 +540,60 @@ impl PyExpression {
             .is_alpha_equivalent_under(&other.get().expression, renaming))
     }
 
-    /// Return the expression of the envelope payload `data`, an instance
-    /// of `cls`.
+    /// Return the V2 payload `{"nodes": [..]}`, the core's flat table of
+    /// the distinct nodes, or the V1 envelope inside
+    /// `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::write_dict(
+            slf.as_any(),
+            || crate::wire::write_v1_envelope(slf.as_any()),
+            || Ok(slf.get().expression.clone()),
+        )
+    }
+
+    /// Return the JSON text of the payload: the canonical V2 text, which
+    /// is the core's, unless `indent` or `sort_keys` re-formats it or V1 is
+    /// written.
+    #[pyo3(signature = (*, indent = None, sort_keys = None))]
+    fn to_json(
+        slf: &Bound<'_, Self>,
+        indent: Option<&Bound<'_, PyAny>>,
+        sort_keys: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
+            Ok(slf.get().expression.clone())
+        })
+    }
+
+    /// Return the expression of the payload `data`, an instance of `cls`:
+    /// a V2 node table, or a V1 envelope, which warns.
     ///
-    /// Decodes a payload of the expression classes' own shapes in one pass;
-    /// any other payload goes through `WrappedFamilySerializable`'s
+    /// A V1 payload of the expression classes' own shapes decodes in one
+    /// pass; any other goes through `WrappedFamilySerializable`'s V1
     /// decoding, which raises the serialization framework's errors.
     #[classmethod]
     fn deserialize_from_dict<'py>(
         cls: &Bound<'py, PyType>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        deserialize_expression_payload(cls, data)
+        if crate::wire::is_v1_payload(data) {
+            return crate::wire::reading_v1(cls, || deserialize_expression_payload(cls, data));
+        }
+        let expression: Expression = crate::wire::parse_dict(cls, data)?;
+        crate::wire::check_instance(cls, materialize_expression(cls.py(), &expression)?)
+    }
+
+    /// Return the expression of the JSON text `payload`, an instance of
+    /// `cls`.
+    #[classmethod]
+    fn from_json<'py>(
+        cls: &Bound<'py, PyType>,
+        payload: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::wire::read_json(cls, payload, |text| {
+            let expression: Expression = crate::wire::parse(cls, text)?;
+            crate::wire::check_instance(cls, materialize_expression(cls.py(), &expression)?)
+        })
     }
 
     /// Return `other` as an expression, as every operator and builder

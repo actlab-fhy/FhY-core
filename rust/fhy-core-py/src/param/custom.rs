@@ -295,6 +295,10 @@ impl CustomDomain for PyCustomDomain {
         })
     }
 
+    fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
+        crate::wire::foreign_of(&self.object, true)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

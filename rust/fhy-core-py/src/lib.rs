@@ -27,6 +27,7 @@ mod symbol_table;
 mod term;
 mod types;
 mod value_domain;
+mod wire;
 
 /// `fhy_core`'s Rust implementation.
 #[pyo3::pymodule(name = "_rs")]
