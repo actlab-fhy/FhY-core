@@ -71,8 +71,8 @@ onto `dev-rust` before continuing.
 
 - [x] B0: worktree `port/fix2-expression` created; the baseline gates recorded (the worktree is `fix-b-expression`, branch `fix/b-expression`; see Track B notes): `4403638`
 - [x] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed: `0393b79`
-- [x] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing: this commit
-- [ ] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`
+- [x] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing: `52e9581`
+- [x] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`: this commit
 - [ ] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`
 - [ ] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node
 - [ ] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding
@@ -3136,6 +3136,25 @@ failing case over `any_literal`. Both passed at their first run.
   | Before | After | Tests |
   |---|---|---|
   | `evaluate_expression_with_numpy` over broadcasts whose lane count wraps raised `PanicException`, and over ones too large to allocate aborted the interpreter | `ValueError: the broadcast shape [..] has more lanes than an array can hold`, and `MemoryError: cannot allocate the N lanes of the result` | `test_a_huge_broadcast_raises_instead_of_aborting` (subprocess, both shapes) |
+
+**R2-013a.**
+- **Drop** moves the sub-patterns of a node's last handle onto a work
+  list, as `Expression`'s does, leaving `Nothing` in the node.
+- **`Debug` (call: its text).** The derived text named every field and
+  recursed; the hand-written one is a prefix notation in the style of
+  `Expression`'s `Debug`, with the same 1,000-node budget and `..`:
+  `Pattern((add (capture "c" (literal 1)) _))`, a kind with any operation
+  named by its kind (`(binary _ _)`), any operand list as `*`
+  (`(call *)`, `(piecewise * (literal 0))`), `(predicate)`, and
+  `(alternatives ...)`. `PatternKind` no longer derives `Debug`. The
+  rstest `pattern_debug_writes_each_shape` pins each shape. The matcher's
+  recursion stays documented (§I.10).
+- **Test-first.** At the base, `a_200000_level_pattern_drops_on_a_small_stack`
+  aborted the test binary with a stack overflow on its 1 MiB thread, and so
+  did `a_deep_pattern_debug_is_bounded`; the shape pins failed on the
+  derived text.
+- **Python-visible changes:** none; the binding never shows a pattern's
+  `Debug`.
 
 ### Track C notes
 

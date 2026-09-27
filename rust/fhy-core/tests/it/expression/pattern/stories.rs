@@ -1972,6 +1972,88 @@ fn pattern_with_a_repeated_capture_compares_deep_operands_on_a_small_stack() {
     });
 }
 
+/// Stack size of the thread the deep pattern stories drop and print on.
+const PATTERN_SMALL_STACK_BYTES: usize = 1 << 20;
+
+/// Depth of the patterns the deep pattern stories drop and print.
+const DEEP_PATTERN_DEPTH: usize = 200_000;
+
+/// Test a pattern [`DEEP_PATTERN_DEPTH`] levels deep drops on a 1 MiB
+/// thread stack: dropping is iterative, as an expression's is.
+#[test]
+fn a_200000_level_pattern_drops_on_a_small_stack() {
+    run_on_stack(PATTERN_SMALL_STACK_BYTES, || {
+        let pattern = build_deep_sum_pattern(Pattern::wildcard(), DEEP_PATTERN_DEPTH);
+        drop(pattern);
+    });
+}
+
+/// Test `Debug` of a pattern [`DEEP_PATTERN_DEPTH`] levels deep writes a
+/// bounded text on a 1 MiB thread stack, eliding what its budget does not
+/// reach.
+#[test]
+fn a_deep_pattern_debug_is_bounded() {
+    let text = run_on_stack(PATTERN_SMALL_STACK_BYTES, || {
+        let pattern = build_deep_sum_pattern(Pattern::wildcard(), DEEP_PATTERN_DEPTH);
+        format!("{pattern:?}")
+    });
+
+    assert!(text.len() < 64 << 10, "{} bytes", text.len());
+    assert!(text.starts_with("Pattern((add (add "), "{text:.40}");
+    assert!(text.contains(".."), "the budget elides the rest");
+    assert!(text.ends_with("))"), "the opened parentheses are closed");
+}
+
+/// Test `Debug` writes each pattern shape.
+#[rstest]
+#[case::wildcard(Pattern::wildcard(), "Pattern(_)")]
+#[case::nothing(Pattern::nothing(), "Pattern((nothing))")]
+#[case::literal(Pattern::literal(5), "Pattern((literal 5))")]
+#[case::any_literal(Pattern::any_literal(), "Pattern((literal _))")]
+#[case::any_identifier(Pattern::any_identifier(), "Pattern((identifier _))")]
+#[case::binary(
+    Pattern::binary(BinaryOperation::Add, Pattern::literal(1), Pattern::wildcard()),
+    "Pattern((add (literal 1) _))"
+)]
+#[case::binary_any_operation(
+    Pattern::binary_any_operation(Pattern::wildcard(), Pattern::wildcard()),
+    "Pattern((binary _ _))"
+)]
+#[case::captured(
+    Pattern::literal(1).captured_as(&Capture::new("c")),
+    "Pattern((capture \"c\" (literal 1)))"
+)]
+#[case::alternatives(
+    Pattern::alternatives([Pattern::literal(1), Pattern::nothing()]),
+    "Pattern((alternatives (literal 1) (nothing)))"
+)]
+#[case::predicate(Pattern::predicate(|_| true), "Pattern((predicate))")]
+#[case::unary(
+    Pattern::unary(UnaryOperation::Negate, Pattern::wildcard()),
+    "Pattern((negate _))"
+)]
+#[case::unary_any_operation(
+    Pattern::unary_any_operation(Pattern::wildcard()),
+    "Pattern((unary _))"
+)]
+#[case::logical(
+    Pattern::logical(LogicalOperation::And, [Pattern::wildcard(), Pattern::nothing()]),
+    "Pattern((and _ (nothing)))"
+)]
+#[case::any_logical(Pattern::any_logical(), "Pattern((logical *))")]
+#[case::piecewise_any_cases(
+    Pattern::piecewise_any_cases(Pattern::literal(0)),
+    "Pattern((piecewise * (literal 0)))"
+)]
+#[case::call(
+    Pattern::call(BuiltinFunction::Sin, [Pattern::wildcard()]),
+    "Pattern((sin _))"
+)]
+#[case::any_call(Pattern::any_call(), "Pattern((call *))")]
+fn pattern_debug_writes_each_shape(#[case] pattern: Pattern, #[case] expected: &str) {
+    assert_eq!(format!("{pattern:?}"), expected);
+}
+
 /// Test a pattern mirroring a 50-level chain matches it.
 #[test]
 fn pattern_matches_a_deeply_nested_chain() {

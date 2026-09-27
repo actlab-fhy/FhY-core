@@ -104,7 +104,6 @@ impl fmt::Debug for Predicate {
 
 /// The shape a [`Pattern`] describes. `None` leaves a part of a node
 /// unconstrained.
-#[derive(Debug)]
 enum PatternKind {
     Wildcard,
     Nothing,
@@ -190,8 +189,9 @@ fn match_list(
 /// Matching recurses once per level of the pattern and not at all below its
 /// leaves, so matching a shallow pattern against a deep expression costs
 /// little stack; a pattern nested 4000 levels deep matches within a 16 MiB
-/// thread stack. Cloning is cheap and shares the pattern, predicates
-/// included.
+/// thread stack. Dropping and `Debug` do not recurse, so a pattern of any
+/// depth drops and prints on a small stack. Cloning is cheap and shares the
+/// pattern, predicates included.
 ///
 /// # Examples
 ///
@@ -210,8 +210,201 @@ fn match_list(
 /// assert!(!pattern.is_match(&(&a + 1))?);
 /// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Pattern(Arc<PatternKind>);
+
+/// The most pattern nodes `Debug` of a pattern prints before it elides the
+/// rest.
+const DEBUG_NODE_BUDGET: usize = 1000;
+
+/// The kind a dropped pattern node is left holding while its sub-patterns
+/// are moved out.
+const DROP_PLACEHOLDER: PatternKind = PatternKind::Nothing;
+
+/// Move the sub-patterns out of `pattern`'s node onto `pending` if this is
+/// the node's last handle.
+fn move_sub_patterns_of_last_handle(pattern: &mut Pattern, pending: &mut Vec<Pattern>) {
+    let Some(kind) = Arc::get_mut(&mut pattern.0) else {
+        return;
+    };
+    match std::mem::replace(kind, DROP_PLACEHOLDER) {
+        PatternKind::Captured { pattern, .. } => pending.push(pattern),
+        PatternKind::Unary { operand, .. } => pending.push(operand),
+        PatternKind::Binary { left, right, .. } => pending.extend([left, right]),
+        PatternKind::Logical { operands, .. }
+        | PatternKind::Call {
+            arguments: operands,
+            ..
+        } => {
+            pending.extend(operands.map(Vec::from).unwrap_or_default());
+        }
+        PatternKind::Piecewise { cases, otherwise } => {
+            for (condition, value) in cases.map(Vec::from).unwrap_or_default() {
+                pending.push(condition);
+                pending.push(value);
+            }
+            pending.push(otherwise);
+        }
+        PatternKind::Alternatives(alternatives) => pending.extend(Vec::from(alternatives)),
+        PatternKind::Wildcard
+        | PatternKind::Nothing
+        | PatternKind::Literal(_)
+        | PatternKind::Identifier(_)
+        | PatternKind::Predicate(_) => {}
+    }
+}
+
+impl Drop for Pattern {
+    /// Drop the node if this is its last handle, moving the sub-patterns of
+    /// every node dropped with it onto a work list, so a deep pattern drops
+    /// without deep recursion.
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        move_sub_patterns_of_last_handle(self, &mut pending);
+        while let Some(mut pattern) = pending.pop() {
+            move_sub_patterns_of_last_handle(&mut pattern, &mut pending);
+        }
+    }
+}
+
+/// One pending piece of a pattern's `Debug` text: a node still to print,
+/// or text to write.
+enum DebugStep<'a> {
+    Print(&'a Pattern),
+    Write(&'a str),
+}
+
+/// Push `(name`, a space and each of `parts` before it, then `)`, onto
+/// `pending`, so that they pop in that order.
+fn schedule_node<'a>(
+    pending: &mut Vec<DebugStep<'a>>,
+    name: &'a str,
+    parts: impl IntoIterator<Item = DebugStep<'a>>,
+) {
+    let start = pending.len();
+    pending.push(DebugStep::Write("("));
+    pending.push(DebugStep::Write(name));
+    for part in parts {
+        pending.push(DebugStep::Write(" "));
+        pending.push(part);
+    }
+    pending.push(DebugStep::Write(")"));
+    pending[start..].reverse();
+}
+
+/// Return the steps printing `patterns`, or `*` for a list left
+/// unconstrained.
+fn list_steps(patterns: Option<&[Pattern]>) -> Vec<DebugStep<'_>> {
+    patterns.map_or_else(
+        || vec![DebugStep::Write("*")],
+        |patterns| patterns.iter().map(DebugStep::Print).collect(),
+    )
+}
+
+/// Write a leaf `pattern` to `f`, or schedule the pieces of an inner one on
+/// `pending`.
+fn print_pattern_node<'a>(
+    pattern: &'a Pattern,
+    f: &mut fmt::Formatter<'_>,
+    pending: &mut Vec<DebugStep<'a>>,
+) -> fmt::Result {
+    match &*pattern.0 {
+        PatternKind::Wildcard => f.write_str("_")?,
+        PatternKind::Nothing => f.write_str("(nothing)")?,
+        PatternKind::Captured { pattern, capture } => {
+            write!(f, "(capture {:?} ", capture.name())?;
+            pending.push(DebugStep::Write(")"));
+            pending.push(DebugStep::Print(pattern));
+        }
+        PatternKind::Literal(None) => f.write_str("(literal _)")?,
+        PatternKind::Literal(Some(value)) => write!(f, "(literal {value})")?,
+        PatternKind::Identifier(None) => f.write_str("(identifier _)")?,
+        PatternKind::Identifier(Some(identifier)) => write!(
+            f,
+            "(identifier {}::{})",
+            identifier.name_hint(),
+            identifier.id()
+        )?,
+        PatternKind::Unary { operation, operand } => schedule_node(
+            pending,
+            operation.map_or("unary", UnaryOperation::as_str),
+            [DebugStep::Print(operand)],
+        ),
+        PatternKind::Binary {
+            operation,
+            left,
+            right,
+        } => schedule_node(
+            pending,
+            operation.map_or("binary", BinaryOperation::as_str),
+            [DebugStep::Print(left), DebugStep::Print(right)],
+        ),
+        PatternKind::Logical {
+            operation,
+            operands,
+        } => schedule_node(
+            pending,
+            operation.map_or("logical", LogicalOperation::as_str),
+            list_steps(operands.as_deref()),
+        ),
+        PatternKind::Piecewise { cases, otherwise } => {
+            let mut parts = cases.as_deref().map_or_else(
+                || vec![DebugStep::Write("*")],
+                |cases| {
+                    cases
+                        .iter()
+                        .flat_map(|(condition, value)| {
+                            [DebugStep::Print(condition), DebugStep::Print(value)]
+                        })
+                        .collect()
+                },
+            );
+            parts.push(DebugStep::Print(otherwise));
+            schedule_node(pending, "piecewise", parts);
+        }
+        PatternKind::Call { callee, arguments } => schedule_node(
+            pending,
+            callee.as_ref().map_or("call", Callee::name),
+            list_steps(arguments.as_deref()),
+        ),
+        PatternKind::Predicate(_) => f.write_str("(predicate)")?,
+        PatternKind::Alternatives(alternatives) => schedule_node(
+            pending,
+            "alternatives",
+            alternatives.iter().map(DebugStep::Print),
+        ),
+    }
+    Ok(())
+}
+
+/// A bounded text for diagnostics: `Pattern(`, the pattern in a prefix
+/// notation, then `)`.
+///
+/// A node constraining nothing is `_`, a node kind with any operation is
+/// named by its kind (`(binary _ _)`), and a list of any length is `*`
+/// (`(call *)`). At most 1,000 nodes are printed; every sub-pattern not yet
+/// printed after that is written as `..`, with the parentheses already
+/// opened still closed. So the text and the work are bounded whatever the
+/// depth of the pattern, and writing it does not recurse. The text is not a
+/// stable format.
+impl fmt::Debug for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Pattern(")?;
+        let mut remaining = DEBUG_NODE_BUDGET;
+        let mut pending = vec![DebugStep::Print(self)];
+        while let Some(step) = pending.pop() {
+            match step {
+                DebugStep::Write(piece) => f.write_str(piece)?,
+                DebugStep::Print(_) if remaining == 0 => f.write_str("..")?,
+                DebugStep::Print(pattern) => {
+                    remaining -= 1;
+                    print_pattern_node(pattern, f, &mut pending)?;
+                }
+            }
+        }
+        f.write_str(")")
+    }
+}
 
 impl Pattern {
     fn from_kind(kind: PatternKind) -> Self {
