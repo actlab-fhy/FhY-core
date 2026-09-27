@@ -157,9 +157,9 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties (35 new tests, all failing against the `todo!()` stubs first; the Rust gate passes, 4,222 tests; 4,254 with all features)
   - [x] S18.2: the Python stories the case list adds (K-10, S-5), and the docs (`pytest tests` 7,902 passed; lint and mypy are clean)
   - [x] S18.3: status and implementation notes (see "S18 status")
-- [ ] S17: serialization, in two parts (one canonical format, V2, the core's serde; V1 kept readable, and writable on request; see "S17: serialization")
+- [ ] S17: serialization, in two parts (one canonical format, V2, the core's serde; V1 deprecated, readable and writable on request until its removal release; see "S17: serialization")
   - [x] S17.0: the design (survey, divergences W-1 to W-11, decisions D-S17-1 to D-S17-24, benchmark plan, steps, test plan)
-  - [ ] N-S17-1 to N-S17-3 decided
+  - [x] N-S17-1 decided as (a), N-S17-2 as (a), N-S17-3 as (c) (2026-09-26; see "S17 resolutions"; D-S17-16, D-S17-19 and D-S17-20 revised, D-S17-25 added)
   - [ ] S17.1: serialization benchmarks and the V1 baseline; the frozen pickle corpus and today's V1 payloads
   - [ ] S17a: the core
     - [ ] S17a.1: `fhy_core::foreign` (`Foreign`, `Resolve`, `NoForeign`, `ForeignError`) and `to_foreign` on the five extension traits, test-first
@@ -18553,9 +18553,9 @@ section).
   this slice: "We need a way for Python serialization to match Rust
   serialization if possible... so maybe serialization needs to be updated;
   we should keep the old serialization though for backwards
-  compatibility." "Needs the user" has three items (N-S17-1 to N-S17-3);
-  the decisions below assume their recommended options, and each names
-  what changes under the others.
+  compatibility." The user decided N-S17-1 as (a), N-S17-2 as (a) and
+  N-S17-3 as (c) (see "S17 resolutions"); D-S17-16, D-S17-19 and D-S17-20
+  are revised to match, and D-S17-25 adds the upgrade path.
 - **Scope:** the wire format of every `Serializable` class, not a module
   port. It touches `src/fhy_core/serialization.py` (1,928 lines), the
   payload code of every Rust-backed class in `rust/fhy-core-py`, and the
@@ -19131,12 +19131,18 @@ and cross-cutting rules 4 to 7.
   - The move is its own commit, before V2 lands, with the suite green and
     no test changed. Afterwards V1 changes only to be deleted (N-S17-3):
     its texts, errors and quirks stay exactly as they are.
-- **D-S17-16: the deprecation path** (N-S17-3 (a)). The V1 reader stays as
-  long as the package exists, pinned by the frozen corpus. Writing V1 emits
-  a `DeprecationWarning` from S17 on, once per `wire_version(V1)` block,
-  and the V1 writer is removed in the release the maintainer names
-  (proposed: 0.4.0), taking `_serialization_v1.py`'s writers and the
-  `legacy` writers with it.
+- **D-S17-16: the deprecation path** (N-S17-3 (c), revised 2026-09-26).
+  V1 is deprecated from S17 on, and its reader and its writer are both
+  removed after one deprecation release.
+  - Writing V1 emits a `DeprecationWarning`, once when a
+    `wire_version(WireVersion.V1)` block is entered.
+  - Reading V1 emits a `DeprecationWarning` too, at each point a reader
+    detects a V1 payload (D-S17-14), naming the upgrade path of D-S17-25.
+  - The release that removes V1 is the maintainer's choice; 0.4.0 is
+    proposed (the package is 0.2.0, so the deprecation release is 0.3.0).
+    The removal deletes `_serialization_v1.py`, the binding's `legacy/`
+    module, the V1 hooks of the Rust-backed classes, `WireVersion.V1`, the
+    V1 corpora of D-S17-20 and the upgrade path of D-S17-25.
 - **D-S17-17: errors** (D-S4-1; D-S7-12; CONTRIBUTING "Errors belong to
   their module").
 
@@ -19158,10 +19164,12 @@ and cross-cutting rules 4 to 7.
 - **D-S17-19: pickling is unchanged** (the direction; D-S16-9's forms).
   Reduce values are not routed through the wire, so pickle speed and
   stability do not depend on it. Every callable an existing pickle names
-  keeps accepting what it passes; `ValueDomain`'s pickle keeps passing its
-  V1 payload, which its reader still accepts, so a pickle written after
-  S17 also loads before it. A frozen pickle corpus, written by today's code
-  in S17.1, pins that old pickles load.
+  keeps accepting what it passes. `ValueDomain`'s pickle passes its V2
+  payload from S17 on (revised under N-S17-3 (c): a V1 payload would warn
+  on every unpickling), and a pickle holding the V1 payload still loads,
+  with the V1 reader's warning, until V1 is removed. A frozen pickle
+  corpus, written by today's code in S17.1, pins that old pickles load
+  until then, and is deleted with V1.
 - **D-S17-20: the golden corpus pins both versions** (CONTRIBUTING "Freeze
   the golden corpus"; R-11).
   - Serialization is now defined in both languages (both read and write
@@ -19178,10 +19186,11 @@ and cross-cutting rules 4 to 7.
     and checks that each foreign case is refused by name without a
     resolver and round-trips with a test resolver. `golden_expanded` gains
     an entry for random seeded cases.
-  - When the V1 writer is removed, the generator's V1 half freezes: the
-    committed V1 payloads stay as a fixed regression corpus for the reader.
-  - `test_serialization_pins.py` keeps its 19 golden V1 blobs as reader
-    pins, and gains the V2 text of the same values.
+  - The V1 payloads (the generator's V1 half, the 19 golden V1 blobs of
+    `test_serialization_pins.py`, and the pickle corpus of D-S17-19) pin
+    V1 only until V1 is removed (N-S17-3 (c)), and are deleted with it.
+    The V2 half stays.
+  - `test_serialization_pins.py` gains the V2 text of the same 19 values.
   - CONTRIBUTING's rule changes from "today `identifier` and `interned`" to
     include serialization, with the reason.
 - **D-S17-21: the rules that named the envelope are revised** (the
@@ -19205,6 +19214,38 @@ and cross-cutting rules 4 to 7.
 - **D-S17-24: split into S17a and S17b** (the task's size rule;
   cross-cutting rule 7). S17a is the core only, so its serde is settled and
   reviewed before any Python payload changes.
+- **D-S17-25: an upgrade path for stored V1 data** (N-S17-3 (c): stored V1
+  payloads become unreadable when V1 is removed, so the deprecation release
+  ships a way to convert them). Additive tooling, removed with V1.
+  - `fhy_core.serialization.upgrade_v1_payload(payload, cls=None)` reads a
+    V1 payload in any format (a dict, JSON text or bytes, or a binary blob)
+    and returns the V2 payload in the same format. `cls` names the class
+    for a dict or JSON payload that is not a family envelope (a `Param`, a
+    `SymbolTable`); an envelope and a binary blob name their own class.
+    The read's `DeprecationWarning` is suppressed inside it.
+  - `python -m fhy_core.serialization_upgrade [--type TYPE_ID] INPUT
+    [OUTPUT]` does the same for a file (binary when it starts with the
+    `FhYS` magic, JSON otherwise), writing to `OUTPUT` or standard output;
+    `--type` is the registered type id `cls` would name. The README
+    documents both, with the one-liner `python -m
+    fhy_core.serialization_upgrade old.json > new.json`.
+  - The upgrade reads with the registry only, so the modules defining a
+    payload's classes must be imported first; the entry point takes
+    `--import MODULE` (repeatable) for third-party classes.
+
+### S17 resolutions (decided by the user, 2026-09-26)
+
+- **N-S17-1: (a).** Writers produce V2 by default; V1 is written only
+  inside `wire_version(WireVersion.V1)`; readers take both.
+- **N-S17-2: (a).** A foreign part's payload is canonical JSON text inside
+  a string.
+- **N-S17-3: (c), not the recommendation.** The V1 reader and writer are
+  both removed after one deprecation release. From S17 on, writing V1 and
+  reading V1 both emit `DeprecationWarning`. The removal release is the
+  maintainer's choice, 0.4.0 proposed. The frozen V1 corpus and the pickle
+  corpus pin behavior only until then, and are deleted with V1 (D-S17-16,
+  D-S17-19 and D-S17-20, revised). Since stored V1 data then becomes
+  unreadable, the deprecation release ships an upgrade path (D-S17-25).
 
 ### Needs the user
 
