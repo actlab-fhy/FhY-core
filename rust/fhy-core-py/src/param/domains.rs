@@ -17,8 +17,8 @@ use pyo3::types::{PyBool, PyDict, PyList, PyTuple, PyType};
 use fhy_core::constraint::{Constraint, Member, Outcome, Value};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
-    CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, OrdinalDomain,
-    ParamContext, ParamDomain, ParamError, PermutationDomain, RealDomain, Side,
+    CategoricalDomain, DomainError, DomainKind, IntegerDomain, IntervalIntegerDomain,
+    OrdinalDomain, ParamContext, ParamDomain, PermutationDomain, RealDomain, Side,
 };
 
 use crate::constraint::{
@@ -33,7 +33,7 @@ use crate::serialization::{
 };
 use crate::solver::{get_default_solver, symbol_type_to_python};
 
-use super::error::{ordinal_error_to_py, param_error_to_py};
+use super::error::{ParamFailure, ordinal_error_to_py, param_error_to_py};
 use super::objects::{
     constraints_to_python, domain_to_python, profile_to_python, read_constraints, read_domain,
 };
@@ -43,11 +43,11 @@ use super::value::{read_candidate, read_finite_values, to_tuple};
 /// Run `question` with the default solver, the registry snapshot and a
 /// logging observer, detached from the interpreter when `is_detached`, and
 /// map its error with `map_error`.
-pub(super) fn run_with_context<T: Send>(
+pub(super) fn run_with_context<T: Send, E: Send>(
     py: Python<'_>,
     is_detached: bool,
-    question: impl FnOnce(&ParamContext<'_>) -> Result<T, ParamError> + Send,
-    map_error: impl FnOnce(ParamError) -> PyErr,
+    question: impl FnOnce(&ParamContext<'_>) -> Result<T, E> + Send,
+    map_error: impl FnOnce(E) -> PyErr,
 ) -> PyResult<T> {
     let solver = get_default_solver(py)?;
     let solver = solver.bind(py).get();
@@ -78,11 +78,11 @@ pub(super) fn value_set_context() -> ParamContext<'static> {
 
 /// Run `question` as [`run_with_context`] does, naming `other` as the other
 /// domain of a set operation in its errors.
-pub(super) fn run_question<T: Send>(
+pub(super) fn run_question<T: Send, E: Into<ParamFailure> + Send>(
     py: Python<'_>,
     is_detached: bool,
     other: Option<&Bound<'_, PyAny>>,
-    question: impl FnOnce(&ParamContext<'_>) -> Result<T, ParamError> + Send,
+    question: impl FnOnce(&ParamContext<'_>) -> Result<T, E> + Send,
 ) -> PyResult<T> {
     run_with_context(py, is_detached, question, |error| {
         param_error_to_py(py, error, other)
@@ -870,7 +870,7 @@ fn build_finite(
     values: &Bound<'_, PyAny>,
 ) -> PyResult<DomainState> {
     let values: Vec<Value> = read_finite_values(kind, values)?;
-    let (built, raised) = capture_pending_errors(|| -> Result<ParamDomain, ParamError> {
+    let (built, raised) = capture_pending_errors(|| -> Result<ParamDomain, DomainError> {
         Ok(match kind {
             DomainKind::Ordinal => ParamDomain::from(OrdinalDomain::new(values)?),
             DomainKind::Categorical => ParamDomain::from(CategoricalDomain::new(values)?),

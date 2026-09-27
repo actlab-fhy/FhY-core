@@ -8,7 +8,6 @@
 //! Objects the binding builds from core values are built through a seed
 //! handed to the public class's `__new__`, so they are not validated again.
 
-use fhy_core::param::Inclusivity;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -21,7 +20,8 @@ use fhy_core::constraint::{Binding, Constraint, ConstraintError, Outcome, Value}
 use fhy_core::expression::{ExpressionKind, LiteralValue};
 use fhy_core::param::wire::{ParamAssignmentData, ParamData};
 use fhy_core::param::{
-    BoundSide, Operand, Param, ParamAssignment, ParamContext, ParamDomain, ParamError, ValueCheck,
+    AssignmentError, BoundSide, Inclusivity, IntervalError, Operand, Param, ParamAssignment,
+    ParamBuildError, ParamContext, ParamDomain, ParamError, ValueCheck,
 };
 use fhy_core::term::AlphaEquivalence;
 
@@ -44,7 +44,7 @@ use crate::serialization::{
 use crate::term::read_renaming;
 
 use super::domains::run_with_context;
-use super::error::{param_error, param_error_to_py};
+use super::error::{ParamFailure, param_error, param_error_to_py};
 use super::objects::{constraint_to_python, domain_to_python, read_domain};
 use super::value::{read_candidate, to_tuple};
 
@@ -240,16 +240,22 @@ struct Site<'a, 'py> {
 
 impl PyParam {
     /// Return the exception of `error` raised by an operation of `this`.
-    fn error_to_py(this: &Bound<'_, Self>, error: ParamError, site: &Site<'_, '_>) -> PyErr {
+    fn error_to_py(
+        this: &Bound<'_, Self>,
+        error: impl Into<ParamFailure>,
+        site: &Site<'_, '_>,
+    ) -> PyErr {
         let py = this.py();
         let objects = &this.get().objects;
         let variable = objects.variable.bind(py);
-        match error {
-            ParamError::NativeConstantVariable(_) => native_constant_error(variable),
-            ParamError::OutOfScope { constraint, .. } => {
+        match error.into() {
+            ParamFailure::Build(ParamBuildError::NativeConstantVariable(_)) => {
+                native_constant_error(variable)
+            }
+            ParamFailure::Build(ParamBuildError::OutOfScope { constraint, .. }) => {
                 out_of_scope_error(py, variable, &constraint, site.known)
             }
-            ParamError::BindingsBindVariable(_) => param_error(
+            ParamFailure::Assignment(AssignmentError::BindingsBindVariable(_)) => param_error(
                 py,
                 format!(
                     "bindings must not include this parameter's own variable {}; its value is \
@@ -257,23 +263,31 @@ impl PyParam {
                     repr_text(variable)
                 ),
             ),
-            ParamError::UnsupportedUnion(_) => PyTypeError::new_err(format!(
-                "Union is not supported for domain kind {}.",
-                type_name(objects.domain.bind(py))
-            )),
-            ParamError::UnsupportedOperand => PyTypeError::new_err(format!(
-                "Unsupported operand type: {}",
-                site.other.map_or_else(
-                    || "?".to_owned(),
-                    |other| repr_text(other.get_type().as_any())
-                )
-            )),
-            ParamError::NonBoundOperand(cause) => {
-                let refused = PyTypeError::new_err(ParamError::NonBoundOperand(None).to_string());
+            ParamFailure::Question(ParamError::UnsupportedUnion(_)) => {
+                PyTypeError::new_err(format!(
+                    "Union is not supported for domain kind {}.",
+                    type_name(objects.domain.bind(py))
+                ))
+            }
+            ParamFailure::Interval(IntervalError::UnsupportedOperand) => {
+                PyTypeError::new_err(format!(
+                    "Unsupported operand type: {}",
+                    site.other.map_or_else(
+                        || "?".to_owned(),
+                        |other| repr_text(other.get_type().as_any())
+                    )
+                ))
+            }
+            ParamFailure::Interval(IntervalError::NonBoundOperand(cause)) => {
+                let refused =
+                    PyTypeError::new_err(IntervalError::NonBoundOperand(None).to_string());
                 if let Some(cause) = cause {
                     refused.set_cause(py, Some(constraint_error_to_py(py, cause, None)));
                 }
                 refused
+            }
+            ParamFailure::Interval(IntervalError::Build(error)) => {
+                Self::error_to_py(this, error, site)
             }
             other => param_error_to_py(py, other, site.other),
         }
@@ -381,7 +395,7 @@ impl PyParam {
         if bindings.contains(this.get().objects.variable.bind(py))? {
             return Err(Self::error_to_py(
                 this,
-                ParamError::BindingsBindVariable(this.get().core.variable().clone()),
+                AssignmentError::BindingsBindVariable(this.get().core.variable().clone()),
                 &Site {
                     known: &[],
                     other: None,
@@ -484,7 +498,8 @@ impl PyParam {
     fn arithmetic<'py>(
         this: &Bound<'py, Self>,
         other: &Bound<'py, PyAny>,
-        operation: impl FnOnce(&Param, &Operand, &ParamContext<'_>) -> Result<Param, ParamError> + Send,
+        operation: impl FnOnce(&Param, &Operand, &ParamContext<'_>) -> Result<Param, IntervalError>
+        + Send,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = this.py();
         let Some(operand) = Self::read_operand(other)? else {
@@ -509,7 +524,7 @@ impl PyParam {
             false,
             |context| match operation(&core, &operand, context) {
                 // Neither side is an interval operand: Python's `NotImplemented`.
-                Err(ParamError::NotAnIntervalOperand) => Ok(None),
+                Err(IntervalError::NotAnIntervalOperand) => Ok(None),
                 result => result.map(Some),
             },
             |error| {
@@ -594,9 +609,15 @@ fn out_of_scope_error(
 
 /// Return the exception of an evaluation's error, naming the Python objects
 /// of the binding an unusable-binding error concerns.
-fn evaluation_error(py: Python<'_>, error: ParamError, read: &ReadBindings<'_>) -> PyErr {
-    match error {
-        ParamError::Constraint(error) => {
+fn evaluation_error(
+    py: Python<'_>,
+    error: impl Into<ParamFailure>,
+    read: &ReadBindings<'_>,
+) -> PyErr {
+    match error.into() {
+        ParamFailure::Constraint(error)
+        | ParamFailure::Question(ParamError::Constraint(error))
+        | ParamFailure::Assignment(AssignmentError::Constraint(error)) => {
             let binding = match &error {
                 ConstraintError::UnusableBinding { identifier, .. } => read.objects(identifier),
                 _ => None,
@@ -667,8 +688,8 @@ impl PyParam {
             false,
             |context| Param::new(core_domain, identifier, constraints, context),
             |error| match error {
-                ParamError::NativeConstantVariable(_) => native_constant_error(&variable),
-                ParamError::OutOfScope { constraint, .. } => {
+                ParamBuildError::NativeConstantVariable(_) => native_constant_error(&variable),
+                ParamBuildError::OutOfScope { constraint, .. } => {
                     out_of_scope_error(py, &variable, &constraint, &known)
                 }
                 other => param_error_to_py(py, other, None),

@@ -5,12 +5,12 @@
 use fhy_core::param::{Sign, ZeroInclusion};
 use std::sync::Arc;
 
-use fhy_core::constraint::{Binding, Bindings, Constraint, Outcome, Value};
+use fhy_core::constraint::{Binding, Bindings, Constraint, ConstraintError, Outcome, Value};
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
-    CategoricalDomain, IntegerDomain, OrdinalDomain, ParamDomain, ParamError, PermutationDomain,
-    RealDomain, Side, are_all_constraints_satisfied, compute_constraint_implication_subset,
+    CategoricalDomain, IntegerDomain, OrdinalDomain, ParamDomain, PermutationDomain, RealDomain,
+    Side, are_all_constraints_satisfied, compute_constraint_implication_subset,
     evaluate_constraints,
 };
 use fhy_core::solver::SatResult;
@@ -162,7 +162,7 @@ fn evaluation_propagates_a_failure_the_observer_does_not_judge_undecidable() {
     )
     .expect_err("the failure propagates");
 
-    assert!(matches!(error, ParamError::Constraint(_)));
+    assert!(matches!(error, ConstraintError::Solve(_)), "{error:?}");
 }
 
 #[test]
@@ -178,7 +178,10 @@ fn evaluation_propagates_an_unusable_binding() {
     )
     .expect_err("a tuple is no literal");
 
-    assert!(matches!(error, ParamError::Constraint(_)));
+    assert!(
+        matches!(error, ConstraintError::UnusableBinding { .. }),
+        "{error:?}"
+    );
 }
 
 #[test]

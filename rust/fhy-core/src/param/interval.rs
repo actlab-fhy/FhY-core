@@ -15,7 +15,7 @@ use super::context::ParamContext;
 use super::domain::{
     IntervalIntegerDomain, IntervalProfile, ParamDomain, Sign, ZeroInclusion, is_bound_expression,
 };
-use super::error::ParamError;
+use super::error::{IntervalError, ParamBuildError};
 use super::parameter::Param;
 
 /// Whether a bound includes its value.
@@ -112,7 +112,7 @@ pub(super) fn check_natural_bound(
     value: &LiteralValue,
     side: BoundSide,
     is_inclusive: bool,
-) -> Result<(), ParamError> {
+) -> Result<(), ParamBuildError> {
     let Some(profile) = profile.filter(|profile| profile.non_negative) else {
         return Ok(());
     };
@@ -122,7 +122,7 @@ pub(super) fn check_natural_bound(
     if is_valid_natural_bound(bound, side, profile.zero_included, is_inclusive) {
         return Ok(());
     }
-    Err(ParamError::NaturalBound {
+    Err(ParamBuildError::NaturalBound {
         side,
         zero_included: profile.zero_included,
         is_inclusive,
@@ -241,19 +241,19 @@ fn compare_exactly(left: &LiteralValue, right: &LiteralValue) -> Option<Ordering
 ///
 /// # Errors
 ///
-/// Returns [`ParamError::UnorderedBounds`] for such bounds.
+/// Returns [`ParamBuildError::UnorderedBounds`] for such bounds.
 pub fn check_bounds_are_ordered(
     lower: &LiteralValue,
     upper: &LiteralValue,
     lower_inclusivity: Inclusivity,
     upper_inclusivity: Inclusivity,
-) -> Result<(), ParamError> {
+) -> Result<(), ParamBuildError> {
     match compare_exactly(lower, upper) {
-        Some(Ordering::Greater) => Err(ParamError::UnorderedBounds),
+        Some(Ordering::Greater) => Err(ParamBuildError::UnorderedBounds),
         Some(Ordering::Equal)
             if !(lower_inclusivity.is_inclusive() && upper_inclusivity.is_inclusive()) =>
         {
-            Err(ParamError::UnorderedBounds)
+            Err(ParamBuildError::UnorderedBounds)
         }
         _ => Ok(()),
     }
@@ -282,21 +282,21 @@ struct DecodedBound {
 ///
 /// # Errors
 ///
-/// Returns [`ParamError::MalformedBound`] for a constraint that is no
+/// Returns [`IntervalError::MalformedBound`] for a constraint that is no
 /// equation bound of `variable`.
 fn decode_bound(
     constraint: &Constraint,
     variable: &Identifier,
-) -> Result<DecodedBound, ParamError> {
+) -> Result<DecodedBound, IntervalError> {
     let Constraint::Equation(equation) = constraint else {
-        return Err(ParamError::MalformedBound);
+        return Err(IntervalError::MalformedBound);
     };
     let expression = equation.expression();
     if !is_bound_expression(expression) {
-        return Err(ParamError::MalformedBound);
+        return Err(IntervalError::MalformedBound);
     }
     let ExpressionKind::Binary(binary) = expression.kind() else {
-        return Err(ParamError::MalformedBound);
+        return Err(IntervalError::MalformedBound);
     };
     let (operation, literal) = match (binary.left().kind(), binary.right().kind()) {
         (ExpressionKind::Identifier(identifier), ExpressionKind::Literal(literal))
@@ -309,10 +309,10 @@ fn decode_bound(
         {
             (invert_comparison(binary.operation()), literal)
         }
-        _ => return Err(ParamError::MalformedBound),
+        _ => return Err(IntervalError::MalformedBound),
     };
     let LiteralValue::Int(value) = literal else {
-        return Err(ParamError::MalformedBound);
+        return Err(IntervalError::MalformedBound);
     };
     Ok(DecodedBound {
         side: if matches!(
@@ -343,13 +343,13 @@ pub(super) struct Interval {
 ///
 /// # Errors
 ///
-/// Returns [`ParamError::MalformedBound`] for a constraint that is no
-/// bound, and [`ParamError::EmptyInterval`] for bounds that enclose no
+/// Returns [`IntervalError::MalformedBound`] for a constraint that is no
+/// bound, and [`IntervalError::EmptyInterval`] for bounds that enclose no
 /// integer.
 pub(super) fn effective_interval(
     constraints: &[Constraint],
     variable: &Identifier,
-) -> Result<Interval, ParamError> {
+) -> Result<Interval, IntervalError> {
     let mut min: Option<BigInt> = None;
     let mut max: Option<BigInt> = None;
     for constraint in constraints {
@@ -375,7 +375,9 @@ pub(super) fn effective_interval(
     }
     if let (Some(min), Some(max)) = (&min, &max) {
         if min > max {
-            return Err(ParamError::EmptyInterval(variable.clone()));
+            return Err(IntervalError::Build(ParamBuildError::EmptyInterval(
+                variable.clone(),
+            )));
         }
     }
     Ok(Interval { min, max })
@@ -487,7 +489,7 @@ fn apply_interval(
     profile: IntervalProfile,
     interval: &Interval,
     context: &ParamContext<'_>,
-) -> Result<Param, ParamError> {
+) -> Result<Param, IntervalError> {
     let mut param = param;
     if let Some(min) = &interval.min {
         param = if is_exclusive_lower_rendering_valid(profile, min) {
@@ -534,7 +536,7 @@ pub(super) fn build_interval_param(
     template: IntervalProfile,
     natural: Option<bool>,
     context: &ParamContext<'_>,
-) -> Result<Param, ParamError> {
+) -> Result<Param, IntervalError> {
     let domain = match natural {
         Some(zero_included) => IntervalIntegerDomain::new(
             Inclusivity::inclusive_if(template.prefer_inclusive),
@@ -548,7 +550,8 @@ pub(super) fn build_interval_param(
         ),
     };
     let profile = ParamDomain::from(domain)
-        .interval_profile()?
+        .interval_profile()
+        .map_err(profile_error)?
         .unwrap_or(template);
     let param = Param::new(
         ParamDomain::from(domain),
@@ -559,12 +562,19 @@ pub(super) fn build_interval_param(
     apply_interval(param, profile, interval, context)
 }
 
+/// Return the interval error of a domain's failed profile, a custom
+/// domain's error.
+fn profile_error(error: super::error::ParamError) -> IntervalError {
+    IntervalError::Custom(error.into_custom())
+}
+
 /// Return `param`'s profile if it is an interval operand as it stands: its
 /// profile admits only bounds.
-pub(super) fn operand_profile(param: &Param) -> Result<Option<IntervalProfile>, ParamError> {
+pub(super) fn operand_profile(param: &Param) -> Result<Option<IntervalProfile>, IntervalError> {
     Ok(param
         .domain()
-        .interval_profile()?
+        .interval_profile()
+        .map_err(profile_error)?
         .filter(|profile| profile.admits_only_bounds))
 }
 
@@ -575,14 +585,14 @@ pub(super) fn operand_profile(param: &Param) -> Result<Option<IntervalProfile>, 
 ///
 /// # Errors
 ///
-/// Returns [`ParamError::NonBoundOperand`] for a param with a constraint
-/// that is no bound, and [`ParamError::UnsupportedOperand`] for a param
+/// Returns [`IntervalError::NonBoundOperand`] for a param with a constraint
+/// that is no bound, and [`IntervalError::UnsupportedOperand`] for a param
 /// whose domain has no profile.
 pub(super) fn coerce_to_interval(
     template: IntervalProfile,
     other: &Operand,
     context: &ParamContext<'_>,
-) -> Result<Param, ParamError> {
+) -> Result<Param, IntervalError> {
     match other {
         Operand::Integer(value) => {
             let domain = IntervalIntegerDomain::new(
@@ -599,10 +609,11 @@ pub(super) fn coerce_to_interval(
             )?
             .with_bound(&literal, BoundSide::Lower, true, context)?
             .with_bound(&literal, BoundSide::Upper, true, context)
+            .map_err(IntervalError::from)
         }
         Operand::Param(param) => {
-            let Some(profile) = param.domain().interval_profile()? else {
-                return Err(ParamError::UnsupportedOperand);
+            let Some(profile) = param.domain().interval_profile().map_err(profile_error)? else {
+                return Err(IntervalError::UnsupportedOperand);
             };
             if profile.admits_only_bounds {
                 return Ok(param.clone());
@@ -610,9 +621,9 @@ pub(super) fn coerce_to_interval(
             for constraint in param.constraints() {
                 let expression = constraint
                     .to_expression()
-                    .map_err(|error| ParamError::NonBoundOperand(Some(error)))?;
+                    .map_err(|error| IntervalError::NonBoundOperand(Some(error)))?;
                 if !is_bound_expression(&expression) {
-                    return Err(ParamError::NonBoundOperand(None));
+                    return Err(IntervalError::NonBoundOperand(None));
                 }
             }
             Param::new(
@@ -625,6 +636,7 @@ pub(super) fn coerce_to_interval(
                 param.constraints().to_vec(),
                 context,
             )
+            .map_err(IntervalError::from)
         }
     }
 }

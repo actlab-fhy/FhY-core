@@ -4,7 +4,7 @@
 
 use fhy_core::constraint::Value;
 use fhy_core::expression::BigInt;
-use fhy_core::param::{OrdinalDomain, ParamError};
+use fhy_core::param::{DomainError, OrdinalDomain};
 use rstest::rstest;
 
 use crate::support::constraint::{int, text};
@@ -103,7 +103,7 @@ fn ordinal_domain_orders_opaque_values_by_their_producer() {
 fn ordinal_domain_refuses_values_that_do_not_order(#[case] values: Vec<Value>) {
     assert!(matches!(
         OrdinalDomain::new(values),
-        Err(ParamError::IncomparableValues)
+        Err(DomainError::IncomparableValues)
     ));
 }
 
@@ -115,7 +115,7 @@ fn ordinal_domain_sorts_under_a_comparison_that_is_no_order() {
 
     // Three equal pairs: the values are not unique, and the sort did not
     // panic on the cycle.
-    assert!(matches!(result, Err(ParamError::DuplicateValues(_))));
+    assert!(matches!(result, Err(DomainError::DuplicateValues(_))));
 }
 
 #[test]

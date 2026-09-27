@@ -7,8 +7,9 @@ use fhy_core::expression::{BigInt, Decimal, Expression, SymbolType};
 use fhy_core::foreign::Part;
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
-    CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, IntervalProfile,
-    OrdinalDomain, ParamDomain, ParamError, PermutationDomain, RealDomain, is_bound_expression,
+    CategoricalDomain, DomainError, DomainKind, IntegerDomain, IntervalIntegerDomain,
+    IntervalProfile, OrdinalDomain, ParamBuildError, ParamDomain, PermutationDomain, RealDomain,
+    is_bound_expression,
 };
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use rstest::rstest;
@@ -57,7 +58,7 @@ fn finite_domain_refuses_no_value(#[case] kind: DomainKind) {
 
     let error = result.expect_err("no value");
 
-    assert!(matches!(error, ParamError::EmptyValues(refused) if refused == kind));
+    assert!(matches!(error, DomainError::EmptyValues(refused) if refused == kind));
     assert!(error.to_string().contains("non-empty"));
 }
 
@@ -71,7 +72,7 @@ fn finite_domain_refuses_a_value_that_is_no_leaf(#[case] value: Value) {
 
     assert!(matches!(
         error,
-        ParamError::NotALeafValue {
+        DomainError::NotALeafValue {
             kind: DomainKind::Ordinal,
             index: 1
         }
@@ -84,7 +85,7 @@ fn categorical_domain_refuses_a_float() {
 
     assert!(matches!(
         error,
-        ParamError::NotALeafValue {
+        DomainError::NotALeafValue {
             kind: DomainKind::Categorical,
             index: 1
         }
@@ -103,7 +104,7 @@ fn finite_domain_refuses_a_nan(#[case] kind: DomainKind) {
 
     let error = result.expect_err("a NaN");
 
-    assert!(matches!(error, ParamError::NanValue(refused) if refused == kind));
+    assert!(matches!(error, DomainError::NanValue(refused) if refused == kind));
     assert!(error.to_string().contains("NaN"));
 }
 
@@ -112,7 +113,7 @@ fn finite_domain_checks_each_value_s_kind_before_nan() {
     let error = PermutationDomain::new(vec![float(f64::NAN), Value::Tuple(Vec::new())])
         .expect_err("a NaN and a tuple");
 
-    assert!(matches!(error, ParamError::NotALeafValue { index: 1, .. }));
+    assert!(matches!(error, DomainError::NotALeafValue { index: 1, .. }));
 }
 
 #[test]
@@ -120,7 +121,7 @@ fn ordinal_domain_checks_order_before_uniqueness() {
     let error =
         OrdinalDomain::new(vec![int(1), int(1), text("a")]).expect_err("incomparable and equal");
 
-    assert!(matches!(error, ParamError::IncomparableValues));
+    assert!(matches!(error, DomainError::IncomparableValues));
 }
 
 #[rstest]
@@ -137,7 +138,7 @@ fn finite_domain_refuses_equal_values(#[case] kind: DomainKind) {
 
     let error = result.expect_err("equal values");
 
-    assert!(matches!(error, ParamError::DuplicateValues(refused) if refused == kind));
+    assert!(matches!(error, DomainError::DuplicateValues(refused) if refused == kind));
     assert!(error.to_string().contains("unique"));
 }
 
@@ -338,14 +339,14 @@ fn interval_domain_allows_bounds_only() {
         .expect("allows a bound");
     assert!(matches!(
         domain.validate_constraint(&less_than(&x, &y), &x),
-        Err(ParamError::NotABound)
+        Err(ParamBuildError::NotABound)
     ));
     let error = domain
         .validate_constraint(&in_set(&x, ints([1])), &x)
         .expect_err("a set constraint");
     assert!(matches!(
         error,
-        ParamError::ForbiddenConstraintKind(DomainKind::IntervalInteger)
+        ParamBuildError::ForbiddenConstraintKind(DomainKind::IntervalInteger)
     ));
 }
 
@@ -364,7 +365,7 @@ fn finite_domains_allow_set_constraints_only() {
             .validate_constraint(&at_least(&x, 0), &x)
             .expect_err("an equation");
         assert!(
-            matches!(error, ParamError::ForbiddenConstraintKind(kind) if kind == domain.kind())
+            matches!(error, ParamBuildError::ForbiddenConstraintKind(kind) if kind == domain.kind())
         );
         assert!(error.to_string().contains("in-set and not-in-set"));
     }

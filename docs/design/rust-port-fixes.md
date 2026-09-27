@@ -44,8 +44,8 @@ onto `dev-rust` before continuing.
 - [x] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers: `9473515`
 - [x] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python): `3f9c59b`
 - [x] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error: `0b44aa2`, `450fa2c`, `dcf2022`
-- [x] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`
-- [ ] R2-006 (F2-006): `ParamError` split by family
+- [x] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`: `a5afd95`
+- [x] R2-006 (F2-006): `ParamError` split by family
 - [ ] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits
 - [ ] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized
 - [ ] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories
@@ -2405,6 +2405,34 @@ finding.
   The spec's expected change, a raising custom scope, was already raised
   as itself through the slot; `test_a_python_constraint_whose_scope_raises_is_refused_with_its_error`
   pins it.
+
+**R2-006.** The five families, with each variant's producers confirmed by
+`rg`. Where the table moved:
+
+| Family | Returned by | Variants |
+|---|---|---|
+| `DomainError` | the three finite constructors | the table's five, and **`Custom`** (added: R2-004 makes an opaque value's key and order fallible, and they run in `OrdinalDomain::new`) |
+| `ParamBuildError` | `Param::new`, `with_constraint(s)`, `with_bound`, `validate_constraint`, `check_bounds_are_ordered`, and `ParamDomain::validate_constraint` and `implied_constraints` | the table's nine |
+| `AssignmentError` | `ParamAssignment::new` and `restore`, and the value checks `Param::environment`, `is_value_admissible`, `evaluate_constraints` and `check_value` | the table's six |
+| `IntervalError` | `Param::checked_*` and the crate-private interval helpers | the table's five, and **`Custom`** (added: an operand's profile can fail through its custom domain). `EmptyInterval` stays a build error, carried as `Build(ParamBuildError::EmptyInterval)` from the effective interval |
+| `ParamError` | the questions (`check_feasibility`, `check_subset`, `is_value_set_subset`, `symbol_type`, the domain's own questions, `compute_constraint_implication_subset`, alpha equivalence), the set algebra | the table's eleven, and **`Domain(DomainError)`** (a union's merged ordinal values can be incomparable) and **`Interval(IntervalError)`** (an intersection coerces its operands) |
+| `ConstraintError` | `evaluate_constraints` and `are_all_constraints_satisfied` (moved from `ParamError`: `Constraint` was their only error) | |
+
+- **Text.** Every message is today's; the wrapper variants (`Domain`,
+  `Build`, `Interval`) write the wrapped error's text and return its source,
+  as `foreign::BuildError` does.
+- **Domain questions.** A domain's sort, admissibility and profile fail only
+  through a custom domain; a caller of another family unwraps the boxed
+  error with the crate-private `ParamError::into_custom`.
+- **The binding.** `param/error.rs` flattens the families into a
+  crate-private `ParamFailure`, so one mapping raises each old variant's
+  Python class and text; each family also implements `IntoPyErr`. The
+  `run_with_context` runner is generic over the error type.
+- **Tests.** `tests/it/param/error_stories.rs` binds each public
+  operation's result to its family's type (a signature that widens fails to
+  compile), and the existing `expect_err` patterns name the new types. The
+  Python suites pass unchanged.
+- **Python-visible changes:** none.
 
 ### Track D notes
 

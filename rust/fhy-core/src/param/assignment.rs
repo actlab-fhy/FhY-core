@@ -5,7 +5,7 @@ use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::context::ParamContext;
 use super::decide::Evaluation;
-use super::error::ParamError;
+use super::error::{AssignmentError, ParamError};
 use super::parameter::{Param, ValueCheck};
 use super::value::are_values_equal;
 
@@ -25,15 +25,21 @@ impl ParamAssignment {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::Inadmissible`],
-    /// [`ParamError::ViolatedConstraint`] and
-    /// [`ParamError::UnverifiedConstraint`], and what the evaluation returns.
-    pub fn new(param: Param, value: Value, context: &ParamContext<'_>) -> Result<Self, ParamError> {
+    /// Returns [`AssignmentError::Inadmissible`],
+    /// [`AssignmentError::ViolatedConstraint`] and
+    /// [`AssignmentError::UnverifiedConstraint`], and what the evaluation returns.
+    pub fn new(
+        param: Param,
+        value: Value,
+        context: &ParamContext<'_>,
+    ) -> Result<Self, AssignmentError> {
         let environment = param.environment(Binding::Value(value.clone()), &Bindings::new())?;
         match param.check_value(&environment, context)? {
-            ValueCheck::Inadmissible => Err(ParamError::Inadmissible),
-            ValueCheck::Violated { member } => Err(ParamError::ViolatedConstraint { member }),
-            ValueCheck::Undecided { member } => Err(ParamError::UnverifiedConstraint { member }),
+            ValueCheck::Inadmissible => Err(AssignmentError::Inadmissible),
+            ValueCheck::Violated { member } => Err(AssignmentError::ViolatedConstraint { member }),
+            ValueCheck::Undecided { member } => {
+                Err(AssignmentError::UnverifiedConstraint { member })
+            }
             _ => Ok(Self { param, value }),
         }
     }
@@ -45,22 +51,22 @@ impl ParamAssignment {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::Inadmissible`] and
-    /// [`ParamError::ViolatedConstraint`], and what the evaluation returns.
+    /// Returns [`AssignmentError::Inadmissible`] and
+    /// [`AssignmentError::ViolatedConstraint`], and what the evaluation returns.
     pub fn restore(
         param: Param,
         value: Value,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, AssignmentError> {
         let binding = Binding::Value(value.clone());
         if !param.is_value_admissible(&binding)? {
-            return Err(ParamError::Inadmissible);
+            return Err(AssignmentError::Inadmissible);
         }
         let environment = param.environment(binding, &Bindings::new())?;
         let evaluation: Evaluation = param.evaluate_constraints(&environment, context)?;
         if evaluation.outcome() == crate::constraint::Outcome::Violated {
             if let Some(member) = evaluation.deciding_member() {
-                return Err(ParamError::ViolatedConstraint { member });
+                return Err(AssignmentError::ViolatedConstraint { member });
             }
         }
         Ok(Self { param, value })

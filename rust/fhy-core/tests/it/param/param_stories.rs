@@ -7,9 +7,9 @@ use fhy_core::expression::builtins::BuiltinConstant;
 use fhy_core::expression::{BigInt, Decimal, LiteralValue};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
-    BoundSide, CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, Operand,
-    OrdinalDomain, Param, ParamAssignment, ParamContext, ParamDomain, ParamError, RealDomain,
-    ValueCheck, check_bounds_are_ordered,
+    AssignmentError, BoundSide, CategoricalDomain, DomainKind, IntegerDomain, IntervalError,
+    IntervalIntegerDomain, Operand, OrdinalDomain, Param, ParamAssignment, ParamBuildError,
+    ParamContext, ParamDomain, ParamError, RealDomain, ValueCheck, check_bounds_are_ordered,
 };
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use fhy_core::solver::{SatResult, Solver};
@@ -96,7 +96,7 @@ fn param_refuses_a_native_constant_as_its_variable() {
     )
     .expect_err("a native constant");
 
-    assert!(matches!(error, ParamError::NativeConstantVariable(variable) if variable == pi));
+    assert!(matches!(error, ParamBuildError::NativeConstantVariable(variable) if variable == pi));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn param_refuses_a_constraint_outside_its_scope() {
     )
     .expect_err("out of scope");
 
-    assert!(matches!(error, ParamError::OutOfScope { .. }));
+    assert!(matches!(error, ParamBuildError::OutOfScope { .. }));
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn param_refuses_a_constraint_its_domain_forbids() {
 
     assert!(matches!(
         error,
-        ParamError::ForbiddenConstraintKind(DomainKind::Ordinal)
+        ParamBuildError::ForbiddenConstraintKind(DomainKind::Ordinal)
     ));
 }
 
@@ -281,7 +281,7 @@ fn natural_gate_refuses_a_bound_literal_the_naturals_do_not_admit(
         .with_bound(&integer(bound), side, is_inclusive, &context)
         .expect_err("refused");
 
-    assert!(matches!(error, ParamError::NaturalBound { .. }));
+    assert!(matches!(error, ParamBuildError::NaturalBound { .. }));
     assert_eq!(error.to_string(), message);
     param
         .with_bound(&integer(bound + 1), side, is_inclusive, &context)
@@ -310,7 +310,7 @@ fn natural_gate_judges_integer_bounds_of_non_negative_profiles_only() {
         .expect("a float bound is not judged");
     assert!(matches!(
         interval_natural.with_bound(&integer(-1), BoundSide::Lower, true, &context),
-        Err(ParamError::NaturalBound { .. })
+        Err(ParamBuildError::NaturalBound { .. })
     ));
     plain
         .with_bound(&integer(-1), BoundSide::Lower, true, &context)
@@ -395,7 +395,7 @@ fn environment_refuses_bindings_of_the_param_s_own_variable() {
 
     assert!(matches!(
         param.environment(Binding::Value(int(2)), &bindings),
-        Err(ParamError::BindingsBindVariable(_))
+        Err(AssignmentError::BindingsBindVariable(_))
     ));
 }
 
@@ -605,7 +605,10 @@ fn intersection_recasts_an_integer_param_against_an_interval_one() {
         .expect_err("a non-bound constraint");
 
     assert_eq!(result.domain().kind(), DomainKind::IntervalInteger);
-    assert!(matches!(error, ParamError::NonBoundOperand(None)));
+    assert!(matches!(
+        error,
+        ParamError::Interval(IntervalError::NonBoundOperand(None))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -753,17 +756,17 @@ fn arithmetic_coerces_an_integer_param_of_bounds_and_refuses_other_pairs() {
 
     assert_eq!(members(&sum, -5..=10, &context), [1, 2, 3, 4]);
     assert!(
-        matches!(declined, Err(ParamError::NotAnIntervalOperand)),
+        matches!(declined, Err(IntervalError::NotAnIntervalOperand)),
         "{declined:?}"
     );
     assert_eq!(members(&reversed, -5..=15, &context), [9]);
     assert!(matches!(
         interval.checked_add(&Operand::Param(ordinal), &context),
-        Err(ParamError::UnsupportedOperand)
+        Err(IntervalError::UnsupportedOperand)
     ));
     assert!(matches!(
         plain.checked_neg(&context),
-        Err(ParamError::NotAnIntervalOperand)
+        Err(IntervalError::NotAnIntervalOperand)
     ));
 }
 
@@ -776,7 +779,10 @@ fn arithmetic_refuses_an_empty_interval() {
 
     let error = empty.checked_neg(&context).expect_err("empty");
 
-    assert!(matches!(error, ParamError::EmptyInterval(_)));
+    assert!(matches!(
+        error,
+        IntervalError::Build(ParamBuildError::EmptyInterval(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -823,21 +829,21 @@ fn assignment_checks_its_value_and_restores_an_undecided_one() {
 
     assert!(matches!(
         ParamAssignment::new(param.clone(), text("a"), &context),
-        Err(ParamError::Inadmissible)
+        Err(AssignmentError::Inadmissible)
     ));
     assert!(matches!(
         ParamAssignment::new(param.clone(), int(11), &context),
-        Err(ParamError::ViolatedConstraint { .. })
+        Err(AssignmentError::ViolatedConstraint { .. })
     ));
     assert!(matches!(
         ParamAssignment::new(param.clone(), int(5), &context),
-        Err(ParamError::UnverifiedConstraint { .. })
+        Err(AssignmentError::UnverifiedConstraint { .. })
     ));
     let restored =
         ParamAssignment::restore(param.clone(), int(5), &context).expect("undecided is accepted");
     assert!(matches!(
         ParamAssignment::restore(param.clone(), int(11), &context),
-        Err(ParamError::ViolatedConstraint { .. })
+        Err(AssignmentError::ViolatedConstraint { .. })
     ));
     assert!(
         restored
@@ -881,7 +887,7 @@ fn checked_add_of_a_non_interval_param_is_an_error() {
         plain.checked_neg(&context),
     ] {
         assert!(
-            matches!(result, Err(ParamError::NotAnIntervalOperand)),
+            matches!(result, Err(IntervalError::NotAnIntervalOperand)),
             "{result:?}"
         );
     }

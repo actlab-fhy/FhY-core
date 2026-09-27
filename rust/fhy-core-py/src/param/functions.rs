@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use fhy_core::constraint::{Bindings, ConstraintError};
-use fhy_core::param::{ParamError, Side};
+use fhy_core::param::{AssignmentError, ParamError, Side};
 
 use crate::constraint::{
     PyConstraintSystem, PythonBindings, ReadBindings, constraint_error_to_py, outcome_to_python,
@@ -20,14 +20,20 @@ use crate::expression::PyExpression;
 use crate::identifier::restore_identifier;
 
 use super::domains::{run_question, run_with_context};
-use super::error::param_error_to_py;
+use super::error::{ParamFailure, param_error_to_py};
 use super::objects::{read_constraints, read_domain};
 
 /// Return the exception of `error`, naming the Python objects of the
 /// binding an unusable-binding error concerns.
-fn evaluation_error_to_py(py: Python<'_>, error: ParamError, read: &ReadBindings<'_>) -> PyErr {
-    match error {
-        ParamError::Constraint(error) => {
+fn evaluation_error_to_py(
+    py: Python<'_>,
+    error: impl Into<ParamFailure>,
+    read: &ReadBindings<'_>,
+) -> PyErr {
+    match error.into() {
+        ParamFailure::Constraint(error)
+        | ParamFailure::Question(ParamError::Constraint(error))
+        | ParamFailure::Assignment(AssignmentError::Constraint(error)) => {
             let binding = match &error {
                 ConstraintError::UnusableBinding { identifier, .. } => read.objects(identifier),
                 _ => None,

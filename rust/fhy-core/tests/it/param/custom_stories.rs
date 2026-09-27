@@ -6,8 +6,8 @@ use fhy_core::expression::SymbolType;
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
-    CustomDomain, IntegerDomain, IntervalProfile, OrdinalDomain, Param, ParamContext, ParamDomain,
-    ParamError, Side,
+    CustomDomain, IntegerDomain, IntervalProfile, OrdinalDomain, Param, ParamBuildError,
+    ParamContext, ParamDomain, ParamError, Side,
 };
 use fhy_core::param::{Sign, ZeroInclusion};
 use fhy_core::solver::SatResult;
@@ -443,7 +443,7 @@ fn a_failing_custom_domain_s_error_surfaces_from_each_set_procedure() {
     let (domain, handle) = RecordingDomain::build(true);
     let x = Identifier::new("x");
     let own = Param::new(domain.clone(), x.clone(), [], &context);
-    assert!(matches!(own, Err(ParamError::Custom(_))));
+    assert!(matches!(own, Err(ParamBuildError::Custom(_))));
     assert_eq!(handle.take_calls(), ["implied_constraints(x)"]);
 
     let failures = [

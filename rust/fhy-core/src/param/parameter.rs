@@ -11,7 +11,7 @@ use crate::term::{AlphaEquivalence, AlphaRenaming};
 use super::context::ParamContext;
 use super::decide::{Evaluation, evaluate_constraints};
 use super::domain::{IntervalProfile, ParamDomain, Side};
-use super::error::ParamError;
+use super::error::{AssignmentError, IntervalError, ParamBuildError, ParamError};
 use super::interval::{
     BoundSide, Interval, Operand, bound_constraint, build_interval_param, check_natural_bound,
     coerce_to_interval, combine_ends, effective_interval, multiply_intervals, operand_profile,
@@ -69,8 +69,8 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NativeConstantVariable`] for a variable that is
-    /// a native constant's identifier, [`ParamError::OutOfScope`] for a
+    /// Returns [`ParamBuildError::NativeConstantVariable`] for a variable that is
+    /// a native constant's identifier, [`ParamBuildError::OutOfScope`] for a
     /// constraint whose scope lacks the variable, the domain's refusal of a
     /// constraint, and a custom domain's or constraint's failure.
     pub fn new(
@@ -78,9 +78,9 @@ impl Param {
         variable: Identifier,
         constraints: impl IntoIterator<Item = Constraint>,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, ParamBuildError> {
         if context.is_native_constant(&variable) {
-            return Err(ParamError::NativeConstantVariable(variable));
+            return Err(ParamBuildError::NativeConstantVariable(variable));
         }
         let mut accumulated: Vec<Constraint> = Vec::new();
         for constraint in constraints {
@@ -97,7 +97,7 @@ impl Param {
         Ok(Self(Arc::new(ParamInner {
             domain,
             variable,
-            system: ConstraintSystem::new(accumulated).map_err(ParamError::Constraint)?,
+            system: ConstraintSystem::new(accumulated).map_err(ParamBuildError::Constraint)?,
         })))
     }
 
@@ -150,8 +150,8 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::OutOfScope`], and the domain's refusal.
-    pub fn validate_constraint(&self, constraint: &Constraint) -> Result<(), ParamError> {
+    /// Returns [`ParamBuildError::OutOfScope`], and the domain's refusal.
+    pub fn validate_constraint(&self, constraint: &Constraint) -> Result<(), ParamBuildError> {
         validate_constraint(self.domain(), self.variable(), constraint)
     }
 
@@ -165,7 +165,7 @@ impl Param {
         &self,
         constraints: impl IntoIterator<Item = Constraint>,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, ParamBuildError> {
         Self::new(
             self.domain().clone(),
             self.variable().clone(),
@@ -179,12 +179,12 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::OutOfScope`], and the domain's refusal.
+    /// Returns [`ParamBuildError::OutOfScope`], and the domain's refusal.
     pub fn with_constraint(
         &self,
         constraint: Constraint,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, ParamBuildError> {
         self.validate_constraint(&constraint)?;
         if holds_equivalent(self.constraints(), &constraint) {
             return Ok(self.clone());
@@ -202,7 +202,7 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NaturalBound`] for a bound the gate refuses,
+    /// Returns [`ParamBuildError::NaturalBound`] for a bound the gate refuses,
     /// and what [`Param::with_constraint`] returns.
     pub fn with_bound(
         &self,
@@ -210,8 +210,12 @@ impl Param {
         side: BoundSide,
         is_inclusive: bool,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
-        check_natural_bound(self.domain().interval_profile()?, value, side, is_inclusive)?;
+    ) -> Result<Self, ParamBuildError> {
+        let profile = self
+            .domain()
+            .interval_profile()
+            .map_err(|error| ParamBuildError::Custom(error.into_custom()))?;
+        check_natural_bound(profile, value, side, is_inclusive)?;
         self.with_constraint(
             bound_constraint(self.variable(), value, side, is_inclusive),
             context,
@@ -223,11 +227,17 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::BindingsBindVariable`] if `bindings` binds the
+    /// Returns [`AssignmentError::BindingsBindVariable`] if `bindings` binds the
     /// variable.
-    pub fn environment(&self, value: Binding, bindings: &Bindings) -> Result<Bindings, ParamError> {
+    pub fn environment(
+        &self,
+        value: Binding,
+        bindings: &Bindings,
+    ) -> Result<Bindings, AssignmentError> {
         if bindings.get(self.variable()).is_some() {
-            return Err(ParamError::BindingsBindVariable(self.variable().clone()));
+            return Err(AssignmentError::BindingsBindVariable(
+                self.variable().clone(),
+            ));
         }
         let mut environment = Bindings::new();
         environment.insert(self.variable().clone(), value);
@@ -242,10 +252,13 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::Custom`] for a custom domain that fails.
-    pub fn is_value_admissible(&self, value: &Binding) -> Result<bool, ParamError> {
+    /// Returns [`AssignmentError::Custom`] for a custom domain that fails.
+    pub fn is_value_admissible(&self, value: &Binding) -> Result<bool, AssignmentError> {
         match value {
-            Binding::Value(value) => self.domain().is_value_admissible(value),
+            Binding::Value(value) => self
+                .domain()
+                .is_value_admissible(value)
+                .map_err(|error| AssignmentError::Custom(error.into_custom())),
             Binding::Expression(_) => Ok(false),
         }
     }
@@ -260,8 +273,12 @@ impl Param {
         &self,
         environment: &Bindings,
         context: &ParamContext<'_>,
-    ) -> Result<Evaluation, ParamError> {
-        evaluate_constraints(self.constraints(), environment, context)
+    ) -> Result<Evaluation, AssignmentError> {
+        Ok(evaluate_constraints(
+            self.constraints(),
+            environment,
+            context,
+        )?)
     }
 
     /// Decide whether the value `environment` binds to the variable is
@@ -274,7 +291,7 @@ impl Param {
         &self,
         environment: &Bindings,
         context: &ParamContext<'_>,
-    ) -> Result<ValueCheck, ParamError> {
+    ) -> Result<ValueCheck, AssignmentError> {
         let is_admissible = match environment.get(self.variable()) {
             Some(value) => self.is_value_admissible(value)?,
             None => false,
@@ -349,7 +366,7 @@ impl Param {
         else {
             return Err(ParamError::UnsupportedUnion(self.domain().kind()));
         };
-        Self::new(domain, variable, constraints, context)
+        Ok(Self::new(domain, variable, constraints, context)?)
     }
 
     /// Return the param over `variable` admitting exactly the values valid
@@ -401,7 +418,7 @@ impl Param {
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Option<(Self, Self, IntervalProfile)>, ParamError> {
+    ) -> Result<Option<(Self, Self, IntervalProfile)>, IntervalError> {
         if let Some(profile) = operand_profile(self)? {
             let coerced = coerce_to_interval(profile, other, context)?;
             return Ok(Some((self.clone(), coerced, profile)));
@@ -418,7 +435,7 @@ impl Param {
     }
 
     /// Return the effective intervals of two operands.
-    fn intervals(left: &Self, right: &Self) -> Result<(Interval, Interval), ParamError> {
+    fn intervals(left: &Self, right: &Self) -> Result<(Interval, Interval), IntervalError> {
         Ok((
             effective_interval(left.constraints(), left.variable())?,
             effective_interval(right.constraints(), right.variable())?,
@@ -432,22 +449,23 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NotAnIntervalOperand`] when neither operand is
+    /// Returns [`IntervalError::NotAnIntervalOperand`] when neither operand is
     /// an interval operand, and the coercion's and the bounds' errors.
     pub fn checked_add(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, IntervalError> {
         let (left, coerced, profile) = self
             .resolve_operands(other, context)?
-            .ok_or(ParamError::NotAnIntervalOperand)?;
+            .ok_or(IntervalError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = Interval {
             min: combine_ends(own.min.as_ref(), others.min.as_ref(), |a, b| a + b),
             max: combine_ends(own.max.as_ref(), others.max.as_ref(), |a, b| a + b),
         };
-        let coerced_profile = operand_profile(&coerced)?.ok_or(ParamError::NotAnIntervalOperand)?;
+        let coerced_profile =
+            operand_profile(&coerced)?.ok_or(IntervalError::NotAnIntervalOperand)?;
         let natural =
             (profile.non_negative && coerced_profile.non_negative).then_some(profile.zero_included);
         build_interval_param(&interval, profile, natural, context)
@@ -458,16 +476,16 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NotAnIntervalOperand`] when neither operand is
+    /// Returns [`IntervalError::NotAnIntervalOperand`] when neither operand is
     /// an interval operand, and the coercion's and the bounds' errors.
     pub fn checked_sub(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, IntervalError> {
         let (left, coerced, profile) = self
             .resolve_operands(other, context)?
-            .ok_or(ParamError::NotAnIntervalOperand)?;
+            .ok_or(IntervalError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = Interval {
             min: combine_ends(own.min.as_ref(), others.max.as_ref(), |a, b| a - b),
@@ -480,14 +498,14 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NotAnIntervalOperand`] when this param is no
+    /// Returns [`IntervalError::NotAnIntervalOperand`] when this param is no
     /// interval operand, and the coercion's and the bounds' errors.
     pub fn checked_reverse_sub(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
-        let profile = operand_profile(self)?.ok_or(ParamError::NotAnIntervalOperand)?;
+    ) -> Result<Self, IntervalError> {
+        let profile = operand_profile(self)?.ok_or(IntervalError::NotAnIntervalOperand)?;
         coerce_to_interval(profile, other, context)?
             .checked_sub(&Operand::Param(self.clone()), context)
     }
@@ -499,17 +517,18 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NotAnIntervalOperand`] when neither operand is
+    /// Returns [`IntervalError::NotAnIntervalOperand`] when neither operand is
     /// an interval operand, and the coercion's and the bounds' errors.
     pub fn checked_mul(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, IntervalError> {
         let (left, coerced, profile) = self
             .resolve_operands(other, context)?
-            .ok_or(ParamError::NotAnIntervalOperand)?;
-        let coerced_profile = operand_profile(&coerced)?.ok_or(ParamError::NotAnIntervalOperand)?;
+            .ok_or(IntervalError::NotAnIntervalOperand)?;
+        let coerced_profile =
+            operand_profile(&coerced)?.ok_or(IntervalError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = multiply_intervals(&own, &others);
         let natural = (profile.non_negative && coerced_profile.non_negative)
@@ -521,10 +540,10 @@ impl Param {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::NotAnIntervalOperand`] for a param that is no
+    /// Returns [`IntervalError::NotAnIntervalOperand`] for a param that is no
     /// interval operand, and the bounds' errors.
-    pub fn checked_neg(&self, context: &ParamContext<'_>) -> Result<Self, ParamError> {
-        let profile = operand_profile(self)?.ok_or(ParamError::NotAnIntervalOperand)?;
+    pub fn checked_neg(&self, context: &ParamContext<'_>) -> Result<Self, IntervalError> {
+        let profile = operand_profile(self)?.ok_or(IntervalError::NotAnIntervalOperand)?;
         let own = effective_interval(self.constraints(), self.variable())?;
         let interval = Interval {
             min: own.max.map(|max| -max),
@@ -584,13 +603,13 @@ fn validate_constraint(
     domain: &ParamDomain,
     variable: &Identifier,
     constraint: &Constraint,
-) -> Result<(), ParamError> {
+) -> Result<(), ParamBuildError> {
     if !constraint
         .free_identifiers()
-        .map_err(ParamError::Constraint)?
+        .map_err(ParamBuildError::Constraint)?
         .contains(variable)
     {
-        return Err(ParamError::OutOfScope {
+        return Err(ParamBuildError::OutOfScope {
             constraint: constraint.clone(),
             variable: variable.clone(),
         });

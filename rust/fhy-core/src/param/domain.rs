@@ -14,7 +14,7 @@ use crate::identifier::Identifier;
 
 use super::context::ParamContext;
 use super::custom::CustomDomain;
-use super::error::ParamError;
+use super::error::{DomainError, ParamBuildError, ParamError};
 use super::interval::Inclusivity;
 use super::value::{compare_ordinal, sort_tolerantly};
 use super::{algebra, decide};
@@ -329,9 +329,9 @@ fn read_leaf_values(
     kind: DomainKind,
     values: Vec<Value>,
     allows_float: bool,
-) -> Result<Vec<Member>, ParamError> {
+) -> Result<Vec<Member>, DomainError> {
     if values.is_empty() {
-        return Err(ParamError::EmptyValues(kind));
+        return Err(DomainError::EmptyValues(kind));
     }
     for (index, value) in values.iter().enumerate() {
         let is_leaf = match value {
@@ -341,31 +341,34 @@ fn read_leaf_values(
             Value::Decimal(_) | Value::Tuple(_) | Value::FrozenSet(_) => false,
         };
         if !is_leaf {
-            return Err(ParamError::NotALeafValue { kind, index });
+            return Err(DomainError::NotALeafValue { kind, index });
         }
     }
     if values
         .iter()
         .any(|value| matches!(value, Value::Float(number) if number.is_nan()))
     {
-        return Err(ParamError::NanValue(kind));
+        return Err(DomainError::NanValue(kind));
     }
     values
         .into_iter()
         .map(|value| {
             Member::try_from(value).map_err(|error| match error {
-                MemberError::OrderingKey { source, .. } => ParamError::Custom(source),
-                _ => ParamError::NanValue(kind),
+                MemberError::OrderingKey { source, .. } => DomainError::Custom(source),
+                _ => DomainError::NanValue(kind),
             })
         })
         .collect()
 }
 
 /// Return the finite values `members` of `kind`, refusing equal members.
-fn build_finite_values(kind: DomainKind, members: Vec<Member>) -> Result<FiniteValues, ParamError> {
+fn build_finite_values(
+    kind: DomainKind,
+    members: Vec<Member>,
+) -> Result<FiniteValues, DomainError> {
     let lookup = MemberSet::new(members.iter().cloned());
     if lookup.len() != members.len() {
-        return Err(ParamError::DuplicateValues(kind));
+        return Err(DomainError::DuplicateValues(kind));
     }
     Ok(FiniteValues {
         values: members,
@@ -378,18 +381,18 @@ impl OrdinalDomain {
     ///
     /// # Errors
     ///
-    /// In order: [`ParamError::EmptyValues`] for no value;
-    /// [`ParamError::NotALeafValue`] for a value that is no Boolean,
+    /// In order: [`DomainError::EmptyValues`] for no value;
+    /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
     /// integer, float, string or member-shaped opaque value;
-    /// [`ParamError::NanValue`] for a NaN; [`ParamError::IncomparableValues`]
+    /// [`DomainError::NanValue`] for a NaN; [`DomainError::IncomparableValues`]
     /// for two values that do not order; and
-    /// [`ParamError::DuplicateValues`] for two equal values.
-    pub fn new(values: Vec<Value>) -> Result<Self, ParamError> {
+    /// [`DomainError::DuplicateValues`] for two equal values.
+    pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
         let members = read_leaf_values(DomainKind::Ordinal, values, true)?;
         let sorted = sort_tolerantly(members, |left, right| {
             compare_ordinal(left, right)
-                .map_err(ParamError::Custom)?
-                .ok_or(ParamError::IncomparableValues)
+                .map_err(DomainError::Custom)?
+                .ok_or(DomainError::IncomparableValues)
         })?;
         build_finite_values(DomainKind::Ordinal, sorted).map(|values| Self(Arc::new(values)))
     }
@@ -412,16 +415,16 @@ impl CategoricalDomain {
     ///
     /// # Errors
     ///
-    /// In order: [`ParamError::EmptyValues`] for no value;
-    /// [`ParamError::NotALeafValue`] for a value that is no Boolean,
+    /// In order: [`DomainError::EmptyValues`] for no value;
+    /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
     /// integer, string or member-shaped opaque value, a float included; and
-    /// [`ParamError::DuplicateValues`] for two equal values.
-    pub fn new(values: Vec<Value>) -> Result<Self, ParamError> {
+    /// [`DomainError::DuplicateValues`] for two equal values.
+    pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
         let members = read_leaf_values(DomainKind::Categorical, values, false)?;
         let count = members.len();
         let lookup = MemberSet::new(members);
         if lookup.len() != count {
-            return Err(ParamError::DuplicateValues(DomainKind::Categorical));
+            return Err(DomainError::DuplicateValues(DomainKind::Categorical));
         }
         Ok(Self(Arc::new(FiniteValues {
             values: lookup.iter().cloned().collect(),
@@ -447,12 +450,12 @@ impl PermutationDomain {
     ///
     /// # Errors
     ///
-    /// In order: [`ParamError::EmptyValues`] for no value;
-    /// [`ParamError::NotALeafValue`] for a value that is no Boolean,
+    /// In order: [`DomainError::EmptyValues`] for no value;
+    /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
     /// integer, float, string or member-shaped opaque value;
-    /// [`ParamError::NanValue`] for a NaN; and
-    /// [`ParamError::DuplicateValues`] for two equal values.
-    pub fn new(values: Vec<Value>) -> Result<Self, ParamError> {
+    /// [`DomainError::NanValue`] for a NaN; and
+    /// [`DomainError::DuplicateValues`] for two equal values.
+    pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
         let members = read_leaf_values(DomainKind::Permutation, values, true)?;
         build_finite_values(DomainKind::Permutation, members).map(|values| Self(Arc::new(values)))
     }
@@ -633,23 +636,23 @@ impl ParamDomain {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::ForbiddenConstraintKind`] for a constraint of
-    /// a forbidden kind, [`ParamError::NotABound`] for an interval domain's
-    /// equation that is no bound, and [`ParamError::Custom`] for a custom
+    /// Returns [`ParamBuildError::ForbiddenConstraintKind`] for a constraint of
+    /// a forbidden kind, [`ParamBuildError::NotABound`] for an interval domain's
+    /// equation that is no bound, and [`ParamBuildError::Custom`] for a custom
     /// domain's refusal.
     pub fn validate_constraint(
         &self,
         constraint: &Constraint,
         variable: &Identifier,
-    ) -> Result<(), ParamError> {
+    ) -> Result<(), ParamBuildError> {
         match self {
             Self::Integer(_) | Self::Real(_) => Ok(()),
             Self::IntervalInteger(_) => match constraint {
                 Constraint::Equation(equation) if is_bound_expression(equation.expression()) => {
                     Ok(())
                 }
-                Constraint::Equation(_) => Err(ParamError::NotABound),
-                _ => Err(ParamError::ForbiddenConstraintKind(
+                Constraint::Equation(_) => Err(ParamBuildError::NotABound),
+                _ => Err(ParamBuildError::ForbiddenConstraintKind(
                     DomainKind::IntervalInteger,
                 )),
             },
@@ -657,13 +660,13 @@ impl ParamDomain {
                 if is_set_constraint(constraint) {
                     Ok(())
                 } else {
-                    Err(ParamError::ForbiddenConstraintKind(self.kind()))
+                    Err(ParamBuildError::ForbiddenConstraintKind(self.kind()))
                 }
             }
             Self::Custom(domain) => domain
                 .get()
                 .validate_constraint(constraint, variable)
-                .map_err(ParamError::Custom),
+                .map_err(ParamBuildError::Custom),
         }
     }
 
@@ -672,11 +675,11 @@ impl ParamDomain {
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::Custom`] for a custom domain that fails.
+    /// Returns [`ParamBuildError::Custom`] for a custom domain that fails.
     pub fn implied_constraints(
         &self,
         variable: &Identifier,
-    ) -> Result<Vec<Constraint>, ParamError> {
+    ) -> Result<Vec<Constraint>, ParamBuildError> {
         Ok(match self {
             Self::Integer(domain) => {
                 non_negative_bound(variable, domain.non_negative, domain.zero_included)
@@ -690,7 +693,7 @@ impl ParamDomain {
             Self::Custom(domain) => domain
                 .get()
                 .implied_constraints(variable)
-                .map_err(ParamError::Custom)?,
+                .map_err(ParamBuildError::Custom)?,
         })
     }
 

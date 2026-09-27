@@ -1,6 +1,6 @@
 //! Stories of the domains' union and intersection.
 
-use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
+use fhy_core::param::{DomainError, Inclusivity, Sign, ZeroInclusion};
 use std::sync::Arc;
 
 use fhy_core::constraint::{Constraint, Outcome, Polarity, Value};
@@ -176,7 +176,10 @@ fn union_of_ordinal_values_that_do_not_order_is_refused() {
         )
         .expect_err("incomparable");
 
-    assert!(matches!(error, ParamError::IncomparableValues));
+    assert!(matches!(
+        error,
+        ParamError::Domain(DomainError::IncomparableValues)
+    ));
 }
 
 // ---------------------------------------------------------------------------

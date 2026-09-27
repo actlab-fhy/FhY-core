@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use crate::constraint::{
-    Binding, Bindings, Constraint, ConstraintSystem, Member, MemberKind, MemberSet, Outcome,
-    Polarity, SetConstraint, Value,
+    Binding, Bindings, Constraint, ConstraintError, ConstraintSystem, Member, MemberKind,
+    MemberSet, Outcome, Polarity, SetConstraint, Value,
 };
 use crate::expression::SymbolType;
 use crate::identifier::Identifier;
@@ -75,7 +75,7 @@ pub fn evaluate_constraints(
     constraints: &[Constraint],
     bindings: &Bindings,
     context: &ParamContext<'_>,
-) -> Result<Evaluation, ParamError> {
+) -> Result<Evaluation, ConstraintError> {
     let mut first_undecided = None;
     for (index, constraint) in constraints.iter().enumerate() {
         let outcome = match evaluate_member(constraint, bindings, context) {
@@ -88,7 +88,7 @@ pub fn evaluate_constraints(
                 });
                 Outcome::Undecided
             }
-            Err(error) => return Err(ParamError::Constraint(error)),
+            Err(error) => return Err(error),
         };
         match outcome {
             Outcome::Violated => {
@@ -124,7 +124,7 @@ pub fn are_all_constraints_satisfied(
     constraints: &[Constraint],
     bindings: &Bindings,
     context: &ParamContext<'_>,
-) -> Result<bool, ParamError> {
+) -> Result<bool, ConstraintError> {
     for constraint in constraints {
         if evaluate_member(constraint, bindings, context)? != Outcome::Satisfied {
             return Ok(false);
@@ -149,11 +149,11 @@ pub(super) fn is_value_valid_for(
     if !domain.is_value_admissible(value)? {
         return Ok(false);
     }
-    are_all_constraints_satisfied(
+    Ok(are_all_constraints_satisfied(
         side.constraints(),
         &bind(side.variable(), value.clone()),
         context,
-    )
+    )?)
 }
 
 /// Return the set constraints of `constraints` of `polarity`.
@@ -220,8 +220,7 @@ fn evaluate_candidate(
     if !domain.is_value_admissible(&value)? {
         return Ok(Outcome::Violated);
     }
-    evaluate_constraints(equations, &bind(variable, value), context)
-        .map(|evaluation| evaluation.outcome())
+    Ok(evaluate_constraints(equations, &bind(variable, value), context)?.outcome())
 }
 
 /// Return the equations of `side` in the canonical order of their system.
@@ -285,12 +284,12 @@ fn evaluate_candidate_against_other(
             }
         }
     }
-    evaluate_constraints(
+    Ok(evaluate_constraints(
         &canonical_equations(other)?,
         &bind(other.variable(), value),
         context,
-    )
-    .map(|evaluation| evaluation.outcome())
+    )?
+    .outcome())
 }
 
 /// Decide the subset relation from `own`'s in-set candidates, as

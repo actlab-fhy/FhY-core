@@ -17614,6 +17614,14 @@ it says so.
   | a malformed bound in an interval param (unreachable through the API) | `RuntimeError`, the core's text |
   | `Constraint(ConstraintError)` | S13's mapping |
   | `Custom` | the Python exception itself |
+
+  - **Revised (R2-006, 2026-09-27):** the core's `ParamError` is split by
+    family into `DomainError`, `ParamBuildError`, `AssignmentError`,
+    `IntervalError` and a question-level `ParamError`, and the constraint
+    evaluations return `ConstraintError`. The binding maps each type
+    (through its `ParamFailure`), and every variant raises the class and
+    text the table above gives. See `docs/design/rust-port-fixes.md`
+    R2-006.
 - **D-S16-13: the factories stay Python functions; their logic is the
   core's** (D-S4-2; the direction). Each keeps its signature (keyword-only
   parameters, which `test_signatures.py` pins) and docstring, and its body
