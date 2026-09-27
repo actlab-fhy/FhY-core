@@ -142,7 +142,72 @@ fn build_distinct_term_strategy() -> impl Strategy<Value = Lambda> {
     build_term_strategy(true)
 }
 
+/// Return `term` with `replacements` substituted by the algorithm before
+/// R2-035: every replacement's free identifiers are capturable, whether its
+/// key occurs or not, and each bound identifier of the original list is
+/// renamed when capturable.
+fn substitute_as_before(term: &Lambda, replacements: &HashMap<Identifier, Lambda>) -> Lambda {
+    match term {
+        Lambda::Var(identifier) => replacements
+            .get(identifier)
+            .cloned()
+            .unwrap_or_else(|| term.clone()),
+        Lambda::App(function, argument) => app(
+            substitute_as_before(function, replacements),
+            substitute_as_before(argument, replacements),
+        ),
+        Lambda::Lam(lam) => {
+            let bound: HashSet<&Identifier> = lam.bound_identifiers().iter().collect();
+            let active: HashMap<Identifier, Lambda> = replacements
+                .iter()
+                .filter(|(identifier, _)| !bound.contains(identifier))
+                .map(|(identifier, term)| (identifier.clone(), term.clone()))
+                .collect();
+            if active.is_empty() {
+                return term.clone();
+            }
+            let capturable: HashSet<Identifier> = active
+                .values()
+                .flat_map(FreeIdentifiers::free_identifiers)
+                .collect();
+            let mut safe = lam.clone();
+            for bound_identifier in lam.bound_identifiers() {
+                if capturable.contains(bound_identifier) {
+                    safe = safe
+                        .rename_bound_identifier(
+                            bound_identifier,
+                            Identifier::new(bound_identifier.name_hint()),
+                        )
+                        .expect("infallible");
+                }
+            }
+            let body = safe
+                .scoped_children()
+                .iter()
+                .map(|child| substitute_as_before(child, &active))
+                .collect();
+            Lambda::Lam(safe.rebuild_with_scoped_children(body).expect("infallible"))
+        }
+    }
+}
+
 proptest! {
+    /// Test a substitution's result is alpha-equivalent to the one the
+    /// algorithm before R2-035 gave, which renamed more binders.
+    #[test]
+    fn substitution_agrees_with_the_algorithm_that_renamed_more(
+        term in build_distinct_term_strategy(),
+        replacement in build_distinct_term_strategy(),
+        key in 0..POOL.len(),
+    ) {
+        let replacements = HashMap::from([(POOL[key].clone(), replacement)]);
+
+        let result = term.substitute(&replacements).expect("infallible");
+        let before = substitute_as_before(&term, &replacements);
+
+        prop_assert!(result.is_alpha_equivalent(&before), "{result:?} against {before:?}");
+    }
+
     /// Test alpha equivalence holds exactly when both terms have one de
     /// Bruijn form, repeated binders included.
     #[test]

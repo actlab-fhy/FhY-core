@@ -266,6 +266,102 @@ fn substitute_renames_only_the_parameters_a_replacement_would_capture() {
     assert!(result.is_alpha_equivalent(&lam([&y, &z], app(var(&y), app(var(&z), var(&x))))));
 }
 
+/// A lambda whose `rename_bound_identifier` records each identifier it is
+/// asked to rename, and whether the binder bound it.
+#[derive(Debug, Clone)]
+struct Recording {
+    inner: Lam,
+    renamed: std::sync::Arc<std::sync::Mutex<Vec<(Identifier, bool)>>>,
+}
+
+impl Binder for Recording {
+    type Child = Lambda;
+    type RebuildError = std::convert::Infallible;
+
+    fn bound_identifiers(&self) -> &[Identifier] {
+        self.inner.bound_identifiers()
+    }
+
+    fn scoped_children(&self) -> &[Lambda] {
+        self.inner.scoped_children()
+    }
+
+    fn rename_bound_identifier(
+        &self,
+        old: &Identifier,
+        new: Identifier,
+    ) -> Result<Self, std::convert::Infallible> {
+        let is_bound = self.inner.bound_identifiers().contains(old);
+        self.renamed
+            .lock()
+            .expect("unpoisoned")
+            .push((old.clone(), is_bound));
+        Ok(Self {
+            inner: self.inner.rename_bound_identifier(old, new)?,
+            renamed: std::sync::Arc::clone(&self.renamed),
+        })
+    }
+
+    fn rebuild_with_scoped_children(
+        &self,
+        children: Vec<Lambda>,
+    ) -> Result<Self, std::convert::Infallible> {
+        Ok(Self {
+            inner: self.inner.rebuild_with_scoped_children(children)?,
+            renamed: std::sync::Arc::clone(&self.renamed),
+        })
+    }
+}
+
+#[test]
+fn a_substitution_that_replaces_nothing_inside_returns_the_same_handle() {
+    let [x, y, z] = build_identifiers(["x", "y", "z"]);
+    // `\y. x`: `z` does not occur, although its replacement mentions `y`.
+    let binder = Recording {
+        inner: Lam::new(vec![y.clone()], vec![var(&x)]),
+        renamed: std::sync::Arc::default(),
+    };
+
+    let substituted = binder
+        .substitute_avoiding_capture(&HashMap::from([(z.clone(), var(&y))]))
+        .expect("infallible");
+
+    assert!(substituted.inner.ptr_eq(&binder.inner));
+    assert!(
+        binder.renamed.lock().expect("unpoisoned").is_empty(),
+        "nothing is renamed, so no fresh id is drawn"
+    );
+    let term = lam([&y], var(&x));
+    let result = term
+        .substitute(&HashMap::from([(z, var(&y))]))
+        .expect("infallible");
+    assert!(expect_lam(&result).ptr_eq(expect_lam(&term)));
+}
+
+#[test]
+fn a_repeated_binder_is_renamed_once() {
+    let [x, z] = build_identifiers(["x", "z"]);
+    // `\x x. z` with `z := x`: `x` would be captured.
+    let binder = Recording {
+        inner: Lam::new(vec![x.clone(), x.clone()], vec![var(&z)]),
+        renamed: std::sync::Arc::default(),
+    };
+
+    let substituted = binder
+        .substitute_avoiding_capture(&HashMap::from([(z.clone(), var(&x))]))
+        .expect("infallible");
+
+    assert_eq!(
+        *binder.renamed.lock().expect("unpoisoned"),
+        vec![(x.clone(), true)]
+    );
+    let parameters = substituted.bound_identifiers();
+    assert_eq!(parameters.len(), 2);
+    assert_eq!(parameters[0], parameters[1]);
+    assert_ne!(parameters[0], x);
+    assert_eq!(substituted.scoped_children(), &[var(&x)]);
+}
+
 // =============================================================================
 // A binder over expressions
 // =============================================================================

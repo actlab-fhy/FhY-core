@@ -349,6 +349,17 @@ def test_binder_substitution_calls_the_rebuild_hooks_it_needs() -> None:
     assert captured_result.get_free_identifiers() == frozenset({x})
 
 
+def test_binder_substitution_of_a_key_it_does_not_mention_renames_nothing() -> None:
+    """Test a key absent from the binder leaves it as itself, whatever it maps to."""
+    x, y, z = Identifier("x"), Identifier("y"), Identifier("z")
+    binder = _Lam([y], [_Var(x)])
+
+    result = binder.substitute({z: _Var(y)})
+
+    assert result is binder
+    assert binder.calls == ["get_bound_identifiers", "get_scoped_children"]
+
+
 def test_binder_substitution_that_applies_nothing_returns_the_binder_itself() -> None:
     """Test a substitution of only bound keys returns the node itself."""
     x, y = Identifier("x"), Identifier("y")

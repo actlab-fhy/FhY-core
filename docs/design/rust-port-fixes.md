@@ -40,8 +40,8 @@ onto `dev-rust` before continuing.
 - [x] A0: worktree `port/fix2-api` created; the baseline gates recorded (the worktree is `fix-a-api`, branch `fix/a-api`; see Track A notes): `fd19340`
 - [x] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key: `83c1caa`
 - [x] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode: `68b326d`
-- [x] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence
-- [ ] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers
+- [x] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence: `82935f7`
+- [x] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers
 - [ ] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python)
 - [ ] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error
 - [ ] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`
@@ -2253,6 +2253,23 @@ with its own `.venv`) serves the baseline's Python gates, the benchmarks'
   | `is_structurally_equivalent(built_in, python_defined)` answered `False` without calling Python | the Python-defined operand's handler answers, with the operands swapped | `test_a_built_in_type_against_a_python_defined_one_asks_its_handler` |
 - **Fixed forward:** `83c1caa` (R2-023) left one test docstring 89
   characters long, which ruff's E501 refuses; this commit shortens it.
+
+**R2-035.**
+- **Hook order kept.** The binder reads its bound identifiers first, and
+  its scoped children only when a key is not shadowed, as before, so a
+  Python binder's hooks run in the same order; the children's free
+  identifiers are then read to keep only the keys that occur. An empty
+  substitution returns at once, reading no hook.
+- **Renaming once.** The loop walks the binder as renamed so far, by
+  position, and renames each distinct capturable identifier once, so the
+  hook is never asked about an identifier the binder no longer binds.
+- **The "no fresh id" pin** is a recording binder that sees no rename: a
+  global id count would race with the other tests' threads.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a substitution whose key the binder does not mention, but whose value mentions a bound identifier, renamed the binder and rebuilt it | the binder is returned as itself, and only `get_bound_identifiers` and `get_scoped_children` run | `test_binder_substitution_of_a_key_it_does_not_mention_renames_nothing` |
 
 ### Track D notes
 

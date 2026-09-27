@@ -243,13 +243,16 @@ pub trait Binder: Clone {
     /// Return this node with every free occurrence of a key of
     /// `replacements` in its scoped children replaced by its value.
     ///
-    /// A key this node binds is shadowed and does not apply. When no key
-    /// applies, the result is a clone of `self`. Otherwise each bound
-    /// identifier that is free in an applying value is first renamed to a
-    /// fresh identifier with the same name hint
-    /// ([`rename_bound_identifier`](Self::rename_bound_identifier)), so the
-    /// binder captures none of them. Then each scoped child is substituted,
-    /// and the node is rebuilt from the results.
+    /// Only a key free in this node applies: a key it binds is shadowed,
+    /// and a key its children do not mention changes nothing. When no key
+    /// applies, the result is a clone of `self`, and nothing is renamed.
+    /// Otherwise each distinct bound identifier that is free in an applying
+    /// value is first renamed, once, to a fresh identifier with the same
+    /// name hint ([`rename_bound_identifier`](Self::rename_bound_identifier)),
+    /// so the binder captures none of them; the identifiers renamed are
+    /// read from the node as renamed so far, so the hook is only asked
+    /// about identifiers the node binds. Then each scoped child is
+    /// substituted, and the node is rebuilt from the results.
     ///
     /// # Errors
     ///
@@ -259,11 +262,25 @@ pub trait Binder: Clone {
         &self,
         replacements: &HashMap<Identifier, Self::Child, S>,
     ) -> Result<Self, Self::RebuildError> {
+        if replacements.is_empty() {
+            return Ok(self.clone());
+        }
         let bound: HashSet<&Identifier> = self.bound_identifiers().iter().collect();
-        let active: HashMap<Identifier, Self::Child> = replacements
-            .iter()
-            .filter(|(identifier, _)| !bound.contains(identifier))
-            .map(|(identifier, term)| (identifier.clone(), term.clone()))
+        let unshadowed: Vec<&Identifier> = replacements
+            .keys()
+            .filter(|identifier| !bound.contains(identifier))
+            .collect();
+        if unshadowed.is_empty() {
+            return Ok(self.clone());
+        }
+        let mut free = HashSet::new();
+        for child in self.scoped_children() {
+            free.extend(child.free_identifiers());
+        }
+        let active: HashMap<Identifier, Self::Child> = unshadowed
+            .into_iter()
+            .filter(|identifier| free.contains(*identifier))
+            .map(|identifier| (identifier.clone(), replacements[identifier].clone()))
             .collect();
         if active.is_empty() {
             return Ok(self.clone());
@@ -273,11 +290,17 @@ pub trait Binder: Clone {
             capturable.extend(term.free_identifiers());
         }
         let mut safe = self.clone();
-        for bound_identifier in self.bound_identifiers() {
-            if capturable.contains(bound_identifier) {
-                let fresh = Identifier::new(bound_identifier.name_hint());
-                safe = safe.rename_bound_identifier(bound_identifier, fresh)?;
+        let mut renamed = HashSet::new();
+        let mut position = 0;
+        while let Some(bound_identifier) = safe.bound_identifiers().get(position) {
+            position += 1;
+            if !capturable.contains(bound_identifier) || renamed.contains(bound_identifier) {
+                continue;
             }
+            let bound_identifier = bound_identifier.clone();
+            let fresh = Identifier::new(bound_identifier.name_hint());
+            safe = safe.rename_bound_identifier(&bound_identifier, fresh)?;
+            renamed.insert(bound_identifier);
         }
         let children = safe
             .scoped_children()
