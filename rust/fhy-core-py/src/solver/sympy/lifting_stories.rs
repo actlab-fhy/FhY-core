@@ -275,6 +275,70 @@ fn connectives_lift_in_argument_order() {
     assert_eq!(lifted("sympy.false"), build_literal(false));
 }
 
+#[test]
+fn nand_and_nor_nodes_lift_as_negated_connectives() {
+    let (a, a_reference) = build_identifier("a");
+    let (b, b_reference) = build_identifier("b");
+    let (c, c_reference) = build_identifier("c");
+    let symbols = format!("({}, {}, {})", symbol(&a), symbol(&b), symbol(&c));
+    let call = |body: &str| lifted(&format!("(lambda a, b, c: {body})(*{symbols})"));
+    let all = [&a_reference, &b_reference, &c_reference];
+
+    // Without `evaluate=False`, SymPy builds `Not(And(..))` and `Not(Or(..))`.
+    assert_eq!(
+        call("sympy.Nand(a, b, c, evaluate=False)"),
+        !Expression::new_logical(LogicalOperation::And, all)
+    );
+    assert_eq!(
+        call("sympy.Nor(a, b, c, evaluate=False)"),
+        !Expression::new_logical(LogicalOperation::Or, all)
+    );
+}
+
+#[test]
+fn an_equality_of_three_arguments_is_refused_for_its_arity() {
+    let (a, _) = build_identifier("a");
+    let (b, _) = build_identifier("b");
+    let (c, _) = build_identifier("c");
+
+    let (text, kind) = refusal(&format!(
+        "sympy.Basic.__new__(sympy.Eq, {}, {}, {})",
+        symbol(&a),
+        symbol(&b),
+        symbol(&c)
+    ));
+
+    assert!(
+        matches!(&kind, SympyErrorKind::Arity(expected) if expected == "a binary operation to have exactly two arguments"),
+        "{kind:?}"
+    );
+    assert_eq!(
+        text,
+        "expected a binary operation to have exactly two arguments"
+    );
+}
+
+#[test]
+fn a_boolean_condition_piecewise_inside_a_relational_lifts_to_a_comparison_of_it() {
+    let (a, a_reference) = build_identifier("a");
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+
+    let comparison = lifted(&format!(
+        "sympy.Lt(sympy.Piecewise(({x}, {a}), ({y}, True)), 3, evaluate=False)",
+        x = symbol(&x),
+        a = symbol(&a),
+        y = symbol(&y)
+    ));
+
+    assert_eq!(
+        comparison,
+        Expression::piecewise([(a_reference, x_reference)], y_reference)
+            .expect("a piecewise")
+            .less(3)
+    );
+}
+
 #[rstest]
 #[case::equal("sympy.Eq(x, y)", BinaryOperation::Equal)]
 #[case::not_equal("sympy.Ne(x, y)", BinaryOperation::NotEqual)]

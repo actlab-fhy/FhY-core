@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::thread;
 
 use fhy_core::expression::builtins::BuiltinConstant;
@@ -15,6 +16,7 @@ use pyo3::exceptions::PyKeyboardInterrupt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::boolean::replace;
 use super::load::Handles;
 use super::test_support::{
     attached, backend, build_identifier, build_literal, evaluate, run, serialized, srepr,
@@ -420,6 +422,40 @@ fn a_module_with_a_mismatched_hash_is_incompatible() {
             "{error:?}"
         );
     }
+}
+
+#[test]
+fn a_hook_that_fails_mid_walk_fails_the_walk_with_its_own_error() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+
+    let result = attached(|py| {
+        let handles = Arc::new(Handles::load(py).expect("loaded"));
+        let object = evaluate(py, "sympy.Symbol('a') + 2 * sympy.Symbol('b') + 3");
+        replace::<SympyErrorKind, _, _>(
+            &handles,
+            &object,
+            |_, _| Ok(true),
+            move |_, node| {
+                if counted.fetch_add(1, AtomicOrdering::SeqCst) == 1 {
+                    Err(SympyErrorKind::Arity("the hook's own failure".to_owned()))
+                } else {
+                    Ok(node.clone())
+                }
+            },
+        )
+        .map(|replaced| replaced.to_string())
+    });
+
+    assert!(
+        matches!(&result, Err(SympyErrorKind::Arity(text)) if text == "the hook's own failure"),
+        "{result:?}"
+    );
+    assert_eq!(
+        calls.load(AtomicOrdering::SeqCst),
+        2,
+        "the walk stops at the failure"
+    );
 }
 
 #[test]

@@ -60,8 +60,8 @@ onto `dev-rust` before continuing.
 - [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature (`63df166`)
 - [x] R2-016 (F2-016): negative powers lift as divisions (`a5b7e62`)
 - [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object (`2aea756`)
-- [x] R2-039 (F2-039): a versioned, hash-checked prelude module
-- [ ] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories
+- [x] R2-039 (F2-039): a versioned, hash-checked prelude module (`c12b485`)
+- [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories
 - [ ] R2-029d (F2-029, `solver`): error-text tables and small stories
 - [ ] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
@@ -2813,6 +2813,34 @@ premise holds for expressions but not for set constraints:
 - **Python.** Two tests pinned the module name `_fhy_core_sympy`; they
   now check the versioned name, its hash attribute and that a pickle names
   it.
+
+**R2-027.**
+- **"`GaveUp` only under a small budget"** is read as a count: each
+  solver-backed property may see at most `GAVE_UP_BUDGET = 4` given-up
+  answers over its cases (a static counter per property), and a refused
+  answer fails at once. The ground-tree property, which checks scripts
+  directly, has the same budget for `unknown`.
+- **The generators** add a Boolean identifier `p` (a predicate leaf) and a
+  piecewise integer leaf whose condition is `p` or a comparison of two
+  leaf terms; the brute force runs over `x, y ∈ [-3, 3]` and `p ∈ {false,
+  true}`, and universal validity quantifies over `y` and `p`.
+- **The skip.** Without `FHY_SMT_SOLVER` (and without the `z3` feature for
+  the three question properties), a property panics when `CI` is set and
+  otherwise prints once, "skipping the solver properties: FHY_SMT_SOLVER is
+  not set", under the `#[expect(clippy::print_stderr, reason)]`. Checked
+  both ways locally. CI's `rust` job sets both variables.
+- **The mutant check**, not committed: with `Hazard::find` returning a
+  refusal for every expression, the three question properties fail on the
+  process backend, and the three and `z3_agrees_with_the_process_backend`
+  fail under `--all-features`. The ground property checks scripts
+  directly and is unaffected, as it should be.
+- **SymPy stories.** The existing `sympy.Nand(a, b)` and `sympy.Nor(a, b)`
+  cases never reached the lifting's `Nand`/`Nor` arm, since SymPy builds
+  `Not(And(..))` for them; the new story uses `evaluate=False`. The
+  others: `Eq(a, b, c)` (built with `Basic.__new__`) refused with `Arity`,
+  a Boolean-condition piecewise inside `Lt` lifting to the comparison of
+  a piecewise, and a `replace` hook that fails on its second call, which
+  stops the walk and fails it with the hook's own error.
 
 **Python-visible changes** (§I.2 rule 6):
 
