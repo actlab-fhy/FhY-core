@@ -517,43 +517,24 @@ impl PySymbolTable {
         })
     }
 
-    /// Return the payload `{"namespaces": [..]}`, in insertion order.
-    fn serialize_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let namespaces = PyList::empty(py);
-        for namespace in self.table.namespaces() {
-            let symbols = PyList::empty(py);
-            for (symbol, entry) in namespace.iter() {
-                let item = PyDict::new(py);
-                item.set_item(
-                    intern!(py, "symbol_name"),
-                    serialize_identifier(py, symbol)?,
+    /// Return the payload `{"namespaces": [..]}`, in insertion order, each
+    /// frame in its own form: the core's serde under V2, written in one
+    /// pass, and each frame's own V1 payload inside
+    /// `wire_version(WireVersion.V1)`.
+    fn serialize_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        if !crate::wire::is_writing_v1(py)? {
+            let data =
+                fhy_core::symbol_table::wire::SymbolTableData::of(
+                    &self.table,
+                    |entry| match &entry.0.native {
+                        Some(frame) => fhy_core::symbol_table::wire::SymbolFrameData::of(frame)
+                            .map_err(|error| crate::wire::foreign_error(py, &error)),
+                        None => super::frames::frame_wire_data(entry.frame(py)),
+                    },
                 )?;
-                item.set_item(
-                    intern!(py, "frame"),
-                    entry
-                        .frame(py)
-                        .call_method0(intern!(py, "serialize_to_dict"))?,
-                )?;
-                symbols.append(item)?;
-            }
-            let item = PyDict::new(py);
-            item.set_item(
-                intern!(py, "namespace_name"),
-                serialize_identifier(py, namespace.name())?,
-            )?;
-            match namespace.parent() {
-                Some(parent) => item.set_item(
-                    intern!(py, "parent_namespace_name"),
-                    serialize_identifier(py, parent)?,
-                )?,
-                None => item.set_item(intern!(py, "parent_namespace_name"), py.None())?,
-            }
-            item.set_item(intern!(py, "symbols"), symbols)?;
-            namespaces.append(item)?;
+            return crate::wire::to_dict(py, &data);
         }
-        let payload = PyDict::new(py);
-        payload.set_item(intern!(py, "namespaces"), namespaces)?;
-        Ok(payload)
+        Ok(self.serialize_v1(py)?.into_any())
     }
 
     /// Return the table a payload describes: every namespace is added, then
@@ -732,4 +713,48 @@ fn read_table_payload<'py>(
         });
     }
     Ok(Some(entries))
+}
+
+impl PySymbolTable {
+    /// Return the V1 payload `{"namespaces": [..]}`, in insertion order.
+    ///
+    /// V1: removed with the V1 wire format; its shape is V2's but for the
+    /// frames' envelopes.
+    fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let namespaces = PyList::empty(py);
+        for namespace in self.table.namespaces() {
+            let symbols = PyList::empty(py);
+            for (symbol, entry) in namespace.iter() {
+                let item = PyDict::new(py);
+                item.set_item(
+                    intern!(py, "symbol_name"),
+                    serialize_identifier(py, symbol)?,
+                )?;
+                item.set_item(
+                    intern!(py, "frame"),
+                    entry
+                        .frame(py)
+                        .call_method0(intern!(py, "serialize_to_dict"))?,
+                )?;
+                symbols.append(item)?;
+            }
+            let item = PyDict::new(py);
+            item.set_item(
+                intern!(py, "namespace_name"),
+                serialize_identifier(py, namespace.name())?,
+            )?;
+            match namespace.parent() {
+                Some(parent) => item.set_item(
+                    intern!(py, "parent_namespace_name"),
+                    serialize_identifier(py, parent)?,
+                )?,
+                None => item.set_item(intern!(py, "parent_namespace_name"), py.None())?,
+            }
+            item.set_item(intern!(py, "symbols"), symbols)?;
+            namespaces.append(item)?;
+        }
+        let payload = PyDict::new(py);
+        payload.set_item(intern!(py, "namespaces"), namespaces)?;
+        Ok(payload)
+    }
 }

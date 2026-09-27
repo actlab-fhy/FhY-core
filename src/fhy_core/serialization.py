@@ -833,8 +833,6 @@ def serialize_value(value: RegistryWrappedValue) -> SerializedDict:
     """
     from . import _rs  # noqa: PLC0415  # the extension imports this module
 
-    if not is_registry_wrapped_value(value):
-        raise SerializationTypeError(type(value))
     return _rs.serialize_wire_value(value)
 
 

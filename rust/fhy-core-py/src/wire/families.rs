@@ -19,7 +19,7 @@ use crate::constraint::{PyConstraintSystem, read_constraint};
 use crate::param::{constraint_to_python, domain_to_python, read_domain_object};
 use crate::symbol_table::{frame_from_wire, frame_wire_data};
 
-use super::{PyResolver, build, check_instance, loads, parse, parse_dict, read_json, to_json};
+use super::{PyResolver, build, check_instance, parse, parse_dict, read_json, to_dict, to_json};
 
 /// A family whose base is a Python class.
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +42,17 @@ impl Family {
                 "unknown wire family {other:?}"
             ))),
         }
+    }
+}
+
+/// Return the V2 dict of `object`, a member of `family`.
+fn encode_dict<'py>(family: Family, object: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    let py = object.py();
+    match family {
+        Family::Constraint => to_dict(py, &read_constraint(object)?),
+        Family::ConstraintSystem => to_dict(py, object.cast::<PyConstraintSystem>()?.get().core()),
+        Family::ParamDomain => to_dict(py, &read_domain_object(object)?),
+        Family::SymbolFrame => to_dict(py, &frame_wire_data(object)?),
     }
 }
 
@@ -127,8 +138,7 @@ pub(crate) fn encode_wire_dict<'py>(
     family: &str,
     object: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let text = encode(Family::of(family)?, object)?;
-    loads(object.py(), &text)
+    encode_dict(Family::of(family)?, object)
 }
 
 /// Return the canonical V2 text of `object`, a member of the family

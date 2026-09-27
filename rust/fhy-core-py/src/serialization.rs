@@ -1,5 +1,10 @@
 //! The parts of Python's serialization framework, `fhy_core.serialization`,
-//! that the Rust-backed classes use to keep today's Python payloads.
+//! that the Rust-backed classes use to read and write their V1 payloads
+//! (and the payload shapes of the few classes whose V1 and V2 forms agree).
+//!
+//! V1: removed with the V1 wire format, except the field checks of the
+//! classes whose V2 form is their V1 form (`Position`, `Span`, `Note`, the
+//! tags). The V2 format is `wire.rs`'s.
 //!
 //! The core crate serializes in plain serde shapes, and the
 //! `__type__`/`__data__` envelope and the Python field shapes belong to the

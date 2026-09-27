@@ -1,4 +1,6 @@
-//! Decoding a whole expression payload in one pass.
+//! Decoding a whole V1 expression payload in one pass.
+//!
+//! V1: removed with the V1 wire format.
 //!
 //! The framework's `WrappedFamilySerializable.deserialize_from_dict`
 //! decodes one node per call and checks, at every node, that the node's

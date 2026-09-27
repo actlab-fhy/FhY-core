@@ -37,6 +37,7 @@ use crate::constraint::{
 };
 
 mod families;
+mod python_value;
 mod values;
 
 pub(crate) use families::{
@@ -173,7 +174,8 @@ pub(crate) fn to_json<T: Serialize + ?Sized>(py: Python<'_>, value: &T) -> PyRes
     })
 }
 
-/// Return the V2 dict of `value`: `json.loads` of its canonical text.
+/// Return the V2 dict of `value`: what `json.loads` makes of its canonical
+/// text, built without the text.
 ///
 /// # Errors
 ///
@@ -182,18 +184,9 @@ pub(crate) fn to_dict<'py, T: Serialize + ?Sized>(
     py: Python<'py>,
     value: &T,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let text = to_json(py, value)?;
-    loads(py, &text)
-}
-
-/// Return `json.loads(text)`.
-///
-/// # Errors
-///
-/// Raises what `json.loads` raises.
-pub(crate) fn loads<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
-    static LOADS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    LOADS.import(py, "json", "loads")?.call1((text,))
+    with_pending_errors(|| {
+        python_value::to_python(py, value).map_err(|error| serialization_error(py, error.0))
+    })
 }
 
 /// Return the text of a JSON payload given as `str`, `bytes` or
