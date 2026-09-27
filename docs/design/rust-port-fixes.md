@@ -88,8 +88,8 @@ onto `dev-rust` before continuing.
 
 ### Track C: `types-param` (types, checking, params and the symbol table; lands 4th)
 
-- [ ] C0: worktree `port/fix2-types-param` created; the baseline gates recorded
-- [ ] R2-017 (F2-017): a negated literal checks as one literal
+- [x] C0: worktree `port/fix2-types-param` created; the baseline gates recorded (the worktree is `fix-c-types-param`, branch `fix/c-types-param`, from `dev-rust` at `35519bb`; see the Track C notes)
+- [x] R2-017 (F2-017): a negated literal checks as one literal
 - [ ] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous
 - [ ] R2-001b (F2-001, checker part): the checker memoizes shared nodes
 - [ ] R2-026b (F2-026, checker part): rstests and broadened properties
@@ -3576,7 +3576,34 @@ rounds each. The median row is 1.00.
 
 ### Track C notes
 
-(none yet)
+**C0: the worktree and the baseline.** The maintainer created the worktree
+as `~/Projects/FhY-core-worktrees/fix-c-types-param` on branch
+`fix/c-types-param`, from `dev-rust` at `35519bb` (Tracks A and D landed),
+in place of §I.2 rule 7's `fix2-types-param`/`port/fix2-types-param`; the
+names are the only difference. Its `.venv` is its own (`uv sync --group dev
+--group bench`), and its `target/gate-env.sh` points `CARGO_TARGET_DIR` at
+`target/gate-cargo`. A clean copy of the base (`git archive 35519bb` into
+`target/base-src`, with its own `.venv` and target directory) serves the
+baseline and the benchmarks' "before" runs. The baseline is Track D's
+status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
+`pytest tests` 8,313.
+
+**R2-017.**
+- **Where.** `infer` checks a `Negate` of an integer or float literal as
+  the one negated literal against the expected type, so the negate rule
+  never sees one; its weak-literal branch, which only that case reached,
+  is gone. A Boolean or decimal operand still takes the rule's path and
+  its errors.
+- **Not widened.** A binary operation still hands the expected type, and
+  the weak-literal rescue, only to a bare literal operand:
+  `a_literal_nested_below_a_negation_escapes_the_range_check` pins that
+  `x_int32 + -(2^200)` synthesizes `int32`, and the spec's change names
+  only the negation's own check.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `check(-(5), uint8)` returned `uint8`; `check(-(128), int8)` raised "synthesized type int16[] is wider than the expected type int8[]" | the first raises "literal -5 is incompatible with uint8"; the second returns `int8` | `test_negated_literals_check_as_one_literal` |
 
 ### Track E notes
 

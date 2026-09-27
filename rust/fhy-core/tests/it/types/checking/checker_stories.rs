@@ -159,6 +159,34 @@ fn negating_a_weak_literal_flips_its_sign_family() {
     );
 }
 
+/// A negated literal checks as the one literal it denotes: `-(5)` and the
+/// literal `-5` both fall outside `uint8`, and `-(128)` and the literal
+/// `-128` both fit `int8` (F2-017).
+#[rstest]
+#[case::negated_five_against_uint8(-Expression::from(5), Uint8, None)]
+#[case::literal_minus_five_against_uint8(Expression::from(-5), Uint8, None)]
+#[case::negated_128_against_int8(-Expression::from(128), Int8, Some(Int8))]
+#[case::literal_minus_128_against_int8(Expression::from(-128), Int8, Some(Int8))]
+#[case::negated_float_against_float32(-Expression::from(2.5), Float32, Some(Float32))]
+fn negated_literals_check_as_one_literal(
+    #[case] expression: Expression,
+    #[case] expected: CoreDataType,
+    #[case] checked: Option<CoreDataType>,
+) {
+    let result = check(&Bindings::new(), &expression, &scalar(expected));
+
+    if let Some(checked) = checked {
+        assert_eq!(ok(result), (scalar(checked), TypeQualifier::Param));
+    } else {
+        let (kind, reason) = rule_of(result);
+        assert_eq!(kind, TypeRuleKind::Literal);
+        assert!(
+            reason.contains("literal -5 is incompatible with uint8"),
+            "{reason}"
+        );
+    }
+}
+
 #[rstest]
 #[case(Expression::from(100), Int8, Int8)]
 #[case(Expression::from(200), Uint8, Uint8)]

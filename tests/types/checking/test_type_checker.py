@@ -458,6 +458,50 @@ def test_check_negative_literal_against_unsigned_expected_raises() -> None:
         checker.check(LiteralExpression(-1), _make_scalar(CoreDataType.UINT16))
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected", "checked"),
+    [
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
+            CoreDataType.UINT8,
+            None,
+            id="negated-five-against-uint8",
+        ),
+        pytest.param(
+            LiteralExpression(-5), CoreDataType.UINT8, None, id="minus-five-against-uint8"
+        ),
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(128)),
+            CoreDataType.INT8,
+            CoreDataType.INT8,
+            id="negated-128-against-int8",
+        ),
+        pytest.param(
+            LiteralExpression(-128),
+            CoreDataType.INT8,
+            CoreDataType.INT8,
+            id="minus-128-against-int8",
+        ),
+    ],
+)
+def test_negated_literals_check_as_one_literal(
+    expression: Expression,
+    expected: CoreDataType,
+    checked: CoreDataType | None,
+) -> None:
+    """Test a negated literal checks as the one literal it denotes."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    if checked is None:
+        with pytest.raises(
+            FhYCoreTypeError, match=r"literal -5 is incompatible with uint8"
+        ):
+            checker.check(expression, _make_scalar(expected))
+    else:
+        result_type, _ = checker.check(expression, _make_scalar(expected))
+        assert result_type.is_structurally_equivalent(_make_scalar(checked))
+
+
 def test_check_binary_expression_uses_expected_type_bidirectionally() -> None:
     """Test an arithmetic expression adopts the expected type bidirectionally."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))

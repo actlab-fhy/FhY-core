@@ -141,7 +141,9 @@ impl CallTargets for FunctionRegistry {
 ///   supplied for a constant's identifier, and reading an `output`
 ///   identifier, are refused.
 /// - A literal takes its weak type: a Boolean `bool`, a non-negative integer
-///   `uint`, a negative one `int`, a float `float`.
+///   `uint`, a negative one `int`, a float `float`. The negation of an
+///   integer or float literal is that one negated literal, so `-(128)`
+///   checks against `int8` and `-(5)` does not against `uint8`.
 /// - Arithmetic promotes the operands' primitive types; true division of
 ///   integers is a real float as wide as the wider operand, and floor
 ///   division refuses complex operands. Comparisons are Boolean. Index
@@ -324,6 +326,23 @@ fn literal(expression: &Expression) -> Option<&LiteralValue> {
     match expression.kind() {
         ExpressionKind::Literal(value) => Some(value),
         _ => None,
+    }
+}
+
+/// Return the literal `-v` that `expression` denotes when it is the
+/// negation of an integer or float literal `v`, which the checker checks as
+/// that one literal against the expected type.
+fn negated_literal(expression: &Expression) -> Option<LiteralValue> {
+    let ExpressionKind::Unary(unary) = expression.kind() else {
+        return None;
+    };
+    if unary.operation() != UnaryOperation::Negate {
+        return None;
+    }
+    match literal(unary.operand())? {
+        LiteralValue::Int(integer) => Some(LiteralValue::Int(-integer)),
+        LiteralValue::Float(float) => Some(LiteralValue::Float(-float)),
+        LiteralValue::Bool(_) | LiteralValue::Decimal(_) => None,
     }
 }
 
@@ -609,8 +628,12 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 results.push(self.literal(node, value, expected.as_ref())?);
             }
             ExpressionKind::Unary(unary) => {
-                steps.push(Step::Unary(node));
-                steps.push(Step::Infer(unary.operand(), expected));
+                if let Some(negated) = negated_literal(node) {
+                    results.push(self.literal(node, &negated, expected.as_ref())?);
+                } else {
+                    steps.push(Step::Unary(node));
+                    steps.push(Step::Infer(unary.operand(), expected));
+                }
             }
             ExpressionKind::Binary(binary) => {
                 let expected_for_literals = expected.filter(|expected| {
@@ -893,27 +916,8 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                         "unary negation is not defined for boolean operands",
                     ));
                 }
-                if let Some(value) = literal(unary.operand()) {
-                    if is_weak(&operand) {
-                        let negated = match value {
-                            LiteralValue::Int(integer) => LiteralValue::Int(-integer),
-                            LiteralValue::Float(float) => LiteralValue::Float(-float),
-                            _ => {
-                                return Err(self.error(
-                                    node,
-                                    TypeRuleKind::Literal,
-                                    format!(
-                                        "expected a numeric literal value, got {}",
-                                        format_expression(unary.operand())
-                                    ),
-                                ));
-                            }
-                        };
-                        let core_data_type = CoreDataType::of_literal(&negated)
-                            .map_err(|error| self.literal_error(node, &error))?;
-                        return Ok((scalar(core_data_type), qualifier));
-                    }
-                }
+                // A negated integer or float literal never reaches this
+                // rule: `infer` checks it as the one literal it denotes.
                 Ok((operand, qualifier))
             }
             UnaryOperation::LogicalNot => {
