@@ -50,6 +50,13 @@ pub(crate) fn build_literal(value: impl Into<LiteralValue>) -> Expression {
     Expression::from(value.into())
 }
 
+/// Run `body` while no other story that replaces a SymPy function or a
+/// module runs.
+pub(crate) fn serialized<R>(body: impl FnOnce() -> R) -> R {
+    let _serial: MutexGuard<'_, ()> = PATCHES.lock().unwrap_or_else(PoisonError::into_inner);
+    body()
+}
+
 /// Serializes the stories that replace a SymPy function for their own
 /// thread, so each restores the function it replaced.
 static PATCHES: Mutex<()> = Mutex::new(());
@@ -105,7 +112,7 @@ fn scope(py: Python<'_>) -> Bound<'_, PyDict> {
     let prelude = py
         .import("sys")
         .and_then(|sys| sys.getattr("modules"))
-        .and_then(|modules| modules.get_item("_fhy_core_sympy"))
+        .and_then(|modules| modules.get_item(super::load::prelude_module_name()))
         .expect("the prelude is published");
     scope.set_item("prelude", prelude).expect("set");
     scope

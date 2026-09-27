@@ -3,10 +3,11 @@
 SymPy is extended by subclassing and by hook functions, which only Python
 code can define, so this module holds exactly those: the parity-opaque
 piecewise class, the ``round`` function, and the helpers their methods call.
-The Rust backend (``fhy_core::solver::SympySimplifier``) runs this source
-once per interpreter and publishes it as the module ``_fhy_core_sympy``;
-every backend in the interpreter uses the one published module, so every
-lowered piecewise has one class.
+The Rust backend (the binding's ``solver::sympy::SympySimplifier``) runs
+this source once per interpreter and publishes it as the module
+``_fhy_core_sympy_<version>_<hash>``, whose ``__fhy_core_prelude__`` is the
+hash of this source; every backend of the same version and source uses the
+one published module, so every lowered piecewise has one class.
 """
 
 from typing import Any

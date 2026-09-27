@@ -40,7 +40,11 @@ fn is_native_constant(identifier: &Identifier, sorts: &dyn SortLookup) -> bool {
 /// Nothing is imported until the first operation, which imports SymPy and
 /// loads the backend's prelude, a small Python module of the SymPy classes
 /// and hooks only Python code can define, published once per interpreter
-/// as `_fhy_core_sympy`. A failed load is retried by the next operation.
+/// as `_fhy_core_sympy_<version>_<hash>`, the hash being that of its source,
+/// which the module also holds as `__fhy_core_prelude__`; a module under
+/// that name whose hash differs is refused as
+/// [`SympyUnavailableError::Incompatible`]. A failed load is retried by the
+/// next operation.
 ///
 /// Each operation attaches to the interpreter once for its whole run, so
 /// operations on several threads run one at a time, as all SymPy work does.

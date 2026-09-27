@@ -11,6 +11,7 @@ and threads.
 
 import logging
 import pickle
+import re
 import subprocess
 import sys
 import textwrap
@@ -374,7 +375,10 @@ def test_lowered_round_and_piecewise_pickle_within_the_process(x: Identifier) ->
 
     assert pickle.loads(pickle.dumps(rounded)) == rounded
     assert pickle.loads(pickle.dumps(choice)) == choice
-    assert type(choice).__module__ == "_fhy_core_sympy"
+    prelude = sys.modules[type(choice).__module__]
+    assert type(choice).__module__.startswith("_fhy_core_sympy_0_")
+    assert re.fullmatch(r"[0-9a-f]{16}", prelude.__fhy_core_prelude__)
+    assert type(choice).__module__.endswith(prelude.__fhy_core_prelude__)
 
 
 @pytest.mark.subprocess
@@ -400,7 +404,8 @@ def test_lowered_piecewise_pickle_loads_where_the_bridge_is_imported(
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.split() == ["_fhy_core_sympy", "ParityOpaquePiecewise"]
+    module_name = type(choice).__module__
+    assert completed.stdout.split() == [module_name, "ParityOpaquePiecewise"]
 
 
 # =============================================================================

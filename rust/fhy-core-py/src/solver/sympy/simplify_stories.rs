@@ -1,6 +1,7 @@
 //! Stories for simplifying with SymPy, [`SympySimplifier`] as a
-//! [`Simplifier`] and its SymPy-level operations: decided comparisons, the workarounds, the best-effort cases,
-//! the substitution, the phases of errors, threads, and the prelude.
+//! [`Simplifier`] and its SymPy-level operations: decided comparisons, the
+//! workarounds, the best-effort cases, the substitution, the phases of
+//! errors, threads, and the prelude.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,10 +15,12 @@ use pyo3::exceptions::PyKeyboardInterrupt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::load::Handles;
 use super::test_support::{
-    attached, backend, build_identifier, build_literal, evaluate, srepr, with_patched_sympy,
+    attached, backend, build_identifier, build_literal, evaluate, run, serialized, srepr,
+    with_patched_sympy,
 };
-use super::{SympyError, SympyErrorKind, SympyPhase, SympySimplifier};
+use super::{SympyError, SympyErrorKind, SympyPhase, SympySimplifier, SympyUnavailableError};
 
 /// Return the solver holding a new SymPy backend.
 fn solver() -> Solver {
@@ -349,6 +352,75 @@ fn substitute_symbols_applies_a_mapping_of_symbols() {
 // ---------------------------------------------------------------------------
 // Threads and the prelude
 // ---------------------------------------------------------------------------
+
+/// The statements publishing, as the module `name`, probe S2's impostor
+/// prelude, whose `ROUND` is `sympy.floor`, with the `__fhy_core_prelude__`
+/// hash `hash` when it is given.
+fn impostor_prelude(name: &str, hash: Option<&str>) -> String {
+    let hash = hash.map_or_else(String::new, |hash| {
+        format!("module.__fhy_core_prelude__ = {hash:?}\n")
+    });
+    format!(
+        "import sys, types\n\
+         module = types.ModuleType({name:?})\n\
+         module.ParityOpaquePiecewise = sympy.Piecewise\n\
+         module.ROUND = sympy.floor\n\
+         module.hide_piecewise_parity = lambda expression: expression\n\
+         module.holds_partial_piecewise = lambda expression: False\n\
+         class AbortWalk(BaseException):\n\
+         \x20   pass\n\
+         module.AbortWalk = AbortWalk\n\
+         {hash}\
+         sys.modules[{name:?}] = module\n"
+    )
+}
+
+#[test]
+fn a_module_under_the_old_fixed_name_is_ignored() {
+    let registry = FunctionRegistry::new();
+    let context = SimplifyContext::from_registry(&registry);
+    let round = Expression::call(
+        fhy_core::expression::builtins::BuiltinFunction::Round,
+        [build_literal(3.5)],
+    );
+
+    let rounded = serialized(|| {
+        attached(|py| run(py, &impostor_prelude("_fhy_core_sympy", None)));
+        let rounded = SympySimplifier::new().simplify(&round, &context);
+        attached(|py| run(py, "import sys\nsys.modules.pop('_fhy_core_sympy', None)\n"));
+        rounded
+    });
+
+    // The impostor's `sympy.floor` would give 3. The real prelude's
+    // `round` folds only over an integer, so the call stays.
+    assert_eq!(rounded.expect("simplified"), round);
+}
+
+#[test]
+fn a_module_with_a_mismatched_hash_is_incompatible() {
+    const NAME: &str = "_fhy_core_sympy_mismatched_hash_story";
+    backend();
+
+    let (loaded, unhashed) = attached(|py| {
+        run(py, &impostor_prelude(NAME, Some("0000000000000000")));
+        let loaded = Handles::load_with_prelude(py, NAME).map(drop);
+        run(py, &impostor_prelude(NAME, None));
+        let unhashed = Handles::load_with_prelude(py, NAME).map(drop);
+        run(
+            py,
+            &format!("import sys\nsys.modules.pop({NAME:?}, None)\n"),
+        );
+        (loaded, unhashed)
+    });
+
+    for result in [loaded, unhashed] {
+        let error = result.expect_err("an impostor is refused");
+        assert!(
+            matches!(&error, SympyUnavailableError::Incompatible(cause) if cause.to_string().contains(NAME)),
+            "{error:?}"
+        );
+    }
+}
 
 #[test]
 fn threads_share_one_backend() {

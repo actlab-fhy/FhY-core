@@ -66,7 +66,8 @@ SympySimplifier = _rs.SympySimplifier
 
 # The backend the passes and functions below run on. SymPy is imported
 # already, so loading it here publishes the backend's prelude module,
-# ``_fhy_core_sympy``, whose classes a pickled lowered expression names.
+# ``_fhy_core_sympy_<version>_<hash>``, whose classes a pickled lowered
+# expression names.
 _BACKEND = SympySimplifier()
 _BACKEND.load()
 

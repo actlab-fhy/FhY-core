@@ -10,11 +10,37 @@ use fhy_core::expression::builtins::BuiltinFunction;
 
 use super::error::SympyUnavailableError;
 
-/// The name the prelude is published under in `sys.modules`.
-const PRELUDE_MODULE: &str = "_fhy_core_sympy";
+/// The stem of the name the prelude is published under in `sys.modules`.
+const PRELUDE_MODULE_STEM: &str = "_fhy_core_sympy";
+
+/// The attribute of the prelude module that holds the hash of its source.
+const PRELUDE_HASH_ATTRIBUTE: &str = "__fhy_core_prelude__";
 
 /// The prelude's source.
 const PRELUDE_SOURCE: &str = include_str!("prelude.py");
+
+/// The 64-bit FNV-1a hash of the prelude's source.
+const PRELUDE_HASH: u64 = fnv1a_64(PRELUDE_SOURCE.as_bytes());
+
+/// Return the 64-bit FNV-1a hash of `bytes`.
+const fn fnv1a_64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET_BASIS;
+    let mut index = 0;
+    while index < bytes.len() {
+        hash ^= bytes[index] as u64;
+        hash = hash.wrapping_mul(PRIME);
+        index += 1;
+    }
+    hash
+}
+
+/// Return the hash of the prelude's source as 16 hexadecimal digits, the
+/// value of the prelude module's `__fhy_core_prelude__`.
+fn prelude_hash_text() -> String {
+    format!("{PRELUDE_HASH:016x}")
+}
 
 /// What the backend reads from SymPy and from its prelude, loaded once per
 /// backend.
@@ -95,39 +121,81 @@ fn attribute(object: &Bound<'_, PyAny>, path: &str) -> PyResult<Py<PyAny>> {
     Ok(current.unbind())
 }
 
-/// Return the prelude module of this interpreter, running the prelude and
-/// publishing it first if no backend has.
-fn prelude(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+/// Return the name the prelude is published under:
+/// `_fhy_core_sympy_<crate version>_<hash>`, with the version's `.` and `-`
+/// written `_`, since a dotted name would read as a package path when a
+/// pickle names one of the prelude's classes.
+///
+/// So two builds of the backend in one interpreter share a prelude only
+/// when their versions and prelude sources are the same.
+pub(super) fn prelude_module_name() -> String {
+    let version = env!("CARGO_PKG_VERSION").replace(['.', '-', '+'], "_");
+    format!("{PRELUDE_MODULE_STEM}_{version}_{}", prelude_hash_text())
+}
+
+/// Return the prelude module of this interpreter, published as `name`,
+/// running the prelude and publishing it first if no backend has.
+///
+/// # Errors
+///
+/// Raises `ImportError` for a module published as `name` whose
+/// `__fhy_core_prelude__` is missing or is not the hash of this prelude's
+/// source, and the error of running the prelude.
+fn prelude<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
     let modules = py.import("sys")?.getattr("modules")?;
-    if let Some(existing) = modules.cast::<PyDict>()?.get_item(PRELUDE_MODULE)? {
-        return Ok(existing);
+    let hash = prelude_hash_text();
+    let published = if let Some(existing) = modules.cast::<PyDict>()?.get_item(name)? {
+        existing
+    } else {
+        let module = PyModule::new(py, name)?;
+        let source = CString::new(PRELUDE_SOURCE)
+            .map_err(|_nul| pyo3::exceptions::PyValueError::new_err("the prelude holds a nul"))?;
+        py.run(&source, Some(&module.dict()), None)?;
+        module.setattr(PRELUDE_HASH_ATTRIBUTE, &hash)?;
+        // `setdefault` is atomic under the GIL: if another thread published
+        // a prelude while this one ran, every backend uses that one.
+        modules.call_method1("setdefault", (name, module))?
+    };
+    let found = published
+        .getattr_opt(PRELUDE_HASH_ATTRIBUTE)?
+        .map(|value| value.str().map(|text| text.to_string()))
+        .transpose()?;
+    if found.as_deref() != Some(hash.as_str()) {
+        return Err(pyo3::exceptions::PyImportError::new_err(format!(
+            "sys.modules[{name:?}] is not this backend's prelude: its {PRELUDE_HASH_ATTRIBUTE} \
+             is {}, not {hash:?}",
+            found.map_or_else(|| "missing".to_owned(), |found| format!("{found:?}"))
+        )));
     }
-    let module = PyModule::new(py, PRELUDE_MODULE)?;
-    let source = CString::new(PRELUDE_SOURCE)
-        .map_err(|_nul| pyo3::exceptions::PyValueError::new_err("the prelude holds a nul"))?;
-    py.run(&source, Some(&module.dict()), None)?;
-    // `setdefault` is atomic under the GIL: if another thread published a
-    // prelude while this one ran, every backend uses that one.
-    modules.call_method1("setdefault", (PRELUDE_MODULE, module))
+    Ok(published)
 }
 
 impl Handles {
     /// Import SymPy and the prelude and read what the backend needs.
     pub(super) fn load(py: Python<'_>) -> Result<Self, SympyUnavailableError> {
+        Self::load_with_prelude(py, &prelude_module_name())
+    }
+
+    /// Import SymPy, and the prelude published as `prelude_name`, and read
+    /// what the backend needs.
+    pub(super) fn load_with_prelude(
+        py: Python<'_>,
+        prelude_name: &str,
+    ) -> Result<Self, SympyUnavailableError> {
         let sympy = py
             .import("sympy")
             .map_err(SympyUnavailableError::MissingSympy)?;
-        Self::read(py, &sympy).map_err(SympyUnavailableError::Incompatible)
+        Self::read(py, &sympy, prelude_name).map_err(SympyUnavailableError::Incompatible)
     }
 
     #[expect(clippy::too_many_lines, reason = "one line per handle read")]
-    fn read(py: Python<'_>, sympy: &Bound<'_, PyModule>) -> PyResult<Self> {
+    fn read(py: Python<'_>, sympy: &Bound<'_, PyModule>, prelude_name: &str) -> PyResult<Self> {
         py.import("sympy.core.evalf")?;
         py.import("sympy.functions.elementary.piecewise")?;
         py.import("sympy.logic.boolalg")?;
         let module = sympy.as_any();
         let get = |path: &str| attribute(module, path);
-        let prelude = prelude(py)?;
+        let prelude = prelude(py, prelude_name)?;
         let from_prelude = |name: &str| attribute(&prelude, name);
         let log = get("log")?;
         let exp = get("exp")?;

@@ -59,8 +59,8 @@ onto `dev-rust` before continuing.
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped — **held for the maintainer**: dropping it makes params and set constraints report false proofs (Track D notes, N-D1)
 - [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature (`63df166`)
 - [x] R2-016 (F2-016): negative powers lift as divisions (`a5b7e62`)
-- [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object
-- [ ] R2-039 (F2-039): a versioned, hash-checked prelude module
+- [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object (`2aea756`)
+- [x] R2-039 (F2-039): a versioned, hash-checked prelude module
 - [ ] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories
 - [ ] R2-029d (F2-029, `solver`): error-text tables and small stories
 - [ ] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift
@@ -2786,11 +2786,40 @@ premise holds for expressions but not for set constraints:
   own construction of the 49 rebuilt nodes, so its story's bound is 1 s.
   Both results hold the input's 49 distinct nodes.
 
+**R2-039.**
+- **The name** is `_fhy_core_sympy_<version>_<hash>` with the version's
+  `.`, `-` and `+` written `_` (today `_fhy_core_sympy_0_2_0_<16 hex>`),
+  a call on the spec's `_<crate version>_`: a pickle of a lowered
+  piecewise or `round` names the prelude module, and pickle imports a
+  dotted name as a package path, so `0.2.0` would not load.
+- **The hash** is the 64-bit FNV-1a of `PRELUDE_SOURCE`, a `const`
+  computed by a `const fn`; its 16-digit text is formatted at run time,
+  since `str::from_utf8` is not `const` at the 1.85 MSRV and the crate
+  forbids the unchecked form. A published module missing the attribute,
+  or holding another hash, is refused with an `ImportError` cause naming
+  both, as `SympyUnavailableError::Incompatible`; the check also runs on
+  the module `setdefault` returns.
+- **Tests.** `a_module_under_the_old_fixed_name_is_ignored` publishes probe
+  S2's impostor, whose `ROUND` is `sympy.floor`, under `_fhy_core_sympy`,
+  and checks a fresh backend's `round(3.5)`. The spec expected `4`, but
+  the real prelude's `round` folds only over an integer, so the call
+  stays `round(3.5)`, which the story pins; the impostor gave `3` at the
+  base. `a_module_with_a_mismatched_hash_is_incompatible` goes through a
+  seam, `Handles::load_with_prelude(py, name)`, under a name of its own,
+  since replacing the real module would race the other stories' fresh
+  backends; it covers a wrong hash and a missing one. Both old-name
+  stories run under `test_support::serialized`, the lock the SymPy
+  patches take.
+- **Python.** Two tests pinned the module name `_fhy_core_sympy`; they
+  now check the versioned name, its hash attribute and that a pickle names
+  it.
+
 **Python-visible changes** (§I.2 rule 6):
 
 | Item | Old | New | Tests |
 |---|---|---|---|
 | R2-015 | a name hint's control characters were written into its quoted SMT-LIB2 symbol (`SmtScript.text`, `convert_expression_to_smtlib2`, the declarations' `symbol`); a NUL made the z3-solver adapter raise `Z3Exception` | each is written as `_` | `test_a_control_character_name_hint_answers_the_same_on_every_backend` (new) |
+| R2-039 | the prelude was the module `_fhy_core_sympy`, and any module under that name was trusted | it is `_fhy_core_sympy_0_2_0_<hash>` with `__fhy_core_prelude__`; an impostor under that name raises `SolverBackendUnavailableError` from the first SymPy question; a pickle of a lowered piecewise or `round` names the versioned module, so one written by another version or prelude no longer loads | `test_lowered_round_and_piecewise_pickle_within_the_process`, `test_lowered_piecewise_pickle_loads_where_the_bridge_is_imported` |
 | R2-038a | lifting and SymPy substitution walked a SymPy DAG as a tree, in exponential time, and lifted results shared nothing | both are linear in the distinct objects, and a lifted result shares where the SymPy object does | the Rust stories; the Python suites unchanged |
 | R2-016 | `simplify_expression(y / x)` returned `y * x ** -1`, which the evaluators refuse at integer points | it returns `y / x`; every power by a negative integer lifts as a division | `test_simplify_then_evaluate_equals_evaluate_on_integer_grids` (new); no existing test pinned the old form |
 | R2-005a | none in behavior; `SolverBackend.SYMPY`'s backend lives in the extension as before | the same objects, from the binding's own module | `test_missing_sympy_reports_unavailable` (new) |

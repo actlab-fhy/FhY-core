@@ -10962,6 +10962,15 @@ Where a decision follows an earlier slice's decision or note, it says so.
     pattern gain this one `.py` file. `noxfile.py`'s `SOURCES` gains its
     directory, so `ruff` and `mypy` check it.
   - **Pickles.** Y-S12-1 records the consequence for pickles.
+  - **Revised (R2-039, 2026-09-27):** the prelude is published as
+    `_fhy_core_sympy_<version>_<hash>` (the version's `.` written `_`),
+    where the hash is the 64-bit FNV-1a of its source in 16 hexadecimal
+    digits, which the module also holds as `__fhy_core_prelude__`; a
+    module under that name with another or no hash is refused as
+    `SympyUnavailableError::Incompatible`, and one under the old fixed
+    name is ignored. So a pickle of a lowered piecewise or `round` names
+    the versioned module and loads where the same version's backend has
+    loaded (see `docs/design/rust-port-fixes.md` R2-039).
 - **D-S12-8: the mapping keeps today's semantics** (D-S4-2: the same
   meaning, pinned by 627 tests; D-S4-1 where the core's values differ).
   - **The tables.** Each table of the survey becomes a Rust `match` over
