@@ -543,6 +543,14 @@ macro_rules! domain_class {
         impl $class {
             $($extra)*
 
+            /// Visit the member objects, for the cycle collector (R2-003).
+            fn __traverse__(
+                &self,
+                visit: ::pyo3::pyclass::PyVisit<'_>,
+            ) -> Result<(), ::pyo3::pyclass::PyTraverseError> {
+                visit.call(self.state.values.as_ref())
+            }
+
             /// The sort the solver reasons about the values in, or `None`.
             #[getter]
             fn symbol_type<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

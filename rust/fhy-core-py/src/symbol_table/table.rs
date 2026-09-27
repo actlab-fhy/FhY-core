@@ -11,6 +11,7 @@ use std::sync::Arc;
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple, PyType};
 
@@ -144,6 +145,18 @@ impl Entry {
         })))
     }
 
+    /// Visit the symbol and the frame, if this handle is the entry's only
+    /// one (R2-003): an entry shared with another table, or with a copy a
+    /// call is working on, is visited by none, since a reference must be
+    /// visited at most once.
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if Arc::strong_count(&self.0) != 1 {
+            return Ok(());
+        }
+        visit.call(&self.0.symbol)?;
+        visit.call(&self.0.frame)
+    }
+
     /// Return the frame object.
     fn frame<'py>(&self, py: Python<'py>) -> &Bound<'py, PyAny> {
         self.0.frame.bind(py)
@@ -251,6 +264,28 @@ fn bad_state() -> PyErr {
 
 #[pymethods]
 impl PySymbolTable {
+    /// Visit the entries this table alone holds and its cached namespace
+    /// dicts, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for namespace in self.table.namespaces() {
+            for (_, entry) in namespace.iter() {
+                entry.traverse(&visit)?;
+            }
+        }
+        crate::gc::traverse_all(&visit, self.namespace_dicts.values())
+    }
+
+    /// Drop the table's entries and dicts, for the cycle collector: the
+    /// table is left empty, a consistent state.
+    fn __clear__(&mut self) {
+        self.table = SymbolTable::new();
+        self.namespace_dicts.clear();
+    }
+
     /// Create an empty table; arguments are accepted and ignored, so a
     /// subclass with its own `__init__` constructs.
     #[new]

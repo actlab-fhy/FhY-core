@@ -2,6 +2,7 @@
 //! the Rust [`Capture`] (D-S5-2).
 
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyString, PyTuple, PyType};
 
 use fhy_core::expression::pattern::Capture;
@@ -40,6 +41,16 @@ impl PyCapture {
 
 #[pymethods]
 impl PyCapture {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        Ok(())
+    }
+
     /// Create a capture named `name`, distinct from every other capture.
     ///
     /// Raises `TypeError` for a name that is not a `str`.

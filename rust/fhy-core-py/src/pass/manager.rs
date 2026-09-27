@@ -14,6 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyInt, PyTuple};
 
 use fhy_core::pass::{FixpointPassGroup, PassManager};
@@ -63,6 +64,23 @@ pub(crate) struct PyFixpointPassGroup {
 
 #[pymethods]
 impl PyFixpointPassGroup {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        crate::gc::traverse_locked(&self.passes, |passes| {
+            crate::gc::traverse_all(&visit, passes)
+        })
+    }
+
+    /// Drop what only this object holds, for the cycle collector.
+    fn __clear__(&self) {
+        crate::gc::clear_locked(&self.passes);
+    }
+
     /// Create the empty group `name`, an `Identifier`, with a budget of
     /// `max_iterations` iterations that fails a pipeline when it does not
     /// converge if `fail_on_non_convergence` holds.
@@ -273,6 +291,32 @@ impl PyPassManager {
 
 #[pymethods]
 impl PyPassManager {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        crate::gc::traverse_locked(&self.items, |items| {
+            items.iter().try_for_each(|item| match item {
+                Item::Pass(compiler_pass) => visit.call(compiler_pass),
+                Item::FixpointGroup(group) => visit.call(group),
+            })
+        })?;
+        crate::gc::traverse_locked(&self.verifier, |verifier| match verifier {
+            Verifier::Manager(manager) => visit.call(manager),
+            Verifier::Registry | Verifier::Off => Ok(()),
+        })
+    }
+
+    /// Drop what only this object holds, for the cycle collector.
+    fn __clear__(&self) {
+        crate::gc::clear_locked(&self.items);
+        let verifier = std::mem::replace(&mut *lock(&self.verifier), Verifier::Off);
+        drop(verifier);
+    }
+
     /// Create the empty pipeline `name`, by default an identifier named
     /// `pipeline`, which verifies with the verification registry.
     ///

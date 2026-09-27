@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyList, PySequence, PyString, PyTuple, PyType};
 
@@ -283,6 +284,16 @@ pub(crate) struct PyImportSymbolTableFrame {
 
 #[pymethods]
 impl PyImportSymbolTableFrame {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        Ok(())
+    }
+
     /// Create the frame of the imported symbol `name`.
     ///
     /// Raises `TypeError` if `name` is no `Identifier`.
@@ -416,6 +427,18 @@ pub(crate) struct PyVariableSymbolTableFrame {
 
 #[pymethods]
 impl PyVariableSymbolTableFrame {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.ty)?;
+        visit.call(&self.type_qualifier)?;
+        Ok(())
+    }
+
     /// Create the frame of the variable `name` of type `type`, qualified
     /// `type_qualifier`.
     ///
@@ -652,6 +675,18 @@ fn read_signature<'py>(
 
 #[pymethods]
 impl PyFunctionSymbolTableFrame {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.keyword)?;
+        visit.call(&self.signature)?;
+        Ok(())
+    }
+
     /// Create the frame of the function `name`, declared with `keyword`,
     /// whose parameters have the `(TypeQualifier, Type)` pairs of
     /// `signature`, in order.

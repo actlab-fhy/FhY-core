@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::expression::Expression;
@@ -24,6 +25,7 @@ use super::kinds::{
     into_callback_error, read_optional_str, type_name,
 };
 use super::objects::{ActiveTable, current_adopt, current_object_of};
+use crate::gc::{Slot, Slots, collect_slots};
 
 // ---------------------------------------------------------------------------
 // RewriteRule
@@ -97,10 +99,13 @@ impl<'py> RuleFields<'py> {
     /// Return the Rust rule of these fields: the pattern, each guard in
     /// order, the rewrite and the name, with the callbacks calling the
     /// Python callables with the match's bindings object.
+    ///
+    /// Each callback reads its callable from a [`Slot`], which the rule
+    /// object built from these fields owns (R2-003).
     fn build_rule(&self) -> PyResult<RewriteRule> {
         let py = self.pattern.py();
         let captures = Arc::clone(self.pattern.get().captures(py)?);
-        let rewrite = self.rewrite.clone().unbind();
+        let rewrite = Slot::new(self.rewrite.clone().unbind());
         let is_partial = self.is_partial;
         let label = self.label()?;
         let rewrite_captures = Arc::clone(&captures);
@@ -108,18 +113,18 @@ impl<'py> RuleFields<'py> {
             RewriteRule::new_partial(self.pattern.get().pattern().clone(), move |bindings| {
                 Python::attach(|py| -> PyResult<Option<Expression>> {
                     let object = PyMatchBindings::build(py, bindings, &rewrite_captures)?;
-                    let result = rewrite.bind(py).call1((object,))?;
+                    let result = rewrite.get(py).call1((object,))?;
                     read_rewrite_result(&result, is_partial, &label)
                 })
                 .map_err(into_callback_error)
             });
         for guard in &self.guards {
-            let guard = guard.unbind();
+            let guard = Slot::new(guard.unbind());
             let guard_captures = Arc::clone(&captures);
             rule = rule.with_guard(move |bindings| {
                 Python::attach(|py| -> PyResult<bool> {
                     let object = PyMatchBindings::build(py, bindings, &guard_captures)?;
-                    guard.bind(py).call1((object,))?.is_truthy()
+                    guard.get(py).call1((object,))?.is_truthy()
                 })
                 .map_err(into_callback_error)
             });
@@ -132,10 +137,12 @@ impl<'py> RuleFields<'py> {
 
     /// Return the initializer of the rule of these fields.
     fn into_rule(self) -> PyResult<PyRewriteRule> {
-        let rule = self.build_rule()?;
+        let (rule, slots) = collect_slots(|| self.build_rule());
+        let rule = rule?;
         let depth = self.pattern.get().depth();
         Ok(PyRewriteRule {
             rule,
+            slots,
             depth,
             pattern: self.pattern.into_any().unbind(),
             rewrite: self.rewrite.unbind(),
@@ -173,6 +180,7 @@ fn read_rewrite_result(
 #[pyclass(frozen, module = "fhy_core._rs", name = "_RewriteRuleSeed")]
 struct RewriteRuleSeed {
     rule: RewriteRule,
+    slots: Slots,
     depth: usize,
     pattern: Py<PyAny>,
     rewrite: Py<PyAny>,
@@ -191,6 +199,8 @@ struct RewriteRuleSeed {
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "RewriteRule")]
 pub(crate) struct PyRewriteRule {
     rule: RewriteRule,
+    /// The slots of the rule's callbacks, which this object owns (R2-003).
+    slots: Slots,
     /// The depth of the pattern.
     depth: usize,
     /// The pattern.
@@ -243,6 +253,7 @@ impl PyRewriteRule {
     ) -> PyResult<Bound<'py, PyAny>> {
         let seed = RewriteRuleSeed {
             rule: rule.rule,
+            slots: rule.slots,
             depth: rule.depth,
             pattern: rule.pattern,
             rewrite: rule.rewrite,
@@ -267,6 +278,19 @@ impl PyRewriteRule {
 
 #[pymethods]
 impl PyRewriteRule {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.pattern)?;
+        visit.call(&self.rewrite)?;
+        visit.call(&self.guards)?;
+        visit.call(self.name.as_ref())?;
+        self.slots.traverse(&visit)
+    }
+
     /// Create the rule rewriting what `pattern` matches with the callable
     /// `rewrite`, which must return an `Expression`, when the callable
     /// `guard`, if given, allows it, named `name`.
@@ -286,6 +310,7 @@ impl PyRewriteRule {
             let seed = seed.get();
             return Ok(Self {
                 rule: seed.rule.clone(),
+                slots: seed.slots.clone(),
                 depth: seed.depth,
                 pattern: seed.pattern.clone_ref(py),
                 rewrite: seed.rewrite.clone_ref(py),
@@ -572,6 +597,16 @@ impl PyFiredRule {
 
 #[pymethods]
 impl PyFiredRule {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(self.name.as_ref())?;
+        Ok(())
+    }
+
     /// Create the firing of the rule at `rule_index` named `name`.
     ///
     /// Raises `TypeError` for a name that is not a `str` or `None`, and

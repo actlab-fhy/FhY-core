@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
@@ -34,6 +35,7 @@ use crate::expression::{
     PyExpression, coerce_to_expression, read_big_int, try_get_native_constant_for_identifier,
 };
 use crate::frozen::build_frozen_mutation_error;
+use crate::gc::{Slots, collect_slots};
 use crate::identifier::{
     deserialize_identifier, identifier_to_python, new_python_identifier, restore_identifier,
     serialize_identifier,
@@ -96,6 +98,21 @@ struct ParamObjects {
     variable: Py<PyAny>,
     system: Py<PyAny>,
     constraints: Py<PyTuple>,
+    /// The slots of the Python-defined parts the param's construction
+    /// adapted, which the param owns (R2-003): a param derived from another
+    /// shares that one's parts, and owns none.
+    slots: Slots,
+}
+
+impl ParamObjects {
+    /// Visit the objects, for the cycle collector (R2-003).
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.domain)?;
+        visit.call(&self.variable)?;
+        visit.call(&self.system)?;
+        visit.call(&self.constraints)?;
+        self.slots.traverse(visit)
+    }
 }
 
 /// The state a param object is built from, handed to `__new__` as the
@@ -168,6 +185,7 @@ fn instantiate_param<'py>(
         variable: variable.clone().unbind(),
         system: system.clone().unbind(),
         constraints: constraints.unbind(),
+        slots: Slots::default(),
     };
     let seed = Py::new(
         py,
@@ -644,6 +662,16 @@ fn read_known<'py>(
 
 #[pymethods]
 impl PyParam {
+    /// Visit the Python objects the param holds, for the cycle collector
+    /// (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.objects.traverse(&visit)
+    }
+
     /// Create the param over `domain` whose variable is `variable` (a new
     /// `Identifier("param")` by default), narrowed by the members of
     /// `constraint_system`.
@@ -680,21 +708,26 @@ impl PyParam {
             }
             _ => Vec::new(),
         };
-        let core_domain = read_domain(domain);
         let identifier = restore_identifier(&variable, "Param", "variable")?;
         let constraints: Vec<Constraint> = known.iter().map(|(core, _)| core.clone()).collect();
-        let result = run_with_context(
-            py,
-            false,
-            |context| Param::new(core_domain, identifier, constraints, context),
-            |error| match error {
-                ParamBuildError::NativeConstantVariable(_) => native_constant_error(&variable),
-                ParamBuildError::OutOfScope { constraint, .. } => {
-                    out_of_scope_error(py, &variable, &constraint, &known)
-                }
-                other => param_error_to_py(py, other, None),
-            },
-        )?;
+        // The domain's adapter and the implied constraints' are this
+        // param's to traverse (R2-003).
+        let (result, slots) = collect_slots(|| {
+            let core_domain = read_domain(domain);
+            run_with_context(
+                py,
+                false,
+                |context| Param::new(core_domain, identifier, constraints, context),
+                |error| match error {
+                    ParamBuildError::NativeConstantVariable(_) => native_constant_error(&variable),
+                    ParamBuildError::OutOfScope { constraint, .. } => {
+                        out_of_scope_error(py, &variable, &constraint, &known)
+                    }
+                    other => param_error_to_py(py, other, None),
+                },
+            )
+        });
+        let result = result?;
         let system = system_object(py, &result, &known)?;
         let constraints = system
             .getattr(intern!(py, "constraints"))?
@@ -707,6 +740,7 @@ impl PyParam {
                 variable: variable.unbind(),
                 system: system.unbind(),
                 constraints,
+                slots,
             },
         })
     }
@@ -1641,6 +1675,17 @@ pub(crate) struct PyParamAssignment {
 
 #[pymethods]
 impl PyParamAssignment {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.param)?;
+        visit.call(&self.value)?;
+        Ok(())
+    }
+
     /// Create the assignment of `value` to `param`, checked without
     /// bindings and normalized.
     ///

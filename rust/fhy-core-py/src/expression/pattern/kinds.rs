@@ -16,6 +16,7 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyRecursionError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyString, PyTuple, PyType};
 
@@ -237,6 +238,19 @@ impl PyPattern {
 
 #[pymethods]
 impl PyPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.fields)?;
+        crate::gc::traverse_all(&visit, &self.sub_patterns)?;
+        // `captures` holds `Capture` objects, which hold only their names,
+        // and can be read only with the interpreter attached.
+        visit.call(self.capture.as_ref())
+    }
+
     /// Match `expression` at the root, and return the captures, or `None`
     /// if it does not match.
     ///
@@ -409,6 +423,17 @@ impl_public_class!(PyCapturePattern, "CapturePattern");
 
 #[pymethods]
 impl PyCapturePattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.capture)?;
+        visit.call(&self.sub_pattern)?;
+        Ok(())
+    }
+
     /// Create the pattern binding `capture`, a `Capture`, to what
     /// `sub_pattern` matches, a new `WildcardPattern` when omitted.
     ///
@@ -485,6 +510,16 @@ impl_public_class!(PyLiteralPattern, "LiteralPattern");
 
 #[pymethods]
 impl PyLiteralPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.value)?;
+        Ok(())
+    }
+
     /// Create the pattern matching every literal for `None`, and otherwise
     /// the literals equal to `LiteralExpression(value)`.
     ///
@@ -538,6 +573,16 @@ impl_public_class!(PyIdentifierPattern, "IdentifierPattern");
 
 #[pymethods]
 impl PyIdentifierPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.identifier)?;
+        Ok(())
+    }
+
     /// Create the pattern matching every reference for `None`, and
     /// otherwise the references to `identifier`, an `Identifier`.
     ///
@@ -602,6 +647,17 @@ impl_public_class!(PyUnaryExpressionPattern, "UnaryExpressionPattern");
 
 #[pymethods]
 impl PyUnaryExpressionPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.operation)?;
+        visit.call(&self.operand)?;
+        Ok(())
+    }
+
     /// Create the pattern of a unary node of `operation`, any for `None`,
     /// whose operand matches `operand`.
     ///
@@ -668,6 +724,18 @@ impl_public_class!(PyBinaryExpressionPattern, "BinaryExpressionPattern");
 
 #[pymethods]
 impl PyBinaryExpressionPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.operation)?;
+        visit.call(&self.left)?;
+        visit.call(&self.right)?;
+        Ok(())
+    }
+
     /// Create the pattern of a binary node of `operation`, any for `None`,
     /// whose operands match `left` and `right`.
     ///
@@ -745,6 +813,17 @@ impl_public_class!(PyLogicalExpressionPattern, "LogicalExpressionPattern");
 
 #[pymethods]
 impl PyLogicalExpressionPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.operation)?;
+        visit.call(&self.operands)?;
+        Ok(())
+    }
+
     /// Create the pattern of a logical node of `operation`, either for
     /// `None`, whose operands match the iterable of patterns `operands`
     /// position-wise, or are any for `None`.
@@ -820,6 +899,17 @@ impl_public_class!(PyPiecewiseExpressionPattern, "PiecewiseExpressionPattern");
 
 #[pymethods]
 impl PyPiecewiseExpressionPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.cases)?;
+        visit.call(&self.otherwise)?;
+        Ok(())
+    }
+
     /// Create the pattern of a piecewise node whose cases match the
     /// iterable of `(condition, value)` pattern pairs `cases`
     /// position-wise, or are any for `None`, and whose otherwise branch
@@ -924,6 +1014,17 @@ impl_public_class!(PyCallExpressionPattern, "CallExpressionPattern");
 
 #[pymethods]
 impl PyCallExpressionPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.function_name)?;
+        visit.call(&self.arguments)?;
+        Ok(())
+    }
+
     /// Create the pattern of a call of the function named `function_name`,
     /// any for `None`, whose arguments match the iterable of patterns
     /// `arguments` position-wise, or are any for `None`.
@@ -1000,6 +1101,9 @@ pub(crate) struct PyPredicatePattern {
     /// The callable.
     #[pyo3(get)]
     predicate: Py<PyAny>,
+    /// The slot the Rust predicate reads the callable from, which this
+    /// object owns (R2-003).
+    slots: crate::gc::Slots,
 }
 
 impl_public_class!(PyPredicatePattern, "PredicatePattern");
@@ -1007,10 +1111,11 @@ impl_public_class!(PyPredicatePattern, "PredicatePattern");
 /// Return the Rust predicate calling the Python callable `predicate` with
 /// the candidate's node object, read by truthiness (D-S5-6).
 fn build_predicate(predicate: Py<PyAny>) -> Pattern {
+    let predicate = crate::gc::Slot::new(predicate);
     Pattern::try_predicate(move |node| {
         Python::attach(|py| -> PyResult<bool> {
             let object = current_object_of(py, node)?;
-            predicate.bind(py).call1((object,))?.is_truthy()
+            predicate.get(py).call1((object,))?.is_truthy()
         })
         .map_err(into_callback_error)
     })
@@ -1018,6 +1123,16 @@ fn build_predicate(predicate: Py<PyAny>) -> Pattern {
 
 #[pymethods]
 impl PyPredicatePattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.predicate)?;
+        self.slots.traverse(&visit)
+    }
+
     /// Create the pattern matching the expressions for which the callable
     /// `predicate` returns a true value.
     ///
@@ -1033,11 +1148,13 @@ impl PyPredicatePattern {
                 predicate,
             )?);
         }
-        let pattern = build_predicate(predicate.clone().unbind());
+        let (pattern, slots) =
+            crate::gc::collect_slots(|| build_predicate(predicate.clone().unbind()));
         let fields = build_fields(py, &[predicate])?;
         Ok(
             PyPattern::initializer(pattern, fields, &["predicate"], &[], None).add_subclass(Self {
                 predicate: predicate.clone().unbind(),
+                slots,
             }),
         )
     }
@@ -1075,6 +1192,16 @@ impl_public_class!(PyAlternativesPattern, "AlternativesPattern");
 
 #[pymethods]
 impl PyAlternativesPattern {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.alternatives)?;
+        Ok(())
+    }
+
     /// Create the pattern trying the iterable of patterns `alternatives` in
     /// order.
     ///

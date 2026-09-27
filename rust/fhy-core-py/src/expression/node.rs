@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFrozenSet, PyList, PyString, PyTuple, PyType};
 
@@ -394,6 +395,16 @@ const STR_OCCURRENCE_BUDGET: usize = 1_000;
 
 #[pymethods]
 impl PyExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.children)?;
+        Ok(())
+    }
+
     /// Return whether `other` is an expression of the same structure:
     /// the same node kinds, operations and callees, identifiers with the
     /// same ids, equal literals, children equal in order.
@@ -910,6 +921,17 @@ impl_public_class!(PyUnaryExpression, "UnaryExpression");
 
 #[pymethods]
 impl PyUnaryExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.operation)?;
+        visit.call(&self.operand)?;
+        Ok(())
+    }
+
     /// Create the node of `operation`, a `UnaryOperation`, over the
     /// expression `operand`.
     ///
@@ -1052,6 +1074,18 @@ impl_public_class!(PyBinaryExpression, "BinaryExpression");
 
 #[pymethods]
 impl PyBinaryExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.operation)?;
+        visit.call(&self.left)?;
+        visit.call(&self.right)?;
+        Ok(())
+    }
+
     /// Create the node of `operation`, a `BinaryOperation`, over the
     /// expressions `left` and `right`.
     ///
@@ -1210,6 +1244,17 @@ impl_public_class!(PyLogicalExpression, "LogicalExpression");
 
 #[pymethods]
 impl PyLogicalExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.operation)?;
+        visit.call(&self.operands)?;
+        Ok(())
+    }
+
     /// Create the node of `operation`, a `LogicalOperation`, over the
     /// iterable of expressions `operands`, kept in order and never
     /// flattened.
@@ -1366,6 +1411,16 @@ impl PyIdentifierExpression {
 
 #[pymethods]
 impl PyIdentifierExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.identifier)?;
+        Ok(())
+    }
+
     /// Create the reference to `identifier`, an `Identifier`.
     ///
     /// Raises `TypeError` for a value that is not an `Identifier`.
@@ -1536,6 +1591,16 @@ fn encode_literal_value<'py>(
 
 #[pymethods]
 impl PyLiteralExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.value)?;
+        Ok(())
+    }
+
     /// Create the literal of `value`: a `bool`, an `int`, a `float`, a
     /// finite non-negative `decimal.Decimal`, or a `str` of ASCII digits
     /// with at most one decimal point, normalized.
@@ -1652,6 +1717,18 @@ impl_public_class!(PyPiecewiseExpression, "PiecewiseExpression");
 
 #[pymethods]
 impl PyPiecewiseExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.conditions)?;
+        visit.call(&self.values)?;
+        visit.call(&self.otherwise)?;
+        Ok(())
+    }
+
     /// Create the piecewise of the cases pairing the iterables `conditions`
     /// and `values` by position, and the fallback `otherwise`.
     ///
@@ -1848,6 +1925,17 @@ impl_public_class!(PyCallExpression, "CallExpression");
 
 #[pymethods]
 impl PyCallExpression {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.function_name)?;
+        visit.call(&self.arguments)?;
+        Ok(())
+    }
+
     /// Create the call of the function named `function_name` with the
     /// iterable of expressions `arguments`.
     ///

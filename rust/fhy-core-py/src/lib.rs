@@ -13,6 +13,7 @@ mod diagnostic;
 mod error;
 mod expression;
 mod frozen;
+mod gc;
 mod identifier;
 mod interned;
 mod lattice;

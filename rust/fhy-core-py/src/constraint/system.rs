@@ -16,6 +16,7 @@ use fhy_core::foreign::Part;
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyFrozenSet, PyList, PyTuple, PyType};
 
@@ -30,6 +31,7 @@ use fhy_core::term::AlphaRenaming;
 
 use crate::expression::{PyExpression, registry_snapshot};
 use crate::frozen::build_frozen_mutation_error;
+use crate::gc::{Slots, collect_slots};
 use crate::serialization::{
     FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
 };
@@ -200,6 +202,9 @@ pub(crate) struct PyConstraintSystem {
     core: ConstraintSystem,
     /// The members' Python objects, in canonical order.
     constraints: Py<PyTuple>,
+    /// The slots of the Python-defined members' adapters, which the system
+    /// owns (R2-003).
+    slots: Slots,
 }
 
 impl PyConstraintSystem {
@@ -278,6 +283,16 @@ fn read_members<'py>(
 
 #[pymethods]
 impl PyConstraintSystem {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.constraints)?;
+        self.slots.traverse(&visit)
+    }
+
     /// Create the system of `constraints`, an iterable of `Constraint`s,
     /// sorted by their ordering keys, duplicates kept.
     ///
@@ -285,10 +300,12 @@ impl PyConstraintSystem {
     #[new]
     #[pyo3(signature = (constraints))]
     fn new(constraints: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let (core, objects) = read_members(constraints)?;
+        let (members, slots) = collect_slots(|| read_members(constraints));
+        let (core, objects) = members?;
         Ok(Self {
             core,
             constraints: objects.unbind(),
+            slots,
         })
     }
 

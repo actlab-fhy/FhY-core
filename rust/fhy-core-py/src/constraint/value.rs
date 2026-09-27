@@ -35,6 +35,7 @@ use fhy_core::constraint::{Member, MemberKind, OpaqueValue, Value};
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
+use crate::gc::Slot;
 
 thread_local! {
     /// The first exception an opaque value's `==` raised during the current
@@ -185,9 +186,12 @@ fn type_text(value: &Bound<'_, PyAny>) -> String {
 }
 
 /// A Python object as a core opaque value.
+///
+/// The object and its class are kept in [`Slot`]s, which the object whose construction
+/// made the adapter owns and traverses (R2-003).
 pub(crate) struct PyOpaqueValue {
-    object: Py<PyAny>,
-    class: Py<PyType>,
+    object: Slot,
+    class: Slot,
     type_name: String,
     is_member_shaped: bool,
     /// The ordering key, computed when a member is read, or on first use.
@@ -199,8 +203,8 @@ impl PyOpaqueValue {
     /// ordering key when it is known.
     fn new(object: &Bound<'_, PyAny>, is_member_shaped: bool, key: Option<String>) -> Self {
         Self {
-            object: object.clone().unbind(),
-            class: object.get_type().unbind(),
+            object: Slot::new(object.clone().unbind()),
+            class: Slot::new(object.get_type().into_any().unbind()),
             type_name: type_name(object),
             is_member_shaped,
             key: key.map_or_else(OnceLock::new, OnceLock::from),
@@ -208,8 +212,8 @@ impl PyOpaqueValue {
     }
 
     /// Return the Python object.
-    pub(crate) fn object(&self) -> &Py<PyAny> {
-        &self.object
+    pub(crate) fn object<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        self.object.get(py)
     }
 }
 
@@ -247,7 +251,7 @@ impl ForeignPart for PyOpaqueValue {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, false)
+        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), false))
     }
 }
 
@@ -268,10 +272,10 @@ impl OpaqueValue for PyOpaqueValue {
             return false;
         }
         Python::attach(|py| {
-            if !self.class.bind(py).is(other.class.bind(py)) {
+            if !self.class.get(py).is(other.class.get(py)) {
                 return false;
             }
-            match self.object.bind(py).eq(other.object.bind(py)) {
+            match self.object.get(py).eq(other.object.get(py)) {
                 Ok(is_equal) => is_equal,
                 Err(error) => {
                     record_pending_error(error);
@@ -282,7 +286,7 @@ impl OpaqueValue for PyOpaqueValue {
     }
 
     fn check_hashable(&self) -> Result<(), BoxError> {
-        Python::attach(|py| self.object.bind(py).hash().map(|_hash| ()))
+        Python::attach(|py| self.object.get(py).hash().map(|_hash| ()))
             .map_err(|error| Box::new(error) as BoxError)
     }
 
@@ -290,7 +294,7 @@ impl OpaqueValue for PyOpaqueValue {
     /// keep it; a key that raises is the error, and is not kept.
     fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
         cached_key(&self.key, || {
-            Python::attach(|py| build_ordering_key(self.object.bind(py)))
+            Python::attach(|py| build_ordering_key(&self.object.get(py)))
         })
         .map_err(|error| Box::new(error) as BoxError)
     }
@@ -307,12 +311,12 @@ impl OpaqueValue for PyOpaqueValue {
             return Ok(None);
         }
         Python::attach(|py| {
-            let (left, right) = (self.object.bind(py), other.object.bind(py));
-            let ordering = left.lt(right).and_then(|is_less| {
+            let (left, right) = (self.object.get(py), other.object.get(py));
+            let ordering = left.lt(&right).and_then(|is_less| {
                 if is_less {
                     Ok(Ordering::Less)
                 } else {
-                    right.lt(left).map(|is_greater| {
+                    right.lt(&left).map(|is_greater| {
                         if is_greater {
                             Ordering::Greater
                         } else {
@@ -439,7 +443,7 @@ fn value_to_python_at<'py>(
             .get()
             .as_any()
             .downcast_ref::<PyOpaqueValue>()
-            .map(|value| value.object().bind(py).clone())
+            .map(|value| value.object(py))
             .ok_or_else(|| PyTypeError::new_err("an opaque value has no Python object")),
         _ => Err(PyTypeError::new_err(format!(
             "a value of an unknown kind has no Python form: {value:?}"
@@ -681,7 +685,7 @@ pub(crate) fn member_to_python<'py>(
             .get()
             .as_any()
             .downcast_ref::<PyOpaqueValue>()
-            .map(|value| value.object().bind(py).clone())
+            .map(|value| value.object(py))
             .ok_or_else(|| PyTypeError::new_err("an opaque member has no Python object")),
     }
 }

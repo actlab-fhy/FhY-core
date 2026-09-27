@@ -120,8 +120,8 @@ onto `dev-rust` before continuing.
 - [x] R2-041 (F2-041): diagnostics read through their report (`b966131`)
 - [x] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members (`cd51fde`)
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed; no rebase needed)
-- [x] R2-013c (F2-013, binding readers): depth limits in the dict and member readers
-- [ ] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot
+- [x] R2-013c (F2-013, binding readers): depth limits in the dict and member readers (`5e7cca2`)
+- [x] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot
 - [ ] `[rebase]` onto `dev-rust` after Tracks D, B and C land
 - [ ] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes
 - [ ] R2-031 (F2-031): one `ScopedStack` guard for all six thread-local stacks
@@ -4392,3 +4392,96 @@ The other Python gates are Track D's status line, on the same code.
   |---|---|---|
   | a V2 payload dict nested 30,000 levels crashed the interpreter | `DeserializationValueError` ("the payload nests more than 128 levels") | `test_a_deep_payload_dict_raises_instead_of_crashing` (subprocess), `test_a_payload_dict_128_levels_deep_is_read` |
   | an `InSetConstraint` member, or a bound value, nested 20,000 levels crashed the interpreter | `RecursionError` past the recursion limit | `test_a_deep_member_raises_recursion_error` (subprocess) |
+
+**R2-003.**
+- **The rule every traversal keeps:** the cycle collector subtracts one
+  visit per reference, so each strong reference is visited at most once, by
+  the object that holds it. Visiting a reference twice could free an object
+  still referenced from outside the cycle (an unsound collection), while
+  not visiting it only keeps a cycle alive, as every Rust-held reference did
+  before. `rust/fhy-core-py/src/gc.rs` (new) holds the helpers and states
+  the rules.
+- **Fields.** Every exported class that holds Python objects has
+  `__traverse__` (the flag test lists the exceptions with a reason each: the
+  classes that hold no object, and three whose only objects are names,
+  identifiers or the SymPy module, read through a `PyOnceLock`, which cannot
+  be read without the interpreter). A field behind a `Mutex` is visited
+  under `try_lock` and skipped when locked; an `Arc` shared with another
+  holder (a symbol-table entry another table shares, a renaming's object
+  chain, a pass hook's frame while the hook runs) is visited only when this
+  handle is the only one.
+- **Slots (call: a designated owner, not a shared visit).** A Python object
+  inside a Rust closure or a core trait object is held in a `Slot`: the
+  rewrite rule's rewrite and guards, a `PredicatePattern`'s predicate, a
+  `Solver`'s Python `SmtSolver` and `Simplifier`, and the five adapters of
+  Python-defined parts in core `Part`s (opaque values, custom constraints,
+  custom domains, type and data-type extensions). A core value can be shared
+  by any number of objects, so a slot is visited only by the object whose
+  construction made it: constructions run inside `collect_slots`, a
+  thread-local collection, and keep the slots made in them in a `Slots`
+  field. A slot made outside any collection has no owner and costs nothing
+  (it holds the object directly). The owners now: `RewriteRule`,
+  `PredicatePattern`, `Solver`, `Param` (its domain's adapter and the
+  implied constraints'), `InSetConstraint`/`NotInSetConstraint` (opaque
+  members), `ConstraintSystem` (Python-defined members) and
+  `NumericalType` (a Python-defined data type). The owners in Track B's and
+  C's binding files (the finite domains' opaque members, the environment's
+  and the checker's Python-defined types) are left for the final sweep
+  after the last rebase; until then those slots have no owner, which only
+  keeps such a cycle alive.
+- **Deviation from the spec's slot shape.** The spec's slot is an
+  `Arc<Mutex<Option<Py<PyAny>>>>` that the owner "traverses and clears".
+  A slot here is never cleared: its object may still be used by a core
+  value another, reachable object shares, and emptying it would break that
+  object. So it needs neither the `Option` nor the lock, and the owned form
+  is an `Arc<Py<PyAny>>`. Every cycle through a slot also runs through a
+  Python object (the callback function, the instance with its `__dict__`)
+  whose own `tp_clear` breaks it; the tests' cycles are all collected this
+  way.
+- **Clearing.** `__clear__` empties only what its object alone holds: the
+  lattice's and poset's elements (reset to empty), the symbol table's
+  entries and dicts, the pass group's passes, the pass manager's items and
+  verifier, the validation manager's validators and a pass's recorded
+  diagnostics. The frozen classes' plain fields cannot be emptied; their
+  cycles are broken by the Python objects in them.
+- **Test-first.** `tests/test_gc_cycles.py` (new): the plain Python control
+  cycle, and cycles through a pass and its manager, a rewrite callback and
+  its rule list, a guard and its rule, a simplifier and its solver, an
+  element and its poset or lattice, a Python-defined frame and its symbol
+  table, a Python-defined domain and its param, and a native function and
+  its implementation. All ten failed at the base, as did the flag check,
+  which then listed every class; the control passed. `gc.rs` has three unit
+  tests (a nested collection, an unowned slot, a panicking collection).
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | no extension class had `Py_TPFLAGS_HAVE_GC`, and a cycle through one leaked for the process's life | the classes that hold objects take part in GC; the cycles above are freed by `gc.collect()` | `tests/test_gc_cycles.py` |
+- **Stress.** The binding suites (3,678 tests) pass with
+  `gc.set_threshold(20, 2, 2)`, so the collector traverses every new object
+  many times over.
+- **Benchmarks** (§I.8.3's files for E, and `test_constraint.py` and
+  `test_param.py`, since the adapters changed; 241 rows, the base's
+  `target/base-src` build against the head, interleaved, best of three
+  medians): the median row moved by +0.9%. The first full run had the
+  opaque-value rows up to +38% (`test_param_is_value_valid[serializable]`),
+  from two slot allocations per converted value; an unowned slot now holds
+  its object directly, with no allocation and no lock, and those rows are
+  back within noise. **Flagged for the maintainer, GC tracking's cost on
+  small constructions** (rows re-measured in five interleaved rounds of
+  20,000 iterations): `test_numerical_type_construction[scalar]` 0.22 to
+  0.35 us, `test_import_frame_construction` 0.19 to 0.31 us,
+  `test_rewrite_rule_construction` 0.58 to 0.76 us,
+  `test_set_constraint_construction` +5% to +15%, the binary-operator
+  construction rows +7% to +39% (0.33 to 0.47 us at worst); the other
+  rows of those files are within 10%. A `timeit` of the first two with 40
+  repeats on a quieter machine gives about +3% for the frame and +12% for
+  the numerical type, with and without `gc.disable()`: the cost is the
+  tracked allocation (PyO3 allocates a GC object with its header and links
+  it), not collections. The machine was shared with Tracks B and C
+  throughout, and sub-microsecond rows moved by up to 80% between runs
+  (`test_identifier_eq`, which runs no extension code, is one), so the
+  flagged numbers are an upper bound. The spec expected this cost; exempting
+  the immutable expression nodes from tracking would recover the
+  binary-operator rows, and is the maintainer's call (a cycle through one
+  needs a user object in a literal or an attribute set on an `Identifier`).

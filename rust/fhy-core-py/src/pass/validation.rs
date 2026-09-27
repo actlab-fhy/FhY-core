@@ -15,6 +15,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{DiagnosticLevel, Note};
@@ -285,6 +286,23 @@ impl PyValidationManager {
 
 #[pymethods]
 impl PyValidationManager {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        crate::gc::traverse_locked(&self.validators, |validators| {
+            crate::gc::traverse_all(&visit, validators)
+        })
+    }
+
+    /// Drop what only this object holds, for the cycle collector.
+    fn __clear__(&self) {
+        crate::gc::clear_locked(&self.validators);
+    }
+
     /// Create the empty validation pipeline `name`, by default an
     /// identifier named `validation-pipeline`.
     ///

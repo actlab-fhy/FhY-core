@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::PyMapping;
 
@@ -23,6 +24,7 @@ use fhy_core::solver::{
 };
 
 use crate::expression::{PyExpression, materialize_substituted, registry_snapshot};
+use crate::gc::{Slots, collect_slots};
 use fhy_core::tree::NodeHandle;
 
 use crate::identifier::{read_identifier_id, restore_identifier};
@@ -140,6 +142,9 @@ pub(crate) struct PySolver {
     solver: Solver,
     smt_solver: Option<Py<PyAny>>,
     simplifier: Option<Py<PyAny>>,
+    /// The slots the Python backends' adapters read their objects from,
+    /// which this solver owns (R2-003).
+    slots: Slots,
 }
 
 impl PySolver {
@@ -232,6 +237,17 @@ impl PySolver {
 
 #[pymethods]
 impl PySolver {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(self.smt_solver.as_ref())?;
+        visit.call(self.simplifier.as_ref())?;
+        self.slots.traverse(&visit)
+    }
+
     /// Create the solver answering the logical questions with
     /// `smt_solver`, an `SmtSolver`, and simplification with `simplifier`,
     /// a `Simplifier`; either may be `None`.
@@ -245,17 +261,21 @@ impl PySolver {
     ) -> PyResult<Self> {
         let smt_solver = smt_solver.filter(|backend| !backend.is_none());
         let simplifier = simplifier.filter(|backend| !backend.is_none());
-        let mut solver = Solver::new();
-        if let Some(backend) = smt_solver {
-            solver = solver.with_shared_smt_solver(build_smt_solver(backend)?);
-        }
-        if let Some(backend) = simplifier {
-            solver = solver.with_shared_simplifier(build_simplifier(backend)?);
-        }
+        let (solver, slots) = collect_slots(|| -> PyResult<Solver> {
+            let mut solver = Solver::new();
+            if let Some(backend) = smt_solver {
+                solver = solver.with_shared_smt_solver(build_smt_solver(backend)?);
+            }
+            if let Some(backend) = simplifier {
+                solver = solver.with_shared_simplifier(build_simplifier(backend)?);
+            }
+            Ok(solver)
+        });
         Ok(Self {
-            solver,
+            solver: solver?,
             smt_solver: smt_solver.map(|backend| backend.clone().unbind()),
             simplifier: simplifier.map(|backend| backend.clone().unbind()),
+            slots,
         })
     }
 

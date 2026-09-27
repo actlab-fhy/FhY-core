@@ -10,6 +10,7 @@
 
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyInt, PyString, PyTuple, PyType};
 
 use crate::dataclass::{
@@ -62,6 +63,12 @@ macro_rules! define_record_class {
         #[pymethods]
         impl $class {
             $($methods)*
+
+            /// Visit the fields, for the cycle collector (R2-003).
+            fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+                $( visit.call(&self.$field)?; )+
+                Ok(())
+            }
 
             /// Always true: records are immutable.
             #[getter]

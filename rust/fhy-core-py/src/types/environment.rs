@@ -13,6 +13,7 @@ use std::sync::{Mutex, OnceLock};
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyMapping, PyTuple, PyType};
 
@@ -446,6 +447,27 @@ fn read_table(
 
 #[pymethods]
 impl PyTypeUnificationEnvironment {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for table in [
+            &self.objects.data_types,
+            &self.objects.types,
+            &self.objects.expressions,
+        ] {
+            for (identifier, value) in table.values() {
+                visit.call(identifier)?;
+                visit.call(value)?;
+            }
+        }
+        self.views
+            .iter()
+            .try_for_each(|view| visit.call(view.get()))
+    }
+
     /// Create the environment of the mappings `data_type_bindings`,
     /// `type_bindings` and `expression_bindings`, each from `Identifier`s
     /// to data types, types and expressions; a table not given is empty.

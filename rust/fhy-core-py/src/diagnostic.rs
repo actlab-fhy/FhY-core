@@ -20,6 +20,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
@@ -188,6 +189,17 @@ impl PyNote {
 
 #[pymethods]
 impl PyNote {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.message)?;
+        visit.call(&self.kind)?;
+        Ok(())
+    }
+
     /// Create the note carrying `message` in the role `kind`, by default
     /// the uncategorized kind.
     ///
@@ -348,6 +360,19 @@ impl PyDiagnostic {
 
 #[pymethods]
 impl PyDiagnostic {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.level)?;
+        visit.call(&self.message)?;
+        visit.call(&self.source)?;
+        visit.call(&self.detail)?;
+        Ok(())
+    }
+
     /// Create the diagnostic `message` emitted by `source` at `level`, with
     /// optional `detail`.
     ///
@@ -626,6 +651,17 @@ pub(crate) fn report_to_python<'py>(
 
 #[pymethods]
 impl PyValidationReport {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.diagnostics)?;
+        visit.call(&self.records)?;
+        Ok(())
+    }
+
     /// Create the report of `diagnostics` and `records`, each an iterable,
     /// by default empty.
     ///

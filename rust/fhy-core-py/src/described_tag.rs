@@ -167,6 +167,16 @@ macro_rules! define_described_tag_class {
 
         #[pymethods]
         impl $class {
+            /// Visit the name and description, for the cycle collector
+            /// (R2-003).
+            fn __traverse__(
+                &self,
+                visit: ::pyo3::pyclass::PyVisit<'_>,
+            ) -> Result<(), ::pyo3::pyclass::PyTraverseError> {
+                visit.call(&self.name)?;
+                visit.call(&self.description)
+            }
+
             /// Build an instance from a seed the binding created.
             #[new]
             fn new(seed: &Bound<'_, $seed>) -> Self {

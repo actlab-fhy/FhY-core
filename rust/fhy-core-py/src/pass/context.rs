@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::PyType;
 
 use fhy_core::pass::{AnalysisId, DetachedAnalyses};
@@ -323,6 +324,22 @@ pub(crate) struct PyAnalysisManager {
 
 #[pymethods]
 impl PyAnalysisManager {
+    /// Visit the diagnostics the hook reported, once the frame is this
+    /// object's alone, for the cycle collector (R2-003): while the hook runs,
+    /// the run holds the frame too.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if Arc::strong_count(&self.frame) != 1 {
+            return Ok(());
+        }
+        crate::gc::traverse_locked(&self.frame.state, |state| {
+            crate::gc::traverse_all(&visit, &state.reported)
+        })
+    }
+
     /// Return the result of the analysis `analysis_type` for `ir`, cached
     /// per node for the run when `ir` is a frozen `Frozen` object.
     ///

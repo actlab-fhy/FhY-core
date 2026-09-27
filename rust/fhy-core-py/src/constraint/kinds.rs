@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{
     PyBool, PyByteArray, PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PyString,
@@ -34,6 +35,7 @@ use crate::expression::{
     registry_snapshot,
 };
 use crate::frozen::build_frozen_mutation_error;
+use crate::gc::{Slots, collect_slots};
 use crate::identifier::{deserialize_identifier, read_identifier_id, restore_identifier};
 use crate::serialization::{
     FieldShape, construct_from_decoded_fields, deserialization_value_error_class,
@@ -208,6 +210,16 @@ pub(crate) struct PyEquationConstraint {
 
 #[pymethods]
 impl PyEquationConstraint {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.expression)?;
+        Ok(())
+    }
+
     /// Create the constraint that `expression`, an `Expression`, holds.
     ///
     /// Raises `ConstraintError` for another value.
@@ -428,6 +440,9 @@ struct SetState {
     core: SetConstraint,
     variable: Py<PyAny>,
     values: Py<PyTuple>,
+    /// The slots of the opaque members' adapters, which the constraint
+    /// owns (R2-003).
+    slots: Slots,
 }
 
 impl SetState {
@@ -453,7 +468,8 @@ impl SetState {
             ));
         }
         let identifier = restore_identifier(variable, class_name, "variable")?;
-        let members = read_member_collection(values)?;
+        let (members, slots) = collect_slots(|| read_member_collection(values));
+        let members = members?;
         let objects = members
             .iter()
             .map(|member| member_to_python(py, member))
@@ -462,7 +478,15 @@ impl SetState {
             core: SetConstraint::new(identifier, members, polarity),
             variable: variable.clone().unbind(),
             values: PyTuple::new(py, objects)?.unbind(),
+            slots,
         })
+    }
+
+    /// Visit the Python objects, for the cycle collector (R2-003).
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.variable)?;
+        visit.call(&self.values)?;
+        self.slots.traverse(visit)
     }
 
     /// Decide the constraint under the Python `bindings`, as the object
@@ -703,6 +727,11 @@ macro_rules! set_constraint_class {
 
         #[pymethods]
         impl $class {
+            /// Visit the Python objects, for the cycle collector (R2-003).
+            fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+                self.state.traverse(&visit)
+            }
+
             /// Create the constraint on `variable`, an `Identifier`, and
             /// the members `values`.
             ///

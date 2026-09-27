@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyTuple, PyType};
 
 use fhy_core::expression::pattern::{Capture, MatchBindings};
@@ -95,6 +96,16 @@ impl PyMatchBindings {
 
 #[pymethods]
 impl PyMatchBindings {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.entries)?;
+        Ok(())
+    }
+
     /// Create bindings that bind no capture.
     ///
     /// Raises `TypeError` if an argument is given: only a match produces

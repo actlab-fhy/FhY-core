@@ -43,6 +43,7 @@ use fhy_core::types::{
 
 use super::convert;
 use super::environment::PyTypeUnificationEnvironment;
+use crate::gc::Slot;
 
 /// The Python objects of the values a call has seen, by the values' Rust
 /// identity.
@@ -219,9 +220,9 @@ fn build_result_type_error(
 }
 
 /// Return `str(object)`, or the class name if that raises.
-fn write_object(f: &mut fmt::Formatter<'_>, object: &Py<PyAny>) -> fmt::Result {
+fn write_object(f: &mut fmt::Formatter<'_>, object: &Slot) -> fmt::Result {
     let text = Python::attach(|py| {
-        let object = object.bind(py);
+        let object = object.get(py);
         object
             .str()
             .map(|text| text.to_string())
@@ -232,10 +233,10 @@ fn write_object(f: &mut fmt::Formatter<'_>, object: &Py<PyAny>) -> fmt::Result {
 }
 
 /// Return `type(object).__name__`.
-fn class_name(object: &Py<PyAny>) -> Cow<'static, str> {
+fn class_name(object: &Slot) -> Cow<'static, str> {
     Python::attach(|py| {
         object
-            .bind(py)
+            .get(py)
             .get_type()
             .name()
             .map_or_else(|_| Cow::Borrowed("?"), |name| Cow::Owned(name.to_string()))
@@ -244,17 +245,17 @@ fn class_name(object: &Py<PyAny>) -> Cow<'static, str> {
 
 /// Return whether the objects `left` and `right` are `==`, keeping an
 /// exception in the context.
-fn objects_equal(left: &Py<PyAny>, right: &Py<PyAny>) -> bool {
+fn objects_equal(left: &Slot, right: &Slot) -> bool {
     Python::attach(|py| {
-        let (left, right) = (left.bind(py), right.bind(py));
-        if left.is(right) {
+        let (left, right) = (left.get(py), right.get(py));
+        if left.is(&right) {
             return true;
         }
         let context = current_context();
         if context.has_failed() {
             return false;
         }
-        left.eq(right).unwrap_or_else(|error| {
+        left.eq(&right).unwrap_or_else(|error| {
             context.fail(error);
             false
         })
@@ -262,10 +263,10 @@ fn objects_equal(left: &Py<PyAny>, right: &Py<PyAny>) -> bool {
 }
 
 /// Feed `hash(object)` to `state`, keeping an exception in the context.
-fn hash_object(object: &Py<PyAny>, state: &mut dyn Hasher) {
+fn hash_object(object: &Slot, state: &mut dyn Hasher) {
     Python::attach(|py| {
         let context = current_context();
-        match object.bind(py).hash() {
+        match object.get(py).hash() {
             Ok(hash) => state.write_isize(hash),
             Err(error) => context.fail(error),
         }
@@ -278,19 +279,24 @@ fn hash_object(object: &Py<PyAny>, state: &mut dyn Hasher) {
 
 /// A Python-defined `Type` as a core type extension.
 #[derive(Debug)]
+///
+/// The object is kept in a [`Slot`], which the object whose construction
+/// made the adapter owns and traverses (R2-003).
 pub(crate) struct PyTypeAdapter {
-    object: Py<PyAny>,
+    object: Slot,
 }
 
 impl PyTypeAdapter {
     /// Return the adapter over `object`.
     pub(crate) fn new(object: Py<PyAny>) -> Self {
-        Self { object }
+        Self {
+            object: Slot::new(object),
+        }
     }
 
     /// Return the Python object.
-    pub(crate) fn object(&self) -> &Py<PyAny> {
-        &self.object
+    pub(crate) fn object<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        self.object.get(py)
     }
 }
 
@@ -306,7 +312,7 @@ impl ForeignPart for PyTypeAdapter {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, true)
+        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
     }
 }
 
@@ -320,7 +326,7 @@ impl TypeExtension for PyTypeAdapter {
             if context.has_failed() {
                 return Ok(false);
             }
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) = user_handler(object, Hook::IsStructurallyEquivalent)? else {
                 return Ok(false);
             };
@@ -349,7 +355,7 @@ impl TypeExtension for PyTypeAdapter {
     ) -> Result<TypeUnificationEnvironment, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) =
                 user_handler(object, Hook::BindTemplate).map_err(extension_error)?
             else {
@@ -379,7 +385,7 @@ impl TypeExtension for PyTypeAdapter {
     ) -> Result<Type, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) =
                 user_handler(object, Hook::SubstituteTemplate).map_err(extension_error)?
             else {
@@ -404,7 +410,7 @@ impl TypeExtension for PyTypeAdapter {
     ) -> Result<(Type, TypeUnificationEnvironment), UnificationError> {
         Python::attach(|py| {
             let context = current_context();
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) = user_handler(object, Hook::Unify).map_err(extension_error)? else {
                 return default_unify(this, actual, environment);
             };
@@ -441,19 +447,24 @@ impl TypeExtension for PyTypeAdapter {
 
 /// A Python-defined `DataType` as a core data-type extension.
 #[derive(Debug)]
+///
+/// The object is kept in a [`Slot`], which the object whose construction
+/// made the adapter owns and traverses (R2-003).
 pub(crate) struct PyDataTypeAdapter {
-    object: Py<PyAny>,
+    object: Slot,
 }
 
 impl PyDataTypeAdapter {
     /// Return the adapter over `object`.
     pub(crate) fn new(object: Py<PyAny>) -> Self {
-        Self { object }
+        Self {
+            object: Slot::new(object),
+        }
     }
 
     /// Return the Python object.
-    pub(crate) fn object(&self) -> &Py<PyAny> {
-        &self.object
+    pub(crate) fn object<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        self.object.get(py)
     }
 }
 
@@ -469,7 +480,7 @@ impl ForeignPart for PyDataTypeAdapter {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, true)
+        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
     }
 }
 
@@ -483,7 +494,7 @@ impl DataTypeExtension for PyDataTypeAdapter {
             if context.has_failed() {
                 return Ok(false);
             }
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) = user_handler(object, Hook::IsStructurallyEquivalent)? else {
                 return Ok(false);
             };
@@ -512,7 +523,7 @@ impl DataTypeExtension for PyDataTypeAdapter {
     ) -> Result<TypeUnificationEnvironment, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) =
                 user_handler(object, Hook::BindDataTemplate).map_err(extension_error)?
             else {
@@ -542,7 +553,7 @@ impl DataTypeExtension for PyDataTypeAdapter {
     ) -> Result<DataType, UnificationError> {
         Python::attach(|py| {
             let context = current_context();
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let Some(handler) =
                 user_handler(object, Hook::SubstituteDataTemplate).map_err(extension_error)?
             else {

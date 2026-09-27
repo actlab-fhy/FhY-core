@@ -15,6 +15,7 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyList, PyMapping, PyTuple, PyType};
 
@@ -71,6 +72,25 @@ impl ObjectTable {
             node = current.parent.0.as_deref();
         }
         None
+    }
+}
+
+impl ObjectTable {
+    /// Visit the objects of the nodes this table alone holds (R2-003).
+    ///
+    /// The chain is shared between renamings, and a reference must be
+    /// visited at most once, so the walk stops at the first node another
+    /// table or node holds too.
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        let mut node = self.0.as_ref();
+        while let Some(current) = node {
+            if Arc::strong_count(current) != 1 {
+                break;
+            }
+            crate::gc::traverse_all(visit, current.objects.values())?;
+            node = current.parent.0.as_ref();
+        }
+        Ok(())
     }
 }
 
@@ -324,6 +344,16 @@ impl PyAlphaRenaming {
 
 #[pymethods]
 impl PyAlphaRenaming {
+    /// Visit the identifier objects the renaming alone holds, for the cycle
+    /// collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.value.objects.traverse(&visit)
+    }
+
     /// Return the renaming with no binder frame and no free renaming, one
     /// shared object.
     #[classmethod]

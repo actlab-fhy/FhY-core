@@ -12,6 +12,7 @@
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple, PyType};
 
@@ -475,6 +476,20 @@ impl PyRegisteredFunction {
 }
 
 impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.parameters)?;
+        visit.call(&self.parameter_sorts)?;
+        visit.call(&self.result_sort)?;
+        visit.call(&self.body)?;
+        Ok(())
+    }
+
     /// Create the function `name` of the identifiers `parameters`, whose
     /// sorts are `parameter_sorts` in order, returning `result_sort`, as the
     /// expression `body`.
@@ -723,6 +738,19 @@ impl PyNativeFunction {
 }
 
 impl_entry_protocols!(PyNativeFunction, "NativeFunction", {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.parameter_sorts)?;
+        visit.call(&self.result_sort)?;
+        visit.call(&self.implementation)?;
+        Ok(())
+    }
+
     /// Create the function `name` taking arguments of `parameter_sorts`, in
     /// order, returning `result_sort`, computed by the callable
     /// `implementation`.
@@ -915,6 +943,18 @@ impl PyNativeConstant {
 }
 
 impl_entry_protocols!(PyNativeConstant, "NativeConstant", {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.sort)?;
+        visit.call(&self.value)?;
+        Ok(())
+    }
+
     /// Create the constant `name` of the sort `sort` holding `value`.
     ///
     /// Raises `TypeError` for an argument of the wrong type, a value that is

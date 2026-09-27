@@ -457,7 +457,14 @@ such call runs.
 Slice S17 reuses that slot for the exception a Python-defined part's
 serialization hook raises while the core serializes or resolves it
 (`rust/fhy-core-py/src/wire.rs`); the wire version is a Python context
-variable, not Rust state. Tests never clear a
+variable, not Rust state. R2-003 of `docs/design/rust-port-fixes.md` adds a
+thread-local stack of slot collections (`rust/fhy-core-py/src/gc.rs`): a
+Python object the binding keeps inside a Rust closure or a core trait
+object, where the cycle collector cannot see it, is held in a `Slot`, and
+the construction that makes it runs inside `collect_slots`, so the object
+it builds owns the slot and its `__traverse__` visits it, at most once
+however the core shares the value; a collection lives only for its
+construction, so the stack is empty whenever none runs. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default

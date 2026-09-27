@@ -19,6 +19,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
@@ -602,6 +603,22 @@ impl PyCompilerPassBase {
 
 #[pymethods]
 impl PyCompilerPassBase {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        crate::gc::traverse_locked(&self.diagnostics, |diagnostics| {
+            crate::gc::traverse_all(&visit, diagnostics)
+        })
+    }
+
+    /// Drop what only this object holds, for the cycle collector.
+    fn __clear__(&self) {
+        crate::gc::clear_locked(&self.diagnostics);
+    }
+
     /// Accept any arguments, so a subclass's `__init__` takes its own.
     ///
     /// Raises `TypeError` for arguments a subclass without an `__init__`

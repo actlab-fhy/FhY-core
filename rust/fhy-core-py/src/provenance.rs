@@ -21,6 +21,7 @@ use pyo3::exceptions::{PyOverflowError, PyRecursionError, PyTypeError, PyValueEr
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyInt, PyList, PyString, PyTuple, PyType};
 
@@ -306,6 +307,17 @@ impl PyPosition {
 
 #[pymethods]
 impl PyPosition {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.line)?;
+        visit.call(&self.column)?;
+        Ok(())
+    }
+
     /// Create the position at `line` and `column`.
     ///
     /// Raises `TypeError` if either is not a strict `int`, `ValueError` if
@@ -527,6 +539,19 @@ impl PySpan {
 
 #[pymethods]
 impl PySpan {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.start_offset)?;
+        visit.call(&self.end_offset)?;
+        visit.call(&self.start_position)?;
+        visit.call(&self.end_position)?;
+        Ok(())
+    }
+
     /// Create the span with the given bounds, each optional.
     ///
     /// Checks the arguments in the Python implementation's order, raising
@@ -1205,6 +1230,17 @@ impl PyFileProvenance {
 
 #[pymethods]
 impl PyFileProvenance {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.file_path)?;
+        visit.call(&self.span)?;
+        Ok(())
+    }
+
     /// Create the provenance for `span`, if given, in the file at
     /// `file_path`, normalizing the path as `pathlib.PurePosixPath` does.
     ///
@@ -1348,6 +1384,17 @@ impl PyNamedProvenance {
 
 #[pymethods]
 impl PyNamedProvenance {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.child)?;
+        Ok(())
+    }
+
     /// Create the provenance naming `child` as `name`.
     ///
     /// Raises `TypeError` if `name` is not a `str` or `child` is not a
@@ -1478,6 +1525,17 @@ impl PyCallSiteProvenance {
 
 #[pymethods]
 impl PyCallSiteProvenance {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.callee)?;
+        visit.call(&self.caller)?;
+        Ok(())
+    }
+
     /// Create the provenance of a value from `callee` created at `caller`.
     ///
     /// Raises `TypeError` if either is not a `Provenance`.
@@ -1621,6 +1679,17 @@ impl PyFusedProvenance {
 
 #[pymethods]
 impl PyFusedProvenance {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.sources)?;
+        visit.call(&self.metadata)?;
+        Ok(())
+    }
+
     /// Create the fusion of `sources`, any iterable of provenances kept in
     /// order as given, labelled with `metadata` unless it is `None`.
     ///

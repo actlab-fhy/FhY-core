@@ -26,27 +26,32 @@ use crate::constraint::{
     value_to_python,
 };
 
+use crate::gc::Slot;
+
 use super::objects::{
     constraint_to_python, constraints_to_python, domain_to_python, identifier_object, read_domain,
     read_profile,
 };
 
 /// A Python-defined domain, driven through its methods.
+///
+/// The object is kept in a [`Slot`], which the object whose construction
+/// made the adapter owns and traverses (R2-003).
 pub(crate) struct PyCustomDomain {
-    object: Py<PyAny>,
+    object: Slot,
 }
 
 impl PyCustomDomain {
     /// Return the adapter of `object`.
     pub(super) fn new(object: &Bound<'_, PyAny>) -> Self {
         Self {
-            object: object.clone().unbind(),
+            object: Slot::new(object.clone().unbind()),
         }
     }
 
     /// Return the Python object.
-    pub(super) fn object(&self) -> &Py<PyAny> {
-        &self.object
+    pub(super) fn object<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        self.object.get(py)
     }
 
     /// Call `hook` under the interpreter, boxing its exception.
@@ -54,7 +59,7 @@ impl PyCustomDomain {
         &self,
         hook: impl FnOnce(Python<'_>, &Bound<'_, PyAny>) -> PyResult<T>,
     ) -> Result<T, BoxError> {
-        Python::attach(|py| hook(py, self.object.bind(py)))
+        Python::attach(|py| hook(py, &self.object.get(py)))
             .map_err(|error| Box::new(error) as BoxError)
     }
 }
@@ -127,11 +132,11 @@ fn read_symbol_type(
 
 impl ForeignPart for PyCustomDomain {
     fn type_name(&self) -> Cow<'_, str> {
-        Cow::Owned(Python::attach(|py| type_name(self.object.bind(py))))
+        Cow::Owned(Python::attach(|py| type_name(&self.object.get(py))))
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, true)
+        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
     }
 }
 
@@ -315,10 +320,10 @@ impl CustomDomain for PyCustomDomain {
         }
         Python::attach(|py| {
             self.object
-                .bind(py)
+                .get(py)
                 .call_method1(
                     intern!(py, "is_structurally_equivalent"),
-                    (other.object.bind(py),),
+                    (other.object.get(py),),
                 )
                 .and_then(|answer| answer.is_truthy())
                 .unwrap_or_else(|error| {

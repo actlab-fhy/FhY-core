@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyDict, PyEllipsis, PyInt, PyList, PyString, PyTuple, PyType};
 
 use fhy_core::expression::Expression;
@@ -385,6 +386,16 @@ impl PyPrimitiveDataType {
 
 #[pymethods]
 impl PyPrimitiveDataType {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.core_data_type)?;
+        Ok(())
+    }
+
     /// Always true: the built-in types are immutable.
     #[getter]
     fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
@@ -594,6 +605,16 @@ fn read_widths(widths: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Vec<u32>>> 
 
 #[pymethods]
 impl PyTemplateDataType {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.data_type)?;
+        Ok(())
+    }
+
     /// Always true: the built-in types are immutable.
     #[getter]
     fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
@@ -802,6 +823,9 @@ pub(crate) struct PyNumericalType {
     shape: Py<PyTuple>,
     value: NumericalType,
     hash: OnceLock<u64>,
+    /// The slot of a Python-defined data type's adapter, which the type
+    /// owns (R2-003).
+    slots: crate::gc::Slots,
 }
 
 impl_public_class!(PyNumericalType, "NumericalType");
@@ -825,6 +849,17 @@ impl PyNumericalType {
 
 #[pymethods]
 impl PyNumericalType {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.data_type)?;
+        visit.call(&self.shape)?;
+        self.slots.traverse(&visit)
+    }
+
     /// Always true: the built-in types are immutable.
     #[getter]
     fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
@@ -868,7 +903,8 @@ impl PyNumericalType {
         shape: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let py = data_type.py();
-        let Some(rust_data_type) = read_data_type_value(data_type) else {
+        let (rust_data_type, slots) = crate::gc::collect_slots(|| read_data_type_value(data_type));
+        let Some(rust_data_type) = rust_data_type else {
             return Err(build_argument_type_error(
                 "NumericalType",
                 "data_type",
@@ -900,6 +936,7 @@ impl PyNumericalType {
             shape: shape.unbind(),
             value: NumericalType::new(rust_data_type, dimensions),
             hash: OnceLock::new(),
+            slots,
         }))
     }
 
@@ -1097,6 +1134,18 @@ fn unit_stride(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
 
 #[pymethods]
 impl PyIndexType {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.lower_bound)?;
+        visit.call(&self.upper_bound)?;
+        visit.call(&self.stride)?;
+        Ok(())
+    }
+
     /// Always true: the built-in types are immutable.
     #[getter]
     fn is_frozen(_slf: &Bound<'_, Self>) -> bool {

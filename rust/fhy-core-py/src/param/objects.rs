@@ -51,7 +51,7 @@ pub(super) fn constraint_class_name(py: Python<'_>, constraint: &Constraint) -> 
             .downcast_ref::<PyCustomConstraint>()
             .map_or_else(
                 || "Constraint".to_owned(),
-                |custom| crate::constraint::type_name(custom.object().bind(py)),
+                |custom| crate::constraint::type_name(&custom.object(py)),
             ),
         _ => "Constraint".to_owned(),
     }
@@ -96,7 +96,7 @@ pub(crate) fn constraint_to_python<'py>(
             .get()
             .as_any()
             .downcast_ref::<PyCustomConstraint>()
-            .map(|custom| custom.object().bind(py).clone())
+            .map(|custom| custom.object(py))
             .ok_or_else(|| {
                 pyo3::exceptions::PyTypeError::new_err("a custom constraint has no Python object")
             }),
@@ -259,7 +259,7 @@ pub(crate) fn domain_to_python<'py>(
             .get()
             .as_any()
             .downcast_ref::<PyCustomDomain>()
-            .map(|custom| custom.object().bind(py).clone())
+            .map(|custom| custom.object(py))
             .ok_or_else(|| {
                 pyo3::exceptions::PyTypeError::new_err("a custom domain has no Python object")
             }),

@@ -220,7 +220,7 @@ pub(crate) fn data_type_to_python<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     if let DataType::Extension(extension) = data_type {
         if let Some(adapter) = extension.get().as_any().downcast_ref::<PyDataTypeAdapter>() {
-            return Ok(adapter.object().bind(py).clone());
+            return Ok(adapter.object(py));
         }
     }
     let found = find_known(py, &context.known.borrow().data_types, |candidate| {
@@ -269,7 +269,7 @@ pub(crate) fn type_to_python<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     if let Type::Extension(extension) = value {
         if let Some(adapter) = extension.get().as_any().downcast_ref::<PyTypeAdapter>() {
-            return Ok(adapter.object().bind(py).clone());
+            return Ok(adapter.object(py));
         }
     }
     let found = find_known(py, &context.known.borrow().types, |candidate| {

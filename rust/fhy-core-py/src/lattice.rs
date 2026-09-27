@@ -24,6 +24,7 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::boolean_struct::False;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
@@ -94,6 +95,12 @@ impl Elements {
             .iter()
             .map(|object| object.clone_ref(py))
             .collect()
+    }
+
+    /// Visit the positions `dict` and every element (R2-003).
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.positions)?;
+        crate::gc::traverse_all(visit, &self.objects)
     }
 
     /// Return the objects at `positions`, as a list.
@@ -437,6 +444,22 @@ impl Order for PyPartiallyOrderedSet {
 
 #[pymethods]
 impl PyPartiallyOrderedSet {
+    /// Visit the elements and their positions `dict`, for the cycle
+    /// collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.elements.traverse(&visit)
+    }
+
+    /// Drop the elements, for the cycle collector: the object is left
+    /// empty, a consistent state.
+    fn __clear__(&mut self, py: Python<'_>) {
+        *self = Self::empty(py);
+    }
+
     /// Create an empty set; arguments are accepted and ignored, so a
     /// subclass with its own `__init__` constructs.
     #[new]
@@ -651,6 +674,22 @@ fn diagnostic_class<'py>(py: Python<'py>, name: &'static str) -> PyResult<Bound<
 
 #[pymethods]
 impl PyLattice {
+    /// Visit the elements and their positions `dict`, for the cycle
+    /// collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.elements.traverse(&visit)
+    }
+
+    /// Drop the elements, for the cycle collector: the object is left
+    /// empty, a consistent state.
+    fn __clear__(&mut self, py: Python<'_>) {
+        *self = Self::empty(py);
+    }
+
     /// Create an empty lattice; arguments are accepted and ignored, so a
     /// subclass with its own `__init__` constructs.
     #[new]

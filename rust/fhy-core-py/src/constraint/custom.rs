@@ -29,6 +29,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
 
 use crate::expression::{PyExpression, materialize_expression};
+use crate::gc::Slot;
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::term::PyAlphaRenaming;
 
@@ -40,8 +41,11 @@ use super::value::{has_pending_error, record_pending_error, type_name, value_to_
 pub(crate) struct PythonBindings(pub(crate) Py<PyDict>);
 
 /// A Python-defined constraint, driven through its methods.
+///
+/// The object is kept in a [`Slot`], which the object whose construction
+/// made the adapter owns and traverses (R2-003).
 pub(crate) struct PyCustomConstraint {
-    object: Py<PyAny>,
+    object: Slot,
     key: String,
 }
 
@@ -67,14 +71,14 @@ impl PyCustomConstraint {
             .to_str()?
             .to_owned();
         Ok(Self {
-            object: object.clone().unbind(),
+            object: Slot::new(object.clone().unbind()),
             key,
         })
     }
 
     /// Return the Python object.
-    pub(crate) fn object(&self) -> &Py<PyAny> {
-        &self.object
+    pub(crate) fn object<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        self.object.get(py)
     }
 }
 
@@ -151,11 +155,11 @@ pub(crate) fn read_outcome(
 
 impl ForeignPart for PyCustomConstraint {
     fn type_name(&self) -> Cow<'_, str> {
-        Cow::Owned(Python::attach(|py| type_name(self.object.bind(py))))
+        Cow::Owned(Python::attach(|py| type_name(&self.object.get(py))))
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        crate::wire::foreign_of(&self.object, true)
+        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
     }
 }
 
@@ -167,7 +171,7 @@ impl CustomConstraint for PyCustomConstraint {
             return Ok(HashSet::new());
         }
         Python::attach(|py| -> PyResult<HashSet<Identifier>> {
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let identifiers = object.call_method0(intern!(py, "get_free_identifiers"))?;
             identifiers
                 .try_iter()?
@@ -185,7 +189,7 @@ impl CustomConstraint for PyCustomConstraint {
         _context: &ConstraintContext<'_>,
     ) -> Result<Outcome, BoxError> {
         Python::attach(|py| -> PyResult<Outcome> {
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let mapping = match bindings
                 .source()
                 .and_then(|source| source.downcast_ref::<PythonBindings>())
@@ -201,7 +205,7 @@ impl CustomConstraint for PyCustomConstraint {
 
     fn to_expression(&self) -> Result<Expression, BoxError> {
         Python::attach(|py| -> PyResult<Expression> {
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let expression = object.call_method0(intern!(py, "convert_to_expression"))?;
             expression
                 .cast::<PyExpression>()
@@ -234,10 +238,10 @@ impl CustomConstraint for PyCustomConstraint {
         }
         Python::attach(|py| {
             self.object
-                .bind(py)
+                .get(py)
                 .call_method1(
                     intern!(py, "is_structurally_equivalent"),
-                    (other.object.bind(py),),
+                    (other.object.get(py),),
                 )
                 .and_then(|answer| answer.is_truthy())
                 .unwrap_or_else(|error| {
@@ -263,9 +267,9 @@ impl CustomConstraint for PyCustomConstraint {
         Python::attach(|py| {
             renaming_to_python(py, renaming)
                 .and_then(|renaming| {
-                    self.object.bind(py).call_method1(
+                    self.object.get(py).call_method1(
                         intern!(py, "is_alpha_equivalent_under"),
-                        (other.object.bind(py), renaming),
+                        (other.object.get(py), renaming),
                     )
                 })
                 .and_then(|answer| answer.is_truthy())

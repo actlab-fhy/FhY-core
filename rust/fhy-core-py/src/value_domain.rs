@@ -18,6 +18,7 @@
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyString, PyType};
 
 use fhy_core::interned::{Canonical, Interned};
@@ -198,6 +199,18 @@ impl PyValueDomain {
 
 #[pymethods]
 impl PyValueDomain {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.name)?;
+        visit.call(&self.description)?;
+        visit.call(self.parent.as_ref())?;
+        Ok(())
+    }
+
     /// Build an instance from a seed the binding created.
     #[new]
     fn new(seed: &Bound<'_, ValueDomainSeed>) -> Self {

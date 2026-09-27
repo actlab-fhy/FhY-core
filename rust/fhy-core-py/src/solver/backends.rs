@@ -20,6 +20,7 @@ use std::time::Duration;
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::expression::Expression;
@@ -31,6 +32,7 @@ use fhy_core::solver::{
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use crate::expression::{PyExpression, materialize_expression, materialize_substituted};
+use crate::gc::Slot;
 use crate::pass::refuse_unused_arguments;
 
 use super::values::{PySatResult, PySmtScript};
@@ -173,8 +175,10 @@ impl PySimplifyContext {
 
 /// A Python `SmtSolver`, as a core backend: its `check` called with the
 /// script and the timeout.
+///
+/// The object is kept in a [`Slot`], which the solver owns (R2-003).
 pub(super) struct PythonSmtSolver {
-    object: Py<PyAny>,
+    object: Slot,
 }
 
 impl fmt::Debug for PythonSmtSolver {
@@ -185,7 +189,7 @@ impl fmt::Debug for PythonSmtSolver {
 
 impl SmtSolver for PythonSmtSolver {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Owned(Python::attach(|py| read_name(self.object.bind(py))))
+        Cow::Owned(Python::attach(|py| read_name(&self.object.get(py))))
     }
 
     /// Call the Python `check(script, *, timeout_milliseconds=...)`.
@@ -194,7 +198,7 @@ impl SmtSolver for PythonSmtSolver {
     /// `TypeError` for a result that is not a `SatResult`.
     fn check(&self, script: &SmtScript, limits: &CheckLimits) -> Result<SatResult, BoxError> {
         Python::attach(|py| -> PyResult<SatResult> {
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let script = Bound::new(py, PySmtScript::new(script.clone()))?;
             let keywords = PyDict::new(py);
             keywords.set_item(
@@ -314,8 +318,10 @@ fn record_result(object: Py<PyAny>) {
 
 /// A Python `Simplifier`, as a core backend: its `simplify` called with the
 /// substituted expression's object.
+///
+/// The object is kept in a [`Slot`], which the solver owns (R2-003).
 pub(super) struct PythonSimplifier {
-    object: Py<PyAny>,
+    object: Slot,
 }
 
 impl fmt::Debug for PythonSimplifier {
@@ -326,7 +332,7 @@ impl fmt::Debug for PythonSimplifier {
 
 impl Simplifier for PythonSimplifier {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Owned(Python::attach(|py| read_name(self.object.bind(py))))
+        Cow::Owned(Python::attach(|py| read_name(&self.object.get(py))))
     }
 
     /// Call the Python `simplify(expression)`, with `context`'s limits
@@ -341,7 +347,7 @@ impl Simplifier for PythonSimplifier {
     ) -> Result<Expression, BoxError> {
         record_limits(context.limits());
         Python::attach(|py| -> PyResult<Expression> {
-            let object = self.object.bind(py);
+            let object = &self.object.get(py);
             let input = current_input_object(py, expression)?;
             let result = object.call_method1(intern!(py, "simplify"), (input,))?;
             let handle = match result.cast::<PyExpression>() {
@@ -373,7 +379,7 @@ pub(super) fn build_smt_solver(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Sm
     }
     if object.is_instance_of::<PySmtSolverBase>() {
         return Ok(Arc::new(PythonSmtSolver {
-            object: object.clone().unbind(),
+            object: Slot::new(object.clone().unbind()),
         }));
     }
     Err(PyTypeError::new_err(format!(
@@ -394,7 +400,7 @@ pub(super) fn build_simplifier(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Si
     }
     if object.is_instance_of::<PySimplifierBase>() {
         return Ok(Arc::new(PythonSimplifier {
-            object: object.clone().unbind(),
+            object: Slot::new(object.clone().unbind()),
         }));
     }
     Err(PyTypeError::new_err(format!(
@@ -424,6 +430,17 @@ pub(crate) struct PySmtLib2ProcessSolver {
 
 #[pymethods]
 impl PySmtLib2ProcessSolver {
+    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.program)?;
+        visit.call(&self.args)?;
+        Ok(())
+    }
+
     /// Create the backend running `program`, a path, with the `str`
     /// arguments `args`.
     ///
