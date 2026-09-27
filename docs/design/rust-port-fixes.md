@@ -114,7 +114,7 @@ onto `dev-rust` before continuing.
 - [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails (`44a2c00`)
 - [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
 - [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python (`6f57090`; its extra blank line, which `ruff format` refuses, fixed forward in the next commit)
-- [ ] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
+- [x] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
 - [ ] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
 - [ ] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented
 - [ ] R2-041 (F2-041): diagnostics read through their report
@@ -4211,3 +4211,30 @@ The other Python gates are Track D's status line, on the same code.
   | `_rs.advance_identifier_counter_past` accepted any id below `2**63`, and its `OverflowError` read "identifier id N is at or above the cap …" | it refuses a foreign id from `2**62`, and the text names both bounds | `test_counter_advancing_past_a_foreign_id_at_or_above_2_pow_62_raises` |
   | construction failed only at `2**64 - 1` | it fails once the counter reaches `2**63` | the Rust unit tests (no Python test reaches it) |
   | none | `_rs.next_identifier_id()` | `test_next_identifier_id_is_the_id_the_counter_issues_next` |
+
+**R2-024.**
+- **The reduce value (call).** `__reduce__` returns
+  `(copyreg.__newobj__, (type(self),), state)`, as `SymbolTable`'s does,
+  rather than the spec's `(type(self), (), state)`: calling the class would
+  run a subclass's `__init__`, which may take arguments
+  (`test_subclasses_with_their_own_init_construct` has one), while
+  `__newobj__` only allocates. The state is `(elements, orders,
+  __dict__ or None)`.
+- **The orders.** The core exposes no list of the orders added, so each
+  class records every accepted `add_order` as a pair of positions, and the
+  state holds them as pairs of element objects, in the order added; the
+  replay therefore yields the same relation and, since iteration depends
+  only on it and on insertion order, the same iteration.
+- **The replay** builds a fresh value from the core's own operations,
+  calling no subclass override, and swaps it in, so no Python code (an
+  element's `__hash__` or `__eq__`) runs under the object's borrow.
+- **Test-first.** The 12 new tests failed at the base with `TypeError:
+  cannot pickle 'PartiallyOrderedSet' object` (and `Lattice`), or with no
+  `__setstate__`.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `pickle`, `copy.copy` and `copy.deepcopy` of a `PartiallyOrderedSet` or `Lattice` raised `TypeError` | they round-trip, subclasses and their instance state included, with insertion order, the order, and meets and joins; `__setstate__` of another shape raises `TypeError` | `test_a_poset_pickles_and_copies_with_its_order`, `test_a_lattice_pickles_and_copies_with_its_meets_and_joins`, `test_a_subclass_copies_with_its_instance_state_without_calling_init`, `test_a_copy_is_independent_of_the_original`, `test_a_deep_copy_copies_the_elements`, `test_setstate_refuses_a_state_it_did_not_write` |
+
+  `python-switch.md` records it as S11's divergence T-16.

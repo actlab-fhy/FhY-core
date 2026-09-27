@@ -12413,6 +12413,7 @@ a given object (`is`).
 | T-13 | `networkx` is a required dependency | it is no dependency (D-S11-5) |
 | T-14 | `ExpressionTypeChecker` is a `VisitablePass` with six `visit_*` methods, and nested nodes call two of them | a `CompilerPass`: a subclass that defines a `visit_*` method is refused at class creation, as N-S9-1 (a) did for the pretty formatter (D-S11-20) |
 | T-15 | the lookups may return anything, and a wrong shape fails somewhere later | a `get_identifier_type` result that is not a `(Type, TypeQualifier)` pair, or a `resolve_call_target` result that is not an entry, raises `TypeError` in S2's style |
+| T-16 | the poset and the lattice pickled, copied and deep-copied through their `__dict__` (S11a lost that, and T-1 to T-15 did not record it; F2-024) | **Added (R2-024, 2026-09-27):** they pickle, copy and deep-copy again, subclasses with their instance `__dict__` included: `__reduce__` returns the elements in insertion order and every order added, and `__setstate__` replays them without calling `__init__`, so the copy iterates, orders, meets and joins as the original does |
 
 Unchanged in meaning:
 

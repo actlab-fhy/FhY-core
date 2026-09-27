@@ -6,6 +6,12 @@
 //! `dict` from element to its position, which keeps Python's hashing and
 //! `==`, and a list of the objects by position; the core's order runs over
 //! the positions. The core never holds a Python object.
+//!
+//! Both classes pickle, copy and deep-copy (R2-024): `__reduce__` returns the
+//! elements in insertion order and every order added, as element objects,
+//! and `__setstate__` replays them, so the copy iterates, orders, meets and
+//! joins as the original does; a subclass's `__dict__` goes with them, and
+//! its `__init__` is not called.
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
@@ -18,12 +24,16 @@ use fhy_core::lattice::{Lattice, MissingBound, OrderError, PartiallyOrderedSet};
 /// The source of the diagnostics `Lattice.verify` reports.
 const VERIFY_SOURCE: &str = "fhy_core.lattice.Lattice.verify";
 
-/// The element objects of an order and their positions.
+/// The element objects of an order, their positions, and the orders added
+/// between them.
 struct Elements {
     /// The position of each element, keyed by the element.
     positions: Py<PyDict>,
     /// The elements, by position.
     objects: Vec<Py<PyAny>>,
+    /// Every order added, as `(lower, upper)` positions, in the order added,
+    /// which a pickle replays.
+    orders: Vec<(usize, usize)>,
 }
 
 impl Elements {
@@ -31,7 +41,18 @@ impl Elements {
         Self {
             positions: PyDict::new(py).unbind(),
             objects: Vec::new(),
+            orders: Vec::new(),
         }
+    }
+
+    /// Return the pickle state of the order: the elements in insertion
+    /// order, and every order added as a `(lower, upper)` pair of elements.
+    fn state<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+        let orders = PyList::empty(py);
+        for &(lower, upper) in &self.orders {
+            orders.append((self.objects[lower].bind(py), self.objects[upper].bind(py)))?;
+        }
+        Ok((self.list(py, 0..self.objects.len())?, orders))
     }
 
     /// Return whether `element` is a member; an unhashable object is none.
@@ -151,9 +172,9 @@ fn order_error_to_python(
 }
 
 /// Add the order `lower` below `upper` to `poset`, whose elements are
-/// `elements`.
+/// `elements`, and record it there.
 fn add_order(
-    elements: &Elements,
+    elements: &mut Elements,
     poset: &mut PartiallyOrderedSet<usize>,
     lower: &Bound<'_, PyAny>,
     upper: &Bound<'_, PyAny>,
@@ -165,7 +186,79 @@ fn add_order(
         .map_err(|error| {
             order_error_to_python(lower.py(), &error, &[lower.clone(), upper.clone()])
                 .unwrap_or_else(|conversion| conversion)
-        })
+        })?;
+    elements.orders.push((lower_position, upper_position));
+    Ok(())
+}
+
+/// Return the `__reduce__` value of `slf`, whose order's state is `state`:
+/// `copyreg.__newobj__`, so unpickling calls no `__init__`, the class, and
+/// the state with the instance `__dict__` (or `None`) last.
+fn reduce<'py>(
+    slf: &Bound<'py, PyAny>,
+    state: (Bound<'py, PyList>, Bound<'py, PyList>),
+) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+    static NEW_OBJECT: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    let py = slf.py();
+    let instance_dict = match slf.getattr(intern!(py, "__dict__")) {
+        Ok(instance_dict) => instance_dict,
+        Err(_no_dict) => py.None().into_bound(py),
+    };
+    let (elements, orders) = state;
+    let state = PyTuple::new(py, [elements.into_any(), orders.into_any(), instance_dict])?;
+    let new_object = NEW_OBJECT.import(py, "copyreg", "__newobj__")?.clone();
+    Ok((new_object, PyTuple::new(py, [slf.get_type()])?, state))
+}
+
+/// The error of a pickle state that `__setstate__` cannot read.
+fn bad_state(class: &str) -> PyErr {
+    PyTypeError::new_err(format!("{class} state must be the one __reduce__ returns."))
+}
+
+/// The elements, the `(lower, upper)` orders and the instance `__dict__` of
+/// a pickle state that `reduce` wrote.
+type State<'py> = (
+    Vec<Bound<'py, PyAny>>,
+    Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    Bound<'py, PyAny>,
+);
+
+/// Read a pickle state that `reduce` wrote for the class `class`.
+fn read_state<'py>(state: &Bound<'py, PyAny>, class: &str) -> PyResult<State<'py>> {
+    let state = state
+        .cast::<PyTuple>()
+        .map_err(|_not_a_tuple| bad_state(class))?;
+    if state.len() != 3 {
+        return Err(bad_state(class));
+    }
+    let elements = state
+        .get_item(0)?
+        .try_iter()?
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut orders = Vec::new();
+    for pair in state.get_item(1)?.try_iter()? {
+        let pair = pair?;
+        let pair = pair
+            .cast::<PyTuple>()
+            .map_err(|_not_a_tuple| bad_state(class))?;
+        if pair.len() != 2 {
+            return Err(bad_state(class));
+        }
+        orders.push((pair.get_item(0)?, pair.get_item(1)?));
+    }
+    Ok((elements, orders, state.get_item(2)?))
+}
+
+/// Update `slf`'s instance `__dict__` from a pickle state's, unless that is
+/// `None`.
+fn restore_instance_dict(slf: &Bound<'_, PyAny>, instance_dict: &Bound<'_, PyAny>) -> PyResult<()> {
+    if instance_dict.is_none() {
+        return Ok(());
+    }
+    let py = slf.py();
+    slf.getattr(intern!(py, "__dict__"))?
+        .call_method1(intern!(py, "update"), (instance_dict,))?;
+    Ok(())
 }
 
 /// Return the class itself, so `X[T]` subscripts at run time.
@@ -271,7 +364,34 @@ impl PyPartiallyOrderedSet {
     /// Raises `ValueError` if either is not a member, and `RuntimeError` if
     /// `upper` is already at most `lower`.
     fn add_order(&mut self, lower: &Bound<'_, PyAny>, upper: &Bound<'_, PyAny>) -> PyResult<()> {
-        add_order(&self.elements, &mut self.poset, lower, upper)
+        add_order(&mut self.elements, &mut self.poset, lower, upper)
+    }
+
+    /// Return the pickle form: the class, and the elements in insertion
+    /// order, every order added and the instance `__dict__`.
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+        let state = slf.borrow().elements.state(slf.py())?;
+        reduce(slf.as_any(), state)
+    }
+
+    /// Restore the set from the state `__reduce__` returned, replaying its
+    /// elements and orders.
+    ///
+    /// Raises `TypeError` for a state of another shape, and whatever adding
+    /// an element or an order raises.
+    fn __setstate__(slf: &Bound<'_, Self>, state: &Bound<'_, PyAny>) -> PyResult<()> {
+        let (elements, orders, instance_dict) = read_state(state, "PartiallyOrderedSet")?;
+        let mut restored = Self::new(slf.py(), &PyTuple::empty(slf.py()), None);
+        for element in &elements {
+            restored.add_element(element)?;
+        }
+        for (lower, upper) in &orders {
+            restored.add_order(lower, upper)?;
+        }
+        *slf.borrow_mut() = restored;
+        restore_instance_dict(slf.as_any(), &instance_dict)
     }
 
     /// Return whether `lower` is less than or equal to `upper`.
@@ -387,7 +507,36 @@ impl PyLattice {
             .map_err(|error| {
                 order_error_to_python(lower.py(), &error, &[lower.clone(), upper.clone()])
                     .unwrap_or_else(|conversion| conversion)
-            })
+            })?;
+        self.elements.orders.push((lower_position, upper_position));
+        Ok(())
+    }
+
+    /// Return the pickle form: the class, and the elements in insertion
+    /// order, every order added and the instance `__dict__`.
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+        let state = slf.borrow().elements.state(slf.py())?;
+        reduce(slf.as_any(), state)
+    }
+
+    /// Restore the lattice from the state `__reduce__` returned, replaying
+    /// its elements and orders.
+    ///
+    /// Raises `TypeError` for a state of another shape, and whatever adding
+    /// an element or an order raises.
+    fn __setstate__(slf: &Bound<'_, Self>, state: &Bound<'_, PyAny>) -> PyResult<()> {
+        let (elements, orders, instance_dict) = read_state(state, "Lattice")?;
+        let mut restored = Self::new(slf.py(), &PyTuple::empty(slf.py()), None);
+        for element in &elements {
+            restored.add_element(element)?;
+        }
+        for (lower, upper) in &orders {
+            restored.add_order(lower, upper)?;
+        }
+        *slf.borrow_mut() = restored;
+        restore_instance_dict(slf.as_any(), &instance_dict)
     }
 
     /// Return whether every pair of elements has a meet and a join.

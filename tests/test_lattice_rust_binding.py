@@ -9,6 +9,9 @@ equality, the key calls of ``iter_stable``, the ``verify`` report, and the
 exception classes and texts.
 """
 
+import copy
+import pickle
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -248,3 +251,151 @@ def test_a_non_member_is_refused_by_every_bound_query() -> None:
     ):
         with pytest.raises(ValueError, match="not a member"):
             query(1, 9)
+
+
+# =============================================================================
+# Pickling and copying (R2-024)
+# =============================================================================
+
+
+class _TaggedPoset(PartiallyOrderedSet[str]):
+    """A poset subclass whose `__init__` takes an argument and keeps state."""
+
+    def __init__(self, tag: str) -> None:
+        super().__init__()
+        self.tag = tag
+
+
+class _TaggedLattice(Lattice[int]):
+    """A lattice subclass whose `__init__` takes an argument and keeps state."""
+
+    def __init__(self, tag: str) -> None:
+        super().__init__()
+        self.tag = tag
+
+
+def _pickle_round_trip(value: Any) -> Any:
+    return pickle.loads(pickle.dumps(value))
+
+
+_COPIES: list[Callable[[Any], Any]] = [_pickle_round_trip, copy.copy, copy.deepcopy]
+_COPY_IDS = ["pickle", "copy", "deepcopy"]
+
+
+def _build_poset(poset: PartiallyOrderedSet[str]) -> PartiallyOrderedSet[str]:
+    """Fill `poset` with `d` below `b` below `a`, and `c` beside them."""
+    for element in ("d", "c", "b", "a"):
+        poset.add_element(element)
+    poset.add_order("d", "b")
+    poset.add_order("b", "a")
+    return poset
+
+
+def _fill_crown(lattice: Lattice[int]) -> Lattice[int]:
+    """Fill `lattice` with a bottom 0 below 1 and 2, below a top 3."""
+    for element in (3, 1, 2, 0):
+        lattice.add_element(element)
+    for lower, upper in ((0, 1), (0, 2), (1, 3), (2, 3)):
+        lattice.add_order(lower, upper)
+    return lattice
+
+
+@pytest.mark.parametrize("copy_function", _COPIES, ids=_COPY_IDS)
+def test_a_poset_pickles_and_copies_with_its_order(
+    copy_function: Callable[[Any], Any],
+) -> None:
+    """Test a poset copies with its elements' insertion order and its order."""
+    original = _build_poset(PartiallyOrderedSet())
+
+    rebuilt = copy_function(original)
+
+    assert type(rebuilt) is PartiallyOrderedSet
+    assert rebuilt is not original
+    assert list(rebuilt) == list(original) == ["d", "c", "b", "a"]
+    assert list(rebuilt.iter_stable(key=lambda _element: 0)) == list(original)
+    assert rebuilt.is_less_than("d", "a")
+    assert not rebuilt.is_less_than("c", "a")
+    assert len(rebuilt) == 4
+
+
+@pytest.mark.parametrize("copy_function", _COPIES, ids=_COPY_IDS)
+def test_a_lattice_pickles_and_copies_with_its_meets_and_joins(
+    copy_function: Callable[[Any], Any],
+) -> None:
+    """Test a lattice copies with its order, meets and joins."""
+    original = _fill_crown(Lattice())
+
+    rebuilt = copy_function(original)
+
+    assert type(rebuilt) is Lattice
+    assert rebuilt.is_lattice()
+    assert rebuilt.get_meet(1, 2) == 0
+    assert rebuilt.get_join(1, 2) == 3
+    assert all(element in rebuilt for element in (0, 1, 2, 3))
+
+
+@pytest.mark.parametrize("copy_function", _COPIES, ids=_COPY_IDS)
+def test_a_subclass_copies_with_its_instance_state_without_calling_init(
+    copy_function: Callable[[Any], Any],
+) -> None:
+    """Test a subclass whose `__init__` needs an argument copies, with its state."""
+    poset = _build_poset(_TaggedPoset("p"))
+    lattice = _fill_crown(_TaggedLattice("l"))
+
+    rebuilt_poset = copy_function(poset)
+    rebuilt_lattice = copy_function(lattice)
+
+    assert type(rebuilt_poset) is _TaggedPoset
+    assert rebuilt_poset.tag == "p"
+    assert list(rebuilt_poset) == ["d", "c", "b", "a"]
+    assert type(rebuilt_lattice) is _TaggedLattice
+    assert rebuilt_lattice.tag == "l"
+    assert rebuilt_lattice.get_join(1, 2) == 3
+
+
+def test_a_copy_is_independent_of_the_original() -> None:
+    """Test adding to a copy leaves the original unchanged."""
+    original = _build_poset(PartiallyOrderedSet())
+
+    rebuilt = copy.copy(original)
+    rebuilt.add_element("e")
+    rebuilt.add_order("c", "e")
+
+    assert "e" not in original
+    assert len(original) == 4
+
+
+def test_a_deep_copy_copies_the_elements() -> None:
+    """Test a deep copy holds copies of the elements, and a shallow one the same."""
+    element = frozenset({1})
+    poset: PartiallyOrderedSet[Any] = PartiallyOrderedSet()
+    poset.add_element(element)
+    shared = [object()]
+
+    class Holder:
+        def __init__(self, value: list[object]) -> None:
+            self.value = value
+
+        def __hash__(self) -> int:
+            return 7
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, Holder)
+
+    holder = Holder(shared)
+    poset.add_element(holder)
+
+    deep = list(copy.deepcopy(poset))
+    shallow = list(copy.copy(poset))
+
+    assert shallow[1] is holder
+    assert deep[1] is not holder
+    assert deep[1].value is not shared
+
+
+def test_setstate_refuses_a_state_it_did_not_write() -> None:
+    """Test `__setstate__` of a malformed state raises `TypeError`."""
+    poset: PartiallyOrderedSet[int] = PartiallyOrderedSet()
+
+    with pytest.raises(TypeError, match="__reduce__"):
+        poset.__setstate__(("not", "a", "state", "at", "all"))
