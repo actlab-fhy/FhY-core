@@ -4,10 +4,11 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::constraint::{ConstraintError, CustomError};
+use crate::constraint::{Constraint, ConstraintError, CustomError};
 use crate::identifier::Identifier;
 
 use super::domain::DomainKind;
+use super::interval::BoundSide;
 
 /// The set operation a [`ParamError::KindMismatch`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,6 +86,66 @@ pub enum ParamError {
     },
     /// A constraint of a kind the rescoping does not know, a custom one.
     UnexpectedConstraintKind,
+    /// A param's variable is a native constant's canonical identifier,
+    /// which names a value rather than a variable.
+    NativeConstantVariable(Identifier),
+    /// A constraint's scope does not hold the param's variable.
+    OutOfScope {
+        /// The constraint.
+        constraint: Constraint,
+        /// The param's variable.
+        variable: Identifier,
+    },
+    /// The bindings of a value check bind the param's own variable, whose
+    /// value is the value checked.
+    BindingsBindVariable(Identifier),
+    /// A value is not admissible in the param's domain.
+    Inadmissible,
+    /// A value provably violates the param's constraint at `member`, in
+    /// canonical order.
+    ViolatedConstraint {
+        /// The constraint's position.
+        member: usize,
+    },
+    /// A value could not be verified against the param's constraint at
+    /// `member`, in canonical order.
+    UnverifiedConstraint {
+        /// The constraint's position.
+        member: usize,
+    },
+    /// An integer bound a non-negative domain's gate refuses: a bound
+    /// literal the natural numbers do not admit.
+    NaturalBound {
+        /// Which bound.
+        side: BoundSide,
+        /// Whether the domain admits zero.
+        zero_included: bool,
+        /// Whether the bound admits its own value.
+        is_inclusive: bool,
+        /// Whether the bound is negative.
+        is_negative: bool,
+    },
+    /// A lower bound exceeds its upper bound, or equals it with an
+    /// exclusive side, so the bounds enclose no value.
+    UnorderedBounds,
+    /// The bounds of an interval param enclose no integer.
+    EmptyInterval(Identifier),
+    /// A param that is no interval operand, where interval arithmetic
+    /// needs one.
+    NotAnIntervalOperand,
+    /// An operand of interval arithmetic that is neither an integer nor a
+    /// param over an integer domain.
+    UnsupportedOperand,
+    /// An integer param carries a constraint that is not a bound, so it
+    /// cannot be recast as an interval operand.
+    NonBoundOperand(Option<ConstraintError>),
+    /// An interval param holds a constraint that is not a bound, which its
+    /// domain never allows.
+    MalformedBound,
+    /// A domain of `kind` represents no union.
+    UnsupportedUnion(DomainKind),
+    /// The intersection of two params is provably empty.
+    EmptyParamIntersection,
     /// A constraint failed to evaluate or convert.
     Constraint(ConstraintError),
     /// A [`CustomDomain`](super::CustomDomain) failed.
@@ -92,6 +153,7 @@ pub enum ParamError {
 }
 
 impl fmt::Display for ParamError {
+    #[expect(clippy::too_many_lines, reason = "one arm per variant")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyValues(kind) => {
@@ -158,8 +220,96 @@ impl fmt::Display for ParamError {
             Self::UnexpectedConstraintKind => {
                 f.write_str("cannot rescope a constraint of an unexpected kind")
             }
+            Self::NativeConstantVariable(variable) => write!(
+                f,
+                "the variable {variable:?} is a native constant's canonical identifier, which \
+                 names a value rather than a variable"
+            ),
+            Self::OutOfScope { variable, .. } => write!(
+                f,
+                "a constraint's scope must include the param's variable {variable:?}"
+            ),
+            Self::BindingsBindVariable(variable) => write!(
+                f,
+                "the bindings must not bind the param's own variable {variable:?}, whose value \
+                 is the value checked"
+            ),
+            Self::Inadmissible => f.write_str("the value is not admissible"),
+            Self::ViolatedConstraint { member } => {
+                write!(f, "the value violates the param's constraint {member}")
+            }
+            Self::UnverifiedConstraint { member } => write!(
+                f,
+                "the value could not be verified against the param's constraint {member}"
+            ),
+            Self::NaturalBound {
+                side,
+                zero_included,
+                is_inclusive,
+                is_negative,
+            } => f.write_str(natural_bound_text(
+                *side,
+                *zero_included,
+                *is_inclusive,
+                *is_negative,
+            )),
+            Self::UnorderedBounds => {
+                f.write_str("lower bound must be less than or equal to upper bound")
+            }
+            Self::EmptyInterval(variable) => write!(
+                f,
+                "empty integer interval represented by the constraints of {variable:?}"
+            ),
+            Self::NotAnIntervalOperand => {
+                f.write_str("arithmetic is only supported on interval-integer parameters")
+            }
+            Self::UnsupportedOperand => f.write_str("unsupported operand of interval arithmetic"),
+            Self::NonBoundOperand(_) => f.write_str(
+                "cannot coerce an integer parameter with non-bound constraints to an interval \
+                 parameter",
+            ),
+            Self::MalformedBound => {
+                f.write_str("an interval parameter holds a constraint that is not a bound")
+            }
+            Self::UnsupportedUnion(kind) => {
+                write!(f, "union is not supported for {}", kind.article())
+            }
+            Self::EmptyParamIntersection => {
+                f.write_str("the intersection of the parameters is empty")
+            }
             Self::Constraint(_) => f.write_str("a constraint failed"),
             Self::Custom(_) => f.write_str("a custom domain failed"),
+        }
+    }
+}
+
+/// Return the text of a bound the natural-number gate refuses.
+fn natural_bound_text(
+    side: BoundSide,
+    zero_included: bool,
+    is_inclusive: bool,
+    is_negative: bool,
+) -> &'static str {
+    match (side, zero_included, is_inclusive) {
+        (BoundSide::Lower, true, _) if is_negative => "lower bound must be non-negative",
+        (BoundSide::Lower, true, _) => {
+            "lower bound must be at least 1 if zero is included and bound is exclusive"
+        }
+        (BoundSide::Lower, false, true) => {
+            "lower bound must be at least 1 when zero is not included"
+        }
+        (BoundSide::Lower, false, false) => {
+            "lower bound must be non-negative when zero is not included and bound is exclusive"
+        }
+        (BoundSide::Upper, true, true) => "upper bound must be non-negative when zero is included",
+        (BoundSide::Upper, true, false) => {
+            "upper bound must be at least 1 if zero is included and bound is exclusive"
+        }
+        (BoundSide::Upper, false, true) => {
+            "upper bound must be at least 1 when zero is not included"
+        }
+        (BoundSide::Upper, false, false) => {
+            "upper bound must be at least 2 when zero is not included and bound is exclusive"
         }
     }
 }
@@ -167,7 +317,7 @@ impl fmt::Display for ParamError {
 impl Error for ParamError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Constraint(error) => Some(error),
+            Self::Constraint(error) | Self::NonBoundOperand(Some(error)) => Some(error),
             Self::Custom(error) => Some(&**error),
             _ => None,
         }

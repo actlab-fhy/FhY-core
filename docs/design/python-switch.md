@@ -148,7 +148,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests (see "S16a.4 status")
     - [x] S16a.5: the interface suite for the domains (54 tests)
   - [ ] S16b: params
-    - [ ] S16b.1: core additions, test-first (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection)
+    - [x] S16b.1: core additions (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection; 44 new tests, written after the code, see "S16b.1 implementation notes")
     - [ ] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
     - [ ] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite
     - [ ] S16b.4: benchmarks after, and docs
@@ -17954,3 +17954,40 @@ exception, `KeyboardInterrupt` included, propagating; pickling and deep
 copies of each kind, a payload in another order decoding to the canonical
 order, and eight threads agreeing. At the end: `pytest` 7,821 passed, 2
 xfailed.
+
+### S16b.1 implementation notes
+
+`param/parameter.rs` (`Param`, `ValueCheck`), `param/interval.rs`
+(`BoundSide`, `Operand`, `check_bounds_are_ordered`, the gates, the exact
+order of bound literals, the bounds' decoding and the arithmetic) and
+`param/assignment.rs` (`ParamAssignment`) complete the core, with 44 new
+tests: `param_stories.rs` (43, counting `rstest` cases) and a seventh
+property, `interval_arithmetic_is_the_exact_hull_of_the_pairwise_results`.
+Unlike S16a.2, the code came first here and its stories second, from the
+Python tests' pinned cases, as S12.3 recorded for its backend; they passed
+at once but for one story whose dependent-constraint case was rewritten.
+The Python param suite, which S16b.3 runs through this core, is the
+differential check.
+
+Where the shape differs from D-S16-2's sketch, or fills it in:
+
+- **Value checks take an environment.** `Param::environment(value,
+  bindings)` refuses bindings of the param's own variable and binds the
+  value first; `check_value` and `evaluate_constraints` take the result,
+  so the binding can carry the Python snapshot as the bindings' source for
+  Python-defined constraints.
+- **An expression bound as the value is admissible in no domain**; a
+  custom domain is not asked about it.
+- **`with_constraint` returns a clone** (`Param::ptr_eq`) for a duplicate,
+  and `Constraint::ptr_eq` and `SetConstraint::ptr_eq` (additive to S13's
+  module) let the binding find the Python objects of the constraints the
+  core kept.
+- **The arithmetic** returns `None` where Python returned
+  `NotImplemented`; `checked_reverse_sub` stands for `__rsub__`; each
+  result is over a fresh `Identifier::new("param")`.
+- **The errors** gain `NativeConstantVariable`, `OutOfScope`,
+  `BindingsBindVariable`, `Inadmissible`, `ViolatedConstraint`,
+  `UnverifiedConstraint`, `NaturalBound`, `UnorderedBounds`,
+  `EmptyInterval`, `NotAnIntervalOperand`, `UnsupportedOperand`,
+  `NonBoundOperand`, `MalformedBound`, `UnsupportedUnion` and
+  `EmptyParamIntersection`.

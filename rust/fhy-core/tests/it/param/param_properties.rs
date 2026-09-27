@@ -3,9 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use fhy_core::constraint::{Constraint, MemberKind, Outcome, Value};
+use fhy_core::constraint::{Binding, Bindings, Constraint, MemberKind, Outcome, Value};
+use fhy_core::expression::{BigInt, LiteralValue};
 use fhy_core::identifier::Identifier;
-use fhy_core::param::{CategoricalDomain, OrdinalDomain, ParamDomain, Side};
+use fhy_core::param::{
+    BoundSide, CategoricalDomain, IntervalIntegerDomain, Operand, OrdinalDomain, Param,
+    ParamContext, ParamDomain, Side, ValueCheck,
+};
 use fhy_core::solver::SatResult;
 use proptest::prelude::*;
 
@@ -173,5 +177,82 @@ proptest! {
             .filter(|value| is_valid(&own_values, &own_bounds, **value))
             .all(|value| is_valid(&other_values, &other_bounds, *value));
         prop_assert_eq!(outcome, if expected { Outcome::Satisfied } else { Outcome::Violated });
+    }
+}
+
+/// Return whether the interval param `param` admits `value`.
+fn admits(param: &Param, value: i64, context: &ParamContext<'_>) -> bool {
+    let environment = param
+        .environment(Binding::Value(int(value)), &Bindings::new())
+        .expect("no bindings");
+    param.check_value(&environment, context).expect("decides") == ValueCheck::Valid
+}
+
+/// Return the interval param `[lower, upper]` over a fresh variable.
+fn interval_param(
+    lower: i64,
+    upper: i64,
+    prefer_inclusive: bool,
+    context: &ParamContext<'_>,
+) -> Param {
+    Param::new(
+        ParamDomain::from(IntervalIntegerDomain::new(prefer_inclusive, false, true)),
+        Identifier::new("param"),
+        Vec::new(),
+        context,
+    )
+    .and_then(|param| {
+        param.with_bound(
+            &LiteralValue::Int(BigInt::from(lower)),
+            BoundSide::Lower,
+            true,
+            context,
+        )
+    })
+    .and_then(|param| {
+        param.with_bound(
+            &LiteralValue::Int(BigInt::from(upper)),
+            BoundSide::Upper,
+            true,
+            context,
+        )
+    })
+    .expect("an interval param")
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
+    #[test]
+    fn interval_arithmetic_is_the_exact_hull_of_the_pairwise_results(
+        (left_lower, left_upper) in (-4_i64..4).prop_flat_map(|lower| (Just(lower), lower..5)),
+        (right_lower, right_upper) in (-4_i64..4).prop_flat_map(|lower| (Just(lower), lower..5)),
+        prefer_inclusive in any::<bool>(),
+    ) {
+        let (solver, _smt) = scripted_solver(SatResult::Sat);
+        let observer = RecordingParamObserver::default();
+        let context = context(&solver, &observer);
+        let left = interval_param(left_lower, left_upper, prefer_inclusive, &context);
+        let right = interval_param(right_lower, right_upper, true, &context);
+        let operand = Operand::Param(right);
+        let results = [
+            (left.checked_add(&operand, &context).expect("adds").expect("operands"), 0),
+            (left.checked_sub(&operand, &context).expect("subtracts").expect("operands"), 1),
+            (left.checked_mul(&operand, &context).expect("multiplies").expect("operands"), 2),
+        ];
+        for (result, operation) in &results {
+            let pairwise: Vec<i64> = (left_lower..=left_upper)
+                .flat_map(|a| (right_lower..=right_upper).map(move |b| match operation {
+                    0 => a + b,
+                    1 => a - b,
+                    _ => a * b,
+                }))
+                .collect();
+            let least = *pairwise.iter().min().expect("a pair");
+            let greatest = *pairwise.iter().max().expect("a pair");
+            for value in -30..=30 {
+                prop_assert_eq!(admits(result, value, &context), (least..=greatest).contains(&value));
+            }
+        }
     }
 }

@@ -53,6 +53,12 @@ impl SetConstraint {
         }))
     }
 
+    /// Return whether `other` is this very constraint, or a clone of it.
+    #[must_use]
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.0, &other.0)
+    }
+
     /// Return the variable.
     #[must_use]
     pub fn variable(&self) -> &Identifier {

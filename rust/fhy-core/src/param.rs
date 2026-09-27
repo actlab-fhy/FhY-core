@@ -17,6 +17,13 @@
 //!   and a finite domain's values are [`Member`](crate::constraint::Member)s,
 //!   so matching is type-strict: a Boolean, an integer and a float never
 //!   match.
+//! - A [`Param`] is a variable over a domain, narrowed by constraints the
+//!   domain allows, which it keeps deduplicated and in canonical order
+//!   with the domain's implied ones. It checks values ([`ValueCheck`]),
+//!   answers its domain's questions, takes unions and intersections, and,
+//!   over an interval domain, does interval arithmetic with other params
+//!   and integers ([`Operand`]). A [`ParamAssignment`] binds a param to a
+//!   value it admits.
 //! - Why an answer is undecided or weakened is reported to the
 //!   [`ParamContext`]'s [`ParamObserver`] as a [`ParamEvent`].
 //!
@@ -42,14 +49,18 @@
 //! ```
 
 mod algebra;
+mod assignment;
 mod context;
 mod custom;
 mod decide;
 mod domain;
 mod error;
+mod interval;
+mod parameter;
 mod screen;
 mod value;
 
+pub use assignment::ParamAssignment;
 pub use context::{NoParamObserver, ParamContext, ParamEvent, ParamObserver, ScreenReason};
 pub use custom::CustomDomain;
 pub use decide::{
@@ -61,3 +72,5 @@ pub use domain::{
     OrdinalDomain, ParamDomain, PermutationDomain, RealDomain, Side, is_bound_expression,
 };
 pub use error::{ParamError, SetOperation};
+pub use interval::{BoundSide, Operand, check_bounds_are_ordered};
+pub use parameter::{Param, ValueCheck};

@@ -100,6 +100,20 @@ pub enum Constraint {
 }
 
 impl Constraint {
+    /// Return whether `other` is this very constraint, or a clone of it,
+    /// rather than an equal one built apart.
+    #[must_use]
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        match (this, other) {
+            (Self::Equation(left), Self::Equation(right)) => {
+                Expression::ptr_eq(left.expression(), right.expression())
+            }
+            (Self::Set(left), Self::Set(right)) => SetConstraint::ptr_eq(left, right),
+            (Self::Custom(left), Self::Custom(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+
     /// Return the scope: every identifier the constraint refers to.
     #[must_use]
     pub fn free_identifiers(&self) -> HashSet<Identifier> {

@@ -149,3 +149,36 @@ pub(crate) fn sort_tolerantly<T: Clone>(
     }
     Ok(current)
 }
+
+/// Return whether two values are equal type-strictly: of one kind and
+/// equal, at every depth; opaque values by their producer, and a NaN equal
+/// to nothing.
+#[expect(
+    clippy::float_cmp,
+    reason = "type-strict equality of floats is IEEE equality, as Python's `==` is"
+)]
+pub(crate) fn are_values_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Bool(left), Value::Bool(right)) => left == right,
+        (Value::Int(left), Value::Int(right)) => left == right,
+        (Value::Float(left), Value::Float(right)) => left == right,
+        (Value::Decimal(left), Value::Decimal(right)) => left == right,
+        (Value::Str(left), Value::Str(right)) => left == right,
+        (Value::Tuple(left), Value::Tuple(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| are_values_equal(left, right))
+        }
+        (Value::FrozenSet(left), Value::FrozenSet(right)) => {
+            left.iter()
+                .all(|value| right.iter().any(|other| are_values_equal(value, other)))
+                && right
+                    .iter()
+                    .all(|value| left.iter().any(|other| are_values_equal(value, other)))
+        }
+        (Value::Opaque(left), Value::Opaque(right)) => left.is_equal(right),
+        _ => false,
+    }
+}
