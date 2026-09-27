@@ -47,7 +47,7 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
 )
 from fhy_core.symbolic.param import ParamDomain
-from fhy_core.types import Type
+from fhy_core.types import NumericalType, Type
 from fhy_core.utils.override import override
 
 from .foreign_parts import GoldenDomain, GoldenEven, GoldenToken, GoldenType
@@ -232,6 +232,49 @@ def test_a_foreign_part_of_an_unknown_type_id_is_refused() -> None:
 
     with pytest.raises(UnknownTypeIdError, match=r"nowhere\.Nothing"):
         Constraint.deserialize_from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    ("decode", "expected"),
+    [
+        pytest.param(
+            lambda: Type.deserialize_from_dict(
+                {"extension": {"type_id": "golden.domain", "data": '{"modulus":2}'}}
+            ),
+            "Python-defined Type",
+            id="a_domain_as_a_type",
+        ),
+        pytest.param(
+            lambda: NumericalType.deserialize_from_dict(
+                {
+                    "numerical": {
+                        "data_type": {
+                            "extension": {
+                                "type_id": "golden.type",
+                                "data": '{"tag":"tile"}',
+                            }
+                        },
+                        "shape": [],
+                    }
+                }
+            ),
+            "Python-defined DataType",
+            id="a_type_as_a_data_type",
+        ),
+    ],
+)
+def test_a_foreign_part_of_the_wrong_kind_is_refused(
+    decode: Any, expected: str
+) -> None:
+    """Test a part whose registered class is of another kind is refused (R2-030).
+
+    The class decodes its data, and the resolver then refuses the object for
+    the place the part holds, naming the part's type id.
+    """
+    with pytest.raises(
+        TypeError, match=rf'the foreign part "golden\.\w+" is not a {expected}'
+    ):
+        decode()
 
 
 class _Raising(Serializable):

@@ -20,6 +20,7 @@ from fhy_core import _rs
 from fhy_core.diagnostic import DiagnosticLevel, ValidationReport
 from fhy_core.lattice import Lattice
 from fhy_core.traits.verifiable import Verifiable, VerifiableMixin
+from fhy_core.utils.override import override
 from fhy_core.utils.poset import PartiallyOrderedSet
 
 
@@ -376,9 +377,11 @@ def test_a_deep_copy_copies_the_elements() -> None:
         def __init__(self, value: list[object]) -> None:
             self.value = value
 
+        @override
         def __hash__(self) -> int:
             return 7
 
+        @override
         def __eq__(self, other: object) -> bool:
             return isinstance(other, Holder)
 
@@ -438,6 +441,7 @@ def test_an_element_whose_hash_reads_the_set_sees_it_before_the_insertion() -> N
     seen: list[list[object]] = []
 
     class NosyHash:
+        @override
         def __hash__(self) -> int:
             seen.append(list(poset))
             return 1
@@ -463,6 +467,7 @@ def test_an_element_whose_hash_adds_an_element_keeps_both_positions() -> None:
         def __init__(self) -> None:
             self.hashed = False
 
+        @override
         def __hash__(self) -> int:
             if not self.hashed:
                 self.hashed = True
@@ -489,9 +494,11 @@ def test_orders_and_queries_compare_their_arguments_under_no_borrow() -> None:
     calls: list[bool] = []
 
     class Key:
+        @override
         def __hash__(self) -> int:
             return 3
 
+        @override
         def __eq__(self, other: object) -> bool:
             calls.append(lattice.has_meet(1, 2))
             return isinstance(other, Key)
@@ -515,6 +522,7 @@ def test_verify_writes_reprs_that_change_the_lattice() -> None:
         def __init__(self, name: str) -> None:
             self.name = name
 
+        @override
         def __repr__(self) -> str:
             if "late" not in lattice:
                 lattice.add_element("late")

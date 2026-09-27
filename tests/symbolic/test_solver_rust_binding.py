@@ -373,6 +373,73 @@ def test_strict_companions_raise_undecidable_error_with_the_backend_reason(
 
 
 @pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        pytest.param(SatResult.UNSAT, True, id="no_counterexample"),
+        pytest.param(SatResult.SAT, False, id="a_counterexample"),
+        pytest.param(SatResult.unknown("timeout"), None, id="unknown"),
+    ],
+)
+def test_holds_for_all_free_assignments_asks_its_backend_once(
+    x: Identifier, answer: SatResult, expected: bool | None
+) -> None:
+    """Test the universal question is one check for a counterexample (R2-030).
+
+    With nothing considered, the question is universal validity, so an
+    unsatisfiable negation holds. The answer is the very ``True``, ``False``
+    or ``None`` object.
+    """
+    backend = _RecordingSmtSolver(answer)
+    solver = Solver(smt_solver=backend)
+
+    result = solver.holds_for_all_free_assignments(
+        [], IdentifierExpression(x) * IdentifierExpression(x) >= 0, {x: SymbolType.INT}
+    )
+
+    assert result is expected
+    assert len(backend.checks) == 1
+
+
+def test_assert_holds_for_all_free_assignments_raises_undecidable_error(
+    x: Identifier,
+) -> None:
+    """Test the strict companion raises on ``unknown`` and answers otherwise."""
+    expression = IdentifierExpression(x) * IdentifierExpression(x) >= 0
+    undecided = Solver(smt_solver=_RecordingSmtSolver(SatResult.unknown("timeout")))
+    decided = Solver(smt_solver=_RecordingSmtSolver(SatResult.UNSAT))
+
+    with pytest.raises(UndecidableError, match="_RecordingSmtSolver") as exception_info:
+        undecided.assert_holds_for_all_free_assignments(
+            [], expression, {x: SymbolType.INT}
+        )
+
+    assert exception_info.value.reason == "timeout"
+    assert (
+        decided.assert_holds_for_all_free_assignments(
+            [], expression, {x: SymbolType.INT}
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["holds_for_all_free_assignments", "assert_holds_for_all_free_assignments"],
+)
+def test_holds_for_all_free_assignments_raises_the_backend_s_keyboard_interrupt(
+    x: Identifier, method: str
+) -> None:
+    """Test a backend's ``KeyboardInterrupt`` is raised as the same object."""
+    interrupt = KeyboardInterrupt()
+    solver = Solver(smt_solver=_RecordingSmtSolver(interrupt))
+
+    with pytest.raises(KeyboardInterrupt) as exception_info:
+        getattr(solver, method)([], IdentifierExpression(x) >= 0, {x: SymbolType.INT})
+
+    assert exception_info.value is interrupt
+
+
+@pytest.mark.parametrize(
     "timeout",
     [pytest.param(True, id="bool"), pytest.param(2**64, id="above_u64")],
 )

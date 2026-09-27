@@ -51,6 +51,7 @@ from fhy_core.types import (
     promote_core_data_types,
     promote_type_qualifiers,
     resolve_literal_core_data_type,
+    substitute_data_template,
     substitute_template,
     unify,
     unify_expression,
@@ -177,6 +178,45 @@ def _(
         raise _RAISED
     if pattern.mode == "interrupt":
         raise KeyboardInterrupt
+    return 42
+
+
+class _WrongKind(_Unserializable, Type):
+    """A type whose handlers all answer with something that is no result."""
+
+
+@bind_template.register
+def _(
+    pattern: _WrongKind, actual: Type, environment: TypeUnificationEnvironment
+) -> Any:
+    return 42
+
+
+@substitute_template.register
+def _(type_: _WrongKind, environment: TypeUnificationEnvironment) -> Any:
+    return 42
+
+
+@unify.register
+def _(
+    expected: _WrongKind, actual: Type, environment: TypeUnificationEnvironment
+) -> Any:
+    return (expected,)
+
+
+class _WrongKindData(_Unserializable, DataType):
+    """A data type whose handlers all answer with something that is no result."""
+
+
+@bind_data_template.register
+def _(
+    pattern: _WrongKindData, actual: DataType, environment: TypeUnificationEnvironment
+) -> Any:
+    return 42
+
+
+@substitute_data_template.register
+def _(data_type: _WrongKindData, environment: TypeUnificationEnvironment) -> Any:
     return 42
 
 
@@ -372,6 +412,28 @@ def test_environment_lookups_return_the_bound_objects() -> None:
     assert isinstance(environment.expression_bindings, immutabledict)
     assert environment.expression_bindings[name] is value
     assert environment.get_expression_binding("N") is None  # type: ignore[arg-type]
+
+
+def test_type_bindings_maps_each_bound_name_to_its_type_object() -> None:
+    """Test `type_bindings` holds only the type bindings, as the objects given.
+
+    `get_type_binding` returns the same object, and the other two tables do
+    not appear in it (R2-030).
+    """
+    u, t, n = Identifier("U"), Identifier("T"), Identifier("N")
+    bound = NumericalType(_int32())
+    environment = (
+        TypeUnificationEnvironment.empty()
+        .with_type_binding(u, bound)
+        .with_data_type_binding(t, _int32())
+        .with_expression_binding(n, LiteralExpression(4))
+    )
+
+    assert isinstance(environment.type_bindings, immutabledict)
+    assert dict(environment.type_bindings) == {u: bound}
+    assert environment.type_bindings[u] is bound
+    assert environment.get_type_binding(u) is bound
+    assert TypeUnificationEnvironment.empty().type_bindings == {}
 
 
 def test_environment_constructor_takes_the_three_tables() -> None:
@@ -641,6 +703,91 @@ def test_a_handler_result_of_the_wrong_type_raises_type_error() -> None:
             NumericalType(_int32()),
             TypeUnificationEnvironment.empty(),
         )
+
+
+@pytest.mark.parametrize(
+    ("call", "hook", "expected"),
+    [
+        pytest.param(
+            lambda: _rs.types_bind_template(
+                _WrongKind(), _WrongKind(), TypeUnificationEnvironment.empty()
+            ),
+            "bind_template",
+            "a TypeUnificationEnvironment",
+            id="bind_template",
+        ),
+        pytest.param(
+            lambda: _rs.types_substitute_template(
+                _WrongKind(), TypeUnificationEnvironment.empty()
+            ),
+            "substitute_template",
+            "a Type",
+            id="substitute_template",
+        ),
+        pytest.param(
+            lambda: _rs.types_unify(
+                _WrongKind(), _WrongKind(), TypeUnificationEnvironment.empty()
+            ),
+            "unify",
+            r"a \(Type, TypeUnificationEnvironment\) tuple",
+            id="unify",
+        ),
+        pytest.param(
+            lambda: bind_template(
+                NumericalType(_WrongKindData()),
+                NumericalType(_int32()),
+                TypeUnificationEnvironment.empty(),
+            ),
+            "bind_data_template",
+            "a TypeUnificationEnvironment",
+            id="bind_data_template",
+        ),
+        pytest.param(
+            lambda: substitute_template(
+                NumericalType(_WrongKindData()), TypeUnificationEnvironment.empty()
+            ),
+            "substitute_data_template",
+            "a DataType",
+            id="substitute_data_template",
+        ),
+    ],
+)
+def test_every_core_driven_handler_of_the_wrong_kind_raises_type_error(
+    call: Any, hook: str, expected: str
+) -> None:
+    """Test the core refuses each hook's result of the wrong kind (R2-030).
+
+    The core asks a Python-defined type's handlers when it meets the type,
+    as the checker's unification does and `_rs.types_*` do directly; a
+    Python-defined data type's, when it meets one inside a built-in type.
+    """
+    with pytest.raises(
+        TypeError,
+        match=rf"^{hook} handler for _WrongKind\w* must return {expected}, got ",
+    ):
+        call()
+
+
+def test_a_python_defined_type_goes_through_the_core_s_substitution() -> None:
+    """Test the core substitutes through a Python-defined type's handler.
+
+    `_rs.types_substitute_template` meets the type as the core does inside a
+    walk and asks its handler, which substitutes the wrapped type; a type
+    with no handler is returned as the very object (R2-030).
+    """
+    t = Identifier("T")
+    environment = TypeUnificationEnvironment.empty().with_data_type_binding(t, _int32())
+    tagged = _Tagged("dense", NumericalType(TemplateDataType(t)))
+    bare = _Bare()
+    _Tagged.calls.clear()
+
+    substituted = _rs.types_substitute_template(tagged, environment)
+
+    assert isinstance(substituted, _Tagged)
+    assert substituted.tag == "dense"
+    assert substituted.inner == NumericalType(_int32())
+    assert _Tagged.calls == ["substitute_template"]
+    assert _rs.types_substitute_template(bare, environment) is bare
 
 
 def test_a_handler_for_a_subclass_of_a_built_in_serves_direct_calls_only() -> None:

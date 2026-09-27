@@ -926,7 +926,8 @@ def test_a_non_identifier_whose_class_reads_the_table_is_refused_by_type() -> No
 
     class Impostor:
         @property  # type: ignore[misc]
-        def __class__(self) -> type:  # type: ignore[override]
+        @override
+        def __class__(self) -> type:
             table.get_number_of_namespaces()
             return object
 

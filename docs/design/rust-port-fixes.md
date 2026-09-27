@@ -117,8 +117,8 @@ onto `dev-rust` before continuing.
 - [x] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy (`047f6ea`)
 - [x] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow (`464cbe8`)
 - [x] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented (`86c407c`)
-- [x] R2-041 (F2-041): diagnostics read through their report
-- [ ] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members
+- [x] R2-041 (F2-041): diagnostics read through their report (`b966131`)
+- [x] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
 - [ ] R2-013c (F2-013, binding readers): depth limits in the dict and member readers
 - [ ] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot
@@ -4315,3 +4315,52 @@ The other Python gates are Track D's status line, on the same code.
   new signature does not compile there.
 - **Python-visible changes:** none; the Python validation suites pass
   unchanged.
+
+**R2-030.**
+- **The stub test** gains two checks. `test_stub_class_members_match_the_built_extension`
+  compares each class's non-dunder members in both directions, resolved
+  through the bases on each side (the stub's own bases; on the extension,
+  only `fhy_core._rs` classes, not built-in bases such as `Exception`),
+  with their kinds: method, class method, static method, property, or
+  attribute (a stub annotation also describes a `#[pyo3(get)]` property).
+  A base the stub imports from the package, such as `SymbolTableFrame`
+  for the frame classes, accounts for an extension member but is not
+  required of the extension, since it is that Python class's API.
+  `test_stub_class_dunders_match_the_built_extension` is the allowlist
+  form for dunders: an extension dunder that `object` lacks must be
+  declared unless PyO3 adds it on its own (`__module__`, `__doc__`, the
+  six comparison wrappers of a `__richcmp__`, the reflected operator of a
+  declared one, a generic class's `__class_getitem__`), and a declared
+  dunder must exist, except `__init__`, which stands for `__new__`.
+- **At the base** the new checks report exactly the audit's two drifts,
+  `ValueDomain.from_json` and `Expression.rebuild_with_visit_children`,
+  plus the undeclared `ParamAssignment._restore` and three
+  `__getnewargs__`; the stub now declares `_restore` and the three
+  `__getnewargs__`, drops the other two, and the node classes'
+  `rebuild_with_visit_children` lose `@override`, which no base backs.
+- **Gaps filled** (every new test passed at its first run, so no new
+  finding):
+  - `TypeUnificationEnvironment::type_bindings` from Rust
+    (`type_bindings_lists_the_type_bindings_alone`, in Track C's
+    `unification_stories.rs`, one additive story) and Python
+    (`test_type_bindings_maps_each_bound_name_to_its_type_object`);
+  - each core-driven handler hook of a Python-defined type or data type
+    answering the wrong kind (`bind_template`, `substitute_template`,
+    `unify`, `bind_data_template`, `substitute_data_template`); a Python
+    type through the core's `substitute_template`, handler and no-handler;
+  - a foreign part whose class is of another kind, as a `Type` and as a
+    `DataType` (the constraint and domain places refuse such a part in
+    Python first, with their own errors, before the resolver sees it);
+  - the audit's unnamed `Param` members (`variable_expression`,
+    `add_constraints`, `replace_constraints`, `add_upper_bound_constraint`,
+    `check_subset`, `is_subset`, `is_feasible`) and `Solver` members
+    (`holds_for_all_free_assignments`, `assert_holds_for_all_free_assignments`),
+    with the objects they return and a backend's or a Python constraint's
+    `KeyboardInterrupt` raised as the same object.
+- **Fixed forward: `type_check`.** The R2-024 and R2-044 commits (`047f6ea`,
+  `464cbe8`) left mypy errors: the stub's two new `__reduce__` and the new
+  test classes' `__hash__`/`__eq__`/`__repr__`/`__class__` lacked
+  `@override`, which `mypy --strict`'s `explicit-override` requires. This
+  commit adds them; the per-commit gate now includes mypy.
+- **Python-visible changes:** none; the stub's declarations change as
+  above.

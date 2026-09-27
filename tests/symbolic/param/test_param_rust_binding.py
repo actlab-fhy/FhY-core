@@ -12,7 +12,7 @@ pickling, payloads, and threads.
 import copy
 import pickle
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +46,14 @@ from fhy_core.symbolic.param import (
     create_natural_param,
     create_ordinal_param,
     create_permutation_param,
+)
+from fhy_core.symbolic.solver import (
+    SatResult,
+    SmtScript,
+    SmtSolver,
+    Solver,
+    get_default_solver,
+    set_default_solver,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMixin, FrozenMutationError
@@ -542,3 +550,151 @@ def test_threads_agree() -> None:
     assert len(results) == 8
     assert all(len(constraints) == 0 for constraints, _, _ in results)
     assert all(value == 3 for _, _, value in results)
+
+
+# =============================================================================
+# Members the interface suites did not name (R2-030)
+# =============================================================================
+
+
+class _InterruptingSmtSolver(SmtSolver):
+    """A backend whose every check raises one `KeyboardInterrupt`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.interrupt = KeyboardInterrupt()
+        self.checks = 0
+
+    @override
+    def check(
+        self, script: SmtScript, *, timeout_milliseconds: int | None
+    ) -> SatResult:
+        self.checks += 1
+        raise self.interrupt
+
+
+@pytest.fixture
+def interrupting_default_solver() -> Iterator[_InterruptingSmtSolver]:
+    """Make the default solver's backend interrupt, restoring it afterwards."""
+    original = get_default_solver()
+    backend = _InterruptingSmtSolver()
+    set_default_solver(Solver(smt_solver=backend))
+    try:
+        yield backend
+    finally:
+        set_default_solver(original)
+
+
+def _bounded_param() -> Param[int]:
+    param = create_integer_param()
+    variable = param.variable_expression
+    return param.add_constraints(
+        [EquationConstraint(variable >= 3), EquationConstraint(variable <= 9)]
+    )
+
+
+def test_variable_expression_is_a_fresh_reference_to_the_param_s_variable() -> None:
+    """Test `variable_expression` holds the param's own identifier object."""
+    param = create_integer_param()
+
+    first, second = param.variable_expression, param.variable_expression
+
+    assert isinstance(first, IdentifierExpression)
+    assert first.identifier is param.variable
+    assert first is not second
+    assert first.is_structurally_equivalent(second)
+
+
+def test_add_constraints_and_replace_constraints_return_new_params() -> None:
+    """Test both build a new param over the same variable and domain.
+
+    `add_constraints` keeps the param's constraints and appends the new
+    ones; `replace_constraints` keeps only the ones it is given; the
+    original is unchanged.
+    """
+    param = create_integer_param()
+    variable = param.variable_expression
+
+    added = param.add_constraints(
+        [EquationConstraint(variable >= 3), EquationConstraint(variable <= 9)]
+    )
+    replaced = added.replace_constraints([EquationConstraint(variable >= 5)])
+
+    assert added is not param and replaced is not added
+    assert (
+        len(param.constraints),
+        len(added.constraints),
+        len(replaced.constraints),
+    ) == (0, 2, 1)
+    assert added.variable is param.variable is replaced.variable
+    assert added.domain is param.domain
+    assert [added.is_value_valid(value) for value in (2, 3, 9, 10)] == [
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert [replaced.is_value_valid(value) for value in (3, 5, 10)] == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_add_upper_bound_constraint_is_inclusive_unless_told_otherwise() -> None:
+    """Test the upper bound admits itself by default, and not when exclusive."""
+    param = create_integer_param()
+
+    inclusive = param.add_upper_bound_constraint(4)
+    exclusive = param.add_upper_bound_constraint(4, is_inclusive=False)
+
+    assert inclusive is not param
+    assert (inclusive.is_value_valid(4), inclusive.is_value_valid(5)) == (True, False)
+    assert (exclusive.is_value_valid(3), exclusive.is_value_valid(4)) == (True, False)
+
+
+def test_is_feasible_is_subset_and_check_subset_answer_by_the_solver() -> None:
+    """Test the three questions answer through the default solver."""
+    bounded = _bounded_param()
+    unbounded = create_integer_param(name=bounded.variable)
+    variable = bounded.variable_expression
+    empty = bounded.add_constraints([EquationConstraint(variable <= 1)])
+
+    assert bounded.check_subset(unbounded) is ConstraintOutcome.SATISFIED
+    assert bounded.is_subset(unbounded) is True
+    assert unbounded.is_subset(bounded) is False
+    assert bounded.is_feasible() is True
+    assert empty.is_feasible() is False
+
+
+@pytest.mark.parametrize("question", ["check_subset", "is_subset", "is_feasible"])
+def test_a_solver_question_raises_the_backend_s_keyboard_interrupt(
+    interrupting_default_solver: _InterruptingSmtSolver, question: str
+) -> None:
+    """Test the backend's `KeyboardInterrupt` is raised as itself, after one check."""
+    bounded = _bounded_param()
+    arguments = () if question == "is_feasible" else (create_integer_param(),)
+
+    with pytest.raises(KeyboardInterrupt) as exception_info:
+        getattr(bounded, question)(*arguments)
+
+    assert exception_info.value is interrupting_default_solver.interrupt
+    assert interrupting_default_solver.checks == 1
+
+
+def test_add_constraints_raises_a_python_constraint_s_keyboard_interrupt() -> None:
+    """Test a Python constraint's `KeyboardInterrupt` from its scope is raised as is."""
+    interrupt = KeyboardInterrupt()
+
+    @dataclass(frozen=True)
+    class InterruptingConstraint(_RecordingConstraint):
+        @override
+        def get_free_identifiers(self) -> frozenset[Identifier]:
+            raise interrupt
+
+    param = create_integer_param()
+
+    with pytest.raises(KeyboardInterrupt) as exception_info:
+        param.add_constraints([InterruptingConstraint(frozenset({param.variable}))])
+
+    assert exception_info.value is interrupt

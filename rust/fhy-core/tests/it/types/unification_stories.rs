@@ -91,6 +91,39 @@ fn environment_equivalence_compares_bindings_by_value() {
     assert!(!with_int.is_equivalent(&with_expression));
 }
 
+/// Test `type_bindings` lists each type binding once, with its value, and
+/// no data-type or expression binding (R2-030).
+#[test]
+fn type_bindings_lists_the_type_bindings_alone() {
+    let (u, v, t, n) = (
+        Identifier::new("U"),
+        Identifier::new("V"),
+        Identifier::new("T"),
+        Identifier::new("N"),
+    );
+    let environment = empty()
+        .with_type_binding(u.clone(), scalar(CoreDataType::Int32))
+        .with_type_binding(v.clone(), scalar(CoreDataType::Float32))
+        .with_data_type_binding(t, int32())
+        .with_expression_binding(n, Expression::from(4));
+
+    let mut bindings: Vec<(Identifier, Type)> = environment
+        .type_bindings()
+        .map(|(name, bound)| (name.clone(), bound.clone()))
+        .collect();
+    bindings.sort_by_key(|(name, _)| name.id());
+
+    assert_eq!(environment.type_bindings().len(), 2);
+    assert_eq!(
+        bindings,
+        [
+            (u, scalar(CoreDataType::Int32)),
+            (v, scalar(CoreDataType::Float32))
+        ]
+    );
+    assert_eq!(empty().type_bindings().len(), 0);
+}
+
 #[test]
 fn environment_equivalence_distinguishes_type_bindings() {
     let u = Identifier::new("U");
