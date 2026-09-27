@@ -152,6 +152,11 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
     - [x] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite (24 tests)
     - [x] S16b.4: benchmarks after, and docs (two rows slower than 10%, flagged: the pickle round trip, 1.16, and `repr`, 1.11; see "S16 benchmarks")
+- [ ] S18: scope and stack, two native implementations (P1, the `Identifier` model; "Needs the user" is empty; see "S18: scope and stack")
+  - [x] S18.0: the design (survey, decisions D-S18-1 to D-S18-10, steps, the shared case list)
+  - [ ] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties
+  - [ ] S18.2: the Python stories the case list adds, and the docs
+  - [ ] S18.3: status and implementation notes
 
 ## Goal
 
@@ -18269,3 +18274,189 @@ coordinator rebases. The conflicts to expect are additive: this document
 the crate README and CONTRIBUTING (param is layer 9, after
 `symbol_table`), `rust-workspace.md` §I.8, the binding's `lib.rs`, the stub
 and the package README.
+
+## S18: scope and stack
+
+- **Status:** designed 2026-09-26 at 4fb588b (dev-rust with S16). D-S18-1
+  to D-S18-10 apply the user's direction for this slice: two native
+  implementations with one API and one behavior, on the `Identifier`
+  model (P1), and no binding. "Needs the user" is empty.
+- **Scope:** `src/fhy_core/utils/stack.py` (84 lines) and
+  `utils/scope.py` (114 lines), and their tests. S15 left both in Python
+  (D-S15-14) because nothing in `src` uses them and a Rust port would hash
+  every Python key through Python. That reason still holds for Python, so
+  this slice does not bind anything: it adds a Rust `Stack<T>` and
+  `Scope<K, V>` over Rust values, for Rust users, and pins the two
+  languages to one behavior through one list of test cases.
+- **Coordination.** S17 (serialization) is designed in parallel. Every
+  edit to a shared file (this checklist, `lib.rs`, the crate README,
+  CONTRIBUTING) is additive.
+
+### Survey
+
+**`Stack[T]`**, a `deque` wrapper: `push(item)`; `pop()` and `peek()`,
+which raise `IndexError` on an empty stack; `clear()`; `len()`; and
+`iter()`, bottom to top (oldest first), a fresh iterator per call. `peek`
+returns the stored object itself, so a caller can mutate the top in
+place, which `Scope.define` does. Equality is identity.
+
+**`Scope[K, V]`**, a `Stack` of dicts that starts with one root frame:
+`push()`; `pop()`, which raises `IndexError` when only the root is left;
+`define(key, value)` into the innermost frame, overwriting there and
+shadowing outer frames; `lookup(key)`, innermost to outermost, and
+`lookup_local(key)`, innermost only, both raising `KeyError`;
+`is_defined(key)` and `is_defined_local(key)`; `get_depth()`, at least 1;
+and `scope()`, a context manager that pushes a frame, yields the scope
+itself, and pops one frame in a `finally`.
+
+**Consumers.** None in `src`: `fhy_core.utils` re-exports both, and the
+package README lists them. The symbol table does not use them (S15).
+
+**Tests.** `tests/test_stack.py` (11 stories), `test_stack_properties.py`
+(a Hypothesis state machine over a `list` model), `tests/test_scope.py`
+(20 stories) and `test_scope_properties.py` (a state machine over a
+`list[dict]` model). They use the public API, except the stack fixture,
+which appends to `_stack`.
+
+**Rust today.** Nothing: the crate has no stack or scope type.
+`term::AlphaRenaming` keeps its own frames for a different purpose.
+
+### Divergences (Rust from Python)
+
+| # | Python | Rust | Why |
+|---|---|---|---|
+| Q-1 | `Stack.pop()`, `peek()` on an empty stack raise `IndexError` | `Option<T>`, `Option<&T>` | an empty stack is an ordinary state, as `Vec::pop` treats it |
+| Q-2 | `Scope.lookup`, `lookup_local` raise `KeyError` for an unbound key | `Option<&V>` | an unbound key is an ordinary answer, as `HashMap::get` treats it |
+| Q-3 | `Scope.pop()` at the root raises `IndexError` | `Result<(), RootFramePopError>` | popping the root is a caller error, which `Result` makes the caller see (`#[must_use]`); the scope is unchanged either way |
+| Q-4 | `get_depth()`, `len(stack)`, `iter(stack)` | `depth()`, `len()` with `is_empty()`, `iter()` and `&Stack: IntoIterator` | §I.3 rule 5 (no `get_`), and clippy's `len_without_is_empty` |
+| Q-5 | `with scope.scope():` pops exactly one frame on exit | `scope.with_frame(\|s\| ...)` restores the depth it found on exit | D-S18-6; the two agree whenever the body leaves the depth it found |
+| Q-6 | `peek()` returns the object, mutable in place | `peek()` returns `&T`, and `peek_mut()` returns `&mut T` | Rust separates the two borrows |
+| Q-7 | equality is identity | `==` compares the contents (derived) | the common traits of a Rust container (C-COMMON-TRAITS) |
+| Q-8 | mutating a stack while iterating it raises `RuntimeError` | the borrow checker refuses the program | |
+
+### Decisions (proposed 2026-09-26)
+
+- **D-S18-1: two native implementations, no binding** (the user's
+  direction; P1's `Identifier` precedent without the conversion, since no
+  Rust value holds a Python scope). `_rs`, its stub and `fhy-core-py` do
+  not change, and neither implementation calls the other.
+- **D-S18-2: two new top-level modules, `fhy_core::stack` and
+  `fhy_core::scope`,** as Python has two modules. Each depends on `std`
+  only, and on no other module of the crate, not even each other
+  (D-S18-5), so the layering list gains a tenth layer for both, after
+  `param`, and CONTRIBUTING's module table gains the rows
+  `fhy_core.utils.stack` to `fhy_core::stack` and `fhy_core.utils.scope`
+  to `fhy_core::scope`. A `utils` module was rejected: the crate names
+  modules by what they hold.
+- **D-S18-3: names** (§I.3 rule 5; Python names where the meaning is the
+  same). `Stack`: `new`, `push`, `pop`, `peek`, `peek_mut`, `clear`,
+  `len`, `is_empty`, `iter`. `Scope`: `new`, `push`, `pop`, `define`,
+  `lookup`, `lookup_local`, `is_defined`, `is_defined_local`, `depth`,
+  `with_frame`. The keyed methods take `&Q` where `K: Borrow<Q>`, as
+  `HashMap::get` does. `define` returns nothing, as in Python.
+- **D-S18-4: errors** (the user's direction; Q-1 to Q-3). `Option` for
+  the empty stack and the unbound key; `Result` for a root pop, with
+  `scope::RootFramePopError`, a `#[non_exhaustive]` unit struct like
+  `types::TemplateWidthError`, displaying `cannot pop the root frame`.
+- **D-S18-5: representation.** `Stack<T>` wraps a `Vec<T>`. `Scope<K, V>`
+  holds the root `HashMap<K, V>` apart from a `Vec` of inner frames, so
+  the root exists by construction and no path unwraps an `Option`. The
+  maps use std's default hasher; no hasher parameter, since nothing asks
+  for one.
+- **D-S18-6: the scoped frame is a closure,** `with_frame(f)`, which
+  pushes a frame, runs `f(&mut self)`, and restores the depth it found
+  through a private drop guard, so the frame goes on a normal return and
+  on a panic's unwinding alike, and returns `f`'s value. It restores the
+  entry depth rather than popping one frame (Q-5), so a body that pushes
+  and panics before popping leaves nothing behind; a body that pops below
+  the entry depth is left as it is, since nothing can be pushed back. A
+  public guard that derefs to the scope would hold the same `&mut` and add
+  a type, so it was rejected. Python's context manager is not changed
+  (the direction leaves Python's implementation alone); the shared case
+  list pins only balanced bodies, and Rust's unbalanced case is a
+  Rust-only story.
+- **D-S18-7: traits.** Both derive `Debug`, `Clone`, `PartialEq` and
+  `Eq`, and implement `Default` without bounds on their parameters (Q-7);
+  `Stack` also derives `Hash`. `Stack` iterates through its own `Iter`
+  type, double-ended, exact-size and fused. Neither serializes: the
+  Python classes are not `Serializable`.
+- **D-S18-8: one case list, two test suites.** The cases below are the
+  behavior spec. Rust gets stories for each (`tests/it/stack_stories.rs`,
+  `tests/it/scope_stories.rs`) and a proptest model property for each
+  type, mirroring the Hypothesis state machines
+  (`tests/it/scope_stack_properties.rs`). Python keeps its tests and
+  gains a story for each case it lacks.
+- **D-S18-9: Python is unchanged,** so no benchmark is needed: the deque
+  and dict speed the user wants kept is untouched.
+- **D-S18-10: docs.** `lib.rs` and the crate README list both modules and
+  say they depend on nothing; CONTRIBUTING gains the tenth layer, the two
+  table rows, and a sentence in "Python parity is limited to dual-defined
+  concepts" saying these two share behavior through S18's case list but
+  keep Rust's errors and names. The package README does not change.
+
+### Needs the user
+
+Nothing. The closest call is D-S18-6's divergence for an unbalanced
+body, which only a misused scope reaches; it is recorded as Q-5 and
+pinned in Rust only.
+
+### Steps
+
+1. **S18.1:** `rust/fhy-core/src/stack.rs` and `scope.rs` as `todo!()`
+   stubs, the Rust stories and properties, seen failing; then the
+   implementation; `lib.rs`. One commit.
+2. **S18.2:** the Python stories the case list adds, and the docs of
+   D-S18-10. One commit.
+3. **S18.3:** status, implementation notes, and this checklist.
+
+Every step ends with: `cargo test --workspace` with and without
+`--all-features` in the environment of `target/gate-env.sh`; clippy
+`--all-targets -D warnings` both ways; fmt; doc `-D warnings`; `cargo
+deny check`; `cargo +1.85 check --workspace`; `pytest tests`; nox `lint`
+and `type_check`.
+
+### Test plan: the shared case list
+
+Each case is one behavior both languages pin. "Rust" and "Python" name
+the tests; a Python test marked *new* is added in S18.2.
+
+| Case | Behavior | Rust (`tests/it/`) | Python (`tests/`) |
+|---|---|---|---|
+| K-1 | a new stack is empty | `stack_stories::new_stack_is_empty` | `test_stack.py::test_empty_stack_length` |
+| K-2 | push grows the stack by one | `stack_stories::push_grows_the_stack_by_one` | `test_stack_push` |
+| K-3 | peek returns the top and leaves the stack alone | `stack_stories::peek_returns_the_top_without_removing_it` | `test_stack_peek` |
+| K-4 | peek of an empty stack: `None` / `IndexError` | `stack_stories::peek_of_an_empty_stack_is_none` | `test_stack_peek_error` |
+| K-5 | pop returns the elements last in, first out | `stack_stories::pop_returns_the_elements_last_in_first_out` | `test_stack_pop` |
+| K-6 | pop of an empty stack: `None` / `IndexError` | `stack_stories::pop_of_an_empty_stack_is_none` | `test_stack_pop_error` |
+| K-7 | clear empties the stack | `stack_stories::clear_empties_the_stack` | `test_stack_clear` |
+| K-8 | iteration runs bottom to top, and can be repeated | `stack_stories::iteration_runs_bottom_to_top_and_repeats` | `test_stack_iter`, `test_stack_next` |
+| K-9 | two iterations at once are independent | `stack_stories::nested_iterations_are_independent` | `test_stack_supports_nested_iteration` |
+| K-10 | the top can be changed in place | `stack_stories::peek_mut_changes_the_top_in_place` | `test_stack_peek_returns_the_stored_object` (*new*) |
+| K-11 | any sequence of operations agrees with a list model | `scope_stack_properties::stack_agrees_with_a_vec_model` | `test_stack_properties.py` |
+| S-1 | a new scope has one frame, the root | `scope_stories::new_scope_has_one_root_frame` | `test_scope.py::test_fresh_scope_has_single_root_frame` |
+| S-2 | a binding in the root is found | `scope_stories::define_and_lookup_in_the_root_frame` | `test_define_and_lookup_in_root_frame` |
+| S-3 | an unbound key: `None` / `KeyError` | `scope_stories::lookup_of_an_unbound_key_is_none` | `test_lookup_raises_key_error_for_unbound_key` |
+| S-4 | push adds a frame and pop removes it | `scope_stories::push_adds_a_frame_and_pop_removes_it` | `test_push_increases_depth_and_pop_restores_it` |
+| S-5 | the root cannot be popped, and the refusal changes nothing | `scope_stories::popping_the_root_frame_is_refused_and_changes_nothing` | `test_pop_root_frame_raises_index_error`, `test_failed_root_pop_keeps_the_root_bindings` (*new*) |
+| S-6 | an inner binding shadows an outer one | `scope_stories::inner_binding_shadows_outer_binding` | `test_inner_binding_shadows_outer_binding` |
+| S-7 | pop reveals the shadowed binding | `scope_stories::pop_reveals_the_shadowed_outer_binding` | `test_pop_reveals_shadowed_outer_binding` |
+| S-8 | lookup finds an outer binding from an inner frame | `scope_stories::lookup_finds_an_outer_binding_from_an_inner_frame` | `test_lookup_finds_outer_binding_from_inner_frame` |
+| S-9 | `lookup_local` ignores outer frames | `scope_stories::lookup_local_ignores_outer_frames` | `test_lookup_local_only_searches_innermost_frame` |
+| S-10 | `lookup_local` finds an innermost binding | `scope_stories::lookup_local_finds_an_innermost_binding` | `test_lookup_local_returns_innermost_binding` |
+| S-11 | define overwrites a binding of the same frame | `scope_stories::define_overwrites_a_binding_of_the_same_frame` | `test_define_overwrites_same_frame_binding` |
+| S-12 | `is_defined` sees an outer binding | `scope_stories::is_defined_sees_an_outer_binding` | `test_is_defined_true_for_outer_binding` |
+| S-13 | `is_defined` is false for an unbound key | `scope_stories::is_defined_is_false_for_an_unbound_key` | `test_is_defined_false_for_unbound_key` |
+| S-14 | `is_defined_local` ignores outer frames | `scope_stories::is_defined_local_ignores_outer_frames` | `test_is_defined_local_false_for_outer_binding` |
+| S-15 | `is_defined_local` sees an innermost binding | `scope_stories::is_defined_local_sees_an_innermost_binding` | `test_is_defined_local_true_for_innermost_binding` |
+| S-16 | the scoped frame is pushed for the body and popped after | `scope_stories::with_frame_pushes_for_the_body_and_pops_after` | `test_scope_context_manager_pushes_and_pops` |
+| S-17 | the scoped frame is popped when the body fails (panic / exception) | `scope_stories::with_frame_pops_when_the_body_panics` | `test_scope_context_manager_pops_on_exception` |
+| S-18 | the body gets the same scope, and its result comes back | `scope_stories::with_frame_gives_the_body_the_scope_and_returns_its_result` | `test_scope_context_manager_yields_same_scope` |
+| S-19 | bindings of the scoped frame go with it | `scope_stories::bindings_of_the_scoped_frame_are_discarded` | `test_bindings_in_context_manager_frame_are_discarded_on_exit` |
+| S-20 | nested scoped frames unwind last in, first out | `scope_stories::nested_frames_unwind_last_in_first_out` | `test_nested_scopes_track_depth` |
+| S-21 | any sequence of operations agrees with a list-of-maps model | `scope_stack_properties::scope_agrees_with_a_list_of_maps_model` | `test_scope_properties.py` |
+| S-22 | Rust only (Q-5): the scoped frame restores the entry depth after an unbalanced body, also on a panic | `scope_stories::with_frame_restores_the_entry_depth_after_an_unbalanced_body` | none: Python pops one frame |
+
+The Rust models are a `Vec<T>` and a `Vec<HashMap<char, i32>>` over
+random operation sequences (push, pop, define, and every query), as the
+Python state machines' models are; each step compares the result, and
+the depth or length after it.
