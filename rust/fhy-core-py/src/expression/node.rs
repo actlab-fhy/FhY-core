@@ -17,6 +17,8 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+use std::collections::HashMap;
+
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -1893,6 +1895,22 @@ pub(super) fn build_node<'py>(
     expression: &Expression,
     children: Vec<Bound<'py, PyAny>>,
 ) -> PyResult<Bound<'py, PyAny>> {
+    build_node_with(py, expression, children, &mut HashMap::new())
+}
+
+/// Return a new node of the public class of `expression`'s kind, over the
+/// Python objects `children`, reusing the Python `Identifier` of each id
+/// `identifiers` holds, and recording the ones it builds.
+///
+/// A decimal literal is built from its positional text, which the literal
+/// grammar reads back as the same decimal without the `decimal.Decimal`
+/// calls a `Decimal` argument costs.
+pub(super) fn build_node_with<'py>(
+    py: Python<'py>,
+    expression: &Expression,
+    children: Vec<Bound<'py, PyAny>>,
+    identifiers: &mut HashMap<u64, Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
     match expression.kind() {
         ExpressionKind::Unary(node) => PyUnaryExpression::public_class().get(py)?.call1((
             operation_to_python(py, node.operation())?,
@@ -1910,9 +1928,26 @@ pub(super) fn build_node<'py>(
             operation_to_python(py, node.operation())?,
             PyTuple::new(py, children)?,
         )),
-        ExpressionKind::Identifier(identifier) => PyIdentifierExpression::public_class()
-            .get(py)?
-            .call1((crate::identifier::identifier_to_python(py, identifier)?,)),
+        ExpressionKind::Identifier(identifier) => {
+            let object = match identifiers.get(&identifier.id()) {
+                Some(object) => object.clone(),
+                None => {
+                    let object = crate::identifier::identifier_to_python(py, identifier)?;
+                    identifiers.insert(identifier.id(), object.clone());
+                    object
+                }
+            };
+            PyIdentifierExpression::public_class()
+                .get(py)?
+                .call1((object,))
+        }
+        ExpressionKind::Literal(fhy_core::expression::LiteralValue::Decimal(decimal)) => {
+            let mut text = decimal.to_string();
+            if !text.contains('.') {
+                text.push_str(".0");
+            }
+            PyLiteralExpression::public_class().get(py)?.call1((text,))
+        }
         ExpressionKind::Literal(value) => PyLiteralExpression::public_class()
             .get(py)?
             .call1((literal_to_python(py, value)?,)),

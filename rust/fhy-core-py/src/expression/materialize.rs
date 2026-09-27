@@ -23,7 +23,7 @@ use fhy_core::tree::{NodeHandle, NodeIdentity, Tree};
 use crate::error::IntoPyResult;
 use crate::identifier::{read_identifier_id, restore_identifier};
 
-use super::node::{PyExpression, build_node};
+use super::node::{PyExpression, build_node_with};
 
 /// One step of the materializing walk.
 enum Step<'a, 'py> {
@@ -47,6 +47,8 @@ struct Materializer<'py> {
     /// The objects already known for core nodes, by identity: the
     /// replacements, and every shared node built so far.
     known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
+    /// The Python `Identifier` of each id the walk has built one for.
+    identifiers: HashMap<u64, Bound<'py, PyAny>>,
 }
 
 impl<'py> Materializer<'py> {
@@ -97,7 +99,7 @@ impl<'py> Materializer<'py> {
                 Step::Build { node, child_count } => {
                     let first = results.len() - child_count;
                     let children = results.split_off(first);
-                    let object = build_node(self.py, node, children)?;
+                    let object = build_node_with(self.py, node, children, &mut self.identifiers)?;
                     if node.is_shared() {
                         self.known.insert(node.identity(), object.clone());
                     }
@@ -168,7 +170,11 @@ pub(super) fn substitute<'py>(
     if Expression::ptr_eq(&result, this.expression()) {
         return Ok(slf.clone().into_any());
     }
-    let mut materializer = Materializer { py, known };
+    let mut materializer = Materializer {
+        py,
+        known,
+        identifiers: HashMap::new(),
+    };
     materializer.materialize(&result, Some(slf.clone()))
 }
 
@@ -189,6 +195,7 @@ pub(super) fn materialize_beside<'py>(
     let mut materializer = Materializer {
         py: input.py(),
         known: HashMap::new(),
+        identifiers: HashMap::new(),
     };
     materializer.materialize(result, Some(input.clone()))
 }
@@ -207,6 +214,7 @@ pub(crate) fn materialize_expression<'py>(
     let mut materializer = Materializer {
         py,
         known: HashMap::new(),
+        identifiers: HashMap::new(),
     };
     materializer.materialize(expression, None)
 }
@@ -231,6 +239,7 @@ pub(crate) fn materialize_substituted<'py>(
     let mut materializer = Materializer {
         py: input.py(),
         known,
+        identifiers: HashMap::new(),
     };
     materializer.materialize(result, Some(input.clone()))
 }
@@ -247,6 +256,10 @@ pub(crate) fn materialize_with_known<'py>(
     expression: &Expression,
     known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let mut materializer = Materializer { py, known };
+    let mut materializer = Materializer {
+        py,
+        known,
+        identifiers: HashMap::new(),
+    };
     materializer.materialize(expression, None)
 }

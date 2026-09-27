@@ -244,6 +244,9 @@ pub(crate) fn parse<D: DeserializeOwned>(cls: &Bound<'_, PyType>, text: &str) ->
 
 /// Return the wire form `D` of the V2 dict `data`, a payload of `cls`.
 ///
+/// The dict is read into a JSON value tree, the shape `json.loads` makes,
+/// without writing its text.
+///
 /// # Errors
 ///
 /// Raises `DeserializationValueError` for a payload that is not JSON-shaped
@@ -252,27 +255,77 @@ pub(crate) fn parse_dict<D: DeserializeOwned>(
     cls: &Bound<'_, PyType>,
     data: &Bound<'_, PyAny>,
 ) -> PyResult<D> {
-    static DUMPS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = cls.py();
-    let text = framework(py, &DUMPS, "_dump_canonical_json")?
-        .call1((data,))
-        .map_err(|error| {
-            let message = format!(
-                "Invalid V2 payload for \"{}\": {}",
-                class_name(cls),
-                error.value(py)
-            );
-            let wrapped = deserialization_error(py, message);
-            wrapped.set_cause(py, Some(error));
-            wrapped
-        })?;
-    let text = text.cast::<PyString>()?.to_str()?;
-    serde_json::from_str(text).map_err(|error| {
+    let invalid = |reason: String| {
         deserialization_error(
             py,
-            format!("Invalid V2 payload for \"{}\": {error}", class_name(cls)),
+            format!("Invalid V2 payload for \"{}\": {reason}", class_name(cls)),
         )
-    })
+    };
+    let value = read_json_value(data)?.map_err(invalid)?;
+    serde_json::from_value(value).map_err(|error| invalid(error.to_string()))
+}
+
+/// Return the JSON value of the Python payload `object`, or the reason it
+/// has none: a `dict` with `str` keys, a `list` or `tuple`, a `str`, an
+/// `int` that fits 64 bits, a finite `float`, a `bool` or `None`.
+fn read_json_value(object: &Bound<'_, PyAny>) -> PyResult<Result<serde_json::Value, String>> {
+    use serde_json::Value as Json;
+    if object.is_none() {
+        return Ok(Ok(Json::Null));
+    }
+    if let Ok(flag) = object.cast::<pyo3::types::PyBool>() {
+        return Ok(Ok(Json::Bool(flag.is_true())));
+    }
+    if let Ok(text) = object.cast::<PyString>() {
+        return Ok(Ok(Json::String(text.to_str()?.to_owned())));
+    }
+    if let Ok(dict) = object.cast::<PyDict>() {
+        let mut map = serde_json::Map::with_capacity(dict.len());
+        for (key, item) in dict.iter() {
+            let Ok(key) = key.cast::<PyString>() else {
+                return Ok(Err(format!("a key {} is not a str", key.repr()?)));
+            };
+            match read_json_value(&item)? {
+                Ok(value) => {
+                    map.insert(key.to_str()?.to_owned(), value);
+                }
+                Err(reason) => return Ok(Err(reason)),
+            }
+        }
+        return Ok(Ok(Json::Object(map)));
+    }
+    if let Ok(list) = object.cast::<pyo3::types::PyList>() {
+        let mut items = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            match read_json_value(&item)? {
+                Ok(value) => items.push(value),
+                Err(reason) => return Ok(Err(reason)),
+            }
+        }
+        return Ok(Ok(Json::Array(items)));
+    }
+    if let Ok(integer) = object.cast::<pyo3::types::PyInt>() {
+        if let Ok(value) = integer.extract::<u64>() {
+            return Ok(Ok(Json::from(value)));
+        }
+        if let Ok(value) = integer.extract::<i64>() {
+            return Ok(Ok(Json::from(value)));
+        }
+        return Ok(Err(format!(
+            "the integer {} does not fit 64 bits",
+            integer.repr()?
+        )));
+    }
+    if let Ok(float) = object.cast::<pyo3::types::PyFloat>() {
+        return Ok(serde_json::Number::from_f64(float.value())
+            .map(Json::Number)
+            .ok_or_else(|| format!("the float {} is not finite", float.value())));
+    }
+    Ok(Err(format!(
+        "a value of type {} is not JSON",
+        object.get_type().name()?
+    )))
 }
 
 /// Return the value `build` builds, raising a Python-defined part's
