@@ -530,6 +530,8 @@ module depends only on the layers before it:
    never on `pass`
 9. `param`, the value domains of params and their questions, which depends
    on `constraint` and never on `pass`
+10. `stack` and `scope`, the last-in, first-out stack and the lexical
+    scope, which depend on no other module, each other included
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -561,6 +563,8 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.constraint` | `fhy_core::constraint`; the Python-defined constraints and the member objects only Python compares reach it through the binding's adapters |
 | `fhy_core.symbolic.param` (`values`, `domains`) | `fhy_core::param`; the Python-defined domains and the values only Python compares or orders reach it through the binding's adapters |
 | `fhy_core.symbol_table` | `fhy_core::symbol_table`; the abstract `SymbolTableFrame` that Python-defined frames subclass stays in Python |
+| `fhy_core.utils.stack` | `fhy_core::stack`, for Rust users; the Python `Stack` stays a separate Python implementation with the same behavior |
+| `fhy_core.utils.scope` | `fhy_core::scope`, for Rust users; the Python `Scope` stays a separate Python implementation with the same behavior |
 
 ### Errors belong to their module
 
@@ -601,6 +605,10 @@ formatting, lowercase error messages, `Display` impls instead of Python
 shipped defaults as associated functions such as
 `OpAttribute::commutative()`. Rustdoc describes Rust behavior and does not
 narrate the Python implementation.
+`stack` and `scope` are implemented twice, natively in each language and
+with no binding between them (S18 of `docs/design/python-switch.md`): the
+two share their behavior, which one list of test cases pins in both test
+suites, and each keeps its own language's errors and names.
 
 ### Binding crate layout
 

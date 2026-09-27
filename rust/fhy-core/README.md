@@ -6,7 +6,7 @@ This crate is the Rust implementation of the `fhy_core` Python package, which re
 
 ## Modules
 
-Each module depends only on the modules listed before it, except that `tree`, `term` and `lattice` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, `solver` and `types` depend on `expression` and not on `pass`, `constraint` depends on `solver` and not on `pass`, and `param` depends on `constraint` and not on `pass`. Each public item has exactly one public path.
+Each module depends only on the modules listed before it, except that `tree`, `term` and `lattice` are independent of each other, `expression` and `pass` are independent of each other, `expression::passes` joins them, `solver` and `types` depend on `expression` and not on `pass`, `constraint` depends on `solver` and not on `pass`, and `param` depends on `constraint` and not on `pass`. `stack` and `scope` depend on no other module, each other included. Each public item has exactly one public path.
 
 - `identifier`: `Identifier`, a name hint paired with a process-unique id.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical value per key.
@@ -31,6 +31,8 @@ Each module depends only on the modules listed before it, except that `tree`, `t
 - `types`: the IR type system. `CoreDataType` with its promotion orders and the types literals resolve to, `TypeQualifier`, the `DataType`s (primitive, `TemplateDataType`, or an extension) and `Type`s (`NumericalType`, `IndexType`, or an extension), and template binding, substitution and unification into a `TypeUnificationEnvironment`. `TypeExtension` and `DataTypeExtension` let types defined elsewhere take part in each operation.
   - `types::checking`: `TypeChecker`, which synthesizes an expression's type and qualifier or checks it against an expected type over `IdentifierTypes` and `CallTargets` lookups, and `check_function_body` and `check_all_function_bodies`, which hold function bodies to their declared result sorts.
 - `symbol_table`: `SymbolTable`, namespaces in insertion order, each naming an optional parent and mapping its symbols to frames of any type implementing `Frame`. A lookup walks up the parents, an inner namespace never redefines an outer symbol, and `violations` reports missing and cyclic parents and frames that name another symbol. `SymbolFrame` is the built-in frame: an `ImportFrame`, a `VariableFrame` or a `FunctionFrame`, with its `FunctionKeyword`. It depends on `types`.
+- `stack`: `Stack`, a last-in, first-out stack whose `pop` and `peek` answer `None` when it is empty, iterated from the bottom to the top.
+- `scope`: `Scope`, lexical frames with shadowing lookup. `define` binds a key in the innermost frame, `lookup` searches from the innermost frame outward and `lookup_local` searches the innermost only, and `with_frame` runs a closure in a new frame and restores the depth afterwards, also when the closure panics. The root frame cannot be popped (`RootFramePopError`). The Python `fhy_core.utils.Stack` and `Scope` are separate Python implementations with the same behavior, pinned by one list of test cases.
 
 ## One copy per process
 
