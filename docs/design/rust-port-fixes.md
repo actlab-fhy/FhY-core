@@ -69,7 +69,7 @@ onto `dev-rust` before continuing.
 
 ### Track B: `expression` (expressions, the wire and the corpus; lands 3rd)
 
-- [ ] B0: worktree `port/fix2-expression` created; the baseline gates recorded
+- [x] B0: worktree `port/fix2-expression` created; the baseline gates recorded (the worktree is `fix-b-expression`, branch `fix/b-expression`; see Track B notes): this commit
 - [ ] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed
 - [ ] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing
 - [ ] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`
@@ -79,7 +79,7 @@ onto `dev-rust` before continuing.
 - [ ] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests
 - [ ] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed
 - [ ] R2-029b (F2-029, `expression`): error-text tables and small stories
-- [ ] `[rebase]` onto `dev-rust` after Tracks A and D land
+- [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
 - [ ] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration
 - [ ] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order
 - [ ] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key
@@ -3086,7 +3086,18 @@ Track E (`pass/validation.rs`, `diagnostic.rs`), so this track left it.
 
 ### Track B notes
 
-(none yet)
+**B0: the worktree and the baseline.** The maintainer created the worktree
+as `~/Projects/FhY-core-worktrees/fix-b-expression` on branch
+`fix/b-expression`, from `dev-rust` at `35519bb`, where Tracks A and D have
+landed, in place of §I.2 rule 7's `fix2-expression`/`port/fix2-expression`;
+the names are the only difference. So the checklist's `[rebase]` line holds
+from the start, and the track works in its listed order with the wire group
+after the pre-rebase items. Its `.venv` is its own (`uv sync --group dev
+--group bench`), and its `target/gate-env.sh` copy points
+`CARGO_TARGET_DIR` at `target/gate-cargo`. The baseline at `35519bb`
+matches the Track D status: `cargo test --workspace` 4,565 passed, 2
+ignored; `--all-features` 4,601; fmt and clippy `-D warnings` both ways
+clean; `pytest tests` 8,313 passed, 2 xfailed.
 
 ### Track C notes
 
