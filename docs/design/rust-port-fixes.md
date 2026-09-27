@@ -118,9 +118,9 @@ onto `dev-rust` before continuing.
 - [x] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow (`464cbe8`)
 - [x] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented (`86c407c`)
 - [x] R2-041 (F2-041): diagnostics read through their report (`b966131`)
-- [x] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members
-- [ ] `[rebase]` onto `dev-rust` after Track A lands
-- [ ] R2-013c (F2-013, binding readers): depth limits in the dict and member readers
+- [x] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members (`cd51fde`)
+- [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed; no rebase needed)
+- [x] R2-013c (F2-013, binding readers): depth limits in the dict and member readers
 - [ ] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot
 - [ ] `[rebase]` onto `dev-rust` after Tracks D, B and C land
 - [ ] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes
@@ -4364,3 +4364,31 @@ The other Python gates are Track D's status line, on the same code.
   commit adds them; the per-commit gate now includes mypy.
 - **Python-visible changes:** none; the stub's declarations change as
   above.
+
+**R2-013c.**
+- **The payload reader.** `wire.rs`'s `read_json_value` counts its depth
+  and refuses a `dict` or `list` more than 128 levels deep (the payload's
+  own dict counting as the first), with "the payload nests more than 128
+  levels" in the `DeserializationValueError` of the class. The limit
+  bounds the recursion and so the depth of the `serde_json::Value` built,
+  whose drop is then shallow; an iterative drop (the spec's second half)
+  is therefore not needed (call). It serves every V2 dict decode, the
+  expression's included.
+- **The member readers.** `read_member_value`, `read_bound_value` (a
+  bound value is read the same way, the spec's `p26` "bind" path) and
+  `value_to_python` count their depth and, past 64 levels, check it
+  against `sys.getrecursionlimit()`, read once per call, raising
+  `RecursionError` as the provenance binding does. They are in Track A's
+  `constraint/value.rs`; the edit adds depth-tracking inner functions
+  behind the unchanged signatures.
+- **Test-first.** At the base the child processes of the Expression,
+  `NumericalType` and `Param` payloads and of the deep member (built and
+  bound) died with `SIGSEGV` (`-11`), and the 128-level boundary test
+  failed; the `SymbolTable` case, whose shape Python checks first, passed
+  as a control.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a V2 payload dict nested 30,000 levels crashed the interpreter | `DeserializationValueError` ("the payload nests more than 128 levels") | `test_a_deep_payload_dict_raises_instead_of_crashing` (subprocess), `test_a_payload_dict_128_levels_deep_is_read` |
+  | an `InSetConstraint` member, or a bound value, nested 20,000 levels crashed the interpreter | `RecursionError` past the recursion limit | `test_a_deep_member_raises_recursion_error` (subprocess) |

@@ -254,14 +254,26 @@ pub(crate) fn parse_dict<D: DeserializeOwned>(
             format!("Invalid V2 payload for \"{}\": {reason}", class_name(cls)),
         )
     };
-    let value = read_json_value(data)?.map_err(invalid)?;
+    let value = read_json_value(data, 0)?.map_err(invalid)?;
     serde_json::from_value(value).map_err(|error| invalid(error.to_string()))
 }
 
-/// Return the JSON value of the Python payload `object`, or the reason it
-/// has none: a `dict` with `str` keys, a `list` or `tuple`, a `str`, an
-/// `int` that fits 64 bits, a finite `float`, a `bool` or `None`.
-fn read_json_value(object: &Bound<'_, PyAny>) -> PyResult<Result<serde_json::Value, String>> {
+/// The deepest nesting of `dict`s and `list`s the reader of a Python payload
+/// accepts, `serde_json`'s own limit for JSON text (R2-013c). V2 payloads are
+/// shallow: an expression is a flat node table.
+const MAX_PAYLOAD_DEPTH: usize = 128;
+
+/// Return the JSON value of the Python payload `object`, `depth` levels
+/// inside the payload, or the reason it has none: a `dict` with `str` keys,
+/// a `list` or `tuple`, a `str`, an `int` that fits 64 bits, a finite
+/// `float`, a `bool` or `None`, nested at most [`MAX_PAYLOAD_DEPTH`] levels.
+///
+/// The limit bounds the recursion, and so the depth of the value built,
+/// whose drop recurses as deep.
+fn read_json_value(
+    object: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<Result<serde_json::Value, String>> {
     use serde_json::Value as Json;
     if object.is_none() {
         return Ok(Ok(Json::Null));
@@ -272,13 +284,20 @@ fn read_json_value(object: &Bound<'_, PyAny>) -> PyResult<Result<serde_json::Val
     if let Ok(text) = object.cast::<PyString>() {
         return Ok(Ok(Json::String(text.to_str()?.to_owned())));
     }
+    let is_container =
+        object.cast::<PyDict>().is_ok() || object.cast::<pyo3::types::PyList>().is_ok();
+    if is_container && depth >= MAX_PAYLOAD_DEPTH {
+        return Ok(Err(format!(
+            "the payload nests more than {MAX_PAYLOAD_DEPTH} levels"
+        )));
+    }
     if let Ok(dict) = object.cast::<PyDict>() {
         let mut map = serde_json::Map::with_capacity(dict.len());
         for (key, item) in dict.iter() {
             let Ok(key) = key.cast::<PyString>() else {
                 return Ok(Err(format!("a key {} is not a str", key.repr()?)));
             };
-            match read_json_value(&item)? {
+            match read_json_value(&item, depth + 1)? {
                 Ok(value) => {
                     map.insert(key.to_str()?.to_owned(), value);
                 }
@@ -290,7 +309,7 @@ fn read_json_value(object: &Bound<'_, PyAny>) -> PyResult<Result<serde_json::Val
     if let Ok(list) = object.cast::<pyo3::types::PyList>() {
         let mut items = Vec::with_capacity(list.len());
         for item in list.iter() {
-            match read_json_value(&item)? {
+            match read_json_value(&item, depth + 1)? {
                 Ok(value) => items.push(value),
                 Err(reason) => return Ok(Err(reason)),
             }

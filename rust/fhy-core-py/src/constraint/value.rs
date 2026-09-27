@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::OnceLock;
 
-use pyo3::exceptions::{PyException, PyTypeError};
+use pyo3::exceptions::{PyException, PyRecursionError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -367,6 +367,54 @@ pub(crate) fn read_opaque_member(value: &Bound<'_, PyAny>) -> PyResult<Value> {
 /// Raises `TypeError` for an opaque value the binding did not build or a
 /// value of a kind it does not know, and whatever building a value raises.
 pub(crate) fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+    value_to_python_at(py, value, 0, &mut RecursionLimit(None))
+}
+
+/// The depth below which no value is checked against the recursion limit.
+const SHALLOW_DEPTH: usize = 64;
+
+/// Python's recursion limit, read once per call the first time a value
+/// nests past [`SHALLOW_DEPTH`].
+struct RecursionLimit(Option<usize>);
+
+impl RecursionLimit {
+    /// Raise `RecursionError` if `depth` levels of nesting pass Python's
+    /// recursion limit (R2-013c).
+    ///
+    /// Each level of a value recurses on the Rust stack, so refusing what
+    /// Python's own limit would refuse keeps a deep value from overflowing
+    /// it, as the provenance binding does.
+    fn check(&mut self, py: Python<'_>, depth: usize) -> PyResult<()> {
+        if depth <= SHALLOW_DEPTH {
+            return Ok(());
+        }
+        let limit = match self.0 {
+            Some(limit) => limit,
+            None => *self.0.insert(
+                py.import(intern!(py, "sys"))?
+                    .call_method0(intern!(py, "getrecursionlimit"))?
+                    .extract()?,
+            ),
+        };
+        if depth > limit {
+            return Err(PyRecursionError::new_err(format!(
+                "maximum recursion depth exceeded: the value is nested more than {limit} \
+                 levels deep"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Return the Python value of the core `value`, `depth` levels inside the
+/// value being converted.
+fn value_to_python_at<'py>(
+    py: Python<'py>,
+    value: &Value,
+    depth: usize,
+    limit: &mut RecursionLimit,
+) -> PyResult<Bound<'py, PyAny>> {
+    limit.check(py, depth)?;
     match value {
         Value::Bool(value) => Ok(PyBool::new(py, *value).to_owned().into_any()),
         Value::Int(value) => big_int_to_python(py, value),
@@ -376,14 +424,14 @@ pub(crate) fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<B
         Value::Tuple(values) => {
             let elements = values
                 .iter()
-                .map(|value| value_to_python(py, value))
+                .map(|value| value_to_python_at(py, value, depth + 1, limit))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyTuple::new(py, elements)?.into_any())
         }
         Value::FrozenSet(values) => {
             let elements = values
                 .iter()
-                .map(|value| value_to_python(py, value))
+                .map(|value| value_to_python_at(py, value, depth + 1, limit))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyFrozenSet::new(py, &elements)?.into_any())
         }
@@ -482,7 +530,18 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
 /// Raises `ConstraintError` with the Python implementation's text for a
 /// value that cannot be a member.
 pub(crate) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    read_member_value_at(value, 0, &mut RecursionLimit(None))
+}
+
+/// Return the core value of the member-shaped `value`, `depth` levels inside
+/// the member being read.
+fn read_member_value_at(
+    value: &Bound<'_, PyAny>,
+    depth: usize,
+    limit: &mut RecursionLimit,
+) -> PyResult<Value> {
     let py = value.py();
+    limit.check(py, depth)?;
     if value.is_none() {
         return Err(constraint_error(py, "Constraint members cannot be `None`."));
     }
@@ -500,7 +559,7 @@ pub(crate) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         }
         let elements = value
             .try_iter()?
-            .map(|element| read_member_value(&element?))
+            .map(|element| read_member_value_at(&element?, depth + 1, limit))
             .collect::<PyResult<Vec<Value>>>()?;
         return Ok(if is_tuple {
             Value::Tuple(elements)
@@ -542,7 +601,18 @@ pub(crate) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
 /// Raises whatever reading a number raises, which an `int` or a `float`
 /// never does.
 pub(crate) fn read_bound_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    read_bound_value_at(value, 0, &mut RecursionLimit(None))
+}
+
+/// Return the core value of the bound `value`, `depth` levels inside the
+/// value being read.
+fn read_bound_value_at(
+    value: &Bound<'_, PyAny>,
+    depth: usize,
+    limit: &mut RecursionLimit,
+) -> PyResult<Value> {
     let py = value.py();
+    limit.check(py, depth)?;
     if let Some(number) = read_number(value)? {
         return Ok(number);
     }
@@ -556,7 +626,7 @@ pub(crate) fn read_bound_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         }
         let elements = value
             .try_iter()?
-            .map(|element| read_bound_value(&element?))
+            .map(|element| read_bound_value_at(&element?, depth + 1, limit))
             .collect::<PyResult<Vec<Value>>>()?;
         return Ok(if is_tuple {
             Value::Tuple(elements)
