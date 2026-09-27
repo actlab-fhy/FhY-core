@@ -182,11 +182,12 @@ impl Prepared<'_> {
             shape = broadcast_shape(&shape, binding.shape())?;
         }
         let lane_count = lane_count(&shape)?;
-        let lanes = ArrayLanes {
-            kernels,
-            bindings: PhantomData,
-        };
         if lane_count <= CHUNK_LANES {
+            let lanes = ArrayLanes {
+                kernels,
+                shape: shape.clone(),
+                bindings: PhantomData,
+            };
             let data = Walk::new(&lanes, self.registry, |identifier: &Identifier| {
                 environment.get(identifier).map(ArrayBinding::to_data)
             })
@@ -209,10 +210,27 @@ impl Prepared<'_> {
                 .iter()
                 .map(|(identifier, source)| (identifier, source.chunk(start, length)))
                 .collect();
+            let lanes = ArrayLanes {
+                kernels,
+                shape: vec![length],
+                bindings: PhantomData,
+            };
             let data = Walk::new(&lanes, self.registry, |identifier: &Identifier| {
                 chunk.get(identifier).map(ArrayBinding::to_data)
             })
-            .run(&self.expression)?;
+            .run(&self.expression)
+            .map_err(|error| match error {
+                EvaluationError::Lane {
+                    failure,
+                    node,
+                    lane,
+                } => EvaluationError::Lane {
+                    failure,
+                    node,
+                    lane: lane.map(|lane| start + lane),
+                },
+                other => other,
+            })?;
             if output.is_none() {
                 output = Some(Output::for_data(&data, lane_count)?);
             }
@@ -529,6 +547,9 @@ fn into_standard_layout<T: Lane>(lanes: CowArray<'_, T, IxDyn>, shape: &[usize])
 /// which live for `'a`, and owned for the values computed from them.
 struct ArrayLanes<'a, 'k> {
     kernels: &'k dyn ArrayKernels,
+    /// The shape of the lanes the walk computes, which lane indices count
+    /// in: the result's, or one chunk's.
+    shape: Vec<usize>,
     bindings: PhantomData<&'a ()>,
 }
 
@@ -721,8 +742,14 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
         self.map2(a.get(), b.get(), f)
     }
 
-    fn first_nonzero(&self, a: &CowArray<'a, u32, IxDyn>) -> Option<u32> {
-        a.iter().copied().find(|&id| id != 0)
+    fn first_nonzero(&self, a: &CowArray<'a, u32, IxDyn>) -> Option<(Option<usize>, u32)> {
+        let lanes = broadcast_view(a, &self.shape).unwrap_or_else(|_| a.view());
+        lanes
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|&(_, id)| id != 0)
+            .map(|(lane, id)| (Some(lane), id))
     }
 
     fn native(

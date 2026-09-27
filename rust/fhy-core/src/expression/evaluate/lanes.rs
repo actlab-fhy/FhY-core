@@ -101,8 +101,10 @@ pub(super) trait Lanes {
         self.map2(a.get(), b.get(), f)
     }
 
-    /// Return the first lane of `a` other than zero, in C order.
-    fn first_nonzero(&self, a: &Self::Of<u32>) -> Option<u32>;
+    /// Return the first lane of `a` other than zero, in C order, and its
+    /// flat index in the result an array backend computes, or `None` for
+    /// the scalar backend's one lane.
+    fn first_nonzero(&self, a: &Self::Of<u32>) -> Option<(Option<usize>, u32)>;
 
     /// Return the real value of the native built-in `function` at each lane
     /// of `argument`.
@@ -187,8 +189,8 @@ impl Lanes for ScalarLanes {
         Ok(f(*a, *b, *c))
     }
 
-    fn first_nonzero(&self, a: &u32) -> Option<u32> {
-        (*a != 0).then_some(*a)
+    fn first_nonzero(&self, a: &u32) -> Option<(Option<usize>, u32)> {
+        (*a != 0).then_some((None, *a))
     }
 
     fn native(&self, function: BuiltinFunction, argument: f64) -> Result<f64, EvaluationError> {

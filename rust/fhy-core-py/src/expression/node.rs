@@ -385,6 +385,13 @@ impl PyExpression {
     }
 }
 
+/// The most node occurrences `str()` of an expression writes in full.
+const STR_OCCURRENCE_LIMIT: u64 = 1_000_000;
+
+/// The node occurrences `str()` writes of an expression with more than
+/// [`STR_OCCURRENCE_LIMIT`].
+const STR_OCCURRENCE_BUDGET: usize = 1_000;
+
 #[pymethods]
 impl PyExpression {
     /// Return whether `other` is an expression of the same structure:
@@ -416,7 +423,16 @@ impl PyExpression {
     }
 
     /// Render the expression in the core's symbolic notation.
+    /// The core's `Display` text; above `STR_OCCURRENCE_LIMIT` occurrences,
+    /// its first `STR_OCCURRENCE_BUDGET` occurrences and `…` (R2-010), so a
+    /// DAG whose full text is exponential prints at once.
     fn __str__(&self) -> String {
+        if self.expression.occurrence_count() > STR_OCCURRENCE_LIMIT {
+            return self
+                .expression
+                .display_bounded(STR_OCCURRENCE_BUDGET)
+                .to_string();
+        }
         self.expression.to_string()
     }
 

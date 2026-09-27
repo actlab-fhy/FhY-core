@@ -188,13 +188,17 @@ where
             Rc::try_unwrap(root_value).unwrap_or_else(|shared| clone_value(&shared));
         if let Some(failures) = failures {
             let aligned = self.align(&failures, &data)?;
-            if let Some(id) = self.lanes.first_nonzero(&aligned) {
+            if let Some((lane, id)) = self.lanes.first_nonzero(&aligned) {
                 let index = usize::try_from(id - 1).expect("a failure id indexes the table");
                 let failure = LaneFailure::ALL[index % LaneFailure::ALL.len()];
                 let node = self
                     .failing_nodes
                     .swap_remove(index / LaneFailure::ALL.len());
-                return Err(EvaluationError::Lane { failure, node });
+                return Err(EvaluationError::Lane {
+                    failure,
+                    node,
+                    lane,
+                });
             }
         }
         Ok(data)

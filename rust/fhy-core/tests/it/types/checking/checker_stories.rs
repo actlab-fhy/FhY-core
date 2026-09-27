@@ -1014,3 +1014,21 @@ fn a_deep_expression_checks_on_a_small_stack() {
         assert!(matches!(typed, Ok(true)));
     });
 }
+
+/// Test a rule error on a doubling DAG displays in bounded size: the root
+/// and the sub-expression are written up to a budget of node occurrences
+/// (R2-010), not once per path.
+#[test]
+fn a_rule_error_on_a_dag_displays_in_bounded_size() {
+    let x = Identifier::new("x");
+    let bindings: Bindings = HashMap::from([(x.clone(), (scalar(Int32), TypeQualifier::Param))]);
+    let dag = crate::support::expression::build_doubling_dag(&Expression::from(x), 16);
+    let tree = &dag + Expression::from(LiteralValue::from(true));
+
+    let error = synthesize(&bindings, &tree).expect_err("a boolean in an addition");
+
+    let text = error.to_string();
+    assert!(matches!(error, TypeCheckError::Rule { .. }), "{text}");
+    assert!(text.len() < 4096, "{} bytes", text.len());
+    assert!(text.contains('…'), "{text}");
+}

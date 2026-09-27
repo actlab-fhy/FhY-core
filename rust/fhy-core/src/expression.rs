@@ -25,6 +25,7 @@ mod symbol_type;
 mod wire;
 
 pub use callee::{Callee, FunctionName, FunctionNameError};
+pub(crate) use display::Bounded;
 pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
 pub use error::{BooleanPosition, NonBooleanLogicalOperandError, PiecewiseError, RebuildError};
 pub use literal::{Decimal, LiteralTextError, LiteralValue};

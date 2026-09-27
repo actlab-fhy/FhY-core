@@ -3,7 +3,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::{Expression, FormatOptions, FunctionName, FunctionSort, IdentifierStyle};
+use crate::expression::{
+    Bounded, Expression, FormatOptions, FunctionName, FunctionSort, IdentifierStyle,
+};
 use crate::foreign::BoxError;
 
 use super::super::core_data_type::CoreDataType;
@@ -147,10 +149,13 @@ pub enum TypeCheckError {
     Callback(BoxError),
 }
 
-/// Write `expression` with its identifiers' ids.
+/// Write `expression` with its identifiers' ids, up to 64 node
+/// occurrences and then `…`, so a message about a DAG stays short (R2-010).
 pub(super) fn format_expression(expression: &Expression) -> String {
-    expression
-        .display(FormatOptions::default().with_identifier_style(IdentifierStyle::NameHintWithId))
+    Bounded::message(expression)
+        .with_options(
+            FormatOptions::default().with_identifier_style(IdentifierStyle::NameHintWithId),
+        )
         .to_string()
 }
 

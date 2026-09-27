@@ -1592,3 +1592,23 @@ fn children_report_their_exact_length() {
         assert!(children.next_back().is_none(), "fused");
     }
 }
+
+#[test]
+fn occurrence_count_saturates_and_is_linear() {
+    let (_, x) = build_identifier("x");
+
+    let counts: Vec<u64> = [0, 1, 2, 10, 62, 63, 70]
+        .into_iter()
+        .map(|levels| build_doubling_dag(&x, levels).occurrence_count())
+        .collect();
+
+    assert_eq!(
+        counts,
+        [1, 3, 7, 2047, u64::MAX >> 1, u64::MAX, u64::MAX],
+        "2^(levels + 1) - 1 occurrences, saturating"
+    );
+    assert_eq!((&x + 1).occurrence_count(), 3);
+    let piecewise = Expression::piecewise([(x.greater(0), x.clone())], Expression::from(0))
+        .expect("a valid piecewise");
+    assert_eq!(piecewise.occurrence_count(), 6);
+}

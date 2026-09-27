@@ -74,8 +74,8 @@ onto `dev-rust` before continuing.
 - [x] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing: `52e9581`
 - [x] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`: `9900487`
 - [x] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`: `d77f7ec`
-- [x] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node: this commit
-- [ ] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding
+- [x] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node: `9ac5ba7`
+- [x] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding: this commit
 - [ ] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests
 - [ ] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed
 - [ ] R2-029b (F2-029, `expression`): error-text tables and small stories
@@ -3199,6 +3199,52 @@ failing case over `any_literal`. Both passed at their first run.
 - **One stored failing node.** The walk's failure table holds each failing
   node once; id `i` names failure `ALL[(i - 1) % 5]` of node `(i - 1) / 5`.
 - **Python-visible changes:** none.
+
+**R2-010.**
+- **`Bounded`** (crate-private, `expression/display.rs`, re-exported
+  `pub(crate)` from `expression` for `solver` and `types`) writes the
+  `Display` text of the first `budget` node occurrences, then `…` once, and
+  stops; the nodes already opened stay unclosed, so the text is a prefix
+  of the full one. `Debug` keeps its own elision (`..` per node, closed).
+  Messages use `MESSAGE_NODE_BUDGET = 64`.
+- **The binding needs a public entry** (deviation): `Bounded` is
+  crate-private, and the binding is another crate, so
+  `Expression::display_bounded(occurrences) -> impl Display` is public and
+  documented; it is S-4's `Bounded` under the default options, and adds no
+  `FormatOptions` budget (§I.10).
+- **The arms.** `EvaluationError`'s `BooleanArithmetic`,
+  `NumberAsBoolean`, `MixedBranches` and `Lane`; `LoweringError`'s
+  `NonFiniteLiteral`, `Call` (its non-call fallback; a call's arms name only
+  the callee), `SortMismatch` and `UnsupportedPower`; and
+  `TypeCheckError::Rule`. For the last, `types/checking/error.rs`'s
+  `format_expression` itself writes `Bounded` with identifier ids, so the
+  root and the sub-expression are bounded, and so are the reasons the
+  checker builds with it (`checker.rs`, Track C's, is not touched), which
+  the checker formats eagerly and would otherwise also be exponential on a
+  DAG.
+- **The lane.** `EvaluationError::Lane { lane: Option<usize> }`: `None`
+  for a scalar evaluation, and for an array one the flat index in C order
+  of the result's shape. The array backend broadcasts the failure ids to
+  the shape it computes (the result's, or a chunk's) before searching, and
+  a chunk's index is offset by the chunk's start. The text is `integer
+  division by zero at lane 2 in (x // y)`; a scalar's is unchanged. The
+  lane property now asserts the index is the first lane the scalar
+  evaluation fails in.
+- **`str`/`repr`.** `Expression.__str__` writes `display_bounded(1000)`
+  above 1,000,000 occurrences. `__repr__` already went through the core's
+  `Debug`, which has had a 1,000-node budget since the first spec, so it
+  needed no change.
+- **Other tracks' files**, additively: `solver/error.rs` (the four arms),
+  `types/checking/error.rs` (`format_expression`), and one story each in
+  `tests/it/solver/smt_lowering_stories.rs` and
+  `tests/it/types/checking/checker_stories.rs`. D's R2-029d tables pin
+  small nodes, so no pin changed.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | error messages naming a node wrote its full text, which for a DAG never finished; `str()` of a decoded doubling DAG hung | a node is written up to 64 occurrences, then `…`; `str()` above a million occurrences writes the first thousand, then `…` | `test_str_of_a_decoded_doubling_dag_is_bounded` (new) |
+  | a lane failure of `evaluate_expression_with_numpy` read `integer division by zero in (x // y)` | `integer division by zero at lane 2 in (x // y)`, the first failed lane in C order | no Python test pinned the array text |
 
 ### Track C notes
 

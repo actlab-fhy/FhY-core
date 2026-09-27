@@ -274,11 +274,12 @@ mod lanes {
                         prop_assert!(is_same_scalar(lane, scalar), "lane {}: {:?} != {:?}", index, lane, scalar);
                     }
                 }
-                Err(EvaluationError::Lane { failure, node }) => {
+                Err(EvaluationError::Lane { failure, node, lane }) => {
                     let first = scalars.iter().position(Result::is_err).expect("some lane fails alone");
-                    let Err(EvaluationError::Lane { failure: alone, node: alone_node }) = &scalars[first] else {
+                    let Err(EvaluationError::Lane { failure: alone, node: alone_node, lane: None }) = &scalars[first] else {
                         panic!("lane {first} fails differently: {:?}", scalars[first]);
                     };
+                    prop_assert_eq!(lane, Some(first), "the error names the first failed lane");
                     prop_assert_eq!(failure, *alone);
                     prop_assert!(Expression::ptr_eq(&node, alone_node) || node == *alone_node);
                 }

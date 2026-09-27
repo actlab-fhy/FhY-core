@@ -313,7 +313,7 @@ fn evaluate_array_raises_the_first_failed_lane_in_c_order() {
 
     assert!(matches!(
         &error,
-        EvaluationError::Lane { failure: LaneFailure::DivisionByZero, node } if node.to_string() == "(x // x)"
+        EvaluationError::Lane { failure: LaneFailure::DivisionByZero, node, lane: Some(1) } if node.to_string() == "(x // x)"
     ));
 }
 
@@ -561,6 +561,7 @@ fn evaluate_array_raises_the_first_failed_lane_of_a_later_chunk() {
         error,
         EvaluationError::Lane {
             failure: LaneFailure::DivisionByZero,
+            lane: Some(150_000),
             ..
         }
     ));
@@ -648,5 +649,60 @@ fn unary_plus_passes_its_operands_lanes_through() {
     assert_eq!(
         addresses[1].0, addresses[0].1,
         "the outer exp reads the inner exp's lanes, not a copy made by +"
+    );
+}
+
+#[test]
+fn a_lane_error_names_its_lane() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let numerators = array![[1_i64, 2, 3], [4, 5, 6]].into_dyn();
+    let divisors = array![1_i64, 1, 0].into_dyn();
+
+    let error = evaluate(
+        &x_reference.floor_divide(&y_reference),
+        vec![
+            (&x, ArrayBinding::Int(numerators.view())),
+            (&y, ArrayBinding::Int(divisors.view())),
+        ],
+    )
+    .expect_err("a division by zero");
+
+    assert!(
+        matches!(
+            error,
+            EvaluationError::Lane {
+                failure: LaneFailure::DivisionByZero,
+                lane: Some(2),
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "integer division by zero at lane 2 in (x // y)"
+    );
+}
+
+#[test]
+fn a_lane_error_names_its_lane_in_the_whole_result_when_its_value_broadcasts() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let rows = array![[2_i64], [1]].into_dyn();
+    let row = array![5_i64, 6, 7].into_dyn();
+
+    let error = evaluate(
+        &(x_reference.floor_divide(&x_reference - 1) + y_reference),
+        vec![
+            (&x, ArrayBinding::Int(rows.view())),
+            (&y, ArrayBinding::Int(row.view())),
+        ],
+    )
+    .expect_err("a division by zero");
+
+    assert!(
+        matches!(error, EvaluationError::Lane { lane: Some(3), .. }),
+        "{error:?}"
     );
 }

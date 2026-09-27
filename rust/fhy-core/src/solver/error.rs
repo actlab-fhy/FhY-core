@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::expression::{
-    Callee, Expression, ExpressionKind, NonBooleanLogicalOperandError, PiecewiseError,
+    Bounded, Callee, Expression, ExpressionKind, NonBooleanLogicalOperandError, PiecewiseError,
 };
 use crate::identifier::Identifier;
 
@@ -171,7 +171,11 @@ impl fmt::Display for LoweringError {
                 write_identifiers(f, identifiers)
             }
             Self::NonFiniteLiteral(node) => {
-                write!(f, "smt-lib2 has no term for the non-finite float {node}")
+                write!(
+                    f,
+                    "smt-lib2 has no term for the non-finite float {}",
+                    Bounded::message(node)
+                )
             }
             Self::Call(node) => match node.kind() {
                 ExpressionKind::Call(call) => match call.callee() {
@@ -193,15 +197,24 @@ impl fmt::Display for LoweringError {
                         name.as_str()
                     ),
                 },
-                _ => write!(f, "smt-lib2 has no term for the call {node}"),
+                _ => write!(
+                    f,
+                    "smt-lib2 has no term for the call {}",
+                    Bounded::message(node)
+                ),
             },
             Self::SortMismatch(node) => {
-                write!(f, "a boolean and a number meet in the node {node}")
+                write!(
+                    f,
+                    "a boolean and a number meet in the node {}",
+                    Bounded::message(node)
+                )
             }
             Self::UnsupportedPower(node) => write!(
                 f,
-                "smt-lib2 has no term for the power {node}, whose exponent is not an integer \
-                 literal of at least one"
+                "smt-lib2 has no term for the power {}, whose exponent is not an integer \
+                 literal of at least one",
+                Bounded::message(node)
             ),
         }
     }

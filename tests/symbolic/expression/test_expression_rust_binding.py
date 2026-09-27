@@ -9,6 +9,7 @@ for.
 """
 
 import pickle
+import time
 import weakref
 
 import pytest
@@ -252,6 +253,31 @@ def test_a_shared_dag_is_compared_and_hashed_in_time_linear_in_its_nodes() -> No
     assert node == twin
     assert hash(node) == hash(twin)
     assert node != other
+
+
+def test_str_of_a_decoded_doubling_dag_is_bounded() -> None:
+    """Test ``str`` of a decoded 61-node payload of 2**61 - 1 occurrences.
+
+    Above a million occurrences, ``str`` writes the first thousand and
+    ``…`` instead of the exponential full text; ``repr`` is bounded too.
+    """
+    x = Identifier("x")
+    node: Expression = IdentifierExpression(x)
+    for _ in range(60):
+        node = node + node
+    decoded = Expression.deserialize_from_dict(node.serialize_to_dict())
+
+    started = time.perf_counter()
+    text = str(decoded)
+    representation = repr(decoded)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0
+    assert text.startswith("((((")
+    assert text.endswith("…")
+    assert len(text) < 10_000
+    assert len(representation) < 20_000
+    assert str(IdentifierExpression(x) + 1) == "(x + 1)"
 
 
 @pytest.mark.usefixtures("v1_wire")

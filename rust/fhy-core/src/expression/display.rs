@@ -23,6 +23,20 @@ use super::node::{
 /// The most nodes `Debug` of an expression prints before it elides the rest.
 const DEBUG_NODE_BUDGET: usize = 1000;
 
+/// The most node occurrences an error message writes of an expression it
+/// names, through [`Bounded`].
+pub(crate) const MESSAGE_NODE_BUDGET: usize = 64;
+
+/// How a writer with a node budget ends once the budget is spent.
+#[derive(Clone, Copy)]
+enum Elision {
+    /// Write `..` for every node met after the budget, and still close the
+    /// nodes already opened, as `Debug` does.
+    EachNode,
+    /// Write `…` once and stop, leaving the opened nodes unclosed.
+    Stop,
+}
+
 /// One pending piece of output: a node still to print, or text to write.
 enum Step<'a> {
     Print(&'a Expression),
@@ -347,12 +361,27 @@ fn write_expression(
     node_budget: Option<usize>,
     f: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
+    write_expression_bounded(expression, options, node_budget, Elision::EachNode, f)
+}
+
+/// Write `expression` as [`write_expression`] does, ending a spent budget
+/// as `elision` says.
+fn write_expression_bounded(
+    expression: &Expression,
+    options: FormatOptions,
+    node_budget: Option<usize>,
+    elision: Elision,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
     let mut remaining = node_budget;
     let mut pending = vec![Step::Print(expression)];
     while let Some(step) = pending.pop() {
         match step {
             Step::Write(piece) => f.write_str(piece)?,
-            Step::Print(_) if remaining == Some(0) => f.write_str("..")?,
+            Step::Print(_) if remaining == Some(0) => match elision {
+                Elision::EachNode => f.write_str("..")?,
+                Elision::Stop => return f.write_str("…"),
+            },
             Step::Print(node) => {
                 if let Some(count) = &mut remaining {
                     *count -= 1;
@@ -362,6 +391,55 @@ fn write_expression(
         }
     }
     Ok(())
+}
+
+/// An expression's [`Display`](fmt::Display) text under [`FormatOptions`],
+/// cut off after a budget of node occurrences: the text of the first
+/// `budget` occurrences, in writing order, then `…` if any remain.
+///
+/// Errors write the nodes they name through it with
+/// [`MESSAGE_NODE_BUDGET`], so a message about a DAG, whose full text can
+/// be exponential in its size, stays short. Writing it does not recurse and
+/// stops at the budget, so its cost is bounded too.
+pub(crate) struct Bounded<'a> {
+    expression: &'a Expression,
+    budget: usize,
+    options: FormatOptions,
+}
+
+impl<'a> Bounded<'a> {
+    /// Return `expression`'s text under the default options, cut off after
+    /// `budget` node occurrences.
+    pub(crate) fn new(expression: &'a Expression, budget: usize) -> Self {
+        Self {
+            expression,
+            budget,
+            options: FormatOptions::default(),
+        }
+    }
+
+    /// Return the text of an error message: [`MESSAGE_NODE_BUDGET`]
+    /// occurrences under the default options.
+    pub(crate) fn message(expression: &'a Expression) -> Self {
+        Self::new(expression, MESSAGE_NODE_BUDGET)
+    }
+
+    /// Return this text written under `options`.
+    pub(crate) fn with_options(self, options: FormatOptions) -> Self {
+        Self { options, ..self }
+    }
+}
+
+impl fmt::Display for Bounded<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_expression_bounded(
+            self.expression,
+            self.options,
+            Some(self.budget),
+            Elision::Stop,
+            f,
+        )
+    }
 }
 
 /// An expression rendered as text under [`FormatOptions`]; what
@@ -413,7 +491,8 @@ impl Expression {
     /// Writing does not recurse, so a tree of any depth displays without
     /// exhausting the thread's stack. A subtree occurring in several places
     /// is written at every occurrence, so the text of a DAG can be
-    /// exponential in its depth.
+    /// exponential in its depth; [`display_bounded`](Self::display_bounded)
+    /// writes a text cut off after a budget of occurrences.
     ///
     /// # Examples
     ///
@@ -435,6 +514,33 @@ impl Expression {
             expression: self,
             options,
         }
+    }
+
+    /// Return the expression's [`Display`](fmt::Display) text cut off after
+    /// `occurrences` node occurrences: the text of the first `occurrences`
+    /// nodes in writing order, then `…` if any remain, with the nodes
+    /// already opened left unclosed.
+    ///
+    /// Writing it stops at the budget, so it is cheap however many
+    /// occurrences the tree has; [`occurrence_count`](Self::occurrence_count)
+    /// tells when the full text would be too long. Error messages write the
+    /// nodes they name this way, with a budget of 64.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expression::Expression;
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let tree = (&x + 1) * 2;
+    ///
+    /// assert_eq!(tree.display_bounded(100).to_string(), "((x + 1) * 2)");
+    /// assert_eq!(tree.display_bounded(3).to_string(), "((x + …");
+    /// ```
+    #[must_use]
+    pub fn display_bounded(&self, occurrences: usize) -> impl fmt::Display + '_ {
+        Bounded::new(self, occurrences)
     }
 }
 

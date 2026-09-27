@@ -3,7 +3,6 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::BigInt;
 use crate::expression::builtins::BuiltinFunction;
 use crate::expression::callee::{Callee, FunctionName};
 use crate::expression::error::{NonBooleanLogicalOperandError, PiecewiseError};
@@ -11,6 +10,7 @@ use crate::expression::literal::{Decimal, LiteralValue};
 use crate::expression::node::Expression;
 use crate::expression::registry::InlineError;
 use crate::expression::sort::FunctionSort;
+use crate::expression::{BigInt, Bounded};
 use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
@@ -137,7 +137,9 @@ pub enum EvaluationError {
     /// A Boolean is used as a number: in arithmetic, an ordering, a sign, a
     /// numeric argument, or an equality with a number.
     ///
-    /// Displays as `a boolean is used as a number in (x + true)`.
+    /// Displays as `a boolean is used as a number in (x + true)`, the node
+    /// written up to 64 node occurrences and then `…`, as every node an
+    /// evaluation error names is.
     BooleanArithmetic(Expression),
     /// A number is used as a Boolean: an operand of a connective or of a
     /// negation, or a piecewise condition, which the screen did not refuse.
@@ -175,13 +177,17 @@ pub enum EvaluationError {
     },
     /// A lane of the result failed.
     ///
-    /// Displays as `integer overflow in (x * y)`, the failure and the node
-    /// where it occurred, for the first failed lane in C order.
+    /// Displays as `integer overflow at lane 3 in (x * y)`, the failure, the
+    /// lane of an array evaluation, and the node where it occurred, for the
+    /// first failed lane in C order; a scalar evaluation names no lane.
     Lane {
         /// Why the lane failed.
         failure: LaneFailure,
         /// The node whose operation failed.
         node: Expression,
+        /// The flat index, in C order of the result's shape, of the first
+        /// failed lane of an array evaluation; `None` for a scalar one.
+        lane: Option<usize>,
     },
     /// An array kernel plugged into the evaluator failed.
     ///
@@ -235,11 +241,21 @@ impl fmt::Display for EvaluationError {
                 "function {:?} has no implementation the evaluator can run",
                 callee.name()
             ),
-            Self::BooleanArithmetic(node) => write!(f, "a boolean is used as a number in {node}"),
-            Self::NumberAsBoolean(node) => write!(f, "a number is used as a boolean in {node}"),
-            Self::MixedBranches(node) => {
-                write!(f, "the branches of {node} mix booleans and numbers")
-            }
+            Self::BooleanArithmetic(node) => write!(
+                f,
+                "a boolean is used as a number in {}",
+                Bounded::message(node)
+            ),
+            Self::NumberAsBoolean(node) => write!(
+                f,
+                "a number is used as a boolean in {}",
+                Bounded::message(node)
+            ),
+            Self::MixedBranches(node) => write!(
+                f,
+                "the branches of {} mix booleans and numbers",
+                Bounded::message(node)
+            ),
             Self::Shape { left, right } => {
                 write!(f, "shapes {left:?} and {right:?} do not broadcast")
             }
@@ -250,7 +266,17 @@ impl fmt::Display for EvaluationError {
             Self::OutOfMemory { lanes } => {
                 write!(f, "cannot allocate the {lanes} lanes of the result")
             }
-            Self::Lane { failure, node } => write!(f, "{failure} in {node}"),
+            Self::Lane {
+                failure,
+                node,
+                lane,
+            } => {
+                write!(f, "{failure}")?;
+                if let Some(lane) = lane {
+                    write!(f, " at lane {lane}")?;
+                }
+                write!(f, " in {}", Bounded::message(node))
+            }
             Self::Kernel { function, .. } => {
                 write!(f, "the array kernel of {} failed", function.name())
             }

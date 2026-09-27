@@ -529,7 +529,7 @@ fn a_piecewise_raises_the_failure_of_the_branch_it_selects() {
 
     assert!(matches!(
         &error,
-        EvaluationError::Lane { failure: LaneFailure::NonFiniteCast, node }
+        EvaluationError::Lane { failure: LaneFailure::NonFiniteCast, node, lane: None }
             if node.to_string() == "floor(sqrt(x))"
     ));
     assert_eq!(
@@ -630,7 +630,7 @@ fn a_failure_passes_through_every_other_node() {
 
     assert!(matches!(
         &error,
-        EvaluationError::Lane { failure: LaneFailure::DivisionByZero, node } if node.to_string() == "(x // 0)"
+        EvaluationError::Lane { failure: LaneFailure::DivisionByZero, node, lane: None } if node.to_string() == "(x // 0)"
     ));
     assert_eq!(error.to_string(), "integer division by zero in (x // 0)");
 }
@@ -797,5 +797,26 @@ fn evaluate_walks_a_deep_tree_on_a_small_stack() {
     assert_eq!(
         value.unwrap(),
         Scalar::Int(i64::try_from(SMALL_STACK_DEPTH).unwrap())
+    );
+}
+
+/// Test a lane error on a 63-level doubling DAG over `x = 1` displays in
+/// bounded size: the addition that overflows is written up to a budget of
+/// node occurrences (R2-010), not once per path, and the node stays in the
+/// error.
+#[test]
+fn a_lane_error_on_a_63_level_doubling_dag_displays_in_bounded_size() {
+    let (x, reference) = build_identifier("x");
+    let dag = crate::support::expression::build_doubling_dag(&reference, 63);
+
+    let error = evaluate(&dag, &[(&x, Scalar::Int(1))]).expect_err("2^63 overflows");
+
+    let text = error.to_string();
+    assert!(text.len() < 4096, "{} bytes", text.len());
+    assert!(text.starts_with("integer overflow in ((((("), "{text}");
+    assert!(text.ends_with('…'), "{text}");
+    assert!(
+        matches!(&error, EvaluationError::Lane { failure: LaneFailure::IntegerOverflow, node, lane: None } if Expression::ptr_eq(node, &dag)),
+        "{error:?}"
     );
 }

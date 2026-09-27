@@ -857,3 +857,31 @@ fn lowering_errors_display_one_lowercase_line() {
          of at least one"
     );
 }
+
+/// Test a lowering error on a depth-20 doubling DAG displays in bounded
+/// size: each variant holding a node writes it up to a budget of node
+/// occurrences (R2-010), not once per path.
+#[test]
+fn a_lowering_error_on_a_depth_20_dag_displays_in_bounded_size() {
+    let (x, reference) = build_identifier("x");
+    let dag = crate::support::expression::build_doubling_dag(&reference, 20);
+    let boolean = build_literal(true);
+    let mismatch = &dag + &boolean;
+
+    let refused = refuse(
+        &mismatch.greater(0),
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+    );
+
+    assert_eq!(refused, LoweringError::SortMismatch(mismatch));
+    for error in [
+        refused,
+        LoweringError::Call(dag.clone()),
+        LoweringError::UnsupportedPower(dag.clone()),
+        LoweringError::NonFiniteLiteral(dag),
+    ] {
+        let text = error.to_string();
+        assert!(text.len() < 4096, "{} bytes", text.len());
+        assert!(text.contains('…'), "{text}");
+    }
+}

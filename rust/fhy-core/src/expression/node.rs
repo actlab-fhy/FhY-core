@@ -549,6 +549,53 @@ impl Expression {
         self.iterate_children()
     }
 
+    /// Return the number of node occurrences of the tree: one per path from
+    /// the root, so a subtree shared in several places counts once per
+    /// place. It saturates at `u64::MAX`.
+    ///
+    /// The count visits each distinct node once, memoized by identity, so
+    /// it is linear in the distinct nodes even when the occurrences are
+    /// exponential in them, as in a doubling DAG. It is the guard for work
+    /// that visits every occurrence, such as [`Display`](std::fmt::Display)
+    /// and [`walk_tree`](crate::tree::walk_tree): a caller can bound such
+    /// work, or choose another rendering, before starting it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expression::Expression;
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let mut dag = x.clone();
+    /// for _ in 0..70 {
+    ///     dag = &dag + &dag;
+    /// }
+    ///
+    /// assert_eq!((&x + 1).occurrence_count(), 3);
+    /// assert_eq!(dag.occurrence_count(), u64::MAX);
+    /// ```
+    #[must_use]
+    pub fn occurrence_count(&self) -> u64 {
+        let mut counts: HashMap<NodeIdentity, u64, BuildIdentityHasher> = HashMap::default();
+        let mut pending = vec![(self, false)];
+        while let Some((node, children_counted)) = pending.pop() {
+            if counts.contains_key(&node.identity()) {
+                continue;
+            }
+            if !children_counted && node.children().len() > 0 {
+                pending.push((node, true));
+                pending.extend(node.children().map(|child| (child, false)));
+                continue;
+            }
+            let count = node.children().fold(1_u64, |count, child| {
+                count.saturating_add(counts[&child.identity()])
+            });
+            counts.insert(node.identity(), count);
+        }
+        counts[&self.identity()]
+    }
+
     /// Return the position in [`children`](Self::children) order of the
     /// child that `error` refuses, or `None` when the error names no single
     /// child.
