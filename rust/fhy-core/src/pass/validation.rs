@@ -175,8 +175,10 @@ impl<I, P: CompilerPass<I, ()>> Validator<I> for PassValidator<P> {
 /// The record of one validator in a [`ValidationReport`].
 ///
 /// The record holds no diagnostics of its own: they are a slice of the
-/// report's diagnostics, read with [`diagnostics_in`](Self::diagnostics_in),
-/// so a report stores each diagnostic once.
+/// report's diagnostics, which the report reads through it with
+/// [`ValidationReport::diagnostics_of`] or pairs with it in
+/// [`ValidationReport::records_with_diagnostics`], so a report stores each
+/// diagnostic once.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ValidatorRecord {
     validator_name: Cow<'static, str>,
@@ -200,18 +202,47 @@ impl ValidatorRecord {
     }
 
     /// Return the validator's diagnostics, in emission order: a slice of
-    /// `report`'s diagnostics.
+    /// `report`'s diagnostics, or `None` if `report` holds fewer
+    /// diagnostics than the record refers to.
     ///
-    /// # Panics
-    ///
-    /// Panics if `report` is not the report this record came from and holds
-    /// fewer diagnostics than the record refers to.
+    /// The record keeps only a range, so it cannot tell its own report from
+    /// another that is long enough: against such a report it returns that
+    /// report's diagnostics in the range. Read a report's records with
+    /// [`ValidationReport::records_with_diagnostics`] to pair each with its
+    /// own diagnostics.
     #[must_use]
     pub fn diagnostics_in<'r>(
         &self,
         report: &'r ValidationReport<ValidatorRecord>,
-    ) -> &'r [Diagnostic] {
-        &report.diagnostics()[self.first_diagnostic..self.end_diagnostic]
+    ) -> Option<&'r [Diagnostic]> {
+        report
+            .diagnostics()
+            .get(self.first_diagnostic..self.end_diagnostic)
+    }
+}
+
+impl ValidationReport<ValidatorRecord> {
+    /// Return the diagnostics of `record`, one of this report's records, in
+    /// emission order, or `None` if the report holds fewer diagnostics than
+    /// the record refers to, which only a record of another report can.
+    #[must_use]
+    pub fn diagnostics_of(&self, record: &ValidatorRecord) -> Option<&[Diagnostic]> {
+        record.diagnostics_in(self)
+    }
+
+    /// Return each record with its diagnostics, in validator order.
+    ///
+    /// Every record a validation run produced refers into its own report,
+    /// so each pair holds that validator's diagnostics; a record of a report
+    /// built with [`ValidationReport::new`] from another run's records that
+    /// refers past the diagnostics is paired with none.
+    #[must_use]
+    pub fn records_with_diagnostics(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&ValidatorRecord, &[Diagnostic])> + '_ {
+        self.records()
+            .iter()
+            .map(|record| (record, record.diagnostics_in(self).unwrap_or_default()))
     }
 }
 

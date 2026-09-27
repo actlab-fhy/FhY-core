@@ -132,8 +132,8 @@ pub(super) fn validation_report_to_python<'py>(
     let diagnostics = diagnostics_to_python(py, report.diagnostics(), scope)?;
     let mut records = Vec::with_capacity(report.records().len());
     let mut start = 0;
-    for record in report.records() {
-        let end = start + record.diagnostics_in(report).len();
+    for (record, record_diagnostics) in report.records_with_diagnostics() {
+        let end = start + record_diagnostics.len();
         records.push(PyValidatorRecord::build(
             py,
             record.validator_name(),

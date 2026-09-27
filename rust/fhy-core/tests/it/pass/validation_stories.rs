@@ -169,6 +169,14 @@ fn build_manager<'p>(
 }
 
 /// Return the validator name of every record of `report`.
+/// Return the diagnostics of the `index`th record of `report`, read through
+/// the report.
+fn own_diagnostics(report: &ValidationReport<ValidatorRecord>, index: usize) -> &[Diagnostic] {
+    report
+        .diagnostics_of(&report.records()[index])
+        .expect("the record is the report's own")
+}
+
 fn collect_validator_names(report: &ValidationReport<ValidatorRecord>) -> Vec<&str> {
     report
         .records()
@@ -313,7 +321,7 @@ fn validation_manager_keeps_every_diagnostic_of_one_validator_in_order() {
     assert_eq!(collect_levels_and_messages(report.diagnostics()), expected);
     assert_eq!(report.records().len(), 1);
     assert_eq!(
-        collect_levels_and_messages(report.records()[0].diagnostics_in(&report)),
+        collect_levels_and_messages(own_diagnostics(&report, 0)),
         expected
     );
 }
@@ -333,11 +341,11 @@ fn validation_manager_records_each_validator_with_its_diagnostics() {
     assert_eq!(records[0].validator_name(), "tests.vm.record_warn");
     assert!(!records[0].is_failed());
     assert_eq!(
-        collect_levels_and_messages(records[0].diagnostics_in(&report)),
+        collect_levels_and_messages(own_diagnostics(&report, 0)),
         [(DiagnosticLevel::Warning, "msg")]
     );
     assert!(!records[1].is_failed());
-    assert!(records[1].diagnostics_in(&report).is_empty());
+    assert!(own_diagnostics(&report, 1).is_empty());
 }
 
 /// Test the report holds every diagnostic once, and the records' slices of
@@ -360,9 +368,8 @@ fn validation_report_stores_each_diagnostic_once() {
     let report = manager.validate(&BoxIr::new(0));
 
     let concatenated: Vec<&Diagnostic> = report
-        .records()
-        .iter()
-        .flat_map(|record| record.diagnostics_in(&report))
+        .records_with_diagnostics()
+        .flat_map(|(_, diagnostics)| diagnostics)
         .collect();
     let all: Vec<&Diagnostic> = report.diagnostics().iter().collect();
     assert_eq!(concatenated.len(), all.len());
@@ -373,11 +380,81 @@ fn validation_report_stores_each_diagnostic_once() {
             .all(|(left, right)| std::ptr::eq(*left, *right))
     );
     let sizes: Vec<_> = report
-        .records()
-        .iter()
-        .map(|record| record.diagnostics_in(&report).len())
+        .records_with_diagnostics()
+        .map(|(_, diagnostics)| diagnostics.len())
         .collect();
     assert_eq!(sizes, [2, 0, 1, 1]);
+}
+
+/// Test a record read against a report shorter than its own is `None`, not
+/// a panic (probe P of F2-041).
+#[test]
+fn a_record_against_a_shorter_report_is_none() {
+    let mut manager = build_manager([ScriptedValidator::new(
+        "tests.vm.three",
+        vec![
+            report(DiagnosticLevel::Info, "one"),
+            report(DiagnosticLevel::Info, "two"),
+            report(DiagnosticLevel::Error, "three"),
+        ],
+    )]);
+    let full = manager.validate(&BoxIr::new(0));
+    let record = full.records()[0].clone();
+    let shorter = ValidationReport::new(Vec::new(), vec![record.clone()]);
+
+    assert_eq!(record.diagnostics_in(&full).map(<[_]>::len), Some(3));
+    assert_eq!(record.diagnostics_in(&shorter), None);
+    assert_eq!(shorter.diagnostics_of(&record), None);
+    let pairs: Vec<_> = shorter.records_with_diagnostics().collect();
+    assert_eq!(pairs.len(), 1);
+    assert!(pairs[0].1.is_empty());
+}
+
+/// Test the report pairs each validator's record with its own diagnostics,
+/// in validator order.
+#[test]
+fn records_pair_each_validator_with_its_diagnostics() {
+    let mut manager = build_manager([
+        ScriptedValidator::reporting("tests.vm.pair_first", DiagnosticLevel::Warning, "first"),
+        ScriptedValidator::clean("tests.vm.pair_clean"),
+        ScriptedValidator::new(
+            "tests.vm.pair_last",
+            vec![
+                report(DiagnosticLevel::Info, "second"),
+                report(DiagnosticLevel::Error, "third"),
+            ],
+        ),
+    ]);
+
+    let report = manager.validate(&BoxIr::new(0));
+
+    let pairs: Vec<(&str, Vec<(DiagnosticLevel, &str)>)> = report
+        .records_with_diagnostics()
+        .map(|(record, diagnostics)| {
+            (
+                record.validator_name(),
+                collect_levels_and_messages(diagnostics),
+            )
+        })
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            (
+                "tests.vm.pair_first",
+                vec![(DiagnosticLevel::Warning, "first")]
+            ),
+            ("tests.vm.pair_clean", vec![]),
+            (
+                "tests.vm.pair_last",
+                vec![
+                    (DiagnosticLevel::Info, "second"),
+                    (DiagnosticLevel::Error, "third")
+                ]
+            ),
+        ]
+    );
+    assert_eq!(report.records_with_diagnostics().len(), 3);
 }
 
 /// Test a structured note reaches the report unchanged.
@@ -475,7 +552,7 @@ fn validation_manager_keeps_the_diagnostics_a_validator_emitted_before_failing()
             ),
         ]
     );
-    assert_eq!(report.records()[0].diagnostics_in(&report).len(), 2);
+    assert_eq!(own_diagnostics(&report, 0).len(), 2);
     assert!(report.records()[0].is_failed());
 }
 
@@ -553,7 +630,7 @@ fn validation_manager_adds_an_error_for_a_validator_that_fails_silently() {
             ),
         ]
     );
-    assert_eq!(report.records()[0].diagnostics_in(&report).len(), 2);
+    assert_eq!(own_diagnostics(&report, 0).len(), 2);
     assert!(report.records()[0].is_failed());
 }
 

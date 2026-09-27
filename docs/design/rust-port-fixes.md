@@ -116,8 +116,8 @@ onto `dev-rust` before continuing.
 - [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python (`6f57090`; its extra blank line, which `ruff format` refuses, fixed forward in the next commit)
 - [x] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy (`047f6ea`)
 - [x] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow (`464cbe8`)
-- [x] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented
-- [ ] R2-041 (F2-041): diagnostics read through their report
+- [x] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented (`86c407c`)
+- [x] R2-041 (F2-041): diagnostics read through their report
 - [ ] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
 - [ ] R2-013c (F2-013, binding readers): depth limits in the dict and member readers
@@ -4293,3 +4293,25 @@ The other Python gates are Track D's status line, on the same code.
   |---|---|---|
   | on a free-threaded interpreter the extension declared free-threading support, so the GIL stayed off | importing it re-enables the GIL, with CPython's `RuntimeWarning` | `test_the_extension_declares_that_it_uses_the_gil` (skipped unless `Py_GIL_DISABLED`) |
   | the NumPy evaluator's in-place read of `float64` inputs was undocumented | the docstrings, stub and README say an input must not be written from another thread during the call | none (documentation) |
+
+**R2-041.**
+- **Where the readers live.** `diagnostic` is layer 3 and `pass` layer 5,
+  so the two readers are an inherent `impl ValidationReport<ValidatorRecord>`
+  block in `pass/validation.rs`, beside the record.
+- **The pairs' name (call).** `ValidationReport<R>` already has
+  `records(&self) -> &[R]`, and an inherent `records` on the specialized
+  impl would be a duplicate definition, so the iterator of `(record,
+  diagnostics)` pairs is `records_with_diagnostics()`, an
+  `ExactSizeIterator`. A record that refers past its report's diagnostics,
+  which only a report built by `ValidationReport::new` from another run's
+  records can hold, is paired with no diagnostics.
+- **`diagnostics_in`** uses `get(range)` and returns `Option<&[Diagnostic]>`;
+  its rustdoc says it cannot tell a longer, unrelated report and points to
+  the pairs. `diagnostics_of(record)` is its report-side spelling.
+- **Callers.** The binding's `validation_report_to_python` walks the pairs;
+  seven story call sites read through the report instead.
+- **Test-first.** At the base, `a_record_against_a_shorter_report_is_none`
+  is audit probe P, which panics at the slice (`validation.rs:212`); the
+  new signature does not compile there.
+- **Python-visible changes:** none; the Python validation suites pass
+  unchanged.

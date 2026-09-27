@@ -344,9 +344,11 @@ fn verify_has_one_record_per_registration_in_order() {
         ]
     );
     assert_eq!(report.errors().count(), 2);
-    let first = &report.records()[0];
-    assert_eq!(first.diagnostics_in(&report).len(), 2);
-    assert_eq!(first.diagnostics_in(&report)[0].source(), "check-1");
+    let first = report
+        .diagnostics_of(&report.records()[0])
+        .expect("the record is the report's own");
+    assert_eq!(first.len(), 2);
+    assert_eq!(first[0].source(), "check-1");
 }
 
 #[test]

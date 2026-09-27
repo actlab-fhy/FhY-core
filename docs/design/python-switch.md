@@ -3388,6 +3388,12 @@ pass-through with `Nested` (F-014).
   - `ValidatorRecord` has `validator_name`, `is_failed` and
     `diagnostics_in(&report)`. It holds a range into the report, so each
     diagnostic is stored once.
+    - **Revised (R2-041, 2026-09-27):** the report reads its records'
+      diagnostics itself: `ValidationReport::<ValidatorRecord>::diagnostics_of(record)`
+      and `records_with_diagnostics()`, the `(record, diagnostics)` pairs.
+      `diagnostics_in` returns `Option<&[Diagnostic]>`, `None` for a report
+      shorter than the record's range, instead of panicking; the
+      representation is unchanged (`docs/design/rust-port-fixes.md` R2-041).
 - **`PassRegistry`** is owned, not global.
   - `register::<P, I, O>(factory)` reads the name and description from one
     instance the factory builds.
@@ -3838,6 +3844,10 @@ Each names the policy it follows:
     (D-S6-18). `raise_if_failed` and `ValidationFailedError` are
     unchanged.
   - The S3a benchmarks confirm it, or the cost is recorded.
+  - **Revised (R2-041, 2026-09-27):** the representation stays; a Rust
+    report's records are read through the report (see the
+    `ValidatorRecord` bullet of the S6 core API, revised the same day), and
+    the binding converts them from those pairs.
 - **D-S6-18: Rust diagnostics and reports reaching Python** (S3a's
   registration; recommendation). This is the S3a leftover, and S3a's
   classes already register their public classes for it.
