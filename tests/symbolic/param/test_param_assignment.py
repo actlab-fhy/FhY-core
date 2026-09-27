@@ -24,6 +24,7 @@ from fhy_core.symbolic.param import (
     ParamError,
     PermutationDomain,
     RealDomain,
+    create_categorical_param,
     create_integer_param,
     create_integer_param_with_lower_bound,
     create_permutation_param,
@@ -284,6 +285,19 @@ def test_deserialization_rejects_a_value_that_provably_violates() -> None:
     tampered["value"] = donor.serialize_to_dict()["value"]
 
     with pytest.raises(DeserializationValueError, match="violates constraint"):
+        ParamAssignment.deserialize_from_dict(tampered)
+
+
+def test_an_inadmissible_assignment_payload_fails_to_decode() -> None:
+    """Test a payload assigning a string to an integer param is rejected (F2-020)."""
+    x = mock_identifier("x", 1)
+    tampered = create_integer_param(name=x).assign(3).serialize_to_dict()
+    donor = create_categorical_param(
+        ["not an integer"], name=mock_identifier("d", 2)
+    ).assign("not an integer")
+    tampered["value"] = donor.serialize_to_dict()["value"]
+
+    with pytest.raises(DeserializationValueError):
         ParamAssignment.deserialize_from_dict(tampered)
 
 

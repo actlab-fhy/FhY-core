@@ -96,8 +96,8 @@ onto `dev-rust` before continuing.
 - [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion: `6068d7e`
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed)
 - [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph: `ad15163`
-- [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution
-- [ ] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`
+- [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution: `0d5f5ba`
+- [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`
 - [ ] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction
 - [ ] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations
 - [ ] R2-028 (F2-028): param and constraint decision-rule tests in Rust
@@ -3743,6 +3743,48 @@ finding.
   chain's environment alone was quadratic at the base).
 - **Behavior change:** none; substitution results are DAGs sharing each
   binding's form.
+
+**R2-020.**
+- **`add_symbol`** refuses, after its ancestor check, a symbol that a
+  namespace whose chain of parents reaches the target holds, with the new
+  `SymbolTableError::SymbolDefinedInDescendant` ("symbol y already defined
+  in namespace c, a descendant of namespace p"); only the namespaces
+  holding the symbol walk their parents. `violations()` gains
+  `Violation::ShadowedSymbol`, reported last, for a symbol an ancestor
+  also holds (outside a cycle), which only `insert_namespace` can build
+  now. The model of `table_properties.rs` gains the descendant rule.
+- **Build order (reading the spec).** `SymbolTableData::build` adds every
+  namespace first and then every symbol. The namespaces are added in
+  payload order, not reordered parents-first: `add_namespace` checks no
+  parent, and payload order keeps the table's namespace order, so a
+  decoded table re-encodes byte-identically, which R2-046b's properties
+  need.
+- **Assignments (call).** `ParamAssignmentData::build` goes through
+  `ParamAssignment::restore` under the caller's context. The core's
+  `Deserialize` builds its param with a solver without backends, under
+  which evaluating any equation fails with `NoCapableBackend`; so it
+  checks under a crate-private observer that counts that failure as
+  undecided, and `restore` accepts an undecided member. Admissibility and
+  set-constraint membership are decided without a solver and refused.
+- **Rewritten pins:** `an_assignment_round_trips_without_checking_its_value`
+  (a value outside the in-set decoded) is now
+  `an_assignment_round_trips_and_its_value_is_checked_on_decode`, and
+  `the_nearest_namespace_holding_a_symbol_answers_a_lookup` builds its
+  shadowing table with `insert_namespace`, since `add_symbol` refuses it in
+  either order.
+- **Python.** The binding decodes tables and assignments through its own
+  replay and constructors, so of the three interface tests only
+  `test_add_symbol_refuses_a_name_a_descendant_defines` failed at the base;
+  `test_a_table_whose_child_was_added_before_its_parent_round_trips` and
+  `test_an_inadmissible_assignment_payload_fails_to_decode` pass at the
+  base too, and pin that Python keeps agreeing.
+- **Revises** D-S15-11 and D-S17-9 (bullets appended in
+  `python-switch.md`).
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `SymbolTable.add_symbol(parent, y, ...)` succeeded when a child of `parent` already held `y` | it raises `SymbolTableError` "symbol y::… already defined in namespace child::…, a descendant of namespace parent::…" | `test_add_symbol_refuses_a_name_a_descendant_defines` |
 
 ### Track E notes
 

@@ -219,3 +219,76 @@ fn a_table_wire_form_is_written_from_any_frame_type() {
             .ends_with(r#""frame":7}]}]}"#)
     );
 }
+
+/// A table built through the checked API with a child added before its
+/// parent: the child's symbol could not be added while its parent was
+/// missing on decode (F2-020).
+#[test]
+fn a_table_whose_child_was_added_before_its_parent_round_trips() {
+    let (parent, child, x) = (
+        restored(61_430, "parent"),
+        restored(61_431, "child"),
+        restored(61_432, "x"),
+    );
+    let mut table = SymbolTable::new();
+    table
+        .add_namespace(child.clone(), Some(parent.clone()))
+        .expect("new");
+    table.add_namespace(parent.clone(), None).expect("new");
+    table
+        .add_symbol(
+            &child,
+            x.clone(),
+            SymbolFrame::Import(ImportFrame::new(x.clone())),
+        )
+        .expect("new");
+    assert!(table.violations().is_empty());
+
+    for decoded in [round_trip_json(&table), round_trip_postcard(&table)] {
+        assert_eq!(decoded, table);
+        let names: Vec<&Identifier> = decoded
+            .namespaces()
+            .map(|namespace| namespace.name())
+            .collect();
+        assert_eq!(names, [&child, &parent]);
+        assert_eq!(
+            serde_json::to_string(&decoded).expect("encodes"),
+            serde_json::to_string(&table).expect("encodes")
+        );
+    }
+}
+
+/// The TYP probe's second table: `y` added to a child and then to its
+/// parent. `add_symbol` now refuses the second, so no such table is built
+/// through the checked API, and one built unchecked fails to decode.
+#[test]
+fn a_symbol_added_to_a_child_then_its_parent_is_refused() {
+    let (parent, child, y) = (
+        restored(61_433, "parent"),
+        restored(61_434, "child"),
+        restored(61_435, "y"),
+    );
+    let frame = || SymbolFrame::Import(ImportFrame::new(y.clone()));
+    let mut table = SymbolTable::new();
+    table.add_namespace(parent.clone(), None).expect("new");
+    table
+        .add_namespace(child.clone(), Some(parent.clone()))
+        .expect("new");
+    table.add_symbol(&child, y.clone(), frame()).expect("new");
+
+    let refused = table.add_symbol(&parent, y.clone(), frame());
+
+    assert!(
+        matches!(
+            refused,
+            Err(fhy_core::symbol_table::SymbolTableError::SymbolDefinedInDescendant { .. })
+        ),
+        "{refused:?}"
+    );
+    let mut unchecked = SymbolTable::new();
+    unchecked.insert_namespace(parent.clone(), None, [(y.clone(), frame())]);
+    unchecked.insert_namespace(child.clone(), Some(parent.clone()), [(y.clone(), frame())]);
+    let text = serde_json::to_string(&unchecked).expect("encodes");
+    let error = serde_json::from_str::<SymbolTable<SymbolFrame>>(&text).expect_err("shadowing");
+    assert!(error.to_string().contains("already defined"), "{error}");
+}

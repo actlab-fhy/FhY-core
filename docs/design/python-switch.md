@@ -16560,6 +16560,14 @@ Where a decision follows an earlier slice's decision or note, it says so.
   `add_symbol` for every symbol, so a payload that cannot be rebuilt
   raises `SymbolTableError` as today. Frames decode through
   `SymbolTableFrame.deserialize_from_dict`.
+- **Revised (R2-020, 2026-09-27):** the core's `SymbolTableData::build`
+  adds every namespace first, in payload order, and then every symbol, and
+  `add_symbol` also refuses a symbol a descendant namespace defines
+  (`SymbolDefinedInDescendant`; `violations()` gains `ShadowedSymbol`). So
+  every table the checked API builds decodes, a child added before its
+  parent included, and the refusal that kept the invariant "an inner
+  namespace never shadows an outer one" in only one order holds in both.
+  See `docs/design/rust-port-fixes.md` R2-020.
 - **D-S15-12: `verify` builds the report from `violations`** (S11's
   `Lattice.verify`; D-S15-6). One ERROR `Diagnostic` per violation, with
   a `Note` of the core's text and today's source.
@@ -19147,6 +19155,13 @@ and cross-cutting rules 4 to 7.
     as the decode error.
   - Each has a JSON and a postcard round trip; the open ones also round
     trip with a test resolver.
+- **Revised (R2-020, 2026-09-27):** `ParamAssignment` decodes through
+  `ParamAssignment::restore`, which it did not (it was built unchecked):
+  an inadmissible value, or one a decided constraint violates, fails to
+  decode. `ParamAssignmentData::build` checks under the caller's context;
+  the core's `Deserialize`, whose solver has no backend, counts an
+  equation it cannot evaluate as undecided, which `restore` accepts. See
+  `docs/design/rust-port-fixes.md` R2-020.
 
 **The binding and the framework.**
 

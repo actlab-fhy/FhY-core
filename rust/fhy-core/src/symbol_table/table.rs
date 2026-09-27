@@ -17,13 +17,15 @@ use super::ordered::OrderedMap;
 /// each namespace. A namespace may name a parent namespace:
 /// [`lookup`](Self::lookup) walks from a namespace up its parents, and
 /// [`add_symbol`](Self::add_symbol) refuses a symbol the namespace or one of
-/// its ancestors already defines, so an inner namespace never shadows an
-/// outer one.
+/// its ancestors or one of its descendants already defines, so an inner
+/// namespace never shadows an outer one, whatever order they are filled
+/// in.
 ///
 /// A parent is not checked when a namespace is added: it may be added
 /// later, and a namespace may even name itself. [`violations`](Self::violations)
-/// reports the parents that are missing or that close a cycle, and the
-/// frames whose names are not their symbols; a lookup that meets one fails.
+/// reports the parents that are missing or that close a cycle, the symbols
+/// an ancestor also defines, and the frames whose names are not their
+/// symbols; a lookup that meets a missing parent or a cycle fails.
 ///
 /// Every walk is a loop, so a long chain of parents needs no stack.
 #[derive(Clone)]
@@ -225,7 +227,10 @@ impl<F> SymbolTable<F> {
     ///
     /// Returns [`SymbolTableError::SymbolAlreadyDefined`] if
     /// [`lookup`](Self::lookup) finds `symbol` from `namespace`, and the
-    /// errors of that lookup. The table is unchanged on an error.
+    /// errors of that lookup; then
+    /// [`SymbolTableError::SymbolDefinedInDescendant`] if a namespace whose
+    /// chain of parents reaches `namespace` holds `symbol`. The table is
+    /// unchanged on an error.
     pub fn add_symbol(
         &mut self,
         namespace: &Identifier,
@@ -234,6 +239,13 @@ impl<F> SymbolTable<F> {
     ) -> Result<(), SymbolTableError> {
         if let Some((defined_in, _)) = self.resolve(namespace, &symbol)? {
             return Err(SymbolTableError::SymbolAlreadyDefined {
+                namespace: namespace.clone(),
+                symbol,
+                defined_in: defined_in.clone(),
+            });
+        }
+        if let Some(defined_in) = self.descendant_holding(namespace, &symbol) {
+            return Err(SymbolTableError::SymbolDefinedInDescendant {
                 namespace: namespace.clone(),
                 symbol,
                 defined_in: defined_in.clone(),
@@ -324,6 +336,46 @@ impl<F> SymbolTable<F> {
             };
             (name, data) = (parent_name, parent_data);
         }
+    }
+
+    /// Return the first namespace, in insertion order, that holds `symbol`
+    /// and whose chain of parents reaches `namespace`.
+    ///
+    /// Only the namespaces holding `symbol` walk up their parents, each walk
+    /// stopping at a namespace it passed, so a cycle ends it.
+    fn descendant_holding(
+        &self,
+        namespace: &Identifier,
+        symbol: &Identifier,
+    ) -> Option<&Identifier> {
+        self.namespaces
+            .iter()
+            .filter(|(name, data)| *name != namespace && data.symbols.contains_key(symbol))
+            .find(|(name, _)| self.ancestors(name).any(|ancestor| ancestor == namespace))
+            .map(|(name, _)| name)
+    }
+
+    /// Return the ancestors of `namespace`, nearest first: each defined
+    /// parent up the chain, stopping at a missing parent or at a namespace
+    /// already passed, `namespace` itself included.
+    fn ancestors<'t>(
+        &'t self,
+        namespace: &'t Identifier,
+    ) -> impl Iterator<Item = &'t Identifier> + 't {
+        let mut passed: HashSet<&Identifier> = HashSet::from([namespace]);
+        let mut current = namespace;
+        std::iter::from_fn(move || {
+            let (parent, _) = self
+                .namespaces
+                .get(current)
+                .and_then(|data| data.parent.as_ref())
+                .and_then(|parent| self.namespaces.get_key_value(parent))?;
+            if !passed.insert(parent) {
+                return None;
+            }
+            current = parent;
+            Some(parent)
+        })
     }
 
     /// Return the frame of `symbol` in the first namespace, in insertion
@@ -452,7 +504,9 @@ impl<F> SymbolTable<F> {
     /// Return the table's broken invariants, in this order: for each
     /// namespace, a parent that is not defined or is itself; then each
     /// namespace whose chain of parents cycles; then each frame whose name
-    /// is not its symbol. The list is empty for a well-formed table.
+    /// is not its symbol; then each symbol that an ancestor of its
+    /// namespace also defines, outside a cycle. The list is empty for a
+    /// well-formed table.
     #[must_use]
     pub fn violations(&self) -> Vec<Violation>
     where
@@ -490,6 +544,25 @@ impl<F> SymbolTable<F> {
                         namespace: name.clone(),
                         symbol: symbol.clone(),
                         frame_name: frame.name().clone(),
+                    });
+                }
+            }
+        }
+        for (name, data) in self.namespaces.iter() {
+            if chains.get(name) == Some(&Chain::Cycles) {
+                continue;
+            }
+            for (symbol, _) in data.symbols.iter() {
+                let shadowing = self.ancestors(name).find(|ancestor| {
+                    self.namespaces
+                        .get(ancestor)
+                        .is_some_and(|ancestor| ancestor.symbols.contains_key(symbol))
+                });
+                if let Some(ancestor) = shadowing {
+                    violations.push(Violation::ShadowedSymbol {
+                        namespace: name.clone(),
+                        symbol: symbol.clone(),
+                        ancestor: ancestor.clone(),
                     });
                 }
             }

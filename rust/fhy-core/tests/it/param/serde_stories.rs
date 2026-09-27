@@ -181,7 +181,7 @@ fn a_param_refuses_a_constraint_outside_its_variable_s_scope() {
 }
 
 #[test]
-fn an_assignment_round_trips_without_checking_its_value() {
+fn an_assignment_round_trips_and_its_value_is_checked_on_decode() {
     let variable = restored(61_603, "p");
     let assignment = ParamAssignment::new_unvalidated(build_param(&variable), Value::Int(2.into()));
 
@@ -190,11 +190,50 @@ fn an_assignment_round_trips_without_checking_its_value() {
     assert!(text.ends_with(r#""value":{"int":"2"}}"#), "{text}");
     let decoded: ParamAssignment = serde_json::from_str(&text).expect("decodes");
     assert!(decoded.is_structurally_equivalent(&assignment));
-    let unchecked = text.replace(r#""value":{"int":"2"}"#, r#""value":{"int":"9"}"#);
-    let data: ParamAssignmentData = serde_json::from_str(&unchecked).expect("reads");
-    let solver = Solver::new();
-    let (_, value) = data.clone().into_parts();
+    let from_postcard: ParamAssignment =
+        postcard::from_bytes(&postcard::to_allocvec(&assignment).expect("encodes"))
+            .expect("decodes");
+    assert!(from_postcard.is_structurally_equivalent(&assignment));
+    let violating = text.replace(r#""value":{"int":"2"}"#, r#""value":{"int":"9"}"#);
+    let data: ParamAssignmentData = serde_json::from_str(&violating).expect("reads");
+    let (_, value) = data.into_parts();
     assert_eq!(text_of(&value), r#"{"int":"9"}"#);
-    data.build(&TestResolver, &ParamContext::new(&solver))
-        .unwrap();
+    let error =
+        serde_json::from_str::<ParamAssignment>(&violating).expect_err("9 is outside the in-set");
+    assert!(
+        error
+            .to_string()
+            .starts_with("the value violates the param's constraint"),
+        "{error}"
+    );
+}
+
+/// The TYP probe: an integer param assigned `"not an integer"` round-tripped
+/// because decoding checked nothing (F2-020).
+#[test]
+fn an_inadmissible_assignment_payload_fails_to_decode() {
+    let variable = restored(61_604, "p");
+    let assignment = ParamAssignment::new_unvalidated(build_param(&variable), Value::Int(2.into()));
+    let text = text_of(&assignment).replace(
+        r#""value":{"int":"2"}"#,
+        r#""value":{"str":"not an integer"}"#,
+    );
+
+    let error = serde_json::from_str::<ParamAssignment>(&text).expect_err("inadmissible");
+
+    assert!(error.to_string().contains("not admissible"), "{error}");
+    let data: ParamAssignmentData = serde_json::from_str(&text).expect("reads");
+    let solver = Solver::new();
+    let refused = data.build(&TestResolver, &ParamContext::new(&solver));
+    assert!(
+        matches!(
+            &refused,
+            Err(BuildError::Invalid(source))
+                if matches!(
+                    source.downcast_ref::<fhy_core::param::AssignmentError>(),
+                    Some(fhy_core::param::AssignmentError::Inadmissible)
+                )
+        ),
+        "{refused:?}"
+    );
 }

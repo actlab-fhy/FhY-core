@@ -651,6 +651,41 @@ def test_the_table_payload_is_todays_wire_format() -> None:
     }
 
 
+def test_a_table_whose_child_was_added_before_its_parent_round_trips() -> None:
+    """Test a child added before its parent decodes with its symbols (F2-020)."""
+    parent, child, symbol = (
+        _identifier("parent", 40),
+        _identifier("child", 41),
+        _identifier("x", 42),
+    )
+    table = SymbolTable()
+    table.add_namespace(child, parent)
+    table.add_namespace(parent)
+    table.add_symbol(child, symbol, ImportSymbolTableFrame(symbol))
+
+    restored = SymbolTable.deserialize_from_dict(table.serialize_to_dict())
+
+    assert restored.is_structurally_equivalent(table)
+    assert restored.serialize_to_dict() == table.serialize_to_dict()
+
+
+def test_add_symbol_refuses_a_name_a_descendant_defines() -> None:
+    """Test a symbol a child defines cannot then be added to its parent (F2-020)."""
+    parent, child, symbol = (
+        _identifier("parent", 43),
+        _identifier("child", 44),
+        _identifier("y", 45),
+    )
+    table = SymbolTable()
+    table.add_namespace(parent)
+    table.add_namespace(child, parent)
+    table.add_symbol(child, symbol, ImportSymbolTableFrame(symbol))
+
+    with pytest.raises(SymbolTableError, match="a descendant of namespace"):
+        table.add_symbol(parent, symbol, ImportSymbolTableFrame(symbol))
+    assert table.verify().has_errors() is False
+
+
 def test_a_payload_that_cannot_be_rebuilt_raises_a_symbol_table_error() -> None:
     """Test a duplicate namespace in a payload fails the replay."""
     entry: SerializedDict = {

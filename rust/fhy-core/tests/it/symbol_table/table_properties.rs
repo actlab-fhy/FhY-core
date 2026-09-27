@@ -6,7 +6,8 @@
 //! empty, `canonicalize` is idempotent and keeps the table equal, and
 //! `lookup` agrees with a walk up a reference model's parents. Over random
 //! sequences of operations, the table agrees with a model of the Python
-//! implementation's two dictionaries.
+//! implementation's two dictionaries, which also refuses a symbol a
+//! descendant defines.
 
 use std::collections::HashMap;
 
@@ -140,7 +141,32 @@ impl Model {
         Some(false)
     }
 
-    /// Apply `operation`, returning whether Python accepts it.
+    /// Return whether a namespace other than `namespace`, whose chain of
+    /// defined parents reaches it, holds `symbol`: the descendant check the
+    /// Rust table adds to Python's (F2-020).
+    fn is_defined_below(&self, namespace: usize, symbol: usize) -> bool {
+        self.table.iter().any(|(holder, symbols)| {
+            if *holder == namespace || !symbols.contains(&symbol) {
+                return false;
+            }
+            let mut seen = vec![*holder];
+            let mut current = *holder;
+            while let Some(&parent) = self.parents.get(&current) {
+                if self.position(parent).is_none() || seen.contains(&parent) {
+                    return false;
+                }
+                if parent == namespace {
+                    return true;
+                }
+                seen.push(parent);
+                current = parent;
+            }
+            false
+        })
+    }
+
+    /// Apply `operation`, returning whether the table accepts it: Python's
+    /// rules, and the descendant check.
     fn apply(&mut self, operation: &Operation) -> bool {
         match *operation {
             Operation::AddNamespace(namespace, parent) => {
@@ -165,7 +191,9 @@ impl Model {
                 true
             }
             Operation::AddSymbol(namespace, symbol) => {
-                if self.is_defined_in(namespace, symbol) != Some(false) {
+                if self.is_defined_in(namespace, symbol) != Some(false)
+                    || self.is_defined_below(namespace, symbol)
+                {
                     return false;
                 }
                 let position = self.position(namespace).expect("defined");

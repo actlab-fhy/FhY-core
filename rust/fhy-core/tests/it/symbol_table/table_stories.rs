@@ -226,21 +226,20 @@ fn lookup_walks_up_the_parents() {
     assert_eq!(table.lookup(&root, &Identifier::new("other")), Ok(None));
 }
 
+/// A lookup answers from the nearest namespace holding the symbol. Such a
+/// table shadows the root's symbol, which `add_symbol` refuses in either
+/// order, so it is restored unchecked.
 #[test]
 fn the_nearest_namespace_holding_a_symbol_answers_a_lookup() {
     let [root, child, symbol] = identifiers(["root", "child", "symbol"]);
     let mut table = SymbolTable::new();
-    table
-        .add_namespace(child.clone(), Some(root.clone()))
-        .expect("new");
-    table.add_namespace(root.clone(), None).expect("new");
     let inner = ImportFrame::new(Identifier::new("inner"));
-    table
-        .add_symbol(&child, symbol.clone(), inner.clone())
-        .expect("new");
-    table
-        .add_symbol(&root, symbol.clone(), import(&symbol))
-        .expect("the root's own lookup does not see the child's symbol");
+    table.insert_namespace(
+        child.clone(),
+        Some(root.clone()),
+        [(symbol.clone(), inner.clone())],
+    );
+    table.insert_namespace(root.clone(), None, [(symbol.clone(), import(&symbol))]);
 
     assert_eq!(table.lookup(&child, &symbol), Ok(Some(&inner)));
     assert_eq!(table.lookup(&root, &symbol), Ok(Some(&import(&symbol))));
@@ -260,6 +259,61 @@ fn an_inner_namespace_cannot_shadow_an_outer_symbol() {
         })
     );
     assert!(table.namespace(&child).expect("defined").is_empty());
+}
+
+#[test]
+fn add_symbol_refuses_a_name_a_descendant_defines() {
+    let [root, child, grandchild, symbol] = identifiers(["root", "child", "grandchild", "symbol"]);
+    let mut table: SymbolTable<ImportFrame> = SymbolTable::new();
+    table.add_namespace(root.clone(), None).expect("new");
+    table
+        .add_namespace(child.clone(), Some(root.clone()))
+        .expect("new");
+    table
+        .add_namespace(grandchild.clone(), Some(child.clone()))
+        .expect("new");
+    table
+        .add_symbol(&grandchild, symbol.clone(), import(&symbol))
+        .expect("new");
+
+    for outer in [&root, &child] {
+        assert_eq!(
+            table.add_symbol(outer, symbol.clone(), import(&symbol)),
+            Err(SymbolTableError::SymbolDefinedInDescendant {
+                namespace: outer.clone(),
+                symbol: symbol.clone(),
+                defined_in: grandchild.clone(),
+            })
+        );
+        assert!(table.namespace(outer).expect("defined").is_empty());
+    }
+    let error = table
+        .add_symbol(&root, symbol.clone(), import(&symbol))
+        .expect_err("a descendant defines it");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "symbol {symbol:?} already defined in namespace {grandchild:?}, a descendant of \
+             namespace {root:?}"
+        )
+    );
+}
+
+#[test]
+fn a_sibling_may_define_the_same_symbol() {
+    let [root, left, right, symbol] = identifiers(["root", "left", "right", "symbol"]);
+    let mut table: SymbolTable<ImportFrame> = SymbolTable::new();
+    table.add_namespace(root.clone(), None).expect("new");
+    for side in [&left, &right] {
+        table
+            .add_namespace(side.clone(), Some(root.clone()))
+            .expect("new");
+        table
+            .add_symbol(side, symbol.clone(), import(&symbol))
+            .expect("siblings do not shadow each other");
+    }
+
+    assert!(table.violations().is_empty());
 }
 
 #[test]
@@ -732,6 +786,37 @@ fn violations_report_a_namespace_that_is_its_own_parent() {
             },
             Violation::CyclicParentChain { namespace: own },
         ]
+    );
+}
+
+#[test]
+fn violations_report_a_symbol_an_ancestor_also_defines() {
+    let [root, child, grandchild, symbol] = identifiers(["root", "child", "grandchild", "symbol"]);
+    let mut table: SymbolTable<ImportFrame> = SymbolTable::new();
+    table.insert_namespace(root.clone(), None, [(symbol.clone(), import(&symbol))]);
+    table.insert_namespace(child.clone(), Some(root.clone()), []);
+    table.insert_namespace(
+        grandchild.clone(),
+        Some(child.clone()),
+        [(symbol.clone(), import(&symbol))],
+    );
+
+    let violations = table.violations();
+
+    assert_eq!(
+        violations,
+        [Violation::ShadowedSymbol {
+            namespace: grandchild.clone(),
+            symbol: symbol.clone(),
+            ancestor: root.clone(),
+        }]
+    );
+    assert_eq!(
+        violations[0].to_string(),
+        format!(
+            "namespace {grandchild:?} has symbol {symbol:?}, which its ancestor namespace \
+             {root:?} also defines"
+        )
     );
 }
 

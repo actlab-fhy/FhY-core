@@ -36,13 +36,13 @@ use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::constraint::wire::{ConstraintResolver, ConstraintSystemData, ValueData};
-use crate::constraint::{Member, OpaqueValue, Value};
+use crate::constraint::{ConstraintError, Member, OpaqueValue, Value};
 use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
 use crate::identifier::Identifier;
-use crate::solver::Solver;
+use crate::solver::{SolveError, Solver};
 
 use super::assignment::ParamAssignment;
-use super::context::ParamContext;
+use super::context::{ParamContext, ParamEvent, ParamObserver};
 use super::custom::CustomDomain;
 use super::domain::{
     CategoricalDomain, IntegerDomain, IntervalIntegerDomain, OrdinalDomain, ParamDomain,
@@ -353,11 +353,16 @@ impl ParamAssignmentData {
     }
 
     /// Return the assignment, its foreign parts resolved by `resolver`, its
-    /// param built under `context`, and its value not checked.
+    /// param built under `context`, and its value checked as
+    /// [`ParamAssignment::restore`] checks it: refused when inadmissible or
+    /// violating a constraint, and accepted when a constraint is left
+    /// undecided.
     ///
     /// # Errors
     ///
-    /// Returns what [`ParamData::build`] and [`ValueData::build`] return.
+    /// Returns what [`ParamData::build`] and [`ValueData::build`] return,
+    /// and [`BuildError::Invalid`] with the
+    /// [`AssignmentError`](super::AssignmentError) `restore` returns.
     pub fn build<R: ParamResolver + ?Sized>(
         self,
         resolver: &R,
@@ -365,7 +370,7 @@ impl ParamAssignmentData {
     ) -> Result<ParamAssignment, BuildError> {
         let param = self.param.build(resolver, context)?;
         let value = self.value.build(resolver)?;
-        Ok(ParamAssignment::new_unvalidated(param, value))
+        ParamAssignment::restore(param, value, context).map_err(BuildError::invalid)
     }
 }
 
@@ -378,13 +383,35 @@ impl Serialize for ParamAssignment {
     }
 }
 
-/// Deserializes `{"param", "value"}`, refusing a foreign part, under a
-/// context of a solver without backends.
+/// The observer an assignment's `Deserialize` checks its value under: a
+/// constraint the solver without backends cannot evaluate, an equation,
+/// counts as undecided, which [`ParamAssignment::restore`] accepts.
+struct WithoutBackends;
+
+impl ParamObserver for WithoutBackends {
+    fn notify(&self, _event: &ParamEvent<'_>) {}
+
+    fn is_undecidable(&self, error: &ConstraintError) -> bool {
+        matches!(
+            error,
+            ConstraintError::Solve(SolveError::Backend { .. } | SolveError::NoCapableBackend(_))
+        )
+    }
+}
+
+/// Deserializes `{"param", "value"}`, refusing a foreign part and a value
+/// [`ParamAssignment::restore`] refuses, under a context of a solver
+/// without backends: an inadmissible value, or one a set constraint's
+/// membership refuses, fails to decode, and an equation, which only a
+/// simplifier evaluates, is left undecided.
 impl<'de> Deserialize<'de> for ParamAssignment {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let solver = Solver::new();
         ParamAssignmentData::deserialize(deserializer)?
-            .build(&NoForeign, &ParamContext::new(&solver))
+            .build(
+                &NoForeign,
+                &ParamContext::new(&solver).with_observer(&WithoutBackends),
+            )
             .map_err(de::Error::custom)
     }
 }

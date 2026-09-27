@@ -41,6 +41,16 @@ pub enum SymbolTableError {
         /// The namespace that defines it: `namespace` or an ancestor.
         defined_in: Identifier,
     },
+    /// The symbol is already defined in a descendant of the namespace, a
+    /// namespace whose chain of parents reaches it.
+    SymbolDefinedInDescendant {
+        /// The namespace the symbol was to be added to.
+        namespace: Identifier,
+        /// The symbol.
+        symbol: Identifier,
+        /// The descendant that defines it.
+        defined_in: Identifier,
+    },
     /// The symbol is not found: in the namespace, or anywhere when
     /// `namespace` is `None`.
     SymbolNotFound {
@@ -106,6 +116,15 @@ impl fmt::Display for SymbolTableError {
                 }
                 Ok(())
             }
+            Self::SymbolDefinedInDescendant {
+                namespace,
+                symbol,
+                defined_in,
+            } => write!(
+                f,
+                "symbol {symbol:?} already defined in namespace {defined_in:?}, a descendant of \
+                 namespace {namespace:?}"
+            ),
             Self::SymbolNotFound {
                 namespace: Some(namespace),
                 symbol,
@@ -154,6 +173,16 @@ pub enum Violation {
         /// The namespace the walk starts from.
         namespace: Identifier,
     },
+    /// A symbol that an ancestor of its namespace also defines, which the
+    /// ancestor's shadows for every lookup from the namespace down.
+    ShadowedSymbol {
+        /// The namespace holding the symbol.
+        namespace: Identifier,
+        /// The symbol.
+        symbol: Identifier,
+        /// The nearest ancestor that also defines it.
+        ancestor: Identifier,
+    },
     /// A symbol's frame names another symbol.
     FrameNameMismatch {
         /// The namespace holding the symbol.
@@ -178,6 +207,15 @@ impl fmt::Display for Violation {
             Self::CyclicParentChain { namespace } => {
                 write!(f, "namespace {namespace:?} has a cyclic parent chain")
             }
+            Self::ShadowedSymbol {
+                namespace,
+                symbol,
+                ancestor,
+            } => write!(
+                f,
+                "namespace {namespace:?} has symbol {symbol:?}, which its ancestor namespace \
+                 {ancestor:?} also defines"
+            ),
             Self::FrameNameMismatch {
                 namespace,
                 symbol,

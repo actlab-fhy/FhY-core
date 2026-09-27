@@ -242,7 +242,13 @@ impl<D> SymbolTableData<D> {
     }
 
     /// Return the table, each frame the one `frame` builds from its wire
-    /// form, adding each namespace, then its symbols, in order.
+    /// form, adding every namespace, in order, and then the symbols of each,
+    /// in order.
+    ///
+    /// Every namespace is in place before the first symbol is added, so the
+    /// checks of [`SymbolTable::add_symbol`] see the whole chain of parents,
+    /// and a table built through the checked API decodes whatever order its
+    /// namespaces were added in.
     ///
     /// # Errors
     ///
@@ -254,6 +260,7 @@ impl<D> SymbolTableData<D> {
         mut frame: impl FnMut(D) -> Result<F, BuildError>,
     ) -> Result<SymbolTable<F>, BuildError> {
         let mut table = SymbolTable::new();
+        let mut symbols = Vec::with_capacity(self.namespaces.len());
         for namespace in self.namespaces {
             table
                 .add_namespace(
@@ -261,10 +268,13 @@ impl<D> SymbolTableData<D> {
                     namespace.parent_namespace_name,
                 )
                 .map_err(BuildError::invalid)?;
-            for symbol in namespace.symbols {
+            symbols.push((namespace.namespace_name, namespace.symbols));
+        }
+        for (namespace, namespace_symbols) in symbols {
+            for symbol in namespace_symbols {
                 let value = frame(symbol.frame)?;
                 table
-                    .add_symbol(&namespace.namespace_name, symbol.symbol_name, value)
+                    .add_symbol(&namespace, symbol.symbol_name, value)
                     .map_err(|error: SymbolTableError| BuildError::invalid(error))?;
             }
         }
