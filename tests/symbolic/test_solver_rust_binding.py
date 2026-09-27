@@ -8,6 +8,7 @@ lazy imports, the errors and warnings, the default solver, and threads.
 """
 
 import logging
+import pathlib
 import pickle
 import subprocess
 import sys
@@ -929,6 +930,67 @@ def test_process_solver_checks_a_script_directly(x: Identifier) -> None:
     script = SmtScript.lower(IdentifierExpression(x) > 0, {x: SymbolType.INT})
 
     assert _build_fake_process_solver().check(script) == SatResult.SAT
+
+
+# A fake SMT-LIB2 executable that answers `sat` only when every line of the
+# script it reads is one whole, printable command.
+_PRINTABLE_SCRIPT_PROGRAM = textwrap.dedent(
+    """
+    import sys
+    printable = True
+    for line in sys.stdin:
+        line = line.rstrip("\\n")
+        if line == "(check-sat)":
+            print("sat" if printable else "unsat", flush=True)
+        elif line == "(exit)":
+            break
+        elif line and (
+            not line.startswith("(")
+            or any(not character.isprintable() for character in line)
+        ):
+            printable = False
+    """
+)
+
+
+def _installed_z3_program() -> pathlib.Path | None:
+    """Return the ``z3`` executable beside this interpreter, if one is."""
+    program = pathlib.Path(sys.executable).parent / "z3"
+    return program if program.is_file() else None
+
+
+@pytest.mark.parametrize(
+    "name_hint",
+    ["nul\x00x", "ctl\x01x", "tab\tx", "nl\nx", "del\x7fx"],
+    ids=["nul", "soh", "tab", "newline", "delete"],
+)
+def test_a_control_character_name_hint_answers_the_same_on_every_backend(
+    name_hint: str,
+) -> None:
+    """Test a name hint's control characters never reach a solver's script (p14)."""
+    identifier = Identifier(name_hint)
+    reference = IdentifierExpression(identifier)
+    expression = logical_and(reference > 0, reference < 2)
+    symbol_types = {identifier: SymbolType.INT}
+    backends: list[Any] = [_build_fake_process_solver(_PRINTABLE_SCRIPT_PROGRAM)]
+    z3_program = _installed_z3_program()
+    if z3_program is not None:
+        backends.append(SmtLib2ProcessSolver(str(z3_program), ["-in"]))
+
+    answers = [
+        Solver(smt_solver=backend).check_expression_satisfiability(
+            expression, symbol_types
+        )
+        for backend in backends
+    ]
+    if is_backend_available(SolverBackend.Z3):
+        answers.append(
+            check_expression_satisfiability(
+                expression, symbol_types, backend=SolverBackend.Z3
+            )
+        )
+
+    assert answers == [True] * len(answers)
 
 
 # =============================================================================

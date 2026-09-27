@@ -267,6 +267,22 @@ fn z3_keeps_nothing_between_checks() {
 }
 
 #[test]
+fn a_nul_name_hint_is_answered_not_a_panic() {
+    let (x, reference) = build_identifier("nul\0x");
+    let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
+    let expression = Expression::all([reference.clone().greater(0), reference.less(2)]);
+
+    let answer = z3()
+        .ask(
+            &Question::Satisfiability(&expression),
+            &QueryContext::new(&symbol_types),
+        )
+        .expect("answered");
+
+    assert_eq!(answer, Answer::Yes);
+}
+
+#[test]
 fn z3_backend_is_named_z3() {
     assert_eq!(Z3Solver::new().name(), "z3");
 }

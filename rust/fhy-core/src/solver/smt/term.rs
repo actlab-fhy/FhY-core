@@ -129,7 +129,9 @@ pub(crate) struct TermNode {
 pub(crate) struct Symbol {
     /// The identifier, or `None` for the `value` constant.
     pub(crate) identifier: Option<Identifier>,
-    /// The symbol's name, written quoted.
+    /// The symbol's name, written quoted. It holds no control character,
+    /// `|` or `\`, so it is printable text and a valid C string, which the
+    /// z3 backend names its constants by.
     pub(crate) name: String,
     /// The symbol's sort.
     pub(crate) sort: SymbolType,

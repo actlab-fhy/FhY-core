@@ -96,9 +96,9 @@ impl Declaration {
         &self.identifier
     }
 
-    /// Return the constant's symbol, `<name hint>_<id>` with every `|` and
-    /// `\` of the name hint replaced by `_`. The script writes it quoted,
-    /// as `|x_7|`.
+    /// Return the constant's symbol, `<name hint>_<id>` with every `|`,
+    /// `\` and control character ([`char::is_control`]) of the name hint
+    /// replaced by `_`. The script writes it quoted, as `|x_7|`.
     #[must_use]
     pub fn symbol(&self) -> &str {
         &self.symbol

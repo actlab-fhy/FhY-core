@@ -140,6 +140,31 @@ fn symbol_replaces_the_characters_a_quoted_symbol_cannot_hold() {
     assert_eq!(asserted(&script), format!("|a_b_c d_{}|", odd.id()));
 }
 
+#[rstest]
+#[case::nul("a\0b", "a_b")]
+#[case::bell("a\u{7}b", "a_b")]
+#[case::newline_and_tab("a\nb\tc", "a_b_c")]
+#[case::delete("a\u{7f}b", "a_b")]
+#[case::c1_control("a\u{85}b", "a_b")]
+fn a_name_hint_with_control_characters_lowers_to_printable_text(
+    #[case] name_hint: &str,
+    #[case] sanitized: &str,
+) {
+    let (odd, reference) = build_identifier(name_hint);
+    let script = lower(&reference, &build_symbol_types(&[(&odd, SymbolType::Bool)]));
+    let symbol = format!("{sanitized}_{}", odd.id());
+
+    assert_eq!(script.declarations()[0].symbol(), symbol);
+    assert_eq!(asserted(&script), format!("|{symbol}|"));
+    assert!(
+        !script
+            .to_string()
+            .chars()
+            .any(|character| character.is_control() && character != '\n'),
+        "no control character but the line breaks reaches the script"
+    );
+}
+
 #[test]
 fn identifiers_sharing_a_name_hint_get_distinct_symbols() {
     let (first, first_reference) = build_identifier("x");

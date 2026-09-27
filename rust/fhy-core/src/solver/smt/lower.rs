@@ -21,12 +21,16 @@ use super::{Declaration, Logic, SmtScript};
 const VALUE_SYMBOL: &str = "value";
 
 /// Return `name_hint` with every character a quoted symbol cannot hold
-/// replaced by `_`.
+/// replaced by `_`: `|`, `\`, and every control character
+/// ([`char::is_control`]), since SMT-LIB2 allows only printable text there
+/// and a NUL ends the C string some solvers read the script as.
+///
+/// The `_<id>` suffix of the symbol keeps two sanitized hints apart.
 fn sanitize(name_hint: &str) -> String {
     name_hint
         .chars()
         .map(|character| {
-            if matches!(character, '|' | '\\') {
+            if matches!(character, '|' | '\\') || character.is_control() {
                 '_'
             } else {
                 character

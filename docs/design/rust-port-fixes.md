@@ -53,8 +53,8 @@ onto `dev-rust` before continuing.
 
 ### Track D: `solver` (the SymPy move and build infrastructure; lands 2nd)
 
-- [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes)
-- [ ] R2-015 (F2-015): control characters in name hints mapped before they reach a solver
+- [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes; `9146d0b`)
+- [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver
 - [ ] R2-014 (F2-014): the process backend's timeout bounds the whole call
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped
 - [ ] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature
