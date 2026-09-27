@@ -42,6 +42,49 @@ fn build_value_strategy() -> BoxedStrategy<Value> {
     .boxed()
 }
 
+/// Return a strategy for system members over `x` and `y`: equations,
+/// set constraints over generated values, and set constraints over opaque
+/// values whose keys all collide.
+fn build_system_member_strategy() -> BoxedStrategy<Constraint> {
+    static VARIABLES: std::sync::LazyLock<[Identifier; 2]> =
+        std::sync::LazyLock::new(|| [Identifier::new("x"), Identifier::new("y")]);
+    let variable = prop::sample::select(VARIABLES.to_vec());
+    let polarity = prop::sample::select(vec![Polarity::In, Polarity::NotIn]);
+    prop_oneof![
+        build_expression_strategy(true)
+            .prop_map(|expression| Constraint::from(EquationConstraint::new(expression))),
+        (
+            variable.clone(),
+            polarity.clone(),
+            prop::collection::vec(build_value_strategy(), 1..3)
+        )
+            .prop_map(|(variable, polarity, values)| {
+                Constraint::from(SetConstraint::new(
+                    variable,
+                    crate::support::constraint::member_set(values),
+                    polarity,
+                ))
+            }),
+        (variable, polarity, 0_i64..3).prop_map(|(variable, polarity, payload)| {
+            Constraint::from(SetConstraint::new(
+                variable,
+                crate::support::constraint::member_set([
+                    crate::support::constraint::TestOpaque::colliding(payload).into_value(),
+                ]),
+                polarity,
+            ))
+        }),
+    ]
+    .boxed()
+}
+
+fn hash_of(system: &ConstraintSystem) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    system.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Return whether `left` and `right` are equal type-strictly, by a direct
 /// recursive comparison of the two values.
 fn is_type_strictly_equal(left: &Value, right: &Value) -> bool {
@@ -279,6 +322,27 @@ proptest! {
             left.is_structurally_equivalent(&right)
         );
         prop_assert_eq!(right.key(), unshared.key());
+    }
+
+    /// A system's member keys, its equivalence and its hash do not depend
+    /// on the order its members are given in, even when opaque members'
+    /// keys collide (R2-042): the members draw equations, set constraints
+    /// over generated values, and set constraints over opaque values whose
+    /// keys are all one.
+    #[test]
+    fn system_order_and_equivalence_do_not_depend_on_the_input_order(
+        (members, shuffled) in prop::collection::vec(build_system_member_strategy(), 1..7)
+            .prop_flat_map(|members| (Just(members.clone()), Just(members).prop_shuffle())),
+    ) {
+        let forward = ConstraintSystem::new(members).expect("no key fails");
+        let backward = ConstraintSystem::new(shuffled).expect("no key fails");
+        let keys = |system: &ConstraintSystem| -> Vec<String> {
+            system.constraints().iter().map(ConstraintKey::key).collect()
+        };
+
+        prop_assert_eq!(keys(&forward), keys(&backward));
+        prop_assert!(forward.is_structurally_equivalent(&backward));
+        prop_assert_eq!(hash_of(&forward), hash_of(&backward));
     }
 
     #[test]

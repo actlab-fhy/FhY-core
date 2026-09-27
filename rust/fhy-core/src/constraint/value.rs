@@ -58,9 +58,13 @@ pub trait OpaqueValue: ForeignPart {
     /// Returns the producer's error when it cannot be.
     fn check_hashable(&self) -> Result<(), BoxError>;
 
-    /// Return a text equal for equal values, which orders opaque members.
+    /// Return a text equal for two values exactly when they are equal
+    /// ([`eq_part`](Self::eq_part)), which orders opaque members.
     ///
-    /// A member reads it once, when it is built.
+    /// Two unequal values with one key break this contract, as a `Hash`
+    /// that disagrees with `==` does: members and systems still group such
+    /// values by equality, but their order among themselves then follows
+    /// the input. A member reads the key once, when it is built.
     ///
     /// # Errors
     ///

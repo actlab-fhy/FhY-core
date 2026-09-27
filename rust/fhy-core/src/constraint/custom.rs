@@ -52,8 +52,14 @@ pub trait CustomConstraint: ForeignPart {
     /// Returns the implementation's error.
     fn to_expression(&self) -> Result<Expression, BoxError>;
 
-    /// Return the canonical ordering key: equal for structurally
-    /// equivalent constraints, and distinct from the built-in kinds' keys.
+    /// Return the canonical ordering key: equal for two constraints exactly
+    /// when they are structurally equivalent ([`eq_part`](Self::eq_part)),
+    /// and distinct from the built-in kinds' keys.
+    ///
+    /// Two inequivalent constraints with one key break this contract, as a
+    /// `Hash` that disagrees with `==` does: a system still groups them by
+    /// equivalence, and compares them as a multiset, but their order among
+    /// themselves then follows the input.
     ///
     /// A [`ConstraintSystem`](super::ConstraintSystem) reads it once, when
     /// it is built.

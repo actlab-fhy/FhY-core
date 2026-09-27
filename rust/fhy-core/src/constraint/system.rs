@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::expression::{BooleanScreen, Expression, ExpressionKind, SymbolTypes};
@@ -18,11 +18,23 @@ use super::context::{ConstraintContext, ConstraintEvent, ConstraintObserver};
 use super::error::ConstraintError;
 use super::{Constraint, Outcome};
 
-/// The conjunction of constraints, in canonical order: sorted, stably, by
-/// their ordering keys, duplicates kept. Cloning one shares it.
+/// The conjunction of constraints, in canonical order: sorted by their
+/// ordering keys, duplicates kept. Cloning one shares it.
+///
+/// Keys are equal exactly when constraints are equivalent, for every
+/// conforming [`CustomConstraint`](super::CustomConstraint) and
+/// [`OpaqueValue`](super::OpaqueValue); an implementation whose keys collide
+/// breaks that contract, as a `Hash` that disagrees with `==` does. A run
+/// of members with one key, a tie run, is still grouped: its equivalent
+/// members are next to one another, the groups in the order of their first
+/// member in the input. That residual order is the one thing a colliding
+/// key leaves to the input; equivalence and hashing compare each tie run as
+/// a multiset, so they do not depend on it.
 #[derive(Debug, Clone, Default)]
 pub struct ConstraintSystem {
     constraints: Arc<[Constraint]>,
+    /// The length of each tie run, in order; they sum to the member count.
+    tie_runs: Arc<[usize]>,
 }
 
 impl ConstraintSystem {
@@ -39,11 +51,30 @@ impl ConstraintSystem {
             .map(|constraint| Ok((constraint.ordering_key()?, constraint)))
             .collect::<Result<_, ConstraintError>>()?;
         keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let mut ordered = Vec::with_capacity(keyed.len());
+        let mut tie_runs = Vec::new();
+        let mut members = keyed.into_iter().peekable();
+        while let Some((key, first)) = members.next() {
+            let mut run = vec![first];
+            while let Some((_, member)) = members.next_if(|(next, _)| *next == key) {
+                run.push(member);
+            }
+            tie_runs.push(run.len());
+            ordered.extend(group_equivalent(run));
+        }
         Ok(Self {
-            constraints: keyed
-                .into_iter()
-                .map(|(_, constraint)| constraint)
-                .collect(),
+            constraints: ordered.into(),
+            tie_runs: tie_runs.into(),
+        })
+    }
+
+    /// Return the members of each tie run, in order.
+    fn runs(&self) -> impl Iterator<Item = &[Constraint]> {
+        let mut rest: &[Constraint] = &self.constraints;
+        self.tie_runs.iter().map(move |&length| {
+            let (run, after) = rest.split_at(length);
+            rest = after;
+            run
         })
     }
 
@@ -310,22 +341,76 @@ impl ConstraintSystem {
         )
     }
 
-    /// Return whether `other` holds structurally equivalent members, pairwise
-    /// in order.
+    /// Return whether `other` holds structurally equivalent members: its
+    /// tie runs have this system's lengths, and each run holds the members
+    /// of this system's run, in any order.
     #[must_use]
     pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
-        self.constraints.len() == other.constraints.len()
-            && self
-                .constraints
-                .iter()
-                .zip(other.constraints.iter())
-                .all(|(left, right)| left.is_structurally_equivalent(right))
+        let matched = self.match_runs(other, |left, right| {
+            Ok::<_, std::convert::Infallible>(left.is_structurally_equivalent(right))
+        });
+        matches!(matched, Ok(true))
     }
+
+    /// Return whether the tie runs of `self` and `other` have one length
+    /// each and hold the same members as multisets under `is_equivalent`,
+    /// or the first error it returns.
+    fn match_runs<E>(
+        &self,
+        other: &Self,
+        mut is_equivalent: impl FnMut(&Constraint, &Constraint) -> Result<bool, E>,
+    ) -> Result<bool, E> {
+        if self.tie_runs != other.tie_runs {
+            return Ok(false);
+        }
+        for (left, right) in self.runs().zip(other.runs()) {
+            if let ([left], [right]) = (left, right) {
+                if !is_equivalent(left, right)? {
+                    return Ok(false);
+                }
+                continue;
+            }
+            let mut unmatched: Vec<&Constraint> = right.iter().collect();
+            for member in left {
+                let mut found = None;
+                for (position, candidate) in unmatched.iter().enumerate() {
+                    if is_equivalent(member, candidate)? {
+                        found = Some(position);
+                        break;
+                    }
+                }
+                let Some(position) = found else {
+                    return Ok(false);
+                };
+                unmatched.swap_remove(position);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Return the members of one tie run with each equivalent group next to one
+/// another, the groups in the order of their first member.
+fn group_equivalent(run: Vec<Constraint>) -> Vec<Constraint> {
+    if run.len() < 2 {
+        return run;
+    }
+    let mut groups: Vec<Vec<Constraint>> = Vec::new();
+    for member in run {
+        match groups
+            .iter_mut()
+            .find(|group| group[0].is_structurally_equivalent(&member))
+        {
+            Some(group) => group.push(member),
+            None => groups.push(vec![member]),
+        }
+    }
+    groups.into_iter().flatten().collect()
 }
 
 impl PartialEq for ConstraintSystem {
     /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
-    /// does: the members pairwise, in canonical order.
+    /// does: each tie run as a multiset, in canonical order.
     fn eq(&self, other: &Self) -> bool {
         self.is_structurally_equivalent(other)
     }
@@ -334,8 +419,27 @@ impl PartialEq for ConstraintSystem {
 impl Eq for ConstraintSystem {}
 
 impl Hash for ConstraintSystem {
+    /// Feed each tie run's length, then its members' hashes in sorted
+    /// order, so the order within a run, which equivalence ignores, does not
+    /// change the hash.
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.constraints.hash(state);
+        for run in self.runs() {
+            state.write_usize(run.len());
+            if let [member] = run {
+                member.hash(state);
+                continue;
+            }
+            let mut hashes: Vec<u64> = run
+                .iter()
+                .map(|member| {
+                    let mut hasher = DefaultHasher::new();
+                    member.hash(&mut hasher);
+                    hasher.finish()
+                })
+                .collect();
+            hashes.sort_unstable();
+            hashes.hash(state);
+        }
     }
 }
 
@@ -359,7 +463,8 @@ impl fmt::Display for ConstraintSystem {
 impl AlphaEquivalence for ConstraintSystem {
     type Error = ConstraintError;
 
-    /// Compare the members pairwise, in order, under `renaming`.
+    /// Compare the members under `renaming`, each tie run as a multiset:
+    /// the runs must have one length each, in order.
     ///
     /// # Errors
     ///
@@ -369,15 +474,9 @@ impl AlphaEquivalence for ConstraintSystem {
         other: &Self,
         renaming: &AlphaRenaming,
     ) -> Result<bool, ConstraintError> {
-        if self.constraints.len() != other.constraints.len() {
-            return Ok(false);
-        }
-        for (left, right) in self.constraints.iter().zip(other.constraints.iter()) {
-            if !left.is_alpha_equivalent_under(right, renaming)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        self.match_runs(other, |left, right| {
+            left.is_alpha_equivalent_under(right, renaming)
+        })
     }
 }
 

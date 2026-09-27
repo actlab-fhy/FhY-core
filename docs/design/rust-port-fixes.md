@@ -80,8 +80,8 @@ onto `dev-rust` before continuing.
 - [x] R2-047a (F2-047, evaluator part): `NumberAsBoolean` and the dead arms removed: `f1f9d1a`
 - [x] R2-029b (F2-029, `expression`): error-text tables and small stories: `40dfb54`
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
-- [x] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration: this commit
-- [ ] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order
+- [x] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration: `2385e94`
+- [x] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order: this commit
 - [ ] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key
 - [ ] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing
 - [ ] Track B status: gates green; counts recorded; landed as `<hash>`
@@ -3397,6 +3397,37 @@ new finding.
   | V2 read any float text Rust parses (`"1e5"`, `"+1.5"`, `"nan"`) and any decimal of the grammar (`"1.50"`) | only the canonical text; another raises `DeserializationValueError` naming the canonical text | the Rust stories; no Python writer produced another text |
   | `build_ordering_key()` of an equation rendered the tree in pre-order, a callee by its `Debug` text | the node table: `equation|identifier[7]();literal[int:1]();binary[add](0,1);...`, `call[builtin:max]`, `call[named:"f"]`; a depth-40 doubling DAG keys at once | `test_an_equation_key_is_its_expressions_node_table`, `test_a_depth_40_doubling_dag_constraint_builds_promptly` (new) |
   | a system's members sorted by the old key text | by the new one, so a system's V2 member order can differ | the corpus replay |
+
+**R2-042.**
+- **The system** keeps, beside its members, the length of each tie run (a
+  run of members with one key). `new` sorts by key, then orders each run
+  by equivalence groups, a group's members together and the groups in the
+  order of their first member (J-7's residual order, which the rustdoc
+  names). A system of distinct keys, the only kind a conforming
+  implementation builds, is unchanged.
+- **Equivalence and hashing.** `is_structurally_equivalent`, `==` and
+  alpha equivalence require the same run lengths in order, and match each
+  run as a multiset (greedily, which is exact for an equivalence; a run of
+  one is compared directly). `Hash` feeds each run's length and its
+  members' hashes sorted, so it agrees with the multiset equality.
+- **Contract text.** `OpaqueValue::ordering_key` and
+  `CustomConstraint::ordering_key` (Track A's files, doc lines only) say
+  the key is equal exactly when the values are equal, and what a collision
+  costs; the module docs of `constraint` and `constraint/key.rs` say keys
+  decide equivalence for conforming implementations.
+- **Tests.** The TYP probe as `systems_with_colliding_opaque_keys_are_equivalent_in_either_order`
+  (structural, `==`, hash, alpha), the grouping order, a `Param` over such
+  a system in either order (in `system_stories.rs`, since the param story
+  files are Track C's), and the property
+  `system_order_and_equivalence_do_not_depend_on_the_input_order`, whose
+  members draw colliding opaque keys. The three stories failed at the base.
+- **The corpus** is unchanged (the regeneration check passes), so R2-042
+  stays out of the wire group's commit, as J-4 allows.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | two systems (or params) with the same members, two of them unequal members whose keys collide, were unequal when given in the other order | equal, and they hash alike; within a run of colliding keys, equal members sit together | the Rust stories; no Python test built colliding keys |
 
 ### Track C notes
 

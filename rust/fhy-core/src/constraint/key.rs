@@ -1,5 +1,6 @@
 //! Canonical ordering keys: texts equal for two constraints exactly when
-//! they are structurally equivalent.
+//! they are structurally equivalent, for every conforming opaque value and
+//! custom constraint, whose keys must be equal exactly when they are equal.
 //!
 //! An equation's key is `equation|` and its expression's canonical node
 //! table under structural equivalence (S-1 of

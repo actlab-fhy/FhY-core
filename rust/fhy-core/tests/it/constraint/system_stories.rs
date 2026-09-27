@@ -17,7 +17,7 @@ use fhy_core::expression::builtins::BuiltinConstant;
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{CheckLimits, QueryKind, SatResult, Solver};
-use fhy_core::term::AlphaRenaming;
+use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
 
 use crate::support::constraint::{ConstraintKey, Failing, FailingHook, TestValueError};
 use crate::support::constraint::{
@@ -850,4 +850,91 @@ fn a_failing_custom_scope_is_an_error_not_a_closed_constraint() {
         panic!("a custom error, got {error:?}");
     };
     assert_eq!(source.to_string(), "the scope failed");
+}
+
+// =============================================================================
+// Colliding keys (R2-042)
+// =============================================================================
+
+/// Return `x in {value}` over one opaque value whose ordering key is the
+/// same for every payload.
+fn colliding_member(variable: &Identifier, payload: i64) -> Constraint {
+    Constraint::from(SetConstraint::new(
+        variable.clone(),
+        member_set([crate::support::constraint::TestOpaque::colliding(payload).into_value()]),
+        Polarity::In,
+    ))
+}
+
+fn hash_of(system: &ConstraintSystem) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    system.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[test]
+fn systems_with_colliding_opaque_keys_are_equivalent_in_either_order() {
+    let x = Identifier::new("x");
+    let (one, two) = (colliding_member(&x, 1), colliding_member(&x, 2));
+    assert_eq!(one.key(), two.key());
+    assert_ne!(one, two);
+
+    let forward = ConstraintSystem::new([one.clone(), two.clone()]).expect("a system");
+    let backward = ConstraintSystem::new([two.clone(), one.clone()]).expect("a system");
+    let other = ConstraintSystem::new([one.clone(), one.clone()]).expect("a system");
+
+    assert!(forward.is_structurally_equivalent(&backward));
+    assert_eq!(forward, backward);
+    assert_eq!(hash_of(&forward), hash_of(&backward));
+    assert!(
+        forward
+            .is_alpha_equivalent_under(&backward, &AlphaRenaming::default())
+            .expect("no custom member fails")
+    );
+    assert_ne!(forward, other);
+}
+
+#[test]
+fn equivalent_members_of_a_tie_run_are_grouped_by_first_appearance() {
+    let x = Identifier::new("x");
+    let (one, two) = (colliding_member(&x, 1), colliding_member(&x, 2));
+
+    let system = ConstraintSystem::new([
+        two.clone(),
+        one.clone(),
+        two.clone(),
+        one.clone(),
+        two.clone(),
+    ])
+    .expect("a system");
+
+    assert_eq!(
+        system.constraints(),
+        [two.clone(), two.clone(), two, one.clone(), one]
+    );
+}
+
+#[test]
+fn params_over_colliding_members_are_equivalent_in_either_order() {
+    use fhy_core::param::{Param, ParamContext, ParamDomain, RealDomain};
+    let solver = Solver::new();
+    let context = ParamContext::new(&solver);
+    let x = Identifier::new("x");
+    let (one, two) = (colliding_member(&x, 1), colliding_member(&x, 2));
+    let build = |constraints: [Constraint; 2]| {
+        Param::new(
+            ParamDomain::from(RealDomain),
+            x.clone(),
+            constraints,
+            &context,
+        )
+        .expect("a param")
+    };
+
+    let forward = build([one.clone(), two.clone()]);
+    let backward = build([two, one]);
+
+    assert!(forward.is_structurally_equivalent(&backward));
+    assert_eq!(forward, backward);
 }
