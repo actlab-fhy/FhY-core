@@ -3,6 +3,7 @@
 
 use crate::support::foreign::{TestResolver, WireDomain, WireToken};
 use crate::support::param::{at_least, in_set, ints};
+use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 
 use fhy_core::constraint::Value;
 use fhy_core::foreign::BuildError;
@@ -32,15 +33,19 @@ fn strs(values: &[&str]) -> Vec<Value> {
 
 #[rstest]
 #[case::integer(
-    ParamDomain::from(IntegerDomain::new(false, true)),
+    ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
     r#"{"integer":{"non_negative":false,"zero_included":true}}"#
 )]
 #[case::natural(
-    ParamDomain::from(IntegerDomain::new(true, false)),
+    ParamDomain::from(IntegerDomain::new(Sign::NonNegative, ZeroInclusion::Excluded)),
     r#"{"integer":{"non_negative":true,"zero_included":false}}"#
 )]
 #[case::interval(
-    ParamDomain::from(IntervalIntegerDomain::new(true, false, true)),
+    ParamDomain::from(IntervalIntegerDomain::new(
+        Inclusivity::Inclusive,
+        Sign::Any,
+        ZeroInclusion::Included
+    )),
     r#"{"interval_integer":{"prefer_inclusive":true,"non_negative":false,"zero_included":true}}"#
 )]
 #[case::real(ParamDomain::from(RealDomain), r#"{"real":{}}"#)]
@@ -125,7 +130,10 @@ fn a_custom_domain_and_opaque_members_resolve() {
 fn build_param(variable: &Identifier) -> Param {
     let solver = Solver::new();
     Param::new(
-        ParamDomain::from(IntegerDomain::new(true, true)),
+        ParamDomain::from(IntegerDomain::new(
+            Sign::NonNegative,
+            ZeroInclusion::Included,
+        )),
         variable.clone(),
         [in_set(variable, ints([1, 2, 3])), at_least(variable, 1)],
         &ParamContext::new(&solver),
@@ -175,7 +183,7 @@ fn a_param_refuses_a_constraint_outside_its_variable_s_scope() {
 #[test]
 fn an_assignment_round_trips_without_checking_its_value() {
     let variable = restored(61_603, "p");
-    let assignment = ParamAssignment::new_unchecked(build_param(&variable), Value::Int(2.into()));
+    let assignment = ParamAssignment::new_unvalidated(build_param(&variable), Value::Int(2.into()));
 
     let text = text_of(&assignment);
 

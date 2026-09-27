@@ -34,7 +34,7 @@ use super::renaming::AlphaRenaming;
 /// let (a, b, x, y) = (Identifier::new("a"), Identifier::new("b"), Identifier::new("x"), Identifier::new("y"));
 /// let left = HashMap::from([(a.clone(), Expression::from(x.clone()) + 1)]);
 /// let right = HashMap::from([(b.clone(), Expression::from(y.clone()) + 1)]);
-/// let renaming = AlphaRenaming::try_new(HashMap::from([(a, b), (x, y)]))
+/// let renaming = AlphaRenaming::new(HashMap::from([(a, b), (x, y)]))
 ///     .expect("the renaming is injective");
 ///
 /// assert!(is_mapping_alpha_equivalent_under(&left, &right, &renaming));

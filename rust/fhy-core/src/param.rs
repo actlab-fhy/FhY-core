@@ -70,8 +70,9 @@ pub use decide::{
 };
 pub use domain::{
     CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, IntervalProfile,
-    OrdinalDomain, ParamDomain, PermutationDomain, RealDomain, Side, is_bound_expression,
+    OrdinalDomain, ParamDomain, PermutationDomain, RealDomain, Side, Sign, ZeroInclusion,
+    is_bound_expression,
 };
 pub use error::{ParamError, SetOperation};
-pub use interval::{BoundSide, Operand, check_bounds_are_ordered};
+pub use interval::{BoundSide, Inclusivity, Operand, check_bounds_are_ordered};
 pub use parameter::{Param, ValueCheck};

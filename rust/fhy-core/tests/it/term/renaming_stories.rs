@@ -38,7 +38,7 @@ fn build_renaming(
     free_pairs: HashMap<Identifier, Identifier>,
     frames: Vec<HashMap<Identifier, Identifier>>,
 ) -> AlphaRenaming {
-    let mut renaming = AlphaRenaming::try_new(free_pairs).expect("the free renaming is injective");
+    let mut renaming = AlphaRenaming::new(free_pairs).expect("the free renaming is injective");
     for frame in frames {
         renaming
             .enter_binder(frame)
@@ -76,7 +76,7 @@ fn alpha_renaming_default_resolves_every_identifier_to_itself() {
 fn alpha_renaming_try_new_resolves_a_mapped_identifier_to_its_image() {
     let [x, y] = build_identifiers(["x", "y"]);
 
-    let renaming = AlphaRenaming::try_new(build_map([(&x, &y)])).expect("one pair is injective");
+    let renaming = AlphaRenaming::new(build_map([(&x, &y)])).expect("one pair is injective");
 
     assert_eq!(renaming.resolve(&x), &y);
 }
@@ -85,7 +85,7 @@ fn alpha_renaming_try_new_resolves_a_mapped_identifier_to_its_image() {
 fn alpha_renaming_try_new_of_an_empty_map_is_the_default() {
     let [x] = build_identifiers(["x"]);
 
-    let renaming = AlphaRenaming::try_new(HashMap::new()).expect("an empty map is injective");
+    let renaming = AlphaRenaming::new(HashMap::new()).expect("an empty map is injective");
 
     assert_eq!(renaming, AlphaRenaming::default());
     assert_eq!(renaming.resolve(&x), &x);
@@ -95,7 +95,7 @@ fn alpha_renaming_try_new_of_an_empty_map_is_the_default() {
 fn alpha_renaming_try_new_names_the_free_renaming_in_its_refusal() {
     let [a, b, target] = build_identifiers(["a", "b", "t"]);
 
-    let error = AlphaRenaming::try_new(build_map([(&a, &target), (&b, &target)]))
+    let error = AlphaRenaming::new(build_map([(&a, &target), (&b, &target)]))
         .expect_err("two identifiers share the image t");
 
     assert_eq!(error.image(), &target);

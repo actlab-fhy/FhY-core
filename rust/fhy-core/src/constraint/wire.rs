@@ -30,7 +30,7 @@
 //! let x = Identifier::try_restore(61_200, "x")?;
 //! let members = MemberSet::new([Value::Str("a".into()), Value::Int(2.into())]
 //!     .into_iter()
-//!     .map(Member::try_from_value)
+//!     .map(Member::try_from)
 //!     .collect::<Result<Vec<_>, _>>()?);
 //! let constraint = Constraint::Set(SetConstraint::new(x, members, Polarity::In));
 //!
@@ -306,7 +306,7 @@ fn build_member_set<R: Resolve<Opaque> + ?Sized>(
 ) -> Result<MemberSet, BuildError> {
     let members = values
         .into_iter()
-        .map(|value| Member::try_from_value(value.build(resolver)?).map_err(BuildError::invalid))
+        .map(|value| Member::try_from(value.build(resolver)?).map_err(BuildError::invalid))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(MemberSet::new(members))
 }
@@ -342,7 +342,7 @@ impl ValueData {
         self,
         resolver: &R,
     ) -> Result<Member, BuildError> {
-        Member::try_from_value(self.0.build(resolver)?).map_err(BuildError::invalid)
+        Member::try_from(self.0.build(resolver)?).map_err(BuildError::invalid)
     }
 }
 

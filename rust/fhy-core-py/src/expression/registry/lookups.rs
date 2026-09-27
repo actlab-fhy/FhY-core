@@ -276,7 +276,7 @@ pub(crate) fn try_get_registered_result_sort<'py>(
     if text.parse::<BuiltinConstant>().is_ok() {
         return Ok(None);
     }
-    let Ok(name) = FunctionName::try_new(text) else {
+    let Ok(name) = FunctionName::new(text) else {
         return Ok(None);
     };
     match state::snapshot().registry().result_sort(&name) {

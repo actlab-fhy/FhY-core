@@ -793,7 +793,7 @@ fn piecewise_mixing_a_boolean_and_a_number_is_refused() {
 #[rstest]
 #[case::composed_builtin(Expression::call(BuiltinFunction::Relu, [build_literal(1)]), r#"smt-lib2 has no term for a call of the built-in "relu"; inline it first with inline_functions"#)]
 #[case::native_builtin(Expression::call(BuiltinFunction::Exp, [build_literal(1)]), r#"smt-lib2 has no term for a call of the native built-in "exp""#)]
-#[case::named(Expression::call(FunctionName::try_new("f").expect("a name"), [build_literal(1)]), r#"smt-lib2 has no term for a call of "f"; a user function must be inlined first with inline_functions"#)]
+#[case::named(Expression::call(FunctionName::new("f").expect("a name"), [build_literal(1)]), r#"smt-lib2 has no term for a call of "f"; a user function must be inlined first with inline_functions"#)]
 fn call_is_refused_naming_the_callee(#[case] call: Expression, #[case] text: &str) {
     let error = refuse(&call.clone().greater(0), &HashMap::new());
 

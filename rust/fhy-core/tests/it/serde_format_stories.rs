@@ -73,7 +73,7 @@ fn assert_every_prefix_fails<T: DeserializeOwned + Debug>(bytes: &[u8]) {
 
 /// Build the position at `line` and `column`, which must both be non-zero.
 fn build_position(line: u64, column: u64) -> Position {
-    Position::try_new(line, column).expect("line and column are non-zero")
+    Position::new(line, column).expect("line and column are non-zero")
 }
 
 /// Build a provenance using every variant: a labelled fusion of a named
@@ -281,7 +281,7 @@ fn literal_value_round_trips_through_postcard(#[case] literal: LiteralValue) {
 #[test]
 fn decimal_callee_and_function_name_round_trip_through_postcard() {
     let decimal: Decimal = "12.3400".parse().expect("a decimal text");
-    let name = FunctionName::try_new("softplus").expect("a user function name");
+    let name = FunctionName::new("softplus").expect("a user function name");
 
     assert_round_trips(&decimal);
     assert_round_trips(&name);

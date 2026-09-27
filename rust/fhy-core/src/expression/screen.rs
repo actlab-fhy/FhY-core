@@ -23,13 +23,16 @@ use super::symbol_type::SymbolType;
 
 /// The bindings a screen applies before judging an identifier: the values
 /// that will be substituted for identifiers.
-pub trait Environment {
+///
+/// It is `Sync`, so a screen, and the solver's contexts that hold one, can
+/// be shared across threads.
+pub trait Environment: Sync {
     /// Return the value `identifier` is bound to, or `None` if it is
     /// unbound.
     fn binding(&self, identifier: &Identifier) -> Option<&Expression>;
 }
 
-impl<S: BuildHasher> Environment for HashMap<Identifier, Expression, S> {
+impl<S: BuildHasher + Sync> Environment for HashMap<Identifier, Expression, S> {
     fn binding(&self, identifier: &Identifier) -> Option<&Expression> {
         self.get(identifier)
     }
@@ -38,7 +41,8 @@ impl<S: BuildHasher> Environment for HashMap<Identifier, Expression, S> {
 /// The declared value kinds of the identifiers left free after the
 /// bindings are applied.
 ///
-/// Implemented by maps and by closures:
+/// It is `Sync`, as [`Environment`] is. Implemented by maps and by `Sync`
+/// closures:
 ///
 /// ```
 /// use fhy_core::expression::{BooleanScreen, Expression, SymbolType};
@@ -50,19 +54,19 @@ impl<S: BuildHasher> Environment for HashMap<Identifier, Expression, S> {
 ///
 /// assert!(screen.check_predicate(&Expression::from(n)).is_err());
 /// ```
-pub trait SymbolTypes {
+pub trait SymbolTypes: Sync {
     /// Return the declared value kind of `identifier`, or `None` if it has
     /// none.
     fn symbol_type(&self, identifier: &Identifier) -> Option<SymbolType>;
 }
 
-impl<S: BuildHasher> SymbolTypes for HashMap<Identifier, SymbolType, S> {
+impl<S: BuildHasher + Sync> SymbolTypes for HashMap<Identifier, SymbolType, S> {
     fn symbol_type(&self, identifier: &Identifier) -> Option<SymbolType> {
         self.get(identifier).copied()
     }
 }
 
-impl<F: Fn(&Identifier) -> Option<SymbolType>> SymbolTypes for F {
+impl<F: Fn(&Identifier) -> Option<SymbolType> + Sync> SymbolTypes for F {
     fn symbol_type(&self, identifier: &Identifier) -> Option<SymbolType> {
         self(identifier)
     }
@@ -534,8 +538,8 @@ impl fmt::Debug for BooleanScreen<'_> {
 /// and so does a built-in constant's sort
 /// ([`BuiltinConstant::sort`]), without asking. Both methods default to
 /// knowing nothing. A [`FunctionRegistry`](super::registry::FunctionRegistry)
-/// implements it for its entries.
-pub trait SortLookup {
+/// implements it for its entries. It is `Sync`, as [`Environment`] is.
+pub trait SortLookup: Sync {
     /// Return the sort of the native constant `identifier` is the canonical
     /// identifier of, or `None` if it is no native constant's.
     fn native_constant_sort(&self, _identifier: &Identifier) -> Option<FunctionSort> {
@@ -558,3 +562,8 @@ pub trait SortLookup {
 pub struct NoRegisteredSorts;
 
 impl SortLookup for NoRegisteredSorts {}
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<BooleanScreen<'static>>();
+};

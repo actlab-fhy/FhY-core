@@ -15,5 +15,5 @@ pub(crate) fn build_file(path: &str, span: Option<Span>) -> Provenance {
 /// Panics if `name` is empty.
 #[must_use]
 pub(crate) fn build_named(name: &str, child: Provenance) -> Provenance {
-    Provenance::Named(NamedProvenance::try_new(name, child).expect("name is non-empty"))
+    Provenance::Named(NamedProvenance::new(name, child).expect("name is non-empty"))
 }

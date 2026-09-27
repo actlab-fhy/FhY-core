@@ -83,8 +83,8 @@ fn native_constant_hazard_refuses_a_constant_the_sort_lookup_reports() {
     let mut registry = FunctionRegistry::new();
     let answer = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )
@@ -601,7 +601,7 @@ fn mixed_equality_hazard_reads_a_call_kind_from_the_sort_lookup(
     #[case] result_sort: FunctionSort,
     #[case] is_refused: bool,
 ) {
-    let name = FunctionName::try_new("f").expect("a name");
+    let name = FunctionName::new("f").expect("a name");
     let mut registry = FunctionRegistry::new();
     registry
         .register_native_function(NativeFunction::new(name.clone(), [], result_sort))
@@ -639,7 +639,7 @@ fn mixed_equality_hazard_reads_a_builtin_call_kind_from_the_catalogue() {
 #[test]
 fn mixed_equality_hazard_refuses_an_unknown_function_against_a_literal() {
     let expression = Expression::call(
-        FunctionName::try_new("g").expect("a name"),
+        FunctionName::new("g").expect("a name"),
         Vec::<Expression>::new(),
     )
     .equals(1);

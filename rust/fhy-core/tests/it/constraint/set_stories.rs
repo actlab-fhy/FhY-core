@@ -264,8 +264,8 @@ fn registered_constant_variable_is_refused_through_the_registry() {
     let mut registry = FunctionRegistry::new();
     let answer = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )

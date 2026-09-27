@@ -146,18 +146,19 @@ pub enum Value {
     Opaque(Opaque),
 }
 
-impl Value {
-    /// Return the value of the literal `value`.
-    #[must_use]
-    pub fn from_literal(value: &LiteralValue) -> Self {
+impl From<LiteralValue> for Value {
+    /// Return the value of the literal `value`, of the same kind.
+    fn from(value: LiteralValue) -> Self {
         match value {
-            LiteralValue::Bool(value) => Self::Bool(*value),
-            LiteralValue::Int(value) => Self::Int(value.clone()),
-            LiteralValue::Float(value) => Self::Float(*value),
-            LiteralValue::Decimal(value) => Self::Decimal(value.clone()),
+            LiteralValue::Bool(value) => Self::Bool(value),
+            LiteralValue::Int(value) => Self::Int(value),
+            LiteralValue::Float(value) => Self::Float(value),
+            LiteralValue::Decimal(value) => Self::Decimal(value),
         }
     }
+}
 
+impl Value {
     /// Return whether the value could be a member: whether it and every
     /// value it holds is a Boolean, an integer, a float, a string, a tuple, a
     /// frozen set, or a member-shaped opaque value. A NaN float is
@@ -281,7 +282,9 @@ pub enum MemberKind<'a> {
     Opaque(&'a Opaque),
 }
 
-impl Member {
+impl TryFrom<Value> for Member {
+    type Error = MemberError;
+
     /// Return the member of `value`.
     ///
     /// # Errors
@@ -289,11 +292,13 @@ impl Member {
     /// Returns [`MemberError`] if `value` is, or holds, a NaN, a decimal or
     /// an opaque value that is not member-shaped, whichever comes first in
     /// pre-order.
-    pub fn try_from_value(value: Value) -> Result<Self, MemberError> {
+    fn try_from(value: Value) -> Result<Self, MemberError> {
         check_member(&value)?;
         Ok(build_member(value))
     }
+}
 
+impl Member {
     /// Return the member's kind and contents.
     #[must_use]
     pub fn kind(&self) -> MemberKind<'_> {
@@ -606,7 +611,7 @@ impl MemberSet {
                 .iter()
                 .any(|member| is_value_equal_to_member(value, member));
         }
-        match Member::try_from_value(value.clone()) {
+        match Member::try_from(value.clone()) {
             Ok(member) => self.contains(&member),
             Err(_nan) => false,
         }

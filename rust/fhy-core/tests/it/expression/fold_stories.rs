@@ -25,7 +25,7 @@ use expression_support::{
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 fn name(text: &str) -> FunctionName {
-    FunctionName::try_new(text).expect("the test names no built-in")
+    FunctionName::new(text).expect("the test names no built-in")
 }
 
 fn call(
@@ -105,7 +105,7 @@ fn build_registry() -> (FunctionRegistry, Identifier) {
     let (x, reference) = build_identifier("x");
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("double"),
                 [x],
                 [FunctionSort::Real],
@@ -117,7 +117,7 @@ fn build_registry() -> (FunctionRegistry, Identifier) {
         .expect("free name");
     let answer = registry
         .register_constant(
-            NativeConstant::try_new(name("answer"), FunctionSort::Int, 42).expect("an integer"),
+            NativeConstant::new(name("answer"), FunctionSort::Int, 42).expect("an integer"),
         )
         .expect("free name");
     (registry, answer)

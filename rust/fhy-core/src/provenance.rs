@@ -48,12 +48,12 @@ impl Position {
     /// ```
     /// use fhy_core::provenance::Position;
     ///
-    /// let position = Position::try_new(2, 8)?;
+    /// let position = Position::new(2, 8)?;
     ///
     /// assert_eq!(position.to_string(), "2:8");
     /// # Ok::<(), fhy_core::provenance::PositionError>(())
     /// ```
-    pub fn try_new(line: u64, column: u64) -> Result<Self, PositionError> {
+    pub fn new(line: u64, column: u64) -> Result<Self, PositionError> {
         let line = NonZeroU64::new(line).ok_or(PositionError::ZeroLine)?;
         let column = NonZeroU64::new(column).ok_or(PositionError::ZeroColumn)?;
         Ok(Self { line, column })
@@ -93,7 +93,7 @@ impl fmt::Display for Position {
 /// use fhy_core::provenance::{Position, Span};
 ///
 /// let span = Span::from_offsets(0..3)?
-///     .with_positions(Position::try_new(1, 1)?..Position::try_new(1, 4)?)?;
+///     .with_positions(Position::new(1, 1)?..Position::new(1, 4)?)?;
 ///
 /// assert_eq!(span.to_string(), "1:1-1:4");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -681,10 +681,7 @@ impl NamedProvenance {
     ///
     /// Returns [`NamedProvenanceError::EmptyName`] if `name` is empty. A
     /// name of only whitespace is not empty.
-    pub fn try_new(
-        name: impl Into<String>,
-        child: Provenance,
-    ) -> Result<Self, NamedProvenanceError> {
+    pub fn new(name: impl Into<String>, child: Provenance) -> Result<Self, NamedProvenanceError> {
         let name = name.into();
         if name.is_empty() {
             return Err(NamedProvenanceError::EmptyName);
@@ -721,7 +718,7 @@ impl TryFrom<NamedProvenanceData> for NamedProvenance {
     type Error = NamedProvenanceError;
 
     fn try_from(data: NamedProvenanceData) -> Result<Self, NamedProvenanceError> {
-        Self::try_new(data.name, data.child)
+        Self::new(data.name, data.child)
     }
 }
 

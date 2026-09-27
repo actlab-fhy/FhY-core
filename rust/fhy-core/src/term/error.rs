@@ -12,7 +12,7 @@ use crate::identifier::Identifier;
 /// A free-identifier renaming or a binder frame that sends two identifiers
 /// to one image.
 ///
-/// Returned by [`AlphaRenaming::try_new`](super::AlphaRenaming::try_new) for
+/// Returned by [`AlphaRenaming::new`](super::AlphaRenaming::new) for
 /// the free renaming and by
 /// [`AlphaRenaming::enter_binder`](super::AlphaRenaming::enter_binder) for a
 /// frame. Displays as `a free-identifier renaming must be injective, but
@@ -84,7 +84,7 @@ impl fmt::Display for NonInjectiveRenamingError {
 #[non_exhaustive]
 pub enum RenamingPart {
     /// The free-identifier renaming given to
-    /// [`AlphaRenaming::try_new`](super::AlphaRenaming::try_new).
+    /// [`AlphaRenaming::new`](super::AlphaRenaming::new).
     FreeRenaming,
     /// A binder frame given to
     /// [`AlphaRenaming::enter_binder`](super::AlphaRenaming::enter_binder).

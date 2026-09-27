@@ -42,8 +42,8 @@ onto `dev-rust` before continuing.
 - [x] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode: `68b326d`
 - [x] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence: `82935f7`
 - [x] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers: `9473515`
-- [x] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python)
-- [ ] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error
+- [x] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python): `3f9c59b`
+- [x] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error
 - [ ] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`
 - [ ] R2-006 (F2-006): `ParamError` split by family
 - [ ] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits
@@ -2287,6 +2287,49 @@ finding.
   records a Python constraint's `is_structurally_equivalent` and
   `is_alpha_equivalent_under`, and through a param, that the renaming it
   receives pairs the two variables.
+
+**R2-007**, in three commits: `0b44aa2` (sub-step 1, `BoxError`),
+`450fa2c` (sub-step 2, the `error` module), and this one (sub-steps 3 to
+6).
+- **`BoxError`** is `fhy_core::foreign::BoxError`. The five aliases are
+  gone, not deprecated; the crate is unpublished. The rename reaches files
+  of other tracks (`solver/{process,z3,error,sympy}.rs`,
+  `expression/{evaluate,pattern}/*`, `pass/*`), one type name each.
+- **The `error` module (call):** it holds `UnknownNameError` and two
+  crate-private macros. `impl_name_text` (Display and a serde-based
+  `FromStr`) moved from `expression/operation.rs`; `impl_from_name`, new,
+  derives only `FromStr`, from a listed variant set and a text method, for
+  enums that keep their own `Display`. `QueryKind` parses its `as_str`
+  name, `universal_validity`, not its display words. `Logic`'s invocation
+  sits in Track D's `solver/smt.rs`, one additive block.
+- **`Sync` lookups.** `Environment`, `SymbolTypes` and `SortLookup` are
+  `: Sync`, so the map impls need a `Sync` hasher and the closure impl a
+  `Sync` closure. That bound reached `Solver::simplify`, `Prepared::evaluate`
+  and `evaluate_array` (Track B's files; a `+ Sync` each). A test lookup
+  that counted with a `Cell` counts with an `AtomicUsize`. `IdentifierTypes`
+  and `CallTargets` document that they need not be `Sync`.
+- **Contexts.** `ConstraintEvent`, `ConstraintObserver` and
+  `NoConstraintObserver` (renamed for symmetry with `NoParamObserver`, a
+  call). `ParamContext` holds a `ConstraintContext` and lends it through
+  the public `constraint_context()`; the crate-private
+  `constraint_context_with(observer)` (in Track C's `decide.rs`, a rename
+  of the call) adds a forwarding observer.
+- **Constructors (call, recorded):** `Sign { Any, NonNegative }`,
+  `ZeroInclusion { Included, Excluded }` and `Inclusivity { Inclusive,
+  Exclusive }`, each with a `const` constructor from a `bool`
+  (`non_negative_if`, `included_if`, `inclusive_if`) for callers that hold
+  one. `ZeroInclusion`, not `Zero`, since `num_traits::Zero` is imported
+  where the domains are built. `IntegerDomain::new(Sign, ZeroInclusion)`,
+  `IntervalIntegerDomain::new(Inclusivity, Sign, ZeroInclusion)` and
+  `check_bounds_are_ordered(.., Inclusivity, Inclusivity)`; the getters
+  still answer `bool`, and the wire keeps its Boolean fields.
+- **`checked_*`.** `NotAnIntervalOperand` is now also the "neither is an
+  operand" answer of `checked_{add,sub,mul,reverse_sub}`. The binding maps
+  that variant, from those four, to `NotImplemented`. The one in-body
+  `NotAnIntervalOperand` (a coerced operand without a profile) cannot
+  arise, since coercion yields an interval operand.
+- **Python-visible changes:** none. `test_non_interval_params_return_not_implemented_from_each_operator`
+  pins the `NotImplemented` answers.
 
 ### Track D notes
 

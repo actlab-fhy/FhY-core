@@ -476,7 +476,7 @@ pub(crate) fn types_check_function_body(
     let Ok(text) = name.cast::<PyString>() else {
         return Err(build_argument_type_error(OWNER, "name", "a str", name)?);
     };
-    let function_name = FunctionName::try_new(text.to_str()?).into_py_result()?;
+    let function_name = FunctionName::new(text.to_str()?).into_py_result()?;
     let rust_parameters = parameters
         .try_iter()?
         .map(|parameter| restore_identifier(&parameter?, OWNER, "parameters"))

@@ -112,8 +112,8 @@ pub trait Simplifier: Send + Sync + fmt::Debug {
 /// use fhy_core::solver::SimplifyContext;
 ///
 /// let mut registry = FunctionRegistry::new();
-/// let answer = registry.register_constant(NativeConstant::try_new(
-///     FunctionName::try_new("answer")?,
+/// let answer = registry.register_constant(NativeConstant::new(
+///     FunctionName::new("answer")?,
 ///     FunctionSort::Int,
 ///     42,
 /// )?)?;
@@ -263,3 +263,8 @@ impl CheckLimits {
         self.timeout
     }
 }
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<SimplifyContext<'static>>();
+};

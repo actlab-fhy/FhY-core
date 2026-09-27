@@ -9,6 +9,7 @@
 //! constraint system's questions are, and log what the Python
 //! implementation logged.
 
+use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyList, PyTuple, PyType};
@@ -759,8 +760,8 @@ domain_class!(
             zero_included: OptionalArgument<'_>,
         ) -> PyResult<Self> {
             let domain = IntegerDomain::new(
-                read_flag(non_negative, false)?,
-                read_flag(zero_included, true)?,
+                Sign::non_negative_if(read_flag(non_negative, false)?),
+                ZeroInclusion::included_if(read_flag(zero_included, true)?),
             );
             Ok(Self {
                 state: DomainState::numeric(domain),
@@ -814,9 +815,9 @@ domain_class!(
             zero_included: OptionalArgument<'_>,
         ) -> PyResult<Self> {
             let domain = IntervalIntegerDomain::new(
-                read_flag(prefer_inclusive, true)?,
-                read_flag(non_negative, false)?,
-                read_flag(zero_included, true)?,
+                Inclusivity::inclusive_if(read_flag(prefer_inclusive, true)?),
+                Sign::non_negative_if(read_flag(non_negative, false)?),
+                ZeroInclusion::included_if(read_flag(zero_included, true)?),
             );
             Ok(Self {
                 state: DomainState::numeric(domain),

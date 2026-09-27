@@ -30,7 +30,7 @@ static NUMBERS: LazyLock<[Identifier; 2]> =
     LazyLock::new(|| [Identifier::new("n0"), Identifier::new("n1")]);
 
 fn name(text: &str) -> FunctionName {
-    FunctionName::try_new(text).expect("the test names no built-in")
+    FunctionName::new(text).expect("the test names no built-in")
 }
 
 /// Return the registry of the user functions the trees call:
@@ -47,7 +47,7 @@ fn build_registry() -> FunctionRegistry {
     let (x, references) = parameters(&["x"]);
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("double"),
                 x,
                 [FunctionSort::Real],
@@ -61,7 +61,7 @@ fn build_registry() -> FunctionRegistry {
     let [a, b, c] = [&references[0], &references[1], &references[2]];
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("majority"),
                 abc,
                 [FunctionSort::Bool; 3],
@@ -74,7 +74,7 @@ fn build_registry() -> FunctionRegistry {
     let (bounds, references) = parameters(&["x", "lo", "hi"]);
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("between"),
                 bounds,
                 [FunctionSort::Real; 3],

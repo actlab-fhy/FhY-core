@@ -51,7 +51,7 @@ fn members_compare_type_strictly_inside_containers() {
 #[case::in_a_tuple(Value::Tuple(vec![int(1), Value::Float(f64::NAN)]))]
 #[case::in_a_frozen_set(Value::FrozenSet(vec![Value::Tuple(vec![Value::Float(f64::NAN)])]))]
 fn member_refuses_a_nan_at_any_depth(#[case] value: Value) {
-    let error = Member::try_from_value(value).expect_err("a NaN is no member");
+    let error = Member::try_from(value).expect_err("a NaN is no member");
 
     assert_eq!(error, MemberError::Nan);
     assert!(error.to_string().contains("NaN"), "{error}");
@@ -62,7 +62,7 @@ fn member_refuses_a_nan_at_any_depth(#[case] value: Value) {
 #[case::in_a_tuple(Value::Tuple(vec![decimal("1")]))]
 fn member_refuses_a_decimal_at_any_depth(#[case] value: Value) {
     assert_eq!(
-        Member::try_from_value(value).expect_err("a decimal is no member"),
+        Member::try_from(value).expect_err("a decimal is no member"),
         MemberError::Decimal
     );
 }
@@ -75,7 +75,7 @@ fn member_refuses_an_opaque_value_that_is_not_member_shaped() {
     }
     .into_value();
 
-    let error = Member::try_from_value(value).expect_err("not member-shaped");
+    let error = Member::try_from(value).expect_err("not member-shaped");
 
     assert_eq!(
         error,
@@ -361,11 +361,11 @@ fn value_check_hashable_reports_the_first_unhashable_opaque_value() {
 #[test]
 fn value_of_a_literal_keeps_its_kind() {
     assert!(matches!(
-        Value::from_literal(&LiteralValue::Decimal("0.5".parse().expect("a decimal"))),
+        Value::from(LiteralValue::Decimal("0.5".parse().expect("a decimal"))),
         Value::Decimal(_)
     ));
     assert!(matches!(
-        Value::from_literal(&LiteralValue::Bool(true)),
+        Value::from(LiteralValue::Bool(true)),
         Value::Bool(true)
     ));
 }

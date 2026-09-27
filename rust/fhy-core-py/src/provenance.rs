@@ -323,7 +323,7 @@ impl PyPosition {
         let line_number = read_unsigned(line, "line", 1)?;
         let column_number = read_unsigned(column, "column", 1)?;
         Ok(Self {
-            position: Position::try_new(line_number, column_number).into_py_result()?,
+            position: Position::new(line_number, column_number).into_py_result()?,
             line: line.clone().unbind(),
             column: column.clone().unbind(),
         })
@@ -1360,8 +1360,8 @@ impl PyNamedProvenance {
     ) -> PyResult<PyClassInitializer<Self>> {
         let name = read_str(name, "NamedProvenance", "name")?;
         let child_base = read_provenance(child, "NamedProvenance", "child", "a Provenance")?.get();
-        let provenance = NamedProvenance::try_new(name.to_str()?, child_base.provenance.clone())
-            .into_py_result()?;
+        let provenance =
+            NamedProvenance::new(name.to_str()?, child_base.provenance.clone()).into_py_result()?;
         Ok(PyProvenance::initializer(
             Provenance::Named(provenance),
             child_base.depth.saturating_add(1),

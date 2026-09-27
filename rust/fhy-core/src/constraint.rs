@@ -12,8 +12,8 @@
 //!
 //! Values are bound as [`Bindings`], each an expression or a [`Value`],
 //! which a constraint judges only when it reads it. Why an outcome is
-//! undecided is reported to the [`ConstraintContext`]'s [`Observer`] as an
-//! [`Event`]. A value only its producer can compare, such as an object of
+//! undecided is reported to the [`ConstraintContext`]'s [`ConstraintObserver`] as an
+//! [`ConstraintEvent`]. A value only its producer can compare, such as an object of
 //! the Python binding, is an [`Opaque`] value.
 //!
 //! Each constraint has a canonical ordering key, a text equal for two
@@ -32,7 +32,7 @@
 //! let x = Identifier::new("x");
 //! let members: MemberSet = [1, 2, 3]
 //!     .into_iter()
-//!     .map(|value| Member::try_from_value(Value::Int(value.into())))
+//!     .map(|value| Member::try_from(Value::Int(value.into())))
 //!     .collect::<Result<_, _>>()?;
 //! let constraint = Constraint::from(SetConstraint::new(x.clone(), members, Polarity::In));
 //!
@@ -63,7 +63,7 @@ use crate::identifier::Identifier;
 use crate::term::{AlphaEquivalence, AlphaRenaming, FreeIdentifiers};
 
 pub use binding::{Binding, Bindings};
-pub use context::{ConstraintContext, Event, NoObserver, Observer};
+pub use context::{ConstraintContext, ConstraintEvent, ConstraintObserver, NoConstraintObserver};
 pub use custom::CustomConstraint;
 pub use equation::EquationConstraint;
 pub use error::{ConstraintError, UnusableBindingReason};

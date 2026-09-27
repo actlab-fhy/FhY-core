@@ -1,5 +1,5 @@
 //! The log records of undecided outcomes (D-S13-13): the core reports each
-//! [`Event`], and the observer here logs it on
+//! [`ConstraintEvent`], and the observer here logs it on
 //! `fhy_core.symbolic.constraint.core`, with the level, text and Python
 //! `repr`s the Python implementation logged.
 
@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::PyString;
 
-use fhy_core::constraint::{Event, Observer};
+use fhy_core::constraint::{ConstraintEvent, ConstraintObserver};
 
 use crate::expression::render_expression_repr;
 
@@ -117,11 +117,11 @@ impl LoggingObserver {
     }
 
     /// Log `event`.
-    pub(crate) fn log_event(&self, py: Python<'_>, event: &Event<'_>) -> PyResult<()> {
+    pub(crate) fn log_event(&self, py: Python<'_>, event: &ConstraintEvent<'_>) -> PyResult<()> {
         let logger = core_logger(py)?;
         let kind = &self.kind;
         match *event {
-            Event::Unbound { .. } => log(&logger, DEBUG, || {
+            ConstraintEvent::Unbound { .. } => log(&logger, DEBUG, || {
                 let supplied = join_items(self.bindings.bind(py))
                     .ok()
                     .filter(|text| !text.is_empty())
@@ -132,7 +132,7 @@ impl LoggingObserver {
                     self.variable_repr(py)
                 )
             }),
-            Event::SymbolicBinding { binding, .. } => log(&logger, DEBUG, || {
+            ConstraintEvent::SymbolicBinding { binding, .. } => log(&logger, DEBUG, || {
                 let bound = self.bound_value.as_ref().map_or_else(
                     || render_expression_repr(binding),
                     |value| repr_text(value.bind(py)),
@@ -144,7 +144,7 @@ impl LoggingObserver {
                     self.variable_repr(py)
                 )
             }),
-            Event::BoundNativeConstants { identifiers } => log(&logger, WARNING, || {
+            ConstraintEvent::BoundNativeConstants { identifiers } => log(&logger, WARNING, || {
                 let names = identifiers
                     .iter()
                     .map(|identifier| format!("{identifier:?}"))
@@ -152,7 +152,7 @@ impl LoggingObserver {
                     .join(", ");
                 native_constant_refusal(&format!("{kind}.evaluate_with_bindings"), &names)
             }),
-            Event::Residual {
+            ConstraintEvent::Residual {
                 residual,
                 has_free_identifiers,
             } => {
@@ -175,8 +175,8 @@ impl LoggingObserver {
     }
 }
 
-impl Observer for LoggingObserver {
-    fn notify(&self, event: &Event<'_>) {
+impl ConstraintObserver for LoggingObserver {
+    fn notify(&self, event: &ConstraintEvent<'_>) {
         Python::attach(|py| {
             if let Err(error) = self.log_event(py, event) {
                 record_pending_error(error);

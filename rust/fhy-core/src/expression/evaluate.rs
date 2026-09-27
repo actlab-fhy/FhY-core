@@ -244,7 +244,7 @@ impl<'r> Evaluator<'r> {
     /// # Errors
     ///
     /// Returns what those two return.
-    pub fn evaluate<S: BuildHasher>(
+    pub fn evaluate<S: BuildHasher + Sync>(
         &self,
         expression: &Expression,
         environment: &HashMap<Identifier, Scalar, S>,
@@ -292,7 +292,7 @@ impl Prepared<'_> {
     /// [`EvaluationError::BooleanArithmetic`] or
     /// [`EvaluationError::Unsupported`] for a native user function; and
     /// [`EvaluationError::Lane`] if the result's lane failed.
-    pub fn evaluate<S: BuildHasher>(
+    pub fn evaluate<S: BuildHasher + Sync>(
         &self,
         environment: &HashMap<Identifier, Scalar, S>,
     ) -> Result<Scalar, EvaluationError> {
@@ -319,7 +319,7 @@ impl Prepared<'_> {
     /// identifiers, then refuse the constants it refers to that `is_bound`.
     fn check(
         &self,
-        symbol_type: impl Fn(&Identifier) -> Option<SymbolType>,
+        symbol_type: impl Fn(&Identifier) -> Option<SymbolType> + Sync,
         is_bound: impl Fn(&Identifier) -> bool,
     ) -> Result<(), EvaluationError> {
         BooleanScreen::new()

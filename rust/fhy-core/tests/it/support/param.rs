@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Constraint, ConstraintError, EquationConstraint, Event, Member, MemberKind, Opaque,
+    Constraint, ConstraintError, ConstraintEvent, EquationConstraint, Member, MemberKind, Opaque,
     OpaqueValue, Outcome, Polarity, SetConstraint, Value,
 };
 use fhy_core::expression::evaluate::{Evaluator, Scalar};
@@ -249,14 +249,14 @@ pub(crate) enum RecordedParamEvent {
 }
 
 /// Return the name of a constraint event's kind.
-fn event_name(event: &Event<'_>) -> String {
+fn event_name(event: &ConstraintEvent<'_>) -> String {
     match event {
-        Event::Unbound { .. } => "unbound",
-        Event::SymbolicBinding { .. } => "symbolic_binding",
-        Event::BoundNativeConstants { .. } => "bound_native_constants",
-        Event::Residual { .. } => "residual",
-        Event::Refused { .. } => "refused",
-        Event::GaveUp { .. } => "gave_up",
+        ConstraintEvent::Unbound { .. } => "unbound",
+        ConstraintEvent::SymbolicBinding { .. } => "symbolic_binding",
+        ConstraintEvent::BoundNativeConstants { .. } => "bound_native_constants",
+        ConstraintEvent::Residual { .. } => "residual",
+        ConstraintEvent::Refused { .. } => "refused",
+        ConstraintEvent::GaveUp { .. } => "gave_up",
         _ => "other",
     }
     .to_owned()

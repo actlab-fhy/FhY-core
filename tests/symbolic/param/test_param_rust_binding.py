@@ -337,6 +337,25 @@ def test_non_interval_params_decline_arithmetic() -> None:
         -create_integer_param()
 
 
+def test_non_interval_params_return_not_implemented_from_each_operator() -> None:
+    """Test each binary operator of two non-interval params is `NotImplemented`."""
+    left, right = create_integer_param(), create_integer_param()
+
+    for operator in (
+        "__add__",
+        "__radd__",
+        "__sub__",
+        "__rsub__",
+        "__mul__",
+        "__rmul__",
+    ):
+        assert getattr(left, operator)(right) is NotImplemented
+    with pytest.raises(TypeError):
+        left + right
+    with pytest.raises(TypeError):
+        left - right
+
+
 def test_union_names_the_unsupported_domain_class() -> None:
     """Test a union of numeric params names the domain class, and `|` needs a param."""
     param = create_integer_param()

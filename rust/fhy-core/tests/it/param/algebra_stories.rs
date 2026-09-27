@@ -1,5 +1,6 @@
 //! Stories of the domains' union and intersection.
 
+use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use std::sync::Arc;
 
 use fhy_core::constraint::{Constraint, Outcome, Polarity, Value};
@@ -89,8 +90,12 @@ fn union_is_not_represented_by_the_other_kinds() {
     let observer = RecordingParamObserver::default();
     let context = context(&solver, &observer);
     for domain in [
-        ParamDomain::from(IntegerDomain::new(false, true)),
-        ParamDomain::from(IntervalIntegerDomain::new(true, false, true)),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
+        ParamDomain::from(IntervalIntegerDomain::new(
+            Inclusivity::Inclusive,
+            Sign::Any,
+            ZeroInclusion::Included,
+        )),
         ParamDomain::from(RealDomain),
         ParamDomain::from(PermutationDomain::new(ints([1])).expect("permutation")),
     ] {
@@ -298,22 +303,22 @@ fn intersection_of_integer_domains_merges_the_restrictions() {
 
     assert_eq!(
         merge(
-            IntegerDomain::new(false, true),
-            IntegerDomain::new(false, true)
+            IntegerDomain::new(Sign::Any, ZeroInclusion::Included),
+            IntegerDomain::new(Sign::Any, ZeroInclusion::Included)
         ),
         (false, true)
     );
     assert_eq!(
         merge(
-            IntegerDomain::new(true, true),
-            IntegerDomain::new(false, true)
+            IntegerDomain::new(Sign::NonNegative, ZeroInclusion::Included),
+            IntegerDomain::new(Sign::Any, ZeroInclusion::Included)
         ),
         (true, true)
     );
     assert_eq!(
         merge(
-            IntegerDomain::new(true, true),
-            IntegerDomain::new(true, false)
+            IntegerDomain::new(Sign::NonNegative, ZeroInclusion::Included),
+            IntegerDomain::new(Sign::NonNegative, ZeroInclusion::Excluded)
         ),
         (true, false)
     );
@@ -325,15 +330,23 @@ fn intersection_of_interval_domains_keeps_the_own_rendering_preference() {
     let (solver, _smt) = scripted_solver(SatResult::Sat);
     let observer = RecordingParamObserver::default();
 
-    let (domain, _) = ParamDomain::from(IntervalIntegerDomain::new(false, false, true))
-        .intersection(
-            Side::new(&[], &x),
-            &ParamDomain::from(IntervalIntegerDomain::new(true, true, false)),
-            Side::new(&[], &x),
-            &x,
-            &context(&solver, &observer),
-        )
-        .expect("intersects");
+    let (domain, _) = ParamDomain::from(IntervalIntegerDomain::new(
+        Inclusivity::Exclusive,
+        Sign::Any,
+        ZeroInclusion::Included,
+    ))
+    .intersection(
+        Side::new(&[], &x),
+        &ParamDomain::from(IntervalIntegerDomain::new(
+            Inclusivity::Inclusive,
+            Sign::NonNegative,
+            ZeroInclusion::Excluded,
+        )),
+        Side::new(&[], &x),
+        &x,
+        &context(&solver, &observer),
+    )
+    .expect("intersects");
 
     assert_eq!(
         domain.interval_profile().expect("native").map(|profile| (
@@ -356,15 +369,16 @@ fn intersection_of_numeric_domains_rescopes_both_sides_onto_the_result() {
     let own_constraints = [at_least(&x, 0), less_than(&x, &y), in_set(&x, ints([1, 2]))];
     let other_constraints = [less_than(&y, &w)];
 
-    let (_, constraints) = ParamDomain::from(IntegerDomain::new(false, true))
-        .intersection(
-            Side::new(&own_constraints, &x),
-            &ParamDomain::from(IntegerDomain::new(false, true)),
-            Side::new(&other_constraints, &y),
-            &z,
-            &context(&solver, &observer),
-        )
-        .expect("intersects");
+    let (_, constraints) =
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
+            .intersection(
+                Side::new(&own_constraints, &x),
+                &ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
+                Side::new(&other_constraints, &y),
+                &z,
+                &context(&solver, &observer),
+            )
+            .expect("intersects");
 
     let keys: Vec<String> = constraints.iter().map(Constraint::ordering_key).collect();
     assert_eq!(
@@ -390,10 +404,10 @@ fn intersection_refuses_a_set_constraint_on_another_variable() {
     let observer = RecordingParamObserver::default();
     let foreign = [in_set(&y, ints([1]))];
 
-    let error = ParamDomain::from(IntegerDomain::new(false, true))
+    let error = ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
         .intersection(
             Side::new(&foreign, &x),
-            &ParamDomain::from(IntegerDomain::new(false, true)),
+            &ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
             Side::new(&[], &x),
             &z,
             &context(&solver, &observer),
@@ -436,10 +450,14 @@ fn intersection_refuses_a_domain_of_another_kind() {
     let (solver, _smt) = scripted_solver(SatResult::Sat);
     let observer = RecordingParamObserver::default();
 
-    let error = ParamDomain::from(IntegerDomain::new(false, true))
+    let error = ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
         .intersection(
             Side::new(&[], &x),
-            &ParamDomain::from(IntervalIntegerDomain::new(true, false, true)),
+            &ParamDomain::from(IntervalIntegerDomain::new(
+                Inclusivity::Inclusive,
+                Sign::Any,
+                ZeroInclusion::Included,
+            )),
             Side::new(&[], &x),
             &x,
             &context(&solver, &observer),

@@ -18,7 +18,8 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyFrozenSet, PyList, PyTuple, PyType};
 
 use fhy_core::constraint::{
-    Constraint, ConstraintContext, ConstraintError, ConstraintSystem, Event, Observer, Outcome,
+    Constraint, ConstraintContext, ConstraintError, ConstraintEvent, ConstraintObserver,
+    ConstraintSystem, Outcome,
 };
 use fhy_core::expression::SymbolType;
 use fhy_core::identifier::Identifier;
@@ -108,17 +109,20 @@ struct SystemObserver {
 }
 
 impl SystemObserver {
-    fn log_event(&self, py: Python<'_>, event: &Event<'_>) -> PyResult<()> {
+    fn log_event(&self, py: Python<'_>, event: &ConstraintEvent<'_>) -> PyResult<()> {
         let members = self.members.bind(py);
         match *event {
-            Event::InMember { index, event } => {
+            ConstraintEvent::InMember { index, event } => {
                 let member = members.get_item(index)?;
                 let bindings = self.bindings.as_ref().map_or_else(
                     || PyDict::new(py).into_any(),
                     |bindings| bindings.bind(py).clone(),
                 );
                 let variable = member.getattr(intern!(py, "variable")).ok().filter(|_| {
-                    matches!(event, Event::Unbound { .. } | Event::SymbolicBinding { .. })
+                    matches!(
+                        event,
+                        ConstraintEvent::Unbound { .. } | ConstraintEvent::SymbolicBinding { .. }
+                    )
                 });
                 let bound = match &variable {
                     Some(variable) => bindings
@@ -136,7 +140,7 @@ impl SystemObserver {
                 )
                 .log_event(py, event)
             }
-            Event::UndecidedMember { index } => {
+            ConstraintEvent::UndecidedMember { index } => {
                 let member = members.get_item(index)?;
                 log(&system_logger(py)?, DEBUG, || {
                     format!(
@@ -147,7 +151,7 @@ impl SystemObserver {
                     )
                 })
             }
-            Event::BoundNativeConstants { identifiers } => {
+            ConstraintEvent::BoundNativeConstants { identifiers } => {
                 log(&system_logger(py)?, WARNING, || {
                     let names = identifiers
                         .iter()
@@ -157,10 +161,10 @@ impl SystemObserver {
                     native_constant_refusal(self.entry_point, &names)
                 })
             }
-            Event::Refused { kind, hazard } => {
+            ConstraintEvent::Refused { kind, hazard } => {
                 warn_hazard(py, question_name(kind), hazard, &self.symbol_types)
             }
-            Event::GaveUp { kind, reason } => {
+            ConstraintEvent::GaveUp { kind, reason } => {
                 warn_unknown(py, question_name(kind), &self.backend, reason)
             }
             _ => Ok(()),
@@ -177,8 +181,8 @@ fn question_name(kind: QueryKind) -> &'static str {
     }
 }
 
-impl Observer for SystemObserver {
-    fn notify(&self, event: &Event<'_>) {
+impl ConstraintObserver for SystemObserver {
+    fn notify(&self, event: &ConstraintEvent<'_>) {
         Python::attach(|py| {
             if let Err(error) = self.log_event(py, event) {
                 record_pending_error(error);

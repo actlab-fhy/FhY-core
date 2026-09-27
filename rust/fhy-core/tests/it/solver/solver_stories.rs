@@ -311,8 +311,8 @@ fn user_constant_is_read_from_the_sorts_of_the_context() {
     let mut registry = FunctionRegistry::new();
     let answer_identifier = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )
@@ -340,10 +340,7 @@ fn user_constant_is_read_from_the_sorts_of_the_context() {
 
 #[test]
 fn call_has_no_lowering_after_the_screens_pass() {
-    let call = Expression::call(
-        FunctionName::try_new("f").expect("a name"),
-        [build_literal(1)],
-    );
+    let call = Expression::call(FunctionName::new("f").expect("a name"), [build_literal(1)]);
 
     let error = ask_error(
         &Question::Satisfiability(&call.clone().greater(0)),
@@ -700,8 +697,8 @@ fn simplification_screens_with_the_sorts_of_a_registry_context() {
     let mut registry = FunctionRegistry::new();
     let answer = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )
@@ -729,8 +726,8 @@ fn simplifier_receives_the_registry_of_the_context() {
     let mut registry = FunctionRegistry::new();
     registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )
@@ -764,8 +761,8 @@ fn simplify_context_reads_sorts_from_its_registry() {
     let mut registry = FunctionRegistry::new();
     let answer = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Bool,
                 true,
             )

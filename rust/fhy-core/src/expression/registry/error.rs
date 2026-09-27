@@ -29,8 +29,8 @@ fn write_count(f: &mut fmt::Formatter<'_>, count: usize, noun: &str) -> fmt::Res
 /// use fhy_core::identifier::Identifier;
 ///
 /// let x = Identifier::new("x");
-/// let error = FunctionDefinition::try_new(
-///     FunctionName::try_new("f")?,
+/// let error = FunctionDefinition::new(
+///     FunctionName::new("f")?,
 ///     [x.clone()],
 ///     [],
 ///     FunctionSort::Real,
@@ -106,7 +106,7 @@ impl Error for FunctionDefinitionError {}
 /// use fhy_core::expression::registry::NativeConstant;
 /// use fhy_core::expression::{FunctionName, FunctionSort, LiteralValue};
 ///
-/// let error = NativeConstant::try_new(FunctionName::try_new("flag")?, FunctionSort::Int, true)
+/// let error = NativeConstant::new(FunctionName::new("flag")?, FunctionSort::Int, true)
 ///     .expect_err("a Boolean is no integer");
 /// assert_eq!(error.sort(), FunctionSort::Int);
 /// assert_eq!(error.value(), &LiteralValue::from(true));

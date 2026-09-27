@@ -2,6 +2,7 @@
 //! feasibility, subsets and implication, with their enumerations,
 //! screening and downgrades.
 
+use fhy_core::param::{Sign, ZeroInclusion};
 use std::sync::Arc;
 
 use fhy_core::constraint::{Binding, Bindings, Constraint, Outcome, Value};
@@ -23,7 +24,7 @@ use crate::support::param::{
 use crate::support::solver::quoted_symbol;
 
 fn integer() -> ParamDomain {
-    ParamDomain::from(IntegerDomain::new(false, true))
+    ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
 }
 
 fn bind_value(x: &Identifier, value: Value) -> Bindings {

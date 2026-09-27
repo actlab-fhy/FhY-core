@@ -106,7 +106,7 @@ fn lambdas_swapping_their_parameters_and_arguments_are_alpha_equivalent() {
 #[test]
 fn a_lambda_compares_its_free_identifiers_under_the_free_renaming() {
     let [x, y, free_a, free_b] = build_identifiers(["x", "y", "a", "b"]);
-    let renaming = AlphaRenaming::try_new(HashMap::from([(free_a.clone(), free_b.clone())]))
+    let renaming = AlphaRenaming::new(HashMap::from([(free_a.clone(), free_b.clone())]))
         .expect("one pair is injective");
 
     let left = lam([&x], app(var(&x), var(&free_a)));

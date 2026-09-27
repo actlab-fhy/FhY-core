@@ -102,7 +102,7 @@ fn keys_resolve_through_a_binder_frame_and_the_free_renaming() {
     framed
         .enter_binders(std::slice::from_ref(&x), std::slice::from_ref(&x_prime))
         .expect("one pair");
-    let free = AlphaRenaming::try_new(HashMap::from([(a.clone(), b.clone())])).expect("one pair");
+    let free = AlphaRenaming::new(HashMap::from([(a.clone(), b.clone())])).expect("one pair");
 
     assert!(compare(
         &[(x.clone(), leaf(1))],
@@ -135,7 +135,7 @@ fn maps_whose_resolved_keys_differ_are_not_alpha_equivalent() {
 fn two_keys_resolving_to_one_are_not_alpha_equivalent() {
     let [x, y, target] = build_identifiers(["x", "y", "target"]);
     let renaming =
-        AlphaRenaming::try_new(HashMap::from([(x.clone(), target.clone())])).expect("one pair");
+        AlphaRenaming::new(HashMap::from([(x.clone(), target.clone())])).expect("one pair");
 
     // `x` resolves to `target`, and `target` is itself a key on the left.
     let left = [(x, leaf(1)), (target.clone(), leaf(2))];

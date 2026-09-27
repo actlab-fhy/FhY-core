@@ -20,13 +20,13 @@ use rstest::rstest;
 use expression_support::build_identifier;
 
 fn name(text: &str) -> FunctionName {
-    FunctionName::try_new(text).expect("the test names no built-in")
+    FunctionName::new(text).expect("the test names no built-in")
 }
 
 /// Return `name(x) = x + 1` over the reals.
 fn define_increment(function: &str) -> FunctionDefinition {
     let (x, reference) = build_identifier("x");
-    FunctionDefinition::try_new(
+    FunctionDefinition::new(
         name(function),
         [x],
         [FunctionSort::Real],
@@ -38,7 +38,7 @@ fn define_increment(function: &str) -> FunctionDefinition {
 
 /// Return the function `name` of no parameter returning `body`.
 fn define_constant_function(function: &str, body: Expression) -> FunctionDefinition {
-    FunctionDefinition::try_new(name(function), [], [], FunctionSort::Real, body)
+    FunctionDefinition::new(name(function), [], [], FunctionSort::Real, body)
         .expect("no parameter needs no sort")
 }
 
@@ -51,7 +51,7 @@ fn declare_constant(
     sort: FunctionSort,
     value: impl Into<LiteralValue>,
 ) -> NativeConstant {
-    NativeConstant::try_new(name(constant), sort, value).expect("the sort accepts the value")
+    NativeConstant::new(name(constant), sort, value).expect("the sort accepts the value")
 }
 
 fn expect_function(entry: Option<RegistryEntry<'_>>) -> &FunctionDefinition {
@@ -78,7 +78,7 @@ fn function_definition_keeps_its_fields() {
     let (y, y_reference) = build_identifier("y");
     let body = x_reference * y_reference;
 
-    let function = FunctionDefinition::try_new(
+    let function = FunctionDefinition::new(
         name("product"),
         [x.clone(), y.clone()],
         [FunctionSort::Int, FunctionSort::Real],
@@ -110,7 +110,7 @@ fn function_definition_refuses_a_sort_count_other_than_its_parameter_count(
         .map(|index| Identifier::new(&format!("p{index}")))
         .collect();
 
-    let error = FunctionDefinition::try_new(
+    let error = FunctionDefinition::new(
         name("f"),
         parameters,
         vec![FunctionSort::Real; sort_count],
@@ -135,7 +135,7 @@ fn function_definition_refuses_a_repeated_parameter() {
     let (x, reference) = build_identifier("x");
     let y = Identifier::new("y");
 
-    let error = FunctionDefinition::try_new(
+    let error = FunctionDefinition::new(
         name("f"),
         [x.clone(), y, x.clone()],
         [FunctionSort::Real; 3],
@@ -162,7 +162,7 @@ fn function_definition_accepts_distinct_parameters_sharing_a_name_hint() {
     let first = Identifier::new("x");
     let second = Identifier::new("x");
 
-    let function = FunctionDefinition::try_new(
+    let function = FunctionDefinition::new(
         name("f"),
         [first, second],
         [FunctionSort::Real; 2],
@@ -230,7 +230,7 @@ fn native_constant_accepts_exactly_the_values_of_its_sort(
     #[case] sort: FunctionSort,
     #[case] is_accepted: bool,
 ) {
-    let constant = NativeConstant::try_new(name("c"), sort, value.clone());
+    let constant = NativeConstant::new(name("c"), sort, value.clone());
 
     match constant {
         Ok(constant) => {
@@ -266,7 +266,7 @@ fn constant_value_error_displays_the_constant_its_sort_and_the_value(
     #[case] message: &str,
 ) {
     let error: ConstantValueError =
-        NativeConstant::try_new(name("c"), sort, value).expect_err("the sort refuses it");
+        NativeConstant::new(name("c"), sort, value).expect_err("the sort refuses it");
 
     assert_eq!(error.to_string(), message);
 }
@@ -398,7 +398,7 @@ fn builtin_names_find_no_entry() {
 fn builtin_function_names_are_no_function_names() {
     for function in BuiltinFunction::iter() {
         assert_eq!(
-            FunctionName::try_new(function.name()),
+            FunctionName::new(function.name()),
             Err(FunctionNameError::Builtin(function))
         );
     }
@@ -496,7 +496,7 @@ fn registration_refuses_a_body_capturing_free_identifiers() {
     let (y, y_reference) = build_identifier("y");
     let (z, z_reference) = build_identifier("z");
     let (w, w_reference) = build_identifier("w");
-    let function = FunctionDefinition::try_new(
+    let function = FunctionDefinition::new(
         name("f"),
         [w],
         [FunctionSort::Real],
@@ -614,7 +614,7 @@ fn registration_accepts_a_body_calling_an_unregistered_or_recursive_name() {
 
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("f"),
                 [x],
                 [FunctionSort::Real],
@@ -651,7 +651,7 @@ fn result_sort_answers_for_functions_only() {
     let (x, reference) = build_identifier("x");
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("positive"),
                 [x],
                 [FunctionSort::Real],

@@ -69,7 +69,7 @@ impl ParamAssignment {
     /// Return the assignment of `value` to `param` without a check, for a
     /// value the caller checked, as with bindings a payload does not carry.
     #[must_use]
-    pub fn new_unchecked(param: Param, value: Value) -> Self {
+    pub fn new_unvalidated(param: Param, value: Value) -> Self {
         Self { param, value }
     }
 

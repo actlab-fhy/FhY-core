@@ -28,7 +28,7 @@ use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 /// Build the position at `line` and `column`, which must both be non-zero.
 fn build_position(line: u64, column: u64) -> Position {
-    Position::try_new(line, column).expect("line and column are non-zero")
+    Position::new(line, column).expect("line and column are non-zero")
 }
 
 /// Build the span with the given bounds, each position given as `(line,
@@ -122,7 +122,7 @@ fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(
 
 #[test]
 fn position_try_new_stores_line_and_column() {
-    let position = Position::try_new(2, 8).expect("2:8 is valid");
+    let position = Position::new(2, 8).expect("2:8 is valid");
 
     assert_eq!(position.line().get(), 2);
     assert_eq!(position.column().get(), 8);
@@ -138,7 +138,7 @@ fn position_try_new_rejects_zero_components(
     #[case] column: u64,
     #[case] expected: PositionError,
 ) {
-    let result = Position::try_new(line, column);
+    let result = Position::new(line, column);
 
     assert_eq!(result, Err(expected));
 }
@@ -146,7 +146,7 @@ fn position_try_new_rejects_zero_components(
 /// Test the largest representable line and column are accepted.
 #[test]
 fn position_try_new_accepts_the_largest_u64_values() {
-    let position = Position::try_new(u64::MAX, u64::MAX).expect("u64::MAX is valid");
+    let position = Position::new(u64::MAX, u64::MAX).expect("u64::MAX is valid");
 
     assert_eq!(position.line().get(), u64::MAX);
     assert_eq!(position.column().get(), u64::MAX);
@@ -554,7 +554,7 @@ fn file_provenance_without_span_differs_from_unknown_span() {
 #[case::builtin("fhy.add", Provenance::Unknown)]
 #[case::library_symbol("mylib::matmul", build_file("mylib.fhyobj", None))]
 fn named_provenance_try_new_stores_name_and_child(#[case] name: &str, #[case] child: Provenance) {
-    let provenance = NamedProvenance::try_new(name, child.clone()).expect("name is non-empty");
+    let provenance = NamedProvenance::new(name, child.clone()).expect("name is non-empty");
 
     assert_eq!(provenance.name(), name);
     assert_eq!(provenance.child(), &child);
@@ -562,7 +562,7 @@ fn named_provenance_try_new_stores_name_and_child(#[case] name: &str, #[case] ch
 
 #[test]
 fn named_provenance_try_new_rejects_an_empty_name() {
-    let result = NamedProvenance::try_new("", Provenance::Unknown);
+    let result = NamedProvenance::new("", Provenance::Unknown);
 
     assert_eq!(result, Err(NamedProvenanceError::EmptyName));
 }
@@ -570,7 +570,7 @@ fn named_provenance_try_new_rejects_an_empty_name() {
 /// Test a name made only of whitespace is not empty and is accepted.
 #[test]
 fn named_provenance_try_new_accepts_a_whitespace_name() {
-    let provenance = NamedProvenance::try_new(" ", Provenance::Unknown).expect("not empty");
+    let provenance = NamedProvenance::new(" ", Provenance::Unknown).expect("not empty");
 
     assert_eq!(provenance.name(), " ");
 }

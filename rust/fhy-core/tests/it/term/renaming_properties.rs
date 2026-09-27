@@ -48,7 +48,7 @@ fn build_renaming(
     free: &HashMap<Identifier, Identifier>,
     frames: &[HashMap<Identifier, Identifier>],
 ) -> AlphaRenaming {
-    let mut renaming = AlphaRenaming::try_new(free.clone()).expect("the map is injective");
+    let mut renaming = AlphaRenaming::new(free.clone()).expect("the map is injective");
     for frame in frames {
         renaming
             .enter_binder(frame.clone())

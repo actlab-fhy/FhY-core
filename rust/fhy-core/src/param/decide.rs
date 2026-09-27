@@ -55,7 +55,7 @@ fn evaluate_member(
         constraint,
         bindings,
     };
-    constraint.evaluate(bindings, &context.constraint_context(&forwarder))
+    constraint.evaluate(bindings, &context.constraint_context_with(&forwarder))
 }
 
 /// Evaluate the conjunction of `constraints` under `bindings`, member by
@@ -347,7 +347,7 @@ fn ask_satisfiability(
         .check_satisfiability(
             &symbol_types,
             CheckLimits::new(),
-            &context.constraint_context(&forwarder),
+            &context.constraint_context_with(&forwarder),
         )
         .map_err(ParamError::Constraint)
 }
@@ -471,7 +471,7 @@ pub fn compute_constraint_implication_subset(
             &consequent,
             &symbol_types,
             CheckLimits::new(),
-            &context.constraint_context(&forwarder),
+            &context.constraint_context_with(&forwarder),
         )
         .map_err(ParamError::Constraint)?;
     if outcome == Outcome::Undecided {

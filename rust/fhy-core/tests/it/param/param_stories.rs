@@ -11,6 +11,7 @@ use fhy_core::param::{
     OrdinalDomain, Param, ParamAssignment, ParamContext, ParamDomain, ParamError, RealDomain,
     ValueCheck, check_bounds_are_ordered,
 };
+use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use fhy_core::solver::{SatResult, Solver};
 use fhy_core::term::AlphaEquivalence;
 use rstest::rstest;
@@ -22,18 +23,21 @@ use crate::support::param::{
 };
 
 fn integer_domain() -> ParamDomain {
-    ParamDomain::from(IntegerDomain::new(false, true))
+    ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
 }
 
 fn natural_domain(zero_included: bool) -> ParamDomain {
-    ParamDomain::from(IntegerDomain::new(true, zero_included))
+    ParamDomain::from(IntegerDomain::new(
+        Sign::NonNegative,
+        ZeroInclusion::included_if(zero_included),
+    ))
 }
 
 fn interval_domain(prefer_inclusive: bool, non_negative: bool, zero_included: bool) -> ParamDomain {
     ParamDomain::from(IntervalIntegerDomain::new(
-        prefer_inclusive,
-        non_negative,
-        zero_included,
+        Inclusivity::inclusive_if(prefer_inclusive),
+        Sign::non_negative_if(non_negative),
+        ZeroInclusion::included_if(zero_included),
     ))
 }
 
@@ -361,7 +365,12 @@ fn bounds_are_ordered_exactly(
     #[case] is_upper_inclusive: bool,
     #[case] is_ordered: bool,
 ) {
-    let result = check_bounds_are_ordered(&lower, &upper, is_lower_inclusive, is_upper_inclusive);
+    let result = check_bounds_are_ordered(
+        &lower,
+        &upper,
+        Inclusivity::inclusive_if(is_lower_inclusive),
+        Inclusivity::inclusive_if(is_upper_inclusive),
+    );
 
     assert_eq!(result.is_ok(), is_ordered, "{result:?}");
     if let Err(error) = result {
@@ -618,18 +627,9 @@ fn arithmetic_combines_the_effective_intervals() {
     let right = between(interval_domain(true, false, true), -3, 4, &context);
     let operand = Operand::Param(right.clone());
 
-    let sum = left
-        .checked_add(&operand, &context)
-        .expect("adds")
-        .expect("operands");
-    let difference = left
-        .checked_sub(&operand, &context)
-        .expect("subtracts")
-        .expect("operands");
-    let product = left
-        .checked_mul(&operand, &context)
-        .expect("multiplies")
-        .expect("operands");
+    let sum = left.checked_add(&operand, &context).expect("adds");
+    let difference = left.checked_sub(&operand, &context).expect("subtracts");
+    let product = left.checked_mul(&operand, &context).expect("multiplies");
     let negation = left.checked_neg(&context).expect("negates");
 
     assert_eq!(
@@ -664,8 +664,7 @@ fn arithmetic_renders_bounds_as_the_left_operand_prefers() {
 
     let sum = exclusive
         .checked_add(&Operand::Param(other), &context)
-        .expect("adds")
-        .expect("operands");
+        .expect("adds");
 
     let v = sum.variable();
     let mut expected = vec![above(v, 0).ordering_key(), {
@@ -690,16 +689,13 @@ fn arithmetic_keeps_a_natural_result_when_both_operands_are() {
 
     let sum = positive
         .checked_add(&Operand::Param(natural.clone()), &context)
-        .expect("adds")
-        .expect("operands");
+        .expect("adds");
     let product = positive
         .checked_mul(&Operand::Param(natural), &context)
-        .expect("multiplies")
-        .expect("operands");
+        .expect("multiplies");
     let widened = positive
         .checked_add(&Operand::Param(plain), &context)
-        .expect("adds")
-        .expect("operands");
+        .expect("adds");
 
     let profile = |param: &Param| {
         param
@@ -729,19 +725,17 @@ fn arithmetic_keeps_unbounded_ends_and_zero_absorbs_them() {
 
     let product = unbounded
         .checked_mul(&Operand::Integer(BigInt::from(0)), &context)
-        .expect("multiplies")
-        .expect("operands");
+        .expect("multiplies");
     let sum = unbounded
         .checked_add(&Operand::Integer(BigInt::from(2)), &context)
-        .expect("adds")
-        .expect("operands");
+        .expect("adds");
 
     assert_eq!(members(&product, -5..=5, &context), [0]);
     assert_eq!(members(&sum, -5..=5, &context), [3, 4, 5]);
 }
 
 #[test]
-fn arithmetic_coerces_an_integer_param_of_bounds_and_declines_other_pairs() {
+fn arithmetic_coerces_an_integer_param_of_bounds_and_refuses_other_pairs() {
     let (solver, _smt) = scripted_solver(SatResult::Sat);
     let observer = RecordingParamObserver::default();
     let context = context(&solver, &observer);
@@ -757,18 +751,17 @@ fn arithmetic_coerces_an_integer_param_of_bounds_and_declines_other_pairs() {
 
     let sum = plain
         .checked_add(&Operand::Param(interval.clone()), &context)
-        .expect("adds")
-        .expect("coerced");
-    let declined = plain
-        .checked_add(&Operand::Param(plain.clone()), &context)
-        .expect("answers");
+        .expect("adds");
+    let declined = plain.checked_add(&Operand::Param(plain.clone()), &context);
     let reversed = interval
         .checked_reverse_sub(&Operand::Integer(BigInt::from(10)), &context)
-        .expect("subtracts")
-        .expect("operands");
+        .expect("subtracts");
 
     assert_eq!(members(&sum, -5..=10, &context), [1, 2, 3, 4]);
-    assert!(declined.is_none());
+    assert!(
+        matches!(declined, Err(ParamError::NotAnIntervalOperand)),
+        "{declined:?}"
+    );
     assert_eq!(members(&reversed, -5..=15, &context), [9]);
     assert!(matches!(
         interval.checked_add(&Operand::Param(ordinal), &context),
@@ -853,10 +846,11 @@ fn assignment_checks_its_value_and_restores_an_undecided_one() {
         Err(ParamError::ViolatedConstraint { .. })
     ));
     assert!(
-        restored.is_structurally_equivalent(&ParamAssignment::new_unchecked(param.clone(), int(5)))
+        restored
+            .is_structurally_equivalent(&ParamAssignment::new_unvalidated(param.clone(), int(5)))
     );
     assert!(
-        !restored.is_structurally_equivalent(&ParamAssignment::new_unchecked(param, float(5.0)))
+        !restored.is_structurally_equivalent(&ParamAssignment::new_unvalidated(param, float(5.0)))
     );
 }
 
@@ -875,4 +869,26 @@ fn assignment_values_compare_type_strictly() {
 
     assert!(!one.is_structurally_equivalent(&truth));
     assert!(one.is_alpha_equivalent(&one.clone()));
+}
+
+#[test]
+fn checked_add_of_a_non_interval_param_is_an_error() {
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let plain = between(integer_domain(), 0, 3, &context);
+    let other = Operand::Param(plain.clone());
+
+    for result in [
+        plain.checked_add(&other, &context),
+        plain.checked_sub(&other, &context),
+        plain.checked_mul(&other, &context),
+        plain.checked_reverse_sub(&Operand::Integer(BigInt::from(1)), &context),
+        plain.checked_neg(&context),
+    ] {
+        assert!(
+            matches!(result, Err(ParamError::NotAnIntervalOperand)),
+            "{result:?}"
+        );
+    }
 }

@@ -12,6 +12,7 @@ use crate::identifier::Identifier;
 use super::context::ParamContext;
 use super::custom::CustomDomain;
 use super::error::ParamError;
+use super::interval::Inclusivity;
 use super::value::{compare_ordinal, sort_tolerantly};
 use super::{algebra, decide};
 
@@ -139,6 +140,71 @@ impl<'a> Side<'a> {
     }
 }
 
+/// Whether an integer domain admits every integer or only the
+/// non-negative ones.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "the two signs an integer domain is restricted to, which callers match"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Sign {
+    /// Every integer.
+    Any,
+    /// The non-negative integers, the natural numbers.
+    NonNegative,
+}
+
+impl Sign {
+    /// Return [`NonNegative`](Self::NonNegative) if `is_non_negative`, and
+    /// [`Any`](Self::Any) otherwise.
+    #[must_use]
+    pub const fn non_negative_if(is_non_negative: bool) -> Self {
+        if is_non_negative {
+            Self::NonNegative
+        } else {
+            Self::Any
+        }
+    }
+
+    /// Return whether the sign is [`NonNegative`](Self::NonNegative).
+    #[must_use]
+    pub const fn is_non_negative(self) -> bool {
+        matches!(self, Self::NonNegative)
+    }
+}
+
+/// Whether a non-negative integer domain admits zero.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "zero is in or out, which callers match"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ZeroInclusion {
+    /// Zero is admissible.
+    Included,
+    /// Zero is not admissible.
+    Excluded,
+}
+
+impl ZeroInclusion {
+    /// Return [`Included`](Self::Included) if `is_included`, and
+    /// [`Excluded`](Self::Excluded) otherwise.
+    #[must_use]
+    pub const fn included_if(is_included: bool) -> Self {
+        if is_included {
+            Self::Included
+        } else {
+            Self::Excluded
+        }
+    }
+
+    /// Return whether zero is [`Included`](Self::Included).
+    #[must_use]
+    pub const fn is_included(self) -> bool {
+        matches!(self, Self::Included)
+    }
+}
+
 /// Integers, optionally restricted to the natural numbers.
 ///
 /// Every integer is admissible; a non-negative domain implies the bound
@@ -150,16 +216,15 @@ pub struct IntegerDomain {
 }
 
 impl IntegerDomain {
-    /// Return the integers, restricted to the natural numbers when
-    /// `non_negative`, with zero when `zero_included`.
+    /// Return the integers of `sign`, with zero as `zero` says.
     ///
-    /// `zero_included` means nothing without `non_negative`, so it is then
-    /// stored as `true`.
+    /// `zero` means nothing for [`Sign::Any`], so zero is then included.
     #[must_use]
-    pub fn new(non_negative: bool, zero_included: bool) -> Self {
+    pub fn new(sign: Sign, zero: ZeroInclusion) -> Self {
+        let non_negative = sign.is_non_negative();
         Self {
             non_negative,
-            zero_included: zero_included || !non_negative,
+            zero_included: zero.is_included() || !non_negative,
         }
     }
 
@@ -188,14 +253,15 @@ pub struct IntervalIntegerDomain {
 }
 
 impl IntervalIntegerDomain {
-    /// Return the interval integers, rendering derived bounds inclusively
-    /// when `prefer_inclusive`, restricted as [`IntegerDomain::new`] is.
+    /// Return the interval integers, rendering derived bounds as
+    /// `preferred` says, restricted as [`IntegerDomain::new`] is.
     #[must_use]
-    pub fn new(prefer_inclusive: bool, non_negative: bool, zero_included: bool) -> Self {
+    pub fn new(preferred: Inclusivity, sign: Sign, zero: ZeroInclusion) -> Self {
+        let non_negative = sign.is_non_negative();
         Self {
-            prefer_inclusive,
+            prefer_inclusive: preferred.is_inclusive(),
             non_negative,
-            zero_included: zero_included || !non_negative,
+            zero_included: zero.is_included() || !non_negative,
         }
     }
 
@@ -283,7 +349,7 @@ fn read_leaf_values(
     }
     values
         .into_iter()
-        .map(|value| Member::try_from_value(value).map_err(|_nan| ParamError::NanValue(kind)))
+        .map(|value| Member::try_from(value).map_err(|_nan| ParamError::NanValue(kind)))
         .collect()
 }
 
@@ -404,11 +470,8 @@ impl PermutationDomain {
         {
             return false;
         }
-        let members: Result<Vec<Member>, _> = elements
-            .iter()
-            .cloned()
-            .map(Member::try_from_value)
-            .collect();
+        let members: Result<Vec<Member>, _> =
+            elements.iter().cloned().map(Member::try_from).collect();
         members.is_ok_and(|members| MemberSet::new(members).len() == elements.len())
     }
 }

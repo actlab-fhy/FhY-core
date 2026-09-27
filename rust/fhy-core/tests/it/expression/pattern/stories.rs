@@ -1833,7 +1833,7 @@ fn fail_with_a_rebuild_error() -> Result<(), BoxError> {
 }
 
 fn fail_with_a_function_name_error() -> Result<(), BoxError> {
-    FunctionName::try_new("")?;
+    FunctionName::new("")?;
     Ok(())
 }
 

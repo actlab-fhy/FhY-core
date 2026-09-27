@@ -22,7 +22,7 @@ use expression_support::{build_decimal_literal, build_identifier, build_literal}
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 fn name(text: &str) -> FunctionName {
-    FunctionName::try_new(text).expect("the test names no built-in")
+    FunctionName::new(text).expect("the test names no built-in")
 }
 
 fn call(
@@ -136,7 +136,7 @@ fn evaluate_resolves_builtin_and_user_constants() {
     let mut registry = FunctionRegistry::new();
     let answer = registry
         .register_constant(
-            NativeConstant::try_new(name("answer"), FunctionSort::Int, 42).expect("an integer"),
+            NativeConstant::new(name("answer"), FunctionSort::Int, 42).expect("an integer"),
         )
         .expect("free name");
     let tree =
@@ -670,7 +670,7 @@ fn evaluate_inlines_composed_builtins_and_user_functions() {
     let (parameter, parameter_reference) = build_identifier("x");
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("double"),
                 [parameter],
                 [FunctionSort::Real],

@@ -191,7 +191,7 @@ fn build_pool_permutation(
 ) -> (AlphaRenaming, HashMap<Identifier, Expression>) {
     let pairs = build_pool_permutation_pairs(permutation);
     let substitution = build_renaming_substitution(&pairs);
-    let renaming = AlphaRenaming::try_new(pairs).expect("a permutation is injective");
+    let renaming = AlphaRenaming::new(pairs).expect("a permutation is injective");
     (renaming, substitution)
 }
 
@@ -486,8 +486,8 @@ proptest! {
         let pairs: HashMap<Identifier, Identifier> =
             POOL.iter().cloned().zip(FRESH_POOL.iter().cloned()).collect();
         let substitution = build_renaming_substitution(&pairs);
-        let inverse = AlphaRenaming::try_new(invert_pairs(&pairs)).expect("the pools are distinct");
-        let renaming = AlphaRenaming::try_new(pairs).expect("the pools are distinct");
+        let inverse = AlphaRenaming::new(invert_pairs(&pairs)).expect("the pools are distinct");
+        let renaming = AlphaRenaming::new(pairs).expect("the pools are distinct");
         let renamed = expression.substitute(&substitution).expect("identifiers replace identifiers");
 
         let under_renaming = expression.is_alpha_equivalent_under(&renamed, &renaming);
@@ -519,8 +519,8 @@ proptest! {
             .iter()
             .all(|identifier| !pairs.contains_key(identifier));
         let inverse =
-            AlphaRenaming::try_new(invert_pairs(&pairs)).expect("a permutation is injective");
-        let renaming = AlphaRenaming::try_new(pairs).expect("a permutation is injective");
+            AlphaRenaming::new(invert_pairs(&pairs)).expect("a permutation is injective");
+        let renaming = AlphaRenaming::new(pairs).expect("a permutation is injective");
         let renamed = expression.substitute(&substitution).expect("identifiers replace identifiers");
 
         let under_renaming = expression.is_alpha_equivalent_under(&renamed, &renaming);

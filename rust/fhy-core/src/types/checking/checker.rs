@@ -25,6 +25,11 @@ type Typed = (Type, TypeQualifier);
 type Result<T> = std::result::Result<T, TypeCheckError>;
 
 /// The types of identifiers, as a checker asks for them.
+///
+/// It need not be `Sync`, unlike the expression lookups: an implementation
+/// may hold state bound to one thread, as the Python binding's hold Python
+/// objects. So a [`TypeChecker`] is `Send` or `Sync` only as its lookups
+/// are.
 pub trait IdentifierTypes {
     /// Return the type and qualifier of `identifier`, or `None` if it is not
     /// bound here.
@@ -69,6 +74,8 @@ pub enum CallTarget {
 
 /// The signatures of the functions calls resolve to, as a checker asks for
 /// them.
+///
+/// It need not be `Sync`, as [`IdentifierTypes`] need not.
 pub trait CallTargets {
     /// Return what `callee` resolves to.
     ///

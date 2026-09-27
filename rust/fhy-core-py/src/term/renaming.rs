@@ -349,7 +349,7 @@ impl PyAlphaRenaming {
     ) -> PyResult<Self> {
         let _ = cls;
         let (map, objects) = read_identifier_map(free_renaming, "AlphaRenaming", "free_renaming")?;
-        let renaming = AlphaRenaming::try_new(map).into_py_result()?;
+        let renaming = AlphaRenaming::new(map).into_py_result()?;
         Ok(Self {
             value: RenamingValue::new(renaming, ObjectTable::default().with(objects)),
         })

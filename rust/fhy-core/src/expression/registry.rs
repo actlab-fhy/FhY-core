@@ -32,8 +32,8 @@
 //!
 //! let mut registry = FunctionRegistry::new();
 //! let x = Identifier::new("x");
-//! registry.register_function(FunctionDefinition::try_new(
-//!     FunctionName::try_new("double")?,
+//! registry.register_function(FunctionDefinition::new(
+//!     FunctionName::new("double")?,
 //!     [x.clone()],
 //!     [FunctionSort::Real],
 //!     FunctionSort::Real,
@@ -41,7 +41,7 @@
 //! )?)?;
 //!
 //! let y = Identifier::new("y");
-//! let call = Expression::call(FunctionName::try_new("double")?, [Expression::from(y.clone())]);
+//! let call = Expression::call(FunctionName::new("double")?, [Expression::from(y.clone())]);
 //! assert_eq!(registry.inline(&call)?, Expression::from(y) * 2);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

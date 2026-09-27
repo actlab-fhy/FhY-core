@@ -9,6 +9,7 @@ use fhy_core::param::{
     CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, IntervalProfile,
     OrdinalDomain, ParamDomain, ParamError, PermutationDomain, RealDomain, is_bound_expression,
 };
+use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use rstest::rstest;
 
 use crate::support::constraint::{TestOpaque, int, text};
@@ -168,14 +169,14 @@ fn permutation_domain_keeps_the_order_given() {
 #[test]
 fn integer_domains_store_zero_included_without_non_negative() {
     assert_eq!(
-        IntegerDomain::new(false, false),
-        IntegerDomain::new(false, true)
+        IntegerDomain::new(Sign::Any, ZeroInclusion::Excluded),
+        IntegerDomain::new(Sign::Any, ZeroInclusion::Included)
     );
-    assert!(IntegerDomain::new(false, false).is_zero_included());
-    assert!(!IntegerDomain::new(true, false).is_zero_included());
+    assert!(IntegerDomain::new(Sign::Any, ZeroInclusion::Excluded).is_zero_included());
+    assert!(!IntegerDomain::new(Sign::NonNegative, ZeroInclusion::Excluded).is_zero_included());
     assert_eq!(
-        IntervalIntegerDomain::new(true, false, false),
-        IntervalIntegerDomain::new(true, false, true)
+        IntervalIntegerDomain::new(Inclusivity::Inclusive, Sign::Any, ZeroInclusion::Excluded),
+        IntervalIntegerDomain::new(Inclusivity::Inclusive, Sign::Any, ZeroInclusion::Included)
     );
 }
 
@@ -191,8 +192,12 @@ fn integer_domains_store_zero_included_without_non_negative() {
 #[case::string(text("3"), false)]
 fn integer_domains_admit_integers_only(#[case] value: Value, #[case] is_admissible: bool) {
     for domain in [
-        ParamDomain::from(IntegerDomain::new(false, true)),
-        ParamDomain::from(IntervalIntegerDomain::new(true, true, true)),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
+        ParamDomain::from(IntervalIntegerDomain::new(
+            Inclusivity::Inclusive,
+            Sign::NonNegative,
+            ZeroInclusion::Included,
+        )),
     ] {
         assert_eq!(
             domain.is_value_admissible(&value).expect("native"),
@@ -203,7 +208,10 @@ fn integer_domains_admit_integers_only(#[case] value: Value, #[case] is_admissib
 
 #[test]
 fn non_negative_integer_domain_admits_a_negative_integer() {
-    let domain = ParamDomain::from(IntegerDomain::new(true, true));
+    let domain = ParamDomain::from(IntegerDomain::new(
+        Sign::NonNegative,
+        ZeroInclusion::Included,
+    ));
 
     assert!(domain.is_value_admissible(&int(-5)).expect("native"));
 }
@@ -302,7 +310,7 @@ fn integer_and_real_domains_allow_any_constraint() {
     let x = Identifier::new("x");
     let y = Identifier::new("y");
     for domain in [
-        ParamDomain::from(IntegerDomain::new(false, true)),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
         ParamDomain::from(RealDomain),
     ] {
         for constraint in [at_least(&x, 0), in_set(&x, ints([1])), less_than(&x, &y)] {
@@ -317,7 +325,11 @@ fn integer_and_real_domains_allow_any_constraint() {
 fn interval_domain_allows_bounds_only() {
     let x = Identifier::new("x");
     let y = Identifier::new("y");
-    let domain = ParamDomain::from(IntervalIntegerDomain::new(true, false, true));
+    let domain = ParamDomain::from(IntervalIntegerDomain::new(
+        Inclusivity::Inclusive,
+        Sign::Any,
+        ZeroInclusion::Included,
+    ));
 
     domain
         .validate_constraint(&at_least(&x, 0), &x)
@@ -367,11 +379,14 @@ fn non_negative_integer_domains_imply_a_sign_bound(
 ) {
     let x = Identifier::new("x");
     for domain in [
-        ParamDomain::from(IntegerDomain::new(non_negative, zero_included)),
+        ParamDomain::from(IntegerDomain::new(
+            Sign::non_negative_if(non_negative),
+            ZeroInclusion::included_if(zero_included),
+        )),
         ParamDomain::from(IntervalIntegerDomain::new(
-            true,
-            non_negative,
-            zero_included,
+            Inclusivity::Inclusive,
+            Sign::non_negative_if(non_negative),
+            ZeroInclusion::included_if(zero_included),
         )),
     ] {
         let implied = domain.implied_constraints(&x).expect("native");
@@ -399,9 +414,12 @@ fn non_negative_integer_domains_imply_a_sign_bound(
 #[test]
 fn only_the_integer_domains_have_a_profile() {
     assert_eq!(
-        ParamDomain::from(IntegerDomain::new(true, false))
-            .interval_profile()
-            .expect("native"),
+        ParamDomain::from(IntegerDomain::new(
+            Sign::NonNegative,
+            ZeroInclusion::Excluded
+        ))
+        .interval_profile()
+        .expect("native"),
         Some(IntervalProfile {
             admits_only_bounds: false,
             non_negative: true,
@@ -410,9 +428,13 @@ fn only_the_integer_domains_have_a_profile() {
         })
     );
     assert_eq!(
-        ParamDomain::from(IntervalIntegerDomain::new(false, false, true))
-            .interval_profile()
-            .expect("native"),
+        ParamDomain::from(IntervalIntegerDomain::new(
+            Inclusivity::Exclusive,
+            Sign::Any,
+            ZeroInclusion::Included
+        ))
+        .interval_profile()
+        .expect("native"),
         Some(IntervalProfile {
             admits_only_bounds: true,
             non_negative: false,
@@ -428,15 +450,19 @@ fn only_the_integer_domains_have_a_profile() {
 #[test]
 fn symbol_types_follow_the_value_space() {
     assert_eq!(
-        ParamDomain::from(IntegerDomain::new(false, true))
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
             .symbol_type()
             .expect("native"),
         Some(SymbolType::Int)
     );
     assert_eq!(
-        ParamDomain::from(IntervalIntegerDomain::new(true, false, true))
-            .symbol_type()
-            .expect("native"),
+        ParamDomain::from(IntervalIntegerDomain::new(
+            Inclusivity::Inclusive,
+            Sign::Any,
+            ZeroInclusion::Included
+        ))
+        .symbol_type()
+        .expect("native"),
         Some(SymbolType::Int)
     );
     assert_eq!(
@@ -452,8 +478,15 @@ fn symbol_types_follow_the_value_space() {
 
 #[test]
 fn numeric_value_sets_are_subsets_within_one_sort() {
-    let integer = ParamDomain::from(IntegerDomain::new(true, true));
-    let interval = ParamDomain::from(IntervalIntegerDomain::new(true, false, true));
+    let integer = ParamDomain::from(IntegerDomain::new(
+        Sign::NonNegative,
+        ZeroInclusion::Included,
+    ));
+    let interval = ParamDomain::from(IntervalIntegerDomain::new(
+        Inclusivity::Inclusive,
+        Sign::Any,
+        ZeroInclusion::Included,
+    ));
     let real = ParamDomain::from(RealDomain);
 
     assert!(integer.is_value_set_subset(&interval).expect("native"));
@@ -498,17 +531,32 @@ fn finite_value_sets_are_subsets_by_type_strict_membership() {
 #[test]
 fn domains_are_equivalent_by_kind_and_contents() {
     assert!(
-        ParamDomain::from(IntegerDomain::new(true, false))
-            .is_structurally_equivalent(&ParamDomain::from(IntegerDomain::new(true, false)))
+        ParamDomain::from(IntegerDomain::new(
+            Sign::NonNegative,
+            ZeroInclusion::Excluded
+        ))
+        .is_structurally_equivalent(&ParamDomain::from(IntegerDomain::new(
+            Sign::NonNegative,
+            ZeroInclusion::Excluded
+        )))
     );
     assert!(
-        !ParamDomain::from(IntegerDomain::new(true, false))
-            .is_structurally_equivalent(&ParamDomain::from(IntegerDomain::new(true, true)))
+        !ParamDomain::from(IntegerDomain::new(
+            Sign::NonNegative,
+            ZeroInclusion::Excluded
+        ))
+        .is_structurally_equivalent(&ParamDomain::from(IntegerDomain::new(
+            Sign::NonNegative,
+            ZeroInclusion::Included
+        )))
     );
     assert!(
-        !ParamDomain::from(IntegerDomain::new(false, true)).is_structurally_equivalent(
-            &ParamDomain::from(IntervalIntegerDomain::new(true, false, true))
-        )
+        !ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
+            .is_structurally_equivalent(&ParamDomain::from(IntervalIntegerDomain::new(
+                Inclusivity::Inclusive,
+                Sign::Any,
+                ZeroInclusion::Included
+            )))
     );
     assert!(
         ParamDomain::from(RealDomain).is_structurally_equivalent(&ParamDomain::from(RealDomain))

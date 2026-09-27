@@ -1,6 +1,7 @@
 //! Properties of the domains: the ordinal order, and the finite domains'
 //! questions against brute force.
 
+use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use std::collections::BTreeSet;
 
 use fhy_core::constraint::{Binding, Bindings, Constraint, MemberKind, Outcome, Value};
@@ -196,7 +197,11 @@ fn interval_param(
     context: &ParamContext<'_>,
 ) -> Param {
     Param::new(
-        ParamDomain::from(IntervalIntegerDomain::new(prefer_inclusive, false, true)),
+        ParamDomain::from(IntervalIntegerDomain::new(
+            Inclusivity::inclusive_if(prefer_inclusive),
+            Sign::Any,
+            ZeroInclusion::Included,
+        )),
         Identifier::new("param"),
         Vec::new(),
         context,
@@ -236,9 +241,9 @@ proptest! {
         let right = interval_param(right_lower, right_upper, true, &context);
         let operand = Operand::Param(right);
         let results = [
-            (left.checked_add(&operand, &context).expect("adds").expect("operands"), 0),
-            (left.checked_sub(&operand, &context).expect("subtracts").expect("operands"), 1),
-            (left.checked_mul(&operand, &context).expect("multiplies").expect("operands"), 2),
+            (left.checked_add(&operand, &context).expect("adds"), 0),
+            (left.checked_sub(&operand, &context).expect("subtracts"), 1),
+            (left.checked_mul(&operand, &context).expect("multiplies"), 2),
         ];
         for (result, operation) in &results {
             let pairwise: Vec<i64> = (left_lower..=left_upper)

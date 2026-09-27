@@ -696,7 +696,7 @@ fn systems_are_equivalent_member_by_member_in_canonical_order() {
         equation(Expression::from(y.clone()).less(3)),
     ]);
     let shorter = ConstraintSystem::new([in_set(&x, &[1])]);
-    let renaming = AlphaRenaming::try_new(HashMap::from([(x, y)])).expect("injective");
+    let renaming = AlphaRenaming::new(HashMap::from([(x, y)])).expect("injective");
 
     assert!(left.is_structurally_equivalent(&right));
     assert!(!left.is_structurally_equivalent(&shorter));

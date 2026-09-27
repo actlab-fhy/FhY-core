@@ -8,8 +8,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fhy_core::constraint::{
-    Bindings, Constraint, CustomConstraint, Event, Member, MemberSet, Observer, Opaque,
-    OpaqueValue, Outcome, Value,
+    Bindings, Constraint, ConstraintEvent, ConstraintObserver, CustomConstraint, Member, MemberSet,
+    Opaque, OpaqueValue, Outcome, Value,
 };
 use fhy_core::expression::{BigInt, Expression};
 use fhy_core::foreign::BoxError;
@@ -33,7 +33,7 @@ pub(crate) fn text(text: &str) -> Value {
 ///
 /// Panics if `value` cannot be a member.
 pub(crate) fn member(value: Value) -> Member {
-    Member::try_from_value(value).expect("the value is a member")
+    Member::try_from(value).expect("the value is a member")
 }
 
 /// Return the set of the members of `values`.
@@ -146,7 +146,7 @@ impl OpaqueValue for TestOpaque {
     }
 }
 
-/// An owned copy of an [`Event`].
+/// An owned copy of an [`ConstraintEvent`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RecordedEvent {
     Unbound(Identifier),
@@ -161,29 +161,31 @@ pub(crate) enum RecordedEvent {
 
 impl RecordedEvent {
     /// Return the owned copy of `event`.
-    fn of(event: &Event<'_>) -> Self {
+    fn of(event: &ConstraintEvent<'_>) -> Self {
         match *event {
-            Event::Unbound { variable } => Self::Unbound(variable.clone()),
-            Event::SymbolicBinding { variable, binding } => {
+            ConstraintEvent::Unbound { variable } => Self::Unbound(variable.clone()),
+            ConstraintEvent::SymbolicBinding { variable, binding } => {
                 Self::SymbolicBinding(variable.clone(), binding.clone())
             }
-            Event::BoundNativeConstants { identifiers } => {
+            ConstraintEvent::BoundNativeConstants { identifiers } => {
                 Self::BoundNativeConstants(identifiers.to_vec())
             }
-            Event::Residual {
+            ConstraintEvent::Residual {
                 residual,
                 has_free_identifiers,
             } => Self::Residual(residual.clone(), has_free_identifiers),
-            Event::InMember { index, event } => Self::InMember(index, Box::new(Self::of(event))),
-            Event::UndecidedMember { index } => Self::UndecidedMember(index),
-            Event::Refused { kind, .. } => Self::Refused(kind),
-            Event::GaveUp { kind, reason } => Self::GaveUp(kind, reason.to_owned()),
+            ConstraintEvent::InMember { index, event } => {
+                Self::InMember(index, Box::new(Self::of(event)))
+            }
+            ConstraintEvent::UndecidedMember { index } => Self::UndecidedMember(index),
+            ConstraintEvent::Refused { kind, .. } => Self::Refused(kind),
+            ConstraintEvent::GaveUp { kind, reason } => Self::GaveUp(kind, reason.to_owned()),
             _ => unreachable!("the constraint tests know every event"),
         }
     }
 }
 
-/// An [`Observer`] that records every event.
+/// An [`ConstraintObserver`] that records every event.
 #[derive(Debug, Default)]
 pub(crate) struct RecordingObserver {
     events: Mutex<Vec<RecordedEvent>>,
@@ -199,8 +201,8 @@ impl RecordingObserver {
     }
 }
 
-impl Observer for RecordingObserver {
-    fn notify(&self, event: &Event<'_>) {
+impl ConstraintObserver for RecordingObserver {
+    fn notify(&self, event: &ConstraintEvent<'_>) {
         self.events
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

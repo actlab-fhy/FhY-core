@@ -7,9 +7,10 @@ use super::context::ParamContext;
 use super::decide::is_value_valid_for;
 use super::domain::{
     CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, OrdinalDomain,
-    ParamDomain, RealDomain, Side,
+    ParamDomain, RealDomain, Side, Sign, ZeroInclusion,
 };
 use super::error::{ParamError, SetOperation};
+use super::interval::Inclusivity;
 use super::screen::merge_intersection_constraints;
 use super::value::member_value;
 
@@ -154,7 +155,10 @@ pub(super) fn intersection(
                 (right.is_non_negative(), right.is_zero_included()),
             );
             Ok((
-                ParamDomain::from(IntegerDomain::new(non_negative, zero_included)),
+                ParamDomain::from(IntegerDomain::new(
+                    Sign::non_negative_if(non_negative),
+                    ZeroInclusion::included_if(zero_included),
+                )),
                 merge_intersection_constraints(own, other, variable)?,
             ))
         }
@@ -165,9 +169,9 @@ pub(super) fn intersection(
             );
             Ok((
                 ParamDomain::from(IntervalIntegerDomain::new(
-                    left.is_inclusive_preferred(),
-                    non_negative,
-                    zero_included,
+                    Inclusivity::inclusive_if(left.is_inclusive_preferred()),
+                    Sign::non_negative_if(non_negative),
+                    ZeroInclusion::included_if(zero_included),
                 )),
                 merge_intersection_constraints(own, other, variable)?,
             ))

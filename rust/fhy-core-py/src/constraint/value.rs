@@ -436,7 +436,7 @@ fn read_number(value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
 pub(crate) fn read_member(value: &Bound<'_, PyAny>) -> PyResult<Member> {
     let py = value.py();
     let read = read_member_value(value)?;
-    let member = Member::try_from_value(read)
+    let member = Member::try_from(read)
         .map_err(|error| constraint_error(py, format!("{error}: {}", repr_text(value))))?;
     check_member_hash(value, &member)?;
     Ok(member)

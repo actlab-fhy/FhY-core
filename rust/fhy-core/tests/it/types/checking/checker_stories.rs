@@ -329,8 +329,8 @@ fn a_native_constant_types_by_its_sort_and_refuses_a_supplied_type() {
     let mut registry = FunctionRegistry::new();
     let user = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("tau_c").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("tau_c").expect("a name"),
                 FunctionSort::Real,
                 6.5,
             )
@@ -797,8 +797,8 @@ fn registry_with_scale() -> FunctionRegistry {
     let mut registry = FunctionRegistry::new();
     registry
         .register_function(
-            FunctionDefinition::try_new(
-                FunctionName::try_new("scale").expect("a name"),
+            FunctionDefinition::new(
+                FunctionName::new("scale").expect("a name"),
                 [x.clone()],
                 [FunctionSort::Real],
                 FunctionSort::Real,
@@ -809,8 +809,8 @@ fn registry_with_scale() -> FunctionRegistry {
         .expect("registers");
     registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("k").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("k").expect("a name"),
                 FunctionSort::Int,
                 3,
             )

@@ -22,9 +22,9 @@
 //! # Examples
 //!
 //! ```
-//! use fhy_core::param::{IntegerDomain, ParamDomain};
+//! use fhy_core::param::{IntegerDomain, ParamDomain, Sign, ZeroInclusion};
 //!
-//! let domain = ParamDomain::from(IntegerDomain::new(true, false));
+//! let domain = ParamDomain::from(IntegerDomain::new(Sign::NonNegative, ZeroInclusion::Excluded));
 //! let text = serde_json::to_string(&domain)?;
 //! assert_eq!(text, r#"{"integer":{"non_negative":true,"zero_included":false}}"#);
 //! assert!(serde_json::from_str::<ParamDomain>(&text)?.is_structurally_equivalent(&domain));
@@ -48,8 +48,9 @@ use super::context::ParamContext;
 use super::custom::CustomDomain;
 use super::domain::{
     CategoricalDomain, IntegerDomain, IntervalIntegerDomain, OrdinalDomain, ParamDomain,
-    PermutationDomain, RealDomain,
+    PermutationDomain, RealDomain, Sign, ZeroInclusion,
 };
+use super::interval::Inclusivity;
 use super::parameter::Param;
 
 /// The resolvers a param's foreign parts need.
@@ -205,13 +206,13 @@ impl ParamDomainData {
     pub fn build<R: ParamResolver + ?Sized>(self, resolver: &R) -> Result<ParamDomain, BuildError> {
         Ok(match self.0 {
             DomainRepr::Integer(domain) => ParamDomain::from(IntegerDomain::new(
-                domain.non_negative,
-                domain.zero_included,
+                Sign::non_negative_if(domain.non_negative),
+                ZeroInclusion::included_if(domain.zero_included),
             )),
             DomainRepr::IntervalInteger(domain) => ParamDomain::from(IntervalIntegerDomain::new(
-                domain.prefer_inclusive,
-                domain.non_negative,
-                domain.zero_included,
+                Inclusivity::inclusive_if(domain.prefer_inclusive),
+                Sign::non_negative_if(domain.non_negative),
+                ZeroInclusion::included_if(domain.zero_included),
             )),
             DomainRepr::Real(RealRepr {}) => ParamDomain::from(RealDomain),
             DomainRepr::Ordinal(domain) => ParamDomain::from(
@@ -366,7 +367,7 @@ impl ParamAssignmentData {
     ) -> Result<ParamAssignment, BuildError> {
         let param = self.param.build(resolver, context)?;
         let value = self.value.build(resolver)?;
-        Ok(ParamAssignment::new_unchecked(param, value))
+        Ok(ParamAssignment::new_unvalidated(param, value))
     }
 }
 

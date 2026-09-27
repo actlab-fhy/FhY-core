@@ -32,8 +32,8 @@ use super::error::{ConstantValueError, FunctionDefinitionError};
 /// use fhy_core::identifier::Identifier;
 ///
 /// let x = Identifier::new("x");
-/// let increment = FunctionDefinition::try_new(
-///     FunctionName::try_new("increment")?,
+/// let increment = FunctionDefinition::new(
+///     FunctionName::new("increment")?,
 ///     [x.clone()],
 ///     [FunctionSort::Int],
 ///     FunctionSort::Int,
@@ -67,7 +67,7 @@ impl FunctionDefinition {
     /// parameters and the sorts differ in number, and
     /// [`FunctionDefinitionError::RepeatedParameter`] naming the first
     /// parameter that occurs twice.
-    pub fn try_new(
+    pub fn new(
         name: FunctionName,
         parameters: impl IntoIterator<Item = Identifier>,
         parameter_sorts: impl IntoIterator<Item = FunctionSort>,
@@ -143,7 +143,7 @@ impl FunctionDefinition {
 /// use fhy_core::expression::{FunctionName, FunctionSort};
 ///
 /// let softplus = NativeFunction::new(
-///     FunctionName::try_new("softplus")?,
+///     FunctionName::new("softplus")?,
 ///     [FunctionSort::Real],
 ///     FunctionSort::Real,
 /// );
@@ -203,9 +203,9 @@ impl NativeFunction {
 /// use fhy_core::expression::registry::NativeConstant;
 /// use fhy_core::expression::{FunctionName, FunctionSort, LiteralValue};
 ///
-/// let answer = NativeConstant::try_new(FunctionName::try_new("answer")?, FunctionSort::Nat, 42)?;
+/// let answer = NativeConstant::new(FunctionName::new("answer")?, FunctionSort::Nat, 42)?;
 /// assert_eq!(answer.value(), &LiteralValue::from(42));
-/// assert!(NativeConstant::try_new(FunctionName::try_new("minus")?, FunctionSort::Nat, -1).is_err());
+/// assert!(NativeConstant::new(FunctionName::new("minus")?, FunctionSort::Nat, -1).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -225,7 +225,7 @@ impl NativeConstant {
     /// [`FunctionSort::Bool`], a non-negative integer for
     /// [`FunctionSort::Nat`], an integer for [`FunctionSort::Int`], and an
     /// integer, a float or a decimal for [`FunctionSort::Real`].
-    pub fn try_new(
+    pub fn new(
         name: FunctionName,
         sort: FunctionSort,
         value: impl Into<LiteralValue>,

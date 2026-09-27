@@ -11,10 +11,10 @@ use crate::identifier::Identifier;
 use crate::solver::{Hazard, QueryKind, SimplifyContext, Solver};
 
 /// Why an evaluation or a question is undecided, reported to an
-/// [`Observer`] when the reason arises.
+/// [`ConstraintObserver`] when the reason arises.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
-pub enum Event<'a> {
+pub enum ConstraintEvent<'a> {
     /// A set constraint's variable is unbound.
     Unbound {
         /// The variable.
@@ -41,7 +41,7 @@ pub enum Event<'a> {
         /// The member's position in the system's canonical order.
         index: usize,
         /// What the member reported.
-        event: &'a Event<'a>,
+        event: &'a ConstraintEvent<'a>,
     },
     /// A member of a system answered [`Outcome::Undecided`](super::Outcome)
     /// while the system evaluated it.
@@ -76,30 +76,30 @@ pub enum Event<'a> {
     },
 }
 
-/// Receives the [`Event`]s that explain undecided outcomes.
+/// Receives the [`ConstraintEvent`]s that explain undecided outcomes.
 ///
 /// A constraint reports each event once, when its reason arises, whether
 /// or not the outcome it explains is the final one.
-pub trait Observer: Sync {
+pub trait ConstraintObserver: Sync {
     /// Receive `event`.
-    fn notify(&self, event: &Event<'_>);
+    fn notify(&self, event: &ConstraintEvent<'_>);
 }
 
-/// An [`Observer`] that ignores every event.
+/// An [`ConstraintObserver`] that ignores every event.
 #[expect(
     clippy::exhaustive_structs,
     reason = "a stateless unit type that callers name as a value"
 )]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct NoObserver;
+pub struct NoConstraintObserver;
 
-impl Observer for NoObserver {
-    fn notify(&self, _event: &Event<'_>) {}
+impl ConstraintObserver for NoConstraintObserver {
+    fn notify(&self, _event: &ConstraintEvent<'_>) {}
 }
 
 /// What a constraint is evaluated with: the [`Solver`] whose simplifier
 /// decides an equation, the [`FunctionRegistry`] that knows the native
-/// constants and named functions, and the [`Observer`] of undecided
+/// constants and named functions, and the [`ConstraintObserver`] of undecided
 /// outcomes.
 ///
 /// A context without a registry knows the built-in constants only.
@@ -107,7 +107,7 @@ impl Observer for NoObserver {
 pub struct ConstraintContext<'a> {
     solver: &'a Solver,
     registry: Option<&'a FunctionRegistry>,
-    observer: &'a dyn Observer,
+    observer: &'a dyn ConstraintObserver,
 }
 
 impl<'a> ConstraintContext<'a> {
@@ -118,7 +118,7 @@ impl<'a> ConstraintContext<'a> {
         Self {
             solver,
             registry: None,
-            observer: &NoObserver,
+            observer: &NoConstraintObserver,
         }
     }
 
@@ -134,7 +134,7 @@ impl<'a> ConstraintContext<'a> {
 
     /// Return the context reporting undecided outcomes to `observer`.
     #[must_use]
-    pub fn with_observer(self, observer: &'a dyn Observer) -> Self {
+    pub fn with_observer(self, observer: &'a dyn ConstraintObserver) -> Self {
         Self { observer, ..self }
     }
 
@@ -176,7 +176,7 @@ impl<'a> ConstraintContext<'a> {
     }
 
     /// Report `event` to the observer.
-    pub(super) fn notify(&self, event: &Event<'_>) {
+    pub(super) fn notify(&self, event: &ConstraintEvent<'_>) {
         self.observer.notify(event);
     }
 }

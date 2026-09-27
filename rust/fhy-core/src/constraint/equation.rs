@@ -8,7 +8,7 @@ use crate::term::AlphaRenaming;
 
 use super::Outcome;
 use super::binding::{Binding, Bindings};
-use super::context::{ConstraintContext, Event};
+use super::context::{ConstraintContext, ConstraintEvent};
 use super::error::{ConstraintError, UnusableBindingReason};
 use super::key;
 use super::value::Value;
@@ -51,14 +51,14 @@ impl EquationConstraint {
     /// 2. screens the expression as a predicate, with those bindings, as
     ///    [`BooleanScreen::check_predicate`] judges it;
     /// 3. answers [`Outcome::Undecided`], reporting
-    ///    [`Event::BoundNativeConstants`], if the bindings bind a native
+    ///    [`ConstraintEvent::BoundNativeConstants`], if the bindings bind a native
     ///    constant;
     /// 4. simplifies the expression under the bindings with the context's
     ///    solver, and reads a Boolean literal as
     ///    [`Satisfied`](Outcome::Satisfied) or
     ///    [`Violated`](Outcome::Violated), and anything that is not a
     ///    literal as [`Undecided`](Outcome::Undecided), reporting
-    ///    [`Event::Residual`].
+    ///    [`ConstraintEvent::Residual`].
     ///
     /// # Errors
     ///
@@ -92,7 +92,7 @@ impl EquationConstraint {
             .collect();
         if !constants.is_empty() {
             constants.sort_by_key(Identifier::id);
-            context.notify(&Event::BoundNativeConstants {
+            context.notify(&ConstraintEvent::BoundNativeConstants {
                 identifiers: &constants,
             });
             return Ok(Outcome::Undecided);
@@ -109,7 +109,7 @@ impl EquationConstraint {
                 result,
             }),
             _ => {
-                context.notify(&Event::Residual {
+                context.notify(&ConstraintEvent::Residual {
                     residual: &result,
                     has_free_identifiers: !result.free_identifiers().is_empty(),
                 });

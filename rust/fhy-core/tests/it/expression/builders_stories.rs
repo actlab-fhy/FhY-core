@@ -789,7 +789,7 @@ fn expression_call_returns_a_call_with_callee_and_arguments() {
 /// Test the call builder accepts zero arguments with a named callee.
 #[test]
 fn expression_call_supports_zero_arguments() {
-    let nullary = FunctionName::try_new("nullary").expect("a user function name");
+    let nullary = FunctionName::new("nullary").expect("a user function name");
 
     let built = Expression::call(nullary.clone(), Vec::<Expression>::new());
 
@@ -801,7 +801,7 @@ fn expression_call_supports_zero_arguments() {
 #[test]
 fn expression_call_coerces_identifiers_and_numbers() {
     let (x, x_reference) = build_identifier("x");
-    let f = FunctionName::try_new("f").expect("a user function name");
+    let f = FunctionName::new("f").expect("a user function name");
 
     let with_identifier = Expression::call(f.clone(), [x]);
     let with_numbers = Expression::call(BuiltinFunction::Max, [1, 2]);
@@ -819,9 +819,9 @@ fn expression_call_coerces_identifiers_and_numbers() {
 #[case::composed("max", Callee::Builtin(BuiltinFunction::Max))]
 #[case::native("log10", Callee::Builtin(BuiltinFunction::Log10))]
 #[case::snake_case("clamp_symmetric", Callee::Builtin(BuiltinFunction::ClampSymmetric))]
-#[case::user("softplus", Callee::Named(FunctionName::try_new("softplus").unwrap()))]
-#[case::other_case("Max", Callee::Named(FunctionName::try_new("Max").unwrap()))]
-#[case::constant("pi", Callee::Named(FunctionName::try_new("pi").unwrap()))]
+#[case::user("softplus", Callee::Named(FunctionName::new("softplus").unwrap()))]
+#[case::other_case("Max", Callee::Named(FunctionName::new("Max").unwrap()))]
+#[case::constant("pi", Callee::Named(FunctionName::new("pi").unwrap()))]
 fn callee_from_str_resolves_builtin_names(#[case] name: &str, #[case] expected: Callee) {
     let callee: Callee = name.parse().expect("a non-empty name");
 
@@ -842,7 +842,7 @@ fn callee_from_str_refuses_an_empty_name() {
 #[test]
 fn function_name_refuses_a_builtin_name() {
     for function in BuiltinFunction::iter() {
-        let result = FunctionName::try_new(function.name());
+        let result = FunctionName::new(function.name());
 
         assert_eq!(result, Err(FunctionNameError::Builtin(function)));
     }
@@ -859,7 +859,7 @@ fn function_name_try_new_rejects_empty_and_builtin_names(
     #[case] name: &str,
     #[case] expected: Result<&str, FunctionNameError>,
 ) {
-    let result = FunctionName::try_new(name);
+    let result = FunctionName::new(name);
 
     assert_eq!(
         result.as_ref().map(FunctionName::as_str),

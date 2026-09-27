@@ -9,6 +9,7 @@ use fhy_core::param::{
     CustomDomain, IntegerDomain, IntervalProfile, OrdinalDomain, Param, ParamContext, ParamDomain,
     ParamError, Side,
 };
+use fhy_core::param::{Sign, ZeroInclusion};
 use fhy_core::solver::SatResult;
 
 use crate::support::constraint::{TestValueError, int};
@@ -80,7 +81,7 @@ fn numeric_subset_asks_a_custom_other_side_its_sort_and_its_values() {
     let observer = RecordingParamObserver::default();
     let own_constraints = [in_set(&x, ints([2, 3]))];
 
-    let outcome = ParamDomain::from(IntegerDomain::new(false, true))
+    let outcome = ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
         .feasibility_subset(
             Side::new(&own_constraints, &x),
             &other,
@@ -136,7 +137,8 @@ fn custom_domain_failures_propagate() {
         Err(ParamError::Custom(_))
     ));
     assert!(matches!(
-        ParamDomain::from(IntegerDomain::new(false, true)).is_value_set_subset(&domain),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
+            .is_value_set_subset(&domain),
         Err(ParamError::Custom(_))
     ));
 }
@@ -308,7 +310,7 @@ fn a_custom_domain_on_the_left_answers_each_set_procedure_through_its_hook() {
     let context = context(&solver, &observer);
     let own = param_over(domain.clone(), "x", &context);
     let other = param_over(
-        ParamDomain::from(IntegerDomain::new(false, true)),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
         "y",
         &context,
     );
@@ -367,7 +369,7 @@ fn a_custom_domain_on_the_right_is_asked_only_what_the_left_side_needs() {
     let observer = RecordingParamObserver::default();
     let context = context(&solver, &observer);
     let integer = param_over(
-        ParamDomain::from(IntegerDomain::new(false, true)),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
         "x",
         &context,
     );
@@ -409,7 +411,7 @@ fn a_failing_custom_domain_s_error_surfaces_from_each_set_procedure() {
     let observer = RecordingParamObserver::default();
     let context = context(&solver, &observer);
     let other = param_over(
-        ParamDomain::from(IntegerDomain::new(false, true)),
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
         "y",
         &context,
     );
@@ -447,7 +449,7 @@ fn a_failing_custom_domain_s_error_surfaces_from_each_set_procedure() {
                 &context,
             )
             .map(|_| ()),
-        ParamDomain::from(IntegerDomain::new(false, true))
+        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included))
             .is_value_set_subset(&domain)
             .map(|_| ()),
     ];

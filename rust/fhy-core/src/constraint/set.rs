@@ -9,7 +9,7 @@ use crate::term::AlphaRenaming;
 
 use super::Outcome;
 use super::binding::{Binding, Bindings};
-use super::context::{ConstraintContext, Event};
+use super::context::{ConstraintContext, ConstraintEvent};
 use super::error::{ConstraintError, UnusableBindingReason};
 use super::key;
 use super::value::{MemberSet, Value};
@@ -88,16 +88,16 @@ impl SetConstraint {
     /// It reads the variable's binding only. In order:
     ///
     /// 1. an unbound variable answers [`Outcome::Undecided`], reporting
-    ///    [`Event::Unbound`];
+    ///    [`ConstraintEvent::Unbound`];
     /// 2. a literal expression is decided by its value, a decimal being no
     ///    member; another expression cannot be decided;
     /// 3. another value must be member-shaped and hashable, and is decided
     ///    by type-strict membership;
     /// 4. a variable that is a native constant's canonical identifier
     ///    answers [`Outcome::Undecided`], reporting
-    ///    [`Event::BoundNativeConstants`];
+    ///    [`ConstraintEvent::BoundNativeConstants`];
     /// 5. an expression that is not a literal answers
-    ///    [`Outcome::Undecided`], reporting [`Event::SymbolicBinding`];
+    ///    [`Outcome::Undecided`], reporting [`ConstraintEvent::SymbolicBinding`];
     /// 6. membership satisfies an [`In`](Polarity::In) constraint and
     ///    violates a [`NotIn`](Polarity::NotIn) one.
     ///
@@ -112,13 +112,13 @@ impl SetConstraint {
     ) -> Result<Outcome, ConstraintError> {
         let variable = self.variable();
         let Some(binding) = bindings.get(variable) else {
-            context.notify(&Event::Unbound { variable });
+            context.notify(&ConstraintEvent::Unbound { variable });
             return Ok(Outcome::Undecided);
         };
         let is_member = match binding {
             Binding::Expression(expression) => match expression.kind() {
                 ExpressionKind::Literal(literal) => {
-                    Some(self.members().contains_value(&Value::from_literal(literal)))
+                    Some(self.members().contains_value(&Value::from(literal.clone())))
                 }
                 _ => None,
             },
@@ -139,14 +139,14 @@ impl SetConstraint {
             }
         };
         if context.is_native_constant(variable) {
-            context.notify(&Event::BoundNativeConstants {
+            context.notify(&ConstraintEvent::BoundNativeConstants {
                 identifiers: std::slice::from_ref(variable),
             });
             return Ok(Outcome::Undecided);
         }
         let Some(is_member) = is_member else {
             if let Binding::Expression(expression) = binding {
-                context.notify(&Event::SymbolicBinding {
+                context.notify(&ConstraintEvent::SymbolicBinding {
                     variable,
                     binding: expression,
                 });

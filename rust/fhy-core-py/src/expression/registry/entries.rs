@@ -162,7 +162,7 @@ fn read_name<'py>(
     owner: &str,
 ) -> PyResult<(Bound<'py, PyString>, FunctionName)> {
     let name = read_str(value, owner, "name")?;
-    let function_name = FunctionName::try_new(name.to_str()?).into_py_result()?;
+    let function_name = FunctionName::new(name.to_str()?).into_py_result()?;
     Ok((name.clone(), function_name))
 }
 
@@ -532,7 +532,7 @@ impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
             .get()
             .expression()
             .clone();
-        let definition = FunctionDefinition::try_new(
+        let definition = FunctionDefinition::new(
             function_name,
             rust_parameters,
             rust_sorts,
@@ -951,7 +951,7 @@ impl_entry_protocols!(PyNativeConstant, "NativeConstant", {
         let value = require(value, OWNER, "value")?;
         let rust_value = read_constant_value(&value, OWNER)?;
         let constant =
-            NativeConstant::try_new(constant_name, rust_sort, rust_value).into_py_result()?;
+            NativeConstant::new(constant_name, rust_sort, rust_value).into_py_result()?;
         Ok(Self {
             source: ConstantSource::User(constant),
             name: name.unbind(),

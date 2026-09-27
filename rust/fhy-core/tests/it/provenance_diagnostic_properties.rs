@@ -114,7 +114,7 @@ fn arbitrary_ordered_bounds<T: std::fmt::Debug + Clone>(
 /// Return a strategy for positions with small or huge lines and columns.
 fn arbitrary_position() -> BoxedStrategy<Position> {
     (arbitrary_bound_value(), arbitrary_bound_value())
-        .prop_map(|(line, column)| Position::try_new(line.max(1), column.max(1)).expect("non-zero"))
+        .prop_map(|(line, column)| Position::new(line.max(1), column.max(1)).expect("non-zero"))
         .boxed()
 }
 
@@ -128,7 +128,7 @@ fn advance_position(start: &Position, distance: u64) -> Position {
     } else {
         1
     };
-    Position::try_new(line, column).expect("non-zero")
+    Position::new(line, column).expect("non-zero")
 }
 
 /// Build the span with the given bounds through the single-bound builders.
@@ -388,8 +388,8 @@ proptest! {
         left in (1_u64..=u64::MAX, 1_u64..=u64::MAX),
         right in (1_u64..=u64::MAX, 1_u64..=u64::MAX),
     ) {
-        let left_position = Position::try_new(left.0, left.1).expect("non-zero");
-        let right_position = Position::try_new(right.0, right.1).expect("non-zero");
+        let left_position = Position::new(left.0, left.1).expect("non-zero");
+        let right_position = Position::new(right.0, right.1).expect("non-zero");
 
         prop_assert_eq!(left_position.cmp(&right_position), left.cmp(&right));
     }

@@ -12,9 +12,43 @@ use crate::expression::{BinaryOperation, Expression, ExpressionKind, LiteralValu
 use crate::identifier::Identifier;
 
 use super::context::ParamContext;
-use super::domain::{IntervalIntegerDomain, IntervalProfile, ParamDomain, is_bound_expression};
+use super::domain::{
+    IntervalIntegerDomain, IntervalProfile, ParamDomain, Sign, ZeroInclusion, is_bound_expression,
+};
 use super::error::ParamError;
 use super::parameter::Param;
+
+/// Whether a bound includes its value.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "a bound is inclusive or exclusive, which callers match"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Inclusivity {
+    /// The bound's value is admissible: `>=` or `<=`.
+    Inclusive,
+    /// The bound's value is not admissible: `>` or `<`.
+    Exclusive,
+}
+
+impl Inclusivity {
+    /// Return [`Inclusive`](Self::Inclusive) if `is_inclusive`, and
+    /// [`Exclusive`](Self::Exclusive) otherwise.
+    #[must_use]
+    pub const fn inclusive_if(is_inclusive: bool) -> Self {
+        if is_inclusive {
+            Self::Inclusive
+        } else {
+            Self::Exclusive
+        }
+    }
+
+    /// Return whether the bound is [`Inclusive`](Self::Inclusive).
+    #[must_use]
+    pub const fn is_inclusive(self) -> bool {
+        matches!(self, Self::Inclusive)
+    }
+}
 
 /// Which side of an interval a bound closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -211,12 +245,14 @@ fn compare_exactly(left: &LiteralValue, right: &LiteralValue) -> Option<Ordering
 pub fn check_bounds_are_ordered(
     lower: &LiteralValue,
     upper: &LiteralValue,
-    is_lower_inclusive: bool,
-    is_upper_inclusive: bool,
+    lower_inclusivity: Inclusivity,
+    upper_inclusivity: Inclusivity,
 ) -> Result<(), ParamError> {
     match compare_exactly(lower, upper) {
         Some(Ordering::Greater) => Err(ParamError::UnorderedBounds),
-        Some(Ordering::Equal) if !(is_lower_inclusive && is_upper_inclusive) => {
+        Some(Ordering::Equal)
+            if !(lower_inclusivity.is_inclusive() && upper_inclusivity.is_inclusive()) =>
+        {
             Err(ParamError::UnorderedBounds)
         }
         _ => Ok(()),
@@ -500,10 +536,16 @@ pub(super) fn build_interval_param(
     context: &ParamContext<'_>,
 ) -> Result<Param, ParamError> {
     let domain = match natural {
-        Some(zero_included) => {
-            IntervalIntegerDomain::new(template.prefer_inclusive, true, zero_included)
-        }
-        None => IntervalIntegerDomain::new(template.prefer_inclusive, false, true),
+        Some(zero_included) => IntervalIntegerDomain::new(
+            Inclusivity::inclusive_if(template.prefer_inclusive),
+            Sign::NonNegative,
+            ZeroInclusion::included_if(zero_included),
+        ),
+        None => IntervalIntegerDomain::new(
+            Inclusivity::inclusive_if(template.prefer_inclusive),
+            Sign::Any,
+            ZeroInclusion::Included,
+        ),
     };
     let profile = ParamDomain::from(domain)
         .interval_profile()?
@@ -543,7 +585,11 @@ pub(super) fn coerce_to_interval(
 ) -> Result<Param, ParamError> {
     match other {
         Operand::Integer(value) => {
-            let domain = IntervalIntegerDomain::new(template.prefer_inclusive, false, true);
+            let domain = IntervalIntegerDomain::new(
+                Inclusivity::inclusive_if(template.prefer_inclusive),
+                Sign::Any,
+                ZeroInclusion::Included,
+            );
             let literal = LiteralValue::Int(value.clone());
             Param::new(
                 ParamDomain::from(domain),
@@ -571,9 +617,9 @@ pub(super) fn coerce_to_interval(
             }
             Param::new(
                 ParamDomain::from(IntervalIntegerDomain::new(
-                    template.prefer_inclusive,
-                    false,
-                    true,
+                    Inclusivity::inclusive_if(template.prefer_inclusive),
+                    Sign::Any,
+                    ZeroInclusion::Included,
                 )),
                 param.variable().clone(),
                 param.constraints().to_vec(),

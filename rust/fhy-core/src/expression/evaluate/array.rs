@@ -155,7 +155,7 @@ impl Prepared<'_> {
     /// failed lane of the result in C order, and also
     /// [`EvaluationError::Shape`] for operands that do not broadcast and
     /// [`EvaluationError::Kernel`] for a failing kernel.
-    pub fn evaluate_array<S: BuildHasher>(
+    pub fn evaluate_array<S: BuildHasher + Sync>(
         &self,
         environment: &HashMap<Identifier, ArrayBinding<'_>, S>,
         kernels: &dyn ArrayKernels,

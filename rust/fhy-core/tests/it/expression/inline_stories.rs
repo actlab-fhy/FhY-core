@@ -24,7 +24,7 @@ use expression_support::{build_doubling_dag, build_identifier, build_literal, ex
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 fn name(text: &str) -> FunctionName {
-    FunctionName::try_new(text).expect("the test names no built-in")
+    FunctionName::new(text).expect("the test names no built-in")
 }
 
 fn call(
@@ -44,7 +44,7 @@ fn define(
     build_body: impl FnOnce(&Expression) -> Expression,
 ) -> FunctionDefinition {
     let (x, reference) = build_identifier("x");
-    FunctionDefinition::try_new(
+    FunctionDefinition::new(
         name(function),
         [x],
         [FunctionSort::Real],
@@ -350,7 +350,7 @@ fn inline_refuses_a_call_of_a_constant() {
     let mut registry = FunctionRegistry::new();
     registry
         .register_constant(
-            NativeConstant::try_new(name("c"), FunctionSort::Int, 3).expect("an integer"),
+            NativeConstant::new(name("c"), FunctionSort::Int, 3).expect("an integer"),
         )
         .expect("free");
 
@@ -521,7 +521,7 @@ fn inline_refuses_a_substitution_that_breaks_a_piecewise_condition() {
     let (flag, flag_reference) = build_identifier("flag");
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("choose"),
                 [flag],
                 [FunctionSort::Bool],

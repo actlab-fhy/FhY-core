@@ -11,8 +11,8 @@
 use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
-use std::cell::Cell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
     build_call_or_panic, build_decimal_literal, build_deep_conjunction, build_identifier,
@@ -1190,12 +1190,12 @@ fn boolean_screen_accepts_a_closure_for_symbol_types() {
 /// knowing none.
 #[derive(Debug, Default)]
 struct CountingSorts {
-    call_result_sorts: Cell<usize>,
+    call_result_sorts: AtomicUsize,
 }
 
 impl SortLookup for CountingSorts {
     fn call_result_sort(&self, _name: &FunctionName) -> Option<FunctionSort> {
-        self.call_result_sorts.set(self.call_result_sorts.get() + 1);
+        self.call_result_sorts.fetch_add(1, Ordering::Relaxed);
         None
     }
 }
@@ -1220,7 +1220,7 @@ fn boolean_screen_judges_each_nested_piecewise_once() {
         .check_predicate(&chain);
 
     assert_eq!(result, Ok(()));
-    let lookups = sorts.call_result_sorts.get();
+    let lookups = sorts.call_result_sorts.load(Ordering::Relaxed);
     assert!(lookups <= 2 * DEPTH, "{lookups} lookups for {DEPTH} levels");
     assert!(lookups >= DEPTH, "{lookups} lookups for {DEPTH} levels");
 }
@@ -1235,7 +1235,7 @@ fn boolean_screen_debug_writes_the_type_name() {
 #[test]
 fn no_registered_sorts_knows_nothing() {
     let (x, _) = build_identifier("x");
-    let f = FunctionName::try_new("f").expect("a user function name");
+    let f = FunctionName::new("f").expect("a user function name");
 
     assert_eq!(NoRegisteredSorts.native_constant_sort(&x), None);
     assert_eq!(NoRegisteredSorts.call_result_sort(&f), None);

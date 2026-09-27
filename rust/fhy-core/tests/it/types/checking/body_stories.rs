@@ -13,7 +13,7 @@ use fhy_core::types::checking::{
 };
 
 fn name(text: &str) -> FunctionName {
-    FunctionName::try_new(text).expect("a name")
+    FunctionName::new(text).expect("a name")
 }
 
 fn reference(identifier: &Identifier) -> Expression {
@@ -186,7 +186,7 @@ fn a_self_recursive_body_resolves_its_own_call() {
     let body = build_call_or_panic("countdown", [reference(&x) - 1]);
     registry
         .register_function(
-            FunctionDefinition::try_new(
+            FunctionDefinition::new(
                 name("countdown"),
                 [x.clone()],
                 [FunctionSort::Int],
@@ -231,7 +231,7 @@ fn the_sweep_reports_each_failing_user_body_in_registration_order() {
     ] {
         registry
             .register_function(
-                FunctionDefinition::try_new(
+                FunctionDefinition::new(
                     name(function),
                     [x.clone()],
                     [FunctionSort::Int],

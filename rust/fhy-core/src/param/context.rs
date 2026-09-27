@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::constraint::{
-    Bindings, Constraint, ConstraintContext, ConstraintError, ConstraintSystem, Event, Member,
-    Observer, Outcome,
+    Bindings, Constraint, ConstraintContext, ConstraintError, ConstraintEvent, ConstraintObserver,
+    ConstraintSystem, Member, Outcome,
 };
 use crate::expression::SymbolType;
 use crate::expression::registry::FunctionRegistry;
@@ -49,7 +49,7 @@ pub enum ParamEvent<'a> {
         /// The bindings it was evaluated under.
         bindings: &'a Bindings,
         /// What it reported.
-        event: &'a Event<'a>,
+        event: &'a ConstraintEvent<'a>,
     },
     /// A constraint of a conjunction evaluated under bindings answered
     /// [`Outcome::Undecided`].
@@ -74,7 +74,7 @@ pub enum ParamEvent<'a> {
         /// The symbol types of the question.
         symbol_types: &'a HashMap<Identifier, SymbolType>,
         /// What it reported.
-        event: &'a Event<'a>,
+        event: &'a ConstraintEvent<'a>,
     },
     /// Screening dropped or narrowed a constraint for `variable`.
     Screened {
@@ -177,14 +177,18 @@ impl ParamObserver for NoParamObserver {
     fn notify(&self, _event: &ParamEvent<'_>) {}
 }
 
-/// What a param question is asked with: the [`Solver`] whose simplifier
-/// evaluates equations and whose SMT backend answers questions, the
-/// [`FunctionRegistry`] that knows the native constants, and the
-/// [`ParamObserver`].
+/// What a param question is asked with: the [`ConstraintContext`] its
+/// constraints are evaluated and asked about with, holding the [`Solver`]
+/// whose simplifier evaluates equations and whose SMT backend answers
+/// questions and the [`FunctionRegistry`] that knows the native constants,
+/// and the [`ParamObserver`].
+///
+/// It lends its constraint context to the constraint procedures a question
+/// calls, each time with an observer that forwards the constraint's events
+/// to the param observer.
 #[derive(Clone, Copy)]
 pub struct ParamContext<'a> {
-    solver: &'a Solver,
-    registry: Option<&'a FunctionRegistry>,
+    constraint: ConstraintContext<'a>,
     observer: &'a dyn ParamObserver,
 }
 
@@ -194,8 +198,7 @@ impl<'a> ParamContext<'a> {
     #[must_use]
     pub fn new(solver: &'a Solver) -> Self {
         Self {
-            solver,
-            registry: None,
+            constraint: ConstraintContext::new(solver),
             observer: &NoParamObserver,
         }
     }
@@ -204,7 +207,7 @@ impl<'a> ParamContext<'a> {
     #[must_use]
     pub fn with_registry(self, registry: &'a FunctionRegistry) -> Self {
         Self {
-            registry: Some(registry),
+            constraint: self.constraint.with_registry(registry),
             ..self
         }
     }
@@ -218,34 +221,39 @@ impl<'a> ParamContext<'a> {
     /// Return the solver.
     #[must_use]
     pub fn solver(&self) -> &'a Solver {
-        self.solver
+        self.constraint.solver()
     }
 
     /// Return the registry, if any.
     #[must_use]
     pub fn registry(&self) -> Option<&'a FunctionRegistry> {
-        self.registry
+        self.constraint.registry()
     }
 
-    /// Return the constraint context of the solver and the registry,
-    /// reporting to `observer`.
-    pub(super) fn constraint_context<'b>(&self, observer: &'b dyn Observer) -> ConstraintContext<'b>
+    /// Return the constraint context of the solver and the registry, which
+    /// reports no event; a param question evaluates its constraints with it,
+    /// forwarding their events to the param observer.
+    #[must_use]
+    pub fn constraint_context(&self) -> &ConstraintContext<'a> {
+        &self.constraint
+    }
+
+    /// Return the constraint context reporting to `observer`.
+    pub(super) fn constraint_context_with<'b>(
+        &self,
+        observer: &'b dyn ConstraintObserver,
+    ) -> ConstraintContext<'b>
     where
         'a: 'b,
     {
-        let context = ConstraintContext::new(self.solver).with_observer(observer);
-        match self.registry {
-            Some(registry) => context.with_registry(registry),
-            None => context,
-        }
+        self.constraint.with_observer(observer)
     }
 
     /// Return whether `identifier` is a native constant's canonical
     /// identifier.
     #[must_use]
     pub fn is_native_constant(&self, identifier: &Identifier) -> bool {
-        self.constraint_context(&crate::constraint::NoObserver)
-            .is_native_constant(identifier)
+        self.constraint.is_native_constant(identifier)
     }
 
     /// Report `event` to the observer.
@@ -263,7 +271,7 @@ impl fmt::Debug for ParamContext<'_> {
     /// Write the solver only: the observer need not implement `Debug`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ParamContext")
-            .field("solver", &self.solver)
+            .field("solver", &self.solver())
             .finish_non_exhaustive()
     }
 }
@@ -276,8 +284,8 @@ pub(super) struct MemberForwarder<'a> {
     pub(super) bindings: &'a Bindings,
 }
 
-impl Observer for MemberForwarder<'_> {
-    fn notify(&self, event: &Event<'_>) {
+impl ConstraintObserver for MemberForwarder<'_> {
+    fn notify(&self, event: &ConstraintEvent<'_>) {
         self.context.notify(&ParamEvent::Member {
             constraint: self.constraint,
             bindings: self.bindings,
@@ -294,8 +302,8 @@ pub(super) struct QuestionForwarder<'a> {
     pub(super) symbol_types: &'a HashMap<Identifier, SymbolType>,
 }
 
-impl Observer for QuestionForwarder<'_> {
-    fn notify(&self, event: &Event<'_>) {
+impl ConstraintObserver for QuestionForwarder<'_> {
+    fn notify(&self, event: &ConstraintEvent<'_>) {
         self.context.notify(&ParamEvent::Question {
             system: self.system,
             symbol_types: self.symbol_types,

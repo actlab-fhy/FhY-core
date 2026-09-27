@@ -23,7 +23,7 @@ use super::error::{BinderPairingError, NonInjectiveRenamingError, RenamingPart};
 ///   returns a renaming with one more frame instead. An inner frame shadows
 ///   outer ones, and two frames may share an image, as two nested binders
 ///   may bind one name.
-/// - **The free renaming** ([`try_new`](Self::try_new)) pairs identifiers
+/// - **The free renaming** ([`new`](Self::new)) pairs identifiers
 ///   that no frame binds, for comparing two terms drawn from different
 ///   scopes. An identifier it does not map corresponds only to itself, and
 ///   only when it is not an image.
@@ -50,13 +50,13 @@ use super::error::{BinderPairingError, NonInjectiveRenamingError, RenamingPart};
 /// use fhy_core::term::AlphaRenaming;
 ///
 /// let (a, b, c) = (Identifier::new("a"), Identifier::new("b"), Identifier::new("c"));
-/// let renaming = AlphaRenaming::try_new(HashMap::from([(a.clone(), c.clone())]))
+/// let renaming = AlphaRenaming::new(HashMap::from([(a.clone(), c.clone())]))
 ///     .expect("one pair is injective");
 /// let sum = Expression::from(a.clone()) + 1;
 /// assert!(sum.is_alpha_equivalent_under(&(Expression::from(c.clone()) + 1), &renaming));
 ///
 /// let colliding = HashMap::from([(a, c.clone()), (b, c)]);
-/// assert!(AlphaRenaming::try_new(colliding).is_err());
+/// assert!(AlphaRenaming::new(colliding).is_err());
 /// ```
 ///
 /// Comparing the bodies of `\x. x + z` and `\y. y + z` under the binders'
@@ -98,7 +98,7 @@ impl AlphaRenaming {
     /// Returns [`NonInjectiveRenamingError`] naming a shared image and
     /// [`RenamingPart::FreeRenaming`] if two identifiers map to the same
     /// image.
-    pub fn try_new<S: BuildHasher>(
+    pub fn new<S: BuildHasher>(
         free_renaming: HashMap<Identifier, Identifier, S>,
     ) -> Result<Self, NonInjectiveRenamingError> {
         Ok(Self {

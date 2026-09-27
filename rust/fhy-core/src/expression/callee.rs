@@ -81,7 +81,7 @@ impl FromStr for Callee {
     fn from_str(name: &str) -> Result<Self, FunctionNameError> {
         match name.parse::<BuiltinFunction>() {
             Ok(function) => Ok(Self::Builtin(function)),
-            Err(_not_builtin) => FunctionName::try_new(name).map(Self::Named),
+            Err(_not_builtin) => FunctionName::new(name).map(Self::Named),
         }
     }
 }
@@ -97,7 +97,7 @@ impl fmt::Display for Callee {
 /// and not the name of any [`BuiltinFunction`].
 ///
 /// Serializes as a string, and deserializes from a string that
-/// [`try_new`](Self::try_new) accepts.
+/// [`new`](Self::new) accepts.
 ///
 /// # Examples
 ///
@@ -105,9 +105,9 @@ impl fmt::Display for Callee {
 /// use fhy_core::expression::builtins::BuiltinFunction;
 /// use fhy_core::expression::{FunctionName, FunctionNameError};
 ///
-/// assert_eq!(FunctionName::try_new("softplus")?.as_str(), "softplus");
+/// assert_eq!(FunctionName::new("softplus")?.as_str(), "softplus");
 /// assert_eq!(
-///     FunctionName::try_new("max"),
+///     FunctionName::new("max"),
 ///     Err(FunctionNameError::Builtin(BuiltinFunction::Max))
 /// );
 /// # Ok::<(), FunctionNameError>(())
@@ -123,7 +123,7 @@ impl FunctionName {
     /// Returns [`FunctionNameError::Empty`] if `name` is empty, and
     /// [`FunctionNameError::Builtin`] naming the built-in function if
     /// `name` is a built-in function's name.
-    pub fn try_new(name: &str) -> Result<Self, FunctionNameError> {
+    pub fn new(name: &str) -> Result<Self, FunctionNameError> {
         if name.is_empty() {
             return Err(FunctionNameError::Empty);
         }
@@ -162,7 +162,7 @@ impl Visitor<'_> for FunctionNameVisitor {
     }
 
     fn visit_str<E: de::Error>(self, name: &str) -> Result<FunctionName, E> {
-        FunctionName::try_new(name).map_err(E::custom)
+        FunctionName::new(name).map_err(E::custom)
     }
 }
 

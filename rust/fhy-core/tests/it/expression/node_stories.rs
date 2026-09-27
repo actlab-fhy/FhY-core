@@ -1003,7 +1003,7 @@ fn expression_piecewise_nodes_with_different_case_counts_are_unequal() {
 // =============================================================================
 
 fn build_renaming<const N: usize>(pairs: [(Identifier, Identifier); N]) -> AlphaRenaming {
-    AlphaRenaming::try_new(HashMap::from(pairs)).expect("the renaming is injective")
+    AlphaRenaming::new(HashMap::from(pairs)).expect("the renaming is injective")
 }
 
 #[test]
@@ -1083,7 +1083,7 @@ fn alpha_renaming_try_new_refuses_a_non_injective_map() {
     let (b, _) = build_identifier("b");
     let (c, _) = build_identifier("c");
 
-    let error = AlphaRenaming::try_new(HashMap::from([(a, c.clone()), (b, c.clone())]))
+    let error = AlphaRenaming::new(HashMap::from([(a, c.clone()), (b, c.clone())]))
         .expect_err("two identifiers share the image c");
 
     assert_eq!(error.image(), &c);
@@ -1109,7 +1109,7 @@ fn alpha_renaming_non_injective_refusal_is_symmetric() {
     let sum = &a_reference + &b_reference;
     let doubled = &c_reference + &c_reference;
 
-    let refused = AlphaRenaming::try_new(colliding);
+    let refused = AlphaRenaming::new(colliding);
 
     assert_eq!(refused.expect_err("c is a shared image").image(), &c);
     let forward = build_renaming([(a.clone(), c.clone())]);

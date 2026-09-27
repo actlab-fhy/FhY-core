@@ -8,6 +8,7 @@
 //! Objects the binding builds from core values are built through a seed
 //! handed to the public class's `__new__`, so they are not validated again.
 
+use fhy_core::param::Inclusivity;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -215,8 +216,8 @@ pub(crate) fn check_param_bounds_are_ordered(
     fhy_core::param::check_bounds_are_ordered(
         &lower,
         &upper,
-        is_lower_inclusive,
-        is_upper_inclusive,
+        Inclusivity::inclusive_if(is_lower_inclusive),
+        Inclusivity::inclusive_if(is_upper_inclusive),
     )
     .map_err(|error| param_error_to_py(py, error, None))
 }
@@ -483,8 +484,7 @@ impl PyParam {
     fn arithmetic<'py>(
         this: &Bound<'py, Self>,
         other: &Bound<'py, PyAny>,
-        operation: impl FnOnce(&Param, &Operand, &ParamContext<'_>) -> Result<Option<Param>, ParamError>
-        + Send,
+        operation: impl FnOnce(&Param, &Operand, &ParamContext<'_>) -> Result<Param, ParamError> + Send,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = this.py();
         let Some(operand) = Self::read_operand(other)? else {
@@ -507,7 +507,11 @@ impl PyParam {
         let result = run_with_context(
             py,
             false,
-            |context| operation(&core, &operand, context),
+            |context| match operation(&core, &operand, context) {
+                // Neither side is an interval operand: Python's `NotImplemented`.
+                Err(ParamError::NotAnIntervalOperand) => Ok(None),
+                result => result.map(Some),
+            },
             |error| {
                 Self::error_to_py(
                     this,
@@ -1487,7 +1491,7 @@ fn build_assignment<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let py = param.py();
     let core_value = read_assignment_value(value)?;
-    let core = ParamAssignment::new_unchecked(param.get().core.clone(), core_value);
+    let core = ParamAssignment::new_unvalidated(param.get().core.clone(), core_value);
     let seed = Py::new(
         py,
         PyAssignmentSeed {
@@ -1639,7 +1643,7 @@ impl PyParamAssignment {
         PyParam::validate(param_object, value, None)?;
         let normalized = PyParam::normalize(param_object, value)?;
         Ok(Self {
-            core: ParamAssignment::new_unchecked(
+            core: ParamAssignment::new_unvalidated(
                 param_object.get().core.clone(),
                 read_assignment_value(&normalized)?,
             ),

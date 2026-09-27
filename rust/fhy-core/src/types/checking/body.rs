@@ -152,7 +152,7 @@ pub fn check_all_function_bodies(
         let Some(composed) = function.composed() else {
             continue;
         };
-        let Ok(name) = FunctionName::try_new(function.name()) else {
+        let Ok(name) = FunctionName::new(function.name()) else {
             continue;
         };
         let signature = FunctionSignature::new(

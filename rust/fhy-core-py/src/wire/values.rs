@@ -20,7 +20,7 @@ pub(crate) fn serialize_wire_value<'py>(value: &Bound<'py, PyAny>) -> PyResult<B
     let py = value.py();
     let core = read_bound_value(value)?;
     if core.is_member_shaped() {
-        if let Ok(member) = Member::try_from_value(core.clone()) {
+        if let Ok(member) = Member::try_from(core.clone()) {
             return to_dict(py, &member);
         }
     }

@@ -13,7 +13,7 @@ use rstest::rstest;
 use crate::support::constraint::{TestOpaque, int, int_set, member_set};
 
 fn renaming(pairs: &[(&Identifier, &Identifier)]) -> AlphaRenaming {
-    AlphaRenaming::try_new(
+    AlphaRenaming::new(
         pairs
             .iter()
             .map(|(left, right)| ((*left).clone(), (*right).clone()))

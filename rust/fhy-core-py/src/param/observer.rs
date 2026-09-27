@@ -8,7 +8,9 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyFrozenSet, PyTuple};
 
-use fhy_core::constraint::{Binding, Bindings, Constraint, ConstraintError, Event, Member};
+use fhy_core::constraint::{
+    Binding, Bindings, Constraint, ConstraintError, ConstraintEvent, Member,
+};
 use fhy_core::param::{ParamEvent, ParamObserver, ScreenReason};
 use fhy_core::solver::QueryKind;
 
@@ -79,11 +81,11 @@ fn question_name(kind: QueryKind) -> &'static str {
 }
 
 /// Return the level a constraint's `event` is logged at, if any.
-fn member_event_level(event: &Event<'_>) -> Option<u8> {
+fn member_event_level(event: &ConstraintEvent<'_>) -> Option<u8> {
     match event {
-        Event::Unbound { .. } | Event::SymbolicBinding { .. } => Some(DEBUG),
-        Event::BoundNativeConstants { .. } => Some(WARNING),
-        Event::Residual {
+        ConstraintEvent::Unbound { .. } | ConstraintEvent::SymbolicBinding { .. } => Some(DEBUG),
+        ConstraintEvent::BoundNativeConstants { .. } => Some(WARNING),
+        ConstraintEvent::Residual {
             has_free_identifiers,
             ..
         } => Some(if *has_free_identifiers {
@@ -101,7 +103,7 @@ fn log_member_event(
     py: Python<'_>,
     constraint: &Constraint,
     bindings: &Bindings,
-    event: &Event<'_>,
+    event: &ConstraintEvent<'_>,
 ) -> PyResult<()> {
     let Some(level) = member_event_level(event) else {
         return Ok(());
@@ -307,10 +309,10 @@ impl PyParamObserver {
                 event,
                 ..
             } => match *event {
-                Event::Refused { kind, hazard } => {
+                ConstraintEvent::Refused { kind, hazard } => {
                     warn_hazard(py, question_name(kind), hazard, symbol_types)
                 }
-                Event::GaveUp { kind, reason } => {
+                ConstraintEvent::GaveUp { kind, reason } => {
                     warn_unknown(py, question_name(kind), &self.backend, reason)
                 }
                 _ => Ok(()),

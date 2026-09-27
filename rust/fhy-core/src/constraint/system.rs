@@ -10,7 +10,7 @@ use crate::solver::{Answer, CheckLimits, QueryContext, QueryKind, Question, Unkn
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::binding::{Binding, Bindings};
-use super::context::{ConstraintContext, Event, Observer};
+use super::context::{ConstraintContext, ConstraintEvent, ConstraintObserver};
 use super::error::ConstraintError;
 use super::{Constraint, Outcome};
 
@@ -54,8 +54,8 @@ impl ConstraintSystem {
     /// Members are evaluated in order: the first [`Violated`](Outcome::Violated)
     /// one answers, and otherwise any [`Undecided`](Outcome::Undecided)
     /// one makes the system undecided, reported as
-    /// [`Event::UndecidedMember`]. A member's own events are reported as
-    /// [`Event::InMember`].
+    /// [`ConstraintEvent::UndecidedMember`]. A member's own events are reported as
+    /// [`ConstraintEvent::InMember`].
     ///
     /// # Errors
     ///
@@ -72,7 +72,7 @@ impl ConstraintSystem {
             match constraint.evaluate(bindings, &member_context)? {
                 Outcome::Violated => return Ok(Outcome::Violated),
                 Outcome::Undecided => {
-                    context.notify(&Event::UndecidedMember { index });
+                    context.notify(&ConstraintEvent::UndecidedMember { index });
                     is_undecided = true;
                 }
                 Outcome::Satisfied => {}
@@ -101,8 +101,8 @@ impl ConstraintSystem {
     /// converted; `symbol_types` must cover the conjunction's identifiers,
     /// native constants aside; each member's expression must be a
     /// predicate; and the context's solver is asked. A refused or given-up
-    /// question is undecided, reported as [`Event::Refused`] or
-    /// [`Event::GaveUp`].
+    /// question is undecided, reported as [`ConstraintEvent::Refused`] or
+    /// [`ConstraintEvent::GaveUp`].
     ///
     /// # Errors
     ///
@@ -143,7 +143,7 @@ impl ConstraintSystem {
     /// 4. each residual member's expression must be a predicate, with the
     ///    bindings;
     /// 5. a bound native constant the system refers to makes it undecided,
-    ///    reported as [`Event::BoundNativeConstants`];
+    ///    reported as [`ConstraintEvent::BoundNativeConstants`];
     /// 6. the decided members fold as [`evaluate`](Self::evaluate) folds
     ///    them, a violation answering at once, and no residual answering
     ///    their fold;
@@ -204,7 +204,7 @@ impl ConstraintSystem {
             .collect();
         if !constants.is_empty() {
             constants.sort_by_key(Identifier::id);
-            context.notify(&Event::BoundNativeConstants {
+            context.notify(&ConstraintEvent::BoundNativeConstants {
                 identifiers: &constants,
             });
             return Ok(Outcome::Undecided);
@@ -301,15 +301,15 @@ impl AlphaEquivalence for ConstraintSystem {
 }
 
 /// The observer a member reports to while a system evaluates it: it wraps
-/// each event in [`Event::InMember`].
+/// each event in [`ConstraintEvent::InMember`].
 struct MemberObserver<'a> {
     context: &'a ConstraintContext<'a>,
     index: usize,
 }
 
-impl Observer for MemberObserver<'_> {
-    fn notify(&self, event: &Event<'_>) {
-        self.context.notify(&Event::InMember {
+impl ConstraintObserver for MemberObserver<'_> {
+    fn notify(&self, event: &ConstraintEvent<'_>) {
+        self.context.notify(&ConstraintEvent::InMember {
             index: self.index,
             event,
         });
@@ -406,14 +406,14 @@ fn ask(
         Answer::Yes => Outcome::Satisfied,
         Answer::No => Outcome::Violated,
         Answer::Unknown(UnknownReason::Refused(hazard)) => {
-            context.notify(&Event::Refused {
+            context.notify(&ConstraintEvent::Refused {
                 kind,
                 hazard: &hazard,
             });
             Outcome::Undecided
         }
         Answer::Unknown(UnknownReason::GaveUp { reason }) => {
-            context.notify(&Event::GaveUp {
+            context.notify(&ConstraintEvent::GaveUp {
                 kind,
                 reason: &reason,
             });

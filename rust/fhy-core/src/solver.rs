@@ -466,7 +466,7 @@ impl Solver {
     /// those checks, [`SolveError::Substitution`] if the substitution puts
     /// a literal other than a Boolean in a case condition, and
     /// [`SolveError::Backend`] when the simplifier fails.
-    pub fn simplify<S: BuildHasher>(
+    pub fn simplify<S: BuildHasher + Sync>(
         &self,
         expression: &Expression,
         environment: &HashMap<Identifier, Expression, S>,
@@ -587,3 +587,8 @@ impl<'a> Question<'a> {
         }
     }
 }
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<QueryContext<'static>>();
+};

@@ -421,23 +421,23 @@ impl Param {
         ))
     }
 
-    /// Return the sum of this param and `other`, over a fresh variable, or
-    /// `None` when neither is an interval operand.
+    /// Return the sum of this param and `other`, over a fresh variable.
     ///
     /// The result is natural when both operands' profiles are, admitting
     /// zero when the left one does.
     ///
     /// # Errors
     ///
-    /// Returns the coercion's and the bounds' errors.
+    /// Returns [`ParamError::NotAnIntervalOperand`] when neither operand is
+    /// an interval operand, and the coercion's and the bounds' errors.
     pub fn checked_add(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Option<Self>, ParamError> {
-        let Some((left, coerced, profile)) = self.resolve_operands(other, context)? else {
-            return Ok(None);
-        };
+    ) -> Result<Self, ParamError> {
+        let (left, coerced, profile) = self
+            .resolve_operands(other, context)?
+            .ok_or(ParamError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = Interval {
             min: combine_ends(own.min.as_ref(), others.min.as_ref(), |a, b| a + b),
@@ -446,72 +446,71 @@ impl Param {
         let coerced_profile = operand_profile(&coerced)?.ok_or(ParamError::NotAnIntervalOperand)?;
         let natural =
             (profile.non_negative && coerced_profile.non_negative).then_some(profile.zero_included);
-        build_interval_param(&interval, profile, natural, context).map(Some)
+        build_interval_param(&interval, profile, natural, context)
     }
 
-    /// Return this param minus `other`, over a fresh variable, or `None`
-    /// when neither is an interval operand. The result is never natural.
+    /// Return this param minus `other`, over a fresh variable. The result
+    /// is never natural.
     ///
     /// # Errors
     ///
-    /// Returns the coercion's and the bounds' errors.
+    /// Returns [`ParamError::NotAnIntervalOperand`] when neither operand is
+    /// an interval operand, and the coercion's and the bounds' errors.
     pub fn checked_sub(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Option<Self>, ParamError> {
-        let Some((left, coerced, profile)) = self.resolve_operands(other, context)? else {
-            return Ok(None);
-        };
+    ) -> Result<Self, ParamError> {
+        let (left, coerced, profile) = self
+            .resolve_operands(other, context)?
+            .ok_or(ParamError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = Interval {
             min: combine_ends(own.min.as_ref(), others.max.as_ref(), |a, b| a - b),
             max: combine_ends(own.max.as_ref(), others.min.as_ref(), |a, b| a - b),
         };
-        build_interval_param(&interval, profile, None, context).map(Some)
+        build_interval_param(&interval, profile, None, context)
     }
 
-    /// Return `other` minus this param, or `None` when this param is no
-    /// interval operand.
+    /// Return `other` minus this param.
     ///
     /// # Errors
     ///
-    /// Returns the coercion's and the bounds' errors.
+    /// Returns [`ParamError::NotAnIntervalOperand`] when this param is no
+    /// interval operand, and the coercion's and the bounds' errors.
     pub fn checked_reverse_sub(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Option<Self>, ParamError> {
-        let Some(profile) = operand_profile(self)? else {
-            return Ok(None);
-        };
+    ) -> Result<Self, ParamError> {
+        let profile = operand_profile(self)?.ok_or(ParamError::NotAnIntervalOperand)?;
         coerce_to_interval(profile, other, context)?
             .checked_sub(&Operand::Param(self.clone()), context)
     }
 
-    /// Return the product of this param and `other`, over a fresh variable,
-    /// or `None` when neither is an interval operand.
+    /// Return the product of this param and `other`, over a fresh variable.
     ///
     /// The result is natural when both operands' profiles are, admitting
     /// zero when either does.
     ///
     /// # Errors
     ///
-    /// Returns the coercion's and the bounds' errors.
+    /// Returns [`ParamError::NotAnIntervalOperand`] when neither operand is
+    /// an interval operand, and the coercion's and the bounds' errors.
     pub fn checked_mul(
         &self,
         other: &Operand,
         context: &ParamContext<'_>,
-    ) -> Result<Option<Self>, ParamError> {
-        let Some((left, coerced, profile)) = self.resolve_operands(other, context)? else {
-            return Ok(None);
-        };
+    ) -> Result<Self, ParamError> {
+        let (left, coerced, profile) = self
+            .resolve_operands(other, context)?
+            .ok_or(ParamError::NotAnIntervalOperand)?;
         let coerced_profile = operand_profile(&coerced)?.ok_or(ParamError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = multiply_intervals(&own, &others);
         let natural = (profile.non_negative && coerced_profile.non_negative)
             .then_some(profile.zero_included || coerced_profile.zero_included);
-        build_interval_param(&interval, profile, natural, context).map(Some)
+        build_interval_param(&interval, profile, natural, context)
     }
 
     /// Return the negation of this interval param, over a fresh variable.

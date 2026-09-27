@@ -140,12 +140,8 @@ fn user_constant_lowers_to_its_value_through_the_registry(
     let mut registry = FunctionRegistry::new();
     let constant = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
-                sort,
-                value,
-            )
-            .expect("a constant"),
+            NativeConstant::new(FunctionName::new("answer").expect("a name"), sort, value)
+                .expect("a constant"),
         )
         .expect("registered");
 
@@ -168,8 +164,8 @@ fn user_constant_without_a_registry_is_refused() {
     let mut registry = FunctionRegistry::new();
     let constant = registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )
@@ -406,8 +402,8 @@ fn registry_with_every_entry() -> FunctionRegistry {
     let parameter = Identifier::new("p");
     registry
         .register_function(
-            FunctionDefinition::try_new(
-                FunctionName::try_new("double").expect("a name"),
+            FunctionDefinition::new(
+                FunctionName::new("double").expect("a name"),
                 [parameter.clone()],
                 [FunctionSort::Real],
                 FunctionSort::Real,
@@ -418,15 +414,15 @@ fn registry_with_every_entry() -> FunctionRegistry {
         .expect("registered");
     registry
         .register_native_function(NativeFunction::new(
-            FunctionName::try_new("mystery").expect("a name"),
+            FunctionName::new("mystery").expect("a name"),
             [FunctionSort::Real],
             FunctionSort::Real,
         ))
         .expect("registered");
     registry
         .register_constant(
-            NativeConstant::try_new(
-                FunctionName::try_new("answer").expect("a name"),
+            NativeConstant::new(
+                FunctionName::new("answer").expect("a name"),
                 FunctionSort::Int,
                 42,
             )
@@ -465,11 +461,11 @@ fn call_sympy_has_no_function_for_is_refused_naming_it(#[case] name: &str, #[cas
 fn call_is_refused_before_its_arguments_are_lowered() {
     let registry = FunctionRegistry::new();
     let inner = Expression::call(
-        Callee::Named(FunctionName::try_new("inner").expect("a name")),
+        Callee::Named(FunctionName::new("inner").expect("a name")),
         [build_literal(1)],
     );
     let outer = Expression::call(
-        Callee::Named(FunctionName::try_new("outer").expect("a name")),
+        Callee::Named(FunctionName::new("outer").expect("a name")),
         [inner],
     );
 
