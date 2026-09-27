@@ -2225,24 +2225,27 @@ def test_check_satisfiability_divide_by_nonzero_literal_stays_decided() -> None:
 
 
 # =============================================================================
-# Int/float `EQUAL`/`NOT_EQUAL` sort-mixing hazard screen
+# Int/float `EQUAL`/`NOT_EQUAL` is decided by value (R2-040)
 # =============================================================================
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
-    "operation",
-    [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
+    "operation, expected",
+    [
+        (BinaryOperation.EQUAL, ConstraintOutcome.VIOLATED),
+        (BinaryOperation.NOT_EQUAL, ConstraintOutcome.SATISFIED),
+    ],
     ids=["equal", "not_equal"],
 )
-def test_check_satisfiability_int_identifier_against_float_literal_is_undecided(
-    operation: BinaryOperation,
+def test_check_satisfiability_int_identifier_against_float_literal_is_decided(
+    operation: BinaryOperation, expected: ConstraintOutcome
 ) -> None:
     """Test EQUAL/NOT_EQUAL mixing an INT-sorted identifier and a float literal.
 
-    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
-    this package's type-strict int/float distinction (no ``int`` is ever
-    ``==`` a ``float`` under ``evaluate_with_bindings``), so the screen
-    refuses to hand the comparison to the solver.
+    The expression evaluator compares an ``int`` with a ``float`` by value,
+    and so does the lowering's ``to_real``: no integer equals ``1.5``, and
+    every integer differs from it.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(
@@ -2251,13 +2254,14 @@ def test_check_satisfiability_int_identifier_against_float_literal_is_undecided(
 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
-    assert outcome is ConstraintOutcome.UNDECIDED
+    assert outcome is expected
 
 
-def test_check_satisfiability_logs_warning_for_the_int_float_equality_hazard(
+@pytest.mark.z3
+def test_check_satisfiability_logs_nothing_for_an_int_float_equality(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test the int/float equality screen reports what it refused to lower."""
+    """Test an int/float equality is answered without a refusal warning."""
     x = mock_identifier("x", 0)
     system = create_constraint_system(
         EquationConstraint(make_binary_expression(BinaryOperation.EQUAL, x, 1.5))
@@ -2266,19 +2270,16 @@ def test_check_satisfiability_logs_warning_for_the_int_float_equality_hazard(
     with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = system.check_satisfiability({x: SymbolType.INT})
 
-    assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_solver_records(caplog, logging.WARNING)
-    assert warnings, "expected a WARNING naming the hazardous node"
-    message = warnings[0].getMessage()
-    assert "check_expression_satisfiability" in message
-    assert repr(x) in message
+    assert outcome is ConstraintOutcome.VIOLATED
+    assert _find_solver_records(caplog, logging.WARNING) == []
 
 
-def test_check_satisfiability_with_bindings_int_float_hazard_screens_residual() -> None:
-    """Test the residual after substitution is screened the same way.
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_int_float_residual_is_decided() -> None:
+    """Test the residual after substitution is decided the same way.
 
-    Binding ``y`` to a float-bucket value against an ``INT``-sorted ``x``
-    in ``x == y`` leaves the same hazardous shape in the residual.
+    Binding ``y`` to ``1.5`` against an ``INT``-sorted ``x`` in ``x == y``
+    leaves ``x == 1.5``, which no integer satisfies.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -2288,7 +2289,7 @@ def test_check_satisfiability_with_bindings_int_float_hazard_screens_residual() 
 
     outcome = system.check_satisfiability_with_bindings({y: 1.5}, {x: SymbolType.INT})
 
-    assert outcome is ConstraintOutcome.UNDECIDED
+    assert outcome is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3
@@ -2343,6 +2344,11 @@ def test_check_satisfiability_int_identifier_lt_float_literal_not_screened() -> 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
     assert outcome is ConstraintOutcome.SATISFIED
+
+
+# A set constraint's residual stays refused where its variable's kind and a
+# member's differ: membership is type-strict, while its lowered equality
+# would be read by value (R2-040, as the maintainer revised it).
 
 
 def test_check_satisfiability_with_bindings_int_addition_vs_float_set_undecided() -> (

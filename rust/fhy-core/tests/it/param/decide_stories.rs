@@ -987,7 +987,7 @@ fn real_implication_downgrades_a_satisfaction_resting_on_a_float_member() {
 }
 
 #[test]
-fn integer_implication_leaves_a_float_member_to_the_solver_s_screen() {
+fn integer_implication_leaves_a_float_member_to_the_membership_screen() {
     let x = Identifier::new("x");
     let y = Identifier::new("y");
     let (solver, smt) = scripted_solver(SatResult::Unsat);
@@ -1004,7 +1004,8 @@ fn integer_implication_leaves_a_float_member_to_the_solver_s_screen() {
     )
     .expect("decides");
 
-    // Comparing an INT with a REAL is a hazard the solver refuses, so the
+    // A float member of an INT variable's set is a hazard the constraint
+    // layer's membership screen refuses (R2-040 as revised), so the
     // question is undecided without a downgrade.
     assert_eq!(outcome, Outcome::Undecided);
     assert!(smt.checks().is_empty());

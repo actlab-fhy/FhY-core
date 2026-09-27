@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::expression::{BooleanScreen, Expression, ExpressionKind, SymbolTypes};
 use crate::identifier::Identifier;
-use crate::solver::{Answer, CheckLimits, QueryContext, QueryKind, Question, UnknownReason};
+use crate::solver::{
+    Answer, CheckLimits, Hazard, QueryContext, QueryKind, Question, UnknownReason,
+};
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::binding::{Binding, Bindings};
@@ -112,6 +114,13 @@ impl ConstraintSystem {
     /// question is undecided, reported as [`ConstraintEvent::Refused`] or
     /// [`ConstraintEvent::GaveUp`].
     ///
+    /// A set member's expression is screened with
+    /// [`Hazard::find_for_membership`] before the solver's own screen, so a
+    /// member of another numeric kind than its variable's is refused: the
+    /// solver would read `x == 2.0` by value, where membership keeps `2` and
+    /// `2.0` apart. An equation's equality of an integer with a real is
+    /// answered by value, as the evaluator decides it.
+    ///
     /// # Errors
     ///
     /// Returns [`ConstraintError::UnliftableMember`] or
@@ -131,8 +140,10 @@ impl ConstraintSystem {
         let conjunction = conjoin(members.clone());
         check_symbol_types(conjunction.free_identifiers(), symbol_types, context)?;
         screen_members(&members, None, symbol_types, context)?;
+        let memberships = memberships_of(self.constraints.iter(), &members);
         ask(
             &Question::Satisfiability(&conjunction),
+            &memberships,
             symbol_types,
             limits,
             context,
@@ -232,8 +243,17 @@ impl ConstraintSystem {
             .substitute(&environment)
             .map_err(ConstraintError::Substitution)?;
         check_symbol_types(substituted.free_identifiers(), symbol_types, context)?;
+        let memberships = memberships_of(rest.iter().copied(), &rest_members)
+            .into_iter()
+            .map(|membership| {
+                membership
+                    .substitute(&environment)
+                    .map_err(ConstraintError::Substitution)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let residual_outcome = ask(
             &Question::Satisfiability(&substituted),
+            &memberships,
             symbol_types,
             limits,
             context,
@@ -251,7 +271,8 @@ impl ConstraintSystem {
     /// In order: both systems are converted; `symbol_types` must cover both
     /// sides' identifiers, native constants aside; each member of this
     /// system, then of `other`, must be a predicate; and the solver is
-    /// asked.
+    /// asked, both sides' set members screened first as
+    /// [`check_satisfiability`](Self::check_satisfiability) screens them.
     ///
     /// # Errors
     ///
@@ -272,11 +293,17 @@ impl ConstraintSystem {
         check_symbol_types(mentioned, symbol_types, context)?;
         screen_members(&antecedent_members, None, symbol_types, context)?;
         screen_members(&consequent_members, None, symbol_types, context)?;
+        let mut memberships = memberships_of(self.constraints.iter(), &antecedent_members);
+        memberships.extend(memberships_of(
+            other.constraints.iter(),
+            &consequent_members,
+        ));
         ask(
             &Question::Implication {
                 antecedent: &antecedent,
                 consequent: &consequent,
             },
+            &memberships,
             symbol_types,
             limits,
             context,
@@ -440,22 +467,63 @@ fn screen_members(
     Ok(())
 }
 
+/// Return the expressions of the set members of `constraints`, whose
+/// converted expressions are `members`, in order.
+fn memberships_of<'c>(
+    constraints: impl IntoIterator<Item = &'c Constraint>,
+    members: &[Expression],
+) -> Vec<Expression> {
+    constraints
+        .into_iter()
+        .zip(members)
+        .filter(|(constraint, _)| matches!(constraint, Constraint::Set(_)))
+        .map(|(_, member)| member.clone())
+        .collect()
+}
+
+/// Return the first hazard [`Hazard::find_for_membership`] finds in
+/// `memberships`, the expressions of a question's set members.
+fn find_membership_hazard(
+    memberships: &[Expression],
+    symbol_types: &dyn SymbolTypes,
+    context: &ConstraintContext<'_>,
+) -> Option<Hazard> {
+    memberships.iter().find_map(|membership| {
+        Hazard::find_for_membership(membership, symbol_types, context.sorts())
+    })
+}
+
 /// Ask `question` of the context's solver, and read its answer: undecided
 /// for a refusal or an `unknown`, each reported.
+///
+/// `memberships`, the expressions of the question's set members, are
+/// screened for type-strict membership first, once the solver is known to
+/// answer the question's kind, and a hazard there refuses the question as
+/// the solver's own screen does.
 fn ask(
     question: &Question<'_>,
+    memberships: &[Expression],
     symbol_types: &dyn SymbolTypes,
     limits: CheckLimits,
     context: &ConstraintContext<'_>,
 ) -> Result<Outcome, ConstraintError> {
-    let query = QueryContext::new(symbol_types)
-        .with_sorts(context.sorts())
-        .with_limits(limits);
-    let answer = context
-        .solver()
-        .ask(question, &query)
-        .map_err(ConstraintError::Solve)?;
     let kind: QueryKind = question.kind();
+    let refusal = context
+        .solver()
+        .can_answer(kind)
+        .then(|| find_membership_hazard(memberships, symbol_types, context))
+        .flatten();
+    let answer = if let Some(hazard) = refusal {
+        Answer::Unknown(UnknownReason::Refused(hazard))
+    } else {
+        let query = QueryContext::new(symbol_types)
+            .with_sorts(context.sorts())
+            .with_limits(limits);
+        context
+            .solver()
+            .ask(question, &query)
+            .map_err(ConstraintError::Solve)?
+    };
     Ok(match answer {
         Answer::Yes => Outcome::Satisfied,
         Answer::No => Outcome::Violated,

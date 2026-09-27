@@ -450,8 +450,54 @@ fn partial_operation_hazard_admits_every_spelling_of_an_integer_divisor() {
 }
 
 // ---------------------------------------------------------------------------
-// Mixed int/real equality
+// Mixed int/real equality: admitted by `find`, refused for the equalities of
+// type-strict membership by `find_for_membership` (R2-040)
 // ---------------------------------------------------------------------------
+
+/// Return [`Hazard::find_for_membership`] of `expression` with no registered
+/// sorts.
+fn find_for_membership(
+    expression: &Expression,
+    symbol_types: &HashMap<Identifier, SymbolType>,
+) -> Option<Hazard> {
+    Hazard::find_for_membership(expression, symbol_types, &NoRegisteredSorts)
+}
+
+#[rstest]
+#[case::int_against_a_float(SymbolType::Int, build_literal(1.5), BinaryOperation::Equal)]
+#[case::int_against_a_whole_float(SymbolType::Int, build_literal(1.0), BinaryOperation::Equal)]
+#[case::int_unequal_to_a_float(SymbolType::Int, build_literal(1.0), BinaryOperation::NotEqual)]
+#[case::real_against_an_int(SymbolType::Real, build_literal(1), BinaryOperation::Equal)]
+#[case::int_against_a_decimal(SymbolType::Int, build_decimal("1.5"), BinaryOperation::Equal)]
+fn find_admits_an_equality_of_a_literal_with_an_operand_of_the_other_kind(
+    #[case] sort: SymbolType,
+    #[case] literal: Expression,
+    #[case] operation: BinaryOperation,
+) {
+    let (x, reference) = build_identifier("x");
+    let on_the_right = build_binary(operation, reference.clone(), literal.clone());
+    let on_the_left = build_binary(operation, literal, reference);
+    let symbol_types = build_symbol_types(&[(&x, sort)]);
+
+    assert_eq!(find(&on_the_right, &symbol_types), None);
+    assert_eq!(find(&on_the_left, &symbol_types), None);
+    assert_eq!(
+        find_for_membership(&on_the_right, &symbol_types),
+        Some(Hazard::MixedIntRealEquality(on_the_right))
+    );
+}
+
+#[test]
+fn find_for_membership_reports_the_other_hazards_first() {
+    let (x, reference) = build_identifier("x");
+    let division = reference.clone() / reference.clone();
+    let expression = Expression::all([reference.equals(1.5), division.clone().equals(1)]);
+
+    assert_eq!(
+        find_for_membership(&expression, &build_symbol_types(&[(&x, SymbolType::Int)])),
+        Some(Hazard::PartialOperation(division))
+    );
+}
 
 #[rstest]
 #[case::int_against_a_float(SymbolType::Int, build_literal(1.5), BinaryOperation::Equal)]
@@ -473,7 +519,7 @@ fn mixed_equality_hazard_refuses_a_literal_of_another_kind(
     };
 
     assert_eq!(
-        find(&expression, &symbol_types),
+        find_for_membership(&expression, &symbol_types),
         Some(Hazard::MixedIntRealEquality(expression))
     );
 }
@@ -493,7 +539,10 @@ fn mixed_equality_hazard_admits_a_literal_of_the_same_kind_or_an_ordering(
     let (x, reference) = build_identifier("x");
     let expression = build_binary(operation, reference, literal);
 
-    assert_eq!(find(&expression, &build_symbol_types(&[(&x, sort)])), None);
+    assert_eq!(
+        find_for_membership(&expression, &build_symbol_types(&[(&x, sort)])),
+        None
+    );
 }
 
 #[rstest]
@@ -509,15 +558,15 @@ fn mixed_equality_hazard_follows_the_integer_kind_through_arithmetic(#[case] ope
     let float_on_the_left = build_literal(3.0).equals(operand);
 
     assert_eq!(
-        Hazard::find(&against_a_float, &int_types, &NoRegisteredSorts),
+        Hazard::find_for_membership(&against_a_float, &int_types, &NoRegisteredSorts),
         Some(Hazard::MixedIntRealEquality(against_a_float))
     );
     assert_eq!(
-        Hazard::find(&float_on_the_left, &int_types, &NoRegisteredSorts),
+        Hazard::find_for_membership(&float_on_the_left, &int_types, &NoRegisteredSorts),
         Some(Hazard::MixedIntRealEquality(float_on_the_left))
     );
     assert_eq!(
-        Hazard::find(&against_an_int, &int_types, &NoRegisteredSorts),
+        Hazard::find_for_membership(&against_an_int, &int_types, &NoRegisteredSorts),
         None
     );
 }
@@ -528,8 +577,14 @@ fn mixed_equality_hazard_reads_a_real_operand_of_arithmetic_as_real() {
     let (r, r_reference) = build_identifier("r");
     let symbol_types = build_symbol_types(&[(&y, SymbolType::Int), (&r, SymbolType::Real)]);
 
-    assert_eq!(find(&(y_reference * 1.0).equals(3.0), &symbol_types), None);
-    assert_eq!(find(&(r_reference + 1).equals(3.0), &symbol_types), None);
+    assert_eq!(
+        find_for_membership(&(y_reference * 1.0).equals(3.0), &symbol_types),
+        None
+    );
+    assert_eq!(
+        find_for_membership(&(r_reference + 1).equals(3.0), &symbol_types),
+        None
+    );
 }
 
 #[test]
@@ -538,7 +593,10 @@ fn mixed_equality_hazard_admits_an_equality_of_two_non_literals() {
     let (r, r_reference) = build_identifier("r");
     let symbol_types = build_symbol_types(&[(&y, SymbolType::Int), (&r, SymbolType::Real)]);
 
-    assert_eq!(find(&y_reference.equals(r_reference), &symbol_types), None);
+    assert_eq!(
+        find_for_membership(&y_reference.equals(r_reference), &symbol_types),
+        None
+    );
 }
 
 #[test]
@@ -562,15 +620,15 @@ fn mixed_equality_hazard_reads_a_piecewise_kind_from_its_branches() {
     let float_against_mixed = build_literal(3.0).equals(mixed);
 
     assert_eq!(
-        find(&int_against_all_real, &symbol_types),
+        find_for_membership(&int_against_all_real, &symbol_types),
         Some(Hazard::MixedIntRealEquality(int_against_all_real))
     );
     assert_eq!(
-        find(&float_against_mixed, &symbol_types),
+        find_for_membership(&float_against_mixed, &symbol_types),
         Some(Hazard::MixedIntRealEquality(float_against_mixed))
     );
     assert_eq!(
-        find(&build_literal(1.0).equals(all_real), &symbol_types),
+        find_for_membership(&build_literal(1.0).equals(all_real), &symbol_types),
         None
     );
 }
@@ -588,7 +646,7 @@ fn mixed_equality_hazard_classifies_every_literal_spelling_by_its_value(
     let expression = left.equals(right);
 
     assert_eq!(
-        find(&expression, &HashMap::new()),
+        find_for_membership(&expression, &HashMap::new()),
         is_refused.then(|| Hazard::MixedIntRealEquality(expression))
     );
 }
@@ -608,7 +666,7 @@ fn mixed_equality_hazard_reads_a_call_kind_from_the_sort_lookup(
         .expect("a new name");
     let expression = Expression::call(name, Vec::<Expression>::new()).equals(1.5);
 
-    let hazard = Hazard::find(
+    let hazard = Hazard::find_for_membership(
         &expression,
         &HashMap::<Identifier, SymbolType>::new(),
         &registry,
@@ -629,11 +687,14 @@ fn mixed_equality_hazard_reads_a_builtin_call_kind_from_the_catalogue() {
     let floor_against_a_float = floored.clone().equals(1.5);
 
     assert_eq!(
-        find(&floor_against_a_float, &symbol_types),
+        find_for_membership(&floor_against_a_float, &symbol_types),
         Some(Hazard::MixedIntRealEquality(floor_against_a_float))
     );
-    assert_eq!(find(&floored.equals(1), &symbol_types), None);
-    assert_eq!(find(&absolute.equals(1.5), &symbol_types), None);
+    assert_eq!(find_for_membership(&floored.equals(1), &symbol_types), None);
+    assert_eq!(
+        find_for_membership(&absolute.equals(1.5), &symbol_types),
+        None
+    );
 }
 
 #[test]
@@ -645,7 +706,7 @@ fn mixed_equality_hazard_refuses_an_unknown_function_against_a_literal() {
     .equals(1);
 
     assert_eq!(
-        find(&expression, &HashMap::new()),
+        find_for_membership(&expression, &HashMap::new()),
         Some(Hazard::MixedIntRealEquality(expression))
     );
 }
@@ -657,7 +718,7 @@ fn mixed_equality_hazard_is_found_below_the_root() {
     let expression = Expression::all([reference.greater(0), hazard.clone()]);
 
     assert_eq!(
-        find(&expression, &build_symbol_types(&[(&x, SymbolType::Int)])),
+        find_for_membership(&expression, &build_symbol_types(&[(&x, SymbolType::Int)])),
         Some(Hazard::MixedIntRealEquality(hazard))
     );
 }
@@ -729,8 +790,13 @@ fn hazard_screen_walks_a_deep_chain_on_a_small_stack() {
             chain = chain + 1;
         }
         let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
-        let admitted = Hazard::find(&chain.clone().equals(3), &symbol_types, &NoRegisteredSorts);
-        let refused = Hazard::find(&chain.equals(3.0), &symbol_types, &NoRegisteredSorts);
+        let admitted = Hazard::find_for_membership(
+            &chain.clone().equals(3),
+            &symbol_types,
+            &NoRegisteredSorts,
+        );
+        let refused =
+            Hazard::find_for_membership(&chain.equals(3.0), &symbol_types, &NoRegisteredSorts);
         (
             admitted.is_none(),
             matches!(refused, Some(Hazard::MixedIntRealEquality(_))),
@@ -753,7 +819,7 @@ fn hazard_screen_walks_a_deep_piecewise_nest_on_a_small_stack() {
             .expect("a piecewise");
         }
         let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
-        Hazard::find(&nest.equals(3.5), &symbol_types, &NoRegisteredSorts)
+        Hazard::find_for_membership(&nest.equals(3.5), &symbol_types, &NoRegisteredSorts)
     });
 
     assert!(matches!(found, Some(Hazard::MixedIntRealEquality(_))));
@@ -767,11 +833,11 @@ fn hazard_screen_classifies_a_shared_dag_in_linear_time() {
         dag = dag.clone() + dag;
     }
 
-    let refused = find(
+    let refused = find_for_membership(
         &dag.clone().equals(1.5),
         &build_symbol_types(&[(&x, SymbolType::Int)]),
     );
-    let admitted = find(
+    let admitted = find_for_membership(
         &dag.equals(1.5),
         &build_symbol_types(&[(&x, SymbolType::Real)]),
     );

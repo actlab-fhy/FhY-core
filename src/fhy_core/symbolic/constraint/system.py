@@ -103,7 +103,11 @@ class ConstraintSystem(_rs.ConstraintSystem, WrappedFamilySerializable):
       REAL-sorted operand, floor division or modulo without a finite
       strictly positive literal divisor, or exponentiation without a
       literal integer exponent of at least one;
-    - an ``EQUAL``/``NOT_EQUAL`` mixing an INT and a REAL sort.
+    - an ``InSetConstraint`` or ``NotInSetConstraint`` member of the other
+      numeric kind than its variable, such as ``2.0`` for an INT variable:
+      membership is type-strict, while the solver would compare the two by
+      value. An ``EquationConstraint``'s equality of an int with a float is
+      answered by value, as its evaluation compares them.
 
     ``Constraint.evaluate_with_bindings`` decides an assignment through the
     simplifier instead, which these screens do not cover, so the two can

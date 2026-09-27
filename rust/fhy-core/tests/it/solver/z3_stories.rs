@@ -266,6 +266,32 @@ fn z3_keeps_nothing_between_checks() {
     assert_eq!(ask(&as_int), Answer::No);
 }
 
+#[rstest]
+#[case::implied_by_its_int_spelling(1, 1.0, Answer::Yes)]
+#[case::a_fraction_no_int_equals(1, 1.5, Answer::No)]
+fn z3_answers_an_int_equal_to_a_float_as_the_evaluator_does(
+    #[case] value: i64,
+    #[case] float: f64,
+    #[case] expected: Answer,
+) {
+    let (x, reference) = build_identifier("x");
+    let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
+    let antecedent = reference.clone().equals(value);
+    let consequent = reference.equals(float);
+
+    let answer = z3()
+        .ask(
+            &Question::Implication {
+                antecedent: &antecedent,
+                consequent: &consequent,
+            },
+            &QueryContext::new(&symbol_types),
+        )
+        .expect("answered");
+
+    assert_eq!(answer, expected);
+}
+
 #[test]
 fn a_nul_name_hint_is_answered_not_a_panic() {
     let (x, reference) = build_identifier("nul\0x");

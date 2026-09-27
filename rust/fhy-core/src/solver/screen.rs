@@ -21,8 +21,11 @@ use super::error::write_identifiers;
 /// A shape the hazard screen refuses an expression for, with what it
 /// refused.
 ///
-/// [`Hazard::find`] reports the first one it finds, checking the five
-/// kinds in the order of the variants.
+/// [`Hazard::find`] reports the first one it finds, checking the first
+/// four kinds in the order of the variants.
+/// [`Hazard::find_for_membership`] checks all five: the fifth refuses what
+/// a type-strict membership lowers to, and only the constraint layer's set
+/// constraints ask for it.
 ///
 /// # Examples
 ///
@@ -61,8 +64,11 @@ pub enum Hazard {
     PartialOperation(Expression),
     /// An equality or inequality of a numeric literal with an operand whose
     /// integer or real kind differs from the literal's or is unknown, which
-    /// a solver's numeric comparison would equate where this crate keeps
-    /// `1` and `1.0` apart.
+    /// a solver's numeric comparison would equate where a set constraint's
+    /// type-strict membership keeps `1` and `1.0` apart. Only
+    /// [`Hazard::find_for_membership`] reports it: an expression's own
+    /// equality compares an integer with a real by value, as the lowering's
+    /// `to_real` states it.
     MixedIntRealEquality(Expression),
 }
 
@@ -70,7 +76,7 @@ impl Hazard {
     /// Return the first hazard in `expression`, or `None` when it lowers
     /// soundly.
     ///
-    /// The five kinds are checked in the order of the variants, and the
+    /// The first four kinds are checked in the order of the variants, and the
     /// first kind found is reported: for the native constants, every one
     /// the expression refers to; for the other kinds, the first node in
     /// depth-first pre-order, children in [`Expression::children`] order.
@@ -78,12 +84,17 @@ impl Hazard {
     /// The screen reads the value kind of an identifier from
     /// `symbol_types`, the result sort of a call of a named function and
     /// the native constants from `sorts`, and the built-in functions and
-    /// constants from their catalogue. It classifies each node twice: the
-    /// sort it lowers to (Boolean, numeric, or undetermined), and the
-    /// integer or real kind it evaluates to, if that can be determined. A
-    /// run keeps its pending nodes on the heap and remembers each shared
+    /// constants from their catalogue. It classifies each node by the sort
+    /// it lowers to (Boolean, numeric, or undetermined) and by whether it
+    /// provably lowers to a real; [`find_for_membership`](Self::find_for_membership)
+    /// also by the integer or real kind it evaluates to, if that can be
+    /// determined. A run keeps its pending nodes on the heap and remembers each shared
     /// node's classifications, so it handles a tree of any depth in time
     /// linear in its distinct nodes.
+    ///
+    /// An equality of an integer with a real, such as `x == 1.0` for an
+    /// integer `x`, is no hazard: the lowering converts the integer side
+    /// with `to_real`, which equates the two exactly as the evaluator does.
     #[must_use]
     pub fn find(
         expression: &Expression,
@@ -101,10 +112,29 @@ impl Hazard {
         if let Some(node) = find_first(expression, |node| screen.does_coerce_a_boolean(node)) {
             return Some(Self::BooleanCoercion(node.clone()));
         }
-        if let Some(node) = find_first(expression, |node| screen.is_unsafe_partial_operation(node))
-        {
-            return Some(Self::PartialOperation(node.clone()));
+        find_first(expression, |node| screen.is_unsafe_partial_operation(node))
+            .map(|node| Self::PartialOperation(node.clone()))
+    }
+
+    /// Return the first hazard in `expression`, an equality a type-strict
+    /// membership lowers to, such as a set constraint's `variable ==
+    /// member`: the hazards of [`find`](Self::find), then
+    /// [`MixedIntRealEquality`](Self::MixedIntRealEquality).
+    ///
+    /// Membership keeps an integer and a real apart (`2` is no member of
+    /// `{2.0}`), and a solver reads the lowered equality by value, so a
+    /// member of the other numeric kind, or of an unknown one, is refused.
+    /// The kinds, the order and the walk are those of [`find`](Self::find).
+    #[must_use]
+    pub fn find_for_membership(
+        expression: &Expression,
+        symbol_types: &dyn SymbolTypes,
+        sorts: &dyn SortLookup,
+    ) -> Option<Hazard> {
+        if let Some(hazard) = Self::find(expression, symbol_types, sorts) {
+            return Some(hazard);
         }
+        let mut screen = Screen::new(symbol_types, sorts);
         find_first(expression, |node| {
             screen.does_mix_int_and_real_equality(node)
         })

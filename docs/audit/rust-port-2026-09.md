@@ -2501,7 +2501,7 @@ Behavior changes are listed where they exist.
 | F2-021 | (a) Every domain-level procedure enforces the domain's own restriction |
 | F2-034 | (a) NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`, as NumPy's `maximum`; `abs(-0.0) = 0.0` |
 | F2-036 | (ii) Canonical float and decimal decoders, **and** a D-7 revision: shortest round-trip text, with exponent form outside `[1e-5, 1e16)`. The corpus regeneration lands together with F2-001's and F2-011's |
-| F2-040 | (a) Drop the mixed int/real equality hazard |
+| F2-040 | (a) Drop the mixed int/real equality hazard. **Revised by the maintainer on 2026-09-27:** drop the hazard except for set-constraint residuals, whose membership is type-strict (option 1 of the Track D notes, N-D1, in `docs/design/rust-port-fixes.md`) |
 | F2-043 | `gil_used = true` until a free-threaded CI job exists, and document the NumPy contract that inputs must not be mutated during a call |
 
 **The other groups:**

@@ -796,22 +796,22 @@ def _create_integer_param_restricted_to(members: set[float]) -> Param[int]:
     [
         pytest.param(
             lambda: _create_integer_param_with_equation_literal(1.5),
-            ConstraintOutcome.UNDECIDED,
+            ConstraintOutcome.VIOLATED,
             False,
-            False,
+            True,
             id="equals-float-1.5",
         ),
         pytest.param(
             lambda: _create_integer_param_with_equation_literal("1.5"),
-            ConstraintOutcome.UNDECIDED,
+            ConstraintOutcome.VIOLATED,
             False,
-            False,
+            True,
             id="equals-decimal-string-1.5",
         ),
         pytest.param(
             lambda: _create_integer_param_with_equation_literal(2.0),
-            ConstraintOutcome.UNDECIDED,
-            False,
+            ConstraintOutcome.SATISFIED,
+            True,
             False,
             id="equals-float-2.0",
         ),
@@ -839,13 +839,11 @@ def test_integer_param_wrappers_report_true_only_for_the_outcome_proving_them(
 ) -> None:
     """Test each wrapper reports `True` only for the outcome that proves it.
 
-    The solver refuses to compare an integer variable with a float-valued
-    literal, so the three float-literal equations are `UNDECIDED` and are
-    reported neither feasible nor empty. `v == 1.5` and `v == "1.5"` admit
-    no integer at all, while `v == 2.0` admits `2`; reporting that last one
-    not feasible is the accepted cost of `True` meaning proven. The in-set
-    member `1.5` is decided by enumeration: no integer is a float, so the
-    parameter is proven empty.
+    The solver compares an integer variable with a float-valued literal by
+    value, as evaluation does (R2-040): `v == 1.5` and `v == "1.5"` admit
+    no integer, so they are proven empty, and `v == 2.0` admits `2`, so it
+    is proven feasible. The in-set member `1.5` is decided by enumeration:
+    no integer is a float, so the parameter is proven empty.
     """
     param = build_param()
 
@@ -855,20 +853,58 @@ def test_integer_param_wrappers_report_true_only_for_the_outcome_proving_them(
 
 
 @pytest.mark.sympy
-def test_is_feasible_reports_false_for_a_float_equation_an_integer_satisfies() -> None:
-    """Test `v == 2.0` is not reported feasible, though `v = 2` is valid.
+@pytest.mark.z3
+def test_is_feasible_reports_true_for_a_float_equation_an_integer_satisfies() -> None:
+    """Test `v == 2.0` is reported feasible, as `v = 2` is valid.
 
-    Bound to `2`, evaluation decides `2 == 2.0`; unbound, the solver refuses
-    the int/float comparison, so feasibility is `UNDECIDED`. `is_feasible`
-    therefore reports `False` for a parameter that has a valid value: the
-    accepted cost of never reporting an unproven parameter feasible.
+    Bound to `2`, evaluation decides `2 == 2.0`; unbound, the solver decides
+    the int/float comparison by value too (R2-040), so the valid value is
+    found and feasibility is proven.
     """
     param = _create_integer_param_with_equation_literal(2.0)
 
     assert param.is_value_valid(2)
-    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
-    assert param.is_feasible() is False
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+    assert param.is_feasible() is True
     assert param.is_empty() is False
+
+
+# A set constraint's float member against an integer variable is refused,
+# not decided by value: membership is type-strict (2 is no member of
+# {2.0}), while the solver would read the lowered `v != 2.0` numerically
+# and prove the parameter empty, or a subset it is not (R2-040, as the
+# maintainer revised it; the Track D notes' N-D1).
+
+
+@pytest.mark.z3
+def test_a_float_excluded_from_an_integer_param_is_not_proven_empty() -> None:
+    """Test `2..2` without the float `2.0` is not reported empty, as `2` is valid."""
+    param = create_integer_param_between(2, 2)
+    param = param.add_constraint(NotInSetConstraint(param.variable, {2.0}))
+
+    assert param.is_value_valid(2)
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_empty() is False
+
+
+@pytest.mark.z3
+def test_a_float_excluded_from_an_integer_param_is_not_proven_a_subset() -> None:
+    """Test `x not in {2.0}` is not reported a subset of `y != 2`: `x = 2` is valid."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    excluding_the_float = create_integer_param(
+        name=x, constraints=[NotInSetConstraint(x, {2.0})]
+    )
+    excluding_the_int = create_integer_param(
+        name=y, constraints=[EquationConstraint(IdentifierExpression(y).not_equals(2))]
+    )
+
+    assert excluding_the_float.is_value_valid(2)
+    assert not excluding_the_int.is_value_valid(2)
+    assert (
+        excluding_the_float.check_subset(excluding_the_int)
+        is ConstraintOutcome.UNDECIDED
+    )
 
 
 # =============================================================================

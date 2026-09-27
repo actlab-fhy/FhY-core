@@ -1893,6 +1893,18 @@ the decisions and documents it amends (§I.5).
     equality".
 - **Behavior change:** more questions are answered instead of refused.
 - **Revises:** D-S8-5 (and its follow-up bullet); the README Solver row.
+- **Revised (the maintainer, 2026-09-27):** "drop the hazard except for
+  set-constraint residuals" (option 1 of the Track D notes, N-D1).
+  `Hazard::find` drops hazard 5, and the new public
+  `Hazard::find_for_membership` checks the four hazards and then hazard 5;
+  `ConstraintSystem`'s three questions screen each set member's expression
+  with it (substituted, for `check_satisfiability_with_bindings`) before
+  asking, once the solver answers the question's kind, and report a hazard
+  as the solver's own refusal is reported. So plain questions and equation
+  constraints answer mixed equalities by value, and a set member of the
+  other numeric kind than its variable stays `UNDECIDED`. Extra tests: the
+  set-residual stories in `constraint/system_stories.rs`, and the two
+  false-proof probes in `test_tri_state_feasibility.py`.
 
 ### R2-041: diagnostics read through their report (F2-041)
 
@@ -2693,7 +2705,12 @@ premise holds for expressions but not for set constraints:
   3. extend `param/decide.rs`'s downgrades to the INT sort and add the
      same to `ConstraintSystem`, answer by answer;
   4. keep hazard 5 as it is (revise the resolution).
-- **The work is kept** as `target/r2-040-wip.patch` in this worktree
+- **Resolved (the maintainer, 2026-09-27): option 1.** Implemented after
+  the rebase onto Track A; see "R2-040, as implemented" below. The three
+  false proofs are `UNDECIDED` again (the probes re-run), and the Rust
+  story above passes unchanged, renamed
+  `integer_implication_leaves_a_float_member_to_the_membership_screen`.
+- **The work was kept** as `target/r2-040-wip.patch` in this worktree
   (untracked), a diff against `35fae05` whose `rust-port-fixes.md` hunk
   this note supersedes, for whichever option is chosen:
   the screen change, the admission stories, `x_int_equal_to_1_0_is_answered`,
@@ -2970,6 +2987,59 @@ the address-hasher commit re-ran the per-commit gates):
 - the attribution grep over `111df20..HEAD`: no match; every commit is
   the configured user's.
 
+**After the rebase onto Track A** (the maintainer rebased `fix/d-solver`
+onto `dev-rust` at `46b8596`; the hashes above are the pre-rebase ones,
+and the checklist's are the rebased ones):
+- **The resolutions** the maintainer made: `solver/process.rs` keeps
+  R2-014's `check` with Track A's `BoxError` (R2-007 removed
+  `BackendError`); the moved `sympy/simplifier.rs` keeps `Python::attach`
+  and imports `BoxError` from `fhy_core::foreign`; the core README joins
+  this track's solver line with Track A's `ConstraintObserver`/
+  `ConstraintEvent` renames; `rust-workspace.md` keeps both revision
+  bullets.
+- **Broken commits, fixed forward.** `a04e029` (R2-014, rebased) alone
+  does not compile the `it` tests: its `process_stories.rs` names
+  `BackendError`, which `4683c70` (R2-005a, rebased) renames to
+  `BoxError`. And the rebased head `f0592b5` compiled neither the core's
+  `it` tests nor the binding's: R2-029d's tables called
+  `FunctionName::try_new`, which R2-007 renamed `FunctionName::new`, and
+  the moved simplifier's imports were unsorted for `cargo fmt`. Both are
+  fixed in `ac27b14`, which also points the simplifier's `SimplifyLimits`
+  link at `fhy_core::solver`. Track A's rustdoc line that the SymPy
+  backend does not enforce the context's timeout is still accurate: the
+  moved `simplify` never reads the limits.
+
+**R2-040, as implemented** (the maintainer's option 1):
+- **The screen.** `Hazard::find` checks four kinds; the variant
+  `MixedIntRealEquality` stays, documented as reported only by
+  `Hazard::find_for_membership`, which runs `find` and then the
+  numeric-kind classifier, unchanged from the base.
+- **The constraint layer.** `ask` in `constraint/system.rs` takes the set
+  members' expressions and screens them first; a refusal notifies
+  `ConstraintEvent::Refused` exactly as a solver refusal does, so the
+  binding's WARNING and the param layer's events are unchanged. Every
+  solver question of `param` goes through `ConstraintSystem`, so the
+  param probes are covered, the witness-outside exclusion set included.
+  The one difference in what is reported: a question whose set member is
+  refused by the membership screen and whose equation holds another hazard
+  reports the member's hazard, where the base reported the first kind over
+  the whole conjunction; both are `UNDECIDED`.
+- **Tests, test-first.** At the rebased base, 25 Python pins of the new
+  answers failed and the four guards (the three set-residual tests kept
+  at their base pins, and the two new false-proof probes) passed; the
+  Rust admission stories, `x_int_equal_to_1_0_is_answered`, the z3 story,
+  `an_equation_mixing_int_and_float_is_asked_of_the_backend` and the
+  property failed to compile or failed. The screen stories that pinned
+  the classifier (the old "mixed equality" section and the deep, nested
+  and shared walks) now call `Hazard::find_for_membership`, so the
+  classifier keeps its coverage, and
+  `find_admits_an_equality_of_a_literal_with_an_operand_of_the_other_kind`
+  pins `find`'s admission.
+- **Python.** The tests of plain questions and equation constraints pin
+  the answers (25 cases, which failed at the rebased base) (as in the held patch, less its three set-constraint
+  rewrites, which keep their base pins), and two new tests pin the
+  false-proof probes as `UNDECIDED`.
+
 **Not Track D's.** The maintainer's brief listed "the diagnostics
 signature fix"; that is R2-041, which §I.7.1 and the checklist assign to
 Track E (`pass/validation.rs`, `diagnostic.rs`), so this track left it.
@@ -2982,6 +3052,7 @@ Track E (`pass/validation.rs`, `diagnostic.rs`), so this track left it.
 | R2-039 | the prelude was the module `_fhy_core_sympy`, and any module under that name was trusted | it is `_fhy_core_sympy_0_2_0_<hash>` with `__fhy_core_prelude__`; an impostor under that name raises `SolverBackendUnavailableError` from the first SymPy question; a pickle of a lowered piecewise or `round` names the versioned module, so one written by another version or prelude no longer loads | `test_lowered_round_and_piecewise_pickle_within_the_process`, `test_lowered_piecewise_pickle_loads_where_the_bridge_is_imported` |
 | R2-038a | lifting and SymPy substitution walked a SymPy DAG as a tree, in exponential time, and lifted results shared nothing | both are linear in the distinct objects, and a lifted result shares where the SymPy object does | the Rust stories; the Python suites unchanged |
 | R2-016 | `simplify_expression(y / x)` returned `y * x ** -1`, which the evaluators refuse at integer points | it returns `y / x`; every power by a negative integer lifts as a division | `test_simplify_then_evaluate_equals_evaluate_on_integer_grids` (new); no existing test pinned the old form |
+| R2-040 | an equality of a numeric literal with an operand of the other int/real kind in a plain question or an equation constraint (`x_int == 1.5`, `x_real == 1`, `3.0 == y + 1`, a whole or fractional float or decimal against an int) answered `None`/`UNDECIDED` with a WARNING; `v == 2.0` on an integer param was `UNDECIDED` | each is decided by value, with no warning; `v == 2.0` is feasible and `v == 1.5` empty; a set constraint's member of the other numeric kind than its variable stays `UNDECIDED` with the WARNING; the README Solver and Constraint rows and the `fhy_core.symbolic.solver` and `ConstraintSystem` docstrings say so | the rewritten tests (25 cases) in `test_solver.py`, `test_solver_rust_binding.py`, `test_constraint_system.py` and `test_tri_state_feasibility.py`; 2 new probe tests |
 | R2-005a | none in behavior; `SolverBackend.SYMPY`'s backend lives in the extension as before | the same objects, from the binding's own module | `test_missing_sympy_reports_unavailable` (new) |
 | R2-014 | `SmtLib2ProcessSolver.check` could outlast its timeout (a solver that stops reading, closes stdout without exiting, exits slowly, or leaves a grandchild), and a solver that printed `success` failed with `SolverBackendError` | the timeout bounds the call; the first line written is `(set-option :print-success false)`; `success` lines before the answer are skipped; the class docstring says so | the Rust stories; the Python process-backend tests unchanged |
 

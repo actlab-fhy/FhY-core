@@ -6546,6 +6546,19 @@ Where a decision follows an earlier slice's decision or note, it says so.
     divisor, an unsafe exponent). That changes which questions are
     decided, so it is a separate change with its own tests, recorded
     here as a follow-up, not part of S8.
+  - **Revised (R2-040, 2026-09-27):** the solver's screen,
+    `Hazard::find`, drops hazard 5, the mixed int/real equality: an
+    expression's equality of an integer with a real is answered by value,
+    as the evaluator decides it and the lowering's `to_real` states it,
+    so `x_int == 1.0` is answered. The maintainer revised F2-040's
+    resolution to "drop the hazard except for set-constraint residuals":
+    a set constraint's membership is type-strict (`2 ∉ {2.0}`) while its
+    lowered `x == 2.0` would be read by value, so the constraint layer
+    screens each set member's expression with the new
+    `Hazard::find_for_membership` (the four hazards, then hazard 5) before
+    asking, and refuses it as before. The other four hazards, their order,
+    the per-expression rule and the precedence are unchanged. See
+    `docs/design/rust-port-fixes.md` R2-040 and the Track D notes (N-D1).
 - **D-S8-6: the SMT-LIB2 lowering is pure Rust with the core's
   semantics** (D-S4-1; the direction). `fhy_core::solver::smt` lowers an
   expression and its symbol types to an `SmtScript`: a logic, declarations

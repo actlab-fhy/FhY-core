@@ -246,14 +246,14 @@ fn hazard_answers_unknown_without_asking_the_backend() {
 fn each_expression_is_screened_on_its_own_antecedent_first() {
     let (x, reference) = build_identifier("x");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
-    let equality = reference.clone().equals(1.5);
+    let division = reference.clone() / 2;
     let coercion = reference.clone().equals(build_literal(true));
 
     let answer = RecordingSmtSolver::answering(SatResult::Sat)
         .solver()
         .ask(
             &Question::Implication {
-                antecedent: &equality,
+                antecedent: &division.clone().equals(1),
                 consequent: &coercion,
             },
             &QueryContext::new(&symbol_types),
@@ -272,13 +272,36 @@ fn each_expression_is_screened_on_its_own_antecedent_first() {
 
     assert_eq!(
         answer,
-        Answer::Unknown(UnknownReason::Refused(Hazard::MixedIntRealEquality(
-            equality
-        )))
+        Answer::Unknown(UnknownReason::Refused(Hazard::PartialOperation(division)))
     );
     assert_eq!(
         consequent_only,
         Answer::Unknown(UnknownReason::Refused(Hazard::BooleanCoercion(coercion)))
+    );
+}
+
+#[test]
+fn x_int_equal_to_1_0_is_answered() {
+    // Probe K of the audit: the evaluator equates `x == 1.0` with `x == 1`
+    // for an integer `x`, and so does the lowering's `to_real`.
+    let (x, reference) = build_identifier("x");
+    let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
+    let antecedent = reference.clone().equals(1);
+    let consequent = reference.equals(1.0);
+
+    let (answer, script) = ask_answering(
+        SatResult::Unsat,
+        &Question::Implication {
+            antecedent: &antecedent,
+            consequent: &consequent,
+        },
+        &symbol_types,
+    );
+
+    assert_eq!(answer, Answer::Yes);
+    assert!(
+        script.contains(&format!("(to_real {})", quoted_symbol(&x))),
+        "the integer side is converted: {script}"
     );
 }
 

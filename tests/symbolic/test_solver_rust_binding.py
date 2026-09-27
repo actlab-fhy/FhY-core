@@ -868,11 +868,14 @@ def test_refused_question_is_logged_naming_the_entry_point_node_and_sorts(
     caplog: pytest.LogCaptureFixture, x: Identifier
 ) -> None:
     """Test the hazard warning's logger, level, entry point, node repr and sorts."""
-    hazard = IdentifierExpression(x).equals(LiteralExpression(1.5))
+    hazard = BinaryExpression(
+        BinaryOperation.FLOOR_DIVIDE, IdentifierExpression(x), IdentifierExpression(x)
+    )
+    question = hazard.equals(LiteralExpression(1))
     solver = Solver(smt_solver=_RecordingSmtSolver(SatResult.SAT))
 
     with caplog.at_level(logging.WARNING, logger=_SOLVER_LOGGER_NAME):
-        result = solver.check_expression_satisfiability(hazard, {x: SymbolType.INT})
+        result = solver.check_expression_satisfiability(question, {x: SymbolType.INT})
 
     assert result is None
     (record,) = [
@@ -881,7 +884,7 @@ def test_refused_question_is_logged_naming_the_entry_point_node_and_sorts(
     assert record.levelno == logging.WARNING
     message = record.getMessage()
     assert message.startswith(
-        "check_expression_satisfiability: the expression compares"
+        "check_expression_satisfiability: the expression applies a partial operation"
     )
     assert repr(hazard) in message
     assert f"identifier sorts at that node: {x!r}: INT" in message

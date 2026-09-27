@@ -1175,22 +1175,20 @@ def test_check_expression_satisfiability_positive_integer_exponent_stays_decided
     assert result is True
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
     "operation",
     [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
     ids=["equal", "not_equal"],
 )
-def test_check_expression_satisfiability_real_operand_int_literal_is_screened(
+def test_check_expression_satisfiability_real_operand_int_literal_is_decided(
     operation: BinaryOperation,
 ) -> None:
-    """Test comparing a REAL-sorted identifier to a strict-int literal is screened.
+    """Test comparing a REAL-sorted identifier to an int literal is decided (R2-040).
 
-    The mirror of the float-literal-against-INT-sorted case. Z3
-    rationalizes whichever side is INT-sorted and compares numerically,
-    so it reads `1` and `1.0` as the same value in either arrangement,
-    while this package holds them type-strictly distinct. A type-strict
-    set constraint over an integer member lowers to exactly this shape
-    when its parameter is real-valued.
+    The evaluator converts the integer to a real before comparing, and so
+    does the lowering's ``to_real``, so ``x == 1`` and ``x != 1`` are each
+    satisfiable for a REAL ``x``.
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
@@ -1199,7 +1197,7 @@ def test_check_expression_satisfiability_real_operand_int_literal_is_screened(
 
     result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
 
-    assert result is None
+    assert result is True
 
 
 @pytest.mark.z3
@@ -1245,14 +1243,15 @@ def test_check_expression_satisfiability_real_operand_int_literal_ordering_decid
     assert result is True
 
 
-def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_equal_to_a_fraction_is_unsatisfiable(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test EQUAL mixing an INT-sorted identifier and a float literal is screened.
+    """Test EQUAL of an INT-sorted identifier and a fractional float is decided.
 
-    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
-    the type-strict int/float distinction, so the seam refuses to lower
-    ``x == 1.5`` for an INT-sorted ``x``.
+    No integer equals ``1.5``, by the evaluator and by the lowering's
+    ``to_real`` alike, so the question is answered, not refused, and
+    nothing is logged (R2-040).
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
@@ -1262,11 +1261,8 @@ def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
     with caplog.at_level(logging.WARNING):
         result = check_expression_satisfiability(expression, {x: SymbolType.INT})
 
-    assert result is None
-    messages = _collect_solver_warning_messages(caplog)
-    assert messages, "expected a WARNING naming the hazardous node"
-    assert "check_expression_satisfiability" in messages[0]
-    assert repr(x) in messages[0]
+    assert result is False
+    assert _collect_solver_warning_messages(caplog) == []
 
 
 @pytest.mark.z3
@@ -1302,124 +1298,82 @@ def test_check_expression_satisfiability_int_identifier_lt_float_not_screened() 
 
 
 # -----------------------------------------------------------------------
-# The numeric-kind classifier follows the IR's evaluated int/float kind,
-# not Z3's sort, through arithmetic, NEGATE, POWER, and piecewise
+# An equality of an int with a float is decided as the evaluator decides
+# it, through arithmetic, NEGATE, POWER, and piecewise (R2-040)
 # -----------------------------------------------------------------------
 
 
+def _build_int_arithmetic(operation: BinaryOperation, y: Identifier) -> Expression:
+    return BinaryExpression(
+        operation,
+        IdentifierExpression(y),
+        LiteralExpression(2 if operation is not BinaryOperation.ADD else 1),
+    )
+
+
+@pytest.mark.z3
 @pytest.mark.parametrize(
-    "operation",
-    [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
-    ids=["equal", "not_equal"],
+    "build_left, operation, right, expected",
+    [
+        pytest.param(
+            lambda y: _build_int_arithmetic(BinaryOperation.ADD, y),
+            BinaryOperation.EQUAL,
+            3.0,
+            True,
+            id="addition_equal",
+        ),
+        pytest.param(
+            lambda y: _build_int_arithmetic(BinaryOperation.ADD, y),
+            BinaryOperation.NOT_EQUAL,
+            3.0,
+            True,
+            id="addition_not_equal",
+        ),
+        pytest.param(
+            lambda y: _build_int_arithmetic(BinaryOperation.MULTIPLY, y),
+            BinaryOperation.EQUAL,
+            3.0,
+            False,
+            id="odd_multiple_of_two",
+        ),
+        pytest.param(
+            lambda y: UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(y)),
+            BinaryOperation.EQUAL,
+            3.0,
+            True,
+            id="negation",
+        ),
+        pytest.param(
+            lambda y: _build_int_arithmetic(BinaryOperation.POWER, y),
+            BinaryOperation.EQUAL,
+            4.0,
+            True,
+            id="power",
+        ),
+    ],
 )
-def test_check_expression_satisfiability_int_addition_against_float_literal_is_screened(
-    operation: BinaryOperation,
+def test_check_expression_satisfiability_int_arithmetic_against_a_float_is_decided(
+    build_left: Any, operation: BinaryOperation, right: float, expected: bool
 ) -> None:
-    """Test EQUAL/NOT_EQUAL between INT arithmetic and a float literal is screened.
+    """Test EQUAL/NOT_EQUAL of INT arithmetic and a float literal is decided.
 
-    `y + 1` stays INT-valued whenever `y` is, so comparing it to the
-    float literal `3.0` hits the same Z3 rationalization hazard as
-    comparing a bare INT identifier to a float literal.
+    The evaluator compares ``y + 1`` with ``3.0`` as numbers, and so does
+    the lowering's ``to_real``, so the question is answered: ``2 * y`` is
+    never odd, and every other comparison holds for some ``y``.
     """
     y = mock_identifier("y", 0)
-    addition = BinaryExpression(
-        BinaryOperation.ADD, IdentifierExpression(y), LiteralExpression(1)
-    )
-    expression = BinaryExpression(operation, addition, LiteralExpression(3.0))
+    expression = BinaryExpression(operation, build_left(y), LiteralExpression(right))
+    flipped = BinaryExpression(operation, LiteralExpression(right), build_left(y))
 
-    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
-
-    assert result is None
+    assert check_expression_satisfiability(expression, {y: SymbolType.INT}) is expected
+    assert check_expression_satisfiability(flipped, {y: SymbolType.INT}) is expected
 
 
-def test_check_expression_satisfiability_literal_left_of_int_addition_screened() -> (
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_literal_vs_real_piecewise_is_decided() -> (
     None
 ):
-    """Test the screen catches the hazard with the float literal on the left.
-
-    The mixed-kind hazard is symmetric in operand order: `3.0 == y + 1`
-    must be refused exactly as `y + 1 == 3.0` is.
-    """
-    y = mock_identifier("y", 0)
-    addition = BinaryExpression(
-        BinaryOperation.ADD, IdentifierExpression(y), LiteralExpression(1)
-    )
-    expression = BinaryExpression(
-        BinaryOperation.EQUAL, LiteralExpression(3.0), addition
-    )
-
-    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
-
-    assert result is None
-
-
-def test_check_expression_satisfiability_int_multiply_vs_float_literal_screened() -> (
-    None
-):
-    """Test INT multiplication compared to a float literal is screened.
-
-    `y * 2` stays INT-valued for an INT `y`, so it hits the same
-    rationalization hazard as a bare INT operand.
-    """
-    y = mock_identifier("y", 0)
-    multiplication = BinaryExpression(
-        BinaryOperation.MULTIPLY, IdentifierExpression(y), LiteralExpression(2)
-    )
-    expression = BinaryExpression(
-        BinaryOperation.EQUAL, multiplication, LiteralExpression(3.0)
-    )
-
-    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
-
-    assert result is None
-
-
-def test_check_expression_satisfiability_negated_int_vs_float_literal_screened() -> (
-    None
-):
-    """Test NEGATE of an INT identifier compared to a float literal is screened.
-
-    NEGATE keeps its operand's kind, so `-y` is still INT-valued for an
-    INT `y` and hits the same hazard as the bare identifier.
-    """
-    y = mock_identifier("y", 0)
-    negated = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(y))
-    expression = BinaryExpression(
-        BinaryOperation.EQUAL, negated, LiteralExpression(3.0)
-    )
-
-    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
-
-    assert result is None
-
-
-def test_check_expression_satisfiability_int_power_vs_float_literal_screened() -> None:
-    """Test INT POWER by an integer exponent compared to a float literal is screened.
-
-    Z3 sorts `Int ** Int` as Real, but the IR evaluates `y ** 2` to an
-    int for an INT `y`, so the type-strict distinction from `4.0` is
-    still live and the comparison must stay refused.
-    """
-    y = mock_identifier("y", 0)
-    power = BinaryExpression(
-        BinaryOperation.POWER, IdentifierExpression(y), LiteralExpression(2)
-    )
-    expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(4.0))
-
-    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
-
-    assert result is None
-
-
-def test_check_expression_satisfiability_int_literal_vs_real_piecewise_screened() -> (
-    None
-):
-    """Test an int literal compared to an all-REAL piecewise is screened.
-
-    Every branch of the piecewise is REAL-valued, so the piecewise as a
-    whole hits the same hazard as a bare REAL-sorted operand compared to
-    the int literal `1`.
-    """
+    """Test an int literal compared to an all-REAL piecewise is decided."""
     y = mock_identifier("y", 0)
     b = mock_identifier("b", 1)
     branch = PiecewiseExpression(
@@ -1431,18 +1385,17 @@ def test_check_expression_satisfiability_int_literal_vs_real_piecewise_screened(
         expression, {y: SymbolType.REAL, b: SymbolType.BOOL}
     )
 
-    assert result is None
+    assert result is True
 
 
-def test_check_expression_satisfiability_float_vs_mixed_kind_piecewise_screened() -> (
+@pytest.mark.z3
+def test_check_expression_satisfiability_float_vs_mixed_kind_piecewise_is_decided() -> (
     None
 ):
     """Test a float literal compared to a piecewise mixing INT and REAL branches.
 
-    The piecewise's branches disagree in kind -- one INT, one REAL -- so
-    its own kind is unknown, and an unknown-kind operand next to a
-    numeric literal is refused exactly as a provable INT/REAL mismatch
-    is.
+    The piecewise's INT branch is converted with ``to_real``, so the
+    comparison is decided whichever branch is taken.
     """
     y = mock_identifier("y", 0)
     r = mock_identifier("r", 1)
@@ -1451,12 +1404,11 @@ def test_check_expression_satisfiability_float_vs_mixed_kind_piecewise_screened(
         (IdentifierExpression(b),), (IdentifierExpression(y),), IdentifierExpression(r)
     )
     expression = BinaryExpression(BinaryOperation.EQUAL, LiteralExpression(3.0), branch)
+    only_the_int_branch = Expression.logical_and(IdentifierExpression(b), expression)
 
-    result = check_expression_satisfiability(
-        expression, {y: SymbolType.INT, r: SymbolType.REAL, b: SymbolType.BOOL}
-    )
-
-    assert result is None
+    symbol_types = {y: SymbolType.INT, r: SymbolType.REAL, b: SymbolType.BOOL}
+    assert check_expression_satisfiability(expression, symbol_types) is True
+    assert check_expression_satisfiability(only_the_int_branch, symbol_types) is True
 
 
 @pytest.mark.z3
@@ -1859,7 +1811,13 @@ def test_holds_for_all_free_assignments_screens_a_hazard() -> None:
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
-        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.5)
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE,
+            IdentifierExpression(x),
+            IdentifierExpression(x),
+        ),
+        LiteralExpression(1),
     )
 
     result = holds_for_all_free_assignments(
@@ -1890,17 +1848,23 @@ def test_check_expression_satisfiability_screens_a_bool_in_arithmetic() -> None:
     assert result is None
 
 
-def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -> None:
-    """Test the int/float equality screen descends past the root node.
+def test_check_expression_satisfiability_screens_a_nested_partial_operation() -> None:
+    """Test the partial-operation screen descends past the root node.
 
     A multi-member `ConstraintSystem` lowers to `logical_and(...)`, so the
-    realistic position for this hazard is a child rather than the root. A
+    realistic position for a hazard is a child rather than the root. A
     screen that only inspected the root would hand the conjunction to Z3
     and decide it.
     """
     x = mock_identifier("x", 0)
     hazard = BinaryExpression(
-        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.5)
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE,
+            IdentifierExpression(x),
+            IdentifierExpression(x),
+        ),
+        LiteralExpression(1),
     )
     benign = BinaryExpression(
         BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
@@ -1917,26 +1881,24 @@ def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -
 # =============================================================================
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
     "integer_form", [1, "1", "01"], ids=["int", "string", "leading_zero"]
 )
-def test_int_float_equality_screen_refuses_every_integer_literal_form(
+def test_int_float_equality_is_decided_for_every_integer_literal_form(
     integer_form: int | str,
 ) -> None:
-    """Test the int/float screen refuses an equality in every integer spelling.
+    """Test an int/float equality is decided alike in every integer spelling.
 
     `LiteralExpression(1)`, `LiteralExpression("1")`, and
-    `LiteralExpression("01")` are one structural-equivalence class, so the
-    screen has to classify all three as integer-valued and refuse each
-    against `1.0`. Deciding the string forms while refusing the `int` form
-    would answer a question for one member of a class that the seam
-    declares undecidable for another.
+    `LiteralExpression("01")` are one structural-equivalence class, so each
+    must equal `1.0` as the evaluator says the integer `1` does.
     """
     left = LiteralExpression(integer_form)
     expression = BinaryExpression(BinaryOperation.EQUAL, left, LiteralExpression(1.0))
 
     assert left.is_structurally_equivalent(LiteralExpression(1))
-    assert check_expression_satisfiability(expression, {}) is None
+    assert check_expression_satisfiability(expression, {}) is True
 
 
 @pytest.mark.z3
@@ -1964,25 +1926,26 @@ def test_equality_of_integer_literal_forms_is_decided_as_an_integer_comparison(
     assert check_expression_satisfiability(expression, {}) is expected
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
-    "float_form",
-    [1.0, "1.0", 1.5, "1.5"],
+    "float_form, expected",
+    [(1.0, True), ("1.0", True), (1.5, False), ("1.5", False)],
     ids=["float", "decimal", "float_fractional", "decimal_fractional"],
 )
-def test_int_float_equality_screen_refuses_every_float_literal_form(
-    float_form: float | str,
+def test_int_float_equality_is_decided_for_every_float_literal_form(
+    float_form: float | str, expected: bool
 ) -> None:
-    """Test a float-valued literal against an integer literal stays refused.
+    """Test a float-valued literal against an integer literal is decided by value.
 
-    The counterpart to the integer-form screen: neither float bucket is
-    integer-valued, so the mixed-sort equality is refused whichever
-    spelling the float side uses.
+    The counterpart to the integer forms: a whole float or decimal equals
+    the integer `1`, and a fractional one does not, whichever spelling the
+    float side uses.
     """
     expression = BinaryExpression(
         BinaryOperation.EQUAL, LiteralExpression(float_form), LiteralExpression(1)
     )
 
-    assert check_expression_satisfiability(expression, {}) is None
+    assert check_expression_satisfiability(expression, {}) is expected
 
 
 @pytest.mark.z3

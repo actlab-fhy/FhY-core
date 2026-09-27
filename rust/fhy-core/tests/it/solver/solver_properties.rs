@@ -20,6 +20,8 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::Duration;
 
+use fhy_core::expression::evaluate::{Evaluator, Scalar};
+use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{
     BigInt, BinaryOperation, Expression, ExpressionKind, LiteralValue, NoRegisteredSorts,
     SymbolType, UnaryOperation,
@@ -537,6 +539,78 @@ proptest! {
         if let (Some(z3), Some(process)) = (from_z3.decided(), from_process.decided()) {
             prop_assert_eq!(z3, process);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mixed int/real equalities against the evaluator (R2-040)
+// ---------------------------------------------------------------------------
+
+/// A literal an integer term is compared with: an integer, the float of an
+/// integer, or a float halfway between two integers.
+fn mixed_literal() -> impl Strategy<Value = Expression> {
+    prop_oneof![
+        (-4_i64..=4).prop_map(Expression::literal),
+        (-4_i32..=4).prop_map(|value| Expression::literal(f64::from(value))),
+        (-4_i32..=4).prop_map(|value| Expression::literal(f64::from(value) + 0.5)),
+    ]
+}
+
+/// Return whether `comparison` holds at `point`, by the crate's evaluator.
+fn evaluate_at(comparison: &Expression, variables: &Variables, point: Point) -> bool {
+    let registry = FunctionRegistry::new();
+    let bindings = HashMap::from([
+        (
+            variables.x.clone(),
+            Scalar::Int(i64::try_from(point.x).expect("in the domain")),
+        ),
+        (
+            variables.y.clone(),
+            Scalar::Int(i64::try_from(point.y).expect("in the domain")),
+        ),
+        (variables.p.clone(), Scalar::Bool(point.p)),
+    ]);
+    match Evaluator::new(&registry).evaluate(comparison, &bindings) {
+        Ok(Scalar::Bool(value)) => value,
+        other => panic!("{comparison} evaluates to {other:?}"),
+    }
+}
+
+static MIXED_GAVE_UP: AtomicUsize = AtomicUsize::new(0);
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
+    #[test]
+    fn a_mixed_equality_is_answered_as_the_evaluator_decides_it(
+        term in int_term(),
+        literal in mixed_literal(),
+        is_equal in any::<bool>(),
+        is_literal_on_the_left in any::<bool>(),
+    ) {
+        let Some(backend) = property_backend() else {
+            return Ok(());
+        };
+        let variables = Variables::new();
+        let operation = if is_equal { BinaryOperation::Equal } else { BinaryOperation::NotEqual };
+        let comparison = if is_literal_on_the_left {
+            Expression::new_binary(operation, literal, term.build(&variables))
+        } else {
+            Expression::new_binary(operation, term.build(&variables), literal)
+        };
+        let expression = Expression::all([bound(&variables.x), bound(&variables.y), comparison.clone()]);
+        let expected = points().any(|point| evaluate_at(&comparison, &variables, point));
+
+        let answer = Solver::new()
+            .with_shared_smt_solver(backend)
+            .ask(
+                &Question::Satisfiability(&expression),
+                &QueryContext::new(&variables.symbol_types()).with_limits(limits()),
+            )
+            .expect("answered");
+
+        check_not_vacuous(&answer, &MIXED_GAVE_UP)?;
+        prop_assert!(answer.decided().is_none_or(|decided| decided == expected), "{:?} for {}", answer, comparison);
     }
 }
 

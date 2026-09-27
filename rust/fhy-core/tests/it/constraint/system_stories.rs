@@ -376,6 +376,91 @@ fn a_hazard_is_undecided_and_reported_without_asking_the_backend() {
     assert!(harness.scripts().is_empty());
 }
 
+// ---------------------------------------------------------------------------
+// Mixed int/real equalities (R2-040, as the maintainer revised it)
+// ---------------------------------------------------------------------------
+
+/// Return the set constraint of `variable` against the float members
+/// `members`.
+fn float_set(variable: &Identifier, members: &[f64], polarity: Polarity) -> Constraint {
+    Constraint::from(SetConstraint::new(
+        variable.clone(),
+        member_set(members.iter().map(|&member| Value::Float(member))),
+        polarity,
+    ))
+}
+
+#[test]
+fn an_equation_mixing_int_and_float_is_asked_of_the_backend() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([equation(Expression::from(x.clone()).equals(1.0))])
+        .expect("every member has a key");
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability(
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("answered"), Outcome::Satisfied);
+    assert_eq!(harness.scripts().len(), 1);
+}
+
+#[test]
+fn a_set_member_of_the_other_numeric_kind_is_refused_in_every_question() {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let int_types = build_symbol_types(&[(&x, SymbolType::Int), (&y, SymbolType::Int)]);
+    let excluded = ConstraintSystem::new([float_set(&x, &[2.0], Polarity::NotIn)])
+        .expect("every member has a key");
+    let included = ConstraintSystem::new([float_set(&x, &[3.0], Polarity::In)])
+        .expect("every member has a key");
+    let unequal = ConstraintSystem::new([equation(Expression::from(x.clone()).not_equals(2))])
+        .expect("every member has a key");
+    let harness = Harness::answering(SatResult::Sat);
+    let context = harness.context();
+
+    let satisfiability = excluded.check_satisfiability(&int_types, CheckLimits::new(), &context);
+    let implication =
+        excluded.check_implication(&unequal, &int_types, CheckLimits::new(), &context);
+    let residual = included.check_satisfiability_with_bindings(
+        &bind([(x.clone(), Expression::from(y.clone()) + 1)]),
+        &int_types,
+        CheckLimits::new(),
+        &context,
+    );
+
+    assert_eq!(satisfiability.expect("undecided"), Outcome::Undecided);
+    assert_eq!(implication.expect("undecided"), Outcome::Undecided);
+    assert_eq!(residual.expect("undecided"), Outcome::Undecided);
+    assert_eq!(
+        harness.observer.events(),
+        [
+            RecordedEvent::Refused(QueryKind::Satisfiability),
+            RecordedEvent::Refused(QueryKind::Implication),
+            RecordedEvent::Refused(QueryKind::Satisfiability),
+        ]
+    );
+    assert!(harness.scripts().is_empty());
+}
+
+#[test]
+fn a_set_member_of_the_same_numeric_kind_is_asked_of_the_backend() {
+    let x = Identifier::new("x");
+    let system = ConstraintSystem::new([float_set(&x, &[2.0], Polarity::NotIn)])
+        .expect("every member has a key");
+    let harness = Harness::answering(SatResult::Sat);
+
+    let outcome = system.check_satisfiability(
+        &build_symbol_types(&[(&x, SymbolType::Real)]),
+        CheckLimits::new(),
+        &harness.context(),
+    );
+
+    assert_eq!(outcome.expect("answered"), Outcome::Satisfied);
+    assert_eq!(harness.scripts().len(), 1);
+}
+
 #[test]
 fn a_conversion_error_comes_before_missing_symbol_types() {
     let x = Identifier::new("x");

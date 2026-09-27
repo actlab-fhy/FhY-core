@@ -38,15 +38,15 @@ then each expression's use as a predicate
 (``NonBooleanLogicalOperandError``), then the hazard screen of each
 expression on its own. The screen refuses what SMT-LIB2 arithmetic cannot
 state in this package's semantics: a native constant, a non-finite float, a
-Boolean in a numeric context, a partial operation off its safe domain
+Boolean in a numeric context, and a partial operation off its safe domain
 (division by anything but a finite nonzero literal with a real operand,
-floor division or modulo by anything but a finite positive literal, a power
-without an integer literal exponent of at least one), and an equality of a
-numeric literal with an operand of another or an unknown int/real kind. A
-refused question is logged at WARNING on this module's logger and answers
-``None``; the strict ``assert_*`` companions raise ``UndecidableError`` with
-the reason ``"hazard_screen"`` instead, and with the backend's reason for an
-``unknown`` answer.
+floor division or modulo by anything but a finite positive literal, and a
+power without an integer literal exponent of at least one). An equality of
+an int with a float is no hazard: it is decided by value, as evaluation
+compares them. A refused question is logged at WARNING on this module's
+logger and answers ``None``; the strict ``assert_*`` companions raise
+``UndecidableError`` with the reason ``"hazard_screen"`` instead, and with
+the backend's reason for an ``unknown`` answer.
 
 The lowering keeps this package's semantics: division is exact, floor
 division and modulo round toward negative infinity, and a float or decimal

@@ -6,8 +6,8 @@ system: `x * y <= 64` (a memory-budget bound) and `x < y` (a shape
 preference). Neither constraint is decidable from either parameter alone;
 this is the dependent-constraint story the scope-based rewrite makes first
 class. Both constraints stay inside decidable arithmetic (multiplication and
-strict ordering only, no division/modulo, no bool coercion, no mixed
-int/float equality), so the joint system is confidently SATISFIED or
+strict ordering only, no division/modulo, no bool coercion), so the
+joint system is confidently SATISFIED or
 VIOLATED rather than UNDECIDED.
 """
 
