@@ -2484,3 +2484,32 @@ Behavior changes are listed where they exist.
 - **Honest rustdoc on costs.** Per-occurrence display, the limits of
   identity-based change detection, and pattern recursion depth are all
   documented (EXP).
+
+---
+
+## Resolutions (the maintainer, 2026-09-27)
+
+**Group (b) decisions:**
+
+| Finding | Resolution |
+|---|---|
+| F2-004 | (i) Full unification: one `ForeignPart` supertrait, one handle and equality convention, fallible hooks (`Result<_, BoxError>`) except `eq`/`hash`, a context passed to the custom hooks, and provided methods in place of `Option<Result>`. Done as one breaking batch before the crates.io release |
+| F2-005 | (i) Move the SymPy backend into `fhy-core-py`. The core drops pyo3 and the `sympy` feature. Also make `IntervalProfile` and `Value` `#[non_exhaustive]`, and add a limits field to `SimplifyContext` |
+| F2-006 | (i) Split `ParamError` by family: `DomainError`, `ParamBuildError`, `AssignmentError`, `IntervalError`, and a question-level `ParamError` |
+| F2-011 | (a) Canonical encoding: hash-cons by structural digest while encoding |
+| F2-018 | Both: add `UnificationError::Substitution` and propagate it, **and** make the occurs check walk the binding graph |
+| F2-021 | (a) Every domain-level procedure enforces the domain's own restriction |
+| F2-034 | (a) NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`, as NumPy's `maximum`; `abs(-0.0) = 0.0` |
+| F2-036 | (ii) Canonical float and decimal decoders, **and** a D-7 revision: shortest round-trip text, with exponent form outside `[1e-5, 1e16)`. The corpus regeneration lands together with F2-001's and F2-011's |
+| F2-040 | (a) Drop the mixed int/real equality hazard |
+| F2-043 | `gil_used = true` until a free-threaded CI job exists, and document the NumPy contract that inputs must not be mutated during a call |
+
+**The other groups:**
+- **(a)** All 24 approved as written, with their listed behavior changes.
+- **(c)** All approved, including filtering the 64 V1 `DeprecationWarning`s and checking whether the 99% xdist stall reproduces.
+- **(d)** All six done in the pre-release breaking batch, with F2-004 to F2-006.
+
+**Also settled:**
+- **S17's slower benchmark rows.** V2 decoding of a literal-heavy tree (2.10) is optimized in the fix work, on top of F2-011's encoder rewrite. The other four rows (1.11 to 2.05; the 2.05 row is the cost of N-S17-2 (a)) are accepted.
+- **V1 removal.** The V1 wire format is removed in **0.3.0**, not 0.4.0. The deprecation texts and docs change to say so.
+- **Committed choice in `Alternatives`.** Compare it with the pre-S5 Python matcher first. Fix it only if Python backtracked.
