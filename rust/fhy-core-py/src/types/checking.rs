@@ -508,7 +508,8 @@ pub(crate) fn types_check_function_body(
             &rust_parameters,
             &rust_sorts,
             rust_result_sort,
-        );
+        )
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
         let snapshot = registry_snapshot();
         match check_function_body(
             &signature,
@@ -527,14 +528,28 @@ pub(crate) fn types_check_function_body(
 }
 
 /// Return the `ValidationReport` of every function body held to its
-/// declared result sort, one ERROR diagnostic per failing function, in
-/// registration order, resolving calls through the registry snapshot.
+/// declared result sort, the composed built-ins in catalogue order and then
+/// the user functions in registration order, one ERROR diagnostic per
+/// failing function, resolving calls through the registry snapshot.
+///
+/// `on_checked`, when given, is called with the name of each function the
+/// sweep checked, in that order, once the sweep is done.
 #[pyfunction]
-pub(crate) fn types_check_all_function_bodies(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+#[pyo3(signature = (on_checked = None))]
+pub(crate) fn types_check_all_function_bodies<'py>(
+    py: Python<'py>,
+    on_checked: Option<&Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
     let snapshot = registry_snapshot();
-    let failures = run_in_context(py, None, |_context| {
+    let sweep = run_in_context(py, None, |_context| {
         Ok(check_all_function_bodies(snapshot.registry()))
     })?;
+    if let Some(on_checked) = on_checked {
+        for label in sweep.checked() {
+            on_checked.call1((label.to_string(),))?;
+        }
+    }
+    let failures = sweep.into_failures();
     let error_level = diagnostic_class(py, "DiagnosticLevel")?.getattr("ERROR")?;
     let note = diagnostic_class(py, "Note")?;
     let diagnostic = diagnostic_class(py, "Diagnostic")?;

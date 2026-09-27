@@ -89,8 +89,8 @@ onto `dev-rust` before continuing.
 ### Track C: `types-param` (types, checking, params and the symbol table; lands 4th)
 
 - [x] C0: worktree `port/fix2-types-param` created; the baseline gates recorded (the worktree is `fix-c-types-param`, branch `fix/c-types-param`, from `dev-rust` at `35519bb`; see the Track C notes)
-- [x] R2-017 (F2-017): a negated literal checks as one literal
-- [ ] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous
+- [x] R2-017 (F2-017): a negated literal checks as one literal: `d07de23`
+- [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous
 - [ ] R2-001b (F2-001, checker part): the checker memoizes shared nodes
 - [ ] R2-026b (F2-026, checker part): rstests and broadened properties
 - [ ] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion
@@ -3604,6 +3604,36 @@ status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
   | Before | After | Tests |
   |---|---|---|
   | `check(-(5), uint8)` returned `uint8`; `check(-(128), int8)` raised "synthesized type int16[] is wider than the expected type int8[]" | the first raises "literal -5 is incompatible with uint8"; the second returns `int8` | `test_negated_literals_check_as_one_literal` |
+
+**R2-019.**
+- **The API.** `FunctionLabel { Builtin(BuiltinFunction), User(FunctionName) }`
+  (exhaustive, with `From` both ways and `&FunctionName`) names the function
+  in `FunctionSignature` and in every `BodyCheckError` variant, whose
+  `function` field was a `FunctionName`. `FunctionSignature::new` takes
+  `impl Into<FunctionLabel>` and returns `SignatureError::LengthMismatch`
+  (new, `#[non_exhaustive]`) on a length mismatch; the signature loses
+  `Copy`, since it owns its label. `check_all_function_bodies` returns a
+  `BodySweep` (`checked()`, `failures()`, `into_failures()`).
+- **A malformed signature in the sweep (call).** The sweep reports it as
+  the new `BodyCheckError::Signature` under its label, not a panic; neither
+  the catalogue nor a `FunctionDefinition` can produce one today.
+- **The seam** is the crate-private `sweep(registry, builtins)`, which
+  `check_all_function_bodies` calls with the catalogue's composed bodies;
+  the unit test hands it a broken `max`.
+- **Python (call).** `_rs.types_check_all_function_bodies` gains an
+  optional `on_checked` callable, called with each checked function's name
+  after the sweep, which is the "counting hook" of the Python test; the
+  public `check_all_registered_function_bodies()` keeps its signature. The
+  stub's line changes with it (a shared file).
+- **All 16 composed bodies check**, so the report stays empty.
+- **Fixed forward:** `d07de23` (R2-017) left one Python test line 90
+  characters long, which ruff's E501 refuses; this commit formats it.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `check_all_registered_function_bodies()` checked no composed built-in | it checks the 16 in catalogue order, then the user functions; a failing built-in gets a diagnostic naming it | `test_the_sweep_checks_every_expression_bodied_builtin` |
+  | `_rs.types_check_all_function_bodies()` took no argument | it takes an optional `on_checked` | the same |
 
 ### Track E notes
 

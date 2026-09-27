@@ -4,12 +4,13 @@
 
 use crate::support::expression::build_call_or_panic;
 
-use fhy_core::expression::builtins::BuiltinConstant;
+use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::{FunctionDefinition, FunctionRegistry};
 use fhy_core::expression::{Expression, FunctionName, FunctionSort, LiteralValue};
 use fhy_core::identifier::Identifier;
 use fhy_core::types::checking::{
-    BodyCheck, BodyCheckError, FunctionSignature, check_all_function_bodies, check_function_body,
+    BodyCheck, BodyCheckError, FunctionLabel, FunctionSignature, SignatureError,
+    check_all_function_bodies, check_function_body,
 };
 
 fn name(text: &str) -> FunctionName {
@@ -33,7 +34,8 @@ fn check_body(
     let function = name(function);
     let parameters = [x.clone()];
     let sorts = [parameter_sort];
-    let signature = FunctionSignature::new(&function, &parameters, &sorts, result_sort);
+    let signature = FunctionSignature::new(&function, &parameters, &sorts, result_sort)
+        .expect("a signature of matching lengths");
     check_function_body(&signature, body, registry, registry, defer)
 }
 
@@ -136,7 +138,7 @@ fn a_body_that_breaks_a_rule_or_is_unsupported_is_refused_naming_the_function() 
 #[test]
 fn a_body_whose_type_is_no_scalar_displays_the_type() {
     let error = BodyCheckError::NotScalar {
-        function: name("f"),
+        function: FunctionLabel::User(name("f")),
         body_type: crate::support::types::index(0, 4, 1),
     };
 
@@ -213,8 +215,56 @@ fn a_self_recursive_body_resolves_its_own_call() {
 }
 
 #[test]
-fn the_sweep_holds_every_built_in_body_to_its_sort() {
-    assert!(check_all_function_bodies(&FunctionRegistry::new()).is_empty());
+fn the_sweep_checks_every_composed_builtin() {
+    let sweep = check_all_function_bodies(&FunctionRegistry::new());
+
+    let composed: Vec<FunctionLabel> = BuiltinFunction::iter()
+        .filter(|function| function.composed().is_some())
+        .map(FunctionLabel::Builtin)
+        .collect();
+    assert_eq!(composed.len(), 16);
+    assert_eq!(sweep.checked(), composed);
+    assert!(sweep.failures().is_empty(), "{:?}", sweep.failures());
+}
+
+#[test]
+fn a_signature_with_mismatched_lengths_is_refused() {
+    let function = name("f");
+    let parameters = [Identifier::new("x"), Identifier::new("y")];
+
+    let error = FunctionSignature::new(
+        &function,
+        &parameters,
+        &[FunctionSort::Int],
+        FunctionSort::Int,
+    )
+    .expect_err("two parameters, one sort");
+
+    assert_eq!(
+        error,
+        SignatureError::LengthMismatch {
+            function: FunctionLabel::User(function.clone()),
+            parameters: 2,
+            parameter_sorts: 1,
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "function 'f' has 2 parameter(s) but 1 parameter sort(s)"
+    );
+}
+
+#[test]
+fn a_function_label_displays_its_name() {
+    assert_eq!(
+        FunctionLabel::Builtin(BuiltinFunction::Max).to_string(),
+        "max"
+    );
+    assert_eq!(FunctionLabel::User(name("scale")).to_string(), "scale");
+    assert_eq!(
+        FunctionLabel::from(BuiltinFunction::Relu),
+        FunctionLabel::Builtin(BuiltinFunction::Relu)
+    );
 }
 
 #[test]
@@ -243,12 +293,20 @@ fn the_sweep_reports_each_failing_user_body_in_registration_order() {
             .expect("registers");
     }
 
-    let failures = check_all_function_bodies(&registry);
+    let sweep = check_all_function_bodies(&registry);
 
+    let failures = sweep.failures();
     let names: Vec<String> = failures
         .iter()
         .map(|(function, _)| function.to_string())
         .collect();
     assert_eq!(names, ["sweep_first", "sweep_dangling"]);
     assert!(failures[1].1.to_string().contains("sweep_never_registered"));
+    let users: Vec<String> = sweep
+        .checked()
+        .iter()
+        .filter(|label| matches!(label, FunctionLabel::User(_)))
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(users, ["sweep_first", "sweep_fine", "sweep_dangling"]);
 }

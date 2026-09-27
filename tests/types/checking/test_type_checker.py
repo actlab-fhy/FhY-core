@@ -468,7 +468,10 @@ def test_check_negative_literal_against_unsigned_expected_raises() -> None:
             id="negated-five-against-uint8",
         ),
         pytest.param(
-            LiteralExpression(-5), CoreDataType.UINT8, None, id="minus-five-against-uint8"
+            LiteralExpression(-5),
+            CoreDataType.UINT8,
+            None,
+            id="minus-five-against-uint8",
         ),
         pytest.param(
             UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(128)),

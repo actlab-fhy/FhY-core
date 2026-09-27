@@ -12,7 +12,8 @@
 //! - [`check_function_body`] holds a function's body to its declared result
 //!   sort, and [`check_all_function_bodies`] does so for every function a
 //!   [`FunctionRegistry`](crate::expression::registry::FunctionRegistry) and
-//!   the built-in catalogue define.
+//!   the built-in catalogue define, naming each by its [`FunctionLabel`]
+//!   and returning a [`BodySweep`] of the labels checked and the failures.
 //!
 //! The checker walks the expression on its own work list, so an expression
 //! of any depth checks on a small stack.
@@ -47,6 +48,11 @@ mod checker;
 mod error;
 mod sort;
 
-pub use body::{BodyCheck, FunctionSignature, check_all_function_bodies, check_function_body};
+pub use body::{
+    BodyCheck, BodySweep, FunctionLabel, FunctionSignature, check_all_function_bodies,
+    check_function_body,
+};
 pub use checker::{CallTarget, CallTargets, IdentifierTypes, TypeChecker};
-pub use error::{BodyCheckError, CallTargetError, TypeCheckError, TypeRule, TypeRuleKind};
+pub use error::{
+    BodyCheckError, CallTargetError, SignatureError, TypeCheckError, TypeRule, TypeRuleKind,
+};

@@ -3,13 +3,12 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::{
-    Bounded, Expression, FormatOptions, FunctionName, FunctionSort, IdentifierStyle,
-};
+use crate::expression::{Bounded, Expression, FormatOptions, FunctionSort, IdentifierStyle};
 use crate::foreign::BoxError;
 
 use super::super::core_data_type::CoreDataType;
 use super::super::ty::Type;
+use super::body::FunctionLabel;
 
 /// The kind of rule a [`TypeRule`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -189,6 +188,39 @@ impl Error for TypeCheckError {
     }
 }
 
+/// A function signature whose parts disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SignatureError {
+    /// The parameters and their sorts differ in number.
+    LengthMismatch {
+        /// The function.
+        function: FunctionLabel,
+        /// The number of parameters.
+        parameters: usize,
+        /// The number of parameter sorts.
+        parameter_sorts: usize,
+    },
+}
+
+impl fmt::Display for SignatureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LengthMismatch {
+                function,
+                parameters,
+                parameter_sorts,
+            } => write!(
+                f,
+                "function '{function}' has {parameters} parameter(s) but {parameter_sorts} \
+                 parameter sort(s)"
+            ),
+        }
+    }
+}
+
+impl Error for SignatureError {}
+
 /// A function body that does not satisfy its declared signature.
 ///
 /// Displays one lowercase line naming the function, such as `function
@@ -200,21 +232,21 @@ pub enum BodyCheckError {
     /// The body calls a function no target resolves.
     UnknownCall {
         /// The function whose body is checked.
-        function: FunctionName,
+        function: FunctionLabel,
         /// The lookup's error.
         error: CallTargetError,
     },
     /// The body uses a construct the checker does not support yet.
     Unsupported {
         /// The function whose body is checked.
-        function: FunctionName,
+        function: FunctionLabel,
         /// The checker's error.
         error: TypeCheckError,
     },
     /// The body breaks a type rule.
     IllTyped {
         /// The function whose body is checked.
-        function: FunctionName,
+        function: FunctionLabel,
         /// The checker's error.
         error: TypeCheckError,
     },
@@ -222,14 +254,14 @@ pub enum BodyCheckError {
     /// type.
     NotScalar {
         /// The function whose body is checked.
-        function: FunctionName,
+        function: FunctionLabel,
         /// The body's type.
         body_type: Type,
     },
     /// The body's core data type is outside the declared result sort.
     IncompatibleResult {
         /// The function whose body is checked.
-        function: FunctionName,
+        function: FunctionLabel,
         /// The body's core data type.
         body: CoreDataType,
         /// The declared result sort.
@@ -237,6 +269,8 @@ pub enum BodyCheckError {
     },
     /// A call target lookup failed.
     Callback(BoxError),
+    /// The function's signature is malformed, so its body was not checked.
+    Signature(SignatureError),
 }
 
 impl fmt::Display for BodyCheckError {
@@ -277,6 +311,7 @@ impl fmt::Display for BodyCheckError {
                  declared result sort {sort}"
             ),
             Self::Callback(_) => f.write_str("a call target lookup failed"),
+            Self::Signature(error) => write!(f, "{error}"),
         }
     }
 }
@@ -285,6 +320,7 @@ impl Error for BodyCheckError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Callback(source) => Some(source.as_ref()),
+            Self::Signature(error) => error.source(),
             // The inner errors are fields, and the text already holds them.
             _ => None,
         }
