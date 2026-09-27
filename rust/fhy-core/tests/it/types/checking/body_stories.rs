@@ -79,7 +79,14 @@ fn a_body_of_an_incompatible_type_is_refused() {
     )
     .expect_err("a Boolean body for an int result");
 
-    assert!(matches!(error, BodyCheckError::IncompatibleResult { .. }));
+    assert!(matches!(
+        &error,
+        BodyCheckError::IncompatibleResult {
+            function: FunctionLabel::User(function),
+            body: fhy_core::types::CoreDataType::Bool,
+            sort: FunctionSort::Int,
+        } if *function == name("lt_as_int")
+    ));
     assert_eq!(
         error.to_string(),
         "function 'lt_as_int' body synthesized type bool is not compatible with the declared result sort int"
@@ -177,7 +184,13 @@ fn an_unresolved_call_is_deferred_or_refused() {
         false,
     )
     .expect_err("refused");
-    assert!(matches!(error, BodyCheckError::UnknownCall { .. }));
+    assert!(matches!(
+        &error,
+        BodyCheckError::UnknownCall {
+            function: FunctionLabel::User(function),
+            error: fhy_core::types::checking::CallTargetError::Unknown { name: callee, source: None, .. },
+        } if *function == name("f") && callee == "not_yet"
+    ));
     assert!(error.to_string().starts_with("function 'f' body calls a function that is not registered: no entry is registered under the name 'not_yet'"));
 }
 

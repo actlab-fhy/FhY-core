@@ -418,7 +418,10 @@ fn unconstrained_template_binds_any_width() {
         .bind_template(&DataType::Primitive(CoreDataType::Float64), &empty())
         .expect("binds");
 
-    assert!(environment.data_type_binding(&t).is_some());
+    assert_eq!(
+        environment.data_type_binding(&t),
+        Some(&DataType::Primitive(CoreDataType::Float64))
+    );
 }
 
 #[test]
@@ -1116,4 +1119,74 @@ fn deep_dimensions_bind_substitute_and_unify_on_a_small_stack() {
         let occurs = unify_expressions(&reference(&n), &deep, &empty());
         assert!(matches!(occurs, Err(UnificationError::OccursCheck { .. })));
     });
+}
+
+#[test]
+fn from_bindings_holds_the_three_tables() {
+    let (t, f, n) = (
+        Identifier::new("T"),
+        Identifier::new("F"),
+        Identifier::new("N"),
+    );
+    let environment = TypeUnificationEnvironment::from_bindings(
+        [(t.clone(), int32())].into_iter().collect(),
+        [(f.clone(), scalar(CoreDataType::Bool))]
+            .into_iter()
+            .collect(),
+        [(n.clone(), Expression::from(4))].into_iter().collect(),
+    );
+    let built = empty()
+        .with_data_type_binding(t.clone(), int32())
+        .with_type_binding(f.clone(), scalar(CoreDataType::Bool))
+        .with_expression_binding(n.clone(), Expression::from(4));
+
+    assert_eq!(environment.data_type_binding(&t), Some(&int32()));
+    assert_eq!(
+        environment.type_binding(&f),
+        Some(&scalar(CoreDataType::Bool))
+    );
+    assert_eq!(
+        environment.expression_binding(&n),
+        Some(&Expression::from(4))
+    );
+    assert_eq!(environment.data_type_bindings().len(), 1);
+    assert_eq!(environment, built);
+    assert!(
+        environment
+            .is_structurally_equivalent(&built)
+            .expect("no extension")
+    );
+    assert_eq!(
+        TypeUnificationEnvironment::from_bindings(
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new()
+        ),
+        empty()
+    );
+}
+
+#[test]
+fn an_index_type_substitution_keeps_its_handle_unless_a_bound_changes() {
+    let n = Identifier::new("N");
+    let pattern = index(0, 8, 1);
+    let symbolic = Type::Index(fhy_core::types::IndexType::new(
+        Expression::from(0),
+        reference(&n),
+        Expression::from(1),
+    ));
+    let environment = empty().with_expression_binding(n.clone(), Expression::from(8));
+
+    let unchanged = pattern
+        .substitute_template(&environment)
+        .expect("substitutes");
+    let unbound = symbolic.substitute_template(&empty()).expect("substitutes");
+    let changed = symbolic
+        .substitute_template(&environment)
+        .expect("substitutes");
+
+    assert!(Type::ptr_eq(&unchanged, &pattern));
+    assert!(Type::ptr_eq(&unbound, &symbolic));
+    assert!(!Type::ptr_eq(&changed, &symbolic));
+    assert_eq!(changed, pattern);
 }

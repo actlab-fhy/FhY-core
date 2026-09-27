@@ -4,6 +4,7 @@
 
 mod checking;
 mod data_type_stories;
+mod error_text_stories;
 mod extension_stories;
 mod serde_stories;
 mod type_stories;

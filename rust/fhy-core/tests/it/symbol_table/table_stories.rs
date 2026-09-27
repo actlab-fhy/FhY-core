@@ -931,6 +931,30 @@ fn equivalence_tells_apart_namespaces_parents_symbols_and_frames() {
     assert_ne!(base, other_frame, "a frame differs");
 }
 
+/// Two tables of as many namespaces, or of as many symbols in a namespace,
+/// differ when a name differs, whichever table is asked.
+#[test]
+fn equivalence_of_equal_sizes_tells_apart_names_in_both_directions() {
+    let [first, second, symbol, other] = identifiers(["first", "second", "symbol", "other"]);
+    let table_of = |namespace: &Identifier, held: &Identifier| {
+        let mut table: SymbolTable<ImportFrame> = SymbolTable::new();
+        table.add_namespace(namespace.clone(), None).expect("new");
+        table
+            .add_symbol(namespace, held.clone(), import(held))
+            .expect("new");
+        table
+    };
+
+    let (named_first, named_second) = (table_of(&first, &symbol), table_of(&second, &symbol));
+    let (holding_symbol, holding_other) = (table_of(&first, &symbol), table_of(&first, &other));
+
+    assert_ne!(named_first, named_second, "a namespace name differs");
+    assert_ne!(named_second, named_first, "a namespace name differs");
+    assert_ne!(holding_symbol, holding_other, "a symbol name differs");
+    assert_ne!(holding_other, holding_symbol, "a symbol name differs");
+    assert_eq!(holding_symbol, table_of(&first, &symbol));
+}
+
 #[test]
 fn is_equivalent_by_stops_at_the_first_false_frame() {
     let [namespace, first, second] = identifiers(["namespace", "first", "second"]);

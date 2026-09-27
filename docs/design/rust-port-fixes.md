@@ -101,8 +101,8 @@ onto `dev-rust` before continuing.
 - [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction: `7f3e8db`
 - [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations: `d33c5ef`
 - [x] R2-028 (F2-028): param and constraint decision-rule tests in Rust: `3f55cff`
-- [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables
-- [ ] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories
+- [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables: `f90a4da`
+- [x] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories
 - [ ] `[rebase]` onto `dev-rust` after Tracks D and B land
 - [ ] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound
 - [ ] Track C status: gates green; counts recorded; landed as `<hash>`
@@ -3887,6 +3887,41 @@ and that the decoded JSON re-encodes to the same text.
   and function frames; it also checks that the checked API built no
   shadowing (R2-020). Before R2-020, a child added before its parent would
   have failed it, as F2-046 expected.
+
+**R2-029c.** Tests only; every new test passed at its first run, so no new
+finding.
+- **Done before the rebase onto B (call).** The item "needs" Track B
+  landed, for R2-010's reworded `TypeCheckError::Rule` text; B is still
+  running, so the tables pin today's `Rule` text in two cases
+  (`a_broken_rule_is_framed_by_the_root_and_the_sub_expression` and
+  `each_body_check_failure_names_the_function`, whose `IllTyped` and
+  `Unsupported` texts embed a `Rule`). They are this track's to update
+  when it rebases onto B (§I.7.1, "who resolves").
+- **Tables** (through Track A's `support/error_text.rs`, `to_string()` and
+  the `source()` type by downcast): `types/error_text_stories.rs`, every
+  variant of `PromotionError`, `LiteralTypeError` (the float and integer
+  `Incompatible` texts both), `TemplateWidthError` (built through
+  `with_widths`, its constructors being crate-private) and
+  `UnificationError` (each operation's text, the width mismatch of a weak
+  type, `Extension` and `Substitution` with their sources);
+  `types/checking/error_text_stories.rs`, `TypeCheckError` (a rule at the
+  root and below it, an unsupported rule, a deferred unknown call and a
+  failing lookup, both with the lookup's error as source),
+  `CallTargetError`, `SignatureError` and every `BodyCheckError`, the
+  failures produced by `check_function_body` and matched field by field;
+  `symbol_table/error_text_stories.rs`, every `SymbolTableError` and the
+  text of every `Violation` (which implements no `Error`).
+- **Tightened:** `body_stories.rs`'s two `{ .. }` matches (the labels, the
+  core type, the sort, the callee's name); `extension_stories.rs`'s width
+  mismatch (the template, its widths, the actual type) and the default
+  data-type bind (the operation and which side holds the part);
+  `unification_stories.rs`'s `is_some()` now compares the bound data type.
+- **Small stories:** tables of equal sizes that differ in a namespace or a
+  symbol name, both directions; `from_bindings` holds the three tables and
+  equals the `with_*` build; an index type's substitution keeps its handle
+  unless a bound changes. The default type rule's `TypeMismatch`
+  (`unify.rs:366` at the audit) was already pinned by
+  `an_extension_without_rules_takes_the_default_rules`.
 
 ### Track E notes
 

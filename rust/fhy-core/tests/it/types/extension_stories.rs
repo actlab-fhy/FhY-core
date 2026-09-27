@@ -258,8 +258,14 @@ fn a_width_violation_inside_an_extension_surfaces_as_the_core_error() {
         .expect_err("32 is not 8");
     let unified = pattern.unify(&actual, &empty()).expect_err("32 is not 8");
 
-    assert!(matches!(bound, UnificationError::WidthMismatch { .. }));
-    assert!(matches!(unified, UnificationError::WidthMismatch { .. }));
+    for error in [bound, unified] {
+        let UnificationError::WidthMismatch { template, actual } = &error else {
+            panic!("a width mismatch, got {error}");
+        };
+        assert_eq!(template.identifier(), &t);
+        assert_eq!(template.widths(), Some(&[8][..]));
+        assert_eq!(*actual, CoreDataType::Int32);
+    }
 }
 
 #[test]
@@ -348,7 +354,18 @@ fn a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule() {
         .bind_template(&pattern, &empty())
         .expect("a template binds any data type");
 
-    assert!(matches!(error, UnificationError::DataTypeMismatch { .. }));
+    let UnificationError::DataTypeMismatch {
+        operation,
+        expected,
+        actual,
+    } = &error
+    else {
+        panic!("a data type mismatch, got {error}");
+    };
+    assert_eq!(*operation, TypeOperation::Bind);
+    let is_same_part = |left: &DataType, right: &DataType| matches!((left, right), (DataType::Extension(left), DataType::Extension(right)) if Part::ptr_eq(left, right));
+    assert!(is_same_part(expected, &data_type));
+    assert!(!is_same_part(actual, &data_type));
     assert_eq!(environment.data_type_binding(&t), Some(&data_type));
 }
 
