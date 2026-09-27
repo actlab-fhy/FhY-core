@@ -224,6 +224,8 @@ def test_param_check_subset(benchmark: Benchmark, kind: str) -> None:
 @pytest.mark.parametrize("kind", ["ordinal_20", "categorical_4"])
 def test_param_union(benchmark: Benchmark, kind: str) -> None:
     """Benchmark the union of two finite params."""
+    left: Param[Any]
+    right: Param[Any]
     if kind == "ordinal_20":
         left = create_ordinal_param(list(range(_ORDINAL_SIZE)))
         right = create_ordinal_param(list(range(10, 10 + _ORDINAL_SIZE)))
@@ -236,6 +238,8 @@ def test_param_union(benchmark: Benchmark, kind: str) -> None:
 @pytest.mark.parametrize("kind", ["integer", "ordinal_20", "permutation_4"])
 def test_param_intersection(benchmark: Benchmark, kind: str) -> None:
     """Benchmark the intersection of two params, with its emptiness check."""
+    left: Param[Any]
+    right: Param[Any]
     if kind == "integer":
         left = create_integer_param_between(0, 10)
         right = create_integer_param_between(5, 20)

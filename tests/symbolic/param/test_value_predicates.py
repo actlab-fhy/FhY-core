@@ -1,28 +1,41 @@
-"""Tests for the strict value-matching predicate and its domain-level effects.
+"""Tests for strict value matching and its domain-level effects.
 
-`do_param_values_match` is the central membership predicate for every finite
-parameter domain. It treats ``bool``, ``int``, and ``float`` as mutually
-disjoint value kinds and ``str`` as distinct, so ``True`` never matches ``1`` and
-``1`` never matches ``1.0`` even though Python considers them ``==``. These tests
-exercise the predicate directly, cover the index-wise sequence form
-`do_ordered_param_values_match` built on it, and confirm the four domain builders
-inherit the strict semantics.
+Every finite parameter domain matches values type-strictly. It treats
+``bool``, ``int``, and ``float`` as mutually disjoint value kinds and ``str``
+as distinct, so ``True`` never matches ``1`` and ``1`` never matches ``1.0``
+even though Python considers them ``==``. These tests exercise the matching
+through a one-value domain's admissibility, cover the index-wise sequence
+form through the equivalence of ordered domains, and confirm the domain
+builders inherit the strict semantics. (The Python predicates
+``do_param_values_match`` and ``do_ordered_param_values_match`` were deleted
+when the domains moved to the Rust core, S16; the rules they held are
+pinned here and in ``rust/fhy-core/tests/it/param/domain_stories.rs``.)
 """
+
+from typing import Any
 
 import pytest
 
 from fhy_core.symbolic.param.domains import (
+    PermutationDomain,
     build_categorical_domain,
     build_ordinal_domain,
     build_permutation_domain,
 )
-from fhy_core.symbolic.param.values import (
-    do_ordered_param_values_match,
-    do_param_values_match,
-)
+
+
+def _matches(candidate: object, allowed: Any) -> bool:
+    """Return whether a domain holding only `allowed` admits `candidate`."""
+    return build_ordinal_domain((allowed,)).is_value_admissible(candidate)
+
+
+def _match_in_order(own: tuple[Any, ...], other: tuple[Any, ...]) -> bool:
+    """Return whether two permutation domains hold the same members in order."""
+    return PermutationDomain(own).is_structurally_equivalent(PermutationDomain(other))
+
 
 # =============================================================================
-# `do_param_values_match` strictness
+# Strict matching
 # =============================================================================
 
 
@@ -37,15 +50,15 @@ from fhy_core.symbolic.param.values import (
         pytest.param(True, 1.0, id="bool-float"),
     ],
 )
-def test_do_param_values_match_rejects_cross_kind_numeric_values(
+def test_matching_rejects_cross_kind_numeric_values(
     candidate: object, allowed: object
 ) -> None:
-    """Test the predicate reports cross-kind numeric values as non-matching.
+    """Test matching reports cross-kind numeric values as non-matching.
 
     ``bool``, ``int``, and ``float`` are mutually disjoint, so equal-valued
     numbers of different kinds must not match.
     """
-    assert not do_param_values_match(candidate, allowed)
+    assert not _matches(candidate, allowed)
 
 
 @pytest.mark.parametrize(
@@ -57,50 +70,50 @@ def test_do_param_values_match_rejects_cross_kind_numeric_values(
         pytest.param("a", "a", id="str-str"),
     ],
 )
-def test_do_param_values_match_accepts_same_kind_equal_values(
+def test_matching_accepts_same_kind_equal_values(
     candidate: object, allowed: object
 ) -> None:
-    """Test the predicate reports equal same-kind values as matching."""
-    assert do_param_values_match(candidate, allowed)
+    """Test matching reports equal same-kind values as matching."""
+    assert _matches(candidate, allowed)
 
 
-def test_do_param_values_match_rejects_unequal_same_kind_values() -> None:
-    """Test the predicate reports unequal same-kind values as non-matching."""
-    assert not do_param_values_match(1, 2)
-    assert not do_param_values_match("a", "b")
+def test_matching_rejects_unequal_same_kind_values() -> None:
+    """Test matching reports unequal same-kind values as non-matching."""
+    assert not _matches(1, 2)
+    assert not _matches("a", "b")
 
 
-def test_do_param_values_match_treats_str_as_distinct_from_numbers() -> None:
+def test_matching_treats_str_as_distinct_from_numbers() -> None:
     """Test a ``str`` never matches a numeric value of equal textual form."""
-    assert not do_param_values_match("1", 1)
-    assert not do_param_values_match(1, "1")
+    assert not _matches("1", 1)
+    assert not _matches(1, "1")
 
 
 # =============================================================================
-# `do_ordered_param_values_match` strictness
+# Ordered matching
 # =============================================================================
 
 
-def test_do_ordered_param_values_match_accepts_position_wise_equal_sequences() -> None:
+def test_ordered_matching_accepts_position_wise_equal_sequences() -> None:
     """Test two sequences holding the same values at the same positions match."""
-    assert do_ordered_param_values_match((1, 2, "a"), (1, 2, "a"))
+    assert _match_in_order((1, 2, "a"), (1, 2, "a"))
 
 
-def test_do_ordered_param_values_match_rejects_sequences_of_different_lengths() -> None:
+def test_ordered_matching_rejects_sequences_of_different_lengths() -> None:
     """Test a prefix does not match the longer sequence it is a prefix of."""
-    assert not do_ordered_param_values_match((1, 2), (1, 2, 3))
-    assert not do_ordered_param_values_match((1, 2, 3), (1, 2))
+    assert not _match_in_order((1, 2), (1, 2, 3))
+    assert not _match_in_order((1, 2, 3), (1, 2))
 
 
-def test_do_ordered_param_values_match_rejects_cross_kind_value_at_a_position() -> None:
+def test_ordered_matching_rejects_cross_kind_value_at_a_position() -> None:
     """Test one kind-distinct position makes the whole sequence non-matching."""
-    assert not do_ordered_param_values_match((1, 2), (True, 2))
-    assert not do_ordered_param_values_match((1, 2), (1.0, 2))
+    assert not _match_in_order((1, 2), (True, 2))
+    assert not _match_in_order((1, 2), (1.0, 2))
 
 
-def test_do_ordered_param_values_match_is_order_sensitive() -> None:
+def test_ordered_matching_is_order_sensitive() -> None:
     """Test the same values in a different order do not match."""
-    assert not do_ordered_param_values_match((1, 2), (2, 1))
+    assert not _match_in_order((1, 2), (2, 1))
 
 
 # =============================================================================

@@ -1435,6 +1435,8 @@ def _apply_interval_bounds(
     unbounded.
     """
     profile = domain.get_interval_profile()
+    if profile is None:  # pragma: no cover
+        raise RuntimeError("Interval domain has no interval profile.")
     if min_int is not None:
         if _is_exclusive_lower_rendering_valid(profile, min_int):
             param = param.add_lower_bound_constraint(min_int - 1, is_inclusive=False)

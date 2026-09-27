@@ -145,7 +145,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16a.1: param benchmarks and baseline (55 rows; see "S16a.1 baseline")
     - [x] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events; 141 new tests, see "S16a.2 implementation notes")
     - [x] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
-    - [ ] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests
+    - [x] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests (see "S16a.4 status")
     - [ ] S16a.5: the interface suite for the domains
   - [ ] S16b: params
     - [ ] S16b.1: core additions, test-first (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection)
@@ -17897,3 +17897,35 @@ both ways), `read_opaque_member`, `value_to_python`,
 fallback; the solver binding gains `is_pass_execution_failure` and lends
 `symbol_type_to_python`. Nothing in Python uses it yet, so the suite is
 unchanged (7,766 passed, 2 xfailed).
+
+### S16a.4 status
+
+The Python switch (marked breaking) makes `domains.py` and `values.py`
+thin. `domains.py` keeps the `ParamDomain` ABC, `IntervalProfile`,
+`DecidedOutcome`, the logger, the three `build_*_domain` builders, and
+`compute_constraint_implication_subset`, `evaluate_system_outcome`,
+`are_all_constraints_satisfied` and `is_bound_expression` as calls into
+`_rs`; it defines the six kinds as `class
+IntegerDomain(_rs.IntegerDomain, WrappedFamilySerializable)` and the like,
+with their attributes copied into slots (S13's 64a1436), registered as
+virtual subclasses of `ParamDomain` and `FrozenMixin`. `values.py` keeps
+`ParamError`, the two protocols, the three aliases and their type
+variables. `core.py` stays Python over the new classes until S16b, with
+one guard for the profile its interval helpers read, now typed
+optional. The README's parameter row and Rust-backed list change.
+
+After the switch, three modules failed to collect (they imported deleted
+helpers) and one test failed; nothing else changed, the categorical and
+log tests included. At the end: `pytest` 7,766 passed, `-m "not
+very_slow"` 7,799 passed, the property marker 282 passed, ruff and mypy
+clean (the screening tests then plug a recording SMT backend, and so carry
+no `z3` marker).
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_value_predicates.py`: the 12 tests of `do_param_values_match` and `do_ordered_param_values_match` | `test_matching_*`, `test_ordered_matching_*` | P-12: the same cases through a one-value domain's admissibility and two permutation domains' equivalence |
+| `test_domain_internals.py`: the 4 tests of `_rename_constraint_variable` | `test_rescoping_*` | P-12: through `compute_intersection`, which rescopes a side onto the result variable |
+| `test_domain_internals.py`: the 7 tests of `_build_screened_constraint_system` | `test_screening_*` | P-12: through `has_feasible_value` and `compute_constraint_implication_subset` with a recording SMT backend, asserting what the solver is asked (a dropped constraint asks nothing, or leaves the consequent without it) |
+| `test_domain_internals.py`: the 5 WARNING tests of the screening | `test_screening_logs_warning_naming_the_constraint_and_the_variable` (5 cases) | P-12: the same records, through the same public drivers |
+| `test_core_internals.py`: the 8 tests of `serialize_wrapped_leaf_value` | `test_domain_payload_serializes_each_supported_leaf_type`, `test_domain_refuses_an_unsupported_leaf_value` | P-12: a domain's payload serializes each leaf, and a domain refuses an unsupported value when it is built (`TypeError`) |
+| `test_param_intersection.py::test_intersection_with_unrescopable_constraint_kind_raises_constraint_error` | same name | P-6: the core's text, `cannot rescope a constraint of an unexpected kind` |

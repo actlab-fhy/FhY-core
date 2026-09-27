@@ -680,7 +680,7 @@ def test_intersection_with_unrescopable_constraint_kind_raises_constraint_error(
     left = left.add_constraint(_UnrescopableConstraint(left.variable))
     right = create_integer_param()
 
-    with pytest.raises(ConstraintError, match="Cannot rename an unexpected"):
+    with pytest.raises(ConstraintError, match="unexpected kind"):
         create_intersection_param(left, right)
 
 

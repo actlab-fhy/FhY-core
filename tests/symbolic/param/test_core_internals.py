@@ -1,21 +1,23 @@
-"""Tests for private helpers in `fhy_core.symbolic.param`.
+"""Tests for the leaf values the finite domains serialize and refuse.
 
-The helpers exercised here cover validation paths that the public-API tests
-cannot easily reach because the public constructors and validators reject
-malformed inputs before they propagate. Each test calls the private helper
-directly.
+The Python helper `serialize_wrapped_leaf_value` these tests once called
+directly was deleted when the domains moved to the Rust core (S16). A
+finite domain's payload now serializes each of its values through the
+serialization framework's wrapped registry, and the domain refuses an
+unsupported value when it is built, so the rules are pinned through the
+public domains here.
 """
 
 from typing import Any
 
 import pytest
 
-from fhy_core.symbolic.param.values import ParamError, serialize_wrapped_leaf_value
+from fhy_core.symbolic.param import CategoricalDomain, OrdinalDomain
 
 from .conftest import mock_identifier
 
 # =============================================================================
-# `serialize_wrapped_leaf_value`
+# Leaf values in a payload
 # =============================================================================
 
 
@@ -29,11 +31,23 @@ from .conftest import mock_identifier
         pytest.param(mock_identifier("x", 0), id="serializable"),
     ],
 )
-def test_serialize_wrapped_leaf_value_accepts_each_supported_type(
-    value: Any,
-) -> None:
-    """Test the helper serializes each supported leaf-value type without raising."""
-    serialize_wrapped_leaf_value(value)
+def test_domain_payload_serializes_each_supported_leaf_type(value: Any) -> None:
+    """Test a domain serializes each supported leaf-value type without raising.
+
+    A categorical domain holds no float, so the float goes in an ordinal one.
+    """
+    domain = (
+        OrdinalDomain((value,))
+        if isinstance(value, float)
+        else CategoricalDomain((value,))
+    )
+
+    payload = domain.serialize_to_dict()["__data__"]
+
+    assert isinstance(payload, dict)
+    (values,) = payload.values()
+    assert isinstance(values, list)
+    assert len(values) == 1
 
 
 @pytest.mark.parametrize(
@@ -44,12 +58,10 @@ def test_serialize_wrapped_leaf_value_accepts_each_supported_type(
         pytest.param(object(), id="opaque-object"),
     ],
 )
-def test_serialize_wrapped_leaf_value_rejects_unsupported_type(
-    value: Any,
-) -> None:
-    """Test the helper raises `ParamError` for a value of an unsupported type."""
-    with pytest.raises(ParamError, match="serializable leaf"):
-        serialize_wrapped_leaf_value(value)
+def test_domain_refuses_an_unsupported_leaf_value(value: Any) -> None:
+    """Test a domain refuses a value of an unsupported type when it is built."""
+    with pytest.raises(TypeError, match="Categorical values"):
+        CategoricalDomain((value,))
 
 
 # =============================================================================
