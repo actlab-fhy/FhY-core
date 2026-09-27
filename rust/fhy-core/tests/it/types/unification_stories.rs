@@ -11,7 +11,7 @@ use crate::support::types::{
     array, constrained_template, identifier_dimension, index, literal_dimension, scalar, template,
 };
 
-use fhy_core::expression::{Expression, LiteralValue};
+use fhy_core::expression::{Expression, LiteralValue, PiecewiseError};
 use fhy_core::identifier::Identifier;
 use fhy_core::types::{
     CoreDataType, DataType, Dimension, Type, TypeOperation, TypeUnificationEnvironment,
@@ -892,6 +892,88 @@ fn the_occurs_check_follows_bindings_on_either_side() {
         on_right,
         Err(UnificationError::OccursCheck { .. })
     ));
+}
+
+/// The TYP probe's environment: `C := 5` and `Y := X + 1`, with the
+/// piecewise `{Y if C; 0 otherwise}`, whose substitution puts the literal
+/// `5` in a condition, which `Expression::substitute` refuses.
+fn refused_substitution_case() -> (
+    Identifier,
+    TypeUnificationEnvironment,
+    Expression,
+    Expression,
+) {
+    let (c, x, y) = (
+        Identifier::new("C"),
+        Identifier::new("X"),
+        Identifier::new("Y"),
+    );
+    let environment = empty()
+        .with_expression_binding(c.clone(), Expression::from(5))
+        .with_expression_binding(y.clone(), reference(&x) + 1);
+    let piecewise = Expression::piecewise([(reference(&c), reference(&y))], 0)
+        .expect("an identifier condition");
+    (x, environment, piecewise, reference(&y) * 2)
+}
+
+#[test]
+fn unifying_through_a_refused_substitution_is_an_error() {
+    let (x, environment, piecewise, _) = refused_substitution_case();
+
+    let error = unify_expressions(&reference(&x), &piecewise, &environment)
+        .expect_err("the substitution is refused");
+
+    let UnificationError::Substitution(source) = &error else {
+        panic!("a substitution error, got {error}");
+    };
+    assert_eq!(
+        *source,
+        PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }
+    );
+    assert_eq!(
+        error.to_string(),
+        "substituting the existing shape bindings was refused"
+    );
+    let chained = std::error::Error::source(&error)
+        .and_then(|source| source.downcast_ref::<PiecewiseError>());
+    assert_eq!(chained, Some(source));
+}
+
+#[test]
+fn substitute_template_through_a_refused_substitution_is_an_error() {
+    let (_, environment, piecewise, _) = refused_substitution_case();
+    let pattern = array(int32(), [Dimension::Expression(piecewise.clone())]);
+    let index_type = Type::Index(fhy_core::types::IndexType::new(
+        Expression::from(0),
+        piecewise,
+        Expression::from(1),
+    ));
+
+    for value in [pattern, index_type] {
+        let error = value
+            .substitute_template(&environment)
+            .expect_err("the substitution is refused");
+        assert!(
+            matches!(
+                error,
+                UnificationError::Substitution(PiecewiseError::NonBooleanConditionLiteral { .. })
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_placeholder_behind_a_bound_variable_still_fails_the_occurs_check() {
+    let (x, environment, _, doubled) = refused_substitution_case();
+
+    let error = unify_expressions(&reference(&x), &doubled, &environment)
+        .expect_err("X occurs in Y * 2 through Y := X + 1");
+
+    assert!(
+        matches!(&error, UnificationError::OccursCheck { identifier, .. } if *identifier == x),
+        "{error}"
+    );
 }
 
 #[test]

@@ -93,9 +93,9 @@ onto `dev-rust` before continuing.
 - [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous: `6222f80`
 - [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes: `a0f3e77`
 - [x] R2-026b (F2-026, checker part): rstests and broadened properties: `1206b7a`
-- [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion
+- [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion: `6068d7e`
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed)
-- [ ] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph
+- [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph
 - [ ] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution
 - [ ] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`
 - [ ] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction
@@ -3687,6 +3687,26 @@ finding.
   types are handled, so it is a free function that `expect`s. The audit's
   `:894-901`, the negate rule's non-numeric literal arm, went with R2-017.
 - **Behavior change:** none; the removed errors could not be produced.
+
+**R2-018.**
+- **The error.** `UnificationError::Substitution(PiecewiseError)` (Track
+  A's `types/error.rs`, one variant with its `Display` and `source` arms)
+  reads "substituting the existing shape bindings was refused", with the
+  refusal as its `source()`. `substitute_expression` returns it, so
+  `bind_placeholder`, and through it `unify_expressions` and `Type::unify`,
+  and `Type::substitute_template` (numerical shapes and index bounds) fail
+  where they went on with the unsubstituted form.
+- **The graph occurs check** (`occurs_through_bindings`) walks the free
+  identifiers of the unsubstituted expression and of each binding it
+  reaches, on a heap stack with a visited set, so it also ends on a cyclic
+  environment. `bind_placeholder` refuses when either it or the old check
+  on the substituted form finds the placeholder; with substitution now
+  exact the two agree, which the unit tests and the stories pin.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | with `C := 5`, `Y := X + 1`, `unify_expression(X, {Y if C; 0 otherwise})` returned an environment binding `X` in a cycle, and `substitute_template` returned a type still holding `Y` and `C` | both raise `VerificationError` "substituting the existing shape bindings was refused" | `test_a_refused_shape_substitution_is_an_error` |
 
 ### Track E notes
 

@@ -4,7 +4,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::expression::{BigInt, Expression, FormatOptions, IdentifierStyle, LiteralValue};
+use crate::expression::{
+    BigInt, Expression, FormatOptions, IdentifierStyle, LiteralValue, PiecewiseError,
+};
 use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
@@ -332,6 +334,10 @@ pub enum UnificationError {
     WildcardInUnification,
     /// A type or data type defined outside this crate failed.
     Extension(BoxError),
+    /// Substituting the existing shape bindings into an expression was
+    /// refused, such as a binding that puts a non-Boolean literal in a
+    /// piecewise condition.
+    Substitution(PiecewiseError),
 }
 
 /// Write `expression` with its identifiers' ids.
@@ -520,6 +526,9 @@ impl fmt::Display for UnificationError {
                 f.write_str("wildcard `...` is not supported during unification")
             }
             Self::Extension(_) => f.write_str("a type defined outside the core failed"),
+            Self::Substitution(_) => {
+                f.write_str("substituting the existing shape bindings was refused")
+            }
         }
     }
 }
@@ -528,6 +537,7 @@ impl Error for UnificationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Extension(source) => Some(source.as_ref()),
+            Self::Substitution(source) => Some(source),
             _ => None,
         }
     }

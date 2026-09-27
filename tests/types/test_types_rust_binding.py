@@ -477,6 +477,32 @@ def test_substitution_and_the_occurs_check_reach_calls_and_piecewise() -> None:
         )
 
 
+def test_a_refused_shape_substitution_is_an_error() -> None:
+    """Test unification and substitution raise when a binding is refused.
+
+    With ``C := 5`` and ``Y := X + 1``, substituting into
+    ``{Y if C; 0 otherwise}`` would put ``5`` in a condition, which the
+    expression refuses; both calls raise instead of going on with the
+    unsubstituted form (F2-018).
+    """
+    c, x, y = Identifier("C"), Identifier("X"), Identifier("Y")
+    environment = (
+        TypeUnificationEnvironment.empty()
+        .with_expression_binding(c, LiteralExpression(5))
+        .with_expression_binding(y, IdentifierExpression(x) + 1)
+    )
+    guarded = piecewise((IdentifierExpression(c), IdentifierExpression(y)), otherwise=0)
+
+    with pytest.raises(
+        VerificationError, match="substituting the existing shape bindings was refused"
+    ):
+        unify_expression(IdentifierExpression(x), guarded, environment)
+    with pytest.raises(
+        VerificationError, match="substituting the existing shape bindings was refused"
+    ):
+        substitute_template(NumericalType(_int32(), [guarded]), environment)
+
+
 def test_dispatchers_refuse_an_environment_of_the_wrong_type() -> None:
     """Test a dispatcher raises `TypeError` for a non-environment."""
     with pytest.raises(

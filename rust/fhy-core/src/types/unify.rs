@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::expression::{Expression, ExpressionKind};
+use crate::expression::{Expression, ExpressionKind, PiecewiseError};
 use crate::identifier::Identifier;
 
 use super::data_type::{DataType, TemplateDataType};
@@ -288,7 +288,8 @@ impl Type {
     ///
     /// # Errors
     ///
-    /// Returns an extension's error.
+    /// Returns [`UnificationError::Substitution`] when substituting a shape
+    /// expression is refused, and an extension's error.
     pub fn substitute_template(&self, environment: &TypeUnificationEnvironment) -> Result<Type> {
         match self {
             Self::Numerical(numerical) => {
@@ -305,11 +306,12 @@ impl Type {
                     .iter()
                     .map(|dimension| match dimension {
                         Dimension::Expression(expression) => {
-                            Dimension::Expression(substitute_expression(expression, environment))
+                            substitute_expression(expression, environment)
+                                .map(Dimension::Expression)
                         }
-                        Dimension::Wildcard => Dimension::Wildcard,
+                        Dimension::Wildcard => Ok(Dimension::Wildcard),
                     })
-                    .collect();
+                    .collect::<Result<_>>()?;
                 if is_same_data_type(&data_type, numerical.data_type())
                     && shape.iter().zip(numerical.shape()).all(is_same_dimension)
                 {
@@ -318,9 +320,9 @@ impl Type {
                 Ok(Self::Numerical(NumericalType::new(data_type, shape)))
             }
             Self::Index(index) => {
-                let lower = substitute_expression(index.lower_bound(), environment);
-                let upper = substitute_expression(index.upper_bound(), environment);
-                let stride = substitute_expression(index.stride(), environment);
+                let lower = substitute_expression(index.lower_bound(), environment)?;
+                let upper = substitute_expression(index.upper_bound(), environment)?;
+                let stride = substitute_expression(index.stride(), environment)?;
                 if Expression::ptr_eq(&lower, index.lower_bound())
                     && Expression::ptr_eq(&upper, index.upper_bound())
                     && Expression::ptr_eq(&stride, index.stride())
@@ -621,11 +623,17 @@ fn unify_data_types(
 /// Return `expression` with each bound shape variable replaced by its
 /// binding substituted in turn, stopping at an identifier already on the
 /// chain.
+///
+/// # Errors
+///
+/// Returns [`UnificationError::Substitution`] when a substitution is
+/// refused.
 pub(super) fn substitute_expression(
     expression: &Expression,
     environment: &TypeUnificationEnvironment,
-) -> Expression {
+) -> Result<Expression> {
     substitute_avoiding(expression, environment, &mut Vec::new())
+        .map_err(UnificationError::Substitution)
 }
 
 /// Substitute `expression`, where `chain` holds the identifiers whose
@@ -634,7 +642,7 @@ fn substitute_avoiding(
     expression: &Expression,
     environment: &TypeUnificationEnvironment,
     chain: &mut Vec<Identifier>,
-) -> Expression {
+) -> std::result::Result<Expression, PiecewiseError> {
     let free = expression.free_identifiers();
     let mut replacements = HashMap::new();
     for identifier in free {
@@ -647,14 +655,39 @@ fn substitute_avoiding(
         chain.push(identifier.clone());
         let replacement = substitute_avoiding(bound, environment, chain);
         chain.pop();
-        replacements.insert(identifier, replacement);
+        replacements.insert(identifier, replacement?);
     }
     if replacements.is_empty() {
-        return expression.clone();
+        return Ok(expression.clone());
     }
-    expression
-        .substitute(&replacements)
-        .unwrap_or_else(|_refused| expression.clone())
+    expression.substitute(&replacements)
+}
+
+/// Return whether `identifier` is reachable from `expression` through the
+/// expression bindings of `environment`: free in it, or free in the binding
+/// of a shape variable reachable so far.
+///
+/// The walk keeps its pending identifiers on the heap and visits each once,
+/// so it needs no substituted form and ends on a cyclic environment.
+fn occurs_through_bindings(
+    identifier: &Identifier,
+    expression: &Expression,
+    environment: &TypeUnificationEnvironment,
+) -> bool {
+    let mut pending: Vec<Identifier> = expression.free_identifiers().into_iter().collect();
+    let mut visited = HashSet::new();
+    while let Some(next) = pending.pop() {
+        if next == *identifier {
+            return true;
+        }
+        if !visited.insert(next.id()) {
+            continue;
+        }
+        if let Some(bound) = environment.expression_binding(&next) {
+            pending.extend(bound.free_identifiers());
+        }
+    }
+    false
 }
 
 /// Return the end of the chain of expression bindings that starts at
@@ -689,8 +722,10 @@ fn resolve_chain<'a>(
 ///
 /// # Errors
 ///
-/// Returns [`UnificationError::OccursCheck`] or
-/// [`UnificationError::ExpressionMismatch`].
+/// Returns [`UnificationError::OccursCheck`],
+/// [`UnificationError::ExpressionMismatch`], or
+/// [`UnificationError::Substitution`] when substituting the existing
+/// bindings for the occurs check is refused.
 ///
 /// # Examples
 ///
@@ -737,14 +772,17 @@ pub fn unify_expressions(
 }
 
 /// Bind the placeholder `identifier` to `expression`, after the occurs
-/// check.
+/// check: `identifier` must be neither free in `expression` substituted
+/// through the existing bindings nor reachable from it through them.
 fn bind_placeholder(
     identifier: &Identifier,
     expression: &Expression,
     environment: &TypeUnificationEnvironment,
 ) -> Result<TypeUnificationEnvironment> {
-    let substituted = substitute_expression(expression, environment);
-    if substituted.free_identifiers().contains(identifier) {
+    let substituted = substitute_expression(expression, environment)?;
+    if substituted.free_identifiers().contains(identifier)
+        || occurs_through_bindings(identifier, expression, environment)
+    {
         return Err(UnificationError::OccursCheck {
             identifier: identifier.clone(),
             expression: expression.clone(),
@@ -752,4 +790,60 @@ fn bind_placeholder(
         });
     }
     Ok(environment.with_expression_binding(identifier.clone(), expression.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_occurs_check_follows_bound_variables() {
+        let (c, x, y, z) = (
+            Identifier::new("C"),
+            Identifier::new("X"),
+            Identifier::new("Y"),
+            Identifier::new("Z"),
+        );
+        let environment = TypeUnificationEnvironment::new()
+            .with_expression_binding(c.clone(), Expression::from(5))
+            .with_expression_binding(y.clone(), Expression::from(x.clone()) + 1)
+            .with_expression_binding(z.clone(), Expression::from(c.clone()));
+        let unsubstituted = Expression::piecewise(
+            [(Expression::from(c.clone()), Expression::from(y.clone()))],
+            0,
+        )
+        .expect("an identifier condition");
+
+        assert!(occurs_through_bindings(&x, &unsubstituted, &environment));
+        assert!(occurs_through_bindings(&y, &unsubstituted, &environment));
+        assert!(!occurs_through_bindings(&z, &unsubstituted, &environment));
+        assert!(!occurs_through_bindings(
+            &x,
+            &Expression::from(z),
+            &environment
+        ));
+    }
+
+    #[test]
+    fn the_occurs_check_ends_on_a_cyclic_environment() {
+        let (m, n, x) = (
+            Identifier::new("M"),
+            Identifier::new("N"),
+            Identifier::new("X"),
+        );
+        let environment = TypeUnificationEnvironment::new()
+            .with_expression_binding(m.clone(), Expression::from(n.clone()))
+            .with_expression_binding(n.clone(), Expression::from(m.clone()));
+
+        assert!(!occurs_through_bindings(
+            &x,
+            &Expression::from(m.clone()),
+            &environment
+        ));
+        assert!(occurs_through_bindings(
+            &n,
+            &Expression::from(m),
+            &environment
+        ));
+    }
 }
