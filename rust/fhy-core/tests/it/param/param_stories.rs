@@ -701,9 +701,9 @@ fn arithmetic_keeps_a_natural_result_when_both_operands_are() {
             .expect("native")
             .expect("a profile")
     };
-    assert!(profile(&sum).non_negative && !profile(&sum).zero_included);
-    assert!(profile(&product).non_negative && profile(&product).zero_included);
-    assert!(!profile(&widened).non_negative);
+    assert!(profile(&sum).is_non_negative() && !profile(&sum).is_zero_included());
+    assert!(profile(&product).is_non_negative() && profile(&product).is_zero_included());
+    assert!(!profile(&widened).is_non_negative());
 }
 
 #[test]

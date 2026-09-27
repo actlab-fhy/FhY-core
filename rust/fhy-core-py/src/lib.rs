@@ -96,8 +96,8 @@ mod rs_module {
     };
     #[pymodule_export]
     use super::solver::{
-        PySatResult, PySimplifierBase, PySmtLib2ProcessSolver, PySmtScript, PySmtSolverBase,
-        PySolver, PySympySimplifier, get_default_solver, set_default_solver,
+        PySatResult, PySimplifierBase, PySimplifyContext, PySmtLib2ProcessSolver, PySmtScript,
+        PySmtSolverBase, PySolver, PySympySimplifier, get_default_solver, set_default_solver,
     };
     #[pymodule_export]
     use super::symbol_table::{

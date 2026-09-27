@@ -1344,6 +1344,14 @@ class SmtSolverBase:
 
 class SimplifierBase:
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    @property
+    def context(self) -> SimplifyContext: ...
+
+class SimplifyContext:
+    @property
+    def timeout(self) -> float | None: ...
+    @property
+    def timeout_milliseconds(self) -> int | None: ...
 
 class SmtLib2ProcessSolver(SmtSolverBase):
     def __new__(
@@ -1390,6 +1398,8 @@ class Solver:
         self,
         expression: _Expression,
         environment: Mapping[Identifier, _Expression] | None = None,
+        *,
+        timeout_milliseconds: int | None = None,
     ) -> _Expression: ...
     def check_expression_satisfiability(
         self,

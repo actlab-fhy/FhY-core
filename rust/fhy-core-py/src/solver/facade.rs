@@ -18,8 +18,8 @@ use pyo3::types::PyMapping;
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
-    Answer, CheckLimits, QueryContext, QueryKind, Question, SimplifyContext, SolveError, Solver,
-    UnknownReason,
+    Answer, CheckLimits, QueryContext, QueryKind, Question, SimplifyContext, SimplifyLimits,
+    SolveError, Solver, UnknownReason,
 };
 
 use crate::expression::{PyExpression, materialize_substituted, registry_snapshot};
@@ -288,19 +288,21 @@ impl PySolver {
     ///
     /// The simplifier receives the substituted expression, which is
     /// `expression` itself when `environment` binds none of its
-    /// identifiers, and the object it returns is returned.
+    /// identifiers, and the object it returns is returned. It reads
+    /// `timeout_milliseconds` from its `context`, and honors it if it can.
     ///
     /// Raises `SolverCapabilityError` without a simplifier, `TypeError` for
-    /// a value of `environment` that is not an `Expression`,
-    /// `NonBooleanLogicalOperandError` for a number in a Boolean position,
-    /// counting an identifier bound to one, `NativeConstantBindingError`
-    /// when `environment` binds a native constant `expression` refers to,
-    /// and whatever the simplifier raises.
-    #[pyo3(signature = (expression, environment = None))]
+    /// a value of `environment` that is not an `Expression`, `ValueError`
+    /// for a bad `timeout_milliseconds`, `NonBooleanLogicalOperandError`
+    /// for a number in a Boolean position, counting an identifier bound to
+    /// one, `NativeConstantBindingError` when `environment` binds a native
+    /// constant `expression` refers to, and whatever the simplifier raises.
+    #[pyo3(signature = (expression, environment = None, *, timeout_milliseconds = None))]
     fn simplify_expression<'py>(
         &self,
         expression: &Bound<'py, PyAny>,
         environment: Option<&Bound<'py, PyAny>>,
+        timeout_milliseconds: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = expression.py();
         if !self.solver.can_answer(QueryKind::Simplification) {
@@ -318,6 +320,13 @@ impl PySolver {
                 ))
             })?
             .clone();
+        let limits = match timeout_milliseconds {
+            Some(timeout_milliseconds) => read_limits(timeout_milliseconds)?.timeout(),
+            None => None,
+        }
+        .map_or_else(SimplifyLimits::new, |timeout| {
+            SimplifyLimits::new().with_timeout(timeout)
+        });
         let mut bindings: HashMap<Identifier, Expression> = HashMap::new();
         let mut known: Vec<(Expression, Py<PyAny>)> = Vec::new();
         if let Some(environment) = environment.filter(|environment| !environment.is_none()) {
@@ -351,7 +360,7 @@ impl PySolver {
                 solver.simplify(
                     &rust_input,
                     &bindings,
-                    &SimplifyContext::from_registry(registry.registry()),
+                    &SimplifyContext::from_registry(registry.registry()).with_limits(limits),
                 )
             })
         });

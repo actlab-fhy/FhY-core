@@ -364,8 +364,8 @@ pub(crate) fn read_opaque_member(value: &Bound<'_, PyAny>) -> PyResult<Value> {
 ///
 /// # Errors
 ///
-/// Raises `TypeError` for an opaque value the binding did not build, and
-/// whatever building a value raises.
+/// Raises `TypeError` for an opaque value the binding did not build or a
+/// value of a kind it does not know, and whatever building a value raises.
 pub(crate) fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     match value {
         Value::Bool(value) => Ok(PyBool::new(py, *value).to_owned().into_any()),
@@ -393,6 +393,9 @@ pub(crate) fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<B
             .downcast_ref::<PyOpaqueValue>()
             .map(|value| value.object().bind(py).clone())
             .ok_or_else(|| PyTypeError::new_err("an opaque value has no Python object")),
+        _ => Err(PyTypeError::new_err(format!(
+            "a value of an unknown kind has no Python form: {value:?}"
+        ))),
     }
 }
 

@@ -8,7 +8,7 @@ use pyo3::types::{PyDict, PyTuple, PyType};
 
 use fhy_core::constraint::{Binding, Bindings, Constraint, Polarity};
 use fhy_core::identifier::Identifier;
-use fhy_core::param::{IntervalProfile, ParamDomain};
+use fhy_core::param::{Inclusivity, IntervalProfile, ParamDomain, Sign, ZeroInclusion};
 
 use crate::constraint::{
     PyCustomConstraint, member_to_python, read_constraint, repr_text, value_to_python,
@@ -280,13 +280,13 @@ pub(super) fn profile_to_python(
 ) -> PyResult<Bound<'_, PyAny>> {
     static PROFILE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let keywords = PyDict::new(py);
+    keywords.set_item(intern!(py, "admits_only_bounds"), profile.is_bounds_only())?;
+    keywords.set_item(intern!(py, "non_negative"), profile.is_non_negative())?;
+    keywords.set_item(intern!(py, "zero_included"), profile.is_zero_included())?;
     keywords.set_item(
-        intern!(py, "admits_only_bounds"),
-        profile.admits_only_bounds,
+        intern!(py, "prefer_inclusive"),
+        profile.is_inclusive_preferred(),
     )?;
-    keywords.set_item(intern!(py, "non_negative"), profile.non_negative)?;
-    keywords.set_item(intern!(py, "zero_included"), profile.zero_included)?;
-    keywords.set_item(intern!(py, "prefer_inclusive"), profile.prefer_inclusive)?;
     public_class(py, &PROFILE, DOMAINS, "IntervalProfile")?.call((), Some(&keywords))
 }
 
@@ -299,11 +299,15 @@ pub(super) fn profile_to_python(
 pub(super) fn read_profile(profile: &Bound<'_, PyAny>) -> PyResult<IntervalProfile> {
     let py = profile.py();
     let read = |name| -> PyResult<bool> { profile.getattr(name)?.is_truthy() };
-    Ok(IntervalProfile {
-        admits_only_bounds: read(intern!(py, "admits_only_bounds"))?,
-        non_negative: read(intern!(py, "non_negative"))?,
-        zero_included: read(intern!(py, "zero_included"))?,
-        prefer_inclusive: read(intern!(py, "prefer_inclusive"))?,
+    let profile = IntervalProfile::new(
+        Sign::non_negative_if(read(intern!(py, "non_negative"))?),
+        ZeroInclusion::included_if(read(intern!(py, "zero_included"))?),
+        Inclusivity::inclusive_if(read(intern!(py, "prefer_inclusive"))?),
+    );
+    Ok(if read(intern!(py, "admits_only_bounds"))? {
+        profile.with_only_bounds()
+    } else {
+        profile
     })
 }
 

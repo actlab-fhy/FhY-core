@@ -466,8 +466,8 @@ impl Param {
         };
         let coerced_profile =
             operand_profile(&coerced)?.ok_or(IntervalError::NotAnIntervalOperand)?;
-        let natural =
-            (profile.non_negative && coerced_profile.non_negative).then_some(profile.zero_included);
+        let natural = (profile.is_non_negative() && coerced_profile.is_non_negative())
+            .then_some(profile.is_zero_included());
         build_interval_param(&interval, profile, natural, context)
     }
 
@@ -531,8 +531,8 @@ impl Param {
             operand_profile(&coerced)?.ok_or(IntervalError::NotAnIntervalOperand)?;
         let (own, others) = Self::intervals(&left, &coerced)?;
         let interval = multiply_intervals(&own, &others);
-        let natural = (profile.non_negative && coerced_profile.non_negative)
-            .then_some(profile.zero_included || coerced_profile.zero_included);
+        let natural = (profile.is_non_negative() && coerced_profile.is_non_negative())
+            .then_some(profile.is_zero_included() || coerced_profile.is_zero_included());
         build_interval_param(&interval, profile, natural, context)
     }
 
@@ -630,13 +630,13 @@ fn coerce_intersection_operands(
     ) else {
         return Ok((left.clone(), right.clone()));
     };
-    if left_profile.admits_only_bounds && !right_profile.admits_only_bounds {
+    if left_profile.is_bounds_only() && !right_profile.is_bounds_only() {
         return Ok((
             left.clone(),
             coerce_to_interval(left_profile, &Operand::Param(right.clone()), context)?,
         ));
     }
-    if right_profile.admits_only_bounds && !left_profile.admits_only_bounds {
+    if right_profile.is_bounds_only() && !left_profile.is_bounds_only() {
         return Ok((
             coerce_to_interval(right_profile, &Operand::Param(left.clone()), context)?,
             right.clone(),

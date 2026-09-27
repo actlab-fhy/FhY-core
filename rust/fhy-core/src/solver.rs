@@ -101,7 +101,7 @@ use crate::expression::{
 };
 use crate::identifier::Identifier;
 
-pub use backend::{CheckLimits, SatResult, Simplifier, SimplifyContext, SmtSolver};
+pub use backend::{CheckLimits, SatResult, Simplifier, SimplifyContext, SimplifyLimits, SmtSolver};
 pub use error::{LoweringError, SolveError};
 pub use process::{ProcessError, SmtLib2Process};
 pub use screen::Hazard;

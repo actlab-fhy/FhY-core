@@ -90,26 +90,87 @@ impl_from_name!(
 /// domain.
 ///
 /// A param's interval lives in its bound constraints; the domain
-/// contributes only these facts.
-#[expect(
-    clippy::exhaustive_structs,
-    reason = "the four facts interval arithmetic reads, which callers build and read directly"
-)]
+/// contributes only these facts. It is built with [`new`](Self::new) and
+/// [`with_only_bounds`](Self::with_only_bounds), and read through its
+/// getters, so it can gain facts.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::param::{Inclusivity, IntervalProfile, Sign, ZeroInclusion};
+///
+/// let profile = IntervalProfile::new(Sign::NonNegative, ZeroInclusion::Excluded, Inclusivity::Inclusive)
+///     .with_only_bounds();
+///
+/// assert!(profile.is_bounds_only());
+/// assert!(profile.is_non_negative());
+/// assert!(!profile.is_zero_included());
+/// assert!(profile.is_inclusive_preferred());
+/// ```
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "four independent facts about a domain"
+    reason = "four independent facts about a domain, behind getters"
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct IntervalProfile {
-    /// Whether the domain admits only bound constraints, so a param over it
-    /// is an interval operand as it stands.
-    pub admits_only_bounds: bool,
-    /// Whether the domain admits only non-negative values.
-    pub non_negative: bool,
-    /// Whether the domain admits zero, given it is non-negative.
-    pub zero_included: bool,
-    /// Whether bounds that arithmetic derives render in inclusive form.
-    pub prefer_inclusive: bool,
+    admits_only_bounds: bool,
+    non_negative: bool,
+    zero_included: bool,
+    prefer_inclusive: bool,
+}
+
+impl IntervalProfile {
+    /// Return the profile of a domain of `sign`, with zero as `zero` says,
+    /// whose derived bounds render as `preferred` says, admitting any
+    /// constraint.
+    ///
+    /// `zero` means nothing for [`Sign::Any`]; it is kept as given, and the
+    /// gates read it only for a non-negative domain.
+    #[must_use]
+    pub fn new(sign: Sign, zero: ZeroInclusion, preferred: Inclusivity) -> Self {
+        Self {
+            admits_only_bounds: false,
+            non_negative: sign.is_non_negative(),
+            zero_included: zero.is_included(),
+            prefer_inclusive: preferred.is_inclusive(),
+        }
+    }
+
+    /// Return this profile of a domain that admits only bound constraints,
+    /// so a param over it is an interval operand as it stands.
+    #[must_use]
+    pub fn with_only_bounds(self) -> Self {
+        Self {
+            admits_only_bounds: true,
+            ..self
+        }
+    }
+
+    /// Return whether the domain admits only bound constraints.
+    #[must_use]
+    pub fn is_bounds_only(&self) -> bool {
+        self.admits_only_bounds
+    }
+
+    /// Return whether the domain admits only non-negative values.
+    #[must_use]
+    pub fn is_non_negative(&self) -> bool {
+        self.non_negative
+    }
+
+    /// Return whether the domain admits zero, given it is non-negative.
+    #[must_use]
+    pub fn is_zero_included(&self) -> bool {
+        self.zero_included
+    }
+
+    /// Return whether bounds that arithmetic derives render in inclusive
+    /// form.
+    #[must_use]
+    pub fn is_inclusive_preferred(&self) -> bool {
+        self.prefer_inclusive
+    }
 }
 
 /// The constraints of one side of a question, and the variable they

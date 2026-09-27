@@ -509,7 +509,7 @@ impl PyParam {
                 .domain()
                 .interval_profile()
                 .map_err(|error| param_error_to_py(py, error, None))?
-                .is_some_and(|profile| profile.admits_only_bounds);
+                .is_some_and(|profile| profile.is_bounds_only());
             if is_operand {
                 return Err(PyTypeError::new_err(format!(
                     "Unsupported operand type: {}",

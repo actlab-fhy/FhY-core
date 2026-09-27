@@ -420,12 +420,11 @@ fn only_the_integer_domains_have_a_profile() {
         ))
         .interval_profile()
         .expect("native"),
-        Some(IntervalProfile {
-            admits_only_bounds: false,
-            non_negative: true,
-            zero_included: false,
-            prefer_inclusive: true,
-        })
+        Some(IntervalProfile::new(
+            Sign::NonNegative,
+            ZeroInclusion::Excluded,
+            Inclusivity::Inclusive
+        ))
     );
     assert_eq!(
         ParamDomain::from(IntervalIntegerDomain::new(
@@ -435,16 +434,36 @@ fn only_the_integer_domains_have_a_profile() {
         ))
         .interval_profile()
         .expect("native"),
-        Some(IntervalProfile {
-            admits_only_bounds: true,
-            non_negative: false,
-            zero_included: true,
-            prefer_inclusive: false,
-        })
+        Some(
+            IntervalProfile::new(Sign::Any, ZeroInclusion::Included, Inclusivity::Exclusive)
+                .with_only_bounds()
+        )
     );
     for domain in [ParamDomain::from(RealDomain), ordinal(ints([1]))] {
         assert_eq!(domain.interval_profile().expect("native"), None);
     }
+}
+
+#[rstest]
+fn an_interval_profile_is_built_and_read_through_its_api(
+    #[values(Sign::Any, Sign::NonNegative)] sign: Sign,
+    #[values(ZeroInclusion::Included, ZeroInclusion::Excluded)] zero: ZeroInclusion,
+    #[values(Inclusivity::Inclusive, Inclusivity::Exclusive)] preferred: Inclusivity,
+) {
+    let profile = IntervalProfile::new(sign, zero, preferred);
+    let bounds_only = profile.with_only_bounds();
+
+    for built in [profile, bounds_only] {
+        assert_eq!(built.is_non_negative(), sign == Sign::NonNegative);
+        assert_eq!(built.is_zero_included(), zero == ZeroInclusion::Included);
+        assert_eq!(
+            built.is_inclusive_preferred(),
+            preferred == Inclusivity::Inclusive
+        );
+    }
+    assert!(!profile.is_bounds_only());
+    assert!(bounds_only.is_bounds_only());
+    assert_ne!(profile, bounds_only);
 }
 
 #[test]

@@ -25,7 +25,8 @@ use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use fhy_core::expression::Expression;
 use fhy_core::foreign::BoxError;
 use fhy_core::solver::{
-    CheckLimits, SatResult, Simplifier, SimplifyContext, SmtLib2Process, SmtScript, SmtSolver,
+    CheckLimits, SatResult, Simplifier, SimplifyContext, SimplifyLimits, SmtLib2Process, SmtScript,
+    SmtSolver,
 };
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
@@ -117,6 +118,53 @@ impl PySimplifierBase {
         refuse_unused_arguments(cls, args, kwargs)?;
         Ok(Self)
     }
+
+    /// Return the context of the simplification in progress on this
+    /// thread, which `simplify` reads its limits from: unbounded outside a
+    /// simplification, such as when `simplify` is called directly.
+    #[getter]
+    #[expect(clippy::unused_self, reason = "a Python property receives the object")]
+    fn context(&self) -> PySimplifyContext {
+        PySimplifyContext {
+            limits: current_limits(),
+        }
+    }
+}
+
+/// What a Python `Simplifier`'s `simplify` is told about its
+/// simplification besides the expression: its limits.
+///
+/// The limits bound the simplification a solver asked for; a simplifier
+/// honors them if it can.
+#[pyclass(frozen, module = "fhy_core._rs", name = "SimplifyContext")]
+pub(crate) struct PySimplifyContext {
+    limits: SimplifyLimits,
+}
+
+#[pymethods]
+impl PySimplifyContext {
+    /// Return how long the simplification may run, in seconds, or `None`
+    /// when it is unbounded.
+    #[getter]
+    fn timeout(&self) -> Option<f64> {
+        self.limits.timeout().map(|timeout| timeout.as_secs_f64())
+    }
+
+    /// Return how long the simplification may run, in whole milliseconds,
+    /// or `None` when it is unbounded.
+    #[getter]
+    fn timeout_milliseconds(&self) -> Option<u64> {
+        self.limits
+            .timeout()
+            .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX))
+    }
+
+    fn __repr__(&self) -> String {
+        match self.timeout_milliseconds() {
+            Some(milliseconds) => format!("SimplifyContext(timeout_milliseconds={milliseconds})"),
+            None => "SimplifyContext(timeout_milliseconds=None)".to_owned(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -167,12 +215,13 @@ impl SmtSolver for PythonSmtSolver {
     }
 }
 
-/// One simplification in progress on this thread: the input's object, and
-/// the objects of the environment's values by the identity of their Rust
-/// handles, which it holds.
+/// One simplification in progress on this thread: the input's object, the
+/// objects of the environment's values by the identity of their Rust
+/// handles, which it holds, and the limits the core handed the simplifier.
 struct SimplifyFrame {
     input: Py<PyExpression>,
     known: Vec<(Expression, Py<PyAny>)>,
+    limits: SimplifyLimits,
     result: Option<Py<PyAny>>,
 }
 
@@ -193,6 +242,7 @@ pub(super) fn run_simplification<R>(
         frames.borrow_mut().push(SimplifyFrame {
             input,
             known,
+            limits: SimplifyLimits::new(),
             result: None,
         });
     });
@@ -232,6 +282,26 @@ fn current_input_object<'py>(
     }
 }
 
+/// Record `limits` as the limits of the innermost simplification.
+fn record_limits(limits: SimplifyLimits) {
+    FRAMES.with(|frames| {
+        if let Some(frame) = frames.borrow_mut().last_mut() {
+            frame.limits = limits;
+        }
+    });
+}
+
+/// Return the limits of the innermost simplification, unbounded outside
+/// one.
+fn current_limits() -> SimplifyLimits {
+    FRAMES.with(|frames| {
+        frames
+            .borrow()
+            .last()
+            .map_or_else(SimplifyLimits::new, |frame| frame.limits)
+    })
+}
+
 /// Record `object` as what the innermost simplification's Python
 /// simplifier returned.
 fn record_result(object: Py<PyAny>) {
@@ -259,15 +329,17 @@ impl Simplifier for PythonSimplifier {
         Cow::Owned(Python::attach(|py| read_name(self.object.bind(py))))
     }
 
-    /// Call the Python `simplify(expression)`.
+    /// Call the Python `simplify(expression)`, with `context`'s limits
+    /// readable from the simplifier's `context`.
     ///
     /// Fails with the exception it raises, unchanged, and with a
     /// `TypeError` for a result that is not an `Expression`.
     fn simplify(
         &self,
         expression: &Expression,
-        _context: &SimplifyContext<'_>,
+        context: &SimplifyContext<'_>,
     ) -> Result<Expression, BoxError> {
+        record_limits(context.limits());
         Python::attach(|py| -> PyResult<Expression> {
             let object = self.object.bind(py);
             let input = current_input_object(py, expression)?;

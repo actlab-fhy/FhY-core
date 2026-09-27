@@ -45,8 +45,8 @@ onto `dev-rust` before continuing.
 - [x] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python): `3f9c59b`
 - [x] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error: `0b44aa2`, `450fa2c`, `dcf2022`
 - [x] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`: `a5afd95`
-- [x] R2-006 (F2-006): `ParamError` split by family
-- [ ] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits
+- [x] R2-006 (F2-006): `ParamError` split by family: `d03ac7c`
+- [x] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits
 - [ ] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized
 - [ ] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories
 - [ ] Track A status: gates green; counts recorded; landed as `<hash>`
@@ -2433,6 +2433,47 @@ finding.
   compile), and the existing `expect_err` patterns name the new types. The
   Python suites pass unchanged.
 - **Python-visible changes:** none.
+
+**R2-005b.**
+
+- **`IntervalProfile::new(sign, zero, preferred)`** takes the three named
+  enums R2-007 added (`Sign`, `ZeroInclusion`, `Inclusivity`), and
+  `with_only_bounds()` marks a profile of an interval-integer domain. It
+  stores what it is given, with no normalization, so every profile a
+  literal could build can still be built. The getters are
+  `is_non_negative`, `is_zero_included`, `is_inclusive_preferred` and
+  `is_bounds_only`.
+- **`Value`.** The binding's one exhaustive match, `value_to_python`, gains
+  the wildcard arm raising `TypeError`; nothing reaches it today.
+- **Limits.** The `Solver` holds no limits of its own, so "`Solver::simplify`
+  passes its configured limits" is read as `QueryContext`'s `CheckLimits`
+  are: the limits ride in the `SimplifyContext` the caller builds, and
+  `Solver::simplify` hands that context to the simplifier unchanged.
+  `simplify_hands_its_limits_to_the_simplifier` pins that a bounded and
+  an unbounded context each reach it.
+- **The binding.** `Solver.simplify_expression` gains a keyword
+  `timeout_milliseconds`, validated as the logical questions validate it
+  (after the capability check), and builds the context's limits from it.
+  The module's `simplify_expression` keeps its signature:
+  `test_simplify_expression_signature_has_no_timeout_parameter` pins that
+  the SymPy-backed seam function has no timeout (python-switch, S8), and
+  SymPy cannot enforce one, so a caller that wants to bound a simplifier of
+  its own asks a `Solver` holding it. The Python adapter records the limits it
+  receives in the thread's simplification frame, and a new
+  `SimplifierBase.context` property returns a `fhy_core._rs.SimplifyContext`
+  with `timeout` (seconds, a `float`) and `timeout_milliseconds`, both
+  `None` when unbounded, which they also are outside a simplification. A
+  nested simplification has its own frame, so an inner timeout does not
+  leak to the outer hook. `SimplifyContext` is reachable only through the
+  property, and not re-exported, so the public paths do not change.
+- **Track D's file.** `solver/sympy.rs` gains one additive rustdoc line
+  saying the backend does not enforce the timeout; D re-applies it when it
+  moves the file. The binding's `SympySimplifier` docstring says the same.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | no timeout for a simplification | `Solver.simplify_expression(..., timeout_milliseconds=)`, and `Simplifier.context.timeout`/`.timeout_milliseconds` | `test_python_simplifier_reads_the_timeout_from_its_context`, `test_python_simplifier_context_is_unbounded_outside_a_simplification`, `test_nested_simplification_has_its_own_context`, `test_simplification_refuses_a_bad_timeout` |
 
 ### Track D notes
 

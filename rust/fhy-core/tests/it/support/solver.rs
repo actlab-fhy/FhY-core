@@ -11,7 +11,8 @@ use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
-    CheckLimits, SatResult, Simplifier, SimplifyContext, SmtScript, SmtSolver, Solver,
+    CheckLimits, SatResult, Simplifier, SimplifyContext, SimplifyLimits, SmtScript, SmtSolver,
+    Solver,
 };
 
 /// An error a fake backend reports.
@@ -99,6 +100,7 @@ pub(crate) struct RecordingSimplifier {
     result: Option<Result<Expression, FakeBackendError>>,
     inputs: Mutex<Vec<Expression>>,
     registry_sizes: Mutex<Vec<Option<usize>>>,
+    limits: Mutex<Vec<SimplifyLimits>>,
 }
 
 impl RecordingSimplifier {
@@ -108,6 +110,7 @@ impl RecordingSimplifier {
             result: None,
             inputs: Mutex::new(Vec::new()),
             registry_sizes: Mutex::new(Vec::new()),
+            limits: Mutex::new(Vec::new()),
         })
     }
 
@@ -117,6 +120,7 @@ impl RecordingSimplifier {
             result: Some(Ok(result)),
             inputs: Mutex::new(Vec::new()),
             registry_sizes: Mutex::new(Vec::new()),
+            limits: Mutex::new(Vec::new()),
         })
     }
 
@@ -126,6 +130,7 @@ impl RecordingSimplifier {
             result: Some(Err(FakeBackendError(message.to_owned()))),
             inputs: Mutex::new(Vec::new()),
             registry_sizes: Mutex::new(Vec::new()),
+            limits: Mutex::new(Vec::new()),
         })
     }
 
@@ -141,6 +146,14 @@ impl RecordingSimplifier {
     /// held, or `None` for a context without one, in order.
     pub(crate) fn registry_sizes(&self) -> Vec<Option<usize>> {
         self.registry_sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Return the limits of each simplification's context, in order.
+    pub(crate) fn limits(&self) -> Vec<SimplifyLimits> {
+        self.limits
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -166,6 +179,10 @@ impl Simplifier for RecordingSimplifier {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(context.registry().map(FunctionRegistry::len));
+        self.limits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(context.limits());
         self.inputs
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

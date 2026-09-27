@@ -468,6 +468,70 @@ def test_python_simplifier_can_ask_a_nested_simplification(x: Identifier) -> Non
     assert result is seven
 
 
+class _TimeoutReadingSimplifier(Simplifier):
+    """A Python simplifier recording the timeouts its context gives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.timeouts: list[tuple[float | None, int | None]] = []
+
+    @override
+    def simplify(self, expression: Expression) -> Expression:
+        self.timeouts.append((self.context.timeout, self.context.timeout_milliseconds))
+        return expression
+
+
+def test_python_simplifier_reads_the_timeout_from_its_context() -> None:
+    """Test a subclass reads the simplification's timeout from ``context``."""
+    simplifier = _TimeoutReadingSimplifier()
+    solver = Solver(simplifier=simplifier)
+
+    solver.simplify_expression(LiteralExpression(1), timeout_milliseconds=1500)
+    solver.simplify_expression(LiteralExpression(1))
+
+    assert simplifier.timeouts == [(1.5, 1500), (None, None)]
+
+
+def test_python_simplifier_context_is_unbounded_outside_a_simplification() -> None:
+    """Test ``context`` has no timeout when ``simplify`` is called directly."""
+    simplifier = _TimeoutReadingSimplifier()
+
+    simplifier.simplify(LiteralExpression(1))
+
+    assert simplifier.timeouts == [(None, None)]
+    assert repr(simplifier.context) == "SimplifyContext(timeout_milliseconds=None)"
+
+
+def test_nested_simplification_has_its_own_context(x: Identifier) -> None:
+    """Test an inner simplification's timeout does not leak to the outer one."""
+    reader = _TimeoutReadingSimplifier()
+    inner = Solver(simplifier=reader)
+    seen: list[float | None] = []
+
+    class Nesting(Simplifier):
+        @override
+        def simplify(self, expression: Expression) -> Expression:
+            inner.simplify_expression(expression, timeout_milliseconds=10)
+            seen.append(self.context.timeout)
+            return expression
+
+    Solver(simplifier=Nesting()).simplify_expression(
+        LiteralExpression(1), timeout_milliseconds=2000
+    )
+
+    assert reader.timeouts == [(0.01, 10)]
+    assert seen == [2.0]
+
+
+@pytest.mark.parametrize("timeout_milliseconds", [0, -1, 1.5, True])
+def test_simplification_refuses_a_bad_timeout(timeout_milliseconds: Any) -> None:
+    """Test ``simplify_expression`` validates ``timeout_milliseconds``."""
+    with pytest.raises(ValueError, match="timeout_milliseconds"):
+        Solver(simplifier=_RecordingSimplifier()).simplify_expression(
+            LiteralExpression(1), timeout_milliseconds=timeout_milliseconds
+        )
+
+
 def test_simplification_refuses_a_value_that_is_no_expression(x: Identifier) -> None:
     """Test an environment value must be an ``Expression``."""
     with pytest.raises(TypeError, match="environment values must be Expressions"):

@@ -13,7 +13,7 @@ use fhy_core::expression::{Expression, FunctionName, FunctionSort, NoRegisteredS
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{
     Answer, CheckLimits, Hazard, LoweringError, QueryContext, QueryKind, Question, SatResult,
-    SimplifyContext, SolveError, Solver, UnknownReason,
+    SimplifyContext, SimplifyLimits, SolveError, Solver, UnknownReason,
 };
 use rstest::rstest;
 
@@ -778,6 +778,37 @@ fn simplify_context_reads_sorts_from_its_registry() {
     );
     assert!(context.registry().is_some_and(|held| held.len() == 1));
     assert!(SimplifyContext::default().registry().is_none());
+}
+
+#[test]
+fn simplify_hands_its_limits_to_the_simplifier() {
+    let simplifier = RecordingSimplifier::identity();
+    let solver = simplifier.solver();
+    let bounded = SimplifyLimits::new().with_timeout(Duration::from_millis(250));
+
+    solver
+        .simplify(
+            &build_literal(1),
+            &HashMap::new(),
+            &SimplifyContext::new(&NoRegisteredSorts).with_limits(bounded),
+        )
+        .expect("simplified");
+    solver
+        .simplify(
+            &build_literal(1),
+            &HashMap::new(),
+            &SimplifyContext::new(&NoRegisteredSorts),
+        )
+        .expect("simplified");
+
+    assert_eq!(simplifier.limits(), vec![bounded, SimplifyLimits::new()]);
+    assert_eq!(
+        simplifier
+            .limits()
+            .first()
+            .and_then(SimplifyLimits::timeout),
+        Some(Duration::from_millis(250))
+    );
 }
 
 #[test]

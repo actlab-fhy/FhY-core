@@ -210,7 +210,8 @@ pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -
 ///
 /// Constructing it imports nothing; its first operation imports SymPy, and
 /// raises `SolverBackendUnavailableError` when SymPy is not installed. A
-/// `Solver` holding it simplifies in Rust.
+/// `Solver` holding it simplifies in Rust. It does not enforce a
+/// simplification's `timeout_milliseconds`: SymPy has no cancellation.
 #[pyclass(extends = PySimplifierBase, frozen, module = "fhy_core._rs", name = "SympySimplifier")]
 pub(crate) struct PySympySimplifier {
     backend: Arc<SympySimplifier>,

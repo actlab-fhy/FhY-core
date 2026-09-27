@@ -63,7 +63,8 @@ use load::Handles;
 /// - **Simplification** is best-effort: where `sympy.simplify` raises
 ///   `PrecisionExhausted`, drops a piecewise's final branch, or cannot
 ///   compare a piecewise that must be split per branch, the expression is
-///   kept as it stands.
+///   kept as it stands. It does not enforce the timeout of the context's
+///   [`SimplifyLimits`](super::SimplifyLimits): SymPy has no cancellation.
 /// - **Lifting** inverts the lowering. SymPy's n-ary sums and products fold
 ///   to the right, a rational becomes the decimal literal of its value when
 ///   a binary float equals it and the exact quotient otherwise, and `oo`,

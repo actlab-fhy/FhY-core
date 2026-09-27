@@ -354,9 +354,9 @@ fn intersection_of_interval_domains_keeps_the_own_rendering_preference() {
 
     assert_eq!(
         domain.interval_profile().expect("native").map(|profile| (
-            profile.prefer_inclusive,
-            profile.non_negative,
-            profile.zero_included
+            profile.is_inclusive_preferred(),
+            profile.is_non_negative(),
+            profile.is_zero_included()
         )),
         Some((false, true, false))
     );

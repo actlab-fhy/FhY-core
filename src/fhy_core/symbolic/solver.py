@@ -197,7 +197,10 @@ class Simplifier(_rs.SimplifierBase, ABC):
 
     Subclasses implement :meth:`simplify`, and may override :attr:`name`. A
     :class:`Solver` screens the expression and substitutes the environment
-    before it calls ``simplify`` from Rust, once per question.
+    before it calls ``simplify`` from Rust, once per question. During the
+    call, :attr:`context` gives the simplification's limits: its
+    ``timeout`` in seconds and ``timeout_milliseconds``, or ``None`` when it
+    is unbounded, as it is outside a simplification.
     :class:`~fhy_core.symbolic.expression.passes.sympy.SympySimplifier`, a
     backend implemented in Rust, is registered as a virtual subclass.
     """

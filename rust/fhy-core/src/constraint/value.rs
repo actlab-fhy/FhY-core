@@ -83,17 +83,17 @@ impl_part!(OpaqueValue);
 
 /// A value bound to an identifier, besides an expression.
 ///
+/// More kinds may be added, so a `match` on a value outside this crate
+/// needs a wildcard arm.
+///
 /// Tuples and sets nest, and dropping, comparing and building a member of a
 /// value recurse once per level, as [`Provenance`](crate::provenance::Provenance)
 /// does; a value built through the API is as deep as its caller makes it.
 /// Decoding refuses a value nested deeper than
 /// [`MAX_VALUE_DEPTH`](super::wire::MAX_VALUE_DEPTH), so no payload
 /// builds a deeper one.
-#[expect(
-    clippy::exhaustive_enums,
-    reason = "the shapes a bound value takes, which the binding converts one by one"
-)]
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Value {
     /// A Boolean.
     Bool(bool),

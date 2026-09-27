@@ -93,8 +93,8 @@ pub trait Simplifier: Send + Sync + fmt::Debug {
 
 /// What a [`Simplifier`] is told about a simplification besides the
 /// expression: the sorts of the native constants and named functions the
-/// expression may refer to, and, when it has one, the registry holding
-/// them.
+/// expression may refer to, when it has one the registry holding them, and
+/// the [`SimplifyLimits`] it should run under.
 ///
 /// A backend that lowers an expression to another system reads a user
 /// constant's value, and what kind of entry a called name is, from the
@@ -128,6 +128,7 @@ pub trait Simplifier: Send + Sync + fmt::Debug {
 pub struct SimplifyContext<'a> {
     sorts: &'a dyn SortLookup,
     registry: Option<&'a FunctionRegistry>,
+    limits: SimplifyLimits,
 }
 
 impl<'a> SimplifyContext<'a> {
@@ -138,6 +139,7 @@ impl<'a> SimplifyContext<'a> {
         Self {
             sorts,
             registry: None,
+            limits: SimplifyLimits::new(),
         }
     }
 
@@ -148,7 +150,21 @@ impl<'a> SimplifyContext<'a> {
         Self {
             sorts: registry,
             registry: Some(registry),
+            limits: SimplifyLimits::new(),
         }
+    }
+
+    /// Return this context with the simplification bounded by `limits`.
+    #[must_use]
+    pub fn with_limits(self, limits: SimplifyLimits) -> Self {
+        Self { limits, ..self }
+    }
+
+    /// Return the limits the simplification should run under; a backend
+    /// that cannot enforce one says so in its documentation.
+    #[must_use]
+    pub fn limits(&self) -> SimplifyLimits {
+        self.limits
     }
 
     /// Return the sorts of native constants and named functions.
@@ -258,6 +274,52 @@ impl CheckLimits {
     }
 
     /// Return how long a check may run, or `None` when it is unbounded.
+    #[must_use]
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+}
+
+/// The bounds of one simplification, which a [`Simplifier`] reads from its
+/// [`SimplifyContext`].
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+///
+/// use fhy_core::expression::NoRegisteredSorts;
+/// use fhy_core::solver::{SimplifyContext, SimplifyLimits};
+///
+/// let limits = SimplifyLimits::new().with_timeout(Duration::from_secs(2));
+/// let context = SimplifyContext::new(&NoRegisteredSorts).with_limits(limits);
+///
+/// assert_eq!(context.limits().timeout(), Some(Duration::from_secs(2)));
+/// assert_eq!(SimplifyLimits::default().timeout(), None);
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct SimplifyLimits {
+    timeout: Option<Duration>,
+}
+
+impl SimplifyLimits {
+    /// Return the limits that bound nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return these limits with the simplification bounded to `timeout`.
+    #[must_use]
+    pub fn with_timeout(self, timeout: Duration) -> Self {
+        Self {
+            timeout: Some(timeout),
+        }
+    }
+
+    /// Return how long the simplification may run, or `None` when it is
+    /// unbounded.
     #[must_use]
     pub fn timeout(&self) -> Option<Duration> {
         self.timeout

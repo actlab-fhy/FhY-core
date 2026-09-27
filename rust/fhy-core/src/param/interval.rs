@@ -113,18 +113,18 @@ pub(super) fn check_natural_bound(
     side: BoundSide,
     is_inclusive: bool,
 ) -> Result<(), ParamBuildError> {
-    let Some(profile) = profile.filter(|profile| profile.non_negative) else {
+    let Some(profile) = profile.filter(IntervalProfile::is_non_negative) else {
         return Ok(());
     };
     let LiteralValue::Int(bound) = value else {
         return Ok(());
     };
-    if is_valid_natural_bound(bound, side, profile.zero_included, is_inclusive) {
+    if is_valid_natural_bound(bound, side, profile.is_zero_included(), is_inclusive) {
         return Ok(());
     }
     Err(ParamBuildError::NaturalBound {
         side,
-        zero_included: profile.zero_included,
+        zero_included: profile.is_zero_included(),
         is_inclusive,
         is_negative: bound.is_negative(),
     })
@@ -470,16 +470,26 @@ pub(super) fn combine_ends(
 /// `profile`: never when inclusive bounds are preferred, and on a
 /// non-negative profile only when the gate admits the shifted literal.
 fn is_exclusive_lower_rendering_valid(profile: IntervalProfile, min: &BigInt) -> bool {
-    !profile.prefer_inclusive
-        && (!profile.non_negative
-            || is_valid_natural_bound(&(min - 1), BoundSide::Lower, profile.zero_included, false))
+    !profile.is_inclusive_preferred()
+        && (!profile.is_non_negative()
+            || is_valid_natural_bound(
+                &(min - 1),
+                BoundSide::Lower,
+                profile.is_zero_included(),
+                false,
+            ))
 }
 
 /// Return whether `max` may be rendered as the exclusive `< max + 1`.
 fn is_exclusive_upper_rendering_valid(profile: IntervalProfile, max: &BigInt) -> bool {
-    !profile.prefer_inclusive
-        && (!profile.non_negative
-            || is_valid_natural_bound(&(max + 1), BoundSide::Upper, profile.zero_included, false))
+    !profile.is_inclusive_preferred()
+        && (!profile.is_non_negative()
+            || is_valid_natural_bound(
+                &(max + 1),
+                BoundSide::Upper,
+                profile.is_zero_included(),
+                false,
+            ))
 }
 
 /// Return `param` bounded to `interval`, each bound rendered as its
@@ -539,12 +549,12 @@ pub(super) fn build_interval_param(
 ) -> Result<Param, IntervalError> {
     let domain = match natural {
         Some(zero_included) => IntervalIntegerDomain::new(
-            Inclusivity::inclusive_if(template.prefer_inclusive),
+            Inclusivity::inclusive_if(template.is_inclusive_preferred()),
             Sign::NonNegative,
             ZeroInclusion::included_if(zero_included),
         ),
         None => IntervalIntegerDomain::new(
-            Inclusivity::inclusive_if(template.prefer_inclusive),
+            Inclusivity::inclusive_if(template.is_inclusive_preferred()),
             Sign::Any,
             ZeroInclusion::Included,
         ),
@@ -575,7 +585,7 @@ pub(super) fn operand_profile(param: &Param) -> Result<Option<IntervalProfile>, 
         .domain()
         .interval_profile()
         .map_err(profile_error)?
-        .filter(|profile| profile.admits_only_bounds))
+        .filter(IntervalProfile::is_bounds_only))
 }
 
 /// Return `other` as an interval operand rendering as `template` prefers:
@@ -596,7 +606,7 @@ pub(super) fn coerce_to_interval(
     match other {
         Operand::Integer(value) => {
             let domain = IntervalIntegerDomain::new(
-                Inclusivity::inclusive_if(template.prefer_inclusive),
+                Inclusivity::inclusive_if(template.is_inclusive_preferred()),
                 Sign::Any,
                 ZeroInclusion::Included,
             );
@@ -615,7 +625,7 @@ pub(super) fn coerce_to_interval(
             let Some(profile) = param.domain().interval_profile().map_err(profile_error)? else {
                 return Err(IntervalError::UnsupportedOperand);
             };
-            if profile.admits_only_bounds {
+            if profile.is_bounds_only() {
                 return Ok(param.clone());
             }
             for constraint in param.constraints() {
@@ -628,7 +638,7 @@ pub(super) fn coerce_to_interval(
             }
             Param::new(
                 ParamDomain::from(IntervalIntegerDomain::new(
-                    Inclusivity::inclusive_if(template.prefer_inclusive),
+                    Inclusivity::inclusive_if(template.is_inclusive_preferred()),
                     Sign::Any,
                     ZeroInclusion::Included,
                 )),
