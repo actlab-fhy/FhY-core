@@ -383,7 +383,7 @@ def test_multiplication_rejects_integer_param_with_non_bound_constraint() -> Non
     bound = create_interval_integer_param_exactly(2)
 
     with pytest.raises(
-        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+        TypeError, match="cannot coerce an integer parameter with non-bound constraints"
     ):
         _ = bound * integer
 
@@ -394,7 +394,7 @@ def test_multiplication_rejects_integer_param_with_non_bound_constraint() -> Non
 
 
 def test_multiplication_keeps_non_negative_when_both_operands_are() -> None:
-    """Test ``non_negative`` is preserved when both operands are non-negative."""
+    """Test ``non_negative`` is preserved when both operands are non-negative"""
     x = create_interval_natural_param(zero_included=False)
     x = x.add_lower_bound_constraint(1).add_upper_bound_constraint(3)
     y = create_interval_natural_param(zero_included=False)
@@ -407,7 +407,7 @@ def test_multiplication_keeps_non_negative_when_both_operands_are() -> None:
 
 
 def test_multiplication_drops_non_negative_when_only_one_operand_is() -> None:
-    """Test ``non_negative`` is dropped when only one operand is non-negative."""
+    """Test ``non_negative`` is dropped when only one operand is non-negative"""
     x = create_interval_natural_param()
     x = x.add_upper_bound_constraint(3)
     y = create_interval_integer_param_between(-2, 2)

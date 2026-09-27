@@ -501,7 +501,7 @@ def test_nat_param_between_with_equal_bounds_and_an_exclusive_side_raises(
     """Test equal bounds with at least one exclusive side enclose no value."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Lower bound must be less than or equal to upper bound."),
+        match=re.escape("lower bound must be less than or equal to upper bound"),
     ):
         create_natural_param_between(
             3,
@@ -572,7 +572,7 @@ def test_nat_param_with_lower_bound_and_zero_excluded_rejects_a_zero_bound() -> 
     """Test the lower-bound factory rejects a zero bound when zero is excluded."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Lower bound must be at least 1 when zero is not included."),
+        match=re.escape("lower bound must be at least 1 when zero is not included"),
     ):
         create_natural_param_with_lower_bound(0, zero_included=False)
 
@@ -619,7 +619,7 @@ def test_nat_param_with_upper_bound_and_zero_excluded_rejects_a_zero_bound() -> 
     """Test the upper-bound factory rejects a zero bound when zero is excluded."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Upper bound must be at least 1 when zero is not included."),
+        match=re.escape("upper bound must be at least 1 when zero is not included"),
     ):
         create_natural_param_with_upper_bound(0, zero_included=False)
 
@@ -629,7 +629,7 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
     with pytest.raises(
         ParamError,
         match=re.escape(
-            "Upper bound must be at least 1 if zero is included and bound is exclusive."
+            "upper bound must be at least 1 if zero is included and bound is exclusive"
         ),
     ):
         create_natural_param_with_upper_bound(0, is_inclusive=False)
@@ -640,8 +640,7 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
     [
         pytest.param(
             partial(create_natural_param_with_lower_bound, 0, is_inclusive=False),
-            "Lower bound must be at least 1 if zero is included "
-            "and bound is exclusive.",
+            "lower bound must be at least 1 if zero is included and bound is exclusive",
             id="lower-bound-factory-zero-included",
         ),
         pytest.param(
@@ -651,8 +650,8 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
                 zero_included=False,
                 is_inclusive=False,
             ),
-            "Lower bound must be non-negative when zero is not included "
-            "and bound is exclusive.",
+            "lower bound must be non-negative when zero is not included "
+            "and bound is exclusive",
             id="lower-bound-factory-zero-excluded",
         ),
         pytest.param(
@@ -662,15 +661,14 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
                 zero_included=False,
                 is_inclusive=False,
             ),
-            "Upper bound must be at least 2 when zero is not included "
-            "and bound is exclusive.",
+            "upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive",
             id="upper-bound-factory-zero-excluded",
         ),
         pytest.param(
             # The bounds hold 1, 2, and 3, yet the exclusive zero is refused.
             partial(create_natural_param_between, 0, 3, is_lower_inclusive=False),
-            "Lower bound must be at least 1 if zero is included "
-            "and bound is exclusive.",
+            "lower bound must be at least 1 if zero is included and bound is exclusive",
             id="between-factory-lower-zero-included",
         ),
         pytest.param(
@@ -683,8 +681,8 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
                 is_lower_inclusive=False,
                 is_upper_inclusive=False,
             ),
-            "Upper bound must be at least 2 when zero is not included "
-            "and bound is exclusive.",
+            "upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive",
             id="between-factory-upper-zero-excluded",
         ),
     ],

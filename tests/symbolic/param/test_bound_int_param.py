@@ -118,7 +118,7 @@ def test_bound_int_param_between_with_reversed_bounds_raises() -> None:
     """Test ``create_interval_integer_param_between`` raises when ``lower > upper``."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Lower bound must be less than or equal to upper bound."),
+        match=re.escape("lower bound must be less than or equal to upper bound"),
     ):
         create_interval_integer_param_between(5, 3)
 
@@ -557,7 +557,7 @@ def test_bound_int_param_negation_of_strict_interval_uses_integer_semantics() ->
 # Arithmetic - empty operand
 # =============================================================================
 
-_EMPTY_INTERVAL_MESSAGE = "Empty integer interval"
+_EMPTY_INTERVAL_MESSAGE = "empty integer interval"
 
 
 @pytest.fixture

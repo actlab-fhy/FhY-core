@@ -383,7 +383,7 @@ def test_intersection_rejects_integer_param_with_non_bound_constraint_on_right()
     integer = integer.add_constraint(InSetConstraint(integer.variable, {1, 2, 3}))
 
     with pytest.raises(
-        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+        TypeError, match="cannot coerce an integer parameter with non-bound constraints"
     ):
         _ = interval & integer
 
@@ -395,7 +395,7 @@ def test_intersection_rejects_integer_param_with_non_bound_constraint_on_left() 
     integer = integer.add_constraint(InSetConstraint(integer.variable, {1, 2, 3}))
 
     with pytest.raises(
-        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+        TypeError, match="cannot coerce an integer parameter with non-bound constraints"
     ):
         _ = integer & interval
 

@@ -1,132 +1,148 @@
-"""Tests for the private interval-bound helpers in ``fhy_core.symbolic.param.core``.
+"""Tests for the bound decoding interval-integer arithmetic reads.
 
-These cover the bound-expression parsing used by interval-integer parameter
-arithmetic: ``_invert_comparison``, ``_bound_from_literal``, and the
-``_iter_interval_bounds`` guards (driven through the public ``+`` operator).
+The private helpers ``_invert_comparison``, ``_bound_from_literal`` and
+``_iter_interval_bounds`` these tests once called were deleted when params
+moved to the Rust core (S16), which decodes each bound constraint of an
+interval param into its side, integer and inclusivity. The rules are pinned
+here through the public arithmetic, which reads the decoded interval, and
+the interval domain's constraint check, which keeps every constraint the
+decoding reads a bound.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
-from fhy_core.symbolic.constraint import (
-    EquationConstraint,
-    InSetConstraint,
-    create_constraint_system,
-)
+from fhy_core.identifier import Identifier
+from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
 from fhy_core.symbolic.expression import (
-    BinaryOperation,
+    Expression,
+    IdentifierExpression,
     LiteralExpression,
 )
-from fhy_core.symbolic.param import create_interval_integer_param
-from fhy_core.symbolic.param.core import _bound_from_literal, _invert_comparison
+from fhy_core.symbolic.param import (
+    Param,
+    ParamError,
+    create_interval_integer_param,
+)
 
 from .conftest import mock_identifier
 
+_Build = Callable[[Expression], Expression]
+
+
+def _bounded(build: _Build) -> tuple[Param[int], Identifier]:
+    """Return an interval param with the one bound `build` makes of its variable."""
+    x = mock_identifier("x", 1)
+    param = create_interval_integer_param(name=x)
+    return param.add_constraint(EquationConstraint(build(IdentifierExpression(x)))), x
+
+
+def _admitted(param: Any, values: range) -> list[int]:
+    """Return the values of `values` the param admits."""
+    return [value for value in values if param.is_value_valid(value)]
+
+
 # =============================================================================
-# `_invert_comparison`
+# A bound written with the literal on the left reads inverted
+# =============================================================================
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    ("build", "expected"),
+    [
+        pytest.param(lambda x: LiteralExpression(7) > x, list(range(3, 7)), id="gt-lt"),
+        pytest.param(
+            lambda x: LiteralExpression(7) >= x, list(range(3, 8)), id="ge-le"
+        ),
+        pytest.param(
+            lambda x: LiteralExpression(4) < x, list(range(5, 10)), id="lt-gt"
+        ),
+        pytest.param(
+            lambda x: LiteralExpression(4) <= x, list(range(4, 10)), id="le-ge"
+        ),
+    ],
+)
+def test_arithmetic_reads_a_literal_left_bound_inverted(
+    build: _Build, expected: list[int]
+) -> None:
+    """Test a `k <cmp> x` bound reads as `x <inverse> k` in arithmetic."""
+    param, _ = _bounded(build)
+
+    result = param + 0
+
+    assert _admitted(result, range(3, 10)) == expected
+
+
+# =============================================================================
+# Each comparison operator decodes into its side and inclusivity
+# =============================================================================
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    ("build", "expected"),
+    [
+        pytest.param(lambda x: x > 7, list(range(8, 12)), id="gt"),
+        pytest.param(lambda x: x >= 7, list(range(7, 12)), id="ge"),
+        pytest.param(lambda x: x < 7, list(range(3, 7)), id="lt"),
+        pytest.param(lambda x: x <= 7, list(range(3, 8)), id="le"),
+    ],
+)
+def test_arithmetic_decodes_each_comparison_operator(
+    build: _Build, expected: list[int]
+) -> None:
+    """Test each comparison operator decodes into the interval it bounds."""
+    param, _ = _bounded(build)
+
+    result = param + 0
+
+    assert _admitted(result, range(3, 12)) == expected
+
+
+# =============================================================================
+# The interval domain keeps every constraint the decoding reads a bound
 # =============================================================================
 
 
 @pytest.mark.parametrize(
-    "input_op, expected_op",
+    "build",
     [
-        pytest.param(
-            BinaryOperation.GREATER, BinaryOperation.LESS, id="greater-becomes-less"
-        ),
-        pytest.param(
-            BinaryOperation.GREATER_EQUAL,
-            BinaryOperation.LESS_EQUAL,
-            id="greater-equal-becomes-less-equal",
-        ),
-        pytest.param(
-            BinaryOperation.LESS, BinaryOperation.GREATER, id="less-becomes-greater"
-        ),
-        pytest.param(
-            BinaryOperation.LESS_EQUAL,
-            BinaryOperation.GREATER_EQUAL,
-            id="less-equal-becomes-greater-equal",
-        ),
+        pytest.param(lambda x: x > LiteralExpression(1.5), id="non-int-literal"),
+        pytest.param(lambda x: (x + 1).equals(3), id="non-comparison"),
     ],
 )
-def test_invert_binary_comparison_operation_inverts_each_comparison_operator(
-    input_op: BinaryOperation, expected_op: BinaryOperation
-) -> None:
-    """Test the helper inverts each of the four comparison operators."""
-    assert _invert_comparison(input_op) == expected_op
+def test_interval_domain_refuses_a_constraint_that_is_no_bound(build: _Build) -> None:
+    """Test an interval param refuses an equation the decoding could not read."""
+    x = mock_identifier("x", 1)
+    param = create_interval_integer_param(name=x)
+    constraint = EquationConstraint(build(IdentifierExpression(x)))
+
+    with pytest.raises(ParamError, match="bound expressions"):
+        param.add_constraint(constraint)
 
 
-def test_invert_binary_comparison_operation_rejects_non_comparison_operator() -> None:
-    """Test the helper raises ``ValueError`` for a non-comparison operator."""
-    with pytest.raises(ValueError, match="non-comparison"):
-        _invert_comparison(BinaryOperation.ADD)
+def test_interval_domain_refuses_a_set_constraint() -> None:
+    """Test an interval param refuses a set constraint with `TypeError`."""
+    x = mock_identifier("x", 1)
+
+    with pytest.raises(TypeError, match="interval integer parameters"):
+        create_interval_integer_param(name=x).add_constraint(InSetConstraint(x, {1}))
 
 
-# =============================================================================
-# `_bound_from_literal`
-# =============================================================================
+@pytest.mark.sympy
+def test_interval_arithmetic_reads_the_core_constraints_not_a_slot() -> None:
+    """Test a slot overwritten in place cannot reach the arithmetic.
 
+    The arithmetic reads the constraints the Rust core validated, so the
+    malformed state the Python guards once defended against cannot arise.
+    """
+    x = mock_identifier("x", 1)
+    param = create_interval_integer_param(name=x).add_lower_bound_constraint(2)
+    type(param).constraints.__set__(param, (InSetConstraint(x, {1}),))  # type: ignore[attr-defined]
 
-@pytest.mark.parametrize(
-    "op, expected_is_lower, expected_inclusive",
-    [
-        pytest.param(BinaryOperation.GREATER, True, False, id="gt"),
-        pytest.param(BinaryOperation.GREATER_EQUAL, True, True, id="ge"),
-        pytest.param(BinaryOperation.LESS, False, False, id="lt"),
-        pytest.param(BinaryOperation.LESS_EQUAL, False, True, id="le"),
-    ],
-)
-def test_get_bound_from_expression_decodes_each_comparison_operator(
-    op: BinaryOperation, expected_is_lower: bool, expected_inclusive: bool
-) -> None:
-    """Test the helper decodes each comparison operator into a bound triple."""
-    is_lower, value, inclusive = _bound_from_literal(LiteralExpression(7), op)
+    result = param + 0
 
-    assert is_lower is expected_is_lower
-    assert value == 7
-    assert inclusive is expected_inclusive
-
-
-def test_get_bound_from_expression_rejects_non_int_literal() -> None:
-    """Test the helper raises ``RuntimeError`` for a non-``int`` literal value."""
-    with pytest.raises(RuntimeError):
-        _bound_from_literal(LiteralExpression(1.5), BinaryOperation.GREATER)
-
-
-# =============================================================================
-# Defensive guards in ``_iter_interval_bounds``
-#
-# These guards are unreachable through the public API because
-# ``validate_constraint`` rejects every malformed input that would surface
-# them. Inject malformed state via ``object.__setattr__`` to drive each branch.
-# =============================================================================
-
-
-def _build_interval_param_with_injected_constraints(
-    constraints: tuple[Any, ...],
-) -> Any:
-    """Build an interval-integer param with an injected tuple of constraints."""
-    param = create_interval_integer_param()
-    object.__setattr__(
-        param, "constraint_system", create_constraint_system(*constraints)
-    )
-    return param
-
-
-def test_bound_int_param_iter_bounds_rejects_non_equation_constraint_in_state() -> None:
-    """Test ``_iter_interval_bounds`` raises for a non-equation constraint in state."""
-    param = _build_interval_param_with_injected_constraints(
-        (InSetConstraint(mock_identifier("x", 1), {1}),)
-    )
-
-    with pytest.raises(RuntimeError):
-        param + 0  # test: must raise
-
-
-def test_bound_int_param_iter_bounds_rejects_non_bound_expression_in_state() -> None:
-    """Test ``_iter_interval_bounds`` raises for a non-bound expression in state."""
-    bad = EquationConstraint(LiteralExpression(0))
-    param = _build_interval_param_with_injected_constraints((bad,))
-
-    with pytest.raises(RuntimeError, match="non-bound"):
-        param + 0  # test: must raise
+    assert _admitted(result, range(0, 4)) == [2, 3]

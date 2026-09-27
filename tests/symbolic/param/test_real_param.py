@@ -446,7 +446,7 @@ def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> N
 def test_real_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `create_real_param_between(x, x)` raises when either bound is exclusive."""
+    """Test `create_real_param_between(x, x)` raises when either bound is exclusive"""
     with pytest.raises(ParamError):
         create_real_param_between(
             5.0,
@@ -463,7 +463,7 @@ def test_real_param_between_equal_bounds_with_any_exclusive_raises(
 _WIDE_DIGITS = "1" * 400
 """Integer digits that make a decimal too wide for a finite ``float``."""
 
-_UNORDERED_BOUNDS_MESSAGE = "Lower bound must be less than or equal to upper bound."
+_UNORDERED_BOUNDS_MESSAGE = "lower bound must be less than or equal to upper bound"
 
 
 # Every pair below collapses to one ``float`` when both bounds are rounded
@@ -526,7 +526,7 @@ def test_real_param_between_rejects_bounds_reversed_only_exactly(
 def test_real_param_between_rejects_exactly_equal_bounds_with_an_exclusive_side(
     lower_bound: float | str, upper_bound: float | str
 ) -> None:
-    """Test bounds spelled differently but exactly equal raise when one is exclusive."""
+    """Test bounds spelled differently but exactly equal raise when one is exclusive"""
     with pytest.raises(ParamError, match=re.escape(_UNORDERED_BOUNDS_MESSAGE)):
         create_real_param_between(lower_bound, upper_bound, is_upper_inclusive=False)
 
