@@ -96,7 +96,12 @@ fn numeric_subset_asks_a_custom_other_side_its_sort_and_its_values() {
     assert_eq!(outcome, Outcome::Violated);
     assert_eq!(
         handle.calls(),
-        ["symbol_type", "is_value_admissible", "is_value_admissible"]
+        [
+            "symbol_type",
+            "implied_constraints",
+            "is_value_admissible",
+            "is_value_admissible"
+        ]
     );
 }
 
@@ -405,7 +410,10 @@ fn a_custom_domain_on_the_right_is_asked_only_what_the_left_side_needs() {
             .is_value_set_subset(&custom, &context)
             .expect("answers")
     );
-    assert_eq!(handle.take_calls(), ["symbol_type"]);
+    assert_eq!(
+        handle.take_calls(),
+        ["symbol_type", "implied_constraints(value)"]
+    );
 
     assert!(
         !ordinal

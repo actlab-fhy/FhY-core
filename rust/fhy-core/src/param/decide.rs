@@ -14,7 +14,7 @@ use crate::solver::CheckLimits;
 
 use super::context::{MemberForwarder, ParamContext, ParamEvent, QuestionForwarder};
 use super::domain::{ParamDomain, Side};
-use super::error::ParamError;
+use super::error::{ParamBuildError, ParamError};
 use super::screen::{Screened, rename_system, screen};
 use super::value::member_value;
 
@@ -131,6 +131,38 @@ pub fn are_all_constraints_satisfied(
         }
     }
     Ok(true)
+}
+
+/// Return the question-level error of a domain's failure to give its
+/// implied constraints: a custom domain's own error, as its other hooks'.
+pub(super) fn restriction_error(error: ParamBuildError) -> ParamError {
+    match error {
+        ParamBuildError::Custom(error) => ParamError::Custom(error),
+        other => ParamError::Build(other),
+    }
+}
+
+/// Return `side`'s constraints with each of `domain`'s implied constraints
+/// on its variable the side does not already hold, so a domain-level
+/// procedure respects the domain's restriction as a param's side, which
+/// holds them, does.
+pub(super) fn restricted(
+    domain: &ParamDomain,
+    side: Side<'_>,
+) -> Result<Vec<Constraint>, ParamError> {
+    let mut constraints = side.constraints().to_vec();
+    for implied in domain
+        .implied_constraints(side.variable())
+        .map_err(restriction_error)?
+    {
+        if !constraints
+            .iter()
+            .any(|constraint| constraint.is_structurally_equivalent(&implied))
+        {
+            constraints.push(implied);
+        }
+    }
+    Ok(constraints)
 }
 
 /// Return the bindings of `value` to `variable`.
@@ -401,6 +433,9 @@ fn has_float_member(constraints: &[Constraint], variable: &Identifier, polarity:
 /// `other`'s over `other_domain`, reasoning about their values in
 /// `symbol_type`.
 ///
+/// Each side holds its domain's implied constraints as well as its own, as
+/// a param's side does, so the domains' restrictions count.
+///
 /// 1. When `own` holds an in-set constraint, its candidates are
 ///    enumerated: a candidate decided in `own` and decided out of `other`
 ///    is a counterexample ([`Outcome::Violated`]); `other` deciding every
@@ -426,6 +461,29 @@ fn has_float_member(constraints: &[Constraint], variable: &Identifier, polarity:
 /// Returns a constraint's error, and [`ParamError::Custom`] for a custom
 /// domain that fails.
 pub fn compute_constraint_implication_subset(
+    own_domain: &ParamDomain,
+    own: Side<'_>,
+    other_domain: &ParamDomain,
+    other: Side<'_>,
+    symbol_type: SymbolType,
+    context: &ParamContext<'_>,
+) -> Result<Outcome, ParamError> {
+    let own_constraints = restricted(own_domain, own)?;
+    let other_constraints = restricted(other_domain, other)?;
+    implication_subset(
+        own_domain,
+        Side::new(&own_constraints, own.variable()),
+        other_domain,
+        Side::new(&other_constraints, other.variable()),
+        symbol_type,
+        context,
+    )
+}
+
+/// Decide the subset relation of two sides that hold their domains'
+/// implied constraints, as [`compute_constraint_implication_subset`]
+/// describes.
+fn implication_subset(
     own_domain: &ParamDomain,
     own: Side<'_>,
     other_domain: &ParamDomain,
@@ -599,6 +657,11 @@ pub(super) fn has_feasible_value(
     side: Side<'_>,
     context: &ParamContext<'_>,
 ) -> Result<Outcome, ParamError> {
+    let constraints = match domain {
+        ParamDomain::Custom(_) => side.constraints().to_vec(),
+        _ => restricted(domain, side)?,
+    };
+    let side = Side::new(&constraints, side.variable());
     match domain {
         ParamDomain::Integer(_) | ParamDomain::IntervalInteger(_) => {
             numeric_has_feasible_value(domain, SymbolType::Int, side, context)
@@ -663,6 +726,10 @@ pub(super) fn feasibility_subset(
             if !is_comparable {
                 return Ok(Outcome::Violated);
             }
+            let own_constraints = restricted(own_domain, own)?;
+            let other_constraints = restricted(other_domain, other)?;
+            let own = Side::new(&own_constraints, own.variable());
+            let other = Side::new(&other_constraints, other.variable());
             let Some(values) = finite_values(own_domain) else {
                 return Ok(Outcome::Violated);
             };

@@ -397,6 +397,35 @@ def test_native_procedure_drives_a_python_defined_domain() -> None:
     ]
 
 
+@pytest.mark.parametrize(("value", "admissible"), [(-5, False), (0, True), (7, True)])
+def test_a_natural_domain_admits_only_its_own_values(
+    value: int, admissible: bool
+) -> None:
+    """Test the sign restriction holds at the domain level (F2-021)."""
+    assert IntegerDomain(non_negative=True).is_value_admissible(value) is admissible
+    assert IntegerDomain().is_value_admissible(value) is True
+
+
+def test_domain_questions_fold_in_the_domain_s_restriction() -> None:
+    """Test the TYP probe's rows answer as a param over the domain does."""
+    x, y = Identifier("x"), Identifier("y")
+    natural, integer = IntegerDomain(non_negative=True), IntegerDomain()
+    below_zero = EquationConstraint(IdentifierExpression(x) <= -1)
+
+    assert natural.has_feasible_value((below_zero,), x) is ConstraintOutcome.VIOLATED
+    assert integer.has_feasible_value((below_zero,), x) is ConstraintOutcome.SATISFIED
+    assert (
+        integer.compute_feasibility_subset((), x, natural, (), y)
+        is ConstraintOutcome.VIOLATED
+    )
+    assert (
+        natural.compute_feasibility_subset((), x, integer, (), y)
+        is ConstraintOutcome.SATISFIED
+    )
+    assert integer.is_value_set_subset(natural) is False
+    assert natural.is_value_set_subset(integer) is True
+
+
 def test_python_defined_domain_exception_propagates() -> None:
     """Test an exception a Python domain's hook raises reaches the caller."""
     x = Identifier("x")

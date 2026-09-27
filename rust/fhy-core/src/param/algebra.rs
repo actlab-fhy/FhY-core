@@ -4,7 +4,7 @@ use crate::constraint::{Constraint, Member, MemberSet, Value};
 use crate::identifier::Identifier;
 
 use super::context::ParamContext;
-use super::decide::is_value_valid_for;
+use super::decide::{is_value_valid_for, restricted};
 use super::domain::{
     CategoricalDomain, DomainKind, IntegerDomain, IntervalIntegerDomain, OrdinalDomain,
     ParamDomain, RealDomain, Side, Sign, ZeroInclusion,
@@ -100,6 +100,10 @@ pub(super) fn union(
     match own_domain {
         ParamDomain::Ordinal(_) | ParamDomain::Categorical(_) => {
             require_same_kind(SetOperation::Union, own_domain, other_domain)?;
+            let own_constraints = restricted(own_domain, own)?;
+            let other_constraints = restricted(other_domain, other)?;
+            let own = Side::new(&own_constraints, own.variable());
+            let other = Side::new(&other_constraints, other.variable());
             let own_values =
                 effective_values(own_domain, own, finite_members(own_domain), context)?;
             let other_values =
@@ -150,6 +154,10 @@ pub(super) fn intersection(
             .map_err(ParamError::Custom);
     }
     require_same_kind(SetOperation::Intersection, own_domain, other_domain)?;
+    let own_constraints = restricted(own_domain, own)?;
+    let other_constraints = restricted(other_domain, other)?;
+    let own = Side::new(&own_constraints, own.variable());
+    let other = Side::new(&other_constraints, other.variable());
     match (own_domain, other_domain) {
         (ParamDomain::Integer(left), ParamDomain::Integer(right)) => {
             let (non_negative, zero_included) = merge_restrictions(

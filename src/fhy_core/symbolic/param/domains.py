@@ -483,10 +483,12 @@ def _copy_attributes(instance: object, public: type, native: type, *names: str) 
 class IntegerDomain(_rs.IntegerDomain, WrappedFamilySerializable):
     """Integer-valued domain, optionally restricted to the natural numbers.
 
-    ``non_negative`` does not change admissibility (any strict integer is
-    admissible); it adds an implied ``>= 0`` constraint, or ``> 0`` when
-    ``zero_included`` is ``False``. ``zero_included`` is stored as ``True``
-    unless the domain is non-negative, where it would mean nothing.
+    ``non_negative`` restricts the domain to the natural numbers: it adds an
+    implied ``>= 0`` constraint, or ``> 0`` when ``zero_included`` is
+    ``False``, and admissibility, the value-set subset test and the
+    domain-level feasibility, subset and set-algebra procedures all respect
+    it. ``zero_included`` is stored as ``True`` unless the domain is
+    non-negative, where it would mean nothing.
     """
 
     _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
@@ -521,12 +523,14 @@ class RealDomain(_rs.RealDomain, WrappedFamilySerializable):
 class IntervalIntegerDomain(_rs.IntervalIntegerDomain, WrappedFamilySerializable):
     """Integer domain whose parameters carry their interval as bound constraints.
 
-    Admissibility accepts any strict integer; the interval is expressed through
-    the composing parameter's bound constraints. Only
+    Admissibility accepts any strict integer within the sign restriction; the
+    interval is expressed through the composing parameter's bound
+    constraints. Only
     :class:`~fhy_core.symbolic.constraint.EquationConstraint` bound expressions
     are permitted, enabling interval arithmetic on the composing parameter.
     ``prefer_inclusive`` selects how arithmetic results render their bounds.
-    ``non_negative`` adds the natural-number implied constraint.
+    ``non_negative`` adds the natural-number implied constraint, which the
+    domain-level procedures respect as the integer domain's do.
     """
 
     _WIRE_FAMILY: ClassVar[str | None] = "param_domain"

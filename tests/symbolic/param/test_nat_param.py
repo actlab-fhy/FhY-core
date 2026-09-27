@@ -433,16 +433,17 @@ def test_nat_param_domain_is_integer_domain_with_non_negative() -> None:
 
 
 @pytest.mark.sympy
-def test_nat_param_is_value_admissible_does_not_gate_on_sign() -> None:
-    """Test `is_value_admissible` is True for negative integers on a natural param.
+def test_nat_param_is_value_admissible_gates_on_sign() -> None:
+    """Test `is_value_admissible` refuses a negative integer on a natural param.
 
-    Natural params express non-negativity via constraints, not admissibility.
-    ``is_value_admissible(-5)`` returns ``True``; ``is_value_valid(-5)`` is ``False``.
+    The natural domain's own restriction holds at the domain level too
+    (F2-021), so ``is_value_admissible(-5)`` agrees with ``is_value_valid``.
     """
     param = create_natural_param()
 
-    assert param.is_value_admissible(-5)
+    assert not param.is_value_admissible(-5)
     assert not param.is_value_valid(-5)
+    assert param.is_value_admissible(0)
 
 
 # =============================================================================

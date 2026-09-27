@@ -209,14 +209,17 @@ fn integer_domains_admit_integers_only(#[case] value: Value, #[case] is_admissib
     }
 }
 
+/// The domain's sign restriction holds at the domain level too (F2-021);
+/// before, only a param folding in the implied bound refused `-5`.
 #[test]
-fn non_negative_integer_domain_admits_a_negative_integer() {
+fn non_negative_integer_domain_refuses_a_negative_integer() {
     let domain = ParamDomain::from(IntegerDomain::new(
         Sign::NonNegative,
         ZeroInclusion::Included,
     ));
 
-    assert!(domain.is_value_admissible(&int(-5)).expect("native"));
+    assert!(!domain.is_value_admissible(&int(-5)).expect("native"));
+    assert!(domain.is_value_admissible(&int(0)).expect("native"));
 }
 
 #[rstest]
@@ -496,7 +499,7 @@ fn symbol_types_follow_the_value_space() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn numeric_value_sets_are_subsets_within_one_sort() {
+fn numeric_value_sets_are_subsets_within_one_sort_and_no_stronger_restriction() {
     let integer = ParamDomain::from(IntegerDomain::new(
         Sign::NonNegative,
         ZeroInclusion::Included,
@@ -514,9 +517,10 @@ fn numeric_value_sets_are_subsets_within_one_sort() {
             .expect("native")
     );
     assert!(
-        interval
+        !interval
             .is_value_set_subset(&integer, &native_context())
-            .expect("native")
+            .expect("native"),
+        "the unrestricted interval integers are no subset of the naturals"
     );
     assert!(
         !integer

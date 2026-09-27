@@ -97,8 +97,8 @@ onto `dev-rust` before continuing.
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed)
 - [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph: `ad15163`
 - [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution: `0d5f5ba`
-- [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`
-- [ ] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction
+- [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`: `0abc3fb`
+- [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction
 - [ ] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations
 - [ ] R2-028 (F2-028): param and constraint decision-rule tests in Rust
 - [ ] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables
@@ -3785,6 +3785,44 @@ finding.
   | Before | After | Tests |
   |---|---|---|
   | `SymbolTable.add_symbol(parent, y, ...)` succeeded when a child of `parent` already held `y` | it raises `SymbolTableError` "symbol y::… already defined in namespace child::…, a descendant of namespace parent::…" | `test_add_symbol_refuses_a_name_a_descendant_defines` |
+
+**R2-021.**
+- **Admissibility and the value-set subset** read the sign restriction of
+  the built-in integer kinds directly: a non-negative domain admits `0` and
+  up, a positive one `1` and up, and a numeric domain's set lies in
+  another of its sort only when the other's restriction is no stronger.
+  Against a custom domain of its sort, a numeric domain's set is a subset
+  when each of the custom domain's implied constraints (on a fresh
+  variable) is one of its own; any other restriction is not proven and
+  answers `false`. A custom domain's own `is_value_admissible` answers for
+  its own restriction, as before.
+- **The side-taking procedures** (`has_feasible_value`,
+  `feasibility_subset`, `compute_constraint_implication_subset`, `union`,
+  `intersection`) fold each side's domain's implied constraints into the
+  side, skipping one the side already holds, so a param's side, which
+  holds them, is unchanged (`the_param_path_holds_the_restriction_once`).
+- **Custom domains (call).** A procedure that dispatches to a custom
+  domain's own hook hands it the sides as given, since the hook answers
+  for its own domain; a built-in procedure that meets a custom domain on
+  the other side asks its `implied_constraints` to fold them in. The folds
+  happen only on the paths that read the constraints, so a finite domain
+  against a custom one still asks the custom domain nothing.
+- **Rewritten pins:** `non_negative_integer_domain_admits_a_negative_integer`
+  (now `..._refuses_...`), `numeric_value_sets_are_subsets_within_one_sort`
+  (the unrestricted interval integers are no subset of the naturals), and
+  two custom-hook recordings that gain the `implied_constraints` call. In
+  Python, `test_nat_param_is_value_admissible_does_not_gate_on_sign` (now
+  `..._gates_on_sign`) and `test_assignment_payload_rejects_only_a_provable_violation`
+  (`-1` is now inadmissible, so the violation case uses `x <= 5` with `7`).
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `IntegerDomain(non_negative=True).is_value_admissible(-5)`, and a natural param's, returned `True` | `False`; a positive domain also refuses `0` | `test_a_natural_domain_admits_only_its_own_values`, `test_nat_param_is_value_admissible_gates_on_sign` |
+  | `natural.has_feasible_value((x <= -1,), x)` was `SATISFIED`; `integer.compute_feasibility_subset((), x, natural, (), y)` was `SATISFIED`; `integer.is_value_set_subset(natural)` was `True` | `VIOLATED`, `VIOLATED`, `False` | `test_domain_questions_fold_in_the_domain_s_restriction` |
+  | assigning `-1` to a natural param raised "violates constraint" | it raises "is not admissible" | `test_assignment_payload_rejects_only_a_provable_violation` |
+  | a numeric procedure with a Python-defined domain on the other side asked it only its sort and values | it also asks its implied constraints | the Rust custom stories |
+  | the `IntegerDomain` and `IntervalIntegerDomain` docstrings said `non_negative` does not change admissibility | they say every domain-level procedure respects it | none |
 
 ### Track E notes
 

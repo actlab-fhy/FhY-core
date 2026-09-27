@@ -1072,3 +1072,145 @@ fn real_solver_decides_feasibility_and_subsets_of_intervals() {
         Outcome::Violated
     );
 }
+
+// ---------------------------------------------------------------------------
+// The domain's own restriction (F2-021)
+// ---------------------------------------------------------------------------
+
+fn natural() -> ParamDomain {
+    ParamDomain::from(IntegerDomain::new(
+        Sign::NonNegative,
+        ZeroInclusion::Included,
+    ))
+}
+
+fn positive() -> ParamDomain {
+    ParamDomain::from(IntegerDomain::new(
+        Sign::NonNegative,
+        ZeroInclusion::Excluded,
+    ))
+}
+
+#[test]
+fn a_natural_domain_does_not_admit_a_negative_value() {
+    assert_eq!(natural().is_value_admissible(&int(-5)).ok(), Some(false));
+    assert_eq!(natural().is_value_admissible(&int(0)).ok(), Some(true));
+    assert_eq!(positive().is_value_admissible(&int(0)).ok(), Some(false));
+    assert_eq!(positive().is_value_admissible(&int(1)).ok(), Some(true));
+    assert_eq!(integer().is_value_admissible(&int(-5)).ok(), Some(true));
+    let interval_natural = ParamDomain::from(fhy_core::param::IntervalIntegerDomain::new(
+        fhy_core::param::Inclusivity::Inclusive,
+        Sign::NonNegative,
+        ZeroInclusion::Included,
+    ));
+    assert_eq!(
+        interval_natural.is_value_admissible(&int(-1)).ok(),
+        Some(false)
+    );
+}
+
+#[test]
+fn value_set_subsets_respect_the_sign_restriction() {
+    let solver = fhy_core::solver::Solver::new();
+    let context = ParamContext::new(&solver);
+    let real = ParamDomain::from(RealDomain);
+
+    for (own, other, expected) in [
+        (integer(), natural(), false),
+        (natural(), integer(), true),
+        (positive(), natural(), true),
+        (natural(), positive(), false),
+        (natural(), natural(), true),
+        (natural(), real.clone(), false),
+        (real.clone(), real, true),
+    ] {
+        assert_eq!(
+            own.is_value_set_subset(&other, &context).ok(),
+            Some(expected),
+            "{own} within {other}"
+        );
+    }
+}
+
+#[test]
+fn natural_feasibility_folds_in_the_sign_bound() {
+    let Some(solver) = real_solver() else {
+        return;
+    };
+    let x = Identifier::new("x");
+    let constraints = [at_most(&x, -1)];
+    let context = ParamContext::new(&solver);
+
+    let outcome = natural()
+        .has_feasible_value(Side::new(&constraints, &x), &context)
+        .expect("decides");
+
+    assert_eq!(outcome, Outcome::Violated);
+    assert_eq!(
+        integer()
+            .has_feasible_value(Side::new(&constraints, &x), &context)
+            .expect("decides"),
+        Outcome::Satisfied
+    );
+    let param = fhy_core::param::Param::new(natural(), x.clone(), constraints.to_vec(), &context)
+        .expect("a bound");
+    assert_eq!(
+        param.check_feasibility(&context).ok(),
+        Some(Outcome::Violated)
+    );
+}
+
+#[test]
+fn the_integers_are_no_feasibility_subset_of_the_naturals() {
+    let Some(solver) = real_solver() else {
+        return;
+    };
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let context = ParamContext::new(&solver);
+
+    let integers_in_naturals = integer()
+        .feasibility_subset(Side::new(&[], &x), &natural(), Side::new(&[], &y), &context)
+        .expect("decides");
+    let naturals_in_integers = natural()
+        .feasibility_subset(Side::new(&[], &x), &integer(), Side::new(&[], &y), &context)
+        .expect("decides");
+    let implication = compute_constraint_implication_subset(
+        &integer(),
+        Side::new(&[], &x),
+        &natural(),
+        Side::new(&[], &y),
+        SymbolType::Int,
+        &context,
+    )
+    .expect("decides");
+
+    assert_ne!(integers_in_naturals, Outcome::Satisfied);
+    assert_eq!(integers_in_naturals, Outcome::Violated);
+    assert_eq!(naturals_in_integers, Outcome::Satisfied);
+    assert_eq!(implication, Outcome::Violated);
+}
+
+#[test]
+fn the_param_path_holds_the_restriction_once() {
+    let Some(solver) = real_solver() else {
+        return;
+    };
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let context = ParamContext::new(&solver);
+    let naturals = fhy_core::param::Param::new(natural(), x, [], &context).expect("a param");
+    let integers = fhy_core::param::Param::new(integer(), y, [], &context).expect("a param");
+
+    assert_eq!(
+        naturals.check_subset(&integers, &context).ok(),
+        Some(Outcome::Satisfied)
+    );
+    assert_eq!(
+        integers.check_subset(&naturals, &context).ok(),
+        Some(Outcome::Violated)
+    );
+    assert_eq!(
+        naturals.check_feasibility(&context).ok(),
+        Some(Outcome::Satisfied)
+    );
+    assert_eq!(naturals.constraints().len(), 1);
+}

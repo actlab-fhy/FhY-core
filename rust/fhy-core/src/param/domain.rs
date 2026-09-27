@@ -10,7 +10,9 @@ use crate::constraint::{
     Constraint, EquationConstraint, Member, MemberError, MemberSet, Outcome, Value,
 };
 use crate::error::impl_from_name;
-use crate::expression::{BinaryOperation, Expression, ExpressionKind, LiteralValue, SymbolType};
+use crate::expression::{
+    BigInt, BinaryOperation, Expression, ExpressionKind, LiteralValue, SymbolType,
+};
 use crate::foreign::Part;
 use crate::identifier::Identifier;
 
@@ -629,6 +631,17 @@ fn non_negative_bound(
     vec![Constraint::from(EquationConstraint::new(bound))]
 }
 
+/// The lower bound of a numeric domain's sign restriction, weakest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SignBound {
+    /// No bound.
+    Unbounded,
+    /// `x >= 0`.
+    NonNegative,
+    /// `x > 0`.
+    Positive,
+}
+
 /// Return whether `constraint` is an equation, as the constraints of a
 /// finite domain are not.
 fn is_set_constraint(constraint: &Constraint) -> bool {
@@ -667,17 +680,26 @@ impl ParamDomain {
     }
 
     /// Return whether `value` lies in the domain's value set: an integer
-    /// for the integer kinds; a finite float or a string in the literal
-    /// grammar for the reals; a member, compared type-strictly, for the
-    /// ordinal and categorical kinds; a tuple holding each member once for
-    /// the permutation kind.
+    /// for the integer kinds, within their sign restriction (at least `0`
+    /// for a non-negative domain, above `0` without zero); a finite float
+    /// or a string in the literal grammar for the reals; a member, compared
+    /// type-strictly, for the ordinal and categorical kinds; a tuple holding
+    /// each member once for the permutation kind. A custom domain answers
+    /// for its own restriction.
     ///
     /// # Errors
     ///
     /// Returns [`ParamError::Custom`] for a custom domain that fails.
     pub fn is_value_admissible(&self, value: &Value) -> Result<bool, ParamError> {
         Ok(match self {
-            Self::Integer(_) | Self::IntervalInteger(_) => matches!(value, Value::Int(_)),
+            Self::Integer(_) | Self::IntervalInteger(_) => match value {
+                Value::Int(integer) => match self.sign_bound() {
+                    SignBound::Unbounded => true,
+                    SignBound::NonNegative => *integer >= BigInt::ZERO,
+                    SignBound::Positive => *integer > BigInt::ZERO,
+                },
+                _ => false,
+            },
             Self::Real(_) => match value {
                 Value::Float(number) => number.is_finite(),
                 Value::Str(text) => LiteralValue::parse_text(text).is_ok(),
@@ -790,9 +812,14 @@ impl ParamDomain {
     }
 
     /// Return whether the domain's value set is a subset of `other`'s: a
-    /// numeric domain's of any domain of its sort, a finite domain's of one
-    /// of its kind holding each of its values (a permutation domain's of
-    /// one of as many members).
+    /// numeric domain's of a domain of its sort whose restriction is no
+    /// stronger (the naturals lie in the integers, not the other way
+    /// round), a finite domain's of one of its kind holding each of its
+    /// values (a permutation domain's of one of as many members).
+    ///
+    /// Against a custom domain of its sort, a numeric domain's set is a
+    /// subset when each of the custom domain's implied constraints is one
+    /// of its own; any other restriction is not proven, and answers `false`.
     ///
     /// # Errors
     ///
@@ -805,7 +832,29 @@ impl ParamDomain {
         Ok(match self {
             Self::Integer(_) | Self::IntervalInteger(_) | Self::Real(_) => {
                 let own = self.symbol_type()?;
-                own.is_some() && other.symbol_type()? == own
+                if own.is_none() || other.symbol_type()? != own {
+                    return Ok(false);
+                }
+                match other {
+                    Self::Integer(_) | Self::IntervalInteger(_) | Self::Real(_) => {
+                        self.sign_bound() >= other.sign_bound()
+                    }
+                    _ => {
+                        let variable = Identifier::new("value");
+                        let own_implied = self
+                            .implied_constraints(&variable)
+                            .map_err(decide::restriction_error)?;
+                        other
+                            .implied_constraints(&variable)
+                            .map_err(decide::restriction_error)?
+                            .iter()
+                            .all(|implied| {
+                                own_implied
+                                    .iter()
+                                    .any(|own| own.is_structurally_equivalent(implied))
+                            })
+                    }
+                }
             }
             Self::Ordinal(domain) => match other {
                 Self::Ordinal(other) => {
@@ -836,6 +885,10 @@ impl ParamDomain {
     /// Decide whether `own`'s constrained set, over this domain, is a
     /// subset of `other`'s, over `other_domain`.
     ///
+    /// Each side holds its domain's [`implied_constraints`](Self::implied_constraints)
+    /// as well as its own, as a param's side does, so the domains'
+    /// restrictions count.
+    ///
     /// Domains of different value spaces decide [`Outcome::Violated`]. A
     /// numeric domain asks
     /// [`compute_constraint_implication_subset`](super::compute_constraint_implication_subset);
@@ -856,7 +909,8 @@ impl ParamDomain {
         decide::feasibility_subset(self, own, other_domain, other, context)
     }
 
-    /// Decide whether some admissible value satisfies `side`'s constraints.
+    /// Decide whether some admissible value satisfies `side`'s constraints
+    /// and the domain's [`implied_constraints`](Self::implied_constraints).
     ///
     /// A numeric domain enumerates the candidates of an in-set constraint,
     /// or asks the solver about the screened system; a finite domain
@@ -877,7 +931,8 @@ impl ParamDomain {
     /// Return the domain and constraints of the union of the two value
     /// sets over `variable`, or `None` for a kind that represents no union:
     /// only the ordinal and categorical kinds do, baking both sides'
-    /// effective values into a new domain with no constraint.
+    /// effective values into a new domain with no constraint. Each side
+    /// holds its domain's implied constraints as well as its own.
     ///
     /// # Errors
     ///
@@ -901,7 +956,8 @@ impl ParamDomain {
     /// A finite domain bakes the effective values both sides admit into a
     /// new domain with no constraint; a permutation domain keeps its
     /// members; a numeric domain merges the restrictions. The latter two
-    /// carry both sides' constraints rescoped to `variable`.
+    /// carry both sides' constraints rescoped to `variable`, each side
+    /// holding its domain's implied constraints as well as its own.
     ///
     /// # Errors
     ///
@@ -919,6 +975,21 @@ impl ParamDomain {
         context: &ParamContext<'_>,
     ) -> Result<(Self, Vec<Constraint>), ParamError> {
         algebra::intersection(self, own, other_domain, other, variable, context)
+    }
+
+    /// Return the lower bound a built-in numeric domain's sign restriction
+    /// imposes; any other domain is unbounded here.
+    fn sign_bound(&self) -> SignBound {
+        let (non_negative, zero_included) = match self {
+            Self::Integer(domain) => (domain.non_negative, domain.zero_included),
+            Self::IntervalInteger(domain) => (domain.non_negative, domain.zero_included),
+            _ => return SignBound::Unbounded,
+        };
+        match (non_negative, zero_included) {
+            (false, _) => SignBound::Unbounded,
+            (true, true) => SignBound::NonNegative,
+            (true, false) => SignBound::Positive,
+        }
     }
 
     /// Return whether `other` is a structurally identical domain: of the

@@ -472,12 +472,15 @@ def test_assignment_payload_rejects_only_a_provable_violation() -> None:
     param = create_natural_param(
         name=x,
         constraints=[
-            EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y))
+            EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y)),
+            EquationConstraint(IdentifierExpression(x) <= 5),
         ],
     )
 
     undecided = ParamAssignment.construct_from_fields({"param": param, "value": 3})
     with pytest.raises(ParamError, match="violates"):
+        ParamAssignment.construct_from_fields({"param": param, "value": 7})
+    with pytest.raises(ParamError, match="not admissible"):
         ParamAssignment.construct_from_fields({"param": param, "value": -1})
 
     assert undecided.value == 3
