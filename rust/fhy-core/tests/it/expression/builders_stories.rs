@@ -10,10 +10,11 @@ use expression_support::{
     build_identifier, build_literal, expect_binary, expect_call, expect_logical, expect_piecewise,
     expect_unary,
 };
+use fhy_core::error::UnknownNameError;
 use fhy_core::expression::builtins::BuiltinFunction;
 use fhy_core::expression::{
     BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FunctionName, FunctionNameError,
-    LiteralValue, LogicalOperation, PiecewiseError, RebuildError, UnaryOperation, UnknownNameError,
+    LiteralValue, LogicalOperation, PiecewiseError, RebuildError, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;

@@ -3,8 +3,8 @@
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 
+use crate::error::impl_name_text;
 use crate::expression::LiteralValue;
-use crate::expression::operation::impl_name_text;
 
 use super::error::{IntegerFamily, LiteralTypeError, PromotionError};
 

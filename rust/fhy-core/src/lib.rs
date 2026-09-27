@@ -109,6 +109,7 @@
 pub mod constraint;
 pub mod described_tag;
 pub mod diagnostic;
+pub mod error;
 pub mod expression;
 pub mod foreign;
 pub mod identifier;

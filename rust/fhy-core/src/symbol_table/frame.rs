@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::expression::operation::impl_name_text;
+use crate::error::impl_name_text;
 use crate::identifier::Identifier;
 use crate::types::{Type, TypeQualifier};
 

@@ -33,7 +33,7 @@
 //! assert_eq!(relu.result_sort(), FunctionSort::Real);
 //! assert!(relu.composed().is_some());
 //! assert!(BuiltinFunction::Exp.composed().is_none());
-//! # Ok::<(), fhy_core::expression::UnknownNameError>(())
+//! # Ok::<(), fhy_core::error::UnknownNameError>(())
 //! ```
 
 use std::sync::LazyLock;
@@ -44,8 +44,8 @@ use crate::identifier::Identifier;
 use crate::identifier::reserved::{self, ReservedIdentifier};
 
 use super::node::Expression;
-use super::operation::impl_name_text;
 use super::sort::FunctionSort;
+use crate::error::impl_name_text;
 
 /// Sorts of a function taking one real argument.
 const REAL_1: &[FunctionSort; 1] = &[FunctionSort::Real];
@@ -72,7 +72,7 @@ const BOOL_2: &[FunctionSort; 2] = &[FunctionSort::Bool, FunctionSort::Bool];
 /// assert_eq!(BuiltinFunction::ClampSymmetric.name(), "clamp_symmetric");
 /// assert_eq!("log10".parse::<BuiltinFunction>()?, BuiltinFunction::Log10);
 /// assert_eq!(BuiltinFunction::iter().len(), 35);
-/// # Ok::<(), fhy_core::expression::UnknownNameError>(())
+/// # Ok::<(), fhy_core::error::UnknownNameError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -449,7 +449,7 @@ impl_name_text!(BuiltinFunction, name, "built-in function");
 ///
 /// assert_eq!(BuiltinConstant::Pi.value(), std::f64::consts::PI);
 /// assert!("nan".parse::<BuiltinConstant>()?.value().is_nan());
-/// # Ok::<(), fhy_core::expression::UnknownNameError>(())
+/// # Ok::<(), fhy_core::error::UnknownNameError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -13,10 +13,11 @@ use crate::support::expression as expression_support;
 use std::collections::{HashMap, HashSet};
 use std::thread;
 
+use fhy_core::error::UnknownNameError;
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction, ComposedFunction};
 use fhy_core::expression::{
     BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FormatOptions, FunctionSort,
-    LiteralValue, LogicalOperation, Notation, UnaryOperation, UnknownNameError,
+    LiteralValue, LogicalOperation, Notation, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;

@@ -7,6 +7,7 @@ mod term;
 
 use std::fmt;
 
+use crate::error::impl_from_name;
 use crate::expression::{BooleanScreen, Expression, SortLookup, SymbolType, SymbolTypes};
 use crate::identifier::Identifier;
 
@@ -71,6 +72,13 @@ impl fmt::Display for Logic {
         f.write_str(self.as_str())
     }
 }
+
+impl_from_name!(
+    Logic,
+    as_str,
+    "logic",
+    [QfLia, QfLra, QfNia, QfNra, Lia, Lra, Nia, Nra, All]
+);
 
 /// A constant a script declares for an identifier: its symbol and its
 /// sort.

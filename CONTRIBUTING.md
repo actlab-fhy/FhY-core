@@ -541,8 +541,10 @@ Each public item has exactly one public path, every `pub use` is explicit
 (no globs), and CI rejects an item re-exported under a second path. A
 module depends only on the layers before it:
 
-1. `identifier`, `interned`, and `foreign`, the serialized form of parts other
-   implementations define
+1. `identifier`, `interned`, `foreign`, the serialized form of parts other
+   implementations define and the one boxed error, `BoxError`, their hooks
+   report, and `error`, the errors every layer shares, such as the
+   `UnknownNameError` a name enum's `FromStr` refuses with
 2. `described_tag`, `value_domain`, `provenance`
 3. `diagnostic` and `op_attribute`, whose tags are `described_tag`
    vocabularies

@@ -33,7 +33,7 @@ pub use node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
     PiecewiseExpression, UnaryExpression,
 };
-pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation, UnknownNameError};
+pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation};
 pub use screen::{BooleanScreen, Environment, NoRegisteredSorts, SortLookup, SymbolTypes};
 pub use sort::FunctionSort;
 pub use symbol_type::SymbolType;

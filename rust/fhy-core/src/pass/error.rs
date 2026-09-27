@@ -8,6 +8,7 @@ use std::num::NonZeroUsize;
 use super::manager::PipelineRecord;
 use super::validation::ValidatorRecord;
 use crate::diagnostic::{Diagnostic, ValidationReport};
+use crate::error::impl_from_name;
 use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 
@@ -74,6 +75,20 @@ impl fmt::Display for PassHook {
         f.write_str(self.as_str())
     }
 }
+
+impl_from_name!(
+    PassHook,
+    as_str,
+    "pass hook",
+    [
+        ValidateInput,
+        Skip,
+        Run,
+        ValidateOutput,
+        DidChange,
+        PreservedAnalyses
+    ]
+);
 
 /// The class of a pass failure: whether IR was found invalid or a pass
 /// could not do its work.

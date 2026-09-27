@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::operation::impl_name_text;
+use crate::error::impl_name_text;
 
 /// The value kind a symbolic identifier ranges over.
 ///

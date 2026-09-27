@@ -24,6 +24,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 
 use crate::described_tag::{DescribedTag, TagKind, require_shipped, sealed};
+use crate::error::impl_from_name;
 use crate::identifier::reserved::{self, ReservedIdentifier};
 use crate::interned::{Canonical, InternRegistry};
 
@@ -203,6 +204,13 @@ impl fmt::Display for DiagnosticLevel {
         f.write_str(self.as_str())
     }
 }
+
+impl_from_name!(
+    DiagnosticLevel,
+    as_str,
+    "diagnostic level",
+    [Error, Warning, Info]
+);
 
 /// A note emitted at a level by a named source, with optional detail.
 ///

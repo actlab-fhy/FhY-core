@@ -13,9 +13,10 @@ use std::fmt::{self, Debug};
 use std::str::FromStr;
 
 use expression_support::{ALL_BINARY_OPERATIONS, ALL_LOGICAL_OPERATIONS, ALL_UNARY_OPERATIONS};
+use fhy_core::error::UnknownNameError;
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::{
-    BinaryOperation, FunctionSort, LogicalOperation, SymbolType, UnaryOperation, UnknownNameError,
+    BinaryOperation, FunctionSort, LogicalOperation, SymbolType, UnaryOperation,
 };
 use rstest::rstest;
 use serde::de::DeserializeOwned;

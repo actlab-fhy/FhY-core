@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::expression::operation::impl_name_text;
+use crate::error::impl_name_text;
 
 /// How a value may be used: read as an input, written as an output, kept
 /// as state, fixed as a parameter, or computed as a temporary.

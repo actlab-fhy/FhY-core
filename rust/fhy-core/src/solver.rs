@@ -95,6 +95,7 @@ use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
+use crate::error::impl_from_name;
 use crate::expression::{
     BooleanScreen, Expression, NoRegisteredSorts, SortLookup, SymbolType, SymbolTypes,
 };
@@ -158,6 +159,18 @@ impl fmt::Display for QueryKind {
         f.write_str(self.description())
     }
 }
+
+impl_from_name!(
+    QueryKind,
+    as_str,
+    "query kind",
+    [
+        Simplification,
+        Satisfiability,
+        Implication,
+        UniversalValidity
+    ]
+);
 
 /// A logical question about expressions.
 #[derive(Debug, Clone, Copy)]

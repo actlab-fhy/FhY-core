@@ -5,6 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::constraint::{Constraint, EquationConstraint, Member, MemberSet, Outcome, Value};
+use crate::error::impl_from_name;
 use crate::expression::{BinaryOperation, Expression, ExpressionKind, LiteralValue, SymbolType};
 use crate::identifier::Identifier;
 
@@ -65,6 +66,21 @@ impl fmt::Display for DomainKind {
         f.write_str(self.name())
     }
 }
+
+impl_from_name!(
+    DomainKind,
+    name,
+    "domain kind",
+    [
+        Integer,
+        IntervalInteger,
+        Real,
+        Ordinal,
+        Categorical,
+        Permutation,
+        Custom
+    ]
+);
 
 /// What interval arithmetic and the natural-number bound gates read from a
 /// domain.
