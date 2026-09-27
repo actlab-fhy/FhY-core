@@ -150,7 +150,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [ ] S16b: params
     - [x] S16b.1: core additions (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection; 44 new tests, written after the code, see "S16b.1 implementation notes")
     - [x] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
-    - [ ] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite
+    - [x] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite (24 tests)
     - [ ] S16b.4: benchmarks after, and docs
 
 ## Goal
@@ -18007,3 +18007,46 @@ that name Python values keep Python's words (D-S16-12): an inadmissible,
 violated or unverified value, bindings of the own variable, a native
 constant as the variable, a constraint outside the scope, an unsupported
 union or operand. The stub declares both classes.
+
+### S16b.3 status
+
+The Python switch (marked breaking) makes `core.py` thin: `class
+Param(_rs.Param, Serializable, Generic[_T])` and `class
+ParamAssignment(_rs.ParamAssignment, Serializable, Generic[_T])`, each with
+its attributes copied into slots and registered as a virtual
+`FrozenMixin`, and a `TYPE_CHECKING` block that types the Rust class's
+methods over `_T`, so type checkers see the signatures the dataclasses had.
+The 25 factories stay, their bodies calling the classes, and
+`_rs.check_param_bounds_are_ordered` in place of
+`_validate_bounds_are_ordered`; `create_union_param` and
+`create_intersection_param` call the new `Param.union` and
+`Param.intersection`. Every private helper of `core.py` is deleted. The
+README's parameter row and Rust-backed list change.
+
+After the switch, one module failed to collect (it imported deleted
+helpers), and 34 tests failed, all on message pins; nothing else changed,
+the tri-state, soundness, serialization, pickle and solver-binding tests
+included. At the end: `pytest` 7,845 passed, `-m "not very_slow"` 7,878
+passed, the property marker 282 passed, ruff and mypy clean.
+
+| Test | Now | Reason |
+|---|---|---|
+| `test_bound_internals.py`: the 12 tests of `_invert_comparison`, `_bound_from_literal` and the `_iter_interval_bounds` guards | `test_arithmetic_reads_a_literal_left_bound_inverted` (4), `test_arithmetic_decodes_each_comparison_operator` (4), `test_interval_domain_refuses_a_constraint_that_is_no_bound` (2), `test_interval_domain_refuses_a_set_constraint`, `test_interval_arithmetic_reads_the_core_constraints_not_a_slot` | P-12: the decoding through the arithmetic that reads it, and the domain's check that keeps it total; state injected into a slot no longer reaches the core |
+| `test_bound_int_param.py` (12), `test_nat_param.py` (10), `test_real_param.py` (7), `test_nat_param_properties.py` (2): 31 tests pinning of the unordered-bounds, natural-gate and empty-interval texts | same names | P-6: the core's one-line lowercase texts |
+| `test_param_intersection.py` (2), `test_param_multiplication.py` (1): 3 tests pinning of the coercion refusal | same names | P-6: `cannot coerce an integer parameter with non-bound constraints ...` |
+
+The new `tests/symbolic/param/test_param_rust_binding.py` (24 tests)
+covers the interface suite for params: the class structure (the `_rs`
+base, `Serializable`, virtual `FrozenMixin`, `Param[int]`, slots), frozen
+and identity `==`; the domain, variable and constraint objects kept, new
+implied constraints, `self` for an equivalent constraint; the messages
+that name the value, the constraint, the param, the native constant and a
+constraint's scope, bindings of the own variable refused first, bounds
+lifted as expression operands; integers on either side of the operators,
+a refused `str` or `bool` operand, non-interval pairs declining, the
+union's domain class; a Python-defined domain driven by the core, and a
+Python-defined constraint receiving the bindings it was given; a
+normalized permutation value, a dependent assignment duplicated without
+its bindings, type-strict assignment equivalence, and a payload keeping an
+undecided value but refusing a violation; pickling and deep copies, the
+payload's shape and its structure error, and eight threads.
