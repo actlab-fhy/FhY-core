@@ -38,8 +38,8 @@ onto `dev-rust` before continuing.
 ### Track A: `api` (the breaking API batch; lands 1st)
 
 - [x] A0: worktree `port/fix2-api` created; the baseline gates recorded (the worktree is `fix-a-api`, branch `fix/a-api`; see Track A notes): `fd19340`
-- [x] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key
-- [ ] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode
+- [x] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key: `83c1caa`
+- [x] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode
 - [ ] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence
 - [ ] R2-035 (F2-035): capture renaming restricted to active keys, over distinct identifiers
 - [ ] R2-025 (F2-025): recording custom-domain and custom-constraint hook tests (Rust and Python)
@@ -2207,6 +2207,22 @@ with its own `.venv`) serves the baseline's Python gates, the benchmarks'
   | after a member's `==` raised, every later member's `==` still ran in that call | none runs; the first exception is raised | `test_no_member_equality_runs_after_the_first_exception` |
   | a `KeyboardInterrupt` or `SystemExit` raised after a kept `Exception` was lost | it replaces the kept `Exception` and is raised | binding unit test `the_first_exception_is_kept_until_an_interrupt_replaces_it` |
   | a `KeyboardInterrupt` from the first member's `==` was raised, and later members' `==` still ran | it is raised, and nothing runs after it | `test_a_keyboard_interrupt_from_the_first_member_is_raised_alone` |
+
+**R2-013b.**
+- **Ownership.** `constraint/wire.rs` is Track B's (§I.7.1), but R2-013b
+  names it. The edit is additive: a hand-written `Deserialize` for the
+  private `ValueRepr` (a seed that counts nesting), and the public
+  `wire::MAX_VALUE_DEPTH = 128`. B's R2-036 changes the float text inside
+  the same decoder through `float_text`, which the seed still calls.
+- **The depth (call).** Depth counts the tuples and sets around a value, so
+  128 nested tuples around a scalar decode, and 129 are refused with "value
+  nesting exceeds 128 levels". The cap holds for `Value`, `Member` and
+  `ValueData`, in every format.
+- **Python-visible:** a V2 member or value payload nested more than 128
+  deep raises the deserialization error instead of aborting. JSON text
+  that deep already hit serde_json's own limit, so only a payload decoded
+  from a Python dict reaches the new text; R2-013c's reader limit sits in
+  front of it.
 
 ### Track D notes
 

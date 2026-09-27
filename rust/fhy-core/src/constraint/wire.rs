@@ -16,8 +16,10 @@
 //! resolve the foreign parts in `build`; the types' own `Deserialize`
 //! builds with [`NoForeign`], which refuses them.
 //!
-//! Values nest, and serde recurses once per level of a tuple or a set;
-//! JSON limits the depth, and postcard does not.
+//! Values nest, and serde recurses once per level of a tuple or a set, so
+//! decoding refuses, in every format, a value that holds another inside
+//! more than [`MAX_VALUE_DEPTH`] nested tuples or sets, with "value nesting
+//! exceeds 128 levels".
 //!
 //! # Examples
 //!
@@ -65,7 +67,11 @@ use super::value::{Member, MemberKind, MemberSet, Opaque, Value};
 #[serde(transparent)]
 pub struct ValueData(ValueRepr);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The deepest nesting a decoded [`Value`] or [`Member`] may have: the
+/// number of tuples or sets around its innermost value.
+pub const MAX_VALUE_DEPTH: usize = 128;
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename = "Value", rename_all = "snake_case")]
 enum ValueRepr {
     Bool(bool),
@@ -88,6 +94,141 @@ enum ValueRepr {
     Tuple(Vec<ValueRepr>),
     FrozenSet(Vec<ValueRepr>),
     Opaque(Foreign),
+}
+
+/// The names of [`ValueRepr`]'s variants, in declaration order.
+const VALUE_VARIANTS: &[&str] = &[
+    "bool",
+    "int",
+    "float",
+    "decimal",
+    "str",
+    "tuple",
+    "frozen_set",
+    "opaque",
+];
+
+/// The variant tags of [`ValueRepr`].
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ValueTag {
+    Bool,
+    Int,
+    Float,
+    Decimal,
+    Str,
+    Tuple,
+    FrozenSet,
+    Opaque,
+}
+
+/// An integer's decimal digits, decoded as [`integer_text`] reads them.
+struct IntegerText(BigInt);
+
+impl<'de> Deserialize<'de> for IntegerText {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        integer_text::deserialize(deserializer).map(Self)
+    }
+}
+
+/// A float's text, decoded as [`float_text`] reads it.
+struct FloatText(f64);
+
+impl<'de> Deserialize<'de> for FloatText {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        float_text::deserialize(deserializer).map(Self)
+    }
+}
+
+/// Decodes a [`ValueRepr`] inside `depth` tuples or sets, refusing one
+/// inside more than [`MAX_VALUE_DEPTH`].
+#[derive(Clone, Copy)]
+struct ValueSeed {
+    depth: usize,
+}
+
+impl<'de> de::DeserializeSeed<'de> for ValueSeed {
+    type Value = ValueRepr;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<ValueRepr, D::Error> {
+        if self.depth > MAX_VALUE_DEPTH {
+            return Err(de::Error::custom(format_args!(
+                "value nesting exceeds {MAX_VALUE_DEPTH} levels"
+            )));
+        }
+        deserializer.deserialize_enum("Value", VALUE_VARIANTS, self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for ValueSeed {
+    type Value = ValueRepr;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("enum Value")
+    }
+
+    fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> Result<ValueRepr, A::Error> {
+        use de::VariantAccess;
+        let (tag, variant) = data.variant::<ValueTag>()?;
+        let elements = ElementsSeed {
+            depth: self.depth + 1,
+        };
+        Ok(match tag {
+            ValueTag::Bool => ValueRepr::Bool(variant.newtype_variant()?),
+            ValueTag::Int => ValueRepr::Int(variant.newtype_variant::<IntegerText>()?.0),
+            ValueTag::Float => ValueRepr::Float(variant.newtype_variant::<FloatText>()?.0),
+            ValueTag::Decimal => ValueRepr::Decimal(variant.newtype_variant()?),
+            ValueTag::Str => ValueRepr::Str(variant.newtype_variant()?),
+            ValueTag::Tuple => ValueRepr::Tuple(variant.newtype_variant_seed(elements)?),
+            ValueTag::FrozenSet => ValueRepr::FrozenSet(variant.newtype_variant_seed(elements)?),
+            ValueTag::Opaque => ValueRepr::Opaque(variant.newtype_variant()?),
+        })
+    }
+}
+
+/// Decodes the elements of a tuple or a set, each inside `depth` tuples or
+/// sets.
+#[derive(Clone, Copy)]
+struct ElementsSeed {
+    depth: usize,
+}
+
+impl<'de> de::DeserializeSeed<'de> for ElementsSeed {
+    type Value = Vec<ValueRepr>;
+
+    fn deserialize<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Vec<ValueRepr>, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for ElementsSeed {
+    type Value = Vec<ValueRepr>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a sequence of values")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<ValueRepr>, A::Error> {
+        let seed = ValueSeed { depth: self.depth };
+        // A size hint comes from the input, so it only bounds the first
+        // allocation.
+        let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+        while let Some(element) = seq.next_element_seed(seed)? {
+            elements.push(element);
+        }
+        Ok(elements)
+    }
+}
+
+/// Decodes the shape of the [module documentation](self), refusing a value
+/// nested deeper than [`MAX_VALUE_DEPTH`].
+impl<'de> Deserialize<'de> for ValueRepr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        de::DeserializeSeed::deserialize(ValueSeed { depth: 0 }, deserializer)
+    }
 }
 
 impl ValueRepr {

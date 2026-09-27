@@ -255,3 +255,64 @@ proptest::proptest! {
         proptest::prop_assert_eq!(text_of(&from_postcard), text);
     }
 }
+
+/// Return the postcard bytes of `depth` nested one-element tuples around
+/// `true`, written by hand so no deep value is built or dropped.
+fn nested_tuple_bytes(depth: usize) -> Vec<u8> {
+    // Postcard writes a variant as its index and a sequence as its length,
+    // both varints: `Tuple` is variant 5 and `Bool` variant 0.
+    let mut bytes = Vec::with_capacity(2 * depth + 2);
+    for _ in 0..depth {
+        bytes.extend([5, 1]);
+    }
+    bytes.extend([0, 1]);
+    bytes
+}
+
+/// Return `depth` nested one-element tuples around `true`.
+fn nested_tuple(depth: usize) -> Value {
+    (0..depth).fold(Value::Bool(true), |value, _| Value::Tuple(vec![value]))
+}
+
+#[test]
+fn a_postcard_value_nested_200000_deep_is_refused() {
+    let bytes = nested_tuple_bytes(200_000);
+
+    let error = postcard::from_bytes::<Value>(&bytes).expect_err("too deep");
+
+    assert!(
+        matches!(error, postcard::Error::SerdeDeCustom),
+        "unexpected error {error:?}"
+    );
+    let error = postcard::from_bytes::<Member>(&bytes).expect_err("too deep");
+    assert!(matches!(error, postcard::Error::SerdeDeCustom));
+    let error = postcard::from_bytes::<ValueData>(&bytes).expect_err("too deep");
+    assert!(matches!(error, postcard::Error::SerdeDeCustom));
+}
+
+#[test]
+fn a_value_nested_128_deep_round_trips() {
+    let value = nested_tuple(128);
+
+    let bytes = postcard::to_allocvec(&value).expect("encodes");
+    assert_eq!(bytes, nested_tuple_bytes(128));
+    let decoded: Value = postcard::from_bytes(&bytes).expect("128 levels decode");
+
+    assert_eq!(text_of(&decoded), text_of(&value));
+    postcard::from_bytes::<Value>(&nested_tuple_bytes(129)).expect_err("129 levels are refused");
+}
+
+#[test]
+fn a_value_nested_too_deep_is_refused_with_the_depth_message() {
+    // A JSON text this deep exceeds serde_json's own recursion limit first,
+    // so the tree is decoded from a `serde_json::Value`, which has none.
+    let tree = (0..129).fold(
+        serde_json::json!({"bool": true}),
+        |tree, _| serde_json::json!({"tuple": [tree]}),
+    );
+
+    let error = serde_json::from_value::<Value>(tree.clone()).expect_err("too deep");
+    assert_eq!(error.to_string(), "value nesting exceeds 128 levels");
+    let error = serde_json::from_value::<ValueData>(tree).expect_err("too deep");
+    assert_eq!(error.to_string(), "value nesting exceeds 128 levels");
+}
