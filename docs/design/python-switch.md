@@ -18165,7 +18165,8 @@ column agrees with the S16a.1 table within 10%.
 | `test_set_constraint_evaluate_with_bindings[unbound] (rerun)` | 470 ns | 480 ns | 1.02 |
 
 Of the 55 rows, 24 take half the time or less, 11 are 10 to 50% faster,
-18 are within 10%, and two are slower than the 10% CONTRIBUTING allows:
+18 are within 10%, and two are slower than the 10% CONTRIBUTING allows.
+The maintainer accepted both on 2026-09-26:
 
 - **`test_param_pickle_round_trip`: 1.16 times** (27.0 against 23.2 µs;
   1.23 before 09ad7ce). A pickle is a call of the class with its fields,
@@ -18176,7 +18177,7 @@ Of the 55 rows, 24 take half the time or less, 11 are 10 to 50% faster,
   indices instead of cloning members in the tolerant sort, which took
   ordinal construction from 27.6 to 18.7 µs for 100 values. Skipping the
   check on unpickling would need a trusted constructor that no other slice
-  has, so the row is left, flagged, for the maintainer.
+  has, so the row was left for the maintainer, who accepted it.
 - **`test_param_repr`: 1.11 times** (3.21 against 2.91 µs; 1.08 in the
   first run). The same three reprs are joined as before, the constraint
   tuple's taking three quarters of the time; timed alone outside pytest,
@@ -18253,7 +18254,8 @@ Traceability of the Python tests to the Rust tests (`tests/it/param/`):
 Left for later:
 
 - **The pickle row** (above): a trusted, unchecked constructor for
-  unpickling, if the maintainer wants the 4 µs back.
+  unpickling. The maintainer accepted the cost instead, so this is only
+  worth doing if pickling becomes hot.
 - **`repr_text`'s fallback**: a param's `repr` renders `?` for a part whose
   own `repr` raises, as the constraint binding's helper does, where Python
   propagated the error; no test reaches it.
