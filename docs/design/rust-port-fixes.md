@@ -53,19 +53,19 @@ onto `dev-rust` before continuing.
 
 ### Track D: `solver` (the SymPy move and build infrastructure; lands 2nd)
 
-- [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes; `9146d0b`)
-- [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver (`f969a81`)
-- [x] R2-014 (F2-014): the process backend's timeout bounds the whole call (`35fae05`)
-- [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped — **held for the maintainer**: dropping it makes params and set constraints report false proofs (Track D notes, N-D1)
-- [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature (`63df166`)
-- [x] R2-016 (F2-016): negative powers lift as divisions (`a5b7e62`)
-- [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object (`2aea756`)
-- [x] R2-039 (F2-039): a versioned, hash-checked prelude module (`c12b485`)
-- [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories (`2fc3546`)
-- [x] R2-029d (F2-029, `solver`): error-text tables and small stories (`1fef465`)
-- [x] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift (`93fa510`)
-- [ ] `[rebase]` onto `dev-rust` after Track A lands
-- [ ] Track D status: gates green; counts recorded; landed as `<hash>`
+- [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes; `8e56252`)
+- [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver (`df46944`)
+- [x] R2-014 (F2-014): the process backend's timeout bounds the whole call (`a04e029`)
+- [x] R2-040 (F2-040): the mixed int/real equality hazard dropped, except for set-constraint residuals, as the maintainer revised it (Track D notes, N-D1; `648ccd9`)
+- [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature (`4683c70`)
+- [x] R2-016 (F2-016): negative powers lift as divisions (`1b2fe6a`)
+- [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object (`40a5822`)
+- [x] R2-039 (F2-039): a versioned, hash-checked prelude module (`bc9a9b9`)
+- [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories (`cf6d922`)
+- [x] R2-029d (F2-029, `solver`): error-text tables and small stories (`855cff1`)
+- [x] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift (`1a83801`)
+- [x] `[rebase]` onto `dev-rust` after Track A lands (by the maintainer, onto `46b8596`; fixed forward in `ac27b14`)
+- [x] Track D status: gates green; counts recorded (Track D notes, "Track D status"); landing on `dev-rust` is the maintainer's
 
 ### Track B: `expression` (expressions, the wire and the corpus; lands 3rd)
 
@@ -3039,6 +3039,33 @@ and the checklist's are the rebased ones):
   the answers (25 cases, which failed at the rebased base) (as in the held patch, less its three set-constraint
   rewrites, which keep their base pins), and two new tests pin the
   false-proof probes as `UNDECIDED`.
+
+**Track D status** (on the final tree, after the rebase and R2-040;
+`648ccd9` plus this record):
+- fmt; clippy `-D warnings` for the workspace both ways and for `fhy-core`
+  alone with no features, `z3` and `ndarray`: clean;
+- `cargo test --workspace`: 4,565; `--all-features`: 4,601 (Track A's
+  landing counts plus this track's);
+- `cargo test -p fhy-core --all-features` in a shell with no Python
+  environment: 4,419;
+- `cargo doc -D warnings`: the workspace, and `fhy-core` with default
+  features and with each feature alone: clean;
+- `cargo deny check`: ok; `cargo +1.85 check --workspace --lib` and
+  `-p fhy-core --all-targets` three ways: no warning;
+- `cargo package`, its list (no `.py`), and the CI target list;
+- `pytest tests`: 8,313; `-m "not very_slow"`: 8,346; `property`: 283;
+  `tests_minimal`: 6,322 passed, 665 skipped; nox `lint`, `type_check`
+  and `golden_expanded`: green;
+- the attribution grep over `46b8596..HEAD`: no match; every commit is
+  the configured user's.
+- **Benchmarks after the rebase and R2-040**, base `46b8596` against the
+  head, each built alike under `target/bench/` and run twice back to back
+  (`test_sympy.py`, `test_solver.py`, and, since R2-040 screens the
+  constraint layer's set members, `test_constraint.py` and
+  `test_param.py`; 95 rows, best of two medians): no row slower than
+  1.10; the slowest are `test_constraint_repr` (1.10, a path R2-040 does
+  not touch) and `test_lift_from_sympy_of_a_deep_tree` (1.06, R2-038a's
+  memo, as recorded above).
 
 **Not Track D's.** The maintainer's brief listed "the diagnostics
 signature fix"; that is R2-041, which §I.7.1 and the checklist assign to
