@@ -1,5 +1,9 @@
 """Golden `type_id` and wire-shape pins for the expression/constraint/param tree.
 
+The golden blobs below are V1 payloads, which decode until V1 is removed
+(slice S17 of ``docs/design/python-switch.md``); the V2 texts at the end
+pin what the same values write now.
+
 Every `Serializable` in the `expression` / `constraint` / `param` tree
 pins an explicit `type_id`. This module hard-codes all 19 pinned
 strings and checks, for one representative instance of each class, that
@@ -605,3 +609,95 @@ def test_payload_data_follows_the_rust_semantics(
 ) -> None:
     """Test the envelope's data holds the core's names and normalized literals."""
     assert expression.serialize_data_to_dict() == expected_data
+
+
+# The canonical V2 text of each fixture but the two params, whose variable's
+# id is the process's (slice S17 of `docs/design/python-switch.md`): the
+# golden serialization corpus pins the params' shapes with fixed ids.
+_GOLDEN_V2_TEXTS: dict[str, str] = {
+    "unary_expression": (
+        '{"nodes":[{"literal":{"int":"1"}},{"unary":{"operation":"negate","oper'
+        'and":0}}]}'
+    ),
+    "binary_expression": (
+        '{"nodes":[{"literal":{"int":"1"}},{"literal":{"int":"2"}},{"binary":{"'
+        'operation":"add","left":0,"right":1}}]}'
+    ),
+    "identifier_expression": (
+        '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}}]}'
+    ),
+    "literal_expression": ('{"nodes":[{"literal":{"int":"1"}}]}'),
+    "piecewise_expression": (
+        '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}},{"literal":{"int'
+        '":"0"}},{"binary":{"operation":"greater","left":0,"right":1}},{"litera'
+        'l":{"int":"1"}},{"literal":{"int":"0"}},{"piecewise":{"cases":[[2,3]],'
+        '"otherwise":4}}]}'
+    ),
+    "call_expression": (
+        '{"nodes":[{"literal":{"int":"4"}},{"call":{"callee":{"builtin":"sqrt"}'
+        ',"arguments":[0]}}]}'
+    ),
+    "logical_expression": (
+        '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}},{"literal":{"int'
+        '":"0"}},{"binary":{"operation":"greater","left":0,"right":1}},{"litera'
+        'l":{"bool":true}},{"literal":{"bool":false}},{"logical":{"operation":"'
+        'and","operands":[2,3,4]}}]}'
+    ),
+    "equation_constraint": (
+        '{"equation":{"expression":{"nodes":[{"literal":{"bool":true}}]}}}'
+    ),
+    "in_set_constraint": (
+        '{"in_set":{"variable":{"id":60000,"name_hint":"x"},"values":[{"int":"1'
+        '"},{"int":"2"}]}}'
+    ),
+    "not_in_set_constraint": (
+        '{"not_in_set":{"variable":{"id":60000,"name_hint":"x"},"values":[{"int'
+        '":"1"},{"int":"2"}]}}'
+    ),
+    "constraint_system": (
+        '{"constraints":[{"in_set":{"variable":{"id":60000,"name_hint":"x"},"va'
+        'lues":[{"int":"1"},{"int":"2"}]}},{"not_in_set":{"variable":{"id":6000'
+        '0,"name_hint":"x"},"values":[{"int":"3"}]}}]}'
+    ),
+    "integer_domain": ('{"integer":{"non_negative":false,"zero_included":true}}'),
+    "real_domain": ('{"real":{}}'),
+    "interval_integer_domain": (
+        '{"interval_integer":{"prefer_inclusive":true,"non_negative":false,"zer'
+        'o_included":true}}'
+    ),
+    "ordinal_domain": (
+        '{"ordinal":{"sorted_values":[{"int":"1"},{"int":"2"},{"int":"3"}]}}'
+    ),
+    "categorical_domain": ('{"categorical":{"categories":[{"str":"a"},{"str":"b"}]}}'),
+    "permutation_domain": (
+        '{"permutation":{"ordered_members":[{"str":"n"},{"str":"c"},{"str":"h"}'
+        ',{"str":"w"}]}}'
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "type_id", sorted(_GOLDEN_V2_TEXTS), ids=sorted(_GOLDEN_V2_TEXTS)
+)
+def test_a_fixture_writes_its_golden_v2_text(type_id: str) -> None:
+    """Test each fixture writes its pinned V2 text and reads it back."""
+    instance = _ALL_FIXTURES[type_id]
+    cls = type(instance)
+
+    text = instance.to_json()  # type: ignore[attr-defined]
+
+    assert text == _GOLDEN_V2_TEXTS[type_id]
+    assert cls.from_json(text).to_json() == text  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("type_id", ["param", "param_assignment"])
+def test_a_param_fixture_writes_the_v2_field_order(type_id: str) -> None:
+    """Test the params' V2 payloads hold the core's fields, in its order."""
+    payload = _ALL_FIXTURES[type_id].serialize_to_dict()  # type: ignore[attr-defined]
+
+    expected = (
+        ["domain", "variable", "constraint_system"]
+        if type_id == "param"
+        else ["param", "value"]
+    )
+    assert list(payload) == expected

@@ -170,7 +170,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S17b.1: the binding's plumbing (`serde` and `serde_json`, `wire.rs` and `wire/`, the resolver, `to_foreign` on the adapters); V1 kept in place, marked (D-S17-15 revised; see "S17b implementation notes"); part of it landed early in a1e20c1
     - [x] S17b.2: the framework (`WireVersion`, `wire_version`, detection, the V2 family forms, `serialize_value`/`deserialize_value`, binary version 2, the canonical `to_json`, the deprecation warnings, `upgrade_v1_payload`)
     - [x] S17b.3: each Rust-backed class switched to V2, with the migrated tests (V1 pins run under the `v1_wire` fixture) and the stub; one commit (`pytest tests` 8,133 passed)
-    - [ ] S17b.4: the golden serialization corpus and its generator, the `golden_expanded` entry, and the interface suites
+    - [x] S17b.4: the golden serialization corpus and its generator (89 cases), the `golden_expanded` entry, the interface suites (`test_wire_v2.py`, `test_wire_v1.py`; 76 tests), the V2 pins, and `python -m fhy_core.serialization_upgrade`
     - [ ] S17b.5: benchmarks after, and docs (the revised rules of D-S17-21, the README)
 
 ## Goal

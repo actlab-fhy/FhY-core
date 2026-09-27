@@ -486,7 +486,10 @@ a part's payload and holds no resolver of its own.
   `fhy_core.identifier` is the example: `Identifier` stays in Python and
   only its id counter runs in Rust.
 - Freeze the golden corpus. Golden corpora exist only for concepts defined
-  in both languages, today `identifier` and `interned`. Once a module's
+  in both languages, today `identifier`, `interned`, and serialization,
+  whose V2 texts Python writes and Rust reads and writes back
+  byte-identically (`generate_serialization_cases.py`, slice S17 of
+  `docs/design/python-switch.md`). Once a module's
   Python implementation is deleted, its generator has no oracle left to
   run. Delete the generator (the drift check and `golden_expanded` find
   generators by the `generate_*.py` pattern) and its

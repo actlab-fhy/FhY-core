@@ -49,6 +49,11 @@ EXPANDED_GOLDEN_CORPORA = {
         test_filter="interned::equivalence::",
         variable="FHY_INTERNED_CORPUS",
     ),
+    "generate_serialization_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 40",
+        test_filter="serialization_golden::",
+        variable="FHY_SERIALIZATION_CORPUS",
+    ),
 }
 
 
