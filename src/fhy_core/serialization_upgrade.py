@@ -1,8 +1,8 @@
 """Convert stored payloads of the deprecated V1 wire format to V2.
 
 V1, the ``{"__type__": .., "__data__": ..}`` envelope format of the package
-before 0.3, is deprecated, and its reader is removed in a later release
-(0.4.0 is proposed). Convert stored payloads before then::
+before 0.3, is deprecated, and its reader is removed in 0.3.0. Convert
+stored payloads before then::
 
     python -m fhy_core.serialization_upgrade old.json > new.json
     python -m fhy_core.serialization_upgrade --type param old.json new.json

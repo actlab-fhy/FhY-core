@@ -19272,6 +19272,11 @@ and cross-cutting rules 4 to 7.
     The removal deletes `_serialization_v1.py`, the binding's `legacy/`
     module, the V1 hooks of the Rust-backed classes, `WireVersion.V1`, the
     V1 corpora of D-S17-20 and the upgrade path of D-S17-25.
+  - **Revised (R2-N2, 2026-09-27):** the maintainer named the release:
+    0.3.0 removes V1, not 0.4.0. The warnings say "will be removed in
+    0.3.0", and so do the module docs and the README. Since the workspace
+    is 0.2.0, no published release carries the warnings unless a 0.2.x
+    ships first (J-11 of `docs/design/rust-port-fixes.md`).
 - **D-S17-17: errors** (D-S4-1; D-S7-12; CONTRIBUTING "Errors belong to
   their module").
 
@@ -19380,6 +19385,8 @@ and cross-cutting rules 4 to 7.
   corpus pin behavior only until then, and are deleted with V1 (D-S17-16,
   D-S17-19 and D-S17-20, revised). Since stored V1 data then becomes
   unreadable, the deprecation release ships an upgrade path (D-S17-25).
+  - **Revised (R2-N2, 2026-09-27):** the removal release is 0.3.0 (see
+    D-S17-16).
 
 ### Needs the user
 
@@ -19957,6 +19964,10 @@ and `type_check` clean, `golden_expanded` replays both expanded corpora
 (the interned one and 2,000 random serialization cases); the Rust gate
 passes: fmt, clippy `-D warnings` with and without `--all-features`, 4,305
 tests (4,337 with all features), doc, deny and `cargo +1.85 check`.
+
+- **Revised (R2-N2, 2026-09-27):** the V1 removal release is 0.3.0, not
+  0.4.0, and deleting V1 is a release-blocking task for it (J-11 of
+  `docs/design/rust-port-fixes.md`).
 
 Left for later:
 

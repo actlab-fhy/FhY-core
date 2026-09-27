@@ -68,6 +68,18 @@ def test_reading_v1_warns_once_per_payload_naming_the_upgrade() -> None:
     assert rebuilt.is_structurally_equivalent(_expression())
 
 
+def test_the_v1_warnings_name_the_release_that_removes_v1() -> None:
+    """Test writing and reading V1 both warn that 0.3.0 removes it (R2-N2)."""
+    with (
+        pytest.warns(DeprecationWarning, match="removed in 0.3.0"),
+        wire_version(WireVersion.V1),
+    ):
+        payload = _expression().serialize_to_dict()
+
+    with pytest.warns(DeprecationWarning, match="removed in 0.3.0"):
+        Expression.deserialize_from_dict(payload)
+
+
 def test_an_unmarked_v1_read_fails_the_test() -> None:
     """Test the suite turns an unmarked V1 warning into an error (R2-N4).
 

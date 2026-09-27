@@ -35,9 +35,8 @@ Payloads are written in one of two wire versions (`WireVersion`):
   package before 0.3, is deprecated. It is written only inside
   ``with wire_version(WireVersion.V1):``, and read wherever a reader meets
   it; both warn with ``DeprecationWarning``. Reading and writing V1 are
-  removed in a later release (0.4.0 is proposed): convert stored V1
-  payloads with `upgrade_v1_payload`, or ``python -m
-  fhy_core.serialization_upgrade``.
+  removed in 0.3.0: convert stored V1 payloads before then, with
+  `upgrade_v1_payload` or ``python -m fhy_core.serialization_upgrade``.
 
 Readers accept both versions, and tell them apart at each payload's root: a
 V1 family payload is exactly the two-key envelope, which no V2 payload is.
@@ -264,7 +263,7 @@ _WIRE_VERSION: ContextVar[WireVersion] = ContextVar(
 )
 """The version the writers write in this context; read by the extension too."""
 
-_V1_REMOVAL = "a later release (0.4.0 is proposed)"
+_V1_REMOVAL = "0.3.0"
 
 
 @contextlib.contextmanager

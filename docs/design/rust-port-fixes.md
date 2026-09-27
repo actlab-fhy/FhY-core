@@ -111,8 +111,8 @@ onto `dev-rust` before continuing.
 
 - [ ] E0: worktree `port/fix2-binding` created; the baseline gates recorded
 - [ ] R2-N5 (xdist stall): reproduce or clear the 99% stall; account for the missing tests
-- [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails
-- [ ] R2-N2 (V1 removal): the texts and docs name 0.3.0
+- [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails (`44a2c00`)
+- [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
 - [ ] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python
 - [ ] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
 - [ ] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
@@ -4137,3 +4137,16 @@ base is `03fb9e4`, Tracks A, D and B landed):
   (Track B's) gains the one import and one decorator line.
 - **Python-visible changes:** none; `pytest tests` shows no warnings
   summary.
+
+**R2-N2.**
+- **Texts.** `_V1_REMOVAL` is `"0.3.0"`, so both warnings read "will be
+  removed in 0.3.0"; the module docstrings of `fhy_core.serialization` and
+  `fhy_core.serialization_upgrade` and the README Serializable row say so.
+  `python-switch.md` gains revision bullets under D-S17-16, N-S17-3 and S17
+  status. Deleting V1 stays a 0.3.0 release task (J-11); S17 status's
+  "Left for later" list is that task's list.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | the V1 warnings said "will be removed in a later release (0.4.0 is proposed)" | "will be removed in 0.3.0" | `test_the_v1_warnings_name_the_release_that_removes_v1` |
