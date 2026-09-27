@@ -46,7 +46,7 @@ fn python_error() -> PyErr {
 
 /// Return the name `name`.
 fn name(name: &str) -> FunctionName {
-    FunctionName::try_new(name).expect("a name")
+    FunctionName::new(name).expect("a name")
 }
 
 #[rstest]

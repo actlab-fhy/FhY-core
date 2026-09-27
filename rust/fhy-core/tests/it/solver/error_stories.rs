@@ -133,7 +133,7 @@ fn solve_error_displays_one_line_and_its_source(
     Source::None
 )]
 #[case::call_of_a_user_function(
-    |(_, x): &(Identifier, Expression)| LoweringError::Call(Expression::call(fhy_core::expression::FunctionName::try_new("f").expect("a name"), [x.clone()])),
+    |(_, x): &(Identifier, Expression)| LoweringError::Call(Expression::call(fhy_core::expression::FunctionName::new("f").expect("a name"), [x.clone()])),
     |_: &(Identifier, Expression)| r#"smt-lib2 has no term for a call of "f"; a user function must be inlined first with inline_functions"#.to_owned(),
     Source::None
 )]
