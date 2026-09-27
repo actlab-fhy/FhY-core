@@ -200,6 +200,94 @@ fn process_answers_through_a_solver() {
     assert_eq!(answer, Answer::No);
 }
 
+#[test]
+fn an_unknown_whose_solver_exits_before_the_reason_has_no_reason() {
+    let backend = build_fake(
+        r#"while read -r line; do case "$line" in "(check-sat)") echo unknown; exit 0;; esac; done"#,
+    );
+
+    assert_eq!(
+        check(&backend).expect("an answer"),
+        SatResult::Unknown {
+            reason: String::new()
+        }
+    );
+}
+
+#[test]
+fn an_unknown_whose_reason_line_cannot_be_read_fails_with_its_io_error() {
+    let backend = build_fake(
+        r#"while read -r line; do case "$line" in "(check-sat)") echo unknown;; "(get-info :reason-unknown)") printf '(:reason-unknown "\377\376")\n';; "(exit)") exit 0;; esac; done"#,
+    );
+
+    let error = expect_process_error(check(&backend));
+
+    assert!(
+        matches!(&error, ProcessError::Io(source) if source.kind() == std::io::ErrorKind::InvalidData),
+        "{error:?}"
+    );
+}
+
+/// What a [`ProcessError`]'s `source()` is expected to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessSource {
+    None,
+    Io,
+}
+
+/// Return the exit status of `sh -c 'exit 3'`.
+fn exit_status_three() -> std::process::ExitStatus {
+    Command::new("/bin/sh")
+        .args(["-c", "exit 3"])
+        .status()
+        .expect("sh runs")
+}
+
+#[rstest::rstest]
+#[case::spawn(
+    || ProcessError::Spawn { program: "/no/z3".into(), source: std::io::Error::other("missing") },
+    r#"cannot start the solver "/no/z3""#,
+    ProcessSource::Io
+)]
+#[case::io(|| ProcessError::Io(std::io::Error::other("broken")), "cannot talk to the solver", ProcessSource::Io)]
+#[case::solver(
+    || ProcessError::Solver(r#"(error "no logic")"#.to_owned()),
+    r#"the solver reported (error "no logic")"#,
+    ProcessSource::None
+)]
+#[case::unexpected_answer(
+    || ProcessError::UnexpectedAnswer("maybe".to_owned()),
+    r#"the solver answered "maybe", not sat, unsat or unknown"#,
+    ProcessSource::None
+)]
+#[case::exited_with_a_status(
+    || ProcessError::Exited(Some(exit_status_three())),
+    "the solver exited before answering (exit status: 3)",
+    ProcessSource::None
+)]
+#[case::exited(|| ProcessError::Exited(None), "the solver exited before answering", ProcessSource::None)]
+#[case::closed_output(
+    || ProcessError::ClosedOutput,
+    "the solver closed its output before answering",
+    ProcessSource::None
+)]
+fn process_error_displays_one_line_and_its_source(
+    #[case] build: fn() -> ProcessError,
+    #[case] text: &str,
+    #[case] source: ProcessSource,
+) {
+    let error = build();
+
+    assert_eq!(error.to_string(), text);
+    let found =
+        std::error::Error::source(&error).map(<dyn std::error::Error>::is::<std::io::Error>);
+    assert_eq!(
+        found,
+        (source == ProcessSource::Io).then_some(true),
+        "{error:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The timeout bounds the whole call (R2-014)
 // ---------------------------------------------------------------------------

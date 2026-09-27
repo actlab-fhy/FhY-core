@@ -61,8 +61,8 @@ onto `dev-rust` before continuing.
 - [x] R2-016 (F2-016): negative powers lift as divisions (`a5b7e62`)
 - [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object (`2aea756`)
 - [x] R2-039 (F2-039): a versioned, hash-checked prelude module (`c12b485`)
-- [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories
-- [ ] R2-029d (F2-029, `solver`): error-text tables and small stories
+- [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories (`2fc3546`)
+- [x] R2-029d (F2-029, `solver`): error-text tables and small stories
 - [ ] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
 - [ ] Track D status: gates green; counts recorded; landed as `<hash>`
@@ -2841,6 +2841,26 @@ premise holds for expressions but not for set constraints:
   a Boolean-condition piecewise inside `Lt` lifting to the comparison of
   a piecewise, and a `replace` hook that fails on its second call, which
   stops the walk and fails it with the hook's own error.
+
+**R2-029d.**
+- **Tables.** `tests/it/solver/error_stories.rs` holds one rstest table per
+  error enum of `solver/error.rs` (`SolveError`, 7 variants;
+  `LoweringError`, 10 cases, the four `Call` texts included), each
+  checking `to_string()` and `source()` by downcast. `ProcessError`'s
+  table (7 variants, `ClosedOutput` from R2-014 included) is in
+  `process_stories.rs`, since `Exited(Some(_))` takes the status of a real
+  `sh`. The binding's `solver/sympy/error_stories.rs` covers every
+  `SympyErrorKind` (19), both `SympyUnavailableError`s and the four
+  phases' names.
+- **Small stories.** An `unknown` whose solver exits before the reason
+  answers `unknown` with an empty reason; one whose reason line is not
+  UTF-8 fails with `ProcessError::Io` of kind `InvalidData`, which pins
+  that an unreadable line is an error of the talk, not a reason.
+  `comparison_between_booleans_is_simplified_on_its_own` asserts the
+  simplified form, `(x > -5) && ((x < 1) == true)`, where it asserted
+  `is_ok()`.
+- **B's R2-010** rewords four `LoweringError` texts; per §I.7.1 B updates
+  these pins on its rebase.
 
 **Python-visible changes** (§I.2 rule 6):
 

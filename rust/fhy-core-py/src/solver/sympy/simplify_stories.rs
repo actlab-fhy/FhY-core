@@ -123,7 +123,13 @@ fn comparison_between_booleans_is_simplified_on_its_own() {
 
     let result = simplified(&expression, &HashMap::from([(b, build_literal(true))]));
 
-    assert!(result.is_ok(), "{result:?}");
+    // The comparison between Booleans is simplified on its own operands,
+    // `x < 1` and `true`, and held opaque while the conjunction is, so
+    // SymPy only reorders the conjunction around it.
+    assert_eq!(
+        result.expect("simplified"),
+        x.greater(-5).and(x.less(1).equals(build_literal(true)))
+    );
 }
 
 #[test]

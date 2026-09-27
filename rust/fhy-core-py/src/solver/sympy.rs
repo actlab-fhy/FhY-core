@@ -29,6 +29,8 @@ mod simplify;
 mod substitute;
 
 #[cfg(test)]
+mod error_stories;
+#[cfg(test)]
 mod lifting_stories;
 #[cfg(test)]
 mod lowering_stories;

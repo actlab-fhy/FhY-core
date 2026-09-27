@@ -3,6 +3,7 @@
 //! feature, the z3 backend. The SymPy backend lives in the binding, and so
 //! do its stories.
 
+mod error_stories;
 #[cfg(unix)]
 mod process_stories;
 mod screen_stories;
