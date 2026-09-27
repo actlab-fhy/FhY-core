@@ -63,7 +63,32 @@ impl<'a> Iterator for Children<'a> {
             }
         }
     }
+
+    /// Return the exact number of children left.
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = match self {
+            Self::Contiguous(children) => children.len(),
+            Self::Piecewise {
+                cases,
+                front_value,
+                back_condition,
+                otherwise,
+            } => {
+                2 * cases.len()
+                    + usize::from(front_value.is_some())
+                    + usize::from(back_condition.is_some())
+                    + usize::from(otherwise.is_some())
+            }
+        };
+        (remaining, Some(remaining))
+    }
 }
+
+impl ExactSizeIterator for Children<'_> {}
+
+/// Once a node's children are exhausted, from either end, every further
+/// call answers `None`.
+impl std::iter::FusedIterator for Children<'_> {}
 
 impl DoubleEndedIterator for Children<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -512,8 +537,15 @@ impl Expression {
     /// each case's condition then value, in case order, then its otherwise
     /// branch (`c0, v0, c1, v1, ..., otherwise`); a call its arguments in
     /// order. An identifier or a literal has no children.
+    ///
+    /// The iterator knows its exact length, so
+    /// [`len`](ExactSizeIterator::len) is the node's child count, and it is
+    /// fused.
     #[must_use]
-    pub fn children(&self) -> impl DoubleEndedIterator<Item = &Expression> {
+    pub fn children(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &Expression> + ExactSizeIterator + std::iter::FusedIterator
+    {
         self.iterate_children()
     }
 
@@ -550,7 +582,7 @@ impl Expression {
         &self,
         children: Vec<Expression>,
     ) -> Result<Expression, RebuildError> {
-        let expected = self.count_children();
+        let expected = self.children().len();
         let actual = children.len();
         let count_mismatch = || RebuildError::ChildCount { expected, actual };
         if actual != expected {
@@ -689,19 +721,6 @@ impl Expression {
             ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {
                 Children::Contiguous(std::slice::Iter::default())
             }
-        }
-    }
-
-    /// Return the number of children, the length of
-    /// [`children`](Self::children).
-    fn count_children(&self) -> usize {
-        match self.kind() {
-            ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => 0,
-            ExpressionKind::Unary(_) => 1,
-            ExpressionKind::Binary(_) => 2,
-            ExpressionKind::Logical(node) => node.operands.len(),
-            ExpressionKind::Piecewise(node) => 2 * node.cases.len() + 1,
-            ExpressionKind::Call(node) => node.arguments.len(),
         }
     }
 

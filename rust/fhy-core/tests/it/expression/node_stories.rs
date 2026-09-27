@@ -1554,3 +1554,41 @@ fn expression_debug_of_a_doubling_dag_is_bounded() {
 
     assert!(text.len() < DEBUG_TEXT_LIMIT, "{} characters", text.len());
 }
+
+#[test]
+fn children_report_their_exact_length() {
+    let (_, x) = build_identifier("x");
+    let piecewise = Expression::piecewise(
+        [(x.greater(0), x.clone()), (x.less(0), -&x)],
+        Expression::from(0),
+    )
+    .expect("a valid piecewise");
+    let cases = [
+        (x.clone(), 0),
+        (-&x, 1),
+        (&x + 1, 2),
+        (Expression::all([x.greater(0), x.less(5), x.less(9)]), 3),
+        (piecewise, 5),
+        (
+            Expression::call(BuiltinFunction::Max, [x.clone(), x.clone()]),
+            2,
+        ),
+    ];
+
+    for (expression, length) in cases {
+        let mut children = expression.children();
+        assert_eq!(children.len(), length, "{expression}");
+        assert_eq!(children.size_hint(), (length, Some(length)));
+        for remaining in (0..length).rev() {
+            if remaining % 2 == 0 {
+                children.next();
+            } else {
+                children.next_back();
+            }
+            assert_eq!(children.len(), remaining, "{expression}");
+        }
+        assert!(children.next().is_none());
+        assert!(children.next().is_none(), "fused");
+        assert!(children.next_back().is_none(), "fused");
+    }
+}

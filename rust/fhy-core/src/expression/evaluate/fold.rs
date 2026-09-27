@@ -79,7 +79,7 @@ impl Folder<'_, '_> {
                     }
                 }
                 Step::Exit(node) => {
-                    let child_count = node.children().count();
+                    let child_count = node.children().len();
                     let children = outputs.split_off(outputs.len() - child_count);
                     let folded = match node.kind() {
                         ExpressionKind::Call(call) => self.fold_call(call, &children)?,

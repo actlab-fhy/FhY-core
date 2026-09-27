@@ -597,3 +597,56 @@ fn evaluate_array_hands_a_kernel_each_chunk() {
     );
     assert!(arguments.len() > 1);
 }
+
+/// Kernels computing `exp` that record the address of each argument's
+/// lanes and of each result's.
+#[derive(Default)]
+struct AddressKernels {
+    addresses: RefCell<Vec<(usize, usize)>>,
+}
+
+impl ArrayKernels for AddressKernels {
+    fn handles(&self, function: BuiltinFunction) -> bool {
+        function == BuiltinFunction::Exp
+    }
+
+    fn native(
+        &self,
+        _function: BuiltinFunction,
+        argument: CowArray<'_, f64, IxDyn>,
+    ) -> Result<ArrayD<f64>, BoxError> {
+        let result = argument.mapv(f64::exp);
+        self.addresses
+            .borrow_mut()
+            .push((argument.as_ptr().addr(), result.as_ptr().addr()));
+        Ok(result)
+    }
+}
+
+#[test]
+fn unary_plus_passes_its_operands_lanes_through() {
+    let (x, reference) = build_identifier("x");
+    let values = array![0.0, 1.0].into_dyn();
+    let kernels = AddressKernels::default();
+    let tree = call(
+        BuiltinFunction::Exp,
+        [call(BuiltinFunction::Exp, [reference]).positive()],
+    );
+
+    let result = expect_real(
+        evaluate_with(
+            &tree,
+            vec![(&x, ArrayBinding::Real(values.view()))],
+            &kernels,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(result, values.mapv(|lane| lane.exp().exp()));
+    let addresses = kernels.addresses.borrow();
+    assert_eq!(addresses.len(), 2);
+    assert_eq!(
+        addresses[1].0, addresses[0].1,
+        "the outer exp reads the inner exp's lanes, not a copy made by +"
+    );
+}

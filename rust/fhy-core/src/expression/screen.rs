@@ -170,7 +170,7 @@ fn find_boolean_positions(
         | ExpressionKind::Binary(_)
         | ExpressionKind::Identifier(_)
         | ExpressionKind::Literal(_)
-        | ExpressionKind::Call(_) => vec![None; expression.children().count()],
+        | ExpressionKind::Call(_) => vec![None; expression.children().len()],
     }
 }
 

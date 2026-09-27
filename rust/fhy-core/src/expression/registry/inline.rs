@@ -118,7 +118,7 @@ impl<'r> Inliner<'r> {
                     pending.extend(children.into_iter().rev().map(Step::Enter));
                 }
                 Step::Exit(node) => {
-                    let child_count = node.children().count();
+                    let child_count = node.children().len();
                     let children = outputs.split_off(outputs.len() - child_count);
                     if let ExpressionKind::Call(call) = node.kind() {
                         if let Some(body) = self.expand_call(call, &children)? {

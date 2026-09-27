@@ -101,8 +101,10 @@ pub(super) struct Walk<'a, L: Lanes, B> {
     lanes: &'a L,
     registry: &'a FunctionRegistry,
     bindings: B,
-    /// The failures lanes refer to by id: id `i` is entry `i - 1`.
-    failures: Vec<(LaneFailure, Expression)>,
+    /// The nodes whose lanes failed: failure id `i` is the failure
+    /// [`LaneFailure::ALL`]`[(i - 1) % N]` of node `(i - 1) / N`, where `N`
+    /// is the number of lane failures.
+    failing_nodes: Vec<Expression>,
 }
 
 impl<'a, L, B> Walk<'a, L, B>
@@ -121,7 +123,7 @@ where
             lanes,
             registry,
             bindings,
-            failures: Vec::new(),
+            failing_nodes: Vec::new(),
         }
     }
 
@@ -168,7 +170,7 @@ where
                     (node, value)
                 }
                 Step::Exit(node) => {
-                    let arguments = values.split_off(values.len() - node.children().count());
+                    let arguments = values.split_off(values.len() - node.children().len());
                     (node, self.combine(node, arguments)?)
                 }
             };
@@ -188,7 +190,10 @@ where
             let aligned = self.align(&failures, &data)?;
             if let Some(id) = self.lanes.first_nonzero(&aligned) {
                 let index = usize::try_from(id - 1).expect("a failure id indexes the table");
-                let (failure, node) = self.failures.swap_remove(index);
+                let failure = LaneFailure::ALL[index % LaneFailure::ALL.len()];
+                let node = self
+                    .failing_nodes
+                    .swap_remove(index / LaneFailure::ALL.len());
                 return Err(EvaluationError::Lane { failure, node });
             }
         }
@@ -275,6 +280,15 @@ where
                 {
                     return Ok(self.negate_booleans(operand));
                 }
+                if unary.operation() == UnaryOperation::Positive
+                    && !matches!(operand.data, Data::Bool(_))
+                {
+                    // `+x` is `x`: its lanes and failures pass through,
+                    // moved when no one else holds them.
+                    return Ok(
+                        Rc::try_unwrap(operand).unwrap_or_else(|shared| clone_value(&shared))
+                    );
+                }
                 self.unary(node, unary.operation(), &operand)
             }
             ExpressionKind::Binary(binary) => {
@@ -309,16 +323,12 @@ where
         }
     }
 
-    /// Record the failures of `node` and return the id of the first, the
+    /// Record `node` as failing and return the id of its first failure, the
     /// ids of the others following in [`LaneFailure::ALL`]'s order.
     fn reserve_failures(&mut self, node: &Expression) -> u32 {
-        let base = u32::try_from(self.failures.len() + 1).expect("fewer than 2^32 failures");
-        self.failures.extend(
-            LaneFailure::ALL
-                .iter()
-                .map(|failure| (*failure, node.clone())),
-        );
-        base
+        let base = self.failing_nodes.len() * LaneFailure::ALL.len() + 1;
+        self.failing_nodes.push(node.clone());
+        u32::try_from(base).expect("fewer than 2^32 failures")
     }
 
     /// Apply the fallible `kernel` to each lane of `a`, recording the
@@ -497,11 +507,8 @@ where
                 return Err(EvaluationError::NumberAsBoolean(node.clone()));
             }
             (_, Data::Bool(_)) => return Err(EvaluationError::BooleanArithmetic(node.clone())),
-            (UnaryOperation::Positive, Data::Int(value)) => {
-                (Data::Int(lanes.map1(value, |x| x)), None)
-            }
-            (UnaryOperation::Positive, Data::Real(value)) => {
-                (Data::Real(lanes.map1(value, |x| x)), None)
+            (UnaryOperation::Positive, _) => {
+                unreachable!("`combine` passes a numeric operand of `+` through")
             }
             (UnaryOperation::Negate, Data::Int(value)) => {
                 let (lanes, own) = self.try_map1(node, value, |x: i64| {
