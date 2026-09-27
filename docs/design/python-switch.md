@@ -139,7 +139,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S15.4: the Python switch (`symbol_table.py` over `_rs`; the README row and CONTRIBUTING's callback exception)
   - [x] S15.5: tests migrated (none needed a change), and the interface suite (54)
   - [x] S15.6: benchmarks after, and docs (every row faster or within noise except `get_namespace` and `update_namespaces`; see "S15 benchmarks")
-- [ ] S16: params, in two parts (see "S16: params"; "Needs the user" is empty)
+- [x] S16: params, in two parts ("Needs the user" was empty). The suite is green (7,845 passed), slow tests pass (7,878), properties pass (282), `tests_minimal` passes (5,879 passed, 642 skipped), lint and mypy are clean, and the Rust gate passes (4,124 tests; 4,156 with all features)
   - [x] S16.0: the design (survey, divergences P-1 to P-14, decisions D-S16-1 to D-S16-22, benchmark plan, steps, test plan)
   - [x] S16a: values and domains. The suite is green (7,821 passed), slow tests pass (7,854), properties pass (282), `tests_minimal` passes (5,868 passed, 629 skipped), lint and mypy are clean, and the Rust gate passes (4,080; 4,112 with all features)
     - [x] S16a.1: param benchmarks and baseline (55 rows; see "S16a.1 baseline")
@@ -147,11 +147,11 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
     - [x] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests (see "S16a.4 status")
     - [x] S16a.5: the interface suite for the domains (54 tests)
-  - [ ] S16b: params
+  - [x] S16b: params
     - [x] S16b.1: core additions (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection; 44 new tests, written after the code, see "S16b.1 implementation notes")
     - [x] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
     - [x] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite (24 tests)
-    - [ ] S16b.4: benchmarks after, and docs
+    - [x] S16b.4: benchmarks after, and docs (two rows slower than 10%, flagged: the pickle round trip, 1.16, and `repr`, 1.11; see "S16 benchmarks")
 
 ## Goal
 
@@ -18050,3 +18050,220 @@ normalized permutation value, a dependent assignment duplicated without
 its bindings, type-strict assignment equivalence, and a payload keeping an
 undecided value but refusing a violation; pickling and deep copies, the
 payload's shape and its structure error, and eight threads.
+
+### S16 status
+
+S16 was implemented on 2026-09-26 in fourteen commits after the design
+(9ef68f3, from 452d0f6):
+
+- the benchmarks and their baseline (743ae39);
+- the core's domains and decision procedures, test-first (5501122);
+- their binding (382cb09), and a lint fix in the stub and the benchmarks
+  (67be645);
+- the Python switch of `values.py` and `domains.py` with the migrated
+  tests, marked breaking (166ad38);
+- the domains' interface suite (2e13a40), and S16a's docs (098d649);
+- the core's params, assignments and interval arithmetic (2ac826b);
+- their binding (7d13ea4);
+- the Python switch of `core.py` with the migrated tests, marked breaking
+  (4c9754e);
+- the params' interface suite (caf7631), and S16b.3's docs (182c8ad);
+- the index merge in the tolerant sort the benchmarks called for
+  (09ad7ce);
+- these docs.
+
+No test was skipped, or deleted without a rewrite. At the end:
+
+- `pytest tests`: 7,845 passed; `-m "not very_slow"`: 7,878 passed;
+- the `property` session: 282 passed;
+- nox `tests_minimal`: 5,879 passed and 642 skipped;
+- nox `lint` and `type_check`: clean; `tests/test_rs_stub.py`: green.
+
+One property test outside S16's area,
+`test_strategies_properties.py`'s ambiguous-equality sort, failed once
+under a load average of 10 to 16 and passed on rerun; it tests the test
+strategies, which S16 does not touch.
+
+The Rust gate is green with `target/gate-env.sh` (the shared gate Python
+read-only, the z3 paths and `CARGO_TARGET_DIR` in this worktree):
+
+- fmt, and clippy `--all-targets -D warnings` with and without
+  `--all-features`;
+- `cargo test --workspace`: 4,124 tests; `--all-features`: 4,156;
+- doc `-D warnings` with and without `--all-features`;
+- `cargo deny check`;
+- `cargo +1.85 check --workspace`, and `-p fhy-core` with the three
+  features.
+
+### S16 benchmarks (before and after)
+
+Median time per call of `benchmarks/test_param.py` and the reruns,
+`target/bench.sh` (`-n 0 --benchmark-only`), on the S0 machine with
+Python 3.11.13 and pytest-benchmark 5.3.0. "Before" is the S16a.1
+baseline's tree under `target/before` (the extension built at 452d0f6, the
+benchmarks of 743ae39); "after" is 09ad7ce. The two ran three times each,
+interleaved, with a load average of 9 to 11 from other work on the
+machine, and the table lists the best of the three medians. The "before"
+column agrees with the S16a.1 table within 10%.
+
+| Benchmark | before | after | after / before |
+|---|--:|--:|--:|
+| `test_constraint_system_construction (rerun)` | 20.68 µs | 20.47 µs | 0.99 |
+| `test_domain_construction[categorical_100]` | 2.13 ms | 29.39 µs | 0.01 |
+| `test_domain_construction[ordinal_100]` | 1.56 ms | 18.68 µs | 0.01 |
+| `test_domain_construction[ordinal_serializable]` | 376.38 µs | 294.65 µs | 0.78 |
+| `test_int_param_intersection_feasibility (rerun)` | 593.67 µs | 570.51 µs | 0.96 |
+| `test_nat_param_is_value_valid (rerun)` | 13.21 µs | 11.93 µs | 0.90 |
+| `test_param_add_lower_bound` | 19.09 µs | 16.13 µs | 0.85 |
+| `test_param_alpha_equivalence` | 5.08 µs | 840 ns | 0.17 |
+| `test_param_alpha_equivalence[integer] (rerun)` | 4.43 µs | 432 ns | 0.10 |
+| `test_param_alpha_equivalence[natural_between] (rerun)` | 5.11 µs | 751 ns | 0.15 |
+| `test_param_arithmetic[add]` | 65.09 µs | 27.94 µs | 0.43 |
+| `test_param_arithmetic[mul]` | 68.24 µs | 27.75 µs | 0.41 |
+| `test_param_arithmetic[neg]` | 56.47 µs | 26.84 µs | 0.48 |
+| `test_param_arithmetic[sub]` | 62.92 µs | 27.76 µs | 0.44 |
+| `test_param_assign` | 35.15 µs | 33.77 µs | 0.96 |
+| `test_param_assignment_deserialize_from_dict` | 132.43 µs | 118.65 µs | 0.90 |
+| `test_param_attribute_read` | 138 ns | 93 ns | 0.67 |
+| `test_param_check_feasibility[in_set]` | 87.25 µs | 53.95 µs | 0.62 |
+| `test_param_check_feasibility[natural_between]` | 494.70 µs | 470.36 µs | 0.95 |
+| `test_param_check_feasibility[ordinal_20]` | 1.98 µs | 819 ns | 0.41 |
+| `test_param_check_feasibility[permutation_4]` | 10.23 µs | 1.57 µs | 0.15 |
+| `test_param_check_feasibility[real_between]` | 497.88 µs | 464.59 µs | 0.93 |
+| `test_param_check_subset[in_set]` | 249.80 µs | 170.68 µs | 0.68 |
+| `test_param_check_subset[integer]` | 566.32 µs | 495.47 µs | 0.87 |
+| `test_param_check_subset[ordinal_20]` | 53.28 µs | 5.56 µs | 0.10 |
+| `test_param_construction[categorical_4]` | 14.34 µs | 9.85 µs | 0.69 |
+| `test_param_construction[integer]` | 9.88 µs | 9.28 µs | 0.94 |
+| `test_param_construction[interval_between]` | 50.22 µs | 44.05 µs | 0.88 |
+| `test_param_construction[natural_between]` | 62.41 µs | 58.83 µs | 0.94 |
+| `test_param_construction[ordinal_20]` | 77.73 µs | 13.71 µs | 0.18 |
+| `test_param_construction[permutation_4]` | 13.59 µs | 9.38 µs | 0.69 |
+| `test_param_construction_between_bounds (rerun)` | 41.11 µs | 42.38 µs | 1.03 |
+| `test_param_deserialize_from_dict` | 178.49 µs | 170.43 µs | 0.95 |
+| `test_param_intersection[integer]` | 602.48 µs | 571.17 µs | 0.95 |
+| `test_param_intersection[ordinal_20]` | 296.05 µs | 26.94 µs | 0.09 |
+| `test_param_intersection[permutation_4]` | 34.95 µs | 12.41 µs | 0.36 |
+| `test_param_is_value_valid[categorical_4-c]` | 4.07 µs | 1.47 µs | 0.36 |
+| `test_param_is_value_valid[natural_between-3]` | 41.31 µs | 35.48 µs | 0.86 |
+| `test_param_is_value_valid[ordinal_20-7]` | 5.31 µs | 1.69 µs | 0.32 |
+| `test_param_is_value_valid[permutation_4-value3]` | 11.83 µs | 4.28 µs | 0.36 |
+| `test_param_is_value_valid[serializable-value4]` | 21.54 µs | 4.47 µs | 0.21 |
+| `test_param_pickle_round_trip` | 23.17 µs | 26.97 µs | 1.16 **slower** |
+| `test_param_repr` | 2.91 µs | 3.21 µs | 1.11 **slower** |
+| `test_param_serialize_to_dict` | 8.20 µs | 7.01 µs | 0.85 |
+| `test_param_str` | 3.44 µs | 3.38 µs | 0.98 |
+| `test_param_structural_equivalence` | 10.19 µs | 288 ns | 0.03 |
+| `test_param_structural_equivalence (rerun)` | 3.02 µs | 137 ns | 0.05 |
+| `test_param_union[categorical_4]` | 47.78 µs | 15.89 µs | 0.33 |
+| `test_param_union[ordinal_20]` | 468.05 µs | 47.91 µs | 0.10 |
+| `test_param_validate_value_violation` | 90.94 µs | 40.40 µs | 0.44 |
+| `test_set_constraint_evaluate_with_bindings[literal_expression] (rerun)` | 714 ns | 729 ns | 1.02 |
+| `test_set_constraint_evaluate_with_bindings[member] (rerun)` | 758 ns | 764 ns | 1.01 |
+| `test_set_constraint_evaluate_with_bindings[non_member] (rerun)` | 747 ns | 740 ns | 0.99 |
+| `test_set_constraint_evaluate_with_bindings[serializable] (rerun)` | 2.06 µs | 1.96 µs | 0.95 |
+| `test_set_constraint_evaluate_with_bindings[unbound] (rerun)` | 470 ns | 480 ns | 1.02 |
+
+Of the 55 rows, 24 take half the time or less, 11 are 10 to 50% faster,
+18 are within 10%, and two are slower than the 10% CONTRIBUTING allows:
+
+- **`test_param_pickle_round_trip`: 1.16 times** (27.0 against 23.2 µs;
+  1.23 before 09ad7ce). A pickle is a call of the class with its fields,
+  as every slice's has been since S3, so unpickling re-validates the
+  domain: an ordinal domain of 20 values is read, sorted and checked again
+  (6.6 µs, against 3.3 µs for the dataclass's unchecked field restore),
+  while the param, variable and system cost what they did. 09ad7ce merges
+  indices instead of cloning members in the tolerant sort, which took
+  ordinal construction from 27.6 to 18.7 µs for 100 values. Skipping the
+  check on unpickling would need a trusted constructor that no other slice
+  has, so the row is left, flagged, for the maintainer.
+- **`test_param_repr`: 1.11 times** (3.21 against 2.91 µs; 1.08 in the
+  first run). The same three reprs are joined as before, the constraint
+  tuple's taking three quarters of the time; timed alone outside pytest,
+  the new `repr` is the faster (2.99 against 3.28 µs), so the 0.3 µs is
+  the extension call's overhead or noise. Flagged, with no change.
+
+The rest:
+
+- **Finite domains** are built 70 to 85 times faster (the sort, the
+  duplicate check and the lookup set are Rust); a domain of
+  `Serializable` values gains 22%, its `<` and `==` being Python's.
+- **Ordinal, categorical, permutation and in-set questions** (subsets, unions,
+  intersections, feasibility) are 1.5 to 11 times faster, since they
+  enumerate in Rust; the interval and real questions gain 4 to 13%, z3's
+  work dominating.
+- **Param equivalence** is 6 to 35 times faster, and **interval
+  arithmetic** 2.1 to 2.5 times, the bounds being decoded and the hull computed
+  in Rust.
+- **Value checks** are 1.1 to 4.8 times faster, a violation's message 2.3
+  times (P-8: one pass names the member).
+- **Serialization, `str` and assignment** are 2 to 15% faster, their
+  time being the payload and the constraints' own methods.
+
+### S16 implementation notes
+
+Choices the decisions left open, made while implementing S16a.3 to S16b.4,
+and where the implementation departs from the design (S16a.2's and
+S16b.1's are in their own notes above):
+
+- **Seeds reach the public classes through `**kwargs`.** `_rs.Param` and
+  `_rs.ParamAssignment` take the private keyword `_seed` through their
+  `**kwargs` (read by one generic `read_seed`), since a named `_seed`
+  parameter trips clippy's underscore-binding lint; the public classes'
+  `__init__` copies the attributes into slots, as S13's do.
+- **The stub types a param's operands as `Any`**, and `core.py` declares
+  the typed signatures (over `_T`) in a `TYPE_CHECKING` block under
+  `@override`, so the stub stays free of the package's type variables and
+  mypy sees what the dataclasses declared.
+- **Param-level core errors map centrally** in the binding's `error.rs`:
+  `NotAnIntervalOperand` to `TypeError`; `EmptyInterval`, `NaturalBound`,
+  `UnorderedBounds` and `EmptyParamIntersection` to `ParamError`, as
+  Python raised them.
+- **Union and intersection are methods** (`Param.union(other, name=None)`,
+  `Param.intersection(...)`), which `create_union_param`,
+  `create_intersection_param`, `__or__` and `__and__` call.
+- **The operators** answer `NotImplemented` for an operand they do not
+  take, and raise `TypeError` where the Python methods raised it (an
+  interval param with a non-bound constraint); `bool` and `str` operands
+  are refused as before.
+- **Ordinal ties are ordered by kind rank** (`bool`, `float`, `int`), and
+  **opaque values order against opaque values only**, as D-S16-4 and P-2,
+  P-3 list; the interface suites pin both.
+- **A custom constraint is dropped silently by screening**, as Python's
+  screening dropped it, with no WARNING record.
+- **The tolerant sort merges indices** (09ad7ce): the members move once,
+  into the order found, instead of being cloned on each of the log n
+  passes; the order is unchanged.
+- **Divergences as the design listed them** (P-1 to P-14) are the only
+  behavioral changes the migrated tests record: P-6 (message texts) and
+  P-12 (deleted helpers) account for every migrated test.
+
+Traceability of the Python tests to the Rust tests (`tests/it/param/`):
+
+| Python tests | Rust tests | Note |
+|---|---|---|
+| `test_value_predicates.py`, the value parts of `test_domain_internals.py` | `value_stories.rs` | the Python-typed value readers stay the binding's |
+| `test_ordinal_param.py`, `test_categorical_param.py`, `test_perm_param.py`, `test_domain_invariants.py`, `test_number_subclass_values.py`, `test_value_semantics.py`, `test_core_internals.py` | `domain_stories.rs` | |
+| `test_feasibility.py`, `test_feasibility_properties.py`, `test_sound_feasibility.py`, `test_tri_state_feasibility.py`, `test_subset_relations.py`, `test_subset_relations_properties.py`, the screening tests of `test_domain_internals.py` | `decide_stories.rs`, the brute-force properties | a scripted and a real solver stand in for z3 |
+| `test_param_union.py`, `test_param_intersection.py` and their properties | `algebra_stories.rs`, `param_stories.rs` | |
+| the Python-defined domains of `test_domain_rust_binding.py` | `custom_stories.rs` | `EvenDomain` stands in for a Python domain |
+| `test_param_base.py`, `test_bindings_validation.py`, `test_scope_attachment.py`, `test_dependent_param_story.py`, `test_nat_param.py`, `test_int_param.py`, `test_bound_int_param.py`, `test_bound_nat_param.py`, `test_real_param.py`, `test_bound_internals.py`, `test_param_multiplication.py`, `test_param_assignment.py` | `param_stories.rs`, `interval_arithmetic_is_the_exact_hull_of_the_pairwise_results` | S16b.1's stories came after the code |
+| none | the tie and canonical orders, per-member degradation, type-strict assignment equality | new (P-1, P-2, P-7, P-9) |
+
+Left for later:
+
+- **The pickle row** (above): a trusted, unchecked constructor for
+  unpickling, if the maintainer wants the 4 µs back.
+- **`repr_text`'s fallback**: a param's `repr` renders `?` for a part whose
+  own `repr` raises, as the constraint binding's helper does, where Python
+  propagated the error; no test reaches it.
+
+### S16 resume notes
+
+Nothing is pending: every step of the checklist is done. The branch stands
+on 452d0f6, and S15 has since landed on `dev-rust` (896b5a8); the
+coordinator rebases. The conflicts to expect are additive: this document
+(the checklist and the appended sections), the module lists of `lib.rs`,
+the crate README and CONTRIBUTING (param is layer 9, after
+`symbol_table`), `rust-workspace.md` §I.8, the binding's `lib.rs`, the stub
+and the package README.
