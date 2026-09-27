@@ -2043,7 +2043,6 @@ class SymbolTable:
     def __reduce__(self) -> tuple[Any, ...]: ...
     def __setstate__(self, state: object) -> None: ...
 
-
 # ---------------------------------------------------------------------------
 # fhy_core::param (S16): the bases of the six domain kinds, and the module
 # functions of `fhy_core.symbolic.param.domains`.
