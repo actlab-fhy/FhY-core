@@ -154,7 +154,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16b.4: benchmarks after, and docs (two rows slower than 10%, flagged: the pickle round trip, 1.16, and `repr`, 1.11; see "S16 benchmarks")
 - [ ] S18: scope and stack, two native implementations (P1, the `Identifier` model; "Needs the user" is empty; see "S18: scope and stack")
   - [x] S18.0: the design (survey, decisions D-S18-1 to D-S18-10, steps, the shared case list)
-  - [ ] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties
+  - [x] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties (35 new tests, all failing against the `todo!()` stubs first; the Rust gate passes, 4,222 tests; 4,254 with all features)
   - [ ] S18.2: the Python stories the case list adds, and the docs
   - [ ] S18.3: status and implementation notes
 

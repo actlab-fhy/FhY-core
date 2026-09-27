@@ -13,6 +13,7 @@
 //! and not on [`pass`], and [`param`] depends on [`constraint`] and not on
 //! [`pass`].
 //! [`symbol_table`] depends on [`types`].
+//! [`stack`] and [`scope`] depend on no other module, each other included.
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -33,6 +34,8 @@
 //! | [`param`] | params' value domains, the integers, the reals and three finite kinds, and the questions they answer: admissibility, feasibility and subsets, by enumeration or through the solver |
 //! | [`types`] | the IR type system: core data types and their promotion, data types, numerical and index types, and template binding, substitution and unification, with extensions; expression type checking in [`types::checking`] |
 //! | [`symbol_table`] | [`SymbolTable`](symbol_table::SymbolTable): namespaces with parents, holding frames for their symbols, and the built-in [`SymbolFrame`](symbol_table::SymbolFrame)s |
+//! | [`stack`] | [`Stack`](stack::Stack): a last-in, first-out stack |
+//! | [`scope`] | [`Scope`](scope::Scope): lexical frames with shadowing lookup, and a root frame that cannot be popped |
 //!
 //! Each public item has exactly one public path.
 //!
@@ -101,7 +104,9 @@ pub mod op_attribute;
 pub mod param;
 pub mod pass;
 pub mod provenance;
+pub mod scope;
 pub mod solver;
+pub mod stack;
 pub mod symbol_table;
 pub mod term;
 pub mod tree;
