@@ -34,6 +34,7 @@ instead, which excludes arithmetic ``BinaryExpression`` outright (SymPy
 re-associates and folds those) and only ever calls those same natives.
 """
 
+import math
 from typing import Final
 
 import pytest
@@ -47,10 +48,13 @@ from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
+    BinaryExpression,
     BinaryOperation,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    UnaryExpression,
+    UnaryOperation,
     call,
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
@@ -60,6 +64,7 @@ from fhy_core.symbolic.expression import (
     piecewise,
     substitute_sympy_expression_variables,
 )
+from fhy_core.symbolic.solver import SolverBackend, simplify_expression
 
 from ....strategies.expressions import (
     SYMPY_STABLE_CALL_FUNCTIONS,
@@ -137,6 +142,136 @@ def test_sympy_round_trip_preserves_evaluation(
         assert bool(lifted_value) == bool(original_value)
     else:
         assert int(lifted_value) == int(original_value)
+
+
+# =============================================================================
+# Simplifying keeps the value on an integer grid (R2-016)
+# =============================================================================
+
+
+_X: Final = _POOL[0]
+_Y: Final = _POOL[1]
+_GRID: Final[range] = range(-3, 4)
+
+
+def _build_grid_tree_strategy() -> st.SearchStrategy[Expression]:
+    """Return trees of p16's shape over `_X`, `_Y` and small integers.
+
+    Sums, differences, products, floor divisions by 1, 2 or 4, floor moduli
+    by 2 or 3, powers by 0 to 3, negations, piecewise nodes, and quotients
+    by 2 or by another tree. Powers of two keep the quotients' binary
+    floats exact where ``sympy.simplify`` distributes a divisor.
+    """
+    leaves = st.one_of(
+        st.sampled_from([IdentifierExpression(_X), IdentifierExpression(_Y)]),
+        st.integers(-3, 3).map(LiteralExpression),
+    )
+
+    def extend(inner: st.SearchStrategy[Expression]) -> st.SearchStrategy[Expression]:
+        def binary(
+            operation: BinaryOperation, right: st.SearchStrategy[Expression]
+        ) -> st.SearchStrategy[Expression]:
+            return st.builds(
+                lambda left, right: make_binary_expression(operation, left, right),
+                inner,
+                right,
+            )
+
+        def literals(*values: int) -> st.SearchStrategy[Expression]:
+            return st.sampled_from([LiteralExpression(value) for value in values])
+
+        return st.one_of(
+            binary(BinaryOperation.ADD, inner),
+            binary(BinaryOperation.SUBTRACT, inner),
+            binary(BinaryOperation.MULTIPLY, inner),
+            binary(BinaryOperation.FLOOR_DIVIDE, literals(1, 2, 4)),
+            binary(BinaryOperation.MODULO, literals(2, 3)),
+            binary(BinaryOperation.POWER, literals(0, 1, 2, 3)),
+            inner.map(lambda operand: UnaryExpression(UnaryOperation.NEGATE, operand)),
+            st.builds(
+                lambda left, right, value, otherwise: piecewise(
+                    (make_binary_expression(BinaryOperation.LESS, left, right), value),
+                    otherwise=otherwise,
+                ),
+                inner,
+                inner,
+                inner,
+                inner,
+            ),
+            binary(BinaryOperation.DIVIDE, literals(2)),
+            binary(BinaryOperation.DIVIDE, inner),
+        )
+
+    return st.recursive(leaves, extend, max_leaves=12)
+
+
+def _evaluate_at(expression: Expression, x: int, y: int) -> float | bool | None:
+    """Return `expression` at `x` and `y`, or `None` where evaluation fails."""
+    try:
+        value = evaluate_expression_with_numpy(expression, {_X: x, _Y: y})
+    except (ValueError, ZeroDivisionError, OverflowError, ArithmeticError):
+        return None
+    item = value.item() if hasattr(value, "item") else value
+    return item if isinstance(item, bool) else float(item)
+
+
+def _is_every_divisor_nonzero(expression: Expression, x: int, y: int) -> bool:
+    """Return whether every quotient of `expression` divides by a finite nonzero.
+
+    Where one does not, the tree passes through an infinity or a NaN, which
+    ``sympy.simplify``'s cancellations assume away (``y / y`` is ``1``).
+    """
+    pending = [expression]
+    while pending:
+        node = pending.pop()
+        if (
+            isinstance(node, BinaryExpression)
+            and node.operation is BinaryOperation.DIVIDE
+        ):
+            divisor = _evaluate_at(node.right, x, y)
+            if divisor is None or not math.isfinite(divisor) or divisor == 0:
+                return False
+        if hasattr(node, "get_operands"):
+            pending.extend(node.get_operands())
+    return True
+
+
+@pytest.mark.sympy
+@given(expression=_build_grid_tree_strategy())
+def test_simplify_then_evaluate_equals_evaluate_on_integer_grids(
+    expression: Expression,
+) -> None:
+    """Test a simplified tree evaluates as the tree does, at every grid point.
+
+    A point where the tree does not evaluate to a finite value, or where
+    one of its quotients divides by zero, is skipped. A tree SymPy folds
+    to a value no expression denotes, such as the complex infinity of
+    ``1 / 0``, is refused, and skipped too.
+    """
+    try:
+        simplified = simplify_expression(expression, backend=SolverBackend.SYMPY)
+    except Exception:  # a refused simplification is no mismatch
+        return
+
+    for x in _GRID:
+        for y in _GRID:
+            expected = _evaluate_at(expression, x, y)
+            if expected is None or not _is_every_divisor_nonzero(expression, x, y):
+                continue
+            if not isinstance(expected, bool) and not math.isfinite(expected):
+                continue
+            actual = _evaluate_at(simplified, x, y)
+            assert actual is not None, (expression, simplified, x, y)
+            if isinstance(expected, bool):
+                assert actual == expected, (expression, simplified, x, y)
+            else:
+                assert not isinstance(actual, bool)
+                assert abs(actual - expected) <= 1e-9 * max(1.0, abs(expected)), (
+                    expression,
+                    simplified,
+                    x,
+                    y,
+                )
 
 
 # =============================================================================

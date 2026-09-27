@@ -57,8 +57,8 @@ onto `dev-rust` before continuing.
 - [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver (`f969a81`)
 - [x] R2-014 (F2-014): the process backend's timeout bounds the whole call (`35fae05`)
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped — **held for the maintainer**: dropping it makes params and set constraints report false proofs (Track D notes, N-D1)
-- [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature
-- [ ] R2-016 (F2-016): negative powers lift as divisions
+- [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature (`63df166`)
+- [x] R2-016 (F2-016): negative powers lift as divisions
 - [ ] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object
 - [ ] R2-039 (F2-039): a versioned, hash-checked prelude module
 - [ ] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories
@@ -2751,11 +2751,33 @@ premise holds for expressions but not for set constraints:
   in the list), and `cargo deny check` (ok, with the `syn` duplicate
   warning of the base).
 
+**R2-016.**
+- **The rule.** A `Pow` whose exponent is a negative SymPy `Integer`
+  lifts as `1 / b` or `1 / b ** k`; in a `Mul`, every such factor goes to
+  the denominator, so `Mul(2, y, Pow(x, -1), Pow(z, -2))` lifts as
+  `(2 * y) / (x * z ** 2)`, each product folded to the right as before. A
+  negative rational exponent is left as a power.
+- **The property's domain.** p16's generator, with the grid `-3..=3` for
+  `x` and `y`. A point is skipped where the original fails or is not
+  finite, as p16 skipped, and also where one of its quotients divides by
+  zero: there the tree passes through a NaN or an infinity, which
+  `sympy.simplify`'s cancellations assume away. The first run without that
+  rule found `{(y + y) if x < y / y; -1 otherwise}`, which simplifies to
+  `{2 * y if x < 1; -1 otherwise}` and differs at `y = 0`, since `0 / 0`
+  is NaN. That is SymPy's generic-value simplification, not the lifting,
+  so it is recorded here and not treated as part of F2-016. A tree SymPy
+  refuses to lift (the complex infinity of `1 / 0`) is skipped
+  (`prop_assume`); floor divisors are 1, 2 or 4 so distributed quotients
+  stay exact binary floats.
+- **Both properties fail at the base**: the Rust one on `(-1 / x) - 0`,
+  simplified to `-1 * x ** -1`, and the Python one likewise.
+
 **Python-visible changes** (§I.2 rule 6):
 
 | Item | Old | New | Tests |
 |---|---|---|---|
 | R2-015 | a name hint's control characters were written into its quoted SMT-LIB2 symbol (`SmtScript.text`, `convert_expression_to_smtlib2`, the declarations' `symbol`); a NUL made the z3-solver adapter raise `Z3Exception` | each is written as `_` | `test_a_control_character_name_hint_answers_the_same_on_every_backend` (new) |
+| R2-016 | `simplify_expression(y / x)` returned `y * x ** -1`, which the evaluators refuse at integer points | it returns `y / x`; every power by a negative integer lifts as a division | `test_simplify_then_evaluate_equals_evaluate_on_integer_grids` (new); no existing test pinned the old form |
 | R2-005a | none in behavior; `SolverBackend.SYMPY`'s backend lives in the extension as before | the same objects, from the binding's own module | `test_missing_sympy_reports_unavailable` (new) |
 | R2-014 | `SmtLib2ProcessSolver.check` could outlast its timeout (a solver that stops reading, closes stdout without exiting, exits slowly, or leaves a grandchild), and a solver that printed `success` failed with `SolverBackendError` | the timeout bounds the call; the first line written is `(set-option :print-success false)`; `success` lines before the answer are skipped; the class docstring says so | the Rust stories; the Python process-backend tests unchanged |
 

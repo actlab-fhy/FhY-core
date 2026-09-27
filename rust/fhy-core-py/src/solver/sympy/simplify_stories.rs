@@ -179,6 +179,18 @@ fn partial_piecewise_result_keeps_the_unsimplified_form() {
 }
 
 #[test]
+fn y_over_x_simplifies_to_a_division() {
+    let (_, x) = build_identifier("x");
+    let (_, y) = build_identifier("y");
+    let quotient = y / x;
+
+    assert_eq!(
+        simplified(&quotient, &HashMap::new()).expect("simplified"),
+        quotient
+    );
+}
+
+#[test]
 fn simplify_is_read_from_the_module_at_each_call() {
     let (_, reference) = build_identifier("x");
 

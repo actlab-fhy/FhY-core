@@ -75,6 +75,33 @@ fn modulo_and_power_are_binary() {
 }
 
 #[test]
+fn negative_integer_powers_lift_as_divisions() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let (z, z_reference) = build_identifier("z");
+    let (x_symbol, y_symbol, z_symbol) = (symbol(&x), symbol(&y), symbol(&z));
+
+    assert_eq!(
+        lifted(&format!("sympy.Pow({x_symbol}, -1)")),
+        build_literal(1) / x_reference.clone()
+    );
+    assert_eq!(
+        lifted(&format!("sympy.Pow({x_symbol}, -3)")),
+        build_literal(1) / x_reference.clone().power(3)
+    );
+    assert_eq!(
+        lifted(&format!("{y_symbol} / {x_symbol}")),
+        y_reference.clone() / x_reference.clone()
+    );
+    assert_eq!(
+        lifted(&format!(
+            "sympy.Mul(2, {y_symbol}, sympy.Pow({x_symbol}, -1), sympy.Pow({z_symbol}, -2), evaluate=False)"
+        )),
+        (build_literal(2) * y_reference) / (x_reference * z_reference.power(2))
+    );
+}
+
+#[test]
 fn power_of_one_half_is_a_square_root() {
     let (x, reference) = build_identifier("x");
 

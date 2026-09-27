@@ -61,7 +61,10 @@ fn is_native_constant(identifier: &Identifier, sorts: &dyn SortLookup) -> bool {
 ///   kept as it stands. It does not enforce the timeout of the context's
 ///   [`SimplifyLimits`](super::SimplifyLimits): SymPy has no cancellation.
 /// - **Lifting** inverts the lowering. SymPy's n-ary sums and products fold
-///   to the right, a rational becomes the decimal literal of its value when
+///   to the right, a power by a negative integer becomes a division (`b **
+///   -k` is `1 / b ** k`, and a product's such factors divide the product of
+///   the others), since the evaluators refuse an integer raised to a
+///   negative integer power, a rational becomes the decimal literal of its value when
 ///   a binary float equals it and the exact quotient otherwise, and `oo`,
 ///   `-oo` and `nan` become the built-in constants. Complex infinity and a
 ///   piecewise without a final `True` branch are refused.

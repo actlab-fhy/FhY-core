@@ -43,6 +43,10 @@ enum Build {
     /// A right fold of a binary operation over the parts, as SymPy's n-ary
     /// `Add` and `Mul` lift.
     RightFold(BinaryOperation, usize),
+    /// A division of the right-folded product of the first count of parts
+    /// (`1` when there are none) by the right-folded product of the second
+    /// count, as a SymPy product with negative integer powers lifts.
+    Quotient(usize, usize),
     /// A connective over the parts, or the one part itself.
     Connective(LogicalOperation, usize),
     /// The negation of a connective over the parts.
@@ -150,6 +154,24 @@ impl<'h> Lifter<'h> {
                         Build::Call(BuiltinFunction::Sqrt, 1),
                         vec![parts[0].clone()],
                     ));
+                }
+                if let Some(denominator) = self.reciprocal_denominator(node)? {
+                    return Ok(Step::Expand(Build::Quotient(0, 1), vec![denominator]));
+                }
+            }
+            if is(&handles.mul)? {
+                let mut numerator = Vec::new();
+                let mut denominator = Vec::new();
+                for part in arguments()? {
+                    match self.reciprocal_denominator(&part)? {
+                        Some(factor) => denominator.push(factor),
+                        None => numerator.push(part),
+                    }
+                }
+                if !denominator.is_empty() {
+                    let counts = (numerator.len(), denominator.len());
+                    numerator.extend(denominator);
+                    return Ok(Step::Expand(Build::Quotient(counts.0, counts.1), numerator));
                 }
             }
             if is(&handles.piecewise)? {
@@ -299,6 +321,43 @@ impl<'h> Lifter<'h> {
             return Ok(Step::Done(Expression::literal(false)));
         }
         Err(SympyErrorKind::UnsupportedBoolean(type_text(node)?))
+    }
+
+    /// Return the denominator `node` stands for when it is a power by a
+    /// negative integer: `b` for `b ** -1`, and `b ** k`, unevaluated, for
+    /// `b ** -k`. The evaluators refuse an integer raised to a negative
+    /// integer power, so such a power lifts as a division.
+    fn reciprocal_denominator<'py>(
+        &self,
+        node: &Bound<'py, PyAny>,
+    ) -> Fallible<Option<Bound<'py, PyAny>>> {
+        let py = node.py();
+        let handles = self.handles;
+        if !node.is_instance(handles.pow.bind(py))? {
+            return Ok(None);
+        }
+        let parts: Vec<Bound<'py, PyAny>> =
+            node.getattr("args")?.try_iter()?.collect::<PyResult<_>>()?;
+        let [base, exponent] = parts.as_slice() else {
+            return Ok(None);
+        };
+        if !exponent.is_instance(handles.integer.bind(py))? {
+            return Ok(None);
+        }
+        let power = read_int(&exponent.getattr("p")?)?;
+        if !power.is_negative() {
+            return Ok(None);
+        }
+        if power == -BigInt::one() {
+            return Ok(Some(base.clone()));
+        }
+        let keywords = PyDict::new(py);
+        keywords.set_item("evaluate", false)?;
+        let positive = handles
+            .pow
+            .bind(py)
+            .call((base, exponent.neg()?), Some(&keywords))?;
+        Ok(Some(positive))
     }
 
     /// Return the step of a piecewise: its conditions, its values, then its
@@ -456,13 +515,16 @@ fn assemble(build: Build, results: &mut Vec<Expression>) -> Fallible<Expression>
             let [left, right] = <[Expression; 2]>::try_from(take(2)).expect("two parts");
             Expression::new_binary(operation, left, right)
         }
-        Build::RightFold(operation, count) => {
-            let mut parts = take(count);
-            let mut folded = parts.pop().expect("a fold has parts");
-            while let Some(left) = parts.pop() {
-                folded = Expression::new_binary(operation, left, folded);
-            }
-            folded
+        Build::RightFold(operation, count) => fold_right(operation, take(count)),
+        Build::Quotient(numerator, denominator) => {
+            let mut parts = take(numerator + denominator);
+            let denominator = fold_right(BinaryOperation::Multiply, parts.split_off(numerator));
+            let numerator = if parts.is_empty() {
+                Expression::literal(1)
+            } else {
+                fold_right(BinaryOperation::Multiply, parts)
+            };
+            Expression::new_binary(BinaryOperation::Divide, numerator, denominator)
         }
         Build::Connective(operation, count) => {
             let parts = take(count);
@@ -500,6 +562,15 @@ fn assemble(build: Build, results: &mut Vec<Expression>) -> Fallible<Expression>
             piecewise(parts.into_iter().zip(values).collect(), otherwise)?
         }
     })
+}
+
+/// Return the right fold of `operation` over `parts`, which are not empty.
+fn fold_right(operation: BinaryOperation, mut parts: Vec<Expression>) -> Expression {
+    let mut folded = parts.pop().expect("a fold has parts");
+    while let Some(left) = parts.pop() {
+        folded = Expression::new_binary(operation, left, folded);
+    }
+    folded
 }
 
 /// Return the piecewise of `cases` and `otherwise`, or the error of one no
