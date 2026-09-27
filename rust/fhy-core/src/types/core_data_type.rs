@@ -63,7 +63,7 @@ pub enum CoreDataType {
 const COUNT: usize = 17;
 
 /// Every core data type, in declaration order.
-const ALL: [CoreDataType; COUNT] = [
+pub(super) const ALL: [CoreDataType; COUNT] = [
     CoreDataType::Uint,
     CoreDataType::Int,
     CoreDataType::Float,

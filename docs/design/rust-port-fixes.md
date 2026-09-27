@@ -92,9 +92,9 @@ onto `dev-rust` before continuing.
 - [x] R2-017 (F2-017): a negated literal checks as one literal: `d07de23`
 - [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous: `6222f80`
 - [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes: `a0f3e77`
-- [x] R2-026b (F2-026, checker part): rstests and broadened properties
-- [ ] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion
-- [ ] `[rebase]` onto `dev-rust` after Track A lands
+- [x] R2-026b (F2-026, checker part): rstests and broadened properties: `1206b7a`
+- [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion
+- [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed)
 - [ ] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph
 - [ ] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution
 - [ ] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`
@@ -3673,6 +3673,20 @@ finding.
   committed: of 256 cases, 233 trees synthesize and 230 evaluate, spread
   over the three kinds, and 182 of the 256 commutative pairs synthesize.
   Both laws also held over 5,000 cases.
+
+**R2-047b.**
+- **The assertion.** A `const` block in `checker.rs` walks every core data
+  type (`core_data_type.rs`'s `ALL`, now `pub(super)`, a one-word edit) and
+  asserts that no integral one is wider than `float64`. So
+  `real_float_of_width` returns a `CoreDataType` and `expect`s with that
+  reason, and `lift`, `lift_pair` and the integer arm of `division` became
+  infallible: the two "no real float core data type found for bit width"
+  errors are gone.
+- **`primitive_of`** (the audit's `:415-420`) is backed by the walk, not by
+  the assertion: every caller reads a type `as_value` admitted, once index
+  types are handled, so it is a free function that `expect`s. The audit's
+  `:894-901`, the negate rule's non-numeric literal arm, went with R2-017.
+- **Behavior change:** none; the removed errors could not be produced.
 
 ### Track E notes
 

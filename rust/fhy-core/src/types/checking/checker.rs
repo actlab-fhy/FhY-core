@@ -13,7 +13,7 @@ use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
-use super::super::core_data_type::CoreDataType;
+use super::super::core_data_type::{ALL as CORE_DATA_TYPES, CoreDataType};
 use super::super::data_type::DataType;
 use super::super::error::LiteralTypeError;
 use super::super::qualifier::TypeQualifier;
@@ -389,11 +389,37 @@ fn negated_literal(expression: &Expression) -> Option<LiteralValue> {
     }
 }
 
-/// Return the smallest real float at least `bit_width` wide, or the weak
-/// `Float` for no width.
-fn real_float_of_width(bit_width: Option<u32>) -> Option<CoreDataType> {
+/// Why an integral type has a real float of its width, which the assertion
+/// below proves.
+const EVERY_INTEGRAL_WIDTH_HAS_A_REAL_FLOAT: &str =
+    "no integral core data type is wider than float64";
+
+/// Every integral core data type is at most as wide as `Float64`, so
+/// [`real_float_of_width`] finds a real float for every integral width.
+const _: () = {
+    let Some(widest) = CoreDataType::Float64.bit_width() else {
+        panic!("float64 has a bit width")
+    };
+    let mut index = 0;
+    while index < CORE_DATA_TYPES.len() {
+        let data_type = CORE_DATA_TYPES[index];
+        if data_type.is_integral() {
+            if let Some(width) = data_type.bit_width() {
+                assert!(
+                    width <= widest,
+                    "an integral core data type is wider than every real float"
+                );
+            }
+        }
+        index += 1;
+    }
+};
+
+/// Return the smallest real float at least `bit_width` wide, the width of
+/// an integral type, or the weak `Float` for no width.
+fn real_float_of_width(bit_width: Option<u32>) -> CoreDataType {
     let Some(bit_width) = bit_width else {
-        return Some(CoreDataType::Float);
+        return CoreDataType::Float;
     };
     [
         CoreDataType::Float16,
@@ -406,6 +432,16 @@ fn real_float_of_width(bit_width: Option<u32>) -> Option<CoreDataType> {
             .bit_width()
             .is_some_and(|width| width >= bit_width)
     })
+    .expect(EVERY_INTEGRAL_WIDTH_HAS_A_REAL_FLOAT)
+}
+
+/// Return the core data type of the value type `value`.
+///
+/// The checker reads it only from a type `Walk::as_value` admitted, and
+/// only once an index type has been handled, so `value` is a scalar
+/// numerical type of a primitive data type.
+fn primitive_of(value: &Type) -> CoreDataType {
+    primitive(value).expect("an admitted value type other than an index type is primitive")
 }
 
 /// Return the qualifier of a value computed from values of `qualifiers`,
@@ -475,18 +511,6 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
     ) -> Result<CoreDataType> {
         left.promote(right)
             .map_err(|error| self.error(at, TypeRuleKind::Promotion, error.to_string()))
-    }
-
-    /// Return the core data type of the value type `value`, which the
-    /// checker only calls with numerical types of primitive data types.
-    fn primitive_of(&self, at: &Expression, value: &Type) -> Result<CoreDataType> {
-        primitive(value).ok_or_else(|| {
-            self.error(
-                at,
-                TypeRuleKind::NotAValueType,
-                format!("expected a primitive data type, got {value}"),
-            )
-        })
     }
 
     /// Return `value` as the type of the value of `expression`: an index
@@ -858,7 +882,7 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 format!("a literal value cannot be checked against index type {expected}"),
             ));
         }
-        let context = self.primitive_of(node, &expected)?;
+        let context = primitive_of(&expected);
         if context.is_weak() {
             return own();
         }
@@ -912,8 +936,8 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 ),
             ));
         }
-        let expected_core = self.primitive_of(at, &expected_value)?;
-        let promoted = self.promote(at, self.primitive_of(at, &actual_value)?, expected_core)?;
+        let expected_core = primitive_of(&expected_value);
+        let promoted = self.promote(at, primitive_of(&actual_value), expected_core)?;
         if promoted != expected_core {
             return Err(self.error(
                 at,
@@ -1108,11 +1132,7 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 format!("comparison {name} is not defined between index type and {other}"),
             )),
             _ => {
-                self.promote(
-                    node,
-                    self.primitive_of(node, left)?,
-                    self.primitive_of(node, right)?,
-                )?;
+                self.promote(node, primitive_of(left), primitive_of(right))?;
                 Ok((boolean(), qualifier))
             }
         }
@@ -1131,10 +1151,7 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
         let name = binary_name(operation);
         match (left, right) {
             (Type::Numerical(_), Type::Numerical(_)) => {
-                let (left_core, right_core) = (
-                    self.primitive_of(node, left)?,
-                    self.primitive_of(node, right)?,
-                );
+                let (left_core, right_core) = (primitive_of(left), primitive_of(right));
                 let core = match operation {
                     BinaryOperation::Divide => self.division(node, left_core, right_core)?,
                     BinaryOperation::FloorDivide => {
@@ -1193,35 +1210,20 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
 
     /// Return a real float of the width of an integral `core`, the weak
     /// `Float` for a weak integer.
-    fn lift(&self, node: &Expression, core: CoreDataType) -> Result<CoreDataType> {
-        let width = core.bit_width();
-        real_float_of_width(width).ok_or_else(|| {
-            self.error(
-                node,
-                TypeRuleKind::Promotion,
-                format!(
-                    "no real float core data type found for bit width {}",
-                    width.unwrap_or_default()
-                ),
-            )
-        })
+    fn lift(core: CoreDataType) -> CoreDataType {
+        real_float_of_width(core.bit_width())
     }
 
     /// Return the pair with an integral side lifted to a real float of its
     /// width when the other side is a float or complex type.
-    fn lift_pair(
-        &self,
-        node: &Expression,
-        left: CoreDataType,
-        right: CoreDataType,
-    ) -> Result<(CoreDataType, CoreDataType)> {
+    fn lift_pair(left: CoreDataType, right: CoreDataType) -> (CoreDataType, CoreDataType) {
         if left.is_integral() && right.is_float_like() {
-            return Ok((self.lift(node, left)?, right));
+            return (Self::lift(left), right);
         }
         if left.is_float_like() && right.is_integral() {
-            return Ok((left, self.lift(node, right)?));
+            return (left, Self::lift(right));
         }
-        Ok((left, right))
+        (left, right)
     }
 
     /// Return the type of a true division.
@@ -1236,18 +1238,9 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 .into_iter()
                 .flatten()
                 .max();
-            return real_float_of_width(width).ok_or_else(|| {
-                self.error(
-                    node,
-                    TypeRuleKind::Promotion,
-                    format!(
-                        "no real float core data type found for bit width {}",
-                        width.unwrap_or_default()
-                    ),
-                )
-            });
+            return Ok(real_float_of_width(width));
         }
-        let (left, right) = self.lift_pair(node, left, right)?;
+        let (left, right) = Self::lift_pair(left, right);
         self.promote(node, left, right)
     }
 
@@ -1273,7 +1266,7 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 ),
             ));
         }
-        let (left, right) = self.lift_pair(node, left, right)?;
+        let (left, right) = Self::lift_pair(left, right);
         self.promote(node, left, right)
     }
 
@@ -1288,7 +1281,7 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
         side: &str,
         subtract: bool,
     ) -> Result<Type> {
-        if !self.primitive_of(node, offset)?.is_integral() {
+        if !primitive_of(offset).is_integral() {
             return Err(self.error(
                 node,
                 TypeRuleKind::Index,
@@ -1337,7 +1330,7 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                 ),
             ));
         };
-        if !self.primitive_of(node, scalar_type)?.is_integral() {
+        if !primitive_of(scalar_type).is_integral() {
             return Err(self.error(
                 node,
                 TypeRuleKind::Index,
@@ -1410,9 +1403,9 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
     /// `parts` holds the conditions, the values and the otherwise branch.
     fn piecewise(&self, node: &Expression, cases: usize, parts: &[Typed]) -> Result<Typed> {
         let (conditions, branches) = parts.split_at(cases);
-        let mut core = self.primitive_of(node, &branches[0].0)?;
+        let mut core = primitive_of(&branches[0].0);
         for (value, _) in &branches[1..] {
-            core = self.promote(node, core, self.primitive_of(node, value)?)?;
+            core = self.promote(node, core, primitive_of(value))?;
         }
         let qualifier = conditions
             .iter()
