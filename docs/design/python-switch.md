@@ -157,6 +157,21 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties (35 new tests, all failing against the `todo!()` stubs first; the Rust gate passes, 4,222 tests; 4,254 with all features)
   - [x] S18.2: the Python stories the case list adds (K-10, S-5), and the docs (`pytest tests` 7,902 passed; lint and mypy are clean)
   - [x] S18.3: status and implementation notes (see "S18 status")
+- [ ] S17: serialization, in two parts (one canonical format, V2, the core's serde; V1 kept readable, and writable on request; see "S17: serialization")
+  - [x] S17.0: the design (survey, divergences W-1 to W-11, decisions D-S17-1 to D-S17-24, benchmark plan, steps, test plan)
+  - [ ] N-S17-1 to N-S17-3 decided
+  - [ ] S17.1: serialization benchmarks and the V1 baseline; the frozen pickle corpus and today's V1 payloads
+  - [ ] S17a: the core
+    - [ ] S17a.1: `fhy_core::foreign` (`Foreign`, `Resolve`, `NoForeign`, `ForeignError`) and `to_foreign` on the five extension traits, test-first
+    - [ ] S17a.2: serde for types and the symbol table (the wire types and their `build`), test-first
+    - [ ] S17a.3: serde for constraints and params, test-first
+    - [ ] S17a.4: the Rust replay of the serialization corpus, with a test resolver
+  - [ ] S17b: the binding and the framework
+    - [ ] S17b.1: the binding's plumbing (`serde_json`, `pythonize` after the spike, `wire.rs`, the resolver, `to_foreign` on the adapters), then V1 moved into `legacy/` and `_serialization_v1.py` unchanged
+    - [ ] S17b.2: the framework (`WireVersion`, `wire_version`, detection, the V2 family forms, `serialize_value`/`deserialize_value`, binary version 2, the canonical `to_json`, the deprecation warning)
+    - [ ] S17b.3: each Rust-backed class switched to V2, one commit per concept, with the migrated tests and the stub
+    - [ ] S17b.4: the golden serialization corpus and its generator, the `golden_expanded` entry, and the interface suites
+    - [ ] S17b.5: benchmarks after, and docs (the revised rules of D-S17-21, the README)
 
 ## Goal
 
