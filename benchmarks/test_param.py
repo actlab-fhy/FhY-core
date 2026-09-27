@@ -9,6 +9,7 @@ simplifier for value checks, its SMT backend for the questions.
 """
 
 import pickle
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -30,8 +31,8 @@ from fhy_core.symbolic.param import (
     create_categorical_param,
     create_integer_param,
     create_integer_param_between,
-    create_interval_integer_param_between,
     create_intersection_param,
+    create_interval_integer_param_between,
     create_natural_param,
     create_natural_param_between,
     create_ordinal_param,
@@ -48,6 +49,8 @@ pytestmark = pytest.mark.benchmark(group="param")
 # How many values the ordinal params hold, and the large domains.
 _ORDINAL_SIZE = 20
 _LARGE_DOMAIN_SIZE = 100
+# The bound the in-set param's equation keeps its candidates above.
+_IN_SET_FLOOR = 5
 
 
 @register_serializable(type_id="benchmarks.param.level")
@@ -82,35 +85,37 @@ class _Level(Serializable):
         return cls(int(data["value"]))
 
 
+def _build_in_set_param() -> Param[Any]:
+    """Return an integer param whose in-set constraint makes it finite."""
+    variable = Identifier("x")
+    return create_integer_param(
+        name=variable,
+        constraints=[
+            InSetConstraint(variable, range(10)),
+            NotInSetConstraint(variable, {3, 4}),
+            EquationConstraint(IdentifierExpression(variable) > _IN_SET_FLOOR),
+        ],
+    )
+
+
+_PARAM_BUILDERS: dict[str, Callable[[], Param[Any]]] = {
+    "integer": create_integer_param,
+    "natural_between": lambda: create_natural_param_between(1, 10),
+    "interval_between": lambda: create_interval_integer_param_between(0, 10),
+    "real_between": lambda: create_real_param_between(0.5, "2.5"),
+    "ordinal_20": lambda: create_ordinal_param(list(range(_ORDINAL_SIZE))),
+    "categorical_4": lambda: create_categorical_param(["a", "b", "c", "d"]),
+    "permutation_4": lambda: create_permutation_param([1, 2, 3, 4]),
+    "serializable": lambda: create_ordinal_param(
+        [_Level(index) for index in range(_ORDINAL_SIZE)]
+    ),
+    "in_set": _build_in_set_param,
+}
+
+
 def _build_param(kind: str) -> Param[Any]:
     """Return a fresh param of `kind`."""
-    if kind == "integer":
-        return create_integer_param()
-    if kind == "natural_between":
-        return create_natural_param_between(1, 10)
-    if kind == "interval_between":
-        return create_interval_integer_param_between(0, 10)
-    if kind == "real_between":
-        return create_real_param_between(0.5, "2.5")
-    if kind == "ordinal_20":
-        return create_ordinal_param(list(range(_ORDINAL_SIZE)))
-    if kind == "categorical_4":
-        return create_categorical_param(["a", "b", "c", "d"])
-    if kind == "permutation_4":
-        return create_permutation_param([1, 2, 3, 4])
-    if kind == "serializable":
-        return create_ordinal_param([_Level(index) for index in range(_ORDINAL_SIZE)])
-    if kind == "in_set":
-        variable = Identifier("x")
-        return create_integer_param(
-            name=variable,
-            constraints=[
-                InSetConstraint(variable, range(10)),
-                NotInSetConstraint(variable, {3, 4}),
-                EquationConstraint(IdentifierExpression(variable) > 5),
-            ],
-        )
-    raise ValueError(kind)
+    return _PARAM_BUILDERS[kind]()
 
 
 @pytest.mark.parametrize(
