@@ -457,16 +457,18 @@ def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
 # =============================================================================
 # Id space bound
 #
-# Ids are unsigned 64-bit integers. A payload id must lie
-# below the cap `2**63`, so no payload can raise the counter past `2**63` and
-# exhaust the id space: fresh ids above the cap stay available.
+# Ids lie below `2**63`. A payload id below `2**62` advances the counter, and
+# one from `2**62` up to `2**63` is read only if this process issued it, so no
+# payload can raise the counter past `2**62`, and every fresh id reads back.
 # =============================================================================
 
 
 @pytest.mark.parametrize(
     "id_value",
-    [2**63, 2**63 + 1, 2**64 - 1, 2**64, 2**200],
+    [2**62, 2**63 - 1, 2**63, 2**63 + 1, 2**64 - 1, 2**64, 2**200],
     ids=[
+        "two-pow-62",
+        "just-below-two-pow-63",
         "two-pow-63",
         "just-above-two-pow-63",
         "two-pow-64-minus-one",
@@ -474,22 +476,31 @@ def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
         "two-pow-200",
     ],
 )
-def test_deserialize_id_at_or_above_2_pow_63_raises_value_error(
+def test_deserialize_a_foreign_id_at_or_above_2_pow_62_raises_value_error(
     id_value: int,
 ) -> None:
-    """Test deserializing an `id` of `2**63` or more raises a value error."""
+    """Test deserializing an `id` of `2**62` or more not issued here raises.
+
+    The message names both bounds.
+    """
     with pytest.raises(
         DeserializationValueError,
-        match=r'"Identifier"\. Expected a non-negative integer below 2\*\*63',
+        match=(
+            r'"Identifier"\. Expected a non-negative integer below 2\*\*62, '
+            r"or below 2\*\*63 if this process issued it"
+        ),
     ):
         Identifier.deserialize_from_dict({"id": id_value, "name_hint": "x"})
 
 
-def test_rejected_deserialization_of_2_pow_63_leaves_the_counter() -> None:
-    """Test rejecting the id `2**63` does not advance the counter."""
+@pytest.mark.parametrize("id_value", [2**62, 2**63])
+def test_rejected_deserialization_of_a_large_id_leaves_the_counter(
+    id_value: int,
+) -> None:
+    """Test rejecting the id `2**62` or `2**63` does not advance the counter."""
     base = Identifier("anchor").id
     with pytest.raises(DeserializationValueError):
-        Identifier.deserialize_from_dict({"id": 2**63, "name_hint": "x"})
+        Identifier.deserialize_from_dict({"id": id_value, "name_hint": "x"})
 
     assert Identifier("next").id == base + 1
 
@@ -498,24 +509,26 @@ _DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM = (
     "from fhy_core.identifier import Identifier\n"
     "from fhy_core.serialization import DeserializationValueError\n"
     "largest = Identifier.deserialize_from_dict("
-    "{'id': 2**63 - 1, 'name_hint': 'largest'})\n"
+    "{'id': 2**62 - 1, 'name_hint': 'largest'})\n"
     "print(largest.id, flush=True)\n"
+    "for id_value in (2**62, 2**63):\n"
+    "    try:\n"
+    "        Identifier.deserialize_from_dict({'id': id_value, 'name_hint': 'x'})\n"
+    "    except DeserializationValueError as error:\n"
+    "        print(type(error).__name__, flush=True)\n"
     "print(Identifier('first').id, Identifier('second').id, flush=True)\n"
-    "try:\n"
-    "    Identifier.deserialize_from_dict({'id': 2**63, 'name_hint': 'cap'})\n"
-    "except DeserializationValueError as error:\n"
-    "    print(type(error).__name__, flush=True)\n"
 )
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
 def test_deserializing_the_largest_payload_id_leaves_construction_working() -> None:
-    """Test a payload id of `2**63 - 1` leaves fresh ids to construct.
+    """Test a payload id of `2**62 - 1` leaves fresh ids to construct.
 
-    The child process deserializes the largest payload id, which leaves the
-    counter at `2**63`, constructs two identifiers, which take the next two
-    ids, and then fails to deserialize the cap itself.
+    The child process deserializes the largest id that advances the counter,
+    which leaves the counter at `2**62`, fails to deserialize `2**62`, which
+    it has not issued, and `2**63`, and constructs two identifiers, which
+    take the next two ids.
     """
     completed = subprocess.run(
         [sys.executable, "-c", _DECODE_THE_LARGEST_PAYLOAD_ID_PROGRAM],
@@ -526,10 +539,55 @@ def test_deserializing_the_largest_payload_id_leaves_construction_working() -> N
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
-        str(2**63 - 1),
-        f"{2**63} {2**63 + 1}",
+        str(2**62 - 1),
         "DeserializationValueError",
+        "DeserializationValueError",
+        f"{2**62} {2**62 + 1}",
     ]
+
+
+_ROUND_TRIP_AFTER_THE_LARGEST_PAYLOAD_PROGRAM = (
+    "import copy, pickle\n"
+    "from fhy_core.identifier import Identifier\n"
+    "from fhy_core.symbolic.expression import (\n"
+    "    Expression, IdentifierExpression, LiteralExpression,\n"
+    ")\n"
+    "from fhy_core.serialization import DeserializationValueError\n"
+    "for id_value in (2**63 - 1, 2**62 - 1):\n"
+    "    try:\n"
+    "        Identifier.deserialize_from_dict({'id': id_value, 'name_hint': 'x'})\n"
+    "    except DeserializationValueError:\n"
+    "        pass\n"
+    "k = Identifier('k')\n"
+    "expression = IdentifierExpression(k) + LiteralExpression(1)\n"
+    "print(k.id, flush=True)\n"
+    "print(Identifier.from_json(k.to_json()) == k, flush=True)\n"
+    "print(pickle.loads(pickle.dumps(k)) == k, flush=True)\n"
+    "print(copy.deepcopy(k) == k, flush=True)\n"
+    "rebuilt = Expression.from_json(expression.to_json())\n"
+    "print(rebuilt.is_structurally_equivalent(expression), flush=True)\n"
+)
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_an_identifier_created_after_the_largest_payload_round_trips() -> None:
+    """Test an identifier issued after a worst-case payload reads back.
+
+    The child process tries the largest payload ids below `2**63` and
+    `2**62`; only the second advances the counter. The next identifier's id
+    is then `2**62`, which this process issued, so JSON, pickle, deep copy
+    and an expression holding it all round-trip (audit probe `p25_idcap.py`).
+    """
+    completed = subprocess.run(
+        [sys.executable, "-c", _ROUND_TRIP_AFTER_THE_LARGEST_PAYLOAD_PROGRAM],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [str(2**62), "True", "True", "True", "True"]
 
 
 # =============================================================================

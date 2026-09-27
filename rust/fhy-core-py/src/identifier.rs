@@ -5,7 +5,8 @@
 //! counter itself, including its refusal to wrap and its cap on payload ids,
 //! lives in the pure-Rust core. A counter that cannot advance raises
 //! `RuntimeError("identifier id space exhausted")`, and advancing past an id
-//! outside `[0, 2**63)` raises `OverflowError`.
+//! outside `[0, 2**62)` that this process did not issue below `2**63`
+//! raises `OverflowError`.
 //!
 //! The Python `Identifier` stays a Python class (pattern P1), so a Rust
 //! value that holds an identifier converts it by id and name hint: into Rust
@@ -44,7 +45,7 @@ impl IntoPyErr for IdOutOfRange {
 /// # Errors
 ///
 /// Raises `RuntimeError`, leaving the counter unchanged, if the counter has
-/// reached `2**64 - 1`.
+/// reached `2**63`.
 #[pyfunction]
 pub(crate) fn allocate_identifier_id() -> PyResult<u64> {
     rust_identifier::try_allocate_id().into_py_result()
@@ -56,13 +57,21 @@ pub(crate) fn allocate_identifier_id() -> PyResult<u64> {
 /// # Errors
 ///
 /// Raises `OverflowError`, leaving the counter unchanged, if
-/// `identifier_id` is outside `[0, 2**63)`: `PyO3` rejects an id outside
-/// `[0, 2**64)` before the call, and the core rejects one at or above the
-/// cap `2**63`.
+/// `identifier_id` is outside the payload range: `PyO3` rejects an id
+/// outside `[0, 2**64)` before the call, and the core rejects one at or
+/// above `2**63`, or at or above `2**62` that this process did not issue.
 #[pyfunction]
 #[pyo3(signature = (identifier_id, /))]
 pub(crate) fn advance_identifier_counter_past(identifier_id: u64) -> PyResult<()> {
     rust_identifier::try_advance_counter_past(identifier_id).into_py_result()
+}
+
+/// Return the id the process-global counter issues next, so
+/// `Identifier.deserialize_from_dict` can tell an id this process issued at
+/// or above `2**62` from a foreign one before it touches the counter.
+#[pyfunction]
+pub(crate) fn next_identifier_id() -> u64 {
+    rust_identifier::next_id()
 }
 
 /// The Python `fhy_core.identifier.Identifier` class, which stays a Python
@@ -110,7 +119,9 @@ pub(crate) fn read_identifier_id(object: &Bound<'_, PyAny>) -> PyResult<Option<u
 /// # Errors
 ///
 /// Raises `TypeError` naming `owner` and `field` if `object` is not an
-/// `Identifier`, and `OverflowError` if its id is at or above `2**63`.
+/// `Identifier`, and `OverflowError` if its id is outside the payload range,
+/// which no `Identifier` built by this process's counter or deserialization
+/// is.
 pub(crate) fn restore_identifier(
     object: &Bound<'_, PyAny>,
     owner: &str,

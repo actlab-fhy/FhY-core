@@ -15,11 +15,19 @@
 //! advances the counter past it.
 //!
 //! A payload id, one read from a serialized identifier or handed to
-//! [`Identifier::try_restore`] or [`try_advance_counter_past`], must lie
-//! below [`ID_CAP`] (`2^63`), so exhausting the counter always takes `2^63`
-//! fresh identifiers. Fresh ids may exceed the cap. A payload id outside
-//! `0..ID_CAP` is rejected with the range it must lie in, wherever the
-//! identifier is nested, and leaves the counter unchanged.
+//! [`Identifier::try_restore`] or [`try_advance_counter_past`], has two
+//! bounds:
+//! - an id below [`ADVANCE_CAP`] (`2^62`) is accepted and advances the
+//!   counter past it, so a payload raises the counter to at most
+//!   `ADVANCE_CAP`;
+//! - an id in `ADVANCE_CAP..ID_CAP` (`2^62` to `2^63`) is accepted only if
+//!   this process issued it, that is, if it lies below the counter, and then
+//!   needs no advance;
+//! - any other id is rejected with [`IdOutOfRange`], wherever the identifier
+//!   is nested, and leaves the counter unchanged.
+//!
+//! The counter issues no id at or above [`ID_CAP`], so every fresh id reads
+//! back, and after a worst-case payload `2^62` fresh identifiers remain.
 
 use std::error::Error;
 use std::fmt;
@@ -41,13 +49,21 @@ use reserved::ReservedIdentifier;
 /// Matches the Python implementation: `fhy_core.identifier._RESERVED_ID_COUNT`.
 pub const RESERVED_ID_COUNT: u64 = 65_536;
 
-/// Exclusive upper bound of a payload id.
-///
-/// A deserialized or restored id must be below it, so a payload can raise
-/// the counter to at most `ID_CAP`. Fresh ids may exceed it.
+/// Exclusive upper bound of every id: the counter issues none at or above
+/// it, and no payload id at or above it is decoded or restored.
 ///
 /// Matches the Python implementation: `fhy_core.identifier._ID_CAP`.
 pub const ID_CAP: u64 = 1 << 63;
+
+/// Exclusive upper bound of a payload id that advances the counter.
+///
+/// A deserialized or restored id below it advances the counter past it, so
+/// a payload raises the counter to at most `ADVANCE_CAP`, and `2^62` fresh
+/// ids stay readable after any payload. An id from `ADVANCE_CAP` up to
+/// [`ID_CAP`] is accepted only if this process issued it.
+///
+/// Matches the Python implementation: `fhy_core.identifier._ADVANCE_CAP`.
+pub const ADVANCE_CAP: u64 = 1 << 62;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(RESERVED_ID_COUNT);
 
@@ -64,7 +80,9 @@ impl fmt::Display for IdSpaceExhausted {
 
 impl Error for IdSpaceExhausted {}
 
-/// Error for a payload id at or above [`ID_CAP`].
+/// Error for a payload id outside the accepted range: at or above
+/// [`ID_CAP`], or at or above [`ADVANCE_CAP`] and not issued by this
+/// process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IdOutOfRange {
@@ -84,7 +102,8 @@ impl fmt::Display for IdOutOfRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "identifier id {} is at or above the cap {ID_CAP}",
+            "identifier id {} is out of range: a payload id must be below {ADVANCE_CAP}, \
+             or below {ID_CAP} if this process issued it",
             self.id
         )
     }
@@ -92,7 +111,9 @@ impl fmt::Display for IdOutOfRange {
 
 impl Error for IdOutOfRange {}
 
-/// An id checked to lie below [`ID_CAP`], so one past it never overflows.
+/// An id checked to lie below [`ID_CAP`], the range a payload id's type
+/// admits; whether it is accepted also depends on the counter
+/// ([`advance_past`]).
 #[derive(Debug, Clone, Copy)]
 struct PayloadId(u64);
 
@@ -104,11 +125,6 @@ impl PayloadId {
             Err(IdOutOfRange { id })
         }
     }
-
-    /// Return the smallest counter value that never issues this id.
-    fn successor(self) -> u64 {
-        self.0 + 1
-    }
 }
 
 /// Process-globally unique, named compiler symbol.
@@ -116,8 +132,9 @@ impl PayloadId {
 /// Cloning is cheap: clones share the name hint's string.
 ///
 /// An identifier serializes as `{"id": .., "name_hint": ..}`. Deserializing
-/// one reads that shape, rejects an id at or above [`ID_CAP`], and advances
-/// the global counter past the id it restores.
+/// one reads that shape, rejects an id outside the payload range (see the
+/// [module docs](self)), and advances the global counter past the id it
+/// restores.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(try_from = "IdentifierWire")]
 pub struct Identifier {
@@ -131,8 +148,8 @@ impl Identifier {
     ///
     /// # Panics
     ///
-    /// Panics if the counter has reached `u64::MAX`. A payload raises the
-    /// counter to at most [`ID_CAP`], so that takes `2^63` fresh
+    /// Panics if the counter has reached [`ID_CAP`]. A payload raises the
+    /// counter to at most [`ADVANCE_CAP`], so that takes `2^62` fresh
     /// identifiers, and no input can cause it. [`try_new`](Self::try_new)
     /// returns an error instead.
     #[must_use]
@@ -146,7 +163,7 @@ impl Identifier {
     /// # Errors
     ///
     /// Returns [`IdSpaceExhausted`], leaving the counter unchanged, if the
-    /// counter has reached `u64::MAX`.
+    /// counter has reached [`ID_CAP`].
     pub fn try_new(name_hint: &str) -> Result<Self, IdSpaceExhausted> {
         Ok(Self {
             id: try_allocate_id()?,
@@ -156,7 +173,8 @@ impl Identifier {
 
     /// Restore an identifier from its parts, advancing the global counter
     /// past `id` as deserialization does, so `id` is never issued to a later
-    /// construction.
+    /// construction. An id at or above [`ADVANCE_CAP`] is restored only if
+    /// this process issued it, and needs no advance.
     ///
     /// For language bindings, which keep identifiers in their own objects
     /// and hand them to this crate by id and name hint. The restored
@@ -165,12 +183,13 @@ impl Identifier {
     /// # Errors
     ///
     /// Returns [`IdOutOfRange`], leaving the counter unchanged, if `id` is
-    /// at or above [`ID_CAP`].
+    /// at or above [`ID_CAP`], or at or above [`ADVANCE_CAP`] and not
+    /// issued by this process.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fhy_core::identifier::{ID_CAP, Identifier};
+    /// use fhy_core::identifier::{ADVANCE_CAP, ID_CAP, Identifier};
     ///
     /// let original = Identifier::new("x");
     /// let restored = Identifier::try_restore(original.id(), "x")?;
@@ -181,6 +200,9 @@ impl Identifier {
     ///
     /// let rejected = Identifier::try_restore(ID_CAP, "too far").unwrap_err();
     /// assert_eq!(rejected.id(), ID_CAP);
+    ///
+    /// let foreign = Identifier::try_restore(ADVANCE_CAP, "not issued here");
+    /// assert!(foreign.is_err());
     /// # Ok::<(), fhy_core::identifier::IdOutOfRange>(())
     /// ```
     pub fn try_restore(id: u64, name_hint: &str) -> Result<Self, IdOutOfRange> {
@@ -223,9 +245,20 @@ impl Identifier {
 ///
 /// # Errors
 ///
-/// Returns [`IdSpaceExhausted`] if the counter has reached `u64::MAX`.
+/// Returns [`IdSpaceExhausted`] if the counter has reached [`ID_CAP`].
 pub fn try_allocate_id() -> Result<u64, IdSpaceExhausted> {
     take_next_id(&NEXT_ID)
+}
+
+/// Return the id the process-global counter issues next.
+///
+/// For language bindings, which check a payload id before restoring it: an
+/// id at or above [`ADVANCE_CAP`] and below this one was issued by this
+/// process. Another thread may draw ids at any time, so the answer is a
+/// lower bound of the counter from then on.
+#[must_use]
+pub fn next_id() -> u64 {
+    NEXT_ID.load(Ordering::Relaxed)
 }
 
 /// Advance the process-global counter so the payload id `id` is never
@@ -238,27 +271,38 @@ pub fn try_allocate_id() -> Result<u64, IdSpaceExhausted> {
 /// # Errors
 ///
 /// Returns [`IdOutOfRange`], leaving the counter unchanged, if `id` is at or
-/// above [`ID_CAP`].
+/// above [`ID_CAP`], or at or above [`ADVANCE_CAP`] and not issued by this
+/// process.
 pub fn try_advance_counter_past(id: u64) -> Result<(), IdOutOfRange> {
     advance_past(&NEXT_ID, id)
 }
 
 /// Return `counter`'s current value and advance it by one.
 ///
-/// At `u64::MAX` this fails and leaves `counter` unchanged instead of
-/// wrapping, since a wrapped counter would re-issue live ids.
+/// At [`ID_CAP`] this fails and leaves `counter` unchanged, so no id it
+/// issues is refused as a payload id, and it never wraps.
 fn take_next_id(counter: &AtomicU64) -> Result<u64, IdSpaceExhausted> {
     counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next_id| {
-            next_id.checked_add(1)
+            (next_id < ID_CAP).then(|| next_id + 1)
         })
         .map_err(|_exhausted_value| IdSpaceExhausted)
 }
 
+/// Accept the payload id `id` against `counter`: below [`ADVANCE_CAP`],
+/// advance `counter` past it; below [`ID_CAP`], accept it only if `counter`
+/// has already issued it, which needs no advance; otherwise refuse it.
+///
+/// The counter only grows, so an id found below it stays below it.
 fn advance_past(counter: &AtomicU64, id: u64) -> Result<(), IdOutOfRange> {
-    let id = PayloadId::new(id)?;
-    counter.fetch_max(id.successor(), Ordering::Relaxed);
-    Ok(())
+    if id < ADVANCE_CAP {
+        counter.fetch_max(id + 1, Ordering::Relaxed);
+        Ok(())
+    } else if id < ID_CAP && id < counter.load(Ordering::Relaxed) {
+        Ok(())
+    } else {
+        Err(IdOutOfRange { id })
+    }
 }
 
 impl PartialEq for Identifier {
@@ -325,7 +369,9 @@ impl Visitor<'_> for PayloadIdVisitor {
 /// The decoded wire form of an [`Identifier`].
 ///
 /// Decoding it rejects an id at or above [`ID_CAP`] without touching the
-/// counter; converting it into an [`Identifier`] restores the id.
+/// counter; converting it into an [`Identifier`] restores the id, which
+/// also refuses an id at or above [`ADVANCE_CAP`] this process did not
+/// issue.
 #[derive(Deserialize)]
 #[serde(
     rename = "Identifier",
@@ -544,42 +590,79 @@ mod tests {
     }
 
     #[test]
-    fn take_next_id_issues_the_last_id_below_u64_max() {
-        let counter = AtomicU64::new(u64::MAX - 1);
-        assert_eq!(take_next_id(&counter), Ok(u64::MAX - 1));
-        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    fn take_next_id_issues_the_last_id_below_the_cap() {
+        let counter = AtomicU64::new(ID_CAP - 1);
+        assert_eq!(take_next_id(&counter), Ok(ID_CAP - 1));
+        assert_eq!(counter.load(Ordering::Relaxed), ID_CAP);
     }
 
-    #[test]
-    fn take_next_id_refuses_to_wrap_at_u64_max() {
-        let counter = AtomicU64::new(u64::MAX);
+    /// Test the counter issues no id at or above the cap, so every fresh id
+    /// is readable as a payload id, and fails without moving.
+    #[rstest]
+    #[case::the_cap(ID_CAP)]
+    #[case::u64_max(u64::MAX)]
+    fn take_next_id_refuses_at_the_cap(#[case] start: u64) {
+        let counter = AtomicU64::new(start);
         assert_eq!(take_next_id(&counter), Err(IdSpaceExhausted));
-        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        assert_eq!(counter.load(Ordering::Relaxed), start);
     }
 
     #[test]
     fn advance_past_raises_the_counter_to_one_past_the_id() {
         let counter = AtomicU64::new(0);
-        assert_eq!(advance_past(&counter, ID_CAP - 1), Ok(()));
-        assert_eq!(counter.load(Ordering::Relaxed), ID_CAP);
+        assert_eq!(advance_past(&counter, ADVANCE_CAP - 1), Ok(()));
+        assert_eq!(counter.load(Ordering::Relaxed), ADVANCE_CAP);
     }
 
-    /// Test advancing past an id at or above the cap fails, naming the id,
-    /// and leaves the counter unchanged.
+    /// Test advancing past an id at or above the advance cap that the
+    /// counter has not issued fails, naming the id, and leaves the counter
+    /// unchanged.
     #[rstest]
+    #[case::the_advance_cap(ADVANCE_CAP)]
+    #[case::just_below_the_cap(ID_CAP - 1)]
     #[case::the_cap(ID_CAP)]
     #[case::u64_max(u64::MAX)]
-    fn advance_past_rejects_an_id_at_or_above_the_cap(#[case] id: u64) {
-        let counter = AtomicU64::new(7);
+    fn advance_past_rejects_an_id_it_did_not_issue_at_or_above_the_advance_cap(#[case] id: u64) {
+        let counter = AtomicU64::new(ADVANCE_CAP);
         assert_eq!(advance_past(&counter, id), Err(IdOutOfRange { id }));
-        assert_eq!(counter.load(Ordering::Relaxed), 7);
+        assert_eq!(counter.load(Ordering::Relaxed), ADVANCE_CAP);
+    }
+
+    /// Test an id the counter issued above the advance cap, after a payload
+    /// raised it there, is accepted without moving the counter, so it
+    /// round-trips, while the next id, not yet issued, is refused.
+    #[test]
+    fn an_id_issued_here_above_the_advance_cap_round_trips() {
+        let counter = AtomicU64::new(RESERVED_ID_COUNT);
+        assert_eq!(advance_past(&counter, ADVANCE_CAP - 1), Ok(()));
+        let issued = take_next_id(&counter).expect("the counter is below the cap");
+
+        assert_eq!(issued, ADVANCE_CAP);
+        assert_eq!(advance_past(&counter, issued), Ok(()));
+        assert_eq!(counter.load(Ordering::Relaxed), ADVANCE_CAP + 1);
+        assert_eq!(
+            advance_past(&counter, issued + 1),
+            Err(IdOutOfRange { id: issued + 1 })
+        );
+    }
+
+    /// Test an id at or above the cap is refused even by a counter that has
+    /// moved past it, which only a counter started there can have.
+    #[test]
+    fn advance_past_rejects_an_id_at_the_cap_whatever_the_counter() {
+        let counter = AtomicU64::new(u64::MAX);
+        assert_eq!(
+            advance_past(&counter, ID_CAP),
+            Err(IdOutOfRange { id: ID_CAP })
+        );
     }
 
     #[test]
-    fn id_out_of_range_displays_the_id_and_the_cap() {
+    fn id_out_of_range_displays_the_id_and_both_bounds() {
         assert_eq!(
             IdOutOfRange { id: ID_CAP }.to_string(),
-            "identifier id 9223372036854775808 is at or above the cap 9223372036854775808"
+            "identifier id 9223372036854775808 is out of range: a payload id must be below \
+             4611686018427387904, or below 9223372036854775808 if this process issued it"
         );
     }
 
@@ -591,6 +674,22 @@ mod tests {
     #[test]
     fn the_cap_is_two_to_the_sixty_third() {
         assert_eq!(ID_CAP, 9_223_372_036_854_775_808);
+    }
+
+    #[test]
+    fn the_advance_cap_is_two_to_the_sixty_second() {
+        assert_eq!(ADVANCE_CAP, 4_611_686_018_427_387_904);
+    }
+
+    #[test]
+    fn next_id_is_the_id_the_counter_issues_next() {
+        // Another test's thread may draw an id in between, so only the
+        // order is fixed.
+        let before = Identifier::new("next-id-anchor").id();
+        let next = next_id();
+        let after = Identifier::new("next-id-anchor").id();
+
+        assert!(before < next && next <= after, "{before} {next} {after}");
     }
 
     /// Reference id counter: a plain next id that allocation hands out and
@@ -638,7 +737,7 @@ mod tests {
         /// for any sequence of allocations and advances.
         #[test]
         fn counter_issues_the_reference_counters_relative_ids_for_any_operation_sequence(
-            start in 0..ID_CAP - 1024,
+            start in 0..ADVANCE_CAP - 1024,
             operations in prop::collection::vec(prop::option::of(0..=500_u64), 0..=20),
         ) {
             let counter = AtomicU64::new(start);
@@ -784,6 +883,31 @@ mod tests {
             format!("invalid value: integer `{id}`, expected an id from 0 to 9223372036854775807");
 
         path.assert_rejected_with(id, &expected);
+    }
+
+    /// Test that serde rejects an id at or above the advance cap that this
+    /// process has not issued, naming both bounds, whichever payload the
+    /// identifier is nested in, and leaves the counter below the advance cap.
+    #[rstest]
+    fn serde_rejects_a_foreign_id_at_or_above_the_advance_cap(
+        #[values(
+            IdentifierPath::Text,
+            IdentifierPath::Value,
+            IdentifierPath::NoteKind,
+            IdentifierPath::OpAttribute,
+            IdentifierPath::ValueDomainParent,
+            IdentifierPath::Expression
+        )]
+        path: IdentifierPath,
+        #[values("4611686018427387904", "9223372036854775807")] id: &str,
+    ) {
+        let expected = format!(
+            "identifier id {id} is out of range: a payload id must be below \
+             4611686018427387904, or below 9223372036854775808 if this process issued it"
+        );
+
+        path.assert_rejected_with(id, &expected);
+        assert!(Identifier::new("after-a-foreign-id").id() < ADVANCE_CAP);
     }
 
     /// Test that serde rejects an integer beyond `u64`, which a format reads

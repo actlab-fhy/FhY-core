@@ -109,11 +109,11 @@ onto `dev-rust` before continuing.
 
 ### Track E: `binding` (the binding and the Python package; lands 5th, last)
 
-- [ ] E0: worktree `port/fix2-binding` created; the baseline gates recorded
+- [x] E0: worktree `port/fix2-binding` created; the baseline gates recorded (the worktree is `fix-e-binding`, branch `fix/e-binding`, from `dev-rust` at `35519bb`; see the Track E notes)
 - [ ] R2-N5 (xdist stall): reproduce or clear the 99% stall; account for the missing tests
 - [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails (`44a2c00`)
 - [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
-- [ ] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python
+- [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python
 - [ ] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
 - [ ] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
 - [ ] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented
@@ -4119,6 +4119,29 @@ base is `03fb9e4`, Tracks A, D and B landed):
 
 ### Track E notes
 
+**E0: the worktree and the baseline.** The maintainer created the worktree
+as `~/Projects/FhY-core-worktrees/fix-e-binding`, on branch
+`fix/e-binding`, from `dev-rust` at `35519bb`, after Tracks A and D landed;
+the names are the only difference from §I.2 rule 7. Its `.venv` is its own
+(`uv sync --group dev --group bench`), and its `target/gate-env.sh` points
+`CARGO_TARGET_DIR` at `target/gate-cargo`. A `git archive 35519bb` copy
+with its own `.venv`, `target/base-src`, serves the "before" runs and the
+check that each bug's new tests fail at the base. The baseline at
+`35519bb`:
+
+| Gate | Result at `35519bb` |
+|---|---|
+| `cargo test --workspace` | 4,565 passed, 2 ignored |
+| `cargo test --workspace --all-features` | 4,601 passed, 2 ignored |
+| `cargo test -p fhy-core` with no Python environment | 4,363 passed, 2 ignored |
+| fmt; clippy `-D warnings`, both ways and `fhy-core` alone three ways | clean |
+| `cargo doc` `-D warnings`: the workspace, `fhy-core` alone, with `z3`, with `ndarray` | clean |
+| `cargo deny check`; `cargo package` | clean |
+| `cargo +1.85 check`, workspace lib and `fhy-core --all-targets` three ways (`-D warnings`) | clean |
+| `pytest tests` | 8,313 passed, 2 xfailed, 66 warnings (the V1 ones) |
+
+The other Python gates are Track D's status line, on the same code.
+
 **R2-N4.**
 - **The list.** At the base (`35519bb`), `pytest tests` with both V1
   warnings as errors failed 65 tests in 13 files (the audit's 64, plus one
@@ -4150,3 +4173,41 @@ base is `03fb9e4`, Tracks A, D and B landed):
   | Before | After | Tests |
   |---|---|---|
   | the V1 warnings said "will be removed in a later release (0.4.0 is proposed)" | "will be removed in 0.3.0" | `test_the_v1_warnings_name_the_release_that_removes_v1` |
+
+**R2-002.**
+- **The rule (J-1)** lives in one crate-private function, `advance_past`,
+  which `try_restore`, `try_advance_counter_past` and serde's `try_from`
+  all reach: below `ADVANCE_CAP` it advances the counter; below `ID_CAP`
+  it accepts an id below the counter without moving it; otherwise
+  `IdOutOfRange`. The counter only grows, so an id found below it stays
+  below it, and the check needs no lock. `take_next_id` refuses at
+  `ID_CAP`, so `Identifier::new` panics, and `try_allocate_id` fails, once
+  the counter reaches `2^63`.
+- **The texts.** `IdOutOfRange`'s `Display` names both bounds: "identifier
+  id N is out of range: a payload id must be below 4611686018427387904, or
+  below 9223372036854775808 if this process issued it"; Python's
+  `OverflowError` carries it. The visitor's type-level refusal of an id at
+  or above `ID_CAP` keeps its "expected an id from 0 to …" text, so a
+  foreign id below `ID_CAP` is refused by the conversion, with the
+  `IdOutOfRange` text, along every nesting path.
+- **`next_id` (call).** The Python field check needs the counter, so the
+  core gains `identifier::next_id()`, documented for bindings, and the
+  binding `_rs.next_identifier_id()`. Python reads it only for an id at or
+  above `2**62`, so ordinary deserialization makes no extra call.
+- **`id_cap_decode`** moves the counter to `ADVANCE_CAP`: it decodes
+  `ADVANCE_CAP - 1`, refuses a foreign `ADVANCE_CAP`, round-trips the next
+  fresh identifier (`ADVANCE_CAP`) through JSON and postcard, and refuses
+  `ID_CAP - 1`. Its rustdoc says why it still needs its own process.
+- **Test-first.** At the base, the new unit and path stories failed (a
+  foreign `2^62` decoded and advanced the counter, after which every
+  later round trip in the binary failed, F2-002 itself), as did
+  `id_cap_decode` and 35 Python tests, the subprocess round trip after the
+  largest payload included.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `Identifier.deserialize_from_dict` read any id below `2**63` and advanced the counter past it; after `2**63 - 1`, every fresh identifier failed to read back | an id below `2**62` advances the counter; one from `2**62` up to `2**63` reads only if this process issued it, else `DeserializationValueError` "Expected a non-negative integer below 2**62, or below 2**63 if this process issued it" | `test_deserialize_a_foreign_id_at_or_above_2_pow_62_raises_value_error`, `test_rejected_deserialization_of_a_large_id_leaves_the_counter`, `test_deserializing_the_largest_payload_id_leaves_construction_working` (updated), `test_an_identifier_created_after_the_largest_payload_round_trips` (new, subprocess) |
+  | `_rs.advance_identifier_counter_past` accepted any id below `2**63`, and its `OverflowError` read "identifier id N is at or above the cap …" | it refuses a foreign id from `2**62`, and the text names both bounds | `test_counter_advancing_past_a_foreign_id_at_or_above_2_pow_62_raises` |
+  | construction failed only at `2**64 - 1` | it fails once the counter reaches `2**63` | the Rust unit tests (no Python test reaches it) |
+  | none | `_rs.next_identifier_id()` | `test_next_identifier_id_is_the_id_the_counter_issues_next` |

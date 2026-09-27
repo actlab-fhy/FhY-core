@@ -69,7 +69,9 @@ mod rs_module {
         try_get_registered_result_sort,
     };
     #[pymodule_export]
-    use super::identifier::{advance_identifier_counter_past, allocate_identifier_id};
+    use super::identifier::{
+        advance_identifier_counter_past, allocate_identifier_id, next_identifier_id,
+    };
     #[pymodule_export]
     use super::lattice::{PyLattice, PyPartiallyOrderedSet};
     #[pymodule_export]

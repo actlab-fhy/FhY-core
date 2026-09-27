@@ -43,9 +43,15 @@ from .traits.frozen import FrozenMixin
 # counter starts here. Matches the Rust implementation:
 # `fhy_core::identifier::RESERVED_ID_COUNT`.
 _RESERVED_ID_COUNT: Final[int] = 65_536
-# Exclusive upper bound of a payload id, so no payload can raise the counter
-# past it. Matches the Rust implementation: `fhy_core::identifier::ID_CAP`.
+# Exclusive upper bound of every id: the counter issues none at or above it,
+# and no payload id at or above it is read. Matches the Rust implementation:
+# `fhy_core::identifier::ID_CAP`.
 _ID_CAP: Final[int] = 2**63
+# Exclusive upper bound of a payload id that advances the counter, so no
+# payload can raise the counter past it; an id from here up to `_ID_CAP` is
+# read only if this process issued it. Matches the Rust implementation:
+# `fhy_core::identifier::ADVANCE_CAP`.
+_ADVANCE_CAP: Final[int] = 2**62
 
 
 class _ReservedIdentifier(NamedTuple):
@@ -108,6 +114,8 @@ def _is_utf8_encodable(text: str) -> bool:
 # Bound once, so a construction skips the module attribute lookups.
 _allocate_id: Callable[[], int] = _rs.allocate_identifier_id
 _advance_counter_past: Callable[[int], None] = _rs.advance_identifier_counter_past
+_next_id: Callable[[], int] = _rs.next_identifier_id
+
 
 
 @final
@@ -132,13 +140,15 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     identifier through deserialization, so they advance the counter the
     same way. A pickle holds only the id and the name hint.
 
-    Ids are unsigned 64-bit integers. Deserialization accepts an int ``id``
-    with ``0 <= id < 2**63`` and raises ``DeserializationValueError`` for any
-    other int before it touches the counter, so no payload can raise the
-    counter past ``2**63`` and exhaust it. Construction still raises
+    Ids are non-negative integers below ``2**63``. Deserialization accepts
+    an int ``id`` with ``0 <= id < 2**62``, which advances the counter, or
+    an ``id`` below ``2**63`` that this process issued, and raises
+    ``DeserializationValueError`` for any other int before it touches the
+    counter. So no payload can raise the counter past ``2**62``, and every
+    id the counter issues reads back. Construction raises
     ``RuntimeError("identifier id space exhausted")``, and leaves the
-    counter unchanged, once ``2**64 - 2`` has been issued, which
-    only a counter started near the end of the id space can reach.
+    counter unchanged, once the counter reaches ``2**63``, which takes
+    ``2**62`` constructions after any payload.
 
     A name hint must be a ``str`` encodable as UTF-8: construction raises
     ``TypeError`` for any other type and ``ValueError`` for a string holding
@@ -197,9 +207,18 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
             raise DeserializationValueError(
                 cls, "id", "a non-negative integer", data["id"]
             )
-        if data["id"] >= _ID_CAP:
+        # An id below 2**62 advances the counter; one below 2**63 is read only
+        # if this process issued it, below the counter. Matches the Rust
+        # implementation: `fhy_core::identifier::try_advance_counter_past`.
+        if data["id"] >= _ADVANCE_CAP and not (
+            data["id"] < _ID_CAP and data["id"] < _next_id()
+        ):
             raise DeserializationValueError(
-                cls, "id", "a non-negative integer below 2**63", data["id"]
+                cls,
+                "id",
+                "a non-negative integer below 2**62, "
+                "or below 2**63 if this process issued it",
+                data["id"],
             )
         if not _is_utf8_encodable(data["name_hint"]):
             raise DeserializationValueError(

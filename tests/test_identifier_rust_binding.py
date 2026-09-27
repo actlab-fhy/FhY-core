@@ -65,23 +65,36 @@ def test_counter_advance_does_not_rewind() -> None:
     assert _rs.allocate_identifier_id() == last + 1
 
 
-@pytest.mark.parametrize("identifier_id", [2**63, 2**64 - 1])
-def test_counter_advancing_past_an_id_at_or_above_the_cap_raises_overflow_error(
+@pytest.mark.parametrize("identifier_id", [2**62, 2**63 - 1, 2**63, 2**64 - 1])
+def test_counter_advancing_past_a_foreign_id_at_or_above_2_pow_62_raises(
     identifier_id: int,
 ) -> None:
-    """Test advancing past an id in `[2**63, 2**64)` raises, counter unchanged."""
+    """Test advancing past an id in `[2**62, 2**64)` not issued here raises.
+
+    It raises `OverflowError` naming both bounds, and leaves the counter
+    unchanged.
+    """
     base = _rs.allocate_identifier_id()
 
     with pytest.raises(
         OverflowError,
         match=(
-            f"^identifier id {identifier_id} is at or above the cap "
-            "9223372036854775808$"
+            f"^identifier id {identifier_id} is out of range: a payload id must "
+            "be below 4611686018427387904, or below 9223372036854775808 if this "
+            "process issued it$"
         ),
     ):
         _rs.advance_identifier_counter_past(identifier_id)
 
     assert _rs.allocate_identifier_id() == base + 1
+
+
+def test_next_identifier_id_is_the_id_the_counter_issues_next() -> None:
+    """Test the counter's next id lies after the last id drawn from it."""
+    drawn = _rs.allocate_identifier_id()
+    peeked = _rs.next_identifier_id()
+
+    assert drawn < peeked <= _rs.allocate_identifier_id()
 
 
 @pytest.mark.parametrize(

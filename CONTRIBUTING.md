@@ -450,9 +450,12 @@ solver after replacing it.
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
 a fixed id in the crate-private reserved table. The counter issues fresh
-ids from 65,536 upward, and no
-payload id at or above `ID_CAP` (2^63) is decoded or restored, so no
-payload can exhaust the counter. A newly shipped identifier takes an unused
+ids from 65,536 upward and never at or above `ID_CAP` (2^63). A payload id
+below `ADVANCE_CAP` (2^62) is decoded or restored and advances the counter
+past it; one from `ADVANCE_CAP` up to `ID_CAP` is decoded only if this
+process issued it, so it needs no advance; any other is refused. So no
+payload can raise the counter past 2^62, and every fresh id, even one
+issued after a worst-case payload, reads back. A newly shipped identifier takes an unused
 id from the reserved table rather than drawing one from the counter.
 
 ### Serialization is plain serde
@@ -678,7 +681,7 @@ state further than an ordinary test tolerates, is its own test target, a
 file `tests/<name>.rs` beside `tests/it/` with exactly one `#[test]` and a
 comment saying why, and it is added to the target list the CI `rust` job
 checks. Today there is one: `id_cap_decode`, which moves the id counter
-to `ID_CAP`. Nothing re-executes a test binary to get a fresh process; a
+to `ADVANCE_CAP`. Nothing re-executes a test binary to get a fresh process; a
 test that needs a process without SymPy is a Python subprocess test
 (`test_missing_sympy_reports_unavailable`).
 

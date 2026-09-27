@@ -45,6 +45,11 @@ behavior is kept only where a concept is defined in both languages at once:
   - Identifier ids stay exact across serialization.
   - Built-in tags get fixed reserved ids (0..1024), and payload ids are
     capped below 2^63, so no input can exhaust the id space.
+    - **Revised (R2-002, 2026-09-27):** a payload id advances the counter
+      only below 2^62 (`ADVANCE_CAP`); one from 2^62 up to 2^63 is read
+      only if this process issued it, and the counter issues no id at or
+      above 2^63, so every fresh id reads back after any payload
+      (`docs/design/rust-port-fixes.md` J-1).
   - The id counter and the intern registries stay process-global and
     append-only, and cannot be cleared.
 - **Layering.** There are no dependency cycles:
@@ -206,6 +211,15 @@ the Part II text, this table governs; each such difference is also listed in
   `CustomError`, `BackendError`, `PassFailure`), so `types` and `evaluate`
   no longer import the pattern module for it. See
   `docs/design/rust-port-fixes.md` R2-007.
+- **Revised (R2-002, 2026-09-27), D-3:** there are two bounds (J-1 of
+  `docs/design/rust-port-fixes.md`). `_advance_counter_past` (both
+  backends) raises `OverflowError` for an id at or above 2^62 that this
+  process did not issue below 2^63, with the text "identifier id N is out
+  of range: a payload id must be below 4611686018427387904, or below
+  9223372036854775808 if this process issued it"; public deserialization
+  raises `DeserializationValueError` "a non-negative integer below 2**62,
+  or below 2**63 if this process issued it". Construction fails once the
+  counter reaches 2^63.
 - **Revised (R2-005a, 2026-09-27), D-19:** the published crate ships no
   Python file at all. S12 had added the SymPy prelude,
   `src/solver/sympy/prelude.py`, to the package list; it moved with the
