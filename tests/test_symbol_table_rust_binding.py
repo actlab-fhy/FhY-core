@@ -870,3 +870,85 @@ def test_a_raising_frame_comparison_propagates() -> None:
 
     with pytest.raises(RuntimeError, match="cannot compare"):
         left.is_structurally_equivalent(right)
+
+
+# ---------------------------------------------------------------------------
+# Re-entrant reads (R2-044)
+# ---------------------------------------------------------------------------
+
+
+_REENTRANT_TABLE: list[SymbolTable] = []
+"""The table a re-entrant frame reads while it is being added to it."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _ReentrantFrame(SymbolTableFrame):
+    """A frame whose `name` reads, and may change, the table it joins."""
+
+    @override
+    def __getattribute__(self, attribute: str) -> Any:
+        if attribute == "name" and _REENTRANT_TABLE:
+            table = _REENTRANT_TABLE[0]
+            table.get_number_of_namespaces()
+            if not table.is_namespace_defined(_identifier("side", 2)):
+                table.add_namespace(_identifier("side", 2))
+        return object.__getattribute__(self, attribute)
+
+
+def test_a_frame_whose_name_reads_the_table_is_added() -> None:
+    """Test `add_symbol` reads a frame's `name` before borrowing the table.
+
+    The frame's `name` reads the table and adds a namespace to it, which
+    both succeed, and the table then holds both the symbol and the new
+    namespace.
+    """
+    table = SymbolTable()
+    namespace, symbol = _identifier("ns", 0), _identifier("x", 1)
+    table.add_namespace(namespace)
+    _REENTRANT_TABLE.append(table)
+    try:
+        table.add_symbol(namespace, symbol, _ReentrantFrame(symbol))
+    finally:
+        _REENTRANT_TABLE.clear()
+
+    assert table.is_symbol_defined_in_namespace(namespace, symbol)
+    assert table.is_namespace_defined(_identifier("side", 2))
+    assert table.get_number_of_namespaces() == 2
+
+
+def test_a_non_identifier_whose_class_reads_the_table_is_refused_by_type() -> None:
+    """Test `add_namespace` checks its argument before borrowing the table.
+
+    Reading the argument's `__class__` reads the table, which succeeds, and
+    the argument is then refused with the `TypeError` of a non-identifier.
+    """
+    table = SymbolTable()
+
+    class Impostor:
+        @property  # type: ignore[misc]
+        def __class__(self) -> type:  # type: ignore[override]
+            table.get_number_of_namespaces()
+            return object
+
+    with pytest.raises(TypeError, match="must be an Identifier"):
+        table.add_namespace(Impostor())  # type: ignore[arg-type]
+
+
+def test_structural_equivalence_runs_frame_hooks_under_no_borrow() -> None:
+    """Test a frame's `is_structurally_equivalent` may change either table."""
+    left, right = _pair_table(), _pair_table()
+
+    @dataclasses.dataclass(frozen=True)
+    class MutatingFrame(SymbolTableFrame):
+        @override
+        def is_structurally_equivalent(self, other: object) -> bool:
+            if not left.is_namespace_defined(_identifier("side", 2)):
+                left.add_namespace(_identifier("side", 2))
+            return isinstance(other, MutatingFrame)
+
+    symbol = _identifier("y", 3)
+    left.add_symbol(_identifier("ns", 0), symbol, MutatingFrame(symbol))
+    right.add_symbol(_identifier("ns", 0), symbol, MutatingFrame(symbol))
+
+    assert left.is_structurally_equivalent(right)
+    assert left.is_namespace_defined(_identifier("side", 2))

@@ -185,8 +185,11 @@ pub(crate) struct PySymbolTable {
 
 impl PySymbolTable {
     /// Add `namespace_name` under `parent_namespace_name`, without logging.
+    ///
+    /// Both are read before the table is borrowed, so a Python read they
+    /// run may read the table (R2-044).
     fn insert_namespace_checked(
-        &mut self,
+        slf: &Bound<'_, Self>,
         namespace_name: &Bound<'_, PyAny>,
         parent_namespace_name: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
@@ -195,13 +198,18 @@ impl PySymbolTable {
             .filter(|parent| !parent.is_none())
             .map(|parent| read_identifier(parent, "parent_namespace_name"))
             .transpose()?;
-        self.namespace_dicts.remove(&namespace.id());
-        self.table.add_namespace(namespace, parent).map_err(raise)
+        let mut this = slf.borrow_mut();
+        this.namespace_dicts.remove(&namespace.id());
+        this.table.add_namespace(namespace, parent).map_err(raise)
     }
 
     /// Add `symbol_name` to `namespace_name`, without logging.
+    ///
+    /// The identifiers and the entry, whose frame's `name` a Python-defined
+    /// frame answers, are read before the table is borrowed, so that read
+    /// may read or change the table (R2-044).
     fn insert_symbol_checked(
-        &mut self,
+        slf: &Bound<'_, Self>,
         namespace_name: &Bound<'_, PyAny>,
         symbol_name: &Bound<'_, PyAny>,
         frame: &Bound<'_, PyAny>,
@@ -209,8 +217,9 @@ impl PySymbolTable {
         let namespace = read_identifier(namespace_name, "namespace_name")?;
         let symbol = read_identifier(symbol_name, "symbol_name")?;
         let entry = Entry::new(symbol_name, frame)?;
-        self.namespace_dicts.remove(&namespace.id());
-        self.table
+        let mut this = slf.borrow_mut();
+        this.namespace_dicts.remove(&namespace.id());
+        this.table
             .add_symbol(&namespace, symbol, entry)
             .map_err(raise)
     }
@@ -264,8 +273,7 @@ impl PySymbolTable {
         parent_namespace_name: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let py = slf.py();
-        slf.borrow_mut()
-            .insert_namespace_checked(namespace_name, parent_namespace_name)?;
+        Self::insert_namespace_checked(slf, namespace_name, parent_namespace_name)?;
         let parent = parent_namespace_name.map_or_else(|| py.None().into_bound(py), Clone::clone);
         log_debug(
             py,
@@ -395,8 +403,7 @@ impl PySymbolTable {
         frame: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
         let py = slf.py();
-        slf.borrow_mut()
-            .insert_symbol_checked(namespace_name, symbol_name, frame)?;
+        Self::insert_symbol_checked(slf, namespace_name, symbol_name, frame)?;
         log_debug(
             py,
             "added symbol %s to namespace %s (frame=%s)",
@@ -506,13 +513,20 @@ impl PySymbolTable {
     /// Return whether `other` is a table with the same namespaces, parents
     /// and symbols, whose frames are structurally equivalent; the orders do
     /// not count.
-    fn is_structurally_equivalent(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+    ///
+    /// The frames' own `is_structurally_equivalent` runs over copies of the
+    /// two tables, under no borrow, so it may read or change either table.
+    fn is_structurally_equivalent(
+        slf: &Bound<'_, Self>,
+        other: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
         let py = other.py();
         let Ok(other) = other.cast::<Self>() else {
             return Ok(false);
         };
-        let other = other.try_borrow()?;
-        self.table.is_equivalent_by(&other.table, |left, right| {
+        let this = slf.borrow().table.clone();
+        let other = other.try_borrow()?.table.clone();
+        this.is_equivalent_by(&other, |left, right| {
             left.is_structurally_equivalent(py, right)
         })
     }
@@ -521,20 +535,23 @@ impl PySymbolTable {
     /// frame in its own form: the core's serde under V2, written in one
     /// pass, and each frame's own V1 payload inside
     /// `wire_version(WireVersion.V1)`.
-    fn serialize_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    ///
+    /// A Python-defined frame's hooks run over a copy of the table, under no
+    /// borrow.
+    fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
         if !crate::wire::is_writing_v1(py)? {
-            let data =
-                fhy_core::symbol_table::wire::SymbolTableData::of(
-                    &self.table,
-                    |entry| match &entry.0.native {
-                        Some(frame) => fhy_core::symbol_table::wire::SymbolFrameData::of(frame)
-                            .map_err(|error| crate::wire::foreign_error(py, &error)),
-                        None => super::frames::frame_wire_data(entry.frame(py)),
-                    },
-                )?;
+            let table = slf.borrow().table.clone();
+            let data = fhy_core::symbol_table::wire::SymbolTableData::of(&table, |entry| {
+                match &entry.0.native {
+                    Some(frame) => fhy_core::symbol_table::wire::SymbolFrameData::of(frame)
+                        .map_err(|error| crate::wire::foreign_error(py, &error)),
+                    None => super::frames::frame_wire_data(entry.frame(py)),
+                }
+            })?;
             return crate::wire::to_dict(py, &data);
         }
-        Ok(self.serialize_v1(py)?.into_any())
+        Ok(Self::serialize_v1(slf)?.into_any())
     }
 
     /// Return the table a payload describes: every namespace is added, then
@@ -720,9 +737,11 @@ impl PySymbolTable {
     ///
     /// V1: removed with the V1 wire format; its shape is V2's but for the
     /// frames' envelopes.
-    fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn serialize_v1<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyDict>> {
+        let py = slf.py();
+        let table = slf.borrow().table.clone();
         let namespaces = PyList::empty(py);
-        for namespace in self.table.namespaces() {
+        for namespace in table.namespaces() {
             let symbols = PyList::empty(py);
             for (symbol, entry) in namespace.iter() {
                 let item = PyDict::new(py);

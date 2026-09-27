@@ -114,8 +114,8 @@ onto `dev-rust` before continuing.
 - [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails (`44a2c00`)
 - [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
 - [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python (`6f57090`; its extra blank line, which `ruff format` refuses, fixed forward in the next commit)
-- [x] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
-- [ ] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
+- [x] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy (`047f6ea`)
+- [x] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
 - [ ] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented
 - [ ] R2-041 (F2-041): diagnostics read through their report
 - [ ] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members
@@ -4238,3 +4238,33 @@ The other Python gates are Track D's status line, on the same code.
   | `pickle`, `copy.copy` and `copy.deepcopy` of a `PartiallyOrderedSet` or `Lattice` raised `TypeError` | they round-trip, subclasses and their instance state included, with insertion order, the order, and meets and joins; `__setstate__` of another shape raises `TypeError` | `test_a_poset_pickles_and_copies_with_its_order`, `test_a_lattice_pickles_and_copies_with_its_meets_and_joins`, `test_a_subclass_copies_with_its_instance_state_without_calling_init`, `test_a_copy_is_independent_of_the_original`, `test_a_deep_copy_copies_the_elements`, `test_setstate_refuses_a_state_it_did_not_write` |
 
   `python-switch.md` records it as S11's divergence T-16.
+
+**R2-044.**
+- **Beyond the three sites.** Every method of the poset and the lattice
+  now runs Python code (an element's `__hash__` and `__eq__`, the
+  `iter_stable` key, an element's `str` in an error and `repr` in
+  `verify`) under no borrow: the lookups run on the positions `dict`,
+  cloned under a borrow that ends at once, and the core is read or changed
+  under a second short borrow. The table's `add_namespace` and `add_symbol`
+  read their identifiers and the frame's `name` first, and its
+  `is_structurally_equivalent`, `serialize_to_dict` (V2 and V1) run the
+  frames' hooks over clones of the core tables, whose entries are shared
+  `Arc`s, so a hook may change either table. Shared borrows that run no
+  user code (the identifier reads of an `Identifier`, which is `@final`)
+  are left as they were.
+- **One hash per insertion (call).** `add_element` inserts with
+  `dict.setdefault` (`PyDict_SetDefaultRef`), predicting the next position,
+  where it ran `contains` and then `set_item`. If the element's hash or
+  equality added elements meanwhile, the element takes the next free
+  position and its entry is set again; `test_an_element_whose_hash_adds_an_element_keeps_both_positions`
+  pins that each keeps its own order.
+- **`iter_stable`** ranks a copy of the element list; an element the key
+  adds has no rank and is ranked by its position, after every ranked one,
+  so the iteration is a topological order of the set as it then is.
+- **Test-first.** The 8 new tests failed at the base with PyO3's "Already
+  borrowed" or "Already mutably borrowed" `RuntimeError`.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a frame's `name` that read the table, an `iter_stable` key that added an element, and an element's `__hash__` that read the set raised `RuntimeError("Already borrowed")` (probe `probe_reentrancy.py`), as did any hook that changed the object from `add_order`, a bound query, `verify` or a table's `is_structurally_equivalent` | each works, and a change made from the hook is kept and consistent | `test_a_frame_whose_name_reads_the_table_is_added`, `test_a_non_identifier_whose_class_reads_the_table_is_refused_by_type`, `test_structural_equivalence_runs_frame_hooks_under_no_borrow`, `test_iter_stable_with_a_key_that_adds_an_element_iterates_it_too`, `test_an_element_whose_hash_reads_the_set_sees_it_before_the_insertion`, `test_an_element_whose_hash_adds_an_element_keeps_both_positions`, `test_orders_and_queries_compare_their_arguments_under_no_borrow`, `test_verify_writes_reprs_that_change_the_lattice` |

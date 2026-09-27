@@ -399,3 +399,131 @@ def test_setstate_refuses_a_state_it_did_not_write() -> None:
 
     with pytest.raises(TypeError, match="__reduce__"):
         poset.__setstate__(("not", "a", "state", "at", "all"))
+
+
+# =============================================================================
+# Re-entrant reads and changes (R2-044)
+# =============================================================================
+
+
+def test_iter_stable_with_a_key_that_adds_an_element_iterates_it_too() -> None:
+    """Test `iter_stable`'s key may add an element, which is iterated last.
+
+    The key runs over a copy of the elements under no borrow; the element it
+    adds has no rank, so it follows the ranked ones, which it is not ordered
+    against, in insertion order.
+    """
+    poset: PartiallyOrderedSet[int] = PartiallyOrderedSet()
+    for element in (1, 2, 3):
+        poset.add_element(element)
+    poset.add_order(1, 2)
+
+    def key(element: int) -> int:
+        if element == 2 and 99 not in poset:
+            poset.add_element(99)
+        return -element
+
+    assert list(poset.iter_stable(key)) == [3, 1, 2, 99]
+    assert len(poset) == 4
+
+
+def test_an_element_whose_hash_reads_the_set_sees_it_before_the_insertion() -> None:
+    """Test `add_element` hashes the element under no borrow.
+
+    The hash reads the set, which holds the elements added before, and the
+    element is then added.
+    """
+    poset: PartiallyOrderedSet[object] = PartiallyOrderedSet()
+    poset.add_element(1)
+    seen: list[list[object]] = []
+
+    class NosyHash:
+        def __hash__(self) -> int:
+            seen.append(list(poset))
+            return 1
+
+    nosy = NosyHash()
+    poset.add_element(nosy)
+
+    assert seen[0] == [1]
+    assert list(poset) == [1, nosy]
+    assert nosy in poset
+
+
+def test_an_element_whose_hash_adds_an_element_keeps_both_positions() -> None:
+    """Test an element added by another's hash leaves both correctly placed.
+
+    The inner element takes the position the outer one was going to take,
+    and the outer one is recorded at the next, so each is ordered as itself.
+    """
+    lattice: Lattice[object] = Lattice()
+    lattice.add_element("bottom")
+
+    class AddsOnFirstHash:
+        def __init__(self) -> None:
+            self.hashed = False
+
+        def __hash__(self) -> int:
+            if not self.hashed:
+                self.hashed = True
+                lattice.add_element("inner")
+            return 2
+
+    outer = AddsOnFirstHash()
+    lattice.add_element(outer)
+    lattice.add_order("bottom", "inner")
+    lattice.add_order("bottom", outer)
+
+    assert lattice.get_meet("inner", outer) == "bottom"
+    assert lattice.get_join("inner", outer) is None
+    assert all(element in lattice for element in ("bottom", "inner", outer))
+
+
+def test_orders_and_queries_compare_their_arguments_under_no_borrow() -> None:
+    """Test an argument's `__eq__` may query the lattice from `add_order`.
+
+    `probe` equals the member `member` without being it, so looking it up
+    calls `__eq__`, which asks the lattice for a meet.
+    """
+    lattice: Lattice[object] = Lattice()
+    calls: list[bool] = []
+
+    class Key:
+        def __hash__(self) -> int:
+            return 3
+
+        def __eq__(self, other: object) -> bool:
+            calls.append(lattice.has_meet(1, 2))
+            return isinstance(other, Key)
+
+    member, probe = Key(), Key()
+    for element in (1, 2, member):
+        lattice.add_element(element)
+    lattice.add_order(1, 2)
+    lattice.add_order(1, probe)
+
+    assert lattice.get_meet(2, probe) == 1
+    assert calls
+    assert all(calls)
+
+
+def test_verify_writes_reprs_that_change_the_lattice() -> None:
+    """Test `verify` builds its report after the borrow, so a `repr` may add."""
+    lattice: Lattice[object] = Lattice()
+
+    class Nosy:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __repr__(self) -> str:
+            if "late" not in lattice:
+                lattice.add_element("late")
+            return self.name
+
+    for element in (Nosy("a"), Nosy("b")):
+        lattice.add_element(element)
+
+    messages = [diagnostic.message.message for diagnostic in lattice.verify().errors()]
+
+    assert "lattice has no unique meet for elements a and b" in messages
+    assert "late" in lattice
