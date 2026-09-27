@@ -11,6 +11,7 @@ use crate::expression::{
 };
 use crate::foreign::BoxError;
 use crate::identifier::Identifier;
+use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
 
 use super::super::core_data_type::CoreDataType;
 use super::super::data_type::DataType;
@@ -154,7 +155,11 @@ impl CallTargets for FunctionRegistry {
 /// - A call's arguments must satisfy its target's parameter sorts, and its
 ///   type follows the result sort.
 ///
-/// The walk keeps its pending steps on the heap.
+/// The walk keeps its pending steps on the heap, and checks a shared node
+/// other than a leaf once per expected type it is checked against, so a DAG
+/// checks in time linear in its distinct nodes. An identifier occurrence
+/// reaches the [`IdentifierTypes`] each time the walk meets it, which is
+/// once within a shared sub-expression however often that is reached.
 #[expect(
     missing_debug_implementations,
     reason = "the lookups are trait objects without Debug"
@@ -244,6 +249,36 @@ enum Step<'e> {
     Piecewise(&'e Expression),
     /// Check the call's arguments against the target's parameter sorts.
     Call(&'e Expression, String, Vec<FunctionSort>, FunctionSort),
+    /// Remember the result just inferred for the shared node, with the
+    /// expected type it was inferred with.
+    Remember(&'e Expression, Option<Type>),
+}
+
+/// The results of the shared nodes other than leaves a walk has inferred, by node and then by
+/// the expected type each was inferred with.
+///
+/// Only results are kept: the walk stops at its first error, so an error is
+/// never met twice. Every node stays alive through the walk's root, so its
+/// identity keys it unambiguously.
+#[derive(Default)]
+struct Memo(HashMap<NodeIdentity, Vec<(Option<Type>, Typed)>, BuildIdentityHasher>);
+
+impl Memo {
+    /// Return the result remembered for `node` inferred with `expected`.
+    fn get(&self, node: &Expression, expected: Option<&Type>) -> Option<&Typed> {
+        self.0
+            .get(&node.identity())?
+            .iter()
+            .find_map(|(key, typed)| (key.as_ref() == expected).then_some(typed))
+    }
+
+    /// Remember `typed` as the result of `node` inferred with `expected`.
+    fn insert(&mut self, node: &Expression, expected: Option<Type>, typed: Typed) {
+        self.0
+            .entry(node.identity())
+            .or_default()
+            .push((expected, typed));
+    }
 }
 
 /// One run of a checker over an expression.
@@ -318,6 +353,14 @@ fn is_ordering(operation: BinaryOperation) -> bool {
             | BinaryOperation::LessEqual
             | BinaryOperation::Greater
             | BinaryOperation::GreaterEqual
+    )
+}
+
+/// Return whether `expression` is a leaf: an identifier or a literal.
+fn is_leaf(expression: &Expression) -> bool {
+    matches!(
+        expression.kind(),
+        ExpressionKind::Identifier(_) | ExpressionKind::Literal(_)
     )
 }
 
@@ -505,10 +548,24 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
     #[expect(clippy::too_many_lines, reason = "one arm per step of the walk")]
     fn run(&self, mut steps: Vec<Step<'e>>) -> Result<Typed> {
         let mut results: Vec<Typed> = Vec::new();
+        let mut memo = Memo::default();
         while let Some(step) = steps.pop() {
             match step {
                 Step::Infer(node, expected) => {
+                    // A leaf costs one lookup, and each occurrence of a
+                    // shared identifier still reaches the lookup.
+                    if node.is_shared() && !is_leaf(node) {
+                        if let Some(typed) = memo.get(node, expected.as_ref()) {
+                            results.push(typed.clone());
+                            continue;
+                        }
+                        steps.push(Step::Remember(node, expected.clone()));
+                    }
                     self.infer(node, expected, &mut steps, &mut results)?;
+                }
+                Step::Remember(node, expected) => {
+                    let typed = results.last().unwrap_or_else(|| unreachable!("a result"));
+                    memo.insert(node, expected, typed.clone());
                 }
                 Step::CheckExpected(node, expected) => {
                     let actual = results.pop().unwrap_or_else(|| unreachable!("a result"));

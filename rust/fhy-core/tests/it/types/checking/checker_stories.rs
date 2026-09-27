@@ -1060,3 +1060,46 @@ fn a_rule_error_on_a_dag_displays_in_bounded_size() {
     assert!(text.len() < 4096, "{} bytes", text.len());
     assert!(text.contains('…'), "{text}");
 }
+
+/// A doubling DAG of depth 64, `e_{k+1} = e_k + e_k` over one leaf, has 2^64
+/// paths: without the memo of shared nodes the checker would not finish.
+#[test]
+fn a_doubling_dag_of_depth_64_checks() {
+    let x = Identifier::new("x");
+    let bindings = params(&[(&x, scalar(Int32))]);
+    let dag = (0..64).fold(reference(&x), |tree, _| &tree + &tree);
+    let literal_dag = (0..64).fold(Expression::from(1), |tree, _| &tree + &tree);
+    let condition = reference(&x).less(0);
+    let piecewise_dag = (0..64).fold(reference(&x), |tree, _| {
+        Expression::piecewise([(condition.clone(), tree.clone())], tree).expect("a piecewise")
+    });
+
+    assert_eq!(type_of(&bindings, &dag), scalar(Int32));
+    assert_eq!(
+        ok(check(&bindings, &dag, &scalar(Int64))),
+        (scalar(Int32), TypeQualifier::Param)
+    );
+    assert_eq!(
+        ok(check(&bindings, &literal_dag, &scalar(Int16))),
+        (scalar(Uint), TypeQualifier::Param)
+    );
+    assert_eq!(type_of(&bindings, &piecewise_dag), scalar(Int32));
+}
+
+/// A shared node that breaks a rule reports the same error on every path,
+/// so the first report is the one a tree would give.
+#[test]
+fn a_shared_ill_typed_node_reports_its_error_once() {
+    let x = Identifier::new("x");
+    let bindings = params(&[(&x, scalar(Int32))]);
+    let bad = reference(&x) + LiteralValue::Bool(true);
+    let dag = (0..64).fold(bad.clone(), |tree, _| &tree * &tree);
+
+    let error = synthesize(&bindings, &dag).expect_err("a Boolean operand");
+
+    let TypeCheckError::Rule { at, rule, .. } = error else {
+        panic!("a rule error, got {error}");
+    };
+    assert!(Expression::ptr_eq(&at, &bad));
+    assert_eq!(rule.kind(), TypeRuleKind::Boolean);
+}

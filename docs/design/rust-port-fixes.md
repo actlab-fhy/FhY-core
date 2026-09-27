@@ -90,8 +90,8 @@ onto `dev-rust` before continuing.
 
 - [x] C0: worktree `port/fix2-types-param` created; the baseline gates recorded (the worktree is `fix-c-types-param`, branch `fix/c-types-param`, from `dev-rust` at `35519bb`; see the Track C notes)
 - [x] R2-017 (F2-017): a negated literal checks as one literal: `d07de23`
-- [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous
-- [ ] R2-001b (F2-001, checker part): the checker memoizes shared nodes
+- [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous: `6222f80`
+- [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes
 - [ ] R2-026b (F2-026, checker part): rstests and broadened properties
 - [ ] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
@@ -3634,6 +3634,28 @@ status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
   |---|---|---|
   | `check_all_registered_function_bodies()` checked no composed built-in | it checks the 16 in catalogue order, then the user functions; a failing built-in gets a diagnostic naming it | `test_the_sweep_checks_every_expression_bodied_builtin` |
   | `_rs.types_check_all_function_bodies()` took no argument | it takes an optional `on_checked` | the same |
+
+**R2-001b.**
+- **The memo** maps a shared node's identity to the results inferred for
+  it, each with the expected type it was inferred with, compared by `==`
+  (the expected types a walk hands down are few: the caller's, `bool` for a
+  condition, and none). A `Remember` step under the node's own steps stores
+  the result once they finish.
+- **Errors (reading the spec).** The walk stops at its first error, so a
+  memoized error could never be replayed; the memo keeps results only, and
+  `a_shared_ill_typed_node_reports_its_error_once` pins that the error names
+  the shared node, as a tree's would.
+- **Leaves are not memoized (call).** An identifier or literal costs one
+  step, and `test_lookup_is_called_per_occurrence_with_the_same_object`
+  pins that a shared identifier node reaches the lookup at each occurrence;
+  memoizing compound nodes alone keeps that, and keeps the walk linear.
+  The binding's and `type_checker.py`'s docs now say a shared compound
+  sub-expression is checked, and so looked up, once.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a sub-expression shared by several parents was re-checked, and its identifiers and calls looked up, once per path (a depth-40 doubling DAG did not finish) | it is checked once per expected type; the depth-40 DAG checks with two lookups | `test_a_doubling_dag_of_depth_40_checks_in_under_a_second` |
 
 ### Track E notes
 

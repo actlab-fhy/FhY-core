@@ -12,6 +12,7 @@ objects handed back, the error classes and their framing, the body pass
 and the sweep's report, and a deep expression.
 """
 
+import time
 from typing import Any
 
 import pytest
@@ -555,3 +556,21 @@ def test_deep_expression_checks_without_recursion_error() -> None:
     assert result_type == _scalar(CoreDataType.INT64)
     assert qualifier is TypeQualifier.PARAM
     assert len(lookup.calls) == 1
+
+
+def test_a_doubling_dag_of_depth_40_checks_in_under_a_second() -> None:
+    """Test a DAG with 2**40 paths checks once per distinct node (F2-001)."""
+    x = mock_identifier("x", 0)
+    expression: Expression = IdentifierExpression(x)
+    for _ in range(40):
+        expression = BinaryExpression(BinaryOperation.ADD, expression, expression)
+    lookup = _Recorder({x: (_scalar(CoreDataType.INT32), TypeQualifier.PARAM)})
+
+    start = time.perf_counter()
+    result_type, qualifier = synthesize_expression_type(expression, lookup)
+    elapsed = time.perf_counter() - start
+
+    assert result_type == _scalar(CoreDataType.INT32)
+    assert qualifier is TypeQualifier.PARAM
+    assert elapsed < 1.0
+    assert len(lookup.calls) == 2
