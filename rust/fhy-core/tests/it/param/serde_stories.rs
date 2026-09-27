@@ -43,7 +43,7 @@ fn strs(values: &[&str]) -> Vec<Value> {
     ParamDomain::from(IntervalIntegerDomain::new(true, false, true)),
     r#"{"interval_integer":{"prefer_inclusive":true,"non_negative":false,"zero_included":true}}"#
 )]
-#[case::real(ParamDomain::from(RealDomain), r#""real""#)]
+#[case::real(ParamDomain::from(RealDomain), r#"{"real":{}}"#)]
 #[case::ordinal(
     ParamDomain::from(OrdinalDomain::new(vec![Value::Int(3.into()), Value::Float(1.5), Value::Int(1.into())]).expect("valid")),
     r#"{"ordinal":{"sorted_values":[{"int":"1"},{"float":"1.5"},{"int":"3"}]}}"#

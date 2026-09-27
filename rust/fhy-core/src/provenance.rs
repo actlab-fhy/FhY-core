@@ -359,9 +359,10 @@ impl TryFrom<SpanData> for Span {
 ///
 /// # Serialization
 ///
-/// A provenance encodes externally tagged by its snake-case variant name:
-/// the unknown provenance as `"unknown"`, and the other variants as a
-/// one-key map such as `{"file": {"file_path": .., "span": ..}}`,
+/// A provenance encodes externally tagged by its snake-case variant name,
+/// as a one-key map: the unknown provenance as `{"unknown": {}}`, so that
+/// every provenance encodes as a map, and the other variants such as
+/// `{"file": {"file_path": .., "span": ..}}`,
 /// `{"named": {"name": .., "child": ..}}`, `{"call_site": {"callee": ..,
 /// "caller": ..}}` and `{"fused": {"sources": [..], "label": ..}}`.
 /// Decoding normalizes a file path and refuses an empty name.
@@ -369,8 +370,7 @@ impl TryFrom<SpanData> for Span {
     clippy::exhaustive_enums,
     reason = "richer origins compose these variants, and consumers match all of them"
 )]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Provenance {
     /// No source information is available.
     Unknown,
@@ -382,6 +382,60 @@ pub enum Provenance {
     CallSite(CallSiteProvenance),
     /// Several provenances combined by a transformation.
     Fused(FusedProvenance),
+}
+
+/// The empty fields of the unknown provenance's encoding.
+#[derive(Serialize, Deserialize)]
+#[serde(rename = "Unknown", deny_unknown_fields)]
+struct UnknownFields {}
+
+/// A provenance as it is written, borrowing its fields.
+#[derive(Serialize)]
+#[serde(rename = "Provenance", rename_all = "snake_case")]
+enum ProvenanceRef<'a> {
+    Unknown(UnknownFields),
+    File(&'a FileProvenance),
+    Named(&'a NamedProvenance),
+    CallSite(&'a CallSiteProvenance),
+    Fused(&'a FusedProvenance),
+}
+
+/// A provenance as it is read.
+#[derive(Deserialize)]
+#[serde(rename = "Provenance", rename_all = "snake_case")]
+enum ProvenanceWire {
+    Unknown(UnknownFields),
+    File(FileProvenance),
+    Named(NamedProvenance),
+    CallSite(CallSiteProvenance),
+    Fused(FusedProvenance),
+}
+
+/// Serializes the shape of the [type documentation](Provenance).
+impl Serialize for Provenance {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Unknown => ProvenanceRef::Unknown(UnknownFields {}),
+            Self::File(file) => ProvenanceRef::File(file),
+            Self::Named(named) => ProvenanceRef::Named(named),
+            Self::CallSite(call_site) => ProvenanceRef::CallSite(call_site),
+            Self::Fused(fused) => ProvenanceRef::Fused(fused),
+        }
+        .serialize(serializer)
+    }
+}
+
+/// Deserializes the shape of the [type documentation](Provenance).
+impl<'de> Deserialize<'de> for Provenance {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match ProvenanceWire::deserialize(deserializer)? {
+            ProvenanceWire::Unknown(UnknownFields {}) => Self::Unknown,
+            ProvenanceWire::File(file) => Self::File(file),
+            ProvenanceWire::Named(named) => Self::Named(named),
+            ProvenanceWire::CallSite(call_site) => Self::CallSite(call_site),
+            ProvenanceWire::Fused(fused) => Self::Fused(fused),
+        })
+    }
 }
 
 impl Provenance {

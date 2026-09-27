@@ -36,7 +36,7 @@
   {
    "name": "provenance_unknown",
    "rust_type": "Provenance",
-   "v2": "\"unknown\"",
+   "v2": "{\"unknown\":{}}",
    "foreign": []
   },
   {
@@ -132,19 +132,19 @@
   {
    "name": "real_domain",
    "rust_type": "ParamDomain",
-   "v2": "\"real\"",
+   "v2": "{\"real\":{}}",
    "foreign": []
   },
   {
    "name": "param",
    "rust_type": "Param",
-   "v2": "{\"domain\":\"real\",\"variable\":{\"id\":61600,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "v2": "{\"domain\":{\"real\":{}},\"variable\":{\"id\":61600,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
    "foreign": []
   },
   {
    "name": "param_assignment",
    "rust_type": "ParamAssignment",
-   "v2": "{\"param\":{\"domain\":\"real\",\"variable\":{\"id\":61601,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}},\"value\":{\"float\":\"1.5\"}}",
+   "v2": "{\"param\":{\"domain\":{\"real\":{}},\"variable\":{\"id\":61601,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}},\"value\":{\"float\":\"1.5\"}}",
    "foreign": []
   }
  ]

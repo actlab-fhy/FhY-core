@@ -4,7 +4,7 @@
 //!
 //! A [`ParamDomain`] serializes as `{"integer": {"non_negative",
 //! "zero_included"}}`, `{"interval_integer": {"prefer_inclusive",
-//! "non_negative", "zero_included"}}`, `"real"`, `{"ordinal":
+//! "non_negative", "zero_included"}}`, `{"real": {}}`, `{"ordinal":
 //! {"sorted_values"}}` (in ordinal order), `{"categorical": {"categories"}}`
 //! (in canonical order), `{"permutation": {"ordered_members"}}` (as given)
 //! or `{"custom": <foreign part>}`, each value in the constraint module's
@@ -67,7 +67,7 @@ pub struct ParamDomainData(DomainRepr);
 enum DomainRepr {
     Integer(IntegerRepr),
     IntervalInteger(IntervalIntegerRepr),
-    Real,
+    Real(RealRepr),
     Ordinal(OrdinalRepr),
     Categorical(CategoricalRepr),
     Permutation(PermutationRepr),
@@ -88,6 +88,12 @@ struct IntervalIntegerRepr {
     non_negative: bool,
     zero_included: bool,
 }
+
+/// The empty fields of the real domain's encoding, so that every domain
+/// encodes as a map.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "RealDomain", deny_unknown_fields)]
+struct RealRepr {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename = "OrdinalDomain", deny_unknown_fields)]
@@ -160,7 +166,7 @@ impl ParamDomainData {
                     zero_included: domain.is_zero_included(),
                 })
             }
-            ParamDomain::Real(_) => DomainRepr::Real,
+            ParamDomain::Real(_) => DomainRepr::Real(RealRepr {}),
             ParamDomain::Ordinal(domain) => DomainRepr::Ordinal(OrdinalRepr {
                 sorted_values: of_values(domain.values())?,
             }),
@@ -182,7 +188,7 @@ impl ParamDomainData {
             DomainRepr::Custom(foreign) => Some(foreign),
             DomainRepr::Integer(_)
             | DomainRepr::IntervalInteger(_)
-            | DomainRepr::Real
+            | DomainRepr::Real(_)
             | DomainRepr::Ordinal(_)
             | DomainRepr::Categorical(_)
             | DomainRepr::Permutation(_) => None,
@@ -207,7 +213,7 @@ impl ParamDomainData {
                 domain.non_negative,
                 domain.zero_included,
             )),
-            DomainRepr::Real => ParamDomain::from(RealDomain),
+            DomainRepr::Real(RealRepr {}) => ParamDomain::from(RealDomain),
             DomainRepr::Ordinal(domain) => ParamDomain::from(
                 OrdinalDomain::new(build_values(domain.sorted_values, resolver)?)
                     .map_err(BuildError::invalid)?,

@@ -1093,12 +1093,11 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
     assert_eq!(encoded, expected);
 }
 
-/// Test each provenance variant encodes externally tagged: the unknown
-/// provenance as the string `"unknown"` and every other variant as a
-/// one-key map from its snake-case name to its fields, with the normalized
-/// path for a file.
+/// Test each provenance variant encodes externally tagged, as a one-key
+/// map from its snake-case name to its fields: the unknown provenance's
+/// fields are empty (`{"unknown": {}}`), and a file's path is normalized.
 #[rstest]
-#[case::unknown(Provenance::Unknown, json!("unknown"))]
+#[case::unknown(Provenance::Unknown, json!({"unknown": {}}))]
 #[case::file(
     build_file("./a//b.fhy", Some(build_offset_span(Some(0), Some(3)))),
     json!({
@@ -1114,20 +1113,20 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
 )]
 #[case::named(
     build_named("lib", Provenance::Unknown),
-    json!({"named": {"name": "lib", "child": "unknown"}})
+    json!({"named": {"name": "lib", "child": {"unknown": {}}}})
 )]
 #[case::call_site(
     build_call_site(build_file("a.fhy", None), Provenance::Unknown),
     json!({
         "call_site": {
             "callee": {"file": {"file_path": "a.fhy", "span": null}},
-            "caller": "unknown",
+            "caller": {"unknown": {}},
         },
     })
 )]
 #[case::fused_without_label(
     build_fused(vec![Provenance::Unknown], None),
-    json!({"fused": {"sources": ["unknown"], "label": null}})
+    json!({"fused": {"sources": [{"unknown": {}}], "label": null}})
 )]
 #[case::fused_with_label(
     build_fused(vec![], Some("fuse")),
@@ -1183,7 +1182,7 @@ fn position_and_span_round_trip_through_json() {
 
 #[test]
 fn decoded_unknown_provenances_compare_equal() {
-    let payload = json!("unknown");
+    let payload = json!({"unknown": {}});
 
     let first: Provenance = serde_json::from_value(payload.clone()).expect("valid payload");
     let second: Provenance = serde_json::from_value(payload).expect("valid payload");
@@ -1340,7 +1339,7 @@ fn span_decode_rejects_malformed_payloads(
 #[case::unit_variant_given_a_body(json!({"unknown": {"x": 1}}), Category::Data, None)]
 #[case::newtype_variant_without_a_body(json!("file"), Category::Data, None)]
 #[case::two_top_level_keys(
-    json!({"file": {"file_path": "a", "span": null}, "named": {"name": "n", "child": "unknown"}}),
+    json!({"file": {"file_path": "a", "span": null}, "named": {"name": "n", "child": {"unknown": {}}}}),
     Category::Syntax,
     None
 )]
@@ -1351,7 +1350,7 @@ fn span_decode_rejects_malformed_payloads(
     None
 )]
 #[case::empty_name(
-    json!({"named": {"name": "", "child": "unknown"}}),
+    json!({"named": {"name": "", "child": {"unknown": {}}}}),
     Category::Data,
     Some(NamedProvenanceError::EmptyName.to_string())
 )]
@@ -1360,11 +1359,11 @@ fn span_decode_rejects_malformed_payloads(
     Category::Data,
     None
 )]
-#[case::null_caller(json!({"call_site": {"callee": "unknown", "caller": null}}), Category::Syntax, None)]
+#[case::null_caller(json!({"call_site": {"callee": {"unknown": {}}, "caller": null}}), Category::Syntax, None)]
 #[case::integer_label(json!({"fused": {"sources": [], "label": 5}}), Category::Data, None)]
 #[case::null_sources(json!({"fused": {"sources": null, "label": null}}), Category::Data, None)]
 #[case::invalid_nested_source(
-    json!({"fused": {"sources": [{"named": {"name": "", "child": "unknown"}}], "label": null}}),
+    json!({"fused": {"sources": [{"named": {"name": "", "child": {"unknown": {}}}}], "label": null}}),
     Category::Data,
     Some(NamedProvenanceError::EmptyName.to_string())
 )]
