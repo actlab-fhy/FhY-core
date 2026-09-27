@@ -1,0 +1,151 @@
+{
+ "provenance": {
+  "note": "hand-written seed, replaced by generate_serialization_cases.py in S17b.4"
+ },
+ "cases": [
+  {
+   "name": "identifier",
+   "rust_type": "Identifier",
+   "v2": "{\"id\":61000,\"name_hint\":\"x\"}",
+   "foreign": []
+  },
+  {
+   "name": "position",
+   "rust_type": "Position",
+   "v2": "{\"line\":2,\"column\":8}",
+   "foreign": []
+  },
+  {
+   "name": "span",
+   "rust_type": "Span",
+   "v2": "{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}",
+   "foreign": []
+  },
+  {
+   "name": "note",
+   "rust_type": "Note",
+   "v2": "{\"message\":\"hello\",\"kind\":{\"name\":{\"id\":3,\"name_hint\":\"other\"},\"description\":\"Uncategorized note.\"}}",
+   "foreign": []
+  },
+  {
+   "name": "op_attribute",
+   "rust_type": "OpAttribute",
+   "v2": "{\"name\":{\"id\":16,\"name_hint\":\"commutative\"},\"description\":\"Op output is invariant under operand swap.\"}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_unknown",
+   "rust_type": "Provenance",
+   "v2": "\"unknown\"",
+   "foreign": []
+  },
+  {
+   "name": "provenance_file",
+   "rust_type": "Provenance",
+   "v2": "{\"file\":{\"file_path\":\"a.fhy\",\"span\":{\"start_offset\":0,\"end_offset\":3,\"start_position\":null,\"end_position\":null}}}",
+   "foreign": []
+  },
+  {
+   "name": "binary_expression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":60000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_nan",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"NaN\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "numerical_type",
+   "rust_type": "Type",
+   "v2": "{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[\"wildcard\"]}}",
+   "foreign": []
+  },
+  {
+   "name": "extension_type",
+   "rust_type": "Type",
+   "v2": "{\"extension\":{\"type_id\":\"pkg.named\",\"data\":\"{\\\"label\\\":\\\"q\\\"}\"}}",
+   "foreign": [
+    "pkg.named"
+   ]
+  },
+  {
+   "name": "primitive_data_type",
+   "rust_type": "DataType",
+   "v2": "{\"primitive\":\"uint8\"}",
+   "foreign": []
+  },
+  {
+   "name": "import_frame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"import\":{\"name\":{\"id\":61400,\"name_hint\":\"f\"}}}",
+   "foreign": []
+  },
+  {
+   "name": "custom_frame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"custom\":{\"type_id\":\"pkg.frame\",\"data\":\"{}\"}}",
+   "foreign": [
+    "pkg.frame"
+   ]
+  },
+  {
+   "name": "symbol_table",
+   "rust_type": "SymbolTable",
+   "v2": "{\"namespaces\":[{\"namespace_name\":{\"id\":61100,\"name_hint\":\"ns\"},\"parent_namespace_name\":null,\"symbols\":[{\"symbol_name\":{\"id\":61101,\"name_hint\":\"x\"},\"frame\":{\"import\":{\"name\":{\"id\":61101,\"name_hint\":\"x\"}}}}]}]}",
+   "foreign": []
+  },
+  {
+   "name": "value_tuple",
+   "rust_type": "Value",
+   "v2": "{\"tuple\":[{\"int\":\"1\"},{\"str\":\"a\"}]}",
+   "foreign": []
+  },
+  {
+   "name": "in_set_constraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":61200,\"name_hint\":\"x\"},\"values\":[{\"int\":\"2\"},{\"str\":\"a\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "custom_constraint",
+   "rust_type": "Constraint",
+   "v2": "{\"custom\":{\"type_id\":\"pkg.even\",\"data\":\"{\\\"modulus\\\":2}\"}}",
+   "foreign": [
+    "pkg.even"
+   ]
+  },
+  {
+   "name": "constraint_system",
+   "rust_type": "ConstraintSystem",
+   "v2": "{\"constraints\":[{\"equation\":{\"expression\":{\"nodes\":[{\"literal\":{\"bool\":true}}]}}}]}",
+   "foreign": []
+  },
+  {
+   "name": "integer_domain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"integer\":{\"non_negative\":true,\"zero_included\":false}}",
+   "foreign": []
+  },
+  {
+   "name": "real_domain",
+   "rust_type": "ParamDomain",
+   "v2": "\"real\"",
+   "foreign": []
+  },
+  {
+   "name": "param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":\"real\",\"variable\":{\"id\":61600,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": []
+  },
+  {
+   "name": "param_assignment",
+   "rust_type": "ParamAssignment",
+   "v2": "{\"param\":{\"domain\":\"real\",\"variable\":{\"id\":61601,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}},\"value\":{\"float\":\"1.5\"}}",
+   "foreign": []
+  }
+ ]
+}

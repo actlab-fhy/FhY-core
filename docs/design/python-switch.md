@@ -165,7 +165,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S17a.1: `fhy_core::foreign` (`Foreign`, `Resolve`, `NoForeign`, `ForeignError`, `BuildError`) and `to_foreign` on the five extension traits (with S17a.2 and S17a.3 in one commit; see "S17a implementation notes")
     - [x] S17a.2: serde for types and the symbol table (`types::wire`, `symbol_table::wire`)
     - [x] S17a.3: serde for constraints and params (`constraint::wire`, `param::wire`); 82 new tests, the Rust gate passes (4,304; 4,336 with all features)
-    - [ ] S17a.4: the Rust replay of the serialization corpus, with a test resolver
+    - [x] S17a.4: the Rust replay of the serialization corpus (`tests/it/serialization_golden.rs`, and its ignored expanded replay), over a hand-written seed corpus until S17b.4 generates it
   - [ ] S17b: the binding and the framework
     - [ ] S17b.1: the binding's plumbing (`serde_json`, `pythonize` after the spike, `wire.rs`, the resolver, `to_foreign` on the adapters), then V1 moved into `legacy/` and `_serialization_v1.py` unchanged
     - [ ] S17b.2: the framework (`WireVersion`, `wire_version`, detection, the V2 family forms, `serialize_value`/`deserialize_value`, binary version 2, the canonical `to_json`, the deprecation warning)

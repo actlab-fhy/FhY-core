@@ -19,6 +19,7 @@ mod provenance_stories;
 mod scope_stack_properties;
 mod scope_stories;
 mod serde_format_stories;
+mod serialization_golden;
 mod solver;
 mod stack_stories;
 mod support;
