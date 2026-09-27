@@ -91,8 +91,8 @@ onto `dev-rust` before continuing.
 - [x] C0: worktree `port/fix2-types-param` created; the baseline gates recorded (the worktree is `fix-c-types-param`, branch `fix/c-types-param`, from `dev-rust` at `35519bb`; see the Track C notes)
 - [x] R2-017 (F2-017): a negated literal checks as one literal: `d07de23`
 - [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous: `6222f80`
-- [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes
-- [ ] R2-026b (F2-026, checker part): rstests and broadened properties
+- [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes: `a0f3e77`
+- [x] R2-026b (F2-026, checker part): rstests and broadened properties
 - [ ] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
 - [ ] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph
@@ -3646,7 +3646,7 @@ status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
   `a_shared_ill_typed_node_reports_its_error_once` pins that the error names
   the shared node, as a tree's would.
 - **Leaves are not memoized (call).** An identifier or literal costs one
-  step, and `test_lookup_is_called_per_occurrence_with_the_same_object`
+  step, and `test_identifier_lookup_is_called_once_per_occurrence_with_the_callers_objects`
   pins that a shared identifier node reaches the lookup at each occurrence;
   memoizing compound nodes alone keeps that, and keeps the walk linear.
   The binding's and `type_checker.py`'s docs now say a shared compound
@@ -3656,6 +3656,23 @@ status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
   | Before | After | Tests |
   |---|---|---|
   | a sub-expression shared by several parents was re-checked, and its identifiers and calls looked up, once per path (a depth-40 doubling DAG did not finish) | it is checked once per expected type; the depth-40 DAG checks with two lookups | `test_a_doubling_dag_of_depth_40_checks_in_under_a_second` |
+
+**R2-026b.** Tests only; every new test passed at its first run, so no new
+finding.
+- **Rstests:** `+x` over `int16`, `uint8`, `float32` and `complex64` keeps
+  the operand's type and qualifier; `!p` is `bool` with `p`'s qualifier;
+  `x_f32` and `y_i16` in both orders under `+` (a promotion error naming
+  the two in the order written), `/` and `//` (`float32` both ways).
+- **The broadened properties** draw from eight identifiers (`int8` to
+  `int32`, `uint8`, `uint16`, `float32`, `float64`, `bool`). A first
+  generator of arbitrary shapes gave well-typed trees in about 1% of cases,
+  so the laws would have held vacuously; the generator is type-directed
+  instead (integer, float and Boolean trees, with unary operators, the
+  arithmetic, comparisons, connectives and piecewise nodes), mixed with
+  the arbitrary shapes at one in seven. Counted with a probe, not
+  committed: of 256 cases, 233 trees synthesize and 230 evaluate, spread
+  over the three kinds, and 182 of the 256 commutative pairs synthesize.
+  Both laws also held over 5,000 cases.
 
 ### Track E notes
 

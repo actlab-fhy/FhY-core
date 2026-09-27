@@ -532,6 +532,85 @@ fn unary_arithmetic_refuses_a_boolean(#[case] operation: UnaryOperation, #[case]
     assert_eq!(text, reason);
 }
 
+#[rstest]
+#[case::int16(Int16)]
+#[case::uint8(Uint8)]
+#[case::float32(Float32)]
+#[case::complex64(Complex64)]
+fn unary_positive_keeps_its_numeric_operand_s_type_and_qualifier(#[case] core: CoreDataType) {
+    let x = Identifier::new("x");
+    let bindings: Bindings = HashMap::from([(x.clone(), (scalar(core), TypeQualifier::State))]);
+
+    assert_eq!(
+        ok(synthesize(&bindings, &reference(&x).positive())),
+        (scalar(core), TypeQualifier::State)
+    );
+}
+
+#[rstest]
+#[case::param(TypeQualifier::Param)]
+#[case::state(TypeQualifier::State)]
+fn logical_not_of_a_boolean_is_boolean(#[case] qualifier: TypeQualifier) {
+    let p = Identifier::new("p");
+    let bindings: Bindings = HashMap::from([(p.clone(), (scalar(Bool), qualifier))]);
+
+    assert_eq!(
+        ok(synthesize(&bindings, &!reference(&p))),
+        (scalar(Bool), qualifier)
+    );
+    assert_eq!(
+        ok(synthesize(&Bindings::new(), &!boolean(false))),
+        (scalar(Bool), TypeQualifier::Param)
+    );
+}
+
+/// A real float and an integer meet in the order they are written: the
+/// integer lifts to a real float of its width for a division, and the two
+/// families refuse to promote for the other arithmetic.
+#[rstest]
+#[case::float_plus_int(
+    true,
+    "+",
+    Err("unsupported primitive data type promotion: float32, int16")
+)]
+#[case::int_plus_float(
+    false,
+    "+",
+    Err("unsupported primitive data type promotion: int16, float32")
+)]
+#[case::float_over_int(true, "/", Ok(Float32))]
+#[case::int_over_float(false, "/", Ok(Float32))]
+#[case::float_floor_over_int(true, "//", Ok(Float32))]
+#[case::int_floor_over_float(false, "//", Ok(Float32))]
+fn a_float32_and_an_int16_promote_in_either_order(
+    #[case] float_first: bool,
+    #[case] operation: &str,
+    #[case] expected: Result<CoreDataType, &str>,
+) {
+    let (x, y) = (Identifier::new("x"), Identifier::new("y"));
+    let bindings = params(&[(&x, scalar(Float32)), (&y, scalar(Int16))]);
+    let (left, right) = if float_first {
+        (reference(&x), reference(&y))
+    } else {
+        (reference(&y), reference(&x))
+    };
+    let expression = match operation {
+        "+" => left + right,
+        "/" => left / right,
+        "//" => left.floor_divide(right),
+        _ => unreachable!("an operation of the table"),
+    };
+
+    match expected {
+        Ok(core) => assert_eq!(type_of(&bindings, &expression), scalar(core)),
+        Err(text) => {
+            let (kind, reason) = rule_of(synthesize(&bindings, &expression));
+            assert_eq!(kind, TypeRuleKind::Promotion);
+            assert_eq!(reason, text);
+        }
+    }
+}
+
 #[test]
 fn binary_arithmetic_refuses_a_boolean_operand_by_the_operation_s_name() {
     let (_, reason) = rule_of(synthesize(
