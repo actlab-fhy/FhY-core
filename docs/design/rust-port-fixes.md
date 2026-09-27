@@ -37,7 +37,7 @@ onto `dev-rust` before continuing.
 
 ### Track A: `api` (the breaking API batch; lands 1st)
 
-- [ ] A0: worktree `port/fix2-api` created; the baseline gates recorded
+- [x] A0: worktree `port/fix2-api` created; the baseline gates recorded (the worktree is `fix-a-api`, branch `fix/a-api`; see Track A notes)
 - [ ] R2-023 (F2-023): interrupts outrank a kept exception; no Python after the first error; no cached fallback key
 - [ ] R2-013b (F2-013, constraint `Value`): depth cap of 128 on decode
 - [ ] R2-022 (F2-022): reflexive extension defaults; symmetric structural equivalence
@@ -2155,7 +2155,31 @@ tables.
 
 ### Track A notes
 
-(none yet)
+**A0: the worktree and the baseline.** The worktree is
+`~/Projects/FhY-core-worktrees/fix-a-api`, on branch `fix/a-api`, from
+`dev-rust` at `111df20` (the names differ from §I.2 rule 7's; the
+maintainer created them). Its `.venv` is its own (`uv sync --group dev
+--group bench`), and its `target/gate-env.sh` points `CARGO_TARGET_DIR` at
+`target/gate-cargo`. The baseline at `111df20` matches §I.8.2's:
+
+| Gate | Result at `111df20` |
+|---|---|
+| `cargo test --workspace` | 4,305 passed, 2 ignored |
+| `cargo test --workspace --all-features` | 4,337 passed, 2 ignored |
+| fmt; clippy `-D warnings`, both ways and per feature | clean |
+| `cargo doc --workspace` `-D warnings` | clean |
+| `cargo doc -p fhy-core` alone, `--features z3`, `--features sympy` | the known `Prepared::evaluate_array` link only |
+| `cargo deny check`; `cargo package` | clean |
+| `cargo +1.85 check`, workspace lib and per feature | the 6 known `dead_code` warnings only |
+| `pytest tests` | 8,281 passed, 2 xfailed |
+| `pytest tests -m "not very_slow"` | 8,314 passed, 2 xfailed |
+| nox `property` | 282 passed |
+| nox `tests_minimal` | 6,315 passed, 642 skipped |
+| nox `lint`, `type_check`, `golden_expanded` | green |
+
+A clean copy of the base (`git archive 111df20` into `target/base-src`,
+with its own `.venv`) serves the baseline's Python gates, the benchmarks'
+"before" runs, and the check that each bug's new tests fail at the base.
 
 ### Track D notes
 
