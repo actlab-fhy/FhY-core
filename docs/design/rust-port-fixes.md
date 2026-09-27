@@ -54,8 +54,8 @@ onto `dev-rust` before continuing.
 ### Track D: `solver` (the SymPy move and build infrastructure; lands 2nd)
 
 - [x] D0: worktree `port/fix2-solver` created; the baseline gates recorded (the worktree is `fix-d-solver`, branch `fix/d-solver`; see the Track D notes; `9146d0b`)
-- [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver
-- [ ] R2-014 (F2-014): the process backend's timeout bounds the whole call
+- [x] R2-015 (F2-015): control characters in name hints mapped before they reach a solver (`f969a81`)
+- [x] R2-014 (F2-014): the process backend's timeout bounds the whole call
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped
 - [ ] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature
 - [ ] R2-016 (F2-016): negative powers lift as divisions
@@ -2602,6 +2602,51 @@ matches §I.8.2's: fmt and clippy (both ways) clean; `cargo test
 all-features run was the first to see R2-015's new tests, which failed as
 intended (5 lowering cases and the z3 story, the latter with z3's
 `CString::new(..).unwrap()` panic at `z3-0.21.1/src/symbol.rs:14`).
+
+**R2-015.** `z3.rs` needed no change: it already names each constant by
+`Symbol::name`, the sanitized `<hint>_<id>`, so sanitizing in `lower.rs`
+removes the NUL for both backends. The Python test's backends are a fake
+that answers `sat` only for a script of whole, printable command lines, the
+process backend over the `z3` beside the interpreter when there is one, and
+the z3-solver adapter when it is installed; at the base the adapter raised
+`Z3Exception` for the NUL and the fake answered `unsat` for every hint.
+
+**R2-014, calls.**
+- **All input goes through the writer thread**, not only the script: the
+  `(get-info :reason-unknown)` and `(exit)` writes would block the same way
+  on a pipe the script filled. The thread owns the pipe and closes it when
+  its queue is dropped and drained, or when a write fails.
+- **A `success` line before the answer is skipped.** SMT-LIB 2.6 leaves
+  open whether a solver whose `:print-success` is on answers the
+  `set-option` that turns it off, so the backend tolerates one (or a solver
+  that ignores the option). The fake of
+  `a_solver_that_prints_success_is_answered` answers `success` to the first
+  command and answers `unsat` unless that command was the `set-option`, so
+  the test also pins that the option comes first.
+- **A new `ProcessError::ClosedOutput` variant** (the enum is
+  `#[non_exhaustive]`): without a timeout, a program that closes its output
+  and does not exit within the 2 s grace is killed and reported this way;
+  with a timeout, it answers `unknown` with `"timeout"` at the deadline, as
+  the spec says. A program that closes its output and exits still reports
+  `Exited(status)`.
+- **Polling.** `try_wait` is polled with a pause doubling from 100 µs to
+  10 ms, so a solver that exits at once after `(exit)` costs no fixed
+  delay.
+- **The group kill** runs `kill -KILL -- -<pgid>` before reaping the
+  leader, so the group id cannot have been reused, and then `Child::kill`,
+  which also covers a missing `kill` program. A solver whose own process
+  group differs (it called `setsid`) is not reached; the rustdoc asks
+  wrappers to `exec` their solver.
+- **A side effect of the own process group:** a terminal's interrupt no
+  longer reaches the solver, which the rustdoc says. The caller still
+  bounds the check by its timeout.
+
+**Python-visible changes** (§I.2 rule 6):
+
+| Item | Old | New | Tests |
+|---|---|---|---|
+| R2-015 | a name hint's control characters were written into its quoted SMT-LIB2 symbol (`SmtScript.text`, `convert_expression_to_smtlib2`, the declarations' `symbol`); a NUL made the z3-solver adapter raise `Z3Exception` | each is written as `_` | `test_a_control_character_name_hint_answers_the_same_on_every_backend` (new) |
+| R2-014 | `SmtLib2ProcessSolver.check` could outlast its timeout (a solver that stops reading, closes stdout without exiting, exits slowly, or leaves a grandchild), and a solver that printed `success` failed with `SolverBackendError` | the timeout bounds the call; the first line written is `(set-option :print-success false)`; `success` lines before the answer are skipped; the class docstring says so | the Rust stories; the Python process-backend tests unchanged |
 
 ### Track B notes
 

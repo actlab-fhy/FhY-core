@@ -1,10 +1,14 @@
 //! Stories for the process backend, [`SmtLib2Process`]: the protocol for
-//! each answer and reason, the failures, and the timeout, with `sh` scripts
-//! as fake solvers. The stories against a real solver run when
+//! each answer and reason, the failures, and the timeout, which bounds the
+//! whole call, with `sh` scripts as fake solvers. The stories against a real solver run when
 //! `FHY_SMT_SOLVER` names one, as a program followed by its arguments, such
 //! as `z3 -in`.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use fhy_core::expression::{Expression, NoRegisteredSorts, SymbolType};
@@ -194,6 +198,131 @@ fn process_answers_through_a_solver() {
         .expect("answered");
 
     assert_eq!(answer, Answer::No);
+}
+
+// ---------------------------------------------------------------------------
+// The timeout bounds the whole call (R2-014)
+// ---------------------------------------------------------------------------
+
+/// The timeout of the stories that check the whole call is bounded.
+const SHORT_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// The time within which a check with [`SHORT_TIMEOUT`] must return.
+const ON_TIME: Duration = Duration::from_millis(1500);
+
+/// Check `script` with `backend` and [`SHORT_TIMEOUT`], returning the
+/// result and how long the check took.
+fn check_with_short_timeout(
+    backend: &SmtLib2Process,
+    script: &SmtScript,
+) -> (Result<SatResult, BackendError>, Duration) {
+    let started = Instant::now();
+    let result = backend.check(script, &CheckLimits::new().with_timeout(SHORT_TIMEOUT));
+    (result, started.elapsed())
+}
+
+/// Return the answer of a check that timed out.
+fn timed_out() -> SatResult {
+    SatResult::Unknown {
+        reason: "timeout".to_owned(),
+    }
+}
+
+/// Return a script longer than any pipe buffer: 20,000 comparisons of `x`.
+fn build_long_script() -> SmtScript {
+    let (x, reference) = build_identifier("x");
+    let expression = Expression::all((0..20_000_i64).map(|bound| reference.clone().greater(bound)));
+    let script = SmtScript::lower(
+        &expression,
+        &build_symbol_types(&[(&x, SymbolType::Int)]),
+        &NoRegisteredSorts,
+    )
+    .expect("lowers");
+    assert!(
+        script.to_string().len() > 256 * 1024,
+        "longer than a pipe buffer"
+    );
+    script
+}
+
+/// Return whether the process `pid` still exists, asking `kill -0`.
+fn is_alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .expect("kill runs")
+        .success()
+}
+
+#[test]
+fn a_solver_that_stops_reading_times_out() {
+    let (result, elapsed) = check_with_short_timeout(&build_fake("sleep 5"), &build_long_script());
+
+    assert_eq!(result.expect("an answer"), timed_out());
+    assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
+}
+
+#[test]
+fn a_solver_that_closes_stdout_without_exiting_times_out() {
+    let (result, elapsed) =
+        check_with_short_timeout(&build_fake("exec 1>&-; sleep 5"), &build_script().1);
+
+    assert_eq!(result.expect("an answer"), timed_out());
+    assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
+}
+
+#[test]
+fn a_wrappers_grandchild_is_killed_with_the_group() {
+    let pid_file = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fhy-smt-grandchild-{}.pid", std::process::id()));
+    drop(fs::remove_file(&pid_file));
+    let backend = build_fake(&format!(
+        "sleep 5 & echo $! > '{}'; wait",
+        pid_file.display()
+    ));
+
+    let (result, elapsed) = check_with_short_timeout(&backend, &build_script().1);
+    let pid = fs::read_to_string(&pid_file).expect("the wrapper wrote its grandchild's pid");
+    let pid = pid.trim();
+    let gone_by = Instant::now() + ON_TIME;
+    while is_alive(pid) && Instant::now() < gone_by {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let survived = is_alive(pid);
+    if survived {
+        drop(Command::new("kill").args(["-KILL", pid]).status());
+    }
+    drop(fs::remove_file(&pid_file));
+
+    assert_eq!(result.expect("an answer"), timed_out());
+    assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
+    assert!(!survived, "the grandchild {pid} outlived the check");
+}
+
+#[test]
+fn a_solver_slow_to_exit_after_answering_returns_on_time() {
+    let (result, elapsed) =
+        check_with_short_timeout(&build_fake("echo sat; exec sleep 5"), &build_script().1);
+
+    assert_eq!(result.expect("an answer"), SatResult::Sat);
+    assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
+}
+
+#[test]
+fn a_solver_that_prints_success_is_answered() {
+    // A conforming solver starts with `:print-success` on, so it answers
+    // `success` to every command until the first one turns it off. This
+    // one answers the first command too, as a solver may, and answers
+    // `unsat` unless that first command turned the option off.
+    let backend = build_fake(
+        r#"read -r first; echo success; off=; if [ "$first" = "(set-option :print-success false)" ]; then off=1; fi; while read -r line; do case "$line" in "(check-sat)") if [ -n "$off" ]; then echo sat; else echo unsat; fi;; "(exit)") exit 0;; *) if [ -z "$off" ]; then echo success; fi;; esac; done"#,
+    );
+
+    let (result, elapsed) = check_with_short_timeout(&backend, &build_script().1);
+
+    assert_eq!(result.expect("an answer"), SatResult::Sat);
+    assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
 }
 
 // ---------------------------------------------------------------------------

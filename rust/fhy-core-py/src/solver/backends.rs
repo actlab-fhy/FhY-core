@@ -408,8 +408,10 @@ pub(super) fn build_simplifier(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Si
 // ---------------------------------------------------------------------------
 
 /// The core's process backend: it runs an SMT-LIB2 executable for each
-/// check, such as `z3 -in` or `cvc5 --lang=smt2`, and kills it at the
-/// timeout.
+/// check, such as `z3 -in` or `cvc5 --lang=smt2`. The timeout bounds the
+/// whole check: a program that has not answered, or has not exited after
+/// answering, by the deadline is killed, together with its process group
+/// on Unix. A wrapper script should `exec` its solver.
 ///
 /// It is a native `SmtSolver`: a solver holding it checks in Rust, with the
 /// interpreter detached.
