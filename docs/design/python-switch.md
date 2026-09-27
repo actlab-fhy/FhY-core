@@ -157,7 +157,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [x] S18.1: `fhy_core::stack` and `fhy_core::scope`, test-first, with the Rust stories and properties (35 new tests, all failing against the `todo!()` stubs first; the Rust gate passes, 4,222 tests; 4,254 with all features)
   - [x] S18.2: the Python stories the case list adds (K-10, S-5), and the docs (`pytest tests` 7,902 passed; lint and mypy are clean)
   - [x] S18.3: status and implementation notes (see "S18 status")
-- [ ] S17: serialization, in two parts (one canonical format, V2, the core's serde; V1 deprecated, readable and writable on request until its removal release; see "S17: serialization")
+- [x] S17: serialization, in two parts (one canonical format, V2, the core's serde; V1 deprecated, readable and writable on request until its removal release; see "S17: serialization"). The suite is green (8,281 passed), slow tests pass (8,314), properties pass (282), `tests_minimal` passes (6,315 passed, 642 skipped), lint and mypy are clean, `golden_expanded` replays both corpora, and the Rust gate passes (4,305 tests; 4,337 with all features). Five benchmark rows slower than 10% await the maintainer's verdict (V2 literal decoding 2.10, a foreign-part write 2.05, set-member writes 1.11 and 1.14, the value functions 1.11; see "S17 benchmarks")
   - [x] S17.0: the design (survey, divergences W-1 to W-11, decisions D-S17-1 to D-S17-24, benchmark plan, steps, test plan)
   - [x] N-S17-1 decided as (a), N-S17-2 as (a), N-S17-3 as (c) (2026-09-26; see "S17 resolutions"; D-S17-16, D-S17-19 and D-S17-20 revised, D-S17-25 added)
   - [x] S17.1: serialization benchmarks and the V1 baseline (67 rows; see "S17.1 baseline"); the frozen pickle corpus and today's V1 payloads (57 objects, 229 tests)
@@ -171,7 +171,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S17b.2: the framework (`WireVersion`, `wire_version`, detection, the V2 family forms, `serialize_value`/`deserialize_value`, binary version 2, the canonical `to_json`, the deprecation warnings, `upgrade_v1_payload`)
     - [x] S17b.3: each Rust-backed class switched to V2, with the migrated tests (V1 pins run under the `v1_wire` fixture) and the stub; one commit (`pytest tests` 8,133 passed)
     - [x] S17b.4: the golden serialization corpus and its generator (89 cases), the `golden_expanded` entry, the interface suites (`test_wire_v2.py`, `test_wire_v1.py`; 76 tests), the V2 pins, and `python -m fhy_core.serialization_upgrade`
-    - [ ] S17b.5: benchmarks after, and docs (the revised rules of D-S17-21, the README)
+    - [x] S17b.5: benchmarks after, and docs (the revised rules of D-S17-21, the README; see "S17 benchmarks", "S17a implementation notes" and "S17b implementation notes")
 
 ## Goal
 
@@ -286,10 +286,10 @@ For framework traits users implement in Python: `CompilerPass`, `Analysis`,
    exception class, with the same message, as the pure-Python
    implementation, through one `IntoPyErr` implementation per core error
    type. The core crate's `Display` text stays Rust-style.
-4. **Serialization.** A switched class keeps the Python wire format it has
-   today, because Python payloads cross both backends. The binding produces
-   the `__type__`/`__data__` envelope and the Python field shapes (decision 4:
-   the envelope lives in the binding). Pickles load under either backend.
+4. **Serialization.** A switched class writes the V2 wire format, the core's
+   serde shapes, through the core's serde, and reads the deprecated V1
+   `__type__`/`__data__` envelope format too, until V1 is removed (S17,
+   D-S17-21 revising this rule). Pickles load under either version.
 5. **Benchmark before switching.** Before a class switches, a benchmark
    compares both backends on its hot paths: construction, attribute access,
    `==`, `hash`, and the module's main operations. It lives in the
@@ -19131,6 +19131,14 @@ and cross-cutting rules 4 to 7.
   - The move is its own commit, before V2 lands, with the suite green and
     no test changed. Afterwards V1 changes only to be deleted (N-S17-3):
     its texts, errors and quirks stay exactly as they are.
+  - **Revised in S17b (2026-09-26): V1 stays where it is, marked.** A move
+    into `_serialization_v1.py` makes an import cycle (the V1 code needs
+    the framework's classes, and the framework re-exports the V1
+    functions), and PyO3 accepts one `#[pymethods]` block per class
+    without the `multiple-pymethods` feature, so a class's V1 methods
+    cannot move to another file. Each V1 item's documentation says "V1:
+    removed with the V1 wire format", which the removal greps for, and the
+    frozen corpora of D-S17-19 and D-S17-20 check V1 is unchanged.
 - **D-S17-16: the deprecation path** (N-S17-3 (c), revised 2026-09-26).
   V1 is deprecated from S17 on, and its reader and its writer are both
   removed after one deprecation release.
@@ -19532,3 +19540,301 @@ V1 writing reproduces each payload; it runs inside
 | `test_type_pickle_round_trip` | 9.34 µs |
 | `test_type_serialize_to_dict` | 1.85 µs |
 | `test_value_round_trip[v1]` | 195.36 µs |
+
+### S17 benchmarks (before and after)
+
+`target/bench.sh` ran `benchmarks/test_serialization.py` and the reruns
+(S17.1 baseline) again on 0617974, the extension built from it, three
+times; each row is the best of three medians. The machine is the S0 one;
+the load average was 6 to 14 from other work. "V2 after" is the default
+path now, compared with "V1 before", the default path before S17; "V1
+after" is the deprecated path, which must not have slowed. The reruns call
+the default writers, so they compare V2 after with V1 before.
+
+| Benchmark | V1 before | V2 after | ratio | V1 after | ratio |
+|---|---|---|---|---|---|
+| `test_bytes_round_trip[deep_expression]` | 1.38 ms | 173.06 µs | 0.13 | 1.18 ms | 0.86 |
+| `test_bytes_round_trip[param_ordinal_20]` | 175.00 µs | 31.25 µs | 0.18 | 158.78 µs | 0.91 |
+| `test_deserialize_from_dict[constraint_system_20]` | 817.08 µs | 200.46 µs | 0.25 | 731.84 µs | 0.90 |
+| `test_deserialize_from_dict[deep_expression]` | 278.12 µs | 213.26 µs | 0.77 | 246.70 µs | 0.89 |
+| `test_deserialize_from_dict[foreign]` | 656.19 µs | 287.68 µs | 0.44 | 588.65 µs | 0.90 |
+| `test_deserialize_from_dict[kernel]` | 16.40 µs | 17.88 µs | 1.09 | 15.78 µs | 0.96 |
+| `test_deserialize_from_dict[literals]` | 120.29 µs | 252.75 µs | 2.10 | 104.38 µs | 0.87 |
+| `test_deserialize_from_dict[param_ordinal_20]` | 92.59 µs | 22.46 µs | 0.24 | 85.80 µs | 0.93 |
+| `test_deserialize_from_dict[provenance]` | 154.13 µs | 38.18 µs | 0.25 | 133.24 µs | 0.86 |
+| `test_deserialize_from_dict[set_constraint_100]` | 233.89 µs | 55.12 µs | 0.24 | 198.15 µs | 0.85 |
+| `test_deserialize_from_dict[symbol_table_20]` | 1.10 ms | 624.20 µs | 0.57 | 1.02 ms | 0.93 |
+| `test_deserialize_from_dict[type]` | 23.59 µs | 8.75 µs | 0.37 | 22.40 µs | 0.95 |
+| `test_deserialize_from_dict[wide_expression]` | 4.97 ms | 2.42 ms | 0.49 | 4.45 ms | 0.89 |
+| `test_json_round_trip[constraint_system_20]` | 1.16 ms | 180.75 µs | 0.16 | 1.09 ms | 0.94 |
+| `test_json_round_trip[deep_expression]` | 1.34 ms | 163.35 µs | 0.12 | 1.20 ms | 0.89 |
+| `test_json_round_trip[foreign]` | 927.30 µs | 327.05 µs | 0.35 | 878.49 µs | 0.95 |
+| `test_json_round_trip[kernel]` | 44.31 µs | 42.90 µs | 0.97 | 41.94 µs | 0.95 |
+| `test_json_round_trip[literals]` | 1.14 ms | 209.25 µs | 0.18 | 1.01 ms | 0.89 |
+| `test_json_round_trip[param_ordinal_20]` | 162.38 µs | 22.58 µs | 0.14 | 150.54 µs | 0.93 |
+| `test_json_round_trip[provenance]` | 250.79 µs | 36.25 µs | 0.14 | 225.46 µs | 0.90 |
+| `test_json_round_trip[set_constraint_100]` | 468.21 µs | 48.94 µs | 0.10 | 405.28 µs | 0.87 |
+| `test_json_round_trip[symbol_table_20]` | 1.49 ms | 902.24 µs | 0.61 | 1.40 ms | 0.94 |
+| `test_json_round_trip[type]` | 51.76 µs | 8.30 µs | 0.16 | 51.25 µs | 0.99 |
+| `test_json_round_trip[wide_expression]` | 16.85 ms | 1.65 ms | 0.10 | 13.93 ms | 0.83 |
+| `test_serialize_to_dict[constraint_system_20]` | 37.52 µs | 28.07 µs | 0.75 | 37.39 µs | 1.00 |
+| `test_serialize_to_dict[deep_expression]` | 121.18 µs | 63.59 µs | 0.52 | 115.53 µs | 0.95 |
+| `test_serialize_to_dict[foreign]` | 35.93 µs | 73.78 µs | 2.05 | 34.82 µs | 0.97 |
+| `test_serialize_to_dict[kernel]` | 2.47 µs | 2.13 µs | 0.86 | 2.48 µs | 1.01 |
+| `test_serialize_to_dict[literals]` | 133.51 µs | 73.47 µs | 0.55 | 127.17 µs | 0.95 |
+| `test_serialize_to_dict[param_ordinal_20]` | 4.49 µs | 4.63 µs | 1.03 | 4.39 µs | 0.98 |
+| `test_serialize_to_dict[provenance]` | 8.92 µs | 5.12 µs | 0.57 | 8.24 µs | 0.92 |
+| `test_serialize_to_dict[set_constraint_100]` | 16.89 µs | 18.74 µs | 1.11 | 14.46 µs | 0.86 |
+| `test_serialize_to_dict[symbol_table_20]` | 32.95 µs | 22.52 µs | 0.68 | 34.74 µs | 1.05 |
+| `test_serialize_to_dict[type]` | 2.05 µs | 1.63 µs | 0.79 | 2.00 µs | 0.97 |
+| `test_serialize_to_dict[wide_expression]` | 1.49 ms | 777.25 µs | 0.52 | 1.41 ms | 0.95 |
+| `test_value_round_trip[mixed_100]` | 195.36 µs | 216.90 µs | 1.11 | 167.86 µs | 0.86 |
+
+| Rerun | before | after | ratio |
+|---|---|---|---|
+| `test_constraint_deserialize_from_dict` | 231.85 µs | 55.43 µs | 0.24 |
+| `test_constraint_pickle_round_trip` | 23.12 µs | 18.32 µs | 0.79 |
+| `test_constraint_serialize_to_dict` | 16.78 µs | 19.11 µs | 1.14 |
+| `test_constraint_system_serialize_to_dict` | 50.90 µs | 49.93 µs | 0.98 |
+| `test_deserialize_from_dict_of_deep_tree` | 294.79 µs | 212.67 µs | 0.72 |
+| `test_domain_construction[ordinal_serializable]` | 305.07 µs | 272.56 µs | 0.89 |
+| `test_frame_deserialize_from_dict` | 53.95 µs | 10.64 µs | 0.20 |
+| `test_frame_serialize_to_dict` | 2.58 µs | 2.50 µs | 0.97 |
+| `test_identifier_deserialize_from_dict` | 3.73 µs | 3.30 µs | 0.88 |
+| `test_identifier_pickle_round_trip` | 9.96 µs | 8.66 µs | 0.87 |
+| `test_json_round_trip_of_deep_tree` | 1.33 ms | 163.83 µs | 0.12 |
+| `test_param_assignment_deserialize_from_dict` | 123.70 µs | 50.94 µs | 0.41 |
+| `test_param_deserialize_from_dict` | 173.33 µs | 45.53 µs | 0.26 |
+| `test_param_is_value_valid[serializable-value4]` | 4.51 µs | 3.85 µs | 0.85 |
+| `test_param_pickle_round_trip` | 28.42 µs | 23.81 µs | 0.84 |
+| `test_param_serialize_to_dict` | 7.39 µs | 4.65 µs | 0.63 |
+| `test_pickle_round_trip_of_deep_tree` | 203.55 µs | 169.21 µs | 0.83 |
+| `test_provenance_dict_round_trip[call_site]` | 50.16 µs | 11.85 µs | 0.24 |
+| `test_provenance_dict_round_trip[file]` | 19.88 µs | 6.54 µs | 0.33 |
+| `test_provenance_dict_round_trip[fused]` | 52.34 µs | 12.57 µs | 0.24 |
+| `test_provenance_dict_round_trip[named]` | 33.56 µs | 7.61 µs | 0.23 |
+| `test_provenance_dict_round_trip[unknown]` | 2.07 µs | 1.00 µs | 0.48 |
+| `test_serialize_to_dict_of_deep_tree` | 128.50 µs | 64.09 µs | 0.50 |
+| `test_set_constraint_construction[serializable]` | 17.96 µs | 19.26 µs | 1.07 |
+| `test_set_constraint_evaluate_with_bindings[serializable]` | 2.18 µs | 1.87 µs | 0.86 |
+| `test_symbol_table_deserialize_from_dict` | 1.12 ms | 616.74 µs | 0.55 |
+| `test_symbol_table_pickle_round_trip` | 184.79 µs | 152.15 µs | 0.82 |
+| `test_symbol_table_serialize_to_dict` | 33.72 µs | 22.75 µs | 0.67 |
+| `test_type_deserialize_from_dict` | 16.03 µs | 4.44 µs | 0.28 |
+| `test_type_pickle_round_trip` | 9.34 µs | 7.55 µs | 0.81 |
+| `test_type_serialize_to_dict` | 1.85 µs | 1.62 µs | 0.88 |
+
+Verdict (cross-cutting rule 5):
+
+- **V1 did not slow down:** every "V1 after" row is within 10% of before
+  (0.83 to 1.05).
+- **V2 is faster on nearly every row:** JSON round trips 3 to 10 times,
+  dict decoding 1.3 to 4 times, binary 5 to 8 times, and most dict writes
+  1.2 to 2 times; the expression reruns (the deep tree) 1.3 to 8 times.
+- **Five rows are slower than 10%, flagged for the maintainer:**
+  - `test_deserialize_from_dict[literals]`, **2.10** (120 µs to 253 µs):
+    100 literals of every kind. A V2 literal is parsed by the core
+    (a decimal-string big integer, a float's text, a decimal's text), then
+    rebuilt through its public class, where V1 handed the JSON number to
+    the constructor; about 1.3 µs a literal against 0.6 µs. The JSON round
+    trip of the same tree is 5 times faster, since V1's text path was slow.
+  - `test_serialize_to_dict[foreign]`, **2.05** (36 µs to 74 µs): a system
+    with a Python-defined constraint and 20 `Serializable` members, each a
+    foreign part whose payload is dumped to canonical JSON text (N-S17-2
+    (a)); about 2 µs a part. Its JSON round trip is 2.8 times faster.
+  - `test_serialize_to_dict[set_constraint_100]`, **1.11** (16.9 µs to
+    18.7 µs): 100 members through the core's member serde into Python.
+  - `test_value_round_trip[mixed_100]`, **1.11** (195 µs to 217 µs): the V2
+    value functions against the V1 registry-wrapped ones.
+  - rerun `test_constraint_serialize_to_dict`, **1.14** (16.8 µs to
+    19.1 µs): the same member path as the set constraint row.
+
+### S17a implementation notes
+
+- **`fhy_core::foreign`** (layer 1): `Foreign { type_id, data }`,
+  `Resolve<T>`, `NoForeign` (a unit struct callers name, so exhaustive, as
+  `RealDomain` is), `ForeignError` (`Unresolved`, `NoWireForm`, `Failed`
+  with its source), and `BuildError` (`Foreign`, or `Invalid` with the
+  constructor's error; `Display` and `source` are the underlying error's,
+  a transparent wrapper, so the Python message is the core's text). The five
+  traits gained `to_foreign`, whose default answers `NoWireForm` naming the
+  type (`type_name()` where the trait has one, "custom constraint" and
+  "custom domain" otherwise).
+- **The wire modules** follow Pattern F as D-S17-8 designed it, with one
+  simplification: a type's `Serialize` converts the value into its owned
+  wire form (`TypeData`, `SymbolFrameData`, `ConstraintData`,
+  `ParamDomainData`, ...), then serializes that, instead of a borrowed twin
+  per type. The clones are of `Arc`-backed parts and strings, and the
+  cost stayed below the Python side's.
+  - Closed parts derive or hand-write their serde directly: `Dimension`,
+    `IndexType`, `TemplateDataType` (zero widths refused with
+    `TemplateWidthError`'s text), `ImportFrame`, `EquationConstraint`.
+  - `Value` and `Member` share one wire form, `ValueData`; decoding a
+    member refuses what `Member::try_from_value` refuses. The literal
+    module's number-text helpers became crate-visible for it.
+  - `ParamData::build` takes a `ParamContext` and builds through
+    `Param::new`; an assignment builds without a check
+    (`ParamAssignment::new_unchecked`), as unpickling does. The plain
+    `Deserialize` of `Param` and `ParamAssignment` use a context over
+    `Solver::new()`, which asks no backend.
+  - `SymbolTableData<D>` is generic over the frame's wire form:
+    `SymbolTableData::of(table, frame)` and `build(frame)`, which adds each
+    namespace, then its symbols, as `add_namespace` and `add_symbol` do.
+- **Decided during S17b, and changed in the core** (D-S17-26 below): every
+  value a Python class serializes encodes as a JSON object, because the
+  Python framework's `serialize_to_dict` returns a dict. So
+  `Provenance::Unknown` encodes as `{"unknown": {}}` (was `"unknown"`),
+  the real domain as `{"real": {}}`, and a value domain as `{"levels":
+  [..]}` (was the bare list; still flat, R-4). The provenance, value-domain
+  and identifier stories that pinned the old shapes were rewritten.
+- **Tests:** 82 new Rust tests in the first commit (`foreign_stories.rs`,
+  `types/serde_stories.rs`, `symbol_table/serde_stories.rs`,
+  `constraint/serde_stories.rs` with a round-trip property over nested
+  values, `param/serde_stories.rs`) and the corpus replay
+  (`serialization_golden.rs`, with its ignored expanded replay). They were
+  written together with the code rather than against `todo!()` stubs, as
+  S16b.1's were; every one passed on its first full run.
+
+### S17b implementation notes
+
+- **The version** is `fhy_core.serialization._WIRE_VERSION`, a
+  `ContextVar`, V2 by default; `wire_version(V1)` warns once on entry.
+  Reading V1 warns once, at the outermost V1 payload: while one is read,
+  `_READING_V1` is set, and nested readers read V1 without warning again.
+  That flag also makes every payload nested in a V1 payload read as V1, so
+  a malformed V1 document fails with V1's own errors; the mixed "V1 with V2
+  parts" document of D-S17-14 is therefore not read (no writer produces
+  one). A V1 payload is detected by an envelope key (`__type__` or
+  `__data__`) at its root, a `Param` by its domain's, an assignment by its
+  value's or its param's, and a value domain by the absence of `levels`.
+- **How each class writes V2.**
+  - The pyclass bases `_rs.Expression`, `_rs.Provenance`, `_rs.Type`,
+    `_rs.DataType`, and `_rs.Param`, `_rs.ParamAssignment` and
+    `_rs.ValueDomain` define `serialize_to_dict`, `to_json`,
+    `deserialize_from_dict` and `from_json` over the core value (a
+    Python-defined `Type` or `DataType` reaches them through its base, and
+    writes its foreign part under `"extension"`).
+  - The families whose base is a Python class (`Constraint`,
+    `ConstraintSystem`, `ParamDomain`, `SymbolTableFrame`) name their Rust
+    family in `WrappedFamilySerializable._WIRE_FAMILY`, and the framework's
+    V2 path calls `_rs.encode_wire_dict`, `encode_wire_json`,
+    `decode_wire_family` and `decode_wire_family_json`, which read the
+    object's core value through the binding's readers, so a Python-defined
+    member writes its foreign part under `"custom"` through its adapter.
+  - `SymbolTable` writes its V2 dict in one serde pass; `Identifier`,
+    `Position`, `Span`, `Note`, `NoteKind` and `OpAttribute` needed no
+    change: their V1 dicts already are the core's, key order included.
+  - The Rust-backed classes' `serialize_data_to_dict` and
+    `deserialize_data_from_dict` stay their V1 data hooks; a pure-Python
+    family uses its hooks in both versions (`{type_id: data}` under V2).
+- **Dicts without text.** `serialize_to_dict` builds its dict with a small
+  serde serializer into Python objects (`wire/python_value.rs`), in the
+  order the core writes, and `deserialize_from_dict` reads the dict into a
+  `serde_json::Value` tree; neither writes JSON text. `serde_json::Value`
+  is used in the binding only, never in the core; its map is a `BTreeMap`
+  without the `preserve_order` feature, which is why writing does not go
+  through it.
+- **Foreign parts.** An adapter's `to_foreign` calls the framework's
+  `_foreign_payload` (the object's type id, and the canonical JSON of its
+  `serialize_data_to_dict()` for a family member, else its
+  `serialize_to_dict()`); `PyResolver` calls `_resolve_foreign` (registry
+  only) and wraps the object through the binding's own readers. Writing
+  does not require the class to be registered, as V1 did not; reading does.
+  A hook's exception is kept in S13's pending-error slot and raised as
+  itself when serde returns; `KeyboardInterrupt` passes through.
+- **Member keys.** A `Serializable` member's ordering key is built from
+  its V2 payload whatever version is in effect
+  (`_serialize_ordering_payload`), so its canonical place does not depend
+  on the context. Against keys built before S17 (from V1 payloads), a
+  member whose payload nests a Rust-backed value may order differently
+  (W-12, below); no test pinned such an order.
+- **Pickling:** unchanged, except `ValueDomain`, whose reduce value passes
+  its V2 payload (D-S17-19 revised); old pickles holding V1 payloads load
+  with the V1 warning, as the frozen pickle corpus checks.
+- **Materializing** a decoded expression reuses one Python `Identifier`
+  per id, and rebuilds a decimal literal from its text, which halved the
+  decoding cost of identifier-heavy trees.
+- **`pythonize` was not added.** The spike measured `json.loads` as about
+  three quarters of a V2 `serialize_to_dict` and the canonical `json.dumps`
+  as about a third of a `deserialize_from_dict`; the binding's own
+  serializer and the `serde_json::Value` walk removed both costs without a
+  new crate. The binding gained `serde` and `serde_json` as dependencies,
+  both already in `Cargo.lock` (serde_json was fhy-core's dev-dependency),
+  so no crate was added to the lock.
+- **V1 stays in place** (D-S17-15 revised): its items are documented
+  "V1: removed with the V1 wire format", and the binding modules
+  `serialization.rs` and `expression/payload.rs` say so in their docs. The
+  Rust-backed classes' V1 data hooks and the registry-wrapped value
+  functions are the rest of what the removal deletes.
+- **The golden corpus** has no V1 half: V1 is pinned by S17.1's frozen
+  `v1_payloads.json`, whose test also checks V1 writing is unchanged, and
+  a generator running today's V1 writer would pin nothing more. The
+  generator imports the frozen fixtures and `tests/serialization/foreign_parts.py`
+  (the Python-defined parts) from the repository root.
+- **Tests migrated:** 94 tests failed on the switch, all pinning V1
+  payloads or V1 errors; most now run under the `v1_wire` fixture
+  (`tests/conftest.py`, over `tests/v1.py`), which writes and reads V1
+  without the warning. Rewritten instead:
+  `test_to_json_returns_sorted_keys_by_default` (V2 keeps the order
+  written; a V1 twin keeps the old pin), the binary envelope's version
+  (2), and `test_payload_data_follows_the_rust_semantics`'s literal V1
+  payload. New: `test_wire_v2.py` (the 89 corpus texts both ways, escapes,
+  re-formatting, float literals, sharing, values, foreign parts and their
+  errors, the V2 errors, Python families, threads; 120 tests with the
+  corpus parameters) and `test_wire_v1.py` (warnings, detection, version 1
+  blobs, the upgrade function and entry point; 8), the V2 pins of
+  `test_serialization_pins.py` (19), and S17.1's `test_frozen_v1.py` (229).
+- **A commit slip:** a1e20c1 ("encode a value domain as a map") also
+  committed the S17b binding work in progress (`wire.rs`, the expression,
+  provenance and type methods), without its Python half or the
+  `Cargo.lock` change; 934876e completes it. The Python suite, and a
+  `--locked` build, fail on a1e20c1 alone.
+
+Divergences found during implementation, beyond W-1 to W-11:
+
+| # | Before S17 | After S17 |
+|---|---|---|
+| W-12 | a `Serializable` member was keyed by `repr` of its V1 payload | by `repr` of its V2 payload, in every version |
+| W-13 | the core wrote `Provenance::Unknown` as `"unknown"` and a value domain as a bare list | `{"unknown": {}}`, `{"levels": [..]}`; the real domain `{"real": {}}` |
+| W-14 | a malformed nested payload in a V1 document raised V1's error | the same, and a V1 document can no longer nest a V2 payload |
+
+Decisions made during implementation, recorded here as the task allows:
+
+- **D-S17-26: every value a Python class serializes encodes as a JSON
+  object** (the framework's dict contract; W-13). Unit variants carry
+  empty fields and a value domain wraps its levels.
+- **D-S17-27: inside a V1 read, nested payloads are V1** (V1 errors stay
+  exact; W-14).
+- **D-S17-28: V1 stays in place, marked** (D-S17-15 revised above).
+- **D-S17-29: dicts are built and read without JSON text, and `pythonize`
+  is not a dependency** (the spike).
+
+### S17 status
+
+S17 is done. Every step of the checklist is ticked; see "S17 benchmarks"
+for the five rows slower than 10% that await the maintainer's verdict. On
+the final tree: `pytest tests` 8,281 passed, `-m "not very_slow"` 8,314,
+nox `property` 282, `tests_minimal` 6,315 passed and 642 skipped, `lint`
+and `type_check` clean, `golden_expanded` replays both expanded corpora
+(the interned one and 2,000 random serialization cases); the Rust gate
+passes: fmt, clippy `-D warnings` with and without `--all-features`, 4,305
+tests (4,337 with all features), doc, deny and `cargo +1.85 check`.
+
+Left for later:
+
+- The V1 removal release (0.4.0 proposed) deletes: `wire_version`'s V1,
+  `_write_v1_envelope`, `_deserialize_v1_envelope`, `_read_v1`,
+  `_READING_V1`, binary version 1, the registry-wrapped value functions,
+  `upgrade_v1_payload` and `fhy_core.serialization_upgrade`; in the
+  binding, `serialization.rs`'s V1 shapes, `expression/payload.rs`, every
+  `serialize_v1`/`deserialize_v1`, and the Rust-backed classes' V1 data
+  hooks; the `v1_wire` fixture, `tests/v1.py` and the V1-marked tests; and
+  the frozen corpora of S17.1.
+- postcard is not exposed to Python (D-S17-2).
+- A faster V2 decoding of literal-heavy expressions, if the maintainer asks
+  for it: building the public nodes around the core's decoded literals
+  without the constructors' re-parsing.
+Commits: 2a621e7 (resolutions), 81b223b (S17.1), ddad2e8 and f3c7168
+(S17a), 50b5154 and a1e20c1 (the core's map encodings, the second with
+the S17b slip), 934876e (the V2 switch), f4f4c7a and fd8856d (decoding
+speedups), 2878276 (S17b.4), 0617974 (writing speedups) and this one.

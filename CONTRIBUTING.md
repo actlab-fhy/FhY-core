@@ -423,7 +423,11 @@ mutability. Slice S13 adds a
 thread-local slot (`rust/fhy-core-py/src/constraint/value.rs`) holding the
 first exception a Python member's `==`, or a Python-defined constraint's
 comparison, raised during one call into the constraint core, which the call
-raises when the core returns; it is empty whenever no such call runs. Tests never clear a
+raises when the core returns; it is empty whenever no such call runs.
+Slice S17 reuses that slot for the exception a Python-defined part's
+serialization hook raises while the core serializes or resolves it
+(`rust/fhy-core-py/src/wire.rs`); the wire version is a Python context
+variable, not Rust state. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default
@@ -440,9 +444,14 @@ id from the reserved table rather than drawing one from the counter.
 ### Serialization is plain serde
 
 `fhy-core` serializes with `#[derive(Serialize, Deserialize)]` wherever it
-can, in shapes Rust defines. There is no `__type__`/`__data__` envelope in
-the core crate: the binding adds it where Python's serialization framework
-embeds a Rust value in a Python container. Serde impls must work with
+can, in shapes Rust defines, and those shapes are the Python package's wire
+format, V2: a Rust-backed class writes and reads its value through the
+core's serde, so Python's and Rust's texts are byte-identical, and the
+golden serialization corpus holds them to it. There is no
+`__type__`/`__data__` envelope in the core crate; the binding keeps it only
+as the deprecated V1 format until V1 is removed. Every value a Python class
+serializes encodes as a map, so a unit variant carries empty fields
+(`{"unknown": {}}`). Serde impls must work with
 non-self-describing formats as well as JSON: every serialized type has a
 round-trip test through JSON and one through postcard, the binary test
 format. `src/` never uses `#[serde(tag)]`, `untagged`, `flatten` or

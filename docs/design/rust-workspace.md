@@ -114,7 +114,9 @@ These apply to every batch.
      and deserializing a `Canonical<T>` interns. A decode that fails partway
      may leave both effects behind. This is documented, not prevented.
    - **Envelope:** the `__type__`/`__data__` envelope lives only in
-     `fhy-core-py`.
+     `fhy-core-py`, as the deprecated V1 format it still reads and writes
+     until V1 is removed; the Python package's default format, V2, is the
+     core's serde (python-switch.md S17, D-S17-21).
 3. **Errors (S-5).**
    - Public errors are `#[non_exhaustive]`, with structured fields.
    - `Display` is one line and never repeats `source()`.
