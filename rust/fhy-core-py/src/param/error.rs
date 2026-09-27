@@ -54,6 +54,7 @@ pub(super) fn param_error_to_py(
     match error {
         ParamError::NotALeafValue { kind, .. } => PyTypeError::new_err(value_kind_message(kind)),
         ParamError::IncomparableValues
+        | ParamError::NotAnIntervalOperand
         | ParamError::ForbiddenConstraintKind(DomainKind::IntervalInteger) => {
             PyTypeError::new_err(text)
         }
@@ -83,7 +84,11 @@ pub(super) fn param_error_to_py(
         | ParamError::NotABound
         | ParamError::EmptyUnion(_)
         | ParamError::EmptyIntersection(_)
-        | ParamError::DifferentPermutationMembers => param_error(py, text),
+        | ParamError::DifferentPermutationMembers
+        | ParamError::EmptyInterval(_)
+        | ParamError::NaturalBound { .. }
+        | ParamError::UnorderedBounds
+        | ParamError::EmptyParamIntersection => param_error(py, text),
         _ => PyRuntimeError::new_err(text),
     }
 }

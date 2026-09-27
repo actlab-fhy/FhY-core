@@ -38,6 +38,7 @@ pub(crate) use materialize::{
 pub(crate) use node::{
     PyBinaryExpression, PyCallExpression, PyExpression, PyIdentifierExpression,
     PyLiteralExpression, PyLogicalExpression, PyPiecewiseExpression, PyUnaryExpression,
+    coerce_to_expression,
 };
 pub(crate) use pattern::{
     PyAlternativesPattern, PyBinaryExpressionPattern, PyCallExpressionPattern, PyCapture,

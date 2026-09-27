@@ -131,7 +131,7 @@ pub(super) fn build_bare_bool_error(position: &str, value: bool) -> PyErr {
 ///
 /// Raises `ValueError` for a bare `bool`, for a value of any other type,
 /// and for a `str` outside the literal grammar.
-pub(super) fn coerce_to_expression<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn coerce_to_expression<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     let py = value.py();
     if value.is_instance_of::<PyExpression>() {
         return Ok(value.clone());

@@ -149,7 +149,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16a.5: the interface suite for the domains (54 tests)
   - [ ] S16b: params
     - [x] S16b.1: core additions (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection; 44 new tests, written after the code, see "S16b.1 implementation notes")
-    - [ ] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
+    - [x] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
     - [ ] S16b.3: the Python switch of `core.py`, with the migrated tests and the interface suite
     - [ ] S16b.4: benchmarks after, and docs
 
@@ -17991,3 +17991,19 @@ Where the shape differs from D-S16-2's sketch, or fills it in:
   `EmptyInterval`, `NotAnIntervalOperand`, `UnsupportedOperand`,
   `NonBoundOperand`, `MalformedBound`, `UnsupportedUnion` and
   `EmptyParamIntersection`.
+
+### S16b.2 status
+
+The binding adds `param/parameter.rs`: `_rs.Param`, `_rs.ParamAssignment`,
+their private seeds (`_ParamSeed`, `_ParamAssignmentSeed`, handed to the
+public classes' `__new__` through the private keyword `_seed`, as S11's
+`_state` is), and `check_param_bounds_are_ordered`; the expression
+binding lends it `coerce_to_expression`, whose lifting of a bound (a bare
+`bool` refused, a `str` in the literal grammar) the bounds reuse. A param
+keeps its domain, variable and `ConstraintSystem` objects, the system's
+members being the constraint objects it was given (found by
+`Constraint::ptr_eq`) and new public-class objects for the rest. Messages
+that name Python values keep Python's words (D-S16-12): an inadmissible,
+violated or unverified value, bindings of the own variable, a native
+constant as the variable, a constraint outside the scope, an unsupported
+union or operand. The stub declares both classes.

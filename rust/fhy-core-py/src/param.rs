@@ -15,6 +15,7 @@ mod error;
 mod functions;
 mod objects;
 mod observer;
+mod parameter;
 mod value;
 
 pub(crate) use domains::{
@@ -25,3 +26,4 @@ pub(crate) use functions::{
     are_all_constraints_satisfied, compute_constraint_implication_subset, evaluate_system_outcome,
     is_bound_expression,
 };
+pub(crate) use parameter::{PyParam, PyParamAssignment, check_param_bounds_are_ordered};

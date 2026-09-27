@@ -75,9 +75,10 @@ mod rs_module {
     use super::op_attribute::PyOpAttribute;
     #[pymodule_export]
     use super::param::{
-        PyCategoricalDomain, PyIntegerDomain, PyIntervalIntegerDomain, PyOrdinalDomain,
-        PyPermutationDomain, PyRealDomain, are_all_constraints_satisfied,
-        compute_constraint_implication_subset, evaluate_system_outcome, is_bound_expression,
+        PyCategoricalDomain, PyIntegerDomain, PyIntervalIntegerDomain, PyOrdinalDomain, PyParam,
+        PyParamAssignment, PyPermutationDomain, PyRealDomain, are_all_constraints_satisfied,
+        check_param_bounds_are_ordered, compute_constraint_implication_subset,
+        evaluate_system_outcome, is_bound_expression,
     };
     #[pymodule_export]
     use super::pass::{
