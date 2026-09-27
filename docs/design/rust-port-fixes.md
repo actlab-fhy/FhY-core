@@ -70,8 +70,8 @@ onto `dev-rust` before continuing.
 ### Track B: `expression` (expressions, the wire and the corpus; lands 3rd)
 
 - [x] B0: worktree `port/fix2-expression` created; the baseline gates recorded (the worktree is `fix-b-expression`, branch `fix/b-expression`; see Track B notes): `4403638`
-- [x] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed: this commit
-- [ ] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing
+- [x] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed: `0393b79`
+- [x] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing: this commit
 - [ ] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`
 - [ ] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`
 - [ ] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node
@@ -3108,6 +3108,34 @@ backtracked into a later alternative; no code change. The new rstest
 Capture(c))` failing on `1 + 2` and matching `2 + 2`, beside the existing
 `pattern_alternatives_commits_to_the_first_match`, which pins the
 failing case over `any_literal`. Both passed at their first run.
+
+**R2-012.**
+- **The lane count** is checked as `ndarray` checks a shape: the lengths of
+  the non-empty axes must multiply to at most `isize::MAX`, even when
+  another axis is empty, so no later broadcast of an intermediate value can
+  fail. Past that, `EvaluationError::BroadcastTooLarge { shape }` (a
+  `ValueError`). `broadcast_view`'s `unreachable!` returns the same error.
+- **The output** is reserved with `try_reserve_exact`, and a failure is
+  `EvaluationError::OutOfMemory { lanes }` (a `MemoryError`). A lane count
+  within one chunk is evaluated whole as before, and needs no reservation.
+- **Per-chunk copies.** `ChunkSource::Copied` now holds the binding's
+  broadcast view and its C-order iterator, and each chunk copies its next
+  lanes into a buffer of one chunk, so a zero-stride binding is never
+  materialized whole. The chunks are read in order, so the iterator gives
+  each lane once, the same work as the one copy before. The spec's
+  `a_broadcast_binding_is_read_per_chunk` asserts the chunk source kind
+  and its buffer's size, as the spec allows, so it is a unit test of
+  `evaluate/array.rs` (the source is crate-private), beside one that a
+  standard-layout binding is sliced in place.
+- **Test-first.** At the base, `p01`'s `(2^33, 1) + (1, 2^33)` raised
+  `PanicException` and `p02`'s `(2^20, 1) + (1, 2^20)` aborted the
+  subprocess with "memory allocation of 8796093022208 bytes failed"; the
+  two Rust stories need the new variants.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `evaluate_expression_with_numpy` over broadcasts whose lane count wraps raised `PanicException`, and over ones too large to allocate aborted the interpreter | `ValueError: the broadcast shape [..] has more lanes than an array can hold`, and `MemoryError: cannot allocate the N lanes of the result` | `test_a_huge_broadcast_raises_instead_of_aborting` (subprocess, both shapes) |
 
 ### Track C notes
 

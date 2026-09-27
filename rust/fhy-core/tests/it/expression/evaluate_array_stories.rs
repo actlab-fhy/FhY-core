@@ -136,6 +136,70 @@ fn evaluate_array_refuses_shapes_that_do_not_broadcast() {
     assert_eq!(error.to_string(), "shapes [2] and [3] do not broadcast");
 }
 
+/// Return a column of shape `(rows, 1)` and a row of shape `(1, columns)`,
+/// each a zero-stride view of one integer, as `numpy.broadcast_to` gives.
+fn build_broadcast_pair(
+    one: &ArrayD<i64>,
+    rows: usize,
+    columns: usize,
+) -> (ndarray::ArrayViewD<'_, i64>, ndarray::ArrayViewD<'_, i64>) {
+    let column = one.broadcast(IxDyn(&[rows, 1])).expect("a broadcast");
+    let row = one.broadcast(IxDyn(&[1, columns])).expect("a broadcast");
+    (column, row)
+}
+
+#[test]
+fn a_broadcast_whose_lane_count_overflows_is_an_error() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let one = arr0(1_i64).into_dyn();
+    let (column, row) = build_broadcast_pair(&one, 1 << 33, 1 << 33);
+
+    let error = evaluate(
+        &(x_reference + y_reference),
+        vec![
+            (&x, ArrayBinding::Int(column)),
+            (&y, ArrayBinding::Int(row)),
+        ],
+    )
+    .expect_err("2^66 lanes do not fit");
+
+    assert!(
+        matches!(&error, EvaluationError::BroadcastTooLarge { shape } if shape == &[1 << 33, 1 << 33]),
+        "got {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "the broadcast shape [8589934592, 8589934592] has more lanes than an array can hold"
+    );
+}
+
+#[test]
+fn a_broadcast_too_large_to_reserve_is_an_error() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, y_reference) = build_identifier("y");
+    let one = arr0(1_i64).into_dyn();
+    let (column, row) = build_broadcast_pair(&one, 1 << 20, 1 << 20);
+
+    let error = evaluate(
+        &(x_reference + y_reference),
+        vec![
+            (&x, ArrayBinding::Int(column)),
+            (&y, ArrayBinding::Int(row)),
+        ],
+    )
+    .expect_err("2^40 integer lanes cannot be reserved");
+
+    assert!(
+        matches!(error, EvaluationError::OutOfMemory { lanes } if lanes == 1 << 40),
+        "got {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "cannot allocate the 1099511627776 lanes of the result"
+    );
+}
+
 #[test]
 fn evaluate_array_keeps_zero_dimensional_and_empty_shapes() {
     let (x, reference) = build_identifier("x");

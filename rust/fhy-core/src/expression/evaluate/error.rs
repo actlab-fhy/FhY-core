@@ -157,6 +157,22 @@ pub enum EvaluationError {
         /// The second operand's shape.
         right: Vec<usize>,
     },
+    /// The operands broadcast to a shape with more lanes than an array can
+    /// hold: the lengths of its non-empty axes multiply past `isize::MAX`.
+    ///
+    /// Displays as `the broadcast shape [8589934592, 8589934592] has more
+    /// lanes than an array can hold`.
+    BroadcastTooLarge {
+        /// The broadcast shape.
+        shape: Vec<usize>,
+    },
+    /// The memory for the lanes of the result could not be allocated.
+    ///
+    /// Displays as `cannot allocate the 1099511627776 lanes of the result`.
+    OutOfMemory {
+        /// How many lanes the result has.
+        lanes: usize,
+    },
     /// A lane of the result failed.
     ///
     /// Displays as `integer overflow in (x * y)`, the failure and the node
@@ -227,6 +243,13 @@ impl fmt::Display for EvaluationError {
             Self::Shape { left, right } => {
                 write!(f, "shapes {left:?} and {right:?} do not broadcast")
             }
+            Self::BroadcastTooLarge { shape } => write!(
+                f,
+                "the broadcast shape {shape:?} has more lanes than an array can hold"
+            ),
+            Self::OutOfMemory { lanes } => {
+                write!(f, "cannot allocate the {lanes} lanes of the result")
+            }
             Self::Lane { failure, node } => write!(f, "{failure} in {node}"),
             Self::Kernel { function, .. } => {
                 write!(f, "the array kernel of {} failed", function.name())
@@ -250,6 +273,8 @@ impl Error for EvaluationError {
             | Self::NumberAsBoolean(_)
             | Self::MixedBranches(_)
             | Self::Shape { .. }
+            | Self::BroadcastTooLarge { .. }
+            | Self::OutOfMemory { .. }
             | Self::Lane { .. } => None,
         }
     }

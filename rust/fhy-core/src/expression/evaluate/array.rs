@@ -158,7 +158,10 @@ impl Prepared<'_> {
     ///
     /// Returns what [`evaluate`](Self::evaluate) returns, for the first
     /// failed lane of the result in C order, and also
-    /// [`EvaluationError::Shape`] for operands that do not broadcast and
+    /// [`EvaluationError::Shape`] for operands that do not broadcast,
+    /// [`EvaluationError::BroadcastTooLarge`] for a broadcast shape with
+    /// more lanes than an array can hold, [`EvaluationError::OutOfMemory`]
+    /// when the result's lanes cannot be allocated, and
     /// [`EvaluationError::Kernel`] for a failing kernel.
     pub fn evaluate_array<S: BuildHasher + Sync>(
         &self,
@@ -178,7 +181,7 @@ impl Prepared<'_> {
         for (_, binding) in &referenced {
             shape = broadcast_shape(&shape, binding.shape())?;
         }
-        let lane_count: usize = shape.iter().product();
+        let lane_count = lane_count(&shape)?;
         let lanes = ArrayLanes {
             kernels,
             bindings: PhantomData,
@@ -190,13 +193,18 @@ impl Prepared<'_> {
             .run(&self.expression)?;
             return Ok(into_value(data, &shape));
         }
-        let sources: Vec<(Identifier, ChunkSource<'_>)> = referenced
+        let mut sources: Vec<(Identifier, ChunkSource<'_>)> = referenced
             .iter()
-            .map(|(identifier, binding)| ((*identifier).clone(), ChunkSource::new(binding, &shape)))
-            .collect();
+            .map(|(identifier, binding)| {
+                Ok(((*identifier).clone(), ChunkSource::new(binding, &shape)?))
+            })
+            .collect::<Result<_, EvaluationError>>()?;
         let mut output: Option<Output> = None;
         for start in (0..lane_count).step_by(CHUNK_LANES) {
             let length = CHUNK_LANES.min(lane_count - start);
+            for (_, source) in &mut sources {
+                source.advance(length);
+            }
             let chunk: HashMap<&Identifier, ArrayBinding<'_>> = sources
                 .iter()
                 .map(|(identifier, source)| (identifier, source.chunk(start, length)))
@@ -205,8 +213,12 @@ impl Prepared<'_> {
                 chunk.get(identifier).map(ArrayBinding::to_data)
             })
             .run(&self.expression)?;
+            if output.is_none() {
+                output = Some(Output::for_data(&data, lane_count)?);
+            }
             output
-                .get_or_insert_with(|| Output::for_data(&data, lane_count))
+                .as_mut()
+                .unwrap_or_else(|| unreachable!("the output was just made"))
                 .push(&data, length);
         }
         Ok(output
@@ -230,6 +242,28 @@ impl<'a> ArrayBinding<'a> {
     }
 }
 
+/// Return the number of lanes of `shape`.
+///
+/// # Errors
+///
+/// Returns [`EvaluationError::BroadcastTooLarge`] when the lengths of its
+/// non-empty axes multiply past `isize::MAX`, the most elements an array
+/// can hold, even when another axis is empty.
+fn lane_count(shape: &[usize]) -> Result<usize, EvaluationError> {
+    let too_large = || EvaluationError::BroadcastTooLarge {
+        shape: shape.to_vec(),
+    };
+    let non_empty = shape
+        .iter()
+        .filter(|&&length| length != 0)
+        .try_fold(1_usize, |count, &length| count.checked_mul(length))
+        .ok_or_else(too_large)?;
+    if non_empty > isize::MAX.unsigned_abs() {
+        return Err(too_large());
+    }
+    Ok(if shape.contains(&0) { 0 } else { non_empty })
+}
+
 /// Where the lanes of one binding come from, chunk by chunk.
 enum ChunkSource<'a> {
     /// A binding of one lane, broadcast to every lane.
@@ -237,9 +271,54 @@ enum ChunkSource<'a> {
     /// A binding in the standard layout, of the result's shape: each chunk
     /// is a slice of it.
     Contiguous(ArrayBinding<'a>),
-    /// Any other binding, broadcast to the result's shape and copied once
-    /// into the standard layout.
-    Copied(OwnedLanes),
+    /// Any other binding, broadcast to the result's shape: each chunk's
+    /// lanes are copied from it, in C order, into a buffer of one chunk,
+    /// so the broadcast is never materialized whole.
+    Copied(CopiedLanes<'a>),
+}
+
+/// The lanes of a broadcast binding not yet read, and the buffer holding
+/// the current chunk's.
+struct Copied<'a, T> {
+    /// The broadcast binding's remaining lanes, in C order.
+    remaining: ndarray::iter::Iter<'a, T, IxDyn>,
+    /// The current chunk's lanes.
+    chunk: Vec<T>,
+}
+
+impl<'a, T: Lane> Copied<'a, T> {
+    /// Return the source of `view`'s lanes, broadcast to `shape`.
+    fn new(view: &'a ArrayViewD<'_, T>, shape: &[usize]) -> Result<Self, EvaluationError> {
+        let broadcast =
+            view.broadcast(IxDyn(shape))
+                .ok_or_else(|| EvaluationError::BroadcastTooLarge {
+                    shape: shape.to_vec(),
+                })?;
+        Ok(Self {
+            remaining: broadcast.into_iter(),
+            chunk: Vec::new(),
+        })
+    }
+
+    /// Read the next `length` lanes into the chunk.
+    fn advance(&mut self, length: usize) {
+        self.chunk.clear();
+        self.chunk
+            .extend(self.remaining.by_ref().take(length).copied());
+    }
+
+    /// Return the current chunk's lanes.
+    fn view(&self) -> ArrayViewD<'_, T> {
+        ArrayViewD::from_shape(IxDyn(&[self.chunk.len()]), &self.chunk)
+            .unwrap_or_else(|_| unreachable!("the chunk fills a flat shape"))
+    }
+}
+
+/// The copied lanes of a broadcast binding, in its domain.
+enum CopiedLanes<'a> {
+    Bool(Copied<'a, bool>),
+    Int(Copied<'a, i64>),
+    Real(Copied<'a, f64>),
 }
 
 /// The one lane of a single-lane binding.
@@ -247,24 +326,6 @@ enum ScalarLane {
     Bool(ArrayD<bool>),
     Int(ArrayD<i64>),
     Real(ArrayD<f64>),
-}
-
-/// Lanes owned in the standard layout.
-enum OwnedLanes {
-    Bool(ArrayD<bool>),
-    Int(ArrayD<i64>),
-    Real(ArrayD<f64>),
-}
-
-/// Return `view` in the standard layout of `shape`, broadcast, as a flat
-/// owned array.
-fn standard_lanes<T: Lane>(view: &ArrayViewD<'_, T>, shape: &[usize]) -> ArrayD<T> {
-    let broadcast = view
-        .broadcast(IxDyn(shape))
-        .unwrap_or_else(|| unreachable!("the shape is a broadcast of the binding's"));
-    let flat: Vec<T> = broadcast.iter().copied().collect();
-    ArrayD::from_shape_vec(IxDyn(&[flat.len()]), flat)
-        .unwrap_or_else(|_| unreachable!("the lanes fill a flat shape"))
 }
 
 /// Return whether `view` holds the lanes of `shape` in the standard layout.
@@ -293,7 +354,12 @@ fn only_lane<T: Lane>(view: &ArrayViewD<'_, T>) -> ArrayD<T> {
 
 impl<'a> ChunkSource<'a> {
     /// Return the source of `binding`'s lanes, broadcast to `shape`.
-    fn new(binding: &ArrayBinding<'a>, shape: &[usize]) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvaluationError::BroadcastTooLarge`] when `binding` does
+    /// not broadcast to `shape` for its size.
+    fn new(binding: &'a ArrayBinding<'_>, shape: &[usize]) -> Result<Self, EvaluationError> {
         let lane_count: usize = binding.shape().iter().product();
         if lane_count == 1 {
             let lane = match binding {
@@ -301,7 +367,7 @@ impl<'a> ChunkSource<'a> {
                 ArrayBinding::Int(view) => ScalarLane::Int(only_lane(view)),
                 ArrayBinding::Real(view) => ScalarLane::Real(only_lane(view)),
             };
-            return Self::Scalar(lane);
+            return Ok(Self::Scalar(lane));
         }
         let is_contiguous = match binding {
             ArrayBinding::Bool(view) => is_standard(view, shape),
@@ -309,17 +375,33 @@ impl<'a> ChunkSource<'a> {
             ArrayBinding::Real(view) => is_standard(view, shape),
         };
         if is_contiguous {
-            return Self::Contiguous(binding.clone());
+            return Ok(Self::Contiguous(match binding {
+                ArrayBinding::Bool(view) => ArrayBinding::Bool(view.view()),
+                ArrayBinding::Int(view) => ArrayBinding::Int(view.view()),
+                ArrayBinding::Real(view) => ArrayBinding::Real(view.view()),
+            }));
         }
-        Self::Copied(match binding {
-            ArrayBinding::Bool(view) => OwnedLanes::Bool(standard_lanes(view, shape)),
-            ArrayBinding::Int(view) => OwnedLanes::Int(standard_lanes(view, shape)),
-            ArrayBinding::Real(view) => OwnedLanes::Real(standard_lanes(view, shape)),
-        })
+        Ok(Self::Copied(match binding {
+            ArrayBinding::Bool(view) => CopiedLanes::Bool(Copied::new(view, shape)?),
+            ArrayBinding::Int(view) => CopiedLanes::Int(Copied::new(view, shape)?),
+            ArrayBinding::Real(view) => CopiedLanes::Real(Copied::new(view, shape)?),
+        }))
+    }
+
+    /// Move a copied source on to its next `length` lanes; the other
+    /// sources read their chunks in place.
+    fn advance(&mut self, length: usize) {
+        match self {
+            Self::Copied(CopiedLanes::Bool(lanes)) => lanes.advance(length),
+            Self::Copied(CopiedLanes::Int(lanes)) => lanes.advance(length),
+            Self::Copied(CopiedLanes::Real(lanes)) => lanes.advance(length),
+            Self::Scalar(_) | Self::Contiguous(_) => {}
+        }
     }
 
     /// Return the lanes `start..start + length` of the flattened broadcast
-    /// binding, or its one lane.
+    /// binding, or its one lane; a copied source returns the lanes its last
+    /// [`advance`](Self::advance) read.
     fn chunk(&self, start: usize, length: usize) -> ArrayBinding<'_> {
         match self {
             Self::Scalar(ScalarLane::Bool(lane)) => ArrayBinding::Bool(lane.view()),
@@ -334,15 +416,9 @@ impl<'a> ChunkSource<'a> {
             Self::Contiguous(ArrayBinding::Real(view)) => {
                 ArrayBinding::Real(slice_lanes(view, start, length))
             }
-            Self::Copied(OwnedLanes::Bool(lanes)) => {
-                ArrayBinding::Bool(slice_lanes(&lanes.view(), start, length))
-            }
-            Self::Copied(OwnedLanes::Int(lanes)) => {
-                ArrayBinding::Int(slice_lanes(&lanes.view(), start, length))
-            }
-            Self::Copied(OwnedLanes::Real(lanes)) => {
-                ArrayBinding::Real(slice_lanes(&lanes.view(), start, length))
-            }
+            Self::Copied(CopiedLanes::Bool(lanes)) => ArrayBinding::Bool(lanes.view()),
+            Self::Copied(CopiedLanes::Int(lanes)) => ArrayBinding::Int(lanes.view()),
+            Self::Copied(CopiedLanes::Real(lanes)) => ArrayBinding::Real(lanes.view()),
         }
     }
 }
@@ -373,13 +449,26 @@ fn append_lanes<T: Lane>(lanes: &mut Vec<T>, chunk: &CowArray<'_, T, IxDyn>, len
 
 impl Output {
     /// Return the empty output of `lane_count` lanes in the domain of
-    /// `data`.
-    fn for_data<L: Lanes>(data: &Data<L>, lane_count: usize) -> Self {
-        match data {
-            Data::Bool(_) => Self::Bool(Vec::with_capacity(lane_count)),
-            Data::Int(_) => Self::Int(Vec::with_capacity(lane_count)),
-            Data::Real(_) => Self::Real(Vec::with_capacity(lane_count)),
+    /// `data`, with room reserved for every lane.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvaluationError::OutOfMemory`] when the room cannot be
+    /// reserved.
+    fn for_data<L: Lanes>(data: &Data<L>, lane_count: usize) -> Result<Self, EvaluationError> {
+        /// Return an empty vector with room for `lane_count` lanes.
+        fn reserved<T>(lane_count: usize) -> Result<Vec<T>, EvaluationError> {
+            let mut lanes = Vec::new();
+            lanes
+                .try_reserve_exact(lane_count)
+                .map_err(|_refused| EvaluationError::OutOfMemory { lanes: lane_count })?;
+            Ok(lanes)
         }
+        Ok(match data {
+            Data::Bool(_) => Self::Bool(reserved(lane_count)?),
+            Data::Int(_) => Self::Int(reserved(lane_count)?),
+            Data::Real(_) => Self::Real(reserved(lane_count)?),
+        })
     }
 
     /// Append the chunk `data` of `length` lanes.
@@ -481,13 +570,23 @@ fn single_lane<T: Lane>(array: &CowArray<'_, T, IxDyn>, shape: &[usize]) -> Opti
 }
 
 /// Return a view of `array` broadcast to `shape`.
-fn broadcast_view<'v, T>(array: &'v CowArray<'_, T, IxDyn>, shape: &[usize]) -> ArrayViewD<'v, T> {
+///
+/// # Errors
+///
+/// Returns [`EvaluationError::BroadcastTooLarge`] when the broadcast has
+/// more lanes than an array can hold.
+fn broadcast_view<'v, T>(
+    array: &'v CowArray<'_, T, IxDyn>,
+    shape: &[usize],
+) -> Result<ArrayViewD<'v, T>, EvaluationError> {
     if array.shape() == shape {
-        return array.view();
+        return Ok(array.view());
     }
     array
         .broadcast(IxDyn(shape))
-        .unwrap_or_else(|| unreachable!("the shape is a broadcast of the array's"))
+        .ok_or_else(|| EvaluationError::BroadcastTooLarge {
+            shape: shape.to_vec(),
+        })
 }
 
 impl<'a> Lanes for ArrayLanes<'a, '_> {
@@ -533,8 +632,8 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
         if let Some(x) = single_lane(a, &shape) {
             return Ok(CowArray::from(b.map(|&y| f(x, y))));
         }
-        let lanes = Zip::from(broadcast_view(a, &shape))
-            .and(broadcast_view(b, &shape))
+        let lanes = Zip::from(broadcast_view(a, &shape)?)
+            .and(broadcast_view(b, &shape)?)
             .map_collect(|&x, &y| f(x, y));
         Ok(CowArray::from(lanes))
     }
@@ -563,9 +662,9 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
         f: impl Fn(A, B, C) -> D,
     ) -> Result<CowArray<'a, D, IxDyn>, EvaluationError> {
         let shape = broadcast_shape(&broadcast_shape(a.shape(), b.shape())?, c.shape())?;
-        let lanes = Zip::from(broadcast_view(a, &shape))
-            .and(broadcast_view(b, &shape))
-            .and(broadcast_view(c, &shape))
+        let lanes = Zip::from(broadcast_view(a, &shape)?)
+            .and(broadcast_view(b, &shape)?)
+            .and(broadcast_view(c, &shape)?)
             .map_collect(|&x, &y, &z| f(x, y, z));
         Ok(CowArray::from(lanes))
     }
@@ -600,7 +699,7 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
                 owned.mapv_inplace(|x| f(x, y));
             } else {
                 Zip::from(&mut owned)
-                    .and(broadcast_view(b.get(), &shape))
+                    .and(broadcast_view(b.get(), &shape)?)
                     .for_each(|x, &y| *x = f(*x, y));
             }
             return Ok(CowArray::from(owned));
@@ -614,7 +713,7 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
                 owned.mapv_inplace(|y| f(x, y));
             } else {
                 Zip::from(&mut owned)
-                    .and(broadcast_view(a.get(), &shape))
+                    .and(broadcast_view(a.get(), &shape)?)
                     .for_each(|y, &x| *y = f(x, *y));
             }
             return Ok(CowArray::from(owned));
@@ -654,5 +753,52 @@ impl<'a> Lanes for ArrayLanes<'a, '_> {
             });
         }
         Ok(CowArray::from(lanes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ndarray::{ArrayD, IxDyn, arr1};
+
+    use super::{ArrayBinding, ChunkSource};
+
+    /// Return the lanes of `binding`, which must hold integers.
+    fn expect_int_lanes(binding: &ArrayBinding<'_>) -> Vec<i64> {
+        match binding {
+            ArrayBinding::Int(view) => view.iter().copied().collect(),
+            other => panic!("expected integers, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_broadcast_binding_is_read_per_chunk() {
+        let column = ArrayD::from_shape_vec(IxDyn(&[4, 1]), vec![0_i64, 1, 2, 3]).unwrap();
+        let binding = ArrayBinding::Int(column.view());
+        let mut source = ChunkSource::new(&binding, &[4, 3]).unwrap();
+        let mut lanes = Vec::new();
+
+        for start in (0..12).step_by(5) {
+            let length = 5.min(12 - start);
+            source.advance(length);
+            let ChunkSource::Copied(super::CopiedLanes::Int(copied)) = &source else {
+                panic!("a broadcast binding is copied chunk by chunk");
+            };
+            assert!(copied.chunk.capacity() <= 5, "the buffer holds one chunk");
+            lanes.extend(expect_int_lanes(&source.chunk(start, length)));
+        }
+
+        assert_eq!(lanes, [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]);
+    }
+
+    #[test]
+    fn a_binding_of_the_result_shape_in_the_standard_layout_is_sliced() {
+        let row = arr1(&[0_i64, 1, 2, 3, 4]).into_dyn();
+        let binding = ArrayBinding::Int(row.view());
+        let mut source = ChunkSource::new(&binding, &[5]).unwrap();
+
+        source.advance(2);
+
+        assert!(matches!(source, ChunkSource::Contiguous(_)));
+        assert_eq!(expect_int_lanes(&source.chunk(3, 2)), [3, 4]);
     }
 }

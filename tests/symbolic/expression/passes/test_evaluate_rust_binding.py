@@ -416,6 +416,55 @@ def test_the_screen_runs_before_the_bound_constant_refusal() -> None:
         evaluate_expression_with_numpy(tree, {x: np.array([1]), pi: 3.0})
 
 
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    ("exponent", "exception"),
+    [(20, "MemoryError"), (33, "ValueError")],
+    ids=["too_large_to_reserve", "lane_count_overflows"],
+)
+def test_a_huge_broadcast_raises_instead_of_aborting(
+    exponent: int, exception: str
+) -> None:
+    """Test ``(2**n, 1)`` against ``(1, 2**n)`` raises as NumPy's ``add`` does.
+
+    The shapes of the audit's probes ``p01`` and ``p02``. Each runs in a
+    subprocess, so an abort fails the test instead of killing the run.
+    """
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"""
+import numpy as np
+from fhy_core.identifier import Identifier
+from fhy_core.symbolic.expression import (
+    IdentifierExpression,
+    evaluate_expression_with_numpy,
+)
+x, y = Identifier("x"), Identifier("y")
+a = np.broadcast_to(np.int64(1), (2**{exponent}, 1))
+b = np.broadcast_to(np.int64(1), (1, 2**{exponent}))
+try:
+    evaluate_expression_with_numpy(
+        IdentifierExpression(x) + IdentifierExpression(y), {{x: a, y: b}}
+    )
+except BaseException as error:
+    print(type(error).__name__)
+    print(error)
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    name, message = completed.stdout.splitlines()
+    assert name == exception
+    assert "lanes" in message
+
+
 # =============================================================================
 # The passes (D-S9-10, D-S9-15)
 # =============================================================================

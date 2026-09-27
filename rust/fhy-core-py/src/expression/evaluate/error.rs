@@ -2,7 +2,7 @@
 //! core's text under the classes the replaced Python API documents.
 
 use pyo3::exceptions::{
-    PyOverflowError, PyRuntimeError, PyTypeError, PyValueError, PyZeroDivisionError,
+    PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError, PyZeroDivisionError,
 };
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -79,7 +79,10 @@ pub(super) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError)
             PyTypeError::new_err(message)
         }
         EvaluationError::NumberAsBoolean(_) => non_boolean_operand_error(py, &message),
-        EvaluationError::Shape { .. } => PyValueError::new_err(message),
+        EvaluationError::Shape { .. } | EvaluationError::BroadcastTooLarge { .. } => {
+            PyValueError::new_err(message)
+        }
+        EvaluationError::OutOfMemory { .. } => PyMemoryError::new_err(message),
         EvaluationError::Lane { failure, .. } => match failure {
             LaneFailure::IntegerOverflow | LaneFailure::OutOfRangeCast => {
                 PyOverflowError::new_err(message)
