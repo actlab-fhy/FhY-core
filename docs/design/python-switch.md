@@ -19966,6 +19966,11 @@ and `type_check` clean, `golden_expanded` replays both expanded corpora
 passes: fmt, clippy `-D warnings` with and without `--all-features`, 4,305
 tests (4,337 with all features), doc, deny and `cargo +1.85 check`.
 
+- **Revised (R2-043, 2026-09-27):** the extension module declares
+  `gil_used = true`, so a free-threaded interpreter re-enables the GIL on
+  import, until a free-threaded CI job exists; CONTRIBUTING "One extension
+  module per process" records the decision and the NumPy input contract
+  (`docs/design/rust-port-fixes.md` R2-043).
 - **Revised (R2-N2, 2026-09-27):** the V1 removal release is 0.3.0, not
   0.4.0, and deleting V1 is a release-blocking task for it (J-11 of
   `docs/design/rust-port-fixes.md`).

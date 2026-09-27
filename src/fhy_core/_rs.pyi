@@ -1020,6 +1020,9 @@ class BuiltinNativeImplementation:
     def _of(cls, name: str) -> BuiltinNativeImplementation: ...
 
 def fold_expression(expression: _Expression) -> tuple[_Expression, tuple[str, ...]]: ...
+
+# Reads a float64 input array in place, without the GIL: no other thread may
+# write an input array until the call returns (R2-043).
 def evaluate_expression_with_numpy(
     expression: _Expression, environment: Mapping[Identifier, Any]
 ) -> Any: ...

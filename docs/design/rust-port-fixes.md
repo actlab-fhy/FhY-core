@@ -115,8 +115,8 @@ onto `dev-rust` before continuing.
 - [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
 - [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python (`6f57090`; its extra blank line, which `ruff format` refuses, fixed forward in the next commit)
 - [x] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy (`047f6ea`)
-- [x] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow
-- [ ] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented
+- [x] R2-044 (F2-044): every Python read before a `PyRef`/`PyRefMut` borrow (`464cbe8`)
+- [x] R2-043 (F2-043): `gil_used = true`; the NumPy input contract documented
 - [ ] R2-041 (F2-041): diagnostics read through their report
 - [ ] R2-030 (F2-030): binding and interface-suite gaps; the stub test checks members
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
@@ -4268,3 +4268,28 @@ The other Python gates are Track D's status line, on the same code.
   | Before | After | Tests |
   |---|---|---|
   | a frame's `name` that read the table, an `iter_stable` key that added an element, and an element's `__hash__` that read the set raised `RuntimeError("Already borrowed")` (probe `probe_reentrancy.py`), as did any hook that changed the object from `add_order`, a bound query, `verify` or a table's `is_structurally_equivalent` | each works, and a change made from the hook is kept and consistent | `test_a_frame_whose_name_reads_the_table_is_added`, `test_a_non_identifier_whose_class_reads_the_table_is_refused_by_type`, `test_structural_equivalence_runs_frame_hooks_under_no_borrow`, `test_iter_stable_with_a_key_that_adds_an_element_iterates_it_too`, `test_an_element_whose_hash_reads_the_set_sees_it_before_the_insertion`, `test_an_element_whose_hash_adds_an_element_keeps_both_positions`, `test_orders_and_queries_compare_their_arguments_under_no_borrow`, `test_verify_writes_reprs_that_change_the_lattice` |
+
+**R2-043.**
+- **The declaration** is `#[pyo3::pymodule(name = "_rs", gil_used = true)]`,
+  with a rustdoc paragraph on the module. The decision (J-13) is a
+  paragraph in CONTRIBUTING "One extension module per process", the NumPy
+  contract is in `evaluate_expression_with_numpy`'s docstring, the
+  `NumpyExpressionEvaluator` docstring, a comment on the stub's
+  declaration and the README Expression row, and S17 status gains a
+  pointer. The binding's own rustdoc of the evaluator (`expression/evaluate/numpy.rs`,
+  Track B's) is left to its owner; the Python docstring is the public one.
+- **Checked on a free-threaded build.** A CPython 3.14.7t installed under
+  this worktree's `target/pythons` (`uv python install --no-bin
+  --install-dir`), with the extension built from the head into a scratch
+  venv: importing `fhy_core` turns the GIL on (`sys._is_gil_enabled()`
+  `False` before, `True` after) with CPython's `RuntimeWarning` "The global
+  interpreter lock (GIL) has been enabled to load module 'fhy_core._rs'…",
+  and `test_the_extension_declares_that_it_uses_the_gil` passes there. It
+  is skipped on the gate's 3.11, as the spec says. No CI job is added
+  (§I.10).
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | on a free-threaded interpreter the extension declared free-threading support, so the GIL stayed off | importing it re-enables the GIL, with CPython's `RuntimeWarning` | `test_the_extension_declares_that_it_uses_the_gil` (skipped unless `Py_GIL_DISABLED`) |
+  | the NumPy evaluator's in-place read of `float64` inputs was undocumented | the docstrings, stub and README say an input must not be written from another thread during the call | none (documentation) |

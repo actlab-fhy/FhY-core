@@ -84,7 +84,8 @@ class NumpyExpressionEvaluator(CompilerPass[Expression, "NumpyResult"]):
     A run evaluates its input over the environment given at construction,
     which is copied then, as :func:`evaluate_expression_with_numpy` does. A
     failure fails the run with ``PassExecutionError``, whose ``__cause__``
-    is the error the function raises.
+    is the error the function raises. The arrays it holds are read in place
+    during a run, so no other thread may write them meanwhile.
     """
 
     _environment: "immutabledict[Identifier, npt.ArrayLike]"
@@ -125,7 +126,10 @@ def evaluate_expression_with_numpy(
         environment: Value for each free identifier, as anything NumPy
             accepts (``ndarray``, scalar, or nested sequence). Bindings of
             identifiers the inlined expression does not refer to are
-            ignored.
+            ignored. A ``float64`` array is read in place, without the
+            GIL, so no other thread may write it until the call returns;
+            the result is then unspecified, as NumPy's own in-place reads
+            are.
 
     Returns:
         A NumPy scalar when every binding is a scalar, and otherwise a new

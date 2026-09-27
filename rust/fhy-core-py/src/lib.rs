@@ -30,7 +30,13 @@ mod value_domain;
 mod wire;
 
 /// `fhy_core`'s Rust implementation.
-#[pyo3::pymodule(name = "_rs")]
+///
+/// The module declares that it uses the GIL (`gil_used = true`, R2-043), so a
+/// free-threaded interpreter re-enables the GIL when importing it: the
+/// binding's invariants were argued for the GIL build only, and no CI job
+/// runs a free-threaded one. CONTRIBUTING "One extension module per process"
+/// records the decision.
+#[pyo3::pymodule(name = "_rs", gil_used = true)]
 mod rs_module {
     use pyo3::prelude::*;
 

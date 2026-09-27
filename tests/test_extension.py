@@ -14,6 +14,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import sysconfig
 
 import pytest
 
@@ -300,3 +301,19 @@ def test_a_versionless_extension_raises_import_error() -> None:
     assert _REQUIREMENT in message
     assert "no __version__ attribute" in message
     assert _REBUILD_ADVICE in message
+
+
+@pytest.mark.skipif(
+    not sysconfig.get_config_var("Py_GIL_DISABLED"),
+    reason="only a free-threaded interpreter can run without the GIL",
+)
+def test_the_extension_declares_that_it_uses_the_gil() -> None:
+    """Test importing the extension on a free-threaded build enables the GIL.
+
+    The module declares ``gil_used = true`` (R2-043), so CPython turns the
+    GIL back on when it is imported.
+    """
+    is_gil_enabled = getattr(sys, "_is_gil_enabled")  # noqa: B009
+
+    assert _rs is not None
+    assert is_gil_enabled()

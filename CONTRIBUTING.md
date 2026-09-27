@@ -361,6 +361,22 @@ links `fhy-core` yet, so `fhy-core-py` does not yet offer the library form
 that such a combined module needs; it gains one before the first
 downstream crate does.
 
+The module declares that it uses the GIL, `#[pymodule(gil_used = true)]`
+in `rust/fhy-core-py/src/lib.rs`, so importing it on a free-threaded
+interpreter (3.13t, 3.14t) re-enables the GIL, with CPython's
+`RuntimeWarning`. PyO3 0.29 declares free-threading support unless told
+otherwise, and nothing has shown the binding safe without the GIL: its
+non-frozen classes raise borrow errors under contention, the opaque
+value's ordering key runs Python in a `OnceLock` initializer, and several
+"never held across Python" invariants were argued for the GIL build only
+(F2-043 of `docs/audit/rust-port-2026-09.md`). The declaration stays until
+a free-threaded CI job exists and those are checked; then the job, not
+this paragraph, decides. Independently of the GIL, the NumPy evaluator
+reads a `float64` input array in place while it releases the GIL, so a
+caller must not write an input array from another thread during the call;
+`evaluate_expression_with_numpy`'s docstring, the stub and the README say
+so (R2-043 of `docs/design/rust-port-fixes.md`).
+
 ### Process-global state is limited to identity
 
 Exactly two kinds of state are process-global: the identifier id counter
