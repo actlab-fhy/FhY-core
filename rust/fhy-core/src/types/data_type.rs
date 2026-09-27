@@ -50,20 +50,30 @@ impl TemplateDataType {
     /// Return the placeholder `identifier`, which only data types of one of
     /// the bit `widths` bind.
     ///
+    /// The widths are a set: they are kept sorted and without repeats, so
+    /// two templates whose widths differ only in order or repeats are
+    /// equal.
+    ///
     /// # Errors
     ///
-    /// Returns [`TemplateWidthError`] if a width is zero.
+    /// Returns [`TemplateWidthError`] if a width is zero, or if there is no
+    /// width, which no data type could bind.
     pub fn with_widths(
         identifier: Identifier,
         widths: impl IntoIterator<Item = u32>,
     ) -> Result<Self, TemplateWidthError> {
-        let widths: Arc<[u32]> = widths.into_iter().collect();
-        if widths.contains(&0) {
-            return Err(TemplateWidthError);
+        let mut widths: Vec<u32> = widths.into_iter().collect();
+        if widths.is_empty() {
+            return Err(TemplateWidthError::empty_list());
         }
+        if widths.contains(&0) {
+            return Err(TemplateWidthError::zero_width());
+        }
+        widths.sort_unstable();
+        widths.dedup();
         Ok(Self {
             identifier,
-            widths: Some(widths),
+            widths: Some(widths.into()),
         })
     }
 
@@ -73,7 +83,8 @@ impl TemplateDataType {
         &self.identifier
     }
 
-    /// Return the width constraint, or `None` if there is none.
+    /// Return the width constraint, sorted and without repeats, or `None`
+    /// if there is none.
     #[must_use]
     pub fn widths(&self) -> Option<&[u32]> {
         self.widths.as_deref()

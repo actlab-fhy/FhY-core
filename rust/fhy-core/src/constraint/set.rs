@@ -1,6 +1,8 @@
 //! [`SetConstraint`]: whether an identifier's value is a member of a set.
 
 use std::collections::HashSet;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::expression::{Expression, ExpressionKind};
@@ -216,5 +218,34 @@ impl SetConstraint {
         self.polarity() == other.polarity()
             && renaming.is_corresponding(self.variable(), other.variable())
             && self.members() == other.members()
+    }
+}
+
+impl PartialEq for SetConstraint {
+    /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
+    /// does.
+    fn eq(&self, other: &Self) -> bool {
+        Self::ptr_eq(self, other) || self.is_structurally_equivalent(other)
+    }
+}
+
+impl Eq for SetConstraint {}
+
+impl Hash for SetConstraint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.polarity().hash(state);
+        self.variable().hash(state);
+        self.members().hash(state);
+    }
+}
+
+impl fmt::Display for SetConstraint {
+    /// Write `x in {1, 2}` or `x not in {1, 2}`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let relation = match self.polarity() {
+            Polarity::In => "in",
+            Polarity::NotIn => "not in",
+        };
+        write!(f, "{} {relation} {}", self.variable(), self.members())
     }
 }

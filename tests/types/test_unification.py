@@ -397,15 +397,10 @@ def test_bind_data_template_raises_for_weak_literal_actual_against_constrained_t
         )
 
 
-def test_bind_data_template_empty_widths_rejects_every_concrete_actual(
-    empty_environment: TypeUnificationEnvironment,
-) -> None:
-    """Test ``widths=[]`` causes every concrete bind to raise."""
-    template = TemplateDataType(Identifier("T"), widths=[])
-    with pytest.raises(VerificationError, match="width"):
-        bind_data_template(
-            template, PrimitiveDataType(CoreDataType.INT8), empty_environment
-        )
+def test_template_data_type_refuses_empty_widths() -> None:
+    """Test ``widths=[]``, which no concrete data type could bind, is refused."""
+    with pytest.raises(ValueError, match="must not be empty"):
+        TemplateDataType(Identifier("T"), widths=[])
 
 
 def test_bind_data_template_unconstrained_template_accepts_any_width(

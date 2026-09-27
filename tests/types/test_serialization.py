@@ -305,6 +305,35 @@ def test_template_data_type_deserialize_raises_on_non_positive_width() -> None:
         )
 
 
+def test_template_data_type_deserialize_raises_on_empty_widths() -> None:
+    """Test deserialize raises a value error for an empty list of widths."""
+    serialized_name = mock_identifier("T", 1).serialize_to_dict()
+    with pytest.raises(DeserializationValueError, match="non-empty list"):
+        TemplateDataType.deserialize_from_dict(
+            _wrap("template_data_type", {"data_type": serialized_name, "widths": []})
+        )
+
+
+def test_template_data_type_v2_payload_with_empty_widths_is_refused() -> None:
+    """Test a V2 payload with an empty list of widths is refused."""
+    payload = TemplateDataType(mock_identifier("T", 1), [8]).serialize_to_dict()
+    payload["template"]["widths"] = []  # type: ignore[index]
+    with pytest.raises(DeserializationValueError, match="must not be empty"):
+        TemplateDataType.deserialize_from_dict(payload)
+
+
+def test_template_data_type_deserialize_sorts_and_deduplicates_widths() -> None:
+    """Test deserialize normalizes the widths as the constructor does."""
+    serialized_name = mock_identifier("T", 1).serialize_to_dict()
+    template = TemplateDataType.deserialize_from_dict(
+        _wrap(
+            "template_data_type",
+            {"data_type": serialized_name, "widths": [32, 8, 32]},
+        )
+    )
+    assert template.widths == [8, 32]
+
+
 def test_numerical_type_deserialize_raises_on_non_list_shape() -> None:
     """Test deserialization raises a structure error when ``shape`` is not a list."""
     primitive_dict = PrimitiveDataType(CoreDataType.INT32).serialize_to_dict()

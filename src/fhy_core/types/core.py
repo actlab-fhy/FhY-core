@@ -292,8 +292,9 @@ class TemplateDataType(_rs.TemplateDataType, DataType):
     """Template data type: a placeholder named by an ``Identifier``.
 
     ``widths``, when not ``None``, lists the bit widths of the data types
-    the placeholder may be bound to; each must be a positive integer.
-    Compares and hashes by its identifier and widths.
+    the placeholder may be bound to; each must be a positive integer, and
+    the list must not be empty. The widths are a set, kept sorted and
+    without repeats. Compares and hashes by its identifier and widths.
     """
 
 

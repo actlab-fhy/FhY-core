@@ -141,16 +141,46 @@ impl fmt::Display for LiteralTypeError {
 
 impl Error for LiteralTypeError {}
 
-/// A width constraint of a [`TemplateDataType`] that holds a width of zero.
+/// A width constraint of a [`TemplateDataType`] that holds a width of zero,
+/// or no width at all, which no data type could bind.
 ///
-/// Displays as `template data type widths must be positive, but got 0`.
+/// Displays as `template data type widths must be positive, but got 0`, or
+/// `template data type widths must not be empty`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct TemplateWidthError;
+pub struct TemplateWidthError {
+    is_empty_list: bool,
+}
+
+impl TemplateWidthError {
+    /// Return the error of a width of zero.
+    pub(crate) fn zero_width() -> Self {
+        Self {
+            is_empty_list: false,
+        }
+    }
+
+    /// Return the error of an empty width list.
+    pub(crate) fn empty_list() -> Self {
+        Self {
+            is_empty_list: true,
+        }
+    }
+
+    /// Return whether the width list was empty, rather than holding a zero.
+    #[must_use]
+    pub fn is_empty_list(&self) -> bool {
+        self.is_empty_list
+    }
+}
 
 impl fmt::Display for TemplateWidthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("template data type widths must be positive, but got 0")
+        if self.is_empty_list {
+            f.write_str("template data type widths must not be empty")
+        } else {
+            f.write_str("template data type widths must be positive, but got 0")
+        }
     }
 }
 

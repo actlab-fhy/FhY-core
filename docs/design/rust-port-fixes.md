@@ -46,8 +46,8 @@ onto `dev-rust` before continuing.
 - [x] R2-007 (F2-007): one `BoxError`; `Sync` lookups; symmetric contexts; constructor and conversion conventions; `checked_*` errors; layer-1 `FromStr` error: `0b44aa2`, `450fa2c`, `dcf2022`
 - [x] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`: `a5afd95`
 - [x] R2-006 (F2-006): `ParamError` split by family: `d03ac7c`
-- [x] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits
-- [ ] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized
+- [x] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits: `b6ccb30`
+- [x] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized
 - [ ] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories
 - [ ] Track A status: gates green; counts recorded; landed as `<hash>`
 
@@ -2474,6 +2474,46 @@ finding.
   | Before | After | Tests |
   |---|---|---|
   | no timeout for a simplification | `Solver.simplify_expression(..., timeout_milliseconds=)`, and `Simplifier.context.timeout`/`.timeout_milliseconds` | `test_python_simplifier_reads_the_timeout_from_its_context`, `test_python_simplifier_context_is_unbounded_outside_a_simplification`, `test_nested_simplification_has_its_own_context`, `test_simplification_refuses_a_bad_timeout` |
+
+**R2-032a.**
+
+- **Equality.** Each type's `==` is its `is_structurally_equivalent`, and
+  `Hash` feeds what it compares: a custom constraint's or domain's `Part`
+  through `eq_part`/`hash_part`, a categorical domain's values as a set, and
+  a system's members in canonical order. `SetConstraint` and `Param` check
+  the shared pointer first.
+- **`Value`** had no structural relation of its own, only the crate-private
+  type-strict `are_values_equal`, under which a NaN equals nothing. `Eq`
+  must be reflexive, so `Value`'s `==` follows `LiteralValue`'s: a NaN
+  equals a NaN, and `-0.0` equals `0.0`. A frozen set equals one holding
+  equal values, in any order and with any repeats; its hash feeds the
+  sorted, deduplicated hashes of its elements. `are_values_equal` stays
+  for the Python-facing comparisons, so `ParamAssignment`'s `==` differs
+  from its `is_structurally_equivalent` only for a NaN value, which the
+  rustdoc says.
+- **`Member` and `MemberSet`** gain `Eq`, `Hash` and `Display`: hashing a
+  set constraint or a finite domain needs them. An opaque member hashes its
+  ordering key, which equal members share.
+- **`Display`** writes for people, as `Expression`'s does, and is not parsed
+  back: values as literals write (`true`, `0.5`), a string quoted, `(1,)`,
+  `{1, 2}`, a foreign part as `<TypeName>`; `x in {1, 2}`; a system's
+  members joined by `and`, or `true`; `positive integer`, `ordinal (1, 2)`,
+  `categorical {"a", "b"}`; `x: integer where ...`; `x = 3`.
+- **Widths.** `TemplateWidthError` gains a private field and
+  `is_empty_list()`. An empty list reads `template data type widths must
+  not be empty`, and the zero text is unchanged. The V2 decoder goes through
+  `with_widths`, so it normalizes and refuses too. The binding's V1 decoder
+  refuses an empty list with `DeserializationValueError`, as it does a zero.
+  `unification_stories.rs` loses the empty list's binding case, which can no
+  longer be built.
+- **Docs.** The `types` module docs have a "Two equalities" section, and
+  T-2's row in python-switch is revised.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `TemplateDataType(t, [16, 8])` kept the order, and was unequal to `[8, 16]` | the widths are sorted and deduplicated: equal, one hash, `widths` and `repr` show `[8, 16]` | `test_template_widths_compare_as_a_set`, `test_template_data_type_deserialize_sorts_and_deduplicates_widths` |
+  | `widths=[]` built a template that bound nothing | `ValueError`, and `DeserializationValueError` from a V1 or V2 payload | `test_an_empty_width_list_is_refused`, `test_template_data_type_refuses_empty_widths` (replacing `test_bind_data_template_empty_widths_rejects_every_concrete_actual`), `test_template_data_type_deserialize_raises_on_empty_widths`, `test_template_data_type_v2_payload_with_empty_widths_is_refused` |
 
 ### Track D notes
 

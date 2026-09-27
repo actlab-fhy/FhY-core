@@ -62,6 +62,9 @@ pub mod wire;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::mem;
 
 use crate::expression::Expression;
 use crate::foreign::Part;
@@ -241,6 +244,42 @@ impl FreeIdentifiers for Constraint {
 
     fn free_identifiers(&self) -> Result<HashSet<Identifier>, ConstraintError> {
         Self::free_identifiers(self)
+    }
+}
+
+impl PartialEq for Constraint {
+    /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
+    /// does: of one kind, built-in kinds structurally, and custom
+    /// constraints through their [`eq_part`](CustomConstraint::eq_part).
+    fn eq(&self, other: &Self) -> bool {
+        self.is_structurally_equivalent(other)
+    }
+}
+
+impl Eq for Constraint {}
+
+impl Hash for Constraint {
+    /// Feed the kind, then the constraint: a custom one through its
+    /// [`hash_part`](CustomConstraint::hash_part).
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        mem::discriminant(self).hash(state);
+        match self {
+            Self::Equation(constraint) => constraint.hash(state),
+            Self::Set(constraint) => constraint.hash(state),
+            Self::Custom(constraint) => constraint.hash(state),
+        }
+    }
+}
+
+impl fmt::Display for Constraint {
+    /// Write an equation's expression, a set constraint as `x in {1, 2}`,
+    /// and a custom constraint as its type name in angle brackets.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Equation(constraint) => write!(f, "{constraint}"),
+            Self::Set(constraint) => write!(f, "{constraint}"),
+            Self::Custom(constraint) => write!(f, "<{}>", constraint.get().type_name()),
+        }
     }
 }
 

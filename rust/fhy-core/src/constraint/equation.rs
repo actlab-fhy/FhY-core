@@ -1,6 +1,8 @@
 //! [`EquationConstraint`]: a Boolean expression that must hold.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use crate::expression::{BooleanScreen, Expression, ExpressionKind, LiteralValue};
 use crate::identifier::Identifier;
@@ -136,6 +138,29 @@ impl EquationConstraint {
     pub fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
         self.expression
             .is_alpha_equivalent_under(&other.expression, renaming)
+    }
+}
+
+impl PartialEq for EquationConstraint {
+    /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
+    /// does.
+    fn eq(&self, other: &Self) -> bool {
+        self.is_structurally_equivalent(other)
+    }
+}
+
+impl Eq for EquationConstraint {}
+
+impl Hash for EquationConstraint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.expression.hash(state);
+    }
+}
+
+impl fmt::Display for EquationConstraint {
+    /// Write the expression.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.expression)
     }
 }
 

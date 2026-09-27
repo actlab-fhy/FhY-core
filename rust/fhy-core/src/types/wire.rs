@@ -301,8 +301,9 @@ impl Serialize for TemplateDataType {
     }
 }
 
-/// Deserializes `{"identifier", "widths"}`, refusing a zero width with
-/// [`TemplateWidthError`](super::TemplateWidthError)'s text.
+/// Deserializes `{"identifier", "widths"}`, refusing a zero width and an
+/// empty width list with [`TemplateWidthError`](super::TemplateWidthError)'s
+/// text, and sorting and deduplicating the widths.
 impl<'de> Deserialize<'de> for TemplateDataType {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = TemplateWire::deserialize(deserializer)?;

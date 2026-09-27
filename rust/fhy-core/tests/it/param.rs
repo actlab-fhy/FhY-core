@@ -10,4 +10,5 @@ mod error_stories;
 mod param_properties;
 mod param_stories;
 mod serde_stories;
+mod std_trait_stories;
 mod value_stories;

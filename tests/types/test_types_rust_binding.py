@@ -289,6 +289,23 @@ def test_arguments_of_the_wrong_type_are_refused() -> None:
         TemplateDataType(Identifier("T"), widths=[0])
 
 
+def test_template_widths_compare_as_a_set() -> None:
+    """Test widths are sorted and deduplicated, so their order does not matter."""
+    identifier = Identifier("T")
+    shuffled = TemplateDataType(identifier, [16, 8, 16])
+
+    assert shuffled == TemplateDataType(identifier, [8, 16])
+    assert hash(shuffled) == hash(TemplateDataType(identifier, [8, 16]))
+    assert shuffled.widths == [8, 16]
+    assert repr(shuffled) == f"TemplateDataType({identifier!r}, widths=[8, 16])"
+
+
+def test_an_empty_width_list_is_refused() -> None:
+    """Test ``widths=[]`` raises the ``ValueError`` of an invalid width."""
+    with pytest.raises(ValueError, match="template data type widths must not be empty"):
+        TemplateDataType(Identifier("T"), widths=[])
+
+
 def test_reprs_list_every_field() -> None:
     """Test T-2: the reprs name the class and every field."""
     identifier = Identifier("T")

@@ -3,6 +3,8 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::mem;
 use std::sync::Arc;
 
 use crate::expression::Expression;
@@ -35,6 +37,40 @@ impl From<Expression> for Binding {
 impl From<Value> for Binding {
     fn from(value: Value) -> Self {
         Self::Value(value)
+    }
+}
+
+impl PartialEq for Binding {
+    /// Compare structurally: expressions by their trees, values as
+    /// [`Value`]'s `==` does; an expression never equals a value.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Expression(left), Self::Expression(right)) => left == right,
+            (Self::Value(left), Self::Value(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Binding {}
+
+impl Hash for Binding {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        mem::discriminant(self).hash(state);
+        match self {
+            Self::Expression(expression) => expression.hash(state),
+            Self::Value(value) => value.hash(state),
+        }
+    }
+}
+
+impl fmt::Display for Binding {
+    /// Write the expression or the value.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Expression(expression) => write!(f, "{expression}"),
+            Self::Value(value) => write!(f, "{value}"),
+        }
     }
 }
 

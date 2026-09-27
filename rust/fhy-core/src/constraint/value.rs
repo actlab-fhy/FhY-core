@@ -15,7 +15,8 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
-use std::hash::Hasher;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::mem;
 
 use crate::expression::{BigInt, Decimal, LiteralValue};
 use crate::foreign::{BoxError, ForeignPart, Part, impl_part, is_same_part};
@@ -123,6 +124,123 @@ impl From<LiteralValue> for Value {
             LiteralValue::Decimal(value) => Self::Decimal(value),
         }
     }
+}
+
+impl PartialEq for Value {
+    /// Compare structurally and type-strictly: of one kind and equal, at
+    /// every depth. A float equals a float of the same number, `-0.0` and
+    /// `0.0` included, and a NaN equals a NaN, so `==` is an equivalence; a
+    /// frozen set equals one holding equal values, in any order and with
+    /// any repeats; an opaque value compares through its
+    /// [`eq_part`](OpaqueValue::eq_part).
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Bool(left), Self::Bool(right)) => left == right,
+            (Self::Int(left), Self::Int(right)) => left == right,
+            (Self::Float(left), Self::Float(right)) => are_floats_equivalent(*left, *right),
+            (Self::Decimal(left), Self::Decimal(right)) => left == right,
+            (Self::Str(left), Self::Str(right)) => left == right,
+            (Self::Tuple(left), Self::Tuple(right)) => left == right,
+            (Self::FrozenSet(left), Self::FrozenSet(right)) => {
+                left.iter().all(|value| right.contains(value))
+                    && right.iter().all(|value| left.contains(value))
+            }
+            (Self::Opaque(left), Self::Opaque(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl Hash for Value {
+    /// Feed the kind, then the contents, consistently with `==`: a float's
+    /// bits with `-0.0` folded into `0.0`, nothing more for a NaN, a frozen
+    /// set's distinct element hashes in sorted order, and an opaque value's
+    /// [`hash_part`](OpaqueValue::hash_part).
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        mem::discriminant(self).hash(state);
+        match self {
+            Self::Bool(value) => value.hash(state),
+            Self::Int(value) => value.hash(state),
+            Self::Float(value) => {
+                if !value.is_nan() {
+                    (value + 0.0).to_bits().hash(state);
+                }
+            }
+            Self::Decimal(value) => value.hash(state),
+            Self::Str(value) => value.hash(state),
+            Self::Tuple(values) => values.hash(state),
+            Self::FrozenSet(values) => {
+                let mut hashes: Vec<u64> = values
+                    .iter()
+                    .map(|value| {
+                        let mut hasher = DefaultHasher::new();
+                        value.hash(&mut hasher);
+                        hasher.finish()
+                    })
+                    .collect();
+                hashes.sort_unstable();
+                hashes.dedup();
+                hashes.hash(state);
+            }
+            Self::Opaque(value) => value.hash(state),
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    /// Write the value for people, as a literal expression writes the
+    /// kinds it shares (`true`, `3`, `0.5`): a string quoted and escaped,
+    /// a tuple as `(1, 2)`, `(1,)` or `()`, a frozen set as `{1, 2}` or
+    /// `{}`, and an opaque value as its type name in angle brackets. The
+    /// text is not parsed back, and distinct values may write alike (the
+    /// integer `1` and the float `1.0`).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bool(value) => write!(f, "{value}"),
+            Self::Int(value) => write!(f, "{value}"),
+            Self::Float(value) => write!(f, "{value}"),
+            Self::Decimal(value) => write!(f, "{value}"),
+            Self::Str(value) => write!(f, "{value:?}"),
+            Self::Tuple(values) => write_tuple(f, values),
+            Self::FrozenSet(values) => write_braced(f, values),
+            Self::Opaque(value) => write!(f, "<{}>", value.get().type_name()),
+        }
+    }
+}
+
+/// Return whether two floats are the same number, or both NaN.
+fn are_floats_equivalent(left: f64, right: f64) -> bool {
+    left.partial_cmp(&right) == Some(Ordering::Equal) || (left.is_nan() && right.is_nan())
+}
+
+/// Write `items` as a tuple: `(a, b)`, `(a,)` or `()`.
+fn write_tuple<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> fmt::Result {
+    f.write_str("(")?;
+    write_separated(f, items)?;
+    if items.len() == 1 {
+        f.write_str(",")?;
+    }
+    f.write_str(")")
+}
+
+/// Write `items` in braces, separated by `, `: `{a, b}`, or `{}`.
+fn write_braced<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> fmt::Result {
+    f.write_str("{")?;
+    write_separated(f, items)?;
+    f.write_str("}")
+}
+
+/// Write `items` separated by `, `.
+fn write_separated<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> fmt::Result {
+    for (position, item) in items.iter().enumerate() {
+        if position > 0 {
+            f.write_str(", ")?;
+        }
+        write!(f, "{item}")?;
+    }
+    Ok(())
 }
 
 impl Value {
@@ -380,6 +498,40 @@ impl PartialOrd for Member {
     }
 }
 
+impl Eq for Member {}
+
+impl Hash for Member {
+    /// Feed the kind, then the contents, consistently with `==`; an opaque
+    /// member feeds its ordering key, which equal members share.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.rank().hash(state);
+        match &self.0 {
+            MemberValue::Bool(value) => value.hash(state),
+            MemberValue::Int(value) => value.hash(state),
+            MemberValue::Float(value) => value.to_bits().hash(state),
+            MemberValue::Str(value) | MemberValue::Opaque(_, value) => value.hash(state),
+            MemberValue::Tuple(members) => members.hash(state),
+            MemberValue::FrozenSet(members) => members.hash(state),
+        }
+    }
+}
+
+impl fmt::Display for Member {
+    /// Write the member as its [`Value`] writes, a frozen set's members in
+    /// canonical order.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            MemberValue::Bool(value) => write!(f, "{value}"),
+            MemberValue::Int(value) => write!(f, "{value}"),
+            MemberValue::Float(value) => write!(f, "{value}"),
+            MemberValue::Str(value) => write!(f, "{value:?}"),
+            MemberValue::Tuple(members) => write_tuple(f, members),
+            MemberValue::FrozenSet(members) => write!(f, "{members}"),
+            MemberValue::Opaque(value, _) => write!(f, "<{}>", value.get().type_name()),
+        }
+    }
+}
+
 /// Return the canonical order of `left` and `right`, in which opaque values
 /// compare by their keys alone.
 fn compare_canonically(left: &Member, right: &Member) -> Ordering {
@@ -625,6 +777,24 @@ impl PartialEq for MemberSet {
     /// Compare as sets: the same number of members, each held by the other.
     fn eq(&self, other: &Self) -> bool {
         self.len() == other.len() && self.iter().all(|member| other.contains(member))
+    }
+}
+
+impl Eq for MemberSet {}
+
+impl Hash for MemberSet {
+    /// Feed the members in canonical order: equal sets hold members of equal
+    /// hashes in the same order, since members that tie in it share their
+    /// hash.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.members.hash(state);
+    }
+}
+
+impl fmt::Display for MemberSet {
+    /// Write the members in canonical order, in braces: `{1, 2}`, or `{}`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_braced(f, &self.members)
     }
 }
 

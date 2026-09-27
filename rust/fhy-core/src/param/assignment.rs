@@ -1,5 +1,8 @@
 //! [`ParamAssignment`]: a param bound to one value.
 
+use std::fmt;
+use std::hash::{Hash, Hasher};
+
 use crate::constraint::{Binding, Bindings, Value};
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
@@ -97,6 +100,31 @@ impl ParamAssignment {
     pub fn is_structurally_equivalent(&self, other: &Self) -> bool {
         self.param.is_structurally_equivalent(&other.param)
             && are_values_equal(&self.value, &other.value)
+    }
+}
+
+impl PartialEq for ParamAssignment {
+    /// Compare the params structurally and the values as [`Value`]'s `==`
+    /// does. That is [`is_structurally_equivalent`](Self::is_structurally_equivalent),
+    /// except that a NaN value equals a NaN, so `==` is an equivalence.
+    fn eq(&self, other: &Self) -> bool {
+        self.param == other.param && self.value == other.value
+    }
+}
+
+impl Eq for ParamAssignment {}
+
+impl Hash for ParamAssignment {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.param.hash(state);
+        self.value.hash(state);
+    }
+}
+
+impl fmt::Display for ParamAssignment {
+    /// Write the variable and the value: `x = 3`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} = {}", self.param.variable(), self.value)
     }
 }
 

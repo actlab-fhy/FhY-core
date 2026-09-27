@@ -387,18 +387,14 @@ fn width_constraint_refuses_an_unlisted_width() {
 }
 
 #[test]
-fn width_constraint_refuses_a_weak_type_and_the_empty_list_refuses_everything() {
+fn width_constraint_refuses_a_weak_type() {
     let t = Identifier::new("T");
 
     let weak = constrained_template(&t, &[8])
         .bind_template(&DataType::Primitive(CoreDataType::Int), &empty())
         .expect_err("a weak type has no width");
-    let empty_list = constrained_template(&t, &[])
-        .bind_template(&DataType::Primitive(CoreDataType::Int8), &empty())
-        .expect_err("no width is listed");
 
     assert!(weak.to_string().contains("has no width"));
-    assert!(empty_list.to_string().contains("width"));
 }
 
 #[test]

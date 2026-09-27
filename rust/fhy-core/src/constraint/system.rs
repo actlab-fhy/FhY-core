@@ -2,6 +2,8 @@
 //! the solver answers about it.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::expression::{BooleanScreen, Expression, ExpressionKind, SymbolTypes};
@@ -291,6 +293,39 @@ impl ConstraintSystem {
                 .iter()
                 .zip(other.constraints.iter())
                 .all(|(left, right)| left.is_structurally_equivalent(right))
+    }
+}
+
+impl PartialEq for ConstraintSystem {
+    /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
+    /// does: the members pairwise, in canonical order.
+    fn eq(&self, other: &Self) -> bool {
+        self.is_structurally_equivalent(other)
+    }
+}
+
+impl Eq for ConstraintSystem {}
+
+impl Hash for ConstraintSystem {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.constraints.hash(state);
+    }
+}
+
+impl fmt::Display for ConstraintSystem {
+    /// Write the members in canonical order, joined by `and`, or `true` for
+    /// the empty system.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.constraints.is_empty() {
+            return f.write_str("true");
+        }
+        for (position, constraint) in self.constraints.iter().enumerate() {
+            if position > 0 {
+                f.write_str(" and ")?;
+            }
+            write!(f, "{constraint}")?;
+        }
+        Ok(())
     }
 }
 

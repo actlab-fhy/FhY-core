@@ -628,9 +628,11 @@ impl PyTemplateDataType {
     /// data types of one of the bit `widths` bind, or any when `widths` is
     /// `None`.
     ///
+    /// The widths are kept sorted and without repeats.
+    ///
     /// Raises `TypeError` for an identifier that is no `Identifier` or a
     /// width that is no `int`, and `ValueError` for a width that is not
-    /// positive.
+    /// positive or an empty list of widths.
     #[new]
     #[pyo3(signature = (data_type, widths = None))]
     fn new(
@@ -639,8 +641,9 @@ impl PyTemplateDataType {
     ) -> PyResult<PyClassInitializer<Self>> {
         let identifier = restore_identifier(data_type, "TemplateDataType", "data_type")?;
         let value = match read_widths(widths)? {
-            Some(widths) => TemplateDataType::with_widths(identifier, widths)
-                .unwrap_or_else(|_zero| unreachable!("every width is positive")),
+            Some(widths) => {
+                TemplateDataType::with_widths(identifier, widths).map_err(IntoPyErr::into_py_err)?
+            }
             None => TemplateDataType::new(identifier),
         };
         Ok(PyClassInitializer::from(PyDataTypeBase).add_subclass(Self {
@@ -744,7 +747,8 @@ impl PyTemplateDataType {
     /// Return the template of a data payload.
     ///
     /// Raises the serialization framework's errors for a malformed payload,
-    /// and `DeserializationValueError` for a width that is not positive.
+    /// and `DeserializationValueError` for a width that is not positive or
+    /// an empty list of widths.
     #[classmethod]
     fn deserialize_data_from_dict<'py>(
         cls: &Bound<'py, PyType>,
@@ -760,15 +764,17 @@ impl PyTemplateDataType {
             ],
         )?;
         if !widths.is_none() {
+            let refuse = |expected: &str| -> PyResult<PyErr> {
+                let error = deserialization_value_error_class(py)?
+                    .call1((cls, "widths", expected, &widths))?;
+                Ok(PyErr::from_value(error))
+            };
+            if widths.len()? == 0 {
+                return Err(refuse("a non-empty list of positive integers or None")?);
+            }
             for width in widths.try_iter()? {
                 if width?.extract::<i64>().is_ok_and(|width| width <= 0) {
-                    let error = deserialization_value_error_class(py)?.call1((
-                        cls,
-                        "widths",
-                        "a list of positive integers or None",
-                        &widths,
-                    ))?;
-                    return Err(PyErr::from_value(error));
+                    return Err(refuse("a list of positive integers or None")?);
                 }
             }
         }

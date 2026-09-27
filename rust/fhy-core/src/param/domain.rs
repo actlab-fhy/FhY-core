@@ -2,6 +2,8 @@
 //! constraints it may carry, and the questions each kind answers.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::mem;
 use std::sync::Arc;
 
 use crate::constraint::{
@@ -933,6 +935,88 @@ impl ParamDomain {
             (Self::Permutation(left), Self::Permutation(right)) => left.values() == right.values(),
             (Self::Custom(left), Self::Custom(right)) => left == right,
             _ => false,
+        }
+    }
+}
+
+impl PartialEq for ParamDomain {
+    /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
+    /// does: of one kind, built-in kinds by their restrictions or values,
+    /// and custom domains through their [`eq_part`](CustomDomain::eq_part).
+    fn eq(&self, other: &Self) -> bool {
+        self.is_structurally_equivalent(other)
+    }
+}
+
+impl Eq for ParamDomain {}
+
+impl Hash for ParamDomain {
+    /// Feed the kind, then the restrictions or values: a categorical
+    /// domain's as a set, and a custom domain through its
+    /// [`hash_part`](CustomDomain::hash_part).
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        mem::discriminant(self).hash(state);
+        match self {
+            Self::Integer(domain) => domain.hash(state),
+            Self::IntervalInteger(domain) => domain.hash(state),
+            Self::Real(domain) => domain.hash(state),
+            Self::Ordinal(domain) => domain.values().hash(state),
+            Self::Categorical(domain) => domain.0.lookup.hash(state),
+            Self::Permutation(domain) => domain.values().hash(state),
+            Self::Custom(domain) => domain.hash(state),
+        }
+    }
+}
+
+impl fmt::Display for ParamDomain {
+    /// Write the kind and its restrictions or values: `integer`,
+    /// `non-negative integer` and `positive integer`, the same for
+    /// `interval integer` with its preferred bounds, `real`, `ordinal (1,
+    /// 2)` in order, `categorical {1, 2}`, `permutation of (1, 2)`, and a
+    /// custom domain as its type name in angle brackets.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sign = |non_negative: bool, zero_included: bool| match (non_negative, zero_included) {
+            (false, _) => "",
+            (true, true) => "non-negative ",
+            (true, false) => "positive ",
+        };
+        let values = |f: &mut fmt::Formatter<'_>, values: &[Member]| -> fmt::Result {
+            f.write_str("(")?;
+            for (position, value) in values.iter().enumerate() {
+                if position > 0 {
+                    f.write_str(", ")?;
+                }
+                write!(f, "{value}")?;
+            }
+            f.write_str(if values.len() == 1 { ",)" } else { ")" })
+        };
+        match self {
+            Self::Integer(domain) => write!(
+                f,
+                "{}integer",
+                sign(domain.is_non_negative(), domain.is_zero_included())
+            ),
+            Self::IntervalInteger(domain) => write!(
+                f,
+                "{}interval integer ({} bounds)",
+                sign(domain.is_non_negative(), domain.is_zero_included()),
+                if domain.is_inclusive_preferred() {
+                    "inclusive"
+                } else {
+                    "exclusive"
+                }
+            ),
+            Self::Real(_) => f.write_str("real"),
+            Self::Ordinal(domain) => {
+                f.write_str("ordinal ")?;
+                values(f, domain.values())
+            }
+            Self::Categorical(domain) => write!(f, "categorical {}", domain.0.lookup),
+            Self::Permutation(domain) => {
+                f.write_str("permutation of ")?;
+                values(f, domain.values())
+            }
+            Self::Custom(domain) => write!(f, "<{}>", domain.get().type_name()),
         }
     }
 }

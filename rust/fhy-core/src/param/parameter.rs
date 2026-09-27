@@ -1,6 +1,8 @@
 //! [`Param`]: a variable ranging over a value domain, narrowed by
 //! constraints.
 
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::constraint::{Binding, Bindings, Constraint, ConstraintSystem, Outcome};
@@ -561,6 +563,36 @@ impl Param {
             && self
                 .constraint_system()
                 .is_structurally_equivalent(other.constraint_system())
+    }
+}
+
+impl PartialEq for Param {
+    /// Compare as [`is_structurally_equivalent`](Self::is_structurally_equivalent)
+    /// does.
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.is_structurally_equivalent(other)
+    }
+}
+
+impl Eq for Param {}
+
+impl Hash for Param {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.domain().hash(state);
+        self.variable().hash(state);
+        self.constraint_system().hash(state);
+    }
+}
+
+impl fmt::Display for Param {
+    /// Write the variable and the domain, and the constraints after
+    /// `where`: `x: non-negative integer where (x >= 0)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.variable(), self.domain())?;
+        if !self.constraint_system().is_empty() {
+            write!(f, " where {}", self.constraint_system())?;
+        }
+        Ok(())
     }
 }
 

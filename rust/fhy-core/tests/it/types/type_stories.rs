@@ -69,11 +69,35 @@ fn template_keeps_its_identifier_and_widths() {
     assert_eq!(unconstrained.identifier(), &t);
     assert_eq!(unconstrained.widths(), None);
     assert_eq!(constrained.widths(), Some(&[8, 16][..]));
+}
+
+#[test]
+fn template_widths_compare_as_a_set() {
+    let t = Identifier::new("T");
+    let sorted = TemplateDataType::with_widths(t.clone(), [8, 16]).expect("positive widths");
+    let shuffled = TemplateDataType::with_widths(t.clone(), [16, 8, 16]).expect("positive widths");
+
+    assert_eq!(shuffled.widths(), Some(&[8, 16][..]));
+    assert_eq!(sorted, shuffled);
+    assert_eq!(hash_of(&sorted), hash_of(&shuffled));
+    assert_eq!(DataType::from(sorted), DataType::from(shuffled));
+}
+
+#[test]
+fn an_empty_width_list_is_refused() {
+    let error = TemplateDataType::with_widths(Identifier::new("T"), [])
+        .expect_err("no width is no constraint");
+
+    let _: &TemplateWidthError = &error;
     assert_eq!(
-        TemplateDataType::with_widths(t, [])
-            .expect("no width")
-            .widths(),
-        Some(&[][..])
+        error.to_string(),
+        "template data type widths must not be empty"
+    );
+    assert!(error.is_empty_list());
+    assert!(
+        !TemplateDataType::with_widths(Identifier::new("T"), [0])
+            .expect_err("zero is no width")
+            .is_empty_list()
     );
 }
 
