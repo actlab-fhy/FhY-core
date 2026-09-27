@@ -11,6 +11,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
+    Expression,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -19,6 +20,7 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     call,
     inline_functions,
+    logical_or,
     piecewise,
     register_function,
 )
@@ -48,6 +50,13 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 pytestmark = pytest.mark.integration
 
 
+def _or_is_nan(comparison: Expression, operand: Expression) -> Expression:
+    """Return ``comparison || operand != operand``, as ``max`` and ``min`` test."""
+    return logical_or(
+        comparison, BinaryExpression(BinaryOperation.NOT_EQUAL, operand, operand)
+    )
+
+
 def test_max_call_then_inline_yields_expected_piecewise_tree() -> None:
     """Test ``max(1, 2)`` inlines to a literal piecewise tree."""
     expression = call("max", LiteralExpression(1), LiteralExpression(2))
@@ -56,10 +65,13 @@ def test_max_call_then_inline_yields_expected_piecewise_tree() -> None:
 
     expected = PiecewiseExpression(
         (
-            BinaryExpression(
-                BinaryOperation.GREATER,
+            _or_is_nan(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    LiteralExpression(1),
+                    LiteralExpression(2),
+                ),
                 LiteralExpression(1),
-                LiteralExpression(2),
             ),
         ),
         (LiteralExpression(1),),
@@ -127,10 +139,13 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
 
     inner_min = PiecewiseExpression(
         (
-            BinaryExpression(
-                BinaryOperation.LESS,
+            _or_is_nan(
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(value),
+                    IdentifierExpression(high),
+                ),
                 IdentifierExpression(value),
-                IdentifierExpression(high),
             ),
         ),
         (IdentifierExpression(value),),
@@ -138,10 +153,13 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
     )
     expected = PiecewiseExpression(
         (
-            BinaryExpression(
-                BinaryOperation.GREATER,
+            _or_is_nan(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    IdentifierExpression(low),
+                    inner_min,
+                ),
                 IdentifierExpression(low),
-                inner_min,
             ),
         ),
         (IdentifierExpression(low),),

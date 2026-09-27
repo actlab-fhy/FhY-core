@@ -78,19 +78,24 @@ const BOOL_2: &[FunctionSort; 2] = &[FunctionSort::Bool, FunctionSort::Bool];
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BuiltinFunction {
-    /// `max(a, b) = {a if a > b; b otherwise}`.
+    /// `max(a, b) = {a if a > b || a != a; b otherwise}`: a NaN operand, on
+    /// either side, is the result, as in `NumPy`'s `maximum`.
     Max,
-    /// `min(a, b) = {a if a < b; b otherwise}`.
+    /// `min(a, b) = {a if a < b || a != a; b otherwise}`: a NaN operand, on
+    /// either side, is the result, as in `NumPy`'s `minimum`.
     Min,
-    /// `abs(x) = {x if x >= 0.0; -x otherwise}`.
+    /// `abs(x) = {x if x > 0.0; 0 - x otherwise}`: both zeros give `0.0`,
+    /// and a NaN gives a NaN.
     Abs,
-    /// `sign(x) = {1 if x > 0.0; -1 if x < 0.0; 0 otherwise}`.
+    /// `sign(x) = {1 if x > 0.0; -1 if x < 0.0; 0 otherwise}`, so
+    /// `sign(nan)` is `0`.
     Sign,
-    /// `clamp(x, lo, hi) = min(max(x, lo), hi)`.
+    /// `clamp(x, lo, hi) = min(max(x, lo), hi)`, so a NaN argument
+    /// propagates.
     Clamp,
     /// `clamp_symmetric(x, bound) = clamp(x, -bound, bound)`.
     ClampSymmetric,
-    /// `relu(x) = max(x, 0)`.
+    /// `relu(x) = max(x, 0)`, so `relu(nan)` is NaN.
     Relu,
     /// `leaky_relu(x, slope) = {x if x > 0.0; x * slope otherwise}`.
     LeakyRelu,
@@ -563,8 +568,9 @@ impl_name_text!(BuiltinConstant, name, "built-in constant");
 static CONSTANT_IDENTIFIERS: LazyLock<[Identifier; 4]> =
     LazyLock::new(|| CONSTANTS.map(|constant| Identifier::reserved(constant.reserved_entry())));
 
-/// Build a piecewise from cases whose conditions are comparisons and whose
-/// list is non-empty, so the construction cannot be refused.
+/// Build a piecewise from cases whose conditions are comparisons, or
+/// connectives of comparisons, and whose list is non-empty, so the
+/// construction cannot be refused.
 fn create_piecewise<C, V, O>(cases: impl IntoIterator<Item = (C, V)>, otherwise: O) -> Expression
 where
     C: Into<Expression>,
@@ -575,16 +581,23 @@ where
         .expect("a catalogue piecewise has at least one case and comparison conditions")
 }
 
+/// `a if (a > b || a != a) else b`: a NaN operand, on either side, is the
+/// result, as `NumPy`'s `maximum` has it.
 fn build_max_body([a, b]: &[Expression; 2]) -> Expression {
-    create_piecewise([(a.greater(b), a)], b)
+    create_piecewise([(a.greater(b).or(a.not_equals(a)), a)], b)
 }
 
+/// `a if (a < b || a != a) else b`: a NaN operand, on either side, is the
+/// result, as `NumPy`'s `minimum` has it.
 fn build_min_body([a, b]: &[Expression; 2]) -> Expression {
-    create_piecewise([(a.less(b), a)], b)
+    create_piecewise([(a.less(b).or(a.not_equals(a)), a)], b)
 }
 
+/// `x if x > 0.0 else 0 - x`: both zeros give the positive zero, and a NaN
+/// gives a NaN. The subtraction from an integer zero keeps an integer
+/// operand's kind.
 fn build_abs_body([x]: &[Expression; 1]) -> Expression {
-    create_piecewise([(x.greater_equal(0.0), x)], -x)
+    create_piecewise([(x.greater(0.0), x)], Expression::from(0_i64) - x)
 }
 
 fn build_sign_body([x]: &[Expression; 1]) -> Expression {

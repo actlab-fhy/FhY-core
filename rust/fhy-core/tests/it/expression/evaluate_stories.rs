@@ -777,7 +777,7 @@ fn prepare_exposes_the_inlined_expression_and_its_free_identifiers() {
 
     assert_eq!(
         prepared.expression().to_string(),
-        "{x if (x > 0); 0 otherwise}"
+        "{x if ((x > 0) || (x != x)); 0 otherwise}"
     );
     assert_eq!(prepared.free_identifiers().len(), 1);
     assert!(prepared.free_identifiers().contains(&x));

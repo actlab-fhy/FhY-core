@@ -772,7 +772,7 @@ def test_inliner_reports_a_change_when_it_inlines() -> None:
     result = FunctionInliner().execute(call("relu", Identifier("x")))
 
     assert result.changed
-    assert str(result.output) == "{x if (x > 0); 0 otherwise}"
+    assert str(result.output) == "{x if ((x > 0) || (x != x)); 0 otherwise}"
 
 
 @pytest.mark.parametrize(
@@ -940,9 +940,9 @@ def test_lookups_and_screens_during_registrations_see_whole_states(
 # =============================================================================
 
 _BUILTIN_BODIES = {
-    "max": "{a if (a > b); b otherwise}",
-    "min": "{a if (a < b); b otherwise}",
-    "abs": "{x if (x >= 0); (-x) otherwise}",
+    "max": "{a if ((a > b) || (a != a)); b otherwise}",
+    "min": "{a if ((a < b) || (a != a)); b otherwise}",
+    "abs": "{x if (x > 0); (0 - x) otherwise}",
     "sign": "{1 if (x > 0); -1 if (x < 0); 0 otherwise}",
     "clamp": "min(max(x, lo), hi)",
     "clamp_symmetric": "clamp(x, (-bound), bound)",

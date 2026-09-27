@@ -15,11 +15,14 @@ use std::thread;
 
 use fhy_core::error::UnknownNameError;
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction, ComposedFunction};
+use fhy_core::expression::evaluate::{Evaluator, Scalar};
+use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{
     BigInt, BinaryOperation, Callee, Expression, ExpressionKind, FormatOptions, FunctionSort,
     LiteralValue, LogicalOperation, Notation, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
+use proptest::prelude::*;
 use rstest::rstest;
 
 use expression_support::{
@@ -88,29 +91,41 @@ fn build_expected_body(name: &str, parameters: &[Expression]) -> Expression {
     }
 }
 
+/// Return `comparison || (operand != operand)`, the NaN test of `max` and
+/// `min`.
+fn build_or_is_nan(comparison: Expression, operand: &Expression) -> Expression {
+    Expression::new_logical(
+        LogicalOperation::Or,
+        [
+            comparison,
+            Expression::new_binary(BinaryOperation::NotEqual, operand, operand),
+        ],
+    )
+}
+
 fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expression {
     let zero_float = build_literal(0.0);
     match (name, parameters) {
         ("max", [a, b]) => build_piecewise_or_panic(
             vec![(
-                Expression::new_binary(BinaryOperation::Greater, a, b),
+                build_or_is_nan(Expression::new_binary(BinaryOperation::Greater, a, b), a),
                 a.clone(),
             )],
             b.clone(),
         ),
         ("min", [a, b]) => build_piecewise_or_panic(
             vec![(
-                Expression::new_binary(BinaryOperation::Less, a, b),
+                build_or_is_nan(Expression::new_binary(BinaryOperation::Less, a, b), a),
                 a.clone(),
             )],
             b.clone(),
         ),
         ("abs", [x]) => build_piecewise_or_panic(
             vec![(
-                Expression::new_binary(BinaryOperation::GreaterEqual, x, &zero_float),
+                Expression::new_binary(BinaryOperation::Greater, x, &zero_float),
                 x.clone(),
             )],
-            Expression::new_unary(UnaryOperation::Negate, x),
+            Expression::new_binary(BinaryOperation::Subtract, build_literal(0), x),
         ),
         ("sign", [x]) => build_piecewise_or_panic(
             vec![
@@ -508,12 +523,20 @@ fn composed_function_body_is_the_documented_tree() {
 }
 
 #[rstest]
-#[case::max("max", "{a if (a > b); b otherwise}", "(piecewise (greater a b) a b)")]
-#[case::min("min", "{a if (a < b); b otherwise}", "(piecewise (less a b) a b)")]
+#[case::max(
+    "max",
+    "{a if ((a > b) || (a != a)); b otherwise}",
+    "(piecewise (or (greater a b) (not_equal a a)) a b)"
+)]
+#[case::min(
+    "min",
+    "{a if ((a < b) || (a != a)); b otherwise}",
+    "(piecewise (or (less a b) (not_equal a a)) a b)"
+)]
 #[case::abs(
     "abs",
-    "{x if (x >= 0); (-x) otherwise}",
-    "(piecewise (greater_equal x 0) x (negate x))"
+    "{x if (x > 0); (0 - x) otherwise}",
+    "(piecewise (greater x 0) x (subtract 0 x))"
 )]
 #[case::sign(
     "sign",
@@ -746,7 +769,14 @@ fn composed_function_max_body_with_literal_arguments_yields_the_literal_piecewis
 
     let expected = build_piecewise_or_panic(
         vec![(
-            Expression::new_binary(BinaryOperation::Greater, build_literal(1), build_literal(2)),
+            build_or_is_nan(
+                Expression::new_binary(
+                    BinaryOperation::Greater,
+                    build_literal(1),
+                    build_literal(2),
+                ),
+                &build_literal(1),
+            ),
             build_literal(1),
         )],
         build_literal(2),
@@ -781,14 +811,20 @@ fn composed_function_max_of_min_inlines_to_a_nested_clamp() {
 
     let inner_min = build_piecewise_or_panic(
         vec![(
-            Expression::new_binary(BinaryOperation::Less, &value, &high),
+            build_or_is_nan(
+                Expression::new_binary(BinaryOperation::Less, &value, &high),
+                &value,
+            ),
             value,
         )],
         high,
     );
     let expected = build_piecewise_or_panic(
         vec![(
-            Expression::new_binary(BinaryOperation::Greater, &low, &inner_min),
+            build_or_is_nan(
+                Expression::new_binary(BinaryOperation::Greater, &low, &inner_min),
+                &low,
+            ),
             low,
         )],
         inner_min,
@@ -963,5 +999,100 @@ fn composed_builtins_have_no_native_value() {
             "{}",
             function.name()
         );
+    }
+}
+
+// =============================================================================
+// NaN through the composed built-ins
+// =============================================================================
+
+/// Return the scalar evaluation of `function` over `arguments`, each bound
+/// to a parameter of its own.
+fn evaluate_builtin(function: BuiltinFunction, arguments: &[Scalar]) -> Scalar {
+    let mut environment = HashMap::new();
+    let mut references = Vec::new();
+    for (index, argument) in arguments.iter().enumerate() {
+        let (identifier, reference) = build_identifier(&format!("p{index}"));
+        environment.insert(identifier, *argument);
+        references.push(reference);
+    }
+    Evaluator::new(&FunctionRegistry::new())
+        .evaluate(&Expression::call(function, references), &environment)
+        .unwrap_or_else(|error| panic!("{} evaluates: {error}", function.name()))
+}
+
+/// Return whether two scalars are the same value, every NaN equal and the
+/// zeros told apart by their sign.
+fn is_same_scalar(left: Scalar, right: Scalar) -> bool {
+    match (left, right) {
+        (Scalar::Real(a), Scalar::Real(b)) => {
+            a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+        }
+        _ => left == right,
+    }
+}
+
+/// Test NaN propagates through the composed built-ins whichever operand it
+/// is, as `NumPy`'s `maximum` does, `abs` of either zero is the positive
+/// zero, and `sign(nan)` stays `0`.
+#[rstest]
+#[case::max_nan_first(BuiltinFunction::Max, &[Scalar::Real(f64::NAN), Scalar::Int(1)], Scalar::Real(f64::NAN))]
+#[case::max_nan_second(BuiltinFunction::Max, &[Scalar::Int(1), Scalar::Real(f64::NAN)], Scalar::Real(f64::NAN))]
+#[case::min_nan_first(BuiltinFunction::Min, &[Scalar::Real(f64::NAN), Scalar::Int(1)], Scalar::Real(f64::NAN))]
+#[case::min_nan_second(BuiltinFunction::Min, &[Scalar::Int(1), Scalar::Real(f64::NAN)], Scalar::Real(f64::NAN))]
+#[case::max_of_integers(BuiltinFunction::Max, &[Scalar::Int(2), Scalar::Int(5)], Scalar::Int(5))]
+#[case::min_of_reals(BuiltinFunction::Min, &[Scalar::Real(2.5), Scalar::Real(-1.0)], Scalar::Real(-1.0))]
+#[case::relu_nan(BuiltinFunction::Relu, &[Scalar::Real(f64::NAN)], Scalar::Real(f64::NAN))]
+#[case::relu_negative(BuiltinFunction::Relu, &[Scalar::Real(-3.0)], Scalar::Real(0.0))]
+#[case::leaky_relu_nan(BuiltinFunction::LeakyRelu, &[Scalar::Real(f64::NAN), Scalar::Real(0.1)], Scalar::Real(f64::NAN))]
+#[case::clamp_nan_value(BuiltinFunction::Clamp, &[Scalar::Real(f64::NAN), Scalar::Int(0), Scalar::Int(1)], Scalar::Real(f64::NAN))]
+#[case::clamp_nan_bound(BuiltinFunction::Clamp, &[Scalar::Real(0.5), Scalar::Real(f64::NAN), Scalar::Int(1)], Scalar::Real(f64::NAN))]
+#[case::clamp_symmetric_nan(BuiltinFunction::ClampSymmetric, &[Scalar::Real(f64::NAN), Scalar::Real(1.0)], Scalar::Real(f64::NAN))]
+#[case::abs_negative_zero(BuiltinFunction::Abs, &[Scalar::Real(-0.0)], Scalar::Real(0.0))]
+#[case::abs_positive_zero(BuiltinFunction::Abs, &[Scalar::Real(0.0)], Scalar::Real(0.0))]
+#[case::abs_nan(BuiltinFunction::Abs, &[Scalar::Real(f64::NAN)], Scalar::Real(f64::NAN))]
+#[case::abs_negative(BuiltinFunction::Abs, &[Scalar::Real(-2.5)], Scalar::Real(2.5))]
+#[case::abs_negative_infinity(BuiltinFunction::Abs, &[Scalar::Real(f64::NEG_INFINITY)], Scalar::Real(f64::INFINITY))]
+#[case::abs_integer(BuiltinFunction::Abs, &[Scalar::Int(-4)], Scalar::Int(4))]
+#[case::sign_nan(BuiltinFunction::Sign, &[Scalar::Real(f64::NAN)], Scalar::Int(0))]
+fn composed_builtins_propagate_nan(
+    #[case] function: BuiltinFunction,
+    #[case] arguments: &[Scalar],
+    #[case] expected: Scalar,
+) {
+    let value = evaluate_builtin(function, arguments);
+
+    assert!(is_same_scalar(value, expected), "{value:?} != {expected:?}");
+}
+
+/// Return a float, NaN, an infinity or a zero included.
+fn any_float() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        Just(f64::NAN),
+        Just(f64::INFINITY),
+        Just(f64::NEG_INFINITY),
+        Just(0.0),
+        Just(-0.0),
+        -1e3..1e3_f64,
+    ]
+}
+
+proptest! {
+    /// `max` and `min` are commutative over floats with NaN: swapping
+    /// the operands gives the same value, the zeros compared as equal.
+    #[test]
+    fn max_and_min_are_commutative_over_floats_with_nan(a in any_float(), b in any_float()) {
+        for function in [BuiltinFunction::Max, BuiltinFunction::Min] {
+            let forward = evaluate_builtin(function, &[Scalar::Real(a), Scalar::Real(b)]);
+            let backward = evaluate_builtin(function, &[Scalar::Real(b), Scalar::Real(a)]);
+            let (Scalar::Real(forward), Scalar::Real(backward)) = (forward, backward) else {
+                panic!("{} of reals is real", function.name());
+            };
+            prop_assert!(
+                forward.partial_cmp(&backward) == Some(std::cmp::Ordering::Equal)
+                    || (forward.is_nan() && backward.is_nan()),
+                "{}({a}, {b}) = {forward}, but {backward} swapped", function.name()
+            );
+        }
     }
 }

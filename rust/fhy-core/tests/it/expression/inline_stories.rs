@@ -142,9 +142,14 @@ fn inline_replaces_a_composed_builtin_call_by_the_catalogue_body() {
         .inline(&call(BuiltinFunction::Relu, [y.clone()]))
         .expect("relu is built in");
 
-    let expected = Expression::piecewise([(y.greater(0_i64), y.clone())], 0_i64)
-        .expect("a comparison condition");
+    let expected = build_relu_of(&y);
     assert_eq!(inlined, expected);
+}
+
+/// Return `relu(x)` inlined: `{x if (x > 0 || x != x); 0 otherwise}`.
+fn build_relu_of(x: &Expression) -> Expression {
+    Expression::piecewise([(x.greater(0_i64).or(x.not_equals(x)), x.clone())], 0_i64)
+        .expect("a comparison condition")
 }
 
 #[rstest]
@@ -173,8 +178,7 @@ fn inline_leaves_no_composed_call_of_a_composed_builtin(#[case] function: Builti
 fn inline_expands_nested_calls_inside_out() {
     let registry = FunctionRegistry::new();
     let (_, y) = build_identifier("y");
-    let inner = Expression::piecewise([(y.greater(0_i64), y.clone())], 0_i64)
-        .expect("a comparison condition");
+    let inner = build_relu_of(&y);
 
     let inlined = registry
         .inline(&call(
@@ -183,12 +187,14 @@ fn inline_expands_nested_calls_inside_out() {
         ))
         .expect("relu is built in");
 
-    let expected = Expression::piecewise([(inner.greater(0_i64), inner.clone())], 0_i64)
-        .expect("a comparison condition");
+    let expected = build_relu_of(&inner);
     assert_eq!(inlined, expected);
     let outer = expect_piecewise(&inlined);
     let (condition, value) = &outer.cases()[0];
-    let ExpressionKind::Binary(comparison) = condition.kind() else {
+    let ExpressionKind::Logical(disjunction) = condition.kind() else {
+        panic!("expected a disjunction, got {condition:?}");
+    };
+    let ExpressionKind::Binary(comparison) = disjunction.operands()[0].kind() else {
         panic!("expected a comparison, got {condition:?}");
     };
     assert!(
@@ -234,9 +240,7 @@ fn inline_expands_a_user_body_calling_a_composed_builtin() {
         .inline(&call_named("f", [y.clone()]))
         .expect("f is registered");
 
-    let relu = Expression::piecewise([(y.greater(0_i64), y.clone())], 0_i64)
-        .expect("a comparison condition");
-    assert_eq!(inlined, relu + 1);
+    assert_eq!(inlined, build_relu_of(&y) + 1);
 }
 
 #[test]

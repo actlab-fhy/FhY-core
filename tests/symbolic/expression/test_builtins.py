@@ -242,19 +242,19 @@ def test_each_built_in_constant_is_a_native_constant(name: str) -> None:
 
 
 def test_abs_inlining_produces_documented_piecewise_body() -> None:
-    """Test ``abs(x)`` inlines to ``{x if x >= 0; -x otherwise}``."""
+    """Test ``abs(x)`` inlines to ``{x if x > 0; 0 - x otherwise}``."""
     x = Identifier("x")
     expression = call("abs", x)
 
     inlined = inline_functions(expression)
 
-    # The shape is a one-case piecewise; the condition is `x >= 0`; the
-    # case value is `x`; `otherwise` is `-x`. Structural equivalence is
-    # enough — we don't pin down the exact `Identifier` instances used
-    # inside the body.
+    # The shape is a one-case piecewise; the condition is `x > 0`; the
+    # case value is `x`; `otherwise` is `0 - x`, so both zeros give `0.0`.
+    # Structural equivalence is enough — we don't pin down the exact
+    # `Identifier` instances used inside the body.
     assert (
         _structure_summary(inlined)
-        == "piecewise([(>=, identifier)], negate(identifier))"
+        == "piecewise([(>, identifier)], -(literal, identifier))"
     )
 
 
@@ -282,8 +282,13 @@ def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
 
     inlined = inline_functions(expression)
 
-    # Inlining max gives a one-case piecewise on `>`.
-    assert _structure_summary(inlined).startswith("piecewise([(>")
+    # Inlining max gives a one-case piecewise on `x > 0 || x != x`.
+    assert isinstance(inlined, PiecewiseExpression)
+    condition = inlined.get_cases()[0][0]
+    assert (
+        _structure_summary(condition)
+        == "or(>(identifier, literal), !=(identifier, identifier))"
+    )
 
 
 def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
@@ -500,23 +505,31 @@ def test_seeded_native_implementation_follows_ieee_outside_its_domain() -> None:
 
 
 def test_max_inlining_yields_greater_piecewise() -> None:
-    """Test inlining ``max(a, b)`` yields ``{a if a > b; b otherwise}``."""
+    """Test inlining ``max(a, b)`` yields ``{a if a > b || a != a; b otherwise}``."""
     a = LiteralExpression(7)
     b = LiteralExpression(2)
 
     result = inline_functions(CallExpression("max", (a, b)))
 
-    assert _structure_summary(result).startswith("piecewise([(>")
+    assert isinstance(result, PiecewiseExpression)
+    condition = result.get_cases()[0][0]
+    assert (
+        _structure_summary(condition) == "or(>(literal, literal), !=(literal, literal))"
+    )
 
 
 def test_min_inlining_yields_less_piecewise() -> None:
-    """Test inlining ``min(a, b)`` yields ``{a if a < b; b otherwise}``."""
+    """Test inlining ``min(a, b)`` yields ``{a if a < b || a != a; b otherwise}``."""
     a = LiteralExpression(7)
     b = LiteralExpression(2)
 
     result = inline_functions(CallExpression("min", (a, b)))
 
-    assert _structure_summary(result).startswith("piecewise([(<")
+    assert isinstance(result, PiecewiseExpression)
+    condition = result.get_cases()[0][0]
+    assert (
+        _structure_summary(condition) == "or(<(literal, literal), !=(literal, literal))"
+    )
 
 
 # =============================================================================

@@ -197,6 +197,7 @@ fn evaluate(expression: &Expression, bindings: &HashMap<Identifier, Value>) -> V
                 BinaryOperation::GreaterEqual => Value::Bool(left.as_number() >= right.as_number()),
                 BinaryOperation::Less => Value::Bool(left.as_number() < right.as_number()),
                 BinaryOperation::Equal => Value::Bool(left == right),
+                BinaryOperation::NotEqual => Value::Bool(left != right),
                 other => panic!("the trees hold no {other:?}"),
             }
         }

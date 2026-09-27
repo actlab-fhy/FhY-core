@@ -72,8 +72,8 @@ onto `dev-rust` before continuing.
 - [x] B0: worktree `port/fix2-expression` created; the baseline gates recorded (the worktree is `fix-b-expression`, branch `fix/b-expression`; see Track B notes): `4403638`
 - [x] R2-N3 (Alternatives): committed choice checked against the pre-S5 matcher; pinned, not changed: `0393b79`
 - [x] R2-012 (F2-012): checked lane counts, fallible reservation, per-chunk broadcast slicing: `52e9581`
-- [x] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`: this commit
-- [ ] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`
+- [x] R2-013a (F2-013, `Pattern`): iterative drop and budgeted `Debug`: `9900487`
+- [x] R2-034 (F2-034): NaN-propagating `max`/`min`/`clamp`/`relu`/`leaky_relu`; `abs(-0.0) = 0.0`: this commit
 - [ ] R2-037 (F2-037): exact-size `Children`; unary `+` passes its operand through; one stored failing node
 - [ ] R2-010 (F2-010): bounded node text in errors; lane index; `occurrence_count`; bounded `str`/`repr` in the binding
 - [ ] R2-026a (F2-026, evaluator part): scalar, array, kernel and chunk tests
@@ -3155,6 +3155,33 @@ failing case over `any_literal`. Both passed at their first run.
   derived text.
 - **Python-visible changes:** none; the binding never shows a pattern's
   `Debug`.
+
+**R2-034.**
+- **`max` and `min`** are the spec's bodies, `a if (a > b || a != a) else
+  b` and its `<` twin; `clamp`, `clamp_symmetric` and `relu` follow through
+  them, and `leaky_relu` (`x if x > 0.0 else x * slope`) already gave NaN
+  for a NaN, so it is unchanged, as is `sign` (§I.10).
+- **`abs` (deviation).** The spec's `x if x > 0 else -x` gives
+  `abs(0.0) = -0.0`, which the base got right (`x >= 0.0`) and the
+  resolution does not ask to change. The body is `x if x > 0.0 else 0 -
+  x`: the subtraction from the integer zero gives `0.0` for both zeros
+  (`0 - 0.0` and `0 - -0.0` are `+0.0`), a NaN for a NaN and `+inf` for
+  `-inf`, and keeps an integer operand an integer, as the negation did.
+- **Lowering tests.** No Z3, SMT-LIB or SymPy test pinned the text of an
+  inlined `max`, `min`, `abs` or `relu`, so none changed; the pins that
+  did change are the catalogue's printed bodies and trees, the inlining
+  stories, and `registry_properties`' reference evaluator, which gained
+  `!=`.
+- **Test-first.** At the base, 9 of the 19 cases of
+  `composed_builtins_propagate_nan` failed (the p6 table:
+  `max(nan, 1) = 1`, `min(nan, 1) = 1`, `relu(nan) = 0`, the clamps,
+  `abs(-0.0) = -0.0`), and so did the commutativity property.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `max(nan, 1)`, `min(nan, 1)`, `relu(nan)`, `clamp(nan, ...)` evaluated to the other operand (order-dependent); `abs(-0.0)` was `-0.0` | NaN propagates, as `np.maximum`/`np.minimum` do; `abs(-0.0)` is `0.0`; `sign(nan)` stays `0` | `test_max_and_min_propagate_nan_as_numpy_does`, `test_relu_propagates_nan_and_abs_of_negative_zero_is_positive` (new) |
+  | the inlined bodies printed `{a if (a > b); b otherwise}`, `{a if (a < b); b otherwise}` and `{x if (x >= 0); (-x) otherwise}` | `{a if ((a > b) \|\| (a != a)); b otherwise}`, the `<` twin, and `{x if (x > 0); (0 - x) otherwise}`; `relu(x)` inlines to `{x if ((x > 0) \|\| (x != x)); 0 otherwise}` | `test_composed_builtin_body_prints_as_pinned`, `test_inliner_reports_a_change_when_it_inlines`, and the `test_builtins.py`/`test_functions_stories.py` shape pins, rewritten |
 
 ### Track C notes
 

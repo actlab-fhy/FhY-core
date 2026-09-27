@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -679,6 +680,42 @@ def test_builtin_implementations_are_one_object_each_and_pickle_as_themselves() 
         sqrt(True)
     with pytest.raises(ValueError, match="not a native built-in"):
         _rs.BuiltinNativeImplementation._of("relu")
+
+
+@pytest.mark.parametrize(
+    ("name", "reference"),
+    [("max", np.maximum), ("min", np.minimum)],
+    ids=["max", "min"],
+)
+def test_max_and_min_propagate_nan_as_numpy_does(
+    name: str, reference: Callable[[Any, Any], Any]
+) -> None:
+    """Test ``max`` and ``min`` agree with NumPy's NaN-propagating pair."""
+    x, x_reference = _reference("x")
+    y, y_reference = _reference("y")
+    left = np.array([math.nan, 1.0, 2.0, math.nan, -1.0])
+    right = np.array([1.0, math.nan, 0.0, math.nan, 3.0])
+
+    result = evaluate_expression_with_numpy(
+        call(name, x_reference, y_reference), {x: left, y: right}
+    )
+
+    assert np.array_equal(result, reference(left, right), equal_nan=True)
+
+
+def test_relu_propagates_nan_and_abs_of_negative_zero_is_positive() -> None:
+    """Test ``relu(nan)`` is NaN, ``abs(-0.0)`` is ``0.0``, ``sign(nan)`` is 0."""
+    x, reference = _reference("x")
+    values = np.array([math.nan, -0.0, -2.0])
+
+    relu = evaluate_expression_with_numpy(call("relu", reference), {x: values})
+    absolute = evaluate_expression_with_numpy(call("abs", reference), {x: values})
+    sign = evaluate_expression_with_numpy(call("sign", reference), {x: values})
+
+    assert np.array_equal(relu, [math.nan, 0.0, 0.0], equal_nan=True)
+    assert np.array_equal(absolute, [math.nan, 0.0, 2.0], equal_nan=True)
+    assert not np.signbit(absolute[1])
+    assert sign.tolist() == [0, 0, -1]
 
 
 # =============================================================================
