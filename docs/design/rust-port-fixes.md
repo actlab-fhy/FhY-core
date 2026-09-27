@@ -111,7 +111,7 @@ onto `dev-rust` before continuing.
 
 - [ ] E0: worktree `port/fix2-binding` created; the baseline gates recorded
 - [ ] R2-N5 (xdist stall): reproduce or clear the 99% stall; account for the missing tests
-- [ ] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails
+- [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails
 - [ ] R2-N2 (V1 removal): the texts and docs name 0.3.0
 - [ ] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python
 - [ ] R2-024 (F2-024): `PartiallyOrderedSet` and `Lattice` pickle, copy and deep-copy
@@ -4119,4 +4119,21 @@ base is `03fb9e4`, Tracks A, D and B landed):
 
 ### Track E notes
 
-(none yet)
+**R2-N4.**
+- **The list.** At the base (`35519bb`), `pytest tests` with both V1
+  warnings as errors failed 65 tests in 13 files (the audit's 64, plus one
+  from a later slice), each a test that reads a V1 payload on purpose,
+  mostly malformed ones whose error is the point. None is a test where the
+  warning itself is the point; those already use `pytest.warns`.
+- **The mark (call).** `tests/v1.py` gains `reads_v1`, a
+  `pytest.mark.filterwarnings("ignore:.*V1 wire format.*:DeprecationWarning")`,
+  and each of the 65 tests carries it: a per-test form of the spec's third
+  option, so a file that also holds V2 tests keeps its V2 reads under the
+  error. It is deleted with V1, as the other helpers are.
+- **The filter.** `pyproject.toml`'s `filterwarnings` turns every V1
+  warning into an error; `test_an_unmarked_v1_read_fails_the_test` pins
+  that an unmarked read raises. The benchmarks already filter their own.
+- **Other tracks' files.** `tests/symbolic/test_serialization_pins.py`
+  (Track B's) gains the one import and one decorator line.
+- **Python-visible changes:** none; `pytest tests` shows no warnings
+  summary.

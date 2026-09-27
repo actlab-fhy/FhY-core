@@ -49,6 +49,8 @@ from fhy_core.symbolic.param import (
     create_integer_param,
 )
 
+from ..v1 import reads_v1
+
 _x = Identifier.deserialize_from_dict({"id": 60_000, "name_hint": "x"})
 """The shared variable, with a fixed id in the reserved range no shipped tag uses."""
 
@@ -537,6 +539,7 @@ def test_fixture_is_registered_under_its_pinned_type_id(
     assert actual == type_id
 
 
+@reads_v1
 @pytest.mark.parametrize(
     "type_id, expected", list(_ALL_FIXTURES.items()), ids=list(_ALL_FIXTURES.keys())
 )

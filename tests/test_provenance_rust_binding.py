@@ -46,6 +46,8 @@ from fhy_core.serialization import (
 from fhy_core.traits import EqualMixin, FrozenMixin, FrozenMutationError
 from fhy_core.utils.override import override
 
+from .v1 import reads_v1
+
 _VARIANT_CLASSES = (
     UnknownProvenance,
     FileProvenance,
@@ -560,6 +562,7 @@ def test_provenances_round_trip_in_every_format(fmt: SerializationFormat) -> Non
         assert type(restored) is type(provenance)
 
 
+@reads_v1
 @pytest.mark.parametrize(
     ("cls", "data", "owner"),
     [

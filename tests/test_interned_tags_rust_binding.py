@@ -47,6 +47,8 @@ from fhy_core.traits import FrozenMixin, FrozenMutationError, InternedMixin
 from fhy_core.utils.override import override
 from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain
 
+from .v1 import reads_v1
+
 _Tag = OpAttribute | NoteKind | ValueDomain
 
 _TAG_CLASSES = pytest.mark.parametrize(
@@ -285,6 +287,7 @@ def test_round_trip_returns_the_canonical_instance(
     assert round_trip(tag) is tag
 
 
+@reads_v1
 def test_value_domain_round_trip_registers_a_new_chain_root_first() -> None:
     """Test decoding an unseen chain registers each level under its parent."""
     root_name = Identifier("binding-decoded-root")
@@ -421,6 +424,7 @@ def test_pickle_from_a_fresh_process_loads_as_the_canonical_tag() -> None:
 # =============================================================================
 
 
+@reads_v1
 @_TAG_CLASSES
 def test_malformed_payload_raises_the_python_structure_error(cls: type[_Tag]) -> None:
     """Test a malformed payload raises the framework's structure error."""
@@ -437,6 +441,7 @@ def test_malformed_payload_raises_the_python_structure_error(cls: type[_Tag]) ->
     assert str(exc_info.value) == str(expected)
 
 
+@reads_v1
 @_TAG_CLASSES
 def test_malformed_name_raises_the_identifier_error(cls: type[_Tag]) -> None:
     """Test a malformed name raises the error `Identifier` deserialization raises."""

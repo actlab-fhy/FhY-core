@@ -14,6 +14,7 @@ from fhy_core.symbolic.param import (
     create_interval_natural_param,
 )
 
+from ...v1 import reads_v1
 from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
 
@@ -111,6 +112,7 @@ def test_bound_nat_param_deserialize_round_trip_preserves_zero_excluded_flag() -
     assert original.is_structurally_equivalent(restored)
 
 
+@reads_v1
 def test_bound_nat_param_deserialize_rejects_payload_with_malformed_domain_data() -> (
     None
 ):

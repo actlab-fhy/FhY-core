@@ -4,15 +4,29 @@ V1 is written only inside ``wire_version(WireVersion.V1)``, and reading or
 writing it warns with ``DeprecationWarning`` (slice S17 of
 ``docs/design/python-switch.md``, D-S17-16). The tests that pin V1 payloads
 use these helpers, which silence that warning, and are deleted with V1.
+
+The suite turns an unmarked V1 warning into an error (``filterwarnings`` in
+``pyproject.toml``), so a test that reads V1 on purpose says so: with
+``@reads_v1``, these helpers, the ``v1_wire`` fixture, or
+``pytest.warns(DeprecationWarning, match="V1 wire format")`` where the
+warning is the point.
 """
 
 import contextlib
 import warnings
 from collections.abc import Iterator
 
+import pytest
+
 from fhy_core.serialization import _READING_V1, WireVersion, wire_version
 
-__all__ = ["reading_v1", "writing_v1"]
+__all__ = ["V1_WARNING_FILTER", "reading_v1", "reads_v1", "writing_v1"]
+
+V1_WARNING_FILTER = "ignore:.*V1 wire format.*:DeprecationWarning"
+"""The ``filterwarnings`` entry that silences the V1 deprecation warnings."""
+
+reads_v1 = pytest.mark.filterwarnings(V1_WARNING_FILTER)
+"""Mark a test that reads V1 payloads on purpose, silencing their warning."""
 
 
 @contextlib.contextmanager

@@ -46,6 +46,8 @@ from fhy_core.types import (
 )
 from fhy_core.utils.override import override
 
+from .v1 import reads_v1
+
 # The identifiers this file builds, by name hint and number, so a test that
 # names one twice gets the same identifier. They are real identifiers, since
 # the tests pickle them and log them.
@@ -321,6 +323,7 @@ def test_frame_payloads_are_todays_wire_format() -> None:
         assert SymbolTableFrame.deserialize_from_dict(payload) == frame
 
 
+@reads_v1
 @pytest.mark.parametrize(
     ("data", "error"),
     [
@@ -383,6 +386,7 @@ def test_malformed_frame_payloads_are_refused(
         SymbolTableFrame.deserialize_from_dict(data)
 
 
+@reads_v1
 def test_a_bad_function_keyword_names_the_value() -> None:
     """Test the function frame keeps its message for a bad keyword."""
     data: SerializedDict = {

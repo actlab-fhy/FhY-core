@@ -38,6 +38,8 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.traits import FrozenMixin, HasOperands, VisitableMixin
 
+from ...v1 import reads_v1
+
 _NODE_CLASSES = [
     (UnaryExpression, _rs.UnaryExpression),
     (BinaryExpression, _rs.BinaryExpression),
@@ -407,6 +409,7 @@ def test_a_deep_payload_decodes_in_one_pass() -> None:
     assert Expression.deserialize_from_dict(payload) == tree
 
 
+@reads_v1
 def test_a_payload_the_fast_path_declines_raises_the_framework_error() -> None:
     """Test a malformed payload still raises the serialization framework's error."""
     from fhy_core.serialization import DeserializationValueError  # noqa: PLC0415

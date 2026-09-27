@@ -21,6 +21,7 @@ from fhy_core.symbolic.param import (
     create_natural_param_with_upper_bound,
 )
 
+from ...v1 import reads_v1
 from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
 # =============================================================================
@@ -405,6 +406,7 @@ def test_nat_param_deserialize_recovers_zero_exclusion_without_stored_constraint
     assert restored.is_value_valid(1)
 
 
+@reads_v1
 def test_nat_param_deserialize_rejects_payload_with_malformed_domain_data() -> None:
     """Test `Param.deserialize_from_dict` rejects payloads with malformed domain data.
 

@@ -32,6 +32,7 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
 )
 
+from ...v1 import reads_v1
 from .conftest import build_case_condition_constraint, mock_identifier
 
 # =============================================================================
@@ -385,6 +386,7 @@ def test_assignment_deserialize_wraps_value_field_value_error_as_value_error() -
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@reads_v1
 def test_assignment_deserialize_rejects_payload_missing_param_field() -> None:
     """Test a payload missing the ``param`` field is rejected as malformed."""
     payload = {"value": serialize_registry_wrapped_value(1)}
@@ -406,6 +408,7 @@ def test_assignment_deserialize_rejects_payload_missing_value_field() -> None:
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@reads_v1
 def test_assignment_deserialize_rejects_payload_with_param_not_serialized_dict() -> (
     None
 ):

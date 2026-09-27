@@ -68,6 +68,19 @@ def test_reading_v1_warns_once_per_payload_naming_the_upgrade() -> None:
     assert rebuilt.is_structurally_equivalent(_expression())
 
 
+def test_an_unmarked_v1_read_fails_the_test() -> None:
+    """Test the suite turns an unmarked V1 warning into an error (R2-N4).
+
+    ``pyproject.toml`` filters the V1 warnings as errors, so a test that
+    reads V1 without saying so fails instead of burying the warning.
+    """
+    with writing_v1():
+        payload = _expression().serialize_to_dict()
+
+    with pytest.raises(DeprecationWarning, match="V1 wire format"):
+        Expression.deserialize_from_dict(payload)
+
+
 def test_the_version_is_detected_at_the_root() -> None:
     """Test one reader reads a V1 envelope and a V2 table alike."""
     expression = _expression()

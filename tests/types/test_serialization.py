@@ -22,6 +22,7 @@ from fhy_core.types import (
     TemplateDataType,
 )
 
+from ..v1 import reads_v1
 from .conftest import mock_identifier
 
 # The sentinel `__type__` for an ellipsis shape dimension. Pinned here so a
@@ -245,12 +246,14 @@ def _wrap(type_id: str, inner: SerializedDict) -> SerializedDict:
     return {"__type__": type_id, "__data__": inner}
 
 
+@reads_v1
 def test_primitive_data_type_deserialize_raises_on_missing_key() -> None:
     """Test deserialize raises a structure error when ``core_data_type`` is missing."""
     with pytest.raises(DeserializationDictStructureError):
         PrimitiveDataType.deserialize_from_dict(_wrap("primitive_data_type", {}))
 
 
+@reads_v1
 def test_primitive_data_type_deserialize_raises_on_wrong_type_for_core_data_type() -> (
     None
 ):
@@ -261,6 +264,7 @@ def test_primitive_data_type_deserialize_raises_on_wrong_type_for_core_data_type
         )
 
 
+@reads_v1
 def test_primitive_data_type_deserialize_raises_on_unknown_core_data_type_value() -> (
     None
 ):
@@ -271,6 +275,7 @@ def test_primitive_data_type_deserialize_raises_on_unknown_core_data_type_value(
         )
 
 
+@reads_v1
 def test_template_data_type_deserialize_raises_on_missing_data_type_field() -> None:
     """Test deserialization raises a structure error when ``data_type`` is missing."""
     with pytest.raises(DeserializationDictStructureError):
@@ -279,6 +284,7 @@ def test_template_data_type_deserialize_raises_on_missing_data_type_field() -> N
         )
 
 
+@reads_v1
 def test_template_data_type_deserialize_raises_on_widths_wrong_type() -> None:
     """Test deserialization raises a structure error when ``widths`` is not a list."""
     name = mock_identifier("T", 1)
@@ -292,6 +298,7 @@ def test_template_data_type_deserialize_raises_on_widths_wrong_type() -> None:
         )
 
 
+@reads_v1
 def test_template_data_type_deserialize_raises_on_non_positive_width() -> None:
     """Test deserialize raises a value error when widths contain a non-positive."""
     name = mock_identifier("T", 1)
@@ -305,6 +312,7 @@ def test_template_data_type_deserialize_raises_on_non_positive_width() -> None:
         )
 
 
+@reads_v1
 def test_template_data_type_deserialize_raises_on_empty_widths() -> None:
     """Test deserialize raises a value error for an empty list of widths."""
     serialized_name = mock_identifier("T", 1).serialize_to_dict()
@@ -322,6 +330,7 @@ def test_template_data_type_v2_payload_with_empty_widths_is_refused() -> None:
         TemplateDataType.deserialize_from_dict(payload)
 
 
+@reads_v1
 def test_template_data_type_deserialize_sorts_and_deduplicates_widths() -> None:
     """Test deserialize normalizes the widths as the constructor does."""
     serialized_name = mock_identifier("T", 1).serialize_to_dict()
@@ -334,6 +343,7 @@ def test_template_data_type_deserialize_sorts_and_deduplicates_widths() -> None:
     assert template.widths == [8, 32]
 
 
+@reads_v1
 def test_numerical_type_deserialize_raises_on_non_list_shape() -> None:
     """Test deserialization raises a structure error when ``shape`` is not a list."""
     primitive_dict = PrimitiveDataType(CoreDataType.INT32).serialize_to_dict()
@@ -346,6 +356,7 @@ def test_numerical_type_deserialize_raises_on_non_list_shape() -> None:
         )
 
 
+@reads_v1
 def test_numerical_type_deserialize_raises_on_non_dict_shape_element() -> None:
     """Test deserialize raises a structure error when a shape element isn't a dict."""
     primitive_dict = PrimitiveDataType(CoreDataType.INT32).serialize_to_dict()
@@ -358,6 +369,7 @@ def test_numerical_type_deserialize_raises_on_non_dict_shape_element() -> None:
         )
 
 
+@reads_v1
 def test_index_type_deserialize_raises_on_missing_field() -> None:
     """Test deserialization raises a structure error when an index field is missing."""
     serialized = LiteralExpression(0).serialize_to_dict()

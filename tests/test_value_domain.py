@@ -25,6 +25,8 @@ from fhy_core.value_domain import (
     ValueDomain,
 )
 
+from .v1 import reads_v1
+
 # =============================================================================
 # Construction & traits
 # =============================================================================
@@ -213,6 +215,7 @@ def test_value_domain_deserialize_returns_canonical_for_registered_name() -> Non
     assert restored is DATA_DOMAIN
 
 
+@reads_v1
 def test_value_domain_deserialize_constructs_fresh_for_unregistered_name() -> None:
     """Test deserialization constructs a fresh instance for an unseen identifier."""
     unregistered_name = Identifier("never-registered-value-domain")
@@ -237,6 +240,7 @@ def test_value_domain_deserialize_constructs_fresh_for_unregistered_name() -> No
 # =============================================================================
 
 
+@reads_v1
 def test_value_domain_deserialize_warns_on_description_mismatch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -305,6 +309,7 @@ def test_value_domain_deserialize_rejects_a_conflicting_parent() -> None:
     assert ValueDomain.get_interned(canonical.name) is canonical
 
 
+@reads_v1
 def test_value_domain_deserialize_rejects_a_parent_dropped_from_the_payload() -> None:
     """Test a payload with no parent conflicts with a parented canonical."""
     canonical = ValueDomain(
@@ -359,6 +364,7 @@ def test_value_domain_deserialize_returns_canonical_for_an_exact_parented_match(
     assert restored is canonical
 
 
+@reads_v1
 def test_value_domain_deserialize_conflict_keeps_a_fresh_nested_parent() -> None:
     """Test a rejected payload still registers the fresh parent decoded first."""
     canonical = ValueDomain(

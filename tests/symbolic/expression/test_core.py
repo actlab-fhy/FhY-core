@@ -64,6 +64,8 @@ from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 
+from ...v1 import reads_v1
+
 # =============================================================================
 # Construction & accessors
 # =============================================================================
@@ -1569,6 +1571,7 @@ def test_literal_payload_holds_the_normalized_value(
 # =============================================================================
 
 
+@reads_v1
 @pytest.mark.parametrize(
     "data",
     [
@@ -1650,6 +1653,7 @@ def test_nested_piecewise_expression_round_trips_through_dict() -> None:
     assert restored.is_structurally_equivalent(outer)
 
 
+@reads_v1
 def test_deserializing_a_removed_conditional_node_blob_raises_unknown_type_id() -> None:
     """Test a blob using an unregistered conditional node's type id is rejected.
 
@@ -1683,6 +1687,7 @@ def test_deserializing_a_removed_conditional_node_blob_raises_unknown_type_id() 
         Expression.deserialize_from_dict(unrestorable_blob)
 
 
+@reads_v1
 def test_deserializing_mismatched_condition_and_value_lengths_raises_value_error() -> (
     None
 ):

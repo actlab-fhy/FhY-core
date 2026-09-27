@@ -52,6 +52,8 @@ from fhy_core.serialization import (
 )
 from fhy_core.utils.override import override
 
+from ..v1 import reads_v1
+
 # =============================================================================
 # Registered serializable classes used by the test suite
 # =============================================================================
@@ -715,6 +717,7 @@ def test_register_serializable_assigns_provided_type_id_as_canonical() -> None:
     assert _Canon.get_serialization_class_type_id() == "tests.CanonicalA"
 
 
+@reads_v1
 def test_register_serializable_alias_does_not_override_canonical_id() -> None:
     """Test `alias=True` registers a secondary id without changing the canonical."""
 
@@ -1357,6 +1360,7 @@ def test_wrapped_family_binary_round_trip(custom_node: _CustomNode) -> None:
     assert Serializable.from_bytes(custom_node.to_bytes()) == custom_node
 
 
+@reads_v1
 def test_wrapped_family_accepts_alias_type_id() -> None:
     """Test a `WrappedFamilySerializable` accepts an alias in `__type__`."""
     register_serializable(_CustomNode, type_id="tests.LegacyCustomNode", alias=True)
@@ -1367,6 +1371,7 @@ def test_wrapped_family_accepts_alias_type_id() -> None:
     assert rebuilt.value == 9
 
 
+@reads_v1
 @pytest.mark.parametrize(
     "payload, error, match",
     [
