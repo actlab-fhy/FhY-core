@@ -58,8 +58,8 @@ onto `dev-rust` before continuing.
 - [x] R2-014 (F2-014): the process backend's timeout bounds the whole call (`35fae05`)
 - [ ] R2-040 (F2-040): the mixed int/real equality hazard dropped — **held for the maintainer**: dropping it makes params and set constraints report false proofs (Track D notes, N-D1)
 - [x] R2-005a (F2-005, the move): the SymPy backend moves into `fhy-core-py`; the core drops pyo3 and the `sympy` feature (`63df166`)
-- [x] R2-016 (F2-016): negative powers lift as divisions
-- [ ] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object
+- [x] R2-016 (F2-016): negative powers lift as divisions (`a5b7e62`)
+- [x] R2-038a (F2-038, SymPy part): lifting and substitution memoized by object
 - [ ] R2-039 (F2-039): a versioned, hash-checked prelude module
 - [ ] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories
 - [ ] R2-029d (F2-029, `solver`): error-text tables and small stories
@@ -2772,11 +2772,26 @@ premise holds for expressions but not for set constraints:
 - **Both properties fail at the base**: the Rust one on `(-1 / x) - 0`,
   simplified to `-1 * x ** -1`, and the Python one likewise.
 
+**R2-038a.**
+- **The memos** key by the object's address and hold the object, so no
+  address is reused during the call: the lifting's memo maps a SymPy node
+  to its expression (a `Remember` task records a node once its parts are
+  assembled), and `rebuild_bottom_up`'s maps a node to its result, which
+  serves the substitution and the masking of Boolean comparisons alike. In
+  the masking walk, a shared comparison now gets one placeholder instead
+  of one per occurrence, which `substitute_symbols` puts back the same way.
+- **Numbers** (debug build, depth 16): lifting took 5.7 s before and is
+  now under the story's 100 ms bound in debug and release; the
+  substitution took 3.8 s and now about 0.14 s in debug, which is SymPy's
+  own construction of the 49 rebuilt nodes, so its story's bound is 1 s.
+  Both results hold the input's 49 distinct nodes.
+
 **Python-visible changes** (§I.2 rule 6):
 
 | Item | Old | New | Tests |
 |---|---|---|---|
 | R2-015 | a name hint's control characters were written into its quoted SMT-LIB2 symbol (`SmtScript.text`, `convert_expression_to_smtlib2`, the declarations' `symbol`); a NUL made the z3-solver adapter raise `Z3Exception` | each is written as `_` | `test_a_control_character_name_hint_answers_the_same_on_every_backend` (new) |
+| R2-038a | lifting and SymPy substitution walked a SymPy DAG as a tree, in exponential time, and lifted results shared nothing | both are linear in the distinct objects, and a lifted result shares where the SymPy object does | the Rust stories; the Python suites unchanged |
 | R2-016 | `simplify_expression(y / x)` returned `y * x ** -1`, which the evaluators refuse at integer points | it returns `y / x`; every power by a negative integer lifts as a division | `test_simplify_then_evaluate_equals_evaluate_on_integer_grids` (new); no existing test pinned the old form |
 | R2-005a | none in behavior; `SolverBackend.SYMPY`'s backend lives in the extension as before | the same objects, from the binding's own module | `test_missing_sympy_reports_unavailable` (new) |
 | R2-014 | `SmtLib2ProcessSolver.check` could outlast its timeout (a solver that stops reading, closes stdout without exiting, exits slowly, or leaves a grandchild), and a solver that printed `success` failed with `SolverBackendError` | the timeout bounds the call; the first line written is `(set-option :print-success false)`; `success` lines before the answer are skipped; the class docstring says so | the Rust stories; the Python process-backend tests unchanged |

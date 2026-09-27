@@ -1,13 +1,22 @@
 //! Stories for lifting SymPy objects to expressions,
 //! [`SympySimplifier::lift`]: sums and
 //! products, the native functions, constants, numbers, symbols, the
-//! connectives and relationals, the refusals, and deep objects.
+//! connectives and relationals, the refusals, and deep and shared
+//! objects.
+
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::{
-    BigInt, BinaryOperation, Decimal, Expression, LiteralValue, LogicalOperation, UnaryOperation,
+    BigInt, BinaryOperation, Decimal, Expression, LiteralValue, LogicalOperation,
+    NoRegisteredSorts, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
+use fhy_core::solver::SimplifyContext;
+use fhy_core::tree::{NodeHandle, NodeIdentity};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use rstest::rstest;
 
 use super::test_support::{attached, backend, build_identifier, build_literal, evaluate};
@@ -348,4 +357,100 @@ fn deep_object_lifts_on_a_small_stack() {
         .expect("a thread");
 
     assert_eq!(handle.join().expect("no stack overflow"), Ok(()));
+}
+
+/// Return the doubling DAG `e_{k+1} = sin(e_k) + cos(e_k)` of `depth`
+/// levels over `x`: `3 * depth + 1` distinct nodes, and about `2^depth`
+/// occurrences of `x`.
+fn build_sin_cos_dag(x: Expression, depth: usize) -> Expression {
+    let mut dag = x;
+    for _ in 0..depth {
+        dag = Expression::call(BuiltinFunction::Sin, [dag.clone()])
+            + Expression::call(BuiltinFunction::Cos, [dag]);
+    }
+    dag
+}
+
+/// Return the number of distinct nodes of `root`, by identity.
+fn count_distinct_nodes(root: &Expression) -> usize {
+    let mut seen: HashSet<NodeIdentity> = HashSet::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if seen.insert(node.identity()) {
+            pending.extend(node.children());
+        }
+    }
+    seen.len()
+}
+
+#[test]
+fn lifting_a_depth_16_sin_cos_dag_is_linear() {
+    let (_, x) = build_identifier("x");
+    let dag = build_sin_cos_dag(x.clone(), 16);
+    let small = build_sin_cos_dag(x.clone(), 4);
+    let mut small_in_sympy_order = x;
+    for _ in 0..4 {
+        small_in_sympy_order =
+            Expression::call(BuiltinFunction::Cos, [small_in_sympy_order.clone()])
+                + Expression::call(BuiltinFunction::Sin, [small_in_sympy_order]);
+    }
+    let context = SimplifyContext::new(&NoRegisteredSorts);
+
+    let (lifted, elapsed, small_lifted) = attached(|py| {
+        let lowered = backend().lower(py, &dag, &context).expect("lowered");
+        let started = Instant::now();
+        let lifted = backend().lift(&lowered).expect("lifted");
+        let elapsed = started.elapsed();
+        let small_lowered = backend().lower(py, &small, &context).expect("lowered");
+        (
+            lifted,
+            elapsed,
+            backend().lift(&small_lowered).expect("lifted"),
+        )
+    });
+
+    assert!(
+        elapsed < Duration::from_millis(100),
+        "lifting took {elapsed:?}"
+    );
+    assert_eq!(
+        count_distinct_nodes(&lifted),
+        3 * 16 + 1,
+        "the result shares"
+    );
+    assert_eq!(
+        small_lifted, small_in_sympy_order,
+        "sympy orders a sum's terms"
+    );
+}
+
+#[test]
+fn substituting_into_a_depth_16_sin_cos_dag_is_linear() {
+    let (x, x_reference) = build_identifier("x");
+    let (y, _) = build_identifier("y");
+    let dag = build_sin_cos_dag(x_reference, 16);
+    let context = SimplifyContext::new(&NoRegisteredSorts);
+
+    let (substituted, elapsed) = attached(|py| {
+        let lowered = backend().lower(py, &dag, &context).expect("lowered");
+        let replacements = PyDict::new(py);
+        replacements
+            .set_item(evaluate(py, &symbol(&x)), evaluate(py, &symbol(&y)))
+            .expect("set");
+        let started = Instant::now();
+        let substituted = backend()
+            .substitute_symbols(&lowered, replacements.as_any())
+            .expect("substituted");
+        let elapsed = started.elapsed();
+        (backend().lift(&substituted).expect("lifted"), elapsed)
+    });
+
+    // Each of the 49 rebuilt nodes is a SymPy construction, whose own
+    // evaluation dominates; without the memo, the walk takes seconds.
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "substituting took {elapsed:?}"
+    );
+    assert_eq!(count_distinct_nodes(&substituted), 3 * 16 + 1);
+    assert_eq!(substituted.free_identifiers(), HashSet::from([y]));
 }

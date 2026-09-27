@@ -1,6 +1,7 @@
 //! Rebuilding SymPy trees bottom-up: the substitution of symbols, and the
 //! walk the masking of Boolean comparisons shares with it.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -29,6 +30,11 @@ struct Frame<'py> {
 /// Rebuild `root` bottom-up on a work list, as a recursive walk over
 /// SymPy's `args` would, without the recursion.
 ///
+/// A node met again, the same Python object (`id`), takes the result it
+/// had, so a SymPy DAG costs its distinct nodes, and a shared node's result
+/// is shared too. The memo holds every node it keys by, so no id is reused
+/// while the walk runs.
+///
 /// `visit` decides for each SymPy node (`Basic`) whether to replace it or
 /// to walk its arguments; an argument that is not a SymPy node is kept.
 /// Once a node's arguments are walked, `rebuild` receives the node, the
@@ -47,6 +53,7 @@ pub(super) fn rebuild_bottom_up<'py, E: From<PyErr>>(
 ) -> Result<(Bound<'py, PyAny>, bool), E> {
     let py = root.py();
     let basic = handles.basic.bind(py);
+    let mut memo: Memo<'py> = HashMap::new();
     let mut open =
         |node: &Bound<'py, PyAny>| -> Result<Result<Frame<'py>, (Bound<'py, PyAny>, bool)>, E> {
             match visit(node)? {
@@ -77,8 +84,15 @@ pub(super) fn rebuild_bottom_up<'py, E: From<PyErr>>(
                 top.done.push((argument, false));
                 continue;
             }
+            if let Some((_, finished)) = memo.get(&argument.as_ptr().addr()) {
+                top.done.push(finished.clone());
+                continue;
+            }
             match open(&argument)? {
-                Err(finished) => stack.last_mut().expect("the parent").done.push(finished),
+                Err(finished) => {
+                    memo.insert(argument.as_ptr().addr(), (argument, finished.clone()));
+                    stack.last_mut().expect("the parent").done.push(finished);
+                }
                 Ok(frame) => stack.push(frame),
             }
             continue;
@@ -88,11 +102,18 @@ pub(super) fn rebuild_bottom_up<'py, E: From<PyErr>>(
         let results = frame.done.into_iter().map(|(result, _)| result).collect();
         let finished = rebuild(&frame.node, results, changed)?;
         match stack.last_mut() {
-            Some(parent) => parent.done.push(finished),
+            Some(parent) => {
+                parent.done.push(finished.clone());
+                memo.insert(frame.node.as_ptr().addr(), (frame.node, finished));
+            }
             None => return Ok(finished),
         }
     }
 }
+
+/// The results of a walk's finished nodes, keyed by each node's address,
+/// with the node, which keeps the address its own.
+type Memo<'py> = HashMap<usize, (Bound<'py, PyAny>, (Bound<'py, PyAny>, bool))>;
 
 /// Return `node` with `replacements`, a mapping from SymPy symbols to SymPy
 /// objects, applied.

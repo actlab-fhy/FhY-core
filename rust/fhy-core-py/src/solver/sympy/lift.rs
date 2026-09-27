@@ -1,5 +1,7 @@
 //! Lifting SymPy objects to expressions.
 
+use std::collections::HashMap;
+
 use num_traits::{One, Signed, Zero};
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
@@ -66,6 +68,8 @@ enum Build {
 enum Task<'py> {
     Visit(Bound<'py, PyAny>),
     Build(Build),
+    /// Remember the last result as the lifting of this node.
+    Remember(Bound<'py, PyAny>),
 }
 
 /// What visiting one SymPy node gives.
@@ -89,22 +93,45 @@ impl<'h> Lifter<'h> {
     }
 
     /// Return the expression `root` denotes, lifting on a work list.
-    pub(super) fn lift(&self, root: &Bound<'_, PyAny>) -> Fallible<Expression> {
+    ///
+    /// A node met again, the same Python object (`id`), takes the
+    /// expression it lifted to, so a SymPy DAG costs its distinct nodes and
+    /// lifts to an expression that shares as it does. The memo holds every
+    /// node it keys by, so no id is reused while the lifting runs.
+    pub(super) fn lift<'py>(&self, root: &Bound<'py, PyAny>) -> Fallible<Expression> {
         let mut tasks = vec![Task::Visit(root.clone())];
         let mut results: Vec<Expression> = Vec::new();
+        let mut memo: HashMap<usize, (Bound<'py, PyAny>, Expression)> = HashMap::new();
         while let Some(task) = tasks.pop() {
             match task {
-                Task::Visit(node) => match self.visit(&node)? {
-                    Step::Done(expression) => results.push(expression),
-                    Step::Forward(next) => tasks.push(Task::Visit(next)),
-                    Step::Expand(build, parts) => {
-                        tasks.push(Task::Build(build));
-                        tasks.extend(parts.into_iter().rev().map(Task::Visit));
+                Task::Visit(node) => {
+                    if let Some((_, lifted)) = memo.get(&node.as_ptr().addr()) {
+                        results.push(lifted.clone());
+                        continue;
                     }
-                },
+                    match self.visit(&node)? {
+                        Step::Done(expression) => {
+                            results.push(expression.clone());
+                            memo.insert(node.as_ptr().addr(), (node, expression));
+                        }
+                        Step::Forward(next) => {
+                            tasks.push(Task::Remember(node));
+                            tasks.push(Task::Visit(next));
+                        }
+                        Step::Expand(build, parts) => {
+                            tasks.push(Task::Remember(node));
+                            tasks.push(Task::Build(build));
+                            tasks.extend(parts.into_iter().rev().map(Task::Visit));
+                        }
+                    }
+                }
                 Task::Build(build) => {
                     let lifted = assemble(build, &mut results)?;
                     results.push(lifted);
+                }
+                Task::Remember(node) => {
+                    let lifted = results.last().expect("the node is lifted").clone();
+                    memo.insert(node.as_ptr().addr(), (node, lifted));
                 }
             }
         }
