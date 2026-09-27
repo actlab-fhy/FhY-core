@@ -47,8 +47,8 @@ onto `dev-rust` before continuing.
 - [x] R2-004 (F2-004): `ForeignPart`, one handle and equality convention, fallible hooks, contexts for custom hooks, provided methods for `Option<Result>`: `a5afd95`
 - [x] R2-006 (F2-006): `ParamError` split by family: `d03ac7c`
 - [x] R2-005b (F2-005, API part): `IntervalProfile` and `Value` `#[non_exhaustive]`; `SimplifyContext` limits: `b6ccb30`
-- [x] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized
-- [ ] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories
+- [x] R2-032a (F2-032, equality part): `PartialEq`/`Eq`/`Hash`/`Display` on constraint and param values; the two type equalities documented; template widths normalized: `fa89655`
+- [x] R2-029a (F2-029, `param`, `constraint`, `foreign`): error-text tables and small stories
 - [ ] Track A status: gates green; counts recorded; landed as `<hash>`
 
 ### Track D: `solver` (the SymPy move and build infrastructure; lands 2nd)
@@ -2514,6 +2514,37 @@ finding.
   |---|---|---|
   | `TemplateDataType(t, [16, 8])` kept the order, and was unequal to `[8, 16]` | the widths are sorted and deduplicated: equal, one hash, `widths` and `repr` show `[8, 16]` | `test_template_widths_compare_as_a_set`, `test_template_data_type_deserialize_sorts_and_deduplicates_widths` |
   | `widths=[]` built a template that bound nothing | `ValueError`, and `DeserializationValueError` from a V1 or V2 payload | `test_an_empty_width_list_is_refused`, `test_template_data_type_refuses_empty_widths` (replacing `test_bind_data_template_empty_widths_rejects_every_concrete_actual`), `test_template_data_type_deserialize_raises_on_empty_widths`, `test_template_data_type_v2_payload_with_empty_widths_is_refused` |
+
+**R2-029a.**
+
+- **Tables.** `tests/it/param/error_text_stories.rs` has one rstest table
+  per family (`DomainError`, `ParamBuildError`, `AssignmentError`,
+  `IntervalError`, `ParamError`), `tests/it/constraint/error_text_stories.rs`
+  one for `ConstraintError` and `MemberError`, and `foreign_stories.rs` one
+  for `ForeignError` and `BuildError`. Each case checks `to_string()` and the
+  type of `source()` by downcast, through `support/error_text.rs`. A wrapper
+  variant has a case with a source and one without. Identifiers are
+  restored with fixed ids, so the texts name them exactly.
+- **`NaturalBound`.** The table covers the 8 combinations of side, zero
+  inclusion and inclusivity, plus a story that `is_negative` changes the
+  text only for a zero-including lower bound. The story that drives the
+  gate (`natural_gate_refuses_a_bound_literal_the_naturals_do_not_admit`)
+  now matches every field of the variant it returns.
+- **Tightened.** The spec's line numbers are the audit's; the matches are
+  in `param_refuses_a_constraint_outside_its_scope` (the constraint and the
+  variable, now comparable through R2-032a, and the text),
+  `intersection_refuses_a_set_constraint_on_another_variable` (`from`, `to`,
+  `variable` and the whole text), and
+  `text_outside_the_literal_grammar_is_refused_with_its_cause` (the
+  identifier, the `LiteralTextError` compared with the parser's own, and the
+  source downcast to it).
+- **`param/context.rs:162-164`**, the default `is_undecidable`, had no
+  test: every test observer overrode it. `decide_stories.rs` gains a story
+  that the default (for `NoParamObserver` and for an observer that
+  overrides only `notify`) counts only a backend's failure as undecidable,
+  and one that a context without an observer evaluates past a failing
+  simplifier.
+- No test found a bug. **Python-visible changes:** none.
 
 ### Track D notes
 

@@ -13,7 +13,7 @@ use fhy_core::constraint::{
 };
 use fhy_core::expression::builtins::BuiltinConstant;
 use fhy_core::expression::registry::FunctionRegistry;
-use fhy_core::expression::{Decimal, Expression, LiteralValue};
+use fhy_core::expression::{Decimal, Expression, LiteralTextError, LiteralValue};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{SolveError, Solver};
 use rstest::rstest;
@@ -149,13 +149,14 @@ fn text_outside_the_literal_grammar_is_refused_with_its_cause(#[case] refused: &
     );
 
     let error = outcome.expect_err("not a literal text");
+    let expected_cause = LiteralValue::parse_text(refused).expect_err("outside the grammar");
     assert!(
         matches!(
             &error,
             ConstraintError::UnusableBinding {
-                reason: UnusableBindingReason::UnparsableText(_),
-                ..
-            }
+                identifier,
+                reason: UnusableBindingReason::UnparsableText(cause),
+            } if *identifier == x && *cause == expected_cause && cause.text() == refused
         ),
         "{error:?}"
     );
@@ -163,7 +164,11 @@ fn text_outside_the_literal_grammar_is_refused_with_its_cause(#[case] refused: &
         error.to_string(),
         format!("the binding of {x:?} cannot be lifted into a literal")
     );
-    assert!(std::error::Error::source(&error).is_some());
+    let source = std::error::Error::source(&error).expect("the cause");
+    assert_eq!(
+        source.downcast_ref::<LiteralTextError>(),
+        Some(&expected_cause)
+    );
 }
 
 #[test]

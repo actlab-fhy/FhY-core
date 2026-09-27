@@ -4,6 +4,7 @@
 //! dead code.
 
 pub(crate) mod constraint;
+pub(crate) mod error_text;
 pub(crate) mod expression;
 pub(crate) mod foreign;
 pub(crate) mod hashing;

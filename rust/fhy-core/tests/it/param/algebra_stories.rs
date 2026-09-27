@@ -418,8 +418,21 @@ fn intersection_refuses_a_set_constraint_on_another_variable() {
         )
         .expect_err("scoped elsewhere");
 
-    assert!(matches!(error, ParamError::Rescope { .. }));
-    assert!(error.to_string().contains("scoped"));
+    assert!(
+        matches!(
+            &error,
+            ParamError::Rescope { from, to, variable }
+                if *from == x && *to == z && *variable == y
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "cannot rescope a set constraint from {x:?} to {z:?}: it is scoped to {y:?}, not \
+             {x:?}"
+        )
+    );
 }
 
 #[test]

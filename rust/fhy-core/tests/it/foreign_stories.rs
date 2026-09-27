@@ -5,6 +5,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use crate::support::constraint::{TestCustom, TestOpaque};
+use crate::support::error_text::{Source, assert_error_text, test_error};
 use crate::support::foreign::{
     NAMED_TYPE, NamedType, REFUSED, SilentDataType, SilentType, TestResolver,
 };
@@ -15,6 +16,7 @@ use fhy_core::expression::Expression;
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, ForeignPart, NoForeign, Part, Resolve};
 use fhy_core::param::{CustomDomain, ParamDomain};
 use fhy_core::types::{DataTypeExtension, Type, TypeExtension};
+use rstest::rstest;
 
 #[test]
 fn a_foreign_part_serializes_as_its_type_id_and_text() {
@@ -185,4 +187,52 @@ fn every_part_handle_is_send_and_sync() {
     assert_send_sync::<Part<dyn CustomDomain>>();
     assert_send_sync::<Part<dyn TypeExtension>>();
     assert_send_sync::<Part<dyn DataTypeExtension>>();
+}
+
+#[rstest]
+#[case::unresolved(
+    ForeignError::Unresolved { type_id: "pkg.even".to_owned() },
+    "no implementation for the foreign part `pkg.even`",
+    Source::None
+)]
+#[case::no_wire_form(
+    ForeignError::NoWireForm { type_name: "Handle".to_owned() },
+    "`Handle` has no wire form",
+    Source::None
+)]
+#[case::failed(
+    ForeignError::Failed { type_id: "pkg.even".to_owned(), source: test_error() },
+    "the foreign part `pkg.even` failed",
+    Source::TestValue
+)]
+fn foreign_error_text(#[case] error: ForeignError, #[case] text: &str, #[case] source: Source) {
+    assert_error_text(&error, text, source);
+}
+
+#[rstest]
+#[case::foreign(
+    BuildError::Foreign(ForeignError::Unresolved { type_id: "pkg.even".to_owned() }),
+    "no implementation for the foreign part `pkg.even`",
+    Source::None
+)]
+#[case::failed_foreign(
+    BuildError::Foreign(ForeignError::Failed {
+        type_id: "pkg.even".to_owned(),
+        source: test_error(),
+    }),
+    "the foreign part `pkg.even` failed",
+    Source::TestValue
+)]
+#[case::invalid(
+    BuildError::invalid(zero_width_error()),
+    "template data type widths must be positive, but got 0",
+    Source::None
+)]
+#[case::invalid_with_a_cause(
+    BuildError::invalid(ForeignError::Failed { type_id: "t".to_owned(), source: test_error() }),
+    "the foreign part `t` failed",
+    Source::TestValue
+)]
+fn build_error_text(#[case] error: BuildError, #[case] text: &str, #[case] source: Source) {
+    assert_error_text(&error, text, source);
 }

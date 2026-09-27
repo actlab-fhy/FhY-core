@@ -108,13 +108,24 @@ fn param_refuses_a_constraint_outside_its_scope() {
 
     let error = Param::new(
         integer_domain(),
-        x,
+        x.clone(),
         vec![at_least(&y, 0)],
         &context(&solver, &observer),
     )
     .expect_err("out of scope");
 
-    assert!(matches!(error, ParamBuildError::OutOfScope { .. }));
+    assert!(
+        matches!(
+            &error,
+            ParamBuildError::OutOfScope { constraint, variable }
+                if *constraint == at_least(&y, 0) && *variable == x
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("a constraint's scope must include the param's variable {x:?}")
+    );
 }
 
 #[test]
@@ -281,7 +292,21 @@ fn natural_gate_refuses_a_bound_literal_the_naturals_do_not_admit(
         .with_bound(&integer(bound), side, is_inclusive, &context)
         .expect_err("refused");
 
-    assert!(matches!(error, ParamBuildError::NaturalBound { .. }));
+    assert!(
+        matches!(
+            error,
+            ParamBuildError::NaturalBound {
+                side: refused_side,
+                zero_included: refused_zero_included,
+                is_inclusive: refused_is_inclusive,
+                is_negative,
+            } if refused_side == side
+                && refused_zero_included == zero_included
+                && refused_is_inclusive == is_inclusive
+                && is_negative == (bound < 0)
+        ),
+        "{error:?}"
+    );
     assert_eq!(error.to_string(), message);
     param
         .with_bound(&integer(bound + 1), side, is_inclusive, &context)

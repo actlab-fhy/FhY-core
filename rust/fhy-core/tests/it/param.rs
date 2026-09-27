@@ -7,6 +7,7 @@ mod custom_stories;
 mod decide_stories;
 mod domain_stories;
 mod error_stories;
+mod error_text_stories;
 mod param_properties;
 mod param_stories;
 mod serde_stories;

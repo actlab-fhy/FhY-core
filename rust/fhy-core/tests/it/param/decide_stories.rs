@@ -9,14 +9,14 @@ use fhy_core::constraint::{Binding, Bindings, Constraint, ConstraintError, Outco
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
-    CategoricalDomain, IntegerDomain, OrdinalDomain, ParamDomain, PermutationDomain, RealDomain,
-    Side, are_all_constraints_satisfied, compute_constraint_implication_subset,
-    evaluate_constraints,
+    CategoricalDomain, IntegerDomain, NoParamObserver, OrdinalDomain, ParamContext, ParamDomain,
+    ParamEvent, ParamObserver, PermutationDomain, RealDomain, Side, are_all_constraints_satisfied,
+    compute_constraint_implication_subset, evaluate_constraints,
 };
-use fhy_core::solver::SatResult;
+use fhy_core::solver::{QueryKind, SatResult, SolveError};
 
 use crate::support::constraint::ConstraintKey;
-use crate::support::constraint::{TestCustom, int, text};
+use crate::support::constraint::{TestCustom, TestValueError, int, text};
 use crate::support::param::{
     EvaluatingSimplifier, RecordedParamEvent, RecordingParamObserver, above, at_least, at_most,
     build_solver, context, failing_simplifier_solver, float, in_set, ints, less_than, not_in_set,
@@ -163,6 +163,45 @@ fn evaluation_propagates_a_failure_the_observer_does_not_judge_undecidable() {
     .expect_err("the failure propagates");
 
     assert!(matches!(error, ConstraintError::Solve(_)), "{error:?}");
+}
+
+/// An observer that ignores events and keeps the default judgement.
+struct SilentObserver;
+
+impl ParamObserver for SilentObserver {
+    fn notify(&self, _event: &ParamEvent<'_>) {}
+}
+
+#[test]
+fn the_default_judgement_counts_only_a_backend_failure_undecidable() {
+    let backend = ConstraintError::Solve(SolveError::Backend {
+        backend: "recording".to_owned(),
+        source: Box::new(TestValueError("cannot lower".to_owned())),
+    });
+    let refused = ConstraintError::Solve(SolveError::NoCapableBackend(QueryKind::Simplification));
+    let custom = ConstraintError::Custom(Box::new(TestValueError("no".to_owned())));
+
+    for observer in [&NoParamObserver as &dyn ParamObserver, &SilentObserver] {
+        assert!(observer.is_undecidable(&backend));
+        assert!(!observer.is_undecidable(&refused));
+        assert!(!observer.is_undecidable(&custom));
+    }
+}
+
+#[test]
+fn a_context_without_an_observer_counts_a_backend_failure_as_undecided() {
+    let x = Identifier::new("x");
+    let solver = failing_simplifier_solver();
+
+    let evaluation = evaluate_constraints(
+        &[at_least(&x, 0), in_set(&x, ints([5]))],
+        &bind_value(&x, int(3)),
+        &ParamContext::new(&solver),
+    )
+    .expect("the failure is undecidable");
+
+    assert_eq!(evaluation.outcome(), Outcome::Violated);
+    assert_eq!(evaluation.deciding_member(), Some(1));
 }
 
 #[test]

@@ -4,6 +4,7 @@
 mod constraint_properties;
 mod equation_stories;
 mod equivalence_stories;
+mod error_text_stories;
 mod key_stories;
 mod serde_stories;
 mod set_stories;
