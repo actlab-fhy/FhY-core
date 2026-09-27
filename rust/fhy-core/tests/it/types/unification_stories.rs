@@ -1018,6 +1018,86 @@ fn a_cycle_of_placeholder_bindings_resolves_to_where_it_closes() {
     assert_eq!(next, environment);
 }
 
+/// Bindings shaped `N_i := N_{i+1} + N_{i+2}` reach each `N_i` along
+/// Fibonacci-many paths: substitution must treat each once (F2-038). At
+/// n = 64 an unmemoized substitution would not finish.
+#[test]
+fn fibonacci_bindings_substitute_in_linear_time() {
+    const N: usize = 64;
+    let names: Vec<Identifier> = (0..N + 2)
+        .map(|index| Identifier::new(&format!("N{index}")))
+        .collect();
+    let environment = (0..N).fold(empty(), |environment, index| {
+        environment.with_expression_binding(
+            names[index].clone(),
+            reference(&names[index + 1]) + reference(&names[index + 2]),
+        )
+    });
+    let pattern = array(int32(), [identifier_dimension(&names[0])]);
+
+    let start = std::time::Instant::now();
+    let substituted = pattern
+        .substitute_template(&environment)
+        .expect("substitutes");
+    let elapsed = start.elapsed();
+
+    let Type::Numerical(numerical) = &substituted else {
+        panic!("a numerical type");
+    };
+    let Dimension::Expression(dimension) = &numerical.shape()[0] else {
+        panic!("an expression dimension");
+    };
+    let free = dimension.free_identifiers();
+    assert_eq!(
+        free,
+        [names[N].clone(), names[N + 1].clone()]
+            .into_iter()
+            .collect()
+    );
+    assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    let (x, occurs) = (&names[N + 1], reference(&names[0]) * 2);
+    assert!(matches!(
+        unify_expressions(&reference(x), &occurs, &environment),
+        Err(UnificationError::OccursCheck { .. })
+    ));
+}
+
+/// A chain `N_i := N_{i+1} + 1` of 100,000 bindings builds and substitutes
+/// without recursing once per binding.
+#[test]
+fn a_100000_binding_chain_substitutes_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let names: Vec<Identifier> = (0..=SMALL_STACK_DEPTH)
+            .map(|index| Identifier::new(&format!("N{index}")))
+            .collect();
+        let environment = (0..SMALL_STACK_DEPTH).fold(empty(), |environment, index| {
+            environment
+                .with_expression_binding(names[index].clone(), reference(&names[index + 1]) + 1)
+        });
+        let pattern = array(int32(), [identifier_dimension(&names[0])]);
+
+        let substituted = pattern
+            .substitute_template(&environment)
+            .expect("substitutes");
+
+        let Type::Numerical(numerical) = &substituted else {
+            panic!("a numerical type");
+        };
+        let Dimension::Expression(dimension) = &numerical.shape()[0] else {
+            panic!("an expression dimension");
+        };
+        let expected: std::collections::HashSet<Identifier> =
+            [names[SMALL_STACK_DEPTH].clone()].into_iter().collect();
+        assert_eq!(dimension.free_identifiers(), expected);
+        assert_eq!(environment.expression_bindings().len(), SMALL_STACK_DEPTH);
+        let last = &names[SMALL_STACK_DEPTH];
+        assert!(matches!(
+            unify_expressions(&reference(last), &reference(&names[0]), &environment),
+            Err(UnificationError::OccursCheck { .. })
+        ));
+    });
+}
+
 #[test]
 fn deep_dimensions_bind_substitute_and_unify_on_a_small_stack() {
     run_on_small_stack(|| {

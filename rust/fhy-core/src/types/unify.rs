@@ -3,8 +3,9 @@
 //! The expression walks, the substitution of shape variables and the
 //! occurs check, go through the core's iterative [`Expression::substitute`]
 //! and [`Expression::free_identifiers`], so they reach every node kind and
-//! any depth. Following a chain of expression bindings recurses once per
-//! binding along the chain.
+//! any depth. Following the expression bindings keeps its chain on the heap
+//! and substitutes each binding once per call, so a chain of any length,
+//! and bindings shared along many paths, substitute in linear time.
 
 use std::collections::{HashMap, HashSet};
 
@@ -632,35 +633,101 @@ pub(super) fn substitute_expression(
     expression: &Expression,
     environment: &TypeUnificationEnvironment,
 ) -> Result<Expression> {
-    substitute_avoiding(expression, environment, &mut Vec::new())
-        .map_err(UnificationError::Substitution)
+    substitute_avoiding(expression, environment).map_err(UnificationError::Substitution)
 }
 
-/// Substitute `expression`, where `chain` holds the identifiers whose
-/// bindings are being substituted.
+/// One pending substitution of [`substitute_avoiding`]: an expression, the
+/// bound shape variables of it still to substitute, and the forms of those
+/// done.
+struct Frame {
+    /// The shape variable whose binding this is, or `None` for the
+    /// expression substituted.
+    identifier: Option<Identifier>,
+    expression: Expression,
+    pending: Vec<Identifier>,
+    replacements: HashMap<Identifier, Expression>,
+    /// Whether the form depends on the chain it was reached along: it kept
+    /// an identifier on the chain other than its own, or used such a form.
+    depends_on_chain: bool,
+}
+
+impl Frame {
+    fn new(
+        identifier: Option<Identifier>,
+        expression: Expression,
+        environment: &TypeUnificationEnvironment,
+    ) -> Self {
+        let pending = expression
+            .free_identifiers()
+            .into_iter()
+            .filter(|free| environment.expression_binding(free).is_some())
+            .collect();
+        Self {
+            identifier,
+            expression,
+            pending,
+            replacements: HashMap::new(),
+            depends_on_chain: false,
+        }
+    }
+}
+
+/// Substitute `expression`: each bound shape variable free in it becomes
+/// the form of its binding, substituted in turn, and a variable already on
+/// the chain of bindings being substituted stays as it is.
+///
+/// The walk keeps the chain on the heap, marking each variable white (not
+/// met), grey (on the chain) or black (its form known). A form that met no
+/// grey variable but itself is the same along any chain, so it is
+/// remembered and reused, and an acyclic environment substitutes in time
+/// linear in its bindings; a form that met a cycle is recomputed wherever
+/// it is reached.
 fn substitute_avoiding(
     expression: &Expression,
     environment: &TypeUnificationEnvironment,
-    chain: &mut Vec<Identifier>,
 ) -> std::result::Result<Expression, PiecewiseError> {
-    let free = expression.free_identifiers();
-    let mut replacements = HashMap::new();
-    for identifier in free {
-        if chain.contains(&identifier) {
+    let mut black: HashMap<Identifier, Expression> = HashMap::new();
+    let mut grey: HashSet<Identifier> = HashSet::new();
+    let mut frames = vec![Frame::new(None, expression.clone(), environment)];
+    loop {
+        let top = frames.last_mut().unwrap_or_else(|| unreachable!("a frame"));
+        if let Some(next) = top.pending.pop() {
+            if let Some(form) = black.get(&next) {
+                top.replacements.insert(next, form.clone());
+            } else if grey.contains(&next) {
+                if top.identifier.as_ref() != Some(&next) {
+                    top.depends_on_chain = true;
+                }
+            } else {
+                let bound = environment
+                    .expression_binding(&next)
+                    .unwrap_or_else(|| unreachable!("a pending variable is bound"))
+                    .clone();
+                grey.insert(next.clone());
+                frames.push(Frame::new(Some(next), bound, environment));
+            }
             continue;
         }
-        let Some(bound) = environment.expression_binding(&identifier) else {
-            continue;
+        let frame = frames.pop().unwrap_or_else(|| unreachable!("a frame"));
+        let form = if frame.replacements.is_empty() {
+            frame.expression
+        } else {
+            frame.expression.substitute(&frame.replacements)?
         };
-        chain.push(identifier.clone());
-        let replacement = substitute_avoiding(bound, environment, chain);
-        chain.pop();
-        replacements.insert(identifier, replacement?);
+        let Some(identifier) = frame.identifier else {
+            return Ok(form);
+        };
+        grey.remove(&identifier);
+        let parent = frames
+            .last_mut()
+            .unwrap_or_else(|| unreachable!("a parent frame"));
+        if frame.depends_on_chain {
+            parent.depends_on_chain = true;
+        } else {
+            black.insert(identifier.clone(), form.clone());
+        }
+        parent.replacements.insert(identifier, form);
     }
-    if replacements.is_empty() {
-        return Ok(expression.clone());
-    }
-    expression.substitute(&replacements)
 }
 
 /// Return whether `identifier` is reachable from `expression` through the

@@ -95,8 +95,8 @@ onto `dev-rust` before continuing.
 - [x] R2-026b (F2-026, checker part): rstests and broadened properties: `1206b7a`
 - [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion: `6068d7e`
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed)
-- [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph
-- [ ] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution
+- [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph: `ad15163`
+- [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution
 - [ ] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`
 - [ ] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction
 - [ ] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations
@@ -3707,6 +3707,42 @@ finding.
   | Before | After | Tests |
   |---|---|---|
   | with `C := 5`, `Y := X + 1`, `unify_expression(X, {Y if C; 0 otherwise})` returned an environment binding `X` in a cycle, and `substitute_template` returned a type still holding `Y` and `C` | both raise `VerificationError` "substituting the existing shape bindings was refused" | `test_a_refused_shape_substitution_is_an_error` |
+
+**R2-038b.**
+- **The substitution** keeps its chain on the heap, one frame per binding
+  being substituted, marking each shape variable white, grey (on the chain)
+  or black (its form known). The definition keeps "a variable already on
+  the chain stays", which an environment built by hand may still need,
+  since `with_expression_binding` accepts a cycle (the stories
+  `substitution_follows_a_chain_of_bindings_and_stops_at_a_cycle` and
+  `a_cycle_of_placeholder_bindings_resolves_to_where_it_closes` pin it).
+  So a form is remembered only when its computation met no grey variable
+  but its own and used no such form: then it is the same along every
+  chain. In an acyclic environment every form is remembered, and a call is
+  linear in the bindings it reaches; a form that met a cycle is recomputed
+  where it is reached again, as before. The property
+  `substitution_agrees_with_its_recursive_definition` checks the result
+  against the recursive definition over random environments, cycles
+  included (5,000 cases run once).
+- **The environment (call): a persistent table of shared layers**, in
+  `environment.rs`, with no new dependency. A `with_*` adds a one-entry
+  layer and merges it into the layer below while that one is no larger, as
+  a binary counter carries, so a table holds logarithmically many layers,
+  each entry is copied logarithmically often, and a lookup probes each
+  layer at most once. The layers are shared and never mutated, so an
+  environment stays a value. A persistent map crate (`im`, `imbl`, `rpds`)
+  would have added a dependency tree to the core and edits to Track D's
+  manifests and `deny.toml`; the layers need neither. The iterators,
+  `==`, `Hash`, `Debug` and structural equivalence read the newest value of
+  each key. `an_environment_agrees_with_a_map_of_its_bindings` checks every
+  step of random `with_*` sequences against a map, and that earlier
+  environments are unchanged.
+- **Tests:** `fibonacci_bindings_substitute_in_linear_time` (n = 64, run in
+  debug and release, under 2 s; it did not finish at the base) and
+  `a_100000_binding_chain_substitutes_on_a_small_stack` (building the
+  chain's environment alone was quadratic at the base).
+- **Behavior change:** none; substitution results are DAGs sharing each
+  binding's form.
 
 ### Track E notes
 

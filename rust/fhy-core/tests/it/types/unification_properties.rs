@@ -103,3 +103,110 @@ proptest! {
         prop_assert!(left.is_equivalent(&right));
     }
 }
+
+proptest! {
+    /// The environment's tables persist: a sequence of `with_*` calls, some
+    /// replacing a binding, agrees at every step with a map built afresh,
+    /// and leaves every earlier environment as it was.
+    #[test]
+    fn an_environment_agrees_with_a_map_of_its_bindings(
+        operations in prop::collection::vec((0_usize..12, 0_i64..5), 0..80),
+    ) {
+        let names: Vec<Identifier> = (0..12).map(|index| Identifier::new(&format!("N{index}"))).collect();
+        let mut model: std::collections::HashMap<Identifier, Expression> = std::collections::HashMap::new();
+        let mut history = vec![(TypeUnificationEnvironment::new(), model.clone())];
+        for (name, value) in operations {
+            let (environment, _) = history.last().expect("an environment");
+            let next = environment.with_expression_binding(names[name].clone(), Expression::from(value));
+            model.insert(names[name].clone(), Expression::from(value));
+            history.push((next, model.clone()));
+        }
+
+        for (environment, model) in &history {
+            let rebuilt = TypeUnificationEnvironment::from_bindings(
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                model.clone(),
+            );
+            prop_assert_eq!(environment.expression_bindings().len(), model.len());
+            for name in &names {
+                prop_assert_eq!(environment.expression_binding(name), model.get(name));
+            }
+            let listed: std::collections::HashMap<Identifier, Expression> = environment
+                .expression_bindings()
+                .map(|(identifier, value)| (identifier.clone(), value.clone()))
+                .collect();
+            prop_assert_eq!(&listed, model);
+            prop_assert_eq!(environment, &rebuilt);
+            prop_assert_eq!(hash_of(environment), hash_of(&rebuilt));
+            prop_assert!(environment.is_structurally_equivalent(&rebuilt).expect("no extension"));
+        }
+    }
+}
+
+/// Return `expression` substituted as the definition states it, by
+/// recursion: each bound variable becomes its binding substituted in turn,
+/// and a variable already on `chain` stays.
+fn reference_substitution(
+    expression: &Expression,
+    environment: &TypeUnificationEnvironment,
+    chain: &mut Vec<Identifier>,
+) -> Expression {
+    let mut replacements = std::collections::HashMap::new();
+    for identifier in expression.free_identifiers() {
+        if chain.contains(&identifier) {
+            continue;
+        }
+        let Some(bound) = environment.expression_binding(&identifier) else {
+            continue;
+        };
+        chain.push(identifier.clone());
+        let replacement = reference_substitution(bound, environment, chain);
+        chain.pop();
+        replacements.insert(identifier, replacement);
+    }
+    if replacements.is_empty() {
+        return expression.clone();
+    }
+    expression.substitute(&replacements).expect("no piecewise")
+}
+
+/// Return the sum of the variables `terms` names plus `constant`.
+fn sum_of(names: &[Identifier], terms: &[usize], constant: i64) -> Expression {
+    terms.iter().fold(Expression::from(constant), |sum, index| {
+        sum + Expression::from(names[*index].clone())
+    })
+}
+
+proptest! {
+    /// Substituting through the bindings, cycles included, gives the form
+    /// the recursive definition gives, however the memo reuses forms.
+    #[test]
+    fn substitution_agrees_with_its_recursive_definition(
+        bindings in prop::collection::vec(
+            prop::option::of((prop::collection::vec(0_usize..6, 0..3), 0_i64..3)),
+            6,
+        ),
+        root in prop::collection::vec(0_usize..6, 1..4),
+    ) {
+        let names: Vec<Identifier> = (0..6).map(|index| Identifier::new(&format!("N{index}"))).collect();
+        let environment = bindings.iter().enumerate().fold(
+            TypeUnificationEnvironment::new(),
+            |environment, (index, binding)| match binding {
+                Some((terms, constant)) => environment
+                    .with_expression_binding(names[index].clone(), sum_of(&names, terms, *constant)),
+                None => environment,
+            },
+        );
+        let expression = sum_of(&names, &root, 0);
+        let pattern = array(DataType::Primitive(CoreDataType::Int32), [Dimension::Expression(expression.clone())]);
+
+        let substituted = pattern.substitute_template(&environment).expect("substitutes");
+
+        let expected = array(
+            DataType::Primitive(CoreDataType::Int32),
+            [Dimension::Expression(reference_substitution(&expression, &environment, &mut Vec::new()))],
+        );
+        prop_assert_eq!(substituted, expected);
+    }
+}
