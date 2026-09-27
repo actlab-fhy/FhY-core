@@ -1929,13 +1929,12 @@ pub(super) fn build_node_with<'py>(
             PyTuple::new(py, children)?,
         )),
         ExpressionKind::Identifier(identifier) => {
-            let object = match identifiers.get(&identifier.id()) {
-                Some(object) => object.clone(),
-                None => {
-                    let object = crate::identifier::identifier_to_python(py, identifier)?;
-                    identifiers.insert(identifier.id(), object.clone());
-                    object
-                }
+            let object = if let Some(object) = identifiers.get(&identifier.id()) {
+                object.clone()
+            } else {
+                let object = crate::identifier::identifier_to_python(py, identifier)?;
+                identifiers.insert(identifier.id(), object.clone());
+                object
             };
             PyIdentifierExpression::public_class()
                 .get(py)?
