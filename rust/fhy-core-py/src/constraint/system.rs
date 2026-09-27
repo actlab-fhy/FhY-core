@@ -52,7 +52,7 @@ fn constraint_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 }
 
 /// Return `fhy_core.symbolic.constraint.system`'s logger.
-fn system_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+pub(crate) fn system_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     static LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     LOGGER
         .get_or_try_init(py, || {
@@ -72,7 +72,7 @@ fn system_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
 ///
 /// Raises `ConstraintError` for a value that is not a `Constraint`, and
 /// what reading a Python-defined member's ordering key raises.
-fn read_member(member: &Bound<'_, PyAny>) -> PyResult<Constraint> {
+pub(crate) fn read_member(member: &Bound<'_, PyAny>) -> PyResult<Constraint> {
     let py = member.py();
     if let Some(constraint) = read_native_constraint(member) {
         return Ok(constraint);
@@ -197,6 +197,11 @@ pub(crate) struct PyConstraintSystem {
 }
 
 impl PyConstraintSystem {
+    /// Return the core system.
+    pub(crate) fn core(&self) -> &ConstraintSystem {
+        &self.core
+    }
+
     /// Run `question` with the default solver, the registry snapshot and an
     /// observer of `symbol_types`, detached from the interpreter, and map
     /// its error with `bindings`.

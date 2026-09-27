@@ -144,7 +144,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
   - [ ] S16a: values and domains
     - [x] S16a.1: param benchmarks and baseline (55 rows; see "S16a.1 baseline")
     - [x] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events; 141 new tests, see "S16a.2 implementation notes")
-    - [ ] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
+    - [x] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
     - [ ] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests
     - [ ] S16a.5: the interface suite for the domains
   - [ ] S16b: params
@@ -17874,3 +17874,26 @@ comparison, as it does from Python.
     package builds.
   - Screening reports its fidelity as a flag rather than by the identity
     of the constraints it returns.
+
+### S16a.3 status
+
+The binding is `rust/fhy-core-py/src/param.rs` with `param/domains.rs`
+(the six pyclasses, over one shared state and a macro for the methods the
+kinds share, and the runner that asks a question with the default solver,
+the registry snapshot and the logging observer), `param/value.rs` (the
+finite domains' value reader, which judges a `Serializable`'s equality or
+ordering as the Python predicates did, and the lenient candidate reader,
+which reads any sequence that is no string as a tuple),
+`param/objects.rs` (the Python objects of core constraints, domains and
+profiles, and the core domain of a Python one), `param/custom.rs`
+(`PyCustomDomain`), `param/observer.rs` (`PyParamObserver`: the records,
+and the undecidable judgement), `param/error.rs` and `param/functions.rs`
+(`compute_constraint_implication_subset`, `evaluate_system_outcome`,
+`are_all_constraints_satisfied`, `is_bound_expression`), exported from
+`_rs` and declared in `_rs.pyi`. The constraint binding widens its
+helpers to the crate, gains `PyOpaqueValue::order_against` (Python's `<`
+both ways), `read_opaque_member`, `value_to_python`,
+`capture_pending_errors`, the system's `core()`, and D-S16-15's bindings
+fallback; the solver binding gains `is_pass_execution_failure` and lends
+`symbol_type_to_python`. Nothing in Python uses it yet, so the suite is
+unchanged (7,766 passed, 2 xfailed).

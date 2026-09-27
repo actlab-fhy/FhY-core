@@ -54,6 +54,9 @@ from fhy_core.symbolic.constraint.core import (
 from fhy_core.symbolic.constraint.core import (
     ConstraintOutcome as _ConstraintOutcome,
 )
+from fhy_core.symbolic.constraint.system import (
+    ConstraintSystem as _ConstraintSystem,
+)
 from fhy_core.symbolic.expression.core import (
     BinaryExpression as _BinaryExpression,
 )
@@ -108,6 +111,8 @@ from fhy_core.symbolic.expression.registry.entries import (
     RegisteredFunction as _RegisteredFunction,
 )
 from fhy_core.symbolic.expression.sort import FunctionSort
+from fhy_core.symbolic.param.domains import IntervalProfile as _IntervalProfile
+from fhy_core.symbolic.param.domains import ParamDomain as _ParamDomain
 from fhy_core.symbolic.solver import SatStatus as _SatStatus
 from fhy_core.symbolic.solver import Simplifier as _Simplifier
 from fhy_core.symbolic.solver import SmtSolver as _SmtSolver
@@ -2037,3 +2042,542 @@ class SymbolTable:
     @override
     def __reduce__(self) -> tuple[Any, ...]: ...
     def __setstate__(self, state: object) -> None: ...
+
+
+
+# ---------------------------------------------------------------------------
+# fhy_core::param (S16): the bases of the six domain kinds, and the module
+# functions of `fhy_core.symbolic.param.domains`.
+# ---------------------------------------------------------------------------
+
+class IntegerDomain(_ParamDomain):
+    @property
+    @override
+    def symbol_type(self) -> SymbolType | None: ...
+    @override
+    def is_value_admissible(self, value: Any) -> bool: ...
+    @override
+    def normalize_value(self, value: Any) -> Any: ...
+    @override
+    def validate_constraint(
+        self, constraint: _Constraint, variable: Identifier
+    ) -> None: ...
+    @override
+    def get_implied_constraints(
+        self, variable: Identifier
+    ) -> tuple[_Constraint, ...]: ...
+    @override
+    def get_interval_profile(self) -> _IntervalProfile | None: ...
+    @override
+    def is_value_set_subset(self, other: _ParamDomain) -> bool: ...
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+    ) -> _ConstraintOutcome: ...
+    @override
+    def has_feasible_value(
+        self, constraints: Sequence[_Constraint], variable: Identifier
+    ) -> _ConstraintOutcome: ...
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]] | None: ...
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]]: ...
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool: ...
+    @override
+    def render_set_string(self) -> str: ...
+    @override
+    def render_set_repr(self) -> str: ...
+    @override
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    @override
+    def serialize_data_to_dict(self) -> SerializedDict: ...
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self: ...
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
+    @property
+    @override
+    def is_frozen(self) -> bool: ...
+    @override
+    def freeze(self) -> None: ...
+    @override
+    def assert_frozen(self) -> None: ...
+    @override
+    def __setattr__(self, name: str, value: object) -> None: ...
+    @override
+    def __delattr__(self, name: str) -> None: ...
+    def __init__(
+        self, non_negative: bool = False, zero_included: bool = True
+    ) -> None: ...
+    @property
+    def non_negative(self) -> bool: ...
+    @property
+    def zero_included(self) -> bool: ...
+
+class IntervalIntegerDomain(_ParamDomain):
+    @property
+    @override
+    def symbol_type(self) -> SymbolType | None: ...
+    @override
+    def is_value_admissible(self, value: Any) -> bool: ...
+    @override
+    def normalize_value(self, value: Any) -> Any: ...
+    @override
+    def validate_constraint(
+        self, constraint: _Constraint, variable: Identifier
+    ) -> None: ...
+    @override
+    def get_implied_constraints(
+        self, variable: Identifier
+    ) -> tuple[_Constraint, ...]: ...
+    @override
+    def get_interval_profile(self) -> _IntervalProfile | None: ...
+    @override
+    def is_value_set_subset(self, other: _ParamDomain) -> bool: ...
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+    ) -> _ConstraintOutcome: ...
+    @override
+    def has_feasible_value(
+        self, constraints: Sequence[_Constraint], variable: Identifier
+    ) -> _ConstraintOutcome: ...
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]] | None: ...
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]]: ...
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool: ...
+    @override
+    def render_set_string(self) -> str: ...
+    @override
+    def render_set_repr(self) -> str: ...
+    @override
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    @override
+    def serialize_data_to_dict(self) -> SerializedDict: ...
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self: ...
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
+    @property
+    @override
+    def is_frozen(self) -> bool: ...
+    @override
+    def freeze(self) -> None: ...
+    @override
+    def assert_frozen(self) -> None: ...
+    @override
+    def __setattr__(self, name: str, value: object) -> None: ...
+    @override
+    def __delattr__(self, name: str) -> None: ...
+    def __init__(
+        self,
+        prefer_inclusive: bool = True,
+        non_negative: bool = False,
+        zero_included: bool = True,
+    ) -> None: ...
+    @property
+    def prefer_inclusive(self) -> bool: ...
+    @property
+    def non_negative(self) -> bool: ...
+    @property
+    def zero_included(self) -> bool: ...
+
+class RealDomain(_ParamDomain):
+    @property
+    @override
+    def symbol_type(self) -> SymbolType | None: ...
+    @override
+    def is_value_admissible(self, value: Any) -> bool: ...
+    @override
+    def normalize_value(self, value: Any) -> Any: ...
+    @override
+    def validate_constraint(
+        self, constraint: _Constraint, variable: Identifier
+    ) -> None: ...
+    @override
+    def get_implied_constraints(
+        self, variable: Identifier
+    ) -> tuple[_Constraint, ...]: ...
+    @override
+    def get_interval_profile(self) -> _IntervalProfile | None: ...
+    @override
+    def is_value_set_subset(self, other: _ParamDomain) -> bool: ...
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+    ) -> _ConstraintOutcome: ...
+    @override
+    def has_feasible_value(
+        self, constraints: Sequence[_Constraint], variable: Identifier
+    ) -> _ConstraintOutcome: ...
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]] | None: ...
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]]: ...
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool: ...
+    @override
+    def render_set_string(self) -> str: ...
+    @override
+    def render_set_repr(self) -> str: ...
+    @override
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    @override
+    def serialize_data_to_dict(self) -> SerializedDict: ...
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self: ...
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
+    @property
+    @override
+    def is_frozen(self) -> bool: ...
+    @override
+    def freeze(self) -> None: ...
+    @override
+    def assert_frozen(self) -> None: ...
+    @override
+    def __setattr__(self, name: str, value: object) -> None: ...
+    @override
+    def __delattr__(self, name: str) -> None: ...
+    def __init__(self) -> None: ...
+
+class OrdinalDomain(_ParamDomain):
+    @property
+    @override
+    def symbol_type(self) -> SymbolType | None: ...
+    @override
+    def is_value_admissible(self, value: Any) -> bool: ...
+    @override
+    def normalize_value(self, value: Any) -> Any: ...
+    @override
+    def validate_constraint(
+        self, constraint: _Constraint, variable: Identifier
+    ) -> None: ...
+    @override
+    def get_implied_constraints(
+        self, variable: Identifier
+    ) -> tuple[_Constraint, ...]: ...
+    @override
+    def get_interval_profile(self) -> _IntervalProfile | None: ...
+    @override
+    def is_value_set_subset(self, other: _ParamDomain) -> bool: ...
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+    ) -> _ConstraintOutcome: ...
+    @override
+    def has_feasible_value(
+        self, constraints: Sequence[_Constraint], variable: Identifier
+    ) -> _ConstraintOutcome: ...
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]] | None: ...
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]]: ...
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool: ...
+    @override
+    def render_set_string(self) -> str: ...
+    @override
+    def render_set_repr(self) -> str: ...
+    @override
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    @override
+    def serialize_data_to_dict(self) -> SerializedDict: ...
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self: ...
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
+    @property
+    @override
+    def is_frozen(self) -> bool: ...
+    @override
+    def freeze(self) -> None: ...
+    @override
+    def assert_frozen(self) -> None: ...
+    @override
+    def __setattr__(self, name: str, value: object) -> None: ...
+    @override
+    def __delattr__(self, name: str) -> None: ...
+    def __init__(self, sorted_values: Iterable[Any]) -> None: ...
+    @property
+    def sorted_values(self) -> tuple[Any, ...]: ...
+
+class CategoricalDomain(_ParamDomain):
+    @property
+    @override
+    def symbol_type(self) -> SymbolType | None: ...
+    @override
+    def is_value_admissible(self, value: Any) -> bool: ...
+    @override
+    def normalize_value(self, value: Any) -> Any: ...
+    @override
+    def validate_constraint(
+        self, constraint: _Constraint, variable: Identifier
+    ) -> None: ...
+    @override
+    def get_implied_constraints(
+        self, variable: Identifier
+    ) -> tuple[_Constraint, ...]: ...
+    @override
+    def get_interval_profile(self) -> _IntervalProfile | None: ...
+    @override
+    def is_value_set_subset(self, other: _ParamDomain) -> bool: ...
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+    ) -> _ConstraintOutcome: ...
+    @override
+    def has_feasible_value(
+        self, constraints: Sequence[_Constraint], variable: Identifier
+    ) -> _ConstraintOutcome: ...
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]] | None: ...
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]]: ...
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool: ...
+    @override
+    def render_set_string(self) -> str: ...
+    @override
+    def render_set_repr(self) -> str: ...
+    @override
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    @override
+    def serialize_data_to_dict(self) -> SerializedDict: ...
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self: ...
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
+    @property
+    @override
+    def is_frozen(self) -> bool: ...
+    @override
+    def freeze(self) -> None: ...
+    @override
+    def assert_frozen(self) -> None: ...
+    @override
+    def __setattr__(self, name: str, value: object) -> None: ...
+    @override
+    def __delattr__(self, name: str) -> None: ...
+    def __init__(self, categories: Iterable[Any]) -> None: ...
+    @property
+    def categories(self) -> tuple[Any, ...]: ...
+
+class PermutationDomain(_ParamDomain):
+    @property
+    @override
+    def symbol_type(self) -> SymbolType | None: ...
+    @override
+    def is_value_admissible(self, value: Any) -> bool: ...
+    @override
+    def normalize_value(self, value: Any) -> Any: ...
+    @override
+    def validate_constraint(
+        self, constraint: _Constraint, variable: Identifier
+    ) -> None: ...
+    @override
+    def get_implied_constraints(
+        self, variable: Identifier
+    ) -> tuple[_Constraint, ...]: ...
+    @override
+    def get_interval_profile(self) -> _IntervalProfile | None: ...
+    @override
+    def is_value_set_subset(self, other: _ParamDomain) -> bool: ...
+    @override
+    def compute_feasibility_subset(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+    ) -> _ConstraintOutcome: ...
+    @override
+    def has_feasible_value(
+        self, constraints: Sequence[_Constraint], variable: Identifier
+    ) -> _ConstraintOutcome: ...
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]] | None: ...
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[_Constraint],
+        own_variable: Identifier,
+        other: _ParamDomain,
+        other_constraints: Sequence[_Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[_ParamDomain, tuple[_Constraint, ...]]: ...
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool: ...
+    @override
+    def render_set_string(self) -> str: ...
+    @override
+    def render_set_repr(self) -> str: ...
+    @override
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    @override
+    def serialize_data_to_dict(self) -> SerializedDict: ...
+    @classmethod
+    @override
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self: ...
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
+    @property
+    @override
+    def is_frozen(self) -> bool: ...
+    @override
+    def freeze(self) -> None: ...
+    @override
+    def assert_frozen(self) -> None: ...
+    @override
+    def __setattr__(self, name: str, value: object) -> None: ...
+    @override
+    def __delattr__(self, name: str) -> None: ...
+    def __init__(self, ordered_members: Iterable[Any]) -> None: ...
+    @property
+    def ordered_members(self) -> tuple[Any, ...]: ...
+
+def compute_constraint_implication_subset(
+    own_domain: _ParamDomain,
+    own_constraints: Sequence[_Constraint],
+    own_variable: Identifier,
+    other_domain: _ParamDomain,
+    other_constraints: Sequence[_Constraint],
+    other_variable: Identifier,
+    symbol_type: SymbolType,
+) -> _ConstraintOutcome: ...
+def evaluate_system_outcome(
+    system: _ConstraintSystem, bindings: _ConstraintBindings
+) -> _ConstraintOutcome: ...
+def are_all_constraints_satisfied(
+    constraints: Sequence[_Constraint], variable: Identifier, value: Any
+) -> bool: ...
+def is_bound_expression(expression: object) -> bool: ...

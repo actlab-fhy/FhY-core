@@ -17,6 +17,7 @@ mod identifier;
 mod interned;
 mod lattice;
 mod op_attribute;
+mod param;
 mod pass;
 mod provenance;
 mod public_class;
@@ -72,6 +73,12 @@ mod rs_module {
     use super::lattice::{PyLattice, PyPartiallyOrderedSet};
     #[pymodule_export]
     use super::op_attribute::PyOpAttribute;
+    #[pymodule_export]
+    use super::param::{
+        PyCategoricalDomain, PyIntegerDomain, PyIntervalIntegerDomain, PyOrdinalDomain,
+        PyPermutationDomain, PyRealDomain, are_all_constraints_satisfied,
+        compute_constraint_implication_subset, evaluate_system_outcome, is_bound_expression,
+    };
     #[pymodule_export]
     use super::pass::{
         PyAnalysisBase, PyAnalysisManager, PyCompilerPassBase, PyFixpointGroupRecord,

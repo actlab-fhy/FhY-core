@@ -19,6 +19,7 @@
 use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -39,7 +40,7 @@ thread_local! {
 }
 
 /// Keep `error` as the pending exception, unless one is kept already.
-pub(super) fn record_pending_error(error: PyErr) {
+pub(crate) fn record_pending_error(error: PyErr) {
     PENDING_ERROR.with(|pending| {
         let mut pending = pending.borrow_mut();
         if pending.is_none() {
@@ -50,7 +51,7 @@ pub(super) fn record_pending_error(error: PyErr) {
 
 /// Run `call`, and return the exception an opaque value raised during it,
 /// if any, in place of its result.
-pub(super) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
+pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     let outer = PENDING_ERROR.with(|pending| pending.borrow_mut().take());
     let result = call();
     let raised = PENDING_ERROR.with(|pending| {
@@ -65,6 +66,20 @@ pub(super) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyRe
     }
 }
 
+/// Run `call`, and return its result with the exception an opaque value
+/// raised during it, if any.
+pub(crate) fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<PyErr>) {
+    let outer = PENDING_ERROR.with(|pending| pending.borrow_mut().take());
+    let result = call();
+    let raised = PENDING_ERROR.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        let raised = pending.take();
+        *pending = outer;
+        raised
+    });
+    (result, raised)
+}
+
 /// Import the class `name` of `module` once, in `cell`.
 fn import_class<'py>(
     py: Python<'py>,
@@ -76,7 +91,7 @@ fn import_class<'py>(
 }
 
 /// Return `fhy_core.symbolic.constraint.errors.ConstraintError`.
-pub(super) fn constraint_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+pub(crate) fn constraint_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     import_class(
         py,
@@ -87,7 +102,7 @@ pub(super) fn constraint_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyTy
 }
 
 /// Return the `ConstraintError` with `message`.
-pub(super) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
+pub(crate) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
     match constraint_error_class(py).and_then(|class| class.call1((message.into(),))) {
         Ok(error) => PyErr::from_value(error),
         Err(error) => error,
@@ -113,7 +128,7 @@ fn is_serializable_hashable(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 }
 
 /// Return the name of `value`'s type.
-pub(super) fn type_name(value: &Bound<'_, PyAny>) -> String {
+pub(crate) fn type_name(value: &Bound<'_, PyAny>) -> String {
     value
         .get_type()
         .name()
@@ -121,7 +136,7 @@ pub(super) fn type_name(value: &Bound<'_, PyAny>) -> String {
 }
 
 /// Return `repr(value)`, or `?` if it raises.
-pub(super) fn repr_text(value: &Bound<'_, PyAny>) -> String {
+pub(crate) fn repr_text(value: &Bound<'_, PyAny>) -> String {
     value
         .repr()
         .map_or_else(|_| "?".to_owned(), |text| text.to_string())
@@ -236,8 +251,91 @@ impl OpaqueValue for PyOpaqueValue {
         }))
     }
 
+    /// Order with Python's `<`, both ways: `Less` when `self < other`,
+    /// `Greater` when `other < self`, and `Equal` otherwise. A comparison
+    /// that raises answers `None`, and its exception is kept.
+    fn order_against(&self, other: &dyn OpaqueValue) -> Option<Ordering> {
+        let other = other.as_any().downcast_ref::<Self>()?;
+        Python::attach(|py| {
+            let (left, right) = (self.object.bind(py), other.object.bind(py));
+            let ordering = left.lt(right).and_then(|is_less| {
+                if is_less {
+                    Ok(Ordering::Less)
+                } else {
+                    right.lt(left).map(|is_greater| {
+                        if is_greater {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                }
+            });
+            match ordering {
+                Ok(ordering) => Some(ordering),
+                Err(error) => {
+                    record_pending_error(error);
+                    None
+                }
+            }
+        })
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Return the member-shaped opaque value of the `Serializable` `value`,
+/// keyed as a constraint member's.
+///
+/// # Errors
+///
+/// Raises what computing the key raises.
+pub(crate) fn read_opaque_member(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    let key = build_ordering_key(value)?;
+    Ok(Value::Opaque(Opaque::new(PyOpaqueValue::new(
+        value,
+        true,
+        Some(key),
+    ))))
+}
+
+/// Return the Python value of the core `value`: a `bool`, an `int`, a
+/// `float`, a `Decimal`, a `str`, a `tuple`, a `frozenset`, or the object of
+/// an opaque value.
+///
+/// # Errors
+///
+/// Raises `TypeError` for an opaque value the binding did not build, and
+/// whatever building a value raises.
+pub(crate) fn value_to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+    match value {
+        Value::Bool(value) => Ok(PyBool::new(py, *value).to_owned().into_any()),
+        Value::Int(value) => big_int_to_python(py, value),
+        Value::Float(value) => Ok(PyFloat::new(py, *value).into_any()),
+        Value::Decimal(value) => decimal_class(py)?.call1((value.to_string(),)),
+        Value::Str(value) => Ok(PyString::new(py, value).into_any()),
+        Value::Tuple(values) => {
+            let elements = values
+                .iter()
+                .map(|value| value_to_python(py, value))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyTuple::new(py, elements)?.into_any())
+        }
+        Value::FrozenSet(values) => {
+            let elements = values
+                .iter()
+                .map(|value| value_to_python(py, value))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyFrozenSet::new(py, &elements)?.into_any())
+        }
+        Value::Opaque(opaque) => opaque
+            .get()
+            .as_any()
+            .downcast_ref::<PyOpaqueValue>()
+            .map(|value| value.object().bind(py).clone())
+            .ok_or_else(|| PyTypeError::new_err("an opaque value has no Python object")),
     }
 }
 
@@ -272,7 +370,7 @@ fn read_number(value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
 /// Raises `ConstraintError`, with the Python implementation's text, for a
 /// value that cannot be a member, for a member whose hash raises, and with
 /// the core's text for a NaN.
-pub(super) fn read_member(value: &Bound<'_, PyAny>) -> PyResult<Member> {
+pub(crate) fn read_member(value: &Bound<'_, PyAny>) -> PyResult<Member> {
     let py = value.py();
     let read = read_member_value(value)?;
     let member = Member::try_from_value(read)
@@ -323,7 +421,7 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
 ///
 /// Raises `ConstraintError` with the Python implementation's text for a
 /// value that cannot be a member.
-pub(super) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+pub(crate) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     let py = value.py();
     if value.is_none() {
         return Err(constraint_error(py, "Constraint members cannot be `None`."));
@@ -383,7 +481,7 @@ pub(super) fn read_member_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
 ///
 /// Raises whatever reading a number raises, which an `int` or a `float`
 /// never does.
-pub(super) fn read_bound_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+pub(crate) fn read_bound_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     let py = value.py();
     if let Some(number) = read_number(value)? {
         return Ok(number);
@@ -426,7 +524,7 @@ pub(super) fn read_bound_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
 ///
 /// Raises `TypeError` for an opaque member the binding did not build, and
 /// whatever building a value raises.
-pub(super) fn member_to_python<'py>(
+pub(crate) fn member_to_python<'py>(
     py: Python<'py>,
     member: &Member,
 ) -> PyResult<Bound<'py, PyAny>> {

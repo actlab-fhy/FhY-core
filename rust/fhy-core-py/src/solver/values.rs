@@ -27,7 +27,7 @@ fn symbol_type_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 }
 
 /// Return the Python `SymbolType` member of `symbol_type`.
-pub(super) fn symbol_type_to_python(
+pub(crate) fn symbol_type_to_python(
     py: Python<'_>,
     symbol_type: SymbolType,
 ) -> PyResult<Bound<'_, PyAny>> {

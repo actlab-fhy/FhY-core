@@ -56,7 +56,7 @@ fn is_literal_type(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 
 /// Return the exception of `error`, where `identifier` and `value` are the
 /// Python objects of the binding it concerns, if any.
-pub(super) fn constraint_error_to_py(
+pub(crate) fn constraint_error_to_py(
     py: Python<'_>,
     error: ConstraintError,
     binding: Option<(&Bound<'_, PyAny>, &Bound<'_, PyAny>)>,

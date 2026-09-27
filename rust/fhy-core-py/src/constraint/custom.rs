@@ -5,7 +5,8 @@
 //! system needs them. Its ordering key is read once, when the system is
 //! built. `evaluate_with_bindings` receives the Python snapshot of the
 //! caller's mapping, which the core carries as the bindings' source, so the
-//! member sees the objects it saw before. An exception a hook raises
+//! member sees the objects it saw before; bindings the core built itself,
+//! with no source, reach it as a dict rebuilt from them (D-S16-15). An exception a hook raises
 //! propagates as the same object; a comparison that raises answers `false`
 //! and its exception is raised when the core returns.
 
@@ -19,24 +20,24 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
-use fhy_core::constraint::{Bindings, CustomConstraint, CustomError, Outcome};
+use fhy_core::constraint::{Binding, Bindings, CustomConstraint, CustomError, Outcome};
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
 
-use crate::expression::PyExpression;
+use crate::expression::{PyExpression, materialize_expression};
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::term::PyAlphaRenaming;
 
 use super::kinds::outcome_to_python;
-use super::value::{record_pending_error, type_name};
+use super::value::{record_pending_error, type_name, value_to_python};
 
 /// The Python form of a system's bindings: the snapshot of the caller's
 /// mapping.
-pub(super) struct PythonBindings(pub(super) Py<PyDict>);
+pub(crate) struct PythonBindings(pub(crate) Py<PyDict>);
 
 /// A Python-defined constraint, driven through its methods.
-pub(super) struct PyCustomConstraint {
+pub(crate) struct PyCustomConstraint {
     object: Py<PyAny>,
     key: String,
 }
@@ -48,7 +49,7 @@ impl PyCustomConstraint {
     ///
     /// Raises what `build_ordering_key` raises, and `TypeError` for a key
     /// that is not a `str`.
-    pub(super) fn new(object: &Bound<'_, PyAny>) -> PyResult<Self> {
+    pub(crate) fn new(object: &Bound<'_, PyAny>) -> PyResult<Self> {
         let py = object.py();
         let key = object.call_method0(intern!(py, "build_ordering_key"))?;
         let key = key
@@ -67,6 +68,29 @@ impl PyCustomConstraint {
             key,
         })
     }
+
+    /// Return the Python object.
+    pub(crate) fn object(&self) -> &Py<PyAny> {
+        &self.object
+    }
+}
+
+/// Return the Python dict of the core `bindings`, for a Python-defined
+/// member evaluated under bindings the core built (D-S16-15): each
+/// identifier's Python object, bound to an expression's object or a value's.
+fn build_python_bindings<'py>(
+    py: Python<'py>,
+    bindings: &Bindings,
+) -> PyResult<Bound<'py, PyDict>> {
+    let mapping = PyDict::new(py);
+    for (identifier, binding) in bindings.iter() {
+        let value = match binding {
+            Binding::Expression(expression) => materialize_expression(py, expression)?,
+            Binding::Value(value) => value_to_python(py, value)?,
+        };
+        mapping.set_item(identifier_to_python(py, identifier)?, value)?;
+    }
+    Ok(mapping)
 }
 
 impl fmt::Debug for PyCustomConstraint {
@@ -105,7 +129,10 @@ fn renaming_to_python<'py>(
 }
 
 /// Return the outcome of the `ConstraintOutcome` member `value`.
-fn read_outcome(object: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<Outcome> {
+pub(crate) fn read_outcome(
+    object: &Bound<'_, PyAny>,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<Outcome> {
     let py = value.py();
     for outcome in [Outcome::Satisfied, Outcome::Violated, Outcome::Undecided] {
         if value.is(&outcome_to_python(py, outcome)?) {
@@ -145,7 +172,7 @@ impl CustomConstraint for PyCustomConstraint {
                 .and_then(|source| source.downcast_ref::<PythonBindings>())
             {
                 Some(PythonBindings(mapping)) => mapping.bind(py).clone(),
-                None => PyDict::new(py),
+                None => build_python_bindings(py, bindings)?,
             };
             let outcome = object.call_method1(intern!(py, "evaluate_with_bindings"), (mapping,))?;
             read_outcome(object, &outcome)

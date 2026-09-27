@@ -144,6 +144,18 @@ fn warn_implies(py: Python<'_>, node: &str) {
     drop(logged);
 }
 
+/// Return whether [`sympy_error_to_py`], wrapping, raises `error` as a
+/// `PassExecutionError`.
+pub(super) fn is_raised_as_pass_error(py: Python<'_>, error: &SympyError) -> bool {
+    if pass_name(error.phase()).is_none() || is_unwrapped(error) {
+        return false;
+    }
+    match error.kind() {
+        SympyErrorKind::Python(error) => error.is_instance_of::<PyException>(py),
+        _ => true,
+    }
+}
+
 /// Return whether `error` keeps its own class whatever phase it arose in:
 /// the screen's refusal, a bound constant, and a missing backend, which the
 /// Python bridge raised before any pass ran.

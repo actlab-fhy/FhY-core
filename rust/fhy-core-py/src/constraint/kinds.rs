@@ -50,7 +50,7 @@ use super::value::{
 };
 
 /// Return the `ConstraintOutcome` member of `outcome`.
-pub(super) fn outcome_to_python(py: Python<'_>, outcome: Outcome) -> PyResult<Bound<'_, PyAny>> {
+pub(crate) fn outcome_to_python(py: Python<'_>, outcome: Outcome) -> PyResult<Bound<'_, PyAny>> {
     static MEMBERS: PyOnceLock<[Py<PyAny>; 3]> = PyOnceLock::new();
     let members = MEMBERS.get_or_try_init(py, || -> PyResult<[Py<PyAny>; 3]> {
         let class = py
@@ -76,7 +76,7 @@ fn is_satisfied(outcome: Outcome) -> bool {
 }
 
 /// Return the core binding of the Python value `value`.
-pub(super) fn read_binding(value: &Bound<'_, PyAny>) -> PyResult<Binding> {
+pub(crate) fn read_binding(value: &Bound<'_, PyAny>) -> PyResult<Binding> {
     Ok(match value.cast::<PyExpression>() {
         Ok(expression) => Binding::Expression(expression.get().expression().clone()),
         Err(_not_an_expression) => Binding::Value(read_bound_value(value)?),
@@ -85,14 +85,14 @@ pub(super) fn read_binding(value: &Bound<'_, PyAny>) -> PyResult<Binding> {
 
 /// The bindings of one evaluation: the core's, and the Python objects of
 /// each, by identifier id, for the messages that name them.
-pub(super) struct ReadBindings<'py> {
-    pub(super) core: Bindings,
+pub(crate) struct ReadBindings<'py> {
+    pub(crate) core: Bindings,
     objects: HashMap<u64, (Bound<'py, PyAny>, Bound<'py, PyAny>)>,
 }
 
 impl<'py> ReadBindings<'py> {
     /// Return the Python key and value bound to `identifier`.
-    pub(super) fn objects(
+    pub(crate) fn objects(
         &self,
         identifier: &Identifier,
     ) -> Option<(&Bound<'py, PyAny>, &Bound<'py, PyAny>)> {
@@ -109,7 +109,7 @@ impl<'py> ReadBindings<'py> {
 ///
 /// Raises `TypeError` if `mapping` is not a mapping, and whatever reading
 /// its items raises.
-pub(super) fn read_scoped_bindings<'py>(
+pub(crate) fn read_scoped_bindings<'py>(
     mapping: &Bound<'py, PyAny>,
     scope: Option<&std::collections::HashSet<Identifier>>,
 ) -> PyResult<ReadBindings<'py>> {
@@ -175,12 +175,12 @@ fn run_evaluation(
 }
 
 /// Return whether `other` is of exactly `this`'s class.
-pub(super) fn is_same_class(this: &Bound<'_, PyAny>, other: &Bound<'_, PyAny>) -> bool {
+pub(crate) fn is_same_class(this: &Bound<'_, PyAny>, other: &Bound<'_, PyAny>) -> bool {
     this.get_type().is(other.get_type())
 }
 
 /// Return the renaming of `renaming`, an `AlphaRenaming`.
-pub(super) fn with_renaming<T>(
+pub(crate) fn with_renaming<T>(
     renaming: &Bound<'_, PyAny>,
     use_renaming: impl FnOnce(&AlphaRenaming) -> T,
 ) -> PyResult<T> {
@@ -189,7 +189,7 @@ pub(super) fn with_renaming<T>(
 }
 
 /// Return the payload of the serializable `value`.
-pub(super) fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     value.call_method0(intern!(value.py(), "serialize_to_dict"))
 }
 
@@ -920,7 +920,7 @@ set_constraint_class!(
 
 /// Return the core constraint of a Python constraint of a built-in kind,
 /// or `None` for any other value.
-pub(super) fn read_native_constraint(value: &Bound<'_, PyAny>) -> Option<Constraint> {
+pub(crate) fn read_native_constraint(value: &Bound<'_, PyAny>) -> Option<Constraint> {
     if let Ok(equation) = value.cast::<PyEquationConstraint>() {
         return Some(Constraint::from(equation.get().core.clone()));
     }

@@ -150,6 +150,24 @@ pub(crate) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
     }
 }
 
+/// Return whether `error` is a backend failure [`solve_error_to_py`]
+/// raises as a `PassExecutionError`, such as SymPy failing to lower an
+/// expression, or a Python backend raising one.
+pub(crate) fn is_pass_execution_failure(py: Python<'_>, error: &SolveError) -> bool {
+    static EXECUTION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    let SolveError::Backend { source, .. } = error else {
+        return false;
+    };
+    if let Some(error) = source.downcast_ref::<PyErr>() {
+        return EXECUTION
+            .import(py, "fhy_core.pass_infrastructure", "PassExecutionError")
+            .is_ok_and(|class| error.is_instance(py, class));
+    }
+    source
+        .downcast_ref::<SympyError>()
+        .is_some_and(|error| super::sympy::is_raised_as_pass_error(py, error))
+}
+
 /// Return `fhy_core.symbolic.solver`'s logger.
 fn solver_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     static LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();

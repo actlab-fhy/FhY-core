@@ -15,12 +15,12 @@ use crate::expression::render_expression_repr;
 use super::value::{record_pending_error, repr_text};
 
 /// `logging.DEBUG`.
-pub(super) const DEBUG: u8 = 10;
+pub(crate) const DEBUG: u8 = 10;
 /// `logging.WARNING`.
-pub(super) const WARNING: u8 = 30;
+pub(crate) const WARNING: u8 = 30;
 
 /// Return `fhy_core.symbolic.constraint.core`'s logger.
-pub(super) fn core_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+pub(crate) fn core_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     static LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     LOGGER
         .get_or_try_init(py, || {
@@ -38,7 +38,7 @@ pub(super) fn core_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
 ///
 /// The message is passed as the argument of `"%s"`, so it is not formatted
 /// again.
-pub(super) fn log(
+pub(crate) fn log(
     logger: &Bound<'_, PyAny>,
     level: u8,
     message: impl FnOnce() -> String,
@@ -56,7 +56,7 @@ pub(super) fn log(
 
 /// Return the text of the WARNING refusing the bound native constants
 /// `identifiers` at the entry point `context`.
-pub(super) fn native_constant_refusal(context: &str, identifiers: &str) -> String {
+pub(crate) fn native_constant_refusal(context: &str, identifiers: &str) -> String {
     format!(
         "{context}: identifier(s) {identifiers} are the canonical identifier(s) of registered \
          native constant(s), which name a value rather than a variable, so the supplied \
@@ -67,7 +67,7 @@ pub(super) fn native_constant_refusal(context: &str, identifiers: &str) -> Strin
 
 /// Return the items of a Python collection as `format_comma_separated_list`
 /// joins them: a `str` as it is, anything else by its `repr`.
-pub(super) fn join_items(items: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(crate) fn join_items(items: &Bound<'_, PyAny>) -> PyResult<String> {
     let mut texts = Vec::new();
     for item in items.try_iter()? {
         let item = item?;
@@ -80,7 +80,7 @@ pub(super) fn join_items(items: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 /// The observer of one evaluation of one constraint.
-pub(super) struct LoggingObserver {
+pub(crate) struct LoggingObserver {
     /// The name of the constraint's class.
     kind: String,
     /// The set constraint's variable, or `None` for an equation.
@@ -95,7 +95,7 @@ impl LoggingObserver {
     /// Return the observer of an evaluation of the constraint of class
     /// `kind` under `bindings`, whose set variable, if any, is `variable`,
     /// bound to `bound_value`.
-    pub(super) fn new(
+    pub(crate) fn new(
         kind: String,
         variable: Option<Py<PyAny>>,
         bindings: Py<PyAny>,
@@ -117,7 +117,7 @@ impl LoggingObserver {
     }
 
     /// Log `event`.
-    pub(super) fn log_event(&self, py: Python<'_>, event: &Event<'_>) -> PyResult<()> {
+    pub(crate) fn log_event(&self, py: Python<'_>, event: &Event<'_>) -> PyResult<()> {
         let logger = core_logger(py)?;
         let kind = &self.kind;
         match *event {
