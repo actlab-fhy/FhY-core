@@ -100,8 +100,8 @@ onto `dev-rust` before continuing.
 - [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`: `0abc3fb`
 - [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction: `7f3e8db`
 - [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations: `d33c5ef`
-- [x] R2-028 (F2-028): param and constraint decision-rule tests in Rust
-- [ ] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables
+- [x] R2-028 (F2-028): param and constraint decision-rule tests in Rust: `3f55cff`
+- [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables
 - [ ] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories
 - [ ] `[rebase]` onto `dev-rust` after Tracks D and B land
 - [ ] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound
@@ -3867,6 +3867,26 @@ finding.
   rebinding an identifier keeps its first position with the last value;
   a system with one member on an unbound identifier is undecided unless a
   decided member is violated.
+
+**R2-046b.** Tests only; every new test passed at its first run, so no new
+finding. One helper, `support::serde::check_serde_round_trip` (a new
+support module), checks JSON and postcard round trips to an equal value
+and that the decoded JSON re-encodes to the same text.
+- `a_domain_round_trips_through_serde` (`param/serde_stories.rs`): the six
+  built-in kinds, the finite ones over members of kind int, bool, str,
+  tuple and frozen set, nested two deep, each built through its
+  constructor (a set the constructor refuses is filtered out).
+- `a_type_round_trips_through_serde` (`types/serde_stories.rs`): numerical
+  types over primitives and templates with and without widths, shapes of
+  sums and products of literals and shape variables with wildcards, and
+  index types; the data type round-trips on its own too.
+- `a_table_built_through_the_checked_api_round_trips`
+  (`symbol_table/serde_stories.rs`): tables built by random
+  `add_namespace`/`remove_namespace`/`add_symbol`/`remove_symbol`
+  sequences over `table_properties.rs`'s alphabet, with import, variable
+  and function frames; it also checks that the checked API built no
+  shadowing (R2-020). Before R2-020, a child added before its parent would
+  have failed it, as F2-046 expected.
 
 ### Track E notes
 

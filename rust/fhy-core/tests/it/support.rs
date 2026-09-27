@@ -13,6 +13,7 @@ pub(crate) mod param;
 pub(crate) mod pass_ir;
 pub(crate) mod pattern;
 pub(crate) mod provenance;
+pub(crate) mod serde;
 pub(crate) mod solver;
 pub(crate) mod stack;
 pub(crate) mod tree_ir;

@@ -14,6 +14,7 @@ use fhy_core::param::{
     ParamContext, ParamDomain, PermutationDomain, RealDomain,
 };
 use fhy_core::solver::Solver;
+use proptest::prelude::*;
 use rstest::rstest;
 
 fn restored(id: u64, name: &str) -> Identifier {
@@ -236,4 +237,63 @@ fn an_inadmissible_assignment_payload_fails_to_decode() {
         ),
         "{refused:?}"
     );
+}
+
+/// Return a strategy for domain members: integers, Booleans, short strings,
+/// and tuples and frozen sets of those.
+fn member_value_strategy() -> BoxedStrategy<Value> {
+    let leaf = prop_oneof![
+        (-3_i64..6).prop_map(|value| Value::Int(value.into())),
+        any::<bool>().prop_map(Value::Bool),
+        "[ab]{1,2}".prop_map(Value::Str),
+    ];
+    leaf.prop_recursive(2, 6, 3, |inner| {
+        prop_oneof![
+            prop::collection::vec(inner.clone(), 1..3).prop_map(Value::Tuple),
+            prop::collection::vec(inner, 1..3).prop_map(Value::FrozenSet),
+        ]
+    })
+    .boxed()
+}
+
+/// Return a strategy for the six built-in domain kinds.
+fn domain_strategy() -> impl Strategy<Value = ParamDomain> {
+    let sign = prop_oneof![Just(Sign::Any), Just(Sign::NonNegative)];
+    let zero = prop_oneof![Just(ZeroInclusion::Included), Just(ZeroInclusion::Excluded)];
+    let inclusivity = prop_oneof![Just(Inclusivity::Inclusive), Just(Inclusivity::Exclusive)];
+    let values = || prop::collection::vec(member_value_strategy(), 1..5);
+    prop_oneof![
+        (sign.clone(), zero.clone())
+            .prop_map(|(sign, zero)| ParamDomain::from(IntegerDomain::new(sign, zero))),
+        (inclusivity, sign, zero).prop_map(|(inclusivity, sign, zero)| {
+            ParamDomain::from(IntervalIntegerDomain::new(inclusivity, sign, zero))
+        }),
+        Just(ParamDomain::from(RealDomain)),
+        prop::collection::vec(-5_i64..5, 1..5).prop_filter_map("distinct values", |values| {
+            OrdinalDomain::new(
+                values
+                    .into_iter()
+                    .map(|value| Value::Int(value.into()))
+                    .collect(),
+            )
+            .ok()
+            .map(ParamDomain::from)
+        }),
+        values().prop_filter_map("distinct leaf values", |values| {
+            CategoricalDomain::new(values).ok().map(ParamDomain::from)
+        }),
+        values().prop_filter_map("distinct members", |values| {
+            PermutationDomain::new(values).ok().map(ParamDomain::from)
+        }),
+    ]
+}
+
+proptest::proptest! {
+    /// Every built-in domain round-trips through JSON and postcard, members
+    /// of kind bool, tuple and frozen set included, and its JSON re-encodes
+    /// byte-identically (F2-046).
+    #[test]
+    fn a_domain_round_trips_through_serde(domain in domain_strategy()) {
+        crate::support::serde::check_serde_round_trip(&domain)?;
+    }
 }

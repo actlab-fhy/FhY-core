@@ -10,6 +10,7 @@ use fhy_core::foreign::{BuildError, ForeignError};
 use fhy_core::identifier::Identifier;
 use fhy_core::types::wire::{DataTypeData, TypeData};
 use fhy_core::types::{CoreDataType, DataType, Dimension, NumericalType, TemplateDataType, Type};
+use proptest::prelude::*;
 use rstest::rstest;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -216,4 +217,84 @@ fn an_extension_that_fails_to_give_its_part_fails_the_serializer() {
         .to_string();
 
     assert_eq!(message, "the foreign part `test.named_type` failed");
+}
+
+/// Return a strategy for shape expressions over three shape variables:
+/// literals, variables, sums and products.
+fn shape_expression_strategy(variables: Vec<Identifier>) -> BoxedStrategy<Expression> {
+    let leaf = prop_oneof![
+        (1_i64..9).prop_map(Expression::from),
+        prop::sample::select(variables).prop_map(Expression::from),
+    ];
+    leaf.prop_recursive(2, 6, 2, |inner| {
+        prop_oneof![
+            (inner.clone(), inner.clone()).prop_map(|(left, right)| left + right),
+            (inner.clone(), inner).prop_map(|(left, right)| left * right),
+        ]
+    })
+    .boxed()
+}
+
+/// Return a strategy for data types: primitives, and templates with or
+/// without widths.
+fn data_type_strategy(templates: Vec<Identifier>) -> BoxedStrategy<DataType> {
+    let primitive = prop::sample::select(vec![
+        CoreDataType::Int8,
+        CoreDataType::Uint16,
+        CoreDataType::Int32,
+        CoreDataType::Float32,
+        CoreDataType::Float64,
+        CoreDataType::Complex64,
+        CoreDataType::Bool,
+        CoreDataType::Int,
+    ])
+    .prop_map(DataType::Primitive);
+    let template_type = (
+        prop::sample::select(templates),
+        prop::option::of(prop::collection::vec(
+            prop::sample::select(vec![8_u32, 16, 32, 64]),
+            1..4,
+        )),
+    )
+        .prop_map(|(identifier, widths)| match widths {
+            None => DataType::Template(TemplateDataType::new(identifier)),
+            Some(widths) => DataType::Template(
+                TemplateDataType::with_widths(identifier, widths).expect("positive widths"),
+            ),
+        });
+    prop_oneof![primitive, template_type].boxed()
+}
+
+/// Return a strategy for types: numerical types over data types and
+/// shapes of expressions and wildcards, and index types.
+fn type_strategy() -> impl Strategy<Value = Type> {
+    let variables: Vec<Identifier> = ["N", "M", "K"].into_iter().map(Identifier::new).collect();
+    let templates: Vec<Identifier> = ["T", "U"].into_iter().map(Identifier::new).collect();
+    let dimension = prop_oneof![
+        4 => shape_expression_strategy(variables.clone()).prop_map(Dimension::Expression),
+        1 => Just(Dimension::Wildcard),
+    ];
+    let expression = move || shape_expression_strategy(variables.clone());
+    prop_oneof![
+        (
+            data_type_strategy(templates),
+            prop::collection::vec(dimension, 0..4)
+        )
+            .prop_map(|(data_type, shape)| Type::Numerical(NumericalType::new(data_type, shape))),
+        (expression(), expression(), expression()).prop_map(|(lower, upper, stride)| {
+            Type::Index(fhy_core::types::IndexType::new(lower, upper, stride))
+        }),
+    ]
+}
+
+proptest::proptest! {
+    /// Every built-in type round-trips through JSON and postcard, and its
+    /// JSON re-encodes byte-identically (F2-046).
+    #[test]
+    fn a_type_round_trips_through_serde(value in type_strategy()) {
+        crate::support::serde::check_serde_round_trip(&value)?;
+        if let Type::Numerical(numerical) = &value {
+            crate::support::serde::check_serde_round_trip(numerical.data_type())?;
+        }
+    }
 }

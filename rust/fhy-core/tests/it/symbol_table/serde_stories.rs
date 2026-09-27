@@ -292,3 +292,84 @@ fn a_symbol_added_to_a_child_then_its_parent_is_refused() {
     let error = serde_json::from_str::<SymbolTable<SymbolFrame>>(&text).expect_err("shadowing");
     assert!(error.to_string().contains("already defined"), "{error}");
 }
+
+/// An operation on a table over a small alphabet of namespaces and
+/// symbols, as `table_properties.rs`'s model draws them; the frame kind is
+/// the symbol's frame when it is added.
+#[derive(Debug, Clone)]
+enum Operation {
+    AddNamespace(usize, Option<usize>),
+    RemoveNamespace(usize),
+    AddSymbol(usize, usize, u8),
+    RemoveSymbol(usize, usize),
+}
+
+fn operation_strategy() -> impl proptest::strategy::Strategy<Value = Operation> {
+    use proptest::prelude::*;
+    prop_oneof![
+        (0_usize..4, proptest::option::of(0_usize..4))
+            .prop_map(|(namespace, parent)| Operation::AddNamespace(namespace, parent)),
+        (0_usize..4).prop_map(Operation::RemoveNamespace),
+        (0_usize..4, 0_usize..4, 0_u8..3)
+            .prop_map(|(namespace, symbol, kind)| Operation::AddSymbol(namespace, symbol, kind)),
+        (0_usize..4, 0_usize..4)
+            .prop_map(|(namespace, symbol)| Operation::RemoveSymbol(namespace, symbol)),
+    ]
+}
+
+/// Return the frame of `kind` for `symbol`.
+fn frame_of(symbol: &Identifier, kind: u8) -> SymbolFrame {
+    match kind {
+        0 => SymbolFrame::Import(ImportFrame::new(symbol.clone())),
+        1 => SymbolFrame::Variable(VariableFrame::new(
+            symbol.clone(),
+            scalar(CoreDataType::Int32),
+            TypeQualifier::Param,
+        )),
+        _ => SymbolFrame::Function(FunctionFrame::new(
+            symbol.clone(),
+            FunctionKeyword::Procedure,
+            [(TypeQualifier::Input, scalar(CoreDataType::Float32))],
+        )),
+    }
+}
+
+proptest::proptest! {
+    /// Every table the checked operations build round-trips through JSON
+    /// and postcard, and its JSON re-encodes byte-identically, whatever
+    /// order its namespaces were added in (F2-046, F2-020).
+    #[test]
+    fn a_table_built_through_the_checked_api_round_trips(
+        operations in proptest::collection::vec(operation_strategy(), 0..30),
+    ) {
+        let namespaces: Vec<Identifier> = (0..4).map(|index| Identifier::new(&format!("ns{index}"))).collect();
+        let symbols: Vec<Identifier> = (0..4).map(|index| Identifier::new(&format!("s{index}"))).collect();
+        let mut table: SymbolTable<SymbolFrame> = SymbolTable::new();
+        for operation in operations {
+            // A refused operation leaves the table as it was.
+            let refused = match operation {
+                Operation::AddNamespace(namespace, parent) => table
+                    .add_namespace(namespace_name(&namespaces, namespace), parent.map(|parent| namespace_name(&namespaces, parent))),
+                Operation::RemoveNamespace(namespace) => table.remove_namespace(&namespaces[namespace]),
+                Operation::AddSymbol(namespace, symbol, kind) => {
+                    table.add_symbol(&namespaces[namespace], symbols[symbol].clone(), frame_of(&symbols[symbol], kind))
+                }
+                Operation::RemoveSymbol(namespace, symbol) => {
+                    table.remove_symbol(&namespaces[namespace], &symbols[symbol]).map(|_| ())
+                }
+            };
+            drop(refused);
+        }
+        let is_shadowing = |violation: &fhy_core::symbol_table::Violation| {
+            matches!(violation, fhy_core::symbol_table::Violation::ShadowedSymbol { .. })
+        };
+        proptest::prop_assert!(!table.violations().iter().any(is_shadowing));
+
+        crate::support::serde::check_serde_round_trip(&table)?;
+    }
+}
+
+/// Return the namespace identifier at `index`.
+fn namespace_name(namespaces: &[Identifier], index: usize) -> Identifier {
+    namespaces[index].clone()
+}
