@@ -146,7 +146,7 @@ recreate it with `python3.11 -m venv target/tooling/pyenv && target/tooling/pyen
     - [x] S16a.2: core additions, test-first (`fhy_core::param`: the value orders, the six domains, `CustomDomain`, screening, the decision procedures, the set algebra of domains, the context and events; 141 new tests, see "S16a.2 implementation notes")
     - [x] S16a.3: the domain binding (the six pyclasses, the custom-domain adapter, the log records, the module functions, the stubs)
     - [x] S16a.4: the Python switch of `values.py` and `domains.py`, with the migrated tests (see "S16a.4 status")
-    - [ ] S16a.5: the interface suite for the domains
+    - [x] S16a.5: the interface suite for the domains (54 tests)
   - [ ] S16b: params
     - [ ] S16b.1: core additions, test-first (`Param`, `ParamAssignment`, the bounds and their gates, interval arithmetic, union and intersection)
     - [ ] S16b.2: the param binding (`Param`, `ParamAssignment`, the factories' helpers, the stubs)
@@ -17929,3 +17929,28 @@ no `z3` marker).
 | `test_domain_internals.py`: the 5 WARNING tests of the screening | `test_screening_logs_warning_naming_the_constraint_and_the_variable` (5 cases) | P-12: the same records, through the same public drivers |
 | `test_core_internals.py`: the 8 tests of `serialize_wrapped_leaf_value` | `test_domain_payload_serializes_each_supported_leaf_type`, `test_domain_refuses_an_unsupported_leaf_value` | P-12: a domain's payload serializes each leaf, and a domain refuses an unsupported value when it is built (`TypeError`) |
 | `test_param_intersection.py::test_intersection_with_unrescopable_constraint_kind_raises_constraint_error` | same name | P-6: the core's text, `cannot rescope a constraint of an unexpected kind` |
+
+### S16a.5 status
+
+The new `tests/symbolic/param/test_domain_rust_binding.py` (54 tests,
+counting parametrized cases) covers the interface suite of the test plan
+for the domains: the class structure (each kind extends its `_rs` class
+and is a virtual `ParamDomain` and `FrozenMixin`), the frozen contract,
+identity `==` and `hash`, slot-cached attributes and the canonical
+`zero_included`; the objects kept (a `Serializable` value's own object),
+number subclasses and NumPy floats read as exact numbers, the ordinal ties
+and the categorical order, a permutation admitting any sequence; a `<`
+that raises `TypeError` chained under the order error, another exception
+and a `KeyboardInterrupt` passing through, a `Serializable` that does not
+order against an `int`; a Python-defined domain driven by a native subset
+question (the hooks and the objects it receives), its exception
+propagating, and native equivalence against it; the enumeration's WARNING
+naming its candidates; the construction errors' core texts, the kind
+mismatch's Python words, an interval domain's `TypeError`, the rescoping
+`ConstraintError`, the `IntervalProfile` dataclass,
+`is_bound_expression`; a simplifier's `PassExecutionError` read as an
+undecided member while a later member still decides, and any other
+exception, `KeyboardInterrupt` included, propagating; pickling and deep
+copies of each kind, a payload in another order decoding to the canonical
+order, and eight threads agreeing. At the end: `pytest` 7,821 passed, 2
+xfailed.
