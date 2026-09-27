@@ -13,6 +13,7 @@ use fhy_core::expression::{
 };
 use fhy_core::identifier::Identifier;
 
+use super::address_hash::BuildAddressHasher;
 use super::boolean::Fallible;
 use super::error::SympyErrorKind;
 use super::load::Handles;
@@ -101,7 +102,8 @@ impl<'h> Lifter<'h> {
     pub(super) fn lift<'py>(&self, root: &Bound<'py, PyAny>) -> Fallible<Expression> {
         let mut tasks = vec![Task::Visit(root.clone())];
         let mut results: Vec<Expression> = Vec::new();
-        let mut memo: HashMap<usize, (Bound<'py, PyAny>, Expression)> = HashMap::new();
+        let mut memo: HashMap<usize, (Bound<'py, PyAny>, Expression), BuildAddressHasher> =
+            HashMap::default();
         while let Some(task) = tasks.pop() {
             match task {
                 Task::Visit(node) => {

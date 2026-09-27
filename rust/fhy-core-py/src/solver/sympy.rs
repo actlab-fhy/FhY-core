@@ -19,6 +19,7 @@
 //! by `cargo test -p fhy-core-py` in an interpreter the test binary embeds
 //! (J-10 of the fixes spec); they need Python with SymPy.
 
+mod address_hash;
 mod boolean;
 mod error;
 mod lift;

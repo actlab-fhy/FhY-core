@@ -7,6 +7,7 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
+use super::address_hash::BuildAddressHasher;
 use super::boolean::{Fallible, boolean_positions};
 use super::error::SympyErrorKind;
 use super::load::Handles;
@@ -53,7 +54,7 @@ pub(super) fn rebuild_bottom_up<'py, E: From<PyErr>>(
 ) -> Result<(Bound<'py, PyAny>, bool), E> {
     let py = root.py();
     let basic = handles.basic.bind(py);
-    let mut memo: Memo<'py> = HashMap::new();
+    let mut memo: Memo<'py> = HashMap::default();
     let mut open =
         |node: &Bound<'py, PyAny>| -> Result<Result<Frame<'py>, (Bound<'py, PyAny>, bool)>, E> {
             match visit(node)? {
@@ -113,7 +114,7 @@ pub(super) fn rebuild_bottom_up<'py, E: From<PyErr>>(
 
 /// The results of a walk's finished nodes, keyed by each node's address,
 /// with the node, which keeps the address its own.
-type Memo<'py> = HashMap<usize, (Bound<'py, PyAny>, (Bound<'py, PyAny>, bool))>;
+type Memo<'py> = HashMap<usize, (Bound<'py, PyAny>, (Bound<'py, PyAny>, bool)), BuildAddressHasher>;
 
 /// Return `node` with `replacements`, a mapping from SymPy symbols to SymPy
 /// objects, applied.

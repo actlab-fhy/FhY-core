@@ -17,6 +17,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::solver::SimplifyContext;
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
+use super::address_hash::BuildAddressHasher;
 use super::boolean::{Fallible, comparison_operands, condition, to_boolean};
 use super::error::SympyErrorKind;
 use super::load::Handles;
@@ -90,7 +91,8 @@ impl<'h, 'c> Lowerer<'h, 'c> {
         py: Python<'py>,
         root: &Expression,
     ) -> Fallible<Bound<'py, PyAny>> {
-        let mut memo: HashMap<NodeIdentity, Bound<'py, PyAny>> = HashMap::new();
+        let mut memo: HashMap<NodeIdentity, Bound<'py, PyAny>, BuildAddressHasher> =
+            HashMap::default();
         let mut pending: Vec<(&Expression, bool)> = vec![(root, false)];
         while let Some((node, is_expanded)) = pending.pop() {
             if memo.contains_key(&node.identity()) {

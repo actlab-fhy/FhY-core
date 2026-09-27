@@ -63,7 +63,7 @@ onto `dev-rust` before continuing.
 - [x] R2-039 (F2-039): a versioned, hash-checked prelude module (`c12b485`)
 - [x] R2-027 (F2-027): non-vacuous solver properties; Boolean and piecewise generators; z3 against the process backend; SymPy stories (`2fc3546`)
 - [x] R2-029d (F2-029, `solver`): error-text tables and small stories (`1fef465`)
-- [x] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift
+- [x] R2-009 (F2-009): docs.rs metadata, `doc(cfg)`, the default-feature doc build, per-crate CI steps, doc drift (`93fa510`)
 - [ ] `[rebase]` onto `dev-rust` after Track A lands
 - [ ] Track D status: gates green; counts recorded; landed as `<hash>`
 
@@ -2898,6 +2898,81 @@ premise holds for expressions but not for set constraints:
   workspace `repository` drops `.git`; the README's two "docs.rs builds the
   default features" sentences say docs.rs builds each feature and marks
   its items.
+
+**After R2-009: the SymPy memos hash by address.** The benchmarks below
+first showed the lowering 5–8% slower than at the base, from the standard
+hasher R2-005a put in place of the core's crate-private
+`BuildIdentityHasher`, and the lifting and substitution memos of R2-038a
+paying the same. A binding copy of that hasher, `sympy/address_hash.rs`,
+now serves all three memos; the lowering and substitution rows are back at
+parity, and the lifting keeps about 5% for its memo's bookkeeping, which
+R2-038a's linear DAG lifting pays for.
+
+**Benchmarks** (§I.8.3: `benchmarks/test_sympy.py` and `test_solver.py`),
+medians in µs, the base at `111df20` and the head (with the address
+hasher), each in its own venv built the same way (`uv sync
+--no-default-groups --group bench --group test`, CPython 3.11) from a `git
+archive` under this worktree's `target/bench/`, run back to back with
+`pytest --benchmark-only -n 0`. Other tracks were building on the machine,
+so single runs moved by up to 20%; the rows that crossed 10% in some run
+were re-measured interleaved, base and head alternating.
+
+| Benchmark | Base | Head | Ratio |
+|---|---:|---:|---:|
+| `test_check_satisfiability_of_a_conjunction_of_50_bounds` | 891.99 | 934.40 | 1.05 |
+| `test_check_satisfiability_of_bounds` | 473.68 | 450.69 | 0.95 |
+| `test_check_satisfiability_refused_by_the_screen` | 26.92 | 27.27 | 1.01 |
+| `test_constraint_system_check_implication` | 411.59 | 431.55 | 1.05 |
+| `test_does_expression_imply_of_bounds` | 406.92 | 425.72 | 1.05 |
+| `test_equation_constraint_evaluate_with_bindings` | 10.51 | 10.82 | 1.03 |
+| `test_first_simplification_in_a_fresh_interpreter` | 315,105.35 | 344,072.50 | 1.09 (interleaved, 15 pairs: 356.1 ms against 353.0 ms) |
+| `test_holds_for_all_free_assignments_with_a_witness` | 903.59 | 968.66 | 1.07 |
+| `test_import_fhy_core` | 93,096.63 | 112,112.76 | 1.20 (interleaved, 40 pairs: 112.0 ms against 97.1 ms; minimum 92.5 against 93.0 ms) |
+| `test_int_param_intersection_feasibility` | 521.03 | 550.66 | 1.06 |
+| `test_lift_from_sympy_of_a_deep_tree` | 67.46 | 69.38 | 1.03 (interleaved, 3 pairs: 1.04 to 1.07) |
+| `test_lower_to_smtlib2_of_a_deep_tree` | 75.47 | 65.15 | 0.86 |
+| `test_lower_to_sympy_of_a_deep_tree` | 154.15 | 190.03 | 1.23 before the address hasher; interleaved after it, 3 pairs: 0.94 to 1.06 |
+| `test_lower_to_z3_of_a_deep_tree` | 366.51 | 400.91 | 1.09 |
+| `test_nat_param_is_value_valid` | 11.25 | 11.06 | 0.98 |
+| `test_screen_of_a_deep_predicate` | 77.82 | 79.25 | 1.02 |
+| `test_simplify_expression_of_a_boolean_comparison` | 8,528.86 | 8,821.41 | 1.03 |
+| `test_simplify_expression_of_a_bound_piecewise` | 47.05 | 48.32 | 1.03 |
+| `test_simplify_expression_of_a_ground_comparison` | 10.59 | 10.70 | 1.01 |
+| `test_simplify_expression_symbolic` | 24.27 | 26.25 | 1.08 |
+| `test_substitute_sympy_variables_of_a_deep_tree` | 24.67 | 23.93 | 0.97 (interleaved after the hasher: 0.99 to 1.02) |
+| `test_sympy_simplifier_of_a_ground_comparison` | 8.00 | 8.19 | 1.02 |
+
+The table is the second full run, before the address hasher, except where
+a row says otherwise; a third full run after it had every row but the
+fresh-interpreter one (1.12, 1.01 interleaved) within 1.09. No row is
+slower by more than 10% once measured interleaved.
+
+**Where Track D stops.** At the checklist's `[rebase]` line, as the
+maintainer asked: the rebase onto Track A, the track gates after it, and
+the Track D status line are the maintainer's. The track gates of §I.8.2
+and D's extras were run on the head before the rebase (`93fa510`, then
+the address-hasher commit re-ran the per-commit gates):
+- fmt; clippy `-D warnings` workspace both ways, and `fhy-core` alone
+  with no features, `z3` and `ndarray`: clean;
+- `cargo test --workspace`: 4,378; `--all-features`: 4,412 (the base:
+  4,305 and 4,337);
+- `cargo test -p fhy-core --all-features` in a shell with no Python
+  environment: 4,233 (3,677 of `it` at R2-005a, now more);
+- `cargo doc -D warnings`: the workspace, `fhy-core` with default
+  features, and with each feature alone: clean;
+- `cargo deny check`: ok; `cargo +1.85 check --workspace --lib` and
+  `-p fhy-core --all-targets` three ways: no warning;
+- `cargo package` and its list (no `.py`), and the CI target list;
+- `pytest tests`: 8,288 (the base 8,281); `-m "not very_slow"`: 8,321
+  (8,314); `property`: 283 (282); `tests_minimal`: 6,320 passed, 642
+  skipped (6,315 and 642); nox `lint`, `type_check` and `golden_expanded`:
+  green;
+- the attribution grep over `111df20..HEAD`: no match; every commit is
+  the configured user's.
+
+**Not Track D's.** The maintainer's brief listed "the diagnostics
+signature fix"; that is R2-041, which §I.7.1 and the checklist assign to
+Track E (`pass/validation.rs`, `diagnostic.rs`), so this track left it.
 
 **Python-visible changes** (§I.2 rule 6):
 
