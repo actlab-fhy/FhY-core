@@ -36,7 +36,9 @@ use crate::dataclass::{
 use crate::error::{IntoPyErr, IntoPyResult};
 use crate::frozen::build_frozen_mutation_error;
 use crate::public_class::PublicClass;
-use crate::serialization::{FieldShape, construct_from_decoded_fields, read_payload_fields};
+use crate::serialization::{
+    FieldShape, construct_from_decoded_fields, read_payload_fields, serialize_nested,
+};
 
 /// The Python module that defines the public classes.
 const MODULE: &str = "fhy_core.provenance";
@@ -180,18 +182,6 @@ fn read_optional_str<'py>(
 /// Return `value`, or Python's `None` for `None`.
 fn object_or_none<'py>(py: Python<'py>, value: Option<&Bound<'py, PyAny>>) -> Bound<'py, PyAny> {
     value.map_or_else(|| py.None().into_bound(py), Clone::clone)
-}
-
-/// Return the payload of the serializable `value` from its own
-/// `serialize_to_dict`, or `None` for `None`.
-///
-/// Matches the Python implementation: the derived encoding of a
-/// serializable field.
-fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    if value.is_none() {
-        return Ok(value.clone());
-    }
-    value.call_method0(intern!(value.py(), "serialize_to_dict"))
 }
 
 /// Return the value of `payload` decoded by `class.deserialize_from_dict`,

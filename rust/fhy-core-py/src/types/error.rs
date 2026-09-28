@@ -37,12 +37,13 @@ impl IntoPyErr for TemplateWidthError {
 impl IntoPyErr for UnificationError {
     fn into_py_err(self) -> PyErr {
         match self {
-            UnificationError::Extension(source) => crate::exceptions::unbox_py_err(source)
-                .unwrap_or_else(|other| {
+            Self::Extension(source) => {
+                crate::exceptions::unbox_py_err(source).unwrap_or_else(|other| {
                     Python::attach(|py| {
                         crate::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
                     })
-                }),
+                })
+            }
             other => Python::attach(|py| {
                 crate::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
             }),

@@ -13,10 +13,23 @@
 //! the framework's own exceptions with the same messages.
 
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
+use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyType};
 
 const MODULE: &str = "fhy_core.serialization";
+
+/// Return the payload of the serializable `value` from its own
+/// `serialize_to_dict`, or `None` for `None`.
+///
+/// Matches the Python implementation: the derived encoding of a
+/// serializable field.
+pub(crate) fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    if value.is_none() {
+        return Ok(value.clone());
+    }
+    value.call_method0(intern!(value.py(), "serialize_to_dict"))
+}
 
 /// Return whether `value` is a payload dict: a mapping with `str` keys and
 /// serializable values, as `fhy_core.serialization.is_serialized_dict`

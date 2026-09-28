@@ -34,6 +34,7 @@ use crate::frozen::build_frozen_mutation_error;
 use crate::gc::{Slots, collect_slots};
 use crate::serialization::{
     FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
+    serialize_nested,
 };
 use crate::solver::{
     get_default_solver, read_limits, read_symbol_types, warn_hazard, warn_unknown,
@@ -43,7 +44,7 @@ use super::custom::{PyCustomConstraint, PythonBindings};
 use super::error::constraint_error_to_py;
 use super::kinds::{
     ReadBindings, is_same_class, outcome_to_python, read_native_constraint, read_scoped_bindings,
-    serialize_nested, with_renaming,
+    with_renaming,
 };
 use super::observer::{DEBUG, LoggingObserver, WARNING, log, native_constant_refusal};
 use super::value::{

@@ -17,7 +17,6 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::expression::{Callee, ExpressionKind, FunctionName, FunctionSort, LiteralValue};
@@ -31,6 +30,7 @@ use fhy_core::types::checking::{
 use fhy_core::types::{CoreDataType, Type, TypeQualifier};
 
 use crate::dataclass::build_argument_type_error;
+use crate::diagnostic::diagnostic_class;
 use crate::error::IntoPyResult;
 use crate::expression::{
     PyExpression, PyIdentifierExpression, RegistryState, get_registered_entry, read_big_int,
@@ -56,15 +56,6 @@ const SWEEP_SOURCE: &str = "fhy_core.types.checking.check_all_registered_functio
 fn is_registry_resolver(resolver: &Bound<'_, PyAny>) -> PyResult<bool> {
     let registry_resolver = crate::python::cached_attr!(resolver.py(), "fhy_core.symbolic.expression.registry", "get_registered_entry" => PyAny)?;
     Ok(resolver.is(registry_resolver))
-}
-
-/// Return the class `name` of `fhy_core.diagnostic`.
-fn diagnostic_class<'py>(py: Python<'py>, name: &'static str) -> PyResult<Bound<'py, PyAny>> {
-    static MODULE: PyOnceLock<Py<PyModule>> = PyOnceLock::new();
-    MODULE
-        .get_or_try_init(py, || py.import("fhy_core.diagnostic").map(Bound::unbind))?
-        .bind(py)
-        .getattr(name)
 }
 
 /// Return the text of the `EntryLookupError` `error`: its message, not the

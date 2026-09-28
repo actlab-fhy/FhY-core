@@ -22,7 +22,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyDict, PyString, PyTuple, PyType};
+use pyo3::types::{PyDict, PyModule, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind};
 use fhy_core::interned::Canonical;
@@ -41,6 +41,23 @@ const MODULE: &str = "fhy_core.diagnostic";
 
 /// The text `format()` renders for a report without diagnostics.
 const NO_DIAGNOSTICS_TEXT: &str = "No validation diagnostics.";
+
+/// Return the attribute `name` of `fhy_core.diagnostic`, such as a class,
+/// imported on first use and kept for the life of the process.
+///
+/// # Errors
+///
+/// Raises what importing the module or reading the attribute raises.
+pub(crate) fn diagnostic_class<'py>(
+    py: Python<'py>,
+    name: &'static str,
+) -> PyResult<Bound<'py, PyAny>> {
+    static DIAGNOSTIC_MODULE: PyOnceLock<Py<PyModule>> = PyOnceLock::new();
+    DIAGNOSTIC_MODULE
+        .get_or_try_init(py, || py.import(MODULE).map(Bound::unbind))?
+        .bind(py)
+        .getattr(name)
+}
 
 define_described_tag_class! {
     /// Open, registry-backed classification of an explanatory note's role,

@@ -26,7 +26,7 @@ use crate::expression::PyExpression;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{deserialize_identifier, restore_identifier};
 use crate::public_class::PublicClass;
-use crate::serialization::{FieldShape, read_payload_fields};
+use crate::serialization::{FieldShape, read_payload_fields, serialize_nested};
 
 use super::adapter::run_in_context;
 use super::convert::{read_data_type_value, read_type_value};
@@ -57,15 +57,15 @@ pub(crate) trait MayCallPython {
 
 impl MayCallPython for DataType {
     fn may_call_python(&self) -> bool {
-        matches!(self, DataType::Extension(_))
+        matches!(self, Self::Extension(_))
     }
 }
 
 impl MayCallPython for Type {
     fn may_call_python(&self) -> bool {
         match self {
-            Type::Numerical(numerical) => numerical.data_type().may_call_python(),
-            Type::Index(_) => false,
+            Self::Numerical(numerical) => numerical.data_type().may_call_python(),
+            Self::Index(_) => false,
             _ => true,
         }
     }
@@ -116,11 +116,6 @@ fn cached_hash<T: std::hash::Hash + MayCallPython>(
         hash_value(value)
     };
     Ok(*cache.get_or_init(|| hash))
-}
-
-/// Return the payload of the serializable `value`.
-fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    value.call_method0(intern!(value.py(), "serialize_to_dict"))
 }
 
 /// Return the expression a payload encodes.

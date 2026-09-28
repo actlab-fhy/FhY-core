@@ -29,7 +29,7 @@ use crate::dataclass::{
 use crate::error::IntoPyErr;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{deserialize_identifier, restore_identifier, serialize_identifier};
-use crate::serialization::{FieldShape, is_serialized_dict, read_payload_fields};
+use crate::serialization::{FieldShape, is_serialized_dict, read_payload_fields, serialize_nested};
 use crate::term::read_renaming;
 use crate::types::{
     MayCallPython, read_type_qualifier, read_type_value, run_in_context, type_qualifier_to_python,
@@ -113,10 +113,8 @@ fn keyword_to_python(py: Python<'_>, keyword: FunctionKeyword) -> PyResult<Bound
 impl MayCallPython for SymbolFrame {
     fn may_call_python(&self) -> bool {
         match self {
-            SymbolFrame::Variable(frame) => frame.ty().may_call_python(),
-            SymbolFrame::Function(frame) => {
-                frame.signature().iter().any(|(_, ty)| ty.may_call_python())
-            }
+            Self::Variable(frame) => frame.ty().may_call_python(),
+            Self::Function(frame) => frame.signature().iter().any(|(_, ty)| ty.may_call_python()),
             _ => false,
         }
     }
@@ -214,11 +212,6 @@ fn cached_hash(py: Python<'_>, cache: &OnceLock<u64>, value: &SymbolFrame) -> Py
         hash_value(value)
     };
     Ok(*cache.get_or_init(|| hash))
-}
-
-/// Return the payload of the serializable `value`.
-fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    value.call_method0(intern!(value.py(), "serialize_to_dict"))
 }
 
 /// Return the type a payload encodes, through `Type`'s family dispatch.

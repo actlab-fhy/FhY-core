@@ -19,6 +19,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::symbol_table::{Frame, SymbolFrame, SymbolTable, SymbolTableError};
 
 use crate::dataclass::build_argument_type_error;
+use crate::diagnostic::diagnostic_class;
 use crate::error::IntoPyErr;
 use crate::identifier::{
     deserialize_identifier, identifier_to_python, restore_identifier, serialize_identifier,
@@ -70,15 +71,6 @@ fn log_debug<'py>(
     items.extend(arguments);
     logger(py)?.call_method1(intern!(py, "debug"), PyTuple::new(py, items)?)?;
     Ok(())
-}
-
-/// Return `fhy_core.diagnostic`'s class `name`.
-fn diagnostic_class<'py>(py: Python<'py>, name: &'static str) -> PyResult<Bound<'py, PyAny>> {
-    static DIAGNOSTIC_MODULE: PyOnceLock<Py<PyModule>> = PyOnceLock::new();
-    DIAGNOSTIC_MODULE
-        .get_or_try_init(py, || py.import("fhy_core.diagnostic").map(Bound::unbind))?
-        .bind(py)
-        .getattr(name)
 }
 
 /// What the table holds for one symbol.

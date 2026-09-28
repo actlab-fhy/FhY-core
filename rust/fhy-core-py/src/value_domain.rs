@@ -109,7 +109,7 @@ impl PyValueDomain {
         let description = PyString::new(py, domain.description());
         let seed = Bound::new(
             py,
-            ValueDomainSeed(Seed::new(PyValueDomain {
+            ValueDomainSeed(Seed::new(Self {
                 domain,
                 name: name.unbind(),
                 description: description.unbind(),

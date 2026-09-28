@@ -38,6 +38,7 @@ use crate::gc::{Slots, collect_slots};
 use crate::identifier::{deserialize_identifier, read_identifier_id, restore_identifier};
 use crate::serialization::{
     FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
+    serialize_nested,
 };
 use crate::solver::get_default_solver;
 use crate::term::read_renaming;
@@ -186,11 +187,6 @@ pub(crate) fn with_renaming<T>(
 ) -> PyResult<T> {
     let renaming = read_renaming(renaming)?;
     Ok(use_renaming(renaming.get().value().renaming()))
-}
-
-/// Return the payload of the serializable `value`.
-pub(crate) fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    value.call_method0(intern!(value.py(), "serialize_to_dict"))
 }
 
 // ---------------------------------------------------------------------------
