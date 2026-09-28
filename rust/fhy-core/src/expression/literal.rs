@@ -1,6 +1,7 @@
 //! Literal values and the exact decimals they may hold.
 
 mod decimal;
+pub(crate) mod exact;
 
 use std::cmp::Ordering;
 use std::error::Error;
@@ -11,8 +12,8 @@ use std::mem;
 use num_bigint::{BigInt, Sign};
 use serde::{Deserialize, Serialize};
 
-pub use self::decimal::Decimal;
 use self::decimal::is_ascii_digit_run;
+pub use self::decimal::{Decimal, DecimalPartsError};
 use super::sort::FunctionSort;
 
 /// The constant held by a literal expression, normalized.

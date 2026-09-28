@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use num_bigint::{BigInt, Sign};
 use num_traits::{One, Signed, Zero};
 
+use crate::expression::Rational;
 use crate::expression::{
-    BinaryOperation, Decimal, Expression, ExpressionKind, LiteralValue, LogicalOperation,
-    SymbolType, SymbolTypes, UnaryOperation,
+    BinaryOperation, Expression, ExpressionKind, LiteralValue, LogicalOperation, SymbolType,
+    SymbolTypes, UnaryOperation,
 };
 use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
@@ -37,68 +38,6 @@ fn sanitize(name_hint: &str) -> String {
             }
         })
         .collect()
-}
-
-/// Return the greatest common divisor of two non-negative integers.
-fn gcd(mut left: BigInt, mut right: BigInt) -> BigInt {
-    while !right.is_zero() {
-        let remainder = &left % &right;
-        left = right;
-        right = remainder;
-    }
-    left
-}
-
-/// Return the exact rational a finite `f64` denotes, as a numerator of any
-/// sign and a positive denominator in lowest terms.
-fn rationalize_float(value: f64) -> (BigInt, BigInt) {
-    if value == 0.0 {
-        return (BigInt::zero(), BigInt::one());
-    }
-    let bits = value.to_bits();
-    let is_negative = bits >> 63 == 1;
-    let biased_exponent = i64::try_from((bits >> 52) & 0x7ff).expect("an 11-bit field");
-    let fraction = bits & ((1_u64 << 52) - 1);
-    let (mut mantissa, mut exponent) = if biased_exponent == 0 {
-        (fraction, -1074_i64)
-    } else {
-        (fraction | (1_u64 << 52), biased_exponent - 1075)
-    };
-    let trailing_zeros = mantissa.trailing_zeros();
-    mantissa >>= trailing_zeros;
-    exponent += i64::from(trailing_zeros);
-    let magnitude = BigInt::from(mantissa);
-    let (numerator, denominator) = if exponent >= 0 {
-        let shift = u64::try_from(exponent).expect("a non-negative exponent");
-        (magnitude << shift, BigInt::one())
-    } else {
-        let shift = u64::try_from(-exponent).expect("a positive shift");
-        (magnitude, BigInt::one() << shift)
-    };
-    if is_negative {
-        (-numerator, denominator)
-    } else {
-        (numerator, denominator)
-    }
-}
-
-/// Return the exact rational a decimal denotes, in lowest terms.
-fn rationalize_decimal(decimal: &Decimal) -> (BigInt, BigInt) {
-    let ten = BigInt::from(10);
-    let exponent = decimal.exponent();
-    if exponent >= 0 {
-        let power = u32::try_from(exponent).map_or_else(
-            |_| unreachable!("a decimal's exponent is bounded by its digit count"),
-            |exponent| ten.pow(exponent),
-        );
-        return (decimal.coefficient() * power, BigInt::one());
-    }
-    let power = u32::try_from(-exponent).map_or_else(
-        |_| unreachable!("a decimal's exponent is bounded by its digit count"),
-        |exponent| ten.pow(exponent),
-    );
-    let divisor = gcd(decimal.coefficient().clone(), power.clone());
-    (decimal.coefficient() / &divisor, power / divisor)
 }
 
 /// Lowers expressions into the terms of one script.
@@ -257,13 +196,15 @@ impl<'a> Lowerer<'a> {
         Ok(match literal {
             LiteralValue::Bool(value) => self.push(Term::Bool(*value), SymbolType::Bool, true),
             LiteralValue::Int(value) => self.integer(value.clone()),
-            LiteralValue::Float(value) if value.is_finite() => {
-                let (numerator, denominator) = rationalize_float(*value);
+            LiteralValue::Float(value) => {
+                let Some(exact) = Rational::of_f64(*value) else {
+                    return Err(LoweringError::NonFiniteLiteral(node.clone()));
+                };
+                let (numerator, denominator) = exact.into_parts();
                 self.rational(numerator, denominator)
             }
-            LiteralValue::Float(_) => return Err(LoweringError::NonFiniteLiteral(node.clone())),
             LiteralValue::Decimal(decimal) => {
-                let (numerator, denominator) = rationalize_decimal(decimal);
+                let (numerator, denominator) = decimal.to_rational_parts();
                 self.rational(numerator, denominator)
             }
         })

@@ -52,21 +52,14 @@ pub(super) fn literal<'py>(
     }
 }
 
-/// Return the `Rational` a decimal denotes.
+/// Return the `Rational` a decimal denotes, from the core's exact
+/// arithmetic (`Decimal::to_rational_parts`), in lowest terms.
 fn rational<'py>(
     py: Python<'py>,
     handles: &Handles,
     value: &Decimal,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let ten = BigInt::from(10);
-    let exponent = value.exponent();
-    let magnitude = exponent.unsigned_abs();
-    let power = num_traits::pow(ten, usize::try_from(magnitude).unwrap_or(usize::MAX));
-    let (numerator, denominator) = if exponent >= 0 {
-        (value.coefficient() * power, BigInt::from(1))
-    } else {
-        (value.coefficient().clone(), power)
-    };
+    let (numerator, denominator) = value.to_rational_parts();
     handles
         .rational
         .bind(py)

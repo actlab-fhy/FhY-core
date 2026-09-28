@@ -4,9 +4,9 @@
 use std::cmp::Ordering;
 
 use num_bigint::BigInt;
-use num_traits::FromPrimitive;
 
 use crate::constraint::{Member, MemberKind, Value};
+use crate::expression::ExactNumber;
 use crate::foreign::BoxError;
 
 /// Return the value `member` holds.
@@ -36,27 +36,6 @@ fn tie_rank(member: &Member) -> u8 {
     }
 }
 
-/// Return the exact order of the integer `left` and the float `right`,
-/// which is not a NaN.
-fn compare_int_with_float(left: &BigInt, right: f64) -> Ordering {
-    if right.is_infinite() {
-        return if right > 0.0 {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        };
-    }
-    let floor = right.floor();
-    let Some(floor_int) = BigInt::from_f64(floor) else {
-        // A finite float always has an integral floor.
-        return Ordering::Equal;
-    };
-    match left.cmp(&floor_int) {
-        Ordering::Equal if right > floor => Ordering::Less,
-        ordering => ordering,
-    }
-}
-
 /// Return the numeric order of two numbers, exactly.
 fn compare_numbers(left: &Member, right: &Member) -> Option<Ordering> {
     let as_int = |member: &Member| match member.kind() {
@@ -68,13 +47,12 @@ fn compare_numbers(left: &Member, right: &Member) -> Option<Ordering> {
         MemberKind::Float(value) => Some(value),
         _ => None,
     };
-    match (as_int(left), as_int(right), as_float(left), as_float(right)) {
-        (Some(left), Some(right), _, _) => Some(left.cmp(&right)),
-        (Some(left), None, _, Some(right)) => Some(compare_int_with_float(&left, right)),
-        (None, Some(right), Some(left), _) => Some(compare_int_with_float(&right, left).reverse()),
-        (None, None, Some(left), Some(right)) => left.partial_cmp(&right),
-        _ => None,
-    }
+    let exact = |integer: Option<BigInt>, float: Option<f64>| match (integer, float) {
+        (Some(integer), _) => Some(ExactNumber::integer(integer)),
+        (None, Some(float)) => ExactNumber::of_f64(float),
+        (None, None) => None,
+    };
+    Some(exact(as_int(left), as_float(left))?.cmp(&exact(as_int(right), as_float(right))?))
 }
 
 /// Return whether `member` is a number of the ordinal order.

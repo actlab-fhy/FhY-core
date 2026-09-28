@@ -104,7 +104,7 @@ onto `dev-rust` before continuing.
 - [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables: `98bc2a8`
 - [x] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories: `a61d3b6`
 - [x] `[rebase]` onto `dev-rust` after Tracks D and B land (rebased onto `03fb9e4` by the maintainer)
-- [ ] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound
+- [x] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound
 - [ ] Track C status: gates green; counts recorded; landed as `<hash>`
 
 ### Track E: `binding` (the binding and the Python package; lands 5th, last)
@@ -3934,6 +3934,79 @@ B's `a_rule_error_on_a_dag_displays_in_bounded_size` followed by this
 track's two DAG stories. The per-commit gates pass on the rebased head
 (`cargo test --workspace` 4,924, `--all-features` 4,960) with no
 fix-forward.
+
+**R2-008.**
+- **The module.** `expression/literal/exact.rs` (crate-private, one
+  `pub(crate) mod exact;` line in Track B's `literal.rs`, and a
+  `pub(crate) use` of `ExactNumber` and `Rational` in `expression.rs`)
+  holds `Rational` (always in lowest terms with a positive denominator,
+  ordered by cross-multiplication), `Rational::of_f64` (exact from the
+  IEEE-754 decomposition, `None` for a NaN or an infinity),
+  `Rational::to_f64_exact` (the float equal to the rational, if any,
+  subnormals included), `Rational::to_decimal` (where the expansion ends
+  and the exponent is within the bound), `Decimal::to_rational`,
+  `ExactNumber` (the rationals and the two infinities, in order), and
+  `LiteralValue::exact_value`/`exact_cmp` (a Boolean as `0` or `1`, a NaN
+  ordered against nothing). Powers of ten and two are computed by squaring
+  over a `u64` exponent, so no conversion of an exponent can fail or fall
+  back.
+- **The copies deleted:** `param/interval.rs`'s `Fraction` and `Extended`
+  (`check_bounds_are_ordered` calls `exact_cmp`), `param/value.rs`'s
+  `compare_int_with_float` (the ordinal order compares `ExactNumber`s),
+  `solver/smt/lower.rs`'s `gcd`, `rationalize_float` and
+  `rationalize_decimal`, `expression/literal/decimal.rs`'s `split_float`
+  (`to_f64_exact` is now `to_rational().to_f64_exact()`), and in the
+  binding `solver/sympy/lower.rs`'s decimal-to-rational and
+  `solver/sympy/lift.rs`'s `split_off` and `exact_decimal` (Track D's
+  moved files, the call sites the spec names).
+- **The public surface, for the binding and Track E's R2-045 (call):**
+  - `Decimal::MAX_EXPONENT_MAGNITUDE: u32 = 10_000`;
+  - `Decimal::from_parts(coefficient: BigInt, exponent: i64) ->
+    Result<Decimal, DecimalPartsError>`: the value `coefficient *
+    10^exponent`, normalized as parsing normalizes (trailing zeros move
+    into the exponent, zero is `0 * 10^0`), refusing a negative
+    coefficient (`DecimalPartsError::NegativeCoefficient`; a decimal is
+    non-negative, its sign is a negation around it) and a normalized
+    exponent beyond the bound in magnitude
+    (`DecimalPartsError::ExponentOutOfRange { exponent }`, the exponent
+    given, including one whose normalization would overflow `i64`). For a
+    Python `decimal.Decimal`'s `as_tuple()`, R2-045 passes the digits as a
+    `BigInt` and the exponent, handling the sign as a negation;
+  - `DecimalPartsError`, `#[non_exhaustive]`, exported as
+    `fhy_core::expression::DecimalPartsError`;
+  - `Decimal::to_rational_parts(&self) -> (BigInt, BigInt)`, lowest terms,
+    positive denominator;
+  - `Decimal::from_rational_parts(numerator, denominator) ->
+    Option<Decimal>`, added beyond the spec's two so the SymPy lifting
+    keeps no rational-to-decimal copy: the decimal of the magnitude, or
+    `None` for a zero denominator, an expansion that does not end, or an
+    exponent beyond the bound.
+- **The bound's premise (spec proved wrong).** The spec says the text
+  grammar implies the bound for any accepted literal; it does not: the
+  grammar has no length limit, so `"0." + 20,000 zeros + "1"` parses with
+  exponent `-20,001`. What the grammar implies is that a parsed exponent is
+  at most the text's length, so its cost is linear in the input. So
+  `FromStr` keeps accepting every text it accepted (no behavior change),
+  and the bound holds where parts come from outside the grammar,
+  `from_parts`, as the spec places it; `Rational::to_decimal`, and so
+  `from_rational_parts`, stay within it too. The exact conversions need no
+  bound for correctness, since they never truncate.
+- **Tests:** unit properties in `exact.rs` (`of_f64` round-trips every
+  finite `f64` bit pattern through `to_f64_exact`; `exact_cmp` agrees with
+  a cross-multiplication oracle that decomposes floats through
+  `integer_decode` and decimals through their text; a decimal round-trips
+  through its rational), rstests of both conversions' edges (the least
+  subnormal, `f64::MAX`, values no float equals), and
+  `tests/it/param/interval_stories.rs` (new):
+  `a_decimal_bound_with_a_huge_exponent_is_refused_not_misordered` through
+  `from_parts`, with bounds at the limit ordered exactly against floats and
+  a `10^10000 - 1` integer, and the normalization and refusal stories. The
+  existing lowering, interval and SymPy stories pass unchanged.
+- **Behavior change:** none through the grammar. A decimal beyond the
+  bound can only come from `from_parts`, which refuses it. In the SymPy
+  lifting, a rational whose decimal would need an exponent beyond 10,000
+  now lifts as the quotient `n / d` instead of a decimal literal; no
+  Python test reaches one.
 
 ### Track E notes
 

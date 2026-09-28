@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed};
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple};
@@ -477,8 +477,11 @@ fn read_symbol(node: &Bound<'_, PyAny>) -> Fallible<Identifier> {
 /// A rational some binary float equals becomes the decimal literal of its
 /// value, negated when it is negative, which the evaluators read; every
 /// other one becomes the exact quotient of its numerator and denominator.
+/// The decimal comes from the core's exact arithmetic
+/// (`Decimal::from_rational_parts`), so a rational whose decimal exponent
+/// would exceed `Decimal::MAX_EXPONENT_MAGNITUDE` stays a quotient.
 pub(super) fn lift_rational(numerator: &BigInt, denominator: &BigInt) -> Expression {
-    if let Some(decimal) = exact_decimal(numerator.abs(), denominator) {
+    if let Some(decimal) = Decimal::from_rational_parts(numerator.clone(), denominator.clone()) {
         if decimal.to_f64_exact().is_some() {
             let magnitude = Expression::literal(LiteralValue::Decimal(decimal));
             return if numerator.is_negative() {
@@ -493,42 +496,6 @@ pub(super) fn lift_rational(numerator: &BigInt, denominator: &BigInt) -> Express
         Expression::literal(numerator.clone()),
         Expression::literal(denominator.clone()),
     )
-}
-
-/// Return the multiplicity of `prime` in `value`, and `value` without it.
-fn split_off(mut value: BigInt, prime: u32) -> (u32, BigInt) {
-    let prime = BigInt::from(prime);
-    let mut exponent = 0;
-    while (&value % &prime).is_zero() {
-        value /= &prime;
-        exponent += 1;
-    }
-    (exponent, value)
-}
-
-/// Return the decimal equal to the non-negative `magnitude / denominator`,
-/// or `None` when its expansion does not end: exactly when the
-/// denominator's only prime factors are 2 and 5.
-fn exact_decimal(magnitude: BigInt, denominator: &BigInt) -> Option<Decimal> {
-    if !denominator.is_positive() {
-        return None;
-    }
-    let (twos, rest) = split_off(denominator.clone(), 2);
-    let (fives, rest) = split_off(rest, 5);
-    if !rest.is_one() {
-        return None;
-    }
-    let digits_after_point = twos.max(fives);
-    let scaled = magnitude
-        * num_traits::pow(BigInt::from(2), (digits_after_point - twos) as usize)
-        * num_traits::pow(BigInt::from(5), (digits_after_point - fives) as usize);
-    let mut text = scaled.to_string();
-    let fraction_digits = digits_after_point as usize;
-    if text.len() <= fraction_digits {
-        text = format!("{}{text}", "0".repeat(fraction_digits + 1 - text.len()));
-    }
-    text.insert(text.len() - fraction_digits, '.');
-    text.parse().ok()
 }
 
 /// Return the expression `build` assembles from the last parts of

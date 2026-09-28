@@ -9,6 +9,7 @@ mod decision_rule_stories;
 mod domain_stories;
 mod error_stories;
 mod error_text_stories;
+mod interval_stories;
 mod param_properties;
 mod param_stories;
 mod serde_stories;

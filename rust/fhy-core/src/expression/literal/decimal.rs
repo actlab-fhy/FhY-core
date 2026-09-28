@@ -9,24 +9,12 @@ use std::fmt;
 use std::str::FromStr;
 
 use num_bigint::BigInt;
-use num_traits::Zero;
+use num_traits::{Signed, Zero};
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::LiteralTextError;
-
-/// Return the integer mantissa and the binary exponent of the finite,
-/// positive `value`: `value == mantissa * 2^exponent` exactly.
-fn split_float(value: f64) -> (u64, i64) {
-    let bits = value.to_bits();
-    let stored_exponent = i64::try_from((bits >> 52) & 0x7ff).expect("11 bits");
-    let fraction = bits & ((1 << 52) - 1);
-    if stored_exponent == 0 {
-        (fraction, -1074)
-    } else {
-        (fraction | (1 << 52), stored_exponent - 1075)
-    }
-}
+use super::exact::Rational;
 
 fn convert_count_to_exponent(count: usize) -> i64 {
     i64::try_from(count).expect("a digit count fits in an i64 exponent")
@@ -125,11 +113,101 @@ impl Decimal {
         self.exponent
     }
 
+    /// The greatest magnitude of the exponent [`from_parts`](Self::from_parts)
+    /// accepts: `10^10000` and `10^-10000` are the extremes of its scale.
+    ///
+    /// Parts come from outside the literal grammar, such as a Python
+    /// `decimal.Decimal`'s `as_tuple`, whose exponent may be a billion; the
+    /// bound keeps the exact value such a decimal denotes, a rational with
+    /// `10^|exponent|` in it, of bounded size. A decimal parsed from text
+    /// needs no bound: its exponent is at most its text's length.
+    pub const MAX_EXPONENT_MAGNITUDE: u32 = 10_000;
+
+    /// Return the decimal `coefficient * 10^exponent`, normalized as
+    /// parsing normalizes: trailing zeros of the coefficient move into the
+    /// exponent, and zero is the coefficient `0` with exponent `0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecimalPartsError::NegativeCoefficient`] for a negative
+    /// coefficient, a decimal being non-negative, and
+    /// [`DecimalPartsError::ExponentOutOfRange`] when the normalized
+    /// exponent's magnitude exceeds [`MAX_EXPONENT_MAGNITUDE`](Self::MAX_EXPONENT_MAGNITUDE).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::expression::{BigInt, Decimal, DecimalPartsError};
+    ///
+    /// let decimal = Decimal::from_parts(BigInt::from(1500), -3)?;
+    ///
+    /// assert_eq!(decimal, "1.5".parse()?);
+    /// assert_eq!(decimal.to_rational_parts(), (BigInt::from(3), BigInt::from(2)));
+    /// assert!(Decimal::from_parts(BigInt::from(1), 10_001).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_parts(coefficient: BigInt, exponent: i64) -> Result<Self, DecimalPartsError> {
+        if coefficient.is_negative() {
+            return Err(DecimalPartsError::NegativeCoefficient);
+        }
+        if coefficient.is_zero() {
+            return Ok(Self {
+                coefficient,
+                exponent: 0,
+            });
+        }
+        let out_of_range = || DecimalPartsError::ExponentOutOfRange { exponent };
+        let ten = BigInt::from(10);
+        let mut coefficient = coefficient;
+        let mut normalized = exponent;
+        while (&coefficient % &ten).is_zero() {
+            coefficient /= &ten;
+            normalized = normalized.checked_add(1).ok_or_else(out_of_range)?;
+        }
+        if normalized.unsigned_abs() > u64::from(Self::MAX_EXPONENT_MAGNITUDE) {
+            return Err(out_of_range());
+        }
+        Ok(Self {
+            coefficient,
+            exponent: normalized,
+        })
+    }
+
+    /// Return the exact rational the decimal denotes, as its numerator and
+    /// its positive denominator in lowest terms: `1.5` is `(3, 2)`.
+    #[must_use]
+    pub fn to_rational_parts(&self) -> (BigInt, BigInt) {
+        self.to_rational().into_parts()
+    }
+
+    /// Return the decimal equal to the magnitude of `numerator /
+    /// denominator`, or `None` when its expansion does not end (the
+    /// reduced denominator has a prime factor other than 2 and 5), the
+    /// denominator is zero, or its exponent's magnitude exceeds
+    /// [`MAX_EXPONENT_MAGNITUDE`](Self::MAX_EXPONENT_MAGNITUDE).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::expression::{BigInt, Decimal};
+    ///
+    /// assert_eq!(
+    ///     Decimal::from_rational_parts(BigInt::from(-3), BigInt::from(8)),
+    ///     Some("0.375".parse()?)
+    /// );
+    /// assert_eq!(Decimal::from_rational_parts(BigInt::from(1), BigInt::from(3)), None);
+    /// # Ok::<(), fhy_core::expression::LiteralTextError>(())
+    /// ```
+    #[must_use]
+    pub fn from_rational_parts(numerator: BigInt, denominator: BigInt) -> Option<Self> {
+        Rational::new(numerator, denominator)?.to_decimal()
+    }
+
     /// Return the binary64 float equal to the decimal, or `None` if no
     /// float is: `0.5` is one, and `0.1` is not.
     ///
-    /// The answer is exact at any length: the nearest float to the decimal
-    /// is compared with the decimal as exact rationals.
+    /// The answer is exact at any length: the decimal's exact rational must
+    /// be a float's.
     ///
     /// # Examples
     ///
@@ -142,34 +220,43 @@ impl Decimal {
     /// ```
     #[must_use]
     pub fn to_f64_exact(&self) -> Option<f64> {
-        let nearest: f64 = self.to_string().parse().ok()?;
-        if !nearest.is_finite() {
-            return None;
-        }
-        if nearest == 0.0 {
-            return self.coefficient.is_zero().then_some(0.0);
-        }
-        // The float is `mantissa * 2^binary_exponent` exactly, and the
-        // decimal `coefficient * 10^exponent`; compare the two as integers,
-        // scaling whichever side has a negative exponent up.
-        let (mantissa, binary_exponent) = split_float(nearest);
-        let mut float_side = BigInt::from(mantissa);
-        let mut decimal_side = self.coefficient.clone();
-        if binary_exponent >= 0 {
-            float_side <<= binary_exponent.unsigned_abs();
-        } else {
-            decimal_side <<= binary_exponent.unsigned_abs();
-        }
-        let ten = BigInt::from(10);
-        let scale = num_traits::pow(ten, usize::try_from(self.exponent.unsigned_abs()).ok()?);
-        if self.exponent >= 0 {
-            decimal_side *= scale;
-        } else {
-            float_side *= scale;
-        }
-        (float_side == decimal_side).then_some(nearest)
+        self.to_rational().to_f64_exact()
     }
 }
+
+/// Parts [`Decimal::from_parts`] refuses.
+///
+/// Displays one lowercase line, such as `decimal exponent 10001 exceeds the
+/// bound of 10000 in magnitude`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DecimalPartsError {
+    /// The coefficient is negative; a decimal is non-negative.
+    NegativeCoefficient,
+    /// The exponent, normalized, exceeds
+    /// [`Decimal::MAX_EXPONENT_MAGNITUDE`] in magnitude.
+    ExponentOutOfRange {
+        /// The exponent given.
+        exponent: i64,
+    },
+}
+
+impl fmt::Display for DecimalPartsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NegativeCoefficient => {
+                f.write_str("a decimal's coefficient must be non-negative")
+            }
+            Self::ExponentOutOfRange { exponent } => write!(
+                f,
+                "decimal exponent {exponent} exceeds the bound of {} in magnitude",
+                Decimal::MAX_EXPONENT_MAGNITUDE
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DecimalPartsError {}
 
 impl FromStr for Decimal {
     type Err = LiteralTextError;

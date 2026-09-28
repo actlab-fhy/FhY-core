@@ -5,7 +5,7 @@
 use std::cmp::Ordering;
 
 use num_bigint::BigInt;
-use num_traits::{One, Signed, Zero};
+use num_traits::{Signed, Zero};
 
 use crate::constraint::{Constraint, EquationConstraint};
 use crate::expression::{BinaryOperation, Expression, ExpressionKind, LiteralValue};
@@ -130,108 +130,6 @@ pub(super) fn check_natural_bound(
     })
 }
 
-/// A finite number as the exact fraction `numerator / denominator`, the
-/// denominator positive.
-struct Fraction {
-    numerator: BigInt,
-    denominator: BigInt,
-}
-
-impl Fraction {
-    fn integer(value: BigInt) -> Self {
-        Self {
-            numerator: value,
-            denominator: BigInt::one(),
-        }
-    }
-
-    /// Return the exact value of the finite float `value`.
-    fn of_float(value: f64) -> Self {
-        let bits = value.to_bits();
-        let is_negative = bits >> 63 == 1;
-        let exponent = i64::try_from((bits >> 52) & 0x7ff).unwrap_or(0);
-        let fraction = bits & ((1_u64 << 52) - 1);
-        let (mantissa, power) = if exponent == 0 {
-            (fraction, -1074)
-        } else {
-            (fraction | (1_u64 << 52), exponent - 1075)
-        };
-        let mut numerator = BigInt::from(mantissa);
-        if is_negative {
-            numerator = -numerator;
-        }
-        let shift = usize::try_from(power.unsigned_abs()).unwrap_or(0);
-        if power >= 0 {
-            Self::integer(numerator << shift)
-        } else {
-            Self {
-                numerator,
-                denominator: BigInt::one() << shift,
-            }
-        }
-    }
-
-    fn compare(&self, other: &Self) -> Ordering {
-        (&self.numerator * &other.denominator).cmp(&(&other.numerator * &self.denominator))
-    }
-}
-
-/// A bound literal's place on the extended number line.
-enum Extended {
-    NegativeInfinity,
-    Finite(Fraction),
-    PositiveInfinity,
-    NotANumber,
-}
-
-/// Return the exact value of the literal `value`: a Boolean as `0` or `1`.
-fn extended_value(value: &LiteralValue) -> Extended {
-    match value {
-        LiteralValue::Bool(value) => {
-            Extended::Finite(Fraction::integer(BigInt::from(u8::from(*value))))
-        }
-        LiteralValue::Int(value) => Extended::Finite(Fraction::integer(value.clone())),
-        LiteralValue::Float(value) if value.is_nan() => Extended::NotANumber,
-        LiteralValue::Float(value) if value.is_infinite() => {
-            if *value > 0.0 {
-                Extended::PositiveInfinity
-            } else {
-                Extended::NegativeInfinity
-            }
-        }
-        LiteralValue::Float(value) => Extended::Finite(Fraction::of_float(*value)),
-        LiteralValue::Decimal(value) => {
-            let exponent = value.exponent();
-            let power = BigInt::from(10).pow(u32::try_from(exponent.unsigned_abs()).unwrap_or(0));
-            Extended::Finite(if exponent >= 0 {
-                Fraction::integer(value.coefficient() * power)
-            } else {
-                Fraction {
-                    numerator: value.coefficient().clone(),
-                    denominator: power,
-                }
-            })
-        }
-    }
-}
-
-/// Return the exact order of two bound literals, or `None` when one is a
-/// NaN.
-fn compare_exactly(left: &LiteralValue, right: &LiteralValue) -> Option<Ordering> {
-    let rank = |value: &Extended| match value {
-        Extended::NegativeInfinity => 0,
-        Extended::Finite(_) => 1,
-        Extended::PositiveInfinity => 2,
-        Extended::NotANumber => 3,
-    };
-    let (left, right) = (extended_value(left), extended_value(right));
-    match (&left, &right) {
-        (Extended::NotANumber, _) | (_, Extended::NotANumber) => None,
-        (Extended::Finite(left), Extended::Finite(right)) => Some(left.compare(right)),
-        _ => Some(rank(&left).cmp(&rank(&right))),
-    }
-}
-
 /// Refuse bounds that enclose no value in any number system: a lower bound
 /// above the upper, or equal to it with an exclusive side.
 ///
@@ -248,7 +146,7 @@ pub fn check_bounds_are_ordered(
     lower_inclusivity: Inclusivity,
     upper_inclusivity: Inclusivity,
 ) -> Result<(), ParamBuildError> {
-    match compare_exactly(lower, upper) {
+    match lower.exact_cmp(upper) {
         Some(Ordering::Greater) => Err(ParamBuildError::UnorderedBounds),
         Some(Ordering::Equal)
             if !(lower_inclusivity.is_inclusive() && upper_inclusivity.is_inclusive()) =>
