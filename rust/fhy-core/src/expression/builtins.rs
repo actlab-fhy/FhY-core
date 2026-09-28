@@ -155,55 +155,367 @@ pub enum BuiltinFunction {
     Ceil,
 }
 
-/// Every built-in function in catalogue order: the composed functions, then
-/// the native ones.
-const FUNCTIONS: [BuiltinFunction; 35] = [
-    BuiltinFunction::Max,
-    BuiltinFunction::Min,
-    BuiltinFunction::Abs,
-    BuiltinFunction::Sign,
-    BuiltinFunction::Clamp,
-    BuiltinFunction::ClampSymmetric,
-    BuiltinFunction::Relu,
-    BuiltinFunction::LeakyRelu,
-    BuiltinFunction::Xor,
-    BuiltinFunction::Nand,
-    BuiltinFunction::Nor,
-    BuiltinFunction::Implies,
-    BuiltinFunction::Iff,
-    BuiltinFunction::Sigmoid,
-    BuiltinFunction::Silu,
-    BuiltinFunction::Gelu,
-    BuiltinFunction::Exp,
-    BuiltinFunction::Exp2,
-    BuiltinFunction::Log,
-    BuiltinFunction::Log2,
-    BuiltinFunction::Log10,
-    BuiltinFunction::Sqrt,
-    BuiltinFunction::Sin,
-    BuiltinFunction::Cos,
-    BuiltinFunction::Tan,
-    BuiltinFunction::Arcsin,
-    BuiltinFunction::Arccos,
-    BuiltinFunction::Arctan,
-    BuiltinFunction::Sinh,
-    BuiltinFunction::Cosh,
-    BuiltinFunction::Tanh,
-    BuiltinFunction::Erf,
-    BuiltinFunction::Round,
-    BuiltinFunction::Floor,
-    BuiltinFunction::Ceil,
-];
+/// One function's catalogue entry: its name and sorts, and either how to
+/// compute it natively or how to build its composed definition.
+struct FunctionEntry {
+    function: BuiltinFunction,
+    name: &'static str,
+    parameter_sorts: &'static [FunctionSort],
+    result_sort: FunctionSort,
+    /// `Some` for a native function, computing its value at one real
+    /// argument.
+    native: Option<fn(f64) -> f64>,
+    /// `Some` for a composed function.
+    composed: Option<ComposedSpec>,
+}
 
-/// The number of composed functions, which lead [`FUNCTIONS`].
-const COMPOSED_FUNCTION_COUNT: usize = 16;
+/// How to build a composed function's definition: its parameters' name
+/// hints, and how to build its body over references to them.
+#[derive(Clone, Copy)]
+struct ComposedSpec {
+    parameter_names: &'static [&'static str],
+    build_body: fn(&[Expression]) -> Expression,
+}
+
+/// The catalogue in catalogue order: the 16 composed functions, then the 19
+/// native ones. [`BuiltinFunction::catalogue_index`] indexes it.
+const CATALOGUE: [FunctionEntry; 35] = [
+    FunctionEntry {
+        function: BuiltinFunction::Max,
+        name: "max",
+        parameter_sorts: REAL_2,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_max_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Min,
+        name: "min",
+        parameter_sorts: REAL_2,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_min_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Abs,
+        name: "abs",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x"],
+            build_body: build_abs_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Sign,
+        name: "sign",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Int,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x"],
+            build_body: build_sign_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Clamp,
+        name: "clamp",
+        parameter_sorts: REAL_3,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x", "lo", "hi"],
+            build_body: build_clamp_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::ClampSymmetric,
+        name: "clamp_symmetric",
+        parameter_sorts: REAL_2,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x", "bound"],
+            build_body: build_clamp_symmetric_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Relu,
+        name: "relu",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x"],
+            build_body: build_relu_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::LeakyRelu,
+        name: "leaky_relu",
+        parameter_sorts: REAL_2,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x", "slope"],
+            build_body: build_leaky_relu_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Xor,
+        name: "xor",
+        parameter_sorts: BOOL_2,
+        result_sort: FunctionSort::Bool,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_xor_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Nand,
+        name: "nand",
+        parameter_sorts: BOOL_2,
+        result_sort: FunctionSort::Bool,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_nand_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Nor,
+        name: "nor",
+        parameter_sorts: BOOL_2,
+        result_sort: FunctionSort::Bool,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_nor_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Implies,
+        name: "implies",
+        parameter_sorts: BOOL_2,
+        result_sort: FunctionSort::Bool,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_implies_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Iff,
+        name: "iff",
+        parameter_sorts: BOOL_2,
+        result_sort: FunctionSort::Bool,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["a", "b"],
+            build_body: build_iff_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Sigmoid,
+        name: "sigmoid",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x"],
+            build_body: build_sigmoid_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Silu,
+        name: "silu",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x"],
+            build_body: build_silu_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Gelu,
+        name: "gelu",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: None,
+        composed: Some(ComposedSpec {
+            parameter_names: &["x"],
+            build_body: build_gelu_body,
+        }),
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Exp,
+        name: "exp",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::exp),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Exp2,
+        name: "exp2",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::exp2),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Log,
+        name: "log",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::ln),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Log2,
+        name: "log2",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::log2),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Log10,
+        name: "log10",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::log10),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Sqrt,
+        name: "sqrt",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::sqrt),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Sin,
+        name: "sin",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::sin),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Cos,
+        name: "cos",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::cos),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Tan,
+        name: "tan",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::tan),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Arcsin,
+        name: "arcsin",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::asin),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Arccos,
+        name: "arccos",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::acos),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Arctan,
+        name: "arctan",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::atan),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Sinh,
+        name: "sinh",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::sinh),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Cosh,
+        name: "cosh",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::cosh),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Tanh,
+        name: "tanh",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(f64::tanh),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Erf,
+        name: "erf",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Real,
+        native: Some(libm::erf),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Round,
+        name: "round",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Int,
+        native: Some(f64::round_ties_even),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Floor,
+        name: "floor",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Int,
+        native: Some(f64::floor),
+        composed: None,
+    },
+    FunctionEntry {
+        function: BuiltinFunction::Ceil,
+        name: "ceil",
+        parameter_sorts: REAL_1,
+        result_sort: FunctionSort::Int,
+        native: Some(f64::ceil),
+        composed: None,
+    },
+];
 
 impl BuiltinFunction {
     /// Return every built-in function in catalogue order: the 16 composed
     /// functions, then the 19 native ones.
     #[must_use]
     pub fn iter() -> impl ExactSizeIterator<Item = BuiltinFunction> + Clone {
-        FUNCTIONS.into_iter()
+        CATALOGUE.iter().map(|entry| entry.function)
     }
 
     /// Return the name a call refers to the function by, the variant name in
@@ -211,43 +523,7 @@ impl BuiltinFunction {
     /// `"exp2"`, `"log10"`, and so on.
     #[must_use]
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Max => "max",
-            Self::Min => "min",
-            Self::Abs => "abs",
-            Self::Sign => "sign",
-            Self::Clamp => "clamp",
-            Self::ClampSymmetric => "clamp_symmetric",
-            Self::Relu => "relu",
-            Self::LeakyRelu => "leaky_relu",
-            Self::Xor => "xor",
-            Self::Nand => "nand",
-            Self::Nor => "nor",
-            Self::Implies => "implies",
-            Self::Iff => "iff",
-            Self::Sigmoid => "sigmoid",
-            Self::Silu => "silu",
-            Self::Gelu => "gelu",
-            Self::Exp => "exp",
-            Self::Exp2 => "exp2",
-            Self::Log => "log",
-            Self::Log2 => "log2",
-            Self::Log10 => "log10",
-            Self::Sqrt => "sqrt",
-            Self::Sin => "sin",
-            Self::Cos => "cos",
-            Self::Tan => "tan",
-            Self::Arcsin => "arcsin",
-            Self::Arccos => "arccos",
-            Self::Arctan => "arctan",
-            Self::Sinh => "sinh",
-            Self::Cosh => "cosh",
-            Self::Tanh => "tanh",
-            Self::Erf => "erf",
-            Self::Round => "round",
-            Self::Floor => "floor",
-            Self::Ceil => "ceil",
-        }
+        CATALOGUE[self.catalogue_index()].name
     }
 
     /// Return the sort of each parameter, in positional order.
@@ -256,36 +532,7 @@ impl BuiltinFunction {
     /// take two Booleans; every other function takes one to three reals.
     #[must_use]
     pub fn parameter_sorts(self) -> &'static [FunctionSort] {
-        match self {
-            Self::Max | Self::Min | Self::ClampSymmetric | Self::LeakyRelu => REAL_2,
-            Self::Clamp => REAL_3,
-            Self::Xor | Self::Nand | Self::Nor | Self::Implies | Self::Iff => BOOL_2,
-            Self::Abs
-            | Self::Sign
-            | Self::Relu
-            | Self::Sigmoid
-            | Self::Silu
-            | Self::Gelu
-            | Self::Exp
-            | Self::Exp2
-            | Self::Log
-            | Self::Log2
-            | Self::Log10
-            | Self::Sqrt
-            | Self::Sin
-            | Self::Cos
-            | Self::Tan
-            | Self::Arcsin
-            | Self::Arccos
-            | Self::Arctan
-            | Self::Sinh
-            | Self::Cosh
-            | Self::Tanh
-            | Self::Erf
-            | Self::Round
-            | Self::Floor
-            | Self::Ceil => REAL_1,
-        }
+        CATALOGUE[self.catalogue_index()].parameter_sorts
     }
 
     /// Return the sort of the function's result: [`FunctionSort::Bool`] for
@@ -293,36 +540,7 @@ impl BuiltinFunction {
     /// `floor` and `ceil`, and [`FunctionSort::Real`] for the rest.
     #[must_use]
     pub fn result_sort(self) -> FunctionSort {
-        match self {
-            Self::Xor | Self::Nand | Self::Nor | Self::Implies | Self::Iff => FunctionSort::Bool,
-            Self::Sign | Self::Round | Self::Floor | Self::Ceil => FunctionSort::Int,
-            Self::Max
-            | Self::Min
-            | Self::Abs
-            | Self::Clamp
-            | Self::ClampSymmetric
-            | Self::Relu
-            | Self::LeakyRelu
-            | Self::Sigmoid
-            | Self::Silu
-            | Self::Gelu
-            | Self::Exp
-            | Self::Exp2
-            | Self::Log
-            | Self::Log2
-            | Self::Log10
-            | Self::Sqrt
-            | Self::Sin
-            | Self::Cos
-            | Self::Tan
-            | Self::Arcsin
-            | Self::Arccos
-            | Self::Arctan
-            | Self::Sinh
-            | Self::Cosh
-            | Self::Tanh
-            | Self::Erf => FunctionSort::Real,
-        }
+        CATALOGUE[self.catalogue_index()].result_sort
     }
 
     /// Return the definition of a composed built-in, or `None` for a native
@@ -357,44 +575,8 @@ impl BuiltinFunction {
     /// ```
     #[must_use]
     pub fn native_value(self, argument: f64) -> Option<f64> {
-        let value = match self {
-            Self::Exp => argument.exp(),
-            Self::Exp2 => argument.exp2(),
-            Self::Log => argument.ln(),
-            Self::Log2 => argument.log2(),
-            Self::Log10 => argument.log10(),
-            Self::Sqrt => argument.sqrt(),
-            Self::Sin => argument.sin(),
-            Self::Cos => argument.cos(),
-            Self::Tan => argument.tan(),
-            Self::Arcsin => argument.asin(),
-            Self::Arccos => argument.acos(),
-            Self::Arctan => argument.atan(),
-            Self::Sinh => argument.sinh(),
-            Self::Cosh => argument.cosh(),
-            Self::Tanh => argument.tanh(),
-            Self::Erf => libm::erf(argument),
-            Self::Round => argument.round_ties_even(),
-            Self::Floor => argument.floor(),
-            Self::Ceil => argument.ceil(),
-            Self::Max
-            | Self::Min
-            | Self::Abs
-            | Self::Sign
-            | Self::Clamp
-            | Self::ClampSymmetric
-            | Self::Relu
-            | Self::LeakyRelu
-            | Self::Xor
-            | Self::Nand
-            | Self::Nor
-            | Self::Implies
-            | Self::Iff
-            | Self::Sigmoid
-            | Self::Silu
-            | Self::Gelu => return None,
-        };
-        Some(value)
+        let native = CATALOGUE[self.catalogue_index()].native?;
+        Some(native(argument))
     }
 
     /// Return the function's position in catalogue order, the order of
@@ -583,75 +765,123 @@ where
 
 /// `a if (a > b || a != a) else b`: a NaN operand, on either side, is the
 /// result, as `NumPy`'s `maximum` has it.
-fn build_max_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_max_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("max takes 2 arguments")
+    };
     create_piecewise([(a.greater(b).or(a.not_equals(a)), a)], b)
 }
 
 /// `a if (a < b || a != a) else b`: a NaN operand, on either side, is the
 /// result, as `NumPy`'s `minimum` has it.
-fn build_min_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_min_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("min takes 2 arguments")
+    };
     create_piecewise([(a.less(b).or(a.not_equals(a)), a)], b)
 }
 
 /// `x if x > 0.0 else 0 - x`: both zeros give the positive zero, and a NaN
 /// gives a NaN. The subtraction from an integer zero keeps an integer
 /// operand's kind.
-fn build_abs_body([x]: &[Expression; 1]) -> Expression {
+fn build_abs_body(args: &[Expression]) -> Expression {
+    let [x] = args else {
+        unreachable!("abs takes 1 argument")
+    };
     create_piecewise([(x.greater(0.0), x)], Expression::from(0_i64) - x)
 }
 
-fn build_sign_body([x]: &[Expression; 1]) -> Expression {
+fn build_sign_body(args: &[Expression]) -> Expression {
+    let [x] = args else {
+        unreachable!("sign takes 1 argument")
+    };
     create_piecewise([(x.greater(0.0), 1_i64), (x.less(0.0), -1_i64)], 0_i64)
 }
 
-fn build_clamp_body([x, lo, hi]: &[Expression; 3]) -> Expression {
+fn build_clamp_body(args: &[Expression]) -> Expression {
+    let [x, lo, hi] = args else {
+        unreachable!("clamp takes 3 arguments")
+    };
     Expression::call(
         BuiltinFunction::Min,
         [&Expression::call(BuiltinFunction::Max, [x, lo]), hi],
     )
 }
 
-fn build_clamp_symmetric_body([x, bound]: &[Expression; 2]) -> Expression {
+fn build_clamp_symmetric_body(args: &[Expression]) -> Expression {
+    let [x, bound] = args else {
+        unreachable!("clamp_symmetric takes 2 arguments")
+    };
     Expression::call(BuiltinFunction::Clamp, [x, &-bound, bound])
 }
 
-fn build_relu_body([x]: &[Expression; 1]) -> Expression {
+fn build_relu_body(args: &[Expression]) -> Expression {
+    let [x] = args else {
+        unreachable!("relu takes 1 argument")
+    };
     Expression::call(BuiltinFunction::Max, [x, &Expression::from(0_i64)])
 }
 
-fn build_leaky_relu_body([x, slope]: &[Expression; 2]) -> Expression {
+fn build_leaky_relu_body(args: &[Expression]) -> Expression {
+    let [x, slope] = args else {
+        unreachable!("leaky_relu takes 2 arguments")
+    };
     create_piecewise([(x.greater(0.0), x)], x * slope)
 }
 
-fn build_xor_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_xor_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("xor takes 2 arguments")
+    };
     a.or(b).and(!a.and(b))
 }
 
-fn build_nand_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_nand_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("nand takes 2 arguments")
+    };
     !a.and(b)
 }
 
-fn build_nor_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_nor_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("nor takes 2 arguments")
+    };
     !a.or(b)
 }
 
-fn build_implies_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_implies_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("implies takes 2 arguments")
+    };
     (!a).or(b)
 }
 
-fn build_iff_body([a, b]: &[Expression; 2]) -> Expression {
+fn build_iff_body(args: &[Expression]) -> Expression {
+    let [a, b] = args else {
+        unreachable!("iff takes 2 arguments")
+    };
     a.equals(b)
 }
 
-fn build_sigmoid_body([x]: &[Expression; 1]) -> Expression {
+fn build_sigmoid_body(args: &[Expression]) -> Expression {
+    let [x] = args else {
+        unreachable!("sigmoid takes 1 argument")
+    };
     1.0 / (1.0 + Expression::call(BuiltinFunction::Exp, [-x]))
 }
 
-fn build_silu_body([x]: &[Expression; 1]) -> Expression {
+fn build_silu_body(args: &[Expression]) -> Expression {
+    let [x] = args else {
+        unreachable!("silu takes 1 argument")
+    };
     x * Expression::call(BuiltinFunction::Sigmoid, [x])
 }
 
-fn build_gelu_body([x]: &[Expression; 1]) -> Expression {
+fn build_gelu_body(args: &[Expression]) -> Expression {
+    let [x] = args else {
+        unreachable!("gelu takes 1 argument")
+    };
     0.5 * x
         * (1.0
             + Expression::call(
@@ -662,57 +892,44 @@ fn build_gelu_body([x]: &[Expression; 1]) -> Expression {
 
 /// Build the composed `function`: mint one parameter per name hint in
 /// `parameter_names`, then build the body over references to them.
-fn create_composed_function<const N: usize>(
+fn create_composed_function(
     function: BuiltinFunction,
-    parameter_names: [&str; N],
-    build_body: fn(&[Expression; N]) -> Expression,
+    parameter_names: &'static [&'static str],
+    build_body: fn(&[Expression]) -> Expression,
 ) -> ComposedFunction {
-    let parameters = parameter_names.map(Identifier::new);
+    let parameters: Box<[Identifier]> = parameter_names
+        .iter()
+        .copied()
+        .map(Identifier::new)
+        .collect();
     // A clone keeps the identifier's id, so the body's references equal the
     // parameters the function keeps.
-    let references = parameters
-        .each_ref()
-        .map(|parameter| Expression::from(parameter.clone()));
+    let references: Box<[Expression]> = parameters
+        .iter()
+        .map(|parameter| Expression::from(parameter.clone()))
+        .collect();
     ComposedFunction {
         function,
-        parameters: Box::new(parameters),
+        parameters,
         body: build_body(&references),
     }
 }
 
-/// Build the composed functions in catalogue order.
-fn create_composed_functions() -> [ComposedFunction; COMPOSED_FUNCTION_COUNT] {
-    [
-        create_composed_function(BuiltinFunction::Max, ["a", "b"], build_max_body),
-        create_composed_function(BuiltinFunction::Min, ["a", "b"], build_min_body),
-        create_composed_function(BuiltinFunction::Abs, ["x"], build_abs_body),
-        create_composed_function(BuiltinFunction::Sign, ["x"], build_sign_body),
-        create_composed_function(BuiltinFunction::Clamp, ["x", "lo", "hi"], build_clamp_body),
-        create_composed_function(
-            BuiltinFunction::ClampSymmetric,
-            ["x", "bound"],
-            build_clamp_symmetric_body,
-        ),
-        create_composed_function(BuiltinFunction::Relu, ["x"], build_relu_body),
-        create_composed_function(
-            BuiltinFunction::LeakyRelu,
-            ["x", "slope"],
-            build_leaky_relu_body,
-        ),
-        create_composed_function(BuiltinFunction::Xor, ["a", "b"], build_xor_body),
-        create_composed_function(BuiltinFunction::Nand, ["a", "b"], build_nand_body),
-        create_composed_function(BuiltinFunction::Nor, ["a", "b"], build_nor_body),
-        create_composed_function(BuiltinFunction::Implies, ["a", "b"], build_implies_body),
-        create_composed_function(BuiltinFunction::Iff, ["a", "b"], build_iff_body),
-        create_composed_function(BuiltinFunction::Sigmoid, ["x"], build_sigmoid_body),
-        create_composed_function(BuiltinFunction::Silu, ["x"], build_silu_body),
-        create_composed_function(BuiltinFunction::Gelu, ["x"], build_gelu_body),
-    ]
-}
-
-/// The composed functions, built on first use.
-static COMPOSED_FUNCTIONS: LazyLock<[ComposedFunction; COMPOSED_FUNCTION_COUNT]> =
-    LazyLock::new(create_composed_functions);
+/// The composed functions, in catalogue order, built from [`CATALOGUE`] on
+/// first use.
+static COMPOSED_FUNCTIONS: LazyLock<Vec<ComposedFunction>> = LazyLock::new(|| {
+    CATALOGUE
+        .iter()
+        .filter_map(|entry| {
+            let spec = entry.composed?;
+            Some(create_composed_function(
+                entry.function,
+                spec.parameter_names,
+                spec.build_body,
+            ))
+        })
+        .collect()
+});
 
 /// A built-in function defined by an expression over its parameters.
 ///
@@ -759,13 +976,18 @@ mod tests {
     use super::super::node::ExpressionKind;
     use super::*;
 
-    /// Test that the catalogue-order arrays list every variant exactly once,
-    /// at the index an exhaustive `match` gives it, so a variant cannot be
-    /// added without listing it.
+    /// Test that the catalogue lists every variant exactly once, at the
+    /// index an exhaustive `match` gives it, so a variant cannot be added
+    /// without listing it.
     #[test]
     fn catalogue_order_array_lists_every_variant() {
-        for (index, function) in FUNCTIONS.into_iter().enumerate() {
-            assert_eq!(function.catalogue_index(), index, "{function:?}");
+        for (index, entry) in CATALOGUE.iter().enumerate() {
+            assert_eq!(
+                entry.function.catalogue_index(),
+                index,
+                "{:?}",
+                entry.function
+            );
         }
         for (index, constant) in CONSTANTS.into_iter().enumerate() {
             assert_eq!(constant.catalogue_index(), index, "{constant:?}");
@@ -776,14 +998,14 @@ mod tests {
     /// its own variant, and that no native function has a definition.
     #[test]
     fn composed_functions_lead_the_catalogue_in_order() {
-        for (index, function) in FUNCTIONS.into_iter().enumerate() {
+        let composed_count = CATALOGUE
+            .iter()
+            .filter(|entry| entry.composed.is_some())
+            .count();
+        for (index, function) in BuiltinFunction::iter().enumerate() {
             let composed = function.composed();
 
-            assert_eq!(
-                composed.is_some(),
-                index < COMPOSED_FUNCTION_COUNT,
-                "{function:?}"
-            );
+            assert_eq!(composed.is_some(), index < composed_count, "{function:?}");
             if let Some(composed) = composed {
                 assert_eq!(composed.function(), function);
                 assert_eq!(
