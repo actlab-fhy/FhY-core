@@ -11,7 +11,6 @@
 //! object the caller gets. No frame is borrowed across a call into Python.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -34,6 +33,7 @@ use fhy_core::tree::{NodeHandle, NodeIdentity};
 use crate::expression::{PyExpression, materialize_expression, materialize_substituted};
 use crate::gc::Slot;
 use crate::pass::refuse_unused_arguments;
+use crate::scoped::ScopedStack;
 
 use super::values::{PySatResult, PySmtScript};
 
@@ -231,7 +231,7 @@ struct SimplifyFrame {
 
 thread_local! {
     /// The simplifications in progress on this thread, innermost last.
-    static FRAMES: RefCell<Vec<SimplifyFrame>> = const { RefCell::new(Vec::new()) };
+    static FRAMES: ScopedStack<SimplifyFrame> = const { ScopedStack::new() };
 }
 
 /// Run `simplify` as the simplification of `input`, whose environment's
@@ -242,17 +242,18 @@ pub(super) fn run_simplification<R>(
     known: Vec<(Expression, Py<PyAny>)>,
     simplify: impl FnOnce() -> R,
 ) -> (R, Option<Py<PyAny>>) {
-    FRAMES.with(|frames| {
-        frames.borrow_mut().push(SimplifyFrame {
+    // Popped when the guard drops, on unwind included (R2-031).
+    let scope = ScopedStack::push(
+        &FRAMES,
+        SimplifyFrame {
             input,
             known,
             limits: SimplifyLimits::new(),
             result: None,
-        });
-    });
+        },
+    );
     let result = simplify();
-    let frame = FRAMES.with(|frames| frames.borrow_mut().pop());
-    (result, frame.and_then(|frame| frame.result))
+    (result, scope.pop().result)
 }
 
 /// Return the Python object of `expression`, the substituted input of the
@@ -262,8 +263,8 @@ fn current_input_object<'py>(
     py: Python<'py>,
     expression: &Expression,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let frame = FRAMES.with(|frames| {
-        frames.borrow().last().map(|frame| {
+    let frame = ScopedStack::with_top(&FRAMES, |frame| {
+        frame.map(|frame| {
             (
                 frame.input.clone_ref(py),
                 frame
@@ -288,8 +289,8 @@ fn current_input_object<'py>(
 
 /// Record `limits` as the limits of the innermost simplification.
 fn record_limits(limits: SimplifyLimits) {
-    FRAMES.with(|frames| {
-        if let Some(frame) = frames.borrow_mut().last_mut() {
+    ScopedStack::with_top_mut(&FRAMES, |frame| {
+        if let Some(frame) = frame {
             frame.limits = limits;
         }
     });
@@ -298,22 +299,20 @@ fn record_limits(limits: SimplifyLimits) {
 /// Return the limits of the innermost simplification, unbounded outside
 /// one.
 fn current_limits() -> SimplifyLimits {
-    FRAMES.with(|frames| {
-        frames
-            .borrow()
-            .last()
-            .map_or_else(SimplifyLimits::new, |frame| frame.limits)
+    ScopedStack::with_top(&FRAMES, |frame| {
+        frame.map_or_else(SimplifyLimits::new, |frame| frame.limits)
     })
 }
 
 /// Record `object` as what the innermost simplification's Python
 /// simplifier returned.
 fn record_result(object: Py<PyAny>) {
-    FRAMES.with(|frames| {
-        if let Some(frame) = frames.borrow_mut().last_mut() {
-            frame.result = Some(object);
-        }
+    let mut object = Some(object);
+    let replaced = ScopedStack::with_top_mut(&FRAMES, |frame| {
+        frame.and_then(|frame| std::mem::replace(&mut frame.result, object.take()))
     });
+    // Dropped outside the stack's borrow: a finalizer may run Python.
+    drop((replaced, object));
 }
 
 /// A Python `Simplifier`, as a core backend: its `simplify` called with the
@@ -541,5 +540,28 @@ impl PySmtLib2ProcessSolver {
             self.program.bind(py).repr()?,
             self.args.bind(py).repr()?
         ))
+    }
+}
+
+#[cfg(test)]
+mod scoped_stack_tests {
+    use super::*;
+
+    /// Test a panic inside a simplification leaves no frame behind, so the
+    /// next one does not reuse a dead input (R2-031).
+    #[test]
+    fn a_panic_inside_a_simplification_leaves_the_stack_empty() {
+        Python::initialize();
+        Python::attach(|py| {
+            let input = PyExpression::bare_for_tests(py, Expression::from(1));
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_simplification(input, Vec::new(), || -> () {
+                    panic!("inside a simplification")
+                })
+            }));
+
+            let _panic = unwound.unwrap_err();
+            assert_eq!(ScopedStack::depth(&FRAMES), 0);
+        });
     }
 }

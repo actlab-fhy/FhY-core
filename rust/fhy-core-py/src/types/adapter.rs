@@ -44,6 +44,7 @@ use fhy_core::types::{
 use super::convert;
 use super::environment::PyTypeUnificationEnvironment;
 use crate::gc::Slot;
+use crate::scoped::ScopedStack;
 
 /// The Python objects of the values a call has seen, by the values' Rust
 /// identity.
@@ -87,7 +88,7 @@ impl Context {
 
 thread_local! {
     /// The contexts of the calls in progress, innermost last.
-    static CONTEXTS: RefCell<Vec<Rc<Context>>> = const { RefCell::new(Vec::new()) };
+    static CONTEXTS: ScopedStack<Rc<Context>> = const { ScopedStack::new() };
 }
 
 /// Run `body` in a new context over the environment `template`, and raise
@@ -104,9 +105,10 @@ pub(crate) fn run_in_context<R>(
         pending: RefCell::new(None),
     });
     let _ = py;
-    CONTEXTS.with(|contexts| contexts.borrow_mut().push(Rc::clone(&context)));
+    // Popped when the guard drops, on unwind included (R2-031).
+    let scope = ScopedStack::push(&CONTEXTS, Rc::clone(&context));
     let result = body(&context);
-    CONTEXTS.with(|contexts| contexts.borrow_mut().pop());
+    drop(scope.pop());
     match context.pending.borrow_mut().take() {
         Some(error) => Err(error),
         None => result,
@@ -116,15 +118,13 @@ pub(crate) fn run_in_context<R>(
 /// Return the context of the innermost call in progress, or a new one when
 /// none runs.
 fn current_context() -> Rc<Context> {
-    CONTEXTS
-        .with(|contexts| contexts.borrow().last().cloned())
-        .unwrap_or_else(|| {
-            Rc::new(Context {
-                known: RefCell::new(Known::default()),
-                template: None,
-                pending: RefCell::new(None),
-            })
+    ScopedStack::cloned_top(&CONTEXTS).unwrap_or_else(|| {
+        Rc::new(Context {
+            known: RefCell::new(Known::default()),
+            template: None,
+            pending: RefCell::new(None),
         })
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -587,5 +587,27 @@ pub(super) fn environment_class<'py>(
         None => Ok(PyTypeUnificationEnvironment::public_class()
             .get(py)?
             .clone()),
+    }
+}
+
+#[cfg(test)]
+mod scoped_stack_tests {
+    use super::*;
+
+    /// Test a panic inside a type-system call leaves no context behind, so
+    /// the next call does not find a dead one (R2-031).
+    #[test]
+    fn a_panic_inside_a_call_leaves_the_stack_empty() {
+        Python::initialize();
+        Python::attach(|py| {
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_in_context(py, None, |_context| -> PyResult<()> {
+                    panic!("inside a call")
+                })
+            }));
+
+            let _panic = unwound.unwrap_err();
+            assert_eq!(ScopedStack::depth(&CONTEXTS), 0);
+        });
     }
 }

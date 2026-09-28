@@ -35,6 +35,7 @@ use fhy_core::expression::pattern::{Capture, MatchBindings};
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use super::super::node::{PyExpression, build_node};
+use crate::scoped::{ScopedGuard, ScopedStack};
 
 /// The last bindings object a table built: the identities of its captures'
 /// nodes, in binding order, and the object.
@@ -162,12 +163,14 @@ impl ObjectTable {
 thread_local! {
     /// The tables of the matches and walks running on this thread,
     /// innermost last.
-    static TABLES: RefCell<Vec<Rc<RefCell<ObjectTable>>>> = const { RefCell::new(Vec::new()) };
+    static TABLES: ScopedStack<Rc<RefCell<ObjectTable>>> = const { ScopedStack::new() };
 }
 
-/// The current table of a match or walk, for as long as the value lives.
+/// The current table of a match or walk, for as long as the value lives:
+/// dropping it, as unwinding does, pops the table.
 pub(super) struct ActiveTable {
     table: Rc<RefCell<ObjectTable>>,
+    _scope: ScopedGuard<Rc<RefCell<ObjectTable>>>,
 }
 
 impl ActiveTable {
@@ -175,9 +178,17 @@ impl ActiveTable {
     pub(super) fn enter(root: &Bound<'_, PyExpression>) -> Self {
         let mut table = ObjectTable::new();
         table.discover(root);
+        Self::enter_table(table)
+    }
+
+    /// Make `table` current.
+    fn enter_table(table: ObjectTable) -> Self {
         let table = Rc::new(RefCell::new(table));
-        TABLES.with(|tables| tables.borrow_mut().push(Rc::clone(&table)));
-        Self { table }
+        let scope = ScopedStack::push(&TABLES, Rc::clone(&table));
+        Self {
+            table,
+            _scope: scope,
+        }
     }
 
     /// Return the Python object of `node`.
@@ -191,18 +202,6 @@ impl ActiveTable {
         node: &Expression,
     ) -> PyResult<Bound<'py, PyAny>> {
         borrow_table(&self.table)?.object_of(py, node)
-    }
-}
-
-impl Drop for ActiveTable {
-    fn drop(&mut self) {
-        TABLES.with(|tables| {
-            let popped = tables.borrow_mut().pop();
-            debug_assert!(
-                popped.is_some_and(|popped| Rc::ptr_eq(&popped, &self.table)),
-                "the tables are left in the order they were entered"
-            );
-        });
     }
 }
 
@@ -225,11 +224,9 @@ fn borrow_table(table: &RefCell<ObjectTable>) -> PyResult<std::cell::RefMut<'_, 
 /// Raises `RuntimeError` if no match or walk is running, which would mean
 /// the core called a callback outside one.
 fn current_table() -> PyResult<Rc<RefCell<ObjectTable>>> {
-    TABLES
-        .with(|tables| tables.borrow().last().cloned())
-        .ok_or_else(|| {
-            PyRuntimeError::new_err("a pattern callback ran outside a match or a rewrite walk")
-        })
+    ScopedStack::cloned_top(&TABLES).ok_or_else(|| {
+        PyRuntimeError::new_err("a pattern callback ran outside a match or a rewrite walk")
+    })
 }
 
 /// Return the Python object of `node` in the current table.
@@ -301,4 +298,22 @@ pub(super) fn current_bindings_object<'py>(
         object: object.clone().unbind(),
     });
     Ok(object)
+}
+
+#[cfg(test)]
+mod scoped_stack_tests {
+    use super::*;
+
+    /// Test a panic inside a match leaves no table behind (R2-031).
+    #[test]
+    fn a_panic_inside_a_match_leaves_the_stack_empty() {
+        let unwound = std::panic::catch_unwind(|| {
+            let _table = ActiveTable::enter_table(ObjectTable::new());
+            let _current = current_table().expect("the table is current");
+            panic!("inside a match");
+        });
+
+        let _panic = unwound.unwrap_err();
+        assert_eq!(ScopedStack::depth(&TABLES), 0);
+    }
 }

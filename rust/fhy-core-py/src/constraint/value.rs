@@ -20,7 +20,6 @@
 //! that is.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt;
 use std::sync::OnceLock;
@@ -36,11 +35,13 @@ use fhy_core::foreign::{BoxError, ForeignPart, Part};
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 use crate::gc::Slot;
+use crate::scoped::ScopedStack;
 
 thread_local! {
-    /// The first exception an opaque value's `==` raised during the current
-    /// call into the core on this thread.
-    static PENDING_ERROR: RefCell<Option<PyErr>> = const { RefCell::new(None) };
+    /// The first exception an opaque value's `==` raised during each call
+    /// into the core in progress on this thread, innermost last; a base
+    /// frame, pushed on first use, keeps one raised outside every call.
+    static PENDING_ERROR: ScopedStack<Option<PyErr>> = const { ScopedStack::new() };
 }
 
 /// Return whether `error` should replace the kept exception `kept`: only an
@@ -56,19 +57,22 @@ fn outranks(py: Python<'_>, error: &PyErr, kept: &PyErr) -> bool {
 pub(crate) fn record_pending_error(error: PyErr) {
     Python::attach(|py| {
         let mut error = Some(error);
-        let replaced = PENDING_ERROR.with(|pending| {
-            let mut pending = pending.borrow_mut();
-            let replaces = match (pending.as_ref(), error.as_ref()) {
-                (None, _) => true,
-                (Some(kept), Some(error)) => outranks(py, error, kept),
-                (Some(_), None) => false,
-            };
-            if replaces {
-                pending.replace(error.take()?)
-            } else {
-                None
-            }
-        });
+        let replaced = ScopedStack::with_top_or_base_mut(
+            &PENDING_ERROR,
+            || None,
+            |pending| {
+                let replaces = match (pending.as_ref(), error.as_ref()) {
+                    (None, _) => true,
+                    (Some(kept), Some(error)) => outranks(py, error, kept),
+                    (Some(_), None) => false,
+                };
+                if replaces {
+                    pending.replace(error.take()?)
+                } else {
+                    None
+                }
+            },
+        );
         // Dropped outside the borrow: a finalizer may run Python.
         drop((replaced, error));
     });
@@ -77,20 +81,19 @@ pub(crate) fn record_pending_error(error: PyErr) {
 /// Return whether an exception is pending on this thread, so no further
 /// comparison may call Python during the current call.
 pub(crate) fn has_pending_error() -> bool {
-    PENDING_ERROR.with(|pending| pending.borrow().is_some())
+    ScopedStack::with_top(&PENDING_ERROR, |pending| {
+        pending.is_some_and(Option::is_some)
+    })
 }
 
 /// Run `call`, and return the exception an opaque value raised during it,
 /// if any, in place of its result.
 pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
-    let outer = PENDING_ERROR.with(|pending| pending.borrow_mut().take());
+    // A frame of its own, popped when the guard drops, on unwind included,
+    // so the outer frame is restored (R2-031).
+    let scope = ScopedStack::push(&PENDING_ERROR, None);
     let result = call();
-    let raised = PENDING_ERROR.with(|pending| {
-        let mut pending = pending.borrow_mut();
-        let raised = pending.take();
-        *pending = outer;
-        raised
-    });
+    let raised = scope.pop();
     match raised {
         Some(error) => Err(error),
         None => result,
@@ -100,15 +103,9 @@ pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyRe
 /// Run `call`, and return its result with the exception an opaque value
 /// raised during it, if any.
 pub(crate) fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<PyErr>) {
-    let outer = PENDING_ERROR.with(|pending| pending.borrow_mut().take());
+    let scope = ScopedStack::push(&PENDING_ERROR, None);
     let result = call();
-    let raised = PENDING_ERROR.with(|pending| {
-        let mut pending = pending.borrow_mut();
-        let raised = pending.take();
-        *pending = outer;
-        raised
-    });
-    (result, raised)
+    (result, scope.pop())
 }
 
 /// Import the class `name` of `module` once, in `cell`.
@@ -763,5 +760,37 @@ mod tests {
         let key = cached_key(&cell, || Ok("real".to_owned())).expect("computes");
         assert_eq!(key, "real");
         assert_eq!(cell.get().map(String::as_str), Some("real"));
+    }
+}
+
+#[cfg(test)]
+mod scoped_stack_tests {
+    use super::*;
+
+    /// Test a panic inside a call restores the outer pending exception, and
+    /// leaves only the base frame behind (R2-031).
+    #[test]
+    fn a_panic_inside_a_call_restores_the_outer_pending_exception() {
+        Python::initialize();
+        Python::attach(|py| {
+            let ((), outer) = capture_pending_errors(|| {
+                record_pending_error(PyTypeError::new_err("outer"));
+                let unwound = std::panic::catch_unwind(|| {
+                    with_pending_errors(|| -> PyResult<()> {
+                        record_pending_error(PyTypeError::new_err("inner"));
+                        panic!("inside a call")
+                    })
+                });
+                let _panic = unwound.unwrap_err();
+                assert!(has_pending_error());
+            });
+
+            assert_eq!(
+                outer.map(|error| error.value(py).to_string()).as_deref(),
+                Some("outer")
+            );
+            assert!(ScopedStack::depth(&PENDING_ERROR) <= 1);
+            assert!(!has_pending_error());
+        });
     }
 }

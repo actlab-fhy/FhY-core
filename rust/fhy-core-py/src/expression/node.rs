@@ -336,6 +336,14 @@ impl PyExpression {
         })
     }
 
+    /// Return a bare node of `expression` with no children, for the
+    /// binding's unit tests, which run without the Python package.
+    #[cfg(test)]
+    pub(crate) fn bare_for_tests(py: Python<'_>, expression: Expression) -> Py<Self> {
+        Py::new(py, Self::initializer(expression, PyTuple::empty(py)))
+            .unwrap_or_else(|error| panic!("a bare node builds: {error}"))
+    }
+
     /// Return the Rust handle.
     pub(crate) fn expression(&self) -> &Expression {
         &self.expression

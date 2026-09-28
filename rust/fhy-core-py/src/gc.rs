@@ -30,11 +30,12 @@
 //!   a callback function or an instance with a `__dict__`, whose own
 //!   clearing breaks it.
 
-use std::cell::RefCell;
 use std::sync::{Arc, Mutex, TryLockError};
 
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
+
+use crate::scoped::ScopedStack;
 
 /// A Python object held where no traversal can see it, visible to the one
 /// object that owns it (see the [module docs](self)).
@@ -61,7 +62,7 @@ impl Slot {
     /// Return the slot of `object`, registered with the innermost
     /// [`collect_slots`] of this thread, if any.
     pub(crate) fn new(object: Py<PyAny>) -> Self {
-        COLLECTORS.with(|collectors| match collectors.borrow_mut().last_mut() {
+        ScopedStack::with_top_mut(&COLLECTORS, |innermost| match innermost {
             Some(innermost) => {
                 let object = Arc::new(object);
                 innermost.push(Arc::clone(&object));
@@ -103,38 +104,18 @@ impl Slots {
 thread_local! {
     /// The slots each [`collect_slots`] in progress on this thread has
     /// collected, innermost last.
-    static COLLECTORS: RefCell<Vec<Vec<Arc<Py<PyAny>>>>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Pops the innermost collector when dropped, on unwind included.
-struct CollectorGuard;
-
-impl Drop for CollectorGuard {
-    fn drop(&mut self) {
-        COLLECTORS.with(|collectors| {
-            collectors.borrow_mut().pop();
-        });
-    }
+    static COLLECTORS: ScopedStack<Vec<Arc<Py<PyAny>>>> = const { ScopedStack::new() };
 }
 
 /// Run `build`, returning its result and the slots made while it ran,
 /// which the object it builds owns.
 ///
 /// A nested collection keeps its own slots, so each slot has at most one
-/// owner.
+/// owner. The collection is popped when `build` returns or unwinds.
 pub(crate) fn collect_slots<T>(build: impl FnOnce() -> T) -> (T, Slots) {
-    COLLECTORS.with(|collectors| collectors.borrow_mut().push(Vec::new()));
-    let guard = CollectorGuard;
+    let scope = ScopedStack::push(&COLLECTORS, Vec::new());
     let value = build();
-    let slots = COLLECTORS.with(|collectors| {
-        collectors
-            .borrow_mut()
-            .last_mut()
-            .map(std::mem::take)
-            .unwrap_or_default()
-    });
-    drop(guard);
-    (value, Slots(slots))
+    (value, Slots(scope.pop()))
 }
 
 /// Visit the objects `mutex` holds with `traverse`, unless another thread
@@ -217,7 +198,7 @@ mod tests {
             }));
 
             let _panic = unwound.unwrap_err();
-            assert!(COLLECTORS.with(|collectors| collectors.borrow().is_empty()));
+            assert_eq!(ScopedStack::depth(&COLLECTORS), 0);
             let slot = Slot::new(py.None());
             assert!(matches!(slot.0, SlotKind::Unowned(_)));
         });

@@ -9,7 +9,6 @@
 //! reaching the run's cache. A hook the core runs without a context,
 //! `did_change` or `get_preserved_analyses`, gets a frame that refuses both.
 
-use std::cell::RefCell;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -23,6 +22,7 @@ use fhy_core::pass::{AnalysisId, DetachedAnalyses};
 use crate::dataclass::build_argument_type_error;
 use crate::diagnostic::borrow_python_diagnostic;
 use crate::identifier::restore_identifier;
+use crate::scoped::{ScopedGuard, ScopedStack};
 
 use super::analysis::PyAnalysisBase;
 use super::ir::PyIr;
@@ -76,13 +76,13 @@ impl HookFrame {
 
 thread_local! {
     /// The frames of the hooks running on this thread, innermost last.
-    static FRAMES: RefCell<Vec<Arc<HookFrame>>> = const { RefCell::new(Vec::new()) };
+    static FRAMES: ScopedStack<Arc<HookFrame>> = const { ScopedStack::new() };
 }
 
 /// Return the innermost frame of a hook of `owner`, if one runs.
 fn find_frame(owner: &Bound<'_, PyAny>) -> Option<Arc<HookFrame>> {
     let address = owner.as_ptr().addr();
-    FRAMES.with_borrow(|frames| {
+    ScopedStack::with_frames(&FRAMES, |frames| {
         frames
             .iter()
             .rev()
@@ -92,9 +92,13 @@ fn find_frame(owner: &Bound<'_, PyAny>) -> Option<Arc<HookFrame>> {
 }
 
 /// A frame on this thread's stack for the length of one hook call.
+///
+/// Dropping the guard without [`finish`](Self::finish), as unwinding does,
+/// pops and expires the frame too.
 pub(super) struct FrameGuard {
     frame: Arc<HookFrame>,
-    is_finished: bool,
+    /// The frame's place on the stack, until it is popped.
+    scope: Option<ScopedGuard<Arc<HookFrame>>>,
 }
 
 impl FrameGuard {
@@ -115,29 +119,23 @@ impl FrameGuard {
                 ..FrameState::default()
             }),
         });
-        FRAMES.with_borrow_mut(|frames| frames.push(Arc::clone(&frame)));
+        let scope = ScopedStack::push(&FRAMES, Arc::clone(&frame));
         Self {
             frame,
-            is_finished: false,
+            scope: Some(scope),
         }
     }
 
     /// Pop the frame, expire it, and return the diagnostics its hook
     /// reported, in report order.
     pub(super) fn finish(mut self) -> Vec<Py<PyAny>> {
-        self.is_finished = true;
         self.pop()
     }
 
-    fn pop(&self) -> Vec<Py<PyAny>> {
-        FRAMES.with_borrow_mut(|frames| {
-            if let Some(position) = frames
-                .iter()
-                .rposition(|frame| Arc::ptr_eq(frame, &self.frame))
-            {
-                frames.remove(position);
-            }
-        });
+    fn pop(&mut self) -> Vec<Py<PyAny>> {
+        if let Some(scope) = self.scope.take() {
+            drop(scope.pop());
+        }
         let mut state = self.frame.lock();
         state.is_expired = true;
         state.analyses = None;
@@ -147,7 +145,7 @@ impl FrameGuard {
 
 impl Drop for FrameGuard {
     fn drop(&mut self) {
-        if !self.is_finished {
+        if self.scope.is_some() {
             drop(self.pop());
         }
     }
@@ -372,5 +370,28 @@ impl PyAnalysisManager {
         Err(PyTypeError::new_err(
             "an AnalysisManager lives for one hook and cannot be pickled",
         ))
+    }
+}
+
+#[cfg(test)]
+mod scoped_stack_tests {
+    use super::*;
+
+    /// Test a panic inside a hook leaves no frame behind (R2-031).
+    #[test]
+    fn a_panic_inside_a_hook_leaves_the_stack_empty() {
+        Python::initialize();
+        Python::attach(|py| {
+            let owner = py.None().into_bound(py);
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _frame = FrameGuard::push(&owner, "run_pass", None, true);
+                assert!(find_frame(&owner).is_some());
+                panic!("inside a hook");
+            }));
+
+            let _panic = unwound.unwrap_err();
+            assert_eq!(ScopedStack::depth(&FRAMES), 0);
+            assert!(find_frame(&owner).is_none());
+        });
     }
 }

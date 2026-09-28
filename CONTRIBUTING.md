@@ -464,7 +464,13 @@ object, where the cycle collector cannot see it, is held in a `Slot`, and
 the construction that makes it runs inside `collect_slots`, so the object
 it builds owns the slot and its `__traverse__` visits it, at most once
 however the core shares the value; a collection lives only for its
-construction, so the stack is empty whenever none runs. Tests never clear a
+construction, so the stack is empty whenever none runs. Every one of these
+thread-local stacks, the pending-exception slot included, is a `ScopedStack`
+(`rust/fhy-core-py/src/scoped.rs`, R2-031): a frame is pushed only through a
+guard that pops it when dropped, on unwind included, so a panic, which PyO3
+raises as `PanicException`, never leaves a stale frame for the thread's next
+call; the slot keeps an exception raised outside every call in a base frame,
+as it did before. Tests never clear a
 process-global registry; a test that needs an empty or controlled registry
 builds a local one, except that the Python tests restore the function
 registry through the `function_registry_snapshot` fixture, and the default

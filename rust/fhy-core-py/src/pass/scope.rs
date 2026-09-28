@@ -10,7 +10,6 @@
 //! inside a hook pushes a scope of its own, which it removes before the hook
 //! returns.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::mem;
 
@@ -20,6 +19,7 @@ use fhy_core::diagnostic::Diagnostic;
 
 use crate::dataclass::hash_value;
 use crate::diagnostic::borrow_python_diagnostic;
+use crate::scoped::{ScopedGuard, ScopedStack};
 
 /// A nested run error that a hook raised, recorded when the adapter handed
 /// its Rust error to the core, which nests it.
@@ -81,7 +81,7 @@ impl RunScope {
 
 thread_local! {
     /// The scopes of the runs in progress on this thread, innermost last.
-    static SCOPES: RefCell<Vec<RunScope>> = const { RefCell::new(Vec::new()) };
+    static SCOPES: ScopedStack<RunScope> = const { ScopedStack::new() };
 }
 
 /// Apply `update` to the innermost scope, if a run is in progress, and
@@ -91,7 +91,7 @@ thread_local! {
 /// returns what it replaces, which is dropped after the borrow ends, since
 /// dropping a Python object may run Python code.
 fn with_innermost<R>(update: impl FnOnce(&mut RunScope) -> R) -> Option<R> {
-    SCOPES.with_borrow_mut(|scopes| scopes.last_mut().map(update))
+    ScopedStack::with_top_mut(&SCOPES, |scope| scope.map(update))
 }
 
 /// Record `objects`, the diagnostic objects a hook reported, in the
@@ -150,49 +150,35 @@ pub(super) fn is_interrupted() -> bool {
 ///
 /// Dropping the guard without [`finish`](Self::finish), as unwinding does,
 /// removes the scope too.
-pub(super) struct ScopeGuard {
-    /// The stack's length with this scope on it.
-    depth: usize,
-    is_finished: bool,
-}
+pub(super) struct ScopeGuard(ScopedGuard<RunScope>);
 
 impl ScopeGuard {
     /// Push a new, empty scope.
     pub(super) fn enter() -> Self {
-        let depth = SCOPES.with_borrow_mut(|scopes| {
-            scopes.push(RunScope::default());
-            scopes.len()
-        });
-        Self {
-            depth,
-            is_finished: false,
-        }
+        Self(ScopedStack::push(&SCOPES, RunScope::default()))
     }
 
     /// Remove the scope from the stack and return it.
-    pub(super) fn finish(mut self) -> RunScope {
-        self.is_finished = true;
-        remove_scope(self.depth)
+    pub(super) fn finish(self) -> RunScope {
+        self.0.pop()
     }
 }
 
-impl Drop for ScopeGuard {
-    fn drop(&mut self) {
-        if !self.is_finished {
-            drop(remove_scope(self.depth));
-        }
-    }
-}
+#[cfg(test)]
+mod scoped_stack_tests {
+    use super::*;
 
-/// Remove the scope at `depth`, and any left above it, from the stack, and
-/// return it; the caller drops what it returns outside the borrow.
-fn remove_scope(depth: usize) -> RunScope {
-    let mut removed = SCOPES
-        .with_borrow_mut(|scopes| scopes.split_off(depth.saturating_sub(1).min(scopes.len())));
-    if removed.is_empty() {
-        return RunScope::default();
+    /// Test a panic inside a run's scope leaves no scope behind (R2-031).
+    #[test]
+    fn a_panic_inside_a_scope_leaves_the_stack_empty() {
+        let unwound = std::panic::catch_unwind(|| {
+            let _scope = ScopeGuard::enter();
+            assert_eq!(ScopedStack::depth(&SCOPES), 1);
+            panic!("inside a run");
+        });
+
+        let _panic = unwound.unwrap_err();
+        assert_eq!(ScopedStack::depth(&SCOPES), 0);
+        assert!(!is_interrupted());
     }
-    let scope = removed.swap_remove(0);
-    drop(removed);
-    scope
 }

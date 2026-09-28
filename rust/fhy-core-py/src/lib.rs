@@ -22,6 +22,7 @@ mod param;
 mod pass;
 mod provenance;
 mod public_class;
+mod scoped;
 mod serialization;
 mod solver;
 mod symbol_table;
