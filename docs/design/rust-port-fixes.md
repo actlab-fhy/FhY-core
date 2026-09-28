@@ -4618,3 +4618,36 @@ neither.
   before the fix and pass after it; `__annotations__` is on the check's
   list of dunders the stub does not declare. A scratch plugin that checks
   every extension class after each test found the first test that adds it.
+
+**Where Track E stops: the `[rebase]` line after Tracks D, B and C land.**
+Tracks B and C have not landed. So the rebase, the `Decimal` half of
+R2-045 (it needs R2-008), R2-033's sweep of every binding file, the slot
+owners in Track B's and C's binding files (R2-003's note), and the status
+line are left for after it. The track gates of §I.8.2 and E's extras, run
+on the head `0aa6752`:
+- fmt; clippy `-D warnings`, workspace both ways and `fhy-core` alone with
+  no features, `z3` and `ndarray`: clean;
+- `cargo test --workspace`: 4,599; `--all-features`: 4,635 (the base:
+  4,565 and 4,601); `cargo test -p fhy-core` with no Python environment:
+  4,385, and 4,441 with all features;
+- `cargo doc -D warnings` (the workspace, `fhy-core` alone and with each
+  feature), `cargo deny check`, `cargo +1.85 check` (the workspace lib and
+  `fhy-core --all-targets` three ways, `-D warnings`) and `cargo package`:
+  clean;
+- `pytest tests`: 8,382 passed, 1 skipped (R2-043's free-threading test),
+  2 xfailed, in three `-n auto` runs, `-n 16` and `-n 0` (the base: 8,313);
+  `-m "not very_slow"`: 8,422; `-m subprocess`: 51; `property`: 284;
+  `tests_minimal`: 6,394 passed, 670 skipped; nox `lint`, `type_check` and
+  `golden_expanded`: green;
+- the attribution grep over `35519bb..HEAD`: no match; every commit is the
+  configured user's;
+- benchmarks (241 rows of §I.8.3's files and `test_constraint.py` and
+  `test_param.py`, two interleaved rounds against the base): the median
+  row +1.3%; the rows over 10% are R2-003's GC-tracking cost on small
+  constructions, flagged in its note (at worst
+  `test_numerical_type_construction[scalar]`, 0.31 to 0.41 us, and
+  `test_rewrite_rule_construction`, 0.64 to 0.79 us).
+- **Fixed forward:** `6f57090` (formatting, `59f54d4`); `047f6ea` and
+  `464cbe8` (mypy's `explicit-override`, in `cd51fde`); `cd51fde` (its
+  order-dependent dunder check, `7f01bfd`; its and `726d53e`'s tests under
+  `tests_minimal`, `0aa6752`).
