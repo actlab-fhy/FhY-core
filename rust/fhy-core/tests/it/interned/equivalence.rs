@@ -37,7 +37,7 @@ fn build_golden_tag(name: &str, note: &str) -> GoldenTag {
     }
 }
 
-fn create_no_defaults() -> Vec<GoldenTag> {
+const fn create_no_defaults() -> Vec<GoldenTag> {
     Vec::new()
 }
 

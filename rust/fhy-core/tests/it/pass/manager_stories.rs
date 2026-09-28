@@ -369,10 +369,10 @@ fn pass_manager_without_items_counts_no_run() {
 }
 
 /// Assert `T` is `Send`.
-fn assert_send<T: Send>() {}
+const fn assert_send<T: Send>() {}
 
 /// Assert `T` is `Send` and `Sync`.
-fn assert_send_sync<T: Send + Sync>() {}
+const fn assert_send_sync<T: Send + Sync>() {}
 
 /// Test pipelines, fixpoint groups, verifiers and registries are `Send`,
 /// whatever their IR, and a pipeline built on one thread runs on another.

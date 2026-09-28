@@ -44,7 +44,7 @@ struct ScriptedValidator {
 
 impl ScriptedValidator {
     /// Build the validator `name` performing `steps`.
-    fn new(name: &'static str, steps: Vec<Step>) -> Self {
+    const fn new(name: &'static str, steps: Vec<Step>) -> Self {
         Self { name, steps }
     }
 
@@ -97,7 +97,7 @@ impl CompilerPass<BoxIr, ()> for ScriptedValidator {
 }
 
 /// Build the step that reports `message` at `level` without detail.
-fn report(level: DiagnosticLevel, message: &'static str) -> Step {
+const fn report(level: DiagnosticLevel, message: &'static str) -> Step {
     Step::Report {
         level,
         message,

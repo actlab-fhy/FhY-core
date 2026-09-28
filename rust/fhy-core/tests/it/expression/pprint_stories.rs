@@ -856,7 +856,7 @@ impl DeepShape {
     /// Return the text expected for the shape: `(opening, closing)` pieces
     /// written [`SMALL_STACK_DEPTH`] times around the leaf `x`, in symbolic
     /// then functional notation.
-    fn expected_pieces(self) -> [(&'static str, &'static str); 2] {
+    const fn expected_pieces(self) -> [(&'static str, &'static str); 2] {
         match self {
             Self::LeftSum => [("(", " + 1)"), ("(add ", " 1)")],
             Self::RightConjunction => [("(true && ", ")"), ("(and true ", ")")],

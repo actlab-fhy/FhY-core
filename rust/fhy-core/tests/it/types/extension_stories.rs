@@ -171,7 +171,7 @@ fn empty() -> TypeUnificationEnvironment {
     TypeUnificationEnvironment::new()
 }
 
-fn int32() -> DataType {
+const fn int32() -> DataType {
     DataType::Primitive(CoreDataType::Int32)
 }
 

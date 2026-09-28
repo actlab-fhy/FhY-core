@@ -465,7 +465,7 @@ fn pass_manager_prefers_an_outputs_own_result_by_id_to_its_inputs() {
 // =============================================================================
 
 /// Assert `T` is `Send`, `Sync` and `'static`.
-fn assert_send_sync_static<T: Send + Sync + 'static>() {}
+const fn assert_send_sync_static<T: Send + Sync + 'static>() {}
 
 #[test]
 fn detached_analyses_are_send_sync_and_static() {

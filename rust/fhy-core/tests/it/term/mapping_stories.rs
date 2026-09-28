@@ -23,7 +23,7 @@ struct Leaf<'a> {
     log: Option<&'a RefCell<Vec<i64>>>,
 }
 
-fn leaf(payload: i64) -> Leaf<'static> {
+const fn leaf(payload: i64) -> Leaf<'static> {
     Leaf {
         payload,
         reference: None,

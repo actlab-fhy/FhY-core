@@ -229,7 +229,7 @@ enum InnerFailure {
 }
 
 /// The class of the failure `inner` produces.
-fn classify_inner_failure(inner: InnerFailure) -> FailureClass {
+const fn classify_inner_failure(inner: InnerFailure) -> FailureClass {
     match inner {
         InnerFailure::Validation => FailureClass::Validation,
         InnerFailure::Execution => FailureClass::Execution,
@@ -261,7 +261,7 @@ impl HandOverPass {
     }
 
     /// Build the pass `name` that hands over `failure` from `hook`.
-    fn handing(name: &'static str, hook: PassHook, failure: PassError) -> Self {
+    const fn handing(name: &'static str, hook: PassHook, failure: PassError) -> Self {
         Self {
             name,
             hook,
@@ -1069,7 +1069,7 @@ struct NamedPass {
 
 impl NamedPass {
     /// Build the pass `name` described as `description`.
-    fn new(name: &'static str, description: &'static str) -> Self {
+    const fn new(name: &'static str, description: &'static str) -> Self {
         Self { name, description }
     }
 }

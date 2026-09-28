@@ -39,7 +39,7 @@ enum BinaryBuilder {
 }
 
 impl BinaryBuilder {
-    fn operation(self) -> BinaryOperation {
+    const fn operation(self) -> BinaryOperation {
         match self {
             Self::Add => BinaryOperation::Add,
             Self::Subtract => BinaryOperation::Subtract,

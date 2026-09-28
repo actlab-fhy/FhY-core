@@ -26,12 +26,12 @@ use super::constraint::{ConstraintKey, TestValueError, member_set};
 use super::solver::{FakeBackendError, RecordingSmtSolver};
 
 /// Return the Boolean value `value`.
-pub(crate) fn boolean(value: bool) -> Value {
+pub(crate) const fn boolean(value: bool) -> Value {
     Value::Bool(value)
 }
 
 /// Return the float value `value`.
-pub(crate) fn float(value: f64) -> Value {
+pub(crate) const fn float(value: f64) -> Value {
     Value::Float(value)
 }
 
@@ -345,7 +345,7 @@ pub(crate) struct RecordingParamObserver {
 
 impl RecordingParamObserver {
     /// Return the observer judging no failure undecidable.
-    pub(crate) fn strict() -> Self {
+    pub(crate) const fn strict() -> Self {
         Self {
             events: Mutex::new(Vec::new()),
             is_strict: true,

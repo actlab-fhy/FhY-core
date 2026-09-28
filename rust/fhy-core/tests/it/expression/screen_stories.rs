@@ -190,7 +190,7 @@ impl Placement {
         }
     }
 
-    fn position(self) -> BooleanPosition {
+    const fn position(self) -> BooleanPosition {
         match self {
             Self::AndLeft => BooleanPosition::LogicalOperand {
                 operation: LogicalOperation::And,

@@ -514,7 +514,7 @@ fn kind_of_type(core: CoreDataType) -> u8 {
 }
 
 /// Return the value kind of `value`, as [`kind_of_type`] numbers them.
-fn kind_of_value(value: Scalar) -> u8 {
+const fn kind_of_value(value: Scalar) -> u8 {
     match value {
         Scalar::Bool(_) => 0,
         Scalar::Int(_) => 1,

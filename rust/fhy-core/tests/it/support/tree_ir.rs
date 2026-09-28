@@ -342,7 +342,7 @@ pub(crate) enum WalkHook {
 impl WalkHook {
     /// Return the label of the hook in the recorded events.
     #[must_use]
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Before => "before",
             Self::Visit => "visit",

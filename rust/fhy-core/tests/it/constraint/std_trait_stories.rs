@@ -42,7 +42,7 @@ fn assert_agrees_with<T: Eq + std::hash::Hash + std::fmt::Debug>(
     }
 }
 
-fn float(value: f64) -> Value {
+const fn float(value: f64) -> Value {
     Value::Float(value)
 }
 
