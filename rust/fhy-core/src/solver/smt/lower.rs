@@ -378,10 +378,9 @@ impl<'a> Lowerer<'a> {
         let mut result: Option<TermId> = None;
         loop {
             if remaining.bit(0) {
-                result = Some(match result {
-                    None => square,
-                    Some(product) => self.apply(Operator::Multiply, vec![product, square], sort),
-                });
+                result = Some(result.map_or(square, |product| {
+                    self.apply(Operator::Multiply, vec![product, square], sort)
+                }));
             }
             remaining >>= 1_u32;
             if remaining.is_zero() {

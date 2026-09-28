@@ -100,7 +100,7 @@ impl Hazard {
         expression: &Expression,
         symbol_types: &dyn SymbolTypes,
         sorts: &dyn SortLookup,
-    ) -> Option<Hazard> {
+    ) -> Option<Self> {
         let constants = find_native_constants(expression, sorts);
         if !constants.is_empty() {
             return Some(Self::NativeConstant(constants));
@@ -130,7 +130,7 @@ impl Hazard {
         expression: &Expression,
         symbol_types: &dyn SymbolTypes,
         sorts: &dyn SortLookup,
-    ) -> Option<Hazard> {
+    ) -> Option<Self> {
         if let Some(hazard) = Self::find(expression, symbol_types, sorts) {
             return Some(hazard);
         }
@@ -144,7 +144,7 @@ impl Hazard {
     /// Return the node the hazard refuses, or `None` for native constants,
     /// which are refused for the whole expression.
     #[must_use]
-    pub fn node(&self) -> Option<&Expression> {
+    pub const fn node(&self) -> Option<&Expression> {
         match self {
             Self::NativeConstant(_) => None,
             Self::NonFiniteLiteral(node)

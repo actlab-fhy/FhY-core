@@ -264,7 +264,7 @@ impl Session {
     }
 
     /// Check `script`, returning the answer.
-    fn run(&mut self, script: &SmtScript) -> Result<SatResult, Failure> {
+    fn run(&self, script: &SmtScript) -> Result<SatResult, Failure> {
         self.send(format!("(set-option :print-success false)\n{script}(check-sat)\n").into_bytes());
         let answer = self.read_answer()?;
         let result = match answer.as_str() {
