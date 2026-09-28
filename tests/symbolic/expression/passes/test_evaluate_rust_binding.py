@@ -714,7 +714,7 @@ def test_relu_propagates_nan_and_abs_of_negative_zero_is_positive() -> None:
 
     assert np.array_equal(relu, [math.nan, 0.0, 0.0], equal_nan=True)
     assert np.array_equal(absolute, [math.nan, 0.0, 2.0], equal_nan=True)
-    assert not np.signbit(absolute[1])
+    assert math.copysign(1.0, absolute.tolist()[1]) == 1.0
     assert sign.tolist() == [0, 0, -1]
 
 

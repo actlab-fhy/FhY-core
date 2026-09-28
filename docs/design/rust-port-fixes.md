@@ -83,7 +83,7 @@ onto `dev-rust` before continuing.
 - [x] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration: `2385e94`
 - [x] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order: `77197df`
 - [x] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key: `859a45c`
-- [x] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing: this commit
+- [x] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing: `eba22e0`
 - [ ] Track B status: gates green; counts recorded; landed as `<hash>`
 
 ### Track C: `types-param` (types, checking, params and the symbol table; lands 4th)
@@ -3490,6 +3490,12 @@ new finding.
 - **Python-visible changes:** none in behavior; decoded literals compute
   `value` on first read, and a decoded tree's repeated subtrees are one
   object, as R2-011's decoder already made them one core node.
+
+**Fixed forward.** `d77f7ec` (R2-034) indexed a NumPy result in
+`test_relu_propagates_nan_and_abs_of_negative_zero_is_positive` in a way
+mypy's NumPy stubs refuse, which nox `type_check` (a track gate, not a
+per-commit one) found at the track gates; the test reads the lane through
+`tolist()` instead.
 
 ### Track C notes
 
