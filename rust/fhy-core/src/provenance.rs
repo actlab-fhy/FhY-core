@@ -61,13 +61,13 @@ impl Position {
 
     /// Return the 1-indexed line.
     #[must_use]
-    pub fn line(&self) -> NonZeroU64 {
+    pub const fn line(&self) -> NonZeroU64 {
         self.line
     }
 
     /// Return the 1-indexed column.
     #[must_use]
-    pub fn column(&self) -> NonZeroU64 {
+    pub const fn column(&self) -> NonZeroU64 {
         self.column
     }
 }
@@ -237,18 +237,17 @@ impl Span {
     /// Return the span if each pair of bounds that is fully set is in
     /// order, checking the offsets first.
     fn check_order(self) -> Result<Self, SpanError> {
-        match (self.start_offset, self.end_offset) {
-            (Some(start), Some(end)) if end < start => {
+        if let (Some(start), Some(end)) = (self.start_offset, self.end_offset) {
+            if end < start {
                 return Err(SpanError::EndOffsetBeforeStart { start, end });
             }
-            _ => {}
         }
-        match (self.start_position, self.end_position) {
-            (Some(start), Some(end)) if end < start => {
-                Err(SpanError::EndPositionBeforeStart { start, end })
+        if let (Some(start), Some(end)) = (self.start_position, self.end_position) {
+            if end < start {
+                return Err(SpanError::EndPositionBeforeStart { start, end });
             }
-            _ => Ok(self),
         }
+        Ok(self)
     }
 
     /// Return whether none of the four bounds is set.
@@ -259,25 +258,25 @@ impl Span {
 
     /// Return the byte offset the span starts at, if known.
     #[must_use]
-    pub fn start_offset(&self) -> Option<u64> {
+    pub const fn start_offset(&self) -> Option<u64> {
         self.start_offset
     }
 
     /// Return the byte offset the span ends at, if known.
     #[must_use]
-    pub fn end_offset(&self) -> Option<u64> {
+    pub const fn end_offset(&self) -> Option<u64> {
         self.end_offset
     }
 
     /// Return the position the span starts at, if known.
     #[must_use]
-    pub fn start_position(&self) -> Option<Position> {
+    pub const fn start_position(&self) -> Option<Position> {
         self.start_position
     }
 
     /// Return the position the span ends at, if known.
     #[must_use]
-    pub fn end_position(&self) -> Option<Position> {
+    pub const fn end_position(&self) -> Option<Position> {
         self.end_position
     }
 }
@@ -645,7 +644,7 @@ impl FileProvenance {
 
     /// Return the region of the file, if one was given.
     #[must_use]
-    pub fn span(&self) -> Option<&Span> {
+    pub const fn span(&self) -> Option<&Span> {
         self.span.as_ref()
     }
 }
