@@ -123,7 +123,7 @@ onto `dev-rust` before continuing.
 - [x] R2-013c (F2-013, binding readers): depth limits in the dict and member readers (`5e7cca2`)
 - [x] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot (`fe4eb15`)
 - [x] `[rebase]` onto `dev-rust` after Tracks D, B and C land (rebased onto `fb282fb` by the maintainer)
-- [x] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes (ints `726d53e` before the rebase, rebased; `Decimal`s in this commit)
+- [x] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes (ints `eb52fdf`, before the rebase as `726d53e`; `Decimal`s `2ee9990`)
 - [x] R2-031 (F2-031): one `ScopedStack` guard for all six thread-local stacks (done before the rebase: none of the six is in Track B's or C's files) (`e40d223`)
 - [ ] R2-033 (F2-033): binding boilerplate consolidated
 - [ ] Track E status: gates green; counts recorded; landed as `<hash>`
@@ -4702,3 +4702,13 @@ leaked with the rest of the change stashed and are collected with it; a
 numerical type's data type, owned since `fe4eb15`, gains its test too.
 Adapters built outside a construction (a decode's, a question's operands)
 still have no owner, which only keeps such a cycle alive.
+
+**The maintainer's decisions (2026-09-28).**
+- **R2-003's GC-tracking cost: accepted by the maintainer on 2026-09-28.**
+  The 10% to 40% slower small constructions recorded under R2-003 stand:
+  every class that holds Python objects stays GC-tracked, and the
+  immutable expression nodes get no exemption.
+- **R2-N5's install: the editable install stays.** nox is not switched to
+  `uv sync --no-editable`; the rule CONTRIBUTING now states, to run the
+  Python gates one after another or each in its own checkout, is the
+  remedy for the rebuild race.
