@@ -27,13 +27,13 @@ pub struct EquationConstraint {
 impl EquationConstraint {
     /// Return the constraint that `expression` holds.
     #[must_use]
-    pub fn new(expression: Expression) -> Self {
+    pub const fn new(expression: Expression) -> Self {
         Self { expression }
     }
 
     /// Return the expression.
     #[must_use]
-    pub fn expression(&self) -> &Expression {
+    pub const fn expression(&self) -> &Expression {
         &self.expression
     }
 

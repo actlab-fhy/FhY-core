@@ -125,7 +125,7 @@ impl<'a> ConstraintContext<'a> {
     /// Return the context reading native constants and named functions
     /// from `registry`.
     #[must_use]
-    pub fn with_registry(self, registry: &'a FunctionRegistry) -> Self {
+    pub const fn with_registry(self, registry: &'a FunctionRegistry) -> Self {
         Self {
             registry: Some(registry),
             ..self
@@ -140,13 +140,13 @@ impl<'a> ConstraintContext<'a> {
 
     /// Return the solver.
     #[must_use]
-    pub fn solver(&self) -> &'a Solver {
+    pub const fn solver(&self) -> &'a Solver {
         self.solver
     }
 
     /// Return the registry, if any.
     #[must_use]
-    pub fn registry(&self) -> Option<&'a FunctionRegistry> {
+    pub const fn registry(&self) -> Option<&'a FunctionRegistry> {
         self.registry
     }
 

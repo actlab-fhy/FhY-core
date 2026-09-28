@@ -478,7 +478,7 @@ impl ConstraintData {
     /// Return the foreign part of a custom constraint, or `None` for a
     /// built-in one.
     #[must_use]
-    pub fn foreign(&self) -> Option<&Foreign> {
+    pub const fn foreign(&self) -> Option<&Foreign> {
         match &self.0 {
             ConstraintRepr::Custom(foreign) => Some(foreign),
             ConstraintRepr::Equation(_)

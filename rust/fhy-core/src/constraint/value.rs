@@ -425,7 +425,7 @@ impl Member {
     /// would canonicalize it against numeric members, and neither does a
     /// container or an opaque value.
     #[must_use]
-    pub fn lifts_to_expression(&self) -> bool {
+    pub const fn lifts_to_expression(&self) -> bool {
         matches!(
             self.0,
             MemberValue::Bool(_) | MemberValue::Int(_) | MemberValue::Float(_)
@@ -471,7 +471,7 @@ impl Member {
     }
 
     /// Return the rank of the member's kind in the canonical order.
-    fn rank(&self) -> u8 {
+    const fn rank(&self) -> u8 {
         match &self.0 {
             MemberValue::Bool(_) => 0,
             MemberValue::Float(_) => 1,
