@@ -259,7 +259,10 @@ pub(super) fn effective_interval(
                 } else {
                     bound.value + 1
                 };
-                min = Some(min.map_or(effective.clone(), |min| min.max(effective)));
+                min = Some(match min {
+                    Some(min) => min.max(effective),
+                    None => effective,
+                });
             }
             BoundSide::Upper => {
                 let effective = if bound.is_inclusive {
@@ -267,7 +270,10 @@ pub(super) fn effective_interval(
                 } else {
                     bound.value - 1
                 };
-                max = Some(max.map_or(effective.clone(), |max| max.min(effective)));
+                max = Some(match max {
+                    Some(max) => max.min(effective),
+                    None => effective,
+                });
             }
         }
     }

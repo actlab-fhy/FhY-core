@@ -520,7 +520,7 @@ fn implication_subset(
     let other_screened = screen(other.constraints(), other.variable(), context)?;
     let antecedent = rename_system(&own_screened.system, own.variable(), &common)?;
     let consequent = rename_system(&other_screened.system, other.variable(), &common)?;
-    let symbol_types = HashMap::from([(common.clone(), symbol_type)]);
+    let symbol_types = HashMap::from([(common, symbol_type)]);
     let forwarder = QuestionForwarder {
         context,
         system: &antecedent,
