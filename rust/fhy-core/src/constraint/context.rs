@@ -41,7 +41,7 @@ pub enum ConstraintEvent<'a> {
         /// The member's position in the system's canonical order.
         index: usize,
         /// What the member reported.
-        event: &'a ConstraintEvent<'a>,
+        event: &'a Self,
     },
     /// A member of a system answered [`Outcome::Undecided`](super::Outcome)
     /// while the system evaluated it.

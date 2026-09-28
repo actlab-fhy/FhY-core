@@ -89,8 +89,8 @@ enum ValueRepr {
     ),
     Decimal(Decimal),
     Str(String),
-    Tuple(Vec<ValueRepr>),
-    FrozenSet(Vec<ValueRepr>),
+    Tuple(Vec<Self>),
+    FrozenSet(Vec<Self>),
     Opaque(Foreign),
 }
 

@@ -111,9 +111,9 @@ pub enum Value {
     /// A string.
     Str(String),
     /// A sequence of values.
-    Tuple(Vec<Value>),
+    Tuple(Vec<Self>),
     /// An unordered collection of values.
-    FrozenSet(Vec<Value>),
+    FrozenSet(Vec<Self>),
     /// A value only its producer can compare.
     Opaque(Part<dyn OpaqueValue>),
 }
