@@ -89,21 +89,21 @@ onto `dev-rust` before continuing.
 ### Track C: `types-param` (types, checking, params and the symbol table; lands 4th)
 
 - [x] C0: worktree `port/fix2-types-param` created; the baseline gates recorded (the worktree is `fix-c-types-param`, branch `fix/c-types-param`, from `dev-rust` at `35519bb`; see the Track C notes)
-- [x] R2-017 (F2-017): a negated literal checks as one literal: `d07de23`
-- [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous: `6222f80`
-- [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes: `a0f3e77`
-- [x] R2-026b (F2-026, checker part): rstests and broadened properties: `1206b7a`
-- [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion: `6068d7e`
+- [x] R2-017 (F2-017): a negated literal checks as one literal: `f634007`
+- [x] R2-019 (F2-019): the body sweep checks the composed built-ins; its test is not vacuous: `8a2862c`
+- [x] R2-001b (F2-001, checker part): the checker memoizes shared nodes: `9bf0a97`
+- [x] R2-026b (F2-026, checker part): rstests and broadened properties: `2a5bdb1`
+- [x] R2-047b (F2-047, checker part): impossible arms backed by a `const` assertion: `609922f`
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed)
-- [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph: `ad15163`
-- [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution: `0d5f5ba`
-- [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`: `0abc3fb`
-- [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction: `7f3e8db`
-- [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations: `d33c5ef`
-- [x] R2-028 (F2-028): param and constraint decision-rule tests in Rust: `3f55cff`
-- [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables: `f90a4da`
-- [x] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories
-- [ ] `[rebase]` onto `dev-rust` after Tracks D and B land
+- [x] R2-018 (F2-018): `UnificationError::Substitution`, and an occurs check over the binding graph: `50a5641`
+- [x] R2-038b (F2-038, shape substitution): memoized, cycle-marked substitution: `4a5e01f`
+- [x] R2-020 (F2-020): descendants checked by `add_symbol`; namespaces decoded first; assignments decoded through `restore`: `836875e`
+- [x] R2-021 (F2-021): every domain-level procedure enforces its domain's restriction: `c4d62a4`
+- [x] R2-038c (F2-038, permutations): in-set candidates instead of `n!` permutations: `ef57f96`
+- [x] R2-028 (F2-028): param and constraint decision-rule tests in Rust: `85f9797`
+- [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables: `98bc2a8`
+- [x] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories: `a61d3b6`
+- [x] `[rebase]` onto `dev-rust` after Tracks D and B land (rebased onto `03fb9e4` by the maintainer)
 - [ ] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound
 - [ ] Track C status: gates green; counts recorded; landed as `<hash>`
 
@@ -3626,7 +3626,7 @@ status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
   public `check_all_registered_function_bodies()` keeps its signature. The
   stub's line changes with it (a shared file).
 - **All 16 composed bodies check**, so the report stays empty.
-- **Fixed forward:** `d07de23` (R2-017) left one Python test line 90
+- **Fixed forward:** `f634007` (R2-017) left one Python test line 90
   characters long, which ruff's E501 refuses; this commit formats it.
 - **Python-visible changes:**
 
@@ -3896,7 +3896,9 @@ finding.
   (`a_broken_rule_is_framed_by_the_root_and_the_sub_expression` and
   `each_body_check_failure_names_the_function`, whose `IllTyped` and
   `Unsupported` texts embed a `Rule`). They are this track's to update
-  when it rebases onto B (§I.7.1, "who resolves").
+  when it rebases onto B (§I.7.1, "who resolves"). After the rebase onto
+  `03fb9e4` they pass unchanged: B's `Bounded` text differs from the full
+  text only past 64 node occurrences, and these expressions are small.
 - **Tables** (through Track A's `support/error_text.rs`, `to_string()` and
   the `source()` type by downcast): `types/error_text_stories.rs`, every
   variant of `PromotionError`, `LiteralTypeError` (the float and integer
@@ -3922,6 +3924,16 @@ finding.
   unless a bound changes. The default type rule's `TypeMismatch`
   (`unify.rs:366` at the audit) was already pinned by
   `an_extension_without_rules_takes_the_default_rules`.
+
+**After the rebase onto Tracks D and B.** The maintainer rebased
+`fix/c-types-param` onto `dev-rust` at `03fb9e4` (Tracks A, D and B
+landed); the checklist's hashes are the rebased ones. The resolutions:
+`types/checking/error.rs` imports B's `Bounded` beside the checker's
+imports without R2-019's `FunctionName`, and `checker_stories.rs` keeps
+B's `a_rule_error_on_a_dag_displays_in_bounded_size` followed by this
+track's two DAG stories. The per-commit gates pass on the rebased head
+(`cargo test --workspace` 4,924, `--all-features` 4,960) with no
+fix-forward.
 
 ### Track E notes
 
