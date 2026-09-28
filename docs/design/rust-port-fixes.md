@@ -4850,3 +4850,13 @@ one Python-visible change:
   | Rust: `audit_solver_probes`, `audit_lattice_probe`, `bigint_probe`, `float_text_probe`, `kernel_probe`, `deep_pattern`, P3, P5 to P10 | | pass or print what the audit expected (P3's core `Display` stays per occurrence, by R2's choice (a); the binding's `str` of a 2^60-occurrence DAG is 2,887 characters) |
   | Rust: `audit_id_cap_probe` | | fails at the high id it reads, which J-1 now refuses |
   | Rust: not re-runnable | | `audit_pass_probe`, the types probes, `lambda` and `term_probe` no longer compile against the changed APIs (`PassFailure`, `diagnostics_in`, the extension traits), and the SymPy probes' backend moved to the binding (R2-005a); the stories each fixing item added cover them |
+
+**Hashes after the rebase.** The items ticked before the maintainer's
+rebase onto `fb282fb` name their commits' hashes from before it. On
+`fix/e-binding` they are: `44a2c00` → `19651df` (R2-N4), `6f57090` →
+`4901e71` (R2-002), `047f6ea` → `7a8efb2` (R2-024), `464cbe8` → `a9a028a`
+(R2-044), `86c407c` → `c52e3cc` (R2-043), `b966131` → `7a0aeb2` (R2-041),
+`cd51fde` → `856dfc5` (R2-030), `7f01bfd` → `cc7c843`, `5e7cca2` →
+`7a5c9e1` (R2-013c), `fe4eb15` → `ef19e86` (R2-003), `e40d223` → `857942d`
+(R2-031), `726d53e` → `eb52fdf` (R2-045's ints, as its line says), and
+`0aa6752` → `220832b`.
