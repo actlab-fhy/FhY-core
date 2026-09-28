@@ -19,14 +19,14 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::described_tag::{DescribedTag, TagKind, require_shipped, sealed};
+use crate::described_tag::{DescribedTag, TagKind, sealed};
 use crate::error::impl_from_name;
+use crate::identifier::Identifier;
 use crate::identifier::reserved::{self, ReservedIdentifier};
-use crate::interned::{Canonical, InternRegistry};
+use crate::interned::{Canonical, InternRegistry, default_instance_accessor};
 
 /// The vocabulary of [`NoteKind`]s.
 #[expect(
@@ -51,7 +51,7 @@ impl sealed::Sealed for NoteKindVocabulary {
 /// Open classification of the role a [`Note`] plays.
 ///
 /// Two kinds are equal when they carry the same
-/// [`Identifier`](crate::identifier::Identifier), whatever their
+/// [`Identifier`], whatever their
 /// descriptions say.
 ///
 /// A kind encodes as `{"name": {"id": .., "name_hint": ..}, "description":
@@ -83,42 +83,26 @@ fn create_default_note_kinds() -> Vec<NoteKind> {
         .collect()
 }
 
-static RATIONALE: LazyLock<Canonical<NoteKind>> =
-    LazyLock::new(|| require_shipped(reserved::RATIONALE_NOTE_KIND));
-
-static SUGGESTION: LazyLock<Canonical<NoteKind>> =
-    LazyLock::new(|| require_shipped(reserved::SUGGESTION_NOTE_KIND));
-
-static REMARK: LazyLock<Canonical<NoteKind>> =
-    LazyLock::new(|| require_shipped(reserved::REMARK_NOTE_KIND));
-
-static OTHER: LazyLock<Canonical<NoteKind>> =
-    LazyLock::new(|| require_shipped(reserved::OTHER_NOTE_KIND));
-
 impl DescribedTag<NoteKindVocabulary> {
-    /// Return the kind for notes that explain why a decision,
-    /// transformation, or result occurred.
-    #[must_use]
-    pub fn rationale() -> &'static Canonical<NoteKind> {
-        &RATIONALE
+    default_instance_accessor! {
+        /// Return the kind for notes that explain why a decision,
+        /// transformation, or result occurred.
+        pub fn rationale() -> Canonical<NoteKind> = Identifier::reserved(reserved::RATIONALE_NOTE_KIND);
     }
 
-    /// Return the kind for notes that suggest a fix or course of action.
-    #[must_use]
-    pub fn suggestion() -> &'static Canonical<NoteKind> {
-        &SUGGESTION
+    default_instance_accessor! {
+        /// Return the kind for notes that suggest a fix or course of action.
+        pub fn suggestion() -> Canonical<NoteKind> = Identifier::reserved(reserved::SUGGESTION_NOTE_KIND);
     }
 
-    /// Return the kind for neutral informational notes.
-    #[must_use]
-    pub fn remark() -> &'static Canonical<NoteKind> {
-        &REMARK
+    default_instance_accessor! {
+        /// Return the kind for neutral informational notes.
+        pub fn remark() -> Canonical<NoteKind> = Identifier::reserved(reserved::REMARK_NOTE_KIND);
     }
 
-    /// Return the kind for uncategorized notes.
-    #[must_use]
-    pub fn other() -> &'static Canonical<NoteKind> {
-        &OTHER
+    default_instance_accessor! {
+        /// Return the kind for uncategorized notes.
+        pub fn other() -> Canonical<NoteKind> = Identifier::reserved(reserved::OTHER_NOTE_KIND);
     }
 }
 

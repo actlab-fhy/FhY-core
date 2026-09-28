@@ -20,13 +20,14 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter;
-use std::sync::LazyLock;
 
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::identifier::{HasIdentifier, Identifier, reserved};
-use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, require_default};
+use crate::interned::{
+    Canonical, InternOutcome, InternRegistry, Interned, default_instance_accessor,
+};
 
 /// Open classification of the kind of value an IR operation handles.
 ///
@@ -385,24 +386,16 @@ fn create_default_domains() -> Vec<ValueDomain> {
     ]
 }
 
-static DATA_DOMAIN: LazyLock<Canonical<ValueDomain>> =
-    LazyLock::new(|| require_default(&Identifier::reserved(reserved::DATA_DOMAIN)));
-
-static ADDRESS_DOMAIN: LazyLock<Canonical<ValueDomain>> =
-    LazyLock::new(|| require_default(&Identifier::reserved(reserved::ADDRESS_DOMAIN)));
-
 impl ValueDomain {
-    /// Return the domain for concrete data values flowing through the IR.
-    #[must_use]
-    pub fn data() -> &'static Canonical<ValueDomain> {
-        &DATA_DOMAIN
+    default_instance_accessor! {
+        /// Return the domain for concrete data values flowing through the IR.
+        pub fn data() -> Canonical<ValueDomain> = Identifier::reserved(reserved::DATA_DOMAIN);
     }
 
-    /// Return the domain for index, offset, or address values used to
-    /// access data.
-    #[must_use]
-    pub fn address() -> &'static Canonical<ValueDomain> {
-        &ADDRESS_DOMAIN
+    default_instance_accessor! {
+        /// Return the domain for index, offset, or address values used to
+        /// access data.
+        pub fn address() -> Canonical<ValueDomain> = Identifier::reserved(reserved::ADDRESS_DOMAIN);
     }
 }
 

@@ -222,16 +222,6 @@ struct DescribedTagWire {
     description: String,
 }
 
-/// Return the canonical shipped tag `entry` names in the vocabulary `K`.
-///
-/// # Panics
-///
-/// Panics if `entry` does not name one of the defaults `K`'s registry was
-/// created with.
-pub(crate) fn require_shipped<K: TagKind>(entry: ReservedIdentifier) -> Canonical<DescribedTag<K>> {
-    crate::interned::require_default(&Identifier::reserved(entry))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

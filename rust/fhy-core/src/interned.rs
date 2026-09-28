@@ -488,6 +488,24 @@ pub(crate) fn require_default<T: Interned>(key: &T::Key) -> Canonical<T> {
         .expect("the registry registers every default on its first use")
 }
 
+/// Define a `'static` accessor returning the canonical default instance of
+/// `$ty` registered under `$key`.
+///
+/// Each accessor holds its own private `LazyLock`, so no top-level static
+/// needs a name of its own.
+macro_rules! default_instance_accessor {
+    ($(#[$doc:meta])* $vis:vis fn $name:ident() -> Canonical<$ty:ty> = $key:expr;) => {
+        $(#[$doc])*
+        #[must_use]
+        $vis fn $name() -> &'static $crate::interned::Canonical<$ty> {
+            static INSTANCE: ::std::sync::LazyLock<$crate::interned::Canonical<$ty>> =
+                ::std::sync::LazyLock::new(|| $crate::interned::require_default(&$key));
+            &INSTANCE
+        }
+    };
+}
+pub(crate) use default_instance_accessor;
+
 /// No canonical instance is registered under a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

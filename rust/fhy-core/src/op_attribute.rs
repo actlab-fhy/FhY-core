@@ -7,11 +7,10 @@
 //! [`OpAttribute::pure`] and [`OpAttribute::elementwise`], and registers its
 //! own without changing this crate.
 
-use std::sync::LazyLock;
-
-use crate::described_tag::{DescribedTag, TagKind, require_shipped, sealed};
+use crate::described_tag::{DescribedTag, TagKind, sealed};
+use crate::identifier::Identifier;
 use crate::identifier::reserved::{self, ReservedIdentifier};
-use crate::interned::{Canonical, InternRegistry};
+use crate::interned::{InternRegistry, default_instance_accessor};
 
 /// The vocabulary of [`OpAttribute`]s.
 #[expect(
@@ -36,11 +35,11 @@ impl sealed::Sealed for OpAttributeVocabulary {
 /// Open semantic tag attached to a compiler operation.
 ///
 /// Two attributes are equal when they carry the same
-/// [`Identifier`](crate::identifier::Identifier), whatever their
+/// [`Identifier`], whatever their
 /// descriptions say.
 ///
-/// Only a [`Canonical<OpAttribute>`] decodes, registering the attribute
-/// unless its name is registered already.
+/// Only a [`Canonical<OpAttribute>`](crate::interned::Canonical) decodes,
+/// registering the attribute unless its name is registered already.
 pub type OpAttribute = DescribedTag<OpAttributeVocabulary>;
 
 /// The shipped attributes, in registration order, with their descriptions.
@@ -70,44 +69,29 @@ fn create_default_attributes() -> Vec<OpAttribute> {
         .collect()
 }
 
-static COMMUTATIVE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_shipped(reserved::COMMUTATIVE));
-
-static ASSOCIATIVE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_shipped(reserved::ASSOCIATIVE));
-
-static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_shipped(reserved::PURE));
-
-static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_shipped(reserved::ELEMENTWISE));
-
 impl DescribedTag<OpAttributeVocabulary> {
-    /// Return the attribute for ops whose output is invariant under operand
-    /// swap.
-    #[must_use]
-    pub fn commutative() -> &'static Canonical<OpAttribute> {
-        &COMMUTATIVE
+    default_instance_accessor! {
+        /// Return the attribute for ops whose output is invariant under operand
+        /// swap.
+        pub fn commutative() -> Canonical<OpAttribute> = Identifier::reserved(reserved::COMMUTATIVE);
     }
 
-    /// Return the attribute for ops that compose associatively across
-    /// applications.
-    #[must_use]
-    pub fn associative() -> &'static Canonical<OpAttribute> {
-        &ASSOCIATIVE
+    default_instance_accessor! {
+        /// Return the attribute for ops that compose associatively across
+        /// applications.
+        pub fn associative() -> Canonical<OpAttribute> = Identifier::reserved(reserved::ASSOCIATIVE);
     }
 
-    /// Return the attribute for ops that have no side effects and produce
-    /// deterministic outputs.
-    #[must_use]
-    pub fn pure() -> &'static Canonical<OpAttribute> {
-        &PURE
+    default_instance_accessor! {
+        /// Return the attribute for ops that have no side effects and produce
+        /// deterministic outputs.
+        pub fn pure() -> Canonical<OpAttribute> = Identifier::reserved(reserved::PURE);
     }
 
-    /// Return the attribute for ops that act independently on each element
-    /// of their operands.
-    #[must_use]
-    pub fn elementwise() -> &'static Canonical<OpAttribute> {
-        &ELEMENTWISE
+    default_instance_accessor! {
+        /// Return the attribute for ops that act independently on each element
+        /// of their operands.
+        pub fn elementwise() -> Canonical<OpAttribute> = Identifier::reserved(reserved::ELEMENTWISE);
     }
 }
 
