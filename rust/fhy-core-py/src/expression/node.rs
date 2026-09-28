@@ -1,6 +1,6 @@
 //! The expression classes: `fhy_core._rs.Expression` and its seven node
 //! classes, the bases of the classes of the same names in
-//! `fhy_core.symbolic.expression.core` (pattern P2, as a class hierarchy).
+//! `fhy_core.symbolic.expression.core`, built as a class hierarchy.
 //!
 //! `Expression` holds the Rust [`Expression`] handle, the tuple of its
 //! children's Python objects in visiting order, and its structural hash,
@@ -401,7 +401,7 @@ const STR_OCCURRENCE_BUDGET: usize = 1_000;
 
 #[pymethods]
 impl PyExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -441,7 +441,7 @@ impl PyExpression {
 
     /// Render the expression in the core's symbolic notation.
     /// The core's `Display` text; above `STR_OCCURRENCE_LIMIT` occurrences,
-    /// its first `STR_OCCURRENCE_BUDGET` occurrences and `…` (R2-010), so a
+    /// its first `STR_OCCURRENCE_BUDGET` occurrences and `…`, so a
     /// DAG whose full text is exponential prints at once.
     fn __str__(&self) -> String {
         if self.expression.occurrence_count() > STR_OCCURRENCE_LIMIT {
@@ -927,7 +927,7 @@ impl_public_class!(PyUnaryExpression, "UnaryExpression");
 
 #[pymethods]
 impl PyUnaryExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1080,7 +1080,7 @@ impl_public_class!(PyBinaryExpression, "BinaryExpression");
 
 #[pymethods]
 impl PyBinaryExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1250,7 +1250,7 @@ impl_public_class!(PyLogicalExpression, "LogicalExpression");
 
 #[pymethods]
 impl PyLogicalExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1417,7 +1417,7 @@ impl PyIdentifierExpression {
 
 #[pymethods]
 impl PyIdentifierExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1590,7 +1590,7 @@ fn encode_literal_value<'py>(
 
 #[pymethods]
 impl PyLiteralExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1716,7 +1716,7 @@ impl_public_class!(PyPiecewiseExpression, "PiecewiseExpression");
 
 #[pymethods]
 impl PyPiecewiseExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1902,8 +1902,8 @@ impl PyPiecewiseExpression {
 
 /// A function applied to arguments, backed by [`ExpressionKind::Call`].
 ///
-/// The callee is a built-in function when its name is one (D-9: built-in
-/// names are reserved), and a named user function otherwise.
+/// The callee is a built-in function when its name is one of the reserved
+/// built-in names, and a named user function otherwise.
 #[pyclass(
     extends = PyExpression,
     subclass,
@@ -1924,7 +1924,7 @@ impl_public_class!(PyCallExpression, "CallExpression");
 
 #[pymethods]
 impl PyCallExpression {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

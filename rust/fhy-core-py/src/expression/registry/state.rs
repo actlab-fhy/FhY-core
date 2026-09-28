@@ -1,9 +1,9 @@
-//! The registry the Python API reads and writes (N-S7-2 (a)), and the
-//! built-in entries it resolves first (N-S7-3 (a)).
+//! The registry the Python API reads and writes, and the built-in entries
+//! it resolves first.
 //!
 //! The user registry is one [`FunctionRegistry`] with the Python object of
 //! each entry, held as an `Arc` behind a `Mutex` in the extension's module
-//! state (D-S7-13). A lookup locks only to read the current state; a
+//! state. A lookup locks only to read the current state; a
 //! registration builds its entry with no lock held, then, under the lock,
 //! clones the state, registers into the clone, and swaps it in. So the
 //! screen and the inliner run on one consistent snapshot with no lock held,
@@ -199,8 +199,8 @@ impl RegistryState {
 
     /// Return the mapping of every entry's name to its object: the
     /// built-ins in catalogue order, the constants, then the composed
-    /// functions, then the native ones (D-S7-16), and then the user
-    /// entries in registration order.
+    /// functions, then the native ones, and then the user entries in
+    /// registration order.
     pub(super) fn entries_view<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         self.entries_view
             .get_or_try_init(py, || {

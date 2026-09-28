@@ -1,6 +1,6 @@
 //! `fhy_core._rs.CompilerPassBase`, the base of the Python `CompilerPass`
-//! ABC (P3; D-S6-2 to D-S6-4), and the adapter that drives a Python pass
-//! through the core's lifecycle.
+//! ABC, and the adapter that drives a Python pass through the core's
+//! lifecycle.
 //!
 //! The adapter implements the core's [`CompilerPass`] over [`PyIr`] by
 //! calling the Python hooks: `validate_input`, `should_run` then
@@ -597,7 +597,7 @@ impl PyCompilerPassBase {
 
 #[pymethods]
 impl PyCompilerPassBase {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

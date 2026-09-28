@@ -1,4 +1,4 @@
-//! The expression evaluators (S9): the fold of `evaluate_expression`, the
+//! The expression evaluators: the fold of `evaluate_expression`, the
 //! `NumPy` evaluator, the built-ins' native implementations, and the literal
 //! helpers of `native_lowering.py`, over the core's
 //! [`fhy_core::expression::evaluate`].

@@ -299,7 +299,7 @@ pub(super) fn current_bindings_object<'py>(
 mod scoped_stack_tests {
     use super::*;
 
-    /// Test a panic inside a match leaves no table behind (R2-031).
+    /// Test a panic inside a match leaves no table behind.
     #[test]
     fn a_panic_inside_a_match_leaves_the_stack_empty() {
         let unwound = std::panic::catch_unwind(|| {

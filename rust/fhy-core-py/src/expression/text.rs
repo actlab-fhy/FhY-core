@@ -1,4 +1,4 @@
-//! The printed text of expressions (D-S4-1): `str` is the core's `Display`,
+//! The printed text of expressions: `str` is the core's `Display`,
 //! `repr` its bounded `Debug` text under the node's class name, and
 //! `pformat_expression` the core's `display` under the matching options.
 

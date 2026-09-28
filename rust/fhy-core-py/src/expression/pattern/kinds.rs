@@ -1,7 +1,7 @@
 //! The pattern classes: `fhy_core._rs.Pattern` and its eleven kinds, the
 //! bases of the classes of the same names in
-//! `fhy_core.symbolic.expression.pattern.core` (pattern P2, as a closed
-//! class hierarchy; D-S5-4).
+//! `fhy_core.symbolic.expression.pattern.core`, built as a closed class
+//! hierarchy.
 //!
 //! `Pattern` holds the Rust [`Pattern`], the depth of the pattern, the
 //! field objects of its kind in constructor order, with their names, and
@@ -49,7 +49,7 @@ pub(super) fn into_callback_error(error: PyErr) -> BoxError {
 }
 
 /// Raise `RecursionError` if a pattern of depth `depth` is deeper than
-/// Python's recursion limit (D-S5-15).
+/// Python's recursion limit.
 ///
 /// The core matches a pattern recursively, once per level, on the Rust
 /// stack. Refusing the patterns Python's own recursion limit would refuse
@@ -229,7 +229,7 @@ impl PyPattern {
 
 #[pymethods]
 impl PyPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -414,7 +414,7 @@ impl_public_class!(PyCapturePattern, "CapturePattern");
 
 #[pymethods]
 impl PyCapturePattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -501,7 +501,7 @@ impl_public_class!(PyLiteralPattern, "LiteralPattern");
 
 #[pymethods]
 impl PyLiteralPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -564,7 +564,7 @@ impl_public_class!(PyIdentifierPattern, "IdentifierPattern");
 
 #[pymethods]
 impl PyIdentifierPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -638,7 +638,7 @@ impl_public_class!(PyUnaryExpressionPattern, "UnaryExpressionPattern");
 
 #[pymethods]
 impl PyUnaryExpressionPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -715,7 +715,7 @@ impl_public_class!(PyBinaryExpressionPattern, "BinaryExpressionPattern");
 
 #[pymethods]
 impl PyBinaryExpressionPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -804,7 +804,7 @@ impl_public_class!(PyLogicalExpressionPattern, "LogicalExpressionPattern");
 
 #[pymethods]
 impl PyLogicalExpressionPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -890,7 +890,7 @@ impl_public_class!(PyPiecewiseExpressionPattern, "PiecewiseExpressionPattern");
 
 #[pymethods]
 impl PyPiecewiseExpressionPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1005,7 +1005,7 @@ impl_public_class!(PyCallExpressionPattern, "CallExpressionPattern");
 
 #[pymethods]
 impl PyCallExpressionPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1093,14 +1093,14 @@ pub(crate) struct PyPredicatePattern {
     #[pyo3(get)]
     predicate: Py<PyAny>,
     /// The slot the Rust predicate reads the callable from, which this
-    /// object owns (R2-003).
+    /// object owns.
     slots: crate::gc::Slots,
 }
 
 impl_public_class!(PyPredicatePattern, "PredicatePattern");
 
 /// Return the Rust predicate calling the Python callable `predicate` with
-/// the candidate's node object, read by truthiness (D-S5-6).
+/// the candidate's node object, read by truthiness.
 fn build_predicate(predicate: Py<PyAny>) -> Pattern {
     let predicate = crate::gc::Slot::new(predicate);
     Pattern::try_predicate(move |node| {
@@ -1114,7 +1114,7 @@ fn build_predicate(predicate: Py<PyAny>) -> Pattern {
 
 #[pymethods]
 impl PyPredicatePattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1183,7 +1183,7 @@ impl_public_class!(PyAlternativesPattern, "AlternativesPattern");
 
 #[pymethods]
 impl PyAlternativesPattern {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

@@ -1,9 +1,8 @@
 //! `PyO3` classes for [`fhy_core::pass`]: the bases of the pass
-//! infrastructure's public classes in `fhy_core.pass_infrastructure` (S6 of
-//! `docs/design/python-switch.md`).
+//! infrastructure's public classes in `fhy_core.pass_infrastructure`.
 //!
 //! `CompilerPass`, `Analysis` and `Validator` are Rust traits exposed as
-//! Python abstract classes (pattern P3): their `PyO3` bases are
+//! Python abstract classes: their `PyO3` bases are
 //! `CompilerPassBase`, `AnalysisBase` and `ValidatorBase`, and a Python
 //! subclass is driven from Rust through an adapter that implements the
 //! core's trait by calling the Python hooks. The hook names stay Python;
@@ -13,7 +12,7 @@
 //! not override in Rust.
 //!
 //! The managers, `PreservedAnalyses`, `PassResult` and the records are
-//! Rust-backed classes (pattern P2). A pipeline run builds the core's
+//! Rust-backed classes. A pipeline run builds the core's
 //! `PassManager` over [`PyIr`](ir::PyIr), the one type-erased IR whose
 //! identity is the Python object's, runs it, and converts what comes back:
 //! each Rust diagnostic a Python hook reported returns as the object it

@@ -168,7 +168,7 @@ impl ScopeGuard {
 mod scoped_stack_tests {
     use super::*;
 
-    /// Test a panic inside a run's scope leaves no scope behind (R2-031).
+    /// Test a panic inside a run's scope leaves no scope behind.
     #[test]
     fn a_panic_inside_a_scope_leaves_the_stack_empty() {
         let unwound = std::panic::catch_unwind(|| {

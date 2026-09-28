@@ -1,9 +1,9 @@
 //! `fhy_core._rs.Solver`: the core's facade over the backends a Python
-//! caller gives it (P2; D-S8-13), with the methods the module functions of
+//! caller gives it, with the methods the module functions of
 //! `fhy_core.symbolic.solver` call.
 //!
 //! Every question reads the sorts of user constants and named functions
-//! from a snapshot of the function registry (S7), and runs with the
+//! from a snapshot of the function registry, and runs with the
 //! interpreter detached, so a native backend lets other threads run; a
 //! Python backend attaches again for its one call.
 
@@ -136,7 +136,7 @@ pub(crate) struct PySolver {
     smt_solver: Option<Py<PyAny>>,
     simplifier: Option<Py<PyAny>>,
     /// The slots the Python backends' adapters read their objects from,
-    /// which this solver owns (R2-003).
+    /// which this solver owns.
     slots: Slots,
 }
 
@@ -230,7 +230,7 @@ impl PySolver {
 
 #[pymethods]
 impl PySolver {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

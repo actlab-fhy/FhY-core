@@ -1,4 +1,4 @@
-//! The results and records of pass runs (P2; D-S6-10, D-S6-13):
+//! The results and records of pass runs:
 //! `PassResult`, `PassRunRecord`, `FixpointIterationRecord`,
 //! `FixpointGroupRecord`, `PassManagerResult` and `ValidatorRecord`.
 //!
@@ -64,7 +64,7 @@ macro_rules! define_record_class {
         impl $class {
             $($methods)*
 
-            /// Visit the fields, for the cycle collector (R2-003).
+            /// Visit the fields, for the cycle collector.
             fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
                 $( visit.call(&self.$field)?; )+
                 Ok(())

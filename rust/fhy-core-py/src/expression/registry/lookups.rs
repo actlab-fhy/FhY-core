@@ -1,9 +1,9 @@
 //! The registry's Python functions: registration, the lookups, the test
-//! seam, and inlining (D-S7-11, D-S7-12, D-S7-14, D-S7-7).
+//! seam, and inlining.
 //!
 //! Every lookup resolves a name through the built-ins first, then the user
-//! registry (N-S7-3 (a)), and returns the entry's single Python object. A
-//! registration returns the object later lookups return.
+//! registry, and returns the entry's single Python object. A registration
+//! returns the object later lookups return.
 
 use pyo3::exceptions::{PyRecursionError, PyValueError};
 use pyo3::prelude::*;

@@ -1,9 +1,8 @@
 //! The embedded interpreter, the SymPy backend and the expression builders
 //! the SymPy backend's stories share.
 //!
-//! The stories need Python with SymPy (N-S12-1 of
-//! `docs/design/python-switch.md`, resolved as required): without it,
-//! [`backend`] fails every story that uses it with the setup recipe.
+//! The stories need Python with SymPy: without it, [`backend`] fails every
+//! story that uses it with the setup recipe.
 
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 

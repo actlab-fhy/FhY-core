@@ -1,5 +1,5 @@
 //! `fhy_core._rs.MatchBindings`: the base of the public `MatchBindings`
-//! class, backed by the Rust [`MatchBindings`] (D-S5-3).
+//! class, backed by the Rust [`MatchBindings`].
 
 use std::collections::HashMap;
 
@@ -94,7 +94,7 @@ impl PyMatchBindings {
 
 #[pymethods]
 impl PyMatchBindings {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

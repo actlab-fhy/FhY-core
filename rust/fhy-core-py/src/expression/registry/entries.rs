@@ -1,5 +1,5 @@
 //! The three entry classes: `RegisteredFunction`, `NativeFunction` and
-//! `NativeConstant` (D-S7-9).
+//! `NativeConstant`.
 //!
 //! Each is a frozen pyclass holding the Rust value, or for a built-in the
 //! catalogue item, next to the Python objects its fields return, so
@@ -472,7 +472,7 @@ impl PyRegisteredFunction {
 }
 
 impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -717,7 +717,7 @@ impl PyNativeFunction {
 }
 
 impl_entry_protocols!(PyNativeFunction, "NativeFunction", {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -788,9 +788,8 @@ impl_entry_protocols!(PyNativeFunction, "NativeFunction", {
     }
 
     /// Build the entries of the built-ins once, each native built-in
-    /// computed by its `BuiltinNativeImplementation`, the core's kernel
-    /// (D-S9-9). `builtins.py` calls it at import; a later call does
-    /// nothing.
+    /// computed by its `BuiltinNativeImplementation`, the core's kernel.
+    /// `builtins.py` calls it at import; a later call does nothing.
     #[classmethod]
     fn _install_builtins(cls: &Bound<'_, PyType>) -> PyResult<()> {
         state::install_builtins(cls.py())
@@ -910,7 +909,7 @@ impl PyNativeConstant {
 }
 
 impl_entry_protocols!(PyNativeConstant, "NativeConstant", {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

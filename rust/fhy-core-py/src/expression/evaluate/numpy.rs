@@ -1,16 +1,16 @@
-//! `evaluate_expression_with_numpy` (D-S9-10 to D-S9-13): the core's
-//! evaluator over `NumPy` values, converted with rust-numpy.
+//! `evaluate_expression_with_numpy`: the core's evaluator over `NumPy`
+//! values, converted with rust-numpy.
 //!
-//! `NumPy` stays optional (D-S9-11): every entry point imports it first, and
-//! nothing else in the extension touches `NumPy`, so the extension imports
-//! and works without it. The bindings the inlined expression refers to are
+//! `NumPy` stays optional: every entry point imports it first, and nothing
+//! else in the extension touches `NumPy`, so the extension imports and
+//! works without it. The bindings the inlined expression refers to are
 //! converted to the core's three domains: a Python `bool`, `int` or
 //! `float` directly, and anything else through `numpy.asarray`, whose
 //! `bool_`, `int64` and `float64` arrays in native byte order are borrowed
 //! without a copy, and whose other admitted dtypes `NumPy` casts once. When
 //! every binding is a scalar, the scalar backend evaluates; otherwise the
 //! array backend does, with the interpreter released, calling `NumPy`'s
-//! ufuncs for the 14 transcendental natives (N-S9-2 (b)).
+//! ufuncs for the 14 transcendental natives.
 
 use std::collections::{HashMap, HashSet};
 
@@ -211,8 +211,7 @@ struct HeldInput {
 }
 
 /// The array kernels computing the 14 transcendental natives with `NumPy`'s
-/// ufuncs (N-S9-2 (b)); `sqrt`, `round`, `floor`, `ceil` and `erf` keep the
-/// core's.
+/// ufuncs; `sqrt`, `round`, `floor`, `ceil` and `erf` keep the core's.
 struct NumpyKernels {
     numpy: Py<PyModule>,
     inputs: Vec<HeldInput>,
@@ -374,8 +373,8 @@ fn array_to_numpy<'py>(
 
 /// Return the value of the prepared expression when it is a call of a
 /// transcendental native over one real array binding: `NumPy`'s ufunc over
-/// the binding itself, the kernel N-S9-2 (b) gives that node, with no
-/// copy. Return `None` for any other expression, for a binding that is not
+/// the binding itself, the kernel gives that node, with no copy. Return
+/// `None` for any other expression, for a binding that is not
 /// C-contiguous (the result has the binding's order), or for a binding of a
 /// constant's identifier, which the evaluation refuses.
 fn evaluate_lone_kernel_call<'py>(

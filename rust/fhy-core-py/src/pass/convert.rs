@@ -1,5 +1,5 @@
-//! Converting what a run returns to Python (D-S6-18): diagnostics, the
-//! records of a pipeline and validation reports.
+//! Converting what a run returns to Python: diagnostics, the records of a
+//! pipeline and validation reports.
 //!
 //! Every value converts once, where it leaves Rust. A diagnostic a Python
 //! hook reported comes back as the object it reported, found in the run's

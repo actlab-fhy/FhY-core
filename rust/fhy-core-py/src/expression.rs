@@ -1,20 +1,19 @@
 //! `PyO3` classes and functions for [`fhy_core::expression`]: the bases of
-//! `fhy_core.symbolic.expression.core`'s expression classes (pattern P2, as a
-//! class hierarchy), and the Boolean-position screen.
+//! `fhy_core.symbolic.expression.core`'s expression classes, built as a
+//! class hierarchy, and the Boolean-position screen.
 //!
-//! The Python expression API takes the Rust core's
-//! semantics (decision D-S4-1 of `docs/design/python-switch.md`): `==` and
+//! The Python expression API takes the Rust core's semantics: `==` and
 //! `hash` are structural, literals are normalized, conjunctions and
 //! disjunctions are one n-ary `LogicalExpression`, built-in function names
 //! are reserved, and `str`, `repr` and `pformat_expression` print the
 //! core's text. Payloads keep the `__type__`/`__data__` envelope of
-//! `WrappedFamilySerializable`, which the public classes inherit (D-S4-5).
+//! `WrappedFamilySerializable`, which the public classes inherit.
 //!
-//! The `pattern` submodule binds the core's patterns and rewrite rules (S5),
-//! the `registry` submodule the function registry and inlining (S7), and
-//! the `evaluate` submodule the evaluators (S9). The solver binding (S8)
-//! reads expressions, the registry snapshot and the materializer through
-//! the crate-visible items below.
+//! The `pattern` submodule binds the core's patterns and rewrite rules,
+//! the `registry` submodule the function registry and inlining, and
+//! the `evaluate` submodule the evaluators. The solver binding reads
+//! expressions, the registry snapshot and the materializer through the
+//! crate-visible items below.
 
 mod evaluate;
 mod literal;

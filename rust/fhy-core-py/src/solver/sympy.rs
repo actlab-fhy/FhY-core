@@ -1,7 +1,5 @@
-//! The SymPy backend (S12, moved from the core by R2-005a of
-//! `docs/design/rust-port-fixes.md`), and `fhy_core._rs.SympySimplifier`,
-//! the backend as a native `Simplifier` (D-S12-10), with the Python
-//! exceptions of its errors (D-S12-11).
+//! The SymPy backend, and `fhy_core._rs.SympySimplifier`, the backend as a
+//! native `Simplifier`, with the Python exceptions of its errors.
 //!
 //! [`SympySimplifier`] lowers an expression to SymPy, simplifies it, and
 //! lifts the result, in the interpreter the extension runs in; its

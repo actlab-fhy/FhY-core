@@ -1,5 +1,5 @@
 //! `fhy_core._rs.Capture`: the base of the public `Capture` class, backed by
-//! the Rust [`Capture`] (D-S5-2).
+//! the Rust [`Capture`].
 
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
@@ -41,7 +41,7 @@ impl PyCapture {
 
 #[pymethods]
 impl PyCapture {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

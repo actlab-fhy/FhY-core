@@ -1,5 +1,4 @@
-//! A failed run's [`PassError`] as the Python exception it raises (D-S6-6,
-//! as the S6 resolutions amend it; N-S6-2).
+//! A failed run's [`PassError`] as the Python exception it raises.
 //!
 //! The class follows [`PassError::class`]: `PassValidationError` or
 //! `PassExecutionError`. The message is the core's, naming the Python hook,

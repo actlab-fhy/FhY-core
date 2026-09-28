@@ -1,7 +1,7 @@
 //! The backends: `fhy_core._rs.SmtSolverBase` and `SimplifierBase`, the
-//! bases of the Python `SmtSolver` and `Simplifier` ABCs (P3; D-S8-11), the
-//! adapters that drive a Python backend from Rust, and
-//! `SmtLib2ProcessSolver`, the core's process backend.
+//! bases of the Python `SmtSolver` and `Simplifier` ABCs, the adapters that
+//! drive a Python backend from Rust, and `SmtLib2ProcessSolver`, the
+//! core's process backend.
 //!
 //! An adapter calls its Python backend once per question, never per node.
 //! A simplifier receives the substituted expression as a Python object: the
@@ -175,7 +175,7 @@ impl PySimplifyContext {
 /// A Python `SmtSolver`, as a core backend: its `check` called with the
 /// script and the timeout.
 ///
-/// The object is kept in a [`Slot`], which the solver owns (R2-003).
+/// The object is kept in a [`Slot`], which the solver owns.
 pub(super) struct PythonSmtSolver {
     object: Slot,
 }
@@ -241,7 +241,7 @@ pub(super) fn run_simplification<R>(
     known: ObjectTable,
     simplify: impl FnOnce() -> R,
 ) -> (R, Option<Py<PyAny>>, ObjectTable) {
-    // Popped when the guard drops, on unwind included (R2-031).
+    // Popped when the guard drops, on unwind included.
     let scope = ScopedStack::push(
         &FRAMES,
         SimplifyFrame {
@@ -303,7 +303,7 @@ fn record_result(object: Py<PyAny>) {
 /// A Python `Simplifier`, as a core backend: its `simplify` called with the
 /// substituted expression's object.
 ///
-/// The object is kept in a [`Slot`], which the solver owns (R2-003).
+/// The object is kept in a [`Slot`], which the solver owns.
 pub(super) struct PythonSimplifier {
     object: Slot,
 }
@@ -414,7 +414,7 @@ pub(crate) struct PySmtLib2ProcessSolver {
 
 #[pymethods]
 impl PySmtLib2ProcessSolver {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -533,7 +533,7 @@ mod scoped_stack_tests {
     use super::*;
 
     /// Test a panic inside a simplification leaves no frame behind, so the
-    /// next one does not reuse a dead input (R2-031).
+    /// next one does not reuse a dead input.
     #[test]
     fn a_panic_inside_a_simplification_leaves_the_stack_empty() {
         Python::initialize();

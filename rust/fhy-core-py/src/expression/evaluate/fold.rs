@@ -1,6 +1,6 @@
-//! The fold of `evaluate_expression` (D-S9-8, D-S9-15): the core's
-//! `Evaluator::fold` over a registry snapshot, calling each native user
-//! function's Python implementation.
+//! The fold of `evaluate_expression`: the core's `Evaluator::fold` over a
+//! registry snapshot, calling each native user function's Python
+//! implementation.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple};

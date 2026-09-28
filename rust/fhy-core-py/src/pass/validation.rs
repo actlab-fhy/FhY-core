@@ -1,8 +1,7 @@
-//! `fhy_core._rs.ValidatorBase`, the base of the Python `Validator` ABC
-//! (P3; D-S6-13), `fhy_core._rs.ValidationManager` (P2), and the
-//! validators the binding runs: Python validators and Python passes as
-//! checks. The registry verifier of a pipeline (D-S6-12) is in
-//! `verification.rs`.
+//! `fhy_core._rs.ValidatorBase`, the base of the Python `Validator` ABC,
+//! `fhy_core._rs.ValidationManager`, and the validators the binding runs:
+//! Python validators and Python passes as checks. The registry verifier of
+//! a pipeline is in `verification.rs`.
 //!
 //! A pass runs as a check as the core's `PassValidator` runs one:
 //! `validate_input`, `should_run` then `get_noop_output`, `run_pass`, and
@@ -286,7 +285,7 @@ impl PyValidationManager {
 
 #[pymethods]
 impl PyValidationManager {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

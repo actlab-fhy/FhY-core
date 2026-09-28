@@ -1,7 +1,7 @@
-//! The verification registry behind `fhy_core.pass_infrastructure.verification`
-//! (S14 of `docs/design/python-switch.md`): the one registry of the Python
-//! API, held in the extension's module state, the three functions over it,
-//! and the registry verifier a pipeline runs by default (D-S6-12).
+//! The verification registry behind `fhy_core.pass_infrastructure.verification`:
+//! the one registry of the Python API, held in the extension's module
+//! state, the three functions over it, and the registry verifier a
+//! pipeline runs by default.
 //!
 //! The core's [`VerificationRegistry`] keys its registrations by the
 //! address of the IR type they were registered for, and names each by the

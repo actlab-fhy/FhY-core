@@ -1,12 +1,12 @@
 //! The Boolean-position screen: `validate_logical_operands` and
-//! `validate_predicate` over the Rust [`BooleanScreen`] (D-S4-4).
+//! `validate_predicate` over the Rust [`BooleanScreen`].
 //!
 //! The screen reads the sorts of user constants and of named user functions
 //! from a snapshot of the one function registry, the core's
 //! [`FunctionRegistry`](fhy_core::expression::registry::FunctionRegistry)
-//! the binding keeps (D-S7-6), with no call into Python. Built-in functions
-//! and constants are judged by the core's catalogue, since their names and
-//! identifiers are reserved (D-9, D-S7-4).
+//! the binding keeps, with no call into Python. Built-in functions and
+//! constants are judged by the core's catalogue, since their names and
+//! identifiers are reserved.
 
 use std::collections::HashMap;
 

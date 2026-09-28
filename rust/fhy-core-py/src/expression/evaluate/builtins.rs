@@ -1,5 +1,5 @@
 //! `BuiltinNativeImplementation`: the `implementation` of a native built-in
-//! entry, which computes the core's kernel (D-S9-9).
+//! entry, which computes the core's kernel.
 
 use num_traits::{FromPrimitive, Signed, ToPrimitive};
 use pyo3::exceptions::{PyTypeError, PyValueError};

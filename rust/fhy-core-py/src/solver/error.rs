@@ -1,11 +1,10 @@
-//! The Python exceptions of the solver's errors (D-S8-14), and its
-//! warnings.
+//! The Python exceptions of the solver's errors, and its warnings.
 //!
 //! Each core error raises the exception class the Python API documents,
 //! with the core's text. A backend written in Python fails with its own
 //! exception, which propagates as the same object; the SymPy backend's
-//! failure raises the bridge's exception (D-S12-11), and another Rust
-//! backend's `SolverBackendError`.
+//! failure raises the bridge's exception, and another Rust backend's
+//! `SolverBackendError`.
 
 use std::collections::HashMap;
 

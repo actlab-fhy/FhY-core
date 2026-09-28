@@ -1,4 +1,4 @@
-//! The literal helpers of `native_lowering.py` (D-S9-16):
+//! The literal helpers of `native_lowering.py`:
 //! `is_decimal_text_exactly_binary` and `coerce_literal_value`, over the
 //! core's `Decimal::to_f64_exact`.
 
@@ -33,7 +33,7 @@ fn read_signed_literal(value: &Bound<'_, PyAny>) -> PyResult<SignedLiteral> {
         text.to_str()?.to_owned()
     } else if value.is_instance(decimal_class(py)?)? {
         // From its `as_tuple()` parts, not its fixed-point text, which
-        // expanded every digit of the exponent (R2-045). A non-negative
+        // expanded every digit of the exponent. A non-negative
         // exponent reads as an integer, as that text, having no decimal
         // point, did.
         let parts = read_decimal_parts(value)?;

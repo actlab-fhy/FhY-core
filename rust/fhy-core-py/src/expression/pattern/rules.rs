@@ -1,7 +1,6 @@
 //! The rules: `fhy_core._rs.RewriteRule`, backed by the Rust
-//! [`RewriteRule`] (D-S5-8); `fhy_core._rs.RuleBase`, the base of the
-//! Python `Rule` ABC (P3; D-S5-9); and `fhy_core._rs.FiredRule`, one firing
-//! of a walk.
+//! [`RewriteRule`]; `fhy_core._rs.RuleBase`, the base of the Python `Rule`
+//! ABC; and `fhy_core._rs.FiredRule`, one firing of a walk.
 
 use std::sync::Arc;
 
@@ -102,7 +101,7 @@ impl<'py> RuleFields<'py> {
     /// Python callables with the match's bindings object.
     ///
     /// Each callback reads its callable from a [`Slot`], which the rule
-    /// object built from these fields owns (R2-003).
+    /// object built from these fields owns.
     fn build_rule(&self) -> PyResult<RewriteRule> {
         let py = self.pattern.py();
         let captures = Arc::clone(self.pattern.get().captures(py)?);
@@ -191,7 +190,7 @@ struct RewriteRuleSeed(Seed<PyRewriteRule>);
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "RewriteRule")]
 pub(crate) struct PyRewriteRule {
     rule: RewriteRule,
-    /// The slots of the rule's callbacks, which this object owns (R2-003).
+    /// The slots of the rule's callbacks, which this object owns.
     slots: Slots,
     /// The depth of the pattern.
     depth: usize,
@@ -260,7 +259,7 @@ impl PyRewriteRule {
 
 #[pymethods]
 impl PyRewriteRule {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -569,7 +568,7 @@ impl PyFiredRule {
 
 #[pymethods]
 impl PyFiredRule {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

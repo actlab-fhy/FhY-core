@@ -1,6 +1,6 @@
 //! The values a backend exchanges with a solver: `fhy_core._rs.SmtScript`
-//! and `fhy_core._rs.SatResult` (D-S8-11), and the conversions of symbol
-//! types and query kinds.
+//! and `fhy_core._rs.SatResult`, and the conversions of symbol types and
+//! query kinds.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;

@@ -1,5 +1,5 @@
-//! `fhy_core._rs.PassManager` and `FixpointPassGroup` (P2; D-S6-11,
-//! D-S6-12): pipelines over Python item lists.
+//! `fhy_core._rs.PassManager` and `FixpointPassGroup`: pipelines over
+//! Python item lists.
 //!
 //! A pipeline keeps the Python passes and groups it was given. Each run
 //! builds the core's `PassManager` over [`PyIr`] from the current items,
@@ -64,7 +64,7 @@ pub(crate) struct PyFixpointPassGroup {
 
 #[pymethods]
 impl PyFixpointPassGroup {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -291,7 +291,7 @@ impl PyPassManager {
 
 #[pymethods]
 impl PyPassManager {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

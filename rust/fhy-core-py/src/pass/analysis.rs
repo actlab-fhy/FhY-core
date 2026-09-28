@@ -1,6 +1,6 @@
-//! `fhy_core._rs.AnalysisBase`, the base of the Python `Analysis` ABC
-//! (P3; D-S6-7), and `fhy_core._rs.PreservedAnalyses`, backed by the core's
-//! [`PreservedAnalyses`] (P2; D-S6-9).
+//! `fhy_core._rs.AnalysisBase`, the base of the Python `Analysis` ABC, and
+//! `fhy_core._rs.PreservedAnalyses`, backed by the core's
+//! [`PreservedAnalyses`].
 //!
 //! A Python analysis is named by the `Identifier` its class's
 //! `get_analysis_name()` returns, and the core names it by

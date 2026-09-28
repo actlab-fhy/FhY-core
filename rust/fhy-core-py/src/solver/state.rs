@@ -1,5 +1,5 @@
 //! The default solver the module functions of `fhy_core.symbolic.solver`
-//! ask when no backend is named (N-S8-2 (b)).
+//! ask when no backend is named.
 //!
 //! The binding holds one solver object in its module state, behind a
 //! `Mutex`, which is locked only to read or swap the object, never across a

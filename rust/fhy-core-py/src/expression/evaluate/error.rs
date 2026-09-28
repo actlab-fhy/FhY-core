@@ -1,5 +1,5 @@
-//! The Python exceptions of evaluation and folding errors (D-S9-14): the
-//! core's text under the classes the replaced Python API documents.
+//! The Python exceptions of evaluation and folding errors: the core's text
+//! under the classes the replaced Python API documents.
 
 use pyo3::exceptions::{
     PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError, PyZeroDivisionError,

@@ -1,6 +1,6 @@
 //! The rewrite walk: `apply_rewrite_rules` over the core's
-//! [`apply_rewrite_rules`](fhy_core::expression::pattern::apply_rewrite_rules)
-//! (D-S5-10), and its errors (D-S5-11).
+//! [`apply_rewrite_rules`](fhy_core::expression::pattern::apply_rewrite_rules),
+//! and its errors.
 
 use std::cell::RefCell;
 
@@ -26,7 +26,7 @@ use super::rules::{PyFiredRule, PyRewriteRule, PyRuleBase, PythonRule};
 /// `RewriteRebuildError`, with the core's text, the rule's index and name,
 /// and the callback's exception or the rebuild's `ValueError` as its
 /// `__cause__`. An exception that is not an `Exception`, such as
-/// `KeyboardInterrupt`, is raised unchanged instead (D-S5-7).
+/// `KeyboardInterrupt`, is raised unchanged instead.
 impl IntoPyErr for RewriteError {
     fn into_py_err(self) -> PyErr {
         let message = self.to_string();

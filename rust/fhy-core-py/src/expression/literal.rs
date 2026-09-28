@@ -1,7 +1,7 @@
 //! Literal values: the Python values a `LiteralExpression` accepts and
 //! returns, and the Rust [`LiteralValue`] it holds.
 //!
-//! The Rust core normalizes literals (D-S4-1): a Boolean, an integer of any
+//! The Rust core normalizes literals: a Boolean, an integer of any
 //! size, a binary float, or an exact non-negative [`Decimal`], with no
 //! spelling kept. Into Rust, a `bool` becomes a Boolean, an `int` (or a
 //! subclass other than `bool`, such as an `IntEnum` member) an integer, a
@@ -47,7 +47,7 @@ pub(crate) fn read_big_int(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
     }
     // Through `int.to_bytes`, signed and little-endian, sized from
     // `bit_length` with room for the sign: linear, and free of CPython's
-    // digit limit on decimal text (R2-045). `int`'s own methods, so an
+    // digit limit on decimal text. `int`'s own methods, so an
     // `int` subclass's overrides do not change the value read.
     let py = value.py();
     let int = py.get_type::<PyInt>();
@@ -69,7 +69,7 @@ pub(crate) fn read_big_int(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
 /// Return the Python `int` of `value`.
 ///
 /// A big one is built through `int.from_bytes`, so its size is not bounded
-/// by `CPython`'s digit limit on decimal text (R2-045).
+/// by `CPython`'s digit limit on decimal text.
 pub(crate) fn big_int_to_python<'py>(
     py: Python<'py>,
     value: &BigInt,
@@ -116,7 +116,7 @@ pub(crate) struct DecimalParts {
 }
 
 /// Return the parts of the `decimal.Decimal` `value`, read from
-/// `value.as_tuple()` into [`Decimal::from_parts`] (R2-045): the digits are
+/// `value.as_tuple()` into [`Decimal::from_parts`]: the digits are
 /// assembled in Rust, so neither the exponent is expanded nor the digits go
 /// through `CPython`'s digit limit, and an exponent beyond
 /// [`Decimal::MAX_EXPONENT_MAGNITUDE`] is refused at once.

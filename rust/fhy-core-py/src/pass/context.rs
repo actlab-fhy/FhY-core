@@ -323,7 +323,7 @@ pub(crate) struct PyAnalysisManager {
 #[pymethods]
 impl PyAnalysisManager {
     /// Visit the diagnostics the hook reported, once the frame is this
-    /// object's alone, for the cycle collector (R2-003): while the hook runs,
+    /// object's alone, for the cycle collector: while the hook runs,
     /// the run holds the frame too.
     #[expect(
         clippy::needless_pass_by_value,
@@ -377,7 +377,7 @@ impl PyAnalysisManager {
 mod scoped_stack_tests {
     use super::*;
 
-    /// Test a panic inside a hook leaves no frame behind (R2-031).
+    /// Test a panic inside a hook leaves no frame behind.
     #[test]
     fn a_panic_inside_a_hook_leaves_the_stack_empty() {
         Python::initialize();
