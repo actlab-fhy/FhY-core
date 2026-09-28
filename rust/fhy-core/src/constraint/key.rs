@@ -27,7 +27,13 @@ use super::value::{Member, MemberKind};
 
 /// Return the key of an equation over `expression`.
 pub(super) fn equation_key(expression: &Expression) -> String {
-    EquationKey(expression).to_string()
+    /// Room for the key of a small expression, so it writes without
+    /// regrowing.
+    const EXPECTED_LENGTH: usize = 128;
+    let mut key = String::with_capacity(EXPECTED_LENGTH);
+    write!(key, "{}", EquationKey(expression))
+        .unwrap_or_else(|_| unreachable!("a string takes any text"));
+    key
 }
 
 /// Return the key of `constraint`.
@@ -64,11 +70,11 @@ impl fmt::Display for SetKey<'_> {
 /// under structural equivalence, each entry as `kind[data](children)`.
 fn write_expression_key(expression: &Expression, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let table = CanonicalTable::build(expression, Equivalence::Structural);
-    for (index, entry) in table.nodes().iter().enumerate() {
+    for (index, (node, children)) in table.nodes().enumerate() {
         if index > 0 {
             f.write_str(";")?;
         }
-        match entry.node.kind() {
+        match node.kind() {
             ExpressionKind::Unary(unary) => write!(f, "unary[{}]", unary.operation().as_str())?,
             ExpressionKind::Binary(binary) => {
                 write!(f, "binary[{}]", binary.operation().as_str())?;
@@ -90,7 +96,7 @@ fn write_expression_key(expression: &Expression, f: &mut fmt::Formatter<'_>) -> 
             }
         }
         f.write_str("(")?;
-        for (position, child) in entry.children.iter().enumerate() {
+        for (position, child) in children.iter().enumerate() {
             if position > 0 {
                 f.write_str(",")?;
             }

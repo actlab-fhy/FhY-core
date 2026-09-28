@@ -1452,9 +1452,12 @@ impl PyIdentifierExpression {
 )]
 pub(crate) struct PyLiteralExpression {
     /// The normalized value: a `bool`, `int`, `float` or `decimal.Decimal`,
-    /// set by the constructor, or computed from the core literal on its
-    /// first read for a literal built from a [`PyLiteralSeed`].
-    value: PyOnceLock<Py<PyAny>>,
+    /// set by the constructor; `None` for a literal built from a
+    /// [`PyLiteralSeed`], whose value [`computed`](Self::computed) holds.
+    value: Option<Py<PyAny>>,
+    /// The value of a literal built from a seed, computed from the core
+    /// literal on its first read.
+    computed: PyOnceLock<Py<PyAny>>,
 }
 
 /// The private seed of a literal node the core already built, such as a
@@ -1495,7 +1498,10 @@ impl PyLiteralExpression {
         py: Python<'py>,
         expression: &Expression,
     ) -> PyResult<&Bound<'py, PyAny>> {
-        self.value
+        if let Some(value) = &self.value {
+            return Ok(value.bind(py));
+        }
+        self.computed
             .get_or_try_init(py, || {
                 let ExpressionKind::Literal(literal) = expression.kind() else {
                     unreachable!("a literal object holds a literal node")
@@ -1545,16 +1551,18 @@ impl PyLiteralExpression {
                 PyTuple::empty(py),
             )
             .add_subclass(Self {
-                value: PyOnceLock::new(),
+                value: None,
+                computed: PyOnceLock::new(),
             }));
         }
         let (literal, stored) = read_literal(value)?;
         let expression = Expression::from(literal);
-        let value = PyOnceLock::new();
-        value
-            .set(py, stored.unbind())
-            .unwrap_or_else(|_| unreachable!("a new lock is empty"));
-        Ok(PyExpression::initializer(expression, PyTuple::empty(py)).add_subclass(Self { value }))
+        Ok(
+            PyExpression::initializer(expression, PyTuple::empty(py)).add_subclass(Self {
+                value: Some(stored.unbind()),
+                computed: PyOnceLock::new(),
+            }),
+        )
     }
 
     /// The normalized value: a `bool`, `int`, `float` or `decimal.Decimal`.

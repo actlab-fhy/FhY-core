@@ -5,6 +5,7 @@
 //! constraint ordering keys render it under [`Equivalence::Structural`].
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 
 use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
@@ -28,16 +29,20 @@ pub(crate) enum Equivalence {
 }
 
 /// A node of the table: the expression node it stands for, the first one
-/// met, and its children by table index, in [`Expression::children`] order.
-pub(crate) struct CanonicalNode<'a> {
-    pub(crate) node: &'a Expression,
-    pub(crate) children: Vec<usize>,
+/// met, and where its children's table indices sit in the table's child
+/// list.
+struct CanonicalNode<'a> {
+    node: &'a Expression,
+    children: std::ops::Range<usize>,
 }
 
 /// The distinct nodes of an expression, in post-order of first visit, the
 /// root last.
 pub(crate) struct CanonicalTable<'a> {
     nodes: Vec<CanonicalNode<'a>>,
+    /// The children of every node by table index, in
+    /// [`Expression::children`] order, one node's after another's.
+    children: Vec<usize>,
 }
 
 /// The bits a float is compared by: one value for every NaN, and under
@@ -116,11 +121,20 @@ impl<'a> CanonicalTable<'a> {
     /// that may be shared is looked up by identity first, so building is
     /// linear in the distinct handles of `root`, and it does not recurse.
     pub(crate) fn build(root: &'a Expression, equivalence: Equivalence) -> Self {
-        let mut nodes: Vec<CanonicalNode<'a>> = Vec::new();
-        let mut entries: HashMap<(DataKey<'a>, Vec<usize>), usize> = HashMap::new();
+        // Room for a small expression, so it builds without regrowing.
+        const EXPECTED_NODES: usize = 16;
+        let mut nodes: Vec<CanonicalNode<'a>> = Vec::with_capacity(EXPECTED_NODES);
+        let mut child_list: Vec<usize> = Vec::with_capacity(2 * EXPECTED_NODES);
+        // The first entry of each hash of `(data, children)`, and, per entry,
+        // the next entry of the same hash: a chain, which collisions alone
+        // lengthen, so a lookup allocates nothing.
+        let mut first_of_hash: HashMap<u64, usize, BuildIdentityHasher> =
+            HashMap::with_capacity_and_hasher(EXPECTED_NODES, BuildIdentityHasher::default());
+        let mut next_of_hash: Vec<Option<usize>> = Vec::with_capacity(EXPECTED_NODES);
         let mut entered: HashMap<NodeIdentity, usize, BuildIdentityHasher> = HashMap::default();
-        let mut indices: Vec<usize> = Vec::new();
-        let mut pending = vec![Step::Visit(root)];
+        let mut indices: Vec<usize> = Vec::with_capacity(EXPECTED_NODES);
+        let mut pending = Vec::with_capacity(EXPECTED_NODES);
+        pending.push(Step::Visit(root));
         while let Some(step) = pending.pop() {
             match step {
                 Step::Visit(node) => {
@@ -137,15 +151,31 @@ impl<'a> CanonicalTable<'a> {
                     pending.extend(children.rev().map(Step::Visit));
                 }
                 Step::Enter(node, child_count) => {
-                    let children = indices.split_off(indices.len() - child_count);
-                    let key = (data_key(node, equivalence), children);
-                    let index = *entries.entry(key).or_insert_with_key(|(_, children)| {
+                    let children = &indices[indices.len() - child_count..];
+                    let data = data_key(node, equivalence);
+                    let hash = BuildIdentityHasher::default().hash_one((&data, children));
+                    let mut candidate = first_of_hash.get(&hash).copied();
+                    while let Some(index) = candidate {
+                        let entry = &nodes[index];
+                        if child_list[entry.children.clone()] == *children
+                            && data_key(entry.node, equivalence) == data
+                        {
+                            break;
+                        }
+                        candidate = next_of_hash[index];
+                    }
+                    let index = candidate.unwrap_or_else(|| {
+                        let index = nodes.len();
+                        next_of_hash.push(first_of_hash.insert(hash, index));
+                        let start = child_list.len();
+                        child_list.extend_from_slice(children);
                         nodes.push(CanonicalNode {
                             node,
-                            children: children.clone(),
+                            children: start..child_list.len(),
                         });
-                        nodes.len() - 1
+                        index
                     });
+                    indices.truncate(indices.len() - child_count);
                     if node.is_shared() {
                         entered.insert(node.identity(), index);
                     }
@@ -153,11 +183,18 @@ impl<'a> CanonicalTable<'a> {
                 }
             }
         }
-        Self { nodes }
+        Self {
+            nodes,
+            children: child_list,
+        }
     }
 
-    /// Return the distinct nodes, the root last.
-    pub(crate) fn nodes(&self) -> &[CanonicalNode<'a>] {
-        &self.nodes
+    /// Return the distinct nodes, the root last, each the expression node
+    /// it stands for, the first one met, and its children by table index,
+    /// in [`Expression::children`] order.
+    pub(crate) fn nodes(&self) -> impl ExactSizeIterator<Item = (&'a Expression, &[usize])> {
+        self.nodes
+            .iter()
+            .map(|entry| (entry.node, &self.children[entry.children.clone()]))
     }
 }

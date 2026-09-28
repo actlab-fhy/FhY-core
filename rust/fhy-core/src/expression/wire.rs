@@ -124,14 +124,9 @@ fn build_wire_node(node: &Expression, children: Vec<u64>) -> WireNodeRef<'_> {
 fn encode_nodes(root: &Expression) -> Vec<WireNodeRef<'_>> {
     CanonicalTable::build(root, Equivalence::Wire)
         .nodes()
-        .iter()
-        .map(|entry| {
-            let children = entry
-                .children
-                .iter()
-                .map(|&child| to_wire_index(child))
-                .collect();
-            build_wire_node(entry.node, children)
+        .map(|(node, children)| {
+            let children = children.iter().map(|&child| to_wire_index(child)).collect();
+            build_wire_node(node, children)
         })
         .collect()
 }

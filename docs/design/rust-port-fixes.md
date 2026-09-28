@@ -3497,6 +3497,17 @@ mypy's NumPy stubs refuse, which nox `type_check` (a track gate, not a
 per-commit one) found at the track gates; the test reads the lane through
 `tolist()` instead.
 
+**After the benchmarks: a leaner canonical table and literal.** The first
+benchmark pass (below) showed the table's cost on small expressions: an
+equation key 2.1 times the base's, and a 20-member system 1.7 times. The
+table now keeps every node's children in one flat list, looks nodes up by
+a `(data, children)` hash chain under the crate's identity hasher instead
+of a `HashMap` keyed by owned child vectors, and reserves room for a small
+expression; the key is written into a reserved string. A
+`LiteralExpression` built by its constructor holds its value in a plain
+field, and only a seeded one in the `PyOnceLock`. The key and system rows
+came down to 1.26 and 1.19, and the V2 writes of deep trees to 0.92.
+
 ### Track C notes
 
 (none yet)
