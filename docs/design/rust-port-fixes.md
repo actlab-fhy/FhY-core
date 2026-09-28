@@ -84,7 +84,7 @@ onto `dev-rust` before continuing.
 - [x] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order: `77197df`
 - [x] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key: `859a45c`
 - [x] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing: `eba22e0`
-- [ ] Track B status: gates green; counts recorded; landed as `<hash>`
+- [x] Track B status: gates green; counts recorded (Track B notes, "Track B status"); landing on `dev-rust` is the maintainer's: ready on `fix/b-expression`
 
 ### Track C: `types-param` (types, checking, params and the symbol table; lands 4th)
 
@@ -3507,6 +3507,72 @@ expression; the key is written into a reserved string. A
 `LiteralExpression` built by its constructor holds its value in a plain
 field, and only a seeded one in the `PyOnceLock`. The key and system rows
 came down to 1.26 and 1.19, and the V2 writes of deep trees to 0.92.
+
+**Track B status** (on the final tree, `9800307` plus this record):
+
+| Gate | Result | At `35519bb` |
+|---|---|---|
+| fmt; clippy `-D warnings`, workspace both ways and `fhy-core` alone with no features, `z3` and `ndarray` | clean | clean |
+| `cargo test --workspace` | 4,769 passed, 2 ignored | 4,565 |
+| `cargo test --workspace --all-features` | 4,805 passed, 2 ignored | 4,601 |
+| `cargo test -p fhy-core --all-features`, with no Python environment | 4,623 passed | |
+| `cargo doc -D warnings`: the workspace, `fhy-core` alone, with `z3`, with `ndarray` | clean | |
+| `cargo deny check` | ok (the base's `syn` duplicate warning) | |
+| `cargo +1.85 check --workspace --lib` and `-p fhy-core --all-targets` three ways | no warning | |
+| `cargo package`; its list | ok; no `.py` file | |
+| `pytest tests` | 8,350 passed, 2 xfailed | 8,313 |
+| `pytest tests -m "not very_slow"` | 8,383 passed, 2 xfailed | 8,346 |
+| nox `property` | 283 passed | 283 |
+| nox `tests_minimal` | 6,354 passed, 665 skipped | 6,322, 665 |
+| nox `lint`, `type_check`, `golden_expanded`; `tests/test_golden_corpora.py` | green | green |
+| attribution grep over `35519bb..HEAD` | nothing; every commit is the configured user's | |
+
+**Benchmarks** (§I.8.3: `test_serialization.py`, `test_expression.py`,
+`test_constraint.py`, `test_evaluate.py`; 184 rows). The base (`35519bb`)
+and the head were each built from a `git archive` under
+`target/bench/` (`uv sync --no-default-groups --group bench --group
+test`, CPython 3.11), and run with `pytest --benchmark-only -n 0`. Another
+user's jobs held the 24-core machine at a load of 30 to 38 throughout, so
+single medians moved by up to 2 times, in both directions; the table
+compares the least time over three interleaved runs (base, head, base,
+...), and the sub-microsecond and flagged rows were re-measured with 200
+rounds each. The median row is 1.00.
+
+| Benchmark | Base | Head | Ratio |
+|---|---:|---:|---:|
+| `test_deserialize_from_dict[v2-literals]` (J-12) | 262.18 µs | 110.64 µs | 0.42 |
+| `test_deserialize_from_dict[v1-literals]` | 104.10 µs | 107.93 µs | 1.04 |
+| `test_deserialize_from_dict[v2-deep_expression]` | 220.60 µs | 84.47 µs | 0.38 |
+| `test_deserialize_from_dict[v2-wide_expression]` | 2.49 ms | 61.07 µs | 0.02 |
+| `test_json_round_trip[v2-wide_expression]` | 1.72 ms | 205.01 µs | 0.12 |
+| `test_serialize_to_dict[v2-wide_expression]` | 768.24 µs | 141.65 µs | 0.18 |
+| `test_serialize_to_dict[v2-deep_expression]` | 65.09 µs | 59.80 µs | 0.92 |
+| `test_serialize_to_dict[v2-literals]` | 75.72 µs | 83.07 µs | 1.10 (1.097; 102 literals through the canonical table) |
+| **`test_constraint_build_ordering_key[equation]`** | 1.18 µs | 1.52 µs | **1.26 to 1.29** |
+| **`test_constraint_system_construction`** | 18.53 µs | 23.32 µs | **1.19 to 1.26** |
+| **`test_serialize_to_dict[v2-type]`** | 1.65 µs | 1.84 µs | **1.11 to 1.15** |
+| **`test_eq_of_distinct_equal_deep_trees`** | 4.48 µs | 5.02 µs | **1.07 to 1.12** |
+| **`test_structural_equivalence_of_deep_trees`** | 4.63 µs | 5.13 µs | **1.06 to 1.12** |
+| **`test_set_constraint_construction[4]`** | 1.91 µs | 2.12 µs | **1.11** (one run) |
+| `test_literal_expression_construction[int]` | 0.28 µs | 0.28 µs | 1.02 (200 rounds; 1.36 in the three-run pass) |
+
+- **J-12 is met:** the literal-heavy V2 decode is 110.64 µs, against the
+  target of 132.3 µs (1.10 × 120.29 µs) and V1's 107.93 µs in the same
+  runs.
+- **Flagged for the maintainer (above 1.10):**
+  - the equation key and a system's construction, which R2-001a makes
+    build the canonical table: a key is now linear in distinct nodes (the
+    depth-64 DAG keys at once, where the base's key grew fourfold per two
+    levels), at about 0.3 µs more for a three-comparison equation;
+  - `test_serialize_to_dict[v2-type]`, a type holding two shape
+    expressions, whose encoding builds the canonical table (R2-011); the
+    larger trees' writes are as fast or faster;
+  - the two deep-tree equality rows, about 0.5 µs on 4.5 µs, consistent
+    over four runs; the likeliest cause is `Children`'s exact size hint
+    (R2-037), which makes each `extend` of the comparison's work list
+    reserve, and it was not pursued;
+  - `test_set_constraint_construction[4]`, seen once, which R2-042's
+    tie-run bookkeeping and the canonical float text may cost.
 
 ### Track C notes
 
