@@ -544,8 +544,7 @@ impl Expression {
     #[must_use]
     pub fn children(
         &self,
-    ) -> impl DoubleEndedIterator<Item = &Expression> + ExactSizeIterator + std::iter::FusedIterator
-    {
+    ) -> impl DoubleEndedIterator<Item = &Self> + ExactSizeIterator + std::iter::FusedIterator {
         self.iterate_children()
     }
 
@@ -625,10 +624,7 @@ impl Expression {
     /// [`RebuildError::Piecewise`] holding
     /// [`PiecewiseError::NonBooleanConditionLiteral`] if a new piecewise
     /// case condition is a literal other than a Boolean.
-    pub fn rebuild_with_children(
-        &self,
-        children: Vec<Expression>,
-    ) -> Result<Expression, RebuildError> {
+    pub fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, RebuildError> {
         let expected = self.children().len();
         let actual = children.len();
         let count_mismatch = || RebuildError::ChildCount { expected, actual };
@@ -710,8 +706,8 @@ impl Expression {
     /// condition.
     pub fn substitute<S: BuildHasher>(
         &self,
-        replacements: &HashMap<Identifier, Expression, S>,
-    ) -> Result<Expression, PiecewiseError> {
+        replacements: &HashMap<Identifier, Self, S>,
+    ) -> Result<Self, PiecewiseError> {
         let mut substitution = Substitution { replacements };
         rewrite_tree(&mut substitution, self, &mut ()).map_err(|error| match error {
             RewriteTreeError::Rewrite(never) => match never {},
@@ -742,7 +738,7 @@ impl Expression {
     /// compared once, so two DAGs compare in time linear in their distinct
     /// nodes.
     #[must_use]
-    pub fn is_alpha_equivalent_under(&self, other: &Expression, renaming: &AlphaRenaming) -> bool {
+    pub fn is_alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool {
         is_tree_equal(self, other, renaming.is_empty(), &|left, right| {
             renaming.is_corresponding(left, right)
         })
@@ -1013,7 +1009,7 @@ impl AlphaEquivalence for Expression {
         other: &Self,
         renaming: &AlphaRenaming,
     ) -> Result<bool, Infallible> {
-        Ok(Expression::is_alpha_equivalent_under(self, other, renaming))
+        Ok(Self::is_alpha_equivalent_under(self, other, renaming))
     }
 }
 
@@ -1023,7 +1019,7 @@ impl FreeIdentifiers for Expression {
     type Error = Infallible;
 
     fn free_identifiers(&self) -> Result<HashSet<Identifier>, Infallible> {
-        Ok(Expression::free_identifiers(self))
+        Ok(Self::free_identifiers(self))
     }
 }
 
@@ -1036,6 +1032,6 @@ impl Term for Expression {
         &self,
         replacements: &HashMap<Identifier, Self, S>,
     ) -> Result<Self, PiecewiseError> {
-        Expression::substitute(self, replacements)
+        Self::substitute(self, replacements)
     }
 }

@@ -514,7 +514,7 @@ impl BuiltinFunction {
     /// Return every built-in function in catalogue order: the 16 composed
     /// functions, then the 19 native ones.
     #[must_use]
-    pub fn iter() -> impl ExactSizeIterator<Item = BuiltinFunction> + Clone {
+    pub fn iter() -> impl ExactSizeIterator<Item = Self> + Clone {
         CATALOGUE.iter().map(|entry| entry.function)
     }
 
@@ -664,7 +664,7 @@ impl BuiltinConstant {
     /// Return every built-in constant in catalogue order: `pi`, `e`, `inf`,
     /// `nan`.
     #[must_use]
-    pub fn iter() -> impl ExactSizeIterator<Item = BuiltinConstant> + Clone {
+    pub fn iter() -> impl ExactSizeIterator<Item = Self> + Clone {
         CONSTANTS.into_iter()
     }
 

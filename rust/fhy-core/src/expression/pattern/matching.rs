@@ -475,7 +475,7 @@ impl Pattern {
     /// Build the pattern matching a unary node of `operation` whose operand
     /// matches `operand`.
     #[must_use]
-    pub fn unary(operation: UnaryOperation, operand: Pattern) -> Self {
+    pub fn unary(operation: UnaryOperation, operand: Self) -> Self {
         Self::from_kind(PatternKind::Unary {
             operation: Some(operation),
             operand,
@@ -485,7 +485,7 @@ impl Pattern {
     /// Build the pattern matching a unary node of any operation whose
     /// operand matches `operand`.
     #[must_use]
-    pub fn unary_any_operation(operand: Pattern) -> Self {
+    pub fn unary_any_operation(operand: Self) -> Self {
         Self::from_kind(PatternKind::Unary {
             operation: None,
             operand,
@@ -495,7 +495,7 @@ impl Pattern {
     /// Build the pattern matching a binary node of `operation` whose left
     /// operand matches `left` and whose right operand matches `right`.
     #[must_use]
-    pub fn binary(operation: BinaryOperation, left: Pattern, right: Pattern) -> Self {
+    pub fn binary(operation: BinaryOperation, left: Self, right: Self) -> Self {
         Self::from_kind(PatternKind::Binary {
             operation: Some(operation),
             left,
@@ -506,7 +506,7 @@ impl Pattern {
     /// Build the pattern matching a binary node of any operation whose left
     /// operand matches `left` and whose right operand matches `right`.
     #[must_use]
-    pub fn binary_any_operation(left: Pattern, right: Pattern) -> Self {
+    pub fn binary_any_operation(left: Self, right: Self) -> Self {
         Self::from_kind(PatternKind::Binary {
             operation: None,
             left,
@@ -521,10 +521,7 @@ impl Pattern {
     /// A logical node has at least two operands, so fewer than two operand
     /// patterns match nothing.
     #[must_use]
-    pub fn logical(
-        operation: LogicalOperation,
-        operands: impl IntoIterator<Item = Pattern>,
-    ) -> Self {
+    pub fn logical(operation: LogicalOperation, operands: impl IntoIterator<Item = Self>) -> Self {
         Self::from_kind(PatternKind::Logical {
             operation: Some(operation),
             operands: Some(operands.into_iter().collect()),
@@ -535,7 +532,7 @@ impl Pattern {
     /// exactly as many operands as `operands`, each matching the pattern at
     /// its position.
     #[must_use]
-    pub fn logical_any_operation(operands: impl IntoIterator<Item = Pattern>) -> Self {
+    pub fn logical_any_operation(operands: impl IntoIterator<Item = Self>) -> Self {
         Self::from_kind(PatternKind::Logical {
             operation: None,
             operands: Some(operands.into_iter().collect()),
@@ -569,10 +566,7 @@ impl Pattern {
     /// A piecewise node has at least one case, so an empty `cases` matches
     /// nothing.
     #[must_use]
-    pub fn piecewise(
-        cases: impl IntoIterator<Item = (Pattern, Pattern)>,
-        otherwise: Pattern,
-    ) -> Self {
+    pub fn piecewise(cases: impl IntoIterator<Item = (Self, Self)>, otherwise: Self) -> Self {
         Self::from_kind(PatternKind::Piecewise {
             cases: Some(cases.into_iter().collect()),
             otherwise,
@@ -582,7 +576,7 @@ impl Pattern {
     /// Build the pattern matching a piecewise node with any cases, which are
     /// not matched, and an otherwise branch matching `otherwise`.
     #[must_use]
-    pub fn piecewise_any_cases(otherwise: Pattern) -> Self {
+    pub fn piecewise_any_cases(otherwise: Self) -> Self {
         Self::from_kind(PatternKind::Piecewise {
             cases: None,
             otherwise,
@@ -593,7 +587,7 @@ impl Pattern {
     /// arguments as `arguments`, each matching the pattern at its position;
     /// no argument pattern matches only calls without arguments.
     #[must_use]
-    pub fn call(callee: impl Into<Callee>, arguments: impl IntoIterator<Item = Pattern>) -> Self {
+    pub fn call(callee: impl Into<Callee>, arguments: impl IntoIterator<Item = Self>) -> Self {
         Self::from_kind(PatternKind::Call {
             callee: Some(callee.into()),
             arguments: Some(arguments.into_iter().collect()),
@@ -613,7 +607,7 @@ impl Pattern {
     /// Build the pattern matching a call of any callee with exactly as many
     /// arguments as `arguments`, each matching the pattern at its position.
     #[must_use]
-    pub fn call_any_callee(arguments: impl IntoIterator<Item = Pattern>) -> Self {
+    pub fn call_any_callee(arguments: impl IntoIterator<Item = Self>) -> Self {
         Self::from_kind(PatternKind::Call {
             callee: None,
             arguments: Some(arguments.into_iter().collect()),
@@ -662,7 +656,7 @@ impl Pattern {
     /// tried. No alternative at all matches nothing, like
     /// [`nothing`](Self::nothing).
     #[must_use]
-    pub fn alternatives(alternatives: impl IntoIterator<Item = Pattern>) -> Self {
+    pub fn alternatives(alternatives: impl IntoIterator<Item = Self>) -> Self {
         Self::from_kind(PatternKind::Alternatives(
             alternatives.into_iter().collect(),
         ))

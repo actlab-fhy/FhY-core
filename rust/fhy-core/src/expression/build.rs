@@ -55,9 +55,9 @@ impl From<&Identifier> for Expression {
     }
 }
 
-impl From<&Expression> for Expression {
+impl From<&Self> for Expression {
     /// Return a handle sharing the node.
-    fn from(expression: &Expression) -> Self {
+    fn from(expression: &Self) -> Self {
         expression.clone()
     }
 }
@@ -75,7 +75,7 @@ impl Expression {
     /// assert_eq!(node.operation(), UnaryOperation::Negate);
     /// ```
     #[must_use]
-    pub fn new_unary(operation: UnaryOperation, operand: impl Into<Expression>) -> Self {
+    pub fn new_unary(operation: UnaryOperation, operand: impl Into<Self>) -> Self {
         Self::from_kind(ExpressionKind::Unary(UnaryExpression::new(
             operation,
             operand.into(),
@@ -86,8 +86,8 @@ impl Expression {
     #[must_use]
     pub fn new_binary(
         operation: BinaryOperation,
-        left: impl Into<Expression>,
-        right: impl Into<Expression>,
+        left: impl Into<Self>,
+        right: impl Into<Self>,
     ) -> Self {
         Self::from_kind(ExpressionKind::Binary(BinaryExpression::new(
             operation,
@@ -125,9 +125,9 @@ impl Expression {
         otherwise: O,
     ) -> Result<Self, PiecewiseError>
     where
-        C: Into<Expression>,
-        V: Into<Expression>,
-        O: Into<Expression>,
+        C: Into<Self>,
+        V: Into<Self>,
+        O: Into<Self>,
     {
         let cases = cases
             .into_iter()
@@ -164,7 +164,7 @@ impl Expression {
     pub fn call<I>(callee: impl Into<Callee>, arguments: I) -> Self
     where
         I: IntoIterator,
-        I::Item: Into<Expression>,
+        I::Item: Into<Self>,
     {
         let arguments = arguments.into_iter().map(Into::into).collect();
         Self::from_kind(ExpressionKind::Call(CallExpression::new(
@@ -224,7 +224,7 @@ impl Expression {
     pub fn new_logical<I>(operation: LogicalOperation, operands: I) -> Self
     where
         I: IntoIterator,
-        I::Item: Into<Expression>,
+        I::Item: Into<Self>,
     {
         let mut operands = operands.into_iter().map(Into::into);
         let Some(first) = operands.next() else {
@@ -263,7 +263,7 @@ impl Expression {
     pub fn all<I>(operands: I) -> Self
     where
         I: IntoIterator,
-        I::Item: Into<Expression>,
+        I::Item: Into<Self>,
     {
         Self::new_logical(LogicalOperation::And, operands)
     }
@@ -275,7 +275,7 @@ impl Expression {
     pub fn any<I>(operands: I) -> Self
     where
         I: IntoIterator,
-        I::Item: Into<Expression>,
+        I::Item: Into<Self>,
     {
         Self::new_logical(LogicalOperation::Or, operands)
     }
@@ -283,57 +283,57 @@ impl Expression {
     /// Build the two-operand conjunction `self && other`, the same as
     /// `Expression::all([self, other])`.
     #[must_use]
-    pub fn and(&self, other: impl Into<Expression>) -> Expression {
+    pub fn and(&self, other: impl Into<Self>) -> Self {
         Self::all([self.clone(), other.into()])
     }
 
     /// Build the two-operand disjunction `self || other`, the same as
     /// `Expression::any([self, other])`.
     #[must_use]
-    pub fn or(&self, other: impl Into<Expression>) -> Expression {
+    pub fn or(&self, other: impl Into<Self>) -> Self {
         Self::any([self.clone(), other.into()])
     }
 
     /// Build the equality comparison `self == other`.
     #[must_use]
-    pub fn equals(&self, other: impl Into<Expression>) -> Expression {
+    pub fn equals(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::Equal, self, other)
     }
 
     /// Build the inequality comparison `self != other`.
     #[must_use]
-    pub fn not_equals(&self, other: impl Into<Expression>) -> Expression {
+    pub fn not_equals(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::NotEqual, self, other)
     }
 
     /// Build the comparison `self < other`.
     #[must_use]
-    pub fn less(&self, other: impl Into<Expression>) -> Expression {
+    pub fn less(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::Less, self, other)
     }
 
     /// Build the comparison `self <= other`.
     #[must_use]
-    pub fn less_equal(&self, other: impl Into<Expression>) -> Expression {
+    pub fn less_equal(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::LessEqual, self, other)
     }
 
     /// Build the comparison `self > other`.
     #[must_use]
-    pub fn greater(&self, other: impl Into<Expression>) -> Expression {
+    pub fn greater(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::Greater, self, other)
     }
 
     /// Build the comparison `self >= other`.
     #[must_use]
-    pub fn greater_equal(&self, other: impl Into<Expression>) -> Expression {
+    pub fn greater_equal(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::GreaterEqual, self, other)
     }
 
     /// Build the floor division `self // other`: the quotient rounded
     /// toward negative infinity.
     #[must_use]
-    pub fn floor_divide(&self, other: impl Into<Expression>) -> Expression {
+    pub fn floor_divide(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::FloorDivide, self, other)
     }
 
@@ -351,19 +351,19 @@ impl Expression {
     /// assert_eq!(x.floor_mod(3), Expression::new_binary(BinaryOperation::FloorMod, &x, 3));
     /// ```
     #[must_use]
-    pub fn floor_mod(&self, other: impl Into<Expression>) -> Expression {
+    pub fn floor_mod(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::FloorMod, self, other)
     }
 
     /// Build the exponentiation `self ** other`.
     #[must_use]
-    pub fn power(&self, other: impl Into<Expression>) -> Expression {
+    pub fn power(&self, other: impl Into<Self>) -> Self {
         Self::new_binary(BinaryOperation::Power, self, other)
     }
 
     /// Build the arithmetic identity `+self`.
     #[must_use]
-    pub fn positive(&self) -> Expression {
+    pub fn positive(&self) -> Self {
         Self::new_unary(UnaryOperation::Positive, self)
     }
 }
@@ -438,11 +438,11 @@ impl_arithmetic_operators!([
 ]);
 
 impl Neg for Expression {
-    type Output = Expression;
+    type Output = Self;
 
     /// Build the arithmetic negation `-self`.
-    fn neg(self) -> Expression {
-        Expression::new_unary(UnaryOperation::Negate, self)
+    fn neg(self) -> Self {
+        Self::new_unary(UnaryOperation::Negate, self)
     }
 }
 
@@ -456,11 +456,11 @@ impl Neg for &Expression {
 }
 
 impl Not for Expression {
-    type Output = Expression;
+    type Output = Self;
 
     /// Build the Boolean negation `!self`.
-    fn not(self) -> Expression {
-        Expression::new_unary(UnaryOperation::LogicalNot, self)
+    fn not(self) -> Self {
+        Self::new_unary(UnaryOperation::LogicalNot, self)
     }
 }
 
