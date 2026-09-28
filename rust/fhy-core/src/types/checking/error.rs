@@ -149,7 +149,7 @@ pub enum TypeCheckError {
 }
 
 /// Write `expression` with its identifiers' ids, up to 64 node
-/// occurrences and then `…`, so a message about a DAG stays short (R2-010).
+/// occurrences and then `…`, so a message about a DAG stays short.
 pub(super) fn format_expression(expression: &Expression) -> String {
     Bounded::message(expression)
         .with_options(

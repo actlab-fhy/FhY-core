@@ -28,7 +28,7 @@ impl DataType {
     /// # Errors
     ///
     /// Returns [`UnificationError::Extension`] for an extension that fails.
-    pub fn is_structurally_equivalent(&self, other: &DataType) -> Result<bool> {
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool> {
         match (self, other) {
             (Self::Primitive(left), Self::Primitive(right)) => Ok(left == right),
             (Self::Template(left), Self::Template(right)) => Ok(left == right),
@@ -58,7 +58,7 @@ impl DataType {
     /// Returns the [`UnificationError`] of the rule that fails.
     pub fn bind_template(
         &self,
-        actual: &DataType,
+        actual: &Self,
         environment: &TypeUnificationEnvironment,
     ) -> Result<TypeUnificationEnvironment> {
         match self {
@@ -89,7 +89,7 @@ impl DataType {
     pub fn substitute_template(
         &self,
         environment: &TypeUnificationEnvironment,
-    ) -> Result<DataType> {
+    ) -> Result<Self> {
         match self {
             Self::Template(template) => Ok(environment
                 .data_type_binding(template.identifier())
@@ -207,7 +207,7 @@ impl Type {
     /// # Errors
     ///
     /// Returns [`UnificationError::Extension`] for an extension that fails.
-    pub fn is_structurally_equivalent(&self, other: &Type) -> Result<bool> {
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool> {
         match (self, other) {
             (Self::Numerical(left), Self::Numerical(right)) => {
                 Ok(NumericalType::ptr_eq(left, right)
@@ -248,7 +248,7 @@ impl Type {
     /// Returns the [`UnificationError`] of the first rule that fails.
     pub fn bind_template(
         &self,
-        actual: &Type,
+        actual: &Self,
         environment: &TypeUnificationEnvironment,
     ) -> Result<TypeUnificationEnvironment> {
         match self {
@@ -291,7 +291,7 @@ impl Type {
     ///
     /// Returns [`UnificationError::Substitution`] when substituting a shape
     /// expression is refused, and an extension's error.
-    pub fn substitute_template(&self, environment: &TypeUnificationEnvironment) -> Result<Type> {
+    pub fn substitute_template(&self, environment: &TypeUnificationEnvironment) -> Result<Self> {
         match self {
             Self::Numerical(numerical) => {
                 if let DataType::Template(template) = numerical.data_type() {
@@ -355,9 +355,9 @@ impl Type {
     /// Returns the [`UnificationError`] of the first rule that fails.
     pub fn unify(
         &self,
-        actual: &Type,
+        actual: &Self,
         environment: &TypeUnificationEnvironment,
-    ) -> Result<(Type, TypeUnificationEnvironment)> {
+    ) -> Result<(Self, TypeUnificationEnvironment)> {
         match self {
             Self::Numerical(expected) => {
                 let Self::Numerical(actual) = actual else {
@@ -385,7 +385,7 @@ impl Type {
     }
 
     /// Return the kind mismatch of this type's rule meeting `actual`.
-    fn kind_mismatch(&self, operation: TypeOperation, actual: &Type) -> UnificationError {
+    fn kind_mismatch(&self, operation: TypeOperation, actual: &Self) -> UnificationError {
         UnificationError::KindMismatch {
             operation,
             expected: self.kind_name(),
@@ -398,7 +398,7 @@ impl Type {
     fn check_default_equivalence(
         &self,
         operation: TypeOperation,
-        actual: &Type,
+        actual: &Self,
         environment: &TypeUnificationEnvironment,
     ) -> Result<TypeUnificationEnvironment> {
         if self.is_structurally_equivalent(actual)? {

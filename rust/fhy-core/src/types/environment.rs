@@ -164,7 +164,7 @@ struct Table<V> {
 /// One layer of a [`Table`].
 struct Layer<V> {
     entries: HashMap<Identifier, V>,
-    below: Option<Arc<Layer<V>>>,
+    below: Option<Arc<Self>>,
     /// The number of keys of this layer and the layers below, each once.
     len: usize,
 }
