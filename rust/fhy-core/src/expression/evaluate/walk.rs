@@ -101,9 +101,9 @@ pub(super) struct Walk<'a, L: Lanes, B> {
     lanes: &'a L,
     registry: &'a FunctionRegistry,
     bindings: B,
-    /// The nodes whose lanes failed: failure id `i` is the failure
-    /// [`LaneFailure::ALL`]`[(i - 1) % N]` of node `(i - 1) / N`, where `N`
-    /// is the number of lane failures.
+    /// The nodes whose lanes failed: failure id `i` is node `(i - 1) / N`'s
+    /// failure at index `(i - 1) % N` of [`LaneFailure::ALL`], where `N` is
+    /// the number of lane failures.
     failing_nodes: Vec<Expression>,
 }
 
@@ -615,7 +615,7 @@ where
 
     /// Evaluate a conjunction or a disjunction.
     fn logical(
-        &mut self,
+        &self,
         operation: LogicalOperation,
         operands: &[Rc<Value<L>>],
     ) -> Result<Value<L>, EvaluationError> {
@@ -668,7 +668,7 @@ where
     /// Evaluate a piecewise from its children: each case's condition and
     /// value, then the otherwise branch.
     fn piecewise(
-        &mut self,
+        &self,
         node: &Expression,
         children: &[Rc<Value<L>>],
     ) -> Result<Value<L>, EvaluationError> {

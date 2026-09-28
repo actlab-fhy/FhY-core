@@ -218,10 +218,12 @@ fn fold_builtin(
 ) -> Result<LiteralValue, FoldError> {
     let real = match argument {
         LiteralValue::Float(value) => *value,
-        LiteralValue::Int(integer) => integer.to_f64().unwrap_or(if integer.is_negative() {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
+        LiteralValue::Int(integer) => integer.to_f64().unwrap_or_else(|| {
+            if integer.is_negative() {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            }
         }),
         LiteralValue::Bool(_) | LiteralValue::Decimal(_) => {
             unreachable!("the argument is checked and converted")

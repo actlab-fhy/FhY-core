@@ -158,7 +158,7 @@ impl Lanes for ScalarLanes {
         a: &A,
         f: impl Fn(A) -> Result<B, LaneFailure>,
     ) -> (B, bool) {
-        f(*a).map_or((B::default(), true), |value| (value, false))
+        f(*a).map_or_else(|_| (B::default(), true), |value| (value, false))
     }
 
     fn map2<A: Lane, B: Lane, C: Lane>(
@@ -176,7 +176,7 @@ impl Lanes for ScalarLanes {
         b: &B,
         f: impl Fn(A, B) -> Result<C, LaneFailure>,
     ) -> Result<(C, bool), EvaluationError> {
-        Ok(f(*a, *b).map_or((C::default(), true), |value| (value, false)))
+        Ok(f(*a, *b).map_or_else(|_| (C::default(), true), |value| (value, false)))
     }
 
     fn map3<A: Lane, B: Lane, C: Lane, D: Lane>(
