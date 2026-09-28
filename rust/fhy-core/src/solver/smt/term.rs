@@ -12,12 +12,12 @@ pub(crate) struct TermId(usize);
 
 impl TermId {
     /// Return the id of the term at `index` of the arena.
-    pub(crate) fn at(index: usize) -> Self {
+    pub(crate) const fn at(index: usize) -> Self {
         Self(index)
     }
 
     /// Return the index of the term in the arena.
-    pub(crate) fn index(self) -> usize {
+    pub(crate) const fn index(self) -> usize {
         self.0
     }
 }
@@ -67,7 +67,7 @@ pub(crate) enum Operator {
 
 impl Operator {
     /// Return the operator's SMT-LIB2 symbol.
-    pub(crate) fn symbol(self) -> &'static str {
+    pub(crate) const fn symbol(self) -> &'static str {
         match self {
             Self::Add => "+",
             Self::Subtract | Self::Negate => "-",

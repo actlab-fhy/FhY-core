@@ -156,14 +156,14 @@ impl<'a> SimplifyContext<'a> {
 
     /// Return this context with the simplification bounded by `limits`.
     #[must_use]
-    pub fn with_limits(self, limits: SimplifyLimits) -> Self {
+    pub const fn with_limits(self, limits: SimplifyLimits) -> Self {
         Self { limits, ..self }
     }
 
     /// Return the limits the simplification should run under; a backend
     /// that cannot enforce one says so in its documentation.
     #[must_use]
-    pub fn limits(&self) -> SimplifyLimits {
+    pub const fn limits(&self) -> SimplifyLimits {
         self.limits
     }
 
@@ -176,7 +176,7 @@ impl<'a> SimplifyContext<'a> {
     /// Return the registry the context was built from, or `None` for a
     /// context built from sorts alone.
     #[must_use]
-    pub fn registry(&self) -> Option<&'a FunctionRegistry> {
+    pub const fn registry(&self) -> Option<&'a FunctionRegistry> {
         self.registry
     }
 }
@@ -267,7 +267,7 @@ impl CheckLimits {
 
     /// Return these limits with the check bounded to `timeout`.
     #[must_use]
-    pub fn with_timeout(self, timeout: Duration) -> Self {
+    pub const fn with_timeout(self, timeout: Duration) -> Self {
         Self {
             timeout: Some(timeout),
         }
@@ -275,7 +275,7 @@ impl CheckLimits {
 
     /// Return how long a check may run, or `None` when it is unbounded.
     #[must_use]
-    pub fn timeout(&self) -> Option<Duration> {
+    pub const fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
 }
@@ -312,7 +312,7 @@ impl SimplifyLimits {
 
     /// Return these limits with the simplification bounded to `timeout`.
     #[must_use]
-    pub fn with_timeout(self, timeout: Duration) -> Self {
+    pub const fn with_timeout(self, timeout: Duration) -> Self {
         Self {
             timeout: Some(timeout),
         }
@@ -321,7 +321,7 @@ impl SimplifyLimits {
     /// Return how long the simplification may run, or `None` when it is
     /// unbounded.
     #[must_use]
-    pub fn timeout(&self) -> Option<Duration> {
+    pub const fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
 }

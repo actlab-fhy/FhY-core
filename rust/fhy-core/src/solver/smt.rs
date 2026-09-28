@@ -52,7 +52,7 @@ pub enum Logic {
 impl Logic {
     /// Return the SMT-LIB2 name of the logic, such as `"QF_LIA"`.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::QfLia => "QF_LIA",
             Self::QfLra => "QF_LRA",
@@ -92,7 +92,7 @@ pub struct Declaration {
 impl Declaration {
     /// Return the identifier the constant stands for.
     #[must_use]
-    pub fn identifier(&self) -> &Identifier {
+    pub const fn identifier(&self) -> &Identifier {
         &self.identifier
     }
 
@@ -106,7 +106,7 @@ impl Declaration {
 
     /// Return the constant's sort.
     #[must_use]
-    pub fn sort(&self) -> SymbolType {
+    pub const fn sort(&self) -> SymbolType {
         self.sort
     }
 }
@@ -209,7 +209,7 @@ impl SmtScript {
 
     /// Return the logic of the script.
     #[must_use]
-    pub fn logic(&self) -> Logic {
+    pub const fn logic(&self) -> Logic {
         self.logic
     }
 
@@ -223,7 +223,7 @@ impl SmtScript {
     /// Return the sort of the named expression when the script names one,
     /// and `None` when its assertions are predicates.
     #[must_use]
-    pub fn value_sort(&self) -> Option<SymbolType> {
+    pub const fn value_sort(&self) -> Option<SymbolType> {
         self.value_sort
     }
 

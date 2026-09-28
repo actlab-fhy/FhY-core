@@ -15,7 +15,7 @@ use super::SmtScript;
 use super::term::{Symbol, Term, TermId};
 
 /// Return the SMT-LIB2 name of `sort`.
-fn sort_name(sort: SymbolType) -> &'static str {
+const fn sort_name(sort: SymbolType) -> &'static str {
     match sort {
         SymbolType::Bool => "Bool",
         SymbolType::Int => "Int",

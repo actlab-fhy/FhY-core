@@ -131,7 +131,7 @@ impl QueryKind {
     /// Return the snake-case name of the kind, such as
     /// `"universal_validity"`.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Simplification => "simplification",
             Self::Satisfiability => "satisfiability",
@@ -198,7 +198,7 @@ pub enum Question<'a> {
 impl Question<'_> {
     /// Return the kind of the question.
     #[must_use]
-    pub fn kind(&self) -> QueryKind {
+    pub const fn kind(&self) -> QueryKind {
         match self {
             Self::Satisfiability(_) => QueryKind::Satisfiability,
             Self::Implication { .. } => QueryKind::Implication,
@@ -239,13 +239,13 @@ impl<'a> QueryContext<'a> {
 
     /// Return the context bounding the backend's check by `limits`.
     #[must_use]
-    pub fn with_limits(self, limits: CheckLimits) -> Self {
+    pub const fn with_limits(self, limits: CheckLimits) -> Self {
         Self { limits, ..self }
     }
 
     /// Return the limits of the backend's check.
     #[must_use]
-    pub fn limits(&self) -> CheckLimits {
+    pub const fn limits(&self) -> CheckLimits {
         self.limits
     }
 }
@@ -278,7 +278,7 @@ impl Answer {
     /// Return `Some(true)` for [`Yes`](Self::Yes), `Some(false)` for
     /// [`No`](Self::No), and `None` when the question was not decided.
     #[must_use]
-    pub fn decided(&self) -> Option<bool> {
+    pub const fn decided(&self) -> Option<bool> {
         match self {
             Self::Yes => Some(true),
             Self::No => Some(false),
