@@ -48,7 +48,7 @@ pub enum PassHook {
 impl PassHook {
     /// Return the hook's method name, for example `validate_input`.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::ValidateInput => "validate_input",
             Self::Skip => "skip",
@@ -59,7 +59,7 @@ impl PassHook {
         }
     }
 
-    fn class(self) -> FailureClass {
+    const fn class(self) -> FailureClass {
         match self {
             Self::ValidateInput | Self::ValidateOutput => FailureClass::Validation,
             Self::Skip | Self::Run | Self::DidChange | Self::PreservedAnalyses => {

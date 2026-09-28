@@ -63,19 +63,19 @@ pub struct WalkPass<V> {
 impl<V> WalkPass<V> {
     /// Create the pass that walks with `visitor` in `order`.
     #[must_use]
-    pub fn new(visitor: V, order: TraversalOrder) -> Self {
+    pub const fn new(visitor: V, order: TraversalOrder) -> Self {
         Self { visitor, order }
     }
 
     /// Return the visitor.
     #[must_use]
-    pub fn visitor(&self) -> &V {
+    pub const fn visitor(&self) -> &V {
         &self.visitor
     }
 
     /// Return the visitor for mutation.
     #[must_use]
-    pub fn visitor_mut(&mut self) -> &mut V {
+    pub const fn visitor_mut(&mut self) -> &mut V {
         &mut self.visitor
     }
 
@@ -162,19 +162,19 @@ pub struct RewritePass<R> {
 impl<R> RewritePass<R> {
     /// Create the pass that rewrites with `rewriter`.
     #[must_use]
-    pub fn new(rewriter: R) -> Self {
+    pub const fn new(rewriter: R) -> Self {
         Self { rewriter }
     }
 
     /// Return the rewriter.
     #[must_use]
-    pub fn rewriter(&self) -> &R {
+    pub const fn rewriter(&self) -> &R {
         &self.rewriter
     }
 
     /// Return the rewriter for mutation.
     #[must_use]
-    pub fn rewriter_mut(&mut self) -> &mut R {
+    pub const fn rewriter_mut(&mut self) -> &mut R {
         &mut self.rewriter
     }
 

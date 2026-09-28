@@ -36,14 +36,14 @@ impl PassRunRecord {
 
     /// Return whether the run changed the IR.
     #[must_use]
-    pub fn is_changed(&self) -> bool {
+    pub const fn is_changed(&self) -> bool {
         self.changed
     }
 
     /// Return whether the pass skipped the run, so
     /// [`CompilerPass::run`] was not called.
     #[must_use]
-    pub fn is_skipped(&self) -> bool {
+    pub const fn is_skipped(&self) -> bool {
         self.skipped
     }
 
@@ -55,7 +55,7 @@ impl PassRunRecord {
 
     /// Return the analyses the run left valid for its output.
     #[must_use]
-    pub fn preserved_analyses(&self) -> &PreservedAnalyses {
+    pub const fn preserved_analyses(&self) -> &PreservedAnalyses {
         &self.preserved
     }
 }
@@ -71,13 +71,13 @@ pub struct FixpointIterationRecord {
 impl FixpointIterationRecord {
     /// Return the iteration's 1-based number.
     #[must_use]
-    pub fn iteration(&self) -> usize {
+    pub const fn iteration(&self) -> usize {
         self.iteration
     }
 
     /// Return whether any pass changed the IR in this iteration.
     #[must_use]
-    pub fn is_changed(&self) -> bool {
+    pub const fn is_changed(&self) -> bool {
         self.changed
     }
 
@@ -99,7 +99,7 @@ pub struct FixpointGroupRecord {
 impl FixpointGroupRecord {
     /// Return the group's name.
     #[must_use]
-    pub fn group_name(&self) -> &Identifier {
+    pub const fn group_name(&self) -> &Identifier {
         &self.group_name
     }
 
@@ -112,7 +112,7 @@ impl FixpointGroupRecord {
     /// Return whether the group reached an iteration in which no pass
     /// changed the IR.
     #[must_use]
-    pub fn is_converged(&self) -> bool {
+    pub const fn is_converged(&self) -> bool {
         self.converged
     }
 
@@ -147,7 +147,7 @@ pub struct PassManagerResult<I> {
 impl<I> PassManagerResult<I> {
     /// Return the final IR.
     #[must_use]
-    pub fn output(&self) -> &I {
+    pub const fn output(&self) -> &I {
         &self.output
     }
 
@@ -242,19 +242,19 @@ impl<'p, I> FixpointPassGroup<'p, I> {
 
     /// Return the group's name.
     #[must_use]
-    pub fn name(&self) -> &Identifier {
+    pub const fn name(&self) -> &Identifier {
         &self.name
     }
 
     /// Return the iteration budget.
     #[must_use]
-    pub fn max_iterations(&self) -> NonZeroUsize {
+    pub const fn max_iterations(&self) -> NonZeroUsize {
         self.max_iterations
     }
 
     /// Return whether the group fails a pipeline when it does not converge.
     #[must_use]
-    pub fn fails_on_non_convergence(&self) -> bool {
+    pub const fn fails_on_non_convergence(&self) -> bool {
         self.fail_on_non_convergence
     }
 }
@@ -493,7 +493,7 @@ pub struct PassManager<'p, I> {
 impl<'p, I: NodeHandle> PassManager<'p, I> {
     /// Create the empty pipeline `name` without a verifier.
     #[must_use]
-    pub fn new(name: Identifier) -> Self {
+    pub const fn new(name: Identifier) -> Self {
         Self {
             name,
             items: Vec::new(),
@@ -503,7 +503,7 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
 
     /// Return the pipeline's name.
     #[must_use]
-    pub fn name(&self) -> &Identifier {
+    pub const fn name(&self) -> &Identifier {
         &self.name
     }
 

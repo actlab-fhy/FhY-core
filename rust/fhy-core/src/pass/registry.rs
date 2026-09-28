@@ -38,19 +38,19 @@ impl PassInfo {
 
     /// Return the type id of the registered pass type.
     #[must_use]
-    pub fn pass_type_id(&self) -> TypeId {
+    pub const fn pass_type_id(&self) -> TypeId {
         self.pass_type_id
     }
 
     /// Return the type id of the IR the registered pass takes.
     #[must_use]
-    pub fn input_type_id(&self) -> TypeId {
+    pub const fn input_type_id(&self) -> TypeId {
         self.input_type_id
     }
 
     /// Return the type id of the IR the registered pass produces.
     #[must_use]
-    pub fn output_type_id(&self) -> TypeId {
+    pub const fn output_type_id(&self) -> TypeId {
         self.output_type_id
     }
 
@@ -60,7 +60,7 @@ impl PassInfo {
     /// The text is for messages only: `type_name` does not guarantee it
     /// stays the same across compiler versions.
     #[must_use]
-    pub fn pass_type_name(&self) -> &'static str {
+    pub const fn pass_type_name(&self) -> &'static str {
         self.pass_type_name
     }
 

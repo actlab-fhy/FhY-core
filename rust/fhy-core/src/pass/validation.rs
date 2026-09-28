@@ -139,19 +139,19 @@ pub struct PassValidator<P> {
 impl<P> PassValidator<P> {
     /// Create the validator that runs `pass`.
     #[must_use]
-    pub fn new(pass: P) -> Self {
+    pub const fn new(pass: P) -> Self {
         Self { pass }
     }
 
     /// Return the pass.
     #[must_use]
-    pub fn pass(&self) -> &P {
+    pub const fn pass(&self) -> &P {
         &self.pass
     }
 
     /// Return the pass for mutation.
     #[must_use]
-    pub fn pass_mut(&mut self) -> &mut P {
+    pub const fn pass_mut(&mut self) -> &mut P {
         &mut self.pass
     }
 
@@ -197,7 +197,7 @@ impl ValidatorRecord {
     /// Return whether the validator's [`Validator::validate`] returned an
     /// error.
     #[must_use]
-    pub fn is_failed(&self) -> bool {
+    pub const fn is_failed(&self) -> bool {
         self.failed
     }
 
@@ -213,7 +213,7 @@ impl ValidatorRecord {
     #[must_use]
     pub fn diagnostics_in<'r>(
         &self,
-        report: &'r ValidationReport<ValidatorRecord>,
+        report: &'r ValidationReport<Self>,
     ) -> Option<&'r [Diagnostic]> {
         report
             .diagnostics()
@@ -280,7 +280,7 @@ impl<'p, I> ValidationManager<'p, I> {
 
     /// Return the pipeline's name.
     #[must_use]
-    pub fn name(&self) -> &Identifier {
+    pub const fn name(&self) -> &Identifier {
         &self.name
     }
 

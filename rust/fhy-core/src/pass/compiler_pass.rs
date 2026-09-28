@@ -430,7 +430,7 @@ impl<O> PassOutcome<O> {
 
     /// Return the output IR.
     #[must_use]
-    pub fn output(&self) -> &O {
+    pub const fn output(&self) -> &O {
         &self.output
     }
 
@@ -442,14 +442,14 @@ impl<O> PassOutcome<O> {
 
     /// Return whether the run changed the IR.
     #[must_use]
-    pub fn is_changed(&self) -> bool {
+    pub const fn is_changed(&self) -> bool {
         self.changed
     }
 
     /// Return whether the pass skipped the run: its output came from
     /// [`CompilerPass::skip`], and [`CompilerPass::run`] was not called.
     #[must_use]
-    pub fn is_skipped(&self) -> bool {
+    pub const fn is_skipped(&self) -> bool {
         self.skipped
     }
 
@@ -461,7 +461,7 @@ impl<O> PassOutcome<O> {
 
     /// Return the analyses the run left valid for its output.
     #[must_use]
-    pub fn preserved_analyses(&self) -> &PreservedAnalyses {
+    pub const fn preserved_analyses(&self) -> &PreservedAnalyses {
         &self.preserved
     }
 }

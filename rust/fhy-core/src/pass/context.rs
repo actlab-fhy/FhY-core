@@ -29,7 +29,7 @@ pub struct PassContext<'a> {
 impl<'a> PassContext<'a> {
     /// Create the context for a run of the pass `pass_name`, caching analyses
     /// in `analyses` when one is given.
-    pub(super) fn new(
+    pub(super) const fn new(
         pass_name: Cow<'static, str>,
         analyses: Option<&'a mut AnalysisCache>,
     ) -> Self {

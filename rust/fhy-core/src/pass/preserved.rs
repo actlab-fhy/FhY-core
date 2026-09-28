@@ -98,7 +98,7 @@ impl AnalysisId {
     /// Return the identifier the id was built from, or `None` for the id of
     /// an analysis type.
     #[must_use]
-    pub fn identifier(&self) -> Option<&Identifier> {
+    pub const fn identifier(&self) -> Option<&Identifier> {
         match &self.0 {
             AnalysisName::Type { .. } => None,
             AnalysisName::Identifier(name) => Some(name),
@@ -235,7 +235,7 @@ pub struct PreservedAnalyses {
 impl PreservedAnalyses {
     /// Return the set that preserves every analysis.
     #[must_use]
-    pub fn all() -> Self {
+    pub const fn all() -> Self {
         Self {
             preservation: Preservation::All,
         }
@@ -243,7 +243,7 @@ impl PreservedAnalyses {
 
     /// Return the set that preserves no analysis.
     #[must_use]
-    pub fn none() -> Self {
+    pub const fn none() -> Self {
         Self {
             preservation: Preservation::Only(BTreeSet::new()),
         }
@@ -292,7 +292,7 @@ impl PreservedAnalyses {
 
     /// Return whether the set preserves every analysis.
     #[must_use]
-    pub fn preserves_all(&self) -> bool {
+    pub const fn preserves_all(&self) -> bool {
         matches!(self.preservation, Preservation::All)
     }
 
