@@ -158,10 +158,8 @@ impl AnalysisCache {
         T: NodeHandle,
         V: Send + Sync + 'static,
     {
-        match self.cached(ir, id) {
-            Some(result) => result,
-            None => self.insert(ir, id, Arc::new(compute())),
-        }
+        self.cached(ir, id)
+            .unwrap_or_else(|| self.insert(ir, id, Arc::new(compute())))
     }
 
     /// Return the result of type `V` cached for `ir` under `id`, if any.

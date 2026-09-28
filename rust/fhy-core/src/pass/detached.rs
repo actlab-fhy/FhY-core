@@ -174,10 +174,9 @@ pub(super) struct Detachment<'c> {
 impl<'c> Detachment<'c> {
     /// Move the contents of `cache`, if there is one, into a new handle.
     pub(super) fn new(mut cache: Option<&'c mut AnalysisCache>) -> Self {
-        let slot = match cache.as_deref_mut() {
-            Some(cache) => Slot::Cached(mem::take(cache)),
-            None => Slot::Uncached,
-        };
+        let slot = cache
+            .as_deref_mut()
+            .map_or(Slot::Uncached, |cache| Slot::Cached(mem::take(cache)));
         Self {
             cache,
             handle: DetachedAnalyses {
@@ -187,7 +186,7 @@ impl<'c> Detachment<'c> {
     }
 
     /// Return the handle the cache moved into.
-    pub(super) fn handle(&self) -> &DetachedAnalyses {
+    pub(super) const fn handle(&self) -> &DetachedAnalyses {
         &self.handle
     }
 }
