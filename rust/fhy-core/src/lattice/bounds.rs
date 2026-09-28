@@ -84,8 +84,8 @@ impl<T: Eq + Hash + Clone> Lattice<T> {
     /// Returns [`OrderError::NotAMember`] for `x`, then for `y`, if it is not
     /// a member.
     pub fn meet(&self, x: &T, y: &T) -> Result<Option<&T>, OrderError<T>> {
-        let x_position = self.poset.position_of(x)?;
-        let y_position = self.poset.position_of(y)?;
+        let x_position = self.poset.position(x)?;
+        let y_position = self.poset.position(y)?;
         Ok(self
             .meet_of(x_position, y_position)
             .map(|position| self.poset.element(position)))
@@ -98,8 +98,8 @@ impl<T: Eq + Hash + Clone> Lattice<T> {
     /// Returns [`OrderError::NotAMember`] for `x`, then for `y`, if it is not
     /// a member.
     pub fn join(&self, x: &T, y: &T) -> Result<Option<&T>, OrderError<T>> {
-        let x_position = self.poset.position_of(x)?;
-        let y_position = self.poset.position_of(y)?;
+        let x_position = self.poset.position(x)?;
+        let y_position = self.poset.position(y)?;
         Ok(self
             .join_of(x_position, y_position)
             .map(|position| self.poset.element(position)))

@@ -172,7 +172,7 @@ impl<T: Eq + Hash + Clone> PartiallyOrderedSet<T> {
     }
 
     /// Return the position of `element`, or [`OrderError::NotAMember`].
-    fn position(&self, element: &T) -> Result<usize, OrderError<T>> {
+    pub(super) fn position(&self, element: &T) -> Result<usize, OrderError<T>> {
         self.positions
             .get(element)
             .copied()
@@ -210,11 +210,6 @@ impl<T: Eq + Hash + Clone> PartiallyOrderedSet<T> {
     /// Return the up-set of the element at `position`.
     pub(super) fn up_set(&self, position: usize) -> &Bits {
         &self.up_sets[position]
-    }
-
-    /// Return the position of `element`, or [`OrderError::NotAMember`].
-    pub(super) fn position_of(&self, element: &T) -> Result<usize, OrderError<T>> {
-        self.position(element)
     }
 
     /// Return the element at `position`.
