@@ -517,7 +517,7 @@ fn lowered_round_node_pickles_within_the_process() {
     let (_, reference) = build_identifier("x");
     let call = Expression::call(
         fhy_core::expression::builtins::BuiltinFunction::Round,
-        [reference.clone()],
+        [reference],
     );
     let context = SimplifyContext::new(&NoRegisteredSorts);
 

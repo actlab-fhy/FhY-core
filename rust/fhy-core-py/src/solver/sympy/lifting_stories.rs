@@ -96,7 +96,7 @@ fn negative_integer_powers_lift_as_divisions() {
     );
     assert_eq!(
         lifted(&format!("sympy.Pow({x_symbol}, -3)")),
-        build_literal(1) / x_reference.clone().power(3)
+        build_literal(1) / x_reference.power(3)
     );
     assert_eq!(
         lifted(&format!("{y_symbol} / {x_symbol}")),

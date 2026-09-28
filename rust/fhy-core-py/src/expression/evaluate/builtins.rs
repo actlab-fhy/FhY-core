@@ -68,10 +68,12 @@ fn read_argument(function: BuiltinFunction, value: &Bound<'_, PyAny>) -> PyResul
     }
     if value.is_instance_of::<PyInt>() {
         let integer: BigInt = read_big_int(value)?;
-        return Ok(integer.to_f64().unwrap_or(if integer.is_negative() {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
+        return Ok(integer.to_f64().unwrap_or_else(|| {
+            if integer.is_negative() {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            }
         }));
     }
     if let Ok(float) = value.cast::<PyFloat>() {
