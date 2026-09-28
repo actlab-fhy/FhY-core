@@ -205,7 +205,7 @@ impl<'a> ParamContext<'a> {
 
     /// Return the context reading native constants from `registry`.
     #[must_use]
-    pub fn with_registry(self, registry: &'a FunctionRegistry) -> Self {
+    pub const fn with_registry(self, registry: &'a FunctionRegistry) -> Self {
         Self {
             constraint: self.constraint.with_registry(registry),
             ..self
