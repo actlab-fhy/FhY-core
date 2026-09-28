@@ -104,8 +104,8 @@ onto `dev-rust` before continuing.
 - [x] R2-046b (F2-046, properties): serde round-trip properties for params, types and symbol tables: `98bc2a8`
 - [x] R2-029c (F2-029, `types`, `symbol_table`): error-text tables and small stories: `a61d3b6`
 - [x] `[rebase]` onto `dev-rust` after Tracks D and B land (rebased onto `03fb9e4` by the maintainer)
-- [x] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound
-- [ ] Track C status: gates green; counts recorded; landed as `<hash>`
+- [x] R2-008 (F2-008): one crate-private exact-arithmetic module, and the decimal exponent bound: `3913c4b`
+- [x] Track C status: gates green; counts recorded (Track C notes, "Track C status"); landing on `dev-rust` is the maintainer's
 
 ### Track E: `binding` (the binding and the Python package; lands 5th, last)
 
@@ -4040,6 +4040,81 @@ other users, see the benchmark note below), and the costs were removed:
   with no frame and no marks (a follow-up commit, after the interleaved
   reruns still showed `test_substitute_template_of_a_templated_array` at
   1.27).
+
+**Track C status** (on the final tree, `053c186` plus this record; the
+base is `03fb9e4`, Tracks A, D and B landed):
+- fmt; clippy `-D warnings` for the workspace both ways and for `fhy-core`
+  alone with no features, `z3` and `ndarray`: clean;
+- `cargo test --workspace`: 4,968; `--all-features`: 5,004 (the rebased
+  base's per-commit run gave 4,924 and 4,960 with this track's first
+  thirteen items);
+- `cargo test -p fhy-core` in a shell with no Python environment: 4,752,
+  and 4,822 with `--all-features`;
+- C's extra: `cargo test --release -p fhy-core --test it types::`, the
+  depth-64 checker DAG, the Fibonacci bindings and the 100,000-binding
+  chain among them: 376 passed;
+- `cargo doc -D warnings`: the workspace, and `fhy-core` with default
+  features and with each feature alone: clean;
+- `cargo deny check`: ok; `cargo +1.85 check --workspace --lib` and
+  `-p fhy-core --all-targets` three ways: no warning;
+- `cargo package` and its list (no `.py`);
+- `pytest tests`: 8,364 passed, 2 xfailed; `-m "not very_slow"`: 8,397;
+  nox `property`: 283; `tests_minimal`: 6,367 passed, 666 skipped; nox
+  `lint`, `type_check` and `golden_expanded`: green. (One `tests_minimal`
+  run failed its "no optional package" guard because the shell it was
+  launched from still exported the Rust gate's `PYTHONPATH`; rerun without
+  it, green. It says nothing about the code.)
+- the attribution grep over `03fb9e4..HEAD`: no match; every commit is the
+  configured user's.
+- **Benchmarks** (§I.8.3: `test_type_checking.py`, `test_types.py`,
+  `test_param.py`, `test_symbol_table.py`; 116 rows). The base
+  (`03fb9e4`) and the head were each a `git archive` under
+  `target/bench/`, built alike (`uv sync --no-default-groups --group bench
+  --group test`, CPython 3.11), and run file by file, base then head, back
+  to back (`pytest --benchmark-only -n 0`). Other users kept the machine's
+  load near 18 on 24 cores, and single runs moved rows the track never
+  touched (`test_frame_eq`) by up to 3.5x, in both directions; so each
+  table value is the least of four rounds' `min`s, and rows over 10% were
+  re-measured interleaved. The first rounds found real costs, removed in
+  `aa092f7` and `053c186` (see above). **At the head, no row is slower than
+  1.08**: the slowest are `test_substitute_template_of_a_templated_array`
+  (2.73 to 2.96 us, 1.08), `test_lattice_is_lattice_of_a_powerset` (1.08,
+  a path the track does not touch), `test_symbol_table_canonicalize` and
+  `test_unify_of_a_templated_array` (1.06); the median row is 0.99, and
+  1.00 by the medians' statistic. None is flagged.
+
+**Python-visible changes** (§I.2 rule 6), gathered from the items above:
+
+| Item | Old | New | Tests |
+|---|---|---|---|
+| R2-017 | `check(-(5), uint8)` returned `uint8`; `check(-(128), int8)` raised | the first raises "literal -5 is incompatible with uint8"; the second returns `int8` | `test_negated_literals_check_as_one_literal` |
+| R2-019 | the body sweep checked no composed built-in | it checks the 16 in catalogue order; `_rs.types_check_all_function_bodies` takes an optional `on_checked` | `test_the_sweep_checks_every_expression_bodied_builtin` |
+| R2-001b | a shared sub-expression was re-checked, and looked up, once per path | at most twice per expected type | `test_a_doubling_dag_of_depth_40_checks_in_under_a_second` |
+| R2-018 | unification and `substitute_template` through a refused substitution returned a wrong answer | `VerificationError` "substituting the existing shape bindings was refused" | `test_a_refused_shape_substitution_is_an_error` |
+| R2-020 | `add_symbol(parent, y)` succeeded when a child held `y` | `SymbolTableError` naming the descendant | `test_add_symbol_refuses_a_name_a_descendant_defines` |
+| R2-021 | a natural domain admitted `-5`, and its domain-level questions ignored its sign | `False`, `VIOLATED`, `False`; a negative natural assignment raises "is not admissible"; the docstrings say so | `test_a_natural_domain_admits_only_its_own_values`, `test_domain_questions_fold_in_the_domain_s_restriction`, the two rewritten pins |
+| R2-008 | none through the grammar | a lifted SymPy rational whose decimal exponent would exceed 10,000 stays a quotient | none |
+
+**Where Track C stops.** Every Track C item is done. Landing on
+`dev-rust` is the maintainer's.
+- **For Track E's R2-045:** the public surface is `Decimal::from_parts(
+  coefficient: BigInt, exponent: i64) -> Result<Decimal,
+  DecimalPartsError>` (non-negative coefficient; the sign is a negation
+  around the literal), `Decimal::MAX_EXPONENT_MAGNITUDE: u32 = 10_000`
+  (checked on the normalized exponent), `DecimalPartsError::{
+  NegativeCoefficient, ExponentOutOfRange { exponent } }`,
+  `Decimal::to_rational_parts` and `Decimal::from_rational_parts`, all
+  under `fhy_core::expression`.
+- **Other tracks' files touched, each additively:** Track A's
+  `types/error.rs` (the `Substitution` variant) and `param/error.rs` via
+  new helpers only in `decide.rs`; Track B's `expression/literal.rs`
+  (`mod exact;`, the export), `expression.rs` (two exports),
+  `expression/literal/decimal.rs` (the R2-008 surface, `split_float`
+  removed), `tests/it/constraint.rs` (one `mod` line) and the new
+  `tests/it/constraint/decision_rule_stories.rs`; Track D's
+  `solver/smt/lower.rs` and the binding's `solver/sympy/{lower,lift}.rs`
+  (R2-008's call sites); the shared `_rs.pyi` (one signature, R2-019) and
+  `python-switch.md` (two revision bullets, R2-020).
 
 ### Track E notes
 
