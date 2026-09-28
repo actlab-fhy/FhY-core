@@ -573,4 +573,6 @@ def test_a_doubling_dag_of_depth_40_checks_in_under_a_second() -> None:
     assert result_type == _scalar(CoreDataType.INT32)
     assert qualifier is TypeQualifier.PARAM
     assert elapsed < 1.0
-    assert len(lookup.calls) == 2
+    # Each shared node is checked at most twice before its result is kept,
+    # so the lookups are a handful, not one per path.
+    assert len(lookup.calls) <= 4

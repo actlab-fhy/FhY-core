@@ -47,12 +47,17 @@ fn compare_numbers(left: &Member, right: &Member) -> Option<Ordering> {
         MemberKind::Float(value) => Some(value),
         _ => None,
     };
-    let exact = |integer: Option<BigInt>, float: Option<f64>| match (integer, float) {
-        (Some(integer), _) => Some(ExactNumber::integer(integer)),
-        (None, Some(float)) => ExactNumber::of_f64(float),
-        (None, None) => None,
-    };
-    Some(exact(as_int(left), as_float(left))?.cmp(&exact(as_int(right), as_float(right))?))
+    match (as_int(left), as_int(right), as_float(left), as_float(right)) {
+        (Some(left), Some(right), _, _) => Some(left.cmp(&right)),
+        (None, None, Some(left), Some(right)) => left.partial_cmp(&right),
+        (Some(left), None, _, Some(right)) => {
+            Some(ExactNumber::integer(left).cmp(&ExactNumber::of_f64(right)?))
+        }
+        (None, Some(right), Some(left), _) => {
+            Some(ExactNumber::of_f64(left)?.cmp(&ExactNumber::integer(right)))
+        }
+        _ => None,
+    }
 }
 
 /// Return whether `member` is a number of the ordinal order.

@@ -3655,7 +3655,7 @@ status line: `cargo test --workspace` 4,565 and `--all-features` 4,601;
 
   | Before | After | Tests |
   |---|---|---|
-  | a sub-expression shared by several parents was re-checked, and its identifiers and calls looked up, once per path (a depth-40 doubling DAG did not finish) | it is checked once per expected type; the depth-40 DAG checks with two lookups | `test_a_doubling_dag_of_depth_40_checks_in_under_a_second` |
+  | a sub-expression shared by several parents was re-checked, and its identifiers and calls looked up, once per path (a depth-40 doubling DAG did not finish) | it is checked at most twice per expected type (once before the benchmark fix below); the depth-40 DAG checks with at most four lookups | `test_a_doubling_dag_of_depth_40_checks_in_under_a_second` |
 
 **R2-026b.** Tests only; every new test passed at its first run, so no new
 finding.
@@ -4013,6 +4013,29 @@ default solver numeric questions, without `@pytest.mark.z3`, so nox
   lifting, a rational whose decimal would need an exponent beyond 10,000
   now lifts as the quotient `n / d` instead of a decimal literal; no
   Python test reaches one.
+
+**After R2-008: the hot paths the fixes slowed.** The first benchmark runs
+against `03fb9e4` showed rows this track slowed (on a machine loaded by
+other users, see the benchmark note below), and the costs were removed:
+- **The checker's memo (R2-001b)** stored a result for every node the
+  core saw as shared, and a tree built in Python shares every node, since
+  its Python objects hold handles. A node's result is now kept from its
+  second visit on; the first costs one set insertion. A DAG stays linear
+  (the second visit finds the children kept), and a shared node is
+  checked at most twice per expected type, so the depth-40 Python story
+  sees at most four lookups (it pinned two), and the rustdoc, the
+  binding's module docs and `type_checker.py` say "at most twice".
+- **The ordinal order (R2-008)** built `ExactNumber`s for two integers or
+  two floats; only a mixed pair goes through the exact module now.
+- **`restricted` (R2-021)** copied the side's constraints even when the
+  domain implies none or the side holds them all, as a param's does; it
+  returns the side's own slice then (`Cow`).
+- **`violations` (R2-020)** walked a symbol's ancestors per symbol, with a
+  set per walk; it walks each namespace's once, and skips a root
+  namespace.
+- **The environment (R2-038b)** collected its entries into a `Vec` on each
+  iteration; the iterator now walks the layers without allocating, and
+  the substitution returns at once when no bound variable is free.
 
 ### Track E notes
 

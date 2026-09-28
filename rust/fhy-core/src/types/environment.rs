@@ -228,20 +228,71 @@ impl<V> Table<V> {
     }
 
     /// Return the entries, each key once with its newest value, in no
-    /// particular order.
-    fn iter(&self) -> impl ExactSizeIterator<Item = (&Identifier, &V)> {
-        let layers: Vec<&Layer<V>> = self.layers().collect();
-        let mut entries = Vec::with_capacity(self.len());
-        for (depth, layer) in layers.iter().enumerate() {
-            entries.extend(layer.entries.iter().filter(|(key, _)| {
-                !layers[..depth]
-                    .iter()
-                    .any(|newer| newer.entries.contains_key(*key))
-            }));
+    /// particular order, allocating nothing.
+    fn iter(&self) -> TableIter<'_, V> {
+        TableIter {
+            top: self.top.as_deref(),
+            layer: self.top.as_deref(),
+            entries: self.top.as_deref().map(|layer| layer.entries.iter()),
+            remaining: self.len(),
         }
-        entries.into_iter()
     }
 }
+
+/// The entries of a [`Table`]: each layer's, newest first, less those a
+/// newer layer shadows.
+struct TableIter<'t, V> {
+    top: Option<&'t Layer<V>>,
+    layer: Option<&'t Layer<V>>,
+    entries: Option<std::collections::hash_map::Iter<'t, Identifier, V>>,
+    remaining: usize,
+}
+
+impl<V> TableIter<'_, V> {
+    /// Return whether a layer newer than the current one holds `key`.
+    fn is_shadowed(&self, key: &Identifier) -> bool {
+        let mut newer = self.top;
+        while let Some(layer) = newer {
+            if self
+                .layer
+                .is_some_and(|current| std::ptr::eq(layer, current))
+            {
+                return false;
+            }
+            if layer.entries.contains_key(key) {
+                return true;
+            }
+            newer = layer.below.as_deref();
+        }
+        false
+    }
+}
+
+impl<'t, V> Iterator for TableIter<'t, V> {
+    type Item = (&'t Identifier, &'t V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let layer = self.layer?;
+            let entries = self.entries.get_or_insert_with(|| layer.entries.iter());
+            if let Some(entry) = entries.next() {
+                if !self.is_shadowed(entry.0) {
+                    self.remaining -= 1;
+                    return Some(entry);
+                }
+            } else {
+                self.layer = layer.below.as_deref();
+                self.entries = None;
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<V> ExactSizeIterator for TableIter<'_, V> {}
 
 impl<V: PartialEq> PartialEq for Table<V> {
     fn eq(&self, other: &Self) -> bool {

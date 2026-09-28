@@ -45,7 +45,8 @@ with identifier ids:
 The two lookups are Python callables, called once per identifier
 occurrence and once per call node the walk meets; a sub-expression shared
 by several parents, other than a lone identifier or literal, is checked
-once, so the lookups inside it run once. Their exceptions propagate unchanged,
+at most twice, so the lookups inside it run a bounded number of times,
+whatever the number of paths to it. Their exceptions propagate unchanged,
 and a result of the wrong shape raises :class:`TypeError`. When the
 call-target resolver is the registry's ``get_registered_entry``, calls
 resolve through the registry without calling it.

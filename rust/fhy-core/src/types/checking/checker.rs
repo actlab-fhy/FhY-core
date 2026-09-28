@@ -1,6 +1,6 @@
 //! The bidirectional type checker.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 
 use crate::expression::builtins::BuiltinConstant;
@@ -156,10 +156,12 @@ impl CallTargets for FunctionRegistry {
 ///   type follows the result sort.
 ///
 /// The walk keeps its pending steps on the heap, and checks a shared node
-/// other than a leaf once per expected type it is checked against, so a DAG
-/// checks in time linear in its distinct nodes. An identifier occurrence
-/// reaches the [`IdentifierTypes`] each time the walk meets it, which is
-/// once within a shared sub-expression however often that is reached.
+/// other than a leaf at most twice per expected type it is checked against,
+/// keeping its result from the second time on, so a DAG checks in time
+/// linear in its distinct nodes. An identifier occurrence reaches the
+/// [`IdentifierTypes`] each time the walk meets it, which is a bounded
+/// number of times within a shared sub-expression however often that is
+/// reached.
 #[expect(
     missing_debug_implementations,
     reason = "the lookups are trait objects without Debug"
@@ -257,16 +259,30 @@ enum Step<'e> {
 /// The results of the shared nodes other than leaves a walk has inferred, by node and then by
 /// the expected type each was inferred with.
 ///
+/// A node is remembered from its second visit on: a node the walk meets
+/// once, as every node of a tree whose handles a caller also holds, costs
+/// one set insertion and no stored result. In a DAG, the second visit of a
+/// node finds its children remembered, so the walk stays linear in the
+/// distinct nodes.
+///
 /// Only results are kept: the walk stops at its first error, so an error is
 /// never met twice. Every node stays alive through the walk's root, so its
 /// identity keys it unambiguously.
 #[derive(Default)]
-struct Memo(HashMap<NodeIdentity, Vec<(Option<Type>, Typed)>, BuildIdentityHasher>);
+struct Memo {
+    met: HashSet<NodeIdentity, BuildIdentityHasher>,
+    results: HashMap<NodeIdentity, Vec<(Option<Type>, Typed)>, BuildIdentityHasher>,
+}
 
 impl Memo {
+    /// Record a visit of `node`, and return whether it was visited before.
+    fn is_met_again(&mut self, node: &Expression) -> bool {
+        !self.met.insert(node.identity())
+    }
+
     /// Return the result remembered for `node` inferred with `expected`.
     fn get(&self, node: &Expression, expected: Option<&Type>) -> Option<&Typed> {
-        self.0
+        self.results
             .get(&node.identity())?
             .iter()
             .find_map(|(key, typed)| (key.as_ref() == expected).then_some(typed))
@@ -274,7 +290,7 @@ impl Memo {
 
     /// Remember `typed` as the result of `node` inferred with `expected`.
     fn insert(&mut self, node: &Expression, expected: Option<Type>, typed: Typed) {
-        self.0
+        self.results
             .entry(node.identity())
             .or_default()
             .push((expected, typed));
@@ -583,7 +599,9 @@ impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
                             results.push(typed.clone());
                             continue;
                         }
-                        steps.push(Step::Remember(node, expected.clone()));
+                        if memo.is_met_again(node) {
+                            steps.push(Step::Remember(node, expected.clone()));
+                        }
                     }
                     self.infer(node, expected, &mut steps, &mut results)?;
                 }

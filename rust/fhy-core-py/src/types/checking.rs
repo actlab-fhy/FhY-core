@@ -4,8 +4,9 @@
 //!
 //! The checker's two lookups are Python callables, called once per
 //! identifier occurrence and once per call node the walk meets; the walk
-//! checks a shared sub-expression other than a leaf once, so the lookups
-//! inside it run once however often it is reached. A lookup's exception
+//! checks a shared sub-expression other than a leaf at most twice, so the
+//! lookups inside it run a bounded number of times however often it is
+//! reached. A lookup's exception
 //! propagates as the same object, and a result of the wrong shape raises
 //! `TypeError`. When the call-target resolver is the registry's
 //! `get_registered_entry`, calls resolve through the registry snapshot

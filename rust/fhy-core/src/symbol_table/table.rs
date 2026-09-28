@@ -549,15 +549,25 @@ impl<F> SymbolTable<F> {
             }
         }
         for (name, data) in self.namespaces.iter() {
-            if chains.get(name) == Some(&Chain::Cycles) {
+            if data.symbols.len() == 0
+                || data.parent.is_none()
+                || chains.get(name) == Some(&Chain::Cycles)
+            {
+                continue;
+            }
+            let ancestors: Vec<(&Identifier, &NamespaceData<F>)> = self
+                .ancestors(name)
+                .filter_map(|ancestor| self.namespaces.get_key_value(ancestor))
+                .filter(|(_, ancestor)| ancestor.symbols.len() > 0)
+                .collect();
+            if ancestors.is_empty() {
                 continue;
             }
             for (symbol, _) in data.symbols.iter() {
-                let shadowing = self.ancestors(name).find(|ancestor| {
-                    self.namespaces
-                        .get(ancestor)
-                        .is_some_and(|ancestor| ancestor.symbols.contains_key(symbol))
-                });
+                let shadowing = ancestors
+                    .iter()
+                    .find(|(_, ancestor)| ancestor.symbols.contains_key(symbol))
+                    .map(|(ancestor, _)| *ancestor);
                 if let Some(ancestor) = shadowing {
                     violations.push(Violation::ShadowedSymbol {
                         namespace: name.clone(),

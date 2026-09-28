@@ -2,6 +2,7 @@
 //! bindings, enumerating in-set candidates, and asking the solver about
 //! screened systems.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::constraint::{
@@ -145,12 +146,13 @@ pub(super) fn restriction_error(error: ParamBuildError) -> ParamError {
 /// Return `side`'s constraints with each of `domain`'s implied constraints
 /// on its variable the side does not already hold, so a domain-level
 /// procedure respects the domain's restriction as a param's side, which
-/// holds them, does.
-pub(super) fn restricted(
+/// holds them, does. The side's own slice is returned, uncopied, when it
+/// holds them all, as a param's does, or the domain implies none.
+pub(super) fn restricted<'s>(
     domain: &ParamDomain,
-    side: Side<'_>,
-) -> Result<Vec<Constraint>, ParamError> {
-    let mut constraints = side.constraints().to_vec();
+    side: Side<'s>,
+) -> Result<Cow<'s, [Constraint]>, ParamError> {
+    let mut constraints = Cow::Borrowed(side.constraints());
     for implied in domain
         .implied_constraints(side.variable())
         .map_err(restriction_error)?
@@ -159,7 +161,7 @@ pub(super) fn restricted(
             .iter()
             .any(|constraint| constraint.is_structurally_equivalent(&implied))
         {
-            constraints.push(implied);
+            constraints.to_mut().push(implied);
         }
     }
     Ok(constraints)
@@ -673,7 +675,7 @@ pub(super) fn has_feasible_value(
     context: &ParamContext<'_>,
 ) -> Result<Outcome, ParamError> {
     let constraints = match domain {
-        ParamDomain::Custom(_) => side.constraints().to_vec(),
+        ParamDomain::Custom(_) => Cow::Borrowed(side.constraints()),
         _ => restricted(domain, side)?,
     };
     let side = Side::new(&constraints, side.variable());

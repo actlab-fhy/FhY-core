@@ -686,9 +686,13 @@ fn substitute_avoiding(
     expression: &Expression,
     environment: &TypeUnificationEnvironment,
 ) -> std::result::Result<Expression, PiecewiseError> {
+    let root = Frame::new(None, expression.clone(), environment);
+    if root.pending.is_empty() {
+        return Ok(root.expression);
+    }
     let mut black: HashMap<Identifier, Expression> = HashMap::new();
     let mut grey: HashSet<Identifier> = HashSet::new();
-    let mut frames = vec![Frame::new(None, expression.clone(), environment)];
+    let mut frames = vec![root];
     loop {
         let top = frames.last_mut().unwrap_or_else(|| unreachable!("a frame"));
         if let Some(next) = top.pending.pop() {
