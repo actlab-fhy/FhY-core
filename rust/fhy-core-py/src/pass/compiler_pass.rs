@@ -86,16 +86,13 @@ pub(super) fn log_diagnostic(
     diagnostic: &Diagnostic,
     exc_info: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    FUNCTION
-        .import(py, CORE_MODULE, "_log_diagnostic")?
-        .call1((
-            diagnostic.source(),
-            level_to_python(py, diagnostic.level())?,
-            diagnostic.message_text(),
-            diagnostic.detail(),
-            exc_info,
-        ))?;
+    crate::python::cached_attr!(py, CORE_MODULE, "_log_diagnostic" => PyAny)?.call1((
+        diagnostic.source(),
+        level_to_python(py, diagnostic.level())?,
+        diagnostic.message_text(),
+        diagnostic.detail(),
+        exc_info,
+    ))?;
     Ok(())
 }
 

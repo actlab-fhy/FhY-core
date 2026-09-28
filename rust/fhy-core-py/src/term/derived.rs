@@ -17,7 +17,6 @@ use std::rc::Rc;
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 
 use crate::expression::PyExpression;
@@ -31,45 +30,21 @@ use super::renaming::{IdentifierList, PyAlphaRenaming, RenamingValue, read_renam
 
 const MODULE: &str = "fhy_core.term.derived_equivalence";
 
-/// Return the attribute `name` of the module `module`, imported once into
-/// `cell`.
-fn import(
-    py: Python<'_>,
-    cell: &'static PyOnceLock<Py<PyAny>>,
-    module: &str,
-    name: &str,
-) -> PyResult<&'static Py<PyAny>> {
-    cell.get_or_try_init(py, || {
-        Ok::<_, PyErr>(py.import(module)?.getattr(name)?.unbind())
-    })
-}
-
 fn plan_cache(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
-    static CELL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    Ok(import(py, &CELL, MODULE, "_PLAN_CACHE")?
-        .bind(py)
-        .cast::<PyDict>()?
-        .clone())
+    Ok(crate::python::cached_attr!(py, MODULE, "_PLAN_CACHE" => PyDict)?.clone())
 }
 
 fn metadata_key(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
-    static CELL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    Ok(import(py, &CELL, MODULE, "EQUIVALENCE_METADATA_KEY")?
-        .bind(py)
-        .clone())
+    Ok(crate::python::cached_attr!(py, MODULE, "EQUIVALENCE_METADATA_KEY")?.clone())
 }
 
 fn derivation_error(py: Python<'_>, message: String) -> PyResult<PyErr> {
-    static CELL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    let class = import(py, &CELL, MODULE, "EquivalenceDerivationError")?.bind(py);
+    let class = crate::python::cached_attr!(py, MODULE, "EquivalenceDerivationError" => PyType)?;
     Ok(PyErr::from_value(class.call1((message,))?))
 }
 
 fn mixin_method<'py>(py: Python<'py>, name: &Bound<'py, PyString>) -> PyResult<Bound<'py, PyAny>> {
-    static CELL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    import(py, &CELL, MODULE, "DerivedEquivalenceMixin")?
-        .bind(py)
-        .getattr(name)
+    crate::python::cached_attr!(py, MODULE, "DerivedEquivalenceMixin")?.getattr(name)
 }
 
 fn dataclasses_function<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -77,19 +52,11 @@ fn dataclasses_function<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py,
 }
 
 fn enum_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
-    static CELL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    Ok(import(py, &CELL, "enum", "Enum")?
-        .bind(py)
-        .cast::<PyType>()?
-        .clone())
+    Ok(crate::python::cached_attr!(py, "enum", "Enum" => PyType)?.clone())
 }
 
 fn identifier_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
-    static CELL: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    Ok(import(py, &CELL, "fhy_core.identifier", "Identifier")?
-        .bind(py)
-        .cast::<PyType>()?
-        .clone())
+    Ok(crate::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)?.clone())
 }
 
 // ---------------------------------------------------------------------------

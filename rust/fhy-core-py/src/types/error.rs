@@ -11,8 +11,7 @@ use crate::error::IntoPyErr;
 
 /// Return `fhy_core.types.core.FhYCoreTypeError`.
 pub(crate) fn core_type_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.types.core", "FhYCoreTypeError")
+    crate::python::cached_attr!(py, "fhy_core.types.core", "FhYCoreTypeError" => PyType)
 }
 
 /// Return `fhy_core.traits.verifiable.VerificationError`.

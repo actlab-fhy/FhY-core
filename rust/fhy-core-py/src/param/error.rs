@@ -6,7 +6,6 @@
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 
 use fhy_core::constraint::ConstraintError;
@@ -23,8 +22,7 @@ use super::value::value_kind_message;
 
 /// Return `fhy_core.symbolic.param.values.ParamError`.
 fn param_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.symbolic.param.values", "ParamError")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.param.values", "ParamError" => PyType)
 }
 
 /// Return the `ParamError` with `message`.

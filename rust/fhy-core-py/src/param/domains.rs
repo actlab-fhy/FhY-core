@@ -329,13 +329,8 @@ impl DomainState {
 /// Return the payload of the finite domain's `values`: each value through
 /// the serialization framework's wrapped registry.
 fn serialize_values<'py>(values: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyList>> {
-    static SERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = values.py();
-    let serialize = SERIALIZE.import(
-        py,
-        "fhy_core.serialization",
-        "serialize_registry_wrapped_value",
-    )?;
+    let serialize = crate::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
     let payloads = values
         .iter()
         .map(|value| serialize.call1((value,)))
@@ -371,7 +366,6 @@ fn value_error(
 /// Return the values of the payload `data` of a finite domain of `kind`,
 /// decoded and validated as the replaced codec decoded them.
 fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
-    static DESERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     static PARAM_DOMAIN: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = data.py();
     let Ok(payloads) = data.cast::<PyList>() else {
@@ -391,11 +385,7 @@ fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bo
             ));
         }
     }
-    let deserialize = DESERIALIZE.import(
-        py,
-        "fhy_core.serialization",
-        "deserialize_registry_wrapped_value",
-    )?;
+    let deserialize = crate::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
     let decoded = PyList::empty(py);
     for payload in payloads.iter() {
         decoded.append(deserialize.call1((payload,))?)?;

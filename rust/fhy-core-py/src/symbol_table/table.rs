@@ -48,8 +48,7 @@ impl IntoPyErr for SymbolTableError {
 
 /// Return `fhy_core.symbol_table.SymbolTableError`.
 fn symbol_table_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, MODULE, "SymbolTableError")
+    crate::python::cached_attr!(py, MODULE, "SymbolTableError" => PyType)
 }
 
 /// Return the Python `SymbolTableError` of `error`.
@@ -633,14 +632,13 @@ impl PySymbolTable {
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
-        static NEW_OBJECT: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
         let py = slf.py();
         let instance_dict = match slf.getattr(intern!(py, "__dict__")) {
             Ok(instance_dict) => instance_dict,
             Err(_no_dict) => py.None().into_bound(py),
         };
         let state = PyTuple::new(py, [slf.borrow().state(py)?.into_any(), instance_dict])?;
-        let new_object = NEW_OBJECT.import(py, "copyreg", "__newobj__")?.clone();
+        let new_object = crate::python::cached_attr!(py, "copyreg", "__newobj__" => PyAny)?.clone();
         Ok((new_object, PyTuple::new(py, [slf.get_type()])?, state))
     }
 

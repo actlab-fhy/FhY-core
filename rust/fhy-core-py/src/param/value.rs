@@ -14,34 +14,17 @@ use fhy_core::param::DomainKind;
 use crate::constraint::{read_bound_value, read_opaque_member};
 use crate::expression::read_big_int;
 
-/// Return the class `name` of `module`, imported once into `cell`.
-fn import_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, module, name)
-}
-
 /// Return whether `value` is a `Serializable`.
 fn is_serializable(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    value.is_instance(import_class(
-        value.py(),
-        &CLASS,
-        "fhy_core.serialization",
-        "Serializable",
-    )?)
+    value.is_instance(crate::python::cached_attr!(value.py(), "fhy_core.serialization", "Serializable" => PyType)?)
 }
 
 /// Return whether `value` defines usable equality: through the `Equal`
 /// trait, or an `__eq__` of its own class and a `__hash__`.
 fn supports_equal_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    static EQUAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     static OBJECT_EQ: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = value.py();
-    if value.is_instance(import_class(py, &EQUAL, "fhy_core.traits", "Equal")?)? {
+    if value.is_instance(crate::python::cached_attr!(py, "fhy_core.traits", "Equal" => PyType)?)? {
         return value.getattr(intern!(py, "supports_equality"))?.is_truthy();
     }
     let object_eq = OBJECT_EQ.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
@@ -61,14 +44,10 @@ fn supports_equal_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 /// `Orderable` trait, or an `__lt__` defined in its class's MRO below
 /// `object`.
 fn supports_orderable_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    static ORDERABLE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = value.py();
-    if value.is_instance(import_class(
-        py,
-        &ORDERABLE,
-        "fhy_core.traits",
-        "Orderable",
-    )?)? {
+    if value
+        .is_instance(crate::python::cached_attr!(py, "fhy_core.traits", "Orderable" => PyType)?)?
+    {
         return value.getattr(intern!(py, "supports_ordering"))?.is_truthy();
     }
     let mro = value.get_type().mro();
@@ -162,19 +141,15 @@ pub(super) fn read_finite_values(
 /// Return whether `value` is a sequence that is no string, as a
 /// permutation value must be.
 fn is_permutation_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    static SEQUENCE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     if value.is_instance_of::<PyString>()
         || value.is_instance_of::<PyBytes>()
         || value.is_instance_of::<PyByteArray>()
     {
         return Ok(false);
     }
-    value.is_instance(import_class(
-        value.py(),
-        &SEQUENCE,
-        "collections.abc",
-        "Sequence",
-    )?)
+    value.is_instance(
+        crate::python::cached_attr!(value.py(), "collections.abc", "Sequence" => PyType)?,
+    )
 }
 
 /// Return the core value of a candidate value, read leniently: a sequence

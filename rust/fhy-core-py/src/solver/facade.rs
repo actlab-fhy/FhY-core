@@ -13,7 +13,6 @@ use std::time::Duration;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
-use pyo3::sync::PyOnceLock;
 use pyo3::types::PyMapping;
 
 use fhy_core::expression::Expression;
@@ -59,14 +58,8 @@ fn read_expression(value: &Bound<'_, PyAny>, owner: &str, field: &str) -> PyResu
 /// Raises `ValueError` unless it is `None` or a positive integer, below
 /// `2**64` milliseconds.
 pub(crate) fn read_limits(timeout_milliseconds: &Bound<'_, PyAny>) -> PyResult<CheckLimits> {
-    static VALIDATE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = timeout_milliseconds.py();
-    VALIDATE
-        .import(
-            py,
-            "fhy_core.symbolic.solver",
-            "validate_timeout_milliseconds",
-        )?
+    crate::python::cached_attr!(py, "fhy_core.symbolic.solver", "validate_timeout_milliseconds" => PyAny)?
         .call1((timeout_milliseconds,))?;
     if timeout_milliseconds.is_none() {
         return Ok(CheckLimits::new());

@@ -225,10 +225,8 @@ fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny
 
 /// Return the type a payload encodes, through `Type`'s family dispatch.
 fn deserialize_type<'py>(payload: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    static TYPE_CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = payload.py();
-    TYPE_CLASS
-        .import(py, "fhy_core.types", "Type")?
+    crate::python::cached_attr!(py, "fhy_core.types", "Type" => PyType)?
         .call_method1(intern!(py, "deserialize_from_dict"), (payload,))
 }
 
@@ -248,18 +246,12 @@ pub(super) fn structure_error(
     expected: &[(&str, Bound<'_, PyAny>)],
     data: &Bound<'_, PyAny>,
 ) -> PyResult<PyErr> {
-    static STRUCTURE_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = cls.py();
     let fields = PyDict::new(py);
     for (name, ty) in expected {
         fields.set_item(name, ty)?;
     }
-    let error = STRUCTURE_ERROR
-        .import(
-            py,
-            "fhy_core.serialization",
-            "DeserializationDictStructureError",
-        )?
+    let error = crate::python::cached_attr!(py, "fhy_core.serialization", "DeserializationDictStructureError" => PyType)?
         .call1((cls, fields, data))?;
     Ok(PyErr::from_value(error))
 }
@@ -947,15 +939,6 @@ impl PyFunctionSymbolTableFrame {
 // The V2 wire format
 // ---------------------------------------------------------------------------
 
-/// Return the public frame class `name` of `fhy_core.symbol_table`.
-fn public_frame_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, MODULE, name)
-}
-
 /// Return the wire form of the frame object `object`: a built-in frame's
 /// core frame, or a Python-defined frame's foreign part.
 ///
@@ -987,19 +970,18 @@ pub(crate) fn frame_to_python<'py>(
     py: Python<'py>,
     frame: &SymbolFrame,
 ) -> PyResult<Bound<'py, PyAny>> {
-    static IMPORT: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static VARIABLE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static FUNCTION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let type_object = |value: &Type| {
         crate::types::run_in_context(py, None, |context| {
             crate::types::type_to_python(py, context, value)
         })
     };
     match frame {
-        SymbolFrame::Import(frame) => public_frame_class(py, &IMPORT, "ImportSymbolTableFrame")?
-            .call1((crate::identifier::identifier_to_python(py, frame.name())?,)),
+        SymbolFrame::Import(frame) => {
+            crate::python::cached_attr!(py, MODULE, "ImportSymbolTableFrame" => PyType)?
+                .call1((crate::identifier::identifier_to_python(py, frame.name())?,))
+        }
         SymbolFrame::Variable(frame) => {
-            public_frame_class(py, &VARIABLE, "VariableSymbolTableFrame")?.call1((
+            crate::python::cached_attr!(py, MODULE, "VariableSymbolTableFrame" => PyType)?.call1((
                 crate::identifier::identifier_to_python(py, frame.name())?,
                 type_object(frame.ty())?,
                 crate::types::type_qualifier_to_python(py, frame.qualifier())?,
@@ -1019,7 +1001,7 @@ pub(crate) fn frame_to_python<'py>(
                     )
                 })
                 .collect::<PyResult<Vec<_>>>()?;
-            public_frame_class(py, &FUNCTION, "FunctionSymbolTableFrame")?.call1((
+            crate::python::cached_attr!(py, MODULE, "FunctionSymbolTableFrame" => PyType)?.call1((
                 crate::identifier::identifier_to_python(py, frame.name())?,
                 keyword_to_python(py, frame.keyword())?,
                 PyTuple::new(py, signature)?,

@@ -224,8 +224,7 @@ fn build_fields<'py>(
 
 /// Return `pathlib.PurePath`.
 fn pure_path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "pathlib", "PurePath")
+    crate::python::cached_attr!(py, "pathlib", "PurePath" => PyType)
 }
 
 /// Return `pathlib.Path`.

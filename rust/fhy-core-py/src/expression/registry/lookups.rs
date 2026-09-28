@@ -7,7 +7,6 @@
 
 use pyo3::exceptions::{PyRecursionError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyMapping, PyString, PyTuple, PyType};
 
 use fhy_core::expression::FunctionName;
@@ -21,19 +20,10 @@ use super::super::node::read_expression;
 use super::entries::{PyNativeConstant, PyNativeFunction, PyRegisteredFunction, sort_to_python};
 use super::state;
 
-/// Return `fhy_core.symbolic.expression.errors.<name>`.
-fn error_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, "fhy_core.symbolic.expression.errors", name)
-}
-
 /// Return the `EntryRegistrationError` carrying `message`.
 pub(super) fn registration_error(py: Python<'_>, message: &str) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    match error_class(py, &CLASS, "EntryRegistrationError") {
+    match crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryRegistrationError" => PyType)
+    {
         Ok(class) => match class.call1((message,)) {
             Ok(error) => PyErr::from_value(error),
             Err(error) => error,
@@ -44,8 +34,8 @@ pub(super) fn registration_error(py: Python<'_>, message: &str) -> PyErr {
 
 /// Return the `EntryLookupError` carrying `message`.
 pub(in crate::expression) fn lookup_error(py: Python<'_>, message: &str) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    match error_class(py, &CLASS, "EntryLookupError") {
+    match crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryLookupError" => PyType)
+    {
         Ok(class) => match class.call1((message,)) {
             Ok(error) => PyErr::from_value(error),
             Err(error) => error,
@@ -57,12 +47,8 @@ pub(in crate::expression) fn lookup_error(py: Python<'_>, message: &str) -> PyEr
 /// Return the `FunctionArityError` of `fhy_core.symbolic.expression.passes
 /// .inline` carrying `message`.
 pub(in crate::expression) fn arity_error(py: Python<'_>, message: &str) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    match CLASS.import(
-        py,
-        "fhy_core.symbolic.expression.passes.inline",
-        "FunctionArityError",
-    ) {
+    match crate::python::cached_attr!(py, "fhy_core.symbolic.expression.passes.inline", "FunctionArityError" => PyType)
+    {
         Ok(class) => match class.call1((message,)) {
             Ok(error) => PyErr::from_value(error),
             Err(error) => error,

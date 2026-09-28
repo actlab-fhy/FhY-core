@@ -20,7 +20,6 @@ use std::sync::{Mutex, PoisonError};
 use pyo3::exceptions::PyException;
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyType};
 
 use fhy_core::diagnostic::{Diagnostic, Note};
@@ -104,11 +103,10 @@ fn render_chain(error: &(dyn Error + 'static)) -> String {
 
 /// Return the Python error class of `class`.
 fn error_class(py: Python<'_>, class: FailureClass) -> PyResult<&Bound<'_, PyType>> {
-    static VALIDATION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static EXECUTION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    match class {
-        FailureClass::Validation => VALIDATION.import(py, CORE_MODULE, "PassValidationError"),
-        _ => EXECUTION.import(py, CORE_MODULE, "PassExecutionError"),
+    if matches!(class, FailureClass::Validation) {
+        crate::python::cached_attr!(py, CORE_MODULE, "PassValidationError" => PyType)
+    } else {
+        crate::python::cached_attr!(py, CORE_MODULE, "PassExecutionError" => PyType)
     }
 }
 

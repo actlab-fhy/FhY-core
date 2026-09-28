@@ -61,8 +61,7 @@ impl IntoPyErr for ConstantValueError {
 
 /// Return `fhy_core.symbolic.expression.sort.FunctionSort`.
 fn sort_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.symbolic.expression.sort", "FunctionSort")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.sort", "FunctionSort" => PyType)
 }
 
 /// Every sort, in the order of [`sort_index`].

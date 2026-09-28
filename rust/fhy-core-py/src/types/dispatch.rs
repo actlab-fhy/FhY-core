@@ -8,7 +8,6 @@
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyTuple, PyType};
 
 use fhy_core::expression::LiteralValue;
@@ -67,10 +66,8 @@ fn structural_mismatch(
 
 /// Return the `VerificationError` with `message`.
 fn verification_error(message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     Python::attach(|py| {
-        match CLASS
-            .import(py, "fhy_core.traits.verifiable", "VerificationError")
+        match crate::python::cached_attr!(py, "fhy_core.traits.verifiable", "VerificationError" => PyType)
             .and_then(|class| class.call1((message,)))
         {
             Ok(error) => PyErr::from_value(error),

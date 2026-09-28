@@ -201,7 +201,6 @@ fn is_unwrapped(error: &SympyError) -> bool {
 /// exception as its `__cause__`, as the Python bridge's passes did; a
 /// `BaseException` that is not an `Exception` passes through.
 pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -> PyErr {
-    static EXECUTION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let name = pass_name(error.phase()).filter(|_| wrap && !is_unwrapped(&error));
     let exception = exception_of(py, error);
     let Some(name) = name else {
@@ -210,8 +209,7 @@ pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -
     if !exception.is_instance_of::<PyException>(py) {
         return exception;
     }
-    let wrapped = EXECUTION
-        .import(py, "fhy_core.pass_infrastructure", "PassExecutionError")
+    let wrapped = crate::python::cached_attr!(py, "fhy_core.pass_infrastructure", "PassExecutionError" => PyType)
         .and_then(|class| {
             let keywords = PyDict::new(py);
             keywords.set_item(intern!(py, "pass_name"), name)?;

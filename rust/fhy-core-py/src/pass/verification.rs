@@ -212,13 +212,12 @@ pub(super) fn build_registry_verifier() -> ValidationManager<'static, PyIr> {
 /// Return the `PassRegistrationError` for `pass_class`, which is not a
 /// `CompilerPass` subclass.
 fn build_not_a_pass_error(pass_class: &Bound<'_, PyAny>) -> PyResult<PyErr> {
-    static ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = pass_class.py();
     let qualname = match pass_class.getattr(intern!(py, "__qualname__")) {
         Ok(qualname) => qualname.str()?.to_string(),
         Err(_no_qualname) => pass_class.repr()?.to_string(),
     };
-    let class = ERROR.import(py, CORE_MODULE, "PassRegistrationError")?;
+    let class = crate::python::cached_attr!(py, CORE_MODULE, "PassRegistrationError" => PyType)?;
     Ok(PyErr::from_value(class.call1((format!(
         "Cannot register non-CompilerPass type as a verification pass: {qualname}."
     ),))?))

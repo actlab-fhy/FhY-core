@@ -24,8 +24,7 @@ use super::value::{constraint_error, read_member_value, repr_text, type_name};
 
 /// Return `fhy_core.symbolic.expression.LiteralExpression`.
 fn literal_expression_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.symbolic.expression", "LiteralExpression")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.expression", "LiteralExpression" => PyType)
 }
 
 /// Return the `MissingSymbolTypeError` with `message`.

@@ -22,7 +22,6 @@ use num_traits::Zero;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyString, PyTuple, PyType};
 
 use fhy_core::expression::{BigInt, Decimal, DecimalPartsError, LiteralTextError, LiteralValue};
@@ -38,8 +37,7 @@ impl IntoPyErr for LiteralTextError {
 
 /// Return `decimal.Decimal`.
 pub(crate) fn decimal_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "decimal", "Decimal")
+    crate::python::cached_attr!(py, "decimal", "Decimal" => PyType)
 }
 
 /// Return the `int` of the Python int `value`, which may be of any size.

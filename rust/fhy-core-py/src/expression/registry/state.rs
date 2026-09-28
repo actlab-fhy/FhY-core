@@ -202,7 +202,6 @@ impl RegistryState {
     /// functions, then the native ones (D-S7-16), and then the user
     /// entries in registration order.
     pub(super) fn entries_view<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        static IMMUTABLE_DICT: PyOnceLock<Py<PyType>> = PyOnceLock::new();
         self.entries_view
             .get_or_try_init(py, || {
                 let entries = PyDict::new(py);
@@ -215,7 +214,8 @@ impl RegistryState {
                         entries.set_item(name, object.bind(py))?;
                     }
                 }
-                let class = IMMUTABLE_DICT.import(py, "immutabledict", "immutabledict")?;
+                let class =
+                    crate::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)?;
                 class.call1((entries,)).map(Bound::unbind)
             })
             .map(|view| view.bind(py).clone())

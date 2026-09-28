@@ -7,13 +7,11 @@
 //! `FrozenMutationError` with the mixin's message.
 
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 
 /// Return `fhy_core.traits.frozen.FrozenMutationError`.
 fn frozen_mutation_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.traits.frozen", "FrozenMutationError")
+    crate::python::cached_attr!(py, "fhy_core.traits.frozen", "FrozenMutationError" => PyType)
 }
 
 /// Return the `FrozenMutationError` for modifying (`action` "modify") or

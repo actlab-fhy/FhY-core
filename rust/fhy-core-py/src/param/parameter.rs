@@ -54,43 +54,24 @@ use super::value::{read_candidate, to_tuple};
 /// The module of the public param classes.
 const CORE: &str = "fhy_core.symbolic.param.core";
 
-/// Return the public class `name` of `module`, imported once into `cell`.
-fn import_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, module, name)
-}
-
 /// Return the public `Param` class.
 fn param_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(py, &CLASS, CORE, "Param")
+    crate::python::cached_attr!(py, CORE, "Param" => PyType)
 }
 
 /// Return the public `ParamAssignment` class.
 fn assignment_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(py, &CLASS, CORE, "ParamAssignment")
+    crate::python::cached_attr!(py, CORE, "ParamAssignment" => PyType)
 }
 
 /// Return the public `ConstraintSystem` class.
 fn system_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.constraint.system",
-        "ConstraintSystem",
-    )
+    crate::python::cached_attr!(py, "fhy_core.symbolic.constraint.system", "ConstraintSystem" => PyType)
 }
 
 /// Return `fhy_core.symbolic.param.domains.ParamDomain`.
 fn domain_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(py, &CLASS, "fhy_core.symbolic.param.domains", "ParamDomain")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.param.domains", "ParamDomain" => PyType)
 }
 
 /// The Python objects a param holds beside its core.
@@ -1586,7 +1567,6 @@ fn check_structure(
     data: &Bound<'_, PyAny>,
     fields: &[(&str, bool)],
 ) -> PyResult<()> {
-    static STRUCTURE_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = cls.py();
     let is_well_formed = match data.cast::<pyo3::types::PyMapping>() {
         Ok(mapping) => {
@@ -1614,12 +1594,7 @@ fn check_structure(
             expected.set_item(*name, py.get_type::<PyAny>())?;
         }
     }
-    let error = STRUCTURE_ERROR
-        .import(
-            py,
-            "fhy_core.serialization",
-            "DeserializationDictStructureError",
-        )?
+    let error = crate::python::cached_attr!(py, "fhy_core.serialization", "DeserializationDictStructureError" => PyType)?
         .call1((cls, expected, data))?;
     Err(PyErr::from_value(error))
 }
@@ -1964,7 +1939,6 @@ impl PyParamAssignment {
         cls: &Bound<'py, PyType>,
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        static DESERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
         let py = cls.py();
         check_structure(cls, data, &[("param", true), ("value", false)])?;
         let fields = PyDict::new(py);
@@ -1976,11 +1950,7 @@ impl PyParamAssignment {
             )?,
         )?;
         let payload = data.get_item("value")?;
-        let deserialize = DESERIALIZE.import(
-            py,
-            "fhy_core.serialization",
-            "deserialize_registry_wrapped_value",
-        )?;
+        let deserialize = crate::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
         let value = match deserialize.call1((&payload,)) {
             Ok(value) => value,
             Err(error)

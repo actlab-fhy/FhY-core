@@ -19,7 +19,6 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 use pyo3::exceptions::{PyKeyError, PyNotImplementedError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyString, PyType};
 
 /// Map from the id of each canonical key to the single Python object of its
@@ -109,13 +108,11 @@ pub(crate) fn warn_if_description_ignored(
     canonical_description: &Bound<'_, PyString>,
     payload_description: &Bound<'_, PyString>,
 ) -> PyResult<()> {
-    static LOGGING_GET_LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     if canonical_description.as_any().eq(payload_description)? {
         return Ok(());
     }
     let py = cls.py();
-    let logger = LOGGING_GET_LOGGER
-        .import(py, "logging", "getLogger")?
+    let logger = crate::python::cached_attr!(py, "logging", "getLogger" => PyAny)?
         .call1((intern!(py, "fhy_core.traits.interned"),))?;
     logger.call_method1(
         intern!(py, "warning"),

@@ -536,8 +536,7 @@ pub(crate) fn diagnostic_to_python<'py>(
 
 /// Return the Python `ValidationFailedError`, which stays a Python class.
 fn validation_failed_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, MODULE, "ValidationFailedError")
+    crate::python::cached_attr!(py, MODULE, "ValidationFailedError" => PyType)
 }
 
 /// Append `diagnostic` to `text` as `format()` renders it: a `[LEVEL]

@@ -335,7 +335,6 @@ fn add_order<T: Order>(
 fn reduce<'py, T: Order>(
     slf: &Bound<'py, T>,
 ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
-    static NEW_OBJECT: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = slf.py();
     let (elements, orders) = slf.borrow().elements().state(py)?;
     let instance_dict = match slf.as_any().getattr(intern!(py, "__dict__")) {
@@ -343,7 +342,7 @@ fn reduce<'py, T: Order>(
         Err(_no_dict) => py.None().into_bound(py),
     };
     let state = PyTuple::new(py, [elements.into_any(), orders.into_any(), instance_dict])?;
-    let new_object = NEW_OBJECT.import(py, "copyreg", "__newobj__")?.clone();
+    let new_object = crate::python::cached_attr!(py, "copyreg", "__newobj__" => PyAny)?.clone();
     Ok((
         new_object,
         PyTuple::new(py, [slf.as_any().get_type()])?,

@@ -13,7 +13,6 @@ use std::sync::OnceLock;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyMapping, PyTuple, PyType};
 
 use fhy_core::identifier::Identifier;
@@ -99,8 +98,7 @@ pub(crate) struct PyTypeUnificationEnvironment {
 
 /// Return `immutabledict.immutabledict`.
 fn immutabledict_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "immutabledict", "immutabledict")
+    crate::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)
 }
 
 /// Which table a binding belongs to.

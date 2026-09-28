@@ -21,8 +21,7 @@ const MODULE: &str = "fhy_core.serialization";
 
 /// Return `fhy_core.serialization.DeserializationValueError`.
 pub(crate) fn deserialization_value_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, MODULE, "DeserializationValueError")
+    crate::python::cached_attr!(py, MODULE, "DeserializationValueError" => PyType)
 }
 
 /// Return whether `value` is a payload dict: a mapping with `str` keys and
@@ -145,7 +144,6 @@ pub(crate) fn read_payload_fields<'py, const N: usize>(
     data: &Bound<'py, PyAny>,
     fields: [(&str, FieldShape); N],
 ) -> PyResult<[Bound<'py, PyAny>; N]> {
-    static STRUCTURE_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     if let Some(values) = read_fields_of_shape(data, &fields)? {
         return Ok(values);
     }
@@ -154,9 +152,9 @@ pub(crate) fn read_payload_fields<'py, const N: usize>(
     for (name, shape) in fields {
         expected.set_item(name, shape.expected_type(py)?)?;
     }
-    let error = STRUCTURE_ERROR
-        .import(py, MODULE, "DeserializationDictStructureError")?
-        .call1((cls, expected, data))?;
+    let error =
+        crate::python::cached_attr!(py, MODULE, "DeserializationDictStructureError" => PyType)?
+            .call1((cls, expected, data))?;
     Err(PyErr::from_value(error))
 }
 

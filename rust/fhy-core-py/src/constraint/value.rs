@@ -108,25 +108,9 @@ pub(crate) fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<
     (result, scope.pop())
 }
 
-/// Import the class `name` of `module` once, in `cell`.
-fn import_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, module, name)
-}
-
 /// Return `fhy_core.symbolic.constraint.errors.ConstraintError`.
 pub(crate) fn constraint_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.constraint.errors",
-        "ConstraintError",
-    )
+    crate::python::cached_attr!(py, "fhy_core.symbolic.constraint.errors", "ConstraintError" => PyType)
 }
 
 /// Return the `ConstraintError` with `message`.
@@ -139,14 +123,12 @@ pub(crate) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> Py
 
 /// Return `fhy_core.serialization.Serializable`.
 fn serializable_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(py, &CLASS, "fhy_core.serialization", "Serializable")
+    crate::python::cached_attr!(py, "fhy_core.serialization", "Serializable" => PyType)
 }
 
 /// Return `collections.abc.Hashable`.
 fn hashable_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    import_class(py, &CLASS, "collections.abc", "Hashable")
+    crate::python::cached_attr!(py, "collections.abc", "Hashable" => PyType)
 }
 
 /// Return whether `value` is both `Serializable` and `Hashable`.

@@ -54,25 +54,14 @@ const SWEEP_SOURCE: &str = "fhy_core.types.checking.check_all_registered_functio
 // Python classes
 // ---------------------------------------------------------------------------
 
-/// Return the class `name` of `fhy_core.symbolic.expression.errors`.
-fn registry_error_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, "fhy_core.symbolic.expression.errors", name)
-}
-
 /// Return `EntryLookupError`.
 fn entry_lookup_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    registry_error_class(py, &CLASS, "EntryLookupError")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryLookupError" => PyType)
 }
 
 /// Return `EntryRegistrationError`.
 fn entry_registration_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    registry_error_class(py, &CLASS, "EntryRegistrationError")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryRegistrationError" => PyType)
 }
 
 /// Return whether `resolver` is the registry's `get_registered_entry`.
@@ -607,7 +596,6 @@ pub(crate) fn get_core_data_type_from_literal_type<'py>(
     literal: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
     use pyo3::types::{PyBool, PyFloat, PyInt};
-    static DECIMAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = literal.py();
     let value = if let Ok(boolean) = literal.cast::<PyBool>() {
         LiteralValue::Bool(boolean.is_true())
@@ -615,7 +603,9 @@ pub(crate) fn get_core_data_type_from_literal_type<'py>(
         LiteralValue::Int(read_big_int(literal)?)
     } else if let Ok(float) = literal.cast::<PyFloat>() {
         LiteralValue::Float(float.value())
-    } else if literal.is_instance(DECIMAL.import(py, "decimal", "Decimal")?)? {
+    } else if literal
+        .is_instance(crate::python::cached_attr!(py, "decimal", "Decimal" => PyType)?)?
+    {
         return Err(PyNotImplementedError::new_err(
             fhy_core::types::LiteralTypeError::UnsupportedDecimal.to_string(),
         ));

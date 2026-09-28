@@ -22,8 +22,7 @@ use super::error::lowering_error_to_py;
 
 /// Return `fhy_core.symbolic.symbol_type.SymbolType`.
 fn symbol_type_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.symbolic.symbol_type", "SymbolType")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.symbol_type", "SymbolType" => PyType)
 }
 
 /// Return the Python `SymbolType` member of `symbol_type`.

@@ -7,7 +7,6 @@ use std::cell::RefCell;
 use pyo3::exceptions::{PyException, PyRuntimeError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyList, PyType};
 
 use fhy_core::expression::Expression;
@@ -31,14 +30,11 @@ const MODULE: &str = "fhy_core.symbolic.expression.pattern.rewrite";
 
 /// Return the error class named `name` of the rewrite module.
 fn error_class<'py>(py: Python<'py>, name: &str) -> PyResult<&'py Bound<'py, PyType>> {
-    static CALLBACK: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static REBUILD: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    let cell = if name == "RewriteCallbackError" {
-        &CALLBACK
+    if name == "RewriteCallbackError" {
+        crate::python::cached_attr!(py, MODULE, "RewriteCallbackError" => PyType)
     } else {
-        &REBUILD
-    };
-    cell.import(py, MODULE, name)
+        crate::python::cached_attr!(py, MODULE, "RewriteRebuildError" => PyType)
+    }
 }
 
 /// Raises the Python class of the variant, `RewriteCallbackError` or

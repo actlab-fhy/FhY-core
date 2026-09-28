@@ -295,8 +295,7 @@ fn build_child_count_error(expected: usize, actual: usize) -> PyErr {
 
 /// Return `fhy_core.traits.visitable._camel_to_snake`.
 fn camel_to_snake(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
-    static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    FUNCTION.import(py, "fhy_core.traits.visitable", "_camel_to_snake")
+    crate::python::cached_attr!(py, "fhy_core.traits.visitable", "_camel_to_snake" => PyAny)
 }
 
 // ---------------------------------------------------------------------------

@@ -587,12 +587,7 @@ impl SetState {
 
     /// Return the data payload `{"variable": .., "values": [..]}`.
     fn serialize_data_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        static SERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-        let serialize = SERIALIZE.import(
-            py,
-            "fhy_core.serialization",
-            "serialize_registry_wrapped_value",
-        )?;
+        let serialize = crate::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
         let members = self
             .values
             .bind(py)
@@ -659,19 +654,9 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
 /// Raises `DeserializationValueError` naming the field for a member that
 /// does not decode, and `ConstraintError` for one that cannot be a member.
 fn decode_members<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
-    static DESERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    static STRUCTURE_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = values.py();
-    let deserialize = DESERIALIZE.import(
-        py,
-        "fhy_core.serialization",
-        "deserialize_registry_wrapped_value",
-    )?;
-    let structure_error = STRUCTURE_ERROR.import(
-        py,
-        "fhy_core.serialization",
-        "DeserializationDictStructureError",
-    )?;
+    let deserialize = crate::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
+    let structure_error = crate::python::cached_attr!(py, "fhy_core.serialization", "DeserializationDictStructureError" => PyType)?;
     let decoded = PyList::empty(py);
     for payload in values.try_iter()? {
         let member = match deserialize.call1((payload?,)) {

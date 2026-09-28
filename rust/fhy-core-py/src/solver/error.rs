@@ -25,16 +25,6 @@ use crate::expression::render_expression_repr;
 use super::sympy::SympyError;
 use super::values::symbol_type_name;
 
-/// Import the class `name` of the module `module` once.
-fn import_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, module, name)
-}
-
 /// Return the exception of the class `name` of `module`, built with
 /// `message`.
 fn build_error(
@@ -44,7 +34,10 @@ fn build_error(
     name: &str,
     message: String,
 ) -> PyErr {
-    match import_class(py, cell, module, name).and_then(|class| class.call1((message,))) {
+    match cell
+        .import(py, module, name)
+        .and_then(|class| class.call1((message,)))
+    {
         Ok(error) => PyErr::from_value(error),
         Err(error) => error,
     }
@@ -100,13 +93,7 @@ fn constant_lowering_error(py: Python<'_>, message: String) -> PyErr {
 
 /// Return `UndecidableError(message, reason=reason)`.
 pub(super) fn undecidable_error(py: Python<'_>, message: String, reason: &str) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    let built = import_class(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.expression.errors",
-        "UndecidableError",
-    )
+    let built = crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "UndecidableError" => PyType)
     .and_then(|class| {
         let keywords = PyDict::new(py);
         keywords.set_item(intern!(py, "reason"), reason)?;
@@ -155,13 +142,11 @@ pub(crate) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
 /// raises as a `PassExecutionError`, such as SymPy failing to lower an
 /// expression, or a Python backend raising one.
 pub(crate) fn is_pass_execution_failure(py: Python<'_>, error: &SolveError) -> bool {
-    static EXECUTION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let SolveError::Backend { source, .. } = error else {
         return false;
     };
     if let Some(error) = source.downcast_ref::<PyErr>() {
-        return EXECUTION
-            .import(py, "fhy_core.pass_infrastructure", "PassExecutionError")
+        return crate::python::cached_attr!(py, "fhy_core.pass_infrastructure", "PassExecutionError" => PyType)
             .is_ok_and(|class| error.is_instance(py, class));
     }
     source

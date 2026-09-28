@@ -47,25 +47,15 @@ pub(crate) use values::{deserialize_wire_value, serialize_wire_value};
 /// The Python module of the serialization framework.
 const MODULE: &str = "fhy_core.serialization";
 
-/// Return the attribute `name` of the framework's module, imported once into
-/// `cell`.
-fn framework<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyAny>>,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyAny>> {
-    cell.import(py, MODULE, name)
-}
-
 /// Return whether the writers write V1 in the current context.
 ///
 /// # Errors
 ///
 /// Raises what reading the framework's context variable raises.
 pub(crate) fn is_writing_v1(py: Python<'_>) -> PyResult<bool> {
-    static VERSION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     static V1: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    let version = framework(py, &VERSION, "_WIRE_VERSION")?.call_method0(intern!(py, "get"))?;
+    let version = crate::python::cached_attr!(py, MODULE, "_WIRE_VERSION" => PyAny)?
+        .call_method0(intern!(py, "get"))?;
     let v1 = V1.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
         Ok(py
             .import(MODULE)?
@@ -93,8 +83,7 @@ pub(crate) fn is_v1_payload(data: &Bound<'_, PyAny>) -> bool {
 
 /// Return whether a V1 payload is being read in this context.
 pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
-    static READING: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    framework(py, &READING, "_READING_V1")
+    crate::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)
         .and_then(|flag| flag.call_method0(intern!(py, "get")))
         .and_then(|value| value.is_truthy())
         .unwrap_or(false)
@@ -106,8 +95,7 @@ pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
 ///
 /// Raises the warning when warnings are errors.
 pub(crate) fn warn_v1_read(cls: &Bound<'_, PyType>) -> PyResult<()> {
-    static WARN: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    framework(cls.py(), &WARN, "_warn_v1_read")?.call1((cls,))?;
+    crate::python::cached_attr!(cls.py(), MODULE, "_warn_v1_read" => PyAny)?.call1((cls,))?;
     Ok(())
 }
 
@@ -117,7 +105,7 @@ fn error_class<'py>(
     cell: &'static PyOnceLock<Py<PyAny>>,
     name: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
-    framework(py, cell, name).cloned()
+    cell.import(py, MODULE, name).cloned()
 }
 
 /// Return the `DeserializationValueError` with `message`.
@@ -393,13 +381,12 @@ fn failed(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignError {
 /// Returns [`ForeignError::Failed`], keeping the Python exception pending,
 /// when the object's hooks raise.
 pub(crate) fn foreign_of(object: &Py<PyAny>, family: bool) -> Result<Foreign, ForeignError> {
-    static PAYLOAD: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     Python::attach(|py| {
         let object = object.bind(py);
         let result = (|| -> PyResult<(String, String)> {
             let keywords = PyDict::new(py);
             keywords.set_item(intern!(py, "family"), family)?;
-            framework(py, &PAYLOAD, "_foreign_payload")?
+            crate::python::cached_attr!(py, MODULE, "_foreign_payload" => PyAny)?
                 .call((object,), Some(&keywords))?
                 .extract()
         })();
@@ -429,11 +416,10 @@ fn resolve_object<'py>(
     foreign: &Foreign,
     family: bool,
 ) -> Result<Bound<'py, PyAny>, ForeignError> {
-    static RESOLVE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let result = (|| -> PyResult<Bound<'py, PyAny>> {
         let keywords = PyDict::new(py);
         keywords.set_item(intern!(py, "family"), family)?;
-        framework(py, &RESOLVE, "_resolve_foreign")?
+        crate::python::cached_attr!(py, MODULE, "_resolve_foreign" => PyAny)?
             .call((foreign.type_id(), foreign.data()), Some(&keywords))
     })();
     result.map_err(|error| failed(py, foreign.type_id(), error))
@@ -557,8 +543,8 @@ fn base_method<'py>(
 ///
 /// Raises what the member's V1 data hook raises.
 pub(crate) fn write_v1_envelope<'py>(object: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    static WRITE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    framework(object.py(), &WRITE, "_write_v1_envelope")?.call1((object,))
+    crate::python::cached_attr!(object.py(), MODULE, "_write_v1_envelope" => PyAny)?
+        .call1((object,))
 }
 
 /// Return what `read` reads from a V1 payload of `cls`, warning that V1 is
@@ -571,9 +557,8 @@ pub(crate) fn reading_v1<T>(
     cls: &Bound<'_, PyType>,
     read: impl FnOnce() -> PyResult<T>,
 ) -> PyResult<T> {
-    static READING: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = cls.py();
-    let flag = framework(py, &READING, "_READING_V1")?;
+    let flag = crate::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)?;
     if flag.call_method0(intern!(py, "get"))?.is_truthy()? {
         return read();
     }

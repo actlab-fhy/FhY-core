@@ -52,8 +52,7 @@ use super::value::{
 
 /// Return `fhy_core.symbolic.constraint.core.Constraint`.
 fn constraint_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.symbolic.constraint.core", "Constraint")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.constraint.core", "Constraint" => PyType)
 }
 
 /// Return `fhy_core.symbolic.constraint.system`'s logger.

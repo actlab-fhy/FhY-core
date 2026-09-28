@@ -16,7 +16,6 @@
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyType};
 
 use fhy_core::identifier::{self as rust_identifier, IdOutOfRange, IdSpaceExhausted, Identifier};
@@ -77,8 +76,7 @@ pub(crate) fn next_identifier_id() -> u64 {
 /// The Python `fhy_core.identifier.Identifier` class, which stays a Python
 /// class (pattern P1).
 fn python_identifier_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static IDENTIFIER_CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    IDENTIFIER_CLASS.import(py, "fhy_core.identifier", "Identifier")
+    crate::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)
 }
 
 /// Return a new Python `Identifier` named `name_hint`, with a new id.

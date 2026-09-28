@@ -3,7 +3,6 @@
 
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyTuple, PyType};
 
 use fhy_core::constraint::{Binding, Bindings, Constraint, Polarity};
@@ -26,16 +25,6 @@ use super::domains::{
 const CONSTRAINTS: &str = "fhy_core.symbolic.constraint.core";
 /// The module of the public domain classes.
 const DOMAINS: &str = "fhy_core.symbolic.param.domains";
-
-/// Return the public class `name` of `module`, imported once into `cell`.
-fn public_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-) -> PyResult<&'py Bound<'py, PyType>> {
-    cell.import(py, module, name)
-}
 
 /// Return the name of the Python class of `constraint`.
 pub(super) fn constraint_class_name(py: Python<'_>, constraint: &Constraint) -> String {
@@ -67,12 +56,9 @@ pub(crate) fn constraint_to_python<'py>(
     py: Python<'py>,
     constraint: &Constraint,
 ) -> PyResult<Bound<'py, PyAny>> {
-    static EQUATION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static IN_SET: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static NOT_IN_SET: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     match constraint {
         Constraint::Equation(equation) => {
-            public_class(py, &EQUATION, CONSTRAINTS, "EquationConstraint")?
+            crate::python::cached_attr!(py, CONSTRAINTS, "EquationConstraint" => PyType)?
                 .call1((materialize_expression(py, equation.expression())?,))
         }
         Constraint::Set(set) => {
@@ -83,9 +69,9 @@ pub(crate) fn constraint_to_python<'py>(
                 .collect::<PyResult<Vec<_>>>()?;
             let class = match set.polarity() {
                 Polarity::NotIn => {
-                    public_class(py, &NOT_IN_SET, CONSTRAINTS, "NotInSetConstraint")?
+                    crate::python::cached_attr!(py, CONSTRAINTS, "NotInSetConstraint" => PyType)?
                 }
-                _ => public_class(py, &IN_SET, CONSTRAINTS, "InSetConstraint")?,
+                _ => crate::python::cached_attr!(py, CONSTRAINTS, "InSetConstraint" => PyType)?,
             };
             class.call1((
                 identifier_to_python(py, set.variable())?,
@@ -200,9 +186,8 @@ pub(super) fn read_domain(domain: &Bound<'_, PyAny>) -> ParamDomain {
 ///
 /// Raises `TypeError` for an object that is not a `ParamDomain`.
 pub(super) fn read_domain_object(object: &Bound<'_, PyAny>) -> PyResult<ParamDomain> {
-    static PARAM_DOMAIN: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = object.py();
-    if !object.is_instance(public_class(py, &PARAM_DOMAIN, DOMAINS, "ParamDomain")?)? {
+    if !object.is_instance(crate::python::cached_attr!(py, DOMAINS, "ParamDomain" => PyType)?)? {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "expected a ParamDomain, got {}",
             crate::constraint::type_name(object)
@@ -221,12 +206,6 @@ pub(crate) fn domain_to_python<'py>(
     py: Python<'py>,
     domain: &ParamDomain,
 ) -> PyResult<Bound<'py, PyAny>> {
-    static INTEGER: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static INTERVAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static REAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static ORDINAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static CATEGORICAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static PERMUTATION: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let members = |values: &[fhy_core::constraint::Member]| -> PyResult<Bound<'py, PyTuple>> {
         let objects = values
             .iter()
@@ -235,24 +214,30 @@ pub(crate) fn domain_to_python<'py>(
         PyTuple::new(py, objects)
     };
     match domain {
-        ParamDomain::Integer(domain) => public_class(py, &INTEGER, DOMAINS, "IntegerDomain")?
-            .call1((domain.is_non_negative(), domain.is_zero_included())),
+        ParamDomain::Integer(domain) => {
+            crate::python::cached_attr!(py, DOMAINS, "IntegerDomain" => PyType)?
+                .call1((domain.is_non_negative(), domain.is_zero_included()))
+        }
         ParamDomain::IntervalInteger(domain) => {
-            public_class(py, &INTERVAL, DOMAINS, "IntervalIntegerDomain")?.call1((
+            crate::python::cached_attr!(py, DOMAINS, "IntervalIntegerDomain" => PyType)?.call1((
                 domain.is_inclusive_preferred(),
                 domain.is_non_negative(),
                 domain.is_zero_included(),
             ))
         }
-        ParamDomain::Real(_) => public_class(py, &REAL, DOMAINS, "RealDomain")?.call0(),
-        ParamDomain::Ordinal(domain) => public_class(py, &ORDINAL, DOMAINS, "OrdinalDomain")?
-            .call1((members(domain.values())?,)),
+        ParamDomain::Real(_) => {
+            crate::python::cached_attr!(py, DOMAINS, "RealDomain" => PyType)?.call0()
+        }
+        ParamDomain::Ordinal(domain) => {
+            crate::python::cached_attr!(py, DOMAINS, "OrdinalDomain" => PyType)?
+                .call1((members(domain.values())?,))
+        }
         ParamDomain::Categorical(domain) => {
-            public_class(py, &CATEGORICAL, DOMAINS, "CategoricalDomain")?
+            crate::python::cached_attr!(py, DOMAINS, "CategoricalDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Permutation(domain) => {
-            public_class(py, &PERMUTATION, DOMAINS, "PermutationDomain")?
+            crate::python::cached_attr!(py, DOMAINS, "PermutationDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Custom(custom) => custom
@@ -278,7 +263,6 @@ pub(super) fn profile_to_python(
     py: Python<'_>,
     profile: IntervalProfile,
 ) -> PyResult<Bound<'_, PyAny>> {
-    static PROFILE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let keywords = PyDict::new(py);
     keywords.set_item(intern!(py, "admits_only_bounds"), profile.is_bounds_only())?;
     keywords.set_item(intern!(py, "non_negative"), profile.is_non_negative())?;
@@ -287,7 +271,7 @@ pub(super) fn profile_to_python(
         intern!(py, "prefer_inclusive"),
         profile.is_inclusive_preferred(),
     )?;
-    public_class(py, &PROFILE, DOMAINS, "IntervalProfile")?.call((), Some(&keywords))
+    crate::python::cached_attr!(py, DOMAINS, "IntervalProfile" => PyType)?.call((), Some(&keywords))
 }
 
 /// Return the core profile of the Python `IntervalProfile` `profile`, read

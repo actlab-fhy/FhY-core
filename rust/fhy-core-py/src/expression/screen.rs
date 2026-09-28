@@ -12,7 +12,6 @@ use std::collections::HashMap;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyMapping, PyString, PyType};
 
 use fhy_core::expression::{BooleanScreen, Expression, NonBooleanLogicalOperandError, SymbolType};
@@ -26,12 +25,7 @@ use super::text::render_kind_repr;
 
 /// Return `fhy_core.symbolic.expression.errors.NonBooleanLogicalOperandError`.
 fn non_boolean_operand_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(
-        py,
-        "fhy_core.symbolic.expression.errors",
-        "NonBooleanLogicalOperandError",
-    )
+    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "NonBooleanLogicalOperandError" => PyType)
 }
 
 /// Return `NonBooleanLogicalOperandError` with `message`.
