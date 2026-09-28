@@ -69,7 +69,7 @@ impl TypeRule {
 
     /// Return the kind of rule.
     #[must_use]
-    pub fn kind(&self) -> TypeRuleKind {
+    pub const fn kind(&self) -> TypeRuleKind {
         self.kind
     }
 

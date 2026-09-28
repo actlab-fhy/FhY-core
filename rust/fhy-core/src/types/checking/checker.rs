@@ -194,7 +194,7 @@ impl<'a> TypeChecker<'a> {
     /// Return this checker reporting a call of an unknown function as
     /// [`TypeCheckError::UnknownCall`], unframed, instead of a broken rule.
     #[must_use]
-    pub fn with_deferred_unknown_calls(self) -> Self {
+    pub const fn with_deferred_unknown_calls(self) -> Self {
         Self {
             defer_unknown_calls: true,
             ..self
@@ -340,7 +340,7 @@ fn binary_name(operation: BinaryOperation) -> &'static str {
 }
 
 /// Return whether `operation` is arithmetic.
-fn is_arithmetic(operation: BinaryOperation) -> bool {
+const fn is_arithmetic(operation: BinaryOperation) -> bool {
     matches!(
         operation,
         BinaryOperation::Add
@@ -354,7 +354,7 @@ fn is_arithmetic(operation: BinaryOperation) -> bool {
 }
 
 /// Return whether `operation` is an equality.
-fn is_equality(operation: BinaryOperation) -> bool {
+const fn is_equality(operation: BinaryOperation) -> bool {
     matches!(
         operation,
         BinaryOperation::Equal | BinaryOperation::NotEqual
@@ -362,7 +362,7 @@ fn is_equality(operation: BinaryOperation) -> bool {
 }
 
 /// Return whether `operation` is an ordering.
-fn is_ordering(operation: BinaryOperation) -> bool {
+const fn is_ordering(operation: BinaryOperation) -> bool {
     matches!(
         operation,
         BinaryOperation::Less
@@ -489,7 +489,7 @@ impl CoreDataType {
 }
 
 impl<'c, 'a, 'e> Walk<'c, 'a, 'e> {
-    fn new(checker: &'c TypeChecker<'a>, root: &'e Expression) -> Self {
+    const fn new(checker: &'c TypeChecker<'a>, root: &'e Expression) -> Self {
         Self { checker, root }
     }
 

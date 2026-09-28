@@ -25,7 +25,7 @@ pub struct ImportFrame {
 impl ImportFrame {
     /// Return the frame of the imported symbol `name`.
     #[must_use]
-    pub fn new(name: Identifier) -> Self {
+    pub const fn new(name: Identifier) -> Self {
         Self { name }
     }
 }
@@ -52,13 +52,13 @@ impl VariableFrame {
 
     /// Return the variable's type.
     #[must_use]
-    pub fn ty(&self) -> &Type {
+    pub const fn ty(&self) -> &Type {
         &self.ty
     }
 
     /// Return the variable's qualifier.
     #[must_use]
-    pub fn qualifier(&self) -> TypeQualifier {
+    pub const fn qualifier(&self) -> TypeQualifier {
         self.qualifier
     }
 
@@ -103,7 +103,7 @@ impl FunctionFrame {
 
     /// Return the keyword the function is declared with.
     #[must_use]
-    pub fn keyword(&self) -> FunctionKeyword {
+    pub const fn keyword(&self) -> FunctionKeyword {
         self.keyword
     }
 

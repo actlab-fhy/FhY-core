@@ -93,7 +93,7 @@ struct ParameterRepr {
 impl SymbolFrameData {
     /// Return the wire form of a custom frame, whose part is `foreign`.
     #[must_use]
-    pub fn custom(foreign: Foreign) -> Self {
+    pub const fn custom(foreign: Foreign) -> Self {
         Self(FrameRepr::Custom(foreign))
     }
 
@@ -131,7 +131,7 @@ impl SymbolFrameData {
     /// Return the foreign part of a custom frame, or `None` for a built-in
     /// one.
     #[must_use]
-    pub fn foreign(&self) -> Option<&Foreign> {
+    pub const fn foreign(&self) -> Option<&Foreign> {
         match &self.0 {
             FrameRepr::Custom(foreign) => Some(foreign),
             FrameRepr::Import(_) | FrameRepr::Variable(_) | FrameRepr::Function(_) => None,

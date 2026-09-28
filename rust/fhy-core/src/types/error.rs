@@ -98,7 +98,7 @@ impl LiteralTypeError {
     /// Return whether the literal's kind has no core data type at all, as
     /// opposed to a literal the context refuses.
     #[must_use]
-    pub fn is_unsupported(&self) -> bool {
+    pub const fn is_unsupported(&self) -> bool {
         matches!(self, Self::UnsupportedDecimal)
     }
 }
@@ -156,14 +156,14 @@ pub struct TemplateWidthError {
 
 impl TemplateWidthError {
     /// Return the error of a width of zero.
-    pub(crate) fn zero_width() -> Self {
+    pub(crate) const fn zero_width() -> Self {
         Self {
             is_empty_list: false,
         }
     }
 
     /// Return the error of an empty width list.
-    pub(crate) fn empty_list() -> Self {
+    pub(crate) const fn empty_list() -> Self {
         Self {
             is_empty_list: true,
         }
@@ -171,7 +171,7 @@ impl TemplateWidthError {
 
     /// Return whether the width list was empty, rather than holding a zero.
     #[must_use]
-    pub fn is_empty_list(&self) -> bool {
+    pub const fn is_empty_list(&self) -> bool {
         self.is_empty_list
     }
 }

@@ -101,7 +101,7 @@ impl TypeData {
     /// Return the foreign part of an extension type, or `None` for a
     /// built-in one.
     #[must_use]
-    pub fn foreign(&self) -> Option<&Foreign> {
+    pub const fn foreign(&self) -> Option<&Foreign> {
         match &self.0 {
             TypeRepr::Extension(foreign) => Some(foreign),
             TypeRepr::Numerical(_) | TypeRepr::Index(_) => None,
@@ -122,7 +122,7 @@ impl DataTypeData {
     /// Return the foreign part of an extension data type, or `None` for a
     /// built-in one.
     #[must_use]
-    pub fn foreign(&self) -> Option<&Foreign> {
+    pub const fn foreign(&self) -> Option<&Foreign> {
         match &self.0 {
             DataTypeRepr::Extension(foreign) => Some(foreign),
             DataTypeRepr::Primitive(_) | DataTypeRepr::Template(_) => None,

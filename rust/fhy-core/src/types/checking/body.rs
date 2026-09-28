@@ -100,7 +100,7 @@ impl<'s> FunctionSignature<'s> {
 
     /// Return the label of the function.
     #[must_use]
-    pub fn label(&self) -> &FunctionLabel {
+    pub const fn label(&self) -> &FunctionLabel {
         &self.label
     }
 }

@@ -40,7 +40,7 @@ pub struct TemplateDataType {
 impl TemplateDataType {
     /// Return the placeholder `identifier`, with no width constraint.
     #[must_use]
-    pub fn new(identifier: Identifier) -> Self {
+    pub const fn new(identifier: Identifier) -> Self {
         Self {
             identifier,
             widths: None,
@@ -79,7 +79,7 @@ impl TemplateDataType {
 
     /// Return the placeholder's identifier.
     #[must_use]
-    pub fn identifier(&self) -> &Identifier {
+    pub const fn identifier(&self) -> &Identifier {
         &self.identifier
     }
 

@@ -68,13 +68,13 @@ impl<F: fmt::Debug> fmt::Debug for Namespace<'_, F> {
 impl<'a, F> Namespace<'a, F> {
     /// Return the namespace's name.
     #[must_use]
-    pub fn name(&self) -> &'a Identifier {
+    pub const fn name(&self) -> &'a Identifier {
         self.name
     }
 
     /// Return the parent the namespace names, which may not be defined.
     #[must_use]
-    pub fn parent(&self) -> Option<&'a Identifier> {
+    pub const fn parent(&self) -> Option<&'a Identifier> {
         self.data.parent.as_ref()
     }
 
