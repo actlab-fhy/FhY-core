@@ -605,6 +605,7 @@ def test_variable_expression_is_a_fresh_reference_to_the_param_s_variable() -> N
     assert first.is_structurally_equivalent(second)
 
 
+@pytest.mark.sympy
 def test_add_constraints_and_replace_constraints_return_new_params() -> None:
     """Test both build a new param over the same variable and domain.
 
@@ -641,6 +642,7 @@ def test_add_constraints_and_replace_constraints_return_new_params() -> None:
     ]
 
 
+@pytest.mark.sympy
 def test_add_upper_bound_constraint_is_inclusive_unless_told_otherwise() -> None:
     """Test the upper bound admits itself by default, and not when exclusive."""
     param = create_integer_param()
@@ -653,6 +655,7 @@ def test_add_upper_bound_constraint_is_inclusive_unless_told_otherwise() -> None
     assert (exclusive.is_value_valid(3), exclusive.is_value_valid(4)) == (True, False)
 
 
+@pytest.mark.z3
 def test_is_feasible_is_subset_and_check_subset_answer_by_the_solver() -> None:
     """Test the three questions answer through the default solver."""
     bounded = _bounded_param()
