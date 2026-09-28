@@ -23,6 +23,7 @@ use crate::support::constraint::{ConstraintKey, Failing, FailingHook, TestValueE
 use crate::support::constraint::{
     RecordedEvent, RecordingObserver, TestCustom, bind, int, int_set, member_set, text,
 };
+use crate::support::hashing::hash_of;
 use crate::support::lambda::Alpha;
 use crate::support::solver::{RecordingSmtSolver, build_symbol_types, quoted_symbol};
 
@@ -864,13 +865,6 @@ fn colliding_member(variable: &Identifier, payload: i64) -> Constraint {
         member_set([crate::support::constraint::TestOpaque::colliding(payload).into_value()]),
         Polarity::In,
     ))
-}
-
-fn hash_of(system: &ConstraintSystem) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    system.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[test]

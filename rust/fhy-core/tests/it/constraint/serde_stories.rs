@@ -3,6 +3,7 @@
 
 use crate::support::constraint::{TestOpaque, member};
 use crate::support::foreign::{TestResolver, WireCustom, WireToken};
+use crate::support::serde::restored;
 
 use fhy_core::constraint::wire::{ConstraintData, ConstraintSystemData, ValueData};
 use fhy_core::constraint::{
@@ -11,12 +12,7 @@ use fhy_core::constraint::{
 };
 use fhy_core::expression::{BigInt, Decimal, Expression};
 use fhy_core::foreign::BuildError;
-use fhy_core::identifier::Identifier;
 use rstest::rstest;
-
-fn restored(id: u64, name: &str) -> Identifier {
-    Identifier::try_restore(id, name).expect("the id is below the cap")
-}
 
 fn decimal(text: &str) -> Value {
     Value::Decimal(text.parse::<Decimal>().expect("a decimal"))

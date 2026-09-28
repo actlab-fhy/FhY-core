@@ -1,9 +1,21 @@
-//! The serde round trip every serialized type keeps (CONTRIBUTING,
-//! "Serialization is plain serde"), as a property check.
+//! The serde round trip every serialized type keeps: encoding and decoding
+//! through JSON and postcard, checked as a property.
 
+use fhy_core::identifier::Identifier;
 use proptest::test_runner::TestCaseError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+/// Return the identifier `name` restores as at `id`, for serde stories that
+/// compare identifiers by a fixed id rather than one the process counter
+/// assigns.
+///
+/// # Panics
+///
+/// Panics if `id` is at or above the process's id cap.
+pub(crate) fn restored(id: u64, name: &str) -> Identifier {
+    Identifier::try_restore(id, name).expect("the id is below the cap")
+}
 
 /// Check that `value` round-trips through JSON and postcard to an equal
 /// value, and that the JSON decoded re-encodes to the same text.

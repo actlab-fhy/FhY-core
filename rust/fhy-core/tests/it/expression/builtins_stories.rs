@@ -27,7 +27,7 @@ use rstest::rstest;
 
 use expression_support::{
     build_identifier, build_literal, build_piecewise_or_panic, expect_binary, expect_call,
-    expect_literal, expect_piecewise,
+    expect_literal, expect_piecewise, is_same_scalar,
 };
 
 const COMPOSED_NAMES: [&str; 16] = [
@@ -1019,17 +1019,6 @@ fn evaluate_builtin(function: BuiltinFunction, arguments: &[Scalar]) -> Scalar {
     Evaluator::new(&FunctionRegistry::new())
         .evaluate(&Expression::call(function, references), &environment)
         .unwrap_or_else(|error| panic!("{} evaluates: {error}", function.name()))
-}
-
-/// Return whether two scalars are the same value, every NaN equal and the
-/// zeros told apart by their sign.
-fn is_same_scalar(left: Scalar, right: Scalar) -> bool {
-    match (left, right) {
-        (Scalar::Real(a), Scalar::Real(b)) => {
-            a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
-        }
-        _ => left == right,
-    }
 }
 
 /// Test NaN propagates through the composed built-ins whichever operand it

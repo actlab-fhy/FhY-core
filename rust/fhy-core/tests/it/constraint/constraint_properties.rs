@@ -21,8 +21,9 @@ use fhy_core::solver::{CheckLimits, SmtSolver, Solver};
 use proptest::prelude::*;
 
 use crate::support::constraint::ConstraintKey;
-use crate::support::constraint::{int, member, text};
+use crate::support::constraint::{describe, int, member, text};
 use crate::support::expression::build_expression_strategy;
+use crate::support::hashing::hash_of;
 
 /// Return a strategy for member-shaped values: small integers, Booleans,
 /// short strings, floats with repeats of one value, and tuples of those.
@@ -100,13 +101,6 @@ fn build_built_in_constraint_strategy() -> BoxedStrategy<Constraint> {
             }),
     ]
     .boxed()
-}
-
-fn hash_of(system: &ConstraintSystem) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    system.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Return whether `left` and `right` are equal type-strictly, by a direct
@@ -214,13 +208,6 @@ fn build_bound_strategy() -> BoxedStrategy<Bound> {
         prop::collection::vec(constant, 0..4).prop_map(Bound::NotIn),
     ]
     .boxed()
-}
-
-/// Return the canonical sequence of `set`, as debug texts.
-fn describe(set: &MemberSet) -> Vec<String> {
-    set.iter()
-        .map(|member| format!("{:?}", member.kind()))
-        .collect()
 }
 
 proptest! {

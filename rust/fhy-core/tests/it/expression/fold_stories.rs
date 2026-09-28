@@ -20,19 +20,13 @@ use fhy_core::tree::{NodeHandle, NodeIdentity};
 use rstest::rstest;
 
 use expression_support::{
-    build_decimal_literal, build_doubling_dag, build_identifier, build_literal, expect_literal,
+    build_decimal_literal, build_doubling_dag, build_identifier, build_literal, call,
+    expect_literal,
 };
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 fn name(text: &str) -> FunctionName {
     FunctionName::new(text).expect("the test names no built-in")
-}
-
-fn call(
-    function: impl Into<Callee>,
-    arguments: impl IntoIterator<Item = Expression>,
-) -> Expression {
-    Expression::call(function, arguments)
 }
 
 /// Natives that record their calls and compute from a table of closures.

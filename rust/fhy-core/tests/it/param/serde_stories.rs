@@ -3,6 +3,7 @@
 
 use crate::support::foreign::{TestResolver, WireDomain, WireToken};
 use crate::support::param::{at_least, in_set, ints};
+use crate::support::serde::restored;
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 
 use fhy_core::constraint::Value;
@@ -16,10 +17,6 @@ use fhy_core::param::{
 use fhy_core::solver::Solver;
 use proptest::prelude::*;
 use rstest::rstest;
-
-fn restored(id: u64, name: &str) -> Identifier {
-    Identifier::try_restore(id, name).expect("the id is below the cap")
-}
 
 fn text_of(value: &impl serde::Serialize) -> String {
     serde_json::to_string(value).expect("encodes")

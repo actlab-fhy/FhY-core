@@ -5,22 +5,17 @@
 //! The cases are ported from `test_member_validation.py` and the member
 //! tests of `test_set_constraints.py`.
 
-use fhy_core::constraint::{Member, MemberError, MemberKind, MemberSet, Value};
+use fhy_core::constraint::{Member, MemberError, MemberKind, Value};
 use fhy_core::expression::{Decimal, LiteralValue};
 use rstest::rstest;
 
 use crate::support::constraint::{
-    Failing, FailingHook, TestOpaque, TestValueError, int, int_set, member, member_set, text,
+    Failing, FailingHook, TestOpaque, TestValueError, describe, int, int_set, member, member_set,
+    text,
 };
 
 fn decimal(text: &str) -> Value {
     Value::Decimal(text.parse::<Decimal>().expect("a decimal text"))
-}
-
-fn describe(set: &MemberSet) -> Vec<String> {
-    set.iter()
-        .map(|member| format!("{:?}", member.kind()))
-        .collect()
 }
 
 #[test]

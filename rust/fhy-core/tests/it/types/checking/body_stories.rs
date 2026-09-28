@@ -3,6 +3,7 @@
 //! `test_registry_body_sweep.py` and `test_builtin_bodies.py`.
 
 use crate::support::expression::build_call_or_panic;
+use crate::support::param::reference;
 
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::{FunctionDefinition, FunctionRegistry};
@@ -15,10 +16,6 @@ use fhy_core::types::checking::{
 
 fn name(text: &str) -> FunctionName {
     FunctionName::new(text).expect("a name")
-}
-
-fn reference(identifier: &Identifier) -> Expression {
-    Expression::from(identifier.clone())
 }
 
 /// Check `body` as the body of `name(x: parameter_sort) -> result_sort`.

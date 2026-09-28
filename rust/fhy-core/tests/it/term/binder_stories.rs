@@ -13,11 +13,9 @@ use fhy_core::expression::{Expression, PiecewiseError};
 use fhy_core::identifier::Identifier;
 use fhy_core::term::{AlphaEquivalence, AlphaRenaming, Binder, FreeIdentifiers, Term};
 
-use crate::support::lambda::{Alpha, Free, Lam, Lambda, app, block, expect_lam, lam, var};
-
-fn build_identifiers<const N: usize>(names: [&str; N]) -> [Identifier; N] {
-    names.map(Identifier::new)
-}
+use crate::support::lambda::{
+    Alpha, Free, Lam, Lambda, app, block, build_identifiers, expect_lam, lam, var,
+};
 
 // =============================================================================
 // Alpha equivalence

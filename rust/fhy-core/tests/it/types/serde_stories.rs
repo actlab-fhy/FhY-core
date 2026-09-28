@@ -3,6 +3,7 @@
 //! extension parts through a resolver.
 
 use crate::support::foreign::{NamedDataType, NamedType, REFUSED, SilentType, TestResolver};
+use crate::support::serde::restored;
 use crate::support::types::{array, constrained_template, index, scalar, template};
 
 use fhy_core::expression::Expression;
@@ -14,10 +15,6 @@ use proptest::prelude::*;
 use rstest::rstest;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-
-fn restored(id: u64, name: &str) -> Identifier {
-    Identifier::try_restore(id, name).expect("the id is below the cap")
-}
 
 fn assert_round_trips<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(value: &T) {
     let json = serde_json::to_string(value).expect("encodes as JSON");

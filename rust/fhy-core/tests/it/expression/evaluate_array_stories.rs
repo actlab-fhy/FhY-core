@@ -13,19 +13,12 @@ use fhy_core::expression::evaluate::{
     Scalar,
 };
 use fhy_core::expression::registry::FunctionRegistry;
-use fhy_core::expression::{Callee, Expression, SymbolType};
+use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use ndarray::{ArrayD, CowArray, IxDyn, arr0, array};
 
-use expression_support::{build_identifier, build_literal};
-
-fn call(
-    function: impl Into<Callee>,
-    arguments: impl IntoIterator<Item = Expression>,
-) -> Expression {
-    Expression::call(function, arguments)
-}
+use expression_support::{build_identifier, build_literal, call};
 
 fn piecewise(cases: Vec<(Expression, Expression)>, otherwise: impl Into<Expression>) -> Expression {
     Expression::piecewise(cases, otherwise).expect("a valid piecewise")

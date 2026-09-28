@@ -20,18 +20,13 @@ use fhy_core::identifier::Identifier;
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 use rstest::rstest;
 
-use expression_support::{build_doubling_dag, build_identifier, build_literal, expect_piecewise};
+use expression_support::{
+    build_doubling_dag, build_identifier, build_literal, call, expect_piecewise,
+};
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 fn name(text: &str) -> FunctionName {
     FunctionName::new(text).expect("the test names no built-in")
-}
-
-fn call(
-    function: impl Into<Callee>,
-    arguments: impl IntoIterator<Item = Expression>,
-) -> Expression {
-    Expression::call(function, arguments)
 }
 
 fn call_named(function: &str, arguments: impl IntoIterator<Item = Expression>) -> Expression {

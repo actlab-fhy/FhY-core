@@ -18,18 +18,13 @@ use fhy_core::expression::{
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
-use expression_support::{build_decimal_literal, build_identifier, build_literal};
+use expression_support::{
+    build_decimal_literal, build_identifier, build_literal, call, is_same_scalar,
+};
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 fn name(text: &str) -> FunctionName {
     FunctionName::new(text).expect("the test names no built-in")
-}
-
-fn call(
-    function: impl Into<Callee>,
-    arguments: impl IntoIterator<Item = Expression>,
-) -> Expression {
-    Expression::call(function, arguments)
 }
 
 fn binary(
@@ -823,17 +818,6 @@ fn a_lane_error_on_a_63_level_doubling_dag_displays_in_bounded_size() {
 // =============================================================================
 // Unary plus, Boolean piecewise, and the IEEE edges of floor division
 // =============================================================================
-
-/// Return whether two scalars are the same value, every NaN equal and the
-/// zeros told apart by their sign.
-fn is_same_scalar(left: Scalar, right: Scalar) -> bool {
-    match (left, right) {
-        (Scalar::Real(a), Scalar::Real(b)) => {
-            a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
-        }
-        _ => left == right,
-    }
-}
 
 /// Test `+x` is `x` for an integer and a real, and a piecewise with
 /// Boolean branches selects a Boolean.

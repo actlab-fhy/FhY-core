@@ -4,6 +4,7 @@
 //! Ported from `tests/types/test_unification.py`.
 
 use crate::support::expression::build_call_or_panic;
+use crate::support::param::reference;
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
 use crate::support::types::Equivalent;
 use crate::support::types::{
@@ -27,10 +28,6 @@ fn int32() -> DataType {
 
 fn float32() -> DataType {
     DataType::Primitive(CoreDataType::Float32)
-}
-
-fn reference(identifier: &Identifier) -> Expression {
-    Expression::from(identifier.clone())
 }
 
 // =============================================================================

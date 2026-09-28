@@ -2,6 +2,7 @@
 //! (`fhy_core::symbol_table::wire`).
 
 use crate::support::foreign::{NamedType, TestResolver};
+use crate::support::serde::restored;
 use crate::support::types::scalar;
 
 use fhy_core::foreign::{BuildError, Foreign, ForeignError};
@@ -12,10 +13,6 @@ use fhy_core::symbol_table::{
 };
 use fhy_core::types::{CoreDataType, TypeQualifier};
 use rstest::rstest;
-
-fn restored(id: u64, name: &str) -> Identifier {
-    Identifier::try_restore(id, name).expect("the id is below the cap")
-}
 
 fn round_trip_json(table: &SymbolTable<SymbolFrame>) -> SymbolTable<SymbolFrame> {
     serde_json::from_str(&serde_json::to_string(table).expect("encodes")).expect("decodes")

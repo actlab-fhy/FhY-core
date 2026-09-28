@@ -12,9 +12,7 @@ use std::convert::Infallible;
 use fhy_core::identifier::Identifier;
 use fhy_core::term::{AlphaEquivalence, AlphaRenaming, is_mapping_alpha_equivalent_under};
 
-fn build_identifiers<const N: usize>(names: [&str; N]) -> [Identifier; N] {
-    names.map(Identifier::new)
-}
+use crate::support::lambda::build_identifiers;
 
 /// A value compared by payload that records each comparison it makes, and
 /// optionally checks that `reference` corresponds to its counterpart.

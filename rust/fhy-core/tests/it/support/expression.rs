@@ -3,6 +3,7 @@
 use std::sync::LazyLock;
 
 use fhy_core::expression::builtins::BuiltinFunction;
+use fhy_core::expression::evaluate::Scalar;
 use fhy_core::expression::{
     BigInt, BinaryExpression, BinaryOperation, CallExpression, Callee, Decimal, Expression,
     ExpressionKind, LiteralValue, LogicalExpression, LogicalOperation, PiecewiseExpression,
@@ -19,6 +20,18 @@ pub(crate) fn build_identifier(name: &str) -> (Identifier, Expression) {
     let identifier = Identifier::new(name);
     let reference = Expression::from(identifier.clone());
     (identifier, reference)
+}
+
+/// Return whether `left` and `right` are the same scalar, every NaN equal
+/// and the zeros told apart by their sign.
+#[must_use]
+pub(crate) fn is_same_scalar(left: Scalar, right: Scalar) -> bool {
+    match (left, right) {
+        (Scalar::Real(a), Scalar::Real(b)) => {
+            a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+        }
+        _ => left == right,
+    }
 }
 
 /// Return a literal expression holding `value`.
@@ -152,6 +165,15 @@ where
     I::Item: Into<Expression>,
 {
     Expression::call(build_callee(function_name), arguments)
+}
+
+/// Return the call of `function` with `arguments`.
+#[must_use]
+pub(crate) fn call(
+    function: impl Into<Callee>,
+    arguments: impl IntoIterator<Item = Expression>,
+) -> Expression {
+    Expression::call(function, arguments)
 }
 
 /// Return `((leaf + 1) + 1) + ...`, `depth` additions deep.

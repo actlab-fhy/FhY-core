@@ -12,6 +12,7 @@
 
 use crate::support::expression as expression_support;
 use crate::support::hashing::hash_of;
+use crate::support::lambda::build_identifiers;
 
 use std::collections::HashMap;
 
@@ -50,10 +51,6 @@ fn build_renaming(
 /// `frames`, outermost first.
 fn build_framed_renaming(frames: Vec<HashMap<Identifier, Identifier>>) -> AlphaRenaming {
     build_renaming(HashMap::new(), frames)
-}
-
-fn build_identifiers<const N: usize>(names: [&str; N]) -> [Identifier; N] {
-    names.map(Identifier::new)
 }
 
 // =============================================================================

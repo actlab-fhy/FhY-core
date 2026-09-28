@@ -7,6 +7,7 @@
 //! `test_type_checker_booleans.py` and `test_type_checker_sorts.py`.
 
 use crate::support::expression::build_call_or_panic;
+use crate::support::param::reference;
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
 use crate::support::types::{array, index, literal_dimension, scalar};
 
@@ -35,10 +36,6 @@ fn params(pairs: &[(&Identifier, Type)]) -> Bindings {
         .iter()
         .map(|(identifier, value)| ((*identifier).clone(), (value.clone(), TypeQualifier::Param)))
         .collect()
-}
-
-fn reference(identifier: &Identifier) -> Expression {
-    Expression::from(identifier.clone())
 }
 
 fn boolean(value: bool) -> Expression {

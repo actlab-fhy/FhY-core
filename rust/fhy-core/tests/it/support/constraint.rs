@@ -44,6 +44,14 @@ pub(crate) fn member_set(values: impl IntoIterator<Item = Value>) -> MemberSet {
     values.into_iter().map(member).collect()
 }
 
+/// Return the kind of each member of `set`, for comparing two sets built in
+/// a different member order.
+pub(crate) fn describe(set: &MemberSet) -> Vec<String> {
+    set.iter()
+        .map(|member| format!("{:?}", member.kind()))
+        .collect()
+}
+
 /// Return the set of the integers `values`.
 pub(crate) fn int_set(values: impl IntoIterator<Item = i64>) -> MemberSet {
     member_set(values.into_iter().map(int))

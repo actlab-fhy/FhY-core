@@ -46,6 +46,11 @@ impl Lam {
     }
 }
 
+/// Return `names` as freshly created identifiers.
+pub(crate) fn build_identifiers<const N: usize>(names: [&str; N]) -> [Identifier; N] {
+    names.map(Identifier::new)
+}
+
 /// Return the variable `identifier`.
 pub(crate) fn var(identifier: &Identifier) -> Lambda {
     Lambda::Var(identifier.clone())

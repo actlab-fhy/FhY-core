@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use crate::support::expression::is_same_scalar;
+
 use fhy_core::expression::builtins::BuiltinFunction;
 use fhy_core::expression::evaluate::{EvaluationError, Evaluator, NoNativeCalls, Scalar};
 use fhy_core::expression::registry::FunctionRegistry;
@@ -149,16 +151,6 @@ fn scalar_environment(lane: (i64, f64, bool)) -> HashMap<Identifier, Scalar> {
         (IDENTIFIERS[1].clone(), Scalar::Real(lane.1)),
         (IDENTIFIERS[2].clone(), Scalar::Bool(lane.2)),
     ])
-}
-
-/// Return whether two scalars are the same value, every NaN equal.
-fn is_same_scalar(left: Scalar, right: Scalar) -> bool {
-    match (left, right) {
-        (Scalar::Real(a), Scalar::Real(b)) => {
-            a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
-        }
-        _ => left == right,
-    }
 }
 
 /// Return a comparable summary of an evaluation's outcome.
