@@ -289,18 +289,18 @@ impl PyValueDomain {
 
     /// Always true: domains are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: domains are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: domains are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: a domain is registered when it is constructed.
-    fn register_interned_instance(_slf: &Bound<'_, Self>) {}
+    const fn register_interned_instance(_slf: &Bound<'_, Self>) {}
 
     fn __eq__(&self, other: &Bound<'_, Self>) -> bool {
         self.domain == other.get().domain

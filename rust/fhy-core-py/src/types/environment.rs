@@ -113,7 +113,7 @@ impl Table {
     const ALL: [Self; 3] = [Self::DataTypes, Self::Types, Self::Expressions];
 
     /// Return the name of the table's attribute and keyword.
-    fn name(self) -> &'static str {
+    const fn name(self) -> &'static str {
         match self {
             Self::DataTypes => "data_type_bindings",
             Self::Types => "type_bindings",
@@ -121,7 +121,7 @@ impl Table {
         }
     }
 
-    fn index(self) -> usize {
+    const fn index(self) -> usize {
         match self {
             Self::DataTypes => 0,
             Self::Types => 1,
@@ -138,7 +138,7 @@ impl PyTypeUnificationEnvironment {
     }
 
     /// Return the core environment.
-    pub(crate) fn value(&self) -> &TypeUnificationEnvironment {
+    pub(crate) const fn value(&self) -> &TypeUnificationEnvironment {
         &self.value
     }
 
@@ -150,7 +150,7 @@ impl PyTypeUnificationEnvironment {
         entries.into_iter().map(|(_, entry)| entry).collect()
     }
 
-    fn table(&self, table: Table) -> &ObjectTable {
+    const fn table(&self, table: Table) -> &ObjectTable {
         match table {
             Table::DataTypes => &self.objects.data_types,
             Table::Types => &self.objects.types,
@@ -754,7 +754,7 @@ impl PyTypeUnificationEnvironment {
 }
 
 impl PyTypeUnificationEnvironment {
-    fn from_parts(value: TypeUnificationEnvironment, objects: Objects) -> Self {
+    const fn from_parts(value: TypeUnificationEnvironment, objects: Objects) -> Self {
         Self {
             value,
             objects,

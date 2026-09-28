@@ -335,7 +335,7 @@ fn serialize_values<'py>(values: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, Py
 
 /// Return the description of a finite kind's values in deserialization
 /// errors.
-fn values_description(kind: DomainKind) -> &'static str {
+const fn values_description(kind: DomainKind) -> &'static str {
     match kind {
         DomainKind::Ordinal => "a list of orderable serializable values or primitive values",
         _ => "a list of equal serializable values or primitive values",
@@ -674,15 +674,15 @@ macro_rules! domain_class {
 
             /// Always true: domains are immutable.
             #[getter]
-            fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+            const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
                 true
             }
 
             /// Do nothing: domains are always frozen.
-            fn freeze(_slf: &Bound<'_, Self>) {}
+            const fn freeze(_slf: &Bound<'_, Self>) {}
 
             /// Do nothing: domains are always frozen, and mutating one raises.
-            fn assert_frozen(_slf: &Bound<'_, Self>) {}
+            const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
             fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
                 let _ = value;

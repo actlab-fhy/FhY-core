@@ -165,7 +165,7 @@ impl PyTypeBase {
     /// `__init__` constructs.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+    const fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         Self
     }
 
@@ -248,7 +248,7 @@ impl PyDataTypeBase {
     /// `__init__` constructs.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+    const fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         Self
     }
 
@@ -379,7 +379,7 @@ impl_public_class!(PyPrimitiveDataType, "PrimitiveDataType");
 
 impl PyPrimitiveDataType {
     /// Return the Rust data type.
-    pub(crate) fn value(&self) -> DataType {
+    pub(crate) const fn value(&self) -> DataType {
         DataType::Primitive(self.value)
     }
 }
@@ -398,16 +398,16 @@ impl PyPrimitiveDataType {
 
     /// Always true: the built-in types are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: the built-in types are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: the built-in types are always frozen, and mutating one
     /// raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;
@@ -482,7 +482,7 @@ impl PyPrimitiveDataType {
         })
     }
 
-    fn __str__(&self) -> &'static str {
+    const fn __str__(&self) -> &'static str {
         self.value.as_str()
     }
 
@@ -612,16 +612,16 @@ impl PyTemplateDataType {
 
     /// Always true: the built-in types are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: the built-in types are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: the built-in types are always frozen, and mutating one
     /// raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;
@@ -831,7 +831,7 @@ impl PyNumericalType {
     }
 
     /// Return the data type object.
-    pub(crate) fn data_type_object(&self) -> &Py<PyAny> {
+    pub(crate) const fn data_type_object(&self) -> &Py<PyAny> {
         &self.data_type
     }
 
@@ -856,16 +856,16 @@ impl PyNumericalType {
 
     /// Always true: the built-in types are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: the built-in types are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: the built-in types are always frozen, and mutating one
     /// raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;
@@ -1114,7 +1114,7 @@ impl PyIndexType {
     }
 
     /// Return the bound and stride objects.
-    pub(crate) fn expression_objects(&self) -> [&Py<PyAny>; 3] {
+    pub(crate) const fn expression_objects(&self) -> [&Py<PyAny>; 3] {
         [&self.lower_bound, &self.upper_bound, &self.stride]
     }
 }
@@ -1142,16 +1142,16 @@ impl PyIndexType {
 
     /// Always true: the built-in types are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: the built-in types are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: the built-in types are always frozen, and mutating one
     /// raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

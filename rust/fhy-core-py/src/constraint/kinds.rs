@@ -340,15 +340,15 @@ impl PyEquationConstraint {
 
     /// Always true: constraints are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: constraints are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: constraints are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;
@@ -859,16 +859,16 @@ macro_rules! set_constraint_class {
 
             /// Always true: constraints are immutable.
             #[getter]
-            fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+            const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
                 true
             }
 
             /// Do nothing: constraints are always frozen.
-            fn freeze(_slf: &Bound<'_, Self>) {}
+            const fn freeze(_slf: &Bound<'_, Self>) {}
 
             /// Do nothing: constraints are always frozen, and mutating one
             /// raises.
-            fn assert_frozen(_slf: &Bound<'_, Self>) {}
+            const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
             fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
                 let _ = value;

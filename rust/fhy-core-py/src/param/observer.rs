@@ -73,7 +73,7 @@ fn members_tuple_repr(py: Python<'_>, members: &[Member]) -> PyResult<String> {
 
 /// Return the name of the solver function a question of `kind` stands
 /// for, which its warnings name.
-fn question_name(kind: QueryKind) -> &'static str {
+const fn question_name(kind: QueryKind) -> &'static str {
     match kind {
         QueryKind::Implication => "does_expression_imply",
         _ => "check_expression_satisfiability",
@@ -81,7 +81,7 @@ fn question_name(kind: QueryKind) -> &'static str {
 }
 
 /// Return the level a constraint's `event` is logged at, if any.
-fn member_event_level(event: &ConstraintEvent<'_>) -> Option<u8> {
+const fn member_event_level(event: &ConstraintEvent<'_>) -> Option<u8> {
     match event {
         ConstraintEvent::Unbound { .. } | ConstraintEvent::SymbolicBinding { .. } => Some(DEBUG),
         ConstraintEvent::BoundNativeConstants { .. } => Some(WARNING),
@@ -277,7 +277,7 @@ pub(super) struct PyParamObserver {
 impl PyParamObserver {
     /// Return the observer of a question of a solver whose SMT backend is
     /// named `backend`.
-    pub(super) fn new(backend: String) -> Self {
+    pub(super) const fn new(backend: String) -> Self {
         Self { backend }
     }
 

@@ -103,7 +103,7 @@ struct PythonIdentifierTypes<'py, 'a> {
 }
 
 impl<'py, 'a> PythonIdentifierTypes<'py, 'a> {
-    fn new(
+    const fn new(
         lookup: &'a Bound<'py, PyAny>,
         context: &'a Context,
         root: &'a Bound<'py, PyAny>,

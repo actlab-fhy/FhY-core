@@ -177,7 +177,7 @@ impl SystemObserver {
 
 /// Return the name of the solver function a system's question of `kind`
 /// stands for, which its warnings name.
-fn question_name(kind: QueryKind) -> &'static str {
+const fn question_name(kind: QueryKind) -> &'static str {
     match kind {
         QueryKind::Implication => "does_expression_imply",
         _ => "check_expression_satisfiability",
@@ -208,7 +208,7 @@ pub(crate) struct PyConstraintSystem {
 
 impl PyConstraintSystem {
     /// Return the core system.
-    pub(crate) fn core(&self) -> &ConstraintSystem {
+    pub(crate) const fn core(&self) -> &ConstraintSystem {
         &self.core
     }
 
@@ -530,15 +530,15 @@ impl PyConstraintSystem {
 
     /// Always true: systems are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: systems are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: systems are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

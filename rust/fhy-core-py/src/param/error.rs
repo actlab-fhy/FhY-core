@@ -26,7 +26,7 @@ pub(super) fn param_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
 
 /// Return the name of the Python class of a domain of `kind`, after its
 /// indefinite article.
-fn class_with_article(kind: DomainKind) -> &'static str {
+const fn class_with_article(kind: DomainKind) -> &'static str {
     match kind {
         DomainKind::Integer => "an IntegerDomain",
         DomainKind::IntervalInteger => "an IntervalIntegerDomain",

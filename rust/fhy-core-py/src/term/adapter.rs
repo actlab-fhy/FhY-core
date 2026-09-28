@@ -206,7 +206,7 @@ impl<'py> PyTerm<'py> {
         }
     }
 
-    pub(super) fn object(&self) -> &Bound<'py, PyAny> {
+    pub(super) const fn object(&self) -> &Bound<'py, PyAny> {
         &self.object
     }
 
@@ -302,7 +302,7 @@ impl<'py> PyBinder<'py> {
         }
     }
 
-    pub(super) fn object(&self) -> &Bound<'py, PyAny> {
+    pub(super) const fn object(&self) -> &Bound<'py, PyAny> {
         &self.object
     }
 

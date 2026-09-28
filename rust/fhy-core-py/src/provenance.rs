@@ -340,27 +340,27 @@ impl PyPosition {
 
     /// Always true: positions order totally.
     #[getter]
-    fn supports_ordering(_slf: &Bound<'_, Self>) -> bool {
+    const fn supports_ordering(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Always true: positions order totally, so partially too.
     #[getter]
-    fn supports_partial_ordering(_slf: &Bound<'_, Self>) -> bool {
+    const fn supports_partial_ordering(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Always true: positions are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: positions are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: positions are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __eq__<'py>(
         slf: &Bound<'py, Self>,
@@ -613,15 +613,15 @@ impl PySpan {
 
     /// Always true: spans are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: spans are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: spans are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __eq__<'py>(
         slf: &Bound<'py, Self>,
@@ -919,15 +919,15 @@ impl PyProvenance {
 
     /// Always true: provenances are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: provenances are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: provenances are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     /// Compare as a dataclass does: equal when `other` has exactly the same
     /// class and equal fields, compared recursively.

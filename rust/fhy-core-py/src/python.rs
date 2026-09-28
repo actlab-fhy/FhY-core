@@ -24,7 +24,7 @@ pub(crate) struct Seed<T>(Mutex<Option<T>>);
 
 impl<T> Seed<T> {
     /// Return a seed holding `contents`.
-    pub(crate) fn new(contents: T) -> Self {
+    pub(crate) const fn new(contents: T) -> Self {
         Self(Mutex::new(Some(contents)))
     }
 

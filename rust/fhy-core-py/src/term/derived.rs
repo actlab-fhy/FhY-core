@@ -94,7 +94,7 @@ impl PyEquivalenceRole {
     /// Return the role of a referenced identifier, compared by `==`
     /// structurally and through the renaming in alpha mode.
     #[staticmethod]
-    fn reference() -> Self {
+    const fn reference() -> Self {
         Self {
             role: Role::Reference,
         }
@@ -126,7 +126,7 @@ impl PyEquivalenceRole {
 
     /// Return the role of a field that takes no part in equivalence.
     #[staticmethod]
-    fn excluded() -> Self {
+    const fn excluded() -> Self {
         Self {
             role: Role::Excluded,
         }
@@ -144,7 +144,7 @@ impl PyEquivalenceRole {
     /// The kind of role: `"value"`, `"reference"`, `"binder"`, `"excluded"`
     /// or `"explicit"`.
     #[getter]
-    fn kind(&self) -> &'static str {
+    const fn kind(&self) -> &'static str {
         match self.role {
             Role::Value(_) => "value",
             Role::Reference => "reference",

@@ -95,7 +95,7 @@ impl LoggingObserver {
     /// Return the observer of an evaluation of the constraint of class
     /// `kind` under `bindings`, whose set variable, if any, is `variable`,
     /// bound to `bound_value`.
-    pub(crate) fn new(
+    pub(crate) const fn new(
         kind: String,
         variable: Option<Py<PyAny>>,
         bindings: Py<PyAny>,

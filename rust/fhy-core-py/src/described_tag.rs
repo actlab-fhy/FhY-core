@@ -243,18 +243,18 @@ macro_rules! define_described_tag_class {
 
             /// Always true: tags are immutable.
             #[getter]
-            fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+            const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
                 true
             }
 
             /// Do nothing: tags are always frozen.
-            fn freeze(_slf: &Bound<'_, Self>) {}
+            const fn freeze(_slf: &Bound<'_, Self>) {}
 
             /// Do nothing: tags are always frozen, and mutating one raises.
-            fn assert_frozen(_slf: &Bound<'_, Self>) {}
+            const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
             /// Do nothing: a tag is registered when it is constructed.
-            fn register_interned_instance(_slf: &Bound<'_, Self>) {}
+            const fn register_interned_instance(_slf: &Bound<'_, Self>) {}
 
             fn __eq__(&self, other: &Bound<'_, Self>) -> bool {
                 self.tag == other.get().tag

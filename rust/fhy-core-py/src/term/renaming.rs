@@ -202,17 +202,17 @@ pub(crate) struct RenamingValue {
 impl RenamingValue {
     /// Return the value of `renaming`, whose identifiers' objects `objects`
     /// holds.
-    pub(super) fn new(renaming: AlphaRenaming, objects: ObjectTable) -> Self {
+    pub(super) const fn new(renaming: AlphaRenaming, objects: ObjectTable) -> Self {
         Self { renaming, objects }
     }
 
     /// Return the Rust renaming.
-    pub(crate) fn renaming(&self) -> &AlphaRenaming {
+    pub(crate) const fn renaming(&self) -> &AlphaRenaming {
         &self.renaming
     }
 
     /// Return the identifier objects.
-    pub(super) fn objects(&self) -> &ObjectTable {
+    pub(super) const fn objects(&self) -> &ObjectTable {
         &self.objects
     }
 
@@ -337,7 +337,7 @@ pub(crate) struct PyAlphaRenaming {
 
 impl PyAlphaRenaming {
     /// Return the renaming and its identifier objects.
-    pub(crate) fn value(&self) -> &RenamingValue {
+    pub(crate) const fn value(&self) -> &RenamingValue {
         &self.value
     }
 }
@@ -490,15 +490,15 @@ impl PyAlphaRenaming {
 
     /// Always true: renamings are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: renamings are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: renamings are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

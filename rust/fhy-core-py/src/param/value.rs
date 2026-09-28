@@ -65,7 +65,7 @@ fn supports_orderable_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool
 
 /// Return the text of the `TypeError` a value of the wrong kind raises in a
 /// finite domain of `kind`.
-pub(super) fn value_kind_message(kind: DomainKind) -> &'static str {
+pub(super) const fn value_kind_message(kind: DomainKind) -> &'static str {
     match kind {
         DomainKind::Ordinal => {
             "Ordinal values must satisfy orderable semantics and be serializable, or be primitive \
