@@ -58,7 +58,7 @@ impl NonInjectiveRenamingError {
 
     /// Return the part of the renaming that is not injective.
     #[must_use]
-    pub fn part(&self) -> RenamingPart {
+    pub const fn part(&self) -> RenamingPart {
         self.part
     }
 }
