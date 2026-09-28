@@ -34,7 +34,7 @@ impl PyCapture {
     }
 
     /// Return the Rust capture.
-    pub(super) fn capture(&self) -> &Capture {
+    pub(super) const fn capture(&self) -> &Capture {
         &self.capture
     }
 }
@@ -89,15 +89,15 @@ impl PyCapture {
 
     /// Always true: captures are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: captures are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: captures are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

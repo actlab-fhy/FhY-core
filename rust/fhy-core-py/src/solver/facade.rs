@@ -100,7 +100,7 @@ enum OwnedQuestion {
 }
 
 impl OwnedQuestion {
-    fn kind(&self) -> QueryKind {
+    const fn kind(&self) -> QueryKind {
         match self {
             Self::Satisfiability(_) => QueryKind::Satisfiability,
             Self::Implication(..) => QueryKind::Implication,
@@ -108,7 +108,7 @@ impl OwnedQuestion {
         }
     }
 
-    fn question(&self) -> Question<'_> {
+    const fn question(&self) -> Question<'_> {
         match self {
             Self::Satisfiability(expression) => Question::Satisfiability(expression),
             Self::Implication(antecedent, consequent) => Question::Implication {
@@ -142,7 +142,7 @@ pub(crate) struct PySolver {
 
 impl PySolver {
     /// Return the core solver.
-    pub(crate) fn core(&self) -> &Solver {
+    pub(crate) const fn core(&self) -> &Solver {
         &self.solver
     }
 

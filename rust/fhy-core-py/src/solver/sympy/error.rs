@@ -54,7 +54,7 @@ pub(crate) enum SympyPhase {
 impl SympyPhase {
     /// Return the phase's name: `"lowering"`, `"simplification"`,
     /// `"substitution"` or `"lifting"`.
-    pub(crate) fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Lowering => "lowering",
             Self::Simplification => "simplification",
@@ -134,17 +134,17 @@ pub(crate) struct SympyError {
 
 impl SympyError {
     /// Return the error of `kind` in `phase`.
-    pub(crate) fn new(phase: SympyPhase, kind: SympyErrorKind) -> Self {
+    pub(crate) const fn new(phase: SympyPhase, kind: SympyErrorKind) -> Self {
         Self { phase, kind }
     }
 
     /// Return the phase the error arose in.
-    pub(crate) fn phase(&self) -> SympyPhase {
+    pub(crate) const fn phase(&self) -> SympyPhase {
         self.phase
     }
 
     /// Return what went wrong.
-    pub(crate) fn kind(&self) -> &SympyErrorKind {
+    pub(crate) const fn kind(&self) -> &SympyErrorKind {
         &self.kind
     }
 

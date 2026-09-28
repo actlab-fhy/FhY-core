@@ -343,7 +343,7 @@ impl PyExpression {
     }
 
     /// Return the Rust handle.
-    pub(crate) fn expression(&self) -> &Expression {
+    pub(crate) const fn expression(&self) -> &Expression {
         &self.expression
     }
 
@@ -835,15 +835,15 @@ impl PyExpression {
 
     /// Always true: expressions are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: expressions are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: expressions are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;
@@ -1410,7 +1410,7 @@ impl_public_class!(PyIdentifierExpression, "IdentifierExpression");
 
 impl PyIdentifierExpression {
     /// Return the Python `Identifier` the node was built from.
-    pub(crate) fn identifier_object(&self) -> &Py<PyAny> {
+    pub(crate) const fn identifier_object(&self) -> &Py<PyAny> {
         &self.identifier
     }
 }

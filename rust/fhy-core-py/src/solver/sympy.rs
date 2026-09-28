@@ -67,7 +67,7 @@ use super::backends::{PySimplifierBase, type_name};
 
 /// The registered name of the bridge's pass for each phase that runs as a
 /// pass.
-fn pass_name(phase: SympyPhase) -> Option<&'static str> {
+const fn pass_name(phase: SympyPhase) -> Option<&'static str> {
     match phase {
         SympyPhase::Lowering => Some("fhy_core.symbolic.expression.to_sympy"),
         SympyPhase::Substitution => Some("fhy_core.symbolic.expression.substitute_sympy_variables"),
@@ -149,7 +149,7 @@ pub(super) fn is_raised_as_pass_error(py: Python<'_>, error: &SympyError) -> boo
 /// Return whether `error` keeps its own class whatever phase it arose in:
 /// the screen's refusal, a bound constant, and a missing backend, which the
 /// Python bridge raised before any pass ran.
-fn is_unwrapped(error: &SympyError) -> bool {
+const fn is_unwrapped(error: &SympyError) -> bool {
     matches!(
         error.kind(),
         SympyErrorKind::IllTyped(_)
@@ -389,7 +389,7 @@ impl PySympySimplifier {
     }
 
     #[expect(clippy::unused_self, reason = "a Python method receives the object")]
-    fn __repr__(&self) -> &'static str {
+    const fn __repr__(&self) -> &'static str {
         "SympySimplifier()"
     }
 }

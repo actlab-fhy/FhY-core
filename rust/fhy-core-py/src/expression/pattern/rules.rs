@@ -218,12 +218,12 @@ impl PyRewriteRule {
     }
 
     /// Return the Rust rule.
-    pub(super) fn rule(&self) -> &RewriteRule {
+    pub(super) const fn rule(&self) -> &RewriteRule {
         &self.rule
     }
 
     /// Return the depth of the pattern.
-    pub(super) fn depth(&self) -> usize {
+    pub(super) const fn depth(&self) -> usize {
         self.depth
     }
 
@@ -238,10 +238,7 @@ impl PyRewriteRule {
     }
 
     /// Return a rule of the public class `cls` holding `rule`.
-    fn build_object<'py>(
-        cls: &Bound<'py, PyType>,
-        rule: PyRewriteRule,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn build_object<'py>(cls: &Bound<'py, PyType>, rule: Self) -> PyResult<Bound<'py, PyAny>> {
         cls.call1((RewriteRuleSeed(Seed::new(rule)),))
     }
 
@@ -438,15 +435,15 @@ impl PyRewriteRule {
 
     /// Always true: rules are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: rules are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: rules are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;
@@ -482,7 +479,7 @@ pub(crate) struct PyRuleBase;
 impl PyRuleBase {
     #[new]
     #[pyo3(signature = (*args, **kwargs))]
-    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+    const fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         let _ = (args, kwargs);
         Self
     }
@@ -646,15 +643,15 @@ impl PyFiredRule {
 
     /// Always true: firings are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: firings are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: firings are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

@@ -64,17 +64,17 @@ impl RunScope {
     }
 
     /// Return the last nested run error a hook raised, removing it.
-    pub(super) fn take_nested(&mut self) -> Option<NestedNote> {
+    pub(super) const fn take_nested(&mut self) -> Option<NestedNote> {
         self.nested.take()
     }
 
     /// Return the pass whose hook failed last, removing it.
-    pub(super) fn take_failed_pass(&mut self) -> Option<Py<PyAny>> {
+    pub(super) const fn take_failed_pass(&mut self) -> Option<Py<PyAny>> {
         self.failed_pass.take()
     }
 
     /// Return the exception the run must raise unchanged, removing it.
-    pub(super) fn take_interrupt(&mut self) -> Option<PyErr> {
+    pub(super) const fn take_interrupt(&mut self) -> Option<PyErr> {
         self.interrupt.take()
     }
 }

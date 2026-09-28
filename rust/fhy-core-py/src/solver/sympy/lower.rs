@@ -74,7 +74,7 @@ pub(super) struct Lowerer<'h, 'c> {
 }
 
 impl<'h, 'c> Lowerer<'h, 'c> {
-    pub(super) fn new(handles: &'h Arc<Handles>, context: &'c SimplifyContext<'c>) -> Self {
+    pub(super) const fn new(handles: &'h Arc<Handles>, context: &'c SimplifyContext<'c>) -> Self {
         Self { handles, context }
     }
 

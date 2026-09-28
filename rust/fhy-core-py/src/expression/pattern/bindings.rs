@@ -180,7 +180,7 @@ impl PyMatchBindings {
         clippy::unused_self,
         reason = "Python's __bool__ slot is an instance method"
     )]
-    fn __bool__(&self) -> bool {
+    const fn __bool__(&self) -> bool {
         true
     }
 
@@ -246,15 +246,15 @@ impl PyMatchBindings {
 
     /// Always true: bindings are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: bindings are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: bindings are always frozen, and mutating them raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

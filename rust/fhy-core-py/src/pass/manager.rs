@@ -155,13 +155,13 @@ impl PyFixpointPassGroup {
 
     /// The iteration budget.
     #[getter]
-    fn max_iterations(&self) -> usize {
+    const fn max_iterations(&self) -> usize {
         self.max_iterations.get()
     }
 
     /// Whether the group fails a pipeline when it does not converge.
     #[getter]
-    fn fail_on_non_convergence(&self) -> bool {
+    const fn fail_on_non_convergence(&self) -> bool {
         self.fail_on_non_convergence
     }
 

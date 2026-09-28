@@ -34,14 +34,14 @@ impl IntoPyErr for RewriteError {
         let rule_name = self.rule_name().map(str::to_owned);
         Python::attach(|py| {
             let (class, cause) = match self {
-                RewriteError::Callback { source, .. } => {
+                Self::Callback { source, .. } => {
                     let cause = crate::exceptions::boxed_error_to_py(source);
                     if !cause.is_instance_of::<PyException>(py) {
                         return cause;
                     }
                     (&crate::exceptions::REWRITE_CALLBACK_ERROR, cause)
                 }
-                RewriteError::Rebuild { source, .. } => (
+                Self::Rebuild { source, .. } => (
                     &crate::exceptions::REWRITE_REBUILD_ERROR,
                     source.into_py_err(),
                 ),

@@ -81,7 +81,7 @@ impl RegistryState {
     }
 
     /// Return the core registry.
-    pub(crate) fn registry(&self) -> &FunctionRegistry {
+    pub(crate) const fn registry(&self) -> &FunctionRegistry {
         &self.registry
     }
 

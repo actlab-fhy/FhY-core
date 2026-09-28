@@ -92,7 +92,7 @@ impl PyPreservedAnalyses {
     }
 
     /// Return the core's set.
-    pub(super) fn preserved(&self) -> &PreservedAnalyses {
+    pub(super) const fn preserved(&self) -> &PreservedAnalyses {
         &self.preserved
     }
 
@@ -277,16 +277,16 @@ impl PyPreservedAnalyses {
 
     /// Always true: preserved sets are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: preserved sets are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: preserved sets are always frozen, and mutating one
     /// raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __eq__<'py>(
         slf: &Bound<'py, Self>,

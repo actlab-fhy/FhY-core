@@ -35,7 +35,7 @@ pub(crate) fn symbol_type_to_python(
 
 /// Return the name of the Python `SymbolType` member of `symbol_type`, such
 /// as `INT`.
-pub(super) fn symbol_type_name(symbol_type: SymbolType) -> &'static str {
+pub(super) const fn symbol_type_name(symbol_type: SymbolType) -> &'static str {
     match symbol_type {
         SymbolType::Real => "REAL",
         SymbolType::Int => "INT",
@@ -123,7 +123,7 @@ pub(crate) struct PySmtScript {
 
 impl PySmtScript {
     /// Return the Python script of `script`.
-    pub(super) fn new(script: SmtScript) -> Self {
+    pub(super) const fn new(script: SmtScript) -> Self {
         Self {
             script,
             text: OnceLock::new(),
@@ -132,7 +132,7 @@ impl PySmtScript {
     }
 
     /// Return the core script.
-    pub(super) fn script(&self) -> &SmtScript {
+    pub(super) const fn script(&self) -> &SmtScript {
         &self.script
     }
 
@@ -271,7 +271,7 @@ impl From<SatResult> for PySatResult {
 
 impl PySatResult {
     /// Return the core result.
-    pub(super) fn result(&self) -> &SatResult {
+    pub(super) const fn result(&self) -> &SatResult {
         &self.result
     }
 }
@@ -281,7 +281,7 @@ impl PySatResult {
     /// The assertions can hold together.
     #[classattr]
     #[pyo3(name = "SAT")]
-    fn sat() -> Self {
+    const fn sat() -> Self {
         Self {
             result: SatResult::Sat,
         }
@@ -290,7 +290,7 @@ impl PySatResult {
     /// The assertions cannot hold together.
     #[classattr]
     #[pyo3(name = "UNSAT")]
-    fn unsat() -> Self {
+    const fn unsat() -> Self {
         Self {
             result: SatResult::Unsat,
         }

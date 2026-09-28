@@ -89,7 +89,7 @@ pub(super) struct Lifter<'h> {
 }
 
 impl<'h> Lifter<'h> {
-    pub(super) fn new(handles: &'h Handles) -> Self {
+    pub(super) const fn new(handles: &'h Handles) -> Self {
         Self { handles }
     }
 

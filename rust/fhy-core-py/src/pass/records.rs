@@ -72,16 +72,16 @@ macro_rules! define_record_class {
 
             /// Always true: records are immutable.
             #[getter]
-            fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+            const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
                 true
             }
 
             /// Do nothing: records are always frozen.
-            fn freeze(_slf: &Bound<'_, Self>) {}
+            const fn freeze(_slf: &Bound<'_, Self>) {}
 
             /// Do nothing: records are always frozen, and mutating one
             /// raises.
-            fn assert_frozen(_slf: &Bound<'_, Self>) {}
+            const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
             /// Compare the tuples of the fields, for an object of exactly
             /// the same class.

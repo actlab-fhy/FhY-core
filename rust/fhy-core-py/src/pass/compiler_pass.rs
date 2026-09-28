@@ -205,7 +205,7 @@ impl PythonPass {
     }
 
     /// Return whether the class overrides the hook of `bit`.
-    fn overrides(&self, bit: u32) -> bool {
+    const fn overrides(&self, bit: u32) -> bool {
         self.hooks & bit != 0
     }
 
@@ -220,7 +220,7 @@ impl PythonPass {
     }
 
     /// Return the last failure of a hook, removing it.
-    pub(super) fn take_failure(&mut self) -> Option<FailureNote> {
+    pub(super) const fn take_failure(&mut self) -> Option<FailureNote> {
         self.failure.take()
     }
 

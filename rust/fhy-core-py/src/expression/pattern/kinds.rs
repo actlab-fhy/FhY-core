@@ -145,7 +145,7 @@ pub(crate) struct PyPattern {
     /// The field names, paired with `fields`.
     field_names: &'static [&'static str],
     /// The sub-pattern objects, in matching order.
-    sub_patterns: Vec<Py<PyPattern>>,
+    sub_patterns: Vec<Py<Self>>,
     /// The capture a capture pattern binds.
     capture: Option<Py<PyCapture>>,
     /// The capture object of every Rust capture in the pattern, collected
@@ -161,7 +161,7 @@ impl PyPattern {
         pattern: Pattern,
         fields: Bound<'_, PyTuple>,
         field_names: &'static [&'static str],
-        sub_patterns: &[Bound<'_, PyPattern>],
+        sub_patterns: &[Bound<'_, Self>],
         capture: Option<Py<PyCapture>>,
     ) -> PyClassInitializer<Self> {
         let depth = 1 + sub_patterns
@@ -184,12 +184,12 @@ impl PyPattern {
     }
 
     /// Return the Rust pattern.
-    pub(super) fn pattern(&self) -> &Pattern {
+    pub(super) const fn pattern(&self) -> &Pattern {
         &self.pattern
     }
 
     /// Return the number of pattern levels.
-    pub(super) fn depth(&self) -> usize {
+    pub(super) const fn depth(&self) -> usize {
         self.depth
     }
 
@@ -198,7 +198,7 @@ impl PyPattern {
         self.captures.get_or_try_init(py, || {
             let mut captures = CaptureObjects::new();
             let mut visited = HashSet::new();
-            let mut pending: Vec<Bound<'_, PyPattern>> = self
+            let mut pending: Vec<Bound<'_, Self>> = self
                 .sub_patterns
                 .iter()
                 .map(|sub_pattern| sub_pattern.bind(py).clone())
@@ -309,15 +309,15 @@ impl PyPattern {
 
     /// Always true: patterns are immutable.
     #[getter]
-    fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
         true
     }
 
     /// Do nothing: patterns are always frozen.
-    fn freeze(_slf: &Bound<'_, Self>) {}
+    const fn freeze(_slf: &Bound<'_, Self>) {}
 
     /// Do nothing: patterns are always frozen, and mutating one raises.
-    fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let _ = value;

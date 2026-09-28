@@ -73,7 +73,7 @@ const SORTS: [FunctionSort; 4] = [
 ];
 
 /// Return the position of `sort` in [`SORTS`].
-fn sort_index(sort: FunctionSort) -> usize {
+const fn sort_index(sort: FunctionSort) -> usize {
     match sort {
         FunctionSort::Bool => 0,
         FunctionSort::Nat => 1,
@@ -202,15 +202,15 @@ macro_rules! impl_entry_protocols {
 
             /// Return `True`: entries are always frozen.
             #[getter]
-            fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
+            const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
                 true
             }
 
             /// Do nothing: entries are always frozen.
-            fn freeze(_slf: &Bound<'_, Self>) {}
+            const fn freeze(_slf: &Bound<'_, Self>) {}
 
             /// Do nothing: entries are always frozen, and mutating one raises.
-            fn assert_frozen(_slf: &Bound<'_, Self>) {}
+            const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
             fn __setattr__(
                 slf: &Bound<'_, Self>,
@@ -379,12 +379,12 @@ impl PyRegisteredFunction {
     }
 
     /// Return whether this is a built-in's entry.
-    fn is_builtin(&self) -> bool {
+    const fn is_builtin(&self) -> bool {
         matches!(self.source, FunctionSource::Builtin(_))
     }
 
     /// Return the user definition, or `None` for a built-in.
-    pub(super) fn definition(&self) -> Option<&FunctionDefinition> {
+    pub(super) const fn definition(&self) -> Option<&FunctionDefinition> {
         match &self.source {
             FunctionSource::User(definition) => Some(definition),
             FunctionSource::Builtin(_) => None,
@@ -680,7 +680,7 @@ impl PyNativeFunction {
     }
 
     /// Return whether this is a built-in's entry.
-    fn is_builtin(&self) -> bool {
+    const fn is_builtin(&self) -> bool {
         matches!(self.source, NativeSource::Builtin)
     }
 
@@ -690,7 +690,7 @@ impl PyNativeFunction {
     }
 
     /// Return the user declaration, or `None` for a built-in.
-    pub(super) fn declaration(&self) -> Option<&NativeFunction> {
+    pub(super) const fn declaration(&self) -> Option<&NativeFunction> {
         match &self.source {
             NativeSource::User(function) => Some(function),
             NativeSource::Builtin => None,
@@ -879,12 +879,12 @@ impl PyNativeConstant {
     }
 
     /// Return whether this is a built-in's entry.
-    fn is_builtin(&self) -> bool {
+    const fn is_builtin(&self) -> bool {
         matches!(self.source, ConstantSource::Builtin)
     }
 
     /// Return the user declaration, or `None` for a built-in.
-    pub(super) fn declaration(&self) -> Option<&NativeConstant> {
+    pub(super) const fn declaration(&self) -> Option<&NativeConstant> {
         match &self.source {
             ConstantSource::User(constant) => Some(constant),
             ConstantSource::Builtin => None,
