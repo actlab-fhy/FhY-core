@@ -215,9 +215,8 @@ const POSITIONAL_FLOOR: f64 = 1e-5;
 /// writes with an exponent.
 const POSITIONAL_CEILING: f64 = 1e16;
 
-/// Write the canonical text of `value` (S-2 of
-/// `docs/design/rust-port-fixes.md`): `NaN`, `inf` and `-inf`; `0` and `-0`;
-/// Rust's shortest round-trip positional text for a magnitude in
+/// Write the canonical text of `value`: `NaN`, `inf` and `-inf`; `0` and
+/// `-0`; Rust's shortest round-trip positional text for a magnitude in
 /// `[1e-5, 1e16)`; and Rust's shortest round-trip exponent text otherwise.
 ///
 /// Every float text the crate writes goes through it: the literal and

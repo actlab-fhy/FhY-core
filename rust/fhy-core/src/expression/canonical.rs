@@ -1,5 +1,5 @@
 //! The canonical node table of an expression: each distinct node once,
-//! children by table index (S-1 of `docs/design/rust-port-fixes.md`).
+//! children by table index.
 //!
 //! The wire format serializes the table under [`Equivalence::Wire`], and the
 //! constraint ordering keys render it under [`Equivalence::Structural`].

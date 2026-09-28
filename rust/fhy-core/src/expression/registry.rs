@@ -14,7 +14,7 @@
 //!
 //! Every entry is keyed by a [`FunctionName`]: functions and constants share
 //! one namespace, the one calls name functions in. A built-in function's
-//! name is no [`FunctionName`] (D-9), and the registry refuses a built-in
+//! name is no [`FunctionName`], and the registry refuses a built-in
 //! constant's name too, so a name never means both a built-in and an entry.
 //! Built-ins are never entries: [`inline`](FunctionRegistry::inline) and the
 //! screens read them from the catalogue.
