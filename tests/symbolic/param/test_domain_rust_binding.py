@@ -406,6 +406,7 @@ def test_a_natural_domain_admits_only_its_own_values(
     assert IntegerDomain().is_value_admissible(value) is True
 
 
+@pytest.mark.z3
 def test_domain_questions_fold_in_the_domain_s_restriction() -> None:
     """Test the TYP probe's rows answer as a param over the domain does."""
     x, y = Identifier("x"), Identifier("y")

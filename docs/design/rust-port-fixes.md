@@ -3935,6 +3935,12 @@ track's two DAG stories. The per-commit gates pass on the rebased head
 (`cargo test --workspace` 4,924, `--all-features` 4,960) with no
 fix-forward.
 
+**Fixed forward: a z3 marker.** `c4d62a4` (R2-021) left
+`test_domain_questions_fold_in_the_domain_s_restriction`, which asks the
+default solver numeric questions, without `@pytest.mark.z3`, so nox
+`tests_minimal` (no z3-solver installed) failed on it; the marker is added
+(`tests_minimal`: 6,367 passed, 666 skipped).
+
 **R2-008.**
 - **The module.** `expression/literal/exact.rs` (crate-private, one
   `pub(crate) mod exact;` line in Track B's `literal.rs`, and a
