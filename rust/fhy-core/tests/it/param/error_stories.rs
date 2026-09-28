@@ -77,7 +77,7 @@ fn the_value_checks_return_assignment_errors() {
     let observer = RecordingParamObserver::default();
     let context = context(&solver, &observer);
     let x = Identifier::new("x");
-    let param = Param::new(integer(), x.clone(), [], &context).expect("builds");
+    let param = Param::new(integer(), x, [], &context).expect("builds");
 
     let environment: Result<Bindings, AssignmentError> =
         param.environment(Binding::Value(int(1)), &Bindings::new());

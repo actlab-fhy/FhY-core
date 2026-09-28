@@ -374,7 +374,7 @@ fn evaluate_refuses_a_boolean_under_negation_and_as_a_native_argument() {
     let negation = evaluate(&-&reference, &[(&p, Scalar::Bool(true))]).expect_err("-true");
     let positive = evaluate(&reference.positive(), &[(&p, Scalar::Bool(true))]).expect_err("+true");
     let argument = evaluate(
-        &call(BuiltinFunction::Exp, [reference.clone()]),
+        &call(BuiltinFunction::Exp, [reference]),
         &[(&p, Scalar::Bool(true))],
     )
     .expect_err("exp(true)");
@@ -495,7 +495,7 @@ fn a_piecewise_guards_a_non_finite_cast() {
             reference.greater_equal(0),
             call(
                 BuiltinFunction::Floor,
-                [call(BuiltinFunction::Sqrt, [reference.clone()])],
+                [call(BuiltinFunction::Sqrt, [reference])],
             ),
         )],
         0,
@@ -519,7 +519,7 @@ fn a_piecewise_raises_the_failure_of_the_branch_it_selects() {
             reference.less(0),
             call(
                 BuiltinFunction::Floor,
-                [call(BuiltinFunction::Sqrt, [reference.clone()])],
+                [call(BuiltinFunction::Sqrt, [reference])],
             ),
         )],
         0,
@@ -649,7 +649,7 @@ fn evaluate_computes_native_builtins_and_casts_integer_results() {
         &bindings,
     );
     let root = evaluate(&call(BuiltinFunction::Sqrt, [build_literal(-1.0)]), &[]);
-    let erf = evaluate(&call(BuiltinFunction::Erf, [reference.clone()]), &bindings);
+    let erf = evaluate(&call(BuiltinFunction::Erf, [reference]), &bindings);
     let out_of_range = evaluate(&call(BuiltinFunction::Floor, [build_literal(1e300)]), &[]);
 
     assert_eq!(rounded.unwrap(), Scalar::Int(2));
@@ -728,7 +728,7 @@ fn evaluate_reports_an_inlining_error() {
 #[test]
 fn evaluate_screens_with_the_value_kinds_of_the_bindings() {
     let (x, reference) = build_identifier("x");
-    let tree = Expression::all([reference.clone(), build_literal(true)]);
+    let tree = Expression::all([reference, build_literal(true)]);
 
     let error = evaluate(&tree, &[(&x, Scalar::Int(1))]).expect_err("an integer operand");
 

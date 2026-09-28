@@ -95,7 +95,7 @@ fn members_are_sorted_by_key_keeping_duplicates() {
     let (x, y) = (Identifier::new("x"), Identifier::new("y"));
     let first = not_in_set(&y, &[1]);
     let second = in_set(&x, &[2]);
-    let third = equation(Expression::from(x.clone()).less(1));
+    let third = equation(Expression::from(x).less(1));
 
     let system = ConstraintSystem::new([first, second.clone(), third, second])
         .expect("every member has a key");
@@ -424,7 +424,7 @@ fn a_set_member_of_the_other_numeric_kind_is_refused_in_every_question() {
     let implication =
         excluded.check_implication(&unequal, &int_types, CheckLimits::new(), &context);
     let residual = included.check_satisfiability_with_bindings(
-        &bind([(x.clone(), Expression::from(y.clone()) + 1)]),
+        &bind([(x, Expression::from(y) + 1)]),
         &int_types,
         CheckLimits::new(),
         &context,
@@ -786,7 +786,7 @@ fn implication_needs_symbol_types_for_both_sides() {
     );
 
     assert!(
-        matches!(&outcome, Err(ConstraintError::MissingSymbolTypes(identifiers)) if *identifiers == vec![y.clone()]),
+        matches!(&outcome, Err(ConstraintError::MissingSymbolTypes(identifiers)) if *identifiers == vec![y]),
         "{outcome:?}"
     );
 }
@@ -881,8 +881,8 @@ fn systems_with_colliding_opaque_keys_are_equivalent_in_either_order() {
     assert_ne!(one, two);
 
     let forward = ConstraintSystem::new([one.clone(), two.clone()]).expect("a system");
-    let backward = ConstraintSystem::new([two.clone(), one.clone()]).expect("a system");
-    let other = ConstraintSystem::new([one.clone(), one.clone()]).expect("a system");
+    let backward = ConstraintSystem::new([two, one.clone()]).expect("a system");
+    let other = ConstraintSystem::new([one.clone(), one]).expect("a system");
 
     assert!(forward.is_structurally_equivalent(&backward));
     assert_eq!(forward, backward);

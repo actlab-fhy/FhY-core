@@ -236,11 +236,7 @@ fn a_table_whose_child_was_added_before_its_parent_round_trips() {
         .expect("new");
     table.add_namespace(parent.clone(), None).expect("new");
     table
-        .add_symbol(
-            &child,
-            x.clone(),
-            SymbolFrame::Import(ImportFrame::new(x.clone())),
-        )
+        .add_symbol(&child, x.clone(), SymbolFrame::Import(ImportFrame::new(x)))
         .expect("new");
     assert!(table.violations().is_empty());
 

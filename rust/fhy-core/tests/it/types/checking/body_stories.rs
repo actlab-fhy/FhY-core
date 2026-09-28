@@ -256,7 +256,7 @@ fn a_signature_with_mismatched_lengths_is_refused() {
     assert_eq!(
         error,
         SignatureError::LengthMismatch {
-            function: FunctionLabel::User(function.clone()),
+            function: FunctionLabel::User(function),
             parameters: 2,
             parameter_sorts: 1,
         }

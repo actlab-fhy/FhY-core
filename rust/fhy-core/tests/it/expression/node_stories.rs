@@ -1569,10 +1569,7 @@ fn children_report_their_exact_length() {
         (&x + 1, 2),
         (Expression::all([x.greater(0), x.less(5), x.less(9)]), 3),
         (piecewise, 5),
-        (
-            Expression::call(BuiltinFunction::Max, [x.clone(), x.clone()]),
-            2,
-        ),
+        (Expression::call(BuiltinFunction::Max, [x.clone(), x]), 2),
     ];
 
     for (expression, length) in cases {
@@ -1608,7 +1605,7 @@ fn occurrence_count_saturates_and_is_linear() {
         "2^(levels + 1) - 1 occurrences, saturating"
     );
     assert_eq!((&x + 1).occurrence_count(), 3);
-    let piecewise = Expression::piecewise([(x.greater(0), x.clone())], Expression::from(0))
-        .expect("a valid piecewise");
+    let piecewise =
+        Expression::piecewise([(x.greater(0), x)], Expression::from(0)).expect("a valid piecewise");
     assert_eq!(piecewise.occurrence_count(), 6);
 }

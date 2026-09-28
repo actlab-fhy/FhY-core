@@ -239,7 +239,7 @@ fn boolean_coercion_hazard_refuses_a_piecewise_mixing_a_boolean_and_a_number() {
     let (b, b_reference) = build_identifier("b");
     let mixed = Expression::piecewise([(b_reference, build_literal(1))], build_literal(true))
         .expect("a piecewise");
-    let expression = mixed.clone().equals(1);
+    let expression = mixed.equals(1);
 
     assert_eq!(
         find(&expression, &build_symbol_types(&[(&b, SymbolType::Bool)])),
@@ -280,7 +280,7 @@ fn partial_operation_hazard_refuses_a_division_by_a_variable() {
     let division = reference.clone() / reference;
 
     let hazard = find(
-        &division.clone().not_equals(1.0),
+        &division.not_equals(1.0),
         &build_symbol_types(&[(&x, SymbolType::Real)]),
     );
 
@@ -298,7 +298,7 @@ fn partial_operation_hazard_refuses_a_floor_operation_without_a_positive_divisor
 ) {
     let applied = build_binary(operation, build_literal(7), build_literal(divisor));
 
-    let hazard = find(&applied.clone().equals(-4), &HashMap::new());
+    let hazard = find(&applied.equals(-4), &HashMap::new());
 
     assert_eq!(hazard, Some(Hazard::PartialOperation(applied)));
 }
@@ -376,10 +376,7 @@ fn partial_operation_hazard_reads_a_real_dividend_through_negation(
     let dividend = if is_negated { -reference } else { reference };
     let division = dividend / 2;
 
-    let hazard = find(
-        &division.clone().greater(0.0),
-        &build_symbol_types(&[(&x, sort)]),
-    );
+    let hazard = find(&division.greater(0.0), &build_symbol_types(&[(&x, sort)]));
 
     assert_eq!(
         hazard,
@@ -415,7 +412,7 @@ fn partial_operation_hazard_refuses_an_unsafe_exponent(
     let power = base.power(exponent);
     let symbol_types = |_: &Identifier| Some(SymbolType::Int);
 
-    let hazard = Hazard::find(&power.clone().equals(1), &symbol_types, &NoRegisteredSorts);
+    let hazard = Hazard::find(&power.equals(1), &symbol_types, &NoRegisteredSorts);
 
     assert_eq!(hazard, Some(Hazard::PartialOperation(power)));
 }
@@ -491,7 +488,7 @@ fn find_admits_an_equality_of_a_literal_with_an_operand_of_the_other_kind(
 fn find_for_membership_reports_the_other_hazards_first() {
     let (x, reference) = build_identifier("x");
     let division = reference.clone() / reference.clone();
-    let expression = Expression::all([reference.equals(1.5), division.clone().equals(1)]);
+    let expression = Expression::all([reference.equals(1.5), division.equals(1)]);
 
     assert_eq!(
         find_for_membership(&expression, &build_symbol_types(&[(&x, SymbolType::Int)])),
@@ -553,8 +550,8 @@ fn mixed_equality_hazard_admits_a_literal_of_the_same_kind_or_an_ordering(
 #[case::floor_division(build_identifier("y").1.floor_divide(2))]
 fn mixed_equality_hazard_follows_the_integer_kind_through_arithmetic(#[case] operand: Expression) {
     let int_types = |_: &Identifier| Some(SymbolType::Int);
-    let against_a_float = operand.clone().equals(3.0);
-    let against_an_int = operand.clone().equals(3);
+    let against_a_float = operand.equals(3.0);
+    let against_an_int = operand.equals(3);
     let float_on_the_left = build_literal(3.0).equals(operand);
 
     assert_eq!(
@@ -684,7 +681,7 @@ fn mixed_equality_hazard_reads_a_builtin_call_kind_from_the_catalogue() {
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Real)]);
     let floored = Expression::call(BuiltinFunction::Floor, [reference.clone()]);
     let absolute = Expression::call(BuiltinFunction::Abs, [reference]);
-    let floor_against_a_float = floored.clone().equals(1.5);
+    let floor_against_a_float = floored.equals(1.5);
 
     assert_eq!(
         find_for_membership(&floor_against_a_float, &symbol_types),
@@ -714,7 +711,7 @@ fn mixed_equality_hazard_refuses_an_unknown_function_against_a_literal() {
 #[test]
 fn mixed_equality_hazard_is_found_below_the_root() {
     let (x, reference) = build_identifier("x");
-    let hazard = reference.clone().equals(1.5);
+    let hazard = reference.equals(1.5);
     let expression = Expression::all([reference.greater(0), hazard.clone()]);
 
     assert_eq!(
@@ -737,15 +734,11 @@ fn hazard_kinds_are_checked_in_order_whatever_the_node_order() {
         (&y, SymbolType::Real),
         (&b, SymbolType::Bool),
     ]);
-    let equality = x_reference.clone().equals(1.5);
+    let equality = x_reference.equals(1.5);
     let division = y_reference.clone() / y_reference;
     let coercion = x_reference.equals(b_reference);
-    let expression = Expression::all([
-        equality.clone(),
-        division.clone().greater(0.0),
-        coercion.clone(),
-    ]);
-    let without_coercion = Expression::all([equality, division.clone().greater(0.0)]);
+    let expression = Expression::all([equality.clone(), division.greater(0.0), coercion.clone()]);
+    let without_coercion = Expression::all([equality, division.greater(0.0)]);
 
     assert_eq!(
         find(&expression, &symbol_types),
@@ -765,7 +758,7 @@ fn hazard_of_a_kind_is_the_first_node_in_pre_order() {
     let inner = b_reference.clone() / b_reference;
     let outer = a_reference.clone() / inner.clone();
     let later = a_reference.clone() / a_reference;
-    let expression = Expression::all([outer.clone().greater(0.0), later.greater(0.0)]);
+    let expression = Expression::all([outer.greater(0.0), later.greater(0.0)]);
 
     assert_eq!(
         find(&expression, &symbol_types),
@@ -790,11 +783,8 @@ fn hazard_screen_walks_a_deep_chain_on_a_small_stack() {
             chain = chain + 1;
         }
         let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
-        let admitted = Hazard::find_for_membership(
-            &chain.clone().equals(3),
-            &symbol_types,
-            &NoRegisteredSorts,
-        );
+        let admitted =
+            Hazard::find_for_membership(&chain.equals(3), &symbol_types, &NoRegisteredSorts);
         let refused =
             Hazard::find_for_membership(&chain.equals(3.0), &symbol_types, &NoRegisteredSorts);
         (
@@ -834,7 +824,7 @@ fn hazard_screen_classifies_a_shared_dag_in_linear_time() {
     }
 
     let refused = find_for_membership(
-        &dag.clone().equals(1.5),
+        &dag.equals(1.5),
         &build_symbol_types(&[(&x, SymbolType::Int)]),
     );
     let admitted = find_for_membership(

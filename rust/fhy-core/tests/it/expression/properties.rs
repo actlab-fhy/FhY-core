@@ -473,7 +473,7 @@ proptest! {
         };
 
         let expected = collect_sharing_by(&dag, |left, right| encoded(left) == encoded(right));
-        prop_assert_eq!(encoded(&from_text), text.clone(), "decoding and encoding again is the identity");
+        prop_assert_eq!(encoded(&from_text), text, "decoding and encoding again is the identity");
         for restored in [&from_text, &from_bytes] {
             prop_assert_eq!(restored, &dag);
             prop_assert_eq!(collect_sharing(restored), expected.clone());

@@ -170,14 +170,14 @@ enum IntTerm {
     X,
     Y,
     Literal(i64),
-    Add(Box<IntTerm>, Box<IntTerm>),
-    Subtract(Box<IntTerm>, Box<IntTerm>),
-    Multiply(Box<IntTerm>, Box<IntTerm>),
-    Negate(Box<IntTerm>),
-    FloorDivide(Box<IntTerm>, i64),
-    FloorMod(Box<IntTerm>, i64),
-    Square(Box<IntTerm>),
-    Piecewise(Box<Predicate>, Box<IntTerm>, Box<IntTerm>),
+    Add(Box<Self>, Box<Self>),
+    Subtract(Box<Self>, Box<Self>),
+    Multiply(Box<Self>, Box<Self>),
+    Negate(Box<Self>),
+    FloorDivide(Box<Self>, i64),
+    FloorMod(Box<Self>, i64),
+    Square(Box<Self>),
+    Piecewise(Box<Predicate>, Box<Self>, Box<Self>),
 }
 
 /// A generated predicate over integer terms and the flag.
@@ -185,9 +185,9 @@ enum IntTerm {
 enum Predicate {
     Compare(BinaryOperation, IntTerm, IntTerm),
     Flag,
-    And(Box<Predicate>, Box<Predicate>),
-    Or(Box<Predicate>, Box<Predicate>),
-    Not(Box<Predicate>),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+    Not(Box<Self>),
 }
 
 fn comparison() -> impl Strategy<Value = BinaryOperation> {
@@ -775,9 +775,7 @@ fn exact_evaluation_floors_toward_negative_infinity() {
     let seven = Expression::literal(7);
 
     assert_eq!(
-        evaluate_exactly(&seven.clone().floor_divide(-2))
-            .numerator
-            .to_i64(),
+        evaluate_exactly(&seven.floor_divide(-2)).numerator.to_i64(),
         Some(-4)
     );
     assert_eq!(

@@ -153,7 +153,7 @@ fn missing_symbol_types_cover_both_sides_of_an_implication_but_no_constant() {
 
     let implication = ask_error(
         &Question::Implication {
-            antecedent: &pi.clone().less(x_reference),
+            antecedent: &pi.less(x_reference),
             consequent: &y_reference.greater(0),
         },
         &HashMap::new(),
@@ -220,7 +220,7 @@ fn symbol_typed_operand_in_a_boolean_position_is_ill_typed_despite_a_hazard() {
 #[test]
 fn hazard_answers_unknown_without_asking_the_backend() {
     let (x, reference) = build_identifier("x");
-    let hazard = reference.clone().equals(build_literal(true));
+    let hazard = reference.equals(build_literal(true));
     let backend = RecordingSmtSolver::answering(SatResult::Sat);
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
 
@@ -247,13 +247,13 @@ fn each_expression_is_screened_on_its_own_antecedent_first() {
     let (x, reference) = build_identifier("x");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
     let division = reference.clone() / 2;
-    let coercion = reference.clone().equals(build_literal(true));
+    let coercion = reference.equals(build_literal(true));
 
     let answer = RecordingSmtSolver::answering(SatResult::Sat)
         .solver()
         .ask(
             &Question::Implication {
-                antecedent: &division.clone().equals(1),
+                antecedent: &division.equals(1),
                 consequent: &coercion,
             },
             &QueryContext::new(&symbol_types),
@@ -286,7 +286,7 @@ fn x_int_equal_to_1_0_is_answered() {
     // and so does the lowering's `to_real`.
     let (x, reference) = build_identifier("x");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
-    let antecedent = reference.clone().equals(1);
+    let antecedent = reference.equals(1);
     let consequent = reference.equals(1.0);
 
     let (answer, script) = ask_answering(
@@ -365,10 +365,7 @@ fn user_constant_is_read_from_the_sorts_of_the_context() {
 fn call_has_no_lowering_after_the_screens_pass() {
     let call = Expression::call(FunctionName::new("f").expect("a name"), [build_literal(1)]);
 
-    let error = ask_error(
-        &Question::Satisfiability(&call.clone().greater(0)),
-        &HashMap::new(),
-    );
+    let error = ask_error(&Question::Satisfiability(&call.greater(0)), &HashMap::new());
 
     assert!(matches!(error, SolveError::Lowering(LoweringError::Call(node)) if node == call));
 }

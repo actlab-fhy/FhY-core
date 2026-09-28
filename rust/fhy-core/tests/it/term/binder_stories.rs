@@ -194,7 +194,7 @@ fn substitute_leaves_a_key_the_lambda_binds_shadowed() {
     let identity = lam([&x], var(&x));
 
     let result = identity
-        .substitute(&HashMap::from([(x.clone(), var(&y))]))
+        .substitute(&HashMap::from([(x, var(&y))]))
         .expect("infallible");
 
     assert!(expect_lam(&result).ptr_eq(expect_lam(&identity)));
@@ -210,7 +210,7 @@ fn substitute_with_no_applying_key_returns_the_same_handle() {
         .substitute_avoiding_capture(&empty)
         .expect("infallible");
     let bound_only = identity
-        .substitute_avoiding_capture(&HashMap::from([(x.clone(), var(&unrelated))]))
+        .substitute_avoiding_capture(&HashMap::from([(x, var(&unrelated))]))
         .expect("infallible");
 
     assert!(result.ptr_eq(&identity));
@@ -223,7 +223,7 @@ fn substitute_rewrites_a_free_identifier_of_the_body_in_place() {
     let term = lam([&x], app(var(&x), var(&y)));
 
     let result = term
-        .substitute(&HashMap::from([(y.clone(), var(&z))]))
+        .substitute(&HashMap::from([(y, var(&z))]))
         .expect("infallible");
 
     assert_eq!(result, lam([&x], app(var(&x), var(&z))));
@@ -235,7 +235,7 @@ fn substitute_renames_a_binder_that_would_capture_a_replacement() {
     let term = lam([&x], var(&y));
 
     let result = term
-        .substitute(&HashMap::from([(y.clone(), var(&x))]))
+        .substitute(&HashMap::from([(y, var(&x))]))
         .expect("infallible");
 
     let renamed = expect_lam(&result);
@@ -253,7 +253,7 @@ fn substitute_renames_only_the_parameters_a_replacement_would_capture() {
     let term = lam([&x, &z], app(var(&x), app(var(&z), var(&w))));
 
     let result = term
-        .substitute(&HashMap::from([(w.clone(), var(&x))]))
+        .substitute(&HashMap::from([(w, var(&x))]))
         .expect("infallible");
 
     let renamed = expect_lam(&result);
@@ -344,7 +344,7 @@ fn a_repeated_binder_is_renamed_once() {
     };
 
     let substituted = binder
-        .substitute_avoiding_capture(&HashMap::from([(z.clone(), var(&x))]))
+        .substitute_avoiding_capture(&HashMap::from([(z, var(&x))]))
         .expect("infallible");
 
     assert_eq!(
@@ -424,11 +424,11 @@ fn a_binder_over_expressions_compares_its_bodies_under_the_parameter_frame() {
     let [x, y, z] = build_identifiers(["x", "y", "z"]);
     let left = Function {
         parameters: vec![x.clone()],
-        bodies: vec![Expression::from(x.clone()) + Expression::from(z.clone())],
+        bodies: vec![Expression::from(x) + Expression::from(z.clone())],
     };
     let right = Function {
         parameters: vec![y.clone()],
-        bodies: vec![Expression::from(y.clone()) + Expression::from(z.clone())],
+        bodies: vec![Expression::from(y) + Expression::from(z.clone())],
     };
 
     assert_eq!(
@@ -499,7 +499,7 @@ fn expression_through_the_traits_agrees_with_its_methods() {
     renaming
         .enter_binders(std::slice::from_ref(&x), std::slice::from_ref(&y))
         .expect("one pair");
-    let replacements = HashMap::from([(z.clone(), Expression::from(2))]);
+    let replacements = HashMap::from([(z, Expression::from(2))]);
 
     let Ok(under_renaming) = AlphaEquivalence::is_alpha_equivalent_under(&left, &right, &renaming);
     let Ok(without_renaming) = AlphaEquivalence::is_alpha_equivalent(&left, &right);

@@ -205,7 +205,7 @@ fn full_type_binding_conflicting_with_an_existing_one_is_refused() {
     let t = Identifier::new("T");
     let pattern = array(template(&t), [Dimension::Wildcard]);
     let bound = array(int32(), [literal_dimension(2)]);
-    let environment = empty().with_type_binding(t.clone(), bound.clone());
+    let environment = empty().with_type_binding(t.clone(), bound);
     let actual = array(int32(), [literal_dimension(3)]);
 
     let error = pattern
@@ -1207,7 +1207,7 @@ fn an_index_type_substitution_keeps_its_handle_unless_a_bound_changes() {
         reference(&n),
         Expression::from(1),
     ));
-    let environment = empty().with_expression_binding(n.clone(), Expression::from(8));
+    let environment = empty().with_expression_binding(n, Expression::from(8));
 
     let unchanged = pattern
         .substitute_template(&environment)

@@ -1198,8 +1198,8 @@ fn natural_feasibility_folds_in_the_sign_bound() {
             .expect("decides"),
         Outcome::Satisfied
     );
-    let param = fhy_core::param::Param::new(natural(), x.clone(), constraints.to_vec(), &context)
-        .expect("a bound");
+    let param =
+        fhy_core::param::Param::new(natural(), x, constraints.to_vec(), &context).expect("a bound");
     assert_eq!(
         param.check_feasibility(&context).ok(),
         Some(Outcome::Violated)

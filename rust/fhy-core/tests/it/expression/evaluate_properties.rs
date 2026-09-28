@@ -100,20 +100,15 @@ fn tree_strategies(depth: u32) -> (BoxedStrategy<Expression>, BoxedStrategy<Expr
         .boxed();
         let next_boolean = prop_oneof![
             boolean.clone(),
-            (
-                select(COMPARISONS.to_vec()),
-                numeric.clone(),
-                numeric.clone()
-            )
-                .prop_map(|(operation, left, right)| Expression::new_binary(
-                    operation, left, right
-                )),
+            (select(COMPARISONS.to_vec()), numeric.clone(), numeric).prop_map(
+                |(operation, left, right)| Expression::new_binary(operation, left, right)
+            ),
             (boolean.clone(), boolean.clone())
                 .prop_map(|(left, right)| Expression::all([left, right])),
             (boolean.clone(), boolean.clone())
                 .prop_map(|(left, right)| Expression::any([left, right])),
             boolean.clone().prop_map(|operand| !operand),
-            (boolean.clone(), boolean.clone(), boolean.clone()).prop_map(
+            (boolean.clone(), boolean.clone(), boolean).prop_map(
                 |(condition, value, otherwise)| {
                     Expression::piecewise([(condition, value)], otherwise)
                         .expect("a valid piecewise")

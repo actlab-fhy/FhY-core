@@ -318,7 +318,7 @@ fn integer_side_meeting_a_real_is_converted_with_to_real_in_every_position() {
     );
     assert_eq!(
         asserted(&lower(
-            &n_reference.clone().less(r_reference.clone()),
+            &n_reference.less(r_reference.clone()),
             &symbol_types
         )),
         format!("(< (to_real {n_symbol}) {r_symbol})")
@@ -337,7 +337,7 @@ fn integer_side_meeting_a_real_is_converted_with_to_real_in_every_position() {
 fn integer_literal_in_a_real_position_is_a_real_numeral() {
     let (r, reference) = build_identifier("r");
     let symbol_types = build_symbol_types(&[(&r, SymbolType::Real)]);
-    let script = lower(&(reference.clone() + 1).greater(-2), &symbol_types);
+    let script = lower(&(reference + 1).greater(-2), &symbol_types);
 
     assert_eq!(
         asserted(&script),
@@ -351,7 +351,7 @@ fn division_is_exact_over_the_reals() {
     let (n, n_reference) = build_identifier("n");
     let (r, r_reference) = build_identifier("r");
     let symbol_types = build_symbol_types(&[(&n, SymbolType::Int), (&r, SymbolType::Real)]);
-    let integer_division = lower(&(n_reference.clone() / 2), &symbol_types);
+    let integer_division = lower(&(n_reference / 2), &symbol_types);
     let real_division = lower(&(r_reference.clone() / r_reference), &symbol_types);
 
     assert_eq!(
@@ -379,11 +379,11 @@ fn integer_floor_division_divides_by_the_sign_of_the_divisor() {
     let (xs, ys) = (quoted_symbol(&x), quoted_symbol(&y));
 
     assert_eq!(
-        asserted_over(&x_reference.clone().floor_divide(3), SymbolType::Int),
+        asserted_over(&x_reference.floor_divide(3), SymbolType::Int),
         format!("(= value (div {xs} 3))")
     );
     assert_eq!(
-        asserted_over(&x_reference.clone().floor_divide(-3), SymbolType::Int),
+        asserted_over(&x_reference.floor_divide(-3), SymbolType::Int),
         format!("(= value (div (- {xs}) 3))")
     );
     assert_eq!(
@@ -399,11 +399,11 @@ fn integer_floor_modulo_takes_the_sign_of_the_divisor() {
     let (xs, ys) = (quoted_symbol(&x), quoted_symbol(&y));
 
     assert_eq!(
-        asserted_over(&x_reference.clone().floor_mod(3), SymbolType::Int),
+        asserted_over(&x_reference.floor_mod(3), SymbolType::Int),
         format!("(= value (mod {xs} 3))")
     );
     assert_eq!(
-        asserted_over(&x_reference.clone().floor_mod(-3), SymbolType::Int),
+        asserted_over(&x_reference.floor_mod(-3), SymbolType::Int),
         format!("(= value (- (mod (- {xs}) 3)))")
     );
     assert_eq!(
@@ -418,7 +418,7 @@ fn real_floor_operations_go_through_to_int() {
     let (y, y_reference) = build_identifier("y");
     let (xs, ys) = (quoted_symbol(&x), quoted_symbol(&y));
     let floor_division = SmtScript::lower(
-        &x_reference.clone().floor_divide(y_reference.clone()),
+        &x_reference.floor_divide(y_reference.clone()),
         &|_: &Identifier| Some(SymbolType::Real),
         &NoRegisteredSorts,
     )
@@ -554,11 +554,7 @@ fn connectives_are_n_ary_and_or_and_not() {
 
     assert_eq!(
         asserted_over(
-            &Expression::all([
-                a_reference.clone(),
-                b_reference.clone(),
-                c_reference.clone()
-            ]),
+            &Expression::all([a_reference.clone(), b_reference.clone(), c_reference]),
             SymbolType::Bool
         ),
         format!("(and {sa} {sb} {sc})")
@@ -583,7 +579,7 @@ fn piecewise_is_a_right_folded_ite_whose_first_match_wins() {
     let piecewise = Expression::piecewise(
         [
             (reference.clone().less(0), build_literal(-1)),
-            (reference.clone().equals(0), build_literal(0)),
+            (reference.equals(0), build_literal(0)),
         ],
         build_literal(1),
     )
@@ -653,7 +649,7 @@ fn logic_is_linear_only_for_numeral_coefficients_and_divisors() {
     let divided_by_a_sum = reference.clone() / (build_literal(4.0) + 1.0);
 
     assert_eq!(
-        lower(&scaled.greater(reference.clone()), &symbol_types).logic(),
+        lower(&scaled.greater(reference), &symbol_types).logic(),
         Logic::QfLra
     );
     assert_eq!(
@@ -820,7 +816,7 @@ fn piecewise_mixing_a_boolean_and_a_number_is_refused() {
 #[case::native_builtin(Expression::call(BuiltinFunction::Exp, [build_literal(1)]), r#"smt-lib2 has no term for a call of the native built-in "exp""#)]
 #[case::named(Expression::call(FunctionName::new("f").expect("a name"), [build_literal(1)]), r#"smt-lib2 has no term for a call of "f"; a user function must be inlined first with inline_functions"#)]
 fn call_is_refused_naming_the_callee(#[case] call: Expression, #[case] text: &str) {
-    let error = refuse(&call.clone().greater(0), &HashMap::new());
+    let error = refuse(&call.greater(0), &HashMap::new());
 
     assert_eq!(error, LoweringError::Call(call));
     assert_eq!(error.to_string(), text);
@@ -848,7 +844,7 @@ fn lowering_errors_display_one_lowercase_line() {
         "smt-lib2 has no term for the non-finite float inf"
     );
     assert_eq!(
-        LoweringError::SortMismatch(node.clone()).to_string(),
+        LoweringError::SortMismatch(node).to_string(),
         "a boolean and a number meet in the node (x + 1)"
     );
     assert_eq!(

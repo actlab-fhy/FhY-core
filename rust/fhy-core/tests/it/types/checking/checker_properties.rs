@@ -23,8 +23,8 @@ use proptest::prelude::*;
 enum Tree {
     Leaf(usize),
     Literal(u8),
-    Add(Box<Tree>, Box<Tree>),
-    Multiply(Box<Tree>, Box<Tree>),
+    Add(Box<Self>, Box<Self>),
+    Multiply(Box<Self>, Box<Self>),
 }
 
 fn tree_strategy() -> impl Strategy<Value = Tree> {
@@ -227,11 +227,11 @@ enum Broad {
     /// A float literal, the half of the value.
     Float(i8),
     Boolean(bool),
-    Unary(UnaryOperation, Box<Broad>),
-    Binary(BinaryOperation, Box<Broad>, Box<Broad>),
+    Unary(UnaryOperation, Box<Self>),
+    Binary(BinaryOperation, Box<Self>, Box<Self>),
     /// A conjunction when `true`, a disjunction otherwise.
-    Logical(bool, Box<Broad>, Box<Broad>),
-    Piecewise(Box<Broad>, Box<Broad>, Box<Broad>),
+    Logical(bool, Box<Self>, Box<Self>),
+    Piecewise(Box<Self>, Box<Self>, Box<Self>),
 }
 
 const UNARY: [UnaryOperation; 3] = [

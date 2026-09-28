@@ -377,10 +377,10 @@ enum PatternShape {
     AnyLiteral,
     AnyIdentifier,
     Capture(usize),
-    CapturedAs(Box<PatternShape>, usize),
-    Unary(Box<PatternShape>),
-    Binary(Box<PatternShape>, Box<PatternShape>),
-    Alternatives(Vec<PatternShape>),
+    CapturedAs(Box<Self>, usize),
+    Unary(Box<Self>),
+    Binary(Box<Self>, Box<Self>),
+    Alternatives(Vec<Self>),
 }
 
 const CAPTURE_POOL_SIZE: usize = 4;

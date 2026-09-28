@@ -599,7 +599,7 @@ fn build_example_terms() -> Vec<Binders> {
         Binders::new([&q], q_reference.clone()),
         Binders::new([&p], &p_reference + &r_reference),
         Binders::new([&p, &q], &p_reference + &q_reference),
-        Binders::new([&p, &q], p_reference.clone()),
+        Binders::new([&p, &q], p_reference),
         Binders::new([&p, &q], q_reference.clone()),
         Binders::new([&a, &a], a_reference),
         Binders::new([&q, &p], q_reference),
@@ -678,7 +678,7 @@ fn alpha_renaming_extended_equals_a_clone_that_enters_the_frame() {
     let extended = renaming
         .extended(build_map([(&x, &y)]))
         .expect("one pair is injective");
-    let mut entered = renaming.clone();
+    let mut entered = renaming;
     entered
         .enter_binder(build_map([(&x, &y)]))
         .expect("one pair is injective");
@@ -733,8 +733,8 @@ fn alpha_renaming_equal_renamings_built_in_different_orders_hash_alike() {
     forward.insert(free_a.clone(), free_b.clone());
     forward.insert(free_c.clone(), free_d.clone());
     let mut backward = HashMap::new();
-    backward.insert(free_c.clone(), free_d.clone());
-    backward.insert(free_a.clone(), free_b.clone());
+    backward.insert(free_c, free_d);
+    backward.insert(free_a, free_b);
     let frames = || {
         vec![
             build_map([(&bound_x, &bound_y), (&bound_z, &bound_w)]),
@@ -784,11 +784,7 @@ fn alpha_renaming_views_list_the_free_renaming_and_the_frames_outermost_first() 
     assert_eq!(renaming.frames().len(), 3);
     assert_eq!(
         frames,
-        vec![
-            vec![(x.clone(), y.clone())],
-            Vec::new(),
-            vec![(p.clone(), q.clone())]
-        ]
+        vec![vec![(x, y)], Vec::new(), vec![(p.clone(), q.clone())]]
     );
     assert!(
         renaming
@@ -879,12 +875,12 @@ fn alpha_renaming_enter_binders_refuses_a_list_that_repeats_an_identifier(
     let left = if repeats_on_the_left {
         vec![x.clone(), x.clone()]
     } else {
-        vec![x.clone(), y.clone()]
+        vec![x.clone(), y]
     };
     let right = if repeats_on_the_right {
         vec![a.clone(), a.clone()]
     } else {
-        vec![a.clone(), b.clone()]
+        vec![a.clone(), b]
     };
     let mut renaming = AlphaRenaming::default();
 

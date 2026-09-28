@@ -203,7 +203,7 @@ fn equation_and_set_constraints_are_eq_on_their_own() {
     ];
     let sets = [
         SetConstraint::new(x.clone(), member_set([int(1), text("a")]), Polarity::In),
-        SetConstraint::new(x.clone(), member_set([text("a"), int(1)]), Polarity::In),
+        SetConstraint::new(x, member_set([text("a"), int(1)]), Polarity::In),
         SetConstraint::new(Identifier::new("x"), int_set([1]), Polarity::In),
     ];
 

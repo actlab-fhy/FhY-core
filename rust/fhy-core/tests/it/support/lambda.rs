@@ -19,7 +19,7 @@ pub(crate) enum Lambda {
     /// A reference to an identifier.
     Var(Identifier),
     /// The application of one term to another.
-    App(Arc<Lambda>, Arc<Lambda>),
+    App(Arc<Self>, Arc<Self>),
     /// A lambda.
     Lam(Lam),
 }

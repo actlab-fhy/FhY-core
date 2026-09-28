@@ -138,7 +138,7 @@ fn a_large_literal_stays_weak_without_a_context() {
     let huge = Expression::from(BigInt::from(1) << 200_u32);
 
     assert_eq!(type_of(&Bindings::new(), &huge), scalar(Uint));
-    assert_eq!(type_of(&Bindings::new(), &(-huge.clone())), scalar(Int));
+    assert_eq!(type_of(&Bindings::new(), &(-huge)), scalar(Int));
 }
 
 #[test]

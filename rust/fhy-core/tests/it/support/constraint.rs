@@ -150,7 +150,7 @@ pub(crate) enum RecordedEvent {
     SymbolicBinding(Identifier, Expression),
     BoundNativeConstants(Vec<Identifier>),
     Residual(Expression, bool),
-    InMember(usize, Box<RecordedEvent>),
+    InMember(usize, Box<Self>),
     UndecidedMember(usize),
     Refused(QueryKind),
     GaveUp(QueryKind, String),

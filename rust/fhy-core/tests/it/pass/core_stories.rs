@@ -1039,7 +1039,7 @@ fn node_identity_of_ptr_ignores_pointer_metadata() {
 fn node_handle_identity_follows_the_node() {
     let ir = BoxIr::new(1);
 
-    assert_eq!(ir.identity(), ir.clone().identity());
+    assert_eq!(ir.identity(), ir.identity());
     assert_ne!(ir.identity(), ir.derive(1).identity());
 }
 

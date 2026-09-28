@@ -75,7 +75,7 @@ fn template_keeps_its_identifier_and_widths() {
 fn template_widths_compare_as_a_set() {
     let t = Identifier::new("T");
     let sorted = TemplateDataType::with_widths(t.clone(), [8, 16]).expect("positive widths");
-    let shuffled = TemplateDataType::with_widths(t.clone(), [16, 8, 16]).expect("positive widths");
+    let shuffled = TemplateDataType::with_widths(t, [16, 8, 16]).expect("positive widths");
 
     assert_eq!(shuffled.widths(), Some(&[8, 16][..]));
     assert_eq!(sorted, shuffled);

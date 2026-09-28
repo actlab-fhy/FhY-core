@@ -553,9 +553,9 @@ fn capture_check_reads_the_constants_registered_so_far() {
     let identifier = other
         .register_constant(constant.clone())
         .expect("the name is free");
-    let body = Expression::from(identifier.clone()) * 3;
+    let body = Expression::from(identifier) * 3;
 
-    let before = registry.register_function(define_constant_function("f", body.clone()));
+    let before = registry.register_function(define_constant_function("f", body));
     assert!(
         matches!(before, Err(RegistrationError::CapturedIdentifiers { .. })),
         "another registry's constant is captured: {before:?}"

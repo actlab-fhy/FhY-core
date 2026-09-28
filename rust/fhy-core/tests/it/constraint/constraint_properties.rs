@@ -313,7 +313,7 @@ proptest! {
             left.key() == right.key(),
             left.is_structurally_equivalent(&right)
         );
-        prop_assert_eq!(left.key(), left.clone().key());
+        prop_assert_eq!(left.key(), left.key());
     }
 
     /// Keys are equal exactly when equations are structurally equivalent,

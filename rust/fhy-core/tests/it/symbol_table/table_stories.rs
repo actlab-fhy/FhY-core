@@ -86,9 +86,7 @@ fn a_namespace_is_added_once() {
     assert!(!table.is_empty());
     assert_eq!(
         table.add_namespace(namespace.clone(), None),
-        Err(SymbolTableError::NamespaceAlreadyDefined {
-            namespace: namespace.clone()
-        })
+        Err(SymbolTableError::NamespaceAlreadyDefined { namespace })
     );
     assert_eq!(table.len(), 1);
 }
@@ -112,10 +110,10 @@ fn a_parent_is_not_checked_when_a_namespace_is_added() {
         .expect("a forward reference is accepted");
     table.add_namespace(late.clone(), None).expect("new");
     table
-        .add_namespace(missing.clone(), Some(Identifier::new("nowhere")))
+        .add_namespace(missing, Some(Identifier::new("nowhere")))
         .expect("a missing parent is accepted");
     table
-        .add_namespace(own.clone(), Some(own.clone()))
+        .add_namespace(own.clone(), Some(own))
         .expect("a namespace naming itself is accepted");
 
     assert_eq!(table.len(), 4);
@@ -143,7 +141,7 @@ fn namespaces_and_symbols_keep_insertion_order() {
 
     assert_eq!(
         namespace_names(&table),
-        [third.clone(), first.clone(), second.clone()]
+        [third, first.clone(), second.clone()]
     );
     assert_eq!(symbol_names(&table, &first), [late.clone(), early.clone()]);
     let view = table.namespace(&first).expect("defined");
@@ -254,7 +252,7 @@ fn an_inner_namespace_cannot_shadow_an_outer_symbol() {
         Err(SymbolTableError::SymbolAlreadyDefined {
             namespace: child.clone(),
             symbol: symbol.clone(),
-            defined_in: root.clone(),
+            defined_in: root,
         })
     );
     assert!(table.namespace(&child).expect("defined").is_empty());
@@ -336,9 +334,7 @@ fn a_cyclic_chain_fails_the_lookup() {
     table
         .add_namespace(b.clone(), Some(c.clone()))
         .expect("new");
-    table
-        .add_namespace(c.clone(), Some(b.clone()))
-        .expect("new");
+    table.add_namespace(c, Some(b.clone())).expect("new");
 
     assert_eq!(
         table.lookup(&a, &symbol),
@@ -703,7 +699,7 @@ fn canonicalize_is_idempotent() {
     let [a, b, symbol] = identifiers(["a", "b", "symbol"]);
     let mut table = SymbolTable::new();
     table.add_namespace(b.clone(), None).expect("new");
-    table.add_namespace(a.clone(), None).expect("new");
+    table.add_namespace(a, None).expect("new");
     table
         .add_symbol(&b, symbol.clone(), import(&symbol))
         .expect("new");
@@ -796,7 +792,7 @@ fn violations_report_a_symbol_an_ancestor_also_defines() {
     table.insert_namespace(child.clone(), Some(root.clone()), []);
     table.insert_namespace(
         grandchild.clone(),
-        Some(child.clone()),
+        Some(child),
         [(symbol.clone(), import(&symbol))],
     );
 
@@ -887,9 +883,7 @@ fn equivalence_ignores_the_orders() {
     left.add_symbol(&a, x.clone(), import(&x)).expect("new");
     left.add_symbol(&a, y.clone(), import(&y)).expect("new");
     let mut right = SymbolTable::new();
-    right
-        .add_namespace(b.clone(), Some(a.clone()))
-        .expect("new");
+    right.add_namespace(b, Some(a.clone())).expect("new");
     right.add_namespace(a.clone(), None).expect("new");
     right.add_symbol(&a, y.clone(), import(&y)).expect("new");
     right.add_symbol(&a, x.clone(), import(&x)).expect("new");

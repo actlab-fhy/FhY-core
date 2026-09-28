@@ -183,7 +183,7 @@ fn inline_expands_nested_calls_inside_out() {
     let inlined = registry
         .inline(&call(
             BuiltinFunction::Relu,
-            [call(BuiltinFunction::Relu, [y.clone()])],
+            [call(BuiltinFunction::Relu, [y])],
         ))
         .expect("relu is built in");
 

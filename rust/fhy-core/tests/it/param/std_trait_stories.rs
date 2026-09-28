@@ -78,7 +78,7 @@ fn domains_equal_as_they_are_structurally_equivalent() {
         categorical(vec![text("a"), text("b")]),
         categorical(vec![text("b"), text("a")]),
         permutation(ints([1, 2])),
-        even.clone(),
+        even,
         EvenDomain::build(false).0,
     ];
 

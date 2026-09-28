@@ -33,8 +33,8 @@ static POOL: LazyLock<[Identifier; 3]> = LazyLock::new(|| {
 enum DeBruijn {
     Free(u64),
     Bound { level: usize, position: usize },
-    App(Box<DeBruijn>, Box<DeBruijn>),
-    Lam { arity: usize, body: Vec<DeBruijn> },
+    App(Box<Self>, Box<Self>),
+    Lam { arity: usize, body: Vec<Self> },
 }
 
 /// Return the de Bruijn form of `term` under the binder lists `scopes`,

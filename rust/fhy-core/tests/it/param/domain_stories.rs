@@ -641,7 +641,7 @@ fn bound_expressions_compare_an_identifier_with_an_integer_literal() {
             fhy_core::expression::LiteralValue::Float(0.5),
         )),
         (&x_reference + 1).less(literal(3)),
-        x_reference.clone(),
+        x_reference,
     ] {
         assert!(!is_bound_expression(&other), "{other}");
     }

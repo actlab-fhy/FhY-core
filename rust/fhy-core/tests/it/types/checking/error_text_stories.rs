@@ -72,7 +72,7 @@ impl CallTargets for UnknownTargets {
 fn a_broken_rule_is_framed_by_the_root_and_the_sub_expression() {
     let i = fixed(61_720, "i");
     let bindings = params(&[(&i, index(0, 4, 1))]);
-    let negation = -Expression::from(i.clone());
+    let negation = -Expression::from(i);
 
     let at_root = synthesize(&bindings, &negation);
     let below = synthesize(&bindings, &negation.positive());

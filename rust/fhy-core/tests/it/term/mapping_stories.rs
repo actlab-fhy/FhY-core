@@ -118,8 +118,8 @@ fn keys_resolve_through_a_binder_frame_and_the_free_renaming() {
         &framed
     ));
     assert!(compare(
-        &[(a.clone(), leaf(1))],
-        &HashMap::from([(b.clone(), leaf(1))]),
+        &[(a, leaf(1))],
+        &HashMap::from([(b, leaf(1))]),
         &free
     ));
     assert!(!compare(

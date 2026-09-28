@@ -88,7 +88,7 @@ impl TypeExtension for Tagged {
     fn eq_part(&self, other: &dyn TypeExtension) -> bool {
         other
             .as_any()
-            .downcast_ref::<Tagged>()
+            .downcast_ref::<Self>()
             .is_some_and(|other| other.tag == self.tag && other.inner == self.inner)
     }
 
@@ -389,7 +389,7 @@ impl ForeignPart for Alias {
 impl TypeExtension for Alias {
     fn is_structurally_equivalent(&self, other: &Type) -> Result<bool, BoxError> {
         Ok(match other {
-            Type::Extension(extension) => match extension.get().as_any().downcast_ref::<Alias>() {
+            Type::Extension(extension) => match extension.get().as_any().downcast_ref::<Self>() {
                 Some(other) => self.0.is_structurally_equivalent(&other.0)?,
                 None => self.0.is_structurally_equivalent(other)?,
             },
@@ -418,7 +418,7 @@ impl DataTypeExtension for DataAlias {
     fn is_structurally_equivalent(&self, other: &DataType) -> Result<bool, BoxError> {
         Ok(match other {
             DataType::Extension(extension) => {
-                match extension.get().as_any().downcast_ref::<DataAlias>() {
+                match extension.get().as_any().downcast_ref::<Self>() {
                     Some(other) => self.0.is_structurally_equivalent(&other.0)?,
                     None => self.0.is_structurally_equivalent(other)?,
                 }
@@ -579,7 +579,7 @@ fn a_failing_extension_equivalence_is_a_unification_error() {
     let plain = array(int32(), []);
     let t = Identifier::new("T");
     let full = array(template(&t), [fhy_core::types::Dimension::Wildcard]);
-    let bound = empty().with_type_binding(t.clone(), failing.clone());
+    let bound = empty().with_type_binding(t, failing.clone());
 
     let errors = [
         failing

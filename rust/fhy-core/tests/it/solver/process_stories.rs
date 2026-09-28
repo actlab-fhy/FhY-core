@@ -434,9 +434,9 @@ fn real_solver_decides_the_three_questions() {
     let (y, y_reference) = build_identifier("y");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int), (&y, SymbolType::Int)]);
     let context = QueryContext::new(&symbol_types);
-    let positive = x_reference.clone().greater(0);
-    let contradiction = Expression::all([positive.clone(), x_reference.clone().less(0)]);
-    let considered = HashSet::from([y.clone()]);
+    let positive = x_reference.greater(0);
+    let contradiction = Expression::all([positive.clone(), x_reference.less(0)]);
+    let considered = HashSet::from([y]);
     let witness = y_reference.greater(x_reference.clone());
 
     let ask = |question: Question<'_>| solver.ask(&question, &context).expect("answered");

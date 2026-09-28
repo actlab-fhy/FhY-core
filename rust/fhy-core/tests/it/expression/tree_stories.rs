@@ -125,7 +125,7 @@ fn expression_identity_is_shared_by_clones() {
 
     let identity = expression.identity();
 
-    assert_eq!(identity, expression.clone().identity());
+    assert_eq!(identity, expression.identity());
 }
 
 #[test]
