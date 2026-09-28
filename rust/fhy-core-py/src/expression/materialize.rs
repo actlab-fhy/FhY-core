@@ -18,10 +18,11 @@ use pyo3::types::PyMapping;
 
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
-use fhy_core::tree::{NodeHandle, NodeIdentity, Tree};
+use fhy_core::tree::Tree;
 
 use crate::error::IntoPyResult;
 use crate::identifier::{read_identifier_id, restore_identifier};
+use crate::object_table::ObjectTable;
 
 use super::node::{PyExpression, build_node_with};
 
@@ -42,16 +43,15 @@ enum Step<'a, 'py> {
 }
 
 /// The materializer of one result tree.
-struct Materializer<'py> {
+struct Materializer<'py, 't> {
     py: Python<'py>,
     /// The objects already known for core nodes, by identity: the
-    /// replacements, and every shared node built so far.
-    known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
-    /// The Python `Identifier` of each id the walk has built one for.
-    identifiers: HashMap<u64, Bound<'py, PyAny>>,
+    /// replacements, and every shared node built so far; and the Python
+    /// `Identifier` of each id seen or built.
+    known: &'t mut ObjectTable,
 }
 
-impl<'py> Materializer<'py> {
+impl<'py> Materializer<'py, '_> {
     /// Return the Python object of `root`, whose input object at the same
     /// place is `hint`.
     fn materialize(
@@ -70,8 +70,8 @@ impl<'py> Materializer<'py> {
                             continue;
                         }
                     }
-                    if let Some(object) = self.known.get(&node.identity()) {
-                        results.push(object.clone());
+                    if let Some(object) = self.known.node(self.py, node) {
+                        results.push(object);
                         continue;
                     }
                     let children: Vec<&Expression> = node.children().collect();
@@ -99,9 +99,9 @@ impl<'py> Materializer<'py> {
                 Step::Build { node, child_count } => {
                     let first = results.len() - child_count;
                     let children = results.split_off(first);
-                    let object = build_node_with(self.py, node, children, &mut self.identifiers)?;
+                    let object = build_node_with(self.py, node, children, self.known)?;
                     if node.is_shared() {
-                        self.known.insert(node.identity(), object.clone());
+                        self.known.insert_node(node, &object);
                     }
                     results.push(object);
                 }
@@ -132,7 +132,7 @@ pub(super) fn substitute<'py>(
     let py = slf.py();
     let mapping = replacements.cast::<PyMapping>()?;
     let mut map: HashMap<Identifier, Expression> = HashMap::new();
-    let mut known = HashMap::new();
+    let mut known = ObjectTable::new();
     let mut refused: Vec<(Identifier, Bound<'py, PyAny>, Bound<'py, PyAny>)> = Vec::new();
     for item in mapping.items()?.iter() {
         let (key, value) = item.extract::<(Bound<'py, PyAny>, Bound<'py, PyAny>)>()?;
@@ -143,7 +143,7 @@ pub(super) fn substitute<'py>(
         match value.cast::<PyExpression>() {
             Ok(expression) => {
                 let handle = expression.get().expression().clone();
-                known.insert(handle.identity(), value.clone());
+                known.insert_node(&handle, &value);
                 map.insert(identifier, handle);
             }
             Err(_not_an_expression) => refused.push((identifier, key, value)),
@@ -172,8 +172,7 @@ pub(super) fn substitute<'py>(
     }
     let mut materializer = Materializer {
         py,
-        known,
-        identifiers: HashMap::new(),
+        known: &mut known,
     };
     materializer.materialize(&result, Some(slf.clone()))
 }
@@ -194,8 +193,7 @@ pub(super) fn materialize_beside<'py>(
     }
     let mut materializer = Materializer {
         py: input.py(),
-        known: HashMap::new(),
-        identifiers: HashMap::new(),
+        known: &mut ObjectTable::new(),
     };
     materializer.materialize(result, Some(input.clone()))
 }
@@ -213,15 +211,14 @@ pub(crate) fn materialize_expression<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let mut materializer = Materializer {
         py,
-        known: HashMap::new(),
-        identifiers: HashMap::new(),
+        known: &mut ObjectTable::new(),
     };
     materializer.materialize(expression, None)
 }
 
 /// Return the Python object of `result`, the tree the core built from the
 /// expression `input` by substituting replacements whose Python objects
-/// `known` holds by the identity of their Rust handles: the object of a
+/// `known` holds for their Rust handles: the object of a
 /// replacement, or of a subtree of `input` the core kept in place, is
 /// reused.
 ///
@@ -231,7 +228,7 @@ pub(crate) fn materialize_expression<'py>(
 pub(crate) fn materialize_substituted<'py>(
     input: &Bound<'py, PyExpression>,
     result: &Expression,
-    known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
+    known: &mut ObjectTable,
 ) -> PyResult<Bound<'py, PyAny>> {
     if Expression::ptr_eq(result, input.get().expression()) {
         return Ok(input.clone().into_any());
@@ -239,13 +236,12 @@ pub(crate) fn materialize_substituted<'py>(
     let mut materializer = Materializer {
         py: input.py(),
         known,
-        identifiers: HashMap::new(),
     };
     materializer.materialize(result, Some(input.clone()))
 }
 
 /// Return a new Python object of the core tree `expression`, reusing the
-/// object of each node whose Rust handle `known` holds by identity, and
+/// object of each node `known` holds, and each identifier object, and
 /// building every other node through the public class of its kind.
 ///
 /// # Errors
@@ -254,12 +250,8 @@ pub(crate) fn materialize_substituted<'py>(
 pub(crate) fn materialize_with_known<'py>(
     py: Python<'py>,
     expression: &Expression,
-    known: HashMap<NodeIdentity, Bound<'py, PyAny>>,
+    known: &mut ObjectTable,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let mut materializer = Materializer {
-        py,
-        known,
-        identifiers: HashMap::new(),
-    };
+    let mut materializer = Materializer { py, known };
     materializer.materialize(expression, None)
 }

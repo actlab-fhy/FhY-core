@@ -2,7 +2,7 @@
 //!
 //! The core matches and rewrites Rust [`Expression`] handles, but every
 //! callback receives, and every result returns, Python node objects. While a
-//! match or a walk runs, an [`ObjectTable`] maps the identity of each Rust
+//! match or a walk runs, a [`MatchObjects`] maps the identity of each Rust
 //! node it reaches to that node's Python object:
 //!
 //! - an object of the input tree, or of a replacement a callback returned,
@@ -24,7 +24,6 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::rc::Rc;
 
 use pyo3::exceptions::PyRuntimeError;
@@ -35,6 +34,7 @@ use fhy_core::expression::pattern::{Capture, MatchBindings};
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use super::super::node::{PyExpression, build_node};
+use crate::object_table::ObjectTable;
 use crate::scoped::{ScopedGuard, ScopedStack};
 
 /// The last bindings object a table built: the identities of its captures'
@@ -45,10 +45,9 @@ struct CachedBindings {
 }
 
 /// The Python objects of the Rust nodes one match or walk reaches.
-pub(super) struct ObjectTable {
-    /// Each known object by the identity of the Rust node it stands for,
-    /// with that node, which is held so its identity stays unique.
-    known: HashMap<NodeIdentity, (Expression, Py<PyAny>)>,
+pub(super) struct MatchObjects {
+    /// Each known object, by the Rust node it stands for.
+    known: ObjectTable,
     /// Each object built here for a rebuilt node, by the object's address,
     /// with the node it stands for.
     stand_ins: HashMap<usize, Expression>,
@@ -59,10 +58,10 @@ pub(super) struct ObjectTable {
     last_bindings: Option<CachedBindings>,
 }
 
-impl ObjectTable {
+impl MatchObjects {
     fn new() -> Self {
         Self {
-            known: HashMap::new(),
+            known: ObjectTable::new(),
             stand_ins: HashMap::new(),
             frontier: Vec::new(),
             last_bindings: None,
@@ -72,8 +71,7 @@ impl ObjectTable {
     /// Record `object`, a Python expression, and queue its children.
     fn discover(&mut self, object: &Bound<'_, PyExpression>) {
         let handle = object.get().expression();
-        if let Entry::Vacant(entry) = self.known.entry(handle.identity()) {
-            entry.insert((handle.clone(), object.clone().into_any().unbind()));
+        if self.known.insert_node_if_absent(handle, object.as_any()) {
             self.frontier.push(object.clone().into_any().unbind());
         }
     }
@@ -99,8 +97,8 @@ impl ObjectTable {
         node: &Expression,
     ) -> PyResult<Bound<'py, PyAny>> {
         loop {
-            if let Some((_, object)) = self.known.get(&node.identity()) {
-                return Ok(object.bind(py).clone());
+            if let Some(object) = self.known.node(py, node) {
+                return Ok(object);
             }
             if !self.expand_next(py)? {
                 return self.build(py, node);
@@ -120,8 +118,8 @@ impl ObjectTable {
         while let Some(step) = pending.pop() {
             match step {
                 Step::Enter(node) => {
-                    if let Some((_, object)) = self.known.get(&node.identity()) {
-                        results.push(object.bind(py).clone());
+                    if let Some(object) = self.known.node(py, node) {
+                        results.push(object);
                         continue;
                     }
                     let children: Vec<&Expression> = node.children().collect();
@@ -132,11 +130,8 @@ impl ObjectTable {
                     let children = results.split_off(results.len() - child_count);
                     let object = build_node(py, node, children)?;
                     let own = object.cast::<PyExpression>()?.get().expression().clone();
-                    self.known
-                        .entry(own.identity())
-                        .or_insert_with(|| (own.clone(), object.clone().unbind()));
-                    self.known
-                        .insert(node.identity(), (node.clone(), object.clone().unbind()));
+                    self.known.insert_node_if_absent(&own, &object);
+                    self.known.insert_node(node, &object);
                     self.stand_ins
                         .insert(object.as_ptr() as usize, node.clone());
                     results.push(object);
@@ -163,26 +158,26 @@ impl ObjectTable {
 thread_local! {
     /// The tables of the matches and walks running on this thread,
     /// innermost last.
-    static TABLES: ScopedStack<Rc<RefCell<ObjectTable>>> = const { ScopedStack::new() };
+    static TABLES: ScopedStack<Rc<RefCell<MatchObjects>>> = const { ScopedStack::new() };
 }
 
 /// The current table of a match or walk, for as long as the value lives:
 /// dropping it, as unwinding does, pops the table.
 pub(super) struct ActiveTable {
-    table: Rc<RefCell<ObjectTable>>,
-    _scope: ScopedGuard<Rc<RefCell<ObjectTable>>>,
+    table: Rc<RefCell<MatchObjects>>,
+    _scope: ScopedGuard<Rc<RefCell<MatchObjects>>>,
 }
 
 impl ActiveTable {
     /// Make a new table current, holding the tree of `root`.
     pub(super) fn enter(root: &Bound<'_, PyExpression>) -> Self {
-        let mut table = ObjectTable::new();
+        let mut table = MatchObjects::new();
         table.discover(root);
         Self::enter_table(table)
     }
 
     /// Make `table` current.
-    fn enter_table(table: ObjectTable) -> Self {
+    fn enter_table(table: MatchObjects) -> Self {
         let table = Rc::new(RefCell::new(table));
         let scope = ScopedStack::push(&TABLES, Rc::clone(&table));
         Self {
@@ -211,7 +206,7 @@ impl ActiveTable {
 ///
 /// Raises `RuntimeError` if it is borrowed already, which would mean a
 /// Python call re-entered the table while it was in use.
-fn borrow_table(table: &RefCell<ObjectTable>) -> PyResult<std::cell::RefMut<'_, ObjectTable>> {
+fn borrow_table(table: &RefCell<MatchObjects>) -> PyResult<std::cell::RefMut<'_, MatchObjects>> {
     table.try_borrow_mut().map_err(|_already_borrowed| {
         PyRuntimeError::new_err("the pattern object table was re-entered while in use")
     })
@@ -223,7 +218,7 @@ fn borrow_table(table: &RefCell<ObjectTable>) -> PyResult<std::cell::RefMut<'_, 
 ///
 /// Raises `RuntimeError` if no match or walk is running, which would mean
 /// the core called a callback outside one.
-fn current_table() -> PyResult<Rc<RefCell<ObjectTable>>> {
+fn current_table() -> PyResult<Rc<RefCell<MatchObjects>>> {
     ScopedStack::cloned_top(&TABLES).ok_or_else(|| {
         PyRuntimeError::new_err("a pattern callback ran outside a match or a rewrite walk")
     })
@@ -308,7 +303,7 @@ mod scoped_stack_tests {
     #[test]
     fn a_panic_inside_a_match_leaves_the_stack_empty() {
         let unwound = std::panic::catch_unwind(|| {
-            let _table = ActiveTable::enter_table(ObjectTable::new());
+            let _table = ActiveTable::enter_table(MatchObjects::new());
             let _current = current_table().expect("the table is current");
             panic!("inside a match");
         });

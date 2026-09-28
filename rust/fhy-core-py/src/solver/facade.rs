@@ -24,7 +24,7 @@ use fhy_core::solver::{
 
 use crate::expression::{PyExpression, materialize_substituted, registry_snapshot};
 use crate::gc::{Slots, collect_slots};
-use fhy_core::tree::NodeHandle;
+use crate::object_table::ObjectTable;
 
 use crate::identifier::{read_identifier_id, restore_identifier};
 
@@ -341,7 +341,7 @@ impl PySolver {
             SimplifyLimits::new().with_timeout(timeout)
         });
         let mut bindings: HashMap<Identifier, Expression> = HashMap::new();
-        let mut known: Vec<(Expression, Py<PyAny>)> = Vec::new();
+        let mut known = ObjectTable::new();
         if let Some(environment) = environment.filter(|environment| !environment.is_none()) {
             for item in environment.cast::<PyMapping>()?.items()?.iter() {
                 let (key, value) = item.extract::<(Bound<'py, PyAny>, Bound<'py, PyAny>)>()?;
@@ -357,26 +357,23 @@ impl PySolver {
                     ))
                 })?;
                 let handle = bound.get().expression().clone();
-                known.push((handle.clone(), value.clone().unbind()));
+                known.insert_node(&handle, &value);
                 bindings.insert(restore_identifier(&key, "environment", "key")?, handle);
             }
         }
         let rust_input = input.get().expression().clone();
         let registry = registry_snapshot();
         let solver = &self.solver;
-        let known_objects: HashMap<_, _> = known
-            .iter()
-            .map(|(handle, object)| (handle.identity(), object.bind(py).clone()))
-            .collect();
-        let (result, returned) = run_simplification(input.clone().unbind(), known, || {
-            py.detach(|| {
-                solver.simplify(
-                    &rust_input,
-                    &bindings,
-                    &SimplifyContext::from_registry(registry.registry()).with_limits(limits),
-                )
-            })
-        });
+        let (result, returned, mut known) =
+            run_simplification(input.clone().unbind(), known, || {
+                py.detach(|| {
+                    solver.simplify(
+                        &rust_input,
+                        &bindings,
+                        &SimplifyContext::from_registry(registry.registry()).with_limits(limits),
+                    )
+                })
+            });
         let result = result.map_err(|error| solve_error_to_py(py, error))?;
         if let Some(returned) = returned {
             let returned = returned.into_bound(py);
@@ -386,7 +383,7 @@ impl PySolver {
                 }
             }
         }
-        materialize_substituted(&input, &result, known_objects)
+        materialize_substituted(&input, &result, &mut known)
     }
 
     /// Return whether some assignment of `expression`'s identifiers

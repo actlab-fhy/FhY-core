@@ -28,7 +28,6 @@ use fhy_core::constraint::{
 use fhy_core::expression::ExpressionKind;
 use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
-use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use crate::expression::{
     PyExpression, PyIdentifierExpression, decimal_class, materialize_with_known, read_decimal,
@@ -536,15 +535,15 @@ impl SetState {
         let reference = PyIdentifierExpression::public_class()
             .get(py)?
             .call1((self.variable.bind(py),))?;
-        let mut known: HashMap<NodeIdentity, Bound<'py, PyAny>> = HashMap::new();
+        let mut known = crate::object_table::ObjectTable::new();
         let mut pending = vec![&expression];
         while let Some(node) = pending.pop() {
             if matches!(node.kind(), ExpressionKind::Identifier(_)) {
-                known.insert(node.identity(), reference.clone());
+                known.insert_node(node, &reference);
             }
             pending.extend(node.children());
         }
-        materialize_with_known(py, &expression, known)
+        materialize_with_known(py, &expression, &mut known)
     }
 
     /// Return the `repr` of the constraint of class `kind`.

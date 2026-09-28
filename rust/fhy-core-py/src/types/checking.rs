@@ -13,7 +13,7 @@
 //! without calling Python.
 
 use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError};
@@ -39,6 +39,7 @@ use crate::expression::{
     read_call_target, read_sort, registry_snapshot,
 };
 use crate::identifier::restore_identifier;
+use crate::object_table::ObjectTable;
 
 use super::adapter::{Context, run_in_context};
 use super::convert::{identifier_to_python, read_type, type_to_python};
@@ -100,7 +101,7 @@ struct PythonIdentifierTypes<'py, 'a> {
     root: &'a Bound<'py, PyAny>,
     /// The identifier objects of the root, by id, collected on the first
     /// lookup.
-    objects: OnceCell<HashMap<u64, Py<PyAny>>>,
+    objects: OnceCell<ObjectTable>,
 }
 
 impl<'py, 'a> PythonIdentifierTypes<'py, 'a> {
@@ -119,9 +120,9 @@ impl<'py, 'a> PythonIdentifierTypes<'py, 'a> {
 
     /// Return the identifier objects of the expression tree of `root`, by
     /// id, visiting each shared node once.
-    fn collect_objects(root: &Bound<'py, PyAny>) -> HashMap<u64, Py<PyAny>> {
+    fn collect_objects(root: &Bound<'py, PyAny>) -> ObjectTable {
         let py = root.py();
-        let mut objects = HashMap::new();
+        let mut objects = ObjectTable::new();
         let mut seen = HashSet::new();
         let mut pending = vec![root.clone()];
         while let Some(object) = pending.pop() {
@@ -133,9 +134,10 @@ impl<'py, 'a> PythonIdentifierTypes<'py, 'a> {
             }
             if let Ok(reference) = object.cast::<PyIdentifierExpression>() {
                 if let ExpressionKind::Identifier(identifier) = node.get().expression().kind() {
-                    objects
-                        .entry(identifier.id())
-                        .or_insert_with(|| reference.get().identifier_object().clone_ref(py));
+                    objects.insert_identifier_if_absent(
+                        identifier.id(),
+                        reference.get().identifier_object().bind(py),
+                    );
                 }
                 continue;
             }
@@ -150,8 +152,8 @@ impl<'py, 'a> PythonIdentifierTypes<'py, 'a> {
         let objects = self
             .objects
             .get_or_init(|| Self::collect_objects(self.root));
-        match objects.get(&identifier.id()) {
-            Some(object) => Ok(object.bind(py).clone()),
+        match objects.identifier(py, identifier.id()) {
+            Some(object) => Ok(object),
             None => identifier_to_python(py, self.context, identifier),
         }
     }

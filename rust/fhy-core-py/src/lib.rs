@@ -18,6 +18,7 @@ mod gc;
 mod identifier;
 mod interned;
 mod lattice;
+mod object_table;
 mod op_attribute;
 mod param;
 mod pass;

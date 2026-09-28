@@ -24,7 +24,6 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hasher;
 use std::rc::Rc;
@@ -34,7 +33,6 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyTuple, PyType};
 
 use fhy_core::foreign::{BoxError, ForeignPart};
-use fhy_core::tree::NodeIdentity;
 use fhy_core::types::{
     DataType, DataTypeExtension, Type, TypeExtension, TypeUnificationEnvironment, UnificationError,
     default_bind_data_template, default_bind_template, default_substitute_data_template,
@@ -54,10 +52,8 @@ pub(super) struct Known {
     pub(super) types: Vec<(Type, Py<PyAny>)>,
     /// Data types and their objects.
     pub(super) data_types: Vec<(DataType, Py<PyAny>)>,
-    /// Expressions and their objects, by node identity.
-    pub(super) expressions: HashMap<NodeIdentity, Py<PyAny>>,
-    /// Identifier objects, by id.
-    pub(super) identifiers: HashMap<u64, Py<PyAny>>,
+    /// Expressions and their objects, and identifier objects.
+    pub(super) objects: crate::object_table::ObjectTable,
 }
 
 /// What one call into the core shares with the adapters it drives.

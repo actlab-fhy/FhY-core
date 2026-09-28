@@ -168,7 +168,7 @@ impl PyTypeUnificationEnvironment {
             .chain(&self.objects.types)
             .chain(&self.objects.expressions)
         {
-            known.identifiers.insert(*id, key.clone_ref(py));
+            known.objects.insert_identifier(*id, key.bind(py));
         }
         for (identifier, value) in self.value.data_type_bindings() {
             if let Some((_, object)) = self.objects.data_types.get(&identifier.id()) {
@@ -182,10 +182,7 @@ impl PyTypeUnificationEnvironment {
         }
         for (identifier, value) in self.value.expression_bindings() {
             if let Some((_, object)) = self.objects.expressions.get(&identifier.id()) {
-                known.expressions.insert(
-                    fhy_core::tree::NodeHandle::identity(value),
-                    object.clone_ref(py),
-                );
+                known.objects.insert_node(value, object.bind(py));
             }
         }
     }

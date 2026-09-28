@@ -11,7 +11,6 @@
 //! object the caller gets. No frame is borrowed across a call into Python.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,10 +27,10 @@ use fhy_core::solver::{
     CheckLimits, SatResult, Simplifier, SimplifyContext, SimplifyLimits, SmtLib2Process, SmtScript,
     SmtSolver,
 };
-use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use crate::expression::{PyExpression, materialize_expression, materialize_substituted};
 use crate::gc::Slot;
+use crate::object_table::ObjectTable;
 use crate::pass::refuse_unused_arguments;
 use crate::scoped::ScopedStack;
 
@@ -224,7 +223,7 @@ impl SmtSolver for PythonSmtSolver {
 /// handles, which it holds, and the limits the core handed the simplifier.
 struct SimplifyFrame {
     input: Py<PyExpression>,
-    known: Vec<(Expression, Py<PyAny>)>,
+    known: ObjectTable,
     limits: SimplifyLimits,
     result: Option<Py<PyAny>>,
 }
@@ -235,13 +234,13 @@ thread_local! {
 }
 
 /// Run `simplify` as the simplification of `input`, whose environment's
-/// values are `known`, and return its result and the object the Python
-/// simplifier returned, if one ran.
+/// values are `known`, and return its result, the object the Python
+/// simplifier returned, if one ran, and `known`.
 pub(super) fn run_simplification<R>(
     input: Py<PyExpression>,
-    known: Vec<(Expression, Py<PyAny>)>,
+    known: ObjectTable,
     simplify: impl FnOnce() -> R,
-) -> (R, Option<Py<PyAny>>) {
+) -> (R, Option<Py<PyAny>>, ObjectTable) {
     // Popped when the guard drops, on unwind included (R2-031).
     let scope = ScopedStack::push(
         &FRAMES,
@@ -253,7 +252,8 @@ pub(super) fn run_simplification<R>(
         },
     );
     let result = simplify();
-    (result, scope.pop().result)
+    let frame = scope.pop();
+    (result, frame.result, frame.known)
 }
 
 /// Return the Python object of `expression`, the substituted input of the
@@ -264,25 +264,10 @@ fn current_input_object<'py>(
     expression: &Expression,
 ) -> PyResult<Bound<'py, PyAny>> {
     let frame = ScopedStack::with_top(&FRAMES, |frame| {
-        frame.map(|frame| {
-            (
-                frame.input.clone_ref(py),
-                frame
-                    .known
-                    .iter()
-                    .map(|(handle, object)| (handle.identity(), object.clone_ref(py)))
-                    .collect::<Vec<(NodeIdentity, Py<PyAny>)>>(),
-            )
-        })
+        frame.map(|frame| (frame.input.clone_ref(py), frame.known.clone_ref(py)))
     });
     match frame {
-        Some((input, known)) => {
-            let known: HashMap<NodeIdentity, Bound<'py, PyAny>> = known
-                .into_iter()
-                .map(|(identity, object)| (identity, object.into_bound(py)))
-                .collect();
-            materialize_substituted(input.bind(py), expression, known)
-        }
+        Some((input, mut known)) => materialize_substituted(input.bind(py), expression, &mut known),
         None => materialize_expression(py, expression),
     }
 }
@@ -555,7 +540,7 @@ mod scoped_stack_tests {
         Python::attach(|py| {
             let input = PyExpression::bare_for_tests(py, Expression::from(1));
             let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_simplification(input, Vec::new(), || -> () {
+                run_simplification(input, ObjectTable::new(), || -> () {
                     panic!("inside a simplification")
                 })
             }));

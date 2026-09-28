@@ -12,7 +12,6 @@ use pyo3::types::{PyEllipsis, PyList};
 
 use fhy_core::expression::{Expression, ExpressionKind};
 use fhy_core::identifier::Identifier;
-use fhy_core::tree::NodeHandle;
 use fhy_core::types::{DataType, Dimension, Type, TypeUnificationEnvironment};
 
 use crate::expression::{PyExpression, PyIdentifierExpression, materialize_with_known};
@@ -67,15 +66,14 @@ fn remember_expression(context: &Context, object: &Bound<'_, PyAny>) {
         return;
     };
     let mut known = context.known.borrow_mut();
-    known.expressions.insert(
-        expression.get().expression().identity(),
-        object.clone().unbind(),
-    );
+    known
+        .objects
+        .insert_node(expression.get().expression(), object);
     if let Ok(reference) = object.cast::<PyIdentifierExpression>() {
         if let ExpressionKind::Identifier(identifier) = expression.get().expression().kind() {
-            known.identifiers.insert(
+            known.objects.insert_identifier(
                 identifier.id(),
-                reference.get().identifier_object().clone_ref(object.py()),
+                reference.get().identifier_object().bind(object.py()),
             );
         }
     }
@@ -117,9 +115,9 @@ pub(crate) fn read_data_type(
     };
     if let Ok(template) = object.cast::<PyTemplateDataType>() {
         if let DataType::Template(rust_template) = &value {
-            context.known.borrow_mut().identifiers.insert(
+            context.known.borrow_mut().objects.insert_identifier(
                 rust_template.identifier().id(),
-                template.getattr("data_type")?.unbind(),
+                &template.getattr("data_type")?,
             );
         }
     }
@@ -156,15 +154,20 @@ pub(crate) fn identifier_to_python<'py>(
     context: &Context,
     identifier: &Identifier,
 ) -> PyResult<Bound<'py, PyAny>> {
-    if let Some(object) = context.known.borrow().identifiers.get(&identifier.id()) {
-        return Ok(object.bind(py).clone());
+    if let Some(object) = context
+        .known
+        .borrow()
+        .objects
+        .identifier(py, identifier.id())
+    {
+        return Ok(object);
     }
     let object = identifier::identifier_to_python(py, identifier)?;
     context
         .known
         .borrow_mut()
-        .identifiers
-        .insert(identifier.id(), object.clone().unbind());
+        .objects
+        .insert_identifier(identifier.id(), &object);
     Ok(object)
 }
 
@@ -174,27 +177,17 @@ pub(crate) fn expression_to_python<'py>(
     context: &Context,
     expression: &Expression,
 ) -> PyResult<Bound<'py, PyAny>> {
-    if let Some(object) = context
-        .known
-        .borrow()
-        .expressions
-        .get(&expression.identity())
-    {
-        return Ok(object.bind(py).clone());
+    if let Some(object) = context.known.borrow().objects.node(py, expression) {
+        return Ok(object);
     }
-    let known = context
-        .known
-        .borrow()
-        .expressions
-        .iter()
-        .map(|(identity, object)| (*identity, object.bind(py).clone()))
-        .collect();
-    let object = materialize_with_known(py, expression, known)?;
+    // A copy: building a node runs Python, which may enter the context.
+    let mut known = context.known.borrow().objects.clone_ref(py);
+    let object = materialize_with_known(py, expression, &mut known)?;
     context
         .known
         .borrow_mut()
-        .expressions
-        .insert(expression.identity(), object.clone().unbind());
+        .objects
+        .insert_node(expression, &object);
     Ok(object)
 }
 

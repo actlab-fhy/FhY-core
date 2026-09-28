@@ -17,8 +17,6 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use std::collections::HashMap;
-
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -2075,7 +2073,12 @@ pub(super) fn build_node<'py>(
     expression: &Expression,
     children: Vec<Bound<'py, PyAny>>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    build_node_with(py, expression, children, &mut HashMap::new())
+    build_node_with(
+        py,
+        expression,
+        children,
+        &mut crate::object_table::ObjectTable::new(),
+    )
 }
 
 /// Return a new node of the public class of `expression`'s kind, over the
@@ -2089,7 +2092,7 @@ pub(super) fn build_node_with<'py>(
     py: Python<'py>,
     expression: &Expression,
     children: Vec<Bound<'py, PyAny>>,
-    identifiers: &mut HashMap<u64, Bound<'py, PyAny>>,
+    identifiers: &mut crate::object_table::ObjectTable,
 ) -> PyResult<Bound<'py, PyAny>> {
     match expression.kind() {
         ExpressionKind::Unary(node) => PyUnaryExpression::public_class().get(py)?.call1((
@@ -2109,11 +2112,11 @@ pub(super) fn build_node_with<'py>(
             PyTuple::new(py, children)?,
         )),
         ExpressionKind::Identifier(identifier) => {
-            let object = if let Some(object) = identifiers.get(&identifier.id()) {
-                object.clone()
+            let object = if let Some(object) = identifiers.identifier(py, identifier.id()) {
+                object
             } else {
                 let object = crate::identifier::identifier_to_python(py, identifier)?;
-                identifiers.insert(identifier.id(), object.clone());
+                identifiers.insert_identifier(identifier.id(), &object);
                 object
             };
             PyIdentifierExpression::public_class()

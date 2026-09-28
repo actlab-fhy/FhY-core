@@ -279,7 +279,11 @@ impl PySympySimplifier {
             Ok(error) => sympy_error_to_py(py, *error, true),
             Err(error) => PyRuntimeError::new_err(error.to_string()),
         })?;
-        materialize_substituted(&input, &result, HashMap::new())
+        materialize_substituted(
+            &input,
+            &result,
+            &mut crate::object_table::ObjectTable::new(),
+        )
     }
 
     /// Return the SymPy object of `expression`, with the registry's
