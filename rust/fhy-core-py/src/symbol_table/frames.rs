@@ -423,6 +423,9 @@ pub(crate) struct PyVariableSymbolTableFrame {
     type_qualifier: Py<PyAny>,
     value: SymbolFrame,
     hash: OnceLock<u64>,
+    /// The slot of a Python-defined type's adapter, which the frame owns
+    /// (R2-003).
+    slots: crate::gc::Slots,
 }
 
 #[pymethods]
@@ -436,7 +439,7 @@ impl PyVariableSymbolTableFrame {
         visit.call(&self.name)?;
         visit.call(&self.ty)?;
         visit.call(&self.type_qualifier)?;
-        Ok(())
+        self.slots.traverse(&visit)
     }
 
     /// Create the frame of the variable `name` of type `type`, qualified
@@ -453,7 +456,8 @@ impl PyVariableSymbolTableFrame {
     ) -> PyResult<Self> {
         const OWNER: &str = "VariableSymbolTableFrame";
         let identifier = restore_identifier(name, OWNER, "name")?;
-        let ty = read_type_argument(r#type, OWNER, "type")?;
+        let (ty, slots) = crate::gc::collect_slots(|| read_type_argument(r#type, OWNER, "type"));
+        let ty = ty?;
         let qualifier = read_type_qualifier(type_qualifier, OWNER, "type_qualifier")?;
         Ok(Self {
             name: name.clone().unbind(),
@@ -461,6 +465,7 @@ impl PyVariableSymbolTableFrame {
             type_qualifier: type_qualifier.clone().unbind(),
             value: SymbolFrame::from(VariableFrame::new(identifier, ty, qualifier)),
             hash: OnceLock::new(),
+            slots,
         })
     }
 
@@ -630,6 +635,9 @@ pub(crate) struct PyFunctionSymbolTableFrame {
     signature: Py<PyTuple>,
     value: SymbolFrame,
     hash: OnceLock<u64>,
+    /// The slots of the Python-defined parameter types' adapters, which the
+    /// frame owns (R2-003).
+    slots: crate::gc::Slots,
 }
 
 /// The core values of a function frame's signature.
@@ -684,7 +692,7 @@ impl PyFunctionSymbolTableFrame {
         visit.call(&self.name)?;
         visit.call(&self.keyword)?;
         visit.call(&self.signature)?;
-        Ok(())
+        self.slots.traverse(&visit)
     }
 
     /// Create the frame of the function `name`, declared with `keyword`,
@@ -711,16 +719,18 @@ impl PyFunctionSymbolTableFrame {
                 keyword,
             )?);
         };
-        let (pairs, values) = match signature {
-            Some(signature) => read_signature(signature)?,
-            None => (PyTuple::empty(py), Vec::new()),
-        };
+        let (read, slots) = crate::gc::collect_slots(|| match signature {
+            Some(signature) => read_signature(signature),
+            None => Ok((PyTuple::empty(py), Vec::new())),
+        });
+        let (pairs, values) = read?;
         Ok(Self {
             name: name.clone().unbind(),
             keyword: keyword.clone().unbind(),
             signature: pairs.unbind(),
             value: SymbolFrame::from(FunctionFrame::new(identifier, keyword_value, values)),
             hash: OnceLock::new(),
+            slots,
         })
     }
 

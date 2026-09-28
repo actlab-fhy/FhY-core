@@ -22,6 +22,7 @@ use fhy_core::types::TypeUnificationEnvironment;
 
 use crate::dataclass::{build_argument_type_error, hash_value};
 use crate::error::IntoPyErr;
+use crate::gc::{Slots, collect_slots};
 use crate::identifier::{read_identifier_id, restore_identifier};
 use crate::public_class::PublicClass;
 
@@ -47,6 +48,10 @@ struct Objects {
     data_types: ObjectTable,
     types: ObjectTable,
     expressions: ObjectTable,
+    /// The slots of the Python-defined parts' adapters this environment's
+    /// construction made, which it owns (R2-003); a derived environment
+    /// starts with none, since its parent owns the parent's.
+    slots: Slots,
 }
 
 /// Return a copy of `table`.
@@ -63,6 +68,7 @@ impl Objects {
             data_types: copy_table(py, &self.data_types),
             types: copy_table(py, &self.types),
             expressions: copy_table(py, &self.expressions),
+            slots: Slots::default(),
         }
     }
 }
@@ -252,6 +258,7 @@ impl PyTypeUnificationEnvironment {
             data_types: HashMap::new(),
             types: HashMap::new(),
             expressions: HashMap::new(),
+            slots: Slots::default(),
         };
         for (identifier, value) in environment.data_type_bindings() {
             let entry = match kept(Table::DataTypes, identifier) {
@@ -309,40 +316,44 @@ impl PyTypeUnificationEnvironment {
         };
         let identifier = restore_identifier(name, method, "name")?;
         let mut objects = this.objects.copy(py);
-        let next = match table {
-            Table::DataTypes => {
-                let Some(data_type) = read_data_type_value(value) else {
-                    return Err(build_argument_type_error(
-                        method,
-                        "value",
-                        "a DataType",
-                        value,
-                    )?);
-                };
-                this.value
-                    .with_data_type_binding(identifier.clone(), data_type)
-            }
-            Table::Types => {
-                let Some(bound) = read_type_value(value) else {
-                    return Err(build_argument_type_error(method, "value", "a Type", value)?);
-                };
-                this.value.with_type_binding(identifier.clone(), bound)
-            }
-            Table::Expressions => {
-                let Ok(expression) = value.cast::<PyExpression>() else {
-                    return Err(build_argument_type_error(
-                        method,
-                        "value",
-                        "an Expression",
-                        value,
-                    )?);
-                };
-                this.value.with_expression_binding(
-                    identifier.clone(),
-                    expression.get().expression().clone(),
-                )
-            }
-        };
+        let (next, slots) = collect_slots(|| -> PyResult<TypeUnificationEnvironment> {
+            Ok(match table {
+                Table::DataTypes => {
+                    let Some(data_type) = read_data_type_value(value) else {
+                        return Err(build_argument_type_error(
+                            method,
+                            "value",
+                            "a DataType",
+                            value,
+                        )?);
+                    };
+                    this.value
+                        .with_data_type_binding(identifier.clone(), data_type)
+                }
+                Table::Types => {
+                    let Some(bound) = read_type_value(value) else {
+                        return Err(build_argument_type_error(method, "value", "a Type", value)?);
+                    };
+                    this.value.with_type_binding(identifier.clone(), bound)
+                }
+                Table::Expressions => {
+                    let Ok(expression) = value.cast::<PyExpression>() else {
+                        return Err(build_argument_type_error(
+                            method,
+                            "value",
+                            "an Expression",
+                            value,
+                        )?);
+                    };
+                    this.value.with_expression_binding(
+                        identifier.clone(),
+                        expression.get().expression().clone(),
+                    )
+                }
+            })
+        });
+        let next = next?;
+        objects.slots = slots;
         let entry = (name.clone().unbind(), value.clone().unbind());
         match table {
             Table::DataTypes => objects.data_types.insert(identifier.id(), entry),
@@ -465,7 +476,8 @@ impl PyTypeUnificationEnvironment {
         }
         self.views
             .iter()
-            .try_for_each(|view| visit.call(view.get()))
+            .try_for_each(|view| visit.call(view.get()))?;
+        self.objects.slots.traverse(&visit)
     }
 
     /// Create the environment of the mappings `data_type_bindings`,
@@ -506,28 +518,34 @@ impl PyTypeUnificationEnvironment {
             data_types: HashMap::new(),
             types: HashMap::new(),
             expressions: HashMap::new(),
+            slots: Slots::default(),
         };
         let py = cls.py();
         let object_init = py.get_type::<PyAny>().getattr(intern!(py, "__init__"))?;
         if !cls.getattr(intern!(py, "__init__"))?.is(&object_init) {
             return Ok(Self::from_parts(value, objects));
         }
-        for table in Table::ALL {
-            let given = match args.get_item(table.index()) {
-                Ok(given) => Some(given),
-                Err(_absent) => {
-                    kwargs.and_then(|kwargs| kwargs.get_item(table.name()).ok().flatten())
-                }
-            };
-            if let Some(given) = given {
-                let table_objects = match table {
-                    Table::DataTypes => &mut objects.data_types,
-                    Table::Types => &mut objects.types,
-                    Table::Expressions => &mut objects.expressions,
+        let (read, slots) = collect_slots(|| -> PyResult<()> {
+            for table in Table::ALL {
+                let given = match args.get_item(table.index()) {
+                    Ok(given) => Some(given),
+                    Err(_absent) => {
+                        kwargs.and_then(|kwargs| kwargs.get_item(table.name()).ok().flatten())
+                    }
                 };
-                read_table(&given, table, &mut value, table_objects)?;
+                if let Some(given) = given {
+                    let table_objects = match table {
+                        Table::DataTypes => &mut objects.data_types,
+                        Table::Types => &mut objects.types,
+                        Table::Expressions => &mut objects.expressions,
+                    };
+                    read_table(&given, table, &mut value, table_objects)?;
+                }
             }
-        }
+            Ok(())
+        });
+        read?;
+        objects.slots = slots;
         Ok(Self::from_parts(value, objects))
     }
 
@@ -706,20 +724,25 @@ impl PyTypeUnificationEnvironment {
             data_types: HashMap::new(),
             types: HashMap::new(),
             expressions: HashMap::new(),
+            slots: Slots::default(),
         };
-        read_table(
-            data_type_bindings,
-            Table::DataTypes,
-            &mut value,
-            &mut objects.data_types,
-        )?;
-        read_table(type_bindings, Table::Types, &mut value, &mut objects.types)?;
-        read_table(
-            expression_bindings,
-            Table::Expressions,
-            &mut value,
-            &mut objects.expressions,
-        )?;
+        let (read, slots) = collect_slots(|| -> PyResult<()> {
+            read_table(
+                data_type_bindings,
+                Table::DataTypes,
+                &mut value,
+                &mut objects.data_types,
+            )?;
+            read_table(type_bindings, Table::Types, &mut value, &mut objects.types)?;
+            read_table(
+                expression_bindings,
+                Table::Expressions,
+                &mut value,
+                &mut objects.expressions,
+            )
+        });
+        read?;
+        objects.slots = slots;
         Self::instantiate(cls, value, objects, None)
     }
 

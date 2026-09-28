@@ -19,15 +19,28 @@ from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.lattice import Lattice
 from fhy_core.pass_infrastructure import CompilerPass, PassManager
-from fhy_core.symbol_table import SymbolTable, SymbolTableFrame
+from fhy_core.symbol_table import (
+    SymbolTable,
+    SymbolTableFrame,
+    VariableSymbolTableFrame,
+)
 from fhy_core.symbolic.expression import Expression, FunctionSort, NativeFunction
 from fhy_core.symbolic.expression.pattern import RewriteRule, WildcardPattern
-from fhy_core.symbolic.param import Param
+from fhy_core.symbolic.param import CategoricalDomain, OrdinalDomain, Param
 from fhy_core.symbolic.solver import Simplifier, Solver
+from fhy_core.types import (
+    CoreDataType,
+    NumericalType,
+    PrimitiveDataType,
+    TypeQualifier,
+    TypeUnificationEnvironment,
+)
 from fhy_core.utils.override import override
 from fhy_core.utils.poset import PartiallyOrderedSet
 
+from .symbolic.param.test_domain_rust_binding import _Rank
 from .symbolic.param.test_param_rust_binding import _EvenDomain
+from .types.test_types_rust_binding import _Opaque, _Tagged
 
 _Py_TPFLAGS_HAVE_GC = 1 << 14
 
@@ -208,6 +221,64 @@ def test_a_native_function_whose_implementation_holds_it_is_collected() -> None:
             )
         )
         return implementation
+
+    assert _collects(build)
+
+
+@pytest.mark.parametrize("domain_class", [CategoricalDomain, OrdinalDomain])
+def test_an_opaque_member_pointing_at_its_domain_is_collected(
+    domain_class: type,
+) -> None:
+    """Test a finite domain and a `Serializable` member that points back at it.
+
+    The domain holds the member twice, in its values and in the core
+    domain's opaque value; both references are visited.
+    """
+
+    def build() -> object:
+        member = _Rank(1)
+        domain = domain_class([member, _Rank(2)])
+        member.owner = domain  # type: ignore[attr-defined]
+        return member
+
+    assert _collects(build)
+
+
+def test_a_bound_data_type_pointing_at_its_environment_is_collected() -> None:
+    """Test an environment and a Python-defined data type it binds, which
+    points back at it."""
+
+    def build() -> object:
+        data_type = _Opaque("cycle")
+        environment = TypeUnificationEnvironment.empty().with_data_type_binding(
+            Identifier("T"), data_type
+        )
+        object.__setattr__(data_type, "owner", environment)
+        return data_type
+
+    assert _collects(build)
+
+
+def test_a_frame_s_type_pointing_at_the_frame_is_collected() -> None:
+    """Test a variable frame and its Python-defined type, which points back."""
+
+    def build() -> object:
+        ty = _Tagged("cycle", NumericalType(PrimitiveDataType(CoreDataType.INT32)))
+        frame = VariableSymbolTableFrame(Identifier("x"), ty, TypeQualifier.INPUT)
+        object.__setattr__(ty, "owner", frame)
+        return ty
+
+    assert _collects(build)
+
+
+def test_a_data_type_pointing_at_its_numerical_type_is_collected() -> None:
+    """Test a numerical type over a Python-defined data type that points back."""
+
+    def build() -> object:
+        data_type = _Opaque("cycle")
+        numerical = NumericalType(data_type)
+        object.__setattr__(data_type, "owner", numerical)
+        return data_type
 
     assert _collects(build)
 

@@ -4685,3 +4685,20 @@ on the head `0aa6752`:
   |---|---|---|
   | a `Decimal` literal or bound expanded its exponent into digits: `Decimal("1e100000000")` took 0.6 to 1.3 s and 235 MiB, `1e±4000000000` exhausted memory | refused at once with `ValueError` naming the exponent and the bound | `test_an_absurdly_scaled_decimal_is_refused_at_once` (5 cases) |
   | any `Decimal` was accepted, `Decimal("1E+10001")` and a 10,001-digit fraction included | a `Decimal` whose normalized exponent passes ±10,000 is refused, the spec's "absurdly scaled"; the text grammar is unbounded as before | `test_a_decimal_within_the_bound_keeps_its_value`, `test_a_decimal_of_many_digits_is_read_exactly` |
+
+**R2-003, the owners after the rebase.** The slot owners left for the final
+sweep now exist: the finite domains (`param/domains.rs`, Track C's: the
+opaque values' adapters), the type-unification environment
+(`types/environment.rs`, Track C's: a Python-defined bound type or data
+type, from the constructor, `_from_tables` and each `with_*`; a derived
+environment starts with no slots, since its parent owns the parent's), and
+the variable and function frames (`symbol_table/frames.rs`: their
+Python-defined types). Each edit is a `slots` field, a `collect_slots`
+around the reads, and one more visit in `__traverse__`. The checker
+(`types/checking.rs`) builds no object that keeps a core value, so it owns
+none. Four new cycles in `tests/test_gc_cycles.py` (a categorical and an
+ordinal domain's member, an environment's bound data type, a frame's type)
+leaked with the rest of the change stashed and are collected with it; a
+numerical type's data type, owned since `fe4eb15`, gains its test too.
+Adapters built outside a construction (a decode's, a question's operands)
+still have no owner, which only keeps such a cycle alive.

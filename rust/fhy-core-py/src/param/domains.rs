@@ -99,6 +99,9 @@ fn read_variable(variable: &Bound<'_, PyAny>) -> PyResult<Identifier> {
 pub(crate) struct DomainState {
     core: ParamDomain,
     values: Option<Py<PyTuple>>,
+    /// The slots of the opaque values' adapters, which the domain owns
+    /// (R2-003).
+    slots: crate::gc::Slots,
 }
 
 impl DomainState {
@@ -107,6 +110,7 @@ impl DomainState {
         Self {
             core: core.into(),
             values: None,
+            slots: crate::gc::Slots::default(),
         }
     }
 
@@ -119,6 +123,7 @@ impl DomainState {
         Ok(Self {
             core: core.into(),
             values: Some(PyTuple::new(py, objects)?.unbind()),
+            slots: crate::gc::Slots::default(),
         })
     }
 
@@ -548,7 +553,8 @@ macro_rules! domain_class {
                 &self,
                 visit: ::pyo3::pyclass::PyVisit<'_>,
             ) -> Result<(), ::pyo3::pyclass::PyTraverseError> {
-                visit.call(self.state.values.as_ref())
+                visit.call(self.state.values.as_ref())?;
+                self.state.slots.traverse(&visit)
             }
 
             /// The sort the solver reasons about the values in, or `None`.
@@ -873,6 +879,19 @@ domain_class!(PyRealDomain, "RealDomain", |_this, _py| Vec::new(), &[], {
 
 /// Return the finite domain of `kind` of the Python `values`.
 fn build_finite(
+    py: Python<'_>,
+    kind: DomainKind,
+    values: &Bound<'_, PyAny>,
+) -> PyResult<DomainState> {
+    // The opaque values' adapters are this domain's to traverse (R2-003).
+    let (state, slots) = crate::gc::collect_slots(|| build_finite_state(py, kind, values));
+    let mut state = state?;
+    state.slots = slots;
+    Ok(state)
+}
+
+/// Return the finite domain state of `kind` of the Python `values`.
+fn build_finite_state(
     py: Python<'_>,
     kind: DomainKind,
     values: &Bound<'_, PyAny>,
