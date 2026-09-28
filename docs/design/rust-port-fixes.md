@@ -4035,7 +4035,11 @@ other users, see the benchmark note below), and the costs were removed:
   namespace.
 - **The environment (R2-038b)** collected its entries into a `Vec` on each
   iteration; the iterator now walks the layers without allocating, and
-  the substitution returns at once when no bound variable is free.
+  the substitution returns at once when no bound variable is free; a
+  binding with no bound variable free of its own is substituted in place,
+  with no frame and no marks (a follow-up commit, after the interleaved
+  reruns still showed `test_substitute_template_of_a_templated_array` at
+  1.27).
 
 ### Track E notes
 

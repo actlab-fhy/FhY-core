@@ -707,8 +707,15 @@ fn substitute_avoiding(
                     .expression_binding(&next)
                     .unwrap_or_else(|| unreachable!("a pending variable is bound"))
                     .clone();
-                grey.insert(next.clone());
-                frames.push(Frame::new(Some(next), bound, environment));
+                let frame = Frame::new(Some(next.clone()), bound, environment);
+                if frame.pending.is_empty() {
+                    // A binding with no bound variable free is its own form
+                    // and reaches no chain; it needs no frame or marks.
+                    top.replacements.insert(next, frame.expression);
+                } else {
+                    grey.insert(next);
+                    frames.push(frame);
+                }
             }
             continue;
         }
