@@ -2759,8 +2759,8 @@ class ParamAssignment:
     def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self: ...
 
 def check_param_bounds_are_ordered(
-    lower: int | float | str,
-    upper: int | float | str,
+    lower: int | float | str | Decimal,
+    upper: int | float | str | Decimal,
     is_lower_inclusive: bool,
     is_upper_inclusive: bool,
 ) -> None: ...

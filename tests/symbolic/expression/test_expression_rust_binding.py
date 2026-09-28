@@ -13,6 +13,7 @@ import pickle
 import re
 import time
 import weakref
+from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
@@ -483,3 +484,88 @@ def test_a_payload_of_a_5001_digit_int_materializes() -> None:
     assert isinstance(rebuilt, LiteralExpression)
     assert rebuilt.value == value
     assert type(rebuilt.value) is int
+
+
+# Decimals cross as `as_tuple()` parts into `Decimal::from_parts`, which
+# refuses an exponent beyond 10,000 in magnitude at once, where the text
+# route expanded every digit first (R2-045).
+
+
+@pytest.mark.parametrize(
+    ("build", "exponent"),
+    [
+        pytest.param(
+            lambda: LiteralExpression(Decimal("1e100000000")), 100000000, id="literal"
+        ),
+        pytest.param(
+            lambda: LiteralExpression(Decimal("1e+5000000000")),
+            5000000000,
+            id="literal_p32",
+        ),
+        pytest.param(
+            lambda: _rs.check_param_bounds_are_ordered(
+                Decimal("1e-4000000000"), 1, True, True
+            ),
+            -4000000000,
+            id="param_bound_p32",
+        ),
+        pytest.param(
+            lambda: _rs.is_decimal_text_exactly_binary(Decimal("1e100000000")),
+            100000000,
+            id="exactly_binary",
+        ),
+        pytest.param(
+            lambda: _rs.coerce_literal_value(Decimal("-1e100000000")),
+            100000000,
+            id="coerce",
+        ),
+    ],
+)
+def test_an_absurdly_scaled_decimal_is_refused_at_once(
+    build: Callable[[], object], exponent: int
+) -> None:
+    """Test a `Decimal` beyond the exponent bound raises `ValueError` at once.
+
+    The message names the exponent and the bound. The time bound is loose,
+    for a loaded machine: before, the first case took 0.6 s and 235 MiB, and
+    the two `p32` cases gave no answer within 15 s.
+    """
+    started = time.perf_counter()
+    with pytest.raises(
+        ValueError, match=rf"decimal exponent {exponent} exceeds the bound of 10000"
+    ):
+        build()
+
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    "text", ["1E+10000", "1E-10000", "1.50", "0", "-0", "12345678901234567890.5"]
+)
+def test_a_decimal_within_the_bound_keeps_its_value(text: str) -> None:
+    """Test a `Decimal` up to the bound reads back as its normalized value."""
+    value = Decimal(text)
+
+    literal = LiteralExpression(value.copy_abs())
+    read = literal.value
+
+    assert isinstance(read, Decimal)
+    assert read == value.copy_abs()
+    assert value == 0 or read.as_tuple() == value.copy_abs().normalize().as_tuple()
+
+
+def test_a_decimal_of_many_digits_is_read_exactly() -> None:
+    """Test a `Decimal` of 20,000 digits within the bound keeps every one.
+
+    Its exponent is -9,999, so its digits pass CPython's text limit while
+    the exponent stays within the bound; one more fractional digit is
+    refused, and the message does not repeat the value.
+    """
+    value = Decimal("1" * 10_001 + "." + "7" * 9_999)
+    beyond = Decimal("0." + "7" * 10_001)
+
+    assert LiteralExpression(value).value == value
+    assert _rs.is_decimal_text_exactly_binary(value) is False
+    with pytest.raises(ValueError, match="exponent -10001 exceeds") as refused:
+        LiteralExpression(beyond)
+    assert len(str(refused.value)) < 120

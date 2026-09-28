@@ -4,7 +4,6 @@
 
 use num_traits::{FromPrimitive, ToPrimitive};
 use pyo3::exceptions::PyTypeError;
-use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
 
@@ -12,7 +11,7 @@ use fhy_core::expression::{BigInt, Decimal, LiteralValue};
 
 use crate::error::IntoPyResult;
 
-use super::super::literal::{big_int_to_python, decimal_class};
+use super::super::literal::{big_int_to_python, decimal_class, read_decimal_parts};
 use super::error::string_literal_precision_error;
 
 /// The number a decimal text denotes, and its sign.
@@ -33,11 +32,23 @@ fn read_signed_literal(value: &Bound<'_, PyAny>) -> PyResult<SignedLiteral> {
     let text = if let Ok(text) = value.cast::<PyString>() {
         text.to_str()?.to_owned()
     } else if value.is_instance(decimal_class(py)?)? {
-        value
-            .call_method1(intern!(py, "__format__"), ("f",))?
-            .cast::<PyString>()?
-            .to_str()?
-            .to_owned()
+        // From its `as_tuple()` parts, not its fixed-point text, which
+        // expanded every digit of the exponent (R2-045). A non-negative
+        // exponent reads as an integer, as that text, having no decimal
+        // point, did.
+        let parts = read_decimal_parts(value)?;
+        let magnitude = if parts.is_integral_form {
+            let exponent = u32::try_from(parts.magnitude.exponent()).unwrap_or_else(|_| {
+                unreachable!("an integral form's exponent is bounded and non-negative")
+            });
+            LiteralValue::Int(parts.magnitude.coefficient() * BigInt::from(10).pow(exponent))
+        } else {
+            LiteralValue::Decimal(parts.magnitude)
+        };
+        return Ok(SignedLiteral {
+            is_negative: parts.is_negative,
+            magnitude,
+        });
     } else {
         return Err(PyTypeError::new_err(format!(
             "expected decimal text or a decimal.Decimal, got {}.",

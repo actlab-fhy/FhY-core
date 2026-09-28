@@ -122,8 +122,8 @@ onto `dev-rust` before continuing.
 - [x] `[rebase]` onto `dev-rust` after Track A lands (branched from `35519bb`, after Tracks A and D landed; no rebase needed)
 - [x] R2-013c (F2-013, binding readers): depth limits in the dict and member readers (`5e7cca2`)
 - [x] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot (`fe4eb15`)
-- [ ] `[rebase]` onto `dev-rust` after Tracks D, B and C land
-- [ ] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes (ints: done before the rebase, see the Track E notes; the `Decimal` half needs R2-008's `Decimal::from_parts` and exponent bound, and follows the rebase)
+- [x] `[rebase]` onto `dev-rust` after Tracks D, B and C land (rebased onto `fb282fb` by the maintainer)
+- [x] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes (ints `726d53e` before the rebase, rebased; `Decimal`s in this commit)
 - [x] R2-031 (F2-031): one `ScopedStack` guard for all six thread-local stacks (done before the rebase: none of the six is in Track B's or C's files) (`e40d223`)
 - [ ] R2-033 (F2-033): binding boilerplate consolidated
 - [ ] Track E status: gates green; counts recorded; landed as `<hash>`
@@ -4651,3 +4651,37 @@ on the head `0aa6752`:
   `464cbe8` (mypy's `explicit-override`, in `cd51fde`); `cd51fde` (its
   order-dependent dunder check, `7f01bfd`; its and `726d53e`'s tests under
   `tests_minimal`, `0aa6752`).
+
+**R2-045, the `Decimal` half (after the rebase).**
+- **The reader.** `read_decimal_parts` reads `Decimal.as_tuple()`: the
+  sign, the digit tuple, assembled into ASCII and parsed as a `BigInt` in
+  Rust (so no Python int-to-text conversion and no digit limit), and the
+  exponent, into R2-008's `Decimal::from_parts`. `read_decimal` refuses a
+  negative non-zero value as before. The evaluator's `read_signed_literal`
+  (Track B's `expression/evaluate/literal.rs`, one branch) uses it too, and
+  keeps reading a `Decimal` with a non-negative exponent as an integer, as
+  its fixed-point text, which had no decimal point, did.
+- **The bound** is Track C's: the normalized exponent at most 10,000 in
+  magnitude, which holds where parts come from outside the text grammar,
+  as a Python `Decimal`'s do. An exponent beyond `i64` is refused the same
+  way. The message is `A literal Decimal is out of range: decimal exponent
+  100000000 exceeds the bound of 10000 in magnitude.` (call: the value is
+  not written, since its `repr` has every digit; a 10,001-digit fraction
+  would have made a 10 KB message).
+- **The stub.** `check_param_bounds_are_ordered` declares `Decimal`
+  bounds, which it always accepted.
+- **Test-first.** At the base (`fb282fb`, run one case per process under a
+  4 GB address-space limit): `LiteralExpression(Decimal("1e100000000"))`
+  built after 1.3 s; `Decimal("1e+5000000000")` and the bound
+  `Decimal("1e-4000000000")` ran out of memory; `is_decimal_text_exactly_binary(Decimal("1e100000000"))`
+  gave no answer within 10 s; under pytest the last one outlived
+  `pytest-timeout`'s 20 s, since the expansion runs in C holding the GIL.
+  The five cases of `test_an_absurdly_scaled_decimal_is_refused_at_once`
+  now raise at once (the test's time bound is 1 s, not the spec's 10 ms: a
+  10 ms wall-clock bound flakes on a loaded machine, R2-N5).
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a `Decimal` literal or bound expanded its exponent into digits: `Decimal("1e100000000")` took 0.6 to 1.3 s and 235 MiB, `1e±4000000000` exhausted memory | refused at once with `ValueError` naming the exponent and the bound | `test_an_absurdly_scaled_decimal_is_refused_at_once` (5 cases) |
+  | any `Decimal` was accepted, `Decimal("1E+10001")` and a 10,001-digit fraction included | a `Decimal` whose normalized exponent passes ±10,000 is refused, the spec's "absurdly scaled"; the text grammar is unbounded as before | `test_a_decimal_within_the_bound_keeps_its_value`, `test_a_decimal_of_many_digits_is_read_exactly` |

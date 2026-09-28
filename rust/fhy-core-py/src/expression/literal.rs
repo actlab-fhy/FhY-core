@@ -18,13 +18,14 @@
 //! is the negation of a literal, `-LiteralExpression(Decimal("1.5"))`. A
 //! negative zero is the decimal zero.
 
+use num_traits::Zero;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyString, PyType};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyString, PyTuple, PyType};
 
-use fhy_core::expression::{BigInt, Decimal, LiteralTextError, LiteralValue};
+use fhy_core::expression::{BigInt, Decimal, DecimalPartsError, LiteralTextError, LiteralValue};
 
 use crate::error::{IntoPyErr, IntoPyResult};
 
@@ -96,6 +97,37 @@ pub(crate) fn big_int_to_python<'py>(
 ///
 /// Raises `ValueError` if `value` is not finite or is negative.
 pub(crate) fn read_decimal(value: &Bound<'_, PyAny>) -> PyResult<Decimal> {
+    let parts = read_decimal_parts(value)?;
+    if parts.is_negative && !parts.magnitude.coefficient().is_zero() {
+        return Err(PyValueError::new_err(format!(
+            "A literal Decimal must not be negative, got {}; write the \
+             negation of the literal of its magnitude instead.",
+            value.repr()?
+        )));
+    }
+    Ok(parts.magnitude)
+}
+
+/// The parts of a finite `decimal.Decimal`: its sign, its magnitude, and
+/// whether its exponent is non-negative, so its fixed-point text has no
+/// decimal point.
+pub(crate) struct DecimalParts {
+    pub(crate) is_negative: bool,
+    pub(crate) magnitude: Decimal,
+    pub(crate) is_integral_form: bool,
+}
+
+/// Return the parts of the `decimal.Decimal` `value`, read from
+/// `value.as_tuple()` into [`Decimal::from_parts`] (R2-045): the digits are
+/// assembled in Rust, so neither the exponent is expanded nor the digits go
+/// through `CPython`'s digit limit, and an exponent beyond
+/// [`Decimal::MAX_EXPONENT_MAGNITUDE`] is refused at once.
+///
+/// # Errors
+///
+/// Raises `ValueError` if `value` is not finite, or its exponent is beyond
+/// the bound, naming it.
+pub(crate) fn read_decimal_parts(value: &Bound<'_, PyAny>) -> PyResult<DecimalParts> {
     let py = value.py();
     if !value.call_method0(intern!(py, "is_finite"))?.is_truthy()? {
         return Err(PyValueError::new_err(format!(
@@ -103,21 +135,45 @@ pub(crate) fn read_decimal(value: &Bound<'_, PyAny>) -> PyResult<Decimal> {
             value.repr()?
         )));
     }
-    let is_zero = value.call_method0(intern!(py, "is_zero"))?.is_truthy()?;
-    let is_signed = value.call_method0(intern!(py, "is_signed"))?.is_truthy()?;
-    if is_signed && !is_zero {
-        return Err(PyValueError::new_err(format!(
-            "A literal Decimal must not be negative, got {}; write the \
-             negation of the literal of its magnitude instead.",
-            value.repr()?
-        )));
+    let parts = value.call_method0(intern!(py, "as_tuple"))?;
+    let sign: u8 = parts.get_item(0)?.extract()?;
+    let digit_objects = parts.get_item(1)?;
+    let digit_objects = digit_objects.cast::<PyTuple>()?;
+    let mut digits = Vec::with_capacity(digit_objects.len());
+    for digit in digit_objects {
+        let digit: u8 = digit.extract()?;
+        if digit > 9 {
+            return Err(PyValueError::new_err(format!(
+                "A Decimal's digit must lie in 0..=9, got {digit}."
+            )));
+        }
+        digits.push(b'0' + digit);
     }
-    let magnitude = value.call_method0(intern!(py, "copy_abs"))?;
-    let text = magnitude.call_method1(intern!(py, "__format__"), ("f",))?;
-    text.cast::<PyString>()?
-        .to_str()?
-        .parse::<Decimal>()
-        .into_py_result()
+    let coefficient = if digits.is_empty() {
+        BigInt::ZERO
+    } else {
+        BigInt::parse_bytes(&digits, 10)
+            .unwrap_or_else(|| unreachable!("ASCII digits parse as an integer"))
+    };
+    // The value is not written: its `repr` has every digit.
+    let out_of_range = |error: DecimalPartsError| {
+        PyValueError::new_err(format!("A literal Decimal is out of range: {error}."))
+    };
+    let exponent = parts.get_item(2)?;
+    let exponent: i64 = exponent.extract().map_err(|_beyond_i64| {
+        out_of_range(DecimalPartsError::ExponentOutOfRange {
+            exponent: if exponent.gt(0).unwrap_or(true) {
+                i64::MAX
+            } else {
+                i64::MIN
+            },
+        })
+    })?;
+    Ok(DecimalParts {
+        is_negative: sign == 1,
+        magnitude: Decimal::from_parts(coefficient, exponent).map_err(out_of_range)?,
+        is_integral_form: exponent >= 0,
+    })
 }
 
 /// Return the `decimal.Decimal` of `value`, in its normalized form.
