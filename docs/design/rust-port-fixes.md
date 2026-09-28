@@ -3559,7 +3559,8 @@ rounds each. The median row is 1.00.
 - **J-12 is met:** the literal-heavy V2 decode is 110.64 µs, against the
   target of 132.3 µs (1.10 × 120.29 µs) and V1's 107.93 µs in the same
   runs.
-- **Flagged for the maintainer (above 1.10):**
+- **Flagged for the maintainer (above 1.10), and accepted by the maintainer on
+  2026-09-28:**
   - the equation key and a system's construction, which R2-001a makes
     build the canonical table: a key is now linear in distinct nodes (the
     depth-64 DAG keys at once, where the base's key grew fourfold per two
