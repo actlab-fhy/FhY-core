@@ -16,6 +16,8 @@ import weakref
 from decimal import Decimal
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
@@ -38,6 +40,7 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.traits import FrozenMixin, HasOperands, VisitableMixin
 
+from ...strategies.settings import cap_max_examples
 from ...v1 import reads_v1
 
 _NODE_CLASSES = [
@@ -453,3 +456,55 @@ def test_an_expression_pickles_as_a_call_of_its_class() -> None:
     assert restored == expression
     assert type(restored) is PiecewiseExpression
     assert expression.__reduce__()[0] is PiecewiseExpression
+
+
+# =============================================================================
+# Big integers (R2-045)
+#
+# Ints cross into the core as bytes, not decimal text, so CPython's
+# 4,300-digit guard on int-to-text conversion does not apply.
+# =============================================================================
+
+
+def test_a_literal_of_an_int_past_the_digit_limit_is_built() -> None:
+    """Test `LiteralExpression(10**5000)` builds and keeps its value."""
+    value = 10**5000
+
+    literal = LiteralExpression(value)
+
+    assert literal.value == value
+    assert LiteralExpression.from_json(literal.to_json()).value == value
+
+
+def test_a_payload_of_a_5001_digit_int_materializes() -> None:
+    """Test decoding a literal of 5,001 digits builds the Python int."""
+    value = -(10**5000) - 7
+    payload = LiteralExpression(value).serialize_to_dict()
+
+    rebuilt = Expression.deserialize_from_dict(payload)
+
+    assert isinstance(rebuilt, LiteralExpression)
+    assert rebuilt.value == value
+    assert type(rebuilt.value) is int
+
+
+# An int of up to 20,000 digits, built from bounded draws so each example
+# stays within the generator's budget: a head of up to 300 digits shifted by
+# up to 19,700 digits, plus a tail of up to 300 digits.
+_HUGE_INTS = st.builds(
+    lambda head, shift, tail: head * 10**shift + tail,
+    st.integers(min_value=-(10**300), max_value=10**300),
+    st.integers(min_value=0, max_value=19_700),
+    st.integers(min_value=0, max_value=10**300),
+)
+
+
+@pytest.mark.property
+@given(value=_HUGE_INTS)
+@cap_max_examples(60)
+def test_any_int_up_to_twenty_thousand_digits_round_trips(value: int) -> None:
+    """Test an int of up to 20,000 digits crosses into the core and back."""
+    literal = LiteralExpression(value)
+
+    assert literal.value == value
+    assert LiteralExpression.from_json(literal.to_json()).value == value

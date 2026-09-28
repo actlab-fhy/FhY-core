@@ -123,8 +123,8 @@ onto `dev-rust` before continuing.
 - [x] R2-013c (F2-013, binding readers): depth limits in the dict and member readers (`5e7cca2`)
 - [x] R2-003 (F2-003): `__traverse__`/`__clear__`, with every Python object in a visible slot (`fe4eb15`)
 - [ ] `[rebase]` onto `dev-rust` after Tracks D, B and C land
-- [ ] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes
-- [x] R2-031 (F2-031): one `ScopedStack` guard for all six thread-local stacks (done before the rebase: none of the six is in Track B's or C's files)
+- [ ] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes (ints: done before the rebase, see the Track E notes; the `Decimal` half needs R2-008's `Decimal::from_parts` and exponent bound, and follows the rebase)
+- [x] R2-031 (F2-031): one `ScopedStack` guard for all six thread-local stacks (done before the rebase: none of the six is in Track B's or C's files) (`e40d223`)
 - [ ] R2-033 (F2-033): binding boilerplate consolidated
 - [ ] Track E status: gates green; counts recorded; landed as `<hash>`
 
@@ -4514,3 +4514,30 @@ brief asked for it before the stop.
   unguarded stacks kept their frame after such a panic (F2-031); the tests
   use the new API, so they do not compile there.
 - **Python-visible changes:** none, except after a panic.
+
+**R2-045, the int half (before the last rebase).** The `Decimal` half
+needs R2-008's `Decimal::from_parts` and `Decimal::MAX_EXPONENT_MAGNITUDE`
+(Track C, not landed), so it waits for the rebase, with the evaluator's
+`read_signed_literal`, which converts only `Decimal`s. The int half needs
+neither.
+- **The conversion.** `read_big_int` reads an int past `i64` through
+  `int.to_bytes(value, bit_length // 8 + 1, "little", signed=True)` into
+  `BigInt::from_signed_bytes_le`, and `big_int_to_python` builds one through
+  `int.from_bytes(.., "little", signed=True)`: linear, and free of CPython's
+  4,300-digit limit on int-to-text conversion. Both call `int`'s own
+  methods, so an `int` subclass's `to_bytes` or `bit_length` does not change
+  the value read. `BigInt` is the core's num-bigint 0.5 re-export, so the
+  binding gains no dependency, and pyo3's `num-bigint` feature (0.4) is not
+  used. Every one of the 25 call sites goes through these two functions.
+- **Test-first.** At the base, `test_a_literal_of_an_int_past_the_digit_limit_is_built`,
+  `test_a_payload_of_a_5001_digit_int_materializes` and the property
+  `test_any_int_up_to_twenty_thousand_digits_round_trips` failed with
+  CPython's `ValueError: Exceeds the limit (4300 digits) for integer string
+  conversion`. The property builds each int from bounded draws (a head of up
+  to 300 digits shifted by up to 19,700 digits, plus a tail): a single
+  `st.integers` over `±10**20000` exceeds Hypothesis's entropy budget.
+- **Python-visible changes:**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | `LiteralExpression(10**5000)`, and decoding a 5,001-digit literal, raised the digit-limit `ValueError` | ints of any size are literals, and decode | the three tests above |

@@ -22,7 +22,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyType};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyString, PyType};
 
 use fhy_core::expression::{BigInt, Decimal, LiteralTextError, LiteralValue};
 
@@ -46,17 +46,31 @@ pub(crate) fn read_big_int(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
     if let Ok(small) = value.extract::<i64>() {
         return Ok(BigInt::from(small));
     }
-    let text = value
-        .py()
-        .get_type::<PyInt>()
-        .call_method1(intern!(value.py(), "__repr__"), (value,))?;
-    text.cast::<PyString>()?
-        .to_str()?
-        .parse()
-        .map_err(|_unparsable| PyValueError::new_err("an int has decimal digits"))
+    // Through `int.to_bytes`, signed and little-endian, sized from
+    // `bit_length` with room for the sign: linear, and free of CPython's
+    // digit limit on decimal text (R2-045). `int`'s own methods, so an
+    // `int` subclass's overrides do not change the value read.
+    let py = value.py();
+    let int = py.get_type::<PyInt>();
+    let bit_length: usize = int
+        .call_method1(intern!(py, "bit_length"), (value,))?
+        .extract()?;
+    let keywords = PyDict::new(py);
+    keywords.set_item(intern!(py, "signed"), true)?;
+    let bytes = int.call_method(
+        intern!(py, "to_bytes"),
+        (value, bit_length / 8 + 1, intern!(py, "little")),
+        Some(&keywords),
+    )?;
+    Ok(BigInt::from_signed_bytes_le(
+        bytes.cast::<PyBytes>()?.as_bytes(),
+    ))
 }
 
 /// Return the Python `int` of `value`.
+///
+/// A big one is built through `int.from_bytes`, so its size is not bounded
+/// by `CPython`'s digit limit on decimal text (R2-045).
 pub(crate) fn big_int_to_python<'py>(
     py: Python<'py>,
     value: &BigInt,
@@ -64,7 +78,16 @@ pub(crate) fn big_int_to_python<'py>(
     if let Ok(small) = i64::try_from(value) {
         return Ok(small.into_pyobject(py)?.into_any());
     }
-    py.get_type::<PyInt>().call1((value.to_string(),))
+    let keywords = PyDict::new(py);
+    keywords.set_item(intern!(py, "signed"), true)?;
+    py.get_type::<PyInt>().call_method(
+        intern!(py, "from_bytes"),
+        (
+            PyBytes::new(py, &value.to_signed_bytes_le()),
+            intern!(py, "little"),
+        ),
+        Some(&keywords),
+    )
 }
 
 /// Return the Rust decimal of the `decimal.Decimal` `value`.
