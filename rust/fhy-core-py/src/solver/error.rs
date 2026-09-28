@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyDict, PyType};
+use pyo3::types::PyDict;
 
 use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
@@ -25,84 +25,20 @@ use crate::expression::render_expression_repr;
 use super::sympy::SympyError;
 use super::values::symbol_type_name;
 
-/// Return the exception of the class `name` of `module`, built with
-/// `message`.
-fn build_error(
-    py: Python<'_>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-    message: String,
-) -> PyErr {
-    match cell
-        .import(py, module, name)
-        .and_then(|class| class.call1((message,)))
-    {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
-}
-
 /// Return `SolverCapabilityError` with `message`.
 pub(super) fn capability_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    build_error(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.solver",
-        "SolverCapabilityError",
-        message,
-    )
-}
-
-/// Return `SolverBackendError` with `message`.
-fn backend_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    build_error(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.solver",
-        "SolverBackendError",
-        message,
-    )
-}
-
-/// Return `NativeConstantBindingError` with `message`.
-fn binding_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    build_error(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.expression.errors",
-        "NativeConstantBindingError",
-        message,
-    )
-}
-
-/// Return `NativeConstantLoweringError` with `message`.
-fn constant_lowering_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    build_error(
-        py,
-        &CLASS,
-        "fhy_core.symbolic.expression.errors",
-        "NativeConstantLoweringError",
-        message,
-    )
+    crate::exceptions::SOLVER_CAPABILITY_ERROR.err(py, (message,))
 }
 
 /// Return `UndecidableError(message, reason=reason)`.
 pub(super) fn undecidable_error(py: Python<'_>, message: String, reason: &str) -> PyErr {
-    let built = crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "UndecidableError" => PyType)
-    .and_then(|class| {
-        let keywords = PyDict::new(py);
-        keywords.set_item(intern!(py, "reason"), reason)?;
-        class.call((message,), Some(&keywords))
-    });
-    match built {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
+    let keywords = PyDict::new(py);
+    if let Err(error) = keywords.set_item(intern!(py, "reason"), reason) {
+        return error;
     }
+    crate::exceptions::UNDECIDABLE_ERROR
+        .build(py, (message,), Some(&keywords))
+        .unwrap_or_else(|error| error)
 }
 
 /// Return the Python exception of a lowering refusal.
@@ -110,7 +46,9 @@ pub(super) fn lowering_error_to_py(py: Python<'_>, error: LoweringError) -> PyEr
     match error {
         LoweringError::MissingSymbolTypes(_) => PyKeyError::new_err(error.to_string()),
         LoweringError::IllTyped(error) => error.into_py_err(),
-        LoweringError::NativeConstants(_) => constant_lowering_error(py, error.to_string()),
+        LoweringError::NativeConstants(_) => {
+            crate::exceptions::NATIVE_CONSTANT_LOWERING_ERROR.err(py, (error.to_string(),))
+        }
         other => PyTypeError::new_err(other.to_string()),
     }
 }
@@ -122,16 +60,17 @@ pub(crate) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
         SolveError::NoCapableBackend(_) => capability_error(py, text),
         SolveError::MissingSymbolTypes(_) => PyKeyError::new_err(text),
         SolveError::IllTyped(error) => error.into_py_err(),
-        SolveError::BoundNativeConstant(_) => binding_error(py, text),
+        SolveError::BoundNativeConstant(_) => {
+            crate::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
+        }
         SolveError::Substitution(source) => PyValueError::new_err(format!("{text}: {source}")),
         SolveError::Lowering(error) => lowering_error_to_py(py, error),
-        SolveError::Backend { backend, source } => match source.downcast::<PyErr>() {
-            Ok(error) => *error,
+        SolveError::Backend { backend, source } => match crate::exceptions::unbox_py_err(source) {
+            Ok(error) => error,
             Err(source) => match source.downcast::<SympyError>() {
                 Ok(error) => super::sympy::sympy_error_to_py(py, *error, true),
-                Err(source) => {
-                    backend_error(py, format!("the backend {backend:?} failed: {source}"))
-                }
+                Err(source) => crate::exceptions::SOLVER_BACKEND_ERROR
+                    .err(py, (format!("the backend {backend:?} failed: {source}"),)),
             },
         },
         _ => PyRuntimeError::new_err(text),
@@ -146,8 +85,7 @@ pub(crate) fn is_pass_execution_failure(py: Python<'_>, error: &SolveError) -> b
         return false;
     };
     if let Some(error) = source.downcast_ref::<PyErr>() {
-        return crate::python::cached_attr!(py, "fhy_core.pass_infrastructure", "PassExecutionError" => PyType)
-            .is_ok_and(|class| error.is_instance(py, class));
+        return crate::exceptions::PASS_EXECUTION_ERROR.is_instance_of(py, error);
     }
     source
         .downcast_ref::<SympyError>()

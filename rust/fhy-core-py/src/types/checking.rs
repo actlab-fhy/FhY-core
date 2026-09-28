@@ -45,7 +45,6 @@ use super::convert::{identifier_to_python, read_type, type_to_python};
 use super::enums::{
     core_data_type_to_python, read_core_data_type, read_type_qualifier, type_qualifier_to_python,
 };
-use super::error::core_type_error_class;
 
 /// The source of the diagnostics the registry sweep reports.
 const SWEEP_SOURCE: &str = "fhy_core.types.checking.check_all_registered_function_bodies";
@@ -54,24 +53,9 @@ const SWEEP_SOURCE: &str = "fhy_core.types.checking.check_all_registered_functio
 // Python classes
 // ---------------------------------------------------------------------------
 
-/// Return `EntryLookupError`.
-fn entry_lookup_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryLookupError" => PyType)
-}
-
-/// Return `EntryRegistrationError`.
-fn entry_registration_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryRegistrationError" => PyType)
-}
-
 /// Return whether `resolver` is the registry's `get_registered_entry`.
 fn is_registry_resolver(resolver: &Bound<'_, PyAny>) -> PyResult<bool> {
-    static RESOLVER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    let registry_resolver = RESOLVER.import(
-        resolver.py(),
-        "fhy_core.symbolic.expression.registry",
-        "get_registered_entry",
-    )?;
+    let registry_resolver = crate::python::cached_attr!(resolver.py(), "fhy_core.symbolic.expression.registry", "get_registered_entry" => PyAny)?;
     Ok(resolver.is(registry_resolver))
 }
 
@@ -82,24 +66,6 @@ fn diagnostic_class<'py>(py: Python<'py>, name: &'static str) -> PyResult<Bound<
         .get_or_try_init(py, || py.import("fhy_core.diagnostic").map(Bound::unbind))?
         .bind(py)
         .getattr(name)
-}
-
-/// Return the exception of `class` with `message`, or the error building
-/// it.
-fn build_error(class: PyResult<&Bound<'_, PyType>>, message: String) -> PyErr {
-    match class.and_then(|class| class.call1((message,))) {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
-}
-
-/// Return the lookup's own exception boxed in `error`, or a `RuntimeError`
-/// with its text when it is no Python exception.
-fn callback_to_python(error: BoxError) -> PyErr {
-    match error.downcast::<PyErr>() {
-        Ok(error) => *error,
-        Err(other) => PyRuntimeError::new_err(other.to_string()),
-    }
 }
 
 /// Return the text of the `EntryLookupError` `error`: its message, not the
@@ -291,8 +257,8 @@ impl CallTargets for PythonCallTargets<'_, '_> {
                 let entry = match resolver.call1((name,)) {
                     Ok(entry) => entry,
                     Err(error) => {
-                        let is_lookup_error = entry_lookup_error_class(py)
-                            .is_ok_and(|class| error.is_instance(py, class));
+                        let is_lookup_error =
+                            crate::exceptions::ENTRY_LOOKUP_ERROR.is_instance_of(py, &error);
                         return Err(if is_lookup_error {
                             Self::unknown(py, name, error)
                         } else {
@@ -333,10 +299,10 @@ fn type_check_error_to_python(py: Python<'_>, error: TypeCheckError) -> PyErr {
             PyNotImplementedError::new_err(error.to_string())
         }
         error @ TypeCheckError::Rule { .. } => {
-            build_error(core_type_error_class(py), error.to_string())
+            crate::exceptions::CORE_TYPE_ERROR.err(py, (error.to_string(),))
         }
         TypeCheckError::UnknownCall(error) => call_target_error_to_python(py, error),
-        TypeCheckError::Callback(source) => callback_to_python(source),
+        TypeCheckError::Callback(source) => crate::exceptions::boxed_error_to_py(source),
         other => PyRuntimeError::new_err(other.to_string()),
     }
 }
@@ -348,9 +314,9 @@ fn call_target_error_to_python(py: Python<'_>, error: CallTargetError) -> PyErr 
             source: Some(source),
             ..
         }
-        | CallTargetError::Callback(source) => callback_to_python(source),
+        | CallTargetError::Callback(source) => crate::exceptions::boxed_error_to_py(source),
         CallTargetError::Unknown { message, .. } => {
-            build_error(entry_lookup_error_class(py), message)
+            crate::exceptions::ENTRY_LOOKUP_ERROR.err(py, (message,))
         }
         other => PyRuntimeError::new_err(other.to_string()),
     }
@@ -362,14 +328,14 @@ fn call_target_error_to_python(py: Python<'_>, error: CallTargetError) -> PyErr 
 fn body_check_error_to_python(py: Python<'_>, error: BodyCheckError) -> PyErr {
     let message = error.to_string();
     let cause = match error {
-        BodyCheckError::Callback(source) => return callback_to_python(source),
+        BodyCheckError::Callback(source) => return crate::exceptions::boxed_error_to_py(source),
         BodyCheckError::UnknownCall { error, .. } => Some(call_target_error_to_python(py, error)),
         BodyCheckError::Unsupported { error, .. } | BodyCheckError::IllTyped { error, .. } => {
             Some(type_check_error_to_python(py, error))
         }
         _ => None,
     };
-    let registration_error = build_error(entry_registration_error_class(py), message);
+    let registration_error = crate::exceptions::ENTRY_REGISTRATION_ERROR.err(py, (message,));
     if cause.is_some() {
         registration_error.set_cause(py, cause);
     }

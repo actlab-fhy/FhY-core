@@ -38,8 +38,7 @@ use crate::frozen::build_frozen_mutation_error;
 use crate::gc::{Slots, collect_slots};
 use crate::identifier::{deserialize_identifier, read_identifier_id, restore_identifier};
 use crate::serialization::{
-    FieldShape, construct_from_decoded_fields, deserialization_value_error_class,
-    read_constructor_fields, read_payload_fields,
+    FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
 };
 use crate::solver::get_default_solver;
 use crate::term::read_renaming;
@@ -656,20 +655,25 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
 fn decode_members<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
     let py = values.py();
     let deserialize = crate::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
-    let structure_error = crate::python::cached_attr!(py, "fhy_core.serialization", "DeserializationDictStructureError" => PyType)?;
+    let structure_error = crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.class(py)?;
     let decoded = PyList::empty(py);
     for payload in values.try_iter()? {
         let member = match deserialize.call1((payload?,)) {
             Ok(member) => member,
             Err(error)
                 if error.is_instance(py, structure_error)
-                    || error.is_instance(py, deserialization_value_error_class(py)?) =>
+                    || error.is_instance(
+                        py,
+                        crate::exceptions::DESERIALIZATION_VALUE_ERROR.class(py)?,
+                    ) =>
             {
-                let wrapped =
-                    PyErr::from_value(deserialization_value_error_class(py)?.call1((format!(
+                let wrapped = crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+                    py,
+                    (format!(
                         "Invalid serialized member in field \"values\": {}",
                         error.value(py).str()?
-                    ),))?);
+                    ),),
+                );
                 wrapped.set_cause(py, Some(error));
                 return Err(wrapped);
             }

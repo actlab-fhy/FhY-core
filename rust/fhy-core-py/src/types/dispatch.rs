@@ -8,7 +8,7 @@
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyFloat, PyInt, PyTuple, PyType};
+use pyo3::types::{PyBool, PyFloat, PyInt, PyTuple};
 
 use fhy_core::expression::LiteralValue;
 use fhy_core::types::{
@@ -66,14 +66,7 @@ fn structural_mismatch(
 
 /// Return the `VerificationError` with `message`.
 fn verification_error(message: String) -> PyErr {
-    Python::attach(|py| {
-        match crate::python::cached_attr!(py, "fhy_core.traits.verifiable", "VerificationError" => PyType)
-            .and_then(|class| class.call1((message,)))
-        {
-            Ok(error) => PyErr::from_value(error),
-            Err(error) => error,
-        }
-    })
+    Python::attach(|py| crate::exceptions::VERIFICATION_ERROR.err(py, (message,)))
 }
 
 /// Return the kind mismatch of a built-in `pattern` meeting `actual`, which

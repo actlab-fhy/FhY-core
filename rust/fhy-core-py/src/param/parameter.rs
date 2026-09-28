@@ -14,7 +14,6 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::constraint::{Binding, Constraint, ConstraintError, Outcome, Value};
@@ -41,9 +40,7 @@ use crate::identifier::{
     serialize_identifier,
 };
 use crate::python::Seed;
-use crate::serialization::{
-    construct_from_decoded_fields, deserialization_value_error_class, is_serialized_dict,
-};
+use crate::serialization::{construct_from_decoded_fields, is_serialized_dict};
 use crate::term::read_renaming;
 
 use super::domains::run_with_context;
@@ -1594,9 +1591,7 @@ fn check_structure(
             expected.set_item(*name, py.get_type::<PyAny>())?;
         }
     }
-    let error = crate::python::cached_attr!(py, "fhy_core.serialization", "DeserializationDictStructureError" => PyType)?
-        .call1((cls, expected, data))?;
-    Err(PyErr::from_value(error))
+    Err(crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data)))
 }
 
 /// An assignment and the Python objects of its param and value.
@@ -1910,12 +1905,7 @@ impl PyParamAssignment {
     ///
     /// V1: removed with the V1 wire format.
     fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        static SERIALIZE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-        let serialize = SERIALIZE.import(
-            py,
-            "fhy_core.serialization",
-            "serialize_registry_wrapped_value",
-        )?;
+        let serialize = crate::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
         let payload = PyDict::new(py);
         payload.set_item(
             intern!(py, "param"),
@@ -1957,12 +1947,8 @@ impl PyParamAssignment {
                 if error.is_instance_of::<pyo3::exceptions::PyValueError>(py)
                     || error.is_instance_of::<PyTypeError>(py) =>
             {
-                let wrapped = PyErr::from_value(deserialization_value_error_class(py)?.call1((
-                    cls,
-                    "value",
-                    "a decodable value",
-                    &payload,
-                ))?);
+                let wrapped = crate::exceptions::DESERIALIZATION_VALUE_ERROR
+                    .err(py, (cls, "value", "a decodable value", &payload));
                 wrapped.set_cause(py, Some(error));
                 return Err(wrapped);
             }

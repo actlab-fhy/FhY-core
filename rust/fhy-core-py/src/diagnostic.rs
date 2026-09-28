@@ -534,11 +534,6 @@ pub(crate) fn diagnostic_to_python<'py>(
 // ValidationReport
 // ---------------------------------------------------------------------------
 
-/// Return the Python `ValidationFailedError`, which stays a Python class.
-fn validation_failed_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, MODULE, "ValidationFailedError" => PyType)
-}
-
 /// Append `diagnostic` to `text` as `format()` renders it: a `[LEVEL]
 /// source: message` line, followed by an indented `detail:` line when the
 /// detail is non-empty.
@@ -745,8 +740,7 @@ impl PyValidationReport {
         if !slf.get().contains_errors(slf.py())? {
             return Ok(());
         }
-        let error = validation_failed_error_class(slf.py())?.call1((slf,))?;
-        Err(PyErr::from_value(error))
+        Err(crate::exceptions::VALIDATION_FAILED_ERROR.err(slf.py(), (slf,)))
     }
 
     /// Always true: reports are immutable.

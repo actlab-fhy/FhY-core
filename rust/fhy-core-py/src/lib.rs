@@ -11,6 +11,7 @@ mod dataclass;
 mod described_tag;
 mod diagnostic;
 mod error;
+mod exceptions;
 mod expression;
 mod frozen;
 mod gc;

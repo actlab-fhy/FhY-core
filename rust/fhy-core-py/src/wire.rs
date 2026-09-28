@@ -34,6 +34,9 @@ use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 use crate::constraint::{
     read_constraint, read_opaque_member, record_pending_error, with_pending_errors,
 };
+use crate::exceptions::{
+    DESERIALIZATION_VALUE_ERROR, MALFORMED_PAYLOAD_ERROR, SERIALIZATION_ERROR,
+};
 
 mod families;
 mod python_value;
@@ -99,48 +102,9 @@ pub(crate) fn warn_v1_read(cls: &Bound<'_, PyType>) -> PyResult<()> {
     Ok(())
 }
 
-/// Return `fhy_core.serialization.<name>`, an exception class.
-fn error_class<'py>(
-    py: Python<'py>,
-    cell: &'static PyOnceLock<Py<PyAny>>,
-    name: &str,
-) -> PyResult<Bound<'py, PyAny>> {
-    cell.import(py, MODULE, name).cloned()
-}
-
-/// Return the `DeserializationValueError` with `message`.
-fn deserialization_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    match error_class(py, &CLASS, "DeserializationValueError")
-        .and_then(|class| class.call1((message,)))
-    {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
-}
-
-/// Return the `MalformedPayloadError` with `message`.
-fn malformed_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    match error_class(py, &CLASS, "MalformedPayloadError").and_then(|class| class.call1((message,)))
-    {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
-}
-
-/// Return the `SerializationError` with `message`.
-fn serialization_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    match error_class(py, &CLASS, "SerializationError").and_then(|class| class.call1((message,))) {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
-}
-
 /// Return the `SerializationError` of a foreign part that failed.
 pub(crate) fn foreign_error(py: Python<'_>, error: &ForeignError) -> PyErr {
-    serialization_error(py, error.to_string())
+    SERIALIZATION_ERROR.err(py, (error.to_string(),))
 }
 
 /// Return the name of the class `cls`, or `?`.
@@ -157,7 +121,8 @@ fn class_name(cls: &Bound<'_, PyType>) -> String {
 /// `SerializationError` with serde's text otherwise.
 pub(crate) fn to_json<T: Serialize + ?Sized>(py: Python<'_>, value: &T) -> PyResult<String> {
     with_pending_errors(|| {
-        serde_json::to_string(value).map_err(|error| serialization_error(py, error.to_string()))
+        serde_json::to_string(value)
+            .map_err(|error| SERIALIZATION_ERROR.err(py, (error.to_string(),)))
     })
 }
 
@@ -172,7 +137,7 @@ pub(crate) fn to_dict<'py, T: Serialize + ?Sized>(
     value: &T,
 ) -> PyResult<Bound<'py, PyAny>> {
     with_pending_errors(|| {
-        python_value::to_python(py, value).map_err(|error| serialization_error(py, error.0))
+        python_value::to_python(py, value).map_err(|error| SERIALIZATION_ERROR.err(py, (error.0,)))
     })
 }
 
@@ -198,8 +163,9 @@ pub(crate) fn read_text(payload: &Bound<'_, PyAny>) -> PyResult<String> {
             payload.get_type().name()?
         )));
     };
-    String::from_utf8(bytes)
-        .map_err(|_invalid| malformed_error(py, "JSON payload is not valid UTF-8.".to_owned()))
+    String::from_utf8(bytes).map_err(|_invalid| {
+        MALFORMED_PAYLOAD_ERROR.err(py, ("JSON payload is not valid UTF-8.".to_owned(),))
+    })
 }
 
 /// Return the wire form `D` of the V2 text `text`, a payload of `cls`.
@@ -212,11 +178,14 @@ pub(crate) fn parse<D: DeserializeOwned>(cls: &Bound<'_, PyType>, text: &str) ->
     let py = cls.py();
     serde_json::from_str(text).map_err(|error| {
         if error.is_syntax() || error.is_eof() {
-            malformed_error(py, "JSON payload is not valid JSON.".to_owned())
+            MALFORMED_PAYLOAD_ERROR.err(py, ("JSON payload is not valid JSON.".to_owned(),))
         } else {
-            deserialization_error(
+            DESERIALIZATION_VALUE_ERROR.err(
                 py,
-                format!("Invalid V2 payload for \"{}\": {error}", class_name(cls)),
+                (format!(
+                    "Invalid V2 payload for \"{}\": {error}",
+                    class_name(cls)
+                ),),
             )
         }
     })
@@ -237,9 +206,12 @@ pub(crate) fn parse_dict<D: DeserializeOwned>(
 ) -> PyResult<D> {
     let py = cls.py();
     let invalid = |reason: String| {
-        deserialization_error(
+        DESERIALIZATION_VALUE_ERROR.err(
             py,
-            format!("Invalid V2 payload for \"{}\": {reason}", class_name(cls)),
+            (format!(
+                "Invalid V2 payload for \"{}\": {reason}",
+                class_name(cls)
+            ),),
         )
     };
     let value = read_json_value(data, 0)?.map_err(invalid)?;
@@ -341,9 +313,12 @@ pub(crate) fn build<T>(
     let py = cls.py();
     with_pending_errors(|| {
         build().map_err(|error| {
-            deserialization_error(
+            DESERIALIZATION_VALUE_ERROR.err(
                 py,
-                format!("Invalid V2 payload for \"{}\": {error}", class_name(cls)),
+                (format!(
+                    "Invalid V2 payload for \"{}\": {error}",
+                    class_name(cls)
+                ),),
             )
         })
     })
@@ -512,7 +487,7 @@ pub(crate) fn resolve_frame<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     with_pending_errors(|| {
         resolve_object(py, foreign, true)
-            .map_err(|error| serialization_error(py, error.to_string()))
+            .map_err(|error| SERIALIZATION_ERROR.err(py, (error.to_string(),)))
     })
 }
 
@@ -675,12 +650,12 @@ pub(crate) fn check_instance<'py>(
     if object.is_instance(cls)? {
         return Ok(object);
     }
-    Err(serialization_error(
+    Err(SERIALIZATION_ERROR.err(
         cls.py(),
-        format!(
+        (format!(
             "Wrapped type \"{}\" is not a subclass of expected family \"{}\".",
             object.get_type().str()?,
             cls.str()?
-        ),
+        ),),
     ))
 }

@@ -6,7 +6,6 @@
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyType;
 
 use fhy_core::constraint::ConstraintError;
 use fhy_core::foreign::BoxError;
@@ -20,17 +19,9 @@ use crate::error::IntoPyErr;
 
 use super::value::value_kind_message;
 
-/// Return `fhy_core.symbolic.param.values.ParamError`.
-fn param_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.param.values", "ParamError" => PyType)
-}
-
 /// Return the `ParamError` with `message`.
 pub(super) fn param_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
-    match param_error_class(py).and_then(|class| class.call1((message.into(),))) {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
+    crate::exceptions::PARAM_ERROR.err(py, (message.into(),))
 }
 
 /// Return the name of the Python class of a domain of `kind`, after its
@@ -109,10 +100,8 @@ impl From<ConstraintError> for ParamFailure {
 /// Return the Python exception a custom domain or value raised, boxed as
 /// `error`, or a `RuntimeError` naming it and `text`.
 fn custom_error_to_py(text: &str, error: BoxError) -> PyErr {
-    match error.downcast::<PyErr>() {
-        Ok(error) => *error,
-        Err(error) => PyRuntimeError::new_err(format!("{text}: {error}")),
-    }
+    crate::exceptions::unbox_py_err(error)
+        .unwrap_or_else(|error| PyRuntimeError::new_err(format!("{text}: {error}")))
 }
 
 /// Return the exception of `error`, where `other` is the other domain of a
@@ -248,11 +237,11 @@ pub(super) fn ordinal_error_to_py(
         (_, Some(raised)) => raised,
         // A value's `<` that raised: a `TypeError` means the values do not
         // order, as the order error says.
-        (DomainError::Custom(source), None) => match source.downcast::<PyErr>() {
+        (DomainError::Custom(source), None) => match crate::exceptions::unbox_py_err(source) {
             Ok(raised) if raised.is_instance_of::<PyTypeError>(py) => {
-                chain_under_incomparable(*raised)
+                chain_under_incomparable(raised)
             }
-            Ok(raised) => *raised,
+            Ok(raised) => raised,
             Err(other) => param_error_to_py(py, DomainError::Custom(other), None),
         },
         (error, None) => param_error_to_py(py, error, None),

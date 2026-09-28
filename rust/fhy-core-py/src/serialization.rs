@@ -14,31 +14,17 @@
 
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyType};
 
 const MODULE: &str = "fhy_core.serialization";
-
-/// Return `fhy_core.serialization.DeserializationValueError`.
-pub(crate) fn deserialization_value_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, MODULE, "DeserializationValueError" => PyType)
-}
 
 /// Return whether `value` is a payload dict: a mapping with `str` keys and
 /// serializable values, as `fhy_core.serialization.is_serialized_dict`
 /// decides.
 pub(crate) fn is_serialized_dict(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    FUNCTION
-        .import(value.py(), MODULE, "is_serialized_dict")?
+    crate::python::cached_attr!(value.py(), MODULE, "is_serialized_dict" => PyAny)?
         .call1((value,))?
         .is_truthy()
-}
-
-/// Return `fhy_core.serialization.SerializationError`.
-fn serialization_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, MODULE, "SerializationError")
 }
 
 /// What a payload field must hold, as the derived deserialization of the
@@ -152,10 +138,7 @@ pub(crate) fn read_payload_fields<'py, const N: usize>(
     for (name, shape) in fields {
         expected.set_item(name, shape.expected_type(py)?)?;
     }
-    let error =
-        crate::python::cached_attr!(py, MODULE, "DeserializationDictStructureError" => PyType)?
-            .call1((cls, expected, data))?;
-    Err(PyErr::from_value(error))
+    Err(crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data)))
 }
 
 /// Return the values of `fields` in `data`, or `None` if `data` is not a
@@ -255,13 +238,12 @@ pub(crate) fn construct_from_decoded_fields<'py>(
     match cls.call_method1(pyo3::intern!(py, "construct_from_fields"), (fields,)) {
         Ok(instance) => Ok(instance),
         Err(error)
-            if !error.is_instance(py, serialization_error_class(py)?)
+            if !error.is_instance(py, crate::exceptions::SERIALIZATION_ERROR.class(py)?)
                 && (error.is_instance_of::<PyValueError>(py)
                     || error.is_instance_of::<PyTypeError>(py)) =>
         {
             let message = error.value(py).str()?;
-            let wrapped =
-                PyErr::from_value(deserialization_value_error_class(py)?.call1((message,))?);
+            let wrapped = crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(py, (message,));
             wrapped.set_cause(py, Some(error));
             Err(wrapped)
         }

@@ -20,7 +20,6 @@ use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use fhy_core::diagnostic::{Diagnostic, Note};
@@ -99,9 +98,7 @@ pub(super) fn log_diagnostic(
 /// Return the logger of the pass `name` if it logs `DEBUG` lines, and
 /// otherwise `None`: `fhy_core.pass_infrastructure.core._lifecycle_logger`.
 fn lifecycle_logger(py: Python<'_>, name: &str) -> PyResult<Option<Py<PyAny>>> {
-    static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    let logger = FUNCTION
-        .import(py, CORE_MODULE, "_lifecycle_logger")?
+    let logger = crate::python::cached_attr!(py, CORE_MODULE, "_lifecycle_logger" => PyAny)?
         .call1((name,))?;
     Ok((!logger.is_none()).then(|| logger.unbind()))
 }

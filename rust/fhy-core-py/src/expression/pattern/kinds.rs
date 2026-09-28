@@ -48,15 +48,6 @@ pub(super) fn into_callback_error(error: PyErr) -> BoxError {
     Box::new(error)
 }
 
-/// Return the Python exception a callback error carries: the exception a
-/// callback raised, unchanged.
-pub(super) fn callback_error_to_py(error: BoxError) -> PyErr {
-    match error.downcast::<PyErr>() {
-        Ok(error) => *error,
-        Err(error) => pyo3::exceptions::PyRuntimeError::new_err(error.to_string()),
-    }
-}
-
 /// Raise `RecursionError` if a pattern of depth `depth` is deeper than
 /// Python's recursion limit (D-S5-15).
 ///
@@ -269,7 +260,7 @@ impl PyPattern {
         let bindings = self
             .pattern
             .matches(expression.get().expression())
-            .map_err(callback_error_to_py)?;
+            .map_err(crate::exceptions::boxed_error_to_py)?;
         let result = match bindings {
             Some(bindings) => Some(PyMatchBindings::build(py, &bindings, self.captures(py)?)?),
             None => None,

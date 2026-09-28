@@ -263,15 +263,15 @@ fn decode_operation<'py, T: PythonOperation + std::str::FromStr>(
     let py = cls.py();
     match name.cast::<PyString>()?.to_str()?.parse::<T>() {
         Ok(operation) => operation_to_python(py, operation),
-        Err(_unknown) => {
-            let error = crate::serialization::deserialization_value_error_class(py)?.call1((
+        Err(_unknown) => Err(crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+            py,
+            (
                 cls,
                 "operation",
                 format!("a valid {} value", T::CLASS_NAME),
                 name,
-            ))?;
-            Err(PyErr::from_value(error))
-        }
+            ),
+        )),
     }
 }
 

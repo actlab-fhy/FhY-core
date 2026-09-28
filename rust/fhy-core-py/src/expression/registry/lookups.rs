@@ -22,39 +22,18 @@ use super::state;
 
 /// Return the `EntryRegistrationError` carrying `message`.
 pub(super) fn registration_error(py: Python<'_>, message: &str) -> PyErr {
-    match crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryRegistrationError" => PyType)
-    {
-        Ok(class) => match class.call1((message,)) {
-            Ok(error) => PyErr::from_value(error),
-            Err(error) => error,
-        },
-        Err(error) => error,
-    }
+    crate::exceptions::ENTRY_REGISTRATION_ERROR.err(py, (message,))
 }
 
 /// Return the `EntryLookupError` carrying `message`.
 pub(in crate::expression) fn lookup_error(py: Python<'_>, message: &str) -> PyErr {
-    match crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "EntryLookupError" => PyType)
-    {
-        Ok(class) => match class.call1((message,)) {
-            Ok(error) => PyErr::from_value(error),
-            Err(error) => error,
-        },
-        Err(error) => error,
-    }
+    crate::exceptions::ENTRY_LOOKUP_ERROR.err(py, (message,))
 }
 
 /// Return the `FunctionArityError` of `fhy_core.symbolic.expression.passes
 /// .inline` carrying `message`.
 pub(in crate::expression) fn arity_error(py: Python<'_>, message: &str) -> PyErr {
-    match crate::python::cached_attr!(py, "fhy_core.symbolic.expression.passes.inline", "FunctionArityError" => PyType)
-    {
-        Ok(class) => match class.call1((message,)) {
-            Ok(error) => PyErr::from_value(error),
-            Err(error) => error,
-        },
-        Err(error) => error,
-    }
+    crate::exceptions::FUNCTION_ARITY_ERROR.err(py, (message,))
 }
 
 /// Return the Python exception of the inlining error `error`: the core's

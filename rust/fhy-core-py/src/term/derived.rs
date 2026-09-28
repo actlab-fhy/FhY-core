@@ -38,9 +38,8 @@ fn metadata_key(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     Ok(crate::python::cached_attr!(py, MODULE, "EQUIVALENCE_METADATA_KEY")?.clone())
 }
 
-fn derivation_error(py: Python<'_>, message: String) -> PyResult<PyErr> {
-    let class = crate::python::cached_attr!(py, MODULE, "EquivalenceDerivationError" => PyType)?;
-    Ok(PyErr::from_value(class.call1((message,))?))
+fn derivation_error(py: Python<'_>, message: String) -> PyErr {
+    crate::exceptions::EQUIVALENCE_DERIVATION_ERROR.err(py, (message,))
 }
 
 fn mixin_method<'py>(py: Python<'py>, name: &Bound<'py, PyString>) -> PyResult<Bound<'py, PyAny>> {
@@ -260,7 +259,7 @@ fn build_plan(class: &Bound<'_, PyType>) -> PyResult<PyEquivalencePlan> {
                 "Cannot derive equivalence for \"{class_name}\": it is not a dataclass. \
                  Implement is_structurally_equivalent / is_alpha_equivalent_under by hand."
             ),
-        )?);
+        ));
     }
     let dataclass_fields = dataclasses_function(py, "fields")?.call1((class,))?;
     let key = metadata_key(py)?;
@@ -306,7 +305,7 @@ fn build_plan(class: &Bound<'_, PyType>) -> PyResult<PyEquivalencePlan> {
                                  \"{name}\" declares scopes_over=(\"{scope}\", ...), but \
                                  \"{scope}\" is not a field of \"{class_name}\"."
                             ),
-                        )?);
+                        ));
                     }
                     scope_names.push(scope);
                 }
@@ -768,7 +767,7 @@ impl<'py> Walk<'py> {
                  excluded_from_equivalence(), or hand-write the comparison."
             )
         };
-        derivation_error(py, message)
+        Ok(derivation_error(py, message))
     }
 }
 

@@ -53,8 +53,7 @@ use pyo3::exceptions::{
 };
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyDict, PyMapping, PyTuple, PyType};
+use pyo3::types::{PyDict, PyMapping, PyTuple};
 
 use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
@@ -79,24 +78,6 @@ fn pass_name(phase: SympyPhase) -> Option<&'static str> {
     }
 }
 
-/// Return the exception of the class `name` of `module`, built with
-/// `message`.
-fn build_error(
-    py: Python<'_>,
-    cell: &'static PyOnceLock<Py<PyType>>,
-    module: &str,
-    name: &str,
-    message: String,
-) -> PyErr {
-    match cell
-        .import(py, module, name)
-        .and_then(|class| class.call1((message,)))
-    {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
-}
-
 /// The message of `SolverBackendUnavailableError` for a missing SymPy.
 const UNAVAILABLE_MESSAGE: &str = "The sympy solver backend needs the sympy package, which is \
      not installed; install it with `pip install fhy_core[sympy]`, or `pip install \
@@ -104,22 +85,11 @@ const UNAVAILABLE_MESSAGE: &str = "The sympy solver backend needs the sympy pack
 
 /// Return the exception of `error` raised in `phase`, unwrapped.
 fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
-    static UNAVAILABLE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static BINDING: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static COMPLEX_INFINITY: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    static PARTIAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    const SOLVER: &str = "fhy_core.symbolic.solver";
-    const ERRORS: &str = "fhy_core.symbolic.expression.errors";
     let text = error.to_string();
     match error.into_kind() {
         SympyErrorKind::Unavailable(unavailable) => {
-            let error = build_error(
-                py,
-                &UNAVAILABLE,
-                SOLVER,
-                "SolverBackendUnavailableError",
-                UNAVAILABLE_MESSAGE.to_owned(),
-            );
+            let error =
+                crate::exceptions::SOLVER_BACKEND_UNAVAILABLE_ERROR.err(py, (UNAVAILABLE_MESSAGE,));
             let (SympyUnavailableError::MissingSympy(cause)
             | SympyUnavailableError::Incompatible(cause)) = unavailable;
             error.set_cause(py, Some(cause));
@@ -127,17 +97,13 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
         }
         SympyErrorKind::IllTyped(error) => error.into_py_err(),
         SympyErrorKind::BoundNativeConstant(_) => {
-            build_error(py, &BINDING, ERRORS, "NativeConstantBindingError", text)
+            crate::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
         }
-        SympyErrorKind::ComplexInfinity => build_error(
-            py,
-            &COMPLEX_INFINITY,
-            ERRORS,
-            "ComplexInfinityLiftError",
-            text,
-        ),
+        SympyErrorKind::ComplexInfinity => {
+            crate::exceptions::COMPLEX_INFINITY_LIFT_ERROR.err(py, (text,))
+        }
         SympyErrorKind::PartialPiecewise(_) => {
-            build_error(py, &PARTIAL, ERRORS, "PartialPiecewiseError", text)
+            crate::exceptions::PARTIAL_PIECEWISE_ERROR.err(py, (text,))
         }
         SympyErrorKind::Arity(_) => PyValueError::new_err(text),
         SympyErrorKind::Implies(node) => {
@@ -209,19 +175,19 @@ pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -
     if !exception.is_instance_of::<PyException>(py) {
         return exception;
     }
-    let wrapped = crate::python::cached_attr!(py, "fhy_core.pass_infrastructure", "PassExecutionError" => PyType)
-        .and_then(|class| {
-            let keywords = PyDict::new(py);
-            keywords.set_item(intern!(py, "pass_name"), name)?;
-            keywords.set_item(intern!(py, "hook"), "run_pass")?;
-            class.call(
-                (format!("pass {name:?} failed in run_pass"),),
-                Some(&keywords),
-            )
-        });
-    match wrapped {
+    let keywords = PyDict::new(py);
+    if let Err(error) = keywords
+        .set_item(intern!(py, "pass_name"), name)
+        .and_then(|()| keywords.set_item(intern!(py, "hook"), "run_pass"))
+    {
+        return error;
+    }
+    match crate::exceptions::PASS_EXECUTION_ERROR.build(
+        py,
+        (format!("pass {name:?} failed in run_pass"),),
+        Some(&keywords),
+    ) {
         Ok(wrapped) => {
-            let wrapped = PyErr::from_value(wrapped);
             wrapped.set_cause(py, Some(exception));
             wrapped
         }

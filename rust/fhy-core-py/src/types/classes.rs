@@ -26,7 +26,7 @@ use crate::expression::PyExpression;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{deserialize_identifier, restore_identifier};
 use crate::public_class::PublicClass;
-use crate::serialization::{FieldShape, deserialization_value_error_class, read_payload_fields};
+use crate::serialization::{FieldShape, read_payload_fields};
 
 use super::adapter::run_in_context;
 use super::convert::{read_data_type_value, read_type_value};
@@ -523,13 +523,8 @@ impl PyPrimitiveDataType {
         let py = cls.py();
         let [name] = read_payload_fields(cls, data, [("core_data_type", FieldShape::Str)])?;
         let Ok(value) = name.cast::<PyString>()?.to_str()?.parse::<CoreDataType>() else {
-            let error = deserialization_value_error_class(py)?.call1((
-                cls,
-                "core_data_type",
-                "a valid core data type",
-                name,
-            ))?;
-            return Err(PyErr::from_value(error));
+            return Err(crate::exceptions::DESERIALIZATION_VALUE_ERROR
+                .err(py, (cls, "core_data_type", "a valid core data type", name)));
         };
         cls.call1((core_data_type_to_python(py, value)?,))
     }
@@ -786,9 +781,8 @@ impl PyTemplateDataType {
         )?;
         if !widths.is_none() {
             let refuse = |expected: &str| -> PyResult<PyErr> {
-                let error = deserialization_value_error_class(py)?
-                    .call1((cls, "widths", expected, &widths))?;
-                Ok(PyErr::from_value(error))
+                Ok(crate::exceptions::DESERIALIZATION_VALUE_ERROR
+                    .err(py, (cls, "widths", expected, &widths)))
             };
             if widths.len()? == 0 {
                 return Err(refuse("a non-empty list of positive integers or None")?);

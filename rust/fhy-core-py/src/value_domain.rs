@@ -447,14 +447,8 @@ impl PyValueDomain {
         let mut parent = py.None().into_bound(py);
         let levels = levels.cast::<pyo3::types::PyList>()?;
         if levels.is_empty() {
-            return Err(PyErr::from_value(
-                crate::serialization::deserialization_value_error_class(py)?.call1((
-                    cls,
-                    "levels",
-                    "a non-empty list of levels",
-                    levels,
-                ))?,
-            ));
+            return Err(crate::exceptions::DESERIALIZATION_VALUE_ERROR
+                .err(py, (cls, "levels", "a non-empty list of levels", levels)));
         }
         for level in levels.iter() {
             let [name, description] = read_payload_fields(

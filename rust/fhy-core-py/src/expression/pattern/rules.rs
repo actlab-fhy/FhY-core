@@ -21,8 +21,8 @@ use crate::public_class::PublicClass;
 use super::super::node::{PyExpression, read_expression};
 use super::bindings::PyMatchBindings;
 use super::kinds::{
-    PyPattern, argument_type_error, callback_error_to_py, ensure_depth_within_recursion_limit,
-    into_callback_error, read_optional_str, type_name,
+    PyPattern, argument_type_error, ensure_depth_within_recursion_limit, into_callback_error,
+    read_optional_str, type_name,
 };
 use super::objects::{ActiveTable, current_adopt, current_object_of};
 use crate::gc::{Slot, Slots, collect_slots};
@@ -392,7 +392,7 @@ impl PyRewriteRule {
         let replacement = self
             .rule
             .apply(expression.get().expression())
-            .map_err(callback_error_to_py)?;
+            .map_err(crate::exceptions::boxed_error_to_py)?;
         let result = match replacement {
             Some(replacement) => Some(table.object_of(py, &replacement)?),
             None => None,

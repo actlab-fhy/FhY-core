@@ -29,9 +29,7 @@ use crate::dataclass::{
 use crate::error::IntoPyErr;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{deserialize_identifier, restore_identifier, serialize_identifier};
-use crate::serialization::{
-    FieldShape, deserialization_value_error_class, is_serialized_dict, read_payload_fields,
-};
+use crate::serialization::{FieldShape, is_serialized_dict, read_payload_fields};
 use crate::term::read_renaming;
 use crate::types::{
     MayCallPython, read_type_qualifier, read_type_value, run_in_context, type_qualifier_to_python,
@@ -251,9 +249,7 @@ pub(super) fn structure_error(
     for (name, ty) in expected {
         fields.set_item(name, ty)?;
     }
-    let error = crate::python::cached_attr!(py, "fhy_core.serialization", "DeserializationDictStructureError" => PyType)?
-        .call1((cls, fields, data))?;
-    Ok(PyErr::from_value(error))
+    Ok(crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, fields, data)))
 }
 
 // ---------------------------------------------------------------------------
@@ -588,13 +584,15 @@ impl PyVariableSymbolTableFrame {
             .to_str()?
             .parse::<TypeQualifier>()
         else {
-            let error = deserialization_value_error_class(py)?.call1((
-                cls,
-                "type_qualifier",
-                "a valid TypeQualifier value",
-                qualifier,
-            ))?;
-            return Err(PyErr::from_value(error));
+            return Err(crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+                py,
+                (
+                    cls,
+                    "type_qualifier",
+                    "a valid TypeQualifier value",
+                    qualifier,
+                ),
+            ));
         };
         cls.call1((
             deserialize_identifier(&name)?,
@@ -891,10 +889,8 @@ impl PyFunctionSymbolTableFrame {
             parts.push(part);
         }
         let invalid = |text: String| -> PyResult<PyErr> {
-            Ok(PyErr::from_value(
-                deserialization_value_error_class(py)?
-                    .call1((format!("Invalid function frame values: {text}"),))?,
-            ))
+            Ok(crate::exceptions::DESERIALIZATION_VALUE_ERROR
+                .err(py, (format!("Invalid function frame values: {text}"),)))
         };
         let keyword_text = keyword.cast::<PyString>()?.to_str()?;
         let Ok(keyword_value) = keyword_text.parse::<FunctionKeyword>() else {

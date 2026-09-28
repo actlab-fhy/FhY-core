@@ -11,7 +11,6 @@
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
 
 use fhy_core::constraint::{ConstraintError, UnusableBindingReason};
@@ -29,18 +28,7 @@ fn literal_expression_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 
 /// Return the `MissingSymbolTypeError` with `message`.
 fn missing_symbol_type_error(py: Python<'_>, message: String) -> PyErr {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    match CLASS
-        .import(
-            py,
-            "fhy_core.symbolic.constraint.errors",
-            "MissingSymbolTypeError",
-        )
-        .and_then(|class| class.call1((message,)))
-    {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
+    crate::exceptions::MISSING_SYMBOL_TYPE_ERROR.err(py, (message,))
 }
 
 /// Return whether `value` is a `LiteralType`: a `str`, `float`, `int`,
@@ -70,10 +58,8 @@ pub(crate) fn constraint_error_to_py(
         ConstraintError::NonBooleanResult { .. } => non_boolean_operand_error(py, text),
         ConstraintError::Solve(error) => solve_error_to_py(py, error),
         ConstraintError::MissingSymbolTypes(_) => missing_symbol_type_error(py, text),
-        ConstraintError::Custom(error) => match error.downcast::<PyErr>() {
-            Ok(error) => *error,
-            Err(error) => PyRuntimeError::new_err(format!("{text}: {error}")),
-        },
+        ConstraintError::Custom(error) => crate::exceptions::unbox_py_err(error)
+            .unwrap_or_else(|error| PyRuntimeError::new_err(format!("{text}: {error}"))),
         ConstraintError::Substitution(error) => PyValueError::new_err(format!("{text}: {error}")),
         _ => constraint_error(py, text),
     }
@@ -118,8 +104,8 @@ fn unusable_binding_error(
                      type {value_type} cannot be checked for membership."
                 ),
             );
-            if let Ok(cause) = source.downcast::<PyErr>() {
-                error.set_cause(py, Some(*cause));
+            if let Ok(cause) = crate::exceptions::unbox_py_err(source) {
+                error.set_cause(py, Some(cause));
             }
             error
         }

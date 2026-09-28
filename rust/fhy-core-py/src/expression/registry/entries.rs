@@ -629,12 +629,7 @@ struct NativeFunctionSeed(Seed<PyNativeFunction>);
 /// Return the Python function checking a native implementation's arity,
 /// `_check_native_implementation_arity(name, count, implementation)`.
 fn arity_check(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
-    static FUNCTION: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    FUNCTION.import(
-        py,
-        "fhy_core.symbolic.expression.registry.entries",
-        "_check_native_implementation_arity",
-    )
+    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.registry.entries", "_check_native_implementation_arity" => PyAny)
 }
 
 /// A named function computed by a Python callable, backed by the Rust

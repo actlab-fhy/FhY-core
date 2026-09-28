@@ -249,8 +249,7 @@ impl PySmtScript {
 
 /// Return `fhy_core.symbolic.solver.SatStatus`.
 fn sat_status_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "fhy_core.symbolic.solver", "SatStatus")
+    crate::python::cached_attr!(py, "fhy_core.symbolic.solver", "SatStatus" => PyType)
 }
 
 /// The answer of a `check-sat`: `SatResult.SAT`, `SatResult.UNSAT`, or

@@ -11,7 +11,6 @@
 
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyList, PyTuple, PyType};
 
 use fhy_core::constraint::{Constraint, Member, Outcome, Value};
@@ -28,9 +27,7 @@ use crate::dataclass::OptionalArgument;
 use crate::expression::registry_snapshot;
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::restore_identifier;
-use crate::serialization::{
-    construct_from_decoded_fields, deserialization_value_error_class, is_serialized_dict,
-};
+use crate::serialization::{construct_from_decoded_fields, is_serialized_dict};
 use crate::solver::{get_default_solver, symbol_type_to_python};
 
 use super::error::{ParamFailure, ordinal_error_to_py, param_error_to_py};
@@ -355,25 +352,19 @@ fn value_error(
     value: &Bound<'_, PyAny>,
 ) -> PyErr {
     let py = class.py();
-    match deserialization_value_error_class(py)
-        .and_then(|error| error.call1((class, field, description, value)))
-    {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
+    crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(py, (class, field, description, value))
 }
 
 /// Return the values of the payload `data` of a finite domain of `kind`,
 /// decoded and validated as the replaced codec decoded them.
 fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
-    static PARAM_DOMAIN: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = data.py();
     let Ok(payloads) = data.cast::<PyList>() else {
         return Err(pyo3::exceptions::PyTypeError::new_err(
             "Expected a list of wrapped leaf values.",
         ));
     };
-    let owner = PARAM_DOMAIN.import(py, "fhy_core.symbolic.param.domains", "ParamDomain")?;
+    let owner = crate::python::cached_attr!(py, "fhy_core.symbolic.param.domains", "ParamDomain" => PyType)?;
     let description = values_description(kind);
     for payload in payloads.iter() {
         if !is_serialized_dict(&payload)? {
@@ -411,7 +402,6 @@ fn deserialize_domain<'py>(
     data: &Bound<'py, PyAny>,
     fields: &[(&str, Option<DomainKind>)],
 ) -> PyResult<Bound<'py, PyAny>> {
-    static STRUCTURE_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let py = cls.py();
     let is_well_formed = match data.cast::<pyo3::types::PyMapping>() {
         Ok(mapping) => {
@@ -437,14 +427,9 @@ fn deserialize_domain<'py>(
                 expected.set_item(*name, py.get_type::<PyBool>())?;
             }
         }
-        let error = STRUCTURE_ERROR
-            .import(
-                py,
-                "fhy_core.serialization",
-                "DeserializationDictStructureError",
-            )?
-            .call1((cls, expected, data))?;
-        return Err(PyErr::from_value(error));
+        return Err(
+            crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data))
+        );
     }
     let decoded = PyDict::new(py);
     for (name, kind) in fields {

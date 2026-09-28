@@ -27,7 +27,6 @@ use std::sync::OnceLock;
 use pyo3::exceptions::{PyException, PyRecursionError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple, PyType};
 
 use fhy_core::constraint::{Member, MemberKind, OpaqueValue, Value};
@@ -108,17 +107,9 @@ pub(crate) fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<
     (result, scope.pop())
 }
 
-/// Return `fhy_core.symbolic.constraint.errors.ConstraintError`.
-pub(crate) fn constraint_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.constraint.errors", "ConstraintError" => PyType)
-}
-
 /// Return the `ConstraintError` with `message`.
 pub(crate) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
-    match constraint_error_class(py).and_then(|class| class.call1((message.into(),))) {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
+    crate::exceptions::CONSTRAINT_ERROR.err(py, (message.into(),))
 }
 
 /// Return `fhy_core.serialization.Serializable`.
@@ -214,9 +205,7 @@ fn build_ordering_key(value: &Bound<'_, PyAny>) -> PyResult<String> {
     let module: String = class.getattr(intern!(py, "__module__"))?.str()?.to_string();
     let qualified_name = class.qualname()?;
     let payload = if value.is_instance(serializable_class(py)?)? {
-        static ORDERING_PAYLOAD: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-        ORDERING_PAYLOAD
-            .import(py, "fhy_core.serialization", "_serialize_ordering_payload")?
+        crate::python::cached_attr!(py, "fhy_core.serialization", "_serialize_ordering_payload" => PyAny)?
             .call1((value,))?
     } else {
         value.clone()
@@ -488,8 +477,8 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
                             type_name(value)
                         ),
                     );
-                    if let Ok(cause) = error.downcast::<PyErr>() {
-                        refused.set_cause(py, Some(*cause));
+                    if let Ok(cause) = crate::exceptions::unbox_py_err(error) {
+                        refused.set_cause(py, Some(cause));
                     }
                     return Err(refused);
                 }

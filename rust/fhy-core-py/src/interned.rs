@@ -151,7 +151,5 @@ pub(crate) fn build_conflict_error(
         canonical_value.repr()?,
         payload_value.repr()?,
     );
-    Ok(PyErr::from_value(
-        crate::serialization::deserialization_value_error_class(cls.py())?.call1((message,))?,
-    ))
+    Ok(crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(cls.py(), (message,)))
 }

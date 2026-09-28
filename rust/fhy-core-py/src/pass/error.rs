@@ -25,7 +25,7 @@ use pyo3::types::{PyDict, PyType};
 use fhy_core::diagnostic::{Diagnostic, Note};
 use fhy_core::pass::{FailureClass, PassError, PassErrorKind, PassHook};
 
-use super::compiler_pass::{CORE_MODULE, HookFailure, PyCompilerPassBase, log_diagnostic};
+use super::compiler_pass::{HookFailure, PyCompilerPassBase, log_diagnostic};
 use super::convert::{diagnostics_to_python, records_to_python, validation_report_to_python};
 use super::scope::RunScope;
 
@@ -104,9 +104,9 @@ fn render_chain(error: &(dyn Error + 'static)) -> String {
 /// Return the Python error class of `class`.
 fn error_class(py: Python<'_>, class: FailureClass) -> PyResult<&Bound<'_, PyType>> {
     if matches!(class, FailureClass::Validation) {
-        crate::python::cached_attr!(py, CORE_MODULE, "PassValidationError" => PyType)
+        crate::exceptions::PASS_VALIDATION_ERROR.class(py)
     } else {
-        crate::python::cached_attr!(py, CORE_MODULE, "PassExecutionError" => PyType)
+        crate::exceptions::PASS_EXECUTION_ERROR.class(py)
     }
 }
 

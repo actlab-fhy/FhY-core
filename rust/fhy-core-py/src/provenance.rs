@@ -229,8 +229,7 @@ fn pure_path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
 
 /// Return `pathlib.Path`.
 fn path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, "pathlib", "Path")
+    crate::python::cached_attr!(py, "pathlib", "Path" => PyType)
 }
 
 // ---------------------------------------------------------------------------

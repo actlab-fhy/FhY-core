@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use pyo3::exceptions::{PyException, PyRuntimeError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyType};
+use pyo3::types::PyList;
 
 use fhy_core::expression::Expression;
 use fhy_core::expression::pattern::{
@@ -18,24 +18,9 @@ use fhy_core::foreign::BoxError;
 use crate::error::IntoPyErr;
 
 use super::super::node::read_expression;
-use super::kinds::{
-    argument_type_error, callback_error_to_py, ensure_depth_within_recursion_limit,
-    read_optional_str,
-};
+use super::kinds::{argument_type_error, ensure_depth_within_recursion_limit, read_optional_str};
 use super::objects::ActiveTable;
 use super::rules::{PyFiredRule, PyRewriteRule, PyRuleBase, PythonRule};
-
-/// The Python module that defines the walk's error classes.
-const MODULE: &str = "fhy_core.symbolic.expression.pattern.rewrite";
-
-/// Return the error class named `name` of the rewrite module.
-fn error_class<'py>(py: Python<'py>, name: &str) -> PyResult<&'py Bound<'py, PyType>> {
-    if name == "RewriteCallbackError" {
-        crate::python::cached_attr!(py, MODULE, "RewriteCallbackError" => PyType)
-    } else {
-        crate::python::cached_attr!(py, MODULE, "RewriteRebuildError" => PyType)
-    }
-}
 
 /// Raises the Python class of the variant, `RewriteCallbackError` or
 /// `RewriteRebuildError`, with the core's text, the rule's index and name,
@@ -48,24 +33,22 @@ impl IntoPyErr for RewriteError {
         let rule_index = self.rule_index();
         let rule_name = self.rule_name().map(str::to_owned);
         Python::attach(|py| {
-            let (class_name, cause) = match self {
+            let (class, cause) = match self {
                 RewriteError::Callback { source, .. } => {
-                    let cause = callback_error_to_py(source);
+                    let cause = crate::exceptions::boxed_error_to_py(source);
                     if !cause.is_instance_of::<PyException>(py) {
                         return cause;
                     }
-                    ("RewriteCallbackError", cause)
+                    (&crate::exceptions::REWRITE_CALLBACK_ERROR, cause)
                 }
-                RewriteError::Rebuild { source, .. } => {
-                    ("RewriteRebuildError", source.into_py_err())
-                }
+                RewriteError::Rebuild { source, .. } => (
+                    &crate::exceptions::REWRITE_REBUILD_ERROR,
+                    source.into_py_err(),
+                ),
                 _ => return PyRuntimeError::new_err(message),
             };
-            let error = error_class(py, class_name)
-                .and_then(|class| class.call1((message, rule_index, rule_name)));
-            match error {
+            match class.build(py, (message, rule_index, rule_name), None) {
                 Ok(error) => {
-                    let error = PyErr::from_value(error);
                     error.set_cause(py, Some(cause));
                     error
                 }

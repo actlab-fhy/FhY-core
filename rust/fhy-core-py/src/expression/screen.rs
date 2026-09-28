@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyMapping, PyString, PyType};
+use pyo3::types::{PyMapping, PyString};
 
 use fhy_core::expression::{BooleanScreen, Expression, NonBooleanLogicalOperandError, SymbolType};
 use fhy_core::identifier::Identifier;
@@ -23,17 +23,9 @@ use crate::identifier::{read_identifier_id, restore_identifier};
 use super::node::PyExpression;
 use super::text::render_kind_repr;
 
-/// Return `fhy_core.symbolic.expression.errors.NonBooleanLogicalOperandError`.
-fn non_boolean_operand_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.expression.errors", "NonBooleanLogicalOperandError" => PyType)
-}
-
 /// Return `NonBooleanLogicalOperandError` with `message`.
 pub(crate) fn non_boolean_operand_error(py: Python<'_>, message: String) -> PyErr {
-    match non_boolean_operand_error_class(py).and_then(|class| class.call1((message,))) {
-        Ok(error) => PyErr::from_value(error),
-        Err(error) => error,
-    }
+    crate::exceptions::NON_BOOLEAN_LOGICAL_OPERAND_ERROR.err(py, (message,))
 }
 
 /// Raises `NonBooleanLogicalOperandError` (a `TypeError`) with the core's
@@ -50,12 +42,8 @@ impl IntoPyErr for NonBooleanLogicalOperandError {
             ),
             None => format!("{self}: {}", render_kind_repr(self.operand())),
         };
-        Python::attach(|py| match non_boolean_operand_error_class(py) {
-            Ok(class) => match class.call1((message,)) {
-                Ok(error) => PyErr::from_value(error),
-                Err(error) => error,
-            },
-            Err(error) => error,
+        Python::attach(|py| {
+            crate::exceptions::NON_BOOLEAN_LOGICAL_OPERAND_ERROR.err(py, (message,))
         })
     }
 }

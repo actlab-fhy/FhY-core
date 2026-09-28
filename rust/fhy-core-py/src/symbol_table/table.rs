@@ -36,19 +36,8 @@ const OWNER: &str = "SymbolTable";
 /// Raises `fhy_core.symbol_table.SymbolTableError` with the core's text.
 impl IntoPyErr for SymbolTableError {
     fn into_py_err(self) -> PyErr {
-        Python::attach(|py| match symbol_table_error_class(py) {
-            Ok(class) => match class.call1((self.to_string(),)) {
-                Ok(error) => PyErr::from_value(error),
-                Err(error) => error,
-            },
-            Err(error) => error,
-        })
+        Python::attach(|py| crate::exceptions::SYMBOL_TABLE_ERROR.err(py, (self.to_string(),)))
     }
-}
-
-/// Return `fhy_core.symbol_table.SymbolTableError`.
-fn symbol_table_error_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, MODULE, "SymbolTableError" => PyType)
 }
 
 /// Return the Python `SymbolTableError` of `error`.
@@ -58,8 +47,7 @@ fn raise(error: SymbolTableError) -> PyErr {
 
 /// Return `fhy_core.symbol_table.SymbolTableFrame`.
 fn frame_base_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    static CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
-    CLASS.import(py, MODULE, "SymbolTableFrame")
+    crate::python::cached_attr!(py, MODULE, "SymbolTableFrame" => PyType)
 }
 
 /// Return the module's logger, which the DEBUG lines go to (D-S15-13).

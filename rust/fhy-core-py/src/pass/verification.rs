@@ -28,7 +28,7 @@ use fhy_core::pass::{PassContext, ValidationManager, Validator, VerificationRegi
 use crate::dataclass::build_argument_type_error;
 
 use super::compiler_pass::{
-    CORE_MODULE, HookFailure, PyCompilerPassBase, PythonPass, build_interrupted_failure,
+    HookFailure, PyCompilerPassBase, PythonPass, build_interrupted_failure,
 };
 use super::convert::validation_report_to_python;
 use super::ir::PyIr;
@@ -217,10 +217,12 @@ fn build_not_a_pass_error(pass_class: &Bound<'_, PyAny>) -> PyResult<PyErr> {
         Ok(qualname) => qualname.str()?.to_string(),
         Err(_no_qualname) => pass_class.repr()?.to_string(),
     };
-    let class = crate::python::cached_attr!(py, CORE_MODULE, "PassRegistrationError" => PyType)?;
-    Ok(PyErr::from_value(class.call1((format!(
-        "Cannot register non-CompilerPass type as a verification pass: {qualname}."
-    ),))?))
+    Ok(crate::exceptions::PASS_REGISTRATION_ERROR.err(
+        py,
+        (format!(
+            "Cannot register non-CompilerPass type as a verification pass: {qualname}."
+        ),),
+    ))
 }
 
 /// Register the verification pass class `pass_class` for the IR type
