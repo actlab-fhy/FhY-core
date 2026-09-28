@@ -95,6 +95,11 @@ impl<K, V> Scope<K, V> {
     fn innermost(&self) -> &HashMap<K, V> {
         self.inner.last().unwrap_or(&self.root)
     }
+
+    /// Return every frame, innermost first, ending with the root.
+    fn frames(&self) -> impl Iterator<Item = &HashMap<K, V>> {
+        self.inner.iter().rev().chain(std::iter::once(&self.root))
+    }
 }
 
 impl<K: Hash + Eq, V> Scope<K, V> {
@@ -115,11 +120,7 @@ impl<K: Hash + Eq, V> Scope<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.inner
-            .iter()
-            .rev()
-            .chain(std::iter::once(&self.root))
-            .find_map(|frame| frame.get(key))
+        self.frames().find_map(|frame| frame.get(key))
     }
 
     /// Return the value bound to `key` in the innermost frame only, or
@@ -140,10 +141,7 @@ impl<K: Hash + Eq, V> Scope<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.inner
-            .iter()
-            .chain(std::iter::once(&self.root))
-            .any(|frame| frame.contains_key(key))
+        self.frames().any(|frame| frame.contains_key(key))
     }
 
     /// Return whether the innermost frame binds `key`.
