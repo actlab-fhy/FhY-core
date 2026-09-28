@@ -4,9 +4,7 @@
 //! frame, and depth.
 //!
 //! Ported from `tests/types/checking/test_type_checker.py`,
-//! `test_type_checker_booleans.py` and `test_type_checker_sorts.py`; the
-//! traceability table is in `docs/design/python-switch.md`, "S11b.2
-//! implementation notes".
+//! `test_type_checker_booleans.py` and `test_type_checker_sorts.py`.
 
 use crate::support::expression::build_call_or_panic;
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
@@ -161,7 +159,7 @@ fn negating_a_weak_literal_flips_its_sign_family() {
 
 /// A negated literal checks as the one literal it denotes: `-(5)` and the
 /// literal `-5` both fall outside `uint8`, and `-(128)` and the literal
-/// `-128` both fit `int8` (F2-017).
+/// `-128` both fit `int8`.
 #[rstest]
 #[case::negated_five_against_uint8(-Expression::from(5), Uint8, None)]
 #[case::literal_minus_five_against_uint8(Expression::from(-5), Uint8, None)]
@@ -1123,8 +1121,8 @@ fn a_deep_expression_checks_on_a_small_stack() {
 }
 
 /// Test a rule error on a doubling DAG displays in bounded size: the root
-/// and the sub-expression are written up to a budget of node occurrences
-/// (R2-010), not once per path.
+/// and the sub-expression are written up to a fixed budget of node
+/// occurrences, not once per path.
 #[test]
 fn a_rule_error_on_a_dag_displays_in_bounded_size() {
     let x = Identifier::new("x");

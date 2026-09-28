@@ -465,7 +465,7 @@ fn evaluate_refuses_a_piecewise_mixing_booleans_and_numbers() {
 }
 
 // ---------------------------------------------------------------------------
-// Lane failures and their guards (D-S9-6)
+// Lane failures and their guards
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -801,9 +801,8 @@ fn evaluate_walks_a_deep_tree_on_a_small_stack() {
 }
 
 /// Test a lane error on a 63-level doubling DAG over `x = 1` displays in
-/// bounded size: the addition that overflows is written up to a budget of
-/// node occurrences (R2-010), not once per path, and the node stays in the
-/// error.
+/// bounded size: the addition that overflows is written up to a fixed budget
+/// of node occurrences, not once per path, and the node stays in the error.
 #[test]
 fn a_lane_error_on_a_63_level_doubling_dag_displays_in_bounded_size() {
     let (x, reference) = build_identifier("x");

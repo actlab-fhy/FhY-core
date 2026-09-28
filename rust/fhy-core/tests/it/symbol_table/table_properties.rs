@@ -142,8 +142,7 @@ impl Model {
     }
 
     /// Return whether a namespace other than `namespace`, whose chain of
-    /// defined parents reaches it, holds `symbol`: the descendant check the
-    /// Rust table adds to Python's (F2-020).
+    /// defined parents reaches it, holds `symbol`.
     fn is_defined_below(&self, namespace: usize, symbol: usize) -> bool {
         self.table.iter().any(|(holder, symbols)| {
             if *holder == namespace || !symbols.contains(&symbol) {

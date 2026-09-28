@@ -282,8 +282,8 @@ fn each_expression_is_screened_on_its_own_antecedent_first() {
 
 #[test]
 fn x_int_equal_to_1_0_is_answered() {
-    // Probe K of the audit: the evaluator equates `x == 1.0` with `x == 1`
-    // for an integer `x`, and so does the lowering's `to_real`.
+    // The evaluator equates `x == 1.0` with `x == 1` for an integer `x`,
+    // and so does the lowering's `to_real`.
     let (x, reference) = build_identifier("x");
     let symbol_types = build_symbol_types(&[(&x, SymbolType::Int)]);
     let antecedent = reference.clone().equals(1);

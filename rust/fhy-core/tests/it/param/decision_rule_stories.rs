@@ -1,9 +1,8 @@
-//! Decision rules of params that only the Python suites, or neither suite,
-//! pinned (F2-028): both spellings of a bound, the registry of a context,
-//! categorical subsets, assignment equivalence per value kind, and the
-//! audit's three brute-force probes, adopted: the interval hull, finite
-//! and integer intersection, and numeric feasibility and subset against a
-//! real solver.
+//! Decision rules of params not otherwise pinned by a suite shared with
+//! Python: both spellings of a bound, the registry of a context, categorical
+//! subsets, assignment equivalence per value kind, and three brute-force
+//! comparisons: the interval hull, finite and integer intersection, and
+//! numeric feasibility and subset against a real solver.
 
 use fhy_core::constraint::{Binding, Bindings, Constraint, EquationConstraint, Outcome, Value};
 use fhy_core::expression::registry::{FunctionRegistry, NativeConstant};
@@ -241,7 +240,7 @@ fn assignment_equivalence_compares_values_type_strictly(
 }
 
 // ---------------------------------------------------------------------------
-// The audit's probes, adopted
+// Brute-force comparisons
 // ---------------------------------------------------------------------------
 
 /// The interval an interval param's bounds give, and its restriction.

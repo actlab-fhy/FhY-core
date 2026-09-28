@@ -459,7 +459,7 @@ proptest! {
     /// Test a JSON and a postcard round trip of a DAG keep its structure
     /// and share exactly its equal subtrees: wherever two children of the
     /// input's nodes encode alike, the output's are one node, and nowhere
-    /// else (R2-011's canonical encoding).
+    /// else.
     #[test]
     fn expression_wire_round_trip_preserves_structure_and_shares_equal_subtrees(
         dag in build_expression_dag_strategy(),

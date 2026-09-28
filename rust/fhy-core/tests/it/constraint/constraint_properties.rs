@@ -350,9 +350,9 @@ proptest! {
 
     /// A system's member keys, its equivalence and its hash do not depend
     /// on the order its members are given in, even when opaque members'
-    /// keys collide (R2-042): the members draw equations, set constraints
-    /// over generated values, and set constraints over opaque values whose
-    /// keys are all one.
+    /// keys collide: the members draw equations, set constraints over
+    /// generated values, and set constraints over opaque values whose keys
+    /// are all one.
     #[test]
     fn system_order_and_equivalence_do_not_depend_on_the_input_order(
         (members, shuffled) in prop::collection::vec(build_system_member_strategy(), 1..7)
@@ -369,9 +369,9 @@ proptest! {
         prop_assert_eq!(hash_of(&forward), hash_of(&backward));
     }
 
-    /// `Ord` for constraints is a total order that agrees with
-    /// equivalence (R2-032b): equal exactly for equivalent constraints,
-    /// antisymmetric, transitive, and the order of their keys.
+    /// `Ord` for constraints is a total order that agrees with equivalence:
+    /// equal exactly for equivalent constraints, antisymmetric, transitive,
+    /// and the order of their keys.
     #[test]
     fn constraint_order_is_total_and_agrees_with_equivalence(
         a in build_built_in_constraint_strategy(),

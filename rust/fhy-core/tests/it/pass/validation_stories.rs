@@ -387,7 +387,7 @@ fn validation_report_stores_each_diagnostic_once() {
 }
 
 /// Test a record read against a report shorter than its own is `None`, not
-/// a panic (probe P of F2-041).
+/// a panic.
 #[test]
 fn a_record_against_a_shorter_report_is_none() {
     let mut manager = build_manager([ScriptedValidator::new(

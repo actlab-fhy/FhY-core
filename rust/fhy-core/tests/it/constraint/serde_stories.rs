@@ -324,7 +324,7 @@ fn a_value_nested_too_deep_is_refused_with_the_depth_message() {
     assert_eq!(error.to_string(), "value nesting exceeds 128 levels");
 }
 
-/// Test a member float's text is read only in its canonical form (R2-036).
+/// Test a member float's text is read only in its canonical form.
 #[test]
 fn a_member_float_text_that_is_not_canonical_is_refused() {
     let error = serde_json::from_str::<Value>(r#"{"float":"1e5"}"#).unwrap_err();

@@ -3,8 +3,7 @@
 //! serde.
 //!
 //! Ported from the promotion, literal and qualifier tests of
-//! `tests/types/test_core.py`; the traceability table is in
-//! `docs/design/python-switch.md`, "S11a.2 implementation notes".
+//! `tests/types/test_core.py`.
 
 use fhy_core::expression::{BigInt, Decimal, LiteralValue};
 use fhy_core::lattice::Lattice;

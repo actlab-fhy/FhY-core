@@ -315,8 +315,8 @@ fn permutation_feasibility_enumerates_the_permutations() {
 }
 
 /// A permutation domain of ten members has 3,628,800 permutations; with an
-/// in-set constraint of one, feasibility and subset enumerate that one
-/// candidate (F2-038), where they walked every permutation.
+/// in-set constraint of one, feasibility and subset must enumerate that one
+/// candidate rather than walk every permutation.
 #[test]
 fn a_permutation_param_with_a_singleton_in_set_decides_at_n_10() {
     let (x, y) = (Identifier::new("x"), Identifier::new("y"));
@@ -1051,8 +1051,8 @@ fn integer_implication_leaves_a_float_member_to_the_membership_screen() {
     .expect("decides");
 
     // A float member of an INT variable's set is a hazard the constraint
-    // layer's membership screen refuses (R2-040 as revised), so the
-    // question is undecided without a downgrade.
+    // layer's membership screen refuses, so the question is undecided
+    // without a downgrade.
     assert_eq!(outcome, Outcome::Undecided);
     assert!(smt.checks().is_empty());
     assert!(
@@ -1120,7 +1120,7 @@ fn real_solver_decides_feasibility_and_subsets_of_intervals() {
 }
 
 // ---------------------------------------------------------------------------
-// The domain's own restriction (F2-021)
+// The domain's own restriction
 // ---------------------------------------------------------------------------
 
 fn natural() -> ParamDomain {

@@ -854,7 +854,7 @@ fn a_kernel_returning_the_wrong_shape_is_an_error() {
 /// Test a chunked evaluation of 300,003 lanes, over a column binding, a
 /// row binding and a transposed one, with lane failures that a connective
 /// or a piecewise discards in some lanes only, equals the scalar evaluation
-/// of every lane (the audit's `chunk_probe`).
+/// of every lane.
 #[test]
 fn a_chunked_evaluation_equals_the_scalar_evaluation_of_every_lane() {
     let (x, ex) = build_identifier("x");

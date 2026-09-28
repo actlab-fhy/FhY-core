@@ -1,8 +1,7 @@
 //! Tests for `PartiallyOrderedSet`: membership, orders and their
 //! refusals, reachability, and the two iteration orders.
 //!
-//! Ported from `tests/test_poset.py`; the traceability table is in
-//! `docs/design/python-switch.md`, "S11a.2 implementation notes".
+//! Ported from `tests/test_poset.py`.
 
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
 

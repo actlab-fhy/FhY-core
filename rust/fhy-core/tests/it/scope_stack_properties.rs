@@ -2,9 +2,6 @@
 //! with a plain model, a `Vec<i32>` for the stack and a `Vec` of maps for
 //! the scope (index 0 is the root frame), as `tests/test_stack_properties.py`
 //! and `tests/test_scope_properties.py` check them in Python.
-//!
-//! Cases K-11 and S-21 of the shared case list; the traceability table is in
-//! `docs/design/python-switch.md`, "S18: scope and stack".
 
 use std::collections::HashMap;
 

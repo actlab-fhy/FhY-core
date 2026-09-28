@@ -1,7 +1,7 @@
-//! Stories of the interval bounds' exact order (F2-008): a decimal bound
-//! compares by the exact value it denotes, however large its exponent,
-//! and a decimal whose exponent exceeds the bound is refused, never
-//! truncated to a wrong order.
+//! Stories of the interval bounds' exact order: a decimal bound compares by
+//! the exact value it denotes, however large its exponent, and a decimal
+//! whose exponent exceeds the bound is refused, never truncated to a wrong
+//! order.
 
 use fhy_core::expression::{BigInt, Decimal, DecimalPartsError, LiteralValue};
 use fhy_core::param::{Inclusivity, ParamBuildError, check_bounds_are_ordered};

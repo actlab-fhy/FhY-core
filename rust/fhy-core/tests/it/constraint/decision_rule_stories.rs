@@ -1,7 +1,7 @@
-//! Decision rules of constraints that only the Python suites, or neither
-//! suite, pinned (F2-028): membership of opaque values alone and inside
-//! containers, the position a rebound identifier keeps, and a system with
-//! an undecided member.
+//! Decision rules of constraints not otherwise pinned by a suite shared with
+//! Python: membership of opaque values alone and inside containers, the
+//! position a rebound identifier keeps, and a system with an undecided
+//! member.
 
 use fhy_core::constraint::{
     Binding, Bindings, Constraint, ConstraintContext, ConstraintSystem, MemberSet, Outcome,

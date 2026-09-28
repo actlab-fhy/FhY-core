@@ -859,8 +859,8 @@ fn lowering_errors_display_one_lowercase_line() {
 }
 
 /// Test a lowering error on a depth-20 doubling DAG displays in bounded
-/// size: each variant holding a node writes it up to a budget of node
-/// occurrences (R2-010), not once per path.
+/// size: each variant holding a node writes it up to a fixed budget of node
+/// occurrences, not once per path.
 #[test]
 fn a_lowering_error_on_a_depth_20_dag_displays_in_bounded_size() {
     let (x, reference) = build_identifier("x");

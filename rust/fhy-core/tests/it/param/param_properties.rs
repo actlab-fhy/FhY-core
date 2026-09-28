@@ -348,7 +348,7 @@ impl PermutationSide {
 proptest! {
     /// Permutation feasibility and subset, which enumerate the in-set
     /// candidates when there are some, agree with a walk over every
-    /// permutation (F2-038).
+    /// permutation.
     #[test]
     fn permutation_questions_agree_with_brute_force(
         n in 1_i64..=5,

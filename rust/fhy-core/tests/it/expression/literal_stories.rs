@@ -753,7 +753,7 @@ fn big_int_re_export_is_the_num_bigint_type() {
 }
 
 // ---------------------------------------------------------------------------
-// Exact binary floats of decimals (S9, D-S9-2)
+// Exact binary floats of decimals
 // ---------------------------------------------------------------------------
 
 #[rstest]
@@ -808,7 +808,7 @@ fn decimal_to_f64_exact_keeps_the_smallest_subnormal() {
 }
 
 // =============================================================================
-// Canonical float and decimal text (R2-036)
+// Canonical float and decimal text
 // =============================================================================
 
 /// Return a float literal's wire value.

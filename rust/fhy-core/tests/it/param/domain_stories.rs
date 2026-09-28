@@ -209,8 +209,8 @@ fn integer_domains_admit_integers_only(#[case] value: Value, #[case] is_admissib
     }
 }
 
-/// The domain's sign restriction holds at the domain level too (F2-021);
-/// before, only a param folding in the implied bound refused `-5`.
+/// The domain's sign restriction holds at the domain level, not only once a
+/// param folds it into an implied bound.
 #[test]
 fn non_negative_integer_domain_refuses_a_negative_integer() {
     let domain = ParamDomain::from(IntegerDomain::new(

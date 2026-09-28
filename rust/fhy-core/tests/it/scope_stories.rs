@@ -1,9 +1,7 @@
 //! Tests for `Scope`: frames, the root frame, shadowing, the local and
 //! global queries, and the scoped frame of `with_frame`.
 //!
-//! Cases S-1 to S-20 and S-22 of the shared case list with
-//! `tests/test_scope.py`; the traceability table is in
-//! `docs/design/python-switch.md`, "S18: scope and stack".
+//! Ported from `tests/test_scope.py`.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 

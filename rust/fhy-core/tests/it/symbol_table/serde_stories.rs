@@ -222,7 +222,7 @@ fn a_table_wire_form_is_written_from_any_frame_type() {
 
 /// A table built through the checked API with a child added before its
 /// parent: the child's symbol could not be added while its parent was
-/// missing on decode (F2-020).
+/// missing on decode.
 #[test]
 fn a_table_whose_child_was_added_before_its_parent_round_trips() {
     let (parent, child, x) = (
@@ -337,7 +337,7 @@ fn frame_of(symbol: &Identifier, kind: u8) -> SymbolFrame {
 proptest::proptest! {
     /// Every table the checked operations build round-trips through JSON
     /// and postcard, and its JSON re-encodes byte-identically, whatever
-    /// order its namespaces were added in (F2-046, F2-020).
+    /// order its namespaces were added in.
     #[test]
     fn a_table_built_through_the_checked_api_round_trips(
         operations in proptest::collection::vec(operation_strategy(), 0..30),

@@ -1,9 +1,7 @@
 //! Tests for `Stack`: push, pop and peek, the empty stack, clearing, and
 //! iteration.
 //!
-//! Cases K-1 to K-10 of the shared case list with `tests/test_stack.py`;
-//! the traceability table is in `docs/design/python-switch.md`, "S18: scope
-//! and stack".
+//! Ported from `tests/test_stack.py`.
 
 use fhy_core::stack::Stack;
 

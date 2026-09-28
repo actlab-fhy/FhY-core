@@ -290,7 +290,7 @@ fn expression_literal_refuses_a_decimal_text_that_is_not_canonical(
 }
 
 // =============================================================================
-// Canonical encoding (R2-011)
+// Canonical encoding
 // =============================================================================
 
 #[test]
@@ -311,8 +311,8 @@ fn x_plus_x_encodes_alike_from_one_leaf_or_two() {
 }
 
 /// Test `s * s` encodes alike whether both operands are one `s = x + 1` or
-/// `s` built twice, the audit's pair of 184 and 302 bytes, and in the
-/// smaller size.
+/// `s` built twice, and in the smaller size that sharing the subtree
+/// allows.
 #[test]
 fn s_times_s_encodes_alike_however_s_was_built() {
     let x = Identifier::new("x");

@@ -289,7 +289,7 @@ fn process_error_displays_one_line_and_its_source(
 }
 
 // ---------------------------------------------------------------------------
-// The timeout bounds the whole call (R2-014)
+// The timeout bounds the whole call
 // ---------------------------------------------------------------------------
 
 /// The timeout of the stories that check the whole call is bounded.

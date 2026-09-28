@@ -543,7 +543,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Mixed int/real equalities against the evaluator (R2-040)
+// Mixed int/real equalities against the evaluator
 // ---------------------------------------------------------------------------
 
 /// A literal an integer term is compared with: an integer, the float of an

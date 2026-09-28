@@ -289,7 +289,7 @@ fn type_strategy() -> impl Strategy<Value = Type> {
 
 proptest::proptest! {
     /// Every built-in type round-trips through JSON and postcard, and its
-    /// JSON re-encodes byte-identically (F2-046).
+    /// JSON re-encodes byte-identically.
     #[test]
     fn a_type_round_trips_through_serde(value in type_strategy()) {
         crate::support::serde::check_serde_round_trip(&value)?;

@@ -377,7 +377,7 @@ fn a_hazard_is_undecided_and_reported_without_asking_the_backend() {
 }
 
 // ---------------------------------------------------------------------------
-// Mixed int/real equalities (R2-040, as the maintainer revised it)
+// Mixed int/real equalities
 // ---------------------------------------------------------------------------
 
 /// Return the set constraint of `variable` against the float members
@@ -853,7 +853,7 @@ fn a_failing_custom_scope_is_an_error_not_a_closed_constraint() {
 }
 
 // =============================================================================
-// Colliding keys (R2-042)
+// Colliding keys
 // =============================================================================
 
 /// Return `x in {value}` over one opaque value whose ordering key is the
@@ -940,7 +940,7 @@ fn params_over_colliding_members_are_equivalent_in_either_order() {
 }
 
 // =============================================================================
-// Ord for constraints (R2-032b)
+// Ord for constraints
 // =============================================================================
 
 #[test]

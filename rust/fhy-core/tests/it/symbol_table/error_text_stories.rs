@@ -1,5 +1,5 @@
 //! The text and the source of every variant of the `symbol_table` errors,
-//! and the text of every violation, which is no error (F2-029).
+//! and the text of every violation, which is no error.
 
 use fhy_core::symbol_table::{SymbolTableError, Violation};
 use rstest::rstest;

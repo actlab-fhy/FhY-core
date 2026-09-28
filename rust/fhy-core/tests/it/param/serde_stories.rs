@@ -209,8 +209,8 @@ fn an_assignment_round_trips_and_its_value_is_checked_on_decode() {
     );
 }
 
-/// The TYP probe: an integer param assigned `"not an integer"` round-tripped
-/// because decoding checked nothing (F2-020).
+/// An integer param assigned `"not an integer"` must not round-trip: decoding
+/// has to validate the payload against the param's type, not just parse it.
 #[test]
 fn an_inadmissible_assignment_payload_fails_to_decode() {
     let variable = restored(61_604, "p");
@@ -291,7 +291,7 @@ fn domain_strategy() -> impl Strategy<Value = ParamDomain> {
 proptest::proptest! {
     /// Every built-in domain round-trips through JSON and postcard, members
     /// of kind bool, tuple and frozen set included, and its JSON re-encodes
-    /// byte-identically (F2-046).
+    /// byte-identically.
     #[test]
     fn a_domain_round_trips_through_serde(domain in domain_strategy()) {
         crate::support::serde::check_serde_round_trip(&domain)?;

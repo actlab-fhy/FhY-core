@@ -1,6 +1,6 @@
-//! The text and the source of every variant of the checking errors
-//! (F2-029): the checker's, the call-target lookup's, the signature's and
-//! the body check's.
+//! The text and the source of every variant of the checking errors: the
+//! checker's, the call-target lookup's, the signature's and the body
+//! check's.
 
 use std::collections::HashMap;
 

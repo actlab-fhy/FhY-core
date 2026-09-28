@@ -1,8 +1,7 @@
 //! Tests for `SymbolTable`: namespaces and their parents, symbols, the
 //! lookups, merging, canonical order, violations and equivalence.
 //!
-//! Ported from `tests/test_symbol_table.py`; the traceability table is in
-//! `docs/design/python-switch.md`, "S15: the symbol table".
+//! Ported from `tests/test_symbol_table.py`.
 
 use std::convert::Infallible;
 

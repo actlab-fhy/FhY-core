@@ -2,8 +2,8 @@
 //! calculus: alpha equivalence against a de Bruijn model, its laws, and
 //! capture-avoiding substitution.
 //!
-//! A binder list that repeats an identifier pairs with nothing (N-S10-2
-//! (b)), so reflexivity, transitivity and "structurally equal implies
+//! A binder list that repeats an identifier pairs with nothing, so
+//! reflexivity, transitivity and "structurally equal implies
 //! alpha-equivalent" hold for terms whose binder lists repeat no
 //! identifier. The properties of those laws state that precondition: their
 //! generator, `build_distinct_term_strategy`, builds only such terms.
@@ -142,10 +142,10 @@ fn build_distinct_term_strategy() -> impl Strategy<Value = Lambda> {
     build_term_strategy(true)
 }
 
-/// Return `term` with `replacements` substituted by the algorithm before
-/// R2-035: every replacement's free identifiers are capturable, whether its
-/// key occurs or not, and each bound identifier of the original list is
-/// renamed when capturable.
+/// Return `term` with `replacements` substituted by an earlier, more
+/// conservative algorithm: every replacement's free identifiers are treated
+/// as capturable, whether its key occurs or not, and each bound identifier
+/// of the original list is renamed when capturable.
 fn substitute_as_before(term: &Lambda, replacements: &HashMap<Identifier, Lambda>) -> Lambda {
     match term {
         Lambda::Var(identifier) => replacements
@@ -190,7 +190,8 @@ fn substitute_as_before(term: &Lambda, replacements: &HashMap<Identifier, Lambda
 
 proptest! {
     /// Test a substitution's result is alpha-equivalent to the one the
-    /// algorithm before R2-035 gave, which renamed more binders.
+    /// earlier, more conservative algorithm gave, which renamed more
+    /// binders.
     #[test]
     fn substitution_agrees_with_the_algorithm_that_renamed_more(
         term in build_distinct_term_strategy(),

@@ -451,7 +451,7 @@ fn partial_operation_hazard_admits_every_spelling_of_an_integer_divisor() {
 
 // ---------------------------------------------------------------------------
 // Mixed int/real equality: admitted by `find`, refused for the equalities of
-// type-strict membership by `find_for_membership` (R2-040)
+// type-strict membership by `find_for_membership`
 // ---------------------------------------------------------------------------
 
 /// Return [`Hazard::find_for_membership`] of `expression` with no registered

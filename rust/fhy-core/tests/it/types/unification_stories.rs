@@ -1,8 +1,7 @@
 //! Tests for the environment, template binding, substitution and
 //! unification of the built-in types.
 //!
-//! Ported from `tests/types/test_unification.py`; the traceability table is
-//! in `docs/design/python-switch.md`, "S11a.2 implementation notes".
+//! Ported from `tests/types/test_unification.py`.
 
 use crate::support::expression::build_call_or_panic;
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
@@ -92,7 +91,7 @@ fn environment_equivalence_compares_bindings_by_value() {
 }
 
 /// Test `type_bindings` lists each type binding once, with its value, and
-/// no data-type or expression binding (R2-030).
+/// no data-type or expression binding.
 #[test]
 fn type_bindings_lists_the_type_bindings_alone() {
     let (u, v, t, n) = (
@@ -1055,8 +1054,8 @@ fn a_cycle_of_placeholder_bindings_resolves_to_where_it_closes() {
 }
 
 /// Bindings shaped `N_i := N_{i+1} + N_{i+2}` reach each `N_i` along
-/// Fibonacci-many paths: substitution must treat each once (F2-038). At
-/// n = 64 an unmemoized substitution would not finish.
+/// Fibonacci-many paths: substitution must treat each once. At n = 64 an
+/// unmemoized substitution would not finish.
 #[test]
 fn fibonacci_bindings_substitute_in_linear_time() {
     const N: usize = 64;

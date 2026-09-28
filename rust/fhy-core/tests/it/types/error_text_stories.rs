@@ -1,6 +1,6 @@
-//! The text and the source of every variant of the `types` errors
-//! (F2-029): promotion, literal resolution, template widths, and binding,
-//! substitution and unification.
+//! The text and the source of every variant of the `types` errors:
+//! promotion, literal resolution, template widths, and binding, substitution
+//! and unification.
 
 use fhy_core::expression::{BigInt, Expression, LiteralValue, PiecewiseError};
 use fhy_core::types::{

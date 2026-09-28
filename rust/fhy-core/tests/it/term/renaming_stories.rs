@@ -6,10 +6,9 @@
 //!
 //! Most cases are ported from the Python suites of `AlphaRenaming`
 //! (`tests/test_alpha_equivalence.py`, `tests/test_binder.py` and
-//! `tests/test_derived_equivalence.py`); the traceability table is in
-//! `docs/design/python-switch.md`, "S4.2 implementation notes". A Rust
-//! expression has no binder, so where Python compares two binder terms,
-//! these tests enter one frame per binder level and compare the bodies.
+//! `tests/test_derived_equivalence.py`). A Rust expression has no binder, so
+//! where Python compares two binder terms, these tests enter one frame per
+//! binder level and compare the bodies.
 
 use crate::support::expression as expression_support;
 use crate::support::hashing::hash_of;
@@ -313,9 +312,9 @@ fn alpha_renaming_is_corresponding_refuses_an_unmapped_identifier_matching_a_fre
 
 /// Test a frame that binds the other side's identifier shadows an outer
 /// frame binding this side's: `\x. \y. x` is not `\a. \a. a`, whose body
-/// refers to the inner `a`. The Python renaming answers `true` here, and
-/// `false` for the same pair asked the other way round; see the S4.2
-/// implementation notes.
+/// refers to the inner `a`. Corresponding is asymmetric here: it holds this
+/// way round but not the other, because the inner frame's binding shadows
+/// the outer one only on this side.
 #[test]
 fn alpha_renaming_is_corresponding_lets_an_inner_image_shadow_an_outer_binding() {
     let [x, y, a] = build_identifiers(["x", "y", "a"]);

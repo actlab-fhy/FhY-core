@@ -5,8 +5,7 @@
 //! identifier. Also `Expression` through the term traits.
 //!
 //! The lambda cases are ported from `tests/test_binder.py` and the binder
-//! cases of `tests/test_alpha_equivalence.py`; the traceability table is in
-//! `docs/design/python-switch.md`, "S10.2 implementation notes".
+//! cases of `tests/test_alpha_equivalence.py`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -124,7 +123,7 @@ fn a_lambda_is_not_alpha_equivalent_to_a_variable() {
 }
 
 // =============================================================================
-// Repeated bound identifiers (N-S10-2 (b))
+// Repeated bound identifiers
 // =============================================================================
 
 #[test]
