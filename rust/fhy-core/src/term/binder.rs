@@ -286,10 +286,7 @@ pub trait Binder: Clone {
     ///
     /// Returns the first child's error.
     fn binder_free_identifiers(&self) -> Result<HashSet<Identifier>, Self::RebuildError> {
-        let mut free = HashSet::new();
-        for child in self.scoped_children() {
-            free.extend(child.free_identifiers()?);
-        }
+        let mut free = union_free_identifiers(self.scoped_children())?;
         for bound in self.bound_identifiers() {
             free.remove(bound);
         }
@@ -329,10 +326,7 @@ pub trait Binder: Clone {
         if unshadowed.is_empty() {
             return Ok(self.clone());
         }
-        let mut free = HashSet::new();
-        for child in self.scoped_children() {
-            free.extend(child.free_identifiers()?);
-        }
+        let free = union_free_identifiers(self.scoped_children())?;
         let active: HashMap<Identifier, Self::Child> = unshadowed
             .into_iter()
             .filter(|identifier| free.contains(*identifier))
@@ -341,10 +335,7 @@ pub trait Binder: Clone {
         if active.is_empty() {
             return Ok(self.clone());
         }
-        let mut capturable = HashSet::new();
-        for term in active.values() {
-            capturable.extend(term.free_identifiers()?);
-        }
+        let capturable = union_free_identifiers(active.values())?;
         let mut safe = self.clone();
         let mut renamed = HashSet::new();
         let mut position = 0;
@@ -365,4 +356,15 @@ pub trait Binder: Clone {
             .collect::<Result<Vec<_>, _>>()?;
         safe.rebuild_with_scoped_children(children)
     }
+}
+
+/// Return the identifiers occurring free in any of `terms`.
+fn union_free_identifiers<'a, T: FreeIdentifiers + 'a>(
+    terms: impl IntoIterator<Item = &'a T>,
+) -> Result<HashSet<Identifier>, T::Error> {
+    let mut free = HashSet::new();
+    for term in terms {
+        free.extend(term.free_identifiers()?);
+    }
+    Ok(free)
 }
