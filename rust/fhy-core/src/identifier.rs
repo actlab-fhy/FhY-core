@@ -92,7 +92,7 @@ pub struct IdOutOfRange {
 impl IdOutOfRange {
     /// Return the rejected id.
     #[must_use]
-    pub fn id(&self) -> u64 {
+    pub const fn id(&self) -> u64 {
         self.id
     }
 }
@@ -226,7 +226,7 @@ impl Identifier {
 
     /// Return the identifier's unique id.
     #[must_use]
-    pub fn id(&self) -> u64 {
+    pub const fn id(&self) -> u64 {
         self.id
     }
 
