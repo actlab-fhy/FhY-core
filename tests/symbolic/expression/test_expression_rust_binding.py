@@ -8,9 +8,12 @@ objects a node keeps, deep trees, and the protocols the classes stand in
 for.
 """
 
+import math
 import pickle
+import re
 import time
 import weakref
+from decimal import Decimal
 
 import pytest
 
@@ -253,6 +256,109 @@ def test_a_shared_dag_is_compared_and_hashed_in_time_linear_in_its_nodes() -> No
     assert node == twin
     assert hash(node) == hash(twin)
     assert node != other
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        math.nan,
+        -0.0,
+        1e300,
+        2**80 + 7,
+        -(2**70),
+        Decimal("3.125"),
+        Decimal("100"),
+        True,
+        0,
+    ],
+    ids=[
+        "nan",
+        "negative_zero",
+        "huge_float",
+        "big_int",
+        "negative_big_int",
+        "decimal",
+        "whole_decimal",
+        "bool",
+        "zero",
+    ],
+)
+def test_a_decoded_literal_is_the_constructed_one(value: object) -> None:
+    """Test a V2-decoded literal equals, hashes, prints and reads as the built one.
+
+    The decoder builds a literal from the core's decoded value, without the
+    public constructor's parsing, and computes ``value`` on its first read.
+    """
+    constructed = LiteralExpression(value)  # type: ignore[arg-type]
+
+    decoded = Expression.deserialize_from_dict(constructed.serialize_to_dict())
+
+    assert type(decoded) is LiteralExpression
+    assert decoded == constructed
+    assert hash(decoded) == hash(constructed)
+    assert str(decoded) == str(constructed)
+    assert repr(decoded) == repr(constructed)
+    assert type(decoded.value) is type(constructed.value)
+    assert decoded.value is decoded.value
+    if isinstance(value, float) and math.isnan(value):
+        assert math.isnan(decoded.value)
+    else:
+        assert decoded.value == constructed.value
+        assert str(decoded.value) == str(constructed.value)
+    assert pickle.loads(pickle.dumps(decoded)) == constructed
+    assert decoded.serialize_to_dict() == constructed.serialize_to_dict()
+
+
+def test_a_decoded_table_shares_its_repeated_nodes_and_identifiers() -> None:
+    """Test decoding builds a repeated node once, and one ``Identifier`` per id."""
+    x = Identifier("x")
+    twin = Identifier.deserialize_from_dict(x.serialize_to_dict())
+    tree = (IdentifierExpression(x) + 1) * (IdentifierExpression(twin) + 1)
+
+    decoded = Expression.deserialize_from_dict(tree.serialize_to_dict())
+
+    assert isinstance(decoded, BinaryExpression)
+    assert decoded == tree
+    assert decoded.left is decoded.right
+    assert isinstance(decoded.left, BinaryExpression)
+    assert isinstance(decoded.left.left, IdentifierExpression)
+    assert decoded.left.left.identifier == x
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"nodes": []}, "expression payload has no nodes"),
+        (
+            {"nodes": [{"literal": {"int": "1"}}, {"literal": {"int": "2"}}]},
+            "node 0 is not referenced",
+        ),
+        (
+            {"nodes": [{"unary": {"operation": "negate", "operand": 0}}]},
+            "node 0 refers to node 0, which does not precede it",
+        ),
+        ({"nodes": [{"literal": {"float": "1e5"}}]}, "not canonical"),
+        ({"nodes": [{"literal": {"int": "01"}}]}, 'invalid integer literal "01"'),
+        (
+            {
+                "nodes": [
+                    {"literal": {"int": "1"}},
+                    {"logical": {"operation": "and", "operands": [0]}},
+                ]
+            },
+            "logical node 1 has 1 operands",
+        ),
+    ],
+    ids=["empty", "unreferenced", "forward", "float_text", "int_text", "one_operand"],
+)
+def test_a_table_the_fast_path_declines_raises_the_cores_error(
+    payload: SerializedDict, message: str
+) -> None:
+    """Test a malformed V2 table raises the core decoder's error."""
+    from fhy_core.serialization import DeserializationValueError  # noqa: PLC0415
+
+    with pytest.raises(DeserializationValueError, match=re.escape(message)):
+        Expression.deserialize_from_dict(payload)
 
 
 def test_str_of_a_decoded_doubling_dag_is_bounded() -> None:

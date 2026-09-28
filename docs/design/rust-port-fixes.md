@@ -82,8 +82,8 @@ onto `dev-rust` before continuing.
 - [x] `[rebase]` onto `dev-rust` after Tracks A and D land (branched from 35519bb, where both have landed)
 - [x] R2-011 + R2-036 + R2-001a + R2-046a, one commit (the wire group, J-4): canonical encoding, canonical float and decimal text with the D-7 revision, DAG-linear keys, a `Value` corpus case, one corpus regeneration: `2385e94`
 - [x] R2-042 (F2-042): colliding keys grouped by equivalence; system equivalence independent of tie order: `77197df`
-- [x] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key: this commit
-- [ ] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing
+- [x] R2-032b (F2-032, order part): `Ord` for `Constraint` from the canonical key: `859a45c`
+- [x] R2-N1 (S17 row 2.10): V2 decoding of literal-heavy trees without re-parsing: this commit
 - [ ] Track B status: gates green; counts recorded; landed as `<hash>`
 
 ### Track C: `types-param` (types, checking, params and the symbol table; lands 4th)
@@ -3449,6 +3449,47 @@ new finding.
   story, and a story that a custom constraint orders by its key and one
   whose key fails orders last.
 - **Python-visible changes:** none; the binding's classes define no order.
+
+**R2-N1.**
+- **Where the time went.** At the wire group's head, decoding the
+  benchmark's 102-literal tree cost about 270 µs against V1's 110 µs:
+  the dict was turned into a `serde_json::Value`, the core decoded an
+  `Expression`, and the materializer then rebuilt every node through its
+  public class, re-reading each literal from a Python value (a big integer
+  from its digits, a decimal through `decimal.Decimal`, whose constructor
+  alone is about 1.1 µs).
+- **The seed.** `LiteralExpression`'s constructor also accepts a private
+  `_LiteralSeed` (not exported, only the binding builds one) holding a core
+  literal node: the object keeps that handle, and its `value` is a
+  `PyOnceLock` computed on first read (`literal_from_core`). The
+  materializer's literal arm uses it too, so every core-built literal
+  (substitution, simplification, solver results) skips the parse.
+- **The table fast path** (`fhy-core-py/src/expression/table.rs`, new):
+  `Expression.deserialize_from_dict` walks a V2 table's Python objects once,
+  in table order, building each node's object from its children's objects
+  by index, so a shared node is built once and an identifier's Python
+  `Identifier` is made once per id. Leaves go through the core's serde
+  (`LiteralValue`, `Identifier`, `Callee`), so R2-036's canonical checks
+  hold; the structural checks (indices preceding, every node but the root
+  referenced, logical arity, piecewise cases and non-Boolean literal
+  conditions) are the core decoder's. Any other payload, or a constructor's
+  refusal, falls back to the core path, which raises its errors, so the
+  errors and the accepted payloads are unchanged; the V1 fast path of
+  `payload.rs` is untouched. `from_json` still decodes through the core.
+- **The target (J-12).** `test_deserialize_from_dict[v2-literals]`: about
+  270 µs at the wire group's head, 225 µs with the seed alone, and 113 µs
+  with the table path, against 112 µs for V1 in the same run and J-12's
+  132 µs (1.10 × 120.29 µs). The before and after table of §I.8.3 is in the
+  Track B status. python-switch's S17 benchmarks gain a revision bullet.
+- **Tests.** The suite; `test_a_decoded_literal_is_the_constructed_one`
+  over NaN, `-0.0`, `1e300`, big integers, decimals, a Boolean and `0`
+  (equality, hash, `str`, `repr`, the value's type and identity across
+  reads, pickling and re-serializing); a decoded table shares its repeated
+  node and holds the right identifier; and six malformed tables raise the
+  core decoder's `DeserializationValueError` text.
+- **Python-visible changes:** none in behavior; decoded literals compute
+  `value` on first read, and a decoded tree's repeated subtrees are one
+  object, as R2-011's decoder already made them one core node.
 
 ### Track C notes
 

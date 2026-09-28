@@ -19759,6 +19759,13 @@ Verdict (cross-cutting rule 5):
     value functions against the V1 registry-wrapped ones.
   - rerun `test_constraint_serialize_to_dict`, **1.14** (16.8 µs to
     19.1 µs): the same member path as the set constraint row.
+- **Revised (R2-N1, 2026-09-28), row 2.10:** V2 decoding of a
+  literal-heavy tree builds each node's object from the table in one pass,
+  and each literal from the core's decoded value through a private seed,
+  without the constructor's parsing, its Python value computed on first
+  read. `test_deserialize_from_dict[v2-literals]` went from 253 µs to about
+  113 µs, within J-12's target (1.10 of the V1-before 120.29 µs); the
+  numbers are in `docs/design/rust-port-fixes.md`, Track B notes, R2-N1.
 
 ### S17a implementation notes
 

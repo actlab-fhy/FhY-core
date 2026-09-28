@@ -586,6 +586,10 @@ impl PyExpression {
     /// Return the expression of the payload `data`, an instance of `cls`:
     /// a V2 node table, or a V1 envelope, which warns.
     ///
+    /// A V2 table of the core's exact shapes decodes in one pass, building
+    /// each node's object from the table (R2-N1); any other goes through
+    /// the core's decoder, which raises its errors.
+    ///
     /// A V1 payload of the expression classes' own shapes decodes in one
     /// pass; any other goes through `WrappedFamilySerializable`'s V1
     /// decoding, which raises the serialization framework's errors.
@@ -596,6 +600,9 @@ impl PyExpression {
     ) -> PyResult<Bound<'py, PyAny>> {
         if crate::wire::is_v1_payload(data) {
             return crate::wire::reading_v1(cls, || deserialize_expression_payload(cls, data));
+        }
+        if let Ok(Some(object)) = super::table::decode_table(data) {
+            return crate::wire::check_instance(cls, object);
         }
         let expression: Expression = crate::wire::parse_dict(cls, data)?;
         crate::wire::check_instance(cls, materialize_expression(cls.py(), &expression)?)
@@ -1444,9 +1451,59 @@ impl PyIdentifierExpression {
     name = "LiteralExpression"
 )]
 pub(crate) struct PyLiteralExpression {
-    /// The normalized value: a `bool`, `int`, `float` or `decimal.Decimal`.
-    #[pyo3(get)]
-    value: Py<PyAny>,
+    /// The normalized value: a `bool`, `int`, `float` or `decimal.Decimal`,
+    /// set by the constructor, or computed from the core literal on its
+    /// first read for a literal built from a [`PyLiteralSeed`].
+    value: PyOnceLock<Py<PyAny>>,
+}
+
+/// The private seed of a literal node the core already built, such as a
+/// decoded one: the public class's constructor, given one, keeps its handle
+/// and computes the Python value only when it is read (R2-N1), instead of
+/// parsing a Python value back into a literal.
+///
+/// Only the binding creates seeds, and the class is not exported.
+#[pyclass(frozen, module = "fhy_core._rs", name = "_LiteralSeed")]
+pub(crate) struct PyLiteralSeed {
+    expression: Expression,
+}
+
+/// Return the public literal object of the core literal node `expression`,
+/// keeping its handle.
+///
+/// # Errors
+///
+/// Raises what calling the public class raises.
+pub(crate) fn literal_from_core<'py>(
+    py: Python<'py>,
+    expression: &Expression,
+) -> PyResult<Bound<'py, PyAny>> {
+    let seed = Bound::new(
+        py,
+        PyLiteralSeed {
+            expression: expression.clone(),
+        },
+    )?;
+    PyLiteralExpression::public_class().get(py)?.call1((seed,))
+}
+
+impl PyLiteralExpression {
+    /// Return the normalized value, computing it from the core literal
+    /// `expression` holds on the first read.
+    fn stored_value<'py>(
+        &self,
+        py: Python<'py>,
+        expression: &Expression,
+    ) -> PyResult<&Bound<'py, PyAny>> {
+        self.value
+            .get_or_try_init(py, || {
+                let ExpressionKind::Literal(literal) = expression.kind() else {
+                    unreachable!("a literal object holds a literal node")
+                };
+                literal_to_python(py, literal).map(Bound::unbind)
+            })
+            .map(|value| value.bind(py))
+    }
 }
 
 impl_public_class!(PyLiteralExpression, "LiteralExpression");
@@ -1482,13 +1539,30 @@ impl PyLiteralExpression {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let py = value.py();
+        if let Ok(seed) = value.cast_exact::<PyLiteralSeed>() {
+            return Ok(PyExpression::initializer(
+                seed.get().expression.clone(),
+                PyTuple::empty(py),
+            )
+            .add_subclass(Self {
+                value: PyOnceLock::new(),
+            }));
+        }
         let (literal, stored) = read_literal(value)?;
         let expression = Expression::from(literal);
-        Ok(
-            PyExpression::initializer(expression, PyTuple::empty(py)).add_subclass(Self {
-                value: stored.unbind(),
-            }),
-        )
+        let value = PyOnceLock::new();
+        value
+            .set(py, stored.unbind())
+            .unwrap_or_else(|_| unreachable!("a new lock is empty"));
+        Ok(PyExpression::initializer(expression, PyTuple::empty(py)).add_subclass(Self { value }))
+    }
+
+    /// The normalized value: a `bool`, `int`, `float` or `decimal.Decimal`.
+    #[getter]
+    fn value<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        slf.get()
+            .stored_value(slf.py(), &slf.as_super().get().expression)
+            .cloned()
     }
 
     /// Return the node itself for no children.
@@ -1506,10 +1580,7 @@ impl PyLiteralExpression {
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>)> {
         let py = slf.py();
-        Ok((
-            slf.get_type(),
-            PyTuple::new(py, [slf.get().value.bind(py)])?,
-        ))
+        Ok((slf.get_type(), PyTuple::new(py, [Self::value(slf)?])?))
     }
 
     /// Return the data payload `{"value": ..}`: a `bool`, `int` or `float`
@@ -1517,11 +1588,7 @@ impl PyLiteralExpression {
     /// `"100.0"`.
     fn serialize_data_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyDict>> {
         let py = slf.py();
-        let value = encode_literal_value(
-            py,
-            &slf.as_super().get().expression,
-            slf.get().value.bind(py),
-        );
+        let value = encode_literal_value(py, &slf.as_super().get().expression, &Self::value(slf)?);
         build_fields(py, &[("value", &value)])
     }
 
@@ -1956,16 +2023,7 @@ pub(super) fn build_node_with<'py>(
                 .get(py)?
                 .call1((object,))
         }
-        ExpressionKind::Literal(fhy_core::expression::LiteralValue::Decimal(decimal)) => {
-            let mut text = decimal.to_string();
-            if !text.contains('.') {
-                text.push_str(".0");
-            }
-            PyLiteralExpression::public_class().get(py)?.call1((text,))
-        }
-        ExpressionKind::Literal(value) => PyLiteralExpression::public_class()
-            .get(py)?
-            .call1((literal_to_python(py, value)?,)),
+        ExpressionKind::Literal(_) => literal_from_core(py, expression),
         ExpressionKind::Piecewise(node) => {
             let case_count = node.cases().len();
             let mut children = children.into_iter();

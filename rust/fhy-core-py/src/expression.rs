@@ -25,6 +25,7 @@ mod pattern;
 mod payload;
 mod registry;
 mod screen;
+mod table;
 mod text;
 
 pub(crate) use evaluate::{
