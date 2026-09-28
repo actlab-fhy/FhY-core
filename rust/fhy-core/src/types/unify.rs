@@ -86,10 +86,7 @@ impl DataType {
     /// # Errors
     ///
     /// Returns an extension's error.
-    pub fn substitute_template(
-        &self,
-        environment: &TypeUnificationEnvironment,
-    ) -> Result<Self> {
+    pub fn substitute_template(&self, environment: &TypeUnificationEnvironment) -> Result<Self> {
         match self {
             Self::Template(template) => Ok(environment
                 .data_type_binding(template.identifier())
