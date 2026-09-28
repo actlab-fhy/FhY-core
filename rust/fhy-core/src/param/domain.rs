@@ -47,7 +47,7 @@ impl DomainKind {
     /// Return the kind's name: `integer`, `interval integer`, `real`,
     /// `ordinal`, `categorical`, `permutation` or `custom`.
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Integer => "integer",
             Self::IntervalInteger => "interval integer",
@@ -132,7 +132,7 @@ impl IntervalProfile {
     /// `zero` means nothing for [`Sign::Any`]; it is kept as given, and the
     /// gates read it only for a non-negative domain.
     #[must_use]
-    pub fn new(sign: Sign, zero: ZeroInclusion, preferred: Inclusivity) -> Self {
+    pub const fn new(sign: Sign, zero: ZeroInclusion, preferred: Inclusivity) -> Self {
         Self {
             admits_only_bounds: false,
             non_negative: sign.is_non_negative(),
@@ -144,7 +144,7 @@ impl IntervalProfile {
     /// Return this profile of a domain that admits only bound constraints,
     /// so a param over it is an interval operand as it stands.
     #[must_use]
-    pub fn with_only_bounds(self) -> Self {
+    pub const fn with_only_bounds(self) -> Self {
         Self {
             admits_only_bounds: true,
             ..self
@@ -153,26 +153,26 @@ impl IntervalProfile {
 
     /// Return whether the domain admits only bound constraints.
     #[must_use]
-    pub fn is_bounds_only(&self) -> bool {
+    pub const fn is_bounds_only(&self) -> bool {
         self.admits_only_bounds
     }
 
     /// Return whether the domain admits only non-negative values.
     #[must_use]
-    pub fn is_non_negative(&self) -> bool {
+    pub const fn is_non_negative(&self) -> bool {
         self.non_negative
     }
 
     /// Return whether the domain admits zero, given it is non-negative.
     #[must_use]
-    pub fn is_zero_included(&self) -> bool {
+    pub const fn is_zero_included(&self) -> bool {
         self.zero_included
     }
 
     /// Return whether bounds that arithmetic derives render in inclusive
     /// form.
     #[must_use]
-    pub fn is_inclusive_preferred(&self) -> bool {
+    pub const fn is_inclusive_preferred(&self) -> bool {
         self.prefer_inclusive
     }
 }
@@ -188,7 +188,7 @@ pub struct Side<'a> {
 impl<'a> Side<'a> {
     /// Return the side of `constraints` over `variable`.
     #[must_use]
-    pub fn new(constraints: &'a [Constraint], variable: &'a Identifier) -> Self {
+    pub const fn new(constraints: &'a [Constraint], variable: &'a Identifier) -> Self {
         Self {
             constraints,
             variable,
@@ -197,13 +197,13 @@ impl<'a> Side<'a> {
 
     /// Return the constraints.
     #[must_use]
-    pub fn constraints(&self) -> &'a [Constraint] {
+    pub const fn constraints(&self) -> &'a [Constraint] {
         self.constraints
     }
 
     /// Return the variable.
     #[must_use]
-    pub fn variable(&self) -> &'a Identifier {
+    pub const fn variable(&self) -> &'a Identifier {
         self.variable
     }
 }
@@ -288,7 +288,7 @@ impl IntegerDomain {
     ///
     /// `zero` means nothing for [`Sign::Any`], so zero is then included.
     #[must_use]
-    pub fn new(sign: Sign, zero: ZeroInclusion) -> Self {
+    pub const fn new(sign: Sign, zero: ZeroInclusion) -> Self {
         let non_negative = sign.is_non_negative();
         Self {
             non_negative,
@@ -298,13 +298,13 @@ impl IntegerDomain {
 
     /// Return whether the domain admits only non-negative values.
     #[must_use]
-    pub fn is_non_negative(&self) -> bool {
+    pub const fn is_non_negative(&self) -> bool {
         self.non_negative
     }
 
     /// Return whether the domain admits zero, given it is non-negative.
     #[must_use]
-    pub fn is_zero_included(&self) -> bool {
+    pub const fn is_zero_included(&self) -> bool {
         self.zero_included
     }
 }
@@ -324,7 +324,7 @@ impl IntervalIntegerDomain {
     /// Return the interval integers, rendering derived bounds as
     /// `preferred` says, restricted as [`IntegerDomain::new`] is.
     #[must_use]
-    pub fn new(preferred: Inclusivity, sign: Sign, zero: ZeroInclusion) -> Self {
+    pub const fn new(preferred: Inclusivity, sign: Sign, zero: ZeroInclusion) -> Self {
         let non_negative = sign.is_non_negative();
         Self {
             prefer_inclusive: preferred.is_inclusive(),
@@ -335,19 +335,19 @@ impl IntervalIntegerDomain {
 
     /// Return whether derived bounds render inclusively.
     #[must_use]
-    pub fn is_inclusive_preferred(&self) -> bool {
+    pub const fn is_inclusive_preferred(&self) -> bool {
         self.prefer_inclusive
     }
 
     /// Return whether the domain admits only non-negative values.
     #[must_use]
-    pub fn is_non_negative(&self) -> bool {
+    pub const fn is_non_negative(&self) -> bool {
         self.non_negative
     }
 
     /// Return whether the domain admits zero, given it is non-negative.
     #[must_use]
-    pub fn is_zero_included(&self) -> bool {
+    pub const fn is_zero_included(&self) -> bool {
         self.zero_included
     }
 }
@@ -644,14 +644,14 @@ enum SignBound {
 
 /// Return whether `constraint` is an equation, as the constraints of a
 /// finite domain are not.
-fn is_set_constraint(constraint: &Constraint) -> bool {
+const fn is_set_constraint(constraint: &Constraint) -> bool {
     matches!(constraint, Constraint::Set(_))
 }
 
 impl ParamDomain {
     /// Return the domain's kind.
     #[must_use]
-    pub fn kind(&self) -> DomainKind {
+    pub const fn kind(&self) -> DomainKind {
         match self {
             Self::Integer(_) => DomainKind::Integer,
             Self::IntervalInteger(_) => DomainKind::IntervalInteger,
@@ -979,7 +979,7 @@ impl ParamDomain {
 
     /// Return the lower bound a built-in numeric domain's sign restriction
     /// imposes; any other domain is unbounded here.
-    fn sign_bound(&self) -> SignBound {
+    const fn sign_bound(&self) -> SignBound {
         let (non_negative, zero_included) = match self {
             Self::Integer(domain) => (domain.non_negative, domain.zero_included),
             Self::IntervalInteger(domain) => (domain.non_negative, domain.zero_included),

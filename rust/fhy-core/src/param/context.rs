@@ -220,13 +220,13 @@ impl<'a> ParamContext<'a> {
 
     /// Return the solver.
     #[must_use]
-    pub fn solver(&self) -> &'a Solver {
+    pub const fn solver(&self) -> &'a Solver {
         self.constraint.solver()
     }
 
     /// Return the registry, if any.
     #[must_use]
-    pub fn registry(&self) -> Option<&'a FunctionRegistry> {
+    pub const fn registry(&self) -> Option<&'a FunctionRegistry> {
         self.constraint.registry()
     }
 
@@ -234,7 +234,7 @@ impl<'a> ParamContext<'a> {
     /// reports no event; a param question evaluates its constraints with it,
     /// forwarding their events to the param observer.
     #[must_use]
-    pub fn constraint_context(&self) -> &ConstraintContext<'a> {
+    pub const fn constraint_context(&self) -> &ConstraintContext<'a> {
         &self.constraint
     }
 

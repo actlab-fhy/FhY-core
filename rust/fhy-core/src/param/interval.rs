@@ -159,7 +159,7 @@ pub fn check_bounds_are_ordered(
 
 /// Return the operation `operation` read from the other side, as `k <cmp>
 /// x` reads `x <inverse> k`.
-fn invert_comparison(operation: BinaryOperation) -> BinaryOperation {
+const fn invert_comparison(operation: BinaryOperation) -> BinaryOperation {
     match operation {
         BinaryOperation::Greater => BinaryOperation::Less,
         BinaryOperation::GreaterEqual => BinaryOperation::LessEqual,

@@ -32,7 +32,7 @@ impl Evaluation {
     /// violated member, [`Outcome::Satisfied`] if every member is, and
     /// [`Outcome::Undecided`] otherwise.
     #[must_use]
-    pub fn outcome(&self) -> Outcome {
+    pub const fn outcome(&self) -> Outcome {
         self.outcome
     }
 
@@ -40,7 +40,7 @@ impl Evaluation {
     /// violated member, else the first undecided one; `None` for a
     /// satisfied conjunction.
     #[must_use]
-    pub fn deciding_member(&self) -> Option<usize> {
+    pub const fn deciding_member(&self) -> Option<usize> {
         self.deciding_member
     }
 }

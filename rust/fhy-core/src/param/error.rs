@@ -24,7 +24,7 @@ pub enum SetOperation {
 impl SetOperation {
     /// Return the operation's verb: `union` or `intersect`.
     #[must_use]
-    pub fn verb(self) -> &'static str {
+    pub const fn verb(self) -> &'static str {
         match self {
             Self::Union => "union",
             Self::Intersection => "intersect",
@@ -440,7 +440,7 @@ impl fmt::Display for ParamError {
 }
 
 /// Return the text of a bound the natural-number gate refuses.
-fn natural_bound_text(
+const fn natural_bound_text(
     side: BoundSide,
     zero_included: bool,
     is_inclusive: bool,

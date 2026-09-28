@@ -78,19 +78,19 @@ impl ParamAssignment {
     /// Return the assignment of `value` to `param` without a check, for a
     /// value the caller checked, as with bindings a payload does not carry.
     #[must_use]
-    pub fn new_unvalidated(param: Param, value: Value) -> Self {
+    pub const fn new_unvalidated(param: Param, value: Value) -> Self {
         Self { param, value }
     }
 
     /// Return the param.
     #[must_use]
-    pub fn param(&self) -> &Param {
+    pub const fn param(&self) -> &Param {
         &self.param
     }
 
     /// Return the value.
     #[must_use]
-    pub fn value(&self) -> &Value {
+    pub const fn value(&self) -> &Value {
         &self.value
     }
 

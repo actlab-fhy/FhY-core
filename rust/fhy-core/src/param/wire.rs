@@ -182,7 +182,7 @@ impl ParamDomainData {
     /// Return the foreign part of a custom domain, or `None` for a built-in
     /// one.
     #[must_use]
-    pub fn foreign(&self) -> Option<&Foreign> {
+    pub const fn foreign(&self) -> Option<&Foreign> {
         match &self.0 {
             DomainRepr::Custom(foreign) => Some(foreign),
             DomainRepr::Integer(_)

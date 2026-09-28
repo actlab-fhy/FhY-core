@@ -128,7 +128,7 @@ pub(super) fn union(
 /// Return the `(non_negative, zero_included)` restrictions an intersection
 /// of two integer domains inherits: non-negative if either is, and without
 /// zero if either non-negative side excludes it.
-fn merge_restrictions(left: (bool, bool), right: (bool, bool)) -> (bool, bool) {
+const fn merge_restrictions(left: (bool, bool), right: (bool, bool)) -> (bool, bool) {
     let (left_non_negative, left_zero) = left;
     let (right_non_negative, right_zero) = right;
     (
