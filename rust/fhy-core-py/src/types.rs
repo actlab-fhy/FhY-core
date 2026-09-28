@@ -1,19 +1,17 @@
-//! `PyO3` bindings for [`fhy_core::types`] (S11a of
-//! `docs/design/python-switch.md`).
+//! `PyO3` bindings for [`fhy_core::types`].
 //!
 //! - `classes.rs`: the bases `Type` and `DataType`, and the four built-in
-//!   classes (D-S11-11).
-//! - `environment.rs`: `TypeUnificationEnvironment` (D-S11-13).
+//!   classes.
+//! - `environment.rs`: `TypeUnificationEnvironment`.
 //! - `adapter.rs`: the Python-defined types as core extensions, driven
 //!   through the dispatchers' registered handlers, and the context each
-//!   call runs in (D-S11-9).
+//!   call runs in.
 //! - `convert.rs`: the conversions between Python objects and core values.
 //! - `dispatch.rs`: the dispatchers' functions and the promotion helpers.
 //! - `enums.rs`: `CoreDataType` and `TypeQualifier`, which stay Python
-//!   enums (D-S11-12).
-//! - `error.rs`: the Python exceptions of the core's errors (D-S11-14).
-//! - `checking.rs`: the type checker, the body checks and the sort tables
-//!   (S11b, D-S11-20 to D-S11-22).
+//!   enums.
+//! - `error.rs`: the Python exceptions of the core's errors.
+//! - `checking.rs`: the type checker, the body checks and the sort tables.
 
 mod adapter;
 mod checking;
@@ -40,7 +38,7 @@ pub(crate) use dispatch::{
     types_substitute_data_template, types_substitute_template, types_unify, types_unify_expression,
 };
 pub(crate) use environment::PyTypeUnificationEnvironment;
-// For the symbol table's frames (S15), which hold types and qualifiers.
+// For the symbol table's frames, which hold types and qualifiers.
 pub(crate) use adapter::run_in_context;
 pub(crate) use classes::MayCallPython;
 pub(crate) use convert::{read_data_type_value, read_type_value, type_to_python};

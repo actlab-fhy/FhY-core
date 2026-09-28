@@ -1,4 +1,4 @@
-//! The Python exceptions of the constraint core's errors (D-S13-14).
+//! The Python exceptions of the constraint core's errors.
 //!
 //! An unusable binding raises `ConstraintError` naming the identifier, the
 //! value's `repr` and its type, in the Python implementation's words, since
@@ -6,8 +6,8 @@
 //! member validation's error, and a literal the equation cannot lift to the
 //! `LiteralExpression` constructor's. An ill-typed predicate raises
 //! `NonBooleanLogicalOperandError`, a member that does not lift
-//! `ConstraintError` with the core's text, and a solver error S8's and
-//! S12's exception.
+//! `ConstraintError` with the core's text, and a solver error the solver's
+//! own exception.
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;

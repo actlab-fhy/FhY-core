@@ -1,4 +1,4 @@
-//! The Python exceptions of the type system's core errors (D-S11-14).
+//! The Python exceptions of the type system's core errors.
 
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::prelude::*;

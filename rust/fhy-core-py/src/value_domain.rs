@@ -1,15 +1,15 @@
 //! `PyO3` class for [`fhy_core::value_domain`]: `fhy_core._rs.ValueDomain`,
-//! the base of `fhy_core.value_domain.ValueDomain` (pattern P2).
+//! the base of `fhy_core.value_domain.ValueDomain`.
 //!
 //! The class wraps the canonical Rust domain and caches the Python objects
 //! its attributes return, including its parent's single Python object. As
 //! for the described tags, the public class's `__new__` is
 //! `_new_canonical`, which returns the single Python object of the
-//! canonical domain (decision D-S2-4).
+//! canonical domain.
 //!
-//! Domains follow the Rust semantics (decision D-S2-3): a name has one
-//! parent, so constructing a registered name under another parent raises
-//! `ValueError` with the Rust conflict's text, and domains compare by name.
+//! Domains follow the Rust semantics: a name has one parent, so constructing
+//! a registered name under another parent raises `ValueError` with the Rust
+//! conflict's text, and domains compare by name.
 //! Payloads keep the Python shape, `{"name": .., "description": ..,
 //! "parent": <payload or None>}` with the parent nested; decoding a payload
 //! that conflicts with the canonical domain raises the Python
@@ -195,7 +195,7 @@ impl PyValueDomain {
 
 #[pymethods]
 impl PyValueDomain {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

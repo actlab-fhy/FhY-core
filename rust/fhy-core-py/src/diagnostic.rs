@@ -1,9 +1,9 @@
 //! `PyO3` classes for [`fhy_core::diagnostic`]: `fhy_core._rs.NoteKind`,
 //! `Note`, `Diagnostic` and `ValidationReport`, the bases of the classes of
-//! the same names in `fhy_core.diagnostic` (pattern P2).
+//! the same names in `fhy_core.diagnostic`.
 //!
 //! Each class wraps the Rust value. `DiagnosticLevel` stays a Python enum
-//! (pattern P1) and converts by value at the boundary. A report keeps the
+//! and converts by value at the boundary. A report keeps the
 //! tuples of `Diagnostic` objects and records it was built from, and runs
 //! its operations over the Rust diagnostics borrowed from those objects,
 //! as the core's `ValidationReport` does over its own.
@@ -57,7 +57,7 @@ define_described_tag_class! {
 }
 
 // ---------------------------------------------------------------------------
-// DiagnosticLevel (pattern P1)
+// DiagnosticLevel
 // ---------------------------------------------------------------------------
 
 /// The Python `DiagnosticLevel` enum, with its member for each Rust level.
@@ -189,7 +189,7 @@ impl PyNote {
 
 #[pymethods]
 impl PyNote {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -360,7 +360,7 @@ impl PyDiagnostic {
 
 #[pymethods]
 impl PyDiagnostic {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -645,7 +645,7 @@ pub(crate) fn report_to_python<'py>(
 
 #[pymethods]
 impl PyValidationReport {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

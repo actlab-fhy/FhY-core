@@ -1,7 +1,6 @@
-//! The V2 wire format of the Rust-backed classes (slice S17 of
-//! `docs/design/python-switch.md`): the core's serde shapes, as canonical
-//! JSON text and as the dicts `json.loads` makes of it, and the version the
-//! writers write in.
+//! The V2 wire format of the Rust-backed classes: the core's serde shapes,
+//! as canonical JSON text and as the dicts `json.loads` makes of it, and the
+//! version the writers write in.
 //!
 //! A Rust-backed class writes V2 by serializing its core value with
 //! `serde_json`, so its text is byte-identical to the core's, and reads V2
@@ -219,8 +218,8 @@ pub(crate) fn parse_dict<D: DeserializeOwned>(
 }
 
 /// The deepest nesting of `dict`s and `list`s the reader of a Python payload
-/// accepts, `serde_json`'s own limit for JSON text (R2-013c). V2 payloads are
-/// shallow: an expression is a flat node table.
+/// accepts, `serde_json`'s own limit for JSON text. V2 payloads are shallow:
+/// an expression is a flat node table.
 const MAX_PAYLOAD_DEPTH: usize = 128;
 
 /// Return the JSON value of the Python payload `object`, `depth` levels

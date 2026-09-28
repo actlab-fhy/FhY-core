@@ -1,4 +1,4 @@
-//! The Python exceptions of the param core's errors (D-S16-12).
+//! The Python exceptions of the param core's errors.
 //!
 //! An error with a core counterpart raises the class the Python
 //! implementation raised, with the core's text; one whose Python text names
@@ -180,40 +180,27 @@ pub(crate) fn param_error_to_py(
     }
 }
 
-/// Raises each variant's Python class, with no other domain to name.
-impl IntoPyErr for DomainError {
-    fn into_py_err(self) -> PyErr {
-        Python::attach(|py| param_error_to_py(py, self, None))
-    }
+/// Implements [`IntoPyErr`] for a param core error family by converting it
+/// through [`param_error_to_py`], with no other domain to name.
+macro_rules! impl_into_py_err {
+    ($($error:ty),+ $(,)?) => {
+        $(
+            impl IntoPyErr for $error {
+                fn into_py_err(self) -> PyErr {
+                    Python::attach(|py| param_error_to_py(py, self, None))
+                }
+            }
+        )+
+    };
 }
 
-/// Raises each variant's Python class.
-impl IntoPyErr for ParamBuildError {
-    fn into_py_err(self) -> PyErr {
-        Python::attach(|py| param_error_to_py(py, self, None))
-    }
-}
-
-/// Raises each variant's Python class.
-impl IntoPyErr for AssignmentError {
-    fn into_py_err(self) -> PyErr {
-        Python::attach(|py| param_error_to_py(py, self, None))
-    }
-}
-
-/// Raises each variant's Python class.
-impl IntoPyErr for IntervalError {
-    fn into_py_err(self) -> PyErr {
-        Python::attach(|py| param_error_to_py(py, self, None))
-    }
-}
-
-/// Raises each variant's Python class, with no other domain to name.
-impl IntoPyErr for ParamError {
-    fn into_py_err(self) -> PyErr {
-        Python::attach(|py| param_error_to_py(py, self, None))
-    }
-}
+impl_into_py_err!(
+    DomainError,
+    ParamBuildError,
+    AssignmentError,
+    IntervalError,
+    ParamError,
+);
 
 /// Return the exception of a failed ordinal construction: a raising `<`'s
 /// `TypeError` chained under the core's `TypeError`, another exception it

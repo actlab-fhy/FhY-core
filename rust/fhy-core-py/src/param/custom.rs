@@ -1,11 +1,10 @@
-//! A Python-defined `ParamDomain` as a core [`CustomDomain`] (P3;
-//! D-S16-5): the core calls the object's own methods as its procedures need
-//! them, with the Python objects of the constraints, values and domains it
-//! passes.
+//! A Python-defined `ParamDomain` as a core [`CustomDomain`]: the core calls
+//! the object's own methods as its procedures need them, with the Python
+//! objects of the constraints, values and domains it passes.
 //!
 //! An exception a hook raises propagates as the same object; the
 //! equivalence hook, which the core cannot fail, answers `false` and keeps
-//! its exception in S13's pending-error slot.
+//! its exception in the constraint module's pending-error slot.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -36,7 +35,7 @@ use super::objects::{
 /// A Python-defined domain, driven through its methods.
 ///
 /// The object is kept in a [`Slot`], which the object whose construction
-/// made the adapter owns and traverses (R2-003).
+/// made the adapter owns and traverses.
 pub(crate) struct PyCustomDomain {
     object: Slot,
 }

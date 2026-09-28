@@ -1,4 +1,4 @@
-//! Cyclic garbage collection of the binding's classes (R2-003).
+//! Cyclic garbage collection of the binding's classes.
 //!
 //! A class that holds Python objects implements `__traverse__`, which
 //! visits each Python object it holds a strong reference to, so the

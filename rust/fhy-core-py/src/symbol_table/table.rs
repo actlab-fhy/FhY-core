@@ -1,9 +1,9 @@
-//! `SymbolTable`, over the core's [`SymbolTable`] (pattern P2, D-S15-10).
+//! `SymbolTable`, over the core's [`SymbolTable`].
 //!
 //! Each symbol's entry keeps the symbol's `Identifier` object, the frame
 //! object, the frame's name, and, for a built-in frame, its core
 //! [`SymbolFrame`], so two built-in frames of one class compare in Rust and
-//! any other pair through the left frame's own Python method (D-S15-9).
+//! any other pair through the left frame's own Python method.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ fn frame_base_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     crate::python::cached_attr!(py, MODULE, "SymbolTableFrame" => PyType)
 }
 
-/// Return the module's logger, which the DEBUG lines go to (D-S15-13).
+/// Return the module's logger, which the DEBUG lines go to.
 fn logger(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
     static LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     LOGGER
@@ -133,7 +133,7 @@ impl Entry {
     }
 
     /// Visit the symbol and the frame, if this handle is the entry's only
-    /// one (R2-003): an entry shared with another table, or with a copy a
+    /// one — an entry shared with another table, or with a copy a
     /// call is working on, is visited by none, since a reference must be
     /// visited at most once.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
@@ -187,7 +187,7 @@ impl PySymbolTable {
     /// Add `namespace_name` under `parent_namespace_name`, without logging.
     ///
     /// Both are read before the table is borrowed, so a Python read they
-    /// run may read the table (R2-044).
+    /// run may read the table.
     fn insert_namespace_checked(
         slf: &Bound<'_, Self>,
         namespace_name: &Bound<'_, PyAny>,
@@ -207,7 +207,7 @@ impl PySymbolTable {
     ///
     /// The identifiers and the entry, whose frame's `name` a Python-defined
     /// frame answers, are read before the table is borrowed, so that read
-    /// may read or change the table (R2-044).
+    /// may read or change the table.
     fn insert_symbol_checked(
         slf: &Bound<'_, Self>,
         namespace_name: &Bound<'_, PyAny>,
@@ -252,7 +252,7 @@ fn bad_state() -> PyErr {
 #[pymethods]
 impl PySymbolTable {
     /// Visit the entries this table alone holds and its cached namespace
-    /// dicts, for the cycle collector (R2-003).
+    /// dicts, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

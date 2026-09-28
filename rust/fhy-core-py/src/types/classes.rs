@@ -1,11 +1,11 @@
 //! The type classes: the bases `fhy_core._rs.Type` and `DataType`, and the
 //! four built-in classes `PrimitiveDataType`, `TemplateDataType`,
-//! `NumericalType` and `IndexType` (pattern P2, D-S11-11).
+//! `NumericalType` and `IndexType`.
 //!
 //! Each built-in class holds its Rust value and the Python objects it was
 //! built from, which its properties return. A Python-defined `Type` or
 //! `DataType` subclass has the base alone, holds no Rust value, and reaches
-//! the core as an extension (D-S11-9).
+//! the core as an extension.
 
 use std::sync::OnceLock;
 
@@ -386,7 +386,7 @@ impl PyPrimitiveDataType {
 
 #[pymethods]
 impl PyPrimitiveDataType {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -600,7 +600,7 @@ fn read_widths(widths: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Vec<u32>>> 
 
 #[pymethods]
 impl PyTemplateDataType {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -818,7 +818,7 @@ pub(crate) struct PyNumericalType {
     value: NumericalType,
     hash: OnceLock<u64>,
     /// The slot of a Python-defined data type's adapter, which the type
-    /// owns (R2-003).
+    /// owns.
     slots: crate::gc::Slots,
 }
 
@@ -843,7 +843,7 @@ impl PyNumericalType {
 
 #[pymethods]
 impl PyNumericalType {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1128,7 +1128,7 @@ fn unit_stride(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
 
 #[pymethods]
 impl PyIndexType {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

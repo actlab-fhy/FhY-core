@@ -1,5 +1,5 @@
 //! `fhy_core._rs.ConstraintSystem`: the base of the public
-//! `ConstraintSystem` (P2; D-S13-11), over the core's [`ConstraintSystem`].
+//! `ConstraintSystem`, over the core's [`ConstraintSystem`].
 //!
 //! A system keeps its members' Python objects in canonical order beside
 //! the core system, so `constraints` returns them. A member of a built-in
@@ -202,7 +202,7 @@ pub(crate) struct PyConstraintSystem {
     /// The members' Python objects, in canonical order.
     constraints: Py<PyTuple>,
     /// The slots of the Python-defined members' adapters, which the system
-    /// owns (R2-003).
+    /// owns.
     slots: Slots,
 }
 
@@ -282,7 +282,7 @@ fn read_members<'py>(
 
 #[pymethods]
 impl PyConstraintSystem {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

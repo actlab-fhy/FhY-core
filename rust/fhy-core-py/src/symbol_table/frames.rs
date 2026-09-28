@@ -1,13 +1,13 @@
 //! The three built-in frames, `ImportSymbolTableFrame`,
-//! `VariableSymbolTableFrame` and `FunctionSymbolTableFrame` (pattern P2,
-//! D-S15-7), and `FunctionKeyword`, which stays a Python enum (P1).
+//! `VariableSymbolTableFrame` and `FunctionSymbolTableFrame`, and
+//! `FunctionKeyword`, which stays a Python enum.
 //!
 //! Each frame holds its core [`SymbolFrame`] and the Python objects it was
 //! built from, which its properties return. It stands in for the frozen
 //! dataclass it replaces: `==`, `hash` and `repr` follow its fields, it is
 //! always frozen, a pickle is a call of its class, and it writes and reads
 //! the dataclass's payload. Its equivalence methods have the derived plan's
-//! meaning (D-S15-8).
+//! meaning.
 
 use std::sync::OnceLock;
 
@@ -272,7 +272,7 @@ pub(crate) struct PyImportSymbolTableFrame {
 
 #[pymethods]
 impl PyImportSymbolTableFrame {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -411,14 +411,13 @@ pub(crate) struct PyVariableSymbolTableFrame {
     type_qualifier: Py<PyAny>,
     value: SymbolFrame,
     hash: OnceLock<u64>,
-    /// The slot of a Python-defined type's adapter, which the frame owns
-    /// (R2-003).
+    /// The slot of a Python-defined type's adapter, which the frame owns.
     slots: crate::gc::Slots,
 }
 
 #[pymethods]
 impl PyVariableSymbolTableFrame {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -626,7 +625,7 @@ pub(crate) struct PyFunctionSymbolTableFrame {
     value: SymbolFrame,
     hash: OnceLock<u64>,
     /// The slots of the Python-defined parameter types' adapters, which the
-    /// frame owns (R2-003).
+    /// frame owns.
     slots: crate::gc::Slots,
 }
 
@@ -673,7 +672,7 @@ fn read_signature<'py>(
 
 #[pymethods]
 impl PyFunctionSymbolTableFrame {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

@@ -1,4 +1,4 @@
-//! Helpers every binding module shares for talking to Python (R2-033).
+//! Helpers every binding module shares for talking to Python.
 //!
 //! - [`Seed`]: the contents a private seed class hands a class's `__new__`,
 //!   taken once.

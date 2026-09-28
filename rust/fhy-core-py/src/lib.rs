@@ -36,7 +36,7 @@ mod wire;
 
 /// `fhy_core`'s Rust implementation.
 ///
-/// The module declares that it uses the GIL (`gil_used = true`, R2-043), so a
+/// The module declares that it uses the GIL (`gil_used = true`), so a
 /// free-threaded interpreter re-enables the GIL when importing it: the
 /// binding's invariants were argued for the GIL build only, and no CI job
 /// runs a free-threaded one. CONTRIBUTING "One extension module per process"

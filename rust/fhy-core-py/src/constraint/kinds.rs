@@ -1,6 +1,6 @@
 //! `fhy_core._rs.EquationConstraint`, `InSetConstraint` and
-//! `NotInSetConstraint`: the bases of the public constraint classes (P2;
-//! D-S13-9), over the core's [`EquationConstraint`] and [`SetConstraint`].
+//! `NotInSetConstraint`: the bases of the public constraint classes, over
+//! the core's [`EquationConstraint`] and [`SetConstraint`].
 //!
 //! Each object keeps the Python objects it was given: the expression, the
 //! variable, and the objects of opaque members, so the attributes return
@@ -208,7 +208,7 @@ pub(crate) struct PyEquationConstraint {
 
 #[pymethods]
 impl PyEquationConstraint {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -439,7 +439,7 @@ struct SetState {
     variable: Py<PyAny>,
     values: Py<PyTuple>,
     /// The slots of the opaque members' adapters, which the constraint
-    /// owns (R2-003).
+    /// owns.
     slots: Slots,
 }
 
@@ -480,7 +480,7 @@ impl SetState {
         })
     }
 
-    /// Visit the Python objects, for the cycle collector (R2-003).
+    /// Visit the Python objects, for the cycle collector.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.variable)?;
         visit.call(&self.values)?;
@@ -715,7 +715,7 @@ macro_rules! set_constraint_class {
 
         #[pymethods]
         impl $class {
-            /// Visit the Python objects, for the cycle collector (R2-003).
+            /// Visit the Python objects, for the cycle collector.
             fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
                 self.state.traverse(&visit)
             }

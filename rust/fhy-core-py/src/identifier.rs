@@ -8,7 +8,7 @@
 //! outside `[0, 2**62)` that this process did not issue below `2**63`
 //! raises `OverflowError`.
 //!
-//! The Python `Identifier` stays a Python class (pattern P1), so a Rust
+//! The Python `Identifier` stays a Python class, so a Rust
 //! value that holds an identifier converts it by id and name hint: into Rust
 //! through [`Identifier::try_restore`], and back into Python through
 //! `Identifier.deserialize_from_dict`. Neither direction issues a new id.
@@ -74,7 +74,7 @@ pub(crate) fn next_identifier_id() -> u64 {
 }
 
 /// The Python `fhy_core.identifier.Identifier` class, which stays a Python
-/// class (pattern P1).
+/// class.
 fn python_identifier_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     crate::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)
 }

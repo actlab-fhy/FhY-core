@@ -71,7 +71,7 @@ impl IdentityCache {
 }
 
 /// Raise the `NotImplementedError` of an `InternedMixin` registry operation
-/// that the append-only Rust registries cannot support (decision D-S2-1).
+/// that the append-only Rust registries cannot support.
 pub(crate) fn raise_registry_append_only(cls: &Bound<'_, PyType>, method: &str) -> PyResult<()> {
     Err(PyNotImplementedError::new_err(format!(
         "{}.{method} is not supported: the Rust intern registries are \

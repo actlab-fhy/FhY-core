@@ -1,4 +1,4 @@
-//! The log records of undecided outcomes (D-S13-13): the core reports each
+//! The log records of undecided outcomes: the core reports each
 //! [`ConstraintEvent`], and the observer here logs it on
 //! `fhy_core.symbolic.constraint.core`, with the level, text and Python
 //! `repr`s the Python implementation logged.

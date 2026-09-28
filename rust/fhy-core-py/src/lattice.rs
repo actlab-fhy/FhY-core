@@ -1,19 +1,19 @@
 //! `PyO3` classes for [`fhy_core::lattice`]: `fhy_core._rs.PartiallyOrderedSet`
 //! and `Lattice`, the bases of `fhy_core.utils.poset.PartiallyOrderedSet` and
-//! `fhy_core.lattice.Lattice` (pattern P2, D-S11-5).
+//! `fhy_core.lattice.Lattice`.
 //!
 //! The elements are Python objects, so each class keeps them in a Python
 //! `dict` from element to its position, which keeps Python's hashing and
 //! `==`, and a list of the objects by position; the core's order runs over
 //! the positions. The core never holds a Python object.
 //!
-//! No Python code runs while the object is borrowed (R2-044): an element's
+//! No Python code runs while the object is borrowed: an element's
 //! `__hash__` and `__eq__`, `iter_stable`'s key and an element's `repr` run
 //! on the dict or on a copy of the element list, before or after the short
 //! borrow that reads or changes the core order, so they may read the object
 //! again, or add to it, and see a consistent state.
 //!
-//! Both classes pickle, copy and deep-copy (R2-024): `__reduce__` returns the
+//! Both classes pickle, copy and deep-copy: `__reduce__` returns the
 //! elements in insertion order and every order added, as element objects,
 //! and `__setstate__` replays them, so the copy iterates, orders, meets and
 //! joins as the original does; a subclass's `__dict__` goes with them, and
@@ -97,7 +97,7 @@ impl Elements {
             .collect()
     }
 
-    /// Visit the positions `dict` and every element (R2-003).
+    /// Visit the positions `dict` and every element.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.positions)?;
         crate::gc::traverse_all(visit, &self.objects)
@@ -444,7 +444,7 @@ impl Order for PyPartiallyOrderedSet {
 #[pymethods]
 impl PyPartiallyOrderedSet {
     /// Visit the elements and their positions `dict`, for the cycle
-    /// collector (R2-003).
+    /// collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -674,7 +674,7 @@ fn diagnostic_class<'py>(py: Python<'py>, name: &'static str) -> PyResult<Bound<
 #[pymethods]
 impl PyLattice {
     /// Visit the elements and their positions `dict`, for the cycle
-    /// collector (R2-003).
+    /// collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

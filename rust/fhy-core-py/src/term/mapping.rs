@@ -1,5 +1,5 @@
-//! `is_identifier_mapping_alpha_equivalent_under` (D-S10-11): the core's
-//! comparison of identifier-keyed maps over Python values.
+//! `is_identifier_mapping_alpha_equivalent_under`: the core's comparison of
+//! identifier-keyed maps over Python values.
 
 use std::collections::HashMap;
 

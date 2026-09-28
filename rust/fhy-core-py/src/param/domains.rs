@@ -1,7 +1,6 @@
 //! `fhy_core._rs.IntegerDomain`, `IntervalIntegerDomain`, `RealDomain`,
 //! `OrdinalDomain`, `CategoricalDomain` and `PermutationDomain`: the bases
-//! of the public domain classes (P2; D-S16-9), over the core's
-//! [`ParamDomain`].
+//! of the public domain classes, over the core's [`ParamDomain`].
 //!
 //! A finite domain keeps the Python objects of its values in the core's
 //! order, so its attribute returns them. The questions ask the default
@@ -96,8 +95,7 @@ fn read_variable(variable: &Bound<'_, PyAny>) -> PyResult<Identifier> {
 pub(crate) struct DomainState {
     core: ParamDomain,
     values: Option<Py<PyTuple>>,
-    /// The slots of the opaque values' adapters, which the domain owns
-    /// (R2-003).
+    /// The slots of the opaque values' adapters, which the domain owns.
     slots: crate::gc::Slots,
 }
 
@@ -523,7 +521,7 @@ macro_rules! domain_class {
         impl $class {
             $($extra)*
 
-            /// Visit the member objects, for the cycle collector (R2-003).
+            /// Visit the member objects, for the cycle collector.
             fn __traverse__(
                 &self,
                 visit: ::pyo3::pyclass::PyVisit<'_>,
@@ -858,7 +856,7 @@ fn build_finite(
     kind: DomainKind,
     values: &Bound<'_, PyAny>,
 ) -> PyResult<DomainState> {
-    // The opaque values' adapters are this domain's to traverse (R2-003).
+    // The opaque values' adapters are this domain's to traverse.
     let (state, slots) = crate::gc::collect_slots(|| build_finite_state(py, kind, values));
     let mut state = state?;
     state.slots = slots;

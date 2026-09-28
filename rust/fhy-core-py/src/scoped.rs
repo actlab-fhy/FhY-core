@@ -1,5 +1,4 @@
-//! One guard for the binding's thread-local stacks (R2-031, S-5 of
-//! `docs/design/rust-port-fixes.md`).
+//! One guard for the binding's thread-local stacks.
 //!
 //! Each stack holds a frame per call in progress on its thread: the
 //! type-system contexts, the simplifications, the pending exception of an

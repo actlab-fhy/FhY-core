@@ -1,7 +1,6 @@
-//! The module functions of `fhy_core.symbolic.param.domains` over the core
-//! (D-S16-21): `compute_constraint_implication_subset`,
-//! `evaluate_system_outcome`, `are_all_constraints_satisfied` and
-//! `is_bound_expression`.
+//! The module functions of `fhy_core.symbolic.param.domains` over the core:
+//! `compute_constraint_implication_subset`, `evaluate_system_outcome`,
+//! `are_all_constraints_satisfied` and `is_bound_expression`.
 
 use std::sync::Arc;
 

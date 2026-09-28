@@ -1,12 +1,12 @@
 //! `PyO3` classes for the [`fhy_core::described_tag`] vocabularies,
-//! `OpAttribute` and `NoteKind` (pattern P2).
+//! `OpAttribute` and `NoteKind`.
 //!
 //! A vocabulary's class wraps the canonical Rust tag and caches the Python
 //! objects its attributes return. The public Python class is a thin
 //! subclass that mixes in the stateless Python protocols and sets
 //! `__new__` to the class's `_new_canonical`, which registers the tag in the
-//! Rust registry and returns the single Python object of the canonical tag
-//! (decision D-S2-4). The class's own `__new__` only builds an instance from
+//! Rust registry and returns the single Python object of the canonical tag.
+//! The class's own `__new__` only builds an instance from
 //! a seed that `_new_canonical` creates, so no second Python object of a
 //! canonical tag can exist. The public class registers itself with the
 //! class's `_register_public_class` at import, so a canonical tag the
@@ -169,8 +169,7 @@ macro_rules! define_described_tag_class {
 
         #[pymethods]
         impl $class {
-            /// Visit the name and description, for the cycle collector
-            /// (R2-003).
+            /// Visit the name and description, for the cycle collector.
             fn __traverse__(
                 &self,
                 visit: ::pyo3::pyclass::PyVisit<'_>,

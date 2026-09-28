@@ -1,6 +1,6 @@
 //! The functions the six dispatchers of `fhy_core.types.dispatch` run for
 //! the built-in classes and as their defaults, `unify_expression`, and the
-//! promotion helpers of `fhy_core.types.core` (D-S11-8, D-S11-9, D-S11-12).
+//! promotion helpers of `fhy_core.types.core`.
 //!
 //! Each dispatcher function converts its arguments, runs the core in a
 //! context, and hands the result back as the objects it came from where the

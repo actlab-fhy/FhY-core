@@ -1,5 +1,4 @@
-//! The Python exception classes the binding raises, one constructor each
-//! (R2-033).
+//! The Python exception classes the binding raises, one constructor each.
 //!
 //! Each class of the Python package the binding raises is one
 //! [`ExceptionClass`] static here, imported on first use. A binding module

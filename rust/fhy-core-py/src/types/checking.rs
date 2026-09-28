@@ -1,16 +1,14 @@
 //! The functions `fhy_core.types.checking` runs: the type checker, the body
-//! checks, the sweep and the sort tables (S11b of
-//! `docs/design/python-switch.md`, D-S11-20 to D-S11-22).
+//! checks, the sweep and the sort tables.
 //!
 //! The checker's two lookups are Python callables, called once per
 //! identifier occurrence and once per call node the walk meets; the walk
 //! checks a shared sub-expression other than a leaf at most twice, so the
 //! lookups inside it run a bounded number of times however often it is
-//! reached. A lookup's exception
-//! propagates as the same object, and a result of the wrong shape raises
-//! `TypeError`. When the call-target resolver is the registry's
-//! `get_registered_entry`, calls resolve through the registry snapshot
-//! without calling Python.
+//! reached. A lookup's exception propagates as the same object, and a
+//! result of the wrong shape raises `TypeError`. When the call-target
+//! resolver is the registry's `get_registered_entry`, calls resolve through
+//! the registry snapshot without calling Python.
 
 use std::cell::OnceCell;
 use std::collections::HashSet;

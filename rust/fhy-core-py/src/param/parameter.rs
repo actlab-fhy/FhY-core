@@ -1,6 +1,6 @@
 //! `fhy_core._rs.Param` and `ParamAssignment`: the bases of the public
-//! classes of `fhy_core.symbolic.param.core` (P2; D-S16-9), over the core's
-//! [`Param`] and [`ParamAssignment`].
+//! classes of `fhy_core.symbolic.param.core`, over the core's [`Param`] and
+//! [`ParamAssignment`].
 //!
 //! A param keeps the Python objects of its domain, its variable and its
 //! `ConstraintSystem`, whose members are the constraint objects it was
@@ -78,13 +78,13 @@ struct ParamObjects {
     system: Py<PyAny>,
     constraints: Py<PyTuple>,
     /// The slots of the Python-defined parts the param's construction
-    /// adapted, which the param owns (R2-003): a param derived from another
+    /// adapted, which the param owns — a param derived from another
     /// shares that one's parts, and owns none.
     slots: Slots,
 }
 
 impl ParamObjects {
-    /// Visit the objects, for the cycle collector (R2-003).
+    /// Visit the objects, for the cycle collector.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.domain)?;
         visit.call(&self.variable)?;
@@ -641,8 +641,7 @@ fn read_known<'py>(
 
 #[pymethods]
 impl PyParam {
-    /// Visit the Python objects the param holds, for the cycle collector
-    /// (R2-003).
+    /// Visit the Python objects the param holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -684,7 +683,7 @@ impl PyParam {
         let identifier = restore_identifier(&variable, "Param", "variable")?;
         let constraints: Vec<Constraint> = known.iter().map(|(core, _)| core.clone()).collect();
         // The domain's adapter and the implied constraints' are this
-        // param's to traverse (R2-003).
+        // param's to traverse.
         let (result, slots) = collect_slots(|| {
             let core_domain = read_domain(domain);
             run_with_context(
@@ -1640,7 +1639,7 @@ pub(crate) struct PyParamAssignment {
 
 #[pymethods]
 impl PyParamAssignment {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

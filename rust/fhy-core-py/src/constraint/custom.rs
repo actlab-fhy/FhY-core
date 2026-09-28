@@ -1,12 +1,12 @@
-//! A Python-defined `Constraint` as a core [`CustomConstraint`] (P3;
-//! D-S13-5): a member of a system that is not one of the built-in kinds.
+//! A Python-defined `Constraint` as a core [`CustomConstraint`]: a member of
+//! a system that is not one of the built-in kinds.
 //!
 //! The adapter calls the object's own methods, once per question, as the
 //! system needs them. Its ordering key is read once, when the system is
 //! built. `evaluate_with_bindings` receives the Python snapshot of the
 //! caller's mapping, which the core carries as the bindings' source, so the
 //! member sees the objects it saw before; bindings the core built itself,
-//! with no source, reach it as a dict rebuilt from them (D-S16-15). An
+//! with no source, reach it as a dict rebuilt from them. An
 //! exception a hook raises propagates as the same object: it is the hook's
 //! error, except that `is_structurally_equivalent`, which backs the core's
 //! equality and cannot fail, answers `false` and keeps its exception for
@@ -43,7 +43,7 @@ pub(crate) struct PythonBindings(pub(crate) Py<PyDict>);
 /// A Python-defined constraint, driven through its methods.
 ///
 /// The object is kept in a [`Slot`], which the object whose construction
-/// made the adapter owns and traverses (R2-003).
+/// made the adapter owns and traverses.
 pub(crate) struct PyCustomConstraint {
     object: Slot,
     key: String,
@@ -83,8 +83,8 @@ impl PyCustomConstraint {
 }
 
 /// Return the Python dict of the core `bindings`, for a Python-defined
-/// member evaluated under bindings the core built (D-S16-15): each
-/// identifier's Python object, bound to an expression's object or a value's.
+/// member evaluated under bindings the core built: each identifier's Python
+/// object, bound to an expression's object or a value's.
 fn build_python_bindings<'py>(
     py: Python<'py>,
     bindings: &Bindings,

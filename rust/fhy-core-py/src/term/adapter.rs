@@ -1,5 +1,4 @@
-//! Python terms and binders as implementations of the core's term traits
-//! (D-S10-7).
+//! Python terms and binders as implementations of the core's term traits.
 //!
 //! A [`PyTerm`] is any Python object with the `Term` protocol's methods,
 //! and a [`PyBinder`] a `BinderMixin` instance. A comparison, a scope or a

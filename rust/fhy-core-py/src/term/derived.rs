@@ -1,9 +1,9 @@
-//! The engine of `DerivedEquivalenceMixin` (D-S10-8, D-S10-9): structural
-//! and alpha equivalence derived from a dataclass's fields.
+//! The engine of `DerivedEquivalenceMixin`: structural and alpha equivalence
+//! derived from a dataclass's fields.
 //!
 //! A class's plan is built on its first comparison from
 //! `dataclasses.fields`, and kept in the Python module's `_PLAN_CACHE`
-//! dict, keyed by the class, for the life of the process, as before. A
+//! dict, keyed by the class, for the life of the process. A
 //! comparison walks the two objects' fields on its own stack, with the
 //! dispatch order and error texts of the Python implementation. It compares
 //! `None`, identifiers, expressions, exact scalars and nested derived
@@ -562,7 +562,7 @@ impl<'py> Walk<'py> {
                     }
                     // The pairing is checked even when the binder scopes
                     // over nothing: a list that repeats an identifier pairs
-                    // with none (N-S10-2 (b)).
+                    // with none.
                     let Some(paired) = scope.value.entered(&left_list, &right_list) else {
                         return Ok(false);
                     };

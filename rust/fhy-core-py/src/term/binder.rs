@@ -1,5 +1,5 @@
-//! The functions `BinderMixin`'s derived methods call (D-S10-7): the
-//! core's `Binder` algorithms over a Python binder's hooks.
+//! The functions `BinderMixin`'s derived methods call: the core's `Binder`
+//! algorithms over a Python binder's hooks.
 
 use std::collections::HashMap;
 

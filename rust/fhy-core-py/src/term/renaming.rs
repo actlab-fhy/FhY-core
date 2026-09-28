@@ -1,9 +1,9 @@
-//! `fhy_core._rs.AlphaRenaming`, which is `fhy_core.term.AlphaRenaming`
-//! (D-S10-5): the Rust [`AlphaRenaming`] with the Python identifier objects
-//! it was built from.
+//! `fhy_core._rs.AlphaRenaming`, which is `fhy_core.term.AlphaRenaming`: the
+//! Rust [`AlphaRenaming`] with the Python identifier objects it was built
+//! from.
 //!
 //! The Rust renaming decides every lookup. The Python `Identifier` stays a
-//! Python class (P1), so the binding keeps each identifier object given for
+//! Python class, so the binding keeps each identifier object given for
 //! a key or an image, by id, beside the Rust frames, and `resolve` returns
 //! the object that was given. The objects live in a shared chain of tables,
 //! one per extension, so extending a renaming copies no table, as the Rust
@@ -76,7 +76,7 @@ impl ObjectTable {
 }
 
 impl ObjectTable {
-    /// Visit the objects of the nodes this table alone holds (R2-003).
+    /// Visit the objects of the nodes this table alone holds.
     ///
     /// The chain is shared between renamings, and a reference must be
     /// visited at most once, so the walk stops at the first node another
@@ -345,7 +345,7 @@ impl PyAlphaRenaming {
 #[pymethods]
 impl PyAlphaRenaming {
     /// Visit the identifier objects the renaming alone holds, for the cycle
-    /// collector (R2-003).
+    /// collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

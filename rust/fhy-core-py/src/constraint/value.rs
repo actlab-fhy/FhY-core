@@ -10,11 +10,11 @@
 //! hold, such as `None`, a list or an object, becomes an opaque value that
 //! is not member-shaped, so only the constraint that reads it judges it.
 //!
-//! A `Serializable` member is an opaque value (D-S13-3): [`PyOpaqueValue`]
+//! A `Serializable` member is an opaque value: [`PyOpaqueValue`]
 //! compares it with Python's `==`, after `type(a) is type(b)`. A comparison
 //! that raises answers `false` and keeps its exception in a per-thread
 //! slot, which the entry point that started the comparison raises when the
-//! core returns (S10's deferred-error pattern). Once an exception is kept,
+//! core returns. Once an exception is kept,
 //! no comparison calls Python again during that call, and an exception that
 //! is not an `Exception`, such as `KeyboardInterrupt`, replaces a kept one
 //! that is.
@@ -89,7 +89,7 @@ pub(crate) fn has_pending_error() -> bool {
 /// if any, in place of its result.
 pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     // A frame of its own, popped when the guard drops, on unwind included,
-    // so the outer frame is restored (R2-031).
+    // so the outer frame is restored.
     let scope = ScopedStack::push(&PENDING_ERROR, None);
     let result = call();
     let raised = scope.pop();
@@ -158,7 +158,7 @@ fn type_text(value: &Bound<'_, PyAny>) -> String {
 /// A Python object as a core opaque value.
 ///
 /// The object and its class are kept in [`Slot`]s, which the object whose construction
-/// made the adapter owns and traverses (R2-003).
+/// made the adapter owns and traverses.
 pub(crate) struct PyOpaqueValue {
     object: Slot,
     class: Slot,
@@ -351,7 +351,7 @@ struct RecursionLimit(Option<usize>);
 
 impl RecursionLimit {
     /// Raise `RecursionError` if `depth` levels of nesting pass Python's
-    /// recursion limit (R2-013c).
+    /// recursion limit.
     ///
     /// Each level of a value recurses on the Rust stack, so refusing what
     /// Python's own limit would refuse keeps a deep value from overflowing
@@ -739,7 +739,7 @@ mod scoped_stack_tests {
     use super::*;
 
     /// Test a panic inside a call restores the outer pending exception, and
-    /// leaves only the base frame behind (R2-031).
+    /// leaves only the base frame behind.
     #[test]
     fn a_panic_inside_a_call_restores_the_outer_pending_exception() {
         Python::initialize();

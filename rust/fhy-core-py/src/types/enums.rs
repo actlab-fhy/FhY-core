@@ -1,5 +1,5 @@
-//! `CoreDataType` and `TypeQualifier`, which stay Python `StrEnum`s
-//! (pattern P1) and convert by value at the boundary.
+//! `CoreDataType` and `TypeQualifier`, which stay Python `StrEnum`s and
+//! convert by value at the boundary.
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;

@@ -1,7 +1,7 @@
-//! The log records of the param procedures (D-S16-7): the core reports each
+//! The log records of the param procedures: the core reports each
 //! [`ParamEvent`], and the observer here logs it with the logger, level,
 //! text and Python `repr`s the Python implementation logged; and it judges
-//! which evaluation failures are undecided (D-S16-8).
+//! which evaluation failures are undecided.
 
 use pyo3::intern;
 use pyo3::prelude::*;

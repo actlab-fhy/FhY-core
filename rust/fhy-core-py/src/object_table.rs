@@ -1,5 +1,5 @@
 //! The Python objects one call has seen for the core's expression nodes and
-//! identifiers (R2-033).
+//! identifiers.
 //!
 //! The core hands the binding back handles to nodes that Python objects
 //! already stand for: the input a substitution kept in place, a
@@ -10,7 +10,7 @@
 //! holds so its identity stays unique while recorded, and `Identifier`
 //! objects by id. A table a call reaches through a thread-local, the
 //! pattern tables and the type-system contexts, is pushed on a
-//! [`ScopedStack`](crate::scoped::ScopedStack) (S-5).
+//! [`ScopedStack`](crate::scoped::ScopedStack).
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;

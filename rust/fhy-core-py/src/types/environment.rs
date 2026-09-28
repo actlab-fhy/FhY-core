@@ -1,5 +1,5 @@
 //! `fhy_core._rs.TypeUnificationEnvironment`, the base of the class of the
-//! same name in `fhy_core.types.dispatch` (pattern P2, D-S11-13).
+//! same name in `fhy_core.types.dispatch`.
 //!
 //! It holds the core's environment and, for each binding, the Python
 //! objects of its identifier and its value, so a lookup returns the object
@@ -48,7 +48,7 @@ struct Objects {
     types: ObjectTable,
     expressions: ObjectTable,
     /// The slots of the Python-defined parts' adapters this environment's
-    /// construction made, which it owns (R2-003); a derived environment
+    /// construction made, which it owns; a derived environment
     /// starts with none, since its parent owns the parent's.
     slots: Slots,
 }
@@ -453,7 +453,7 @@ fn read_table(
 
 #[pymethods]
 impl PyTypeUnificationEnvironment {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -496,7 +496,7 @@ impl PyTypeUnificationEnvironment {
         if let Some(state) = kwargs.and_then(|kwargs| kwargs.get_item("_state").ok().flatten()) {
             if let Ok(state) = state.cast::<PyEnvironmentState>() {
                 // A reused state raises, where it built an empty
-                // environment (R2-033).
+                // environment.
                 let (value, objects) = state.get().state.take("an environment")?;
                 return Ok(Self::from_parts(value, objects));
             }

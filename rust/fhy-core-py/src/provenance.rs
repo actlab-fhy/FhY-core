@@ -1,7 +1,6 @@
 //! `PyO3` classes for [`fhy_core::provenance`]: `fhy_core._rs.Position`,
 //! `Span`, `Provenance` and its five variant classes, the bases of the
-//! classes of the same names in `fhy_core.provenance` (pattern P2, as a class
-//! hierarchy).
+//! classes of the same names in `fhy_core.provenance`, as a class hierarchy.
 //!
 //! `Provenance` is a `#[pyclass(subclass)]` base that holds the Rust
 //! [`Provenance`], and each variant class extends it with the Python objects
@@ -305,7 +304,7 @@ impl PyPosition {
 
 #[pymethods]
 impl PyPosition {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -537,7 +536,7 @@ impl PySpan {
 
 #[pymethods]
 impl PySpan {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1228,7 +1227,7 @@ impl PyFileProvenance {
 
 #[pymethods]
 impl PyFileProvenance {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1382,7 +1381,7 @@ impl PyNamedProvenance {
 
 #[pymethods]
 impl PyNamedProvenance {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1523,7 +1522,7 @@ impl PyCallSiteProvenance {
 
 #[pymethods]
 impl PyCallSiteProvenance {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"
@@ -1677,7 +1676,7 @@ impl PyFusedProvenance {
 
 #[pymethods]
 impl PyFusedProvenance {
-    /// Visit the Python objects the object holds, for the cycle collector (R2-003).
+    /// Visit the Python objects the object holds, for the cycle collector.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 hands `__traverse__` its visitor by value"

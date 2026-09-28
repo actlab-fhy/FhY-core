@@ -1,19 +1,16 @@
-//! `PyO3` bindings for [`fhy_core::term`] (S10 of
-//! `docs/design/python-switch.md`).
+//! `PyO3` bindings for [`fhy_core::term`].
 //!
 //! - `renaming.rs`: `_rs.AlphaRenaming`, the Rust renaming with the Python
-//!   identifier objects it was built from (D-S10-5).
+//!   identifier objects it was built from.
 //! - `adapter.rs`: the Python terms and binders as implementations of the
-//!   core's traits, and the context they report errors to (D-S10-7).
+//!   core's traits, and the context they report errors to.
 //! - `binder.rs`: the functions `BinderMixin`'s derived methods call.
 //! - `derived.rs`: the roles, the plans and the walks of
-//!   `DerivedEquivalenceMixin` (D-S10-8, D-S10-9).
-//! - `mapping.rs`: `is_identifier_mapping_alpha_equivalent_under`
-//!   (D-S10-11).
+//!   `DerivedEquivalenceMixin`.
+//! - `mapping.rs`: `is_identifier_mapping_alpha_equivalent_under`.
 //!
 //! These call a node's own Python hooks, its children's methods, its
-//! dataclass fields and user comparators per node, the term package's
-//! exception to P3's granularity rule (N-S10-1), and compare the values
+//! dataclass fields and user comparators per node, and compare the values
 //! that are Rust-backed without calling Python.
 
 mod adapter;

@@ -1,5 +1,5 @@
-//! Python-defined types as extensions of the core (D-S11-9), and the
-//! context each call into the core runs in.
+//! Python-defined types as extensions of the core, and the context each call
+//! into the core runs in.
 //!
 //! A `Type` or `DataType` subclass that Python defines reaches the core as a
 //! [`PyTypeAdapter`] or [`PyDataTypeAdapter`] over the object. For each hook
@@ -18,7 +18,7 @@
 //! Python objects the call was given, so the values the core returns are
 //! handed back as those objects where they are unchanged, and the class of
 //! the environment the call was given, which every environment it builds
-//! keeps (D-S11-13). A thread-local stack holds the contexts of the calls in
+//! keeps. A thread-local stack holds the contexts of the calls in
 //! progress, so a nested call, from a handler, gets its own; it is empty
 //! whenever no call runs.
 
@@ -101,7 +101,7 @@ pub(crate) fn run_in_context<R>(
         pending: RefCell::new(None),
     });
     let _ = py;
-    // Popped when the guard drops, on unwind included (R2-031).
+    // Popped when the guard drops, on unwind included.
     let scope = ScopedStack::push(&CONTEXTS, Rc::clone(&context));
     let result = body(&context);
     drop(scope.pop());
@@ -277,7 +277,7 @@ fn hash_object(object: &Slot, state: &mut dyn Hasher) {
 #[derive(Debug)]
 ///
 /// The object is kept in a [`Slot`], which the object whose construction
-/// made the adapter owns and traverses (R2-003).
+/// made the adapter owns and traverses.
 pub(crate) struct PyTypeAdapter {
     object: Slot,
 }
@@ -445,7 +445,7 @@ impl TypeExtension for PyTypeAdapter {
 #[derive(Debug)]
 ///
 /// The object is kept in a [`Slot`], which the object whose construction
-/// made the adapter owns and traverses (R2-003).
+/// made the adapter owns and traverses.
 pub(crate) struct PyDataTypeAdapter {
     object: Slot,
 }
@@ -591,7 +591,7 @@ mod scoped_stack_tests {
     use super::*;
 
     /// Test a panic inside a type-system call leaves no context behind, so
-    /// the next call does not find a dead one (R2-031).
+    /// the next call does not find a dead one.
     #[test]
     fn a_panic_inside_a_call_leaves_the_stack_empty() {
         Python::initialize();
