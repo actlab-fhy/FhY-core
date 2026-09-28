@@ -125,12 +125,12 @@ onto `dev-rust` before continuing.
 - [x] `[rebase]` onto `dev-rust` after Tracks D, B and C land (rebased onto `fb282fb` by the maintainer)
 - [x] R2-045 (F2-045): `Decimal` through `as_tuple`, ints through bytes (ints `eb52fdf`, before the rebase as `726d53e`; `Decimal`s `2ee9990`)
 - [x] R2-031 (F2-031): one `ScopedStack` guard for all six thread-local stacks (done before the rebase: none of the six is in Track B's or C's files) (`e40d223`)
-- [ ] R2-033 (F2-033): binding boilerplate consolidated
-- [ ] Track E status: gates green; counts recorded; landed as `<hash>`
+- [x] R2-033 (F2-033): binding boilerplate consolidated (seeds `ef55e5f`, imports `136dc1e`, exceptions `2059575`, object tables `18156a8`; the frozen protocol left hand-written, a call; one benchmark row flagged; see the Track E notes)
+- [x] Track E status: gates green; counts recorded (Track E notes, "The final verification"); landing on `dev-rust` is the maintainer's
 
 ### Final verification
 
-- [ ] On `dev-rust` after Track E: every gate of §I.8, the CI jobs replayed, and the audit's probes that can run re-run (see §I.8.4)
+- [x] On `dev-rust` after Track E: every gate of §I.8, the CI jobs replayed, and the audit's probes that can run re-run (see §I.8.4) (run on `fix/e-binding`'s head, which lands as is; all green; the probes' outcome in the Track E notes, "The final verification")
 
 ## Contents
 
@@ -4712,3 +4712,141 @@ still have no owner, which only keeps such a cycle alive.
   `uv sync --no-editable`; the rule CONTRIBUTING now states, to run the
   Python gates one after another or each in its own checkout, is the
   remedy for the rebuild race.
+
+**R2-033, the binding sweep (after the rebase).** Five commits, each with
+the gates green, in the spec's order but seeds first, since they carry the
+one Python-visible change:
+- **Seeds (`ef55e5f`).** `python.rs`'s `Seed<T>` holds the contents of each
+  of the twelve private seed classes, and the `__new__` a seed feeds takes
+  them once; a second take raises `RuntimeError("<kind> seed is used
+  once")`. It replaces the three conventions: seeds copied on every use,
+  seeds taken once that raised, and the environment's `_state`, which built
+  an empty environment when reused. `test_a_reused_environment_seed_raises`
+  captures an environment's seed through a subclass and reuses it.
+- **Imports (`136dc1e`).** `python.rs`'s `ImportedAttr<T>` is an attribute
+  of a module imported on first use and kept; `cached_attr!(py, module,
+  name [=> T])` declares one for its call site. The thin import helpers
+  (`import_class` in four files, `public_class`, `public_frame_class`,
+  `framework`, the registry's and the walk's `error_class`,
+  `registry_error_class`, `term/derived.rs`'s `import`) and the single-use
+  `PyOnceLock` statics went: the binding had 150 `PyOnceLock<Py<…>>`
+  caches and has 26, each a computed value (a logger, a module object, an
+  enum member, a method read from a class dictionary) or a field. (The
+  commit message's "60 statics" undercounts; 94 went.)
+- **Exceptions (`2059575`).** `exceptions.rs` declares each of the 34
+  Python exception classes the binding raises once, as an `ExceptionClass`
+  static: `err(py, args)` builds the exception, or returns the error
+  importing or building it; `build` takes keywords and leaves a cause to
+  the caller; `is_instance_of` tests an exception. The per-file
+  `*_error_class` helpers, the four `build_error` copies and the
+  construction sequence written out at each site went, and
+  `serialization.rs` and `wire.rs` share one cache per class.
+  `unbox_py_err` returns the Python exception a core error boxed, and
+  `boxed_error_to_py` replaces the three identical callback converters
+  (`expression/evaluate/error.rs` and `expression/pattern/kinds.rs`, the
+  audit's pair, and `types/checking.rs`'s). Two unit tests cover a class
+  that does not import and the unboxing.
+- **Object tables (`18156a8`).** `object_table.rs`'s `ObjectTable` holds
+  the Python objects of the expression nodes a call has seen, by identity
+  with the node held so the identity stays unique, and the `Identifier`
+  objects by id. It replaces six of the seven tables: the materializer's
+  two maps, the pattern tables' node map (the pattern's own table, renamed
+  `MatchObjects`, keeps its frontier, stand-ins and cached bindings around
+  it), the type-system context's expression and identifier maps, the
+  simplification frame's list and the facade's copy of it, the checker's
+  identifier map, and the constraint conversion's map. The tables a call
+  reaches through a thread-local stay on their `ScopedStack` (S-5), which
+  is what "built on S-5" means here: the table itself is plain data. Call:
+  `term/adapter.rs`'s table stays, since it is the identifier chain a
+  Python `AlphaRenaming` owns and shares with the renamings built from it,
+  not one call's table. A side effect: a type-system context now hands its
+  identifier objects to the materializer too, so an expression it rebuilds
+  reuses them rather than building equal ones.
+- **The frozen protocol: not generated (call).** The 31 copies of
+  `is_frozen`/`freeze`/`assert_frozen`/`__setattr__`/`__delattr__` sit in
+  each class's one `#[pymethods]` block, 6 of them inside other macros. A
+  `frozen_protocol!` cannot expand inside a `#[pymethods]` block, which
+  PyO3's attribute macro reads before macros expand; generating a second
+  block needs PyO3's `multiple-pymethods` feature, which adds the
+  `inventory` dependency (not in the lockfile, and a `cargo deny` review);
+  and wrapping each whole block in a macro takes 25 impls out of rustfmt.
+  About 450 lines stay hand-written, each copy calling the shared
+  `frozen::build_frozen_mutation_error`. Follow-up for the maintainer:
+  enable `multiple-pymethods`, then one `frozen_protocol!(Class)` per class
+  generates the second block.
+- **Converters.** CONTRIBUTING "Binding crate layout" now allows a free
+  `fn …_to_py(…, context)` or `fn …_to_python(…, context)` for a
+  conversion that needs context, keeps `IntoPyErr` for the rest, names the
+  shared helper files, and says that an imported attribute is kept for the
+  life of the process, so monkeypatching or reloading its module does not
+  reach the binding (the audit's `PyOnceLock` note).
+- **Behavior change (Python-visible):**
+
+  | Before | After | Tests |
+  |---|---|---|
+  | a reused environment seed built an empty environment | it raises `RuntimeError("an environment seed is used once")` | `test_a_reused_environment_seed_raises` |
+- **Benchmarks (§I.8.3's Track E row, before at `ef86eda`, after at
+  `18156a8`, back to back, three rounds each, best median per row).** 241
+  rows; median ratio 0.963. Rows past 10%:
+
+  | Row | Before | After | Verdict |
+  |---|---|---|---|
+  | `test_expression.py::test_literal_expression_construction[float]`, `[int]`, `[bool]` | 0.18 to 0.29 µs | 0.19 to 0.33 µs | noise: a different parameter crosses 10% in each run (`[float]` 1.61 in the first, 1.06 in the rerun, where `[bool]` shows 1.62); no R2-033 change is on the path |
+  | `test_types.py::test_numerical_type_construction[scalar]`, `test_lattice_meet`, `test_constraint.py::test_constraint_alpha_equivalence`, `test_pass_infrastructure.py::test_verification_registry_register_again` | 0.26 to 0.63 µs | 0.33 to 0.70 µs | noise of the same kind: sub-microsecond rows, 1.10 to 1.29, none on a path R2-033 changed, and the rerun with 20,000 rounds leaves only two at 1.10 to 1.12 |
+  | `test_pattern.py::test_apply_rewrite_rules_to_a_deep_tree[no_firing]` | 26.2 µs | 30.3 µs | **flagged for the maintainer**: 1.11 and 1.14 in the two runs, and 26.2 against 30.3 µs in an interleaved `timeit` (three pairs); already so at `2059575`, before the object tables, although the walk runs no binding code per node (four native rules that never fire). Not found; it may be code layout in the cdylib. A later bisection was drowned by another user's jobs (load average 25 to 35 on 24 cores from 12:30 on), so the row wants a re-measure on a quiet machine |
+  | `test_expression.py::test_deep_tree_construction` | 73.2 µs | 80.3 µs | 1.10 in the rerun only; interleaved `timeit` runs overlap (73.8 to 82.1 against 77.6 to 84.7 µs); recorded with the row above |
+
+  The GC-tracking cost of R2-003, accepted on 2026-09-28, is not part of
+  this comparison: both sides have it.
+
+**The final verification (on `fix/e-binding`'s head, which lands on
+`dev-rust` as is).**
+- **§I.8.2's gates:** `target/gates-rust.sh final full`: fmt, clippy (the
+  workspace with and without all features, `fhy-core` alone and with each
+  feature), `cargo test --workspace` (5,006 passed, 2 ignored) and with
+  `--all-features` (5,042 passed, 2 ignored), rustdoc with `-D warnings`
+  (workspace, `fhy-core`, each feature), `cargo deny check`, the MSRV
+  (1.85) builds, `cargo package`, and `cargo test -p fhy-core` in a shell
+  with no Python (4,774 passed, 2 ignored). Python: ruff, `ruff format
+  --check` and mypy clean; `pytest` three times with `-n auto`, once with
+  `-n 16` and once with `-n 0` (each 8,451 passed, 1 skipped, 2 xfailed),
+  `-m "not very_slow"` and `-m "slow or not slow"` (8,491 passed each),
+  `-m subprocess` (53 passed); nox `property`, `lint`, `type_check`,
+  `tests_minimal` and `golden_expanded`, one after another, all successful.
+- **The CI replay** (`target/ci-replay.sh`): the `rust` job's steps (the
+  integration-target check, the default-feature solver stories, the docs
+  and the public-paths check, the package contents, and the packaged
+  crate's tests, 4,774 passed, run from an extracted copy given an empty
+  `[workspace]` table, as the runner's temp directory has no workspace
+  above it), `deny` (bans, licenses, sources, advisories), `rust-msrv`, the
+  `style` job (nox `lint`, `type_check`), and `tests` on 3.10 (8,206
+  passed, 46 skipped) and 3.14 (8,207 passed, 45 skipped; the skips are the
+  Hypothesis modules, which the `test` group lacks and `property` runs).
+  Pythons 3.10.21 and 3.14.7 were installed into the worktree's
+  `target/pythons` with `--no-bin`.
+- **The audit's probes**, copied from `target/audit/` into the worktree's
+  `target/probes/` (paths into the main checkout pointed at the worktree):
+
+  | Probe | At the audit | Now |
+  |---|---|---|
+  | `probe_gc_cycles`, `probe_gc_cycles2` (F2-003) | every cycle leaked; 91 of 91 classes without GC | every cycle collected; 16 of 92 classes without GC, none holding a Python object |
+  | `probe_reentrancy` (F2-044) | three `Already borrowed` errors | all three succeed |
+  | `probe_pickle` (F2-024) | `PartiallyOrderedSet` and `Lattice` refused | both pickle, copy and deep-copy (the probe's own `len(lattice)` check fails, since `Lattice` has no `len`) |
+  | `probe_decimal_exponent`, `p31`, `p32_dec1` (F2-045) | `1e100000000` built in 0.6 s and 235 MiB; `1e±4000000000` and `5e+4294967296` hung | each refused at once, naming the exponent and the bound |
+  | `probe_kbi_pending` (F2-023) | calls `['a', 'b']`: the second `__eq__` ran after the first raised | calls `['a']`: no hook runs after the first exception |
+  | `p25_idcap` (F2-002) | one high payload id made every later fresh identifier unreadable | the high id is refused and fresh identifiers round-trip |
+  | `p02_numpy_huge` (F2-012) | abort (n = 20) and panic (n = 33) | `MemoryError` and `ValueError`, as NumPy |
+  | `p04_deepdict`, `p40_deepdict_cls`, `p26_deeptuple` (F2-013) | segfaults | `DeserializationValueError` (128 levels) and `RecursionError` (1,000 levels); `SymbolTable` refuses the shape |
+  | `p30_proc1`, `p29_proc` (F2-014) | blocked 30 s past a 1 s timeout | returns at 1.02 s; `p29`'s every case returns (its stdin-reading case given a 2 s timeout, since with none it waits by design) |
+  | `p14_smtname` (F2-015) | a NUL in a hint broke the z3 backend's script | all ten hints check on both backends |
+  | `p16_sympy`, `p17_pow` (F2-016) | 49 mismatches in 684 trees | `y / x` stays `y / x`; 2 mismatches remain, a floor division and a modulo whose SymPy simplifications assume generic values, which R2-016's notes place outside F2-016 |
+  | `p03_deep` (L-1) | pickle `RecursionError` | unchanged, as the audit left it |
+  | `probe_numpy_race` (F2-043) | 20 of 20 racy runs | unchanged: R2-043 documents the contract, and copying NumPy inputs is left out (§I.10) |
+  | the other Python probes (`probe_hash_eq`, `probe_hook_expiry`, `probe_kbi_hooks`, `probe_pass_errors`, `probe_subclass_pickle`, `probe_decimal_v1`, `stub_compare`, `p01`, `p05` to `p13`, `p15`, `p18` to `p24`, `p27`, `p28`, `p33` to `p39`) | | run to completion |
+  | Rust: `dag_key` (F2-001) | depth 22: a 138 MB key in 576 ms | a 464-byte key in 9 µs (the probe unwraps the key's new `Result`) |
+  | Rust: `decimal_bound` | | runs with `Inclusivity` for the booleans; the text grammar has no exponent form, so each text is refused before the bound |
+  | Rust: `probe_eval` (S1) | clean | clean, comparing errors without the lane index, which lane errors carry since `16de9d2` |
+  | Rust: `probes.rs` P1, P2, `chunk_probe` | P1's DAG message unbounded, P2's equal expressions encoded differently | P1 bounded at 90 bytes, P2 equal texts, `chunk_probe` differs only by the lane its message now names: each assertion of the old defect fails, as it should |
+  | Rust: `audit_solver_probes`, `audit_lattice_probe`, `bigint_probe`, `float_text_probe`, `kernel_probe`, `deep_pattern`, P3, P5 to P10 | | pass or print what the audit expected (P3's core `Display` stays per occurrence, by R2's choice (a); the binding's `str` of a 2^60-occurrence DAG is 2,887 characters) |
+  | Rust: `audit_id_cap_probe` | | fails at the high id it reads, which J-1 now refuses |
+  | Rust: not re-runnable | | `audit_pass_probe`, the types probes, `lambda` and `term_probe` no longer compile against the changed APIs (`PassFailure`, `diagnostics_in`, the extension traits), and the SymPy probes' backend moved to the binding (R2-005a); the stories each fixing item added cover them |

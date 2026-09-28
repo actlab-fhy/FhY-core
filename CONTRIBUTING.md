@@ -703,10 +703,34 @@ suites, and each keeps its own language's errors and names.
 
 `fhy-core-py` declares `fhy_core._rs` with one declarative `#[pymodule]`
 in `lib.rs`. Each core module's bindings live in a file of the same name
-and are exported with `#[pymodule_export]`, and implements the local
-`IntoPyErr` trait of `error.rs` for the core errors they raise. The Python
-namespace of `_rs` stays flat, since PyO3 submodules cannot be imported as
-packages.
+and are exported with `#[pymodule_export]`. The Python namespace of `_rs`
+stays flat, since PyO3 submodules cannot be imported as packages.
+
+A conversion that needs nothing but the value implements the local
+`IntoPyErr` trait of `error.rs` for a core error. A conversion that needs
+context, such as the interpreter token, the other operand, or the objects
+a call has seen, is a free function that takes it, named for what it
+converts: `fn …_to_py(…, context)` for an error and
+`fn …_to_python(…, context)` for a value.
+
+Shared helpers live in their own files, and no module writes its own:
+- `python.rs`: `cached_attr!` and `ImportedAttr`, for an attribute of a
+  Python module imported on first use, and `Seed`, the contents a private
+  seed class hands a class's `__new__`, taken once;
+- `exceptions.rs`: one `ExceptionClass` per Python exception class the
+  binding raises, and `unbox_py_err` for a Python exception a core error
+  boxed;
+- `object_table.rs`: `ObjectTable`, the Python objects of the nodes and
+  identifiers a call has seen, so that a node the call returns keeps its
+  object;
+- `scoped.rs`: `ScopedStack`, a thread-local stack whose guard pops its
+  frame, on unwind included;
+- `gc.rs`: the slots through which a class takes part in cyclic garbage
+  collection.
+
+An imported attribute is kept for the life of the process, so
+monkeypatching or reloading its module afterwards does not reach the
+binding.
 `src/fhy_core/_rs.pyi` is written by hand, and `tests/test_rs_stub.py`
 checks its names and parameters against the built extension.
 
