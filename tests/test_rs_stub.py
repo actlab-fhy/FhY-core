@@ -394,10 +394,14 @@ _PYO3_DUNDERS = frozenset(
         "__ge__",
         "__eq__",
         "__ne__",
+        "__annotations__",
     }
 )
-"""Dunders PyO3 adds to a class on its own: its module and docstring, and
-the six comparison wrappers of one `__richcmp__`."""
+"""Dunders a class gets without the stub declaring them: its module and
+docstring and the six comparison wrappers of one `__richcmp__`, which PyO3
+adds, and `__annotations__`, which the interpreter creates in a class the
+first time something reads it, as an `isinstance` check against a
+runtime-checkable protocol does (R2-N5)."""
 
 
 def _read_stub_class_dunders(
