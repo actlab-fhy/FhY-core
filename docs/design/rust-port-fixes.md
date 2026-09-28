@@ -110,7 +110,7 @@ onto `dev-rust` before continuing.
 ### Track E: `binding` (the binding and the Python package; lands 5th, last)
 
 - [x] E0: worktree `port/fix2-binding` created; the baseline gates recorded (the worktree is `fix-e-binding`, branch `fix/e-binding`, from `dev-rust` at `35519bb`; see the Track E notes)
-- [ ] R2-N5 (xdist stall): reproduce or clear the 99% stall; account for the missing tests
+- [x] R2-N5 (xdist stall): reproduce or clear the 99% stall; account for the missing tests (not reproduced in 92 runs; two causes of lone failures found; see the Track E notes)
 - [x] R2-N4 (V1 warnings): the 64 V1 `DeprecationWarning`s asserted or filtered; an unmarked one fails (`44a2c00`)
 - [x] R2-N2 (V1 removal): the texts and docs name 0.3.0
 - [x] R2-002 (F2-002): separate advance and read caps for payload ids, in Rust and Python (`6f57090`; its extra blank line, which `ruff format` refuses, fixed forward in the next commit)
@@ -4541,3 +4541,80 @@ neither.
   | Before | After | Tests |
   |---|---|---|
   | `LiteralExpression(10**5000)`, and decoding a 5,001-digit literal, raised the digit-limit `ValueError` | ints of any size are literals, and decode | the three tests above |
+
+**R2-N5: the xdist stall and the flaky failure.**
+- **The runs.** Every full `pytest tests` run went through a scratch
+  harness (`target/n5/`: a `-p` plugin that lets a sibling `py-spy` attach
+  and dumps every thread on `SIGUSR1`, `-rf`, `--timeout=180`,
+  `-o faulthandler_timeout=900`, and a watchdog that dumps the tree with
+  `py-spy` and `/proc/*/task/*/wchan` when the whole process tree uses under
+  2 s of CPU in 5 minutes). The machine ran Tracks B's and C's builds and
+  gates meanwhile, at load averages from 7 to 70 on 24 cores.
+
+  | Tree | `-n` | Runs | Failed runs | Stalls | `pytest` time |
+  |---|---|---:|---:|---:|---|
+  | base `35519bb` | auto (24) | 30 | 0 | 0 | 19 to 42 s |
+  | base | 16 | 10 | 0 | 0 | 18 to 48 s |
+  | base | 32 | 20 | 0 | 0 | 23 to 37 s |
+  | base | 0 | 2 | 0 | 0 | 70 to 77 s |
+  | head `726d53e` | auto | 12 | 0 | 0 | 27 to 95 s |
+  | head | 16 | 8 | 1 | 0 | 26 to 70 s |
+  | head | 32 | 8 | 0 | 0 | 28 to 68 s |
+  | head | 0 | 2 | 2 | 0 | 76 to 118 s |
+
+- **Accounting.** `pytest tests --collect-only` selects 8,315 of 8,348
+  tests at the base (33 `slow` ones deselected), and every run ran all of
+  them: 8,313 passed and 2 xfailed. Under xdist the summary does not print
+  the deselected count, which the `-n 0` runs do. So the audit's 8,224
+  results against 8,283 selected were the batch of the one worker that
+  stalled, not missing tests.
+- **The stall did not reproduce** on a normal build: no run of 92 stalled,
+  and no watchdog fired. As §R2-N5 step 4 asks, it is recorded as most
+  likely an artifact of the audit's instrumented build: the LLVM profile
+  runtime's exit-time writes from 16 processes into one profile file. A
+  coverage run should give each process its own profile,
+  `LLVM_PROFILE_FILE=target/coverage/fhy-%p-%m.profraw`, or run `-n 0`. Two
+  facts bound what else it could have been. `pytest-timeout`'s thread
+  method needs the GIL, so only a hang with the GIL held defeats it, and
+  the process backend's waits already ran with the GIL released
+  (`py.detach`) before R2-014. And a worker that crashes is reported and
+  replaced, not waited on: a worker killed with `SIGBUS` at its 200th test
+  gives "worker 'gw1' crashed while running …", 1 failed, and the run
+  completes (`target/n5/n5kill.py`). Track A's one hang, right after an
+  extension rebuild, is also unexplained; it predates R2-014, and none has
+  been seen since.
+- **Found: a rebuild during a run fails a test at random.** The install is
+  editable, and maturin's editable install (`uv sync`, and every nox
+  session, which syncs its own environment editable) unlinks
+  `src/fhy_core/_rs.cpython-*.so` and writes the new file in place
+  (`strace`: `unlink`, then `open(O_WRONLY|O_CREAT|O_TRUNC)` and the
+  writes). A running process keeps the old file; one that imports the
+  package meanwhile loads a partly written one. Rewriting the file with its
+  own bytes in a loop during three full runs (`target/n5/rewriter.py`)
+  failed 2, 3 and 2 tests, all subprocess tests whose child died with
+  `SIGBUS` (`test_missing_sympy_reports_unavailable`,
+  `test_importing_fhy_core_imports_neither_sympy_nor_z3`, …); with no pause
+  between rewrites, the `pytest` controller itself died with a bus error in
+  3 of 6 runs. So a gate run that overlaps any rebuild in the same checkout
+  (a nox session and `pytest tests` side by side) fails a test that passes
+  on every rerun, which matches the main tree's lone failure, whose name
+  was not captured. It is not a bug in the code or a timing-dependent test,
+  so there is nothing to rewrite: CONTRIBUTING ("Working with FhY") now
+  says to run the Python gates one after another, or each in its own
+  checkout. **For the maintainer:** nox's `_sync` could install
+  non-editable (`uv sync --no-editable`), so a session builds its own copy
+  of the extension instead of rewriting the source tree's; the `tests`
+  session's coverage paths rely on the editable install
+  (`pyproject.toml`'s coverage comment), and `noxfile.py` is Track D's, so
+  this track leaves it.
+- **Found: an order-dependent test of this track (fixed, `7f01bfd`).** The
+  head's 3 failures were all `test_stub_class_dunders_match_the_built_extension`,
+  added by R2-030: an `isinstance` check against a runtime-checkable
+  protocol (`test_identifier_expression_does_not_satisfy_symbolic_predicate`)
+  reads `__annotations__` on the instance's classes, which creates it in
+  the extension's `Expression` classes, and the dunder check then reported
+  it whenever it ran later in the same process: always under `-n 0`, in 1
+  of 8 `-n 16` runs. The two tests in that order fail deterministically
+  before the fix and pass after it; `__annotations__` is on the check's
+  list of dunders the stub does not declare. A scratch plugin that checks
+  every extension class after each test found the first test that adds it.

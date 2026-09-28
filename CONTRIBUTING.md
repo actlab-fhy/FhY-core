@@ -40,6 +40,18 @@ The `coverage` session combines the `.coverage.*` data left by the `tests`
 sessions, so run `tests` first. A bare `uv run nox` runs `tests` then
 `coverage` in order; running `coverage` alone on a clean tree simply skips.
 
+Do not rebuild the extension while tests run in the same checkout. The
+install is editable, so `uv sync`, and every nox session, which syncs its
+own environment editable too, writes `src/fhy_core/_rs.*.so` in the source
+tree: maturin removes the old file and writes the new one in place. A
+running process keeps the old file, but one that imports the package
+meanwhile, such as an xdist worker starting or a test's subprocess, loads a
+partly written extension and dies with `SIGBUS`. The run then reports a
+failed test that passes when rerun: a subprocess test whose child died, or
+`worker 'gwN' crashed`. Run the Python gates one after another, or give
+each concurrent run its own checkout (R2-N5 of
+`docs/design/rust-port-fixes.md`).
+
 ## Property-based testing
 
 Most of the test suite is example-based: a test picks an input, runs the
