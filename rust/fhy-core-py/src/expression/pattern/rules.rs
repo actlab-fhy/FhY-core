@@ -26,6 +26,7 @@ use super::kinds::{
 };
 use super::objects::{ActiveTable, current_adopt, current_object_of};
 use crate::gc::{Slot, Slots, collect_slots};
+use crate::python::Seed;
 
 // ---------------------------------------------------------------------------
 // RewriteRule
@@ -178,16 +179,7 @@ fn read_rewrite_result(
 /// The contents of a rule the binding builds, handed to the public class's
 /// constructor. Not exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_RewriteRuleSeed")]
-struct RewriteRuleSeed {
-    rule: RewriteRule,
-    slots: Slots,
-    depth: usize,
-    pattern: Py<PyAny>,
-    rewrite: Py<PyAny>,
-    guards: Py<PyTuple>,
-    name: Option<Py<PyString>>,
-    is_partial: bool,
-}
+struct RewriteRuleSeed(Seed<PyRewriteRule>);
 
 /// A pattern paired with a rewrite of what it matches, optionally guarded
 /// and named, backed by the Rust [`RewriteRule`].
@@ -251,17 +243,7 @@ impl PyRewriteRule {
         cls: &Bound<'py, PyType>,
         rule: PyRewriteRule,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let seed = RewriteRuleSeed {
-            rule: rule.rule,
-            slots: rule.slots,
-            depth: rule.depth,
-            pattern: rule.pattern,
-            rewrite: rule.rewrite,
-            guards: rule.guards,
-            name: rule.name,
-            is_partial: rule.is_partial,
-        };
-        cls.call1((seed,))
+        cls.call1((RewriteRuleSeed(Seed::new(rule)),))
     }
 
     /// Return the fields of this rule.
@@ -307,17 +289,7 @@ impl PyRewriteRule {
     ) -> PyResult<Self> {
         let py = pattern.py();
         if let Ok(seed) = pattern.cast::<RewriteRuleSeed>() {
-            let seed = seed.get();
-            return Ok(Self {
-                rule: seed.rule.clone(),
-                slots: seed.slots.clone(),
-                depth: seed.depth,
-                pattern: seed.pattern.clone_ref(py),
-                rewrite: seed.rewrite.clone_ref(py),
-                guards: seed.guards.clone_ref(py),
-                name: seed.name.as_ref().map(|name| name.clone_ref(py)),
-                is_partial: seed.is_partial,
-            });
+            return seed.get().0.take("a rewrite rule");
         }
         let Some(rewrite) = rewrite else {
             return Err(pyo3::exceptions::PyTypeError::new_err(

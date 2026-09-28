@@ -8,9 +8,9 @@
 //! Objects the binding builds from core values are built through a seed
 //! handed to the public class's `__new__`, so they are not validated again.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
+use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
@@ -40,6 +40,7 @@ use crate::identifier::{
     deserialize_identifier, identifier_to_python, new_python_identifier, restore_identifier,
     serialize_identifier,
 };
+use crate::python::Seed;
 use crate::serialization::{
     construct_from_decoded_fields, deserialization_value_error_class, is_serialized_dict,
 };
@@ -119,7 +120,7 @@ impl ParamObjects {
 /// private keyword `_seed`.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_ParamSeed")]
 pub(crate) struct PyParamSeed {
-    state: Mutex<Option<(Param, ParamObjects)>>,
+    state: Seed<(Param, ParamObjects)>,
 }
 
 /// Return the Python object of each of `constraints`: the object of a
@@ -190,7 +191,7 @@ fn instantiate_param<'py>(
     let seed = Py::new(
         py,
         PyParamSeed {
-            state: Mutex::new(Some((param, objects))),
+            state: Seed::new((param, objects)),
         },
     )?;
     let class = param_class(py)?;
@@ -689,13 +690,7 @@ impl PyParam {
     ) -> PyResult<Self> {
         let py = domain.py();
         if let Some(seed) = read_seed::<PyParamSeed>(kwargs)? {
-            let (core, objects) = seed
-                .get()
-                .state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take()
-                .ok_or_else(|| PyRuntimeError::new_err("a param seed is used once"))?;
+            let (core, objects) = seed.get().state.take("a param")?;
             return Ok(Self { core, objects });
         }
         let variable = match variable {
@@ -1557,11 +1552,11 @@ fn build_assignment<'py>(
     let seed = Py::new(
         py,
         PyAssignmentSeed {
-            state: Mutex::new(Some((
+            state: Seed::new((
                 core,
                 param.clone().into_any().unbind(),
                 value.clone().unbind(),
-            ))),
+            )),
         },
     )?;
     let class = assignment_class(py)?;
@@ -1636,7 +1631,7 @@ type AssignmentState = (ParamAssignment, Py<PyAny>, Py<PyAny>);
 /// the private keyword `_seed`.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_ParamAssignmentSeed")]
 pub(crate) struct PyAssignmentSeed {
-    state: Mutex<Option<AssignmentState>>,
+    state: Seed<AssignmentState>,
 }
 
 /// Return the seed of type `T` the private keyword `_seed` of `kwargs`
@@ -1698,13 +1693,7 @@ impl PyParamAssignment {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         if let Some(seed) = read_seed::<PyAssignmentSeed>(kwargs)? {
-            let (core, param, value) = seed
-                .get()
-                .state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take()
-                .ok_or_else(|| PyRuntimeError::new_err("an assignment seed is used once"))?;
+            let (core, param, value) = seed.get().state.take("an assignment")?;
             return Ok(Self { core, param, value });
         }
         let param_object = param.cast::<PyParam>().map_err(|_not_a_param| {

@@ -8,9 +8,8 @@
 //! with a copy of its instance attributes.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
-use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
@@ -25,6 +24,7 @@ use crate::error::IntoPyErr;
 use crate::gc::{Slots, collect_slots};
 use crate::identifier::{read_identifier_id, restore_identifier};
 use crate::public_class::PublicClass;
+use crate::python::Seed;
 
 use super::adapter::{Context, environment_class, run_in_context};
 use super::convert::{
@@ -77,7 +77,7 @@ impl Objects {
 /// private keyword `_state`.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_EnvironmentState")]
 pub(crate) struct PyEnvironmentState {
-    state: Mutex<Option<(TypeUnificationEnvironment, Objects)>>,
+    state: Seed<(TypeUnificationEnvironment, Objects)>,
 }
 
 /// The binding environment of template binding, substitution and
@@ -204,7 +204,7 @@ impl PyTypeUnificationEnvironment {
         let state = Py::new(
             py,
             PyEnvironmentState {
-                state: Mutex::new(Some((value, objects))),
+                state: Seed::new((value, objects)),
             },
         )?;
         let kwargs = PyDict::new(py);
@@ -500,17 +500,10 @@ impl PyTypeUnificationEnvironment {
     ) -> PyResult<Self> {
         if let Some(state) = kwargs.and_then(|kwargs| kwargs.get_item("_state").ok().flatten()) {
             if let Ok(state) = state.cast::<PyEnvironmentState>() {
-                let taken = state
-                    .get()
-                    .state
-                    .lock()
-                    .map_err(|_poisoned| {
-                        PyTypeError::new_err("the environment state was poisoned")
-                    })?
-                    .take();
-                if let Some((value, objects)) = taken {
-                    return Ok(Self::from_parts(value, objects));
-                }
+                // A reused state raises, where it built an empty
+                // environment (R2-033).
+                let (value, objects) = state.get().state.take("an environment")?;
+                return Ok(Self::from_parts(value, objects));
             }
         }
         let mut value = TypeUnificationEnvironment::new();

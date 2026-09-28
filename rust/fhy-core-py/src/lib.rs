@@ -22,6 +22,7 @@ mod param;
 mod pass;
 mod provenance;
 mod public_class;
+mod python;
 mod scoped;
 mod serialization;
 mod solver;

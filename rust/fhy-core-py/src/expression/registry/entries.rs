@@ -33,6 +33,7 @@ use crate::error::{IntoPyErr, IntoPyResult};
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::public_class::PublicClass;
+use crate::python::Seed;
 
 use super::super::literal::read_big_int;
 use super::super::materialize::materialize_expression;
@@ -303,9 +304,7 @@ enum FunctionSource {
 /// The contents of a function entry the binding builds, handed to the public
 /// class's constructor. Not exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_RegisteredFunctionSeed")]
-struct RegisteredFunctionSeed {
-    entry: std::sync::Mutex<Option<PyRegisteredFunction>>,
-}
+struct RegisteredFunctionSeed(Seed<PyRegisteredFunction>);
 
 /// A named function whose body is an expression over its parameters,
 /// backed by the Rust `FunctionDefinition`, or for a built-in by its
@@ -446,9 +445,7 @@ impl PyRegisteredFunction {
             result_sort: sort_to_python(py, function.result_sort())?.unbind(),
             body: materialize_expression(py, composed.body())?.unbind(),
         };
-        let seed = RegisteredFunctionSeed {
-            entry: std::sync::Mutex::new(Some(entry)),
-        };
+        let seed = RegisteredFunctionSeed(Seed::new(entry));
         Self::public_class().get(py)?.call1((seed,))
     }
 
@@ -519,15 +516,7 @@ impl_entry_protocols!(PyRegisteredFunction, "RegisteredFunction", {
         const OWNER: &str = "RegisteredFunction";
         let py = name.py();
         if let Ok(seed) = name.cast::<RegisteredFunctionSeed>() {
-            if let Some(entry) = seed
-                .get()
-                .entry
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-            {
-                return Ok(entry);
-            }
+            return seed.get().0.take("a registered-function");
         }
         let (name, function_name) = read_name(name, OWNER)?;
         let parameters = collect_tuple(&require(parameters, OWNER, "parameters")?)?;
@@ -636,9 +625,7 @@ enum NativeSource {
 
 /// The contents of a native entry the binding builds. Not exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_NativeFunctionSeed")]
-struct NativeFunctionSeed {
-    entry: std::sync::Mutex<Option<PyNativeFunction>>,
-}
+struct NativeFunctionSeed(Seed<PyNativeFunction>);
 
 /// Return the Python function checking a native implementation's arity,
 /// `_check_native_implementation_arity(name, count, implementation)`.
@@ -730,9 +717,7 @@ impl PyNativeFunction {
             result_sort: sort_to_python(py, function.result_sort())?.unbind(),
             implementation: implementation.clone().unbind(),
         };
-        let seed = NativeFunctionSeed {
-            entry: std::sync::Mutex::new(Some(entry)),
-        };
+        let seed = NativeFunctionSeed(Seed::new(entry));
         Self::public_class().get(py)?.call1((seed,))
     }
 }
@@ -775,15 +760,7 @@ impl_entry_protocols!(PyNativeFunction, "NativeFunction", {
         const OWNER: &str = "NativeFunction";
         let py = name.py();
         if let Ok(seed) = name.cast::<NativeFunctionSeed>() {
-            if let Some(entry) = seed
-                .get()
-                .entry
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-            {
-                return Ok(entry);
-            }
+            return seed.get().0.take("a native-function");
         }
         let (name, function_name) = read_name(name, OWNER)?;
         let (parameter_sorts, rust_sorts) = read_sorts(
@@ -840,9 +817,7 @@ enum ConstantSource {
 
 /// The contents of a constant entry the binding builds. Not exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_NativeConstantSeed")]
-struct NativeConstantSeed {
-    entry: std::sync::Mutex<Option<PyNativeConstant>>,
-}
+struct NativeConstantSeed(Seed<PyNativeConstant>);
 
 /// Return the literal value of the Python `value`, the `value` argument of
 /// `owner`.
@@ -935,9 +910,7 @@ impl PyNativeConstant {
             sort: sort_to_python(py, constant.sort())?.unbind(),
             value: PyFloat::new(py, constant.value()).into_any().unbind(),
         };
-        let seed = NativeConstantSeed {
-            entry: std::sync::Mutex::new(Some(entry)),
-        };
+        let seed = NativeConstantSeed(Seed::new(entry));
         Self::public_class().get(py)?.call1((seed,))
     }
 }
@@ -975,15 +948,7 @@ impl_entry_protocols!(PyNativeConstant, "NativeConstant", {
     ) -> PyResult<Self> {
         const OWNER: &str = "NativeConstant";
         if let Ok(seed) = name.cast::<NativeConstantSeed>() {
-            if let Some(entry) = seed
-                .get()
-                .entry
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-            {
-                return Ok(entry);
-            }
+            return seed.get().0.take("a native-constant");
         }
         let (name, constant_name) = read_name(name, OWNER)?;
         let sort = require(sort, OWNER, "sort")?;

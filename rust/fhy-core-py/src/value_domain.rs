@@ -33,6 +33,7 @@ use crate::interned::{
     IdentityCache, build_conflict_error, build_not_interned_error, raise_registry_append_only,
     warn_if_description_ignored,
 };
+use crate::python::Seed;
 use crate::serialization::{FieldShape, read_constructor_fields, read_payload_fields};
 
 /// The class name errors and restored identifiers name.
@@ -56,12 +57,7 @@ static IDENTITY_CACHE: IdentityCache = IdentityCache::new();
 /// Only the binding creates seeds, so only the binding can build an
 /// instance, and each canonical domain gets one Python object.
 #[pyclass(frozen, module = "fhy_core._rs")]
-pub(crate) struct ValueDomainSeed {
-    domain: Canonical<ValueDomain>,
-    name: Py<PyAny>,
-    description: Py<PyString>,
-    parent: Option<Py<PyAny>>,
-}
+pub(crate) struct ValueDomainSeed(Seed<PyValueDomain>);
 
 /// Open classification of the kind of value an IR operation handles, backed
 /// by the canonical Rust [`ValueDomain`].
@@ -113,12 +109,12 @@ impl PyValueDomain {
         let description = PyString::new(py, domain.description());
         let seed = Bound::new(
             py,
-            ValueDomainSeed {
+            ValueDomainSeed(Seed::new(PyValueDomain {
                 domain,
                 name: name.unbind(),
                 description: description.unbind(),
                 parent: parent.map(Bound::unbind),
-            },
+            })),
         )?;
         let object = py
             .get_type::<Self>()
@@ -213,15 +209,8 @@ impl PyValueDomain {
 
     /// Build an instance from a seed the binding created.
     #[new]
-    fn new(seed: &Bound<'_, ValueDomainSeed>) -> Self {
-        let py = seed.py();
-        let seed = seed.get();
-        Self {
-            domain: seed.domain.clone(),
-            name: seed.name.clone_ref(py),
-            description: seed.description.clone_ref(py),
-            parent: seed.parent.as_ref().map(|parent| parent.clone_ref(py)),
-        }
+    fn new(seed: &Bound<'_, ValueDomainSeed>) -> PyResult<Self> {
+        seed.get().0.take("a value-domain")
     }
 
     /// Return the canonical domain named `name`, registering it with

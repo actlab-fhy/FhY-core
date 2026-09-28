@@ -842,3 +842,28 @@ def test_the_helpers_return_the_enum_members() -> None:
         promote_type_qualifiers(TypeQualifier.PARAM, TypeQualifier.PARAM)
         is TypeQualifier.PARAM
     )
+
+
+def test_a_reused_environment_seed_raises() -> None:
+    """Test the private state an environment is built from is taken once.
+
+    A subclass's `__new__` sees the state the binding hands it; building a
+    second environment from the same state raises, where it silently built
+    an empty environment (R2-033).
+    """
+    states: list[object] = []
+
+    class _Capturing(TypeUnificationEnvironment):
+        def __new__(cls, *args: Any, **kwargs: Any) -> "_Capturing":
+            if "_state" in kwargs:
+                states.append(kwargs["_state"])
+            return super().__new__(cls, *args, **kwargs)
+
+    t = Identifier("T")
+    environment = _Capturing.empty().with_data_type_binding(t, _int32())
+
+    assert environment.get_data_type_binding(t) == _int32()
+    with pytest.raises(RuntimeError, match=r"^an environment seed is used once$"):
+        TypeUnificationEnvironment.__new__(  # type: ignore[call-arg]
+            TypeUnificationEnvironment, _state=states[-1]
+        )

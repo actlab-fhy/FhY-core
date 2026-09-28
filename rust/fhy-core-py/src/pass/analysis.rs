@@ -22,6 +22,7 @@ use crate::dataclass::{
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::public_class::PublicClass;
+use crate::python::Seed;
 
 use super::compiler_pass::refuse_unused_arguments;
 
@@ -104,10 +105,7 @@ impl PyPreservedAnalyses {
         let py = cls.py();
         let seed = Bound::new(
             py,
-            PreservedAnalysesSeed {
-                preserved,
-                names: names.map(Bound::unbind),
-            },
+            PreservedAnalysesSeed(Seed::new((preserved, names.map(Bound::unbind)))),
         )?;
         py.get_type::<Self>()
             .call_method1(intern!(py, "__new__"), (cls, seed))
@@ -140,10 +138,7 @@ pub(super) fn preserved_to_python<'py>(
 /// The contents of a set the binding builds, handed to `__new__`. Not
 /// exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_PreservedAnalysesSeed")]
-struct PreservedAnalysesSeed {
-    preserved: PreservedAnalyses,
-    names: Option<Py<PyFrozenSet>>,
-}
+struct PreservedAnalysesSeed(Seed<(PreservedAnalyses, Option<Py<PyFrozenSet>>)>);
 
 #[pymethods]
 impl PyPreservedAnalyses {
@@ -168,15 +163,12 @@ impl PyPreservedAnalyses {
             OptionalArgument::Given(value) => value,
         };
         if let Ok(seed) = preserve_all.cast::<PreservedAnalysesSeed>() {
-            let seed = seed.get();
+            let (preserved, seed_names) = seed.get().0.take("a preserved-analyses")?;
             let names = PyOnceLock::new();
-            if let Some(seed_names) = &seed.names {
-                names.get_or_init(py, || seed_names.clone_ref(py));
+            if let Some(seed_names) = seed_names {
+                names.get_or_init(py, || seed_names);
             }
-            return Ok(Self {
-                preserved: seed.preserved.clone(),
-                names,
-            });
+            return Ok(Self { preserved, names });
         }
         let Ok(preserve_all) = preserve_all.cast::<PyBool>() else {
             return Err(build_argument_type_error(

@@ -36,6 +36,7 @@ use crate::error::{IntoPyErr, IntoPyResult};
 use crate::frozen::build_frozen_mutation_error;
 use crate::identifier::{read_identifier_id, restore_identifier};
 use crate::public_class::PublicClass;
+use crate::python::Seed;
 use crate::serialization::{FieldShape, construct_from_decoded_fields, read_payload_fields};
 
 use super::literal::{literal_to_python, read_literal};
@@ -1530,9 +1531,7 @@ pub(crate) struct PyLiteralExpression {
 ///
 /// Only the binding creates seeds, and the class is not exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_LiteralSeed")]
-pub(crate) struct PyLiteralSeed {
-    expression: Expression,
-}
+pub(crate) struct PyLiteralSeed(Seed<Expression>);
 
 /// Return the public literal object of the core literal node `expression`,
 /// keeping its handle.
@@ -1544,12 +1543,7 @@ pub(crate) fn literal_from_core<'py>(
     py: Python<'py>,
     expression: &Expression,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let seed = Bound::new(
-        py,
-        PyLiteralSeed {
-            expression: expression.clone(),
-        },
-    )?;
+    let seed = Bound::new(py, PyLiteralSeed(Seed::new(expression.clone())))?;
     PyLiteralExpression::public_class().get(py)?.call1((seed,))
 }
 
@@ -1620,7 +1614,7 @@ impl PyLiteralExpression {
         let py = value.py();
         if let Ok(seed) = value.cast_exact::<PyLiteralSeed>() {
             return Ok(PyExpression::initializer(
-                seed.get().expression.clone(),
+                seed.get().0.take("a literal")?,
                 PyTuple::empty(py),
             )
             .add_subclass(Self {

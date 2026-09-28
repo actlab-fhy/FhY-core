@@ -13,6 +13,7 @@ use fhy_core::expression::pattern::{Capture, MatchBindings};
 use crate::dataclass::hash_value;
 use crate::frozen::build_frozen_mutation_error;
 use crate::public_class::PublicClass;
+use crate::python::Seed;
 
 use super::capture::PyCapture;
 use super::objects::current_bindings_object;
@@ -24,10 +25,7 @@ pub(super) type CaptureObjects = HashMap<Capture, Py<PyCapture>>;
 /// public class's constructor. Not exported, so only the binding builds
 /// bindings that bind anything.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_MatchBindingsSeed")]
-struct MatchBindingsSeed {
-    bindings: MatchBindings,
-    entries: Py<PyTuple>,
-}
+struct MatchBindingsSeed(Seed<PyMatchBindings>);
 
 /// The captures of a successful match, backed by the Rust
 /// [`MatchBindings`]: each bound capture with the expression it matched,
@@ -76,10 +74,10 @@ impl PyMatchBindings {
                     PyTuple::new(py, [capture.bind(py).clone().into_any(), node])
                 })
                 .collect::<PyResult<Vec<_>>>()?;
-            let seed = MatchBindingsSeed {
+            let seed = MatchBindingsSeed(Seed::new(Self {
                 bindings: bindings.clone(),
                 entries: PyTuple::new(py, pairs)?.unbind(),
-            };
+            }));
             Self::public_class().get(py)?.call1((seed,))
         })
     }
@@ -119,13 +117,7 @@ impl PyMatchBindings {
                 entries: PyTuple::empty(py).unbind(),
             }),
             Some(seed) => match seed.cast::<MatchBindingsSeed>() {
-                Ok(seed) => {
-                    let seed = seed.get();
-                    Ok(Self {
-                        bindings: seed.bindings.clone(),
-                        entries: seed.entries.clone_ref(py),
-                    })
-                }
+                Ok(seed) => seed.get().0.take("a match-bindings"),
                 Err(_not_a_seed) => Err(PyTypeError::new_err(
                     "MatchBindings() takes no arguments: only a match produces bindings \
                      that bind a capture",

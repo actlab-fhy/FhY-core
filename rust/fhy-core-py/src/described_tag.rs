@@ -39,11 +39,13 @@ macro_rules! define_described_tag_class {
         /// Only the binding creates seeds, so only the binding can build an
         /// instance, and each canonical tag gets one Python object.
         #[pyclass(frozen, module = "fhy_core._rs")]
-        pub(crate) struct $seed {
-            tag: ::fhy_core::interned::Canonical<$tag>,
-            name: Py<PyAny>,
-            description: Py<::pyo3::types::PyString>,
-        }
+        pub(crate) struct $seed(
+            $crate::python::Seed<(
+                ::fhy_core::interned::Canonical<$tag>,
+                Py<PyAny>,
+                Py<::pyo3::types::PyString>,
+            )>,
+        );
 
         $(#[$class_meta])*
         #[pyclass(subclass, frozen, module = "fhy_core._rs", name = $py_name)]
@@ -107,11 +109,11 @@ macro_rules! define_described_tag_class {
                 let description = ::pyo3::types::PyString::new(py, tag.description());
                 let seed = Bound::new(
                     py,
-                    $seed {
+                    $seed($crate::python::Seed::new((
                         tag,
-                        name: name.unbind(),
-                        description: description.unbind(),
-                    },
+                        name.unbind(),
+                        description.unbind(),
+                    ))),
                 )?;
                 let object = py
                     .get_type::<Self>()
@@ -179,14 +181,13 @@ macro_rules! define_described_tag_class {
 
             /// Build an instance from a seed the binding created.
             #[new]
-            fn new(seed: &Bound<'_, $seed>) -> Self {
-                let py = seed.py();
-                let seed = seed.get();
-                Self {
-                    tag: seed.tag.clone(),
-                    name: seed.name.clone_ref(py),
-                    description: seed.description.clone_ref(py),
-                }
+            fn new(seed: &Bound<'_, $seed>) -> PyResult<Self> {
+                let (tag, name, description) = seed.get().0.take("a tag")?;
+                Ok(Self {
+                    tag,
+                    name,
+                    description,
+                })
             }
 
             /// Return the canonical tag named `name`, registering it with
