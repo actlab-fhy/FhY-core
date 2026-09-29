@@ -1,4 +1,4 @@
-//! Decoding a V2 expression payload, a node table, in one pass (R2-N1).
+//! Decoding a V2 expression payload, a node table, in one pass.
 //!
 //! The general path turns the Python dict into a JSON value, decodes the
 //! core's `Expression` from it, and then materializes a Python object per

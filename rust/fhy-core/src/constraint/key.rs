@@ -3,8 +3,7 @@
 //! custom constraint, whose keys must be equal exactly when they are equal.
 //!
 //! An equation's key is `equation|` and its expression's canonical node
-//! table under structural equivalence (S-1 of
-//! `docs/design/rust-port-fixes.md`): each distinct node once, in
+//! table under structural equivalence: each distinct node once, in
 //! post-order of first visit with the root last, `;`-separated, as
 //! `kind[data](i,j,…)` with its children by table index. A literal writes
 //! its canonical value (`int:1`, `float:1e300`, every NaN as `float:NaN` and

@@ -14,8 +14,8 @@
 //! functions and passes.
 //!
 //! The backend's stories are this module's `#[cfg(test)]` submodules, run
-//! by `cargo test -p fhy-core-py` in an interpreter the test binary embeds
-//! (J-10 of the fixes spec); they need Python with SymPy.
+//! by `cargo test -p fhy-core-py` in an interpreter the test binary
+//! embeds; they need Python with SymPy.
 
 mod address_hash;
 mod boolean;

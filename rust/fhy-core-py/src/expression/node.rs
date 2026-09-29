@@ -604,8 +604,8 @@ impl PyExpression {
     /// a V2 node table, or a V1 envelope, which warns.
     ///
     /// A V2 table of the core's exact shapes decodes in one pass, building
-    /// each node's object from the table (R2-N1); any other goes through
-    /// the core's decoder, which raises its errors.
+    /// each node's object from the table; any other goes through the core's
+    /// decoder, which raises its errors.
     ///
     /// A V1 payload of the expression classes' own shapes decodes in one
     /// pass; any other goes through `WrappedFamilySerializable`'s V1
@@ -1523,8 +1523,8 @@ pub(crate) struct PyLiteralExpression {
 
 /// The private seed of a literal node the core already built, such as a
 /// decoded one: the public class's constructor, given one, keeps its handle
-/// and computes the Python value only when it is read (R2-N1), instead of
-/// parsing a Python value back into a literal.
+/// and computes the Python value only when it is read, instead of parsing a
+/// Python value back into a literal.
 ///
 /// Only the binding creates seeds, and the class is not exported.
 #[pyclass(frozen, module = "fhy_core._rs", name = "_LiteralSeed")]

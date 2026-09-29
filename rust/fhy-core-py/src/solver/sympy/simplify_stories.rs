@@ -361,9 +361,9 @@ fn substitute_symbols_applies_a_mapping_of_symbols() {
 // Threads and the prelude
 // ---------------------------------------------------------------------------
 
-/// The statements publishing, as the module `name`, probe S2's impostor
-/// prelude, whose `ROUND` is `sympy.floor`, with the `__fhy_core_prelude__`
-/// hash `hash` when it is given.
+/// The statements publishing, as the module `name`, an impostor prelude,
+/// whose `ROUND` is `sympy.floor`, with the `__fhy_core_prelude__` hash
+/// `hash` when it is given.
 fn impostor_prelude(name: &str, hash: Option<&str>) -> String {
     let hash = hash.map_or_else(String::new, |hash| {
         format!("module.__fhy_core_prelude__ = {hash:?}\n")

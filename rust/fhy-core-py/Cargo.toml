@@ -18,14 +18,14 @@ fhy-core = { workspace = true, features = ["ndarray"] }
 num-traits = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["macros"] }
-# The V2 wire format (slice S17): the Rust-backed classes serialize their
-# core values with serde, as JSON text.
+# The V2 wire format: the Rust-backed classes serialize their core values
+# with serde, as JSON text.
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-# The SymPy backend's stories and properties (J-10 of
-# docs/design/rust-port-fixes.md), which run in an embedded interpreter.
+# The SymPy backend's stories and properties, which run in an embedded
+# interpreter.
 proptest = { workspace = true }
 rstest = { workspace = true }
 

@@ -2,10 +2,9 @@
 //! of the Python `StrEnum`s of the same meaning.
 //!
 //! `UnaryOperation`, `BinaryOperation` and `LogicalOperation` stay Python
-//! enums (pattern P1) in `fhy_core.symbolic.expression.core`. Each member's
-//! value is the Rust operation's name (`as_str`), so a member converts by
-//! value in both directions, and a payload holds the same text on both
-//! sides. The binding keeps each enum's members in the order of the Rust
+//! enums in `fhy_core.symbolic.expression.core`. Each member's value is the
+//! Rust operation's name (`as_str`), so a member converts by value in both
+//! directions, and a payload holds the same text on both sides. The binding keeps each enum's members in the order of the Rust
 //! table below, so converting a Rust operation to its member is an index,
 //! and converting a member back is an identity scan.
 
