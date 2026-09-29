@@ -50,6 +50,7 @@ from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
+from fhy_core.symbolic._native_slots import copy_native_attributes
 from fhy_core.symbolic.expression import Expression, LiteralType
 from fhy_core.term import DerivedEquivalenceMixin
 from fhy_core.traits import FrozenMixin
@@ -303,17 +304,6 @@ class Constraint(
     def __str__(self) -> str: ...
 
 
-def _copy_attributes(instance: object, public: type, native: type, *names: str) -> None:
-    """Copy the attributes `names` of `instance` from its Rust class into its slots.
-
-    Called by a leaf's ``__init__``, after the Rust class built the value:
-    the slot descriptors of the public class shadow the Rust class's
-    getters, so an attribute read afterwards is a slot read.
-    """
-    for name in names:
-        getattr(public, name).__set__(instance, getattr(native, name).__get__(instance))
-
-
 @register_serializable(type_id="equation_constraint")
 class EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable):
     """Boolean-expression predicate over the expression's free identifiers.
@@ -360,7 +350,9 @@ class EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable):
     __slots__ = ("expression",)
 
     def __init__(self, expression: Expression) -> None:
-        _copy_attributes(self, EquationConstraint, _rs.EquationConstraint, "expression")
+        copy_native_attributes(
+            self, EquationConstraint, _rs.EquationConstraint, "expression"
+        )
 
 
 @register_serializable(type_id="in_set_constraint")
@@ -402,7 +394,7 @@ class InSetConstraint(_rs.InSetConstraint, WrappedFamilySerializable):
     def __init__(
         self, variable: Identifier, values: "MemberCollection[ConstraintMember]"
     ) -> None:
-        _copy_attributes(
+        copy_native_attributes(
             self, InSetConstraint, _rs.InSetConstraint, "members", "values", "variable"
         )
 
@@ -431,7 +423,7 @@ class NotInSetConstraint(_rs.NotInSetConstraint, WrappedFamilySerializable):
     def __init__(
         self, variable: Identifier, values: "MemberCollection[ConstraintMember]"
     ) -> None:
-        _copy_attributes(
+        copy_native_attributes(
             self,
             NotInSetConstraint,
             _rs.NotInSetConstraint,

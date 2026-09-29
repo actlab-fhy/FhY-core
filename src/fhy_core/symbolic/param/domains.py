@@ -55,6 +55,7 @@ from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
+from fhy_core.symbolic._native_slots import copy_native_attributes
 from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintBindings,
@@ -468,17 +469,6 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
         """Return the ``repr`` fragment of the value set, or ``""`` if implicit."""
 
 
-def _copy_attributes(instance: object, public: type, native: type, *names: str) -> None:
-    """Copy the attributes `names` of `instance` from its Rust class into its slots.
-
-    Called by a kind's ``__init__``, after the Rust class built the value:
-    the slot descriptors of the public class shadow the Rust class's
-    getters, so an attribute read afterwards is a slot read.
-    """
-    for name in names:
-        getattr(public, name).__set__(instance, getattr(native, name).__get__(instance))
-
-
 @register_serializable(type_id="integer_domain")
 class IntegerDomain(_rs.IntegerDomain, WrappedFamilySerializable):
     """Integer-valued domain, optionally restricted to the natural numbers.
@@ -496,7 +486,7 @@ class IntegerDomain(_rs.IntegerDomain, WrappedFamilySerializable):
     __slots__ = ("non_negative", "zero_included")
 
     def __init__(self, non_negative: bool = False, zero_included: bool = True) -> None:
-        _copy_attributes(
+        copy_native_attributes(
             self, IntegerDomain, _rs.IntegerDomain, "non_negative", "zero_included"
         )
 
@@ -543,7 +533,7 @@ class IntervalIntegerDomain(_rs.IntervalIntegerDomain, WrappedFamilySerializable
         non_negative: bool = False,
         zero_included: bool = True,
     ) -> None:
-        _copy_attributes(
+        copy_native_attributes(
             self,
             IntervalIntegerDomain,
             _rs.IntervalIntegerDomain,
@@ -573,7 +563,7 @@ class OrdinalDomain(_rs.OrdinalDomain, WrappedFamilySerializable):
     __slots__ = ("sorted_values",)
 
     def __init__(self, sorted_values: Sequence[OrdinalValue]) -> None:
-        _copy_attributes(self, OrdinalDomain, _rs.OrdinalDomain, "sorted_values")
+        copy_native_attributes(self, OrdinalDomain, _rs.OrdinalDomain, "sorted_values")
 
 
 @register_serializable(type_id="categorical_domain")
@@ -592,7 +582,9 @@ class CategoricalDomain(_rs.CategoricalDomain, WrappedFamilySerializable):
     __slots__ = ("categories",)
 
     def __init__(self, categories: Sequence[CategoricalValue]) -> None:
-        _copy_attributes(self, CategoricalDomain, _rs.CategoricalDomain, "categories")
+        copy_native_attributes(
+            self, CategoricalDomain, _rs.CategoricalDomain, "categories"
+        )
 
 
 @register_serializable(type_id="permutation_domain")
@@ -608,7 +600,7 @@ class PermutationDomain(_rs.PermutationDomain, WrappedFamilySerializable):
     __slots__ = ("ordered_members",)
 
     def __init__(self, ordered_members: Sequence[PermutationMemberValue]) -> None:
-        _copy_attributes(
+        copy_native_attributes(
             self, PermutationDomain, _rs.PermutationDomain, "ordered_members"
         )
 

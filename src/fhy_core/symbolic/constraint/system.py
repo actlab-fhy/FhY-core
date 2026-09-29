@@ -22,9 +22,10 @@ from typing import ClassVar
 from fhy_core import _rs
 from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
+from fhy_core.symbolic._native_slots import copy_native_attributes
 from fhy_core.traits import FrozenMixin
 
-from .core import Constraint, _copy_attributes
+from .core import Constraint
 
 _LOGGER = get_logger(__name__)
 """The logger the Rust binding writes this module's records to."""
@@ -121,7 +122,9 @@ class ConstraintSystem(_rs.ConstraintSystem, WrappedFamilySerializable):
     __slots__ = ("constraints",)
 
     def __init__(self, constraints: tuple[Constraint, ...]) -> None:
-        _copy_attributes(self, ConstraintSystem, _rs.ConstraintSystem, "constraints")
+        copy_native_attributes(
+            self, ConstraintSystem, _rs.ConstraintSystem, "constraints"
+        )
 
 
 FrozenMixin.register(ConstraintSystem)

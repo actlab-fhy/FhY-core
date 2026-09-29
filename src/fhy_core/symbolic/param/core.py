@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
+from fhy_core.symbolic._native_slots import copy_native_attributes
 from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintBindings,
@@ -92,17 +93,6 @@ __all__ = [
 ]
 
 _T = TypeVar("_T")
-
-
-def _copy_attributes(instance: object, public: type, native: type, *names: str) -> None:
-    """Copy the attributes `names` of `instance` from its Rust class into its slots.
-
-    Called by ``__init__``, after the Rust class built the value: the slot
-    descriptors of the public class shadow the Rust class's getters, so an
-    attribute read afterwards is a slot read.
-    """
-    for name in names:
-        getattr(public, name).__set__(instance, getattr(native, name).__get__(instance))
 
 
 @register_serializable(type_id="param")
@@ -206,7 +196,7 @@ class Param(_rs.Param, Serializable, Generic[_T]):
         variable: Identifier | None = None,
         constraint_system: ConstraintSystem | None = None,
     ) -> None:
-        _copy_attributes(
+        copy_native_attributes(
             self,
             Param,
             _rs.Param,
@@ -251,7 +241,9 @@ class ParamAssignment(_rs.ParamAssignment, Serializable, Generic[_T]):
         ) -> "ParamAssignment[Any]": ...
 
     def __init__(self, param: Param[_T], value: _T) -> None:
-        _copy_attributes(self, ParamAssignment, _rs.ParamAssignment, "param", "value")
+        copy_native_attributes(
+            self, ParamAssignment, _rs.ParamAssignment, "param", "value"
+        )
 
 
 # The classes are registered, not derived: `FrozenMixin` carries an instance
