@@ -38,6 +38,7 @@ from fhy_core.symbolic.expression import (
     validate_logical_operands,
 )
 from fhy_core.traits import FrozenMixin, HasOperands, VisitableMixin
+from fhy_core.utils.override import override
 
 from ...v1 import reads_v1
 
@@ -426,6 +427,65 @@ def test_a_payload_the_fast_path_declines_raises_the_framework_error() -> None:
 
     with pytest.raises(DeserializationValueError, match="a valid BinaryOperation"):
         Expression.deserialize_from_dict(payload)  # type: ignore[arg-type]
+
+
+class _KeyRaisingOnce(str):
+    """A ``str`` key whose first comparison raises ``exception``.
+
+    Its hash is the ``str`` hash, so a lookup of the same text compares
+    with it, and every comparison after the first is the ``str`` one.
+    """
+
+    __slots__ = ("exception", "has_raised")
+
+    exception: BaseException
+    has_raised: bool
+
+    def __new__(cls, text: str, exception: BaseException) -> "_KeyRaisingOnce":
+        key = super().__new__(cls, text)
+        key.exception = exception
+        key.has_raised = False
+        return key
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        if not self.has_raised:
+            self.has_raised = True
+            raise self.exception
+        return str.__eq__(self, other)
+
+    __hash__ = str.__hash__
+
+
+def _build_literal_payload_with_key(key: str) -> SerializedDict:
+    """Return the V1 payload of ``LiteralExpression(1)`` with ``key`` for ``value``."""
+    return {"__type__": "literal_expression", "__data__": {key: 1}}
+
+
+@reads_v1
+def test_a_payload_the_fast_path_fails_on_falls_back_to_the_framework() -> None:
+    """Test an ``Exception`` in the fast path falls back to the framework's path."""
+    key = _KeyRaisingOnce("value", ValueError("refused"))
+
+    decoded = Expression.deserialize_from_dict(_build_literal_payload_with_key(key))
+
+    assert key.has_raised
+    assert decoded == LiteralExpression(1)
+
+
+@reads_v1
+@pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_a_base_exception_in_the_fast_path_propagates(
+    exception: type[BaseException],
+) -> None:
+    """Test a ``BaseException`` that is no ``Exception`` is not retried."""
+    raised = exception()
+    key = _KeyRaisingOnce("value", raised)
+
+    with pytest.raises(exception) as exception_info:
+        Expression.deserialize_from_dict(_build_literal_payload_with_key(key))
+
+    assert exception_info.value is raised
 
 
 def test_decoding_through_a_node_class_refuses_another_kind() -> None:

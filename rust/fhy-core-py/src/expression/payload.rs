@@ -16,6 +16,7 @@
 //! path, which raises the framework's errors, so the fast path never
 //! changes which payloads decode or how a malformed one fails.
 
+use pyo3::exceptions::PyException;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -346,13 +347,19 @@ fn framework_decoder(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
 /// # Errors
 ///
 /// Raises what the framework's path raises for a payload the fast path
-/// declines.
+/// declines, and a `BaseException` that is no `Exception`, such as
+/// `KeyboardInterrupt`, raised on the fast path.
 pub(super) fn deserialize_expression_payload<'py>(
     cls: &Bound<'py, PyType>,
     data: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    if let Ok(Some(expression)) = decode_fast(cls, data) {
-        return Ok(expression);
+    let py = cls.py();
+    match decode_fast(cls, data) {
+        Ok(Some(expression)) => return Ok(expression),
+        Ok(None) => {}
+        Err(error) if !error.is_instance_of::<PyException>(py) => return Err(error),
+        // The framework's path raises its own error for the payload.
+        Err(refused) => drop(refused),
     }
-    framework_decoder(cls.py())?.call1((cls, data))
+    framework_decoder(py)?.call1((cls, data))
 }
