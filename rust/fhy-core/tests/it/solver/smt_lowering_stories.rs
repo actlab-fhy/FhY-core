@@ -448,6 +448,19 @@ fn integer_floor_division_by_a_real_literal_is_a_real_floor() {
     );
 }
 
+#[test]
+fn integer_floor_modulo_by_a_real_literal_converts_the_dividend_once() {
+    let (x, reference) = build_identifier("x");
+    let xs = quoted_symbol(&x);
+
+    assert_eq!(
+        asserted_over(&reference.floor_mod(2.5), SymbolType::Int),
+        format!(
+            "(let ((t!1 (to_real {xs}))) (= value (- t!1 (* (/ 5.0 2.0) (to_real (to_int (/ t!1 (/ 5.0 2.0))))))))"
+        )
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Powers
 // ---------------------------------------------------------------------------

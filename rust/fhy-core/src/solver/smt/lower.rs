@@ -293,7 +293,7 @@ impl<'a> Lowerer<'a> {
             }
             BinaryOperation::FloorMod => {
                 let (dividend, divisor) = (self.convert_to_real(left), self.convert_to_real(right));
-                let floor = self.floor_real_quotient(left, right);
+                let floor = self.floor_real_quotient(dividend, divisor);
                 let quotient = self.convert_to_real(floor);
                 let product = self.apply(
                     Operator::Multiply,
