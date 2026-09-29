@@ -49,8 +49,7 @@ meanwhile, such as an xdist worker starting or a test's subprocess, loads a
 partly written extension and dies with `SIGBUS`. The run then reports a
 failed test that passes when rerun: a subprocess test whose child died, or
 `worker 'gwN' crashed`. Run the Python gates one after another, or give
-each concurrent run its own checkout (R2-N5 of
-`docs/design/rust-port-fixes.md`).
+each concurrent run its own checkout.
 
 ## Property-based testing
 
@@ -336,12 +335,12 @@ uv run --group bench pytest-benchmark compare --group-by=name --columns=median \
 The machine's load moves the numbers, so compare runs made back to back on
 the same machine.
 
-A class's benchmark must be run before it switches and again after, per
-`docs/design/python-switch.md`. A class without a benchmark gets one in
-`benchmarks/` first, covering construction, attribute access, `==`, `hash`
-and the module's main operations. The slice records the numbers behind its
-pattern choice, and a switch that makes a hot path slower either changes
-pattern or is recorded as an accepted cost.
+A class's benchmark must be run before it switches to Rust and again
+after. A class without a benchmark gets one in `benchmarks/` first,
+covering construction, attribute access, `==`, `hash` and the module's main
+operations. The port records the numbers behind its pattern choice, and a
+switch that makes a hot path slower either changes pattern or is recorded
+as an accepted cost.
 
 ## Porting to Rust
 
@@ -351,11 +350,10 @@ with no PyO3 and no Python at build or test time. `rust/fhy-core-py` holds
 the PyO3 bindings, and maturin builds it into the extension module
 `fhy_core._rs`; it also holds the SymPy backend, `solver::sympy`, a
 `fhy_core::solver::Simplifier` that drives SymPy in the interpreter the
-extension runs in (slice S12 of `docs/design/python-switch.md`, moved there
-by R2-005a of `docs/design/rust-port-fixes.md`). The workspace table holds
-the one `pyo3`, since `pyo3-ffi` links `python` and a build holds one. A
-port adds its types to `fhy-core` and their bindings to `fhy-core-py`.
-Every port follows these rules.
+extension runs in. The workspace table holds the one `pyo3`, since
+`pyo3-ffi` links `python` and a build holds one. A port adds its types to
+`fhy-core` and their bindings to `fhy-core-py`. Every port follows these
+rules.
 
 ### One extension module per process
 
@@ -380,14 +378,13 @@ interpreter (3.13t, 3.14t) re-enables the GIL, with CPython's
 otherwise, and nothing has shown the binding safe without the GIL: its
 non-frozen classes raise borrow errors under contention, the opaque
 value's ordering key runs Python in a `OnceLock` initializer, and several
-"never held across Python" invariants were argued for the GIL build only
-(F2-043 of `docs/audit/rust-port-2026-09.md`). The declaration stays until
-a free-threaded CI job exists and those are checked; then the job, not
-this paragraph, decides. Independently of the GIL, the NumPy evaluator
-reads a `float64` input array in place while it releases the GIL, so a
-caller must not write an input array from another thread during the call;
-`evaluate_expression_with_numpy`'s docstring, the stub and the README say
-so (R2-043 of `docs/design/rust-port-fixes.md`).
+"never held across Python" invariants were argued for the GIL build only.
+The declaration stays until a free-threaded CI job exists and those are
+checked; then the job, not this paragraph, decides. Independently of the
+GIL, the NumPy evaluator reads a `float64` input array in place while it
+releases the GIL, so a caller must not write an input array from another
+thread during the call; `evaluate_expression_with_numpy`'s docstring, the
+stub and the README say so.
 
 ### Process-global state is limited to identity
 
@@ -399,94 +396,94 @@ statistics or caches, is an owned value that its user creates and passes
 explicitly. Where the Python API needs one shared instance, the binding
 holds it in the extension's module state. A new process-global `static`
 with interior mutability needs the maintainer's agreement and a line in
-this section. The binding crate keeps two such kinds, planned in slices
-S2 and S3 of `docs/design/python-switch.md`: each Rust-backed interned
-class's identity cache from canonical keys to their Python objects, which
-is append-only like the registry it mirrors, and each Rust-backed class's
-write-once slot for the public Python class that registers itself at
-import (`rust/fhy-core-py/src/public_class.rs`), so a value the binding
-builds from Rust is an instance of that class. Slice S5 adds a
-thread-local stack of per-call object tables
-(`rust/fhy-core-py/src/expression/pattern/objects.rs`), which maps the Rust
-nodes a match or a rewrite walk reaches to their Python objects while it
-runs; a table lives only for its call, so the stack is empty whenever no
-match or walk runs. Slice S6 adds two more thread-local stacks
-(`rust/fhy-core-py/src/pass/scope.rs` and `pass/context.rs`): the scope of
-each pass run, pipeline run or validation in progress, which records the
-diagnostics Python hooks report so they return as themselves, and the
-frame of each Python hook call, which `report` and `get_analysis` find by
-the pass object. Both live only for their run or hook, so the stacks are
-empty whenever no pass runs. Slice S7 adds the one registry the binding
-holds for the Python API, with the maintainer's agreement (N-S7-2 of the
-design doc): the function registry behind `register_function` and the
-lookups of `fhy_core.symbolic.expression.registry`, a
-`Mutex<Arc<_>>` of the core's owned `FunctionRegistry` and each entry's
-Python object (`rust/fhy-core-py/src/expression/registry/state.rs`). A
-registration swaps in a new state whole, and the lock is never held across
-a call into Python. It is the one kind that is not append-only:
-`set_registry_state_for_tests`, the tests' snapshot seam, replaces it. The
-built-in entries beside it are built once, at import, and never change.
-The core crate stays free of it, as of all global state beyond identity.
-Slice S8 adds, with the maintainer's agreement (N-S8-2 of the design doc),
-the default solver the functions of `fhy_core.symbolic.solver`, and so the
-constraints and params, ask when no backend is named: a
-`Mutex<Option<Py<Solver>>>` (`rust/fhy-core-py/src/solver/state.rs`), set
-when that module is imported and replaced whole by `set_default_solver`;
-the lock is never held across a call into Python, and like the function
-registry it is not append-only. S8 also adds a thread-local stack of the
-simplifications in progress (`rust/fhy-core-py/src/solver/backends.rs`),
-which hands a Python simplifier the objects of its input and environment;
-a frame lives only for its call, so the stack is empty whenever no
-simplification runs. Slice S10 adds one write-once slot, the shared
-empty `AlphaRenaming` that `AlphaRenaming.empty()` returns
+this section.
+
+The binding crate keeps three kinds of write-once or append-only state.
+Each Rust-backed interned class has an identity cache from canonical keys
+to their Python objects, which is append-only like the registry it
+mirrors. Each Rust-backed class has a write-once slot for the public
+Python class that registers itself at import
+(`rust/fhy-core-py/src/public_class.rs`), so a value the binding builds
+from Rust is an instance of that class. The shared empty `AlphaRenaming`
+that `AlphaRenaming.empty()` returns is a write-once slot
 (`rust/fhy-core-py/src/term/renaming.rs`), an immutable value built on
-first use, as a public class slot is, approved by the maintainer; the
-derived-equivalence plans stay
-in the Python module's `_PLAN_CACHE` dict. Slice S11 adds a thread-local stack
-of the type-system calls in progress (`rust/fhy-core-py/src/types/adapter.rs`),
-each a context holding the Python objects the call was given, the class of
-its environment, and the first exception a Python-defined type's `==` or
-`hash` raised inside the core's infallible equality or hashing; a context lives only for its
-call, so the stack is empty whenever no call runs. Slice S14 moves the
-verification registry of `fhy_core.pass_infrastructure.verification`,
-which was a class-level dict of the Python `VerificationRegistry`, into the
-extension's module state: `pymodule_init` sets the private attribute
-`fhy_core._rs._verification_registry` to a `Mutex<Arc<_>>` of the core's
-owned `VerificationRegistry` and the Python objects its keys stand for
-(`rust/fhy-core-py/src/pass/verification.rs`), which the binding reaches
-through a write-once import cache. A registration swaps in a new state
-whole, and the lock is never held across a call into Python. It is
-append-only, as the dict was, and adds no Rust `static` with interior
-mutability. Slice S13 adds a
-thread-local slot (`rust/fhy-core-py/src/constraint/value.rs`) holding the
-first exception a Python member's `==`, or a Python-defined constraint's
-or domain's structural equivalence, raised during one call into the core,
-which the call raises when the core returns: those back the core's
-infallible `==`, while every other hook's exception is its own error; an exception that is not an `Exception`, such
-as `KeyboardInterrupt`, replaces a kept `Exception`, and once one is kept no
-comparison calls Python again during that call. It is empty whenever no
-such call runs.
-Slice S17 reuses that slot for the exception a Python-defined part's
-serialization hook raises while the core serializes or resolves it
-(`rust/fhy-core-py/src/wire.rs`); the wire version is a Python context
-variable, not Rust state. R2-003 of `docs/design/rust-port-fixes.md` adds a
-thread-local stack of slot collections (`rust/fhy-core-py/src/gc.rs`): a
-Python object the binding keeps inside a Rust closure or a core trait
-object, where the cycle collector cannot see it, is held in a `Slot`, and
-the construction that makes it runs inside `collect_slots`, so the object
-it builds owns the slot and its `__traverse__` visits it, at most once
-however the core shares the value; a collection lives only for its
-construction, so the stack is empty whenever none runs. Every one of these
-thread-local stacks, the pending-exception slot included, is a `ScopedStack`
-(`rust/fhy-core-py/src/scoped.rs`, R2-031): a frame is pushed only through a
-guard that pops it when dropped, on unwind included, so a panic, which PyO3
-raises as `PanicException`, never leaves a stale frame for the thread's next
-call; the slot keeps an exception raised outside every call in a base frame,
-as it did before. Tests never clear a
-process-global registry; a test that needs an empty or controlled registry
-builds a local one, except that the Python tests restore the function
-registry through the `function_registry_snapshot` fixture, and the default
-solver after replacing it.
+first use, as a public class slot is; the derived-equivalence plans stay in
+the Python module's `_PLAN_CACHE` dict.
+
+The binding holds three shared registries for the Python API. The function
+registry behind `register_function` and the lookups of
+`fhy_core.symbolic.expression.registry` is a `Mutex<Arc<_>>` of the core's
+owned `FunctionRegistry` and each entry's Python object
+(`rust/fhy-core-py/src/expression/registry/state.rs`). A registration swaps
+in a new state whole, and the lock is never held across a call into Python.
+It is not append-only: `set_registry_state_for_tests`, the tests' snapshot
+seam, replaces it. The built-in entries beside it are built once, at
+import, and never change. The default solver the functions of
+`fhy_core.symbolic.solver`, and so the constraints and params, ask when no
+backend is named is a `Mutex<Option<Py<Solver>>>`
+(`rust/fhy-core-py/src/solver/state.rs`), set when that module is imported
+and replaced whole by `set_default_solver`; the lock is never held across a
+call into Python, and like the function registry it is not append-only.
+The verification registry of `fhy_core.pass_infrastructure.verification`
+lives in the extension's module state: `pymodule_init` sets the private
+attribute `fhy_core._rs._verification_registry` to a `Mutex<Arc<_>>` of the
+core's owned `VerificationRegistry` and the Python objects its keys stand
+for (`rust/fhy-core-py/src/pass/verification.rs`), which the binding
+reaches through a write-once import cache. A registration swaps in a new
+state whole, and the lock is never held across a call into Python. It is
+append-only and adds no Rust `static` with interior mutability. The core
+crate stays free of all three, as of all global state beyond identity.
+
+The rest of the binding's state is thread-local and lives only for one
+call:
+
+- a stack of per-call object tables
+  (`rust/fhy-core-py/src/expression/pattern/objects.rs`), which maps the
+  Rust nodes a match or a rewrite walk reaches to their Python objects
+  while it runs;
+- a stack of the scopes of the pass runs, pipeline runs and validations in
+  progress (`rust/fhy-core-py/src/pass/scope.rs`), which records the
+  diagnostics Python hooks report so they return as themselves, and a stack
+  of the frames of the Python hook calls in progress (`pass/context.rs`),
+  which `report` and `get_analysis` find by the pass object;
+- a stack of the simplifications in progress
+  (`rust/fhy-core-py/src/solver/backends.rs`), which hands a Python
+  simplifier the objects of its input and environment;
+- a stack of the type-system calls in progress
+  (`rust/fhy-core-py/src/types/adapter.rs`), each a context holding the
+  Python objects the call was given, the class of its environment, and the
+  first exception a Python-defined type's `==` or `hash` raised inside the
+  core's infallible equality or hashing;
+- a pending-exception slot (`rust/fhy-core-py/src/constraint/value.rs`)
+  holding the first exception a Python member's `==`, or a Python-defined
+  constraint's or domain's structural equivalence, raised during one call
+  into the core, which the call raises when the core returns: those back
+  the core's infallible `==`, while every other hook's exception is its own
+  error; an exception that is not an `Exception`, such as
+  `KeyboardInterrupt`, replaces a kept `Exception`, and once one is kept no
+  comparison calls Python again during that call. The same slot holds the
+  exception a Python-defined part's serialization hook raises while the
+  core serializes or resolves it (`rust/fhy-core-py/src/wire.rs`); the wire
+  version is a Python context variable, not Rust state;
+- a stack of slot collections (`rust/fhy-core-py/src/gc.rs`): a Python
+  object the binding keeps inside a Rust closure or a core trait object,
+  where the cycle collector cannot see it, is held in a `Slot`, and the
+  construction that makes it runs inside `collect_slots`, so the object it
+  builds owns the slot and its `__traverse__` visits it, at most once
+  however the core shares the value.
+
+Each frame lives only for its call, so every stack is empty whenever no
+such call runs. Every one of these, the pending-exception slot included,
+is a `ScopedStack` (`rust/fhy-core-py/src/scoped.rs`): a frame is pushed
+only through a guard that pops it when dropped, on unwind included, so a
+panic, which PyO3 raises as `PanicException`, never leaves a stale frame
+for the thread's next call; the slot keeps an exception raised outside
+every call in a base frame.
+
+Tests never clear a process-global registry; a test that needs an empty or
+controlled registry builds a local one, except that the Python tests
+restore the function registry through the `function_registry_snapshot`
+fixture, and the default solver after replacing it.
 
 Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
 the crate ships, such as the built-in tags, and each shipped identifier has
@@ -556,8 +553,7 @@ a part's payload and holds no resolver of its own.
 - Freeze the golden corpus. Golden corpora exist only for concepts defined
   in both languages, today `identifier`, `interned`, and serialization,
   whose V2 texts Python writes and Rust reads and writes back
-  byte-identically (`generate_serialization_cases.py`, slice S17 of
-  `docs/design/python-switch.md`). Once a module's
+  byte-identically (`generate_serialization_cases.py`). Once a module's
   Python implementation is deleted, its generator has no oracle left to
   run. Delete the generator (the drift check and `golden_expanded` find
   generators by the `generate_*.py` pattern) and its
@@ -565,19 +561,17 @@ a part's payload and holds no resolver of its own.
   regression corpus.
 - Call back into Python per hook, not per tree node. A Rust walk over an
   IR calls a Python pass, analysis or rule once per run or match, and walks
-  the nodes itself. The first exception is `fhy_core.term`
-  (N-S10-1 of `docs/design/python-switch.md`): `BinderMixin` and
-  `DerivedEquivalenceMixin` run in Rust but call a node's own hooks, its
-  children's methods, its dataclass fields and user comparators per node,
-  since those are per node by nature; each call into Rust still answers
-  one comparison, query or substitution that Python asked for. The second is
-  `fhy_core.types.dispatch` (D-S11-9): the core calls the handler a
-  `Type` or `DataType` subclass Python defines registered on a dispatcher
-  once per such node it meets, since only Python can answer for a class
-  Python defines; a class without a handler takes the core's default rule
-  with no call into Python.
-  The third is `fhy_core.symbol_table` (D-S15-9): the core table asks a
-  frame Python defines, a `SymbolTableFrame` subclass, its own
+  the nodes itself. The first exception is `fhy_core.term`: `BinderMixin`
+  and `DerivedEquivalenceMixin` run in Rust but call a node's own hooks,
+  its children's methods, its dataclass fields and user comparators per
+  node, since those are per node by nature; each call into Rust still
+  answers one comparison, query or substitution that Python asked for. The
+  second is `fhy_core.types.dispatch`: the core calls the handler a `Type`
+  or `DataType` subclass Python defines registered on a dispatcher once per
+  such node it meets, since only Python can answer for a class Python
+  defines; a class without a handler takes the core's default rule with no
+  call into Python. The third is `fhy_core.symbol_table`: the core table
+  asks a frame Python defines, a `SymbolTableFrame` subclass, its own
   `is_structurally_equivalent` and `serialize_to_dict` once per such frame
   it holds, and reads its `name` once when it is added.
 - Keep no fallback. The package requires the extension: importing
@@ -586,9 +580,8 @@ a part's payload and holds no resolver of its own.
   A switched module defines only its Rust-backed classes; there is no
   pure-Python copy to keep in parity and no switch that selects one. Rust
   tests in `rust/fhy-core/tests/` specify the concept's behavior, and a
-  Python interface suite covers the Python API over it (decision 4 of
-  `docs/design/python-switch.md`). Modules not yet ported stay ordinary
-  Python on top of the Rust-backed types.
+  Python interface suite covers the Python API over it. Modules not yet
+  ported stay ordinary Python on top of the Rust-backed types.
 
 ### Module paths follow Rust layering
 
@@ -667,7 +660,7 @@ converts each core error it raises through its local `IntoPyErr` trait. For
 `identifier` and `interned`, which are defined in both languages, it raises
 the Python implementation's exception class with the same message. For
 every other module, Rust defines the behavior: the binding raises the
-exception class the replaced Python API documents, with the Rust error's
+exception class the Python API documents, with the Rust error's
 `Display` text.
 
 ### Public enums and structs
@@ -695,9 +688,9 @@ shipped defaults as associated functions such as
 `OpAttribute::commutative()`. Rustdoc describes Rust behavior and does not
 narrate the Python implementation.
 `stack` and `scope` are implemented twice, natively in each language and
-with no binding between them (S18 of `docs/design/python-switch.md`): the
-two share their behavior, which one list of test cases pins in both test
-suites, and each keeps its own language's errors and names.
+with no binding between them: the two share their behavior, which one
+list of test cases pins in both test suites, and each keeps its own
+language's errors and names.
 
 ### Binding crate layout
 
