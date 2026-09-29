@@ -104,6 +104,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fhy-core-example-aggregate"
+version = "0.2.0"
+dependencies = [
+ "fhy-core",
+ "fhy-core-py",
+ "pyo3",
+]
+
+[[package]]
 name = "fhy-core-ext"
 version = "0.2.0"
 dependencies = [

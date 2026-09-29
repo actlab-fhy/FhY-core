@@ -1,0 +1,22 @@
+[package]
+name = "fhy-core-example-aggregate"
+description = "Test-only aggregate extension: fhy-core-py plus one tiny class, the proof that a downstream binding composes with fhy_core."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "fhy_example_aggregate"
+crate-type = ["cdylib"]
+
+[dependencies]
+fhy-core = { workspace = true }
+fhy-core-py = { path = "../fhy-core-py" }
+pyo3 = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true
