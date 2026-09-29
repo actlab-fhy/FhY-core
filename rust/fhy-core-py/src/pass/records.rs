@@ -547,10 +547,8 @@ define_record_class! {
         /// Return the number of pass runs the pipeline made, not counting
         /// the runs a pass skipped.
         fn run_count(&self, py: Python<'_>) -> PyResult<usize> {
-            let mut runs = Vec::new();
-            collect_pass_runs(self.records.bind(py), &mut runs)?;
             let mut count = 0;
-            for run in runs {
+            for run in self.pass_runs(py)? {
                 if !run.getattr(intern!(py, "skipped"))?.is_truthy()? {
                     count += 1;
                 }
