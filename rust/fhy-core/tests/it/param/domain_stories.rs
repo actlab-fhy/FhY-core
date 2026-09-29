@@ -307,6 +307,59 @@ fn permutation_domain_does_not_admit_a_member_itself() {
     assert!(!domain.is_value_admissible(&int(1)).expect("native"));
 }
 
+#[rstest]
+#[case::member(int(2), true)]
+#[case::float_equal_to_a_member(float(2.0), false)]
+#[case::boolean_equal_to_a_member(boolean(true), false)]
+#[case::non_member(int(5), false)]
+#[case::string_spelling_a_member(text("2"), false)]
+#[case::tuple_of_a_member(Value::Tuple(vec![int(1)]), false)]
+fn finite_domains_contain_their_members_type_strictly(
+    #[case] value: Value,
+    #[case] is_member: bool,
+) {
+    let ordinal = OrdinalDomain::new(ints([1, 2, 3])).expect("an ordinal domain");
+    let categorical = CategoricalDomain::new(ints([1, 2, 3])).expect("a categorical domain");
+    let permutation = PermutationDomain::new(ints([1, 2, 3])).expect("a permutation domain");
+
+    assert_eq!(ordinal.contains_value(&value), is_member);
+    assert_eq!(categorical.contains_value(&value), is_member);
+    assert_eq!(permutation.contains_value(&value), is_member);
+}
+
+#[test]
+fn finite_domains_contain_members_of_mixed_kinds() {
+    let categorical = CategoricalDomain::new(vec![text("a"), int(1), boolean(true)])
+        .expect("a categorical domain");
+    let permutation = PermutationDomain::new(vec![int(1), float(1.0)]).expect("a permutation");
+
+    assert!(categorical.contains_value(&text("a")));
+    assert!(categorical.contains_value(&boolean(true)));
+    assert!(!categorical.contains_value(&text("b")));
+    assert!(permutation.contains_value(&float(1.0)));
+    assert!(!permutation.contains_value(&float(2.0)));
+}
+
+#[rstest]
+#[case::swapped(Value::Tuple(vec![int(2), int(1)]), true)]
+#[case::identity(Value::Tuple(vec![int(1), int(2)]), true)]
+#[case::repeated_member(Value::Tuple(vec![int(1), int(1)]), false)]
+#[case::too_short(Value::Tuple(vec![int(1)]), false)]
+#[case::too_long(Value::Tuple(vec![int(1), int(2), int(1)]), false)]
+#[case::foreign_element(Value::Tuple(vec![int(1), int(3)]), false)]
+#[case::element_of_another_kind(Value::Tuple(vec![int(1), float(2.0)]), false)]
+#[case::empty_tuple(Value::Tuple(Vec::new()), false)]
+#[case::member_itself(int(1), false)]
+#[case::frozen_set_of_the_members(Value::FrozenSet(vec![int(1), int(2)]), false)]
+fn permutation_domain_recognizes_tuples_holding_each_member_once(
+    #[case] value: Value,
+    #[case] is_permutation: bool,
+) {
+    let domain = PermutationDomain::new(ints([1, 2])).expect("a permutation domain");
+
+    assert_eq!(domain.is_permutation(&value), is_permutation);
+}
+
 // ---------------------------------------------------------------------------
 // Constraints, implied constraints, profiles
 // ---------------------------------------------------------------------------
