@@ -9,8 +9,8 @@
 //! The core crate serializes in plain serde shapes, and the
 //! `__type__`/`__data__` envelope and the Python field shapes belong to the
 //! binding. The Rust-backed classes build their payloads themselves and
-//! validate incoming ones exactly as the classes they replace do, raising
-//! the framework's own exceptions with the same messages.
+//! validate incoming ones as the framework's derived deserialization does,
+//! raising the framework's own exceptions with its messages.
 
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::intern;
@@ -40,8 +40,8 @@ pub(crate) fn is_serialized_dict(value: &Bound<'_, PyAny>) -> PyResult<bool> {
         .is_truthy()
 }
 
-/// What a payload field must hold, as the derived deserialization of the
-/// replaced dataclasses checks it.
+/// What a payload field must hold, as the derived deserialization of a
+/// dataclass checks it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FieldShape {
     /// A nested payload dict, the field of a serializable value.
@@ -182,8 +182,8 @@ fn read_fields_of_shape<'py, const N: usize>(
 }
 
 /// Return the values of the fields `names` in the mapping `fields`, in
-/// order, as the constructor call `cls(**fields)` of the replaced
-/// dataclasses would receive them.
+/// order, as the constructor call `cls(**fields)` of a dataclass would
+/// receive them.
 ///
 /// The last `optional` names may be missing, and read as `None`.
 ///

@@ -15,8 +15,8 @@ use super::error::SympyErrorKind;
 use super::load::Handles;
 
 /// How deeply the recursive helpers may nest, as Python's recursion limit
-/// bounds the walks they replace: past it they raise `RecursionError`
-/// rather than exhaust the Rust stack.
+/// bounds a Python walk: past it they raise `RecursionError` rather than
+/// exhaust the Rust stack.
 pub(super) const MAX_NESTING: usize = 1_000;
 
 /// A failure of a helper: an exception, or a failure the backend reports

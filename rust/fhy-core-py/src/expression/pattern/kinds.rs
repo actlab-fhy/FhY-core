@@ -7,8 +7,8 @@
 //! field objects of its kind in constructor order, with their names, and
 //! its sub-pattern objects in matching order. Each kind extends it with its
 //! field objects, read as struct members. Equality, hashing, `repr` and
-//! pickling follow the replaced dataclasses: they use the field objects, so
-//! a capture compares by identity and a predicate by the callable's `==`.
+//! pickling follow the dataclass rules over the field objects, so a capture
+//! compares by identity and a predicate by the callable's `==`.
 
 use std::collections::HashSet;
 use std::sync::Arc;

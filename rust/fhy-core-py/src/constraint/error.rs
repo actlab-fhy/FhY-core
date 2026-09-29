@@ -121,7 +121,7 @@ fn unusable_binding_error(
         }
         _ => {
             // A literal the equation cannot lift: the constructor's refusal
-            // is the cause, as the Python implementation chained it.
+            // is the cause.
             let cause = literal_expression_class(py)
                 .and_then(|class| class.call1((value,)))
                 .err();

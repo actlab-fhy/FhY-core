@@ -5,8 +5,7 @@
 //! A finite domain keeps the Python objects of its values in the core's
 //! order, so its attribute returns them. The questions ask the default
 //! solver with the registry snapshot, detached from the interpreter as the
-//! constraint system's questions are, and log what the Python
-//! implementation logged.
+//! constraint system's questions are, and log their undecided outcomes.
 
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 use pyo3::prelude::*;
@@ -354,7 +353,7 @@ fn value_error(
 }
 
 /// Return the values of the payload `data` of a finite domain of `kind`,
-/// decoded and validated as the replaced codec decoded them.
+/// decoded and validated.
 fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
     let py = data.py();
     let Ok(payloads) = data.cast::<PyList>() else {
@@ -394,7 +393,7 @@ fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bo
 
 /// Return the domain of class `cls` of the payload `data` holding the
 /// fields `fields`, each a flag or, for a finite domain of `kind`, its
-/// values, as the replaced dataclass's derived deserialization built it.
+/// values, as a dataclass's derived deserialization builds it.
 fn deserialize_domain<'py>(
     cls: &Bound<'py, PyType>,
     data: &Bound<'py, PyAny>,
@@ -451,8 +450,8 @@ fn deserialize_domain<'py>(
     construct_from_decoded_fields(cls, &decoded)
 }
 
-/// Return an instance of `cls` of the decoded fields `fields`, as the
-/// replaced dataclass's `cls(**fields)`.
+/// Return an instance of `cls` of the decoded fields `fields`, as a
+/// dataclass's `cls(**fields)` does.
 fn construct_domain<'py>(
     cls: &Bound<'py, PyType>,
     fields: &Bound<'py, PyAny>,

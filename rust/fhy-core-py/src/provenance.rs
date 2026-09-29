@@ -9,12 +9,11 @@
 //! Rust value next to their field objects in the same way. Equality, hashing
 //! and `str` run on the Rust values.
 //!
-//! The Python API is the one the retired pure-Python dataclasses had, with
-//! their reprs, their validation errors and their payloads, including the
-//! `WrappedFamilySerializable` envelope that the public classes inherit. The public classes register
-//! themselves with the binding at import, so a provenance the binding builds
-//! in Rust, such as the result of `Provenance.fuse`, is an instance of the
-//! public class.
+//! The Python API has dataclass reprs, validation errors and payloads,
+//! including the `WrappedFamilySerializable` envelope that the public
+//! classes inherit. The public classes register themselves with the
+//! binding at import, so a provenance the binding builds in Rust, such as
+//! the result of `Provenance.fuse`, is an instance of the public class.
 
 use pyo3::exceptions::{PyOverflowError, PyRecursionError, PyTypeError, PyValueError};
 use pyo3::intern;

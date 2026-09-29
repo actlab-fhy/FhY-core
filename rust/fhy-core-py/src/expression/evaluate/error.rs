@@ -1,5 +1,5 @@
 //! The Python exceptions of evaluation and folding errors: the core's text
-//! under the classes the replaced Python API documents.
+//! under the classes the Python API documents.
 
 use pyo3::exceptions::{
     PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError, PyZeroDivisionError,

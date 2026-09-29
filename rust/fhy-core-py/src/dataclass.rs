@@ -1,7 +1,6 @@
-//! What the Rust-backed classes share to stand in for the Python
-//! dataclasses they replace: argument checks in one message style, the
-//! `__eq__` and `__repr__` a dataclass generates, hashing, and arguments
-//! that may be omitted.
+//! What the Rust-backed classes share to behave as Python dataclasses:
+//! argument checks in one message style, the `__eq__` and `__repr__` a
+//! dataclass generates, hashing, and arguments that may be omitted.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -38,8 +37,7 @@ pub(crate) fn read_str<'a, 'py>(
 
 /// Return the hash of `value` from the standard hasher.
 ///
-/// Equal values hash equally within a process, which is all Python needs;
-/// the hashes differ from the ones the replaced dataclasses computed.
+/// Equal values hash equally within a process, which is all Python needs.
 pub(crate) fn hash_value(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);

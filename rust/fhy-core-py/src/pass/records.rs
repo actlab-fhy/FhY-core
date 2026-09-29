@@ -3,10 +3,10 @@
 //! `FixpointGroupRecord`, `PassManagerResult` and `ValidatorRecord`.
 //!
 //! Each holds the Python objects of its fields, checked when it is built,
-//! and compares, hashes, prints and pickles as the frozen dataclasses it
-//! replaces did: equality and the hash follow the tuple of its fields, the
-//! repr is the dataclass one, and a pickle is a call of its class with its
-//! fields. The binding builds them through their public classes.
+//! and compares, hashes, prints and pickles as a frozen dataclass does:
+//! equality and the hash follow the tuple of its fields, the repr is the
+//! dataclass one, and a pickle is a call of its class with its fields. The
+//! binding builds them through their public classes.
 
 use pyo3::intern;
 use pyo3::prelude::*;

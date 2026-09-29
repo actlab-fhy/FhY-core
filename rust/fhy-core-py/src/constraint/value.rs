@@ -196,8 +196,8 @@ impl fmt::Debug for PyOpaqueValue {
 }
 
 /// Return the ordering key of the member `value`: its type's qualified name
-/// and the `repr` of its payload, as the Python implementation keyed a
-/// `Serializable` member; the payload is its V2 one whatever version is
+/// and the `repr` of its payload for a `Serializable` member, or of the
+/// value itself otherwise; the payload is its V2 one whatever version is
 /// being written, so a member's key does not depend on the context.
 fn build_ordering_key(value: &Bound<'_, PyAny>) -> PyResult<String> {
     let py = value.py();

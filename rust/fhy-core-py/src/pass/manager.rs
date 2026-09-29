@@ -4,7 +4,7 @@
 //! A pipeline keeps the Python passes and groups it was given. Each run
 //! builds the core's `PassManager` over [`PyIr`] from the current items,
 //! with an adapter per pass, and runs it with its own analysis cache, so a
-//! group changed after it was added behaves as it is now, and two runs of
+//! group changed after it was added runs as it is now, and two runs of
 //! one pipeline are independent. By default the run verifies its input and
 //! every changed output with the passes the verification registry holds for
 //! the IR's type; `set_verifier` replaces that verifier or turns it off.

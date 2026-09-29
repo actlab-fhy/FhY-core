@@ -21,8 +21,8 @@
 //!   visited only by the one object that owns it: the object whose
 //!   construction made it, which collects it with [`collect_slots`] and
 //!   keeps it in a [`Slots`] field. A slot made outside any construction has
-//!   no owner and is not visited; it only keeps its object alive, as every
-//!   Rust-held reference did before.
+//!   no owner and is not visited; it only keeps its object alive, as any
+//!   Rust-held reference does.
 //! - **Clearing.** `__clear__` empties what only its object holds (a list of
 //!   passes, a lattice's elements). It never empties a slot, which a core
 //!   value another object still uses may share, so a slot needs no lock. A

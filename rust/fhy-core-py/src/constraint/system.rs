@@ -6,7 +6,7 @@
 //! kind is the core's; any other `Constraint` is driven through
 //! [`PyCustomConstraint`]. The questions ask the default solver with the
 //! registry snapshot, detached from the interpreter as the solver's own
-//! questions are, and log what the Python implementation logged.
+//! questions are, and log their undecided outcomes.
 
 use std::collections::HashMap;
 use std::sync::Arc;

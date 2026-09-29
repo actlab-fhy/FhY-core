@@ -1,7 +1,7 @@
 //! The Python exceptions of the param core's errors.
 //!
-//! An error with a core counterpart raises the class the Python
-//! implementation raised, with the core's text; one whose Python text names
+//! An error with a core counterpart raises the class the Python API
+//! documents, with the core's text; one whose Python text names
 //! Python values, such as a class, keeps Python's words.
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -39,7 +39,7 @@ const fn class_with_article(kind: DomainKind) -> &'static str {
 }
 
 /// Any error of the param core: the families of `fhy_core::param`, so one
-/// mapping raises each variant as the Python implementation did.
+/// mapping raises each variant as its Python exception.
 #[derive(Debug)]
 pub(crate) enum ParamFailure {
     /// A finite domain that cannot be built.

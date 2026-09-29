@@ -5,8 +5,8 @@
 //! catalogue item, next to the Python objects its fields return, so
 //! `entry.body is body` and `native.implementation is implementation` hold.
 //! The public classes are thin subclasses that register themselves at
-//! import. Equality, hashing and `repr` follow the fields, as the
-//! dataclasses' did; a user entry pickles as a call of its class with its
+//! import. Equality, hashing and `repr` follow the fields, as a
+//! dataclass's do; a user entry pickles as a call of its class with its
 //! fields, and a built-in one as a lookup of the built-in by name.
 
 use pyo3::exceptions::{PyTypeError, PyValueError};

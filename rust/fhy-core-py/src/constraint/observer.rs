@@ -1,7 +1,7 @@
 //! The log records of undecided outcomes: the core reports each
 //! [`ConstraintEvent`], and the observer here logs it on
-//! `fhy_core.symbolic.constraint.core`, with the level, text and Python
-//! `repr`s the Python implementation logged.
+//! `fhy_core.symbolic.constraint.core` with its level and its text, which
+//! names values by their Python `repr`s.
 
 use pyo3::intern;
 use pyo3::prelude::*;

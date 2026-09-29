@@ -171,11 +171,11 @@ proptest! {
     }
 }
 
-/// Return a tree of p16's shape over `leaves`: sums, differences,
-/// products, floor divisions by `1`, `2` or `4`, floor moduli by `2` or
-/// `3`, powers by `0` to `3`, negations, piecewise nodes, and quotients by
-/// `2` or by another tree. Powers of two keep the quotients' binary floats
-/// exact where `sympy.simplify` distributes a divisor.
+/// Return a grid tree over `leaves`: sums, differences, products, floor
+/// divisions by `1`, `2` or `4`, floor moduli by `2` or `3`, powers by `0`
+/// to `3`, negations, piecewise nodes, and quotients by `2` or by another
+/// tree. Powers of two keep the quotients' binary floats exact where
+/// `sympy.simplify` distributes a divisor.
 fn grid_tree(leaves: BoxedStrategy<Expression>) -> BoxedStrategy<Expression> {
     leaves
         .prop_recursive(3, 16, 2, |inner| {

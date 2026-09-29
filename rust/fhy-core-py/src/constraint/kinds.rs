@@ -4,10 +4,9 @@
 //!
 //! Each object keeps the Python objects it was given: the expression, the
 //! variable, and the objects of opaque members, so the attributes return
-//! them. Equality and hashing are by identity, as the replaced dataclasses'
-//! `eq=False` gave. Evaluation asks the default solver, with the function
-//! registry's snapshot, and logs undecided outcomes as the Python
-//! implementation did.
+//! them. Equality and hashing are by identity. Evaluation asks the default
+//! solver, with the function registry's snapshot, and logs undecided
+//! outcomes.
 
 use std::collections::HashMap;
 
@@ -945,9 +944,8 @@ pub(crate) fn read_native_constraint(value: &Bound<'_, PyAny>) -> Option<Constra
 }
 
 /// Return whether a constraint member lifts to a `LiteralExpression`: a
-/// `bool`, an `int`, a `float` or a `Decimal` the literal holds, as the
-/// Python implementation answered it; not a `str`, whose literal would
-/// compare against numbers, nor any other value.
+/// `bool`, an `int`, a `float` or a `Decimal` the literal holds; not a
+/// `str`, whose literal would compare against numbers, nor any other value.
 #[pyfunction]
 pub(crate) fn does_member_lift_to_expression(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     let py = value.py();

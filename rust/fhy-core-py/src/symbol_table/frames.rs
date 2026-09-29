@@ -3,11 +3,11 @@
 //! `FunctionKeyword`, which stays a Python enum.
 //!
 //! Each frame holds its core [`SymbolFrame`] and the Python objects it was
-//! built from, which its properties return. It stands in for the frozen
-//! dataclass it replaces: `==`, `hash` and `repr` follow its fields, it is
-//! always frozen, a pickle is a call of its class, and it writes and reads
-//! the dataclass's payload. Its equivalence methods have the derived plan's
-//! meaning.
+//! built from, which its properties return. It behaves as a frozen
+//! dataclass: `==`, `hash` and `repr` follow its fields, it is always
+//! frozen, a pickle is a call of its class, and it writes and reads the
+//! derived payload of its fields. Its equivalence methods have the derived
+//! plan's meaning.
 
 use std::sync::OnceLock;
 

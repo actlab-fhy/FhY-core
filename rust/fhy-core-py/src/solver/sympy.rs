@@ -114,8 +114,7 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
     }
 }
 
-/// Log the refusal of a SymPy `Implies` at WARNING on the bridge's logger,
-/// as the Python bridge did.
+/// Log the refusal of a SymPy `Implies` at WARNING on the bridge's logger.
 fn warn_implies(py: Python<'_>, node: &str) {
     let logged = py
         .import(intern!(py, "fhy_core.logger"))

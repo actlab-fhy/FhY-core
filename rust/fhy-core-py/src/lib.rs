@@ -40,7 +40,7 @@ mod wire;
 /// free-threaded interpreter re-enables the GIL when importing it: the
 /// binding's invariants were argued for the GIL build only, and no CI job
 /// runs a free-threaded one. CONTRIBUTING "One extension module per process"
-/// records the decision.
+/// explains why.
 #[pyo3::pymodule(name = "_rs", gil_used = true)]
 mod rs_module {
     use pyo3::prelude::*;

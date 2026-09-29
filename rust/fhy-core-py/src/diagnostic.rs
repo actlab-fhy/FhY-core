@@ -8,12 +8,11 @@
 //! its operations over the Rust diagnostics borrowed from those objects,
 //! as the core's `ValidationReport` does over its own.
 //!
-//! The Python API is the one the retired pure-Python dataclasses had, with
-//! their reprs, their `format()` text, their payloads and their exceptions:
-//! the Rust core's `Display` text never reaches Python. The public classes
-//! register themselves with the binding at import, so a value the binding
-//! builds from Rust, such as a note's kind, is an instance of the public
-//! class.
+//! The Python API has dataclass reprs and its own `format()` text, payloads
+//! and exceptions: the Rust core's `Display` text never reaches Python. The
+//! public classes register themselves with the binding at import, so a
+//! value the binding builds from Rust, such as a note's kind, is an
+//! instance of the public class.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
