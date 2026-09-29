@@ -477,9 +477,9 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
                             type_name(value)
                         ),
                     );
-                    if let Ok(cause) = crate::exceptions::unbox_py_err(error) {
-                        refused.set_cause(py, Some(cause));
-                    }
+                    // The opaque value is a Python object, so the error is
+                    // the exception its hash raised.
+                    refused.set_cause(py, Some(crate::exceptions::boxed_error_to_py(error)));
                     return Err(refused);
                 }
             }

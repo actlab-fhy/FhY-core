@@ -104,9 +104,9 @@ fn unusable_binding_error(
                      type {value_type} cannot be checked for membership."
                 ),
             );
-            if let Ok(cause) = crate::exceptions::unbox_py_err(source) {
-                error.set_cause(py, Some(cause));
-            }
+            // Every opaque value in the binding is a Python object, so the
+            // source is the exception its hash raised.
+            error.set_cause(py, Some(crate::exceptions::boxed_error_to_py(source)));
             error
         }
         UnusableBindingReason::NotALiteral if !is_literal_type(value).unwrap_or(false) => {
