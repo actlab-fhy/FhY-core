@@ -1,6 +1,6 @@
 [package]
 name = "fhy-core-py"
-description = "PyO3 extension module exposing fhy-core to Python as fhy_core._rs."
+description = "The PyO3 binding of fhy-core as a library: registers fhy_core's Python classes into an extension module."
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -11,7 +11,7 @@ repository.workspace = true
 
 [lib]
 name = "fhy_core_py"
-crate-type = ["cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 fhy-core = { workspace = true, features = ["ndarray"] }

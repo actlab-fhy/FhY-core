@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["rust/fhy-core", "rust/fhy-core-py"]
+members = ["rust/fhy-core", "rust/fhy-core-py", "rust/fhy-core-ext"]
 
 [workspace.package]
 # Also the Python package version: maturin derives it from this one.
