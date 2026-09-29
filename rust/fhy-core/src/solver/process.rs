@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -23,9 +23,11 @@ use crate::foreign::BoxError;
 /// `(set-option :print-success false)`, the script and `(check-sat)` to its
 /// standard input, and reads the answer from its standard output: `sat`,
 /// `unsat`, or `unknown`, after which it asks `(get-info :reason-unknown)`
-/// and reads the reason. A `success` line before the answer, which a
-/// solver that starts with `:print-success` on may print for the first
-/// command, is skipped. The check then writes `(exit)` and closes the
+/// and reads the reason; a program that closes its output before giving
+/// one answers `unknown` with the reason
+/// `"the solver closed its output before giving a reason"`. A `success`
+/// line before the answer, which a solver that starts with
+/// `:print-success` on may print for the first command, is skipped. The check then writes `(exit)` and closes the
 /// input.
 ///
 /// [`CheckLimits::timeout`] bounds the whole call. The input is written
@@ -49,7 +51,9 @@ use crate::foreign::BoxError;
 /// terminal's interrupt does not reach it.
 ///
 /// The program is run as configured; nothing searches for a solver. Its
-/// standard error is discarded.
+/// standard error is read as it is written, and the first 4 KiB of it are
+/// kept for the error of a program that exits or closes its output before
+/// answering.
 ///
 /// # Examples
 ///
@@ -110,7 +114,7 @@ impl SmtLib2Process {
             .args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         command
@@ -165,13 +169,15 @@ impl SmtSolver for SmtLib2Process {
                 let grace_end = Instant::now() + EXIT_GRACE;
                 let exit_by = deadline.map_or(grace_end, |deadline| deadline.min(grace_end));
                 if let Some(status) = wait_until(&mut child, exit_by) {
-                    return Err(Box::new(ProcessError::Exited(Some(status))));
+                    let stderr = session.read_stderr();
+                    return Err(Box::new(ProcessError::Exited { status, stderr }));
                 }
                 kill(&mut child);
                 if exit_by < grace_end {
                     Ok(timed_out())
                 } else {
-                    Err(Box::new(ProcessError::ClosedOutput))
+                    let stderr = session.read_stderr();
+                    Err(Box::new(ProcessError::ClosedOutput { stderr }))
                 }
             }
             Err(Failure::Error(error)) => {
@@ -185,6 +191,17 @@ impl SmtSolver for SmtLib2Process {
 /// The time a program has to exit after its last command when the check
 /// has no deadline, and at most after closing its output unanswered.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
+
+/// The most of a program's standard error that is kept, in bytes.
+const STDERR_KEPT: usize = 4096;
+
+/// The time the standard error of a program that exited or was killed has
+/// to reach its end.
+const STDERR_WAIT: Duration = Duration::from_millis(100);
+
+/// The reason of an `unknown` answer whose program closed its output
+/// before giving one.
+const NO_REASON: &str = "the solver closed its output before giving a reason";
 
 /// The longest pause between two looks at whether a program has exited.
 const LONGEST_POLL: Duration = Duration::from_millis(10);
@@ -219,21 +236,26 @@ impl From<ProcessError> for Failure {
 }
 
 /// The talk with one running program: the commands its input thread
-/// writes, the lines its output thread reads, and the deadline.
+/// writes, the lines its output thread reads, the start of its standard
+/// error, which a third thread reads, and the deadline.
 struct Session {
     /// The input thread's queue, or `None` once the input is closed. The
     /// thread closes the program's input when the queue is dropped and
     /// drained, or when a write fails.
     commands: Option<Sender<Vec<u8>>>,
     lines: Receiver<io::Result<String>>,
+    /// The kept bytes of the standard error, in the chunks they were read.
+    stderr: Receiver<Vec<u8>>,
     deadline: Option<Instant>,
 }
 
 impl Session {
-    /// Take the program's input and output, and start the threads writing
-    /// the one and reading the other.
+    /// Take the program's input, output and standard error, and start the
+    /// threads writing the first and reading the others.
     fn start(child: &mut Child, deadline: Option<Instant>) -> Result<Self, ProcessError> {
-        let (Some(mut input), Some(output)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(mut input), Some(output), Some(errors)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
             return Err(ProcessError::Io(io::Error::other(
                 "the solver's standard streams are not piped",
             )));
@@ -263,6 +285,7 @@ impl Session {
         Ok(Self {
             commands: Some(commands),
             lines,
+            stderr: drain_stderr(errors),
             deadline,
         })
     }
@@ -280,7 +303,7 @@ impl Session {
                 match reason {
                     Ok(reason) => SatResult::Unknown { reason },
                     Err(Failure::Closed) => SatResult::Unknown {
-                        reason: String::new(),
+                        reason: NO_REASON.to_owned(),
                     },
                     Err(failure) => return Err(failure),
                 }
@@ -310,6 +333,21 @@ impl Session {
     /// Close the program's input once the queued commands are written.
     fn close_input(&mut self) {
         self.commands = None;
+    }
+
+    /// Return the kept start of the standard error of the program, which
+    /// exited or was killed, lossily decoded, once its end is read or
+    /// [`STDERR_WAIT`] has passed.
+    fn read_stderr(&self) -> String {
+        let by = Instant::now() + STDERR_WAIT;
+        let mut kept = Vec::new();
+        while let Ok(chunk) = self
+            .stderr
+            .recv_timeout(by.saturating_duration_since(Instant::now()))
+        {
+            kept.extend(chunk);
+        }
+        String::from_utf8_lossy(&kept).into_owned()
     }
 
     /// Return the first line of output that is neither blank nor
@@ -345,6 +383,41 @@ impl Session {
             }
         }
     }
+}
+
+/// Start the thread reading the standard error `errors` to its end, so
+/// the program never blocks on a full pipe, and return the queue of the
+/// chunks of its first [`STDERR_KEPT`] bytes.
+///
+/// A read that fails ends the thread: the standard error only adds detail
+/// to another failure, so its error is dropped.
+fn drain_stderr(mut errors: impl Read + Send + 'static) -> Receiver<Vec<u8>> {
+    let (sender, chunks) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = [0; 1024];
+        let mut kept = 0;
+        loop {
+            let read = match errors.read(&mut buffer) {
+                Ok(0) => return,
+                Ok(read) => read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    drop(error);
+                    return;
+                }
+            };
+            let keep = read.min(STDERR_KEPT - kept);
+            if keep > 0 {
+                kept += keep;
+                // A check that no longer waits has dropped the queue; the
+                // rest is still drained.
+                if let Err(unwanted) = sender.send(buffer[..keep].to_vec()) {
+                    drop(unwanted);
+                }
+            }
+        }
+    });
+    chunks
 }
 
 /// Return the reason of a `(:reason-unknown ...)` line, unquoted, or the
@@ -450,12 +523,20 @@ pub enum ProcessError {
     /// `unknown`, given whole.
     UnexpectedAnswer(String),
     /// The program exited before answering.
-    Exited(Option<ExitStatus>),
+    Exited {
+        /// Its exit status.
+        status: ExitStatus,
+        /// The first 4 KiB of its standard error, lossily decoded.
+        stderr: String,
+    },
     /// The program closed its output before answering, and did not exit
     /// within two seconds of closing it, so it was killed. A check whose
     /// deadline comes first answers `unknown` for it instead, at the
     /// deadline.
-    ClosedOutput,
+    ClosedOutput {
+        /// The first 4 KiB of its standard error, lossily decoded.
+        stderr: String,
+    },
 }
 
 impl fmt::Display for ProcessError {
@@ -469,22 +550,35 @@ impl fmt::Display for ProcessError {
             Self::UnexpectedAnswer(line) => {
                 write!(f, "the solver answered {line:?}, not sat, unsat or unknown")
             }
-            Self::Exited(Some(status)) => {
-                write!(f, "the solver exited before answering ({status})")
+            Self::Exited { status, stderr } => {
+                write!(f, "the solver exited before answering ({status})")?;
+                write_stderr(f, stderr)
             }
-            Self::Exited(None) => f.write_str("the solver exited before answering"),
-            Self::ClosedOutput => f.write_str("the solver closed its output before answering"),
+            Self::ClosedOutput { stderr } => {
+                f.write_str("the solver closed its output before answering")?;
+                write_stderr(f, stderr)
+            }
         }
     }
+}
+
+/// Write `stderr`, trimmed and quoted on one line, unless it is blank.
+fn write_stderr(f: &mut fmt::Formatter<'_>, stderr: &str) -> fmt::Result {
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        return Ok(());
+    }
+    write!(f, "; its standard error: {stderr:?}")
 }
 
 impl Error for ProcessError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Spawn { source, .. } | Self::Io(source) => Some(source),
-            Self::Solver(_) | Self::UnexpectedAnswer(_) | Self::Exited(_) | Self::ClosedOutput => {
-                None
-            }
+            Self::Solver(_)
+            | Self::UnexpectedAnswer(_)
+            | Self::Exited { .. }
+            | Self::ClosedOutput { .. } => None,
         }
     }
 }

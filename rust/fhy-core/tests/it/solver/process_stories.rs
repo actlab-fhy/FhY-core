@@ -158,7 +158,62 @@ fn process_reports_a_missing_program() {
 fn process_reports_a_solver_that_exits_before_answering() {
     let error = expect_process_error(check(&build_fake("exit 3")));
 
-    assert!(matches!(error, ProcessError::Exited(Some(status)) if status.code() == Some(3)));
+    assert!(
+        matches!(&error, ProcessError::Exited { status, stderr } if status.code() == Some(3) && stderr.is_empty()),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "the solver exited before answering (exit status: 3)"
+    );
+}
+
+#[test]
+fn an_exit_error_carries_the_solvers_standard_error() {
+    let error = expect_process_error(check(&build_fake("echo 'no license' >&2; exit 3")));
+
+    assert!(
+        matches!(&error, ProcessError::Exited { stderr, .. } if stderr == "no license\n"),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        r#"the solver exited before answering (exit status: 3); its standard error: "no license""#
+    );
+}
+
+#[test]
+fn a_closed_output_error_carries_the_solvers_standard_error() {
+    let error = expect_process_error(check(&build_fake(
+        "echo 'out of memory' >&2; exec 1>&-; sleep 30",
+    )));
+
+    assert!(
+        matches!(&error, ProcessError::ClosedOutput { stderr } if stderr == "out of memory\n"),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        r#"the solver closed its output before answering; its standard error: "out of memory""#
+    );
+}
+
+#[test]
+fn only_the_start_of_a_long_standard_error_is_kept_and_the_rest_is_drained() {
+    // 100,000 bytes overflow any pipe buffer, so a solver whose standard
+    // error is not drained would block, and the check would time out.
+    let backend = build_fake("head -c 100000 /dev/zero | tr '\\0' x >&2; exit 3");
+
+    let error = expect_process_error(backend.check(
+        &build_script().1,
+        &CheckLimits::new().with_timeout(Duration::from_secs(20)),
+    ));
+
+    let ProcessError::Exited { stderr, .. } = &error else {
+        panic!("an exit error, got {error:?}");
+    };
+    assert_eq!(stderr.len(), 4096);
+    assert!(stderr.bytes().all(|byte| byte == b'x'), "{stderr:?}");
 }
 
 #[test]
@@ -201,7 +256,7 @@ fn process_answers_through_a_solver() {
 }
 
 #[test]
-fn an_unknown_whose_solver_exits_before_the_reason_has_no_reason() {
+fn an_unknown_whose_solver_exits_before_the_reason_says_so() {
     let backend = build_fake(
         r#"while read -r line; do case "$line" in "(check-sat)") echo unknown; exit 0;; esac; done"#,
     );
@@ -209,7 +264,7 @@ fn an_unknown_whose_solver_exits_before_the_reason_has_no_reason() {
     assert_eq!(
         check(&backend).expect("an answer"),
         SatResult::Unknown {
-            reason: String::new()
+            reason: "the solver closed its output before giving a reason".to_owned()
         }
     );
 }
@@ -260,15 +315,29 @@ fn exit_status_three() -> std::process::ExitStatus {
     r#"the solver answered "maybe", not sat, unsat or unknown"#,
     ProcessSource::None
 )]
-#[case::exited_with_a_status(
-    || ProcessError::Exited(Some(exit_status_three())),
+#[case::exited(
+    || ProcessError::Exited { status: exit_status_three(), stderr: String::new() },
     "the solver exited before answering (exit status: 3)",
     ProcessSource::None
 )]
-#[case::exited(|| ProcessError::Exited(None), "the solver exited before answering", ProcessSource::None)]
+#[case::exited_with_a_standard_error(
+    || ProcessError::Exited { status: exit_status_three(), stderr: "line 1\nline 2\n".to_owned() },
+    r#"the solver exited before answering (exit status: 3); its standard error: "line 1\nline 2""#,
+    ProcessSource::None
+)]
+#[case::exited_with_a_blank_standard_error(
+    || ProcessError::Exited { status: exit_status_three(), stderr: " \n".to_owned() },
+    "the solver exited before answering (exit status: 3)",
+    ProcessSource::None
+)]
 #[case::closed_output(
-    || ProcessError::ClosedOutput,
+    || ProcessError::ClosedOutput { stderr: String::new() },
     "the solver closed its output before answering",
+    ProcessSource::None
+)]
+#[case::closed_output_with_a_standard_error(
+    || ProcessError::ClosedOutput { stderr: "killed\n".to_owned() },
+    r#"the solver closed its output before answering; its standard error: "killed""#,
     ProcessSource::None
 )]
 fn process_error_displays_one_line_and_its_source(
@@ -371,7 +440,10 @@ fn a_solver_that_closes_stdout_without_exiting_before_a_far_deadline_fails() {
     let elapsed = started.elapsed();
 
     let error = expect_process_error(result);
-    assert!(matches!(error, ProcessError::ClosedOutput), "{error:?}");
+    assert!(
+        matches!(&error, ProcessError::ClosedOutput { .. }),
+        "{error:?}"
+    );
     assert!(
         elapsed < Duration::from_secs(10),
         "returned after {elapsed:?}"
@@ -385,7 +457,7 @@ fn a_solver_that_closes_stdout_and_exits_before_the_deadline_reports_its_exit() 
 
     let error = expect_process_error(result);
     assert!(
-        matches!(error, ProcessError::Exited(Some(status)) if status.code() == Some(3)),
+        matches!(&error, ProcessError::Exited { status, .. } if status.code() == Some(3)),
         "{error:?}"
     );
     assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
