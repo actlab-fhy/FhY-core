@@ -26,7 +26,10 @@ pub(crate) use functions::{
     is_bound_expression,
 };
 pub(crate) use objects::{constraint_to_python, domain_to_python};
-pub(crate) use parameter::{PyParam, PyParamAssignment, check_param_bounds_are_ordered};
+pub(crate) use parameter::{
+    PyParam, PyParamAssignment, assignment_from_python, assignment_to_python,
+    check_param_bounds_are_ordered, param_from_python, param_to_python,
+};
 
 /// Return the core domain of the Python domain `object`: a built-in kind's
 /// own, and a custom domain for any other `ParamDomain`.

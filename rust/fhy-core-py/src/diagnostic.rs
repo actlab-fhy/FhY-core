@@ -645,6 +645,43 @@ impl PyValidationReport {
     }
 }
 
+/// Return the Rust diagnostics of the Python `ValidationReport` `object`,
+/// in the report's order.
+///
+/// # Errors
+///
+/// Raises `TypeError` if `object` is not a `ValidationReport`.
+pub(crate) fn report_diagnostics_from_python(
+    object: &Bound<'_, PyAny>,
+) -> PyResult<Vec<Diagnostic>> {
+    let report = object
+        .cast::<PyValidationReport>()
+        .map_err(|_not_a_report| {
+            pyo3::exceptions::PyTypeError::new_err(format!(
+                "expected a ValidationReport, got {}.",
+                object
+                    .get_type()
+                    .name()
+                    .map_or_else(|_| "?".to_owned(), |name| name.to_string())
+            ))
+        })?;
+    report
+        .get()
+        .diagnostics
+        .bind(object.py())
+        .iter()
+        .map(|diagnostic| {
+            borrow_python_diagnostic(&diagnostic)
+                .cloned()
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyTypeError::new_err(
+                        "a report holds an object that is no Diagnostic",
+                    )
+                })
+        })
+        .collect()
+}
+
 /// Return a new object of the public `ValidationReport` class of
 /// `diagnostics`, which must hold `Diagnostic`s, and `records`.
 pub(crate) fn report_to_python<'py>(

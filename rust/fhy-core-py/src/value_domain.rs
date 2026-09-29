@@ -59,6 +59,46 @@ static IDENTITY_CACHE: IdentityCache = IdentityCache::new();
 #[pyclass(frozen, module = "fhy_core._rs")]
 pub(crate) struct ValueDomainSeed(Seed<PyValueDomain>);
 
+/// Return the canonical domain of the Python `ValueDomain` `object`.
+///
+/// # Errors
+///
+/// Raises `TypeError` if `object` is not a `ValueDomain`.
+pub(crate) fn value_domain_from_python(
+    object: &Bound<'_, PyAny>,
+) -> PyResult<Canonical<ValueDomain>> {
+    object
+        .cast::<PyValueDomain>()
+        .map(|domain| domain.get().domain.clone())
+        .map_err(|_not_a_domain| {
+            PyTypeError::new_err(format!(
+                "expected a {CLASS_NAME}, got {}.",
+                object
+                    .get_type()
+                    .name()
+                    .map_or_else(|_| "?".to_owned(), |name| name.to_string())
+            ))
+        })
+}
+
+/// Return the single Python object of the canonical `domain`, an instance
+/// of the public `ValueDomain` class.
+///
+/// # Errors
+///
+/// Raises what importing `fhy_core.value_domain` or building the object
+/// raises.
+pub(crate) fn value_domain_to_python(
+    py: Python<'_>,
+    domain: Canonical<ValueDomain>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let class = py
+        .import("fhy_core.value_domain")?
+        .getattr("ValueDomain")?
+        .cast_into::<PyType>()?;
+    PyValueDomain::to_python(&class, domain, None)
+}
+
 /// Open classification of the kind of value an IR operation handles, backed
 /// by the canonical Rust [`ValueDomain`].
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "ValueDomain")]

@@ -16,7 +16,7 @@
 //!   crate, whose one `#[pymodule]` calls [`register`];
 //! - an aggregate extension for a downstream product is a `cdylib` whose
 //!   `#[pymodule]` calls [`register`] and then its own crates' registration
-//!   functions, and takes and returns `fhy-core` values through the binding's conversions.
+//!   functions, and takes and returns `fhy-core` values through [`convert`].
 //!
 //! The split into a library and a thin `cdylib` is deliberate. A `#[pymodule]`
 //! exports a `PyInit_<name>` symbol, which an `rlib` that is linked into an
@@ -70,6 +70,8 @@ mod term;
 mod types;
 mod value_domain;
 mod wire;
+
+pub mod convert;
 
 use pyo3::prelude::*;
 

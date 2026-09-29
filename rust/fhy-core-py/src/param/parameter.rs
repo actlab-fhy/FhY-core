@@ -1541,6 +1541,62 @@ fn read_param(other: &Bound<'_, PyAny>) -> PyResult<Param> {
         })
 }
 
+/// Return the core param of the Python `Param` `object`.
+///
+/// # Errors
+///
+/// Raises `TypeError` if `object` is not a `Param`.
+pub(crate) fn param_from_python(object: &Bound<'_, PyAny>) -> PyResult<Param> {
+    read_param(object)
+}
+
+/// Return a new object of the public `Param` class holding `param`, over
+/// new objects of its domain, variable and constraints.
+///
+/// # Errors
+///
+/// Raises what building an object of a part raises.
+pub(crate) fn param_to_python<'py>(py: Python<'py>, param: &Param) -> PyResult<Bound<'py, PyAny>> {
+    let domain = domain_to_python(py, param.domain())?;
+    let variable = identifier_to_python(py, param.variable())?;
+    build_param_object(py, param.clone(), &domain, &variable, &[])
+}
+
+/// Return the core assignment of the Python `ParamAssignment` `object`.
+///
+/// # Errors
+///
+/// Raises `TypeError` if `object` is not a `ParamAssignment`.
+pub(crate) fn assignment_from_python(object: &Bound<'_, PyAny>) -> PyResult<ParamAssignment> {
+    object
+        .cast::<PyParamAssignment>()
+        .map(|assignment| assignment.get().core.clone())
+        .map_err(|_not_an_assignment| {
+            PyTypeError::new_err(format!(
+                "expected a ParamAssignment, got {}.",
+                type_name(object)
+            ))
+        })
+}
+
+/// Return a new object of the public `ParamAssignment` class holding
+/// `assignment`, over new objects of its param and value.
+///
+/// The assignment was checked when it was built, so the object is not
+/// checked again.
+///
+/// # Errors
+///
+/// Raises what building an object of a part raises.
+pub(crate) fn assignment_to_python<'py>(
+    py: Python<'py>,
+    assignment: &ParamAssignment,
+) -> PyResult<Bound<'py, PyAny>> {
+    let param = param_to_python(py, assignment.param())?.cast_into::<PyParam>()?;
+    let value = crate::constraint::value_to_python(py, assignment.value())?;
+    build_assignment(&param, &value, assignment.clone())
+}
+
 /// Return `this` with the bound `bound` of `side` added.
 fn add_bound<'py>(
     this: &Bound<'py, PyParam>,
