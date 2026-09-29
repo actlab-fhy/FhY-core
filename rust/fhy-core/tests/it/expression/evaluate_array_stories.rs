@@ -173,7 +173,7 @@ fn a_broadcast_too_large_to_reserve_is_an_error() {
     let (x, x_reference) = build_identifier("x");
     let (y, y_reference) = build_identifier("y");
     let one = arr0(1_i64).into_dyn();
-    let (column, row) = build_broadcast_pair(&one, 1 << 20, 1 << 20);
+    let (column, row) = build_broadcast_pair(&one, 1 << 30, 1 << 29);
 
     let error = evaluate(
         &(x_reference + y_reference),
@@ -182,15 +182,15 @@ fn a_broadcast_too_large_to_reserve_is_an_error() {
             (&y, ArrayBinding::Int(row)),
         ],
     )
-    .expect_err("2^40 integer lanes cannot be reserved");
+    .expect_err("2^59 integer lanes, 4 EiB, cannot be reserved on any platform");
 
     assert!(
-        matches!(error, EvaluationError::OutOfMemory { lanes } if lanes == 1 << 40),
+        matches!(error, EvaluationError::OutOfMemory { lanes } if lanes == 1 << 59),
         "got {error:?}"
     );
     assert_eq!(
         error.to_string(),
-        "cannot allocate the 1099511627776 lanes of the result"
+        "cannot allocate the 576460752303423488 lanes of the result"
     );
 }
 

@@ -419,16 +419,18 @@ def test_the_screen_runs_before_the_bound_constant_refusal() -> None:
 
 @pytest.mark.subprocess
 @pytest.mark.parametrize(
-    ("exponent", "exception"),
-    [(20, "MemoryError"), (33, "ValueError")],
+    ("row_exponent", "column_exponent", "exception"),
+    [(30, 29, "MemoryError"), (33, 33, "ValueError")],
     ids=["too_large_to_reserve", "lane_count_overflows"],
 )
 def test_a_huge_broadcast_raises_instead_of_aborting(
-    exponent: int, exception: str
+    row_exponent: int, column_exponent: int, exception: str
 ) -> None:
-    """Test ``(2**n, 1)`` against ``(1, 2**n)`` raises as NumPy's ``add`` does.
+    """Test ``(2**m, 1)`` against ``(1, 2**n)`` raises as NumPy's ``add`` does.
 
-    The shapes of the audit's probes ``p01`` and ``p02``. Each runs in a
+    ``2**59`` integer lanes need 4 EiB, more address space than any platform
+    has, so reserving them fails even where the allocator overcommits.
+    ``2**66`` lanes are more than an array can hold. Each case runs in a
     subprocess, so an abort fails the test instead of killing the run.
     """
     completed = subprocess.run(
@@ -443,8 +445,8 @@ from fhy_core.symbolic.expression import (
     evaluate_expression_with_numpy,
 )
 x, y = Identifier("x"), Identifier("y")
-a = np.broadcast_to(np.int64(1), (2**{exponent}, 1))
-b = np.broadcast_to(np.int64(1), (1, 2**{exponent}))
+a = np.broadcast_to(np.int64(1), (2**{row_exponent}, 1))
+b = np.broadcast_to(np.int64(1), (1, 2**{column_exponent}))
 try:
     evaluate_expression_with_numpy(
         IdentifierExpression(x) + IdentifierExpression(y), {{x: a, y: b}}
