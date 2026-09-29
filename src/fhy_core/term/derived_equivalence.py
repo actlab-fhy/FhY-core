@@ -30,7 +30,7 @@ The engine runs in the Rust binding: it builds a class's plan from
 of any depth compares. It compares identifiers, expressions, scalars and
 nested derived values without calling their Python methods, and calls
 everything else -- comparators, ``key`` normalizers, hand-written methods
-and ``==`` -- as before. A binder field that repeats an identifier, on
+and ``==`` -- through Python. A binder field that repeats an identifier, on
 either side, pairs with none, so its node is alpha-equivalent to no node,
 itself included.
 """

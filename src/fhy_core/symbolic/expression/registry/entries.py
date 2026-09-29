@@ -13,9 +13,8 @@ the core's ``FunctionDefinition``, ``NativeFunction`` and
 ``NativeConstant``, or, for a built-in's entry, over its item of the core's
 catalogue. Each keeps its field objects, so ``entry.body is body`` holds;
 entries are frozen, and mutating one raises ``FrozenMutationError``. They
-compare, hash and print by their fields, as the dataclasses they replace
-did. A user entry pickles as a call of its class with its fields, a
-built-in's entry as the built-in itself.
+compare, hash and print by their fields. A user entry pickles as a call of
+its class with its fields, a built-in's entry as the built-in itself.
 
 Building an entry checks only the entry itself. Which identifiers a
 function's body may refer to depends on the registry, which checks them

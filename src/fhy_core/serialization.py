@@ -947,7 +947,7 @@ def register_serializable(
         cls: The class to register. Can be provided directly or via a decorator.
         type_id: The type id to register under. If omitted, uses the class' existing
             `_SERIALIZATION_CLASS_TYPE_ID` if present.
-        alias: If True, register `type_id` as an additional (legacy) id for the class
+        alias: If True, register `type_id` as an additional id for the class
             without changing the class' canonical `_SERIALIZATION_CLASS_TYPE_ID`.
             If False (default), `type_id` is treated as the canonical id: it will be
             set on the class (if not already set) and must match if already set.
