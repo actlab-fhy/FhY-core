@@ -14,7 +14,7 @@ use fhy_core::expression::pattern::RewriteRule;
 use fhy_core::foreign::BoxError;
 
 use crate::dataclass::{compare_as_dataclass, format_dataclass_repr, hash_value};
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::public_class::PublicClass;
 
 use super::super::node::{PyExpression, read_expression};
@@ -445,13 +445,12 @@ impl PyRewriteRule {
     /// Do nothing: rules are always frozen, and mutating one raises.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Register `cls` as the public class.
@@ -653,13 +652,12 @@ impl PyFiredRule {
     /// Do nothing: firings are always frozen, and mutating one raises.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Register `cls` as the public class.

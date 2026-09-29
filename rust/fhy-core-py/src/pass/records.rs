@@ -18,7 +18,7 @@ use crate::dataclass::{
     format_dataclass_repr,
 };
 use crate::diagnostic::borrow_python_diagnostic;
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::read_identifier_id;
 use crate::public_class::PublicClass;
 
@@ -111,14 +111,13 @@ macro_rules! define_record_class {
             fn __setattr__(
                 slf: &Bound<'_, Self>,
                 name: &str,
-                value: &Bound<'_, PyAny>,
+                _value: &Bound<'_, PyAny>,
             ) -> PyResult<()> {
-                let _ = value;
-                Err(build_frozen_mutation_error(slf, "modify", name)?)
+                refuse_attribute_assignment(slf, name)
             }
 
             fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-                Err(build_frozen_mutation_error(slf, "delete", name)?)
+                refuse_attribute_deletion(slf, name)
             }
 
             /// Pickle as a constructor call of the record's class with its

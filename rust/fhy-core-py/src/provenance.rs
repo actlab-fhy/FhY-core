@@ -34,7 +34,7 @@ use crate::dataclass::{
     hash_value, read_str,
 };
 use crate::error::{IntoPyErr, IntoPyResult};
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::public_class::PublicClass;
 use crate::serialization::{
     FieldShape, construct_from_decoded_fields, read_payload_fields, serialize_nested,
@@ -412,13 +412,12 @@ impl PyPosition {
         self.position.to_string()
     }
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the position's class.
@@ -644,13 +643,12 @@ impl PySpan {
         self.span.to_string()
     }
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the span's class.
@@ -942,13 +940,12 @@ impl PyProvenance {
         Ok(hash_value(&self.provenance))
     }
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Return the V2 payload, the core's: `{"unknown": {}}`, `{"file":

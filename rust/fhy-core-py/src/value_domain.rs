@@ -325,17 +325,12 @@ impl PyValueDomain {
         ))
     }
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(crate::frozen::build_frozen_mutation_error(
-            slf, "modify", name,
-        )?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        crate::frozen::refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(crate::frozen::build_frozen_mutation_error(
-            slf, "delete", name,
-        )?)
+        crate::frozen::refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as the V2 payload, so unpickling returns the canonical domain.

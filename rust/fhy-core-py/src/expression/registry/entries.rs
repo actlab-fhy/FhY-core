@@ -30,7 +30,7 @@ use crate::dataclass::{
     read_str,
 };
 use crate::error::{IntoPyErr, IntoPyResult};
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::public_class::PublicClass;
 use crate::python::Seed;
@@ -215,14 +215,13 @@ macro_rules! impl_entry_protocols {
             fn __setattr__(
                 slf: &Bound<'_, Self>,
                 name: &str,
-                value: &Bound<'_, PyAny>,
+                _value: &Bound<'_, PyAny>,
             ) -> PyResult<()> {
-                let _ = value;
-                Err(build_frozen_mutation_error(slf, "modify", name)?)
+                refuse_attribute_assignment(slf, name)
             }
 
             fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-                Err(build_frozen_mutation_error(slf, "delete", name)?)
+                refuse_attribute_deletion(slf, name)
             }
 
             /// Return whether `other` has exactly this class and equal fields.

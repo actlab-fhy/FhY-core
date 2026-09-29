@@ -33,7 +33,7 @@ use crate::expression::{
     PyExpression, PyIdentifierExpression, decimal_class, materialize_with_known, read_decimal,
     registry_snapshot,
 };
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::gc::{Slots, collect_slots};
 use crate::identifier::{deserialize_identifier, read_identifier_id, restore_identifier};
 use crate::serialization::{
@@ -346,13 +346,12 @@ impl PyEquationConstraint {
     /// Do nothing: constraints are always frozen, and mutating one raises.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the class.
@@ -866,13 +865,12 @@ macro_rules! set_constraint_class {
             /// raises.
             const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-            fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-                let _ = value;
-                Err(build_frozen_mutation_error(slf, "modify", name)?)
+            fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+                refuse_attribute_assignment(slf, name)
             }
 
             fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-                Err(build_frozen_mutation_error(slf, "delete", name)?)
+                refuse_attribute_deletion(slf, name)
             }
 
             /// Pickle as a constructor call of the class.

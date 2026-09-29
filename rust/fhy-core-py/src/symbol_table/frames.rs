@@ -27,7 +27,7 @@ use crate::dataclass::{
     build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
 };
 use crate::error::IntoPyErr;
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::{deserialize_identifier, restore_identifier, serialize_identifier};
 use crate::serialization::{FieldShape, is_serialized_dict, read_payload_fields, serialize_nested};
 use crate::term::read_renaming;
@@ -299,13 +299,12 @@ impl PyImportSymbolTableFrame {
     /// Do nothing: the built-in frames are always frozen.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     fn __eq__<'py>(
@@ -461,13 +460,12 @@ impl PyVariableSymbolTableFrame {
     /// Do nothing: the built-in frames are always frozen.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     fn __eq__<'py>(
@@ -728,13 +726,12 @@ impl PyFunctionSymbolTableFrame {
     /// Do nothing: the built-in frames are always frozen.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     fn __eq__<'py>(

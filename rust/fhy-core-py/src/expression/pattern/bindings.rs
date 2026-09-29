@@ -11,7 +11,7 @@ use pyo3::types::{PyBool, PyTuple, PyType};
 use fhy_core::expression::pattern::{Capture, MatchBindings};
 
 use crate::dataclass::hash_value;
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::public_class::PublicClass;
 use crate::python::Seed;
 
@@ -256,13 +256,12 @@ impl PyMatchBindings {
     /// Do nothing: bindings are always frozen, and mutating them raises.
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let _ = value;
-        Err(build_frozen_mutation_error(slf, "modify", name)?)
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        Err(build_frozen_mutation_error(slf, "delete", name)?)
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Register `cls` as the public class.

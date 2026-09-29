@@ -24,7 +24,7 @@ use crate::constraint::{
 };
 use crate::dataclass::OptionalArgument;
 use crate::expression::registry_snapshot;
-use crate::frozen::build_frozen_mutation_error;
+use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::restore_identifier;
 use crate::serialization::{construct_from_decoded_fields, is_serialized_dict};
 use crate::solver::{get_default_solver, symbol_type_to_python};
@@ -684,13 +684,12 @@ macro_rules! domain_class {
             /// Do nothing: domains are always frozen, and mutating one raises.
             const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
-            fn __setattr__(slf: &Bound<'_, Self>, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-                let _ = value;
-                Err(build_frozen_mutation_error(slf, "modify", name)?)
+            fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+                refuse_attribute_assignment(slf, name)
             }
 
             fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-                Err(build_frozen_mutation_error(slf, "delete", name)?)
+                refuse_attribute_deletion(slf, name)
             }
 
             /// Pickle as a constructor call of the class with the fields.

@@ -8,12 +8,25 @@
 
 use pyo3::prelude::*;
 
+/// Refuse to set attribute `name` of the frozen `object`: always
+/// `FrozenMutationError`.
+///
+/// Matches the Python implementation: `FrozenMixin.__setattr__`.
+pub(crate) fn refuse_attribute_assignment(object: &Bound<'_, PyAny>, name: &str) -> PyResult<()> {
+    Err(build_frozen_mutation_error(object, "modify", name)?)
+}
+
+/// Refuse to delete attribute `name` of the frozen `object`: always
+/// `FrozenMutationError`.
+///
+/// Matches the Python implementation: `FrozenMixin.__delattr__`.
+pub(crate) fn refuse_attribute_deletion(object: &Bound<'_, PyAny>, name: &str) -> PyResult<()> {
+    Err(build_frozen_mutation_error(object, "delete", name)?)
+}
+
 /// Return the `FrozenMutationError` for modifying (`action` "modify") or
 /// deleting (`action` "delete") attribute `name` of the frozen `object`.
-///
-/// Matches the Python implementation: `FrozenMixin.__setattr__` and
-/// `FrozenMixin.__delattr__`.
-pub(crate) fn build_frozen_mutation_error(
+fn build_frozen_mutation_error(
     object: &Bound<'_, PyAny>,
     action: &str,
     name: &str,
