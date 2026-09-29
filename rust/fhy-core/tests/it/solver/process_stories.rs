@@ -361,6 +361,37 @@ fn a_solver_that_closes_stdout_without_exiting_times_out() {
 }
 
 #[test]
+fn a_solver_that_closes_stdout_without_exiting_before_a_far_deadline_fails() {
+    let started = Instant::now();
+
+    let result = build_fake("exec 1>&-; sleep 30").check(
+        &build_script().1,
+        &CheckLimits::new().with_timeout(Duration::from_secs(30)),
+    );
+    let elapsed = started.elapsed();
+
+    let error = expect_process_error(result);
+    assert!(matches!(error, ProcessError::ClosedOutput), "{error:?}");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "returned after {elapsed:?}"
+    );
+}
+
+#[test]
+fn a_solver_that_closes_stdout_and_exits_before_the_deadline_reports_its_exit() {
+    let (result, elapsed) =
+        check_with_short_timeout(&build_fake("exec 1>&-; exit 3"), &build_script().1);
+
+    let error = expect_process_error(result);
+    assert!(
+        matches!(error, ProcessError::Exited(Some(status)) if status.code() == Some(3)),
+        "{error:?}"
+    );
+    assert!(elapsed < ON_TIME, "returned after {elapsed:?}");
+}
+
+#[test]
 fn a_wrappers_grandchild_is_killed_with_the_group() {
     let pid_file = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("fhy-smt-grandchild-{}.pid", std::process::id()));

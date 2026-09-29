@@ -34,8 +34,10 @@ use crate::foreign::BoxError;
 /// not answered in time is killed, and the check answers `unknown` with
 /// the reason `"timeout"`. After its answer, a program has until the
 /// deadline to exit, or two seconds when there is none, and is then
-/// killed; a program that closes its output without exiting is given the
-/// same time.
+/// killed. A program that closes its output without answering has two
+/// seconds to exit, or until the deadline when that comes first; one that
+/// does not is killed, and the check fails, or answers `unknown` with the
+/// reason `"timeout"` when the deadline passed first.
 ///
 /// On Unix, the program runs in a process group of its own, and a kill
 /// signals the whole group, so a wrapper script's solver dies with it. The
@@ -160,11 +162,13 @@ impl SmtSolver for SmtLib2Process {
                 Ok(timed_out())
             }
             Err(Failure::Closed) => {
-                if let Some(status) = wait_until(&mut child, exit_deadline(deadline)) {
+                let grace_end = Instant::now() + EXIT_GRACE;
+                let exit_by = deadline.map_or(grace_end, |deadline| deadline.min(grace_end));
+                if let Some(status) = wait_until(&mut child, exit_by) {
                     return Err(Box::new(ProcessError::Exited(Some(status))));
                 }
                 kill(&mut child);
-                if deadline.is_some() {
+                if exit_by < grace_end {
                     Ok(timed_out())
                 } else {
                     Err(Box::new(ProcessError::ClosedOutput))
@@ -179,7 +183,7 @@ impl SmtSolver for SmtLib2Process {
 }
 
 /// The time a program has to exit after its last command when the check
-/// has no deadline.
+/// has no deadline, and at most after closing its output unanswered.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 
 /// The longest pause between two looks at whether a program has exited.
@@ -448,8 +452,9 @@ pub enum ProcessError {
     /// The program exited before answering.
     Exited(Option<ExitStatus>),
     /// The program closed its output before answering, and did not exit
-    /// within two seconds of its last command, so it was killed. A check
-    /// with a timeout answers `unknown` for it instead, at the deadline.
+    /// within two seconds of closing it, so it was killed. A check whose
+    /// deadline comes first answers `unknown` for it instead, at the
+    /// deadline.
     ClosedOutput,
 }
 
