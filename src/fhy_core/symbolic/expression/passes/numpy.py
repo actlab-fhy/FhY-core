@@ -1,11 +1,11 @@
 """Evaluate an expression over NumPy values.
 
-The evaluation runs in the Rust core (``fhy_core::expression::evaluate``,
-S9 of ``docs/design/python-switch.md``), over NumPy arrays read through
-rust-numpy. :func:`evaluate_expression_with_numpy` inlines composed
-built-ins and registered functions, converts the environment's bindings
-of the identifiers the inlined tree refers to, and walks the tree once,
-broadcasting as NumPy does.
+The evaluation runs in the Rust core (``fhy_core::expression::evaluate``),
+over NumPy arrays read through rust-numpy.
+:func:`evaluate_expression_with_numpy` inlines composed built-ins and
+registered functions, converts the environment's bindings of the identifiers
+the inlined tree refers to, and walks the tree once, broadcasting as NumPy
+does.
 
 The evaluation computes in three domains: ``bool``, ``int64`` and
 ``float64``. A binding of another Boolean, integer or floating-point dtype

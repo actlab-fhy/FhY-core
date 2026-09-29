@@ -1,7 +1,7 @@
 """Core compiler pass abstractions and registration.
 
 The pass machinery is backed by the Rust implementation (``fhy_core._rs``),
-with the Rust core's semantics (S6 of ``docs/design/python-switch.md``):
+with the Rust core's semantics:
 
 - `CompilerPass` is a Python abstract class over ``_rs.CompilerPassBase``.
   A subclass implements the hooks under their Python names, and the Rust

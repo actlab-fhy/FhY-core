@@ -20,8 +20,7 @@ a verification pass runs as a check, so it never verifies anything
 itself.
 
 The registry is the Rust core's ``fhy_core::pass::VerificationRegistry``,
-held in the extension's module state (S14 of
-``docs/design/python-switch.md``). It keys registrations by IR type and
+held in the extension's module state. It keys registrations by IR type and
 looks them up along ``reversed(type(ir).__mro__)``. The classes here are
 thin layers over ``fhy_core._rs``.
 """

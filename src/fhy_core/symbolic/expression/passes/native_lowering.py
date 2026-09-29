@@ -1,10 +1,9 @@
 """Lowering of expression literals and constants to Python values.
 
-The two literal helpers run in the Rust core (``Decimal::to_f64_exact``,
-S9 of ``docs/design/python-switch.md``), which the evaluators use too: a
-decimal becomes a binary ``float`` only when the float equals it exactly,
-so ``0.5`` converts and ``0.1`` is refused. The SymPy bridge
-(:mod:`fhy_core.symbolic.expression.passes.sympy`) asks
+The two literal helpers run in the Rust core (``Decimal::to_f64_exact``),
+which the evaluators use too: a decimal becomes a binary ``float`` only when
+the float equals it exactly, so ``0.5`` converts and ``0.1`` is refused. The
+SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) asks
 :func:`is_decimal_text_exactly_binary` before it writes a rational as
 decimal text, so every decimal literal it emits is one the evaluators
 accept.

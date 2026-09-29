@@ -7,13 +7,12 @@ is parallel to ``StructuralEquivalence``; structurally-equivalent pairs
 are always alpha-equivalent, but alpha-equivalent pairs need not be
 structurally equivalent.
 
-The renaming state is carried by ``AlphaRenaming``: a stack of binder
-frames plus a free-identifier bijection. Binder nodes ``extend`` the
-renaming when they recurse into their bodies; identifier-reference
-nodes consult the renaming to compare their identifiers. It is the
-Rust-backed ``fhy_core._rs.AlphaRenaming``, over the Rust core's
-``fhy_core::term::AlphaRenaming``, and so is the mapping helper
-(S10 of ``docs/design/python-switch.md``).
+The renaming state is carried by ``AlphaRenaming``: a stack of binder frames
+plus a free-identifier bijection. Binder nodes ``extend`` the renaming when
+they recurse into their bodies; identifier-reference nodes consult the
+renaming to compare their identifiers. It is the Rust-backed
+``fhy_core._rs.AlphaRenaming``, over the Rust core's
+``fhy_core::term::AlphaRenaming``, and so is the mapping helper.
 
 For IR nodes whose attributes include ``Mapping[Identifier, V]``
 collections (substitutions, parallel let-groups, identifier-keyed

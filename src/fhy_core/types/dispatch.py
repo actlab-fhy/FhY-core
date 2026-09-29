@@ -25,14 +25,13 @@ Downstream packages defining new ``Type`` or ``DataType`` subclasses
 register handlers against these dispatchers from wherever the class is
 defined; no modification to ``fhy_core`` is required.
 
-The rules of the built-in classes, and each dispatcher's default, run in
-the Rust core (S11a of ``docs/design/python-switch.md``). When the core
-meets a Python-defined type or data type inside a built-in one, or as an
-argument, it calls the handler registered for its class, once per such
-node; a class without a handler gets the default rule, without a call into
-Python. A handler registered again for a built-in class serves direct
-calls of the dispatcher on that class; the core handles the built-in nodes
-it meets itself.
+The rules of the built-in classes, and each dispatcher's default, run in the
+Rust core. When the core meets a Python-defined type or data type inside a
+built-in one, or as an argument, it calls the handler registered for its
+class, once per such node; a class without a handler gets the default rule,
+without a call into Python. A handler registered again for a built-in class
+serves direct calls of the dispatcher on that class; the core handles the
+built-in nodes it meets itself.
 
 Template placeholders are scoped by their underlying ``Identifier`` --- the
 same id-based equality used everywhere else in ``fhy_core``. Two

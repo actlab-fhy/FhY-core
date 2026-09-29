@@ -1,8 +1,7 @@
 """General expression tree.
 
-The expression classes are backed by the Rust core, ``fhy_core::expression``
-(pattern P2 of ``docs/design/python-switch.md``), and take its semantics
-(decision D-S4-1):
+The expression classes are backed by the Rust core, ``fhy_core::expression``,
+and take its semantics:
 
 - ``==`` and ``hash`` are structural: two separately built expressions of
   the same structure are equal and hash alike, and each expression computes
@@ -19,7 +18,7 @@ The expression classes are backed by the Rust core, ``fhy_core::expression``
 
 ``BinaryOperation.MODULO`` keeps its name and means the remainder of floor
 division; its value is the core's name, ``"floor_mod"``. Payloads keep the
-``__type__``/``__data__`` envelope (D-S4-5).
+``__type__``/``__data__`` envelope.
 """
 
 __all__ = [

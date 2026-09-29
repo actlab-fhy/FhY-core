@@ -1,8 +1,8 @@
 """Lattice (order theory) utility.
 
-Backed by the Rust implementation (S11a of ``docs/design/python-switch.md``):
-``fhy_core._rs.Lattice`` keeps its elements as the partially ordered set
-does, and computes meets, joins and the missing bounds in the Rust core.
+Backed by the Rust implementation: ``fhy_core._rs.Lattice`` keeps its
+elements as the partially ordered set does, and computes meets, joins and
+the missing bounds in the Rust core.
 """
 
 __all__ = ["Lattice"]

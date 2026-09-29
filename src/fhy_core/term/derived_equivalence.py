@@ -24,12 +24,11 @@ role metadata) raises :class:`EquivalenceDerivationError`, naming the
 field; supply :func:`compared_with` or :func:`compared_as_value` to
 resolve it.
 
-The engine runs in the Rust binding (S10 of
-``docs/design/python-switch.md``): it builds a class's plan from
+The engine runs in the Rust binding: it builds a class's plan from
 ``dataclasses.fields`` on the first comparison and keeps it in
-``_PLAN_CACHE``, and walks nested derived values on its own stack, so a
-tree of any depth compares. It compares identifiers, expressions, scalars
-and nested derived values without calling their Python methods, and calls
+``_PLAN_CACHE``, and walks nested derived values on its own stack, so a tree
+of any depth compares. It compares identifiers, expressions, scalars and
+nested derived values without calling their Python methods, and calls
 everything else -- comparators, ``key`` normalizers, hand-written methods
 and ``==`` -- as before. A binder field that repeats an identifier, on
 either side, pairs with none, so its node is alpha-equivalent to no node,

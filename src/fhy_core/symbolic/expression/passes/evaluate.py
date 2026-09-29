@@ -1,9 +1,8 @@
 """Fold native call sites and constant references.
 
-The fold runs in the Rust core (``Evaluator::fold``, S9 of
-``docs/design/python-switch.md``), over a snapshot of the function
-registry. It performs two narrow rewrites, bottom-up, once per distinct
-node:
+The fold runs in the Rust core (``Evaluator::fold``), over a snapshot of the
+function registry. It performs two narrow rewrites, bottom-up, once per
+distinct node:
 
 1. A ``CallExpression`` of a native function whose arguments are all
    :class:`LiteralExpression` becomes the literal it computes. A native

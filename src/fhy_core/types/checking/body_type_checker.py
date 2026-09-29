@@ -8,12 +8,11 @@ parameter identifier to the concrete core data type derived from its
 sort, then checks that the synthesized core data type is compatible
 with the declared ``result_sort``.
 
-The check runs in the Rust core (D-S11-22 of
-``docs/design/python-switch.md``), which reports each failure with one
-lowercase line naming the function. Forward-declared calls inside the
-body (calls to functions not yet registered) are tolerated: with
-``defer_unresolved_calls`` set, an unresolved call name abandons the
-check and the pass returns ``None``: "trust the declared target sort; the
+The check runs in the Rust core, which reports each failure with one
+lowercase line naming the function. Forward-declared calls inside the body
+(calls to functions not yet registered) are tolerated: with
+``defer_unresolved_calls`` set, an unresolved call name abandons the check
+and the pass returns ``None``: "trust the declared target sort; the
 call-site check enforces the actual signature at use time."
 
 :func:`check_all_registered_function_bodies` applies that per-function

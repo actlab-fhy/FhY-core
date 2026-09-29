@@ -91,7 +91,7 @@ addopts = "-n auto -rfEs --strict-markers --durations=20 -m 'not slow'"
 timeout = 600
 timeout_method = "thread"
 # A test that reads or writes the deprecated V1 wire format says so (tests/v1.py);
-# an unmarked V1 warning fails the test (R2-N4).
+# an unmarked V1 warning fails the test.
 filterwarnings = ["error:.*V1 wire format.*:DeprecationWarning"]
 markers = [
     "slow: takes more than ~1s; excluded from default run",

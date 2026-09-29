@@ -1,11 +1,11 @@
 """Core type system.
 
-Backed by the Rust implementation (S11a of ``docs/design/python-switch.md``):
-the four built-in classes are thin subclasses of their ``fhy_core._rs``
-classes, which hold the Rust type and the objects each was built from, and
-compare and hash structurally. Promotion and literal resolution run in the
-Rust core, over its promotion orders. ``CoreDataType`` and ``TypeQualifier``
-stay Python enums, converted by value at the boundary.
+Backed by the Rust implementation: the four built-in classes are thin
+subclasses of their ``fhy_core._rs`` classes, which hold the Rust type and
+the objects each was built from, and compare and hash structurally.
+Promotion and literal resolution run in the Rust core, over its promotion
+orders. ``CoreDataType`` and ``TypeQualifier`` stay Python enums, converted
+by value at the boundary.
 
 ``Type`` and ``DataType`` stay open to subclassing: a subclass Python
 defines is frozen at the end of its outermost ``__init__``, as

@@ -71,7 +71,7 @@ class Z3Solver(SmtSolver):
         elif result == z3.unknown:
             reason = solver.reason_unknown()
             # The simple solver stops at its timeout by canceling the check;
-            # a backend that runs out of time answers "timeout" (D-S8-8).
+            # a backend that runs out of time answers "timeout".
             if reason == "canceled" and timeout_milliseconds is not None:
                 reason = "timeout"
             return SatResult.unknown(reason)

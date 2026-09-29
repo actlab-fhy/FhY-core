@@ -1,13 +1,12 @@
 """Expression passes that interface with SymPy, and the SymPy simplifier.
 
 The lowering to SymPy, the simplification with its workarounds, and the
-lifting back run in the Rust core (``fhy_core::solver::SympySimplifier``,
-S12 of ``docs/design/python-switch.md``), so there is one copy of the
-mapping. :class:`SympySimplifier` is that backend, the
-:class:`~fhy_core.symbolic.solver.Simplifier` that ``SolverBackend.SYMPY``
-names; a :class:`~fhy_core.symbolic.solver.Solver` holding it simplifies in
-Rust. The passes and functions below lower, substitute and lift on their own
-through it.
+lifting back run in the Rust core (``fhy_core::solver::SympySimplifier``),
+so there is one copy of the mapping. :class:`SympySimplifier` is that
+backend, the :class:`~fhy_core.symbolic.solver.Simplifier` that
+``SolverBackend.SYMPY`` names; a :class:`~fhy_core.symbolic.solver.Solver`
+holding it simplifies in Rust. The passes and functions below lower,
+substitute and lift on their own through it.
 
 The lowering is exact: a ``bool`` becomes ``sympy.true`` or ``sympy.false``,
 an ``int`` an ``Integer``, a ``float`` the ``Float`` of its binary value, and

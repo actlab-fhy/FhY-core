@@ -996,7 +996,7 @@ def try_get_registered_result_sort(function_name: str) -> FunctionSort | None: .
 def __set_registry_state__(state: Mapping[str, _RegisteredEntry]) -> None: ...
 def inline_functions(expression: _Expression) -> _Expression: ...
 
-# S9: the expression evaluators.
+# The expression evaluators.
 
 class BuiltinNativeImplementation:
     def __call__(self, value: int | float, /) -> int | float: ...
@@ -1010,7 +1010,7 @@ class BuiltinNativeImplementation:
 def fold_expression(expression: _Expression) -> tuple[_Expression, tuple[str, ...]]: ...
 
 # Reads a float64 input array in place, without the GIL: no other thread may
-# write an input array until the call returns (R2-043).
+# write an input array until the call returns.
 def evaluate_expression_with_numpy(
     expression: _Expression, environment: Mapping[Identifier, Any]
 ) -> Any: ...
@@ -1290,7 +1290,7 @@ class ValidationManager:
     def add(self, validator: _Validator[Any] | _CompilerPass[Any, Any]) -> None: ...
     def validate(self, ir: Any) -> _ValidationReport[_ValidatorRecord]: ...
 
-# The verification registry (S14), held in the extension's module state.
+# The verification registry, held in the extension's module state.
 def register_verification_pass(
     ir_type: type, pass_class: type[_CompilerPass[Any, Any]]
 ) -> bool: ...
@@ -1300,7 +1300,7 @@ def get_verification_passes_for(
 def run_verification(ir: Any) -> _ValidationReport[_ValidatorRecord]: ...
 
 # ---------------------------------------------------------------------------
-# The solver (S8)
+# The solver
 # ---------------------------------------------------------------------------
 
 class SmtScript:
@@ -1735,7 +1735,7 @@ def resolve_literal_core_data_type(
     literal: bool | int | float, core_data_type: _CoreDataType
 ) -> _CoreDataType: ...
 
-# S11b: type checking.
+# Type checking.
 
 def types_check_expression(
     expression: _Expression,
@@ -1764,7 +1764,7 @@ def get_core_data_type_from_literal_type(
     literal: bool | int | float | Decimal | str,
 ) -> _CoreDataType: ...
 
-# S13a: constraints.
+# Constraints.
 
 class EquationConstraint(_Constraint):
     def __init__(self, expression: _Expression) -> None: ...
@@ -1926,7 +1926,7 @@ class NotInSetConstraint(_Constraint):
 
 def does_member_lift_to_expression(value: object) -> bool: ...
 
-# S13b: the constraint system.
+# The constraint system.
 
 class ConstraintSystem:
     def __init__(self, constraints: tuple[_Constraint, ...]) -> None: ...
@@ -2102,7 +2102,7 @@ class SymbolTable:
     def __setstate__(self, state: object) -> None: ...
 
 # ---------------------------------------------------------------------------
-# fhy_core::param (S16): the bases of the six domain kinds, and the module
+# fhy_core::param: the bases of the six domain kinds, and the module
 # functions of `fhy_core.symbolic.param.domains`.
 # ---------------------------------------------------------------------------
 

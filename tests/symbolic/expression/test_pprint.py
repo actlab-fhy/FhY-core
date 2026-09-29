@@ -316,11 +316,15 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
 def test_pretty_formatter_refuses_a_subclass_defining_a_visitor() -> None:
     """Test a formatter subclass defining a ``visit_*`` method is refused.
 
-    The core renders the text, with no per-node hook (N-S9-1 of
-    ``docs/design/python-switch.md``), so an override that would be
-    ignored is refused when the class is created.
+    The core renders the text, with no per-node hook, so an override that
+    would be ignored is refused when the class is created.
     """
-    with pytest.raises(TypeError, match=r"visit_literal_expression.*N-S9-1"):
+    with pytest.raises(
+        TypeError,
+        match=r"^_NonStringFormatter defines visit_literal_expression, but "
+        r"ExpressionPrettyFormatter renders through the Rust core and has no "
+        r"per-node hooks\.$",
+    ):
 
         class _NonStringFormatter(ExpressionPrettyFormatter):
             def visit_literal_expression(

@@ -1,10 +1,10 @@
 """Partially ordered set (poset) utility.
 
-Backed by the Rust implementation (S11a of ``docs/design/python-switch.md``):
-``fhy_core._rs.PartiallyOrderedSet`` keeps the elements in a ``dict`` from
-element to position, so membership follows the elements' own ``__hash__``
-and ``__eq__``, and runs the order over the positions in the Rust core,
-where each element keeps its up-set and asking for an order is a bit test.
+Backed by the Rust implementation: ``fhy_core._rs.PartiallyOrderedSet``
+keeps the elements in a ``dict`` from element to position, so membership
+follows the elements' own ``__hash__`` and ``__eq__``, and runs the order
+over the positions in the Rust core, where each element keeps its up-set and
+asking for an order is a bit test.
 """
 
 __all__ = ["PartiallyOrderedSet"]

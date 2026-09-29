@@ -114,7 +114,12 @@ def test_checker_is_a_compiler_pass_but_no_visitable_pass() -> None:
 
 def test_subclass_defining_a_visit_method_is_refused() -> None:
     """Test a subclass with a per-node hook is refused when it is created."""
-    with pytest.raises(TypeError, match=r"visit_binary_expression.*D-S11-20"):
+    with pytest.raises(
+        TypeError,
+        match=r"^_Hooked defines visit_binary_expression, but "
+        r"ExpressionTypeChecker checks through the Rust core and has no "
+        r"per-node hooks\.$",
+    ):
 
         class _Hooked(ExpressionTypeChecker):  # pyright: ignore[reportUnusedClass]
             def visit_binary_expression(self, node: Any) -> Any:

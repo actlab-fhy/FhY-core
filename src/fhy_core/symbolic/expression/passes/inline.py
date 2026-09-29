@@ -3,8 +3,8 @@
 Inlining replaces every call of a composed built-in or of a registered
 :class:`RegisteredFunction` by the function's body with the call's
 arguments substituted for its parameters, and inlines the result in turn.
-It runs in the Rust core (``FunctionRegistry::inline``, decision D-S7-7 of
-``docs/design/python-switch.md``), over a snapshot of the registry:
+It runs in the Rust core (``FunctionRegistry::inline``), over a snapshot of
+the registry:
 
 - Arguments are inlined before they are substituted, and a node that
   occurs in several places is inlined once, so the work is linear in the

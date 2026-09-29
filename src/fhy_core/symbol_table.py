@@ -1,12 +1,12 @@
 """Core symbol table.
 
-Backed by the Rust implementation (S15 of ``docs/design/python-switch.md``):
-``SymbolTable`` and the three built-in frames are thin subclasses of their
-``fhy_core._rs`` classes. The table keeps its namespaces, their parents and
-their symbols in the Rust core, which walks the parent chains, refuses
-shadowing, merges, canonicalizes, compares and verifies; the frames hold
-their Rust values and the objects each was built from. ``FunctionKeyword``
-stays a Python enum, converted by value at the boundary.
+Backed by the Rust implementation: ``SymbolTable`` and the three built-in
+frames are thin subclasses of their ``fhy_core._rs`` classes. The table
+keeps its namespaces, their parents and their symbols in the Rust core,
+which walks the parent chains, refuses shadowing, merges, canonicalizes,
+compares and verifies; the frames hold their Rust values and the objects
+each was built from. ``FunctionKeyword`` stays a Python enum, converted by
+value at the boundary.
 
 ``SymbolTableFrame`` stays the abstract, frozen dataclass base third parties
 subclass. The built-in frames are its virtual subclasses. A table holds a

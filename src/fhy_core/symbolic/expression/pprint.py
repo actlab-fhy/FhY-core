@@ -1,12 +1,11 @@
 """Pretty-printer for expressions.
 
-:func:`pformat_expression` prints the Rust core's text (decision D-S4-1 of
-``docs/design/python-switch.md``): a literal as the core writes it
-(``true``, ``1``, ``NaN``, ``1.5``), a conjunction or disjunction as one
-n-ary node (``(a && b && c)``, functionally ``(and a b c)``), and each
-operation's functional name as its Rust name, which is its member's value
-(``(floor_mod x 3)``). :class:`ExpressionPrettyFormatter` is the same
-rendering as a compiler pass.
+:func:`pformat_expression` prints the Rust core's text: a literal as the
+core writes it (``true``, ``1``, ``NaN``, ``1.5``), a conjunction or
+disjunction as one n-ary node (``(a && b && c)``, functionally
+``(and a b c)``), and each operation's functional name as its Rust name,
+which is its member's value (``(floor_mod x 3)``).
+:class:`ExpressionPrettyFormatter` is the same rendering as a compiler pass.
 """
 
 __all__ = ["pformat_expression"]
@@ -22,8 +21,7 @@ from .core import Expression
 class ExpressionPrettyFormatter(CompilerPass[Expression, str]):
     """Pass formatting an expression as :func:`pformat_expression` does.
 
-    The core renders the text (N-S9-1 of ``docs/design/python-switch.md``,
-    which revises N-S6-3), so the formatter has no per-node hook: a
+    The core renders the text, so the formatter has no per-node hook: a
     subclass defining a ``visit_*`` method is refused when it is created,
     rather than having its override ignored.
     """
@@ -45,7 +43,7 @@ class ExpressionPrettyFormatter(CompilerPass[Expression, str]):
             raise TypeError(
                 f"{cls.__name__} defines {', '.join(overrides)}, but "
                 "ExpressionPrettyFormatter renders through the Rust core and has "
-                "no per-node hooks (N-S9-1 of docs/design/python-switch.md)."
+                "no per-node hooks."
             )
         super().__init_subclass__(**kwargs)
 

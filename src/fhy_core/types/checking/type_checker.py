@@ -31,12 +31,11 @@ stays unchecked even when the enclosing result becomes concrete: with
 ``x`` of type ``int32``, ``x`` plus the negation of ``2**200``
 synthesizes ``int32`` and checks against ``int32``.
 
-The rules run in the Rust core (S11b of ``docs/design/python-switch.md``).
-A broken rule raises :class:`FhYCoreTypeError`, and a construct the
-checker does not support yet (a decimal literal, a tensor operand) raises
-:class:`NotImplementedError`. Every such error is framed by the expression
-checked and, when different, the sub-expression where the rule failed,
-with identifier ids:
+The rules run in the Rust core. A broken rule raises
+:class:`FhYCoreTypeError`, and a construct the checker does not support yet
+(a decimal literal, a tensor operand) raises :class:`NotImplementedError`.
+Every such error is framed by the expression checked and, when different,
+the sub-expression where the rule failed, with identifier ids:
 
 - "type error while inferring the type of `<root>`: <reason>"
 - "type error while inferring the type of `<root>` at sub-expression
@@ -111,9 +110,9 @@ class ExpressionTypeChecker(CompilerPass[Expression, tuple[Type, TypeQualifier]]
     """Bidirectional type checker for expressions.
 
     Calling the pass synthesizes the type of its expression. The rules run
-    in the Rust core (D-S11-20 of ``docs/design/python-switch.md``), so the
-    checker has no per-node hook: a subclass defining a ``visit_*`` method
-    is refused when it is created, rather than having its override ignored.
+    in the Rust core, so the checker has no per-node hook: a subclass
+    defining a ``visit_*`` method is refused when it is created, rather than
+    having its override ignored.
 
     Args:
         get_identifier_type: Callable mapping an :class:`Identifier` to
@@ -164,7 +163,7 @@ class ExpressionTypeChecker(CompilerPass[Expression, tuple[Type, TypeQualifier]]
             raise TypeError(
                 f"{cls.__name__} defines {', '.join(overrides)}, but "
                 "ExpressionTypeChecker checks through the Rust core and has "
-                "no per-node hooks (D-S11-20 of docs/design/python-switch.md)."
+                "no per-node hooks."
             )
         super().__init_subclass__(**kwargs)
 

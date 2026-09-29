@@ -5,12 +5,11 @@ than a :class:`~fhy_core.types.CoreDataType`, so one declared signature
 describes a function over a whole family of concrete IR types (``REAL``
 admits every integer and real-float core data type, for example).
 
-The two helpers here are the only place that mapping is exposed; the
-Rust core holds it (D-S11-22 of ``docs/design/python-switch.md``): ``BOOL``
-satisfies the Boolean sort, the unsigned integers ``NAT``, every integer
-``INT``, and every integer and real float ``REAL``, and a value of a sort
-takes ``BOOL``, ``UINT32``, ``INT64`` or ``FLOAT64``. The type checker
-uses :func:`is_core_data_type_compatible_with_sort` to
+The two helpers here are the only place that mapping is exposed; the Rust
+core holds it: ``BOOL`` satisfies the Boolean sort, the unsigned integers
+``NAT``, every integer ``INT``, and every integer and real float ``REAL``,
+and a value of a sort takes ``BOOL``, ``UINT32``, ``INT64`` or ``FLOAT64``.
+The type checker uses :func:`is_core_data_type_compatible_with_sort` to
 validate arguments at call sites and
 :func:`get_result_core_data_type_for_sort` to synthesize the type of a
 function result or constant reference.

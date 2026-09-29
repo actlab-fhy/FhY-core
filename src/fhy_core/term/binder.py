@@ -12,10 +12,9 @@ The children a binder scopes over (and the values substituted into them) are
 and substitute. ``BinderMixin`` is itself a ``Term``, so binders nest.
 
 The derived methods run the Rust core's ``fhy_core::term::Binder``
-algorithms, which call the node's hooks and its children's methods (S10 of
-``docs/design/python-switch.md``). A binder list that repeats an identifier,
-on either side, pairs with none, so such a binder is alpha-equivalent to no
-binder, itself included.
+algorithms, which call the node's hooks and its children's methods. A binder
+list that repeats an identifier, on either side, pairs with none, so such a
+binder is alpha-equivalent to no binder, itself included.
 """
 
 from fhy_core.utils.override import override

@@ -208,9 +208,8 @@ if TYPE_CHECKING:
     )
     from .passes.z3 import convert_expression_to_z3_expression
 
-# The bridges import sympy and z3, which are optional (D-S8-16 of
-# docs/design/python-switch.md), so their functions are re-exported on
-# first access rather than at import.
+# The bridges import sympy and z3, which are optional, so their functions
+# are re-exported on first access rather than at import.
 _LAZY_BRIDGE_EXPORTS: dict[str, str] = {
     "convert_expression_to_sympy_expression": ".passes.sympy",
     "convert_sympy_expression_to_expression": ".passes.sympy",
