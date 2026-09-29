@@ -60,8 +60,8 @@ from fhy_core.symbolic.expression import (
     validate_logical_operands,
     validate_predicate,
 )
-from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
 from fhy_core.symbolic.symbol_type import SymbolType
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 
 from ...v1 import reads_v1
@@ -2867,7 +2867,7 @@ def test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue(
     resolving, and the screen reads a built-in call's sort from the
     catalogue.
     """
-    set_registry_state_for_tests(
+    set_function_registry_state(
         {
             name: entry
             for name, entry in get_registered_entries().items()

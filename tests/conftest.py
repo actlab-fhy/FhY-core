@@ -11,6 +11,7 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.symbolic.expression import registry as _registry
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.utils.override import override
 
 from .v1 import writing_v1
@@ -102,7 +103,7 @@ def function_registry_snapshot() -> Iterator[None]:
     try:
         yield
     finally:
-        _registry.set_registry_state_for_tests(snapshot)
+        set_function_registry_state(snapshot)
 
 
 def run_counter_operations(

@@ -42,8 +42,8 @@ from fhy_core.symbolic.expression import (
     validate_predicate,
 )
 from fhy_core.symbolic.expression.errors import EntryLookupError
-from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
 from fhy_core.term import AlphaRenaming
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.types.checking import check_all_registered_function_bodies
 
 from .conftest import Benchmark
@@ -76,7 +76,7 @@ _CHAIN_LENGTH = 10
 
 def _restore(snapshot: Mapping[str, RegisteredEntry]) -> None:
     """Restore the registry to `snapshot`, dropping every later entry."""
-    set_registry_state_for_tests(snapshot)
+    set_function_registry_state(snapshot)
 
 
 @pytest.fixture()

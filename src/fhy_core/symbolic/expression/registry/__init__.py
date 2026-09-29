@@ -27,9 +27,10 @@ owned ``FunctionRegistry``, which the extension keeps for this
 process-wide API; the Boolean screen and the inliner read it without
 calling Python.
 
-The registry is process-wide. Tests that need isolation should request
-the ``function_registry_snapshot`` fixture defined in ``tests/conftest.py``
-rather than mutating the registry directly.
+The registry is process-wide. Tests that need isolation should take a
+snapshot with :func:`get_registered_entries` and restore it with
+:func:`fhy_core.testing_patches.set_function_registry_state`, as the
+``function_registry_snapshot`` fixture in ``tests/conftest.py`` does.
 """
 
 __all__ = [
@@ -47,7 +48,6 @@ __all__ = [
     "register_function",
     "register_native_constant",
     "register_native_function",
-    "set_registry_state_for_tests",
     "try_get_native_constant_for_identifier",
     "try_get_registered_result_sort",
 ]
@@ -71,6 +71,5 @@ from .storage import (
     get_registered_entries,
     get_registered_entry,
     is_entry_registered,
-    set_registry_state_for_tests,
     try_get_native_constant_for_identifier,
 )

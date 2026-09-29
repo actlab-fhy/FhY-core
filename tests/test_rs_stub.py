@@ -61,13 +61,16 @@ def _read_public_extension_names(extension: ModuleType) -> set[str]:
 
     Returns:
         The extension's attributes that do not start with an underscore,
-        plus `__version__`.
+        plus `__version__` and the dunder-named functions, which are its
+        testing hooks.
 
     """
     return {
         name
         for name in dir(extension)
-        if not name.startswith("_") or name == "__version__"
+        if not name.startswith("_")
+        or name == "__version__"
+        or (_is_dunder(name) and inspect.isbuiltin(getattr(extension, name)))
     }
 
 

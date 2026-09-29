@@ -47,7 +47,7 @@ from fhy_core.symbolic.expression import (
     try_get_registered_result_sort,
 )
 from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
-from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.traits.frozen import FrozenMutationError
 
 # =============================================================================
@@ -1208,7 +1208,7 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
     register_native_constant("test_const_pruned", sort=FunctionSort.REAL, value=2.0)
     identifier = get_native_constant_identifier("test_const_pruned")
 
-    set_registry_state_for_tests(snapshot)
+    set_function_registry_state(snapshot)
 
     assert try_get_native_constant_for_identifier(identifier) is None
     with pytest.raises(EntryLookupError, match="test_const_pruned"):

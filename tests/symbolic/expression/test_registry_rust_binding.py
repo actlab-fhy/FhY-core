@@ -56,8 +56,8 @@ from fhy_core.symbolic.expression import (
     validate_predicate,
 )
 from fhy_core.symbolic.expression.passes.inline import FunctionInliner
-from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
 from fhy_core.term import AlphaRenaming
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.traits import FrozenMixin
 from fhy_core.traits.frozen import FrozenMutationError
 
@@ -521,7 +521,7 @@ def test_restoring_a_snapshot_prunes_a_constant_registered_after_it(
     register_native_constant("test_binding_pruned", FunctionSort.REAL, 1.0)
     identifier = get_native_constant_identifier("test_binding_pruned")
 
-    set_registry_state_for_tests(snapshot)
+    set_function_registry_state(snapshot)
 
     assert try_get_native_constant_for_identifier(identifier) is None
     assert not is_entry_registered("test_binding_pruned")
@@ -536,7 +536,7 @@ def test_restoring_a_snapshot_keeps_a_kept_constants_identifier(
     snapshot = dict(get_registered_entries())
     _register_increment("test_binding_later")
 
-    set_registry_state_for_tests(snapshot)
+    set_function_registry_state(snapshot)
 
     assert get_native_constant_identifier("test_binding_kept") is identifier
     assert try_get_native_constant_for_identifier(identifier) is constant
@@ -549,7 +549,7 @@ def test_restoring_a_state_registers_a_new_constant_with_a_new_identifier(
     """Test a constant object not registered under its name is registered anew."""
     constant = NativeConstant("test_binding_new", FunctionSort.INT, 1)
 
-    set_registry_state_for_tests({**get_registered_entries(), constant.name: constant})
+    set_function_registry_state({**get_registered_entries(), constant.name: constant})
 
     assert get_registered_entry("test_binding_new") is constant
     identifier = get_native_constant_identifier("test_binding_new")
@@ -561,7 +561,7 @@ def test_restoring_a_state_refuses_a_value_that_is_no_entry(
 ) -> None:
     """Test a state holding something other than an entry raises ``TypeError``."""
     with pytest.raises(TypeError, match="only a user RegisteredFunction"):
-        set_registry_state_for_tests({"test_binding_bad": 1})  # type: ignore[dict-item]
+        set_function_registry_state({"test_binding_bad": 1})  # type: ignore[dict-item]
 
 
 @pytest.mark.parametrize(

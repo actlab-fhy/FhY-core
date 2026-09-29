@@ -10,7 +10,7 @@
 //! whatever other threads register meanwhile, and no lock is ever held
 //! across a call into Python: the old state is dropped after the lock is
 //! released, since dropping it may run Python finalizers. The state is not
-//! append-only: `set_registry_state_for_tests` replaces it.
+//! append-only: `__set_registry_state__` replaces it.
 //!
 //! The built-in entries are built once, when `builtins.py` installs them,
 //! and never change.
@@ -256,7 +256,7 @@ pub(super) fn register(py: Python<'_>, object: &Bound<'_, PyAny>) -> PyResult<()
 }
 
 /// Replace the current state by the entries of `state`, a mapping of names
-/// to entry objects, as `set_registry_state_for_tests` documents.
+/// to entry objects, as `__set_registry_state__` documents.
 ///
 /// # Errors
 ///

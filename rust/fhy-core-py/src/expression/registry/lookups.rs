@@ -251,7 +251,8 @@ pub(crate) fn try_get_registered_result_sort<'py>(
 }
 
 /// Replace the user entries with the entries of `state`, a mapping of names
-/// to entry objects, for the tests' snapshot fixture.
+/// to entry objects: the testing hook `__set_registry_state__`, which
+/// `fhy_core.testing_patches.set_function_registry_state` calls.
 ///
 /// An entry registered under its name keeps its place, and a constant its
 /// identifier, when `state` holds that very object; the other entries of
@@ -262,8 +263,8 @@ pub(crate) fn try_get_registered_result_sort<'py>(
 /// Raises `TypeError` for a value that is no user entry, and
 /// `EntryRegistrationError` for one that cannot be registered, leaving the
 /// registry as it was.
-#[pyfunction]
-pub(crate) fn set_registry_state_for_tests(state: &Bound<'_, PyAny>) -> PyResult<()> {
+#[pyfunction(name = "__set_registry_state__")]
+pub(crate) fn set_registry_state(state: &Bound<'_, PyAny>) -> PyResult<()> {
     state::restore(state.py(), state.cast::<PyMapping>()?)
 }
 

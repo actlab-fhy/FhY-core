@@ -36,7 +36,7 @@ from fhy_core.symbolic.expression import (
     register_native_function,
 )
 from fhy_core.symbolic.expression.pprint import ExpressionPrettyFormatter
-from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
+from fhy_core.testing_patches import set_function_registry_state
 
 from .conftest import Benchmark
 from .test_expression import (
@@ -69,7 +69,7 @@ def snapshot() -> Iterator[Mapping[str, RegisteredEntry]]:
     try:
         yield entries
     finally:
-        set_registry_state_for_tests(entries)
+        set_function_registry_state(entries)
 
 
 def _rng() -> Any:

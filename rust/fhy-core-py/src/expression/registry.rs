@@ -21,8 +21,7 @@ pub(super) use lookups::{arity_error, inline_error_to_python, lookup_error};
 pub(crate) use lookups::{
     get_native_constant_identifier, get_registered_entries, get_registered_entry, inline_functions,
     is_entry_registered, register_function, register_native_constant, register_native_function,
-    set_registry_state_for_tests, try_get_native_constant_for_identifier,
-    try_get_registered_result_sort,
+    set_registry_state, try_get_native_constant_for_identifier, try_get_registered_result_sort,
 };
 pub(crate) use state::RegistryState;
 pub(crate) use state::snapshot;
