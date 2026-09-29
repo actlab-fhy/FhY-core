@@ -14,7 +14,7 @@
 //! What a real downstream aggregate does the same way:
 //!
 //! 1. its `#[pymodule]` calls [`fhy_core_py::register`] first, then the
-//!    registration function of each of its own crates (here [`register`]);
+//!    registration function of each of its own crates (here `register`);
 //! 2. its own classes name their module (`module = "..."`) as the package
 //!    they belong to, so their qualified names do not depend on the native
 //!    module's name;
