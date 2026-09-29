@@ -345,15 +345,18 @@ as an accepted cost.
 ## Porting to Rust
 
 *FhY* Core is moving to Rust one module at a time. The Rust code is a
-Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library,
-with no PyO3 and no Python at build or test time. `rust/fhy-core-py` holds
-the PyO3 bindings, and maturin builds it into the extension module
-`fhy_core._rs`; it also holds the SymPy backend, `solver::sympy`, a
-`fhy_core::solver::Simplifier` that drives SymPy in the interpreter the
-extension runs in. The workspace table holds the one `pyo3`, since
-`pyo3-ffi` links `python` and a build holds one. A port adds its types to
-`fhy-core` and their bindings to `fhy-core-py`. Every port follows these
-rules.
+Cargo workspace. `rust/fhy-core` is the pure-Rust library, with no PyO3 and
+no Python at build or test time. `rust/fhy-core-py` holds the PyO3
+bindings, as a library: it builds no extension module, and its
+`register(py, module)` adds the bindings to a module it is given. It also
+holds the SymPy backend, `solver::sympy`, a `fhy_core::solver::Simplifier`
+that drives SymPy in the interpreter the extension runs in.
+`rust/fhy-core-ext` is the thin `cdylib` that maturin builds into the
+extension module `fhy_core._rs`, and `rust/example-aggregate` is a
+test-only aggregate extension (see "One extension module per process").
+The workspace table holds the one `pyo3`, since `pyo3-ffi` links `python`
+and a build holds one. A port adds its types to `fhy-core` and their
+bindings to `fhy-core-py`. Every port follows these rules.
 
 ### One extension module per process
 
@@ -366,13 +369,101 @@ collide with the first one's, keep registries whose canonical instances
 never match, and fail `isinstance` checks against the first one's classes.
 A downstream *FhY* package that gains Rust code depends on the crate as a
 Rust library and is compiled into one combined extension module; it never
-ships an extension of its own that links the crate. No downstream crate
-links `fhy-core` yet, so `fhy-core-py` does not yet offer the library form
-that such a combined module needs; it gains one before the first
-downstream crate does.
+ships an extension of its own that links the crate. The mechanism has four
+parts.
+
+**The binding is a library.** `fhy-core-py` is an `rlib`. Its
+`register(py, module)` adds every class, function and piece of module state
+to a module it is given, and refuses a module it has registered into
+already. Its `convert` module is the public conversion surface: for an
+`Identifier`, an `Expression`, a `Type`, a `Param`, a `ParamAssignment`, a
+`ValueDomain`, an `OpAttribute`, a `Diagnostic` and a `ValidationReport`,
+`…_from_python` reads a Python object as the Rust value and `…_to_python`
+builds the object of a Rust value through the public class. A downstream
+binding crate calls them at the boundary of its own `#[pyfunction]`s and
+`#[pymethods]`. A conversion that another crate needs and `convert` lacks is
+added there, as a documented `pub fn` over the `pub(crate)` one, and no
+`#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with
+an `rlib` beside it because a `#[pymodule]` exports a `PyInit_<name>`
+symbol: linked into an aggregate as an `rlib`, the crate would export its
+own `PyInit__rs` from every aggregate, and one whose module is also called
+`_rs` would not link. So the module lives in the separate `fhy-core-ext`
+crate, which only calls `register` and sets `__version__`, and maturin
+builds that (`manifest-path` in `[tool.maturin]`); the wheel of `fhy_core`
+alone is unchanged.
+
+**An aggregate is one `cdylib` per product.** Its `#[pymodule]` calls
+`fhy_core_py::register`, then the registration function of each of its own
+crates, into one module. `rust/example-aggregate` is the template and the
+test: it registers `fhy-core-py` and one class, `Tagger`, that takes and
+returns an `Identifier` and an interned `OpAttribute`. It is a workspace
+member (`publish = false`) and no wheel ships it. A downstream aggregate
+follows four rules: its classes name the package they belong to
+(`module = "..."`); its module is a top-level one that imports no `fhy_core`
+Python code when it is imported, since `fhy_core` imports it while `fhy_core`
+is itself being imported; its package imports `fhy_core` before anything
+calls into the module, since the binding imports `fhy_core`'s Python
+modules on first use, and doing that from inside a call made before
+`fhy_core` was imported can deadlock on a once-initialized cache; and it depends on the same `fhy-core` source and
+version as `fhy-core-py`, since two sources are two copies of the statics.
+
+**Class identity does not depend on the module's name.** Every `#[pyclass]`
+names its module explicitly, `module = "fhy_core._rs"`, so `__module__`,
+`repr`, `pickle` (which imports the class by that name) and the qualified
+names users see are the same whichever native module holds the class. The
+binding also finds its own module state, and `fhy_core`'s Python code its
+classes, by the name `fhy_core._rs`. The loader therefore installs an
+aggregate under that name too, `sys.modules["fhy_core._rs"]`, and as the
+`_rs` attribute of the package, so `from fhy_core import _rs` and every
+`py.import("fhy_core._rs")` reach the aggregate. The composition tests in
+`tests/test_composed_extension.py` check `isinstance`, `pickle`, `repr` and
+`__module__` against an aggregate named `_fhy_example_aggregate`.
+
+**The loader chooses the module.** `fhy_core._extension` runs when the
+package is imported and picks the one native module of the process:
+
+1. the module named by the environment variable `FHY_CORE_NATIVE_MODULE`,
+   if set, which overrides everything else (`fhy_core._rs` names the module
+   `fhy_core` ships);
+2. otherwise the module named by the entry points of the group
+   `fhy_core.native`. A product's wheel declares its aggregate with
+   `[project.entry-points."fhy_core.native"]`, `product = "module_name"`.
+   Two entry points that name different modules raise `ImportError` naming
+   both, with the distributions that advertise them;
+3. otherwise `fhy_core._rs`, when `fhy_core` is used alone.
+
+An aggregate must report the `fhy_core` version it holds as
+`__fhy_core_version__`, which `register` sets from the crate version, and
+`fhy_core` refuses a stale one as it refuses a stale `_rs`. A module that
+is named and fails to import raises `ImportError`; it is never replaced by
+`fhy_core._rs`, which would run a second copy of the Rust code beside the one
+the product expects. If `fhy_core._rs` already names a different module,
+such as one that was imported first, loading an aggregate raises
+`ImportError` naming both. The loader tests in `tests/test_extension.py`
+cover the entry points, the environment variable, the refusals and the
+version check without a build; `tests/test_composed_extension.py` builds
+`rust/example-aggregate` with `cargo build` (cargo must be on the path) into
+`target/composition-<python version>`, and checks in a fresh interpreter that
+one identifier counter, one registry per interned type and one set of
+classes serve the aggregate's class and `fhy_core`.
+
+**Which wheel ships an aggregate.** One aggregate per Python process, so one
+per set of packages that can meet in a process. A wheel per product cannot
+do that: the aggregates of two products that are used together would be two
+native modules, and the loader refuses that. The recommended shape is an
+umbrella distribution (working name `fhy-native`) whose extension is the
+aggregate of every `-py` crate of the stack, whose version is pinned to the
+matching releases of `fhy_core` and of each product, and that declares the
+`fhy_core.native` entry point; the products depend on it through an optional
+extra. `fhy_core` alone keeps shipping its own `fhy_core._rs`, so nothing
+changes for users without the umbrella. Until the umbrella exists, a single
+downstream product, which is the only one with Rust code, may ship its own
+aggregate under the same entry point and hand the role to the umbrella when a
+second product gains Rust code. No release packaging for an aggregate is
+built here.
 
 The module declares that it uses the GIL, `#[pymodule(gil_used = true)]`
-in `rust/fhy-core-py/src/lib.rs`, so importing it on a free-threaded
+in `rust/fhy-core-ext/src/lib.rs`, so importing it on a free-threaded
 interpreter (3.13t, 3.14t) re-enables the GIL, with CPython's
 `RuntimeWarning`. PyO3 0.29 declares free-threading support unless told
 otherwise, and nothing has shown the binding safe without the GIL: its
@@ -694,10 +785,12 @@ language's errors and names.
 
 ### Binding crate layout
 
-`fhy-core-py` declares `fhy_core._rs` with one declarative `#[pymodule]`
-in `lib.rs`. Each core module's bindings live in a file of the same name
-and are exported with `#[pymodule_export]`. The Python namespace of `_rs`
-stays flat, since PyO3 submodules cannot be imported as packages.
+`fhy-core-py` is a library, and `fhy-core-ext`'s one `#[pymodule]` declares
+`fhy_core._rs` by calling its `register(py, module)`, which `lib.rs` lists
+by hand: a new class or function is added to it, in the part for its core
+module. Each core module's bindings live in a file of the same name. The
+Python namespace of `_rs` stays flat, since PyO3 submodules cannot be
+imported as packages.
 
 A conversion that needs nothing but the value implements the local
 `IntoPyErr` trait of `error.rs` for a core error. A conversion that needs
