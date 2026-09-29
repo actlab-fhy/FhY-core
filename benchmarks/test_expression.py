@@ -1,17 +1,12 @@
 """Benchmarks of the expression tree's hot paths.
 
-They measured the expression API before and after it switched to the Rust
-core (S4), which gave expressions the Rust semantics (decision D-S4-1 of
-``docs/design/python-switch.md``): ``==`` and ``hash`` are structural,
-literals are normalized, the logical connectives are one n-ary node, and
-the printed text is the core's. The benchmarks were written to run on the
-pure-Python implementation too, so they assert no result that D-S4-1
-changed, and the helpers the switch affected are marked ``D-S4-1``:
-
-- :func:`_build_conjunction` builds a conjunction, one n-ary
-  ``LogicalExpression``;
-- :func:`_build_distinct_equal_trees` returns trees whose ``==`` is
-  structural and true; the benchmarks time it without checking.
+They measure the expression API, which the Rust core backs: ``==`` and
+``hash`` are structural, literals are normalized, the logical connectives
+are one n-ary node, and the printed text is the core's.
+:func:`_build_conjunction` builds a conjunction, one n-ary
+``LogicalExpression``, and :func:`_build_distinct_equal_trees` returns trees
+whose ``==`` is structural and true; the benchmarks time it without
+checking.
 """
 
 import operator
@@ -109,9 +104,8 @@ def _build_doubling_dag(identifier: Identifier, depth: int) -> Expression:
 def _build_distinct_equal_trees() -> tuple[Expression, Expression]:
     """Return two separately built, structurally equal small trees.
 
-    D-S4-1: ``==`` of the two is structural and true; it was identity and
-    false before the switch. The benchmarks time the call and do not
-    assert its result.
+    ``==`` of the two is structural and true. The benchmarks time the call
+    and do not assert its result.
     """
     x = Identifier("x")
     return IdentifierExpression(x) + 1, IdentifierExpression(x) + 1
@@ -120,8 +114,7 @@ def _build_distinct_equal_trees() -> tuple[Expression, Expression]:
 def _build_conjunction(operands: Sequence[Expression]) -> Expression:
     """Return the conjunction of `operands`.
 
-    D-S4-1: one n-ary ``LogicalExpression`` of all the operands; before
-    the switch it was a right-folded chain of binary ``LOGICAL_AND`` nodes.
+    One n-ary ``LogicalExpression`` of all the operands.
     """
     return logical_and(*operands)
 

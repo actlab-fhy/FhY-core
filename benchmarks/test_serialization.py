@@ -1,14 +1,13 @@
 """Benchmarks of the wire formats.
 
-They measure ``fhy_core.serialization`` and the payloads of the classes
-before and after slice S17 of ``docs/design/python-switch.md`` makes the
-core's serde format (V2) the default and keeps the envelope format (V1)
-behind ``wire_version``. Each row is parametrized by version: before S17
-the ``v1`` rows run the default writers and the ``v2`` rows are skipped;
-after it the ``v1`` rows run inside ``wire_version(WireVersion.V1)``. The
-cases use the public API only, with their own Python-defined classes: a
-derived dataclass (``_Kernel``), a Python-defined constraint
-(``_EvenConstraint``) and a ``Serializable`` member value (``_Level``).
+They measure ``fhy_core.serialization`` and the payloads of the classes in
+both wire formats: the core's serde format (V2), the default, and the
+envelope format (V1), selected through ``wire_version``. Each row is
+parametrized by version; the ``v1`` rows run inside
+``wire_version(WireVersion.V1)``. The cases use the public API only, with
+their own Python-defined classes: a derived dataclass (``_Kernel``), a
+Python-defined constraint (``_EvenConstraint``) and a ``Serializable``
+member value (``_Level``).
 """
 
 import contextlib
@@ -21,14 +20,17 @@ from typing import Any
 
 import pytest
 
-from fhy_core import serialization
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import FileProvenance, FusedProvenance, Span
 from fhy_core.serialization import (
     Serializable,
+    WireVersion,
     deserialize_registry_wrapped_value,
+    deserialize_value,
     register_serializable,
     serialize_registry_wrapped_value,
+    serialize_value,
+    wire_version,
 )
 from fhy_core.symbol_table import SymbolTable, VariableSymbolTableFrame
 from fhy_core.symbolic.constraint import (
@@ -57,7 +59,7 @@ from .conftest import Benchmark
 
 pytestmark = [
     pytest.mark.benchmark(group="serialization"),
-    # Reading V1 warns after S17 (D-S17-16); the rows measure the reader.
+    # Reading V1 warns; the rows measure the reader.
     pytest.mark.filterwarnings("ignore::DeprecationWarning"),
 ]
 
@@ -280,17 +282,10 @@ _CASES: dict[str, Callable[[], Serializable]] = {
 
 @contextlib.contextmanager
 def _version(version: str) -> Iterator[None]:
-    """Write in `version`, or skip a V2 row before S17."""
-    wire_version = getattr(serialization, "wire_version", None)
-    if wire_version is None:
-        if version == "v2":
-            pytest.skip("V2 exists from S17 on")
-        yield
-        return
+    """Write in `version`."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        member = vars(serialization)["WireVersion"][version.upper()]
-        with wire_version(member):
+        with wire_version(WireVersion[version.upper()]):
             yield
 
 
@@ -363,10 +358,7 @@ def test_value_round_trip(benchmark: Benchmark, version: str) -> None:
     encode: Callable[[Any], Any] = serialize_registry_wrapped_value
     decode: Callable[[Any], Any] = deserialize_registry_wrapped_value
     if version == "v2":
-        functions = vars(serialization)
-        if "serialize_value" not in functions:
-            pytest.skip("V2 exists from S17 on")
-        encode, decode = functions["serialize_value"], functions["deserialize_value"]
+        encode, decode = serialize_value, deserialize_value
 
     def round_trip() -> list[Any]:
         return [decode(encode(value)) for value in values]

@@ -1,11 +1,11 @@
 """Benchmarks of the expression evaluators and the pretty formatter.
 
 They measure ``evaluate_expression``, ``evaluate_expression_with_numpy``
-and ``ExpressionPrettyFormatter`` before and after they switch to the Rust
-core (S9 of ``docs/design/python-switch.md``). The array rows use seeded
-``float64`` data unless a row names another dtype. The deep tree is the
-expression benchmarks' tree, 100 operations over four identifiers, with
-float bindings, since its integer products overflow ``int64``.
+and ``ExpressionPrettyFormatter``, which the Rust core backs. The array
+rows use seeded ``float64`` data unless a row names another dtype. The deep
+tree is the expression benchmarks' tree, 100 operations over four
+identifiers, with float bindings, since its integer products overflow
+``int64``.
 """
 
 import math

@@ -1,12 +1,11 @@
 """Benchmarks of the type system, the lattice and the partially ordered set.
 
 They measure ``fhy_core.types`` (without ``checking``), ``fhy_core.lattice``
-and ``fhy_core.utils.poset`` before and after they switch to the Rust core
-(S11a of ``docs/design/python-switch.md``), through the public API only.
-The array rows bind, substitute and unify the pattern ``T[N, M]`` against
-``int32[4, 8]``; the Python-type row does the same through a wrapper type
-defined here, with handlers registered on the dispatchers, as a downstream
-package defines its own types.
+and ``fhy_core.utils.poset``, which the Rust core backs, through the public
+API only. The array rows bind, substitute and unify the pattern
+``T[N, M]`` against ``int32[4, 8]``; the Python-type row does the same
+through a wrapper type defined here, with handlers registered on the
+dispatchers, as a downstream package defines its own types.
 """
 
 import itertools
@@ -199,18 +198,12 @@ def _build_powerset_lattice(size: int) -> Lattice[frozenset[int]]:
 
 
 def _compare_types(left: Type, right: Type) -> bool:
-    """Return `left == right`.
-
-    D-S11-10: identity before the switch, structural after it.
-    """
+    """Return `left == right`, which is structural."""
     return left == right
 
 
 def _hash_type(value: Type) -> int:
-    """Return `hash(value)`.
-
-    D-S11-10: identity before the switch, structural after it.
-    """
+    """Return `hash(value)`, which is structural."""
     return hash(value)
 
 

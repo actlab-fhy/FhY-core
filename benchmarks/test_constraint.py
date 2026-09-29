@@ -1,12 +1,11 @@
 """Benchmarks of the constraint package.
 
-They measure ``fhy_core.symbolic.constraint`` before and after it moves to
-the Rust core (S13 of ``docs/design/python-switch.md``), through the public
-API only. The set rows use integer members unless a row names another
-kind; ``_Token`` is a ``Serializable`` member only Python can compare, the
-kind the binding keeps behind an opaque adapter (D-S13-3). The rows that
-evaluate an equation reach the default solver's simplifier; the questions
-reach its SMT backend.
+They measure ``fhy_core.symbolic.constraint``, whose classes the Rust core
+backs, through the public API only. The set rows use integer members unless
+a row names another kind; ``_Token`` is a ``Serializable`` member only Python
+can compare, the kind the binding keeps behind an opaque adapter. The rows
+that evaluate an equation reach the default solver's simplifier; the
+questions reach its SMT backend.
 """
 
 import pickle

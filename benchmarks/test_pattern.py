@@ -1,16 +1,11 @@
 """Benchmarks of pattern matching and rule-driven rewriting.
 
-They measure the pattern API before and after it switches to the Rust core
-(S5 of ``docs/design/python-switch.md``). The trees are the expression
-benchmarks' deep tree (`_DEEP_TREE_DEPTH` operations over four identifiers)
-and doubling DAG, and "the rules" are four: ``x + 0 -> x``,
-``x * 1 -> x``, ``-(-x) -> x`` and ``x - x -> 0``.
-
-The benchmarks call only API whose meaning S5 keeps, and assert no result
-that S5 changes. The calls whose spelling S5 changes sit in helpers marked
-with their decisions: :func:`_capture` returns what a ``CapturePattern``
-binds (D-S5-2), and :func:`_read` reads it from a ``MatchBindings``
-(D-S5-3).
+They measure the pattern API, which the Rust core backs. The trees are the
+expression benchmarks' deep tree (`_DEEP_TREE_DEPTH` operations over four
+identifiers) and doubling DAG, and "the rules" are four: ``x + 0 -> x``,
+``x * 1 -> x``, ``-(-x) -> x`` and ``x - x -> 0``. :func:`_capture` returns
+what a ``CapturePattern`` binds, and :func:`_read` reads it from a
+``MatchBindings``.
 """
 
 from collections.abc import Callable, Sequence
@@ -66,9 +61,8 @@ _FIRING_PERIOD = 4
 def _capture(name: str) -> Capture:
     """Return a new capture named `name`.
 
-    D-S5-2: a ``Capture`` handle, which two positions share by passing the
-    same object; before the switch, the name itself, which two positions
-    shared by spelling it the same.
+    A ``Capture`` handle, which two positions share by passing the same
+    object.
     """
     return Capture(name)
 
@@ -76,8 +70,8 @@ def _capture(name: str) -> Capture:
 def _read(bindings: MatchBindings, capture: Capture) -> Expression:
     """Return the expression `bindings` binds to `capture`.
 
-    D-S5-3: ``bindings[capture]``; before the switch, ``bindings.get(name)``,
-    which raised ``KeyError`` for an unbound name as ``[]`` does now.
+    ``bindings[capture]``, which raises ``KeyError`` for an unbound
+    capture.
     """
     return bindings[capture]
 
@@ -418,7 +412,6 @@ def test_apply_rewrite_rules_with_a_python_rule(
 ) -> None:
     """Benchmark a Python ``Rule`` subclass tried at every node.
 
-    Added after the switch (S5.6), with no baseline: the Rust walk calls
-    the rule's ``apply`` with each node's object.
+    The Rust walk calls the rule's ``apply`` with each node's object.
     """
     assert benchmark(apply_rewrite_rules, deep_tree, (_NeverRule(),)) is deep_tree

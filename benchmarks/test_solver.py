@@ -1,20 +1,14 @@
 """Benchmarks of the solver, its bridges, and the layers that ask it.
 
-They measure the solver API before and after it moves to the Rust core
-(S8 of ``docs/design/python-switch.md``). Every call whose spelling S8
-changes sits in a helper marked with its decision:
-
-- :func:`_ask_an_instant_backend` asks a satisfiability question of a
-  backend that answers at once, so the row measures the screens and the
-  checks around the backend. Before S8 it replaced the z3 bridge's
-  implication; after S8 it asks a ``Solver`` holding a Python
-  ``SmtSolver`` that answers ``sat`` (D-S8-11), so the row also lowers the
-  question and calls the backend once.
+They measure the solver API, which the Rust core backs.
+:func:`_ask_an_instant_backend` asks a satisfiability question of a
+``Solver`` holding a Python ``SmtSolver`` that answers ``sat`` at once, so
+the row measures the screens and the checks around the backend, the
+lowering of the question, and one call of the backend.
 
 The trees reuse the expression benchmarks' deep tree, 100 operations over
-four identifiers. ``test_lower_to_smtlib2_of_a_deep_tree`` exists only
-after S8. ``test_import_fhy_core`` times a fresh interpreter importing the
-package, five rounds (D-S8-16).
+four identifiers. ``test_import_fhy_core`` times a fresh interpreter
+importing the package, five rounds.
 """
 
 import subprocess
@@ -77,9 +71,9 @@ def _ask_an_instant_backend(
 ) -> bool | None:
     """Ask whether `expression` is satisfiable of a backend that answers at once.
 
-    D-S8-11: a ``Solver`` holding a Python ``SmtSolver`` that answers
-    ``sat``, so the call runs the capability, timeout, symbol-type,
-    ill-typedness and hazard checks, the lowering, and one Python call.
+    A ``Solver`` holding a Python ``SmtSolver`` that answers ``sat``, so the
+    call runs the capability, timeout, symbol-type, ill-typedness and hazard
+    checks, the lowering, and one Python call.
     """
     return _INSTANT_SOLVER.check_expression_satisfiability(expression, symbol_types)
 
@@ -134,7 +128,7 @@ def test_lower_to_smtlib2_of_a_deep_tree(
     deep_tree: Expression,
     deep_symbol_types: dict[Identifier, SymbolType],
 ) -> None:
-    """Benchmark lowering the deep tree to SMT-LIB2 text (after S8 only)."""
+    """Benchmark lowering the deep tree to SMT-LIB2 text."""
     benchmark(solver.convert_expression_to_smtlib2, deep_tree, deep_symbol_types)
 
 
@@ -256,5 +250,5 @@ def _import_fhy_core() -> None:
 
 
 def test_import_fhy_core(benchmark: Benchmark) -> None:
-    """Benchmark a fresh interpreter importing the package (D-S8-16)."""
+    """Benchmark a fresh interpreter importing the package."""
     benchmark.pedantic(_import_fhy_core, rounds=_IMPORT_ROUNDS)

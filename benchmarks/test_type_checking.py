@@ -1,10 +1,9 @@
 """Benchmarks of expression type checking and the registered-body checks.
 
-They measure ``fhy_core.types.checking`` before and after it switches to the
-Rust core (S11b of ``docs/design/python-switch.md``), through the public
-API only. The identifiers are looked up through a dict's ``__getitem__``, as
-a symbol table would answer; the deep tree is S4.1's, 100 operations over
-four identifiers.
+They measure ``fhy_core.types.checking``, which the Rust core backs,
+through the public API only. The identifiers are looked up through a dict's
+``__getitem__``, as a symbol table would answer; the deep tree is the
+expression benchmarks' tree, 100 operations over four identifiers.
 """
 
 from collections.abc import Callable, Iterator
@@ -95,7 +94,7 @@ def test_synthesize_expression_type(
 
 
 def test_synthesize_expression_type_of_the_deep_tree(benchmark: Benchmark) -> None:
-    """Synthesize the type of S4.1's 100-operation tree: the walk."""
+    """Synthesize the type of the 100-operation deep tree: the walk."""
     identifiers = _build_identifiers(4, "v")
     lookup = _lookup_of(
         {

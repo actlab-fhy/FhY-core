@@ -1,8 +1,7 @@
 """Benchmarks of the SymPy bridge and simplifier.
 
-They measure the bridge before and after its lowering, simplification and
-lifting move to the Rust core (S12 of ``docs/design/python-switch.md``).
-Every call keeps its spelling across S12: the public functions of
+They measure the bridge, whose lowering, simplification and lifting run in
+the Rust core, through the public functions of
 ``fhy_core.symbolic.expression.passes.sympy``, ``SympySimplifier`` and
 ``simplify_expression``.
 

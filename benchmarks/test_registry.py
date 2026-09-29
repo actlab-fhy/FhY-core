@@ -1,16 +1,13 @@
 """Benchmarks of the function registry, its lookups and the inliner.
 
-They measure the registry API before and after it switches to the Rust core
-(S7 of ``docs/design/python-switch.md``). Registration mutates the
-process-wide registry, so the registration rows restore a snapshot before
-each round through :func:`_restore`, and the fixtures that register user
-entries restore one after their benchmark.
+They measure the registry API, which the Rust core backs. Registration
+mutates the process-wide registry, so the registration rows restore a
+snapshot before each round through :func:`_restore`, and the fixtures that
+register user entries restore one after their benchmark.
 
 The trees are the expression benchmarks' deep tree and doubling DAG. The
-nested row inlines ``relu`` nested `_NESTED_DEPTH` deep; before the switch
-the Python inliner walked the substituted body per occurrence, so the cost
-doubled with each level, and depth 100 did not finish in five minutes. The
-row nesting it `_DEEP_NESTED_DEPTH` deep was added after the switch.
+nested rows inline ``relu`` nested `_NESTED_DEPTH` and `_DEEP_NESTED_DEPTH`
+deep.
 """
 
 import math
@@ -353,11 +350,7 @@ def test_inline_functions(
 def test_inline_functions_of_builtins_nested_a_hundred_deep(
     benchmark: Benchmark,
 ) -> None:
-    """Time the inliner over ``relu`` nested `_DEEP_NESTED_DEPTH` deep.
-
-    Added after the switch to the Rust inliner, with no baseline: the
-    Python inliner did not finish it in five minutes.
-    """
+    """Time the inliner over ``relu`` nested `_DEEP_NESTED_DEPTH` deep."""
     benchmark(inline_functions, _nest_relu(_DEEP_NESTED_DEPTH))
 
 

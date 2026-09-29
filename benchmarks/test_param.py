@@ -1,11 +1,11 @@
 """Benchmarks of the param package.
 
-They measure ``fhy_core.symbolic.param`` before and after it moves to the
-Rust core (S16 of ``docs/design/python-switch.md``), through the public API
-only. ``_Level`` is a ``Serializable`` value with ``==``, ``hash`` and
-``<``, the kind the binding keeps behind an opaque adapter (D-S16-3). The
-rows over a bounded natural or real param reach the default solver: its
-simplifier for value checks, its SMT backend for the questions.
+They measure ``fhy_core.symbolic.param``, whose classes the Rust core
+backs, through the public API only. ``_Level`` is a ``Serializable`` value
+with ``==``, ``hash`` and ``<``, the kind the binding keeps behind an opaque
+adapter. The rows over a bounded natural or real param reach the default
+solver: its simplifier for value checks, its SMT backend for the
+questions.
 """
 
 import pickle

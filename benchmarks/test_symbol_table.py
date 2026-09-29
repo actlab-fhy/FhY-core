@@ -1,9 +1,8 @@
 """Benchmarks of the symbol table and its frames.
 
-They measure ``fhy_core.symbol_table`` before and after it switches to the
-Rust core (S15 of ``docs/design/python-switch.md``), through the public API
-only. The variable frame's construction and hash are measured in
-``test_types.py``, and the table's structural equivalence in
+They measure ``fhy_core.symbol_table``, which the Rust core backs, through
+the public API only. The variable frame's construction and hash are
+measured in ``test_types.py``, and the table's structural equivalence in
 ``test_term.py``.
 """
 

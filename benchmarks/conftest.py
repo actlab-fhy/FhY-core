@@ -1,10 +1,10 @@
 """Shared fixtures for the benchmarks.
 
-The benchmarks use the public API only, so the same benchmark measures a
-concept before and after it switches to the Rust implementation. The
-``benchmark`` fixture comes from ``pytest-benchmark``; :class:`Benchmark`
-types it without importing the plugin, so the lint and type checks do not
-need the ``bench`` dependency group.
+The benchmarks use the public API only, so they measure each concept as a
+caller sees it, whatever implementation backs it. The ``benchmark``
+fixture comes from ``pytest-benchmark``; :class:`Benchmark` types it
+without importing the plugin, so the lint and type checks do not need the
+``bench`` dependency group.
 """
 
 from collections.abc import Callable

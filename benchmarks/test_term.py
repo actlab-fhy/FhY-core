@@ -1,11 +1,11 @@
 """Benchmarks of the term package: renamings, binders and derived equivalence.
 
-They measure ``fhy_core.term`` before and after it switches to the Rust core
-(S10 of ``docs/design/python-switch.md``), through the public API only. The
-binder rows use a small lambda calculus over ``BinderMixin``, as
-``tests/test_binder.py`` does; the derived rows use frozen dataclasses over
-``DerivedEquivalenceMixin``. The consumer rows compare params, constraints
-and symbol tables, whose equivalence the derived engine computes.
+They measure ``fhy_core.term``, which the Rust core backs, through the
+public API only. The binder rows use a small lambda calculus over
+``BinderMixin``, as ``tests/test_binder.py`` does; the derived rows use
+frozen dataclasses over ``DerivedEquivalenceMixin``. The consumer rows
+compare params, constraints and symbol tables, whose equivalence the derived
+engine computes.
 """
 
 from collections.abc import Mapping, Sequence

@@ -1,15 +1,11 @@
 """Benchmarks of the pass infrastructure's hot paths.
 
-They measure the pass API before and after it switches to the Rust core
-(S6 of ``docs/design/python-switch.md``). The IR is the frozen `Box` of
-``conftest.py``, and "the pipeline" is five passes that change, keep and
-analyze it; the expression row runs over the expression benchmarks' deep
-tree with the pattern benchmarks' four rules.
-
-The benchmarks call only API whose meaning S6 keeps, and assert no result
-that S6 changes. The calls whose spelling S6 changes sit in helpers marked
-with their decisions: :func:`_warm_cache` reads a cached analysis
-(D-S6-8), and :func:`_run_count` counts a pipeline's pass runs (N-S6-1).
+They measure the pass API, which the Rust core backs. The IR is the
+frozen `Box` of ``conftest.py``, and "the pipeline" is five passes that
+change, keep and analyze it; the expression row runs over the expression
+benchmarks' deep tree with the pattern benchmarks' four rules.
+:func:`_warm_cache` reads a cached analysis, and :func:`_run_count` counts
+a pipeline's pass runs.
 """
 
 from typing import Any
@@ -98,9 +94,8 @@ class _CacheHitPass(CompilerPass[Box, Box]):
 def _warm_cache(benchmark: Benchmark, box: Box) -> int | None:
     """Benchmark a second ``get_analysis`` of one analysis inside one pass run.
 
-    D-S6-8: the analysis cache lives for one pipeline run and is reached
-    only from inside a pass, so the cache hit is timed there; before S6 it
-    was timed as ``AnalysisManager.get`` on a standalone manager.
+    The analysis cache lives for one pipeline run and is reached only from
+    inside a pass, so the cache hit is timed there.
     """
     cache_hit_pass = _CacheHitPass(benchmark)
     manager = PassManager[Box]()
@@ -110,12 +105,7 @@ def _warm_cache(benchmark: Benchmark, box: Box) -> int | None:
 
 
 def _run_count(result: PassManagerResult[Any]) -> int:
-    """Return how many pass runs `result` records, none of them skipped.
-
-    N-S6-1: ``result.run_count()`` since S6, which replaces the global run
-    counters; before S6, the number of pass records, which is the run count
-    when no pass skips.
-    """
+    """Return how many pass runs `result` records, none of them skipped."""
     return result.run_count()
 
 
