@@ -225,7 +225,7 @@ impl Param {
     }
 
     /// Return the environment of a value check: `value` bound to the
-    /// variable, then `bindings`.
+    /// variable, then `bindings`, carrying their source.
     ///
     /// # Errors
     ///
@@ -241,7 +241,7 @@ impl Param {
                 self.variable().clone(),
             ));
         }
-        let mut environment = Bindings::new();
+        let mut environment = bindings.to_empty_with_source();
         environment.insert(self.variable().clone(), value);
         for (identifier, binding) in bindings.iter() {
             environment.insert(identifier.clone(), binding.clone());

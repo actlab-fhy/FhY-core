@@ -2,7 +2,7 @@
 //! (`fhy_core::param::wire`).
 
 use crate::support::foreign::{TestResolver, WireDomain, WireToken};
-use crate::support::param::{at_least, in_set, ints};
+use crate::support::param::{at_least, in_set, ints, scripted_solver};
 use crate::support::serde::restored;
 use fhy_core::param::{Inclusivity, Sign, ZeroInclusion};
 
@@ -14,7 +14,7 @@ use fhy_core::param::{
     CategoricalDomain, IntegerDomain, IntervalIntegerDomain, OrdinalDomain, Param, ParamAssignment,
     ParamContext, ParamDomain, PermutationDomain, RealDomain,
 };
-use fhy_core::solver::Solver;
+use fhy_core::solver::{SatResult, Solver};
 use proptest::prelude::*;
 use rstest::rstest;
 
@@ -139,6 +139,18 @@ fn build_param(variable: &Identifier) -> Param {
     .expect("the constraints are in scope")
 }
 
+/// Return the assignment of 2 to the param of `variable`, which its
+/// constraints admit.
+fn assign_two(variable: &Identifier) -> ParamAssignment {
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    ParamAssignment::new(
+        build_param(variable),
+        Value::Int(2.into()),
+        &ParamContext::new(&solver),
+    )
+    .expect("2 satisfies the constraints")
+}
+
 #[test]
 fn a_param_serializes_its_domain_variable_and_system() {
     let variable = restored(61_600, "p");
@@ -181,7 +193,7 @@ fn a_param_refuses_a_constraint_outside_its_variable_s_scope() {
 #[test]
 fn an_assignment_round_trips_and_its_value_is_checked_on_decode() {
     let variable = restored(61_603, "p");
-    let assignment = ParamAssignment::new_unvalidated(build_param(&variable), Value::Int(2.into()));
+    let assignment = assign_two(&variable);
 
     let text = text_of(&assignment);
 
@@ -211,7 +223,7 @@ fn an_assignment_round_trips_and_its_value_is_checked_on_decode() {
 #[test]
 fn an_inadmissible_assignment_payload_fails_to_decode() {
     let variable = restored(61_604, "p");
-    let assignment = ParamAssignment::new_unvalidated(build_param(&variable), Value::Int(2.into()));
+    let assignment = assign_two(&variable);
     let text = text_of(&assignment).replace(
         r#""value":{"int":"2"}"#,
         r#""value":{"str":"not an integer"}"#,

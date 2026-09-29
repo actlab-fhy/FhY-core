@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
-use fhy_core::constraint::{Binding, Constraint, ConstraintError, Outcome, Value};
+use fhy_core::constraint::{Binding, Bindings, Constraint, ConstraintError, Outcome, Value};
 use fhy_core::expression::{ExpressionKind, LiteralValue};
 use fhy_core::param::wire::{ParamAssignmentData, ParamData};
 use fhy_core::param::{
@@ -415,6 +415,26 @@ impl PyParam {
         })
     }
 
+    /// Return the environment of a value check, the normalized `value`
+    /// bound to the variable, then `bindings`, and its bindings as read.
+    fn read_environment<'py>(
+        this: &Bound<'py, Self>,
+        normalized: &Bound<'py, PyAny>,
+        bindings: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<(Bound<'py, PyDict>, ReadBindings<'py>)> {
+        let py = this.py();
+        let environment = PyDict::new(py);
+        environment.set_item(this.get().objects.variable.bind(py), normalized)?;
+        if let Some(bindings) = bindings.filter(|bindings| !bindings.is_none()) {
+            for item in bindings.call_method0(intern!(py, "items"))?.try_iter()? {
+                let (key, bound) = item?.extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>()?;
+                environment.set_item(key, bound)?;
+            }
+        }
+        let read = read_scoped_bindings(environment.as_any(), None)?;
+        Ok((environment, read))
+    }
+
     /// Evaluate the constraints with the normalized `value` bound to the
     /// variable, then `bindings`, and return the outcome and its member.
     fn evaluate(
@@ -425,19 +445,11 @@ impl PyParam {
         let py = this.py();
         Self::validate_bindings(this, bindings)?;
         let normalized = Self::normalize(this, value)?;
-        let environment = PyDict::new(py);
-        environment.set_item(this.get().objects.variable.bind(py), &normalized)?;
-        if let Some(bindings) = bindings.filter(|bindings| !bindings.is_none()) {
-            for item in bindings.call_method0(intern!(py, "items"))?.try_iter()? {
-                let (key, bound) = item?.extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>()?;
-                environment.set_item(key, bound)?;
-            }
-        }
-        let read = read_scoped_bindings(environment.as_any(), None)?;
+        let (environment, read) = Self::read_environment(this, &normalized, bindings)?;
         let core_bindings = read
             .core
             .clone()
-            .with_source(Arc::new(PythonBindings(environment.clone().unbind())));
+            .with_source(Arc::new(PythonBindings(environment.unbind())));
         let core = this.get().core.clone();
         run_with_context(
             py,
@@ -448,6 +460,88 @@ impl PyParam {
             },
             |error| evaluation_error(py, error, &read),
         )
+    }
+
+    /// Return the core assignment of the normalized `value`, checked under
+    /// `bindings` as the core does, after `value` is found admissible: for
+    /// a constraint the value leaves undecided, an error when `is_strict`,
+    /// and otherwise acceptance.
+    ///
+    /// Raises what `Param.validate_value` raises.
+    fn check_assignment(
+        this: &Bound<'_, Self>,
+        value: &Bound<'_, PyAny>,
+        normalized: &Bound<'_, PyAny>,
+        bindings: Option<&Bound<'_, PyAny>>,
+        is_strict: bool,
+    ) -> PyResult<ParamAssignment> {
+        let py = this.py();
+        let (environment, read) = Self::read_environment(this, normalized, bindings)?;
+        let variable = this.get().core.variable().clone();
+        let mut core_bindings = Bindings::new();
+        for (identifier, binding) in read.core.iter() {
+            if *identifier != variable {
+                core_bindings.insert(identifier.clone(), binding.clone());
+            }
+        }
+        let core_bindings =
+            core_bindings.with_source(Arc::new(PythonBindings(environment.unbind())));
+        let core = this.get().core.clone();
+        let core_value = read_assignment_value(normalized)?;
+        run_with_context(
+            py,
+            false,
+            |context| {
+                if is_strict {
+                    ParamAssignment::new_with_bindings(core, core_value, &core_bindings, context)
+                } else {
+                    ParamAssignment::restore_with_bindings(
+                        core,
+                        core_value,
+                        &core_bindings,
+                        context,
+                    )
+                }
+            },
+            |error| match error {
+                AssignmentError::Inadmissible => {
+                    Self::value_error(this, value, ValueCheck::Inadmissible)
+                }
+                AssignmentError::ViolatedConstraint { member } => {
+                    Self::value_error(this, value, ValueCheck::Violated { member })
+                }
+                AssignmentError::UnverifiedConstraint { member } => {
+                    Self::value_error(this, value, ValueCheck::Undecided { member })
+                }
+                other => evaluation_error(py, other, &read),
+            },
+        )
+    }
+
+    /// Raise unless `value` is admissible.
+    fn require_admissible(this: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if Self::admits(this, value)? {
+            Ok(())
+        } else {
+            Err(Self::value_error(this, value, ValueCheck::Inadmissible))
+        }
+    }
+
+    /// Return the normalized `value` and its core assignment, checked under
+    /// `bindings`.
+    ///
+    /// Raises what `Param.validate_value` raises.
+    fn assign_checked<'py>(
+        this: &Bound<'py, Self>,
+        value: &Bound<'py, PyAny>,
+        bindings: Option<&Bound<'py, PyAny>>,
+        is_strict: bool,
+    ) -> PyResult<(Bound<'py, PyAny>, ParamAssignment)> {
+        Self::validate_bindings(this, bindings)?;
+        Self::require_admissible(this, value)?;
+        let normalized = Self::normalize(this, value)?;
+        let core = Self::check_assignment(this, value, &normalized, bindings, is_strict)?;
+        Ok((normalized, core))
     }
 
     /// Raise unless `value` is a valid assignment under `bindings`.
@@ -837,9 +931,8 @@ impl PyParam {
         value: &Bound<'py, PyAny>,
         bindings: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        Self::validate(slf, value, bindings)?;
-        let normalized = Self::normalize(slf, value)?;
-        build_assignment(slf, &normalized)
+        let (normalized, core) = Self::assign_checked(slf, value, bindings, true)?;
+        build_assignment(slf, &normalized, core)
     }
 
     /// Return whether this param's value set is a subset of `other`'s.
@@ -1516,15 +1609,14 @@ fn set_operation<'py>(
     build_param_object(py, result, &domain, &variable, &[])
 }
 
-/// Return an assignment of `value`, already checked and normalized, to
-/// `param`.
+/// Return an assignment of the normalized `value` to `param`, holding the
+/// checked `core` assignment.
 fn build_assignment<'py>(
     param: &Bound<'py, PyParam>,
     value: &Bound<'py, PyAny>,
+    core: ParamAssignment,
 ) -> PyResult<Bound<'py, PyAny>> {
     let py = param.py();
-    let core_value = read_assignment_value(value)?;
-    let core = ParamAssignment::new_unvalidated(param.get().core.clone(), core_value);
     let seed = Py::new(
         py,
         PyAssignmentSeed {
@@ -1670,13 +1762,9 @@ impl PyParamAssignment {
                 type_name(param)
             ))
         })?;
-        PyParam::validate(param_object, value, None)?;
-        let normalized = PyParam::normalize(param_object, value)?;
+        let (normalized, core) = PyParam::assign_checked(param_object, value, None, true)?;
         Ok(Self {
-            core: ParamAssignment::new_unvalidated(
-                param_object.get().core.clone(),
-                read_assignment_value(&normalized)?,
-            ),
+            core,
             param: param.clone().unbind(),
             value: normalized.unbind(),
         })
@@ -1799,8 +1887,8 @@ impl PyParamAssignment {
         ))
     }
 
-    /// Return the assignment of the checked `value` to `param`, without a
-    /// check.
+    /// Return the assignment of the normalized `value` to `param`, refused
+    /// only if provably invalid.
     #[classmethod]
     fn _restore<'py>(
         cls: &Bound<'py, PyType>,
@@ -1809,7 +1897,8 @@ impl PyParamAssignment {
     ) -> PyResult<Bound<'py, PyAny>> {
         let _ = cls;
         let param = param.cast::<PyParam>()?;
-        build_assignment(param, value)
+        let core = PyParam::check_assignment(param, value, value, None, false)?;
+        build_assignment(param, value, core)
     }
 
     /// Return the V2 payload `{"param", "value"}`, the core's, or the V1
@@ -1873,27 +1962,11 @@ impl PyParamAssignment {
         fields: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let _ = cls;
-        let py = fields.py();
         let param = fields.get_item("param")?;
         let value = fields.get_item("value")?;
         let param = param.cast::<PyParam>()?;
-        if !PyParam::admits(param, &value)? {
-            return Err(PyParam::value_error(
-                param,
-                &value,
-                ValueCheck::Inadmissible,
-            ));
-        }
-        if let (Outcome::Violated, Some(member)) = PyParam::evaluate(param, &value, None)? {
-            return Err(PyParam::value_error(
-                param,
-                &value,
-                ValueCheck::Violated { member },
-            ));
-        }
-        let normalized = PyParam::normalize(param, &value)?;
-        let _ = py;
-        build_assignment(param, &normalized)
+        let (normalized, core) = PyParam::assign_checked(param, &value, None, false)?;
+        build_assignment(param, &normalized, core)
     }
 }
 

@@ -19,8 +19,8 @@ use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{int, text};
 use crate::support::lambda::Alpha;
 use crate::support::param::{
-    RecordingParamObserver, above, at_least, at_most, context, float, in_set, ints, less_than,
-    not_in_set, scripted_solver,
+    RecordingParamObserver, above, at_least, at_most, context, in_set, ints, less_than, not_in_set,
+    scripted_solver,
 };
 
 fn integer_domain() -> ParamDomain {
@@ -870,13 +870,126 @@ fn assignment_checks_its_value_and_restores_an_undecided_one() {
         ParamAssignment::restore(param.clone(), int(11), &context),
         Err(AssignmentError::ViolatedConstraint { .. })
     ));
-    assert!(
-        restored
-            .is_structurally_equivalent(&ParamAssignment::new_unvalidated(param.clone(), int(5)))
+    assert!(restored.is_structurally_equivalent(
+        &ParamAssignment::restore(param.clone(), int(5), &context).expect("undecided is accepted")
+    ));
+    assert!(!restored.is_structurally_equivalent(
+        &ParamAssignment::restore(param, int(6), &context).expect("undecided is accepted")
+    ));
+}
+
+#[test]
+fn assignment_under_bindings_decides_a_dependent_constraint() {
+    let x = Identifier::new("x");
+    let y = Identifier::new("y");
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let param = Param::new(
+        integer_domain(),
+        x.clone(),
+        vec![at_most(&x, 10), less_than(&x, &y)],
+        &context,
+    )
+    .expect("a param");
+    let mut bindings = Bindings::new();
+    bindings.insert(y, int(8));
+
+    let assignment = ParamAssignment::new_with_bindings(param.clone(), int(5), &bindings, &context)
+        .expect("5 is below 8");
+    assert_eq!(assignment.value(), &int(5));
+    assert!(matches!(
+        ParamAssignment::new_with_bindings(param.clone(), int(9), &bindings, &context),
+        Err(AssignmentError::ViolatedConstraint { .. })
+    ));
+    assert!(matches!(
+        ParamAssignment::new_with_bindings(param.clone(), text("a"), &bindings, &context),
+        Err(AssignmentError::Inadmissible)
+    ));
+    assert!(matches!(
+        ParamAssignment::new_with_bindings(param, int(5), &Bindings::new(), &context),
+        Err(AssignmentError::UnverifiedConstraint { .. })
+    ));
+}
+
+#[test]
+fn restoring_under_bindings_accepts_an_undecided_constraint_only() {
+    let x = Identifier::new("x");
+    let y = Identifier::new("y");
+    let z = Identifier::new("z");
+    let (solver, _smt) = scripted_solver(SatResult::Sat);
+    let observer = RecordingParamObserver::default();
+    let context = context(&solver, &observer);
+    let param = Param::new(
+        integer_domain(),
+        x.clone(),
+        vec![at_most(&x, 10), less_than(&x, &y)],
+        &context,
+    )
+    .expect("a param");
+    let mut bindings = Bindings::new();
+    bindings.insert(y, int(8));
+
+    let decided =
+        ParamAssignment::restore_with_bindings(param.clone(), int(5), &bindings, &context)
+            .expect("5 is below 8");
+    let undecided =
+        ParamAssignment::restore_with_bindings(param.clone(), int(5), &Bindings::new(), &context)
+            .expect("undecided is accepted");
+    assert_eq!(decided, undecided);
+    assert!(matches!(
+        ParamAssignment::restore_with_bindings(param.clone(), int(9), &bindings, &context),
+        Err(AssignmentError::ViolatedConstraint { .. })
+    ));
+    assert!(matches!(
+        ParamAssignment::restore_with_bindings(param.clone(), text("a"), &bindings, &context),
+        Err(AssignmentError::Inadmissible)
+    ));
+    let mut own = Bindings::new();
+    own.insert(x, int(1));
+    own.insert(z, int(2));
+    assert!(matches!(
+        ParamAssignment::restore_with_bindings(param, int(5), &own, &context),
+        Err(AssignmentError::BindingsBindVariable(_))
+    ));
+}
+
+#[test]
+fn a_value_check_environment_carries_the_bindings_source() {
+    let x = Identifier::new("x");
+    let solver = Solver::new();
+    let context = ParamContext::new(&solver);
+    let param = Param::new(integer_domain(), x.clone(), Vec::new(), &context).expect("a param");
+    let bindings = Bindings::new().with_source(std::sync::Arc::new(7_u8));
+
+    let environment = param
+        .environment(Binding::Value(int(1)), &bindings)
+        .expect("no clash");
+
+    assert_eq!(environment.get(&x), Some(&Binding::Value(int(1))));
+    assert_eq!(
+        environment
+            .source()
+            .and_then(|source| source.downcast_ref::<u8>()),
+        Some(&7)
     );
-    assert!(
-        !restored.is_structurally_equivalent(&ParamAssignment::new_unvalidated(param, float(5.0)))
-    );
+}
+
+#[test]
+fn assignment_under_bindings_refuses_bindings_of_its_own_variable() {
+    let x = Identifier::new("x");
+    let solver = Solver::new();
+    let context = ParamContext::new(&solver);
+    let param = Param::new(integer_domain(), x.clone(), Vec::new(), &context).expect("a param");
+    let mut bindings = Bindings::new();
+    bindings.insert(x.clone(), int(1));
+
+    let refused = ParamAssignment::new_with_bindings(param, int(5), &bindings, &context);
+
+    assert!(matches!(
+        refused,
+        Err(AssignmentError::BindingsBindVariable(variable)) if variable == x
+    ));
 }
 
 #[test]

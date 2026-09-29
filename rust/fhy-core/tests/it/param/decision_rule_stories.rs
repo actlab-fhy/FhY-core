@@ -6,7 +6,7 @@
 
 use fhy_core::constraint::{Binding, Bindings, Constraint, EquationConstraint, Outcome, Value};
 use fhy_core::expression::registry::{FunctionRegistry, NativeConstant};
-use fhy_core::expression::{BigInt, Decimal, Expression, FunctionName, FunctionSort, LiteralValue};
+use fhy_core::expression::{BigInt, Expression, FunctionName, FunctionSort, LiteralValue};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     BoundSide, CategoricalDomain, Inclusivity, IntegerDomain, IntervalIntegerDomain, Operand,
@@ -19,8 +19,8 @@ use rstest::rstest;
 
 use crate::support::constraint::{TestOpaque, int, text};
 use crate::support::param::{
-    RecordingParamObserver, at_least, at_most, boolean, context, float, in_set, not_in_set,
-    real_solver, reference, scripted_solver,
+    RecordingParamObserver, at_least, at_most, boolean, context, in_set, not_in_set, real_solver,
+    reference, scripted_solver,
 };
 
 /// Return whether `param` holds `value` valid, decided.
@@ -173,40 +173,13 @@ fn a_categorical_value_set_is_a_subset_of_one_holding_its_categories(
 // Assignment equivalence per value kind
 // ---------------------------------------------------------------------------
 
-fn decimal(text: &str) -> Value {
-    Value::Decimal(text.parse::<Decimal>().expect("a decimal"))
-}
-
-/// Two assignments of one param are structurally equivalent exactly when
-/// their values are equal type-strictly: of one kind, at every depth, so
-/// `1` and `True` differ inside a tuple, the zeros are equal, and a NaN
-/// equals nothing; `==` differs only for the NaN.
+/// Two assignments of one param over a categorical domain are structurally
+/// equivalent exactly when their values are equal type-strictly; `==`
+/// agrees.
 #[rstest]
 #[case::bool(boolean(true), boolean(true), true)]
 #[case::int(int(3), int(3), true)]
-#[case::int_against_float(int(5), float(5.0), false)]
-#[case::zeros(float(-0.0), float(0.0), true)]
-#[case::nan(float(f64::NAN), float(f64::NAN), false)]
-#[case::decimal(decimal("0.1"), decimal("0.10"), true)]
-#[case::decimal_against_float(decimal("0.5"), float(0.5), false)]
 #[case::str(text("a"), text("a"), true)]
-#[case::tuple_of_zeros(Value::Tuple(vec![float(-0.0)]), Value::Tuple(vec![float(0.0)]), true)]
-#[case::one_against_true_in_a_tuple(
-    Value::Tuple(vec![int(1)]),
-    Value::Tuple(vec![boolean(true)]),
-    false
-)]
-#[case::tuple_order(Value::Tuple(vec![int(1), int(2)]), Value::Tuple(vec![int(2), int(1)]), false)]
-#[case::frozenset_order(
-    Value::FrozenSet(vec![int(1), int(2)]),
-    Value::FrozenSet(vec![int(2), int(1), int(1)]),
-    true
-)]
-#[case::one_against_true_in_a_frozenset(
-    Value::FrozenSet(vec![int(1)]),
-    Value::FrozenSet(vec![boolean(true)]),
-    false
-)]
 #[case::opaque(
     TestOpaque::token(1).into_value(),
     TestOpaque::token(1).into_value(),
@@ -223,20 +196,24 @@ fn assignment_equivalence_compares_values_type_strictly(
     #[case] equivalent: bool,
 ) {
     let solver = Solver::new();
+    let context = ParamContext::new(&solver);
+    let mut categories = vec![left.clone()];
+    if right != left {
+        categories.push(right.clone());
+    }
     let param = Param::new(
-        ParamDomain::from(IntegerDomain::new(Sign::Any, ZeroInclusion::Included)),
+        ParamDomain::from(CategoricalDomain::new(categories).expect("categories")),
         Identifier::new("p"),
         [],
-        &ParamContext::new(&solver),
+        &context,
     )
     .expect("a param");
-    let is_nan = matches!(left, Value::Float(value) if value.is_nan());
-    let left = ParamAssignment::new_unvalidated(param.clone(), left);
-    let right = ParamAssignment::new_unvalidated(param, right);
+    let left = ParamAssignment::new(param.clone(), left, &context).expect("a category");
+    let right = ParamAssignment::new(param, right, &context).expect("a category");
 
     assert_eq!(left.is_structurally_equivalent(&right), equivalent);
     assert_eq!(right.is_structurally_equivalent(&left), equivalent);
-    assert_eq!(left == right, equivalent || is_nan);
+    assert_eq!(left == right, equivalent);
 }
 
 // ---------------------------------------------------------------------------

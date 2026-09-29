@@ -143,6 +143,14 @@ impl Bindings {
         }
     }
 
+    /// Return bindings of no identifier carrying this one's source.
+    pub(crate) fn to_empty_with_source(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            ..Self::default()
+        }
+    }
+
     /// Return the caller's own form of the bindings, if it gave one.
     ///
     /// Only the binding that set it reads it (see the type's documentation);

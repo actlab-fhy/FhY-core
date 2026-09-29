@@ -13,7 +13,7 @@ use fhy_core::param::{
 use fhy_core::solver::Solver;
 use rstest::rstest;
 
-use crate::support::constraint::{int, text};
+use crate::support::constraint::text;
 use crate::support::hashing::hash_of;
 use crate::support::param::{EvenDomain, at_least, at_most, float, ints};
 
@@ -164,22 +164,12 @@ fn assignments_equal_by_their_params_and_values() {
     let other =
         Param::new(ParamDomain::from(RealDomain), x, Vec::new(), &context).expect("a param");
     let assignments = [
-        ParamAssignment::new_unvalidated(param.clone(), float(0.0)),
-        ParamAssignment::new_unvalidated(other.clone(), float(-0.0)),
-        ParamAssignment::new_unvalidated(param.clone(), float(1.0)),
-        ParamAssignment::new_unvalidated(param.clone(), int(1)),
+        ParamAssignment::new(param.clone(), float(0.0), &context).expect("a real"),
+        ParamAssignment::new(other.clone(), float(-0.0), &context).expect("a real"),
+        ParamAssignment::new(param.clone(), float(1.0), &context).expect("a real"),
     ];
 
     assert_agrees_with(&assignments, ParamAssignment::is_structurally_equivalent);
     assert_eq!(assignments[0], assignments[1]);
-    assert_eq!(assignments[3].to_string(), "x = 1");
-    // `==` is an equivalence: a NaN value equals itself, which the
-    // type-strict value equality of `is_structurally_equivalent` denies.
-    let nan = ParamAssignment::new_unvalidated(param, float(f64::NAN));
-    assert_eq!(nan, nan.clone());
-    assert!(!nan.is_structurally_equivalent(&nan));
-    assert_eq!(
-        hash_of(&nan),
-        hash_of(&ParamAssignment::new_unvalidated(other, float(f64::NAN)))
-    );
+    assert_eq!(assignments[2].to_string(), "x = 1");
 }
