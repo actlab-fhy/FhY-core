@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 
+use pyo3::exceptions::PyException;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyInt, PyList, PyString, PyTuple};
@@ -306,6 +307,12 @@ fn is_non_boolean_literal(object: &Bound<'_, PyAny>) -> bool {
 ///
 /// Identifiers read before a refusal have advanced the id counter, as they
 /// do in the core's decoder.
+///
+/// # Errors
+///
+/// Raises what reading the table's keys raises, and a `BaseException`
+/// that is no `Exception`, such as `KeyboardInterrupt`, raised while
+/// decoding a node.
 pub(super) fn decode_table<'py>(data: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     let py = data.py();
     let Ok(data) = data.cast_exact::<PyDict>() else {
@@ -330,8 +337,11 @@ pub(super) fn decode_table<'py>(data: &Bound<'py, PyAny>) -> PyResult<Option<Bou
         identifiers: HashMap::new(),
     };
     for (index, node) in nodes.iter().enumerate() {
-        let Ok(Some(object)) = decode_node(&mut decoded, index, &node) else {
-            return Ok(None);
+        let object = match decode_node(&mut decoded, index, &node) {
+            Ok(Some(object)) => object,
+            Err(error) if !error.is_instance_of::<PyException>(py) => return Err(error),
+            // The core's path raises its own error for the payload.
+            Ok(None) | Err(_) => return Ok(None),
         };
         decoded.objects.push(object);
         decoded.is_referenced.push(false);

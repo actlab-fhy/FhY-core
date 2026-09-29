@@ -488,6 +488,61 @@ def test_a_base_exception_in_the_fast_path_propagates(
     assert exception_info.value is raised
 
 
+def _build_negation_table_with_keys(
+    nodes_key: str, operation_key: str
+) -> SerializedDict:
+    """Return the V2 table of ``-1`` with the given keys."""
+    return {
+        nodes_key: [
+            {"literal": {"int": "1"}},
+            {"unary": {operation_key: "negate", "operand": 0}},
+        ]
+    }
+
+
+_TABLE_KEY_PLACES = ["table", "node"]
+
+
+def _build_key_raising_at(place: str, exception: BaseException) -> _KeyRaisingOnce:
+    """Return the key raising ``exception`` for the table key or a node's field."""
+    return _KeyRaisingOnce("nodes" if place == "table" else "operation", exception)
+
+
+def _build_table_payload_raising_at(place: str, key: _KeyRaisingOnce) -> SerializedDict:
+    """Return the V2 table of ``-1`` with ``key`` at ``place``."""
+    if place == "table":
+        return _build_negation_table_with_keys(key, "operation")
+    return _build_negation_table_with_keys("nodes", key)
+
+
+@pytest.mark.parametrize("place", _TABLE_KEY_PLACES)
+def test_a_table_the_fast_path_fails_on_falls_back_to_the_core(place: str) -> None:
+    """Test an ``Exception`` in the V2 fast path falls back to the core's path."""
+    key = _build_key_raising_at(place, ValueError())
+
+    decoded = Expression.deserialize_from_dict(
+        _build_table_payload_raising_at(place, key)
+    )
+
+    assert key.has_raised
+    assert decoded == UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
+
+
+@pytest.mark.parametrize("place", _TABLE_KEY_PLACES)
+@pytest.mark.parametrize("exception", [KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_a_base_exception_in_the_table_fast_path_propagates(
+    exception: type[BaseException], place: str
+) -> None:
+    """Test a ``BaseException`` in the V2 fast path is not retried."""
+    raised = exception()
+    key = _build_key_raising_at(place, raised)
+
+    with pytest.raises(exception) as exception_info:
+        Expression.deserialize_from_dict(_build_table_payload_raising_at(place, key))
+
+    assert exception_info.value is raised
+
+
 def test_decoding_through_a_node_class_refuses_another_kind() -> None:
     """Test ``Node.deserialize_from_dict`` refuses a payload of another node kind."""
     from fhy_core.serialization import SerializationError  # noqa: PLC0415

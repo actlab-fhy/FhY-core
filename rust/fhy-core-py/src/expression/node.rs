@@ -17,7 +17,7 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
@@ -605,7 +605,9 @@ impl PyExpression {
     ///
     /// A V2 table of the core's exact shapes decodes in one pass, building
     /// each node's object from the table; any other goes through the core's
-    /// decoder, which raises its errors.
+    /// decoder, which raises its errors. A `BaseException` that is no
+    /// `Exception`, such as `KeyboardInterrupt`, raised on the one-pass path
+    /// propagates instead.
     ///
     /// A V1 payload of the expression classes' own shapes decodes in one
     /// pass; any other goes through `WrappedFamilySerializable`'s V1
@@ -618,8 +620,11 @@ impl PyExpression {
         if crate::wire::is_v1_payload(data) {
             return crate::wire::reading_v1(cls, || deserialize_expression_payload(cls, data));
         }
-        if let Ok(Some(object)) = super::table::decode_table(data) {
-            return crate::wire::check_instance(cls, object);
+        match super::table::decode_table(data) {
+            Ok(Some(object)) => return crate::wire::check_instance(cls, object),
+            Err(error) if !error.is_instance_of::<PyException>(cls.py()) => return Err(error),
+            // The core's path raises its own error for the payload.
+            Ok(None) | Err(_) => {}
         }
         let expression: Expression = crate::wire::parse_dict(cls, data)?;
         crate::wire::check_instance(cls, materialize_expression(cls.py(), &expression)?)
