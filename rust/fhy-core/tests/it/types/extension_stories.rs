@@ -341,6 +341,31 @@ fn a_data_type_extension_without_rules_takes_the_default_rules() {
 }
 
 #[test]
+fn a_width_constrained_template_refuses_a_data_type_extension() {
+    let t = Identifier::new("T");
+    let extension = DataType::Extension(Part::new(BareData));
+
+    let direct = constrained_template(&t, &[8])
+        .bind_template(&extension, &empty())
+        .expect_err("an extension has no width");
+    let nested = array(constrained_template(&t, &[8]), [literal_dimension(1)])
+        .bind_template(&array(extension.clone(), [literal_dimension(1)]), &empty())
+        .expect_err("an extension has no width");
+
+    for error in [direct, nested] {
+        let UnificationError::WidthOnNonPrimitive {
+            template, actual, ..
+        } = &error
+        else {
+            panic!("a width constraint on a non-primitive, got {error}");
+        };
+        assert_eq!(template.identifier(), &t);
+        assert_eq!(template.widths(), Some(&[8][..]));
+        assert_eq!(actual, &extension);
+    }
+}
+
+#[test]
 fn a_numerical_type_over_a_data_type_extension_binds_it_by_the_default_rule() {
     let data_type = DataType::Extension(Part::new(BareData));
     let other = DataType::Extension(Part::new(BareData));

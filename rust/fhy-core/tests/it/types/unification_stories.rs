@@ -282,6 +282,18 @@ fn a_shape_variable_met_twice_with_different_extents_is_refused() {
         .bind_template(&actual, &empty())
         .expect_err("N is 4 and 5");
 
+    let UnificationError::ConflictingExpressionBinding {
+        identifier,
+        bound,
+        actual,
+        ..
+    } = &error
+    else {
+        panic!("a conflicting expression binding, got {error}");
+    };
+    assert_eq!(identifier, &n);
+    assert_eq!(bound, &Expression::from(4));
+    assert_eq!(actual, &Expression::from(5));
     assert_eq!(
         error.to_string(),
         format!(
@@ -297,6 +309,14 @@ fn a_concrete_pattern_dimension_must_equal_the_actual_one() {
         .bind_template(&array(int32(), [literal_dimension(5)]), &empty())
         .expect_err("4 is not 5");
 
+    let UnificationError::DimensionMismatch {
+        expected, actual, ..
+    } = &error
+    else {
+        panic!("a dimension mismatch, got {error}");
+    };
+    assert_eq!(expected, &Expression::from(4));
+    assert_eq!(actual, &Expression::from(5));
     assert_eq!(error.to_string(), "shape dimension mismatch: 4 vs 5");
 }
 
@@ -361,6 +381,18 @@ fn data_type_binding_conflicting_with_an_existing_one_is_refused() {
         .bind_template(&float32(), &environment)
         .expect_err("conflicts");
 
+    let UnificationError::ConflictingDataTypeBinding {
+        identifier,
+        bound,
+        actual,
+        ..
+    } = &error
+    else {
+        panic!("a conflicting data-type binding, got {error}");
+    };
+    assert_eq!(identifier, &t);
+    assert_eq!(bound, &int32());
+    assert_eq!(actual, &float32());
     assert_eq!(
         error.to_string(),
         format!(
@@ -427,7 +459,7 @@ fn width_constraint_refuses_a_weak_type() {
 }
 
 #[test]
-fn width_constraint_refuses_a_non_primitive_actual() {
+fn width_constrained_template_against_another_template_refuses_the_distinct_templates() {
     let (t, u) = (Identifier::new("T"), Identifier::new("U"));
     let pattern = array(constrained_template(&t, &[8]), [literal_dimension(1)]);
     let actual = array(constrained_template(&u, &[8]), [literal_dimension(1)]);
@@ -436,7 +468,18 @@ fn width_constraint_refuses_a_non_primitive_actual() {
         .bind_template(&actual, &empty())
         .expect_err("distinct templates");
 
-    assert!(error.to_string().contains("template"));
+    let UnificationError::DistinctTemplates {
+        operation,
+        expected,
+        actual,
+        ..
+    } = &error
+    else {
+        panic!("distinct templates, got {error}");
+    };
+    assert_eq!(*operation, TypeOperation::Bind);
+    assert_eq!(expected.identifier(), &t);
+    assert_eq!(actual.identifier(), &u);
 }
 
 #[test]
@@ -486,6 +529,14 @@ fn primitive_pattern_needs_the_same_primitive_actual() {
         .bind_template(&template(&t), &empty())
         .expect_err("a template");
 
+    assert!(matches!(
+        mismatch,
+        UnificationError::CoreDataTypeMismatch {
+            expected: CoreDataType::Int32,
+            actual: CoreDataType::Float32,
+            ..
+        }
+    ));
     assert_eq!(
         mismatch.to_string(),
         "core data type mismatch: int32 vs float32"
