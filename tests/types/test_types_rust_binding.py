@@ -57,6 +57,8 @@ from fhy_core.types import (
     unify_expression,
 )
 
+from .conftest import mock_identifier
+
 # ===========================================================================
 # Python-defined types
 # ===========================================================================
@@ -563,6 +565,36 @@ def test_a_refused_shape_substitution_is_an_error() -> None:
         VerificationError, match="substituting the existing shape bindings was refused"
     ):
         substitute_template(NumericalType(_int32(), [guarded]), environment)
+
+
+def test_a_refused_shape_substitution_names_and_chains_the_refusal() -> None:
+    """Test a refused substitution's error carries the expression's refusal.
+
+    The message ends with the refusal's text, and the refusal is the
+    ``__cause__``, as the expression raises it.
+    """
+    c, x, y = (
+        mock_identifier("C", 101),
+        mock_identifier("X", 102),
+        mock_identifier("Y", 103),
+    )
+    environment = (
+        TypeUnificationEnvironment.empty()
+        .with_expression_binding(c, LiteralExpression(5))
+        .with_expression_binding(y, IdentifierExpression(x) + 1)
+    )
+    guarded = piecewise((IdentifierExpression(c), IdentifierExpression(y)), otherwise=0)
+
+    with pytest.raises(VerificationError) as exception_info:
+        unify_expression(IdentifierExpression(x), guarded, environment)
+
+    assert str(exception_info.value) == (
+        "substituting the existing shape bindings was refused: "
+        "condition of piecewise case 0 is a non-boolean literal"
+    )
+    cause = exception_info.value.__cause__
+    assert type(cause) is ValueError
+    assert str(cause) == "condition of piecewise case 0 is a non-boolean literal"
 
 
 def test_dispatchers_refuse_an_environment_of_the_wrong_type() -> None:

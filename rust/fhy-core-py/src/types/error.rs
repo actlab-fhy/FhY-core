@@ -33,7 +33,9 @@ impl IntoPyErr for TemplateWidthError {
 }
 
 /// Raises the exception a Python-defined type's handler raised, and
-/// `VerificationError` with the core's text otherwise.
+/// `VerificationError` with the core's text otherwise; for a refused
+/// substitution, the text ends with the expression's refusal, which is its
+/// `__cause__`, as the expression raises it.
 impl IntoPyErr for UnificationError {
     fn into_py_err(self) -> PyErr {
         match self {
@@ -44,6 +46,12 @@ impl IntoPyErr for UnificationError {
                     })
                 })
             }
+            Self::Substitution(source) => Python::attach(|py| {
+                let text = format!("{self}: {source}");
+                let error = crate::exceptions::VERIFICATION_ERROR.err(py, (text,));
+                error.set_cause(py, Some(source.into_py_err()));
+                error
+            }),
             other => Python::attach(|py| {
                 crate::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
             }),
