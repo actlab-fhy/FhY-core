@@ -66,7 +66,7 @@ pub(crate) fn read_limits(timeout_milliseconds: &Bound<'_, PyAny>) -> PyResult<C
     }
     let milliseconds: u64 = timeout_milliseconds.extract().map_err(|_too_large| {
         PyValueError::new_err(format!(
-            "timeout_milliseconds must be None or a positive integer, but got {}.",
+            "timeout_milliseconds must be below 2**64 milliseconds, but got {}.",
             timeout_milliseconds
                 .repr()
                 .map_or_else(|_| "?".to_owned(), |text| text.to_string())

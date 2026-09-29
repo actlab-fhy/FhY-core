@@ -439,11 +439,7 @@ def test_holds_for_all_free_assignments_raises_the_backend_s_keyboard_interrupt(
     assert exception_info.value is interrupt
 
 
-@pytest.mark.parametrize(
-    "timeout",
-    [pytest.param(True, id="bool"), pytest.param(2**64, id="above_u64")],
-)
-def test_solver_method_refuses_a_bad_timeout(x: Identifier, timeout: Any) -> None:
+def test_solver_method_refuses_a_bad_timeout(x: Identifier) -> None:
     """Test a ``Solver`` method checks the timeout as the module functions do."""
     solver = Solver(smt_solver=_RecordingSmtSolver(SatResult.SAT))
 
@@ -451,8 +447,28 @@ def test_solver_method_refuses_a_bad_timeout(x: Identifier, timeout: Any) -> Non
         solver.check_expression_satisfiability(
             IdentifierExpression(x) > 0,
             {x: SymbolType.INT},
-            timeout_milliseconds=timeout,
+            timeout_milliseconds=True,
         )
+
+
+def test_solver_method_refuses_a_timeout_of_2_to_the_64_milliseconds(
+    x: Identifier,
+) -> None:
+    """Test a positive timeout of ``2**64`` ms or more names the bound it breaks."""
+    backend = _RecordingSmtSolver(SatResult.SAT)
+    solver = Solver(smt_solver=backend)
+
+    with pytest.raises(
+        ValueError,
+        match=r"^timeout_milliseconds must be below 2\*\*64 milliseconds, but got "
+        rf"{2**64}\.$",
+    ):
+        solver.check_expression_satisfiability(
+            IdentifierExpression(x) > 0,
+            {x: SymbolType.INT},
+            timeout_milliseconds=2**64,
+        )
+    assert backend.checks == []
 
 
 # =============================================================================
