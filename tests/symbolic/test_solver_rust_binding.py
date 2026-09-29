@@ -1077,6 +1077,21 @@ def test_default_solver_holds_the_z3_and_sympy_adapters() -> None:
     assert default.simplifier is not None and default.simplifier.name == "sympy"
 
 
+def test_default_smt_solver_refuses_an_adapter_that_is_no_smt_solver(
+    x: Identifier, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test the deferred z3 adapter raises ``TypeError`` for a non-SMT adapter."""
+    default_smt_solver = get_default_solver().smt_solver
+    assert default_smt_solver is not None
+    script = SmtScript.lower(IdentifierExpression(x) > 0, {x: SymbolType.INT})
+    monkeypatch.setattr(
+        solver_module, "_resolve_adapter", lambda backend: _RecordingSimplifier()
+    )
+
+    with pytest.raises(TypeError, match="z3 adapter must be an SmtSolver"):
+        default_smt_solver.check(script, timeout_milliseconds=None)
+
+
 @pytest.mark.usefixtures("restore_default_solver")
 def test_replacing_the_default_solver_reaches_the_functions_constraints_and_params(
     x: Identifier,

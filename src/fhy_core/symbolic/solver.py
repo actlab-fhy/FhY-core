@@ -384,7 +384,11 @@ class _DeferredSmtSolver(SmtSolver):
         self, script: SmtScript, *, timeout_milliseconds: int | None
     ) -> SatResult:
         adapter = _resolve_adapter(self._backend)
-        assert isinstance(adapter, SmtSolver)
+        if not isinstance(adapter, SmtSolver):
+            raise TypeError(
+                f"The {self._backend.value} adapter must be an SmtSolver, but got "
+                f"{type(adapter).__name__}."
+            )
         return adapter.check(script, timeout_milliseconds=timeout_milliseconds)
 
 
