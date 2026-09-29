@@ -1685,9 +1685,9 @@ fn pattern_alternatives_commits_to_the_first_match() {
 }
 
 /// Test `c + c` through an alternative `[c, _]` on the left is committed
-/// choice, as the Python matcher before the switch was: in `1 + 2` the
-/// first alternative binds `c` to `1`, the right operand then fails, and
-/// the wildcard alternative, which would let `c` bind `2`, is never tried.
+/// choice: in `1 + 2` the first alternative binds `c` to `1`, the right
+/// operand then fails, and the wildcard alternative, which would let `c`
+/// bind `2`, is never tried.
 /// `2 + 2` matches through the first alternative.
 #[rstest]
 #[case::the_right_operand_differs(1, None)]

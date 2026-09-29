@@ -4,7 +4,7 @@
 use fhy_core::expression::FunctionSort;
 use fhy_core::types::CoreDataType;
 
-/// The core data types each sort admits, per the design.
+/// The core data types each sort admits.
 fn admitted(sort: FunctionSort) -> Vec<CoreDataType> {
     CoreDataType::all()
         .filter(|core| match sort {

@@ -8,8 +8,7 @@ parts it holds. A member value (a Rust ``Value``), which is no
 Python type of the value. The Rust replay
 (``rust/fhy-core/tests/it/serialization_golden.rs``) reads each text into its
 Rust type and writes it back byte-identically, so Python's and Rust's
-serialization cannot drift apart (slice S17 of
-``docs/design/python-switch.md``, D-S17-20).
+serialization cannot drift apart.
 
 Every case is checked here first: the text decodes to an object that writes
 the same text again. Every identifier holds a fixed id, so the corpus is the

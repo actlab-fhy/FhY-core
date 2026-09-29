@@ -977,7 +977,7 @@ fn the_occurs_check_follows_bindings_on_either_side() {
     ));
 }
 
-/// The TYP probe's environment: `C := 5` and `Y := X + 1`, with the
+/// An environment of `C := 5` and `Y := X + 1`, with the
 /// piecewise `{Y if C; 0 otherwise}`, whose substitution puts the literal
 /// `5` in a condition, which `Expression::substitute` refuses.
 fn refused_substitution_case() -> (

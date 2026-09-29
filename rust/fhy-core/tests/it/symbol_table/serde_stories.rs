@@ -251,9 +251,9 @@ fn a_table_whose_child_was_added_before_its_parent_round_trips() {
     }
 }
 
-/// The TYP probe's second table: `y` added to a child and then to its
-/// parent. `add_symbol` now refuses the second, so no such table is built
-/// through the checked API, and one built unchecked fails to decode.
+/// A table with `y` added to a child and then to its parent: `add_symbol`
+/// refuses the second, so no such table is built through the checked API,
+/// and one built unchecked fails to decode.
 #[test]
 fn a_symbol_added_to_a_child_then_its_parent_is_refused() {
     let (parent, child, y) = (
