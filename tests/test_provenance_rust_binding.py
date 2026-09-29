@@ -1,13 +1,12 @@
 """Tests the Python interface of the Rust-backed provenance classes.
 
 ``Position``, ``Span``, ``Provenance`` and its five variant classes are thin
-Python subclasses of the ``fhy_core._rs`` classes over the Rust values (slice
-S3b of ``docs/design/python-switch.md``). Their behavioral suites cover the
-provenance semantics; this suite covers what the binding adds: the class
-hierarchy and the registration of the public classes, construction and its
-argument checks, path normalization, the dataclass reprs, equality and
-ordering, the pinned payload text, pickles across processes, frozen errors,
-and the recursion guard.
+Python subclasses of the ``fhy_core._rs`` classes over the Rust values.
+Their behavioral suites cover the provenance semantics; this suite covers
+what the binding adds: the class hierarchy and the registration of the
+public classes, construction and its argument checks, path normalization,
+the dataclass reprs, equality and ordering, the pinned payload text, pickles
+across processes, frozen errors, and the recursion guard.
 """
 
 import base64
@@ -367,7 +366,7 @@ def test_span_checks_offsets_before_positions() -> None:
     ],
 )
 def test_arguments_of_the_wrong_type_raise_type_error(build: Any, message: str) -> None:
-    """Test the stricter argument checks raise `TypeError` in the S2 style."""
+    """Test each argument check raises `TypeError` naming the class and type."""
     with pytest.raises(TypeError) as info:
         build()
 
@@ -661,9 +660,8 @@ _OTHER_PAYLOAD = _build_file_payload(
         "end_position": None,
     },
 )
-# The payload of each provenance `_build_provenances` returns, in order: the
-# wire format the pure-Python classes wrote, which the Rust-backed classes
-# keep (decision 4 of docs/design/python-switch.md).
+# The payload of each provenance `_build_provenances` returns, in order, pinned
+# as the classes' wire format.
 _EXPECTED_PAYLOADS: list[SerializedDict] = [
     _UNKNOWN_PAYLOAD,
     _SOURCE_PAYLOAD,

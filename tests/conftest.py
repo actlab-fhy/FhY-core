@@ -80,9 +80,8 @@ def pytest_collection_modifyitems(
 def v1_wire() -> Iterator[None]:
     """Write, and read, the deprecated V1 wire format in the test.
 
-    For the tests that pin V1 payloads, which stay until V1 is removed
-    (slice S17 of ``docs/design/python-switch.md``); the deprecation
-    warnings are silenced.
+    For the tests that pin V1 payloads, which stay until V1 is removed;
+    the deprecation warnings are silenced.
     """
     with writing_v1():
         yield

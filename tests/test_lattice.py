@@ -131,15 +131,14 @@ def test_two_element_lattice_get_least_upper_bound(
 def test_empty_lattice_meet_refuses_a_non_member(empty_lattice: Lattice[Any]) -> None:
     """Test that the meet of a non-member of an empty lattice raises.
 
-    T-12: an empty lattice refuses a non-member as any lattice does, where
-    it answered `None` before S11a.
+    An empty lattice refuses a non-member as any lattice does.
     """
     with pytest.raises(ValueError, match="not a member"):
         empty_lattice.get_meet(1, 1)
 
 
 def test_empty_lattice_join_refuses_a_non_member(empty_lattice: Lattice[Any]) -> None:
-    """Test that the join of a non-member of an empty lattice raises (T-12)."""
+    """Test that the join of a non-member of an empty lattice raises."""
     with pytest.raises(ValueError, match="not a member"):
         empty_lattice.get_join(1, 1)
 

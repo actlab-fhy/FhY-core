@@ -71,7 +71,7 @@ def test_compiler_pass_wraps_internal_exceptions() -> None:
 def test_compiler_pass_accepts_none_input_unless_an_override_refuses_it() -> None:
     """Test that the default validation accepts None and an override can refuse it.
 
-    D-S6-3: the Rust core's `validate_input` accepts every input.
+    The Rust core's `validate_input` accepts every input.
     """
 
     @register_pass("tests.identity_pass", "Identity pass for object IR.")
@@ -212,7 +212,7 @@ def test_pass_core_records_support_partial_equal_traits() -> None:
 # the others wrap to PassExecutionError. The message is the core's and
 # names the Python hook; the hook's exception is the `__cause__`. A
 # PassValidationError / PassExecutionError raised by user code is wrapped
-# like any other exception (N-S6-2).
+# like any other exception.
 # ---------------------------------------------------------------------------
 
 
@@ -420,8 +420,8 @@ def test_get_preserved_analyses_wraps_unexpected_exception() -> None:
 def test_explicit_pass_validation_error_is_wrapped_as_a_hook_failure() -> None:
     """Test PassValidationError raised by user code is the cause of the hook failure.
 
-    N-S6-2: only a nested pass run's error nests; an error the hook's own
-    code raises fails the hook like any other exception.
+    Only a nested pass run's error nests; an error the hook's own code
+    raises fails the hook like any other exception.
     """
 
     @register_pass(
@@ -456,7 +456,7 @@ def test_explicit_pass_validation_error_is_wrapped_as_a_hook_failure() -> None:
 def test_explicit_pass_execution_error_is_wrapped_as_a_hook_failure() -> None:
     """Test PassExecutionError raised by user code is the cause of the hook failure.
 
-    N-S6-2, as for `PassValidationError`.
+    As for `PassValidationError`, only a nested pass run's error nests.
     """
 
     @register_pass(
@@ -481,8 +481,8 @@ def test_explicit_pass_execution_error_is_wrapped_as_a_hook_failure() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Run statistics track real executions, not invocations (N-S6-1: the global
-# run counters gave way to per-run statistics).
+# Run statistics track real executions, not invocations; each run keeps its
+# own statistics.
 # ---------------------------------------------------------------------------
 
 

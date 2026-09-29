@@ -9,8 +9,8 @@ precedence, inheritance, the ``EquivalenceDerivationError`` for un-inferable
 fields, and the relational laws (reflexive / symmetric / transitive,
 structural-implies-alpha, alpha-not-implies-structural for a renamed binder).
 
-The synthetic dataclasses are deliberately minimal. The real migration target
-(``Expression`` and friends) keeps its own structural- and alpha-equivalence
+The synthetic dataclasses are deliberately minimal. The real consumers
+(``Expression`` and friends) keep their own structural- and alpha-equivalence
 suites; these tests pin the engine itself.
 """
 
@@ -650,9 +650,8 @@ def test_binder_repeating_an_identifier_matches_no_binder_in_either_direction() 
     """Test a binder field repeating an identifier pairs with nothing.
 
     A binder list that repeats an identifier, on either side, pairs with
-    nothing (N-S10-2 (b) of ``docs/design/python-switch.md``), so the node
-    is alpha-equivalent to no node, itself included, though it stays
-    structurally equivalent to an equal copy.
+    nothing, so the node is alpha-equivalent to no node, itself included,
+    though it stays structurally equivalent to an equal copy.
     """
 
     @dataclass(frozen=True, eq=False)
@@ -853,7 +852,7 @@ def test_structural_equivalence_implies_alpha_equivalence() -> None:
     """Test a structurally equivalent pair is also alpha-equivalent.
 
     Precondition: the tree has no binder field that repeats an identifier,
-    since such a binder pairs with nothing (N-S10-2 (b)).
+    since such a binder pairs with nothing.
     """
     left = _mixed_tree()
     right = _mixed_tree()

@@ -1,10 +1,10 @@
-"""Tests that cycles through the extension's objects are collected (R2-003).
+"""Tests that cycles through the extension's objects are collected.
 
 Each test builds an ordinary cycle that runs through a Rust-backed object,
 drops every name of it, and asserts a weak reference to a Python object in
 the cycle dies after `gc.collect()`: a class that held its Python objects
 where the collector cannot see them would keep the whole cycle alive for
-the life of the process (F2-003).
+the life of the process.
 """
 
 import dataclasses

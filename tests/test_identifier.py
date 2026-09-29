@@ -577,7 +577,7 @@ def test_an_identifier_created_after_the_largest_payload_round_trips() -> None:
     The child process tries the largest payload ids below `2**63` and
     `2**62`; only the second advances the counter. The next identifier's id
     is then `2**62`, which this process issued, so JSON, pickle, deep copy
-    and an expression holding it all round-trip (audit probe `p25_idcap.py`).
+    and an expression holding it all round-trip.
     """
     completed = subprocess.run(
         [sys.executable, "-c", _ROUND_TRIP_AFTER_THE_LARGEST_PAYLOAD_PROGRAM],
@@ -708,9 +708,9 @@ def test_fresh_process_issues_ids_upward_from_the_reserved_block() -> None:
 # =============================================================================
 # Reserved ids of the shipped identifiers
 #
-# The shipped tags hold fixed ids from the reserved block
-# (decision D-S2-2 of docs/design/python-switch.md), from a table that must
-# match the Rust crate's `fhy_core::identifier::reserved` entry for entry.
+# The shipped tags hold fixed ids from the reserved block, from a table that
+# must match the Rust crate's `fhy_core::identifier::reserved` entry for
+# entry.
 # =============================================================================
 
 _RUST_RESERVED_TABLE = (

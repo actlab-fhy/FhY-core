@@ -42,11 +42,7 @@ def test_pop_root_frame_raises_index_error() -> None:
 
 
 def test_failed_root_pop_keeps_the_root_bindings() -> None:
-    """Test a refused root pop leaves the depth and the root bindings alone.
-
-    Shared case S-5 of `docs/design/python-switch.md`, "S18: scope and
-    stack".
-    """
+    """Test a refused root pop leaves the depth and the root bindings alone."""
     scope: Scope[str, int] = Scope()
     scope.define("a", 1)
 

@@ -176,7 +176,7 @@ def test_derive_false_without_methods_raises_at_instantiation() -> None:
 
 
 def test_derive_false_with_manual_methods_works() -> None:
-    """Test ``derive=False`` with hand-written methods behaves as before."""
+    """Test ``derive=False`` with hand-written methods round-trips through them."""
 
     @register_serializable(type_id="_test_derive_optout_manual")
     @dataclass(frozen=True)

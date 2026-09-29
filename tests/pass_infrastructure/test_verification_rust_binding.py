@@ -2,12 +2,12 @@
 
 The verification registry runs on the Rust core's
 ``fhy_core::pass::VerificationRegistry``, held in the extension's module
-state (S14 of ``docs/design/python-switch.md``). ``test_verification.py``
-tests the Python API's behavior; this suite covers what the binding adds
-over the core: the ``_rs`` functions and the module state, the typed
-arguments, the lineage read from ``__mro__``, pass classes whose
-construction fails, interrupts, the references the registry keeps,
-threads, logging, and ``VerifiableMixin``'s calls.
+state. ``test_verification.py`` tests the Python API's behavior; this
+suite covers what the binding adds over the core: the ``_rs`` functions
+and the module state, the typed arguments, the lineage read from
+``__mro__``, pass classes whose construction fails, interrupts, the
+references the registry keeps, threads, logging, and
+``VerifiableMixin``'s calls.
 """
 
 import gc
@@ -168,7 +168,7 @@ def test_lookups_return_the_registered_class_objects() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Typed arguments (V-1)
+# Typed arguments
 # ---------------------------------------------------------------------------
 
 
@@ -283,7 +283,7 @@ def test_run_verification_has_one_record_per_pass() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pass classes whose construction fails (V-2)
+# Pass classes whose construction fails
 # ---------------------------------------------------------------------------
 
 
@@ -442,7 +442,7 @@ def test_register_logs_new_and_repeated_registrations(
 
 
 # ---------------------------------------------------------------------------
-# VerifiableMixin over `_rs` (V-3)
+# VerifiableMixin over `_rs`
 # ---------------------------------------------------------------------------
 
 

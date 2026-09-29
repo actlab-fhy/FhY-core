@@ -3,8 +3,7 @@
 V1 is written only inside ``wire_version(WireVersion.V1)``, reading or
 writing it warns, readers tell the versions apart at each payload's root,
 and `upgrade_v1_payload` and ``python -m fhy_core.serialization_upgrade``
-convert stored V1 payloads (slice S17 of ``docs/design/python-switch.md``,
-D-S17-14, D-S17-16 and D-S17-25). The tests are deleted with V1.
+convert stored V1 payloads. The tests are deleted with V1.
 """
 
 import json
@@ -69,7 +68,7 @@ def test_reading_v1_warns_once_per_payload_naming_the_upgrade() -> None:
 
 
 def test_the_v1_warnings_name_the_release_that_removes_v1() -> None:
-    """Test writing and reading V1 both warn that 0.3.0 removes it (R2-N2)."""
+    """Test writing and reading V1 both warn that 0.3.0 removes it."""
     with (
         pytest.warns(DeprecationWarning, match="removed in 0.3.0"),
         wire_version(WireVersion.V1),
@@ -81,7 +80,7 @@ def test_the_v1_warnings_name_the_release_that_removes_v1() -> None:
 
 
 def test_an_unmarked_v1_read_fails_the_test() -> None:
-    """Test the suite turns an unmarked V1 warning into an error (R2-N4).
+    """Test the suite turns an unmarked V1 warning into an error.
 
     ``pyproject.toml`` filters the V1 warnings as errors, so a test that
     reads V1 without saying so fails instead of burying the warning.

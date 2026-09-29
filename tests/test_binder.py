@@ -292,8 +292,8 @@ def test_lambda_repeating_a_parameter_matches_no_lambda_in_either_direction() ->
     """Test a lambda binding one identifier twice pairs with no lambda.
 
     A binder list that repeats an identifier, on either side, pairs with
-    nothing (N-S10-2 (b) of ``docs/design/python-switch.md``), so ``\\x x. x``
-    is not alpha-equivalent to ``\\a b. b`` in either direction.
+    nothing, so ``\\x x. x`` is not alpha-equivalent to ``\\a b. b`` in
+    either direction.
     """
     x = mock_identifier("x", 1)
     a = mock_identifier("a", 4)
@@ -309,7 +309,7 @@ def test_lambda_repeating_a_parameter_is_not_alpha_equivalent_to_itself() -> Non
     """Test a lambda binding one identifier twice is not alpha-equivalent to itself.
 
     Alpha-equivalence is reflexive only on binders whose lists repeat no
-    identifier (N-S10-2 (b)).
+    identifier.
     """
     x = mock_identifier("x", 1)
     repeating = _Lam((x, x), _Var(x))

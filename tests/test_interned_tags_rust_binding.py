@@ -1,11 +1,11 @@
 """Tests the Python interface of the Rust-backed interned tags.
 
 ``OpAttribute``, ``NoteKind`` and ``ValueDomain`` are thin Python subclasses
-of the ``fhy_core._rs`` classes over the Rust registries (slice S2 of
-``docs/design/python-switch.md``). Their behavioral suites cover the tags'
-semantics; this suite covers what the binding adds: canonical identity,
-lookup, payloads and pickles, frozen errors, and the decisions D-S2-1,
-D-S2-3 and D-S2-4.
+of the ``fhy_core._rs`` classes over the Rust registries. Their behavioral
+suites cover the tags' semantics; this suite covers what the binding adds:
+construction and canonical identity, lookup, payloads and pickles, frozen
+errors, append-only registries, and value domains that follow the Rust
+semantics.
 """
 
 import base64
@@ -119,7 +119,7 @@ def test_rust_class_cannot_be_constructed_without_the_binding(
 
 
 # =============================================================================
-# Construction and canonical identity (D-S2-4)
+# Construction and canonical identity
 # =============================================================================
 
 
@@ -361,7 +361,7 @@ def _run_python_in_a_fresh_process(source: str, *, stdin: str | None = None) -> 
 @pytest.mark.slow
 @pytest.mark.subprocess
 def test_pickles_of_shipped_tags_are_identical_in_every_process() -> None:
-    """Test each shipped tag pickles to the same bytes in a fresh process (D-S2-2)."""
+    """Test each shipped tag pickles to the same bytes in a fresh process."""
     this_process_pickles = [
         base64.b64encode(pickle.dumps(tag)).decode("ascii")
         for tag, _, _, _ in _SHIPPED_TAGS
@@ -508,7 +508,7 @@ def test_tag_reports_itself_frozen(cls: type[_Tag]) -> None:
 
 
 # =============================================================================
-# Append-only registries (D-S2-1)
+# Append-only registries
 # =============================================================================
 
 
@@ -597,7 +597,7 @@ def test_note_kind_str_is_its_name_hint() -> None:
 
 
 # =============================================================================
-# Value domains follow the Rust semantics (D-S2-3)
+# Value domains follow the Rust semantics
 # =============================================================================
 
 

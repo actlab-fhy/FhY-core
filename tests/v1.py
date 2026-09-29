@@ -1,9 +1,9 @@
 """Helpers for the tests that pin the deprecated V1 wire format.
 
 V1 is written only inside ``wire_version(WireVersion.V1)``, and reading or
-writing it warns with ``DeprecationWarning`` (slice S17 of
-``docs/design/python-switch.md``, D-S17-16). The tests that pin V1 payloads
-use these helpers, which silence that warning, and are deleted with V1.
+writing it warns with ``DeprecationWarning``. The tests that pin V1
+payloads use these helpers, which silence that warning, and are deleted
+with V1.
 
 The suite turns an unmarked V1 warning into an error (``filterwarnings`` in
 ``pyproject.toml``), so a test that reads V1 on purpose says so: with

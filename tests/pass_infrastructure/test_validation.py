@@ -297,8 +297,8 @@ def test_validation_manager_continues_after_pass_execution_error() -> None:
 def test_validation_manager_reports_the_failure_of_a_validation_hook() -> None:
     """Test that a failing validation hook adds the error recording it.
 
-    D-S6-3: `validate_input` accepts `None` by default, so the validator
-    refuses it in an override; the check reports the hook's failure.
+    `validate_input` accepts `None` by default, so the validator refuses
+    it in an override; the check reports the hook's failure.
     """
 
     @register_pass("tests.vm.rejects_input", "Rejects None via validate_input.")
@@ -391,8 +391,8 @@ def test_validation_manager_default_and_explicit_identifier() -> None:
 def test_validation_manager_record_holds_the_validators_slice_of_the_report() -> None:
     """Test that each record names its validator and shares its diagnostics.
 
-    D-S6-13: a record is a `ValidatorRecord`, whose diagnostics are its
-    slice of the report's diagnostic objects.
+    A record is a `ValidatorRecord`, whose diagnostics are its slice of
+    the report's diagnostic objects.
     """
     manager = ValidationManager[ValueBox]()
     manager.add(_single_warning_validator("tests.vm.record_warn", "msg"))
@@ -469,9 +469,9 @@ def test_validation_manager_attributes_each_diagnostic_to_emitting_validator() -
 def test_validation_manager_reports_silent_failures_with_the_cores_text() -> None:
     """Test the error text of a validator that fails without reporting one.
 
-    D-S6-13: a failing pass reports its hook's failure, and a `Validator`
-    that raises without reporting an error gains the core's synthesized
-    text, both with balanced quotes around the names.
+    A failing pass reports its hook's failure, and a `Validator` that
+    raises without reporting an error gains the core's synthesized text,
+    both with balanced quotes around the names.
     """
 
     @register_pass(

@@ -2,12 +2,11 @@
 
 ``Note``, ``Diagnostic`` and ``ValidationReport`` are thin Python subclasses
 of the ``fhy_core._rs`` classes over the Rust values, and ``DiagnosticLevel``
-converts by value at the boundary (slice S3 of
-``docs/design/python-switch.md``). Their behavioral suites cover the
-diagnostics' semantics; this suite covers what the binding adds: construction and its
-argument checks, the dataclass reprs and ``format()`` text, equality,
-payloads and pickles, frozen errors, and the registration of the public
-classes.
+converts by value at the boundary. Their behavioral suites cover the
+diagnostics' semantics; this suite covers what the binding adds:
+construction and its argument checks, the dataclass reprs and ``format()``
+text, equality, payloads and pickles, frozen errors, and the registration
+of the public classes.
 """
 
 import base64

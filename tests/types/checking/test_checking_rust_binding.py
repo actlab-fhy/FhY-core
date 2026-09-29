@@ -1,12 +1,11 @@
 """Tests for the Python interface over the Rust-backed type checker.
 
 The checker, the sort tables, the body check and the registry sweep run in
-the Rust core (S11b of ``docs/design/python-switch.md``).
-``ExpressionTypeChecker`` is a ``CompilerPass`` over it, and the core
-calls back the two lookups: the identifier types once per identifier
-occurrence, and the call-target resolver once per call node, unless the
-resolver is the registry's ``get_registered_entry``, which resolves
-through the registry without a Python call. These tests cover what the
+the Rust core. ``ExpressionTypeChecker`` is a ``CompilerPass`` over it, and
+the core calls back the two lookups: the identifier types once per
+identifier occurrence, and the call-target resolver once per call node,
+unless the resolver is the registry's ``get_registered_entry``, which
+resolves through the registry without a Python call. These tests cover what the
 binding adds around the core: the pass shape, the lookups' protocol, the
 objects handed back, the error classes and their framing, the body pass
 and the sweep's report, and a deep expression.
@@ -107,7 +106,7 @@ class _Opaque(Type):
 
 
 def test_checker_is_a_compiler_pass_but_no_visitable_pass() -> None:
-    """Test `ExpressionTypeChecker` is a plain `CompilerPass` (T-14)."""
+    """Test `ExpressionTypeChecker` is a plain `CompilerPass`."""
     assert issubclass(ExpressionTypeChecker, CompilerPass)
     assert not issubclass(ExpressionTypeChecker, VisitablePass)
 
@@ -241,7 +240,7 @@ def test_other_lookup_exception_propagates_as_the_same_object(
     ids=["bare_type", "one_tuple", "no_type", "no_qualifier"],
 )
 def test_lookup_result_of_the_wrong_shape_raises_type_error(result: Any) -> None:
-    """Test a lookup result that is no `(Type, TypeQualifier)` pair (T-15)."""
+    """Test a lookup result that is no `(Type, TypeQualifier)` pair."""
     with pytest.raises(TypeError, match=r"get_identifier_type"):
         synthesize_expression_type(
             IdentifierExpression(mock_identifier("x", 0)), lambda _: result
@@ -355,7 +354,7 @@ def test_other_resolver_exception_propagates_as_the_same_object() -> None:
 
 
 def test_resolver_result_that_is_no_entry_raises_type_error() -> None:
-    """Test a resolver returning something other than an entry (T-15)."""
+    """Test a resolver returning something other than an entry."""
 
     def resolver(name: str) -> Any:
         return 42
@@ -392,7 +391,7 @@ def test_non_type_expected_type_raises_type_error() -> None:
 
 
 def test_rule_error_is_framed_with_the_sub_expression() -> None:
-    """Test a rule broken below the root names both, with ids (D-S11-21)."""
+    """Test a rule broken below the root names both, with ids."""
     flag = mock_identifier("flag", 0)
     inner = BinaryExpression(
         BinaryOperation.ADD, IdentifierExpression(flag), LiteralExpression(1)
@@ -547,7 +546,7 @@ def test_sweep_report_is_one_error_per_failing_body_in_registration_order(
 
 
 def test_deep_expression_checks_without_recursion_error() -> None:
-    """Test a 10,000-level expression checks on a small stack (T-9)."""
+    """Test a 10,000-level expression checks on a small stack."""
     x = mock_identifier("x", 0)
     expression: Expression = IdentifierExpression(x)
     for _ in range(10_000):
@@ -564,7 +563,7 @@ def test_deep_expression_checks_without_recursion_error() -> None:
 
 
 def test_a_doubling_dag_of_depth_40_checks_in_under_a_second() -> None:
-    """Test a DAG with 2**40 paths checks once per distinct node (F2-001)."""
+    """Test a DAG with 2**40 paths checks once per distinct node."""
     x = mock_identifier("x", 0)
     expression: Expression = IdentifierExpression(x)
     for _ in range(40):

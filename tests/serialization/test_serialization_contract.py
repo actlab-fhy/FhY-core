@@ -1,9 +1,8 @@
 """Tests of the reusable serialization test contract.
 
-The contract helpers collapse the per-class round-trip / structure-rejection
-battery -- previously copy-pasted for every ``Serializable`` -- into a single
-parametrized form: a migrated class contributes only representative instances
-and a few malformed dicts, not four near-identical test functions.
+The contract helpers express the round-trip / structure-rejection battery
+every ``Serializable`` shares as a single parametrized form: a class
+contributes only representative instances and a few malformed dicts.
 
 Classes whose equality is by-value (provenance, notes, interned domains/
 attributes, dataclass frames) round-trip here. Expressions are ``eq=False``

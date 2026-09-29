@@ -404,7 +404,7 @@ _PYO3_DUNDERS = frozenset(
 docstring and the six comparison wrappers of one `__richcmp__`, which PyO3
 adds, and `__annotations__`, which the interpreter creates in a class the
 first time something reads it, as an `isinstance` check against a
-runtime-checkable protocol does (R2-N5)."""
+runtime-checkable protocol does."""
 
 
 def _read_stub_class_dunders(

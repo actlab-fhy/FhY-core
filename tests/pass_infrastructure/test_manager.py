@@ -192,9 +192,9 @@ def test_analysis_manager_does_not_cache_non_frozen_ir() -> None:
 def test_analysis_manager_does_not_block_ir_from_garbage_collection() -> None:
     """Test that caching an analysis result does not pin the IR after the run.
 
-    D-S6-8: a run's cache holds each cached node until the run ends, and
-    releases it then. If the cache outlived the run, the weakref below
-    would still resolve after `gc.collect()`.
+    A run's cache holds each cached node until the run ends, and releases
+    it then. If the cache outlived the run, the weakref below would still
+    resolve after `gc.collect()`.
     """
     BoxDoubleAnalysis.runs = 0
 
@@ -470,7 +470,7 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
 def test_get_analysis_manager_is_the_hook_view_of_the_run_cache() -> None:
     """Test that `get_analysis_manager` returns the running hook's cache view.
 
-    D-S6-8: outside a run it returns `None`; during a hook it returns an
+    Outside a run it returns `None`; during a hook it returns an
     `AnalysisManager` whose `get` reads the same cache as `get_analysis`.
     """
     BoxDoubleAnalysis.runs = 0
@@ -801,17 +801,15 @@ def test_fixpoint_group_record_iterations_cannot_be_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AnalysisManager falls back to uncached execution when the underlying
-# `weakref.finalize` call raises (no probe ref needed).
+# A run computes analyses uncached for IR it cannot cache.
 # ---------------------------------------------------------------------------
 
 
 def test_analysis_of_ir_that_is_not_frozen_yet_is_computed_uncached() -> None:
     """Test that a run computes analyses uncached for IR it cannot cache.
 
-    D-S6-8: only a `Frozen` IR that is frozen is cached, so a `FrozenMixin`
-    object that is not frozen yet is analyzed afresh on every request, as
-    the IR whose finalizer could not be registered was before.
+    Only a `Frozen` IR that is frozen is cached, so a `FrozenMixin` object
+    that is not frozen yet is analyzed afresh on every request.
     """
     BoxDoubleAnalysis.runs = 0
 
@@ -899,7 +897,7 @@ def _build_returning_pass(
 def test_each_run_starts_with_an_empty_cache() -> None:
     """Test that two runs of one pipeline over one IR each compute the analysis.
 
-    D-S6-8: the cache lives for one run, as a cleared manager's did.
+    The cache lives for one run.
     """
     BoxDoubleAnalysis.runs = 0
     manager = PassManager[Box]()
@@ -918,9 +916,8 @@ def test_pass_returning_its_input_keeps_every_result_even_when_preserving_none()
 ):
     """Test that a node never loses its own cached results within a run.
 
-    W-12 and D-S6-8: the transfer is merge-only, so a pass that returns its
-    input keeps the input's results whatever it preserves, where
-    ``invalidate(ir, PreservedAnalyses.none())`` dropped them.
+    The transfer is merge-only, so a pass that returns its input keeps the
+    input's results whatever it preserves.
     """
     BoxDoubleAnalysis.runs = 0
     BoxParityAnalysis.runs = 0
@@ -1028,16 +1025,15 @@ def test_changing_pass_preserving_none_carries_no_result() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The analysis view of a hook (D-S6-8 removed bind / unbind: a hook's
-# context carries the run's cache).
+# The analysis view of a hook (a hook's context carries the run's cache).
 # ---------------------------------------------------------------------------
 
 
 def test_get_analysis_manager_raises_in_a_hook_without_a_context() -> None:
     """Test that `did_change` cannot reach the run's analyses.
 
-    D-S6-4: the core runs `did_change` and `get_preserved_analyses` without
-    a context, so the view is refused there, and the hook fails.
+    The core runs `did_change` and `get_preserved_analyses` without a
+    context, so the view is refused there, and the hook fails.
     """
 
     @register_pass("tests.pm.bind_rejects_none", "Reads the view in did_change.")
@@ -1100,8 +1096,8 @@ def test_get_analysis_manager_is_none_outside_a_run() -> None:
 def test_concurrent_runs_of_one_pipeline_are_independent() -> None:
     """Test concurrent runs do not crash or produce inconsistent results.
 
-    D-S6-11: each run builds its own pipeline and cache, so runs of one
-    manager from many threads see only their own results.
+    Each run builds its own pipeline and cache, so runs of one manager
+    from many threads see only their own results.
     """
     irs = [Box(i) for i in range(64)]
 
@@ -1291,8 +1287,8 @@ def test_analysis_cache_logs_no_hit_or_miss_lines(
 ) -> None:
     """Test the run's cache logs no hit or miss lines.
 
-    D-S6-5: the cache is the Rust core's, which does not log; the pipeline
-    and pass lines stay.
+    The cache is the Rust core's, which does not log; the pipeline and
+    pass lines are still logged.
     """
 
     class HitMissAnalysis(Analysis[Box, int]):

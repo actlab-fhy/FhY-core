@@ -2200,10 +2200,9 @@ def test_true_division_of_the_widest_integers_is_the_widest_real_float() -> None
 
 
 def test_every_checker_error_is_framed_by_the_root() -> None:
-    """Test a checker error is framed even where Python raised a bare one.
+    """Test a checker error is framed by the root expression.
 
-    Rewrites the test of the private ``_TypeCheckContext``: the core frames
-    every broken rule by the expression checked (D-S11-21).
+    The core frames every broken rule by the expression checked.
     """
     checker = make_identifier_checker({})
     expression = IdentifierExpression(mock_identifier("x", 0))
@@ -2227,7 +2226,7 @@ def test_checker_get_noop_output_raises() -> None:
 
 
 def test_infer_rejects_non_expression_argument() -> None:
-    """Test a non-expression argument is refused with `TypeError` (T-3, T-15)."""
+    """Test a non-expression argument is refused with `TypeError`."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
     unknown = Mock(spec=Expression)
 

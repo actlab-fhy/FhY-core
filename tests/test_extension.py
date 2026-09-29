@@ -310,7 +310,7 @@ def test_a_versionless_extension_raises_import_error() -> None:
 def test_the_extension_declares_that_it_uses_the_gil() -> None:
     """Test importing the extension on a free-threaded build enables the GIL.
 
-    The module declares ``gil_used = true`` (R2-043), so CPython turns the
+    The module declares ``gil_used = true``, so CPython turns the
     GIL back on when it is imported.
     """
     is_gil_enabled = getattr(sys, "_is_gil_enabled")  # noqa: B009

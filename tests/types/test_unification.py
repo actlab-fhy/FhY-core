@@ -1002,17 +1002,14 @@ def test_bind_data_template_default_raises_for_unregistered_class_pair(
 
 
 # =============================================================================
-# The walks reach every expression node (T-5)
+# The walks reach every expression node
 # =============================================================================
 
 
 def test_substitute_template_substitutes_a_shape_variable_inside_a_call(
     int32_data_type: PrimitiveDataType,
 ) -> None:
-    """Test substitution reaches a shape variable inside a call dimension.
-
-    T-5: before S11a the walk stopped at call and piecewise nodes.
-    """
+    """Test substitution reaches a shape variable inside a call dimension."""
     n_identifier = Identifier("N")
     pattern = NumericalType(
         int32_data_type, [call("max", IdentifierExpression(n_identifier), 1)]
@@ -1031,7 +1028,7 @@ def test_substitute_template_substitutes_a_shape_variable_inside_a_call(
 def test_unify_expression_occurs_check_looks_inside_calls_and_piecewise(
     empty_environment: TypeUnificationEnvironment, kind: str
 ) -> None:
-    """Test the occurs check sees a placeholder inside a call or a piecewise (T-5)."""
+    """Test the occurs check sees a placeholder inside a call or a piecewise."""
     n_identifier = Identifier("N")
     reference = IdentifierExpression(n_identifier)
     right = (

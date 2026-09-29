@@ -1,12 +1,11 @@
 """Interface tests for the pass infrastructure's Rust binding.
 
-The pass infrastructure runs on the Rust core (``fhy_core._rs``, S6 of
-``docs/design/python-switch.md``). The other suites in this directory test
-the Python API's behavior; this one covers what the binding adds over the
-core: the class structure, the mapping of the Python hooks onto the core's
-lifecycle, the owned hook context, the Python errors, the analysis cache
-seen from Python, pipelines and validation over Python objects, logging,
-and pickles.
+The pass infrastructure runs on the Rust core (``fhy_core._rs``). The other
+suites in this directory test the Python API's behavior; this one covers what
+the binding adds over the core: the class structure, the mapping of the Python
+hooks onto the core's lifecycle, the owned hook context, the Python errors, the
+analysis cache seen from Python, pipelines and validation over Python objects,
+logging, and pickles.
 """
 
 import gc
@@ -195,7 +194,7 @@ def test_abstract_hooks_are_enforced() -> None:
 
 
 def test_get_noop_output_is_not_abstract() -> None:
-    """Test a pass that never skips needs no `get_noop_output` (D-S6-2)."""
+    """Test a pass that never skips needs no `get_noop_output`."""
     assert IdentityPass().execute(3).output == 3
 
 
@@ -222,7 +221,7 @@ def test_subclass_with_its_own_init_constructs(calls_super: bool) -> None:
 
 
 def test_constructor_refuses_arguments_it_does_not_take() -> None:
-    """Test `CompilerPass()` takes no arguments, as before the switch."""
+    """Test `CompilerPass()` takes no arguments."""
     with pytest.raises(TypeError):
         IdentityPass(1)
 
@@ -362,7 +361,7 @@ def test_hooks_a_class_does_not_override_run_in_rust(
 
 
 def test_default_hooks_accept_none_and_compare_by_value() -> None:
-    """Test the D-S6-3 defaults: `None` is accepted, and `!=` decides the change."""
+    """Test the default hooks: `None` is accepted, and `!=` decides the change."""
     assert IdentityPass().execute(None).output is None
     unchanged = _NewEqualBoxPass().execute(Box(1))
     assert unchanged.changed is False
@@ -430,7 +429,7 @@ class _Undecidable:
 
 
 def test_should_run_and_did_change_results_are_read_by_truthiness() -> None:
-    """Test D-S6-15: `should_run` and `did_change` results are read by `bool()`."""
+    """Test `should_run` and `did_change` results are read by `bool()`."""
 
     class TruthyPass(CompilerPass[int, int]):
         @override
@@ -470,7 +469,7 @@ def test_raising_truth_value_fails_the_hook() -> None:
 
 
 def test_preserved_analyses_of_the_wrong_type_fail_the_hook() -> None:
-    """Test D-S6-15: `get_preserved_analyses` must return a `PreservedAnalyses`."""
+    """Test `get_preserved_analyses` must return a `PreservedAnalyses`."""
 
     class WrongPreservedPass(IdentityPass):
         @override
@@ -601,7 +600,7 @@ def test_diagnostics_during_a_hook_are_the_current_runs() -> None:
 def test_hooks_without_a_context_refuse_report_and_get_analysis(
     hook: str, operation: str
 ) -> None:
-    """Test D-S6-4: `report` and `get_analysis` raise in the context-free hooks."""
+    """Test `report` and `get_analysis` raise in the context-free hooks."""
 
     def use_context(compiler_pass: CompilerPass[Box, Box]) -> None:
         if operation == "report":
@@ -639,7 +638,7 @@ def test_hooks_without_a_context_refuse_report_and_get_analysis(
 
 
 def test_reported_diagnostics_come_back_as_the_same_objects() -> None:
-    """Test D-S6-18: a reported diagnostic is one object everywhere it appears."""
+    """Test a reported diagnostic is one object everywhere it appears."""
     reported: list[Diagnostic] = []
 
     class ReportingPass(CompilerPass[int, int]):
@@ -825,7 +824,7 @@ class _InnerFailingPass(CompilerPass[int, int]):
 
 
 def test_error_of_a_nested_run_nests_in_the_outer_error() -> None:
-    """Test N-S6-2: a nested run's error is the core's `Nested`.
+    """Test a nested run's error is the core's `Nested`.
 
     The outer error names the outer pass and hook, keeps the outer run's
     diagnostics, and has the exception the nested run raised as its
@@ -1066,7 +1065,7 @@ def test_cache_is_keyed_by_identity_not_equality() -> None:
 
 
 def test_merge_only_transfer_keeps_the_outputs_own_result() -> None:
-    """Test W-12: a preserving pass's output keeps a result of its own."""
+    """Test a preserving pass's output keeps a result of its own."""
     replacement = Box(10)
     observed: list[int] = []
 
@@ -1161,7 +1160,7 @@ def test_raising_analysis_caches_nothing() -> None:
 
 
 def test_get_analysis_refuses_a_type_that_is_not_an_analysis() -> None:
-    """Test D-S6-15: `get_analysis` type-checks the analysis type."""
+    """Test `get_analysis` type-checks the analysis type."""
     with pytest.raises(
         TypeError, match="get_analysis analysis_type must be an Analysis subclass"
     ):
@@ -1186,7 +1185,7 @@ def test_analysis_manager_view_reads_the_same_cache() -> None:
 
 
 def test_preserved_analyses_are_keyed_by_identifier() -> None:
-    """Test D-S6-9: `PreservedAnalyses` names analyses by `Identifier`."""
+    """Test `PreservedAnalyses` names analyses by `Identifier`."""
     name = CountingAnalysis.get_analysis_name()
     other = Identifier("other")
     preserved = PreservedAnalyses.none().preserve(name)
@@ -1238,7 +1237,7 @@ def test_preserved_set_from_a_record_names_the_python_analyses() -> None:
 
 
 def test_group_changed_after_it_was_added_runs_as_it_is_now() -> None:
-    """Test D-S6-11: a run reads the current passes of each group."""
+    """Test a run reads the current passes of each group."""
     group = FixpointPassGroup[int](
         Identifier("late"), max_iterations=1, fail_on_non_convergence=False
     )
@@ -1310,7 +1309,7 @@ def test_skipped_runs_are_recorded_and_not_counted() -> None:
 
 
 def test_pipelines_type_check_their_arguments() -> None:
-    """Test D-S6-15: the pipelines refuse arguments of the wrong type."""
+    """Test the pipelines refuse arguments of the wrong type."""
     manager = PassManager[int]()
     group = FixpointPassGroup[int](Identifier("g"))
 
@@ -1549,7 +1548,7 @@ def test_rewrite_rule_applier_in_a_pipeline_keeps_the_input_object() -> None:
 def test_failure_diagnostic_is_logged_with_the_hooks_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test D-S6-5: a hook's failure is logged at ERROR with its exception."""
+    """Test a hook's failure is logged at ERROR with its exception."""
     with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
         with pytest.raises(PassExecutionError):
             _InnerFailingPass().execute(0)
@@ -1660,7 +1659,7 @@ def test_pipeline_and_validation_lines_are_logged(
     ids=lambda value: type(value).__name__,
 )
 def test_values_pickle_as_a_call_of_their_class(value: Any) -> None:
-    """Test D-S6-16: the P2 values pickle as a call of their class with fields."""
+    """Test the result values pickle as a call of their class with fields."""
     restored = pickle.loads(pickle.dumps(value))
 
     assert type(restored) is type(value)
@@ -1696,7 +1695,7 @@ def test_records_compare_by_class_and_fields() -> None:
 
 
 def test_records_type_check_their_fields() -> None:
-    """Test D-S6-15: the records refuse fields of the wrong type."""
+    """Test the records refuse fields of the wrong type."""
     with pytest.raises(TypeError, match="PassResult changed must be a bool, got int"):
         PassResult(0, changed=1)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="diagnostics must be Diagnostic instances"):
@@ -1725,7 +1724,7 @@ def test_pass_instance_pickles_through_its_dict() -> None:
 
 
 def test_managers_do_not_pickle() -> None:
-    """Test D-S6-16: the managers and the analysis view refuse pickling."""
+    """Test the managers and the analysis view refuse pickling."""
     views: list[AnalysisManager[Any]] = []
 
     class ViewPass(IdentityPass):

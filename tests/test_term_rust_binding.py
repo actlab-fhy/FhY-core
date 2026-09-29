@@ -3,13 +3,12 @@
 ``AlphaRenaming`` is ``fhy_core._rs.AlphaRenaming``, over the Rust core's
 ``fhy_core::term::AlphaRenaming``; ``BinderMixin``'s derived methods run the
 core's ``Binder`` algorithms over a node's Python hooks; and
-``DerivedEquivalenceMixin``'s engine runs in the binding (S10 of
-``docs/design/python-switch.md``). These tests cover what the binding adds
-around the core: the renaming's class structure, argument checks, value
-semantics and object identity; which hooks a binder's derived methods call,
-how their exceptions and results are handled, and the renamings they pass
-on; the derived engine's plans, native paths, depth, callbacks and errors;
-and the mapping helper's order.
+``DerivedEquivalenceMixin``'s engine runs in the binding. These tests cover
+what the binding adds around the core: the renaming's class structure, argument
+checks, value semantics and object identity; which hooks a binder's derived
+methods call, how their exceptions and results are handled, and the renamings
+they pass on; the derived engine's plans, native paths, depth, callbacks and
+errors; and the mapping helper's order.
 """
 
 import copy

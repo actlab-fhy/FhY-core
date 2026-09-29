@@ -3,9 +3,8 @@
 Each class is a part the Rust core holds behind an adapter: a constraint, a
 domain, a type, a frame, and a member value. Their V2 form is a foreign
 part, ``{"type_id": .., "data": <canonical JSON text>}``, under the family's
-foreign variant (slice S17 of ``docs/design/python-switch.md``, D-S17-7 and
-D-S17-11). The golden serialization corpus and the interface suites use
-them.
+foreign variant. The golden serialization corpus and the interface suites
+use them.
 """
 
 from collections.abc import Sequence

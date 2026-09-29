@@ -2,11 +2,10 @@
 
 ``PartiallyOrderedSet`` and ``Lattice`` are thin subclasses of
 ``fhy_core._rs.PartiallyOrderedSet`` and ``fhy_core._rs.Lattice``, which keep
-the element objects in a dict and run the order in the Rust core (S11a of
-``docs/design/python-switch.md``). These tests cover what the binding adds
-around the core: the class structure, the elements' Python hashing and
-equality, the key calls of ``iter_stable``, the ``verify`` report, and the
-exception classes and texts.
+the element objects in a dict and run the order in the Rust core. These tests
+cover what the binding adds around the core: the class structure, the elements'
+Python hashing and equality, the key calls of ``iter_stable``, the ``verify``
+report, and the exception classes and texts.
 """
 
 import copy
@@ -144,7 +143,7 @@ def test_the_order_is_reflexive_and_an_order_already_holding_is_accepted() -> No
 
 
 def test_iteration_is_topological_with_insertion_order_breaking_ties() -> None:
-    """Test T-11: ties come in the order the elements were added."""
+    """Test ties come in the order the elements were added."""
     poset: PartiallyOrderedSet[str] = PartiallyOrderedSet()
     for element in ("d", "c", "b", "a"):
         poset.add_element(element)
@@ -255,7 +254,7 @@ def test_a_non_member_is_refused_by_every_bound_query() -> None:
 
 
 # =============================================================================
-# Pickling and copying (R2-024)
+# Pickling and copying
 # =============================================================================
 
 
@@ -405,7 +404,7 @@ def test_setstate_refuses_a_state_it_did_not_write() -> None:
 
 
 # =============================================================================
-# Re-entrant reads and changes (R2-044)
+# Re-entrant reads and changes
 # =============================================================================
 
 

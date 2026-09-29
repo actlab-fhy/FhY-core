@@ -66,8 +66,7 @@ def test_stack_peek_error() -> None:
 def test_stack_peek_returns_the_stored_object() -> None:
     """Test that peek returns the stored top object, so a change to it stays.
 
-    Shared case K-10 of `docs/design/python-switch.md`, "S18: scope and
-    stack"; the Rust stack pins it through `peek_mut`.
+    The Rust stack pins the same behavior through `peek_mut`.
     """
     stack = Stack[list[int]]()
     stack.push([1])

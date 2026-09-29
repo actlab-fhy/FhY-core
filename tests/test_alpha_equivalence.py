@@ -810,8 +810,7 @@ def example_terms() -> list[AlphaEquivalenceMixin]:
     """Yield a small set of terms covering leaves, refs, pairs, and binders.
 
     Every binder binds one identifier, so no binder list repeats one: the
-    precondition of the laws below, which hold only on such terms (N-S10-2
-    (b) of ``docs/design/python-switch.md``).
+    precondition of the laws below, which hold only on such terms.
     """
     leaf1 = _AlphaLeaf(1)
     leaf2 = _AlphaLeaf(2)

@@ -4,11 +4,10 @@ The four built-in classes are thin subclasses of their ``fhy_core._rs``
 classes; the environment is ``fhy_core._rs.TypeUnificationEnvironment``
 under a thin subclass; and the dispatchers' rules and defaults run in the
 Rust core, which calls the handlers of a Python-defined type once per such
-node it meets (S11a of ``docs/design/python-switch.md``). These tests cover
-what the binding adds around the core: the class structure and freezing,
-value semantics, the objects handed back, argument checks, pickling and
-payloads, the environment's class and objects, and how the dispatchers
-drive Python-defined types.
+node it meets. These tests cover what the binding adds around the core: the
+class structure and freezing, value semantics, the objects handed back,
+argument checks, pickling and payloads, the environment's class and objects,
+and how the dispatchers drive Python-defined types.
 """
 
 import copy
@@ -272,7 +271,7 @@ def test_a_python_defined_type_constructs_with_its_init_and_freezes_after_it() -
 
 
 def test_built_in_types_compare_and_hash_structurally() -> None:
-    """Test T-1: separately built equal types are `==` and hash alike."""
+    """Test separately built equal types are `==` and hash alike."""
     assert _array(4, 8) == _array(4, 8)
     assert hash(_array(4, 8)) == hash(_array(4, 8))
     assert _array(4, 8) != _array(4, 9)
@@ -314,7 +313,7 @@ def test_the_default_stride_is_the_literal_one() -> None:
 
 
 def test_arguments_of_the_wrong_type_are_refused() -> None:
-    """Test T-3: the constructors check their arguments."""
+    """Test the constructors check their arguments."""
     with pytest.raises(TypeError, match="data_type must be a DataType"):
         NumericalType(CoreDataType.INT32)  # type: ignore[arg-type]
     with pytest.raises(
@@ -349,7 +348,7 @@ def test_an_empty_width_list_is_refused() -> None:
 
 
 def test_reprs_list_every_field() -> None:
-    """Test T-2: the reprs name the class and every field."""
+    """Test the reprs name the class and every field."""
     identifier = Identifier("T")
 
     assert repr(TemplateDataType(identifier, widths=[8])) == (
@@ -420,7 +419,7 @@ def test_type_bindings_maps_each_bound_name_to_its_type_object() -> None:
     """Test `type_bindings` holds only the type bindings, as the objects given.
 
     `get_type_binding` returns the same object, and the other two tables do
-    not appear in it (R2-030).
+    not appear in it.
     """
     u, t, n = Identifier("U"), Identifier("T"), Identifier("N")
     bound = NumericalType(_int32())
@@ -471,7 +470,7 @@ def test_environments_compare_hash_and_pickle_by_their_tables() -> None:
 
 
 def test_a_subclass_and_its_attributes_survive_every_derived_environment() -> None:
-    """Test D-S11-13: `with_*` and the dispatchers keep the class and extras."""
+    """Test `with_*` and the dispatchers keep the class and extras."""
     environment = _AnnotatedEnvironment("call-7")
     t, n = Identifier("T"), Identifier("N")
     pattern = NumericalType(TemplateDataType(t), [IdentifierExpression(n)])
@@ -522,7 +521,7 @@ def test_bound_objects_come_back_from_substitution() -> None:
 
 
 def test_substitution_and_the_occurs_check_reach_calls_and_piecewise() -> None:
-    """Test T-5 through the dispatchers."""
+    """Test substitution and the occurs check see calls and piecewise nodes."""
     n = Identifier("N")
     environment = TypeUnificationEnvironment.empty().with_expression_binding(
         n, LiteralExpression(4)
@@ -547,7 +546,7 @@ def test_a_refused_shape_substitution_is_an_error() -> None:
     With ``C := 5`` and ``Y := X + 1``, substituting into
     ``{Y if C; 0 otherwise}`` would put ``5`` in a condition, which the
     expression refuses; both calls raise instead of going on with the
-    unsubstituted form (F2-018).
+    unsubstituted form.
     """
     c, x, y = Identifier("C"), Identifier("X"), Identifier("Y")
     environment = (
@@ -787,7 +786,7 @@ def test_a_handler_result_of_the_wrong_type_raises_type_error() -> None:
 def test_every_core_driven_handler_of_the_wrong_kind_raises_type_error(
     call: Any, hook: str, expected: str
 ) -> None:
-    """Test the core refuses each hook's result of the wrong kind (R2-030).
+    """Test the core refuses each hook's result of the wrong kind.
 
     The core asks a Python-defined type's handlers when it meets the type,
     as the checker's unification does and `_rs.types_*` do directly; a
@@ -805,7 +804,7 @@ def test_a_python_defined_type_goes_through_the_core_s_substitution() -> None:
 
     `_rs.types_substitute_template` meets the type as the core does inside a
     walk and asks its handler, which substitutes the wrapped type; a type
-    with no handler is returned as the very object (R2-030).
+    with no handler is returned as the very object.
     """
     t = Identifier("T")
     environment = TypeUnificationEnvironment.empty().with_data_type_binding(t, _int32())
@@ -823,7 +822,7 @@ def test_a_python_defined_type_goes_through_the_core_s_substitution() -> None:
 
 
 def test_a_handler_for_a_subclass_of_a_built_in_serves_direct_calls_only() -> None:
-    """Test T-6: the core compares a built-in node it meets itself."""
+    """Test the core compares a built-in node it meets itself."""
 
     class _Counted(NumericalType):
         """A built-in subclass with its own structural-equivalence handler."""
@@ -880,8 +879,8 @@ def test_a_reused_environment_seed_raises() -> None:
     """Test the private state an environment is built from is taken once.
 
     A subclass's `__new__` sees the state the binding hands it; building a
-    second environment from the same state raises, where it silently built
-    an empty environment (R2-033).
+    second environment from the same state raises instead of building an
+    empty environment.
     """
     states: list[object] = []
 

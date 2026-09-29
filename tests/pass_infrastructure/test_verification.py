@@ -1,9 +1,9 @@
 """Tests for the verification registry, the analysis, and pipeline verification.
 
-D-S6-12: a pipeline verifies its input once and every changed output,
-blaming the producing pass, with the passes registered for the IR's type;
-a standalone ``execute`` never verifies, and ``set_verifier`` replaces
-the verifier or turns it off.
+A pipeline verifies its input once and every changed output, blaming the
+producing pass, with the passes registered for the IR's type; a standalone
+``execute`` never verifies, and ``set_verifier`` replaces the verifier or
+turns it off.
 
 Test isolation strategy: every test that touches the verification registry
 uses an IR class that is unique to that test, either defined inline or
@@ -452,8 +452,8 @@ def test_register_verification_leaves_the_class_a_pass_that_never_verifies(
 ) -> None:
     """Test that a verification pass runs standalone without verifying its IR.
 
-    D-S6-12: `_auto_verify` is gone; a standalone run never verifies, so a
-    verification pass cannot recurse into verification.
+    A standalone run never verifies, so a verification pass cannot recurse
+    into verification.
     """
 
     @register_verification(
@@ -674,9 +674,8 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
     _Cached(0)  # primes the cache
 
     # If subsequent instantiations consulted the registry again, breaking the
-    # registry lookup `VerifiableMixin` calls (`_rs`, D-S14-10) would cause
-    # the test to fail. The positive-result cache means the lookup is never
-    # invoked again.
+    # registry lookup `VerifiableMixin` calls (`_rs`) would cause the test to
+    # fail. The positive-result cache means the lookup is never invoked again.
     def _unreachable(_ir_type: type) -> tuple[type[CompilerPass[object, object]], ...]:
         raise AssertionError(
             "_rs.get_verification_passes_for should not be called after the "
@@ -816,8 +815,7 @@ def test_verify_default_report_can_be_raised_as_validation_failed_error() -> Non
 def test_standalone_execute_never_verifies(fresh_box_ir: type[_BoxIR]) -> None:
     """Test that a pass executed on its own does not verify its IR.
 
-    D-S6-12 replaced the class-level `_auto_verify = True` default: only a
-    pipeline verifies.
+    Only a pipeline verifies.
     """
     build_error_pass("tests.av.default.fail", "would-fail-in-a-pipeline", fresh_box_ir)
 
@@ -912,7 +910,7 @@ def test_set_verifier_none_disables_input_and_output_verification(
 ) -> None:
     """Test that a pipeline without a verifier skips both checks.
 
-    D-S6-12: `set_verifier(None)` replaces the per-class `_auto_verify = False`.
+    `set_verifier(None)` turns verification off for the pipeline.
     """
     build_error_pass("tests.av.disabled.fail", "would-fail-if-enabled", fresh_box_ir)
 
@@ -975,7 +973,7 @@ def test_verification_pass_does_not_recurse_into_verification(
 
 
 # ---------------------------------------------------------------------------
-# Verification is uncached (R-6): a changed output is verified again.
+# Verification is uncached: a changed output is verified again.
 # ---------------------------------------------------------------------------
 
 
@@ -1029,7 +1027,7 @@ def test_pipeline_verifies_a_changed_output_again(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that verification is not cached: a node is verified every time
-    a pass returns it as a changed output (R-6)."""
+    a pass returns it as a changed output."""
 
     @register_verification(
         fresh_box_ir, "tests.cache.again.count", "Counting verification pass."
@@ -1501,8 +1499,8 @@ def test_pass_manager_continues_with_a_verifier_that_finds_nothing(
 ) -> None:
     """Test that replacing the verifier lets the pipeline complete.
 
-    D-S6-12: `set_verifier` takes a `ValidationManager` in place of the
-    registry verifier, whose verification pass would block the run.
+    `set_verifier` takes a `ValidationManager` in place of the registry
+    verifier, whose verification pass would block the run.
     """
     build_error_pass(
         "tests.pm_av.continues_failure", "would-block-if-enabled", fresh_box_ir

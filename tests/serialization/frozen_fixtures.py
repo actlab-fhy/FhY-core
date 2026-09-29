@@ -1,9 +1,8 @@
 """One object of each serializable class, over fixed identifier ids.
 
-The frozen corpora of slice S17 (``docs/design/python-switch.md``) were
-written from these objects by the code before S17: the pickles of
-``data/pickles_v1.json`` and the V1 payloads of ``data/v1_payloads.json``.
-Both pin V1 only until V1 is removed (D-S17-16, D-S17-20), and are
+The frozen corpora were written from these objects by the code that wrote
+V1 by default: the pickles of ``data/pickles_v1.json`` and the V1 payloads
+of ``data/v1_payloads.json``. Both pin V1 only until V1 is removed, and are
 deleted with it. Every identifier takes a fixed id in the reserved range
 no shipped tag uses, so the objects are the same in every process.
 """

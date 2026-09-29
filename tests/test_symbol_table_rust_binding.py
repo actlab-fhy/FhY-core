@@ -1,4 +1,4 @@
-"""Interface tests of the symbol table over the Rust core (S15).
+"""Interface tests of the symbol table over the Rust core.
 
 The behavior of the table itself is specified by the Rust tests of
 ``fhy_core::symbol_table``; these tests cover what the binding adds: the
@@ -180,7 +180,7 @@ def test_a_signature_is_stored_as_a_tuple_of_pairs() -> None:
 
 
 def test_frame_repr_is_the_dataclass_repr() -> None:
-    """Test `repr` lists every field as the dataclass did."""
+    """Test `repr` lists every field in the dataclass style."""
     name = _identifier("x", 4)
     frame = VariableSymbolTableFrame(name, _int32(), TypeQualifier.INPUT)
 
@@ -656,7 +656,7 @@ def test_the_table_payload_is_todays_wire_format() -> None:
 
 
 def test_a_table_whose_child_was_added_before_its_parent_round_trips() -> None:
-    """Test a child added before its parent decodes with its symbols (F2-020)."""
+    """Test a child added before its parent decodes with its symbols."""
     parent, child, symbol = (
         _identifier("parent", 40),
         _identifier("child", 41),
@@ -674,7 +674,7 @@ def test_a_table_whose_child_was_added_before_its_parent_round_trips() -> None:
 
 
 def test_add_symbol_refuses_a_name_a_descendant_defines() -> None:
-    """Test a symbol a child defines cannot then be added to its parent (F2-020)."""
+    """Test a symbol a child defines cannot then be added to its parent."""
     parent, child, symbol = (
         _identifier("parent", 43),
         _identifier("child", 44),
@@ -873,7 +873,7 @@ def test_a_raising_frame_comparison_propagates() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Re-entrant reads (R2-044)
+# Re-entrant reads
 # ---------------------------------------------------------------------------
 
 

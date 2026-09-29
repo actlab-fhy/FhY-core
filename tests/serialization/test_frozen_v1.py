@@ -1,11 +1,11 @@
-"""Pins the V1 wire format and old pickles against corpora frozen before S17.
+"""Pins the V1 wire format and old pickles against frozen corpora.
 
 ``data/pickles_v1.json`` holds pickles (protocols 2 and 5) and
 ``data/v1_payloads.json`` the V1 payloads of the objects
-``frozen_fixtures.build_fixtures`` builds, both written by the code before
-slice S17 (``docs/design/python-switch.md``, D-S17-19 and D-S17-20). They
-pin that old pickles load, that V1 payloads decode, and that V1 writing
-is unchanged, until V1 is removed (D-S17-16), and are deleted with it.
+``frozen_fixtures.build_fixtures`` builds, both written by the code that
+wrote V1 by default. They pin that old pickles load, that V1 payloads
+decode, and that V1 writing is unchanged, until V1 is removed, and are
+deleted with it.
 """
 
 import base64
@@ -56,7 +56,7 @@ def test_the_corpora_cover_exactly_the_fixtures() -> None:
 @pytest.mark.parametrize("protocol", ["2", "5"])
 @pytest.mark.parametrize("name", sorted(_FIXTURES))
 def test_a_frozen_pickle_loads_to_the_same_value(name: str, protocol: str) -> None:
-    """Test a pickle written before S17 loads to an equivalent object."""
+    """Test a frozen pickle loads to an equivalent object."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         loaded = pickle.loads(base64.b64decode(_PICKLES[name][protocol]))
@@ -65,7 +65,7 @@ def test_a_frozen_pickle_loads_to_the_same_value(name: str, protocol: str) -> No
 
 @pytest.mark.parametrize("name", sorted(_FIXTURES))
 def test_a_frozen_v1_payload_decodes_to_the_same_value(name: str) -> None:
-    """Test a V1 payload written before S17 decodes to an equivalent object."""
+    """Test a frozen V1 payload decodes to an equivalent object."""
     expected = _FIXTURES[name]
     with _v1():
         rebuilt = type(expected).deserialize_from_dict(_PAYLOADS[name])
@@ -74,7 +74,7 @@ def test_a_frozen_v1_payload_decodes_to_the_same_value(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(_FIXTURES))
 def test_v1_writing_reproduces_the_frozen_payload(name: str) -> None:
-    """Test V1 writing is the V1 writing of the code before S17."""
+    """Test V1 writing reproduces the frozen V1 payload."""
     instance: Serializable = _FIXTURES[name]
     with _v1():
         assert instance.serialize_to_dict() == _PAYLOADS[name]

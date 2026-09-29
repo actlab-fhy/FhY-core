@@ -1,10 +1,10 @@
 """Tests of the V2 wire format: the Rust core's serde shapes, from Python.
 
-V2 is the default (slice S17 of ``docs/design/python-switch.md``). A class
-the Rust core backs writes exactly what the core writes, so each case of
-the golden serialization corpus, which the Rust replay rewrites
-byte-identically, is pinned here from the Python side; a Python-defined part
-of a Rust value is a foreign part its registered class decodes.
+V2 is the default. A class the Rust core backs writes exactly what the core
+writes, so each case of the golden serialization corpus, which the Rust
+replay rewrites byte-identically, is pinned here from the Python side; a
+Python-defined part of a Rust value is a foreign part its registered class
+decodes.
 """
 
 import importlib
@@ -266,7 +266,7 @@ def test_a_foreign_part_of_an_unknown_type_id_is_refused() -> None:
 def test_a_foreign_part_of_the_wrong_kind_is_refused(
     decode: Any, expected: str
 ) -> None:
-    """Test a part whose registered class is of another kind is refused (R2-030).
+    """Test a part whose registered class is of another kind is refused.
 
     The class decodes its data, and the resolver then refuses the object for
     the place the part holds, naming the part's type id.

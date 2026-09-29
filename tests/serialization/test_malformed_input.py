@@ -141,7 +141,7 @@ def test_constructor_serialization_error_propagates_unwrapped() -> None:
 
 
 # =============================================================================
-# Deep payloads (R2-013c)
+# Deep payloads
 #
 # Each runs in a child process, so a regression that overflows the stack
 # kills the child, not the run.
@@ -201,7 +201,7 @@ def test_a_deep_payload_dict_raises_instead_of_crashing(
 
     The binding's reader of a Python payload refuses more than 128 levels
     with `DeserializationValueError`; a shape Python checks first is refused
-    by that check (probes `p04` and `p40`). Either is a `SerializationError`.
+    by that check. Either is a `SerializationError`.
     """
     completed = _run_child(_DEEP_DICT_PROGRAM.format(cls=cls, key=key, depth=depth))
 
@@ -263,7 +263,7 @@ def test_a_deep_member_raises_recursion_error(action: str) -> None:
     """Test a member nested past the recursion limit raises `RecursionError`.
 
     The member reader counts its depth against `sys.getrecursionlimit()`, as
-    the provenance binding does (probe `p26`).
+    the provenance binding does.
     """
     completed = _run_child(_DEEP_MEMBER_PROGRAM.format(depth=20_000, action=action))
 
