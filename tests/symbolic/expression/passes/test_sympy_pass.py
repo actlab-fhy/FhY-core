@@ -65,7 +65,7 @@ from ..conftest import mock_identifier
 pytestmark = pytest.mark.sympy
 
 # The class every lowered piecewise has: the Rust backend's parity-opaque
-# piecewise, defined in its prelude (S12).
+# piecewise, defined in its prelude.
 _PARITY_OPAQUE_PIECEWISE: type = type(
     convert_expression_to_sympy_expression(
         piecewise(
@@ -1242,9 +1242,10 @@ def test_simplify_expression_is_idempotent_over_a_native_constant(
 ) -> None:
     """Test simplifying twice yields the same tree and keeps the constant's identifier.
 
-    Lifting a sympy constant used to mint a brand-new ``Identifier`` per
-    call, so two simplifications of one expression disagreed and the
-    identifier the caller wrote disappeared from the result.
+    Lifting a sympy constant maps it back to the constant's own
+    ``Identifier``; minting a new one per call would make two
+    simplifications of one expression disagree and drop the identifier the
+    caller wrote from the result.
     """
     constant = get_native_constant_identifier(constant_name)
     expression = IdentifierExpression(constant) + LiteralExpression(0)
@@ -3278,10 +3279,9 @@ def test_simplify_expression_compares_a_bound_numeric_piecewise_with_a_boolean_s
     """Test ``(1 if x == 0, otherwise 2)`` compared with a Boolean, x bound, folds.
 
     The solver substitutes the environment before the sympy adapter lowers
-    the expression (Y-9 of the S8 design), so the piecewise has picked its
-    number, and a number is unequal to every Boolean under the IR's
-    type-strict equality, as ``1 == True`` is. Before S8 the adapter lowered
-    the piecewise with ``x`` free, where sympy refused the comparison.
+    the expression, so the piecewise has picked its number, and a number is
+    unequal to every Boolean under the IR's type-strict equality, as
+    ``1 == True`` is.
     """
     variables = _create_piecewise_variables()
     numeric = piecewise(
@@ -4639,10 +4639,9 @@ _NATIVE_BUILTINS_WITHOUT_A_ROUND_TRIP = frozenset({"exp2", "log2", "log10"})
 def test_every_native_builtin_has_a_sympy_lowering(name: str) -> None:
     """Test each native built-in lowers to a SymPy function of its argument.
 
-    The lowering tables are Rust matches over the built-in catalogue now
-    (S12), so this pins their coverage where the old tests pinned their
-    immutability. Each round-trips to a call of itself, except the three
-    that SymPy rewrites.
+    The lowering tables are Rust matches over the built-in catalogue, so
+    this pins their coverage. Each round-trips to a call of itself, except
+    the three that SymPy rewrites.
     """
     x = IdentifierExpression(mock_identifier("x", 0))
     call_expression = call(name, x)
@@ -4676,8 +4675,8 @@ def test_every_builtin_constant_lowers_and_lifts_as_itself(name: str) -> None:
 def test_sympy_simplify_expression_accepts_an_immutabledict_environment() -> None:
     """Test simplifying with the sympy backend accepts an `immutabledict`.
 
-    The bridge's own ``simplify_expression`` is gone (D-S8-1); the solver's,
-    naming the sympy backend, is the one pipeline.
+    The solver's ``simplify_expression``, naming the sympy backend, is the
+    one sympy simplification pipeline.
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(

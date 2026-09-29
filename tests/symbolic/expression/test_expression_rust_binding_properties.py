@@ -1,4 +1,4 @@
-"""Property tests of the expression binding's big integers (R2-045).
+"""Property tests of the expression binding's big integers.
 
 Ints cross into the core as bytes, not decimal text, so an int of any size
 is a literal and decodes.

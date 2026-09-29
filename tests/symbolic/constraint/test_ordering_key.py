@@ -82,15 +82,14 @@ def test_equal_keys_for_in_set_constraints_built_in_different_member_orders() ->
     """Test two `InSetConstraint`s over the same members key alike regardless of order.
 
     The members collide on hash and are given in opposite orders; both
-    constraints store them in the canonical order (C-1 of the S13 design),
-    and the keys agree.
+    constraints store them in the canonical order, and the keys agree.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = InSetConstraint(x, list(members))
     right = InSetConstraint(x, list(reversed(members)))
 
-    # C-1 of the S13 design: both store their members in canonical order.
+    # Both store their members in canonical order.
     assert left.values == right.values
     assert left.build_ordering_key() == right.build_ordering_key()
 

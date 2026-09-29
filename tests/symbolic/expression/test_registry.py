@@ -471,9 +471,9 @@ def test_registered_function_direct_construction_leaves_captures_to_registration
 ) -> None:
     """Test only registration refuses a body capturing a free identifier.
 
-    Which identifiers a body may refer to depends on the registry it joins
-    (D-S7-5), so an entry built directly holds the body, and registering
-    the same function refuses it, naming the captured identifier.
+    Which identifiers a body may refer to depends on the registry it joins,
+    so an entry built directly holds the body, and registering the same
+    function refuses it, naming the captured identifier.
     """
     parameter = Identifier("x")
     captured = Identifier("y")
@@ -533,9 +533,9 @@ def test_registered_function_direct_construction_accepts_self_recursive_call() -
 def test_registered_functions_with_separately_built_equal_bodies_are_equal() -> None:
     """Test two entries whose bodies are built apart compare ``==``.
 
-    Expression ``==`` is structural (D-S4-1), so the dataclass equality of
-    two entries with equal fields holds when their bodies are separately
-    built, equal trees.
+    Expression ``==`` is structural, so the dataclass equality of two
+    entries with equal fields holds when their bodies are separately built,
+    equal trees.
     """
     parameter = Identifier("x")
 
@@ -560,8 +560,8 @@ def test_registered_functions_swapping_their_parameters_are_alpha_equivalent() -
     """Test entries equal up to a consistent parameter renaming compare alike.
 
     The parameters are a binder over the body, so the body is compared
-    under the binder frame pairing the two parameter lists (D-S4-3): the
-    Rust renaming resolves each bound identifier through that frame.
+    under the binder frame pairing the two parameter lists: the Rust
+    renaming resolves each bound identifier through that frame.
     """
     a = Identifier("a")
     b = Identifier("b")
@@ -1220,8 +1220,8 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
 # =============================================================================
 
 # The built-in constants hold fixed ids from the reserved block, as the
-# shipped tags do (N-S7-1 (a)), so they draw nothing from the counter and are
-# the same in every process, whatever it did first.
+# shipped tags do, so they draw nothing from the counter and are the same in
+# every process, whatever it did first.
 _PINNED_BUILTIN_CONSTANT_IDS = {"pi": 48, "e": 49, "inf": 50, "nan": 51}
 
 

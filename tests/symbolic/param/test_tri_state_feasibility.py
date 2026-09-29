@@ -840,9 +840,9 @@ def test_integer_param_wrappers_report_true_only_for_the_outcome_proving_them(
     """Test each wrapper reports `True` only for the outcome that proves it.
 
     The solver compares an integer variable with a float-valued literal by
-    value, as evaluation does (R2-040): `v == 1.5` and `v == "1.5"` admit
-    no integer, so they are proven empty, and `v == 2.0` admits `2`, so it
-    is proven feasible. The in-set member `1.5` is decided by enumeration:
+    value, as evaluation does: `v == 1.5` and `v == "1.5"` admit no
+    integer, so they are proven empty, and `v == 2.0` admits `2`, so it is
+    proven feasible. The in-set member `1.5` is decided by enumeration:
     no integer is a float, so the parameter is proven empty.
     """
     param = build_param()
@@ -858,8 +858,8 @@ def test_is_feasible_reports_true_for_a_float_equation_an_integer_satisfies() ->
     """Test `v == 2.0` is reported feasible, as `v = 2` is valid.
 
     Bound to `2`, evaluation decides `2 == 2.0`; unbound, the solver decides
-    the int/float comparison by value too (R2-040), so the valid value is
-    found and feasibility is proven.
+    the int/float comparison by value too, so the valid value is found and
+    feasibility is proven.
     """
     param = _create_integer_param_with_equation_literal(2.0)
 
@@ -872,8 +872,7 @@ def test_is_feasible_reports_true_for_a_float_equation_an_integer_satisfies() ->
 # A set constraint's float member against an integer variable is refused,
 # not decided by value: membership is type-strict (2 is no member of
 # {2.0}), while the solver would read the lowered `v != 2.0` numerically
-# and prove the parameter empty, or a subset it is not (R2-040, as the
-# maintainer revised it; the Track D notes' N-D1).
+# and prove the parameter empty, or a subset it is not.
 
 
 @pytest.mark.z3
@@ -1078,9 +1077,9 @@ def test_feasibility_raises_for_the_variable_itself_in_a_boolean_position(
     """Test a numeric parameter's own variable in a Boolean position raises.
 
     The domain declares the variable INT or REAL to the solver, so the
-    variable under a connective or as a case condition is ill-typed. Z3
-    used to reject the sort mismatch itself, which escaped a tri-state
-    query as a `PassExecutionError`.
+    variable under a connective or as a case condition is ill-typed, and
+    the query raises the package's typed error rather than letting Z3's own
+    sort-mismatch exception escape.
     """
     x = mock_identifier("x", 1)
     param = create_param(name=x, constraints=[build_constraint(x)])

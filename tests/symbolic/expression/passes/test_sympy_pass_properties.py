@@ -145,7 +145,7 @@ def test_sympy_round_trip_preserves_evaluation(
 
 
 # =============================================================================
-# Simplifying keeps the value on an integer grid (R2-016)
+# Simplifying keeps the value on an integer grid
 # =============================================================================
 
 
@@ -155,7 +155,7 @@ _GRID: Final[range] = range(-3, 4)
 
 
 def _build_grid_tree_strategy() -> st.SearchStrategy[Expression]:
-    """Return trees of p16's shape over `_X`, `_Y` and small integers.
+    """Return grid trees over `_X`, `_Y` and small integers.
 
     Sums, differences, products, floor divisions by 1, 2 or 4, floor moduli
     by 2 or 3, powers by 0 to 3, negations, piecewise nodes, and quotients

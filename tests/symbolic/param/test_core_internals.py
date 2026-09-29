@@ -1,8 +1,6 @@
 """Tests for the leaf values the finite domains serialize and refuse.
 
-The Python helper `serialize_wrapped_leaf_value` these tests once called
-directly was deleted when the domains moved to the Rust core (S16). A
-finite domain's payload now serializes each of its values through the
+A finite domain's payload serializes each of its values through the
 serialization framework's wrapped registry, and the domain refuses an
 unsupported value when it is built, so the rules are pinned through the
 public domains here.

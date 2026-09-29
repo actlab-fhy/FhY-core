@@ -251,9 +251,8 @@ def test_set_constraint_repr_is_stable_across_construction_order(
     """Test ``repr`` renders alike for two constraints built in opposite orders.
 
     The members collide on hash and are given in opposite orders; both
-    constraints keep them in the canonical order (C-1 of the S13 design),
-    so the same logical constraint prints one way whatever its
-    construction history.
+    constraints keep them in the canonical order, so the same logical
+    constraint prints one way whatever its construction history.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
@@ -262,7 +261,7 @@ def test_set_constraint_repr_is_stable_across_construction_order(
     assert isinstance(left, (InSetConstraint, NotInSetConstraint))
     assert isinstance(right, (InSetConstraint, NotInSetConstraint))
 
-    # C-1 of the S13 design: both store their members in canonical order.
+    # Both store their members in canonical order.
     assert left.values == right.values
     assert repr(left) == repr(right)
 
@@ -495,13 +494,12 @@ def test_set_constraint_accepts_the_unified_values_keyword(
     assert set(constraint.values) == {1, 2}  # type: ignore[attr-defined]
 
 
-# Regression guard for a field that used to store the internal type-strict
-# wrapper directly: reading it gave a silently wrong membership answer
-# (`1 in constraint.values` was `False` for an actual member `1`,
-# because the wrapper's `__eq__`/`__hash__` never matched a raw `1`). Direct
-# membership on the field reflects the constructed member set regardless of
-# in-set/not-in-set polarity; `is_satisfied_with_bindings` (exercised
-# elsewhere) is what differs by kind.
+# The field holds the raw members, not the internal type-strict wrapper:
+# the wrapper's `__eq__`/`__hash__` never match a raw `1`, so storing it
+# would make `1 in constraint.values` silently `False` for an actual member
+# `1`. Direct membership on the field reflects the constructed member set
+# regardless of in-set/not-in-set polarity; `is_satisfied_with_bindings`
+# (exercised elsewhere) is what differs by kind.
 @pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_public_field_direct_membership_reflects_true_membership(
     factory: SetConstraintFactory, field_name: str
@@ -543,8 +541,7 @@ def test_set_constraint_members_order_is_independent_of_construction_order(
     """Test `members` orders alike for two constraints built in opposite orders.
 
     The members collide on hash and are given in opposite orders; both the
-    stored field and the accessor hold the canonical order (C-1 of the S13
-    design).
+    stored field and the accessor hold the canonical order.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
@@ -553,7 +550,7 @@ def test_set_constraint_members_order_is_independent_of_construction_order(
     assert isinstance(left, (InSetConstraint, NotInSetConstraint))
     assert isinstance(right, (InSetConstraint, NotInSetConstraint))
 
-    # C-1 of the S13 design: both store their members in canonical order.
+    # Both store their members in canonical order.
     assert getattr(left, field_name) == getattr(right, field_name)
     assert left.members == right.members
 
@@ -694,9 +691,9 @@ def test_set_constraint_reader_does_not_rebuild_the_members(
     """Test no reader rebuilds the members from the stored field.
 
     The core holds the type-strict member set, built once during
-    construction (D-S13-1 of the S13 design), and the members' Python
-    tuple is built once with it: every reader, ``__repr__`` included,
-    leaves the same tuple object in place.
+    construction, and the members' Python tuple is built once with it:
+    every reader, ``__repr__`` included, leaves the same tuple object in
+    place.
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
     assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
@@ -750,9 +747,9 @@ def test_set_constraint_rebuilt_with_new_values_decides_against_them(
 ) -> None:
     """Test a constraint rebuilt with other members decides against those.
 
-    The kinds are no dataclasses (C-3 of the S13 design), so a caller
-    rebuilds one with ``type(constraint)(constraint.variable, values)``, as
-    the param layer does; the rebuilt constraint holds its own member set.
+    The kinds are no dataclasses, so a caller rebuilds one with
+    ``type(constraint)(constraint.variable, values)``, as the param layer
+    does; the rebuilt constraint holds its own member set.
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
     assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))

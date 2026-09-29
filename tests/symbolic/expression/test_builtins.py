@@ -463,9 +463,8 @@ def test_seeded_native_implementation_agrees_with_math_inside_its_domain(
 ) -> None:
     """Test each seeded native's implementation agrees with ``math`` in its domain.
 
-    The implementation is the core's kernel (D-S9-9 of
-    ``docs/design/python-switch.md``), one object per built-in, where it
-    used to be the ``math`` callable itself.
+    The implementation is the core's kernel, one object per built-in, not
+    the ``math`` callable itself.
     """
     entry = get_registered_entry(name)
     assert isinstance(entry, NativeFunction)
@@ -663,8 +662,7 @@ def test_builtin_entry_parameter_sorts_are_a_tuple(name: str) -> None:
 def test_builtin_native_entry_implementation_cannot_be_replaced() -> None:
     """Test a native built-in's implementation cannot be replaced.
 
-    The table of Python callables is gone (D-S9-9); the entry holds its
-    kernel, and the entry is frozen.
+    The entry holds the core's kernel, and the entry is frozen.
     """
     entry = get_registered_entry("exp")
 

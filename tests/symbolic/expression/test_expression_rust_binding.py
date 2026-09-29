@@ -1,8 +1,7 @@
 """Tests for the Python interface over the Rust-backed expressions.
 
 The expression classes are thin Python subclasses of ``fhy_core._rs``
-classes (pattern P2 of ``docs/design/python-switch.md``).
-These tests cover what the binding adds around the core: the class
+classes. These tests cover what the binding adds around the core: the class
 structure and the public-class registration, argument checks, the child
 objects a node keeps, deep trees, and the protocols the classes stand in
 for.
@@ -572,7 +571,7 @@ def test_an_expression_pickles_as_a_call_of_its_class() -> None:
 
 
 # =============================================================================
-# Big integers (R2-045)
+# Big integers
 #
 # Ints cross into the core as bytes, not decimal text, so CPython's
 # 4,300-digit guard on int-to-text conversion does not apply.
@@ -602,8 +601,8 @@ def test_a_payload_of_a_5001_digit_int_materializes() -> None:
 
 
 # Decimals cross as `as_tuple()` parts into `Decimal::from_parts`, which
-# refuses an exponent beyond 10,000 in magnitude at once, where the text
-# route expanded every digit first (R2-045).
+# refuses an exponent beyond 10,000 in magnitude at once, rather than
+# expanding every digit first as a text route would.
 
 
 @pytest.mark.parametrize(
@@ -615,14 +614,14 @@ def test_a_payload_of_a_5001_digit_int_materializes() -> None:
         pytest.param(
             lambda: LiteralExpression(Decimal("1e+5000000000")),
             5000000000,
-            id="literal_p32",
+            id="literal_huge_exponent",
         ),
         pytest.param(
             lambda: _rs.check_param_bounds_are_ordered(
                 Decimal("1e-4000000000"), 1, True, True
             ),
             -4000000000,
-            id="param_bound_p32",
+            id="param_bound_tiny_exponent",
         ),
         pytest.param(
             lambda: _rs.is_decimal_text_exactly_binary(Decimal("1e100000000")),
@@ -642,8 +641,7 @@ def test_an_absurdly_scaled_decimal_is_refused_at_once(
     """Test a `Decimal` beyond the exponent bound raises `ValueError` at once.
 
     The message names the exponent and the bound. The time bound is loose,
-    for a loaded machine: before, the first case took 0.6 s and 235 MiB, and
-    the two `p32` cases gave no answer within 15 s.
+    for a loaded machine.
     """
     started = time.perf_counter()
     with pytest.raises(

@@ -199,9 +199,8 @@ def test_multi_value_convert_to_expression_orders_leaves_canonically(
 ) -> None:
     """Test the produced combinator's leaves follow the canonical member order.
 
-    Integer members order numerically (C-2 of the S13 design): ``[3, 7, 9,
-    12]``, not the ``repr``-sorted ``[12, 3, 7, 9]``, whatever order they
-    are given in.
+    Integer members order numerically: ``[3, 7, 9, 12]``, not the
+    ``repr``-sorted ``[12, 3, 7, 9]``, whatever order they are given in.
     """
     x = mock_identifier("x", 0)
     members = [12, 9, 3, 7]

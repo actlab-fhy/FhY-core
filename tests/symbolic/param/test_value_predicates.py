@@ -6,10 +6,9 @@ as distinct, so ``True`` never matches ``1`` and ``1`` never matches ``1.0``
 even though Python considers them ``==``. These tests exercise the matching
 through a one-value domain's admissibility, cover the index-wise sequence
 form through the equivalence of ordered domains, and confirm the domain
-builders inherit the strict semantics. (The Python predicates
-``do_param_values_match`` and ``do_ordered_param_values_match`` were deleted
-when the domains moved to the Rust core, S16; the rules they held are
-pinned here and in ``rust/fhy-core/tests/it/param/domain_stories.rs``.)
+builders inherit the strict semantics. The matching runs in the Rust core;
+its rules are pinned here and in
+``rust/fhy-core/tests/it/param/domain_stories.rs``.
 """
 
 from typing import Any

@@ -122,15 +122,15 @@ def test_set_constraint_uses_value_equality_not_identity(
     """Test independent collections with equal contents are equivalent.
 
     The two constraints are built from the same hash-colliding members in
-    opposite orders; both store them in the canonical order (C-1 of the S13
-    design), and are equivalent either way round.
+    opposite orders; both store them in the canonical order, and are
+    equivalent either way round.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = factory(x, list(members))
     right = factory(x, list(reversed(members)))
 
-    # C-1 of the S13 design: both store their members in canonical order.
+    # Both store their members in canonical order.
     assert getattr(left, field_name) == getattr(right, field_name)
     assert left.is_structurally_equivalent(right)
     assert right.is_structurally_equivalent(left)
@@ -168,7 +168,7 @@ def test_set_constraint_alpha_equivalence_matches_structural_for_same_variable(
     left = factory(x, list(members))
     right = factory(x, list(reversed(members)))
 
-    # C-1 of the S13 design: both store their members in canonical order.
+    # Both store their members in canonical order.
     assert getattr(left, field_name) == getattr(right, field_name)
     assert left.is_alpha_equivalent(right) == left.is_structurally_equivalent(right)
     assert left.is_alpha_equivalent(right) is True

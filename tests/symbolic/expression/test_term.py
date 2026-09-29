@@ -239,7 +239,7 @@ def test_substitute_ignores_a_non_expression_value_of_an_absent_identifier() -> 
 
 
 # =============================================================================
-# Alpha equivalence under a renaming's binder frames (D-S4-3)
+# Alpha equivalence under a renaming's binder frames
 # =============================================================================
 
 

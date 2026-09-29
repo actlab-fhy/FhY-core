@@ -1,4 +1,4 @@
-"""Tests of the Python API over the Rust-backed params (S16b).
+"""Tests of the Python API over the Rust-backed params.
 
 ``Param`` and ``ParamAssignment`` of ``fhy_core.symbolic.param.core`` are
 thin subclasses of ``fhy_core._rs`` classes backed by ``fhy_core::param``.
@@ -466,7 +466,7 @@ def test_dependent_assignment_pickles_without_its_bindings() -> None:
 
 
 def test_assignment_values_compare_type_strictly() -> None:
-    """Test assignments of `1` and `True` are not equivalent (P-9)."""
+    """Test assignments of `1` and `True` are not equivalent."""
     param = create_categorical_param([1, True])
 
     assert not param.assign(1).is_structurally_equivalent(param.assign(True))
@@ -553,7 +553,7 @@ def test_threads_agree() -> None:
 
 
 # =============================================================================
-# Members the interface suites did not name (R2-030)
+# Members the interface suites did not name
 # =============================================================================
 
 

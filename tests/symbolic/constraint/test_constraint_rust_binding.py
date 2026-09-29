@@ -1,4 +1,4 @@
-"""Interface tests of the Rust-backed constraints (S13a of ``python-switch.md``).
+"""Interface tests of the Rust-backed constraints.
 
 The behavior of the constraints is specified by the Rust tests of
 ``fhy_core::constraint``; these tests cover what the binding adds over the
@@ -408,7 +408,7 @@ def test_bindings_that_are_no_mapping_are_refused(x: Identifier) -> None:
 
 
 # =============================================================================
-# Ordering keys (R2-001a)
+# Ordering keys
 # =============================================================================
 
 
@@ -707,7 +707,7 @@ def test_constraints_pickle_and_copy_as_equivalent_constraints(build: Any) -> No
 
 @pytest.mark.usefixtures("v1_wire")
 def test_a_payload_in_another_order_decodes_to_the_canonical_order() -> None:
-    """Test a payload written before S13, in ``repr`` order, still decodes."""
+    """Test a payload whose members are in ``repr`` order still decodes."""
     x = Identifier("x")
     payload = InSetConstraint(x, [2, 10]).serialize_to_dict()
     data: Any = payload["__data__"]
@@ -748,7 +748,7 @@ def test_concurrent_evaluations_agree(x: Identifier) -> None:
 
 
 # =============================================================================
-# The system (S13b)
+# The system
 # =============================================================================
 
 

@@ -1,9 +1,8 @@
 """Tests for `fhy_core.symbolic.expression.core`.
 
-The expression API has the Rust core's semantics (decision D-S4-1 of
-``docs/design/python-switch.md``): structural ``==`` and ``hash``,
-normalized literals, an n-ary ``LogicalExpression``, and reserved built-in
-names.
+The expression API has the Rust core's semantics: structural ``==`` and
+``hash``, normalized literals, an n-ary ``LogicalExpression``, and reserved
+built-in names.
 """
 
 import itertools
@@ -132,8 +131,8 @@ def test_literal_expression_normalizes_integer_shaped_string_to_int(
 ) -> None:
     """Test an integer-shaped ``str`` is held as the ``int`` it spells.
 
-    Literals are normalized (D-S4-1): no spelling is kept, so ``"05"`` is
-    the integer ``5``.
+    Literals are normalized: no spelling is kept, so ``"05"`` is the
+    integer ``5``.
     """
     literal = LiteralExpression(string_value)
 
@@ -483,7 +482,7 @@ def test_literal_equivalence_is_false_for_native_float_vs_str_form_float(
 ) -> None:
     """Test native ``float`` literal and equivalent str-form-float are not equivalent.
 
-    The design treats native ``float`` as a (possibly imprecise) IEEE-754 value
+    The IR treats native ``float`` as a (possibly imprecise) IEEE-754 value
     and str-form floats as exact decimals; they are intentionally distinct.
     """
     assert not LiteralExpression(left_value).is_structurally_equivalent(
@@ -1385,7 +1384,7 @@ def test_separately_built_equal_expressions_are_equal_under_eq(
 ) -> None:
     """Test two separately built expressions of one structure compare ``==``.
 
-    ``==`` and ``!=`` are structural (D-S4-1), not object identity.
+    ``==`` and ``!=`` are structural, not object identity.
     """
     first, second = _build_instance_pair(subclass)
     assert first is not second
@@ -1546,7 +1545,7 @@ def test_literal_expression_round_trips_through_serialize_to_dict() -> None:
 def test_literal_payload_holds_the_normalized_value(
     value: LiteralType, expected_payload_value: bool | int | float | str
 ) -> None:
-    """Test a literal's payload holds its normalized value (D-S4-5).
+    """Test a literal's payload holds its normalized value.
 
     A ``bool``, ``int`` or ``float`` is the payload value itself. A decimal
     is its positional text with a decimal point, so the literal grammar
@@ -1734,9 +1733,8 @@ def test_expression_base_has_no_constructor() -> None:
 def test_a_new_expression_subclass_is_not_a_node_kind() -> None:
     """Test a Python subclass of `Expression` that is no node class cannot be built.
 
-    The core's node kinds are closed (D-S4-1): a new kind of expression
-    cannot be added from Python, where the retired pure-Python core derived a
-    new kind's equivalence from its dataclass fields.
+    The core's node kinds are closed: a new kind of expression cannot be
+    added from Python.
     """
 
     class _NewExpression(Expression):  # test-local subclass
@@ -2842,7 +2840,7 @@ def test_logical_and_builds_the_conjunction_a_chained_comparison_meant() -> None
 
 
 # =============================================================================
-# Reserved built-in names (D-9)
+# Reserved built-in names
 # =============================================================================
 
 
@@ -2862,10 +2860,9 @@ def test_the_screen_judges_a_builtin_call_by_the_builtin_catalogue(
 ) -> None:
     """Test the built-ins survive a restored state that drops them.
 
-    The built-ins are the core's catalogue, no registry state (D-S7-3,
-    D-S7-14): restoring a state without ``max`` and ``xor`` keeps both
-    resolving, and the screen reads a built-in call's sort from the
-    catalogue.
+    The built-ins are the core's catalogue, no registry state: restoring a
+    state without ``max`` and ``xor`` keeps both resolving, and the screen
+    reads a built-in call's sort from the catalogue.
     """
     set_function_registry_state(
         {
@@ -2906,8 +2903,8 @@ def test_the_builtin_catalogue_agrees_with_the_registry_on_result_sorts(
 ) -> None:
     """Test the screen's built-in sorts are the ones the registry declares.
 
-    The registry keeps the Python built-ins (D-S4-4) and the screen judges
-    a built-in call by the core's catalogue, so the two must agree on every
+    The registry keeps the Python built-ins and the screen judges a
+    built-in call by the core's catalogue, so the two must agree on every
     built-in's result sort.
     """
     entry = BUILTIN_FUNCTIONS[name]  # type: ignore[literal-required]

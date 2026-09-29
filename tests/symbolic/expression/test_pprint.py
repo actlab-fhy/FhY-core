@@ -1,8 +1,8 @@
 """Tests for `fhy_core.symbolic.expression.pprint`.
 
-The printed text is the Rust core's (decision D-S4-1): a literal as the
-core writes it (``true``, ``1``, ``NaN``), a connective as one n-ary node,
-and each operation's functional name its Rust name.
+The printed text is the Rust core's: a literal as the core writes it
+(``true``, ``1``, ``NaN``), a connective as one n-ary node, and each
+operation's functional name its Rust name.
 """
 
 import math

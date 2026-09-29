@@ -1,10 +1,9 @@
 """Tests for the Python interface over the Rust-backed patterns and rules.
 
 The pattern classes, ``Capture``, ``MatchBindings``, ``RewriteRule`` and
-``FiredRule`` are thin Python subclasses of ``fhy_core._rs`` classes
-(pattern P2 of ``docs/design/python-switch.md``), and ``Rule`` is a
-Python ABC over ``_rs.RuleBase`` whose subclasses the Rust walk drives
-(pattern P3). These tests cover what the binding adds around the core:
+``FiredRule`` are thin Python subclasses of ``fhy_core._rs`` classes, and
+``Rule`` is a Python ABC over ``_rs.RuleBase`` whose subclasses the Rust
+walk drives. These tests cover what the binding adds around the core:
 the class structure and registration, argument checks, the node objects
 callbacks receive and results keep, the callbacks' errors, deep trees and
 patterns, the pass, and pickles.
@@ -313,7 +312,7 @@ def _escape(message: str) -> str:
     ids=["no_operand", "one_operand", "no_case", "no_alternative"],
 )
 def test_a_degenerate_pattern_builds_and_matches_nothing(pattern: Pattern) -> None:
-    """Test the degenerate patterns build, and match no expression (D-S5-5)."""
+    """Test the degenerate patterns build, and match no expression."""
     a, b = _reference("a"), _reference("b")
     candidates = [
         a,
@@ -341,7 +340,7 @@ def test_a_call_pattern_compares_callees() -> None:
     ids=["the_right_operand_differs", "the_operands_are_equal"],
 )
 def test_alternatives_commit_to_the_first_match(left: int, matches: bool) -> None:
-    """Test an alternative is committed choice, as before the switch.
+    """Test an alternative is committed choice.
 
     In ``1 + 2`` the first alternative binds ``c`` to ``1`` and the right
     operand fails; the wildcard alternative is not tried.
@@ -482,7 +481,7 @@ def test_bindings_repr_lists_the_pairs() -> None:
 
 
 def test_bindings_do_not_pickle() -> None:
-    """Test ``MatchBindings`` refuses to pickle (D-S5-13)."""
+    """Test ``MatchBindings`` refuses to pickle."""
     with pytest.raises(TypeError, match="only a match produces bindings"):
         pickle.dumps(MatchBindings())
 
@@ -531,7 +530,7 @@ def test_a_rebuilt_node_gets_one_object() -> None:
 
 
 def test_callbacks_receive_the_right_objects_and_are_read_by_truthiness() -> None:
-    """Test predicates, guards and rewrites, and truthy results (D-S5-6)."""
+    """Test predicates, guards and rewrites, and truthy results."""
     x = Capture("x")
     calls: list[object] = []
 
@@ -586,7 +585,7 @@ def test_a_truth_value_error_is_the_callbacks_error() -> None:
 def test_the_same_exception_object_propagates(
     run: Callable[[RewriteRule, Expression], object],
 ) -> None:
-    """Test a callback's exception propagates unchanged (D-S5-7)."""
+    """Test a callback's exception propagates unchanged."""
     failure = LookupError("no")
 
     def predicate(expression: Expression) -> bool:
@@ -601,7 +600,7 @@ def test_the_same_exception_object_propagates(
 
 
 def test_an_exception_that_is_not_an_exception_passes_through_a_walk() -> None:
-    """Test ``KeyboardInterrupt`` from a callback is never wrapped (D-S5-7)."""
+    """Test ``KeyboardInterrupt`` from a callback is never wrapped."""
 
     def interrupt(bindings: MatchBindings) -> Expression:
         raise KeyboardInterrupt
@@ -631,7 +630,7 @@ def test_nested_matches_and_walks_inside_a_callback_work() -> None:
 
 
 def test_a_rewrite_result_that_is_no_expression_raises_type_error() -> None:
-    """Test the rewrite-result ``TypeError``, naming the rule (D-S5-8)."""
+    """Test the rewrite-result ``TypeError``, naming the rule."""
     rule = RewriteRule(WildcardPattern(), lambda _: None, name="n")  # type: ignore[arg-type,return-value]
     unnamed = RewriteRule(WildcardPattern(), lambda _: 1)  # type: ignore[arg-type,return-value]
     partial = RewriteRule.new_partial(WildcardPattern(), lambda _: 1, name="p")  # type: ignore[arg-type,return-value]
@@ -659,7 +658,7 @@ def test_a_partial_rule_declines_with_none() -> None:
 
 
 def test_a_rewrite_returning_the_matched_node_declines() -> None:
-    """Test a result that is the matched node itself declines (D-S5-8)."""
+    """Test a result that is the matched node itself declines."""
     x = Capture("x")
     identity = RewriteRule(CapturePattern(x), _keep(x))
     expression = _reference("a") + 1
@@ -706,7 +705,7 @@ def test_guards_run_in_order_and_the_first_refusal_stops_the_rest() -> None:
 
 
 def test_a_shared_subtree_is_rewritten_once() -> None:
-    """Test a node that occurs twice has its rule tried once (D-S5-10)."""
+    """Test a node that occurs twice has its rule tried once."""
     calls: list[Expression] = []
 
     def count(expression: Expression) -> bool:
@@ -745,7 +744,7 @@ def test_a_deep_tree_rewrites() -> None:
 
 
 def test_a_pattern_deeper_than_the_recursion_limit_raises() -> None:
-    """Test a pattern deeper than the limit raises ``RecursionError`` (D-S5-15)."""
+    """Test a pattern deeper than the limit raises ``RecursionError``."""
     pattern: Pattern = WildcardPattern()
     for _ in range(sys.getrecursionlimit() + 1):
         pattern = UnaryExpressionPattern(None, pattern)
@@ -773,7 +772,7 @@ def test_a_walk_refuses_a_rule_that_is_not_a_rule() -> None:
 
 
 def test_a_failing_callback_raises_rewrite_callback_error() -> None:
-    """Test the callback error's class, rule, text and cause (D-S5-11)."""
+    """Test the callback error's class, rule, text and cause."""
     failure = ValueError("boom")
 
     def rewrite(bindings: MatchBindings) -> Expression:
@@ -937,7 +936,7 @@ def test_a_python_rule_name_is_read_once_per_walk() -> None:
 
 
 def test_the_applier_is_registered_and_builds_with_no_rules() -> None:
-    """Test ``CompilerPass.create`` builds an applier of no rules (D-S5-12)."""
+    """Test ``CompilerPass.create`` builds an applier of no rules."""
     applier = CompilerPass.create("fhy_core.symbolic.expression.apply_rewrite_rules")
 
     assert isinstance(applier, RewriteRuleApplier)
@@ -1009,7 +1008,7 @@ def test_the_applier_reports_a_change_by_identity() -> None:
 
 
 def test_patterns_pickle_as_calls_of_their_class() -> None:
-    """Test patterns round-trip, and a shared capture stays shared (D-S5-13)."""
+    """Test patterns round-trip, and a shared capture stays shared."""
     x = Capture("x")
     pattern = BinaryExpressionPattern(
         BinaryOperation.SUBTRACT,
@@ -1055,7 +1054,7 @@ def test_a_lambda_predicate_fails_to_pickle_as_pickle_fails() -> None:
 
 
 def test_reprs() -> None:
-    """Test the dataclass-style reprs (D-S5-14)."""
+    """Test the dataclass-style reprs."""
     x = Capture("x")
     pattern = BinaryExpressionPattern(None, CapturePattern(x), LiteralPattern(1))
 

@@ -1,8 +1,7 @@
 """Golden `type_id` and wire-shape pins for the expression/constraint/param tree.
 
-The golden blobs below are V1 payloads, which decode until V1 is removed
-(slice S17 of ``docs/design/python-switch.md``); the V2 texts at the end
-pin what the same values write now.
+The golden blobs below are V1 payloads, which still decode; the V2 texts
+at the end pin what the same values write.
 
 Every `Serializable` in the `expression` / `constraint` / `param` tree
 pins an explicit `type_id`. This module hard-codes all 19 pinned
@@ -556,7 +555,7 @@ def test_golden_blob_deserializes_to_an_equivalent_instance(
 
 
 # =============================================================================
-# The payload values of the Rust semantics (D-S4-5)
+# The payload values of the Rust semantics
 # =============================================================================
 
 
@@ -615,8 +614,8 @@ def test_payload_data_follows_the_rust_semantics(
 
 
 # The canonical V2 text of each fixture but the two params, whose variable's
-# id is the process's (slice S17 of `docs/design/python-switch.md`): the
-# golden serialization corpus pins the params' shapes with fixed ids.
+# id is the process's: the golden serialization corpus pins the params'
+# shapes with fixed ids.
 _GOLDEN_V2_TEXTS: dict[str, str] = {
     "unary_expression": (
         '{"nodes":[{"literal":{"int":"1"}},{"unary":{"operation":"negate","oper'
@@ -630,7 +629,7 @@ _GOLDEN_V2_TEXTS: dict[str, str] = {
         '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}}]}'
     ),
     "literal_expression": ('{"nodes":[{"literal":{"int":"1"}}]}'),
-    # The two literals `0` are one node of the canonical table (R2-011).
+    # The two literals `0` are one node of the canonical table.
     "piecewise_expression": (
         '{"nodes":[{"identifier":{"id":60000,"name_hint":"x"}},{"literal":{"int'
         '":"0"}},{"binary":{"operation":"greater","left":0,"right":1}},{"litera'

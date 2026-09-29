@@ -438,8 +438,8 @@ def test_nat_param_domain_is_integer_domain_with_non_negative() -> None:
 def test_nat_param_is_value_admissible_gates_on_sign() -> None:
     """Test `is_value_admissible` refuses a negative integer on a natural param.
 
-    The natural domain's own restriction holds at the domain level too
-    (F2-021), so ``is_value_admissible(-5)`` agrees with ``is_value_valid``.
+    The natural domain's own restriction holds at the domain level too, so
+    ``is_value_admissible(-5)`` agrees with ``is_value_valid``.
     """
     param = create_natural_param()
 

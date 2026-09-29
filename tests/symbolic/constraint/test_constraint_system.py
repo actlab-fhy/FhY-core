@@ -886,12 +886,12 @@ def _extract_reported_missing_names(error: MissingSymbolTypeError) -> str:
     """Return the name hints a `MissingSymbolTypeError` message lists.
 
     The listing is everything after the message's final ``": "``, each
-    identifier written ``name::id`` and ordered by id (C-7 of the S13
-    design); this returns the name hints, joined by ``", "``. Reading it
-    out separately keeps an assertion off the fixed prefix, which already
-    contains several of the single-character name hints the tests use and
-    would otherwise satisfy a substring match no matter which identifier
-    the error actually reported.
+    identifier written ``name::id`` and ordered by id; this returns the
+    name hints, joined by ``", "``. Reading it out separately keeps an
+    assertion off the fixed prefix, which already contains several of the
+    single-character name hints the tests use and would otherwise satisfy a
+    substring match no matter which identifier the error actually
+    reported.
     """
     listing = str(error).rpartition(": ")[2].rstrip(".")
     return ", ".join(item.rpartition("::")[0] for item in listing.split(", "))
@@ -940,8 +940,8 @@ def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order()
     """Test two missing entries are both reported, ordered by id.
 
     The identifiers are declared so that their ``id`` order is the reverse
-    of their name-hint order: the core names them by id (C-7 of the S13
-    design), so the listing is ``b, a``.
+    of their name-hint order: the core names them by id, so the listing is
+    ``b, a``.
     """
     b = mock_identifier("b", 0)
     a = mock_identifier("a", 1)
@@ -2225,7 +2225,7 @@ def test_check_satisfiability_divide_by_nonzero_literal_stays_decided() -> None:
 
 
 # =============================================================================
-# Int/float `EQUAL`/`NOT_EQUAL` is decided by value (R2-040)
+# Int/float `EQUAL`/`NOT_EQUAL` is decided by value
 # =============================================================================
 
 
@@ -2348,7 +2348,7 @@ def test_check_satisfiability_int_identifier_lt_float_literal_not_screened() -> 
 
 # A set constraint's residual stays refused where its variable's kind and a
 # member's differ: membership is type-strict, while its lowered equality
-# would be read by value (R2-040, as the maintainer revised it).
+# would be read by value.
 
 
 def test_check_satisfiability_with_bindings_int_addition_vs_float_set_undecided() -> (
@@ -2488,7 +2488,7 @@ def test_check_implication_accepts_an_immutabledict_symbol_types() -> None:
     """Test `check_implication` accepts an `immutabledict` `symbol_types`.
 
     Mirrors `test_check_satisfiability_accepts_an_immutabledict_symbol_types`
-    for the implication seam's own removed defensive ``dict()`` copy.
+    for the implication seam, which makes no defensive ``dict()`` copy.
     """
     x = mock_identifier("x", 0)
     antecedent = create_constraint_system(InSetConstraint(x, {1, 2}))
@@ -3198,8 +3198,8 @@ def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
     """Test a variable declared INT or REAL under a connective is ill-typed.
 
     The system hands the caller's sorts to the solver seam, whose screen
-    now reads them, so the sort mismatch is reported as the typed error
-    rather than as Z3's own exception wrapped in ``PassExecutionError``.
+    reads them, so the sort mismatch is reported as the typed error rather
+    than as Z3's own exception wrapped in ``PassExecutionError``.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(

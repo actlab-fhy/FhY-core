@@ -290,7 +290,7 @@ def test_deserialization_rejects_a_value_that_provably_violates() -> None:
 
 
 def test_an_inadmissible_assignment_payload_fails_to_decode() -> None:
-    """Test a payload assigning a string to an integer param is rejected (F2-020)."""
+    """Test a payload assigning a string to an integer param is rejected."""
     x = mock_identifier("x", 1)
     tampered = create_integer_param(name=x).assign(3).serialize_to_dict()
     donor = create_categorical_param(

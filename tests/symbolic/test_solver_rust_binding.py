@@ -1,4 +1,4 @@
-"""Interface tests of the solver over the Rust core (S8 of the switch plan).
+"""Interface tests of the solver over the Rust core.
 
 The behavior of the screens, the lowering and the encodings is specified by
 the Rust tests in ``rust/fhy-core/tests/it/solver/``. This suite covers what
@@ -383,7 +383,7 @@ def test_strict_companions_raise_undecidable_error_with_the_backend_reason(
 def test_holds_for_all_free_assignments_asks_its_backend_once(
     x: Identifier, answer: SatResult, expected: bool | None
 ) -> None:
-    """Test the universal question is one check for a counterexample (R2-030).
+    """Test the universal question is one check for a counterexample.
 
     With nothing considered, the question is universal validity, so an
     unsatisfiable negation holds. The answer is the very ``True``, ``False``
@@ -837,7 +837,7 @@ def test_missing_package_raises_solver_backend_unavailable_error(
 
 @pytest.mark.subprocess
 def test_importing_fhy_core_imports_neither_sympy_nor_z3() -> None:
-    """Test a fresh ``import fhy_core`` leaves both packages unimported (D-S8-16)."""
+    """Test a fresh ``import fhy_core`` leaves both packages unimported."""
     completed = _run_python(
         """
         import sys
@@ -908,7 +908,7 @@ def test_missing_backend_raises_solver_capability_error_with_the_core_text(
 
 
 def test_errors_map_to_the_python_classes(x: Identifier) -> None:
-    """Test D-S8-14's rows: each core error raises its Python class."""
+    """Test each core error raises its Python class."""
     solver = Solver(
         smt_solver=_RecordingSmtSolver(SatResult.SAT), simplifier=_RecordingSimplifier()
     )
@@ -1053,7 +1053,7 @@ def _installed_z3_program() -> pathlib.Path | None:
 def test_a_control_character_name_hint_answers_the_same_on_every_backend(
     name_hint: str,
 ) -> None:
-    """Test a name hint's control characters never reach a solver's script (p14)."""
+    """Test a name hint's control characters never reach a solver's script."""
     identifier = Identifier(name_hint)
     reference = IdentifierExpression(identifier)
     expression = logical_and(reference > 0, reference < 2)
@@ -1080,7 +1080,7 @@ def test_a_control_character_name_hint_answers_the_same_on_every_backend(
 
 
 # =============================================================================
-# The default solver (N-S8-2 (b))
+# The default solver
 # =============================================================================
 
 

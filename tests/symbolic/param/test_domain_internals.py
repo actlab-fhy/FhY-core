@@ -8,10 +8,8 @@ methods take any constraints and variables, so each test below drives the
 rule through them: `compute_intersection` rescopes both sides' constraints
 onto the result variable, `has_feasible_value` asks the solver about the
 screened system of a numeric side, and `compute_constraint_implication_subset`
-screens both sides of an implication. (The private helpers
-`_rename_constraint_variable` and `_build_screened_constraint_system` these
-tests called were deleted when the procedures moved to the Rust core, S16;
-the rules are pinned here and in `rust/fhy-core/tests/it/param/`.)
+screens both sides of an implication. The procedures run in the Rust core;
+the rules are pinned here and in `rust/fhy-core/tests/it/param/`.
 
 Also covers the `WARNING` logging screening emits for every constraint or
 member excluded, and for every solver `UNDECIDED` outcome, which a boolean

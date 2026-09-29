@@ -174,7 +174,7 @@ def test_eq_is_structural_equivalence_and_hash_agrees(
 ) -> None:
     """Test ``==`` is ``is_structurally_equivalent``, and equal trees hash alike.
 
-    Oracle: D-S4-1's structural ``==`` and ``hash``; a hash that split an
+    Oracle: the structural ``==`` and ``hash``; a hash that split an
     equality class would lose dict and set lookups.
     """
     assert (left == right) is left.is_structurally_equivalent(right)

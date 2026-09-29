@@ -307,8 +307,8 @@ def test_wildcard_pattern_matches_any_compound_expression() -> None:
 def test_wildcard_pattern_keeps_the_bindings_threaded_to_it() -> None:
     """Test a wildcard adds no capture to the bindings a compound threads to it.
 
-    D-S5-4 removed ``match_under``; the threading shows through a sibling
-    capture, which the wildcard neither drops nor adds to.
+    The threading shows through a sibling capture, which the wildcard
+    neither drops nor adds to.
     """
     a = Capture("a")
     pattern = BinaryExpressionPattern(
@@ -356,7 +356,7 @@ def test_capture_pattern_stores_its_capture_and_a_wildcard_by_default() -> None:
 def test_capture_pattern_siblings_share_one_capture_object() -> None:
     """Test siblings using one ``Capture`` share it, and same-named ones do not.
 
-    D-S5-2: identity, not name, decides: two ``Capture("x")`` objects are
+    Identity, not name, decides: two ``Capture("x")`` objects are
     independent captures.
     """
     x = Capture("x")
@@ -749,8 +749,8 @@ def test_binary_expression_pattern_propagates_right_failure() -> None:
 def test_piecewise_expression_pattern_with_empty_cases_matches_nothing() -> None:
     """Test an empty (non-``None``) cases tuple builds a pattern matching nothing.
 
-    D-S5-5: a real ``PiecewiseExpression`` always has at least one case, so
-    the pattern can never match; it builds, as the core's does, rather than
+    A real ``PiecewiseExpression`` always has at least one case, so the
+    pattern can never match; it builds, as the core's does, rather than
     raising. ``None`` is the spelling for "match any case count."
     """
     pattern = PiecewiseExpressionPattern((), WildcardPattern())
@@ -1063,8 +1063,8 @@ def test_composite_patterns_reject_a_non_pattern_sub_pattern(
 ) -> None:
     """Test every composite rejects a non-``Pattern`` child at construction.
 
-    D-S5-5: the binding's own type check raises ``TypeError`` naming the
-    field, uniformly across the composites.
+    The binding's own type check raises ``TypeError`` naming the field,
+    uniformly across the composites.
     """
     with pytest.raises(TypeError, match=expected_context):
         construct()
@@ -1073,8 +1073,8 @@ def test_composite_patterns_reject_a_non_pattern_sub_pattern(
 def test_capture_pattern_rejects_a_capture_that_is_not_a_capture() -> None:
     """Test a capture that is not a ``Capture``, such as a name, raises.
 
-    D-S5-2: captures are ``Capture`` handles, and a ``str`` name is refused
-    at construction rather than bound by spelling.
+    Captures are ``Capture`` handles, and a ``str`` name is refused at
+    construction rather than bound by spelling.
     """
     with pytest.raises(TypeError, match="CapturePattern capture must be a Capture"):
         CapturePattern("x", WildcardPattern())  # type: ignore[arg-type]
@@ -1085,8 +1085,8 @@ def test_capture_pattern_rejects_a_capture_that_is_not_a_capture() -> None:
 def test_capture_with_an_empty_name_binds_like_any_other() -> None:
     """Test a capture named ``""`` is valid and binds what it matched.
 
-    D-S5-2: any ``str`` is a capture name; the name serves only ``str``,
-    ``repr`` and messages.
+    Any ``str`` is a capture name; the name serves only ``str``, ``repr``
+    and messages.
     """
     unnamed = Capture("")
     expression = LiteralExpression(5)
@@ -1406,8 +1406,8 @@ def test_logical_expression_pattern_with_fewer_than_two_operands_matches_nothing
 ) -> None:
     """Test fewer than two operand patterns build a pattern matching nothing.
 
-    D-S5-5: a logical expression has at least two operands, so the pattern
-    can never match; it builds, as the core's does, rather than raising.
+    A logical expression has at least two operands, so the pattern can
+    never match; it builds, as the core's does, rather than raising.
     """
     pattern = LogicalExpressionPattern(
         LogicalOperation.AND, tuple(WildcardPattern() for _ in range(count))
@@ -1484,8 +1484,8 @@ def test_predicate_pattern_propagates_exceptions() -> None:
 def test_predicate_pattern_captures_nothing() -> None:
     """Test ``PredicatePattern`` adds no binding to those threaded to it.
 
-    D-S5-4 removed ``match_under``; the threading shows through a sibling
-    capture, which stays the only binding.
+    The threading shows through a sibling capture, which stays the only
+    binding.
     """
     x = Capture("x")
     pattern = BinaryExpressionPattern(
@@ -1516,8 +1516,8 @@ def test_predicate_pattern_using_isinstance_check() -> None:
 def test_alternatives_pattern_with_empty_alternatives_matches_nothing() -> None:
     """Test ``AlternativesPattern(())`` builds a pattern matching nothing.
 
-    D-S5-5: no alternative can match, so the pattern builds, as the core's
-    does, rather than raising.
+    No alternative can match, so the pattern builds, as the core's does,
+    rather than raising.
     """
     pattern = AlternativesPattern(())
 

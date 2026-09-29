@@ -2,13 +2,12 @@
 
 The entry classes are thin Python subclasses of ``fhy_core._rs`` classes,
 and the registry is the Rust core's owned ``FunctionRegistry``, which the
-extension keeps for Python's process-wide API (S7 of
-``docs/design/python-switch.md``). These tests cover what the binding adds
-around the core: the class structure, argument checks and their messages,
-object identity across registration and lookups, the built-ins seen first,
-constants and their identifiers, binder equivalence, the screen and the
-inliner reading the Rust registry without calling Python, threads, and the
-built-ins' bodies, pinned as data.
+extension keeps for Python's process-wide API. These tests cover what the
+binding adds around the core: the class structure, argument checks and
+their messages, object identity across registration and lookups, the
+built-ins seen first, constants and their identifiers, binder equivalence,
+the screen and the inliner reading the Rust registry without calling
+Python, threads, and the built-ins' bodies, pinned as data.
 """
 
 import math
@@ -818,10 +817,10 @@ def test_inliner_refuses_a_numeric_literal_in_a_piecewise_condition(
 
 
 def test_inliner_finishes_nested_builtins_a_hundred_deep() -> None:
-    """Test ``relu`` nested 100 deep inlines quickly (X-10).
+    """Test ``relu`` nested 100 deep inlines quickly.
 
-    The recursive Python inliner doubled its work per level and did not
-    finish this in five minutes.
+    An inliner that doubled its work per level would not finish this in
+    five minutes.
     """
     tree: Expression = IdentifierExpression(Identifier("x"))
     for _ in range(100):

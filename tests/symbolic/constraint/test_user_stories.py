@@ -27,8 +27,8 @@ from .conftest import mock_identifier
 
 
 @pytest.mark.sympy
-def test_dependent_constraint_scenario_matches_the_documented_walkthrough() -> None:
-    """Test the design doc's dependent-constraint example end to end.
+def test_dependent_constraint_scenario_tracks_the_supplied_bindings() -> None:
+    """Test a dependent `x < y` constraint end to end.
 
     A dependent constraint (`x < y`) is a first-class `Constraint`: it has
     no designated variable, its scope is both identifiers, and its
@@ -44,8 +44,8 @@ def test_dependent_constraint_scenario_matches_the_documented_walkthrough() -> N
     assert c.evaluate_with_bindings({x: 5, y: 3}) is ConstraintOutcome.VIOLATED
 
 
-def test_unary_set_constraint_scenario_matches_the_documented_walkthrough() -> None:
-    """Test the design doc's `InSetConstraint` example end to end."""
+def test_unary_set_constraint_scenario_decides_type_strict_membership() -> None:
+    """Test an `InSetConstraint` over `{1, 2, 3}` end to end."""
     x = mock_identifier("x", 0)
     s = InSetConstraint(x, {1, 2, 3})
 
@@ -98,15 +98,12 @@ def test_chain_of_three_dependent_inequalities_is_jointly_satisfiable() -> None:
 
 
 @pytest.mark.z3
-def test_migration_shaped_scenario_matches_the_old_suites_outcomes() -> None:
-    """Test a system shaped like the pre-rewrite suite's examples decides the same way.
+def test_mixed_set_and_equation_scenario_is_satisfiable() -> None:
+    """Test a mixed set-and-equation system decides as satisfiable.
 
-    Builds the same mixed set-and-equation system the old
-    `test_constraint_system.py` used to pin
-    (`test_check_satisfiability_mixed_set_and_equation_system_is_satisfiable`)
-    through the new constructor shapes, and confirms the satisfiability
-    outcome is unchanged: this behavior was never variable-attachment
-    dependent, so the rewrite must not have disturbed it.
+    `x in {1, 2, 3}` together with `x < y` over integers has a solution, and
+    the outcome does not depend on which variables the constraints attach
+    to.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -121,13 +118,13 @@ def test_migration_shaped_scenario_matches_the_old_suites_outcomes() -> None:
 
 
 @pytest.mark.sympy
-def test_ground_constraint_scenario_matches_the_documented_edge_case() -> None:
-    """Test a ground equation constraint's documented edge-case behavior.
+def test_ground_constraint_scenario_decides_under_empty_bindings() -> None:
+    """Test a ground equation constraint's edge-case behavior.
 
     A constraint with no free identifiers has an empty scope and is
-    decidable under empty bindings -- the case the design doc calls out
-    as valid in a bare `ConstraintSystem` even though a `Param` would
-    reject attaching it (scope-membership rule, tested at the param layer).
+    decidable under empty bindings -- valid in a bare `ConstraintSystem`
+    even though a `Param` would reject attaching it (scope-membership rule,
+    tested at the param layer).
     """
     ground = EquationConstraint(LiteralExpression(True))
 

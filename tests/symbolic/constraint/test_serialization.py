@@ -216,9 +216,9 @@ def test_set_constraint_serialized_values_are_in_canonical_order(
 ) -> None:
     """Test serialized members are emitted in the canonical member order.
 
-    Integer members order numerically (C-2 of the S13 design), so the wire
-    lists ``2, 4, 10, 33``, not the ``repr``-sorted ``10, 2, 33, 4``, and
-    the order the members are given in does not matter.
+    Integer members order numerically, so the wire lists ``2, 4, 10, 33``,
+    not the ``repr``-sorted ``10, 2, 33, 4``, and the order the members are
+    given in does not matter.
     """
     constraint = factory(mock_identifier("x", 0), [33, 10, 4, 2])  # type: ignore[call-arg]
 
@@ -235,15 +235,14 @@ def test_set_constraint_wire_order_is_independent_of_construction_order(
     """Test two constraints over the same members serialize to one byte-identical list.
 
     The members collide on hash, and are given in opposite orders; both
-    constraints store them in the canonical order (C-1 of the S13 design),
-    so the wire lists agree.
+    constraints store them in the canonical order, so the wire lists agree.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = factory(x, list(members))  # type: ignore[call-arg]
     right = factory(x, list(reversed(members)))  # type: ignore[call-arg]
 
-    # C-1 of the S13 design: both store their members in canonical order.
+    # Both store their members in canonical order.
     assert getattr(left, field) == getattr(right, field)
     assert _read_wire_members(left, field) == _read_wire_members(right, field)
 

@@ -52,7 +52,7 @@ np = pytest.importorskip("numpy")
 
 @contextlib.contextmanager
 def _refuse_warnings() -> Iterator[None]:
-    """Turn every warning into an error: the evaluator warns nothing (Z-9).
+    """Turn every warning into an error: the evaluator warns nothing.
 
     Real arithmetic is IEEE's, silently, and the NumPy ufuncs the
     evaluator calls for the transcendental natives run with NumPy's
@@ -453,9 +453,8 @@ def test_integer_sort_native_returns_integer_dtype(function_name: str) -> None:
 def test_real_sort_native_widens_a_float32_binding_to_float64() -> None:
     """Test a ``float32`` binding is read as ``float64``, the real domain.
 
-    The evaluator computes reals in ``float64`` (Z-1 of
-    ``docs/design/python-switch.md``), so a narrower binding is widened
-    and a real-sorted result is ``float64``.
+    The evaluator computes reals in ``float64``, so a narrower binding is
+    widened and a real-sorted result is ``float64``.
     """
     x = mock_identifier("x", 0)
     values = np.array([0.1, 0.5, 0.9], dtype=np.float32)
@@ -1032,7 +1031,7 @@ def test_unselected_case_domain_error_is_discarded_without_a_warning() -> None:
     Every case is evaluated for every element, so ``log(0)`` in a case
     whose condition is always false still computes ``-inf`` there. The
     element is discarded, and real arithmetic is IEEE's, with no NumPy
-    ``RuntimeWarning`` (Z-9 of ``docs/design/python-switch.md``).
+    ``RuntimeWarning``.
     """
     x = mock_identifier("x", 0)
     x_expression = IdentifierExpression(x)
@@ -1471,10 +1470,9 @@ def test_raises_for_unbound_identifier_matching_a_native_function_name() -> None
 
 
 def test_evaluates_erf_as_math_does() -> None:
-    """Test ``erf`` is computed, where the NumPy evaluator used to refuse it.
+    """Test ``erf`` is computed although NumPy has no ufunc for it.
 
-    ``erf`` has no NumPy ufunc, so the core computes it (Z-6 of
-    ``docs/design/python-switch.md``).
+    ``erf`` has no NumPy ufunc, so the core computes it.
     """
     x = mock_identifier("x", 0)
     values = np.array([-1.0, 0.0, 0.5, 2.0])
@@ -1605,8 +1603,8 @@ def test_does_not_mutate_input_expression() -> None:
 def test_every_binary_operation_is_evaluated(operation: BinaryOperation) -> None:
     """Test every ``BinaryOperation`` evaluates over arrays, as NumPy does.
 
-    The table of ufuncs is gone; the core defines each operation, so this
-    compares every operation with NumPy on values where the two agree.
+    The core defines each operation, so this compares every operation with
+    NumPy on values where the two agree.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -1659,8 +1657,8 @@ def test_every_unary_operation_is_evaluated() -> None:
 def test_every_builtin_native_function_is_evaluated() -> None:
     """Test every built-in native evaluates over arrays, as ``math`` computes it.
 
-    Every native built-in has a kernel now, ``erf`` included, so none
-    raises ``UnsupportedNumpyLoweringError``.
+    Every native built-in has a kernel, ``erf`` included, so none raises
+    ``UnsupportedNumpyLoweringError``.
     """
     x = mock_identifier("x", 0)
     values = np.array([0.25, 0.5, 0.75])

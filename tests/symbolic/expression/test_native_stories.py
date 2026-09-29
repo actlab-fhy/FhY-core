@@ -289,8 +289,9 @@ def test_user_story_variable_named_after_a_constant_stays_a_free_variable(
 def test_user_story_binding_a_variable_named_after_a_constant_is_honored() -> None:
     """Test a binding for a variable named ``e`` reaches the simplifier.
 
-    The bridge previously resolved the name to the constant and dropped
-    the binding, leaving the caller's substitution silently unapplied.
+    The bridge must resolve the name to the caller's variable, not to the
+    constant, so the caller's substitution is applied rather than silently
+    dropped.
     """
     variable = Identifier("e")
     expression = LiteralExpression(2) * IdentifierExpression(variable)

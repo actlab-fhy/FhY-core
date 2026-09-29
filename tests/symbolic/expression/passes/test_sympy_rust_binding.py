@@ -1,4 +1,4 @@
-"""Interface tests of the SymPy backend over the Rust core (S12 of the plan).
+"""Interface tests of the SymPy backend over the Rust core.
 
 The behavior of the lowering, the simplification and its workarounds, and
 the lifting is specified by the Rust stories in
@@ -142,9 +142,9 @@ def test_constructing_the_backend_imports_nothing_and_its_question_reports_sympy
 def test_missing_sympy_reports_unavailable() -> None:
     """Test a missing SymPy fails ``load``, and a later load succeeds.
 
-    The fresh-process half of the Rust target the SymPy backend's move into
-    the binding removed: the backend keeps no failed load, so once SymPy
-    imports, the same backend loads and simplifies.
+    This needs a fresh process, so it runs here rather than in the Rust
+    tests: the backend keeps no failed load, so once SymPy imports, the
+    same backend loads and simplifies.
     """
     completed = _run_python(
         """
@@ -213,8 +213,8 @@ def test_simplify_reads_user_constants_from_the_registry(
         register_native_constant,
     )
 
-    register_native_constant("answer_s12", FunctionSort.INT, 42)
-    answer = IdentifierExpression(get_native_constant_identifier("answer_s12"))
+    register_native_constant("sympy_answer", FunctionSort.INT, 42)
+    answer = IdentifierExpression(get_native_constant_identifier("sympy_answer"))
 
     result = SympySimplifier().simplify(answer > 41)
 

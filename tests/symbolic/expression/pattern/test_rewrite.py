@@ -113,7 +113,7 @@ def _make_x_times_one_rule() -> RewriteRule:
 def test_rewrite_rule_defaults_for_optional_fields() -> None:
     """Test ``RewriteRule`` defaults to no guard and no name.
 
-    D-S5-8: the guards are a tuple, which replaces the ``guard`` field.
+    The guards are a tuple, empty when none are given.
     """
     rule = RewriteRule(
         pattern=WildcardPattern(),
@@ -127,8 +127,8 @@ def test_rewrite_rule_defaults_for_optional_fields() -> None:
 def test_rewrite_rule_compares_and_hashes_by_identity() -> None:
     """Test ``RewriteRule`` instances compare and hash by identity.
 
-    D-S5-8: callables cannot be compared, so two rules of the same content
-    are distinct.
+    Callables cannot be compared, so two rules of the same content are
+    distinct.
     """
     pattern = LiteralPattern(value=5)
     rewrite = lambda _: LiteralExpression(0)  # noqa: E731
@@ -476,8 +476,8 @@ def test_apply_rewrite_rules_x_minus_x_does_not_match_distinct_operands() -> Non
 def test_apply_rewrite_rules_wraps_guard_exception_as_rewrite_callback_error() -> None:
     """Test ``apply_rewrite_rules`` raises a guard exception as its cause.
 
-    D-S5-11: the walk raises ``RewriteCallbackError`` naming the rule, not
-    the pass framework's ``PassExecutionError``.
+    The walk raises ``RewriteCallbackError`` naming the rule, not the pass
+    framework's ``PassExecutionError``.
     """
     failure = RuntimeError("guard failed")
 
@@ -502,8 +502,8 @@ def test_apply_rewrite_rules_wraps_rewrite_exception_as_rewrite_callback_error()
 ):
     """Test ``apply_rewrite_rules`` raises a rewrite exception as its cause.
 
-    D-S5-11: the walk raises ``RewriteCallbackError`` naming the rule, not
-    the pass framework's ``PassExecutionError``.
+    The walk raises ``RewriteCallbackError`` naming the rule, not the pass
+    framework's ``PassExecutionError``.
     """
     failure = RuntimeError("rewrite failed")
 
@@ -598,8 +598,8 @@ def test_rewrite_rule_applier_defensively_copies_rule_sequence() -> None:
 def test_rewrite_rule_applier_wraps_guard_exception_as_pass_execution_error() -> None:
     """Test ``execute`` wraps a guard exception as ``PassExecutionError``.
 
-    D-S5-12: the cause is the walk's ``RewriteCallbackError``, whose cause
-    is the guard's exception.
+    The cause is the walk's ``RewriteCallbackError``, whose cause is the
+    guard's exception.
     """
     failure = RuntimeError("guard failed")
 
@@ -623,8 +623,8 @@ def test_rewrite_rule_applier_wraps_guard_exception_as_pass_execution_error() ->
 def test_rewrite_rule_applier_wraps_rewrite_exception_as_pass_execution_error() -> None:
     """Test ``execute`` wraps a rewrite exception as ``PassExecutionError``.
 
-    D-S5-12: the cause is the walk's ``RewriteCallbackError``, whose cause
-    is the rewrite's exception.
+    The cause is the walk's ``RewriteCallbackError``, whose cause is the
+    rewrite's exception.
     """
     failure = RuntimeError("rewrite failed")
 
@@ -644,7 +644,7 @@ def test_rewrite_rule_applier_wraps_rewrite_exception_as_pass_execution_error() 
 def test_rewrite_rule_applier_emits_diagnostic_when_named_rule_fires() -> None:
     """Test a named rule firing emits an ``INFO`` diagnostic naming the rule.
 
-    D-S5-12: the text is the core's, ``applied rewrite rule "name"``.
+    The text is the core's, ``applied rewrite rule "name"``.
     """
     x = mock_identifier("x", 0)
     rule = _make_x_plus_zero_rule()
@@ -679,7 +679,7 @@ def test_rewrite_rule_applier_does_not_emit_diagnostic_for_unnamed_rule() -> Non
 def test_apply_rewrite_rules_with_identity_rewrite_reports_unchanged() -> None:
     """Test a rule whose rewrite returns the matched expression declines.
 
-    D-S5-10: returning the matched node itself is no firing, so identity is
+    Returning the matched node itself is no firing, so identity is
     preserved, and the next rule is tried and fires.
     """
     x = Capture("x")
@@ -794,7 +794,7 @@ def test_caller_can_iterate_until_no_change_reported() -> None:
 def test_rewrite_rule_accepts_every_pattern_kind(rule_pattern: Pattern) -> None:
     """Test ``RewriteRule`` accepts a pattern of every kind without coercion.
 
-    D-S5-4: the kinds are closed, so these are all the patterns there are.
+    The kinds are closed, so these are all the patterns there are.
     """
     rule = RewriteRule(pattern=rule_pattern, rewrite=lambda _: LiteralExpression(1))
 

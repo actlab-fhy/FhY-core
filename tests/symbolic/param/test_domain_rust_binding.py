@@ -1,4 +1,4 @@
-"""Tests of the Python API over the Rust-backed param domains (S16a).
+"""Tests of the Python API over the Rust-backed param domains.
 
 The six kinds of ``fhy_core.symbolic.param.domains`` are thin subclasses of
 ``fhy_core._rs`` classes backed by ``fhy_core::param``, and the module
@@ -304,7 +304,7 @@ def test_finite_domain_keeps_serializable_value_objects() -> None:
 
 
 def test_number_subclasses_are_stored_as_exact_numbers() -> None:
-    """Test an `IntEnum` value is stored as the `int` it denotes (P-2)."""
+    """Test an `IntEnum` value is stored as the `int` it denotes."""
     domain = OrdinalDomain((_Level.HIGH, 1))
 
     assert domain.sorted_values == (1, 3)
@@ -321,7 +321,7 @@ def test_numpy_float_is_read_as_a_float() -> None:
 
 
 def test_ordinal_ties_order_by_kind_and_categories_canonically() -> None:
-    """Test equal numbers of three kinds order `bool`, `float`, `int` (P-1, P-2)."""
+    """Test equal numbers of three kinds order `bool`, `float`, `int`."""
     assert OrdinalDomain((1, True, 1.0)).sorted_values == (True, 1.0, 1)
     assert CategoricalDomain(("b", 10, 2, True)).categories == (True, 2, 10, "b")
 
@@ -370,7 +370,7 @@ def test_raising_less_than_propagates_its_exception(error: BaseException) -> Non
 
 
 def test_serializable_and_primitive_values_do_not_order() -> None:
-    """Test an ordinal `Serializable` does not order against an `int` (P-3)."""
+    """Test an ordinal `Serializable` does not order against an `int`."""
     with pytest.raises(TypeError, match="mutually comparable"):
         _ordinal((_Rank(1), 2))
 
@@ -401,14 +401,14 @@ def test_native_procedure_drives_a_python_defined_domain() -> None:
 def test_a_natural_domain_admits_only_its_own_values(
     value: int, admissible: bool
 ) -> None:
-    """Test the sign restriction holds at the domain level (F2-021)."""
+    """Test the sign restriction holds at the domain level."""
     assert IntegerDomain(non_negative=True).is_value_admissible(value) is admissible
     assert IntegerDomain().is_value_admissible(value) is True
 
 
 @pytest.mark.z3
 def test_domain_questions_fold_in_the_domain_s_restriction() -> None:
-    """Test the TYP probe's rows answer as a param over the domain does."""
+    """Test the domain's questions answer as a param over the domain does."""
     x, y = Identifier("x"), Identifier("y")
     natural, integer = IntegerDomain(non_negative=True), IntegerDomain()
     below_zero = EquationConstraint(IdentifierExpression(x) <= -1)

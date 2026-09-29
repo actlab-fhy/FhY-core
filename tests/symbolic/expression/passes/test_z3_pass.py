@@ -1,11 +1,11 @@
 """Tests for `fhy_core.symbolic.expression.passes.z3`: the z3-solver adapter.
 
 ``convert_expression_to_z3_expression`` parses the Rust lowering, and
-``Z3Solver`` answers the solver's questions (S8 of
-``docs/design/python-switch.md``). The lowering's term shapes are specified
-by the Rust stories (``tests/it/solver/smt_lowering_stories.rs``); this file
-pins what the adapter adds: z3 terms equivalent to the expressions, the
-identifier map, the errors, and the questions decided through z3.
+``Z3Solver`` answers the solver's questions. The lowering's term shapes are
+specified by the Rust stories (``tests/it/solver/smt_lowering_stories.rs``);
+this file pins what the adapter adds: z3 terms equivalent to the
+expressions, the identifier map, the errors, and the questions decided
+through z3.
 """
 
 import logging
@@ -334,11 +334,11 @@ def test_convert_expression_to_z3_expression(
 ) -> None:
     """Test `convert_expression_to_z3_expression` maps each expression to Z3.
 
-    The terms are parsed from the Rust lowering (Y-8 of the S8 design), so
-    they are pinned by their meaning, not their shape: the result has the
-    expected sort and equals the expected term for every assignment. The
-    lowering keeps the IR's semantics, so a real floor division stays real
-    and a power is a product of the base's sort (Y-2, Y-3).
+    The terms are parsed from the Rust lowering, so they are pinned by their
+    meaning, not their shape: the result has the expected sort and equals
+    the expected term for every assignment. The lowering keeps the IR's
+    semantics, so a real floor division stays real and a power is a product
+    of the base's sort.
     """
     result, _ = convert_expression_to_z3_expression(expression, symbol_types)
     _assert_equivalent(result, expected_z3_expression)
@@ -527,11 +527,10 @@ def test_holds_for_all_free_assignments_maps_solver_result_to_satisfiability(
 ) -> None:
     """Test ``holds_for_all_free_assignments`` maps each z3 outcome by its encoding.
 
-    D-S8-7: with every identifier considered, nothing is universally
-    quantified, so the script asserts the expression and ``sat`` means it
-    holds; with a free identifier and nothing considered, it asserts the
-    negation and ``unsat`` means it holds. The bridge used to assert the
-    negation under a ``ForAll`` in both cases.
+    With every identifier considered, nothing is universally quantified, so
+    the script asserts the expression and ``sat`` means it holds; with a
+    free identifier and nothing considered, it asserts the negation and
+    ``unsat`` means it holds. Neither case asserts a ``ForAll``.
     """
     monkeypatch.setattr(z3.Solver, "check", lambda self: solver_result)
     considered, expression, symbol_types = trivial_satisfiability_inputs
@@ -745,7 +744,7 @@ def test_holds_for_all_free_assignments_logs_z3s_reason_for_unknown(
 ) -> None:
     """Test the `unknown`-result warning includes Z3's `reason_unknown()` text.
 
-    The solver logs it, on its own logger, for every backend (D-S8-14).
+    The solver logs it, on its own logger, for every backend.
     """
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
     monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
@@ -1172,8 +1171,8 @@ def test_piecewise_over_one_hundred_cases_z3_lowering_matches_hand_nested() -> N
 def test_convert_call_expression_to_z3_rejects_unresolved_call() -> None:
     """Test the z3 lowering rejects ``CallExpression`` (callers must inline first).
 
-    The refusal is the lowering's own ``TypeError``, no longer a
-    ``PassExecutionError`` around it (Y-7).
+    The refusal is the lowering's own ``TypeError``, not a
+    ``PassExecutionError`` around it.
     """
     expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
 
@@ -1185,7 +1184,7 @@ def test_convert_call_expression_to_z3_rejects_unresolved_call() -> None:
 # A Boolean where a number is required is refused, and z3 would coerce it
 # =============================================================================
 #
-# The lowering refuses a Boolean in a numeric context (Y-4), as strict
+# The lowering refuses a Boolean in a numeric context, as strict
 # SMT-LIB2 does. z3 itself is not strict: its SMT-LIB2 parser, which the
 # z3-solver adapter reads every script with, rewrites a Boolean operand of a
 # numeric comparison to `If(b, 1, 0)`, identifying `True` with `1`. The
@@ -1414,9 +1413,9 @@ def test_z3_holds_for_all_free_assignments_refuses_a_bare_numeric_literal_root()
 
     Nothing wraps a connective around a bare
     ``holds_for_all_free_assignments`` query the way the implication
-    encoding does, so a numeric root previously reached Z3's ``Not``
-    directly and raised ``Z3Exception("Value cannot be converted into a
-    Z3 Boolean value")`` -- a backend detail rather than a diagnosis the
+    encoding does, so the root must be screened before it reaches Z3's
+    ``Not``, which would raise ``Z3Exception("Value cannot be converted into
+    a Z3 Boolean value")`` -- a backend detail rather than a diagnosis the
     caller can act on.
     """
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -1490,7 +1489,7 @@ def test_non_finite_float_literal_is_refused_rather_than_lowered(value: float) -
     infinity or a NaN denotes no rational at all. The refusal has to be an
     error rather than some stand-in numeral: a substituted finite value
     would let the solver decide a query about a quantity Z3 was never
-    given. It is the lowering's ``TypeError`` (Y-7).
+    given. It is the lowering's ``TypeError``.
     """
     with pytest.raises(TypeError, match="non-finite float") as exception_info:
         convert_expression_to_z3_expression(LiteralExpression(value), {})
@@ -1579,8 +1578,8 @@ def test_convert_expression_to_z3_reports_a_numeric_sort_operand_as_ill_typed(
 ) -> None:
     """Test an INT or REAL identifier under a connective raises the typed error.
 
-    Z3 rejects the sort mismatch with its own exception, which the pass
-    infrastructure used to wrap as ``PassExecutionError``.
+    The sort mismatch is refused with the package's typed error before Z3
+    sees it, so Z3's own exception never surfaces.
     """
     x = mock_identifier("x", 0)
     expression = logical_and(IdentifierExpression(x), LiteralExpression(True))
@@ -1593,9 +1592,9 @@ def test_question_refuses_a_native_constant_it_would_decide_wrongly() -> None:
     """Test the questions refuse a constant through z3, even with a sort for it.
 
     ``pi > 3`` holds for the constant, but over a free REAL Z3 finds a
-    counterexample such as ``pi = 0``. The bridge's own questions are gone
-    (D-S8-1); the solver's refuse the constant by its hazard screen before
-    lowering, even with a sort declared for it.
+    counterexample such as ``pi = 0``. The solver's questions refuse the
+    constant by its hazard screen before lowering, even with a sort
+    declared for it.
     """
     pi = get_native_constant_identifier("pi")
     expression = BinaryExpression(

@@ -1184,7 +1184,7 @@ def test_check_expression_satisfiability_positive_integer_exponent_stays_decided
 def test_check_expression_satisfiability_real_operand_int_literal_is_decided(
     operation: BinaryOperation,
 ) -> None:
-    """Test comparing a REAL-sorted identifier to an int literal is decided (R2-040).
+    """Test comparing a REAL-sorted identifier to an int literal is decided.
 
     The evaluator converts the integer to a real before comparing, and so
     does the lowering's ``to_real``, so ``x == 1`` and ``x != 1`` are each
@@ -1251,7 +1251,7 @@ def test_check_expression_satisfiability_int_equal_to_a_fraction_is_unsatisfiabl
 
     No integer equals ``1.5``, by the evaluator and by the lowering's
     ``to_real`` alike, so the question is answered, not refused, and
-    nothing is logged (R2-040).
+    nothing is logged.
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
@@ -1299,7 +1299,7 @@ def test_check_expression_satisfiability_int_identifier_lt_float_not_screened() 
 
 # -----------------------------------------------------------------------
 # An equality of an int with a float is decided as the evaluator decides
-# it, through arithmetic, NEGATE, POWER, and piecewise (R2-040)
+# it, through arithmetic, NEGATE, POWER, and piecewise
 # -----------------------------------------------------------------------
 
 

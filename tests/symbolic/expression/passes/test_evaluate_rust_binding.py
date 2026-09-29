@@ -1,4 +1,4 @@
-"""Tests for the Python API of the evaluators over the Rust core (S9).
+"""Tests for the Python API of the evaluators over the Rust core.
 
 The Rust tests in ``rust/fhy-core/tests/it/expression/`` specify the
 evaluation itself; these cover what the binding adds: NumPy as an
@@ -73,7 +73,7 @@ def _run(program: str) -> str:
 
 
 # =============================================================================
-# NumPy is optional (D-S9-11)
+# NumPy is optional
 # =============================================================================
 
 
@@ -128,7 +128,7 @@ def test_the_numpy_evaluator_without_numpy_raises_the_guiding_import_error() -> 
 
 
 # =============================================================================
-# Bindings (D-S9-4, D-S9-12)
+# Bindings
 # =============================================================================
 
 
@@ -263,7 +263,7 @@ def test_empty_and_zero_dimensional_bindings() -> None:
 
 
 # =============================================================================
-# Results (D-S9-13)
+# Results
 # =============================================================================
 
 
@@ -305,7 +305,7 @@ def test_an_array_result_is_a_new_writeable_c_contiguous_array() -> None:
 
 
 # =============================================================================
-# Errors (D-S9-14), raised directly (D-S9-10)
+# Errors, raised directly
 # =============================================================================
 
 
@@ -314,7 +314,7 @@ def _raise_case(case: str) -> tuple[type[BaseException], Expression, dict[Any, A
     ints = np.array([1, 2])
     pi = get_native_constant_identifier("pi")
     cases: dict[str, tuple[type[BaseException], Expression, dict[Any, Any]]] = {
-        "unknown": (EntryLookupError, call("s9_nowhere", reference), {x: ints}),
+        "unknown": (EntryLookupError, call("binding_nowhere", reference), {x: ints}),
         "constant-called": (FunctionArityError, CallExpression("pi", ()), {}),
         "ill-typed": (
             NonBooleanLogicalOperandError,
@@ -399,12 +399,12 @@ def test_an_unsupported_native_user_function_is_refused(
 ) -> None:
     """Test a registered native function is refused by the NumPy evaluator."""
     register_native_function(
-        "s9_softplus", [FunctionSort.REAL], FunctionSort.REAL, math.exp
+        "binding_softplus", [FunctionSort.REAL], FunctionSort.REAL, math.exp
     )
     x, reference = _reference("x")
 
-    with pytest.raises(UnsupportedNumpyLoweringError, match="s9_softplus"):
-        evaluate_expression_with_numpy(call("s9_softplus", reference), {x: 1.0})
+    with pytest.raises(UnsupportedNumpyLoweringError, match="binding_softplus"):
+        evaluate_expression_with_numpy(call("binding_softplus", reference), {x: 1.0})
 
 
 def test_the_screen_runs_before_the_bound_constant_refusal() -> None:
@@ -469,7 +469,7 @@ except BaseException as error:
 
 
 # =============================================================================
-# The passes (D-S9-10, D-S9-15)
+# The passes
 # =============================================================================
 
 
@@ -503,13 +503,13 @@ def test_the_fold_reports_each_function_with_a_body_once(
     """Test the fold reports a WARNING per kept function with a body, once each."""
     x = Identifier("x")
     register_function(
-        "s9_double",
+        "binding_double",
         [x],
         [FunctionSort.REAL],
         FunctionSort.REAL,
         IdentifierExpression(x) * 2,
     )
-    tree = call("s9_double", 1.0) + call("s9_double", 2.0) + call("relu", 3.0)
+    tree = call("binding_double", 1.0) + call("binding_double", 2.0) + call("relu", 3.0)
 
     result = ExpressionEvaluator().execute(tree)
 
@@ -520,7 +520,7 @@ def test_the_fold_reports_each_function_with_a_body_once(
         DiagnosticLevel.WARNING,
         DiagnosticLevel.WARNING,
     ]
-    assert "'s9_double'" in str(messages[0])
+    assert "'binding_double'" in str(messages[0])
     assert "'relu'" in str(messages[1])
 
 
@@ -538,10 +538,11 @@ def test_the_fold_changes_the_ir_exactly_when_it_folds() -> None:
 
 
 def test_the_fold_checks_a_folded_calls_arity() -> None:
-    """Test a folded native call's arity is checked (Z-8).
+    """Test a folded native call's arity is checked.
 
-    The Python fold called ``math.sin(1.0, 2.0)`` and passed on its
-    ``TypeError``; the core checks the arity first.
+    The core checks the arity before it calls the implementation, so
+    ``sin(1.0, 2.0)`` raises a ``FunctionArityError``, not ``math.sin``'s
+    own ``TypeError``.
     """
     with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression(CallExpression("sin", (LiteralExpression(1.0),) * 2))
@@ -568,7 +569,7 @@ def test_a_native_implementation_receives_python_values(
         return 1.0
 
     register_native_function(
-        "s9_record",
+        "binding_record",
         [FunctionSort.REAL, FunctionSort.INT, FunctionSort.BOOL],
         FunctionSort.REAL,
         record,
@@ -576,7 +577,7 @@ def test_a_native_implementation_receives_python_values(
 
     result = evaluate_expression(
         call(
-            "s9_record",
+            "binding_record",
             LiteralExpression(Decimal("0.5")),
             2**70,
             LiteralExpression(True),
@@ -591,15 +592,17 @@ def test_a_native_implementations_exception_is_the_cause_itself(
     function_registry_snapshot: None,
 ) -> None:
     """Test the exception an implementation raises propagates as the same object."""
-    raised = ValueError("s9 boom")
+    raised = ValueError("native boom")
 
     def fail(_value: float) -> float:
         raise raised
 
-    register_native_function("s9_fail", [FunctionSort.REAL], FunctionSort.REAL, fail)
+    register_native_function(
+        "binding_fail", [FunctionSort.REAL], FunctionSort.REAL, fail
+    )
 
     with pytest.raises(PassExecutionError) as exception_info:
-        evaluate_expression(call("s9_fail", 1.0))
+        evaluate_expression(call("binding_fail", 1.0))
 
     assert exception_info.value.__cause__ is raised
 
@@ -613,11 +616,11 @@ def test_a_keyboard_interrupt_passes_through_a_native_implementation(
         raise KeyboardInterrupt
 
     register_native_function(
-        "s9_interrupt", [FunctionSort.REAL], FunctionSort.REAL, interrupt
+        "binding_interrupt", [FunctionSort.REAL], FunctionSort.REAL, interrupt
     )
 
     with pytest.raises(KeyboardInterrupt):
-        evaluate_expression(call("s9_interrupt", 1.0))
+        evaluate_expression(call("binding_interrupt", 1.0))
 
 
 def test_a_native_result_of_no_numeric_type_is_refused(
@@ -625,21 +628,21 @@ def test_a_native_result_of_no_numeric_type_is_refused(
 ) -> None:
     """Test a result that is no ``bool``, ``int`` or ``float`` is refused."""
     register_native_function(
-        "s9_text",
+        "binding_text",
         [FunctionSort.REAL],
         FunctionSort.REAL,
         lambda _value: "one",  # type: ignore[arg-type,return-value]
     )
 
     with pytest.raises(PassExecutionError) as exception_info:
-        evaluate_expression(call("s9_text", 1.0))
+        evaluate_expression(call("binding_text", 1.0))
 
     assert isinstance(exception_info.value.__cause__, NativeResultSortError)
     assert "'one'" in str(exception_info.value.__cause__)
 
 
 # =============================================================================
-# The built-ins' implementations (D-S9-9)
+# The built-ins' implementations
 # =============================================================================
 
 
@@ -721,7 +724,7 @@ def test_relu_propagates_nan_and_abs_of_negative_zero_is_positive() -> None:
 
 
 # =============================================================================
-# The literal helpers (D-S9-16)
+# The literal helpers
 # =============================================================================
 
 
@@ -761,7 +764,7 @@ def test_coerce_literal_value() -> None:
 
 
 # =============================================================================
-# Threads (D-S9-12)
+# Threads
 # =============================================================================
 
 
@@ -815,7 +818,7 @@ def test_concurrent_evaluations_agree() -> None:
 
 
 # =============================================================================
-# NumPy kernels (N-S9-2 (b))
+# NumPy kernels
 # =============================================================================
 
 

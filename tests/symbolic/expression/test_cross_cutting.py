@@ -34,7 +34,7 @@ _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
 
 
 def test_z3_lowering_is_no_registered_pass() -> None:
-    """Test the z3 lowering registers no pass: it is the Rust lowering (D-S8-1)."""
+    """Test the z3 lowering registers no pass: it is the Rust lowering."""
     assert (
         "fhy_core.symbolic.expression.to_z3" not in CompilerPass.get_registered_passes()
     )

@@ -1,12 +1,9 @@
 """Tests for the bound decoding interval-integer arithmetic reads.
 
-The private helpers ``_invert_comparison``, ``_bound_from_literal`` and
-``_iter_interval_bounds`` these tests once called were deleted when params
-moved to the Rust core (S16), which decodes each bound constraint of an
-interval param into its side, integer and inclusivity. The rules are pinned
-here through the public arithmetic, which reads the decoded interval, and
-the interval domain's constraint check, which keeps every constraint the
-decoding reads a bound.
+The Rust core decodes each bound constraint of an interval param into its
+side, integer and inclusivity. The rules are pinned here through the public
+arithmetic, which reads the decoded interval, and the interval domain's
+constraint check, which keeps every constraint the decoding reads a bound.
 """
 
 from collections.abc import Callable
