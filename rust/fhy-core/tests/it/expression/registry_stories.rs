@@ -3,7 +3,10 @@
 //! identifier, registration order, the sort lookup the screens read, and
 //! the registry as an owned, cloneable value.
 
+use std::collections::HashSet;
+
 use crate::support::expression as expression_support;
+use crate::support::hashing as hashing_support;
 
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::{
@@ -18,6 +21,7 @@ use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
 use expression_support::build_identifier;
+use hashing_support::hash_of;
 
 fn name(text: &str) -> FunctionName {
     FunctionName::new(text).expect("the test names no built-in")
@@ -246,6 +250,19 @@ fn native_constant_accepts_exactly_the_values_of_its_sort(
             assert_eq!(error.value(), &value);
         }
     }
+}
+
+#[test]
+fn equal_native_constants_hash_alike_and_collapse_in_a_set() {
+    let zero = declare_constant("c", FunctionSort::Real, 0.0);
+    let negative_zero = declare_constant("c", FunctionSort::Real, -0.0);
+    let one = declare_constant("c", FunctionSort::Real, 1.0);
+    let renamed = declare_constant("d", FunctionSort::Real, 0.0);
+
+    assert_eq!(zero, negative_zero);
+    assert_eq!(hash_of(&zero), hash_of(&negative_zero));
+    let constants: HashSet<NativeConstant> = [zero, negative_zero, one, renamed].into();
+    assert_eq!(constants.len(), 3);
 }
 
 #[rstest]

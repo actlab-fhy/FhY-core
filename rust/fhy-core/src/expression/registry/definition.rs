@@ -208,7 +208,7 @@ impl NativeFunction {
 /// assert!(NativeConstant::new(FunctionName::new("minus")?, FunctionSort::Nat, -1).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NativeConstant {
     name: FunctionName,
     sort: FunctionSort,
