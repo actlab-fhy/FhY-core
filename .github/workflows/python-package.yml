@@ -66,15 +66,15 @@ jobs:
       - name: Install z3 and SymPy
         # The z3 feature's z3-sys 0.13 links libz3 4.13.3 or newer, which
         # Ubuntu does not ship, so the job links the libz3 of the z3-solver
-        # wheel (D-S8-18). The wheel's z3 executable runs the process
-        # backend's stories against a real solver (FHY_SMT_SOLVER).
+        # wheel. The wheel's z3 executable runs the process backend's
+        # stories against a real solver (FHY_SMT_SOLVER).
         # SymPy serves the binding's tests: fhy-core-py holds the SymPy
         # backend, and its stories embed the venv's Python, which pyo3 links
         # (PYO3_PYTHON), and find SymPy on PYTHONPATH, since an embedded
-        # interpreter does not read the venv's pyvenv.cfg (D-S12-13). fhy-core
-        # itself needs no Python. GITHUB_ENV hands both to every later step,
-        # so each cargo test that builds the binding runs the SymPy stories,
-        # which fail without SymPy (N-S12-1).
+        # interpreter does not read the venv's pyvenv.cfg. fhy-core itself
+        # needs no Python. GITHUB_ENV hands both to every later step, so
+        # each cargo test that builds the binding runs the SymPy stories,
+        # which fail without SymPy.
         run: |
           python3 -m venv "$RUNNER_TEMP/z3"
           "$RUNNER_TEMP/z3/bin/pip" install --quiet z3-solver sympy
