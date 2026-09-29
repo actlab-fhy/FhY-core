@@ -20,8 +20,15 @@ import pytest
 
 from fhy_core import _rs
 from fhy_core._extension import (
+    NATIVE_ENTRY_POINT_GROUP,
+    NATIVE_MODULE_ENVIRONMENT_VARIABLE,
     _find_foreign_extension_builds,
     _normalize_pep440_version,
+)
+from tests.native_modules import (
+    read_import_error,
+    run_python,
+    write_distribution,
 )
 
 _IMPORT_PACKAGE_PROGRAM = (
@@ -317,3 +324,119 @@ def test_the_extension_declares_that_it_uses_the_gil() -> None:
 
     assert _rs is not None
     assert is_gil_enabled()
+
+
+def _has_native_entry_points() -> bool:
+    """Return whether a product advertises a combined extension here."""
+    return bool(importlib.metadata.entry_points(group=NATIVE_ENTRY_POINT_GROUP))
+
+
+@pytest.mark.skipif(
+    _has_native_entry_points(),
+    reason="a combined extension is installed, so the package does not run alone",
+)
+def test_the_package_alone_runs_on_its_own_extension() -> None:
+    """Test with no combined extension installed the package uses `_rs`."""
+    assert _rs.__name__ == "fhy_core._rs"
+    assert importlib.import_module("fhy_core._rs") is _rs
+
+
+_PRINT_EXTENSION_NAME = "import fhy_core\nprint(fhy_core._rs.__name__)"
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_two_advertised_native_modules_are_refused_naming_both(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test entry points naming different modules make the import fail."""
+    write_distribution(tmp_path, "product-one", {"one": "native_one"})
+    write_distribution(tmp_path, "product-two", {"two": "native_two"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "one native extension module per process" in message
+    assert "'native_one' (entry point 'one' of 'product-one')" in message
+    assert "'native_two' (entry point 'two' of 'product-two')" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_two_entry_points_naming_one_module_are_not_a_conflict(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test the same module advertised twice loads once, or fails as one module."""
+    write_distribution(tmp_path, "product-one", {"one": "native_shared"})
+    write_distribution(tmp_path, "product-two", {"two": "native_shared"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "'native_shared'" in message
+    assert "one native extension module per process" not in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_an_advertised_module_that_is_missing_is_not_replaced_by_the_own_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test a missing advertised module raises rather than falling back."""
+    write_distribution(tmp_path, "product", {"product": "native_missing"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "'native_missing'" in message
+    assert "failed to import" in message
+    assert "ModuleNotFoundError" in message
+    assert "fhy_core._rs" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    ("version_assignment", "expected_detail"),
+    [
+        ("__fhy_core_version__ = '0.0.0-stale'", "version '0.0.0-stale'"),
+        ("", "no __fhy_core_version__ attribute"),
+    ],
+)
+def test_a_stale_advertised_module_is_refused(
+    tmp_path: pathlib.Path, version_assignment: str, expected_detail: str
+) -> None:
+    """Test a combined extension of another fhy_core version is refused."""
+    write_distribution(tmp_path, "product", {"product": "native_stale"})
+    (tmp_path / "native_stale.py").write_text(version_assignment + "\n")
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "'native_stale'" in message
+    assert expected_detail in message
+    assert repr(importlib.metadata.version("fhy_core")) in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_the_environment_variable_overrides_the_advertised_modules(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test naming `fhy_core._rs` in the environment selects the own module."""
+    write_distribution(tmp_path, "product-one", {"one": "native_one"})
+    write_distribution(tmp_path, "product-two", {"two": "native_two"})
+
+    completed = run_python(
+        _PRINT_EXTENSION_NAME,
+        python_path=[tmp_path],
+        environment={NATIVE_MODULE_ENVIRONMENT_VARIABLE: "fhy_core._rs"},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["fhy_core._rs"]

@@ -1,11 +1,33 @@
-"""Import-time check of the required Rust extension ``fhy_core._rs``.
+"""Import-time check of the required Rust extension.
 
 The package runs on its compiled extension, which it cannot work without.
 Importing this module, which ``fhy_core`` does before anything else, imports
 the extension and raises ``ImportError`` with the cause and the fix when the
 extension is not installed, is built only for other interpreters, fails to
-import, or reports a ``__version__`` that is missing, not a PEP 440 version,
-or unequal to the installed package's version (a stale build).
+import, or reports a version that is missing, not a PEP 440 version, or
+unequal to the installed package's version (a stale build).
+
+Which native module is the extension depends on what is installed:
+
+- ``fhy_core`` alone uses its own module, ``fhy_core._rs``.
+- A downstream product that builds *one* combined extension for the whole
+  process (``fhy-core-py``'s ``register`` called next to its own crates')
+  advertises that module with an entry point in the group
+  ``fhy_core.native`` (``name = "module.path"``). ``fhy_core`` then loads that
+  module instead of its own and installs it under the name ``fhy_core._rs`` as
+  well, so the classes, whose qualified names are ``fhy_core._rs.<Class>``,
+  and the binding's lookups by that name reach it. The module reports the
+  ``fhy_core`` version it holds as ``__fhy_core_version__``. It must be
+  importable without importing ``fhy_core``.
+- The environment variable ``FHY_CORE_NATIVE_MODULE`` names the module to
+  load and overrides the entry points; ``fhy_core._rs`` names the module
+  ``fhy_core`` ships.
+
+A process holds one native module: two entry points that name different
+modules, or an entry point whose module differs from the ``fhy_core._rs`` the
+process already holds, raise ``ImportError`` naming both. A named module that
+fails to import is never replaced by ``fhy_core._rs``, since a second copy of
+the Rust code would then run beside the one the product expects.
 """
 
 __all__: list[str] = []
@@ -13,10 +35,22 @@ __all__: list[str] = []
 import importlib
 import importlib.machinery
 import importlib.metadata
+import os
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 
 _EXTENSION_MODULE = "fhy_core._rs"
+# The entry-point group in which a product's combined extension module is
+# advertised: the entry point's value is the module's name.
+NATIVE_ENTRY_POINT_GROUP = "fhy_core.native"
+# The environment variable that names the native module to load, overriding
+# the entry points.
+NATIVE_MODULE_ENVIRONMENT_VARIABLE = "FHY_CORE_NATIVE_MODULE"
+# The attribute of a combined extension module that holds the version of the
+# `fhy_core` Rust code it links.
+_AGGREGATE_VERSION_ATTRIBUTE = "__fhy_core_version__"
 _EXTENSION_STEM = "_rs"
 # File endings of a compiled extension module on any platform.
 _EXTENSION_FILE_ENDINGS = (".so", ".pyd")
@@ -157,8 +191,8 @@ def _normalize_pep440_version(version: str) -> str | None:
     return normalized
 
 
-def _check_extension() -> None:
-    """Import the extension and check it matches the installed package.
+def _load_own_extension() -> None:
+    """Import ``fhy_core._rs`` and check it matches the installed package.
 
     Raises:
         ImportError: If the extension is not installed, is built only for
@@ -190,6 +224,145 @@ def _check_extension() -> None:
         or _normalize_pep440_version(extension_version) != package_version
     ):
         raise _build_stale_extension_error(extension_version, package_version)
+
+
+def _describe_entry_point(entry_point: importlib.metadata.EntryPoint) -> str:
+    """Return the module an entry point names, and the distribution it is in."""
+    distribution = getattr(entry_point, "dist", None)
+    owner = f" (entry point {entry_point.name!r}"
+    owner += f" of {distribution.name!r})" if distribution is not None else ")"
+    return f"{entry_point.module!r}{owner}"
+
+
+def _build_two_native_modules_error(first: str, second: str) -> ImportError:
+    return ImportError(
+        f"{_PACKAGE_NAME} runs on one native extension module per process, "
+        f"but two different ones are installed or loaded: {first} and "
+        f"{second}. Uninstall one of them, or name the one to use in the "
+        f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}. Two "
+        "native modules would hold two copies of the Rust code, with "
+        "colliding identifier ids, split registries and unrelated classes.",
+        name=_EXTENSION_MODULE,
+    )
+
+
+def _select_native_module() -> str:
+    """Return the name of the native module to load.
+
+    Returns:
+        The module named by ``FHY_CORE_NATIVE_MODULE``, else the module the
+        entry points of the group ``fhy_core.native`` name, else
+        ``fhy_core._rs``.
+
+    Raises:
+        ImportError: If the entry points name two different modules.
+
+    """
+    named = os.environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
+    if named:
+        return named
+    by_module: dict[str, importlib.metadata.EntryPoint] = {}
+    for entry_point in importlib.metadata.entry_points(group=NATIVE_ENTRY_POINT_GROUP):
+        by_module.setdefault(entry_point.module, entry_point)
+    if len(by_module) > 1:
+        first, second, *_ = by_module.values()
+        raise _build_two_native_modules_error(
+            _describe_entry_point(first), _describe_entry_point(second)
+        )
+    return next(iter(by_module), _EXTENSION_MODULE)
+
+
+def _build_aggregate_import_error(module_name: str, error: ImportError) -> ImportError:
+    return ImportError(
+        f"{_PACKAGE_NAME} is set to run on the native extension module "
+        f"{module_name!r}, which failed to import ({type(error).__name__}: "
+        f"{error}). Reinstall the package that provides it, or uninstall it "
+        f"to use {_EXTENSION_MODULE}.",
+        name=module_name,
+    )
+
+
+def _build_stale_aggregate_error(
+    module_name: str, extension_version: object, package_version: str
+) -> ImportError:
+    reported_version = (
+        f"no {_AGGREGATE_VERSION_ATTRIBUTE} attribute"
+        if extension_version is None
+        else f"version {extension_version!r}"
+    )
+    return ImportError(
+        f"{_PACKAGE_NAME} needs the native extension module {module_name!r} "
+        f"to hold {_PACKAGE_NAME} {package_version!r}, but it reports "
+        f"{reported_version}, so it is stale or is not a {_PACKAGE_NAME} "
+        "extension. Rebuild or reinstall the package that provides it.",
+        name=module_name,
+    )
+
+
+def _load_aggregate_extension(module_name: str) -> None:
+    """Load a combined extension module and install it as ``fhy_core._rs``.
+
+    Args:
+        module_name: Importable name of the combined extension module.
+
+    Raises:
+        ImportError: If the module fails to import, does not report the
+            installed package's version as ``__fhy_core_version__``, or
+            another native module is already installed as ``fhy_core._rs``.
+
+    """
+    try:
+        extension = importlib.import_module(module_name)
+    except ImportError as error:
+        raise _build_aggregate_import_error(module_name, error) from error
+    extension_version = getattr(extension, _AGGREGATE_VERSION_ATTRIBUTE, None)
+    package_version = importlib.metadata.version(_PACKAGE_NAME)
+    if (
+        not isinstance(extension_version, str)
+        or _normalize_pep440_version(extension_version) != package_version
+    ):
+        raise _build_stale_aggregate_error(
+            module_name, extension_version, package_version
+        )
+    _install_as_own_extension(module_name, extension)
+
+
+def _install_as_own_extension(module_name: str, extension: ModuleType) -> None:
+    """Make ``fhy_core._rs`` name `extension`, refusing to replace another.
+
+    Args:
+        module_name: Name `extension` was imported as.
+        extension: The combined extension module.
+
+    Raises:
+        ImportError: If ``fhy_core._rs`` names another module.
+
+    """
+    held = sys.modules.get(_EXTENSION_MODULE)
+    if held is not None and held is not extension:
+        held_file = getattr(held, "__file__", None)
+        raise _build_two_native_modules_error(
+            f"{module_name!r}",
+            f"{_EXTENSION_MODULE!r}"
+            + (f" (loaded from {held_file})" if held_file else ""),
+        )
+    sys.modules[_EXTENSION_MODULE] = extension
+    setattr(sys.modules[_PACKAGE_NAME], _EXTENSION_STEM, extension)
+
+
+def _check_extension() -> None:
+    """Load the native module of this process and check it.
+
+    Raises:
+        ImportError: If no usable native module is installed, or two
+            different ones are. The message names the cause and the fix.
+
+    """
+    module_name = _select_native_module()
+    if module_name == _EXTENSION_MODULE:
+        _load_own_extension()
+    else:
+        _load_aggregate_extension(module_name)
 
 
 _check_extension()
