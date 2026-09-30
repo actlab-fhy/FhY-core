@@ -22,7 +22,7 @@ use super::*;
 static SERIAL: Mutex<()> = Mutex::new(());
 
 /// Return a new `Solver` object with no backends.
-fn new_solver<'py>(py: Python<'py>) -> Bound<'py, PyAny> {
+fn new_solver(py: Python<'_>) -> Bound<'_, PyAny> {
     py.get_type::<PySolver>().call0().expect("a solver")
 }
 
