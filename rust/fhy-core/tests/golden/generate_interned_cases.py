@@ -3,8 +3,8 @@
 Drives the Python `InternedMixin` oracle (`fhy_core.traits.interned`) through
 hand-picked and randomly generated operation scripts, recording the observed
 outcome of each operation. The Rust equivalence test
-(`rust/fhy-core/tests/interned_equivalence.rs`) replays these scripts against
-`fhy_core::interned::InternRegistry` and compares every observation.
+(`rust/fhy-core/tests/it/interned/equivalence.rs`) replays these scripts
+against `fhy_core::interned::InternRegistry` and compares every observation.
 
 Run from the repository root:
 
@@ -36,8 +36,8 @@ GENERATOR_COMMAND = (
 
 # Defaults catalogue: catalogue id -> ordered (key, note) pairs. Kept in sync
 # by hand with the four `fn() -> Vec<GoldenTag>` catalogue functions in
-# `rust/fhy-core/tests/interned_equivalence.rs`; the equivalence test asserts the two
-# cannot drift apart.
+# `rust/fhy-core/tests/it/interned/equivalence.rs`; the equivalence test
+# asserts the two cannot drift apart.
 DEFAULTS_CATALOGUE: dict[str, list[tuple[str, str]]] = {
     "none": [],
     "one": [("a", "default-a")],

@@ -14,6 +14,7 @@ registry rather than a per-built-in loop; the report names every
 offender when it fails.
 """
 
+from fhy_core import _rs
 from fhy_core.symbolic.expression import BUILTIN_FUNCTIONS, RegisteredFunction
 from fhy_core.types.checking import check_all_registered_function_bodies
 
@@ -70,3 +71,19 @@ def test_every_builtin_body_type_checks_against_its_declared_result_sort() -> No
     report = check_all_registered_function_bodies()
 
     assert report.has_errors() is False, report.format()
+
+
+def test_the_sweep_checks_every_expression_bodied_builtin() -> None:
+    """Test the sweep checks each composed built-in, once, before any user body.
+
+    A clean report alone would hold for a sweep that checked nothing, so a
+    counting hook records the functions the sweep checked.
+    """
+    checked: list[str] = []
+
+    report = _rs.types_check_all_function_bodies(on_checked=checked.append)
+
+    assert report.has_errors() is False, report.format()
+    builtins = checked[: len(_EXPECTED_EXPRESSION_BODIED_BUILTINS)]
+    assert frozenset(builtins) == _EXPECTED_EXPRESSION_BODIED_BUILTINS
+    assert len(builtins) == len(_EXPECTED_EXPRESSION_BODIED_BUILTINS)

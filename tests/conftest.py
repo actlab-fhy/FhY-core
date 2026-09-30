@@ -11,19 +11,17 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.symbolic.expression import registry as _registry
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.utils.override import override
 
+from .v1 import writing_v1
+
 __all__ = [
-    "NO_EXTENSIONS_VARIABLE",
     "MockIdentifierAliasError",
     "SerializableEqualHashable",
-    "build_backend_environment",
     "mock_identifier",
     "run_counter_operations",
 ]
-
-# The variable that selects the backend a freshly started interpreter imports.
-NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
 
 # Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
 # the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE;
@@ -52,14 +50,41 @@ if find_spec("hypothesis") is not None:
     _hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
 
 
+# The markers of the tests that reach an optional package, a solver backend
+# or NumPy, with the module each imports and the package that provides it.
+# A marked test is skipped when the package is not installed: that is the
+# documented configuration the `tests_minimal` session runs, where an
+# unmarked test reaching a missing backend fails with
+# `SolverBackendUnavailableError`, and one evaluating with NumPy with the
+# NumPy evaluator's `ImportError`.
+_OPTIONAL_BACKEND_MARKERS = {
+    "z3": ("z3", "z3-solver"),
+    "sympy": ("sympy", "sympy"),
+    "numpy": ("numpy", "numpy"),
+}
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    if find_spec("z3") is None:
-        skip_z3 = pytest.mark.skip(reason="z3-solver not installed")
+    for marker, (module, package) in _OPTIONAL_BACKEND_MARKERS.items():
+        if find_spec(module) is not None:
+            continue
+        skip = pytest.mark.skip(reason=f"{package} not installed")
         for item in items:
-            if "z3" in item.keywords:
-                item.add_marker(skip_z3)
+            if marker in item.keywords:
+                item.add_marker(skip)
+
+
+@pytest.fixture()
+def v1_wire() -> Iterator[None]:
+    """Write, and read, the deprecated V1 wire format in the test.
+
+    For the tests that pin V1 payloads, which stay until V1 is removed;
+    the deprecation warnings are silenced.
+    """
+    with writing_v1():
+        yield
 
 
 @pytest.fixture()
@@ -68,42 +93,16 @@ def function_registry_snapshot() -> Iterator[None]:
 
     Captures the registry's contents before the test runs, then restores
     them after the test completes. Tests that mutate the registry
-    request this fixture explicitly. Built-in registrations
-    (``max``, ``min``) survive across tests because they are in the
-    snapshot.
+    request this fixture explicitly. The built-ins (``max``, ``pi``) are
+    the core's catalogue, no registry state, so restoring leaves them in
+    place, and a user constant keeps its identifier when the snapshot
+    holds its entry.
     """
     snapshot = dict(_registry.get_registered_entries())
     try:
         yield
     finally:
-        _registry.set_registry_state_for_tests(snapshot)
-
-
-def build_backend_environment(
-    no_extensions: str | None, *, drop_python_warnings: bool = False
-) -> dict[str, str]:
-    """Return this process's environment with the backend variable replaced.
-
-    A fresh interpreter started with the result selects its backend from
-    ``no_extensions`` alone, whatever this process was started with.
-
-    Args:
-        no_extensions: Value for ``FHY_CORE_NO_EXTENSIONS``, or ``None`` to
-            leave it unset.
-        drop_python_warnings: Whether to also unset ``PYTHONWARNINGS``, so
-            this process's warning filters do not reach the child.
-
-    Returns:
-        A copy of ``os.environ`` with those variables replaced.
-
-    """
-    environment = dict(os.environ)
-    environment.pop(NO_EXTENSIONS_VARIABLE, None)
-    if drop_python_warnings:
-        environment.pop("PYTHONWARNINGS", None)
-    if no_extensions is not None:
-        environment[NO_EXTENSIONS_VARIABLE] = no_extensions
-    return environment
+        set_function_registry_state(snapshot)
 
 
 def run_counter_operations(

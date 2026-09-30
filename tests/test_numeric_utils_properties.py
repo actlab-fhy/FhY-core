@@ -22,7 +22,7 @@ from hypothesis import strategies as st
 
 from fhy_core.utils.numeric_utils import is_strict_int
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 

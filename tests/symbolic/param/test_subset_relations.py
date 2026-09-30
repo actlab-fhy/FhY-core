@@ -1,5 +1,7 @@
 """Tests for `Param.is_subset` and `Param.is_value_set_subset` across param kinds."""
 
+import pytest
+
 from fhy_core.symbolic.constraint import (
     ConstraintOutcome,
     EquationConstraint,
@@ -24,6 +26,7 @@ from fhy_core.symbolic.param import (
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_unconstrained_real_param_is_subset_of_unconstrained_real_param() -> None:
     """Test two unconstrained real params are mutual subsets of each other."""
     left = create_real_param()
@@ -33,6 +36,7 @@ def test_unconstrained_real_param_is_subset_of_unconstrained_real_param() -> Non
     assert right.is_subset(left)
 
 
+@pytest.mark.z3
 def test_constrained_real_param_is_subset_of_unconstrained_real_param() -> None:
     """Test a constrained real param is a subset of an unconstrained one only."""
     constrained = create_real_param()
@@ -45,6 +49,7 @@ def test_constrained_real_param_is_subset_of_unconstrained_real_param() -> None:
     assert unconstrained.check_subset(constrained) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.z3
 def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -> None:
     """Test a narrower-interval real param is a subset of a wider-interval one."""
     wider = create_real_param()
@@ -62,6 +67,7 @@ def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -
     assert narrower.is_subset(wider)
 
 
+@pytest.mark.z3
 def test_real_interval_subset_with_no_set_constraints_stays_satisfied() -> None:
     """Test a real interval subset with no set constraints stays decided SATISFIED."""
     smaller = create_real_param_between(0.2, 0.3)
@@ -75,6 +81,7 @@ def test_real_interval_subset_with_no_set_constraints_stays_satisfied() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_real_singleton_is_not_proven_subset_of_an_in_set_float_member() -> None:
     """Test a real singleton is not proven a subset of a float in-set param.
 
@@ -95,6 +102,7 @@ def test_real_singleton_is_not_proven_subset_of_an_in_set_float_member() -> None
     assert singleton.is_subset(in_set) is False
 
 
+@pytest.mark.z3
 def test_self_excluding_real_singleton_is_not_proven_subset_of_a_narrower_range() -> (
     None
 ):
@@ -114,6 +122,7 @@ def test_self_excluding_real_singleton_is_not_proven_subset_of_a_narrower_range(
     assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.z3
 def test_real_interval_subset_violated_by_an_excluded_member_stays_decided() -> None:
     """Test a real subset VIOLATED by a not-in-set member stays decided.
 
@@ -129,6 +138,7 @@ def test_real_interval_subset_violated_by_an_excluded_member_stays_decided() -> 
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_real_in_set_float_member_is_proven_subset_of_a_covering_range() -> None:
     """Test a real in-set float member is proven a subset of a covering range.
 

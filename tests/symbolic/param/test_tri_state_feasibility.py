@@ -60,6 +60,7 @@ def _create_undecided_param(name: str = "x", identifier_id: int = 1) -> Param[in
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_check_feasibility_reports_satisfied_for_a_reachable_interval() -> None:
     """Test a satisfiable integer interval reports `SATISFIED`."""
     param = create_integer_param_between(1, 5)
@@ -67,6 +68,7 @@ def test_check_feasibility_reports_satisfied_for_a_reachable_interval() -> None:
     assert param.check_feasibility() is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.z3
 def test_check_feasibility_reports_violated_for_contradictory_constraints() -> None:
     """Test contradictory bounds report `VIOLATED`."""
     x = mock_identifier("x", 1)
@@ -113,6 +115,7 @@ def test_is_empty_folds_undecided_to_false() -> None:
     assert not param.is_empty()
 
 
+@pytest.mark.z3
 def test_is_feasible_and_is_empty_are_both_false_only_when_undecided() -> None:
     """Test the two wrappers are not complements: `UNDECIDED` makes both `False`.
 
@@ -142,6 +145,7 @@ def test_is_feasible_and_is_empty_are_both_false_only_when_undecided() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_check_subset_reports_satisfied_for_a_narrower_interval() -> None:
     """Test a narrower integer interval reports `SATISFIED` against a wider one."""
     narrower = create_integer_param_between(2, 3)
@@ -150,6 +154,7 @@ def test_check_subset_reports_satisfied_for_a_narrower_interval() -> None:
     assert narrower.check_subset(wider) is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.z3
 def test_check_subset_reports_violated_for_a_wider_interval() -> None:
     """Test a wider integer interval reports `VIOLATED` against a narrower one."""
     wider = create_integer_param_between(1, 5)
@@ -201,6 +206,7 @@ def test_is_subset_folds_undecided_to_false() -> None:
     assert not undecided.is_subset(wider)
 
 
+@pytest.mark.z3
 def test_is_subset_reports_true_only_for_a_satisfied_outcome() -> None:
     """Test only a proven relation folds `is_subset` to `True`."""
     wider = create_integer_param_between(1, 5)
@@ -304,6 +310,7 @@ def _create_integer_param_with_bound(
     )
 
 
+@pytest.mark.sympy
 def test_check_feasibility_reports_undecided_when_no_in_set_candidate_is_decided() -> (
     None
 ):
@@ -313,6 +320,7 @@ def test_check_feasibility_reports_undecided_when_no_in_set_candidate_is_decided
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_check_feasibility_reports_satisfied_when_one_in_set_candidate_is_decided() -> (
     None
 ):
@@ -322,6 +330,7 @@ def test_check_feasibility_reports_satisfied_when_one_in_set_candidate_is_decide
     assert param.check_feasibility() is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.sympy
 def test_in_set_enumeration_decides_violated_when_the_solver_refuses() -> None:
     """Test enumeration decides `VIOLATED` for a hazard the solver seam refuses.
 
@@ -334,6 +343,7 @@ def test_in_set_enumeration_decides_violated_when_the_solver_refuses() -> None:
     assert narrowed.check_feasibility() is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_check_subset_reports_undecided_when_the_rejected_candidate_is_undecided() -> (
     None
 ):
@@ -355,6 +365,7 @@ def test_check_subset_reports_undecided_when_the_rejected_candidate_is_undecided
     assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_check_subset_reports_undecided_beside_an_accepted_decided_candidate() -> None:
     """Test an accepted decided candidate leaves an undecided rejected one open."""
     own = _create_in_set_param_with_one_decided_member()
@@ -363,6 +374,7 @@ def test_check_subset_reports_undecided_beside_an_accepted_decided_candidate() -
     assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_check_subset_reports_violated_when_a_decided_candidate_is_rejected() -> None:
     """Test a candidate decided into `own` and out of `other` is a counterexample."""
     own = _create_in_set_param_with_one_decided_member()
@@ -371,6 +383,7 @@ def test_check_subset_reports_violated_when_a_decided_candidate_is_rejected() ->
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_check_subset_reports_satisfied_when_other_accepts_every_candidate() -> None:
     """Test `other` accepting every candidate decides `SATISFIED` regardless of `own`.
 
@@ -384,6 +397,7 @@ def test_check_subset_reports_satisfied_when_other_accepts_every_candidate() -> 
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_check_subset_reports_violated_when_own_exceeds_an_undecided_finite_other() -> (
     None
 ):
@@ -398,6 +412,7 @@ def test_check_subset_reports_violated_when_own_exceeds_an_undecided_finite_othe
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_is_feasible_and_is_empty_fold_an_undecided_enumeration() -> None:
     """Test the boolean wrappers read an undecided enumeration as unproven.
 
@@ -411,6 +426,7 @@ def test_is_feasible_and_is_empty_fold_an_undecided_enumeration() -> None:
     assert not param.is_empty()
 
 
+@pytest.mark.sympy
 def test_is_subset_folds_an_undecided_enumeration_to_false() -> None:
     """Test `is_subset` reads an undecided enumeration as "not proven"."""
     own = _create_in_set_param_with_one_decided_member()
@@ -420,6 +436,7 @@ def test_is_subset_folds_an_undecided_enumeration_to_false() -> None:
     assert not own.is_subset(other)
 
 
+@pytest.mark.sympy
 def test_undecided_feasibility_enumeration_logs_one_warning_naming_the_candidates(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -437,6 +454,7 @@ def test_undecided_feasibility_enumeration_logs_one_warning_naming_the_candidate
     assert repr(param.variable) in message
 
 
+@pytest.mark.sympy
 def test_decided_feasibility_enumeration_logs_no_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -450,6 +468,7 @@ def test_decided_feasibility_enumeration_logs_no_warning(
     assert _find_domain_warnings(caplog) == []
 
 
+@pytest.mark.sympy
 def test_undecided_subset_enumeration_logs_one_warning_naming_the_candidates(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -507,6 +526,7 @@ def _find_downgrade_warnings(
     ]
 
 
+@pytest.mark.z3
 def test_check_feasibility_reports_undecided_for_a_satisfiable_weakened_system() -> (
     None
 ):
@@ -516,6 +536,7 @@ def test_check_feasibility_reports_undecided_for_a_satisfiable_weakened_system()
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.z3
 def test_check_feasibility_reports_undecided_for_a_satisfiable_narrowed_system() -> (
     None
 ):
@@ -526,6 +547,7 @@ def test_check_feasibility_reports_undecided_for_a_satisfiable_narrowed_system()
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.z3
 def test_check_feasibility_keeps_violated_for_an_unsatisfiable_weakened_system() -> (
     None
 ):
@@ -537,6 +559,7 @@ def test_check_feasibility_keeps_violated_for_an_unsatisfiable_weakened_system()
     assert param.check_feasibility() is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.z3
 def test_check_subset_reports_undecided_for_a_counterexample_to_a_weakened_antecedent() -> (  # noqa: E501
     None
 ):
@@ -552,6 +575,7 @@ def test_check_subset_reports_undecided_for_a_counterexample_to_a_weakened_antec
     assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.z3
 def test_check_subset_reports_undecided_for_an_implication_into_a_weakened_consequent() -> (  # noqa: E501
     None
 ):
@@ -567,6 +591,7 @@ def test_check_subset_reports_undecided_for_an_implication_into_a_weakened_conse
     assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.z3
 def test_check_subset_keeps_satisfied_when_only_the_antecedent_is_weakened() -> None:
     """Test `SATISFIED` survives a weakened antecedent.
 
@@ -579,6 +604,7 @@ def test_check_subset_keeps_satisfied_when_only_the_antecedent_is_weakened() -> 
     assert own.check_subset(other) is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.z3
 def test_check_subset_keeps_violated_when_only_the_consequent_is_weakened() -> None:
     """Test `VIOLATED` survives a weakened consequent.
 
@@ -592,6 +618,7 @@ def test_check_subset_keeps_violated_when_only_the_consequent_is_weakened() -> N
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.z3
 def test_is_feasible_and_is_empty_fold_a_weakened_feasibility_to_false() -> None:
     """Test the boolean wrappers prove neither answer for a weakened system.
 
@@ -604,6 +631,7 @@ def test_is_feasible_and_is_empty_fold_a_weakened_feasibility_to_false() -> None
     assert param.is_empty() is False
 
 
+@pytest.mark.z3
 def test_is_subset_folds_an_untrusted_counterexample_to_false() -> None:
     """Test `is_subset` reports `False` when the only counterexample is untrusted.
 
@@ -617,6 +645,7 @@ def test_is_subset_folds_an_untrusted_counterexample_to_false() -> None:
     assert own.is_subset(other) is False
 
 
+@pytest.mark.z3
 def test_is_subset_folds_an_untrusted_implication_to_false() -> None:
     """Test `is_subset` reports `False` for an undecided weakened implication."""
     own = create_integer_param_between(1, 3)
@@ -626,6 +655,7 @@ def test_is_subset_folds_an_untrusted_implication_to_false() -> None:
     assert own.is_subset(other) is False
 
 
+@pytest.mark.z3
 def test_weakened_feasibility_downgrade_logs_one_warning_naming_the_variable(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -641,6 +671,7 @@ def test_weakened_feasibility_downgrade_logs_one_warning_naming_the_variable(
     assert repr(param.variable) in downgrades[0].getMessage()
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
     ("build_own", "build_other"),
     [
@@ -681,6 +712,8 @@ def test_weakened_subset_downgrade_logs_one_warning_naming_both_variables(
 # =============================================================================
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 def test_check_feasibility_keeps_satisfied_when_a_not_in_set_constraint_excludes_nothing() -> (  # noqa: E501
     None
 ):
@@ -698,6 +731,7 @@ def test_check_feasibility_keeps_satisfied_when_a_not_in_set_constraint_excludes
     assert param.check_feasibility() is ConstraintOutcome.SATISFIED
 
 
+@pytest.mark.z3
 def test_check_feasibility_stays_undecided_when_a_not_in_set_member_cannot_lift() -> (
     None
 ):
@@ -715,6 +749,7 @@ def test_check_feasibility_stays_undecided_when_a_not_in_set_member_cannot_lift(
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.z3
 def test_check_feasibility_decides_violated_when_a_narrowed_constraint_excludes_every_value() -> (  # noqa: E501
     None
 ):
@@ -755,27 +790,28 @@ def _create_integer_param_restricted_to(members: set[float]) -> Param[int]:
     return create_integer_param(name=v, constraints=[InSetConstraint(v, members)])
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
     ("build_param", "outcome", "is_feasible", "is_empty"),
     [
         pytest.param(
             lambda: _create_integer_param_with_equation_literal(1.5),
-            ConstraintOutcome.UNDECIDED,
+            ConstraintOutcome.VIOLATED,
             False,
-            False,
+            True,
             id="equals-float-1.5",
         ),
         pytest.param(
             lambda: _create_integer_param_with_equation_literal("1.5"),
-            ConstraintOutcome.UNDECIDED,
+            ConstraintOutcome.VIOLATED,
             False,
-            False,
+            True,
             id="equals-decimal-string-1.5",
         ),
         pytest.param(
             lambda: _create_integer_param_with_equation_literal(2.0),
-            ConstraintOutcome.UNDECIDED,
-            False,
+            ConstraintOutcome.SATISFIED,
+            True,
             False,
             id="equals-float-2.0",
         ),
@@ -803,13 +839,11 @@ def test_integer_param_wrappers_report_true_only_for_the_outcome_proving_them(
 ) -> None:
     """Test each wrapper reports `True` only for the outcome that proves it.
 
-    The solver refuses to compare an integer variable with a float-valued
-    literal, so the three float-literal equations are `UNDECIDED` and are
-    reported neither feasible nor empty. `v == 1.5` and `v == "1.5"` admit
-    no integer at all, while `v == 2.0` admits `2`; reporting that last one
-    not feasible is the accepted cost of `True` meaning proven. The in-set
-    member `1.5` is decided by enumeration: no integer is a float, so the
-    parameter is proven empty.
+    The solver compares an integer variable with a float-valued literal by
+    value, as evaluation does: `v == 1.5` and `v == "1.5"` admit no
+    integer, so they are proven empty, and `v == 2.0` admits `2`, so it is
+    proven feasible. The in-set member `1.5` is decided by enumeration:
+    no integer is a float, so the parameter is proven empty.
     """
     param = build_param()
 
@@ -818,20 +852,58 @@ def test_integer_param_wrappers_report_true_only_for_the_outcome_proving_them(
     assert param.is_empty() is is_empty
 
 
-def test_is_feasible_reports_false_for_a_float_equation_an_integer_satisfies() -> None:
-    """Test `v == 2.0` is not reported feasible, though `v = 2` is valid.
+@pytest.mark.sympy
+@pytest.mark.z3
+def test_is_feasible_reports_true_for_a_float_equation_an_integer_satisfies() -> None:
+    """Test `v == 2.0` is reported feasible, as `v = 2` is valid.
 
-    Bound to `2`, evaluation decides `2 == 2.0`; unbound, the solver refuses
-    the int/float comparison, so feasibility is `UNDECIDED`. `is_feasible`
-    therefore reports `False` for a parameter that has a valid value: the
-    accepted cost of never reporting an unproven parameter feasible.
+    Bound to `2`, evaluation decides `2 == 2.0`; unbound, the solver decides
+    the int/float comparison by value too, so the valid value is found and
+    feasibility is proven.
     """
     param = _create_integer_param_with_equation_literal(2.0)
 
     assert param.is_value_valid(2)
-    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
-    assert param.is_feasible() is False
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+    assert param.is_feasible() is True
     assert param.is_empty() is False
+
+
+# A set constraint's float member against an integer variable is refused,
+# not decided by value: membership is type-strict (2 is no member of
+# {2.0}), while the solver would read the lowered `v != 2.0` numerically
+# and prove the parameter empty, or a subset it is not.
+
+
+@pytest.mark.z3
+def test_a_float_excluded_from_an_integer_param_is_not_proven_empty() -> None:
+    """Test `2..2` without the float `2.0` is not reported empty, as `2` is valid."""
+    param = create_integer_param_between(2, 2)
+    param = param.add_constraint(NotInSetConstraint(param.variable, {2.0}))
+
+    assert param.is_value_valid(2)
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_empty() is False
+
+
+@pytest.mark.z3
+def test_a_float_excluded_from_an_integer_param_is_not_proven_a_subset() -> None:
+    """Test `x not in {2.0}` is not reported a subset of `y != 2`: `x = 2` is valid."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    excluding_the_float = create_integer_param(
+        name=x, constraints=[NotInSetConstraint(x, {2.0})]
+    )
+    excluding_the_int = create_integer_param(
+        name=y, constraints=[EquationConstraint(IdentifierExpression(y).not_equals(2))]
+    )
+
+    assert excluding_the_float.is_value_valid(2)
+    assert not excluding_the_int.is_value_valid(2)
+    assert (
+        excluding_the_float.check_subset(excluding_the_int)
+        is ConstraintOutcome.UNDECIDED
+    )
 
 
 # =============================================================================
@@ -1005,9 +1077,9 @@ def test_feasibility_raises_for_the_variable_itself_in_a_boolean_position(
     """Test a numeric parameter's own variable in a Boolean position raises.
 
     The domain declares the variable INT or REAL to the solver, so the
-    variable under a connective or as a case condition is ill-typed. Z3
-    used to reject the sort mismatch itself, which escaped a tri-state
-    query as a `PassExecutionError`.
+    variable under a connective or as a case condition is ill-typed, and
+    the query raises the package's typed error rather than letting Z3's own
+    sort-mismatch exception escape.
     """
     x = mock_identifier("x", 1)
     param = create_param(name=x, constraints=[build_constraint(x)])

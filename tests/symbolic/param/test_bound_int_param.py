@@ -39,6 +39,7 @@ from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifi
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_between_with_inclusive_bounds_satisfies_endpoints() -> None:
     """Test ``create_interval_integer_param_between(3, 5)`` admits inclusive endpoints.
 
@@ -52,6 +53,7 @@ def test_bound_int_param_between_with_inclusive_bounds_satisfies_endpoints() -> 
     assert_none_satisfied(p, [2, 6])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_between_with_exclusive_bounds_excludes_endpoints() -> None:
     """Test ``create_interval_integer_param_between(3, 5)`` excludes both endpoints.
 
@@ -65,6 +67,7 @@ def test_bound_int_param_between_with_exclusive_bounds_excludes_endpoints() -> N
     assert_none_satisfied(p, [3, 5, 2, 6])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_between_with_exclusive_lower_inclusive_upper() -> None:
     """Test ``create_interval_integer_param_between(3, 5)`` excl lower, incl upper.
 
@@ -78,6 +81,7 @@ def test_bound_int_param_between_with_exclusive_lower_inclusive_upper() -> None:
     assert_none_satisfied(p, [3, 2, 6])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_between_with_inclusive_lower_exclusive_upper() -> None:
     """Test ``create_interval_integer_param_between(3, 5)`` incl lower, excl upper.
 
@@ -99,6 +103,7 @@ def test_bound_int_param_between_with_strict_equal_bounds_raises() -> None:
         )
 
 
+@pytest.mark.sympy
 def test_bound_int_param_between_with_inclusive_equal_bounds_is_singleton() -> None:
     """Test ``create_interval_integer_param_between(x, x)`` admits only ``x`` (incl)."""
     p = create_interval_integer_param_between(
@@ -113,11 +118,12 @@ def test_bound_int_param_between_with_reversed_bounds_raises() -> None:
     """Test ``create_interval_integer_param_between`` raises when ``lower > upper``."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Lower bound must be less than or equal to upper bound."),
+        match=re.escape("lower bound must be less than or equal to upper bound"),
     ):
         create_interval_integer_param_between(5, 3)
 
 
+@pytest.mark.z3
 def test_bound_int_param_between_orders_bounds_past_float_precision() -> None:
     """Test bounds one apart above ``2**53``, where floats collide, order exactly.
 
@@ -132,6 +138,7 @@ def test_bound_int_param_between_orders_bounds_past_float_precision() -> None:
     assert param.is_empty()
 
 
+@pytest.mark.z3
 def test_bound_int_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
     """Test ``create_interval_integer_param_between(1, 2)`` builds an empty param.
 
@@ -152,6 +159,7 @@ def test_bound_int_param_between_with_consistent_exclusive_bounds_is_empty() -> 
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "factory, bound, is_inclusive, pass_values, fail_values",
     [
@@ -212,6 +220,7 @@ def test_bound_int_param_with_bound_admits_or_excludes_endpoint_per_inclusivity(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_exactly_admits_only_the_given_value() -> None:
     """Test ``create_interval_integer_param_exactly(7)`` admits only ``7``."""
     p = create_interval_integer_param_exactly(7)
@@ -225,6 +234,7 @@ def test_bound_int_param_exactly_admits_only_the_given_value() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_prefer_inclusive_does_not_change_satisfiable_set() -> None:
     """Test `prefer_inclusive` does not change the satisfiable set."""
     p1 = create_interval_integer_param_between(
@@ -243,6 +253,7 @@ def test_bound_int_param_prefer_inclusive_does_not_change_satisfiable_set() -> N
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_assign_accepts_int_values_only() -> None:
     """Test interval-integer param ``assign`` only accepts integer values."""
     p = create_interval_integer_param_with_lower_bound(0)
@@ -256,6 +267,7 @@ def test_bound_int_param_assign_accepts_int_values_only() -> None:
         p.assign("1")  # type: ignore[arg-type]  # test: invalid input
 
 
+@pytest.mark.sympy
 def test_bound_int_param_assign_rejects_value_outside_constraints() -> None:
     """Test interval-integer param ``assign`` rejects values outside the bounds."""
     p = create_interval_integer_param_between(
@@ -276,6 +288,7 @@ def test_bound_int_param_assign_rejects_value_outside_constraints() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_addition_of_singletons_is_singleton() -> None:
     """Test addition of two singleton interval-integer params is a singleton."""
     x = create_interval_integer_param_exactly(4)
@@ -287,6 +300,7 @@ def test_bound_int_param_addition_of_singletons_is_singleton() -> None:
     assert_none_satisfied(z, [9, 11])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_addition_with_int_on_right_shifts_interval() -> None:
     """Test addition with an ``int`` on the right shifts the interval."""
     x = create_interval_integer_param_between(
@@ -299,6 +313,7 @@ def test_bound_int_param_addition_with_int_on_right_shifts_interval() -> None:
     assert_none_satisfied(z, [4, 8])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_addition_with_int_on_left_shifts_interval() -> None:
     """Test addition with an ``int`` on the left shifts the interval."""
     x = create_interval_integer_param_between(
@@ -311,6 +326,7 @@ def test_bound_int_param_addition_with_int_on_left_shifts_interval() -> None:
     assert_none_satisfied(z, [4, 8])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_addition_propagates_strict_interval_semantics() -> None:
     """Test addition propagates strict-interval semantics from inputs.
 
@@ -345,6 +361,7 @@ def test_bound_int_param_addition_with_unbounded_propagates_unboundedness() -> N
     assert_all_satisfied(z, [-(10**6), 0, 10**6])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_addition_accepts_int_param_on_right() -> None:
     """Test addition of interval-integer param with a plain integer param (right)."""
     x = create_interval_integer_param_between(
@@ -368,6 +385,7 @@ def test_bound_int_param_addition_with_unsupported_type_raises() -> None:
         _ = x + "nope"
 
 
+@pytest.mark.sympy
 def test_bound_int_param_prefer_inclusive_changes_str_not_membership_addition() -> None:
     """Test `prefer_inclusive` changes string form but not membership for addition."""
     x_incl = create_interval_integer_param_between(
@@ -401,6 +419,7 @@ def test_bound_int_param_prefer_inclusive_changes_str_not_membership_addition() 
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_subtraction_of_singletons_is_singleton() -> None:
     """Test subtraction of two singleton interval-integer params is a singleton."""
     x = create_interval_integer_param_exactly(10)
@@ -412,6 +431,7 @@ def test_bound_int_param_subtraction_of_singletons_is_singleton() -> None:
     assert_none_satisfied(z, [3, 5])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_subtraction_with_int_on_right_shifts_interval() -> None:
     """Test subtraction with an ``int`` on the right shifts the interval."""
     x = create_interval_integer_param_between(
@@ -424,6 +444,7 @@ def test_bound_int_param_subtraction_with_int_on_right_shifts_interval() -> None
     assert_none_satisfied(z, [0, 4])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_subtraction_with_int_on_left_shifts_interval() -> None:
     """Test subtraction with an ``int`` on the left shifts the interval."""
     x = create_interval_integer_param_between(
@@ -436,6 +457,7 @@ def test_bound_int_param_subtraction_with_int_on_left_shifts_interval() -> None:
     assert_none_satisfied(z, [4, 8])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_subtraction_propagates_strict_interval_semantics() -> None:
     """Test subtraction propagates strict-interval semantics from inputs.
 
@@ -457,6 +479,7 @@ def test_bound_int_param_subtraction_propagates_strict_interval_semantics() -> N
     assert_none_satisfied(z, [-6, -1, 0])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_subtraction_accepts_int_param_on_right() -> None:
     """Test subtraction of interval-integer param with a plain integer param (right)."""
     x = create_interval_integer_param_between(
@@ -472,6 +495,7 @@ def test_bound_int_param_subtraction_accepts_int_param_on_right() -> None:
     assert_none_satisfied(z, [-8, 1])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_rsub_accepts_int_param_on_left() -> None:
     """Test reflected subtraction with plain integer param on the left."""
     x = create_interval_integer_param_between(
@@ -492,6 +516,7 @@ def test_bound_int_param_rsub_accepts_int_param_on_left() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_int_param_negation_of_singleton_is_negated_singleton() -> None:
     """Test negation of a singleton interval-integer param is a negated singleton."""
     x = create_interval_integer_param_exactly(4)
@@ -502,6 +527,7 @@ def test_bound_int_param_negation_of_singleton_is_negated_singleton() -> None:
     assert_none_satisfied(z, [-3, -5])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_negation_of_inclusive_interval_reflects_endpoints() -> None:
     """Test negation of an inclusive interval-integer param reflects its endpoints."""
     x = create_interval_integer_param_between(
@@ -514,6 +540,7 @@ def test_bound_int_param_negation_of_inclusive_interval_reflects_endpoints() -> 
     assert_none_satisfied(z, [-6, -2])
 
 
+@pytest.mark.sympy
 def test_bound_int_param_negation_of_strict_interval_uses_integer_semantics() -> None:
     """Test negation of a strict-interval param uses integer semantics."""
     x = create_interval_integer_param_between(
@@ -530,7 +557,7 @@ def test_bound_int_param_negation_of_strict_interval_uses_integer_semantics() ->
 # Arithmetic - empty operand
 # =============================================================================
 
-_EMPTY_INTERVAL_MESSAGE = "Empty integer interval"
+_EMPTY_INTERVAL_MESSAGE = "empty integer interval"
 
 
 @pytest.fixture
@@ -699,6 +726,7 @@ def test_bound_int_param_default_prefer_inclusive_emits_inclusive_form(
     assert expected_substring in str(factory())
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "factory, boundary_value",
     [
@@ -739,6 +767,7 @@ def _build_literal_left_constraint(
     return EquationConstraint(make_binary_expression(op, literal_value, variable))
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "literal_value, op, expected_min, expected_max",
     [
@@ -952,6 +981,7 @@ def _valid_bound_int_payload() -> dict[str, Any]:
     return param.serialize_to_dict()
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     "mutate",
     [

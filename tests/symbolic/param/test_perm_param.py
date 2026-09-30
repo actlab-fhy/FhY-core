@@ -348,6 +348,7 @@ def test_perm_param_serialization_round_trip_preserves_constraints(
     assert_none_satisfied(restored, [["n", "c", "w", "h"]])
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_perm_param_deserialize_rejects_a_nan_member() -> None:
     """Test a payload carrying a NaN member is refused, as construction refuses it."""
     payload = create_permutation_param([1.0, 2.0]).serialize_to_dict()

@@ -121,20 +121,17 @@ def test_set_constraint_uses_value_equality_not_identity(
 ) -> None:
     """Test independent collections with equal contents are equivalent.
 
-    The two constraints are built from the same members in opposite
-    orders and store them in genuinely different orders, so equivalence
-    has to normalize rather than lean on the stored tuples comparing
-    equal by accident.
+    The two constraints are built from the same hash-colliding members in
+    opposite orders; both store them in the canonical order, and are
+    equivalent either way round.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = factory(x, list(members))
     right = factory(x, list(reversed(members)))
 
-    assert getattr(left, field_name) != getattr(right, field_name), (
-        "the two constraints must store their members in different orders "
-        "for this test to say anything about order independence"
-    )
+    # Both store their members in canonical order.
+    assert getattr(left, field_name) == getattr(right, field_name)
     assert left.is_structurally_equivalent(right)
     assert right.is_structurally_equivalent(left)
 
@@ -163,19 +160,16 @@ def test_set_constraint_alpha_equivalence_matches_structural_for_same_variable(
 ) -> None:
     """Test alpha equivalence agrees with structural equivalence for one variable.
 
-    As for the structural case, the two constraints genuinely store their
-    members in different orders, so the agreement is not an artifact of
-    the stored tuples being identical.
+    As for the structural case, the two constraints are built from the same
+    members in opposite orders.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = factory(x, list(members))
     right = factory(x, list(reversed(members)))
 
-    assert getattr(left, field_name) != getattr(right, field_name), (
-        "the two constraints must store their members in different orders "
-        "for this test to say anything about order independence"
-    )
+    # Both store their members in canonical order.
+    assert getattr(left, field_name) == getattr(right, field_name)
     assert left.is_alpha_equivalent(right) == left.is_structurally_equivalent(right)
     assert left.is_alpha_equivalent(right) is True
 

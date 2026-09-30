@@ -82,16 +82,6 @@ def test_op_attribute_blocks_attribute_mutation() -> None:
 # =============================================================================
 
 
-def test_op_attribute_first_constructed_with_key_is_canonical() -> None:
-    """Test `get_interned` returns the first instance registered under a name."""
-    name = Identifier("x")
-    first = OpAttribute(name, "first")
-    second = OpAttribute(name, "second")
-    canonical = OpAttribute.get_interned(name)
-    assert canonical is first
-    assert canonical is not second
-
-
 def test_op_attribute_distinct_identifiers_intern_separately() -> None:
     """Test two `Identifier`s with the same `name_hint` are distinct intern keys."""
     name_a = Identifier("dup")
@@ -282,21 +272,3 @@ def test_op_attribute_deserialize_does_not_warn_when_descriptions_match(
     assert not any(
         "already canonical" in record.getMessage() for record in caplog.records
     )
-
-
-# =============================================================================
-# register_default_instances restores module-level canonicals
-# =============================================================================
-
-
-def test_register_default_instances_restores_module_level_op_attributes() -> None:
-    """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
-    try:
-        OpAttribute.clear_interned_registry()
-        OpAttribute.register_default_instances()
-
-        for canonical in (COMMUTATIVE, ASSOCIATIVE, PURE, ELEMENTWISE):
-            restored = OpAttribute.deserialize_from_dict(canonical.serialize_to_dict())
-            assert restored is canonical
-    finally:
-        OpAttribute.register_default_instances()

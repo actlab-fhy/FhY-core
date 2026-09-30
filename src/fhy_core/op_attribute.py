@@ -14,9 +14,13 @@ Callers should import the canonical names rather than constructing fresh
 ``OpAttribute`` instances with the same ``name_hint``, because
 ``Identifier`` uses id-equality and a freshly-constructed
 ``Identifier("commutative")`` would not match the canonical one.
-"""
 
-from fhy_core.utils.override import override
+The shipped attributes hold fixed identifier ids, the same in every process,
+so their payloads and pickles are portable. ``OpAttribute`` is backed by the
+Rust implementation, whose registry is the only one in the process:
+constructing an attribute whose name is registered returns the canonical
+instance itself, and the registry cannot be cleared.
+"""
 
 __all__ = [
     "ASSOCIATIVE",
@@ -26,97 +30,78 @@ __all__ = [
     "OpAttribute",
 ]
 
-from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from .identifier import HasIdentifier, Identifier
-from .serialization import (
-    Serializable,
-    register_serializable,
+from . import _rs
+from .identifier import (
+    _RESERVED_ASSOCIATIVE,
+    _RESERVED_COMMUTATIVE,
+    _RESERVED_ELEMENTWISE,
+    _RESERVED_PURE,
+    HasIdentifier,
+    Identifier,
+    _build_reserved_identifier,
 )
-from .term import DerivedEquivalenceMixin
-from .traits import FrozenMixin, InternedMixin
+from .serialization import Serializable, register_serializable
+from .term import AlphaEquivalenceMixin
+from .traits import FrozenMixin, InternedMixin, StructuralEquivalence
+from .utils.self import Self
 
 
 @register_serializable(type_id="op_attribute")
-@dataclass(frozen=True)
 class OpAttribute(
+    _rs.OpAttribute,
     HasIdentifier,
-    FrozenMixin,
-    DerivedEquivalenceMixin,
-    InternedMixin[Identifier],
+    StructuralEquivalence,
+    AlphaEquivalenceMixin,
     Serializable,
 ):
     """Open semantic tag attached to a compiler operation.
 
-    Each ``OpAttribute`` is uniquely identified by an ``Identifier`` and
-    is canonicalized through the ``InternedMixin`` registry: the first
-    instance constructed for a given ``Identifier`` becomes the canonical
-    entry and subsequent constructions with the same key shadow into that
-    entry without replacing it.
+    Backed by the Rust implementation: the Rust registry holds the
+    canonical attributes, and ``fhy_core._rs.OpAttribute`` implements
+    the attributes, equality, hashing, interning and payloads. This class
+    mixes in the stateless Python protocols, and is registered as a
+    virtual subclass of ``InternedMixin`` and ``FrozenMixin``.
 
-    ``description`` is human-readable metadata only -- it does not
-    participate in equality, structural equivalence, hashing, or
-    interning. The first instance registered for a given ``Identifier``
-    becomes canonical; subsequent constructions and deserializations
-    with a different description are not rejected but do not update the
-    canonical description. Deserializing a payload whose description
-    differs from the canonical's emits a warning.
+    Constructing an attribute whose ``name`` is registered returns the
+    canonical instance itself, keeping its description; deserializing a
+    payload whose description differs logs a warning. Attributes are
+    immutable, compare and hash by ``name``, and pickle as their payload,
+    so unpickling returns the canonical instance. The registry is
+    append-only: ``clear_interned_registry`` and
+    ``register_default_instances`` raise ``NotImplementedError``.
 
     Attributes:
         name: Stable, process-global identifier for this attribute.
-        description: Short human-readable description (surfaced in error
-            messages, documentation, and pass-author guidance; excluded
-            from structural equivalence).
+        description: Short human-readable description (excluded from
+            equality and structural equivalence).
 
     """
 
-    name: Identifier
-    description: str = field(compare=False)
+    __slots__ = ()
+    if TYPE_CHECKING:
+        # The type checkers' view of `_new_canonical`, which the stub cannot
+        # type as this class's constructor.
+        def __new__(cls, name: Identifier, description: str) -> Self:
+            """Return the canonical attribute named ``name``."""
+            ...
 
-    def __post_init__(self) -> None:
-        self.register_interned_instance()
-
-    @override
-    def get_identifier(self) -> Identifier:
-        return self.name
-
-    @override
-    def get_intern_key(self) -> Identifier:
-        return self.name
-
-    @classmethod
-    @override
-    def register_default_instances(cls) -> None:
-        """Re-register the canonical default ``OpAttribute``s shipped here.
-
-        After :meth:`clear_interned_registry` wipes the registry, call this
-        method to restore ``COMMUTATIVE``, ``ASSOCIATIVE``, ``PURE``, and
-        ``ELEMENTWISE`` so the module-level constants remain canonical.
-        """
-        for instance in _DEFAULT_INSTANCES:
-            instance.register_interned_instance()
+    else:
+        __new__ = staticmethod(_rs.OpAttribute._new_canonical)
 
 
-COMMUTATIVE: OpAttribute = OpAttribute(
-    Identifier("commutative"),
-    "Op output is invariant under operand swap.",
+InternedMixin.register(OpAttribute)
+FrozenMixin.register(OpAttribute)
+OpAttribute._register_public_class()
+
+COMMUTATIVE = OpAttribute.require_interned(
+    _build_reserved_identifier(_RESERVED_COMMUTATIVE)
 )
-ASSOCIATIVE: OpAttribute = OpAttribute(
-    Identifier("associative"),
-    "Op composes associatively across applications.",
+ASSOCIATIVE = OpAttribute.require_interned(
+    _build_reserved_identifier(_RESERVED_ASSOCIATIVE)
 )
-PURE: OpAttribute = OpAttribute(
-    Identifier("pure"),
-    "Op has no side effects and produces deterministic outputs.",
-)
-ELEMENTWISE: OpAttribute = OpAttribute(
-    Identifier("elementwise"),
-    "Op acts independently on each element of its operands.",
-)
-
-_DEFAULT_INSTANCES: tuple[OpAttribute, ...] = (
-    COMMUTATIVE,
-    ASSOCIATIVE,
-    PURE,
-    ELEMENTWISE,
+PURE = OpAttribute.require_interned(_build_reserved_identifier(_RESERVED_PURE))
+ELEMENTWISE = OpAttribute.require_interned(
+    _build_reserved_identifier(_RESERVED_ELEMENTWISE)
 )

@@ -282,6 +282,7 @@ def test_categorical_param_serialization_round_trip_preserves_constraints(
     assert_none_satisfied(restored, ["c"])
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_categorical_param_deserialize_rejects_wrapped_non_leaf_values() -> None:
     """Test categorical deserialize rejects wrapped container values.
 

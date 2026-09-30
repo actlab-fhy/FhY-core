@@ -14,6 +14,7 @@ from fhy_core.symbolic.param import (
     create_interval_natural_param,
 )
 
+from ...v1 import reads_v1
 from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
 
@@ -59,6 +60,7 @@ def test_bound_nat_param_init_rejects_name_passed_positionally() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_nat_param_init_defaults_to_zero_included_true() -> None:
     """Test ``create_interval_natural_param()`` defaults to ``zero_included=True``."""
     assert create_interval_natural_param().is_value_valid(0)
@@ -81,6 +83,8 @@ def test_bound_nat_param_init_defaults_to_prefer_inclusive_true() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
+@pytest.mark.sympy
 def test_bound_nat_param_serialization_round_trip_preserves_constraints() -> None:
     """Test interval-natural param round-trips through dict serialization."""
     p = create_interval_natural_param().add_lower_bound_constraint(2, is_inclusive=True)
@@ -108,6 +112,7 @@ def test_bound_nat_param_deserialize_round_trip_preserves_zero_excluded_flag() -
     assert original.is_structurally_equivalent(restored)
 
 
+@reads_v1
 def test_bound_nat_param_deserialize_rejects_payload_with_malformed_domain_data() -> (
     None
 ):
@@ -123,6 +128,8 @@ def test_bound_nat_param_deserialize_rejects_payload_with_malformed_domain_data(
         Param.deserialize_from_dict(payload)
 
 
+@pytest.mark.usefixtures("v1_wire")
+@pytest.mark.sympy
 def test_bound_nat_param_deserialize_recovers_zero_exclusion_without_constraint() -> (
     None
 ):
@@ -221,6 +228,7 @@ def test_bound_nat_param_addition_preserves_zero_excluded_flag() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_bound_nat_param_addition_with_exclusive_rendering_does_not_raise() -> None:
     """Test ``[0,5] + [0,3]`` renders on a zero-included exclusive-preferring domain.
 
@@ -256,6 +264,7 @@ def test_bound_nat_param_addition_with_exclusive_rendering_emits_inclusive_lower
     assert "< 9" in str(result)
 
 
+@pytest.mark.sympy
 def test_bound_nat_param_multiplication_with_exclusive_rendering_does_not_raise() -> (
     None
 ):
@@ -269,6 +278,7 @@ def test_bound_nat_param_multiplication_with_exclusive_rendering_does_not_raise(
     assert_none_satisfied(result, [-1, 16])
 
 
+@pytest.mark.sympy
 def test_bound_nat_param_exclusive_rendering_survives_zero_excluded_domain() -> None:
     """Test a zero-excluded natural domain renders a result lower bound of 2.
 
@@ -289,6 +299,7 @@ def test_bound_nat_param_exclusive_rendering_survives_zero_excluded_domain() -> 
     assert_none_satisfied(result, [1, 9])
 
 
+@pytest.mark.sympy
 def test_bound_nat_param_multiplication_admits_zero_when_one_operand_does() -> None:
     """Test ``(x > 0) * (y >= 0)`` admits a product of zero.
 

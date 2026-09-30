@@ -18,17 +18,18 @@ need to distinguish kinds use ``isinstance``.
 constant-identity mapping.
 """
 
-import dataclasses
 import math
 import subprocess
 import sys
 
 import pytest
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     CallExpression,
     EntryLookupError,
     EntryRegistrationError,
+    Expression,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -46,9 +47,8 @@ from fhy_core.symbolic.expression import (
     try_get_registered_result_sort,
 )
 from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
-from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
-
-from .conftest import mock_identifier
+from fhy_core.testing_patches import set_function_registry_state
+from fhy_core.traits.frozen import FrozenMutationError
 
 # =============================================================================
 # register_function: happy paths
@@ -59,7 +59,7 @@ def test_register_function_stores_name_parameters_and_body(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` records the supplied name, parameters, and body."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     body = IdentifierExpression(parameter)
 
     registered = register_function(
@@ -79,7 +79,7 @@ def test_register_function_records_parameter_sorts_and_result_sort(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` records the declared sorts on the stored entry."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     registered = register_function(
         "test_sort_fields",
         parameters=[parameter],
@@ -96,7 +96,7 @@ def test_register_function_returns_a_registered_function_instance(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` returns a ``RegisteredFunction``."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
 
     registered = register_function(
         "test_returns_instance",
@@ -113,9 +113,9 @@ def test_register_function_with_multiple_parameters_records_order(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` preserves the parameter order on registration."""
-    a = mock_identifier("a", 0)
-    b = mock_identifier("b", 1)
-    c = mock_identifier("c", 2)
+    a = Identifier("a")
+    b = Identifier("b")
+    c = Identifier("c")
 
     registered = register_function(
         "test_three_params",
@@ -137,7 +137,7 @@ def test_register_function_accepts_self_recursive_body(
     plain string, not an ``Identifier``), so it never appears in the
     body's free identifiers and never trips the closure check.
     """
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
 
     registered = register_function(
         "test_self_recursive",
@@ -155,7 +155,7 @@ def test_registered_function_dataclass_is_frozen(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``RegisteredFunction`` instances reject attribute mutation."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     registered = register_function(
         "test_frozen",
         parameters=[parameter],
@@ -164,7 +164,7 @@ def test_registered_function_dataclass_is_frozen(
         body=IdentifierExpression(parameter),
     )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         registered.name = "renamed"  # type: ignore[misc]
 
 
@@ -177,7 +177,7 @@ def test_register_function_rejects_duplicate_name(
     function_registry_snapshot: None,
 ) -> None:
     """Test re-registering an existing name raises ``EntryRegistrationError``."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_duplicate",
         parameters=[parameter],
@@ -200,8 +200,8 @@ def test_register_function_rejects_captured_free_identifier(
     function_registry_snapshot: None,
 ) -> None:
     """Test a body referencing identifiers outside the parameter list is rejected."""
-    parameter = mock_identifier("x", 0)
-    captured = mock_identifier("y", 1)
+    parameter = Identifier("x")
+    captured = Identifier("y")
 
     with pytest.raises(EntryRegistrationError, match="test_captured"):
         register_function(
@@ -221,10 +221,10 @@ def test_register_function_lists_multiple_captured_identifiers_in_sorted_order(
     Pins the sort and the comma-join so that error messages are stable
     when a body captures more than one free identifier.
     """
-    parameter = mock_identifier("a", 0)
-    captured_z = mock_identifier("z", 1)
-    captured_y = mock_identifier("y", 2)
-    captured_x = mock_identifier("x", 3)
+    parameter = Identifier("a")
+    captured_z = Identifier("z")
+    captured_y = Identifier("y")
+    captured_x = Identifier("x")
 
     with pytest.raises(EntryRegistrationError, match=r"x, y, z"):
         register_function(
@@ -244,8 +244,8 @@ def test_register_function_accepts_subset_of_parameters_used_in_body(
     Free-identifier validation is a subset relation: every body identifier
     must be a declared parameter, but declared parameters may go unused.
     """
-    used = mock_identifier("a", 0)
-    unused = mock_identifier("b", 1)
+    used = Identifier("a")
+    unused = Identifier("b")
 
     registered = register_function(
         "test_unused_param",
@@ -277,8 +277,8 @@ def test_register_function_rejects_sort_arity_mismatch(
     function_registry_snapshot: None,
 ) -> None:
     """Test a parameter / parameter-sort length mismatch is rejected."""
-    a = mock_identifier("a", 0)
-    b = mock_identifier("b", 1)
+    a = Identifier("a")
+    b = Identifier("b")
 
     with pytest.raises(EntryRegistrationError, match="test_sort_arity_mismatch"):
         register_function(
@@ -299,7 +299,7 @@ def test_register_function_accepts_body_referencing_registered_constant(
     identifier in a body is a constant reference, not a captured free
     identifier.
     """
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     pi = get_native_constant_identifier("pi")
 
     # Should not raise: ``pi`` is the registered constant's identifier.
@@ -323,8 +323,8 @@ def test_register_function_rejects_body_identifier_merely_named_like_a_constant(
     body referencing some other identifier called ``pi`` is capturing a
     free variable and is rejected like any other capture.
     """
-    x = mock_identifier("x", 0)
-    pi_lookalike = mock_identifier("pi", 704)
+    x = Identifier("x")
+    pi_lookalike = Identifier("pi")
 
     with pytest.raises(EntryRegistrationError, match="pi"):
         register_function(
@@ -345,7 +345,7 @@ def test_get_registered_entry_returns_previously_registered_entry(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``get_registered_entry`` returns the same record as registration."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     expected = register_function(
         "test_lookup",
         parameters=[parameter],
@@ -371,7 +371,7 @@ def test_is_entry_registered_true_after_registration(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``is_entry_registered`` returns True for a registered name."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_is_registered_true",
         parameters=[parameter],
@@ -394,7 +394,7 @@ def test_get_registered_entries_includes_registered_entry(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``get_registered_entries`` snapshots include newly registered entries."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     expected = register_function(
         "test_snapshot_includes",
         parameters=[parameter],
@@ -414,7 +414,7 @@ def test_get_registered_entries_returns_immutable_snapshot(
     function_registry_snapshot: None,
 ) -> None:
     """Test mutating the snapshot does not affect the registry."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_snapshot_immutable",
         parameters=[parameter],
@@ -437,7 +437,7 @@ def test_function_registry_snapshot_restores_state_after_test_a(
     function_registry_snapshot: None,
 ) -> None:
     """Test the snapshot fixture leaves the registry clean for the sibling test."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_isolation_marker",
         parameters=[parameter],
@@ -466,24 +466,56 @@ def test_function_registry_snapshot_restores_state_after_test_b(
 # =============================================================================
 
 
-def test_registered_function_direct_construction_rejects_captured_identifier() -> None:
-    """Test constructing ``RegisteredFunction`` directly rejects an unclosed body."""
-    parameter = mock_identifier("x", 0)
-    captured = mock_identifier("y", 1)
+def test_registered_function_direct_construction_leaves_captures_to_registration(
+    function_registry_snapshot: None,
+) -> None:
+    """Test only registration refuses a body capturing a free identifier.
 
-    with pytest.raises(ValueError, match="y"):
-        RegisteredFunction(
-            name="test_direct_captured",
+    Which identifiers a body may refer to depends on the registry it joins,
+    so an entry built directly holds the body, and registering the same
+    function refuses it, naming the captured identifier.
+    """
+    parameter = Identifier("x")
+    captured = Identifier("y")
+    body = IdentifierExpression(parameter) + captured
+
+    entry = RegisteredFunction(
+        name="test_direct_captured",
+        parameters=(parameter,),
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        body=body,
+    )
+
+    assert entry.body is body
+    with pytest.raises(EntryRegistrationError, match="y"):
+        register_function(
+            "test_direct_captured",
             parameters=(parameter,),
             parameter_sorts=(FunctionSort.REAL,),
             result_sort=FunctionSort.REAL,
-            body=IdentifierExpression(parameter) + captured,
+            body=body,
+        )
+    assert not is_entry_registered("test_direct_captured")
+
+
+def test_registered_function_direct_construction_rejects_a_repeated_parameter() -> None:
+    """Test constructing ``RegisteredFunction`` refuses a parameter named twice."""
+    parameter = Identifier("x")
+
+    with pytest.raises(ValueError, match='repeats the parameter "x"'):
+        RegisteredFunction(
+            name="test_direct_repeated",
+            parameters=(parameter, parameter),
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter),
         )
 
 
 def test_registered_function_direct_construction_accepts_self_recursive_call() -> None:
     """Test a self-referential ``CallExpression`` body passes the closure check."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
 
     registered = RegisteredFunction(
         name="test_direct_self_recursive",
@@ -496,6 +528,62 @@ def test_registered_function_direct_construction_accepts_self_recursive_call() -
     )
 
     assert registered.body.get_free_identifiers() == {parameter}
+
+
+def test_registered_functions_with_separately_built_equal_bodies_are_equal() -> None:
+    """Test two entries whose bodies are built apart compare ``==``.
+
+    Expression ``==`` is structural, so the dataclass equality of two
+    entries with equal fields holds when their bodies are separately built,
+    equal trees.
+    """
+    parameter = Identifier("x")
+
+    def build(body: Expression) -> RegisteredFunction:
+        return RegisteredFunction(
+            name="test_equal_bodies",
+            parameters=(parameter,),
+            parameter_sorts=(FunctionSort.REAL,),
+            result_sort=FunctionSort.REAL,
+            body=body,
+        )
+
+    first = build(IdentifierExpression(parameter) + 1)
+    second = build(IdentifierExpression(parameter) + 1)
+
+    assert first.body is not second.body
+    assert first == second
+    assert hash(first) == hash(second)
+
+
+def test_registered_functions_swapping_their_parameters_are_alpha_equivalent() -> None:
+    """Test entries equal up to a consistent parameter renaming compare alike.
+
+    The parameters are a binder over the body, so the body is compared
+    under the binder frame pairing the two parameter lists: the Rust
+    renaming resolves each bound identifier through that frame.
+    """
+    a = Identifier("a")
+    b = Identifier("b")
+
+    def build(
+        parameters: tuple[Identifier, Identifier], body: Expression
+    ) -> RegisteredFunction:
+        return RegisteredFunction(
+            name="test_alpha_parameters",
+            parameters=parameters,
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            body=body,
+        )
+
+    difference = build((a, b), IdentifierExpression(a) - b)
+    renamed = build((b, a), IdentifierExpression(b) - a)
+    reversed_difference = build((a, b), IdentifierExpression(b) - a)
+
+    assert difference.is_alpha_equivalent(renamed)
+    assert not difference.is_structurally_equivalent(renamed)
+    assert not difference.is_alpha_equivalent(reversed_difference)
 
 
 # =============================================================================
@@ -555,7 +643,7 @@ def test_native_function_dataclass_is_frozen() -> None:
         implementation=math.sqrt,
     )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         native.name = "renamed"  # type: ignore[misc]
 
 
@@ -615,7 +703,7 @@ def test_native_constant_dataclass_is_frozen() -> None:
         name="test_const_frozen", sort=FunctionSort.REAL, value=1.0
     )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         constant.name = "renamed"  # type: ignore[misc]
 
 
@@ -708,7 +796,7 @@ def test_register_native_function_rejects_collision_with_registered_function(
     function_registry_snapshot: None,
 ) -> None:
     """Test a native registration cannot reuse an expression-bodied function name."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_native_collides_with_function",
         parameters=[parameter],
@@ -799,7 +887,7 @@ def test_register_native_constant_rejects_collision_with_function(
     function_registry_snapshot: None,
 ) -> None:
     """Test a constant registration cannot reuse an existing function name."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_const_collides_with_function",
         parameters=[parameter],
@@ -879,7 +967,7 @@ def test_get_registered_entries_snapshot_includes_all_entry_kinds(
     function_registry_snapshot: None,
 ) -> None:
     """Test the snapshot mapping holds the union of all three entry kinds."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     expression_function = register_function(
         "test_snapshot_function",
         parameters=[parameter],
@@ -929,7 +1017,7 @@ def test_try_get_registered_result_sort_returns_expression_function_result_sort(
     function_registry_snapshot: None,
 ) -> None:
     """Test the lookup returns a registered expression-bodied function's result sort."""
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_result_sort_function",
         parameters=[parameter],
@@ -978,7 +1066,7 @@ def test_register_function_accepts_body_calling_an_unregistered_name(
     function_registry_snapshot: None,
 ) -> None:
     """Test registering a function that calls an unregistered name still succeeds."""
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
 
     registered = register_function(
         "test_forward_reference",
@@ -1002,7 +1090,7 @@ def test_register_function_accepts_a_body_whose_forward_reference_is_incompatibl
     synthesizes BOOL. Registration stores it anyway -- it never
     type-checks bodies -- and the sweep is what rejects it.
     """
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
 
     register_function(
         "test_forward_reference_incompatible",
@@ -1092,7 +1180,7 @@ def test_try_get_native_constant_for_identifier_rejects_a_same_named_identifier(
     None
 ):
     """Test an identifier that merely shares a constant's name resolves to nothing."""
-    lookalike = mock_identifier("pi", 705)
+    lookalike = Identifier("pi")
 
     assert try_get_native_constant_for_identifier(lookalike) is None
 
@@ -1101,7 +1189,7 @@ def test_try_get_native_constant_for_identifier_rejects_a_function_named_identif
     None
 ):
     """Test an identifier named after a registered function resolves to nothing."""
-    function_lookalike = mock_identifier("sqrt", 706)
+    function_lookalike = Identifier("sqrt")
 
     assert try_get_native_constant_for_identifier(function_lookalike) is None
 
@@ -1120,7 +1208,7 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
     register_native_constant("test_const_pruned", sort=FunctionSort.REAL, value=2.0)
     identifier = get_native_constant_identifier("test_const_pruned")
 
-    set_registry_state_for_tests(snapshot)
+    set_function_registry_state(snapshot)
 
     assert try_get_native_constant_for_identifier(identifier) is None
     with pytest.raises(EntryLookupError, match="test_const_pruned"):
@@ -1131,16 +1219,17 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
 # Pinned built-in constant ids
 # =============================================================================
 
-_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 8, "e": 9, "inf": 10, "nan": 11}
+# The built-in constants hold fixed ids from the reserved block, as the
+# shipped tags do, so they draw nothing from the counter and are the same in
+# every process, whatever it did first.
+_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 48, "e": 49, "inf": 50, "nan": 51}
 
 
 def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:
     """Test the built-in constants keep the ids a serialized reference resolves by.
 
-    A constant's id is assigned by registration order at import time, so
-    it can shift if the seeding order ever changes; a wire form minted
-    against today's id would then resolve to the wrong identifier, or to
-    none at all, on a process that assigns the ids differently.
+    The ids are the reserved table's, so a wire form naming a constant
+    resolves to it in any process; a constant's name hint is its name.
     """
     ids = {
         name: get_native_constant_identifier(name).id
@@ -1148,6 +1237,10 @@ def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:
     }
 
     assert ids == _PINNED_BUILTIN_CONSTANT_IDS
+    assert all(
+        get_native_constant_identifier(name).name_hint == name
+        for name in _PINNED_BUILTIN_CONSTANT_IDS
+    )
 
 
 @pytest.mark.slow
@@ -1157,10 +1250,9 @@ def test_builtin_constants_keep_their_pinned_canonical_ids_in_a_fresh_interprete
 ):
     """Test the pinned canonical ids hold from a clean process start.
 
-    The ids depend on registration order at import time, which earlier
-    tests in this process may have perturbed by registering their own
-    functions or constants; a fresh interpreter is the only way to see
-    the ids a real deserializing process would see.
+    Earlier tests in this process may have drawn ids from the counter; a
+    fresh interpreter shows the ids a real deserializing process sees,
+    which are the reserved ones whatever the process did first.
     """
     names = tuple(_PINNED_BUILTIN_CONSTANT_IDS)
     output = subprocess.check_output(

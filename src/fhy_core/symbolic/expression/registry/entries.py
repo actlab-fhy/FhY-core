@@ -1,7 +1,6 @@
-"""Value types for entries held by the expression registry.
+"""The entry classes of the expression registry.
 
-This module defines the immutable dataclasses that represent the three
-kinds of things the registry can hold:
+The registry holds three kinds of entries:
 
 - :class:`RegisteredFunction`: a pure function whose body is an
   expression tree.
@@ -9,6 +8,17 @@ kinds of things the registry can hold:
   callable.
 - :class:`NativeConstant`: a named literal value.
 
+The classes are backed by the Rust implementation (``fhy_core._rs``), over
+the core's ``FunctionDefinition``, ``NativeFunction`` and
+``NativeConstant``, or, for a built-in's entry, over its item of the core's
+catalogue. Each keeps its field objects, so ``entry.body is body`` holds;
+entries are frozen, and mutating one raises ``FrozenMutationError``. They
+compare, hash and print by their fields. A user entry pickles as a call of
+its class with its fields, a built-in's entry as the built-in itself.
+
+Building an entry checks only the entry itself. Which identifiers a
+function's body may refer to depends on the registry, which checks them
+when the function is registered.
 """
 
 __all__ = [
@@ -21,125 +31,53 @@ __all__ = [
 
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TypeAlias
 
-from fhy_core.identifier import Identifier
-from fhy_core.term import (
-    DerivedEquivalenceMixin,
-    compared_as_binder,
-    excluded_from_equivalence,
-)
-
-from ..core import Expression
-from ..sort import FunctionSort, is_python_value_compatible_with_sort
+from fhy_core import _rs
+from fhy_core.traits import FrozenMixin
 
 
-def _reject_captured_free_identifiers(
-    name: str,
-    parameters: tuple[Identifier, ...],
-    body: Expression,
-) -> None:
-    """Raise if ``body`` references a free identifier outside ``parameters``.
-
-    The canonical identifier of a registered ``NativeConstant`` is
-    exempt: it resolves to the constant at type-check / evaluation time
-    rather than being treated as captured. The exemption is by
-    identifier identity, matching how every resolution path recognizes
-    a constant reference, so an unrelated identifier that merely shares
-    a constant's ``name_hint`` is captured like any other free
-    identifier.
-
-    The exemption is read from the registry as it stands right now, so
-    this check is order-dependent: the same body is rejected before the
-    constant it references is registered and accepted afterwards.
-    Register constants before the functions whose bodies reference them.
-
-    Raises:
-        ValueError: If ``body`` references a free identifier that is
-            neither a declared parameter nor the canonical identifier of
-            a constant registered so far.
-
-    """
-    # Deferred import: `storage` imports this module for its entry types,
-    # so importing `storage` at module scope here would form a cycle.
-    from .storage import _registered_constant_identifiers  # noqa: PLC0415
-
-    declared = set(parameters)
-    captured = body.get_free_identifiers() - declared
-    if not captured:
-        return
-    truly_captured = captured - _registered_constant_identifiers()
-    if not truly_captured:
-        return
-    captured_names = ", ".join(
-        sorted(identifier.name_hint for identifier in truly_captured)
-    )
-    raise ValueError(
-        f"RegisteredFunction {name!r}: body references identifiers not in "
-        f"its parameters: {captured_names}."
-    )
-
-
-@dataclass(frozen=True)
-class RegisteredFunction(DerivedEquivalenceMixin):
+class RegisteredFunction(_rs.RegisteredFunction):
     """A named pure function over the expression IR.
 
-    Structural and alpha equivalence are derived from the fields: ``name``
-    is registry identity and is excluded; ``parameters`` is a binder whose
-    bound identifiers scope over ``body`` (so two functions identical up to
-    a consistent parameter rename are alpha-equivalent); ``parameter_sorts``
-    and ``result_sort`` compare by value; ``body`` recurses.
+    ``RegisteredFunction(name, parameters, parameter_sorts, result_sort,
+    body)`` builds an entry without registering it.
+
+    Structural and alpha equivalence compare the functions as binder
+    terms: ``name`` is excluded; ``parameters`` bind the identifiers of
+    ``body``, so two functions identical up to a consistent parameter
+    rename are alpha-equivalent; ``parameter_sorts`` and ``result_sort``
+    compare by value. A pairing of the parameters that is not injective is
+    no renaming. Structural equivalence requires the same parameters.
 
     A call to another function is a reference by name
-    (``CallExpression.function_name`` is a plain string, not an
-    ``Identifier``), so a self-recursive or mutually-recursive body
-    never appears in its own free identifiers and never trips the
-    closure check below.
+    (``CallExpression.function_name``), so a recursive body is accepted
+    here and refused only when it is inlined.
 
     Attributes:
         name: Registry key. Used at call sites and in error messages.
         parameters: Ordered formal-parameter identifiers. Inlining
             substitutes these with the call's argument expressions.
-        parameter_sorts: Per-parameter declared sort. Has the same
-            length as ``parameters``.
+        parameter_sorts: Per-parameter declared sort, one per parameter.
         result_sort: Declared result sort. The call-site type checker
             uses this directly, without re-walking the body.
-        body: Expression tree using the parameter identifiers. Free
-            identifiers are a subset of ``parameters`` plus the
-            canonical identifiers of the registered ``NativeConstant``
-            entries. Because that second set is read from the registry
-            at construction time, validity depends on how much of the
-            registry is populated: a body referencing a constant that
-            has not been registered yet is rejected, and the same body
-            is accepted once it has been.
+        body: Expression tree over the parameters.
 
     Raises:
-        ValueError: If ``name`` is empty; if ``parameter_sorts`` and
-            ``parameters`` differ in length; or if ``body`` references
-            a free identifier that is neither a declared parameter nor
-            the canonical identifier of a constant registered so far.
+        TypeError: If an argument has the wrong type.
+        ValueError: If ``name`` is empty or a built-in function's name, if
+            ``parameter_sorts`` and ``parameters`` differ in length, or if
+            a parameter is repeated, with the core's text.
 
     """
 
-    name: str = field(metadata=excluded_from_equivalence())
-    parameters: tuple[Identifier, ...] = field(
-        metadata=compared_as_binder(scopes_over=("body",))
-    )
-    parameter_sorts: tuple[FunctionSort, ...]
-    result_sort: FunctionSort
-    body: Expression
+    __slots__ = ()
+    __match_args__ = ("name", "parameters", "parameter_sorts", "result_sort", "body")
 
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("RegisteredFunction.name must be non-empty.")
-        if len(self.parameters) != len(self.parameter_sorts):
-            raise ValueError(
-                f"RegisteredFunction {self.name!r}: parameter_sorts length "
-                f"({len(self.parameter_sorts)}) does not match parameters "
-                f"length ({len(self.parameters)})."
-            )
-        _reject_captured_free_identifiers(self.name, self.parameters, self.body)
+
+FrozenMixin.register(RegisteredFunction)
+RegisteredFunction._register_public_class()
 
 
 _POSITIONAL_PARAMETER_KINDS = frozenset(
@@ -225,8 +163,7 @@ def _check_native_implementation_arity(
     )
 
 
-@dataclass(frozen=True)
-class NativeFunction:
+class NativeFunction(_rs.NativeFunction):
     """A function whose body is a Python callable.
 
     Native functions cannot be inlined: they have no expression body.
@@ -247,8 +184,10 @@ class NativeFunction:
             ``result_sort``.
 
     Raises:
-        ValueError: If ``name`` is empty, or if ``implementation``'s
-            inspectable signature cannot accept
+        TypeError: If an argument has the wrong type, a non-callable
+            ``implementation`` included.
+        ValueError: If ``name`` is empty or a built-in function's name,
+            or if ``implementation``'s inspectable signature cannot accept
             ``len(parameter_sorts)`` positional arguments. Some
             C-implemented callables (e.g. some ``math`` builtins) do
             not expose an inspectable signature; arity is not checked
@@ -262,33 +201,29 @@ class NativeFunction:
         on the low-order bits of native results.
     """
 
-    name: str
-    parameter_sorts: tuple[FunctionSort, ...]
-    result_sort: FunctionSort
-    implementation: Callable[..., bool | int | float]
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("NativeFunction.name must be non-empty.")
-        _check_native_implementation_arity(
-            self.name, len(self.parameter_sorts), self.implementation
-        )
+    __slots__ = ()
+    __match_args__ = ("name", "parameter_sorts", "result_sort", "implementation")
 
 
-@dataclass(frozen=True)
-class NativeConstant:
+FrozenMixin.register(NativeFunction)
+NativeFunction._register_public_class()
+
+
+class NativeConstant(_rs.NativeConstant):
     """A named constant whose value is a Python literal.
 
     Registration mints one canonical :class:`Identifier` for the
-    constant, held in the registry storage and retrievable with
-    :func:`get_native_constant_identifier`. A constant is referenced in
-    an expression tree as an :class:`IdentifierExpression` wrapping that
-    identifier: :func:`evaluate_expression` substitutes such references
-    with ``LiteralExpression(value)``, and the type checker resolves
-    them from the registry when the identifier is not bound locally.
-    Recognition is by identifier identity, so an identifier that merely
-    shares ``name`` as its ``name_hint`` is an ordinary free variable
-    that callers may bind to whatever they like.
+    constant, retrievable with :func:`get_native_constant_identifier`; a
+    built-in constant's identifier has a fixed reserved id (``pi`` 48,
+    ``e`` 49, ``inf`` 50, ``nan`` 51), the same in every process. A
+    constant is referenced in an expression tree as an
+    :class:`IdentifierExpression` wrapping that identifier:
+    :func:`evaluate_expression` substitutes such references with
+    ``LiteralExpression(value)``, and the type checker resolves them from
+    the registry when the identifier is not bound locally. Recognition is
+    by identifier identity, so an identifier that merely shares ``name`` as
+    its ``name_hint`` is an ordinary free variable that callers may bind to
+    whatever they like.
 
     Attributes:
         name: Registry key.
@@ -296,24 +231,25 @@ class NativeConstant:
         value: Literal Python value, compatible with ``sort`` per
             :func:`is_python_value_compatible_with_sort`.
 
+    Raises:
+        TypeError: If an argument has the wrong type, a value that is not
+            a ``bool``, an ``int`` or a ``float`` included.
+        ValueError: If ``name`` is empty or a built-in function's name, or
+            if ``value`` is not compatible with ``sort``, with the core's
+            text.
+
     Notes:
         Constants seeded from ``math`` (``math.pi``, ``math.e``,
         ``math.inf``, ``math.nan``) carry the same platform-bit caveat
         as native function results.
     """
 
-    name: str
-    sort: FunctionSort
-    value: bool | int | float
+    __slots__ = ()
+    __match_args__ = ("name", "sort", "value")
 
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("NativeConstant.name must be non-empty.")
-        if not is_python_value_compatible_with_sort(self.value, self.sort):
-            raise ValueError(
-                f"NativeConstant {self.name!r}: value {self.value!r} is not "
-                f"compatible with the declared sort {self.sort}."
-            )
+
+FrozenMixin.register(NativeConstant)
+NativeConstant._register_public_class()
 
 
 RegisteredEntry: TypeAlias = RegisteredFunction | NativeFunction | NativeConstant

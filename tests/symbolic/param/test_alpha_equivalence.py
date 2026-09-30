@@ -359,6 +359,7 @@ def test_structural_equivalence_implies_alpha_equivalence() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_param_assignments_alpha_equivalent_for_alpha_equivalent_params() -> None:
     """Test assignments recurse into the param and inherit alpha-equivalence.
 
@@ -381,6 +382,7 @@ def test_param_assignments_alpha_equivalent_for_alpha_equivalent_params() -> Non
     assert not left.is_structurally_equivalent(right)
 
 
+@pytest.mark.sympy
 def test_param_assignments_not_alpha_equivalent_for_different_values() -> None:
     """Test assignments with alpha-equivalent params but different values differ.
 

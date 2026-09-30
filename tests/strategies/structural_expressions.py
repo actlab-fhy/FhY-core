@@ -43,9 +43,9 @@ from .expressions import (
     _MIN_PIECEWISE_LEAVES,
     BOOLEAN_EQUALITY_OPERATIONS,
     COMPARISON_OPERATIONS,
-    LOGICAL_BINARY_OPERATIONS,
     NUMERIC_DIVISION_OPERATIONS,
     NUMERIC_GATE_OPERATIONS,
+    _draw_logical_expression,
     _draw_parts_within_leaf_budget,
     _draw_piecewise_expression,
 )
@@ -206,10 +206,11 @@ def _draw_structural_numeric_expression(
 def _draw_structural_boolean_binary(
     draw: st.DrawFn, identifiers: Sequence[Identifier], max_leaves: int, kind: str
 ) -> Expression:
-    """Draw a Boolean binary node of ``kind`` within a leaf budget.
+    """Draw a Boolean comparison or connective node of ``kind`` within a leaf budget.
 
     ``kind`` is ``"comparison"`` (numeric operands), ``"boolean_comparison"``
-    (``==``/``!=`` over Boolean operands), or ``"and_or"``.
+    (``==``/``!=`` over Boolean operands), or ``"and_or"`` (a connective over
+    two or three Boolean operands).
     """
 
     def build_numeric_operand(budget: int) -> st.SearchStrategy[Expression]:
@@ -218,10 +219,11 @@ def _draw_structural_boolean_binary(
     def build_boolean_operand(budget: int) -> st.SearchStrategy[Expression]:
         return _build_structural_boolean_strategy(identifiers, budget)
 
+    if kind == "and_or":
+        return _draw_logical_expression(draw, max_leaves, build_boolean_operand)
     operations, build_operand = {
         "comparison": (COMPARISON_OPERATIONS, build_numeric_operand),
         "boolean_comparison": (BOOLEAN_EQUALITY_OPERATIONS, build_boolean_operand),
-        "and_or": (LOGICAL_BINARY_OPERATIONS, build_boolean_operand),
     }[kind]
     operation = draw(st.sampled_from(operations))
     left, right = _draw_parts_within_leaf_budget(

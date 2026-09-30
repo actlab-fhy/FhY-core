@@ -7,6 +7,7 @@ the full ``(data_type, shape)`` / ``(lower_bound, upper_bound, stride)``
 contract is compared on every case.
 """
 
+from decimal import Decimal
 from unittest.mock import Mock
 
 import pytest
@@ -18,6 +19,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     UnaryExpression,
     UnaryOperation,
     get_native_constant_identifier,
@@ -34,14 +37,11 @@ from fhy_core.types import (
 )
 from fhy_core.types.checking.type_checker import (
     ExpressionTypeChecker,
-    _get_numeric_literal_value,
-    _get_primitive_data_type,
-    _get_real_float_core_data_type_for_bit_width,
-    _TypeCheckContext,
     check_expression_type,
     get_core_data_type_from_literal_type,
     synthesize_expression_type,
 )
+from fhy_core.utils.override import override
 
 from .conftest import (
     make_identifier_checker,
@@ -93,16 +93,35 @@ def test_get_core_data_type_from_literal_type_rejects_string_literal() -> None:
         get_core_data_type_from_literal_type("1")
 
 
+def test_get_core_data_type_from_literal_type_rejects_decimal_literal() -> None:
+    """Test decimal literal values are rejected with `NotImplementedError`."""
+    with pytest.raises(NotImplementedError, match="decimal literals"):
+        get_core_data_type_from_literal_type(Decimal("1.5"))
+
+
 # =============================================================================
 # Literal synthesis - weak typing & bidirectional check
 # =============================================================================
 
 
-def test_synthesize_string_literal_expression_is_rejected() -> None:
-    """Test a string-form `LiteralExpression` is rejected during type synthesis."""
+def test_synthesize_decimal_literal_expression_is_rejected() -> None:
+    """Test a decimal `LiteralExpression` is rejected during type synthesis.
+
+    Float-grammar text normalizes to a ``Decimal``, which has no core data
+    type yet.
+    """
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="decimal literals"):
         checker.visit(LiteralExpression("1.0"))
+
+
+def test_synthesize_integer_text_literal_expression_is_a_weak_integer() -> None:
+    """Test integer-grammar text synthesizes as the integer it normalizes to."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, _ = checker.visit(LiteralExpression("05"))
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.UINT))
 
 
 def test_unary_negation_of_positive_integer_literal_becomes_weak_signed_int() -> None:
@@ -434,9 +453,56 @@ def test_check_negative_literal_against_unsigned_expected_raises() -> None:
 
     with pytest.raises(
         FhYCoreTypeError,
-        match=r"Literal -1 is incompatible with uint16",
+        match=r"literal -1 is incompatible with uint16",
     ):
         checker.check(LiteralExpression(-1), _make_scalar(CoreDataType.UINT16))
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected", "checked"),
+    [
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
+            CoreDataType.UINT8,
+            None,
+            id="negated-five-against-uint8",
+        ),
+        pytest.param(
+            LiteralExpression(-5),
+            CoreDataType.UINT8,
+            None,
+            id="minus-five-against-uint8",
+        ),
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(128)),
+            CoreDataType.INT8,
+            CoreDataType.INT8,
+            id="negated-128-against-int8",
+        ),
+        pytest.param(
+            LiteralExpression(-128),
+            CoreDataType.INT8,
+            CoreDataType.INT8,
+            id="minus-128-against-int8",
+        ),
+    ],
+)
+def test_negated_literals_check_as_one_literal(
+    expression: Expression,
+    expected: CoreDataType,
+    checked: CoreDataType | None,
+) -> None:
+    """Test a negated literal checks as the one literal it denotes."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    if checked is None:
+        with pytest.raises(
+            FhYCoreTypeError, match=r"literal -5 is incompatible with uint8"
+        ):
+            checker.check(expression, _make_scalar(expected))
+    else:
+        result_type, _ = checker.check(expression, _make_scalar(expected))
+        assert result_type.is_structurally_equivalent(_make_scalar(checked))
 
 
 def test_check_binary_expression_uses_expected_type_bidirectionally() -> None:
@@ -1653,7 +1719,7 @@ def test_type_error_includes_root_expression_for_top_level_failure() -> None:
         checker.visit(expression)
 
     message = str(exc_info.value)
-    assert message.startswith("Type error while inferring type of `")
+    assert message.startswith("type error while inferring the type of `")
     assert pformat_expression(expression, show_id=True) in message
     # The failure surfaces at the root, so no "at sub-expression" framing.
     assert "at sub-expression" not in message
@@ -1671,7 +1737,7 @@ def test_type_error_includes_sub_expression_for_deeply_nested_failure() -> None:
         checker.visit(root)
 
     message = str(exc_info.value)
-    assert message.startswith("Type error while inferring type of `")
+    assert message.startswith("type error while inferring the type of `")
     assert pformat_expression(root, show_id=True) in message
     assert "at sub-expression" in message
     assert pformat_expression(inner, show_id=True) in message
@@ -1691,7 +1757,7 @@ def test_type_error_from_check_includes_root_expression() -> None:
         checker.check(expression, expected)
 
     message = str(exc_info.value)
-    assert message.startswith("Type error while inferring type of `")
+    assert message.startswith("type error while inferring the type of `")
     assert pformat_expression(expression, show_id=True) in message
 
 
@@ -1988,7 +2054,7 @@ def test_floor_division_of_two_real_floats_promotes_via_lattice() -> None:
 
 
 def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> None:
-    """Test `LOGICAL_AND` rejects non-boolean operands with `FhYCoreTypeError`."""
+    """Test an `AND` `LogicalExpression` rejects non-boolean operands."""
     left = mock_identifier("a", 0)
     right = mock_identifier("b", 1)
     checker = make_identifier_checker(
@@ -2000,10 +2066,9 @@ def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> N
 
     with pytest.raises(FhYCoreTypeError):
         checker.visit(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(left),
-                IdentifierExpression(right),
+            LogicalExpression(
+                LogicalOperation.AND,
+                (IdentifierExpression(left), IdentifierExpression(right)),
             )
         )
 
@@ -2069,41 +2134,87 @@ def test_check_string_literal_against_numerical_type_rejects_via_resolver() -> N
 
 def test_get_core_data_type_from_literal_type_rejects_unsupported_type() -> None:
     """Test `get_core_data_type_from_literal_type` rejects container values."""
-    with pytest.raises(ValueError, match=r"Unsupported literal type"):
+    with pytest.raises(ValueError, match=r"unsupported literal type"):
         get_core_data_type_from_literal_type([1, 2, 3])  # type: ignore[arg-type]
 
 
-def test_get_primitive_data_type_rejects_non_primitive_data_type() -> None:
-    """Test `_get_primitive_data_type` rejects a numerical with a template data type."""
-    numerical = NumericalType(TemplateDataType(mock_identifier("T", 0)))
+def test_template_typed_identifier_is_no_value_type() -> None:
+    """Test an identifier of a template-typed numerical type is refused.
 
-    with pytest.raises(FhYCoreTypeError, match=r"expected a primitive data type"):
-        _get_primitive_data_type(numerical)
+    Rewrites the test of the private ``_get_primitive_data_type``: the
+    checker refuses a numerical type of a non-primitive data type where an
+    identifier is read, framed like every other rule.
+    """
+    identifier = mock_identifier("x", 0)
+    numerical = NumericalType(TemplateDataType(mock_identifier("T", 1)))
+    checker = make_identifier_checker({identifier: (numerical, TypeQualifier.PARAM)})
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(identifier), LiteralExpression(1)
+    )
 
-
-def test_get_numeric_literal_value_rejects_bool_literal() -> None:
-    """Test `_get_numeric_literal_value` rejects a boolean literal."""
-    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
-        _get_numeric_literal_value(LiteralExpression(True))
-
-
-def test_get_real_float_for_bit_width_raises_when_no_match() -> None:
-    """Test `_get_real_float_core_data_type_for_bit_width` rejects oversized widths."""
     with pytest.raises(
-        FhYCoreTypeError,
-        match=r"no real float core data type found for bit width 256",
+        FhYCoreTypeError, match=r"must resolve to a primitive numerical type"
     ):
-        _get_real_float_core_data_type_for_bit_width(256)
+        checker.synthesize(expression)
 
 
-def test_type_check_context_type_error_with_empty_stack() -> None:
-    """Test `_TypeCheckContext.type_error` builds a bare message when stack empty."""
-    context = _TypeCheckContext()
+def test_decimal_literal_checked_against_a_concrete_type_is_no_numeric_literal() -> (
+    None
+):
+    """Test a decimal literal checked against a concrete type is refused.
 
-    error = context.type_error("the reason")
+    Rewrites the test of the private ``_get_numeric_literal_value``: a
+    literal handed a concrete expected type must be numeric.
+    """
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
 
-    assert isinstance(error, FhYCoreTypeError)
-    assert str(error) == "Type error: the reason"
+    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
+        checker.check(LiteralExpression("1.5"), _make_scalar(CoreDataType.FLOAT32))
+
+
+def test_true_division_of_the_widest_integers_is_the_widest_real_float() -> None:
+    """Test integer true division reaches the widest real float, ``FLOAT64``.
+
+    Rewrites the test of the private
+    ``_get_real_float_core_data_type_for_bit_width``: no integer is wider
+    than 64 bits, so the width lookup always finds a real float.
+    """
+    left = mock_identifier("a", 0)
+    right = mock_identifier("b", 1)
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.INT64), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.UINT32), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.synthesize(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT64))
+
+
+def test_every_checker_error_is_framed_by_the_root() -> None:
+    """Test a checker error is framed by the root expression.
+
+    The core frames every broken rule by the expression checked.
+    """
+    checker = make_identifier_checker({})
+    expression = IdentifierExpression(mock_identifier("x", 0))
+
+    with pytest.raises(FhYCoreTypeError) as exc_info:
+        checker.synthesize(expression)
+
+    assert str(exc_info.value) == (
+        "type error while inferring the type of "
+        f"`{pformat_expression(expression, show_id=True)}`: identifier "
+        f"`{pformat_expression(expression, show_id=True)}` is not bound"
+    )
 
 
 def test_checker_get_noop_output_raises() -> None:
@@ -2114,12 +2225,12 @@ def test_checker_get_noop_output_raises() -> None:
         checker.get_noop_output(LiteralExpression(0))
 
 
-def test_infer_rejects_unsupported_expression_subclass() -> None:
-    """Test `_infer` raises `NotImplementedError` on unknown Expression subclass."""
+def test_infer_rejects_non_expression_argument() -> None:
+    """Test a non-expression argument is refused with `TypeError`."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
     unknown = Mock(spec=Expression)
 
-    with pytest.raises(NotImplementedError, match=r"Unsupported expression type"):
+    with pytest.raises(TypeError, match=r"expression must be an Expression"):
         checker.synthesize(unknown)
 
 
@@ -2260,21 +2371,48 @@ def test_synthesize_accepts_index_with_boolean_false_stride() -> None:
 
 
 # =============================================================================
-# Unknown UnaryOperation falls through to NotImplementedError
+# A unary node's operation is always a member
 # =============================================================================
 
 
-def test_unary_expression_with_unknown_operation_raises_not_implemented() -> None:
-    """Test an `UnaryExpression` carrying an unknown operation is rejected."""
+class _UnaryExpressionWithUnknownOperation(UnaryExpression):
+    """A `UnaryExpression` whose `operation` property reads as no member.
+
+    Expressions are frozen, so the unknown operation is supplied by
+    overriding the field's property rather than patching the node.
+    """
+
+    @property
+    @override
+    def operation(self) -> UnaryOperation:
+        return Mock(spec=UnaryOperation)
+
+
+def test_unary_expression_with_unknown_operation_is_refused_at_construction() -> None:
+    """Test a unary node cannot be built with an operation that is no member.
+
+    The core's operations are exhaustive, so the checker has no
+    unknown-operation path left: the node refuses the operation instead.
+    """
+    identifier = mock_identifier("x", 0)
+
+    with pytest.raises(ValueError, match=r"is not a valid"):
+        UnaryExpression(Mock(spec=UnaryOperation), IdentifierExpression(identifier))
+
+
+def test_unary_expression_checks_by_its_core_operation() -> None:
+    """Test the checker reads a node's core operation, not a Python override."""
     identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
-    unary = UnaryExpression(UnaryOperation.POSITIVE, IdentifierExpression(identifier))
-    object.__setattr__(unary, "operation", Mock(spec=UnaryOperation))
+    unary = _UnaryExpressionWithUnknownOperation(
+        UnaryOperation.POSITIVE, IdentifierExpression(identifier)
+    )
 
-    with pytest.raises(NotImplementedError, match=r"unary operation"):
-        checker.synthesize(unary)
+    result_type, _ = checker.synthesize(unary)
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
 
 
 # =============================================================================

@@ -1,12 +1,10 @@
 """Constraint evaluation core: outcomes, bindings, and the ``Constraint`` family.
 
 Owns the tri-state ``ConstraintOutcome`` result, the ``ConstraintBindings``
-assignment type and its coercion into a substitution environment, the
-``SymbolicPredicate`` protocol shared with ``ConstraintSystem``
-(``fhy_core.symbolic.constraint.system``), and the ``Constraint`` sum-type
-family base together with its three concrete leaves --
-``EquationConstraint``, and the ``_SetConstraint``-derived
-``InSetConstraint``/``NotInSetConstraint``.
+assignment type, the ``SymbolicPredicate`` protocol shared with
+``ConstraintSystem`` (``fhy_core.symbolic.constraint.system``), and the
+``Constraint`` sum-type family base together with its three concrete leaves
+-- ``EquationConstraint``, ``InSetConstraint`` and ``NotInSetConstraint``.
 
 A constraint's semantic identity is its *scope* -- the set of identifiers
 it references (``get_free_identifiers``) -- rather than a single
@@ -20,11 +18,17 @@ contract is assignment-based: ``evaluate_with_bindings``/
 identifier remains unbound or a bound value cannot be reduced to a
 decision.
 
-Each concrete leaf is a ``@register_serializable
-@dataclass(frozen=True, eq=False)`` class whose wrapped serialization and
-structural equivalence are derived from its fields rather than
-hand-written; the ``Constraint`` base holds no shared state and is frozen
-on construction via ``FrozenMixin``.
+The three leaves run on the Rust core (``fhy_core::constraint``): each is a
+thin subclass of its ``fhy_core._rs`` class, which implements evaluation,
+conversion, the canonical ordering key, structural and alpha equivalence,
+freezing, pickling and the data payload, and keeps the Python objects it
+was given. Evaluation asks the default solver (``get_default_solver``) and
+logs its undecided outcomes on this module's logger. Members compare
+type-strictly and are kept in one canonical order: by kind (``bool``,
+``float``, ``frozenset``, ``int``, ``str``, ``tuple``, then ``Serializable``
+members), then by value. The leaves are virtual subclasses of
+``Constraint`` and ``FrozenMixin``; ``Constraint`` stays an abstract base
+third parties subclass, and ``ConstraintSystem`` holds either kind.
 """
 
 __all__ = [
@@ -37,222 +41,28 @@ __all__ = [
     "SymbolicPredicate",
 ]
 
-import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping
 from enum import Enum, auto
-from functools import cached_property
-from typing import Any, Final, Protocol, TypeAlias, runtime_checkable
+from typing import ClassVar, Protocol, TypeAlias, runtime_checkable
 
+from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
-from fhy_core.symbolic.expression import (
-    BinaryOperation,
-    Expression,
-    LiteralExpression,
-    LiteralType,
-    NonBooleanLogicalOperandError,
-    is_integer_valued_literal,
-    make_binary_expression,
-    pformat_expression,
-    validate_predicate,
-)
-from fhy_core.symbolic.expression.registry import (
-    try_get_native_constant_for_identifier,
-)
-from fhy_core.symbolic.solver import simplify_expression
-from fhy_core.term import (
-    DerivedEquivalenceMixin,
-    compared_as_reference,
-    compared_as_value,
-)
+from fhy_core.symbolic._native_slots import copy_native_attributes
+from fhy_core.symbolic.expression import Expression, LiteralType
+from fhy_core.term import DerivedEquivalenceMixin
 from fhy_core.traits import FrozenMixin
-from fhy_core.utils import Self, format_comma_separated_list
 from fhy_core.utils.override import override
 
-from .errors import ConstraintError
-from .members import (
-    _VALUES_CODEC,
-    ConstraintMember,
-    MemberCollection,
-    _build_member_ordering_key,
-    _lift_member_to_literal_expression,
-    _normalize_constraint_member_collection,
-    _order_members_canonically,
-    _render_member_set,
-    _render_member_set_str,
-    _TypedMember,
-    _unwrap_member,
-    _validate_constraint_member,
-    _wrap_member,
-    _wrap_member_collection,
-)
-from .ordering import _build_expression_ordering_key
+from .members import ConstraintMember, MemberCollection
 
 _LOGGER = get_logger(__name__)
+"""The logger the Rust binding writes this module's records to."""
 
 ConstraintBindings: TypeAlias = Mapping[Identifier, "Expression | LiteralType"]
 """Assignment of candidate values (literals or expressions) to identifiers."""
-
-
-def _validate_binding_value(identifier: Identifier, value: object) -> None:
-    """Reject a binding value ``ConstraintBindings`` does not admit.
-
-    ``ConstraintBindings`` is public and declares ``Expression |
-    LiteralType``. A value in neither arm cannot be lifted into a
-    substitution environment, and handing it to the expression passes
-    anyway surfaces as an internal pass failure that names no identifier.
-    Rejecting it here reports the caller's mistake as a domain error
-    instead.
-
-    Args:
-        identifier: Identifier the value is bound to.
-        value: Candidate binding value.
-
-    Raises:
-        ConstraintError: If ``value`` is neither an ``Expression`` nor a
-            ``LiteralType``. The message names the identifier, the value,
-            and the value's type.
-
-    """
-    if isinstance(value, (Expression, LiteralType)):
-        return
-    raise ConstraintError(
-        f"Binding for identifier {identifier!r} must be an `Expression` or a "
-        f"literal (`str`, `float`, `int`, `bool`), but got value {value!r} of "
-        f"type {type(value).__name__}."
-    )
-
-
-def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expression:
-    """Wrap a raw binding value in the ``LiteralExpression`` it denotes.
-
-    Being a ``LiteralType`` is not enough: ``LiteralExpression`` holds a
-    ``str`` only when it matches the integer or float grammar. A number
-    always lifts; one whose type subclasses ``int`` or ``float``, such as
-    an ``IntEnum`` member, lifts to the exact value it denotes.
-
-    Args:
-        identifier: Identifier the value is bound to.
-        value: Raw binding value.
-
-    Returns:
-        The literal the value denotes.
-
-    Raises:
-        ConstraintError: If ``LiteralExpression`` refuses ``value``. The
-            message names the identifier and the value, and the
-            constructor's error is chained as the cause.
-
-    """
-    try:
-        return LiteralExpression(value)
-    except ValueError as exc:
-        raise ConstraintError(
-            f"Binding for identifier {identifier!r} cannot be lifted into a "
-            f"literal: value {value!r} of type {type(value).__name__} is not "
-            f"one a `LiteralExpression` holds ({exc})"
-        ) from exc
-
-
-def _coerce_bindings_to_environment(
-    bindings: ConstraintBindings,
-) -> dict[Identifier, Expression]:
-    """Coerce every binding value to the ``Expression`` a substitution consumes.
-
-    A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``, which
-    holds a ``str`` only in the integer or float grammar. An
-    ``Expression`` value passes through unchanged, including a non-literal,
-    symbolic one: substituting a symbolic value is supported, and the
-    residual it leaves behind is what the caller's outcome is read from.
-
-    Args:
-        bindings: Mapping from identifiers to candidate values.
-
-    Returns:
-        Substitution environment binding each identifier to an
-        ``Expression``.
-
-    Raises:
-        ConstraintError: If a value falls outside ``Expression |
-            LiteralType``, or is a literal value ``LiteralExpression``
-            refuses: a ``str`` outside the integer and float grammars.
-
-    """
-    environment: dict[Identifier, Expression] = {}
-    for identifier, value in bindings.items():
-        _validate_binding_value(identifier, value)
-        environment[identifier] = (
-            value
-            if isinstance(value, Expression)
-            else _lift_binding_value(identifier, value)
-        )
-    return environment
-
-
-def _find_bound_native_constants(
-    scope: frozenset[Identifier], bindings: Mapping[Identifier, object]
-) -> list[Identifier]:
-    """Return the native constants' canonical identifiers ``bindings`` binds in scope.
-
-    Such a binding cannot take effect: the identifier names the constant's
-    value rather than a variable, and the SymPy bridge lowers it to that
-    value whatever it is bound to. Every bindings-aware path refuses it,
-    reporting ``UNDECIDED``; a set constraint, whose scope is its one
-    variable, asks ``try_get_native_constant_for_identifier`` about that
-    variable directly.
-
-    Args:
-        scope: Identifiers the question references.
-        bindings: Bindings supplied for the question.
-
-    Returns:
-        The bound canonical identifiers in ``scope``, ordered by id so a
-        caller can name them.
-
-    """
-    return sorted(
-        (
-            identifier
-            for identifier in bindings
-            if identifier in scope
-            and try_get_native_constant_for_identifier(identifier) is not None
-        ),
-        key=lambda identifier: identifier.id,
-    )
-
-
-def _log_native_constant_binding_refusal(
-    logger: logging.Logger, context: str, identifiers: Iterable[Identifier]
-) -> None:
-    """Log the WARNING refusing bindings for native constants' canonical identifiers.
-
-    Shared by every bindings-aware entry point that refuses such a binding:
-    ``EquationConstraint.evaluate_with_bindings``,
-    ``_evaluate_set_membership_with_bindings``, and
-    ``ConstraintSystem.check_satisfiability_with_bindings``. Each call site
-    still decides on its own that the binding must be refused, reports
-    ``ConstraintOutcome.UNDECIDED`` itself, and passes its own module
-    logger, so the record attributes to the caller's module rather than
-    always to this one.
-
-    Args:
-        logger: The call site's own module logger.
-        context: Label identifying the call site (the class and/or method
-            name), embedded at the start of the message.
-        identifiers: The refused canonical identifiers, named by repr.
-
-    """
-    logger.warning(
-        "%s: identifier(s) %s are the canonical identifier(s) of registered "
-        "native constant(s), which name a value rather than a variable, so "
-        "the supplied binding cannot be honored; reporting UNDECIDED rather "
-        "than a decision the binding did not take part in",
-        context,
-        format_comma_separated_list(tuple(identifiers)),
-    )
 
 
 class ConstraintOutcome(Enum):
@@ -347,10 +157,11 @@ class Constraint(
 
     Sum-type family base for the three concrete constraint kinds in this
     module (``EquationConstraint``, ``InSetConstraint``,
-    ``NotInSetConstraint``). Each concrete constraint is a
-    ``@register_serializable @dataclass(frozen=True, eq=False)`` leaf of
-    this family; serialization and structural equivalence are derived
-    from its fields. The base holds no state and designates no variable:
+    ``NotInSetConstraint``), which run on the Rust core and are registered
+    as virtual subclasses, and for constraints third parties define as
+    ``@register_serializable @dataclass(frozen=True, eq=False)`` leaves of
+    this family, whose serialization and structural equivalence are
+    derived from their fields. The base holds no state and designates no variable:
     a constraint's semantic identity is its scope
     (``get_free_identifiers``), and the only evaluation contract is
     assignment-based (``evaluate_with_bindings``). Instances are frozen
@@ -371,6 +182,8 @@ class Constraint(
           identifies the kind and the scope.
 
     """
+
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
 
     @abstractmethod
     @override
@@ -453,16 +266,14 @@ class Constraint(
 
         """
 
-    # TODO: derive this from the field schema instead of overriding it per
-    # leaf. `DerivedEquivalenceMixin` already builds a per-type plan that
-    # drives `is_structurally_equivalent` (`fhy_core.term.derived_equivalence`),
-    # and this key is a projection of that same plan. Deriving it there would
-    # make "the key agrees with equivalence" true by construction rather than
-    # by each leaf keeping the two in step by hand. Literal values already
-    # key that way -- `build_literal_equivalence_key` renders the classifier
-    # `LiteralExpression` compares by -- but the tree and member-set keys do
-    # not. It is a change in `fhy_core.term` affecting every
-    # `DerivedEquivalenceMixin` user, so it is not in scope here.
+    # TODO: derive this from the field schema for third-party leaves instead
+    # of overriding it per leaf. `DerivedEquivalenceMixin` already builds a
+    # per-type plan that drives `is_structurally_equivalent`
+    # (`fhy_core.term.derived_equivalence`), and this key is a projection of
+    # that same plan. The three built-in leaves take the Rust core's key,
+    # whose agreement with equivalence the core's tests pin. It is a change
+    # in `fhy_core.term` affecting every `DerivedEquivalenceMixin` user, so
+    # it is not in scope here.
     @abstractmethod
     def build_ordering_key(self) -> str:
         """Return the canonical ordering key for this constraint.
@@ -494,625 +305,137 @@ class Constraint(
 
 
 @register_serializable(type_id="equation_constraint")
-@dataclass(frozen=True, eq=False)
-class EquationConstraint(Constraint):
+class EquationConstraint(_rs.EquationConstraint, WrappedFamilySerializable):
     """Boolean-expression predicate over the expression's free identifiers.
 
     The constraint wraps a Boolean ``Expression``; its scope is exactly
     that expression's free identifiers (empty for a ground expression).
-    ``evaluate_with_bindings`` substitutes every bound identifier
-    simultaneously, simplifies the resulting expression, and reports
-    ``SATISFIED`` only when the simplifier reduces it to the ``bool``
-    literal ``True``.
+    ``evaluate_with_bindings`` substitutes every bound identifier in the
+    scope simultaneously, simplifies the result with the default solver's
+    simplifier, and reports ``SATISFIED`` only when the simplifier reduces
+    it to the ``bool`` literal ``True``. A binding outside the scope is
+    ignored and never inspected.
 
-    The expression is itself a predicate -- a Boolean position on its
-    own, with no connective or piecewise condition above it -- so
-    ``evaluate_with_bindings`` screens it with ``validate_predicate``
-    before substituting anything: a numeric root, such as
-    ``LiteralExpression(1)`` or ``x + 1``, is ill-typed for every
-    possible binding and raises rather than being decided.
+    The expression is itself a predicate, so it is screened before anything
+    is substituted: a numeric root, such as ``LiteralExpression(1)`` or
+    ``x + 1``, raises ``NonBooleanLogicalOperandError``, and so does a
+    binding that puts a number in a Boolean position.
 
     Outcomes:
-        - ``SATISFIED``: the substituted expression reduces to the
-          ``bool`` literal ``True``.
-        - ``VIOLATED``: the substituted expression reduces to the
-          ``bool`` literal ``False``.
-        - ``UNDECIDED``: the simplifier cannot reduce the substituted
-          expression to a ``LiteralExpression`` at all (for example
-          because a free identifier remains unbound, or because the
-          simplifier just cannot decide). Logged at ``DEBUG`` when a
-          free identifier remains in the residual (ordinary partial
-          evaluation), at ``WARNING`` when none does (every identifier
-          was bound yet the simplifier still could not decide).
+        - ``SATISFIED``: the substituted expression reduces to ``True``.
+        - ``VIOLATED``: the substituted expression reduces to ``False``.
+        - ``UNDECIDED``: the simplifier cannot reduce it to a literal, logged
+          at ``DEBUG`` when a free identifier remains and at ``WARNING``
+          when none does; or a binding binds a registered native constant's
+          canonical identifier the expression refers to, which names a value
+          rather than a variable, logged at ``WARNING``.
 
-    A substituted expression that reduces to a literal whose value is not
-    a ``bool`` (for example ``LiteralExpression(1)``) raises
-    ``NonBooleanLogicalOperandError`` rather than being decided
-    ``VIOLATED``: the residual denotes a number, not a predicate.
-
-    ``is_satisfied_with_bindings`` derives from ``evaluate_with_bindings``
-    and treats both ``VIOLATED`` and ``UNDECIDED`` as ``False``, so an
-    undecided check conservatively rejects the bindings.
+    A result that is a literal but not a ``bool`` raises
+    ``NonBooleanLogicalOperandError``: the expression denotes a number. A
+    binding value that is neither an ``Expression`` nor a literal the
+    ``LiteralExpression`` constructor accepts raises ``ConstraintError``
+    naming the identifier, and a simplifier failure raises the solver's
+    error, ``PassExecutionError`` for the SymPy backend.
 
     Attributes:
-        expression: Boolean ``Expression``; the constraint's scope is
-            exactly this expression's free identifiers.
+        expression: The Boolean ``Expression`` given; the scope is exactly
+            its free identifiers.
 
     """
 
-    expression: Expression
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.expression, Expression):
-            raise ConstraintError(
-                f"EquationConstraint requires an `Expression` instance, but "
-                f"got value {self.expression!r} of type "
-                f"{type(self.expression).__name__}."
-            )
-
-    @override
-    def get_free_identifiers(self) -> frozenset[Identifier]:
-        """Return the expression's free identifiers."""
-        return self.expression.get_free_identifiers()
-
-    @override
-    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
-        """Substitute every bound identifier, simplify, and classify.
-
-        Coerces each raw ``LiteralType`` binding value to a
-        ``LiteralExpression``, substitutes the full multi-key environment
-        through ``simplify_expression``, and reports ``SATISFIED`` for
-        the ``bool`` literal ``True``, ``VIOLATED`` for the ``bool``
-        literal ``False``, and ``UNDECIDED`` when no literal results.
-        Logging on ``UNDECIDED``: DEBUG when the residual (substituted
-        and simplified) expression still has free identifiers (expected
-        partial evaluation, including the case where a symbolic binding
-        introduces a new free identifier), WARNING when the residual has
-        none -- every free identifier was bound yet the simplifier still
-        failed to reduce it to a literal.
-
-        A binding for an identifier outside this constraint's scope is
-        ignored, and its value is never inspected, matching the set
-        constraints: whether a system reports an outcome or raises must
-        not depend on which member kinds it holds or where they fall in
-        canonical order.
-
-        The expression is screened with ``validate_predicate`` before
-        anything is substituted: it is itself a Boolean position, so a
-        numeric root -- for example ``LiteralExpression(1)`` or ``x + 1``
-        -- is ill-typed for every possible binding and raises rather than
-        being decided.
-
-        A binding whose identifier is a registered native constant's
-        canonical identifier reports ``UNDECIDED`` with a ``WARNING``:
-        the bridge lowers that identifier to the constant's value rather
-        than to a substitutable symbol, so the binding cannot take part
-        in the decision. The refusal comes after the predicate screen,
-        so a provably numeric operand in a Boolean position is reported
-        instead. ``ConstraintSystem.check_satisfiability_with_bindings``
-        and the set constraints refuse the same bindings in the same
-        order. An identifier that merely shares a constant's
-        ``name_hint`` is an ordinary variable and its binding is applied
-        like any other.
-
-        Raises:
-            ConstraintError: If the value bound to an identifier in this
-                constraint's scope cannot be lifted into the substitution
-                environment: it falls outside ``Expression |
-                LiteralType``, or ``LiteralExpression`` refuses it, as it
-                refuses a ``str`` matching neither the integer nor the
-                float grammar.
-            PassExecutionError: Propagated from ``simplify_expression``
-                when the SymPy bridge fails to lower or lift the
-                substituted expression.
-            NonBooleanLogicalOperandError: If the expression's root
-                provably denotes a number, if it holds a provably
-                numeric operand in a Boolean position -- under a logical
-                connective or as a piecewise case condition -- counting
-                an in-scope binding that puts a number there, or if the
-                substituted expression simplifies to a literal whose
-                value is not a ``bool``. ``ConstraintSystem
-                .check_satisfiability_with_bindings`` refuses the same
-                bindings with the same error.
-
-        """
-        scope = self.get_free_identifiers()
-        in_scope = {
-            identifier: value
-            for identifier, value in bindings.items()
-            if identifier in scope
-        }
-        environment = _coerce_bindings_to_environment(in_scope)
-        validate_predicate(self.expression, environment)
-        captured = _find_bound_native_constants(scope, environment)
-        if captured:
-            _log_native_constant_binding_refusal(
-                _LOGGER, f"{type(self).__name__}.evaluate_with_bindings", captured
-            )
-            return ConstraintOutcome.UNDECIDED
-        result = simplify_expression(self.expression, environment)
-        if isinstance(result, LiteralExpression):
-            if not isinstance(result.value, bool):
-                raise NonBooleanLogicalOperandError(
-                    f"{self.expression!r} simplified to the non-bool literal "
-                    f"{result!r}; a predicate must simplify to a `bool` "
-                    "literal, so the expression is ill-typed."
-                )
-            return (
-                ConstraintOutcome.SATISFIED
-                if result.value
-                else ConstraintOutcome.VIOLATED
-            )
-        if result.get_free_identifiers():
-            _LOGGER.debug(
-                "%s.evaluate_with_bindings: substituted expression %r did not "
-                "reduce to a literal; free identifiers remain unbound; "
-                "reporting UNDECIDED",
-                type(self).__name__,
-                result,
-            )
-        else:
-            _LOGGER.warning(
-                "%s.evaluate_with_bindings: substituted expression %r did not "
-                "reduce to a literal though every free identifier was bound; "
-                "reporting UNDECIDED",
-                type(self).__name__,
-                result,
-            )
-        return ConstraintOutcome.UNDECIDED
-
-    @override
-    def convert_to_expression(self) -> Expression:
-        """Return the wrapped expression."""
-        return self.expression
-
-    @override
-    def build_ordering_key(self) -> str:
-        """Return the kind and the wrapped expression's tree key."""
-        return (
-            f"{type(self).__name__}|{_build_expression_ordering_key(self.expression)}"
-        )
-
-    @override
-    def __repr__(self) -> str:
-        return f"EquationConstraint(expression={self.expression!r})"
-
-    @override
-    def __str__(self) -> str:
-        return pformat_expression(self.expression)
-
-
-_UNBOUND: Final = object()
-"""Sentinel distinguishing an absent binding from a legitimately bound value.
-
-Read through ``Mapping.get`` so the constrained variable is fetched with
-exactly one lookup against the caller's mapping, without copying the whole
-mapping first. A caller may supply a mapping that permits only one read per
-key, and set-constraint evaluation runs once per candidate inside the
-enumeration loops in ``fhy_core.symbolic.param.domains``.
-"""
-
-
-def _validate_set_binding_value(identifier: Identifier, value: object) -> None:
-    """Reject a non-``Expression`` binding value that could never be a member.
-
-    A set constraint decides membership against ``ConstraintMember``-shaped
-    values (the same union a declared member must satisfy), which is
-    wider than ``ConstraintBindings``' declared ``Expression |
-    LiteralType``: a bound value may legitimately be a ``tuple``,
-    ``frozenset``, or ``Serializable`` instance, matching one of the
-    constraint's own container-shaped or ``Serializable`` members.
-
-    Args:
-        identifier: Identifier the value is bound to.
-        value: Candidate binding value already known not to be an
-            ``Expression``.
-
-    Raises:
-        ConstraintError: If ``value`` could never be a valid
-            ``ConstraintMember``. The message names the identifier, the
-            value, and the value's type.
-
-    """
-    try:
-        _validate_constraint_member(value)
-    except ConstraintError as exc:
-        raise ConstraintError(
-            f"Binding for identifier {identifier!r} must be an `Expression` "
-            f"or a value that could be a constraint member, but got value "
-            f"{value!r} of type {type(value).__name__}: {exc}"
-        ) from exc
-
-
-def _decide_bound_value_membership(
-    variable: Identifier, value: object, members: frozenset[_TypedMember]
-) -> bool | None:
-    """Return whether the value bound to ``variable`` is one of ``members``.
-
-    A ``LiteralExpression`` binding is decided by the value it denotes: an
-    integer-grammar string denotes its ``int`` (matching
-    ``LiteralExpression("5")`` being equivalent to ``LiteralExpression(5)``),
-    a float-grammar string stays a decimal-kind value, and every other
-    value passes through unchanged. Any other ``Expression`` is symbolic,
-    and membership cannot be decided against it.
-
-    Args:
-        variable: The constrained identifier the value is bound to.
-        value: The bound value.
-        members: Type-strict wrapped member set to decide against.
-
-    Returns:
-        Whether the value is a member, or ``None`` for a non-literal
-        ``Expression`` binding.
-
-    Raises:
-        ConstraintError: If the bound value is neither an ``Expression``
-            nor a value that could be a ``ConstraintMember``, or if it is
-            one but is unhashable.
-
-    """
-    if isinstance(value, Expression):
-        if not isinstance(value, LiteralExpression):
-            return None
-        value = value.value
-        if isinstance(value, str) and is_integer_valued_literal(value):
-            value = int(value)
-    else:
-        _validate_set_binding_value(variable, value)
-    try:
-        return _wrap_member(value) in members
-    except TypeError as exc:
-        raise ConstraintError(
-            f"Binding for identifier {variable!r} is unhashable: value "
-            f"{value!r} of type {type(value).__name__} cannot be checked "
-            "for membership."
-        ) from exc
-
-
-def _evaluate_set_membership_with_bindings(
-    kind_name: str,
-    variable: Identifier,
-    members: frozenset[_TypedMember],
-    bindings: ConstraintBindings,
-    *,
-    satisfied_when_member: bool,
-) -> ConstraintOutcome:
-    """Decide type-strict membership for one set-constraint leaf under bindings.
-
-    Shared by ``InSetConstraint`` and ``NotInSetConstraint``: the only
-    difference between the two kinds is the outcome polarity a member
-    decides to. Looks up ``variable`` in ``bindings``, unwraps a
-    ``LiteralExpression`` binding to the value it denotes, and decides
-    membership by type-strict comparison against ``members``. A missing
-    binding or a non-literal ``Expression`` binding yields ``UNDECIDED``
-    (DEBUG-logged, naming the identifier). A binding of a registered
-    native constant's canonical identifier yields ``UNDECIDED`` with a
-    ``WARNING``: the identifier names the constant's value rather than a
-    variable, so membership decided against the bound value would answer
-    for a world where the constant has that value. The refusal comes after
-    the checks that raise, so an unusable binding value is reported
-    instead, in the order ``EquationConstraint.evaluate_with_bindings``
-    and ``ConstraintSystem.check_satisfiability_with_bindings`` use.
-    Otherwise a membership check against a concrete value is always
-    decidable, so this never reports ``UNDECIDED`` once ``variable`` is
-    bound to a literal.
-
-    Args:
-        kind_name: Concrete leaf's class name, used to attribute the
-            DEBUG log record.
-        variable: The constrained identifier.
-        members: Type-strict wrapped member set to decide against.
-        bindings: Mapping from identifiers to candidate values.
-        satisfied_when_member: True for ``InSetConstraint`` (membership
-            satisfies the constraint), False for ``NotInSetConstraint``
-            (membership violates it).
-
-    Returns:
-        ``SATISFIED``/``VIOLATED`` when decidable; ``UNDECIDED`` when
-        ``variable`` is unbound or bound to a non-literal expression, or
-        when it is a registered native constant's canonical identifier.
-
-    Raises:
-        ConstraintError: If the bound value is neither an ``Expression``
-            nor a value that could be a ``ConstraintMember``, or if it is
-            one but is unhashable.
-
-    """
-    value: Any = bindings.get(variable, _UNBOUND)
-    if value is _UNBOUND:
-        _LOGGER.debug(
-            "%s.evaluate_with_bindings: no binding for variable %r; the "
-            "bindings supplied %s; reporting UNDECIDED",
-            kind_name,
-            variable,
-            format_comma_separated_list(tuple(bindings)) or "no identifiers",
-        )
-        return ConstraintOutcome.UNDECIDED
-    is_member = _decide_bound_value_membership(variable, value, members)
-    if try_get_native_constant_for_identifier(variable) is not None:
-        _log_native_constant_binding_refusal(
-            _LOGGER, f"{kind_name}.evaluate_with_bindings", (variable,)
-        )
-        return ConstraintOutcome.UNDECIDED
-    if is_member is None:
-        _LOGGER.debug(
-            "%s.evaluate_with_bindings: the binding for %r is the "
-            "non-literal expression %r; this leaf decides against a "
-            "concrete value and cannot consume a symbolic one; "
-            "reporting UNDECIDED",
-            kind_name,
-            variable,
-            value,
-        )
-        return ConstraintOutcome.UNDECIDED
-    if is_member is satisfied_when_member:
-        return ConstraintOutcome.SATISFIED
-    return ConstraintOutcome.VIOLATED
-
-
-@dataclass(frozen=True)
-class _SetPolarity:
-    """Knobs distinguishing one set-constraint leaf's polarity from the other's.
-
-    Attributes:
-        satisfied_when_member: True if membership satisfies the
-            constraint, False if it violates the constraint.
-        comparison_operation: Operation comparing the variable against
-            one member literal.
-        empty_set_literal: Boolean ``convert_to_expression`` returns for
-            an empty member set.
-        render_connective: Word ``__str__`` renders between the variable
-            and the member set.
-
-    """
-
-    satisfied_when_member: bool
-    comparison_operation: BinaryOperation
-    empty_set_literal: bool
-    render_connective: str
-
-
-_IN_SET_POLARITY: Final = _SetPolarity(
-    satisfied_when_member=True,
-    comparison_operation=BinaryOperation.EQUAL,
-    empty_set_literal=False,
-    render_connective="in",
-)
-_NOT_IN_SET_POLARITY: Final = _SetPolarity(
-    satisfied_when_member=False,
-    comparison_operation=BinaryOperation.NOT_EQUAL,
-    empty_set_literal=True,
-    render_connective="not in",
-)
-
-
-@dataclass(frozen=True, eq=False)
-class _SetConstraint(Constraint):
-    """Shared unary-membership predicate over one identifier.
-
-    Module-private implementing base for ``InSetConstraint`` and
-    ``NotInSetConstraint``. Both kinds decide the same question --
-    whether the bound value of ``variable`` is a member of ``values`` --
-    and differ only in polarity, so every field, normalization step,
-    cached derived state, and evaluation/conversion/rendering behavior
-    lives here. A leaf contributes only:
-
-    - ``_polarity``: the ``_SetPolarity`` deciding which outcome
-      membership maps to, which comparison a member literal is built
-      with, which boolean an empty member set converts to, and which
-      connective ``__str__`` renders.
-    - ``_combine_expressions``: folds one per-member comparison
-      expression into the whole (``logical_or``/``logical_and``).
-
-    Scope is always ``frozenset((variable,))``: both kinds are inherently
-    unary. ``evaluate_with_bindings`` resolves ``variable`` from the
-    bindings and decides by type-strict membership; a missing binding or
-    a non-literal ``Expression`` binding is ``UNDECIDED`` (DEBUG-logged),
-    and so is any binding of a registered native constant's canonical
-    identifier (WARNING-logged), while every other literal binding is
-    decidable.
-
-    Determinism:
-        ``convert_to_expression`` emits its leaves in ``repr``-sorted
-        order so structurally equivalent constraints produce
-        structurally equivalent expressions. Member serialization is
-        also ``repr``-sorted to match.
-
-    Not itself ``@register_serializable``: each leaf registers its own
-    type_id, and ``construct_from_fields`` here builds whichever concrete
-    leaf ``cls`` names.
-
-    """
-
-    variable: Identifier = field(metadata=compared_as_reference())
-    # Declared as the constructor-input type. ``__post_init__`` normalizes this
-    # in place to a deduplicated tuple of raw, unwrapped values (the same
-    # content the ``members`` property exposes) so no public attribute ever
-    # yields the internal ``_TypedMember`` wrapper. Comparison uses
-    # ``compared_as_value(key=_wrap_member_collection)`` rather than the
-    # default ``==`` so structural/alpha equivalence stays type-strict and
-    # order-independent despite the field itself being a plain tuple.
-    values: MemberCollection[ConstraintMember] = field(
-        metadata={
-            **compared_as_value(key=_wrap_member_collection),
-            "serialize_codec": _VALUES_CODEC,
-        },
-    )
-
-    @property
-    @abstractmethod
-    def _polarity(self) -> _SetPolarity:
-        """Return the polarity knobs this leaf decides membership with."""
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.variable, Identifier):
-            raise ConstraintError(
-                f"{type(self).__name__} constrains an identifier, but got "
-                f"{self.variable!r} of type {type(self.variable).__name__}. "
-                "Scope, canonical ordering, and evaluation all key on the "
-                "identifier, so a non-identifier fails far from here."
-            )
-        wrapped = _normalize_constraint_member_collection(self.values)
-        object.__setattr__(
-            self,
-            "values",
-            tuple(_unwrap_member(member) for member in wrapped),
-        )
-        # Seed the ``_members`` cache with the set this normalization pass has
-        # already built, so no reader has to derive it a second time.
-        object.__setattr__(self, "_members", wrapped)
-
-    @cached_property
-    def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the members as raw values, in canonical order.
-
-        Ordering is reproducible across processes, so a caller may iterate
-        this to produce deterministic output. The ``values`` field holds
-        the same members in an unspecified order.
-
-        """
-        return _order_members_canonically(self.values)
-
-    @cached_property
-    def _members(self) -> frozenset[_TypedMember]:
-        """Return the type-strict member set membership is decided against.
-
-        Held as a stored set rather than re-derived per read: deciding
-        membership is then a constant-time frozenset lookup, and
-        ``__repr__`` costs no wrapper allocations either.
-        ``__post_init__`` seeds it with the set built during
-        normalization; this body re-derives it from ``values`` for an
-        instance that reaches a reader unseeded, so the public field
-        stays the single source of truth.
-        """
-        return _wrap_member_collection(self.values)
-
-    @classmethod
-    @override
-    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self:
-        return cls(fields["variable"], fields["values"])
-
-    @override
-    def get_free_identifiers(self) -> frozenset[Identifier]:
-        """Return the single-identifier scope."""
-        return frozenset((self.variable,))
-
-    @override
-    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
-        """Decide membership for the bound value of ``variable``.
-
-        Missing binding or non-literal ``Expression`` binding ->
-        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A binding of
-        a registered native constant's canonical identifier ->
-        ``UNDECIDED`` (WARNING-logged), after the checks that raise, as
-        ``EquationConstraint.evaluate_with_bindings`` refuses it. Every
-        other literal binding decides by type-strict membership, polarity
-        given by ``_polarity``.
-
-        Raises:
-            ConstraintError: If the bound value is neither an
-                ``Expression`` nor a value that could be a
-                ``ConstraintMember``, or if it is one but is unhashable.
-
-        """
-        return _evaluate_set_membership_with_bindings(
-            type(self).__name__,
-            self.variable,
-            self._members,
-            bindings,
-            satisfied_when_member=self._polarity.satisfied_when_member,
-        )
-
-    @override
-    def convert_to_expression(self) -> Expression:
-        members = self._members
-        if len(members) == 0:
-            return LiteralExpression(self._polarity.empty_set_literal)
-        sorted_values = sorted(members, key=repr)
-        if len(sorted_values) == 1:
-            return self._build_leaf_expression(sorted_values[0])
-        return self._combine_expressions(
-            self._build_leaf_expression(member) for member in sorted_values
-        )
-
-    @override
-    def build_ordering_key(self) -> str:
-        """Return the kind, the variable's ``id``, and the member-set key."""
-        members = ",".join(
-            sorted(_build_member_ordering_key(member) for member in self.members)
-        )
-        return f"{type(self).__name__}|{self.variable.id}|{{{members}}}"
-
-    @abstractmethod
-    def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
-        """Fold one per-member leaf comparison expression into the whole."""
-
-    def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
-        literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return make_binary_expression(
-            self._polarity.comparison_operation, self.variable, literal
-        )
-
-    @override
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}({self.variable!r}, "
-            f"values={_render_member_set(self._members)})"
-        )
-
-    @override
-    def __str__(self) -> str:
-        return (
-            f"{self.variable} {self._polarity.render_connective} "
-            f"{_render_member_set_str(self._members)}"
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
+
+    # The attributes are copied into slots on construction, so reading one
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("expression",)
+
+    def __init__(self, expression: Expression) -> None:
+        copy_native_attributes(
+            self, EquationConstraint, _rs.EquationConstraint, "expression"
         )
 
 
 @register_serializable(type_id="in_set_constraint")
-@dataclass(frozen=True, eq=False, repr=False)
-class InSetConstraint(_SetConstraint):
+class InSetConstraint(_rs.InSetConstraint, WrappedFamilySerializable):
     """Permitted-set membership predicate over one identifier.
 
-    Scope is ``frozenset((variable,))``. ``evaluate_with_bindings``
-    reports ``SATISFIED`` iff the bound value is in ``values`` and
-    ``VIOLATED`` otherwise, comparing by type-strict equality (so
-    ``True`` and ``1`` are distinct members, and ``1`` and ``1.0`` are
-    distinct members, including inside nested ``tuple`` or ``frozenset``
-    members; a number whose type subclasses ``int`` or ``float``, such as
-    an ``IntEnum`` member, is the exact value it denotes, both as a member
-    and as a bound value). A membership check against a concrete value is
-    always decidable, so it never reports ``UNDECIDED`` once ``variable``
-    is bound to a literal, unless ``variable`` is a registered native
-    constant's canonical identifier, whose binding it refuses as
-    ``UNDECIDED``.
+    Scope is ``frozenset((variable,))``. ``evaluate_with_bindings`` reports
+    ``SATISFIED`` iff the bound value is one of the members and ``VIOLATED``
+    otherwise, comparing type-strictly: ``True``, ``1`` and ``1.0`` are
+    three members, at any depth inside a ``tuple`` or ``frozenset``. A
+    number whose type subclasses ``int`` or ``float``, such as an
+    ``IntEnum`` member, is the exact number it denotes, both as a member and
+    as a bound value, and ``-0.0`` is the member ``0.0``. A bound
+    ``LiteralExpression`` is decided by its value; any other expression,
+    and a missing binding, is ``UNDECIDED`` (``DEBUG``); so is any binding
+    of a registered native constant's canonical identifier (``WARNING``).
+    A bound value that could never be a member, or whose hash raises,
+    raises ``ConstraintError``.
+
+    Members are a ``str``, ``int``, ``float`` or ``bool``, a hashable
+    ``tuple`` or ``frozenset`` of members, or a ``Serializable`` that is
+    also ``Hashable``; ``None``, a NaN and other values raise
+    ``ConstraintError``. ``values`` and ``members`` hold the distinct
+    members in canonical order, which ``repr``, ``str``, the payload and
+    ``convert_to_expression`` use too.
+
+    Attributes:
+        variable: The constrained ``Identifier``, as given.
+        values: The members, in canonical order.
 
     """
 
-    _polarity = _IN_SET_POLARITY
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
 
-    @override
-    def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
-        return Expression.logical_or(*expressions)
+    # The attributes are copied into slots on construction, so reading one
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("members", "values", "variable")
+
+    def __init__(
+        self, variable: Identifier, values: "MemberCollection[ConstraintMember]"
+    ) -> None:
+        copy_native_attributes(
+            self, InSetConstraint, _rs.InSetConstraint, "members", "values", "variable"
+        )
 
 
 @register_serializable(type_id="not_in_set_constraint")
-@dataclass(frozen=True, eq=False, repr=False)
-class NotInSetConstraint(_SetConstraint):
+class NotInSetConstraint(_rs.NotInSetConstraint, WrappedFamilySerializable):
     """Forbidden-set membership predicate over one identifier.
 
-    Symmetric to ``InSetConstraint``: scope is ``frozenset((variable,))``,
-    and ``evaluate_with_bindings`` reports ``SATISFIED`` iff the bound
-    value is NOT in ``values`` and ``VIOLATED`` otherwise, comparing by
-    type-strict equality. A membership check against a concrete value is
-    always decidable, so it never reports ``UNDECIDED`` once ``variable``
-    is bound to a literal, unless ``variable`` is a registered native
-    constant's canonical identifier, whose binding it refuses as
-    ``UNDECIDED``.
+    Symmetric to ``InSetConstraint``: ``evaluate_with_bindings`` reports
+    ``SATISFIED`` iff the bound value is NOT one of the members and
+    ``VIOLATED`` otherwise, with the same type-strict comparison, undecided
+    cases and refusals.
+
+    Attributes:
+        variable: The constrained ``Identifier``, as given.
+        values: The members, in canonical order.
 
     """
 
-    _polarity = _NOT_IN_SET_POLARITY
+    _WIRE_FAMILY: ClassVar[str | None] = "constraint"
 
-    @override
-    def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
-        return Expression.logical_and(*expressions)
+    # The attributes are copied into slots on construction, so reading one
+    # costs a slot read rather than a call into the extension.
+    __slots__ = ("members", "values", "variable")
+
+    def __init__(
+        self, variable: Identifier, values: "MemberCollection[ConstraintMember]"
+    ) -> None:
+        copy_native_attributes(
+            self,
+            NotInSetConstraint,
+            _rs.NotInSetConstraint,
+            "members",
+            "values",
+            "variable",
+        )
+
+
+# The leaves are registered, not derived: `Constraint`'s bases carry an
+# instance layout a Rust-backed class cannot share, as for `Expression`.
+for _leaf in (EquationConstraint, InSetConstraint, NotInSetConstraint):
+    Constraint.register(_leaf)
+    FrozenMixin.register(_leaf)
+del _leaf

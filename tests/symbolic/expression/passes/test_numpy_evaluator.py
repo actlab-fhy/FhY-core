@@ -1,15 +1,16 @@
 """Tests for `fhy_core.symbolic.expression.passes.numpy`."""
 
+import contextlib
 import math
 import sys
 import time
-from collections.abc import Callable
+import warnings
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -20,6 +21,8 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NativeConstantBindingError,
     NativeFunction,
     NonBooleanLogicalOperandError,
@@ -37,17 +40,27 @@ from fhy_core.symbolic.expression import (
     register_function,
     register_native_function,
 )
-from fhy_core.symbolic.expression.passes.numpy import (
-    _BINARY_UFUNC_NAMES,
-    _NATIVE_FUNCTION_UFUNC_NAMES,
-    _UNARY_UFUNC_NAMES,
-    NumpyExpressionEvaluator,
-)
+from fhy_core.symbolic.expression.passes.numpy import NumpyExpressionEvaluator
 from fhy_core.symbolic.solver import simplify_expression
 
 from ..conftest import mock_identifier
 
+pytestmark = pytest.mark.numpy
+
 np = pytest.importorskip("numpy")
+
+
+@contextlib.contextmanager
+def _refuse_warnings() -> Iterator[None]:
+    """Turn every warning into an error: the evaluator warns nothing.
+
+    Real arithmetic is IEEE's, silently, and the NumPy ufuncs the
+    evaluator calls for the transcendental natives run with NumPy's
+    floating-point warnings silenced.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        yield
 
 
 # =============================================================================
@@ -130,27 +143,27 @@ def test_evaluates_comparison_to_boolean_array(
 # Logical operators
 # =============================================================================
 
-LOGICAL_BINARY_CASES = [
-    (BinaryOperation.LOGICAL_AND, np.logical_and),
-    (BinaryOperation.LOGICAL_OR, np.logical_or),
+LOGICAL_CASES = [
+    (LogicalOperation.AND, np.logical_and),
+    (LogicalOperation.OR, np.logical_or),
 ]
 
 
 @pytest.mark.parametrize(
     "operation, reference",
-    LOGICAL_BINARY_CASES,
-    ids=[operation.value for operation, _ in LOGICAL_BINARY_CASES],
+    LOGICAL_CASES,
+    ids=[operation.value for operation, _ in LOGICAL_CASES],
 )
-def test_evaluates_logical_binary_elementwise(
-    operation: BinaryOperation, reference: Callable[[Any, Any], Any]
+def test_evaluates_logical_expression_elementwise(
+    operation: LogicalOperation, reference: Callable[[Any, Any], Any]
 ) -> None:
     """Test logical and/or evaluate elementwise over boolean arrays."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     left = np.array([True, True, False, False])
     right = np.array([True, False, True, False])
-    expression = BinaryExpression(
-        operation, IdentifierExpression(x), IdentifierExpression(y)
+    expression = LogicalExpression(
+        operation, (IdentifierExpression(x), IdentifierExpression(y))
     )
 
     result = evaluate_expression_with_numpy(expression, {x: left, y: right})
@@ -158,6 +171,33 @@ def test_evaluates_logical_binary_elementwise(
     assert isinstance(result, np.ndarray)
     assert result.dtype == np.bool_
     assert np.array_equal(result, reference(left, right))
+
+
+@pytest.mark.parametrize(
+    "operation, reference",
+    LOGICAL_CASES,
+    ids=[operation.value for operation, _ in LOGICAL_CASES],
+)
+def test_evaluates_three_operand_logical_expression_elementwise(
+    operation: LogicalOperation, reference: Callable[[Any, Any], Any]
+) -> None:
+    """Test an n-ary logical expression reduces all its operands elementwise."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    z = mock_identifier("z", 2)
+    first = np.array([True, True, True, True, False, False, False, False])
+    second = np.array([True, True, False, False, True, True, False, False])
+    third = np.array([True, False, True, False, True, False, True, False])
+    expression = LogicalExpression(
+        operation,
+        (IdentifierExpression(x), IdentifierExpression(y), IdentifierExpression(z)),
+    )
+
+    result = evaluate_expression_with_numpy(expression, {x: first, y: second, z: third})
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.bool_
+    assert np.array_equal(result, reference(reference(first, second), third))
 
 
 def test_evaluates_logical_not_elementwise() -> None:
@@ -199,8 +239,8 @@ def test_logical_and_of_two_int_literals_raises_directly() -> None:
     unscreened lowering would silently accept two ill-typed integer
     operands and hand back a `True`-valued answer that means nothing.
     """
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, LiteralExpression(2), LiteralExpression(4)
+    expression = LogicalExpression(
+        LogicalOperation.AND, (LiteralExpression(2), LiteralExpression(4))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -224,8 +264,8 @@ def test_logical_and_of_two_int_bound_identifiers_raises_directly() -> None:
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    expression = LogicalExpression(
+        LogicalOperation.AND, (IdentifierExpression(x), IdentifierExpression(y))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -236,8 +276,8 @@ def test_logical_and_of_two_float_arrays_raises_directly() -> None:
     """Test a float-dtype array binding under `logical_and` is refused."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    expression = LogicalExpression(
+        LogicalOperation.AND, (IdentifierExpression(x), IdentifierExpression(y))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
@@ -246,28 +286,24 @@ def test_logical_and_of_two_float_arrays_raises_directly() -> None:
         )
 
 
-def test_logical_not_of_an_object_dtype_array_raises_as_a_runtime_backstop() -> None:
-    """Test an operand the static check cannot classify still raises at runtime.
+def test_logical_not_of_an_object_dtype_array_is_refused_when_converted() -> None:
+    """Test an object-dtype binding is refused before the evaluation.
 
-    An object-dtype array carries no numeric or boolean dtype the static
-    pre-check can read from the environment, so the refusal has to come
-    from a runtime guard instead -- the same mechanism, and the same
-    `PassExecutionError`-wrapped surfacing, as the existing dtype guard on
-    a piecewise condition.
+    The evaluator computes in the Boolean, ``int64`` and ``float64``
+    domains, so a binding of any other kind is refused with ``TypeError``
+    when it is converted, and no operand is left to a runtime guard.
     """
     x = mock_identifier("x", 0)
     expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(x))
 
-    with pytest.raises(PassExecutionError) as exc_info:
+    with pytest.raises(TypeError, match="dtype object"):
         evaluate_expression_with_numpy(expression, {x: np.array([1, 2], dtype=object)})
-
-    assert isinstance(exc_info.value.__cause__, NonBooleanLogicalOperandError)
 
 
 def test_logical_connectives_still_evaluate_boolean_literals() -> None:
     """Test bare Python bool literals under `logical_and`/`logical_not` still work."""
-    conjunction = BinaryExpression(
-        BinaryOperation.LOGICAL_AND, LiteralExpression(True), LiteralExpression(False)
+    conjunction = LogicalExpression(
+        LogicalOperation.AND, (LiteralExpression(True), LiteralExpression(False))
     )
     negation = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
 
@@ -401,9 +437,8 @@ _INTEGER_SORT_FUNCTION_NAMES = ["round", "floor", "ceil"]
 def test_integer_sort_native_returns_integer_dtype(function_name: str) -> None:
     """Test an ``INT``-sorted native casts its result to an integer dtype.
 
-    ``numpy.floor``/``round``/``ceil`` return floating-point by default;
-    the evaluator casts to the declared ``INT`` result sort so the NumPy
-    path agrees with ``evaluate_expression`` and the declared sort.
+    An integer-sorted result is an ``int64``, agreeing with
+    ``evaluate_expression`` and the declared sort.
     """
     x = mock_identifier("x", 0)
     values = np.array([2.7, -1.2, 3.5])
@@ -415,11 +450,11 @@ def test_integer_sort_native_returns_integer_dtype(function_name: str) -> None:
     assert np.issubdtype(result.dtype, np.integer)
 
 
-def test_real_sort_native_preserves_float_width() -> None:
-    """Test a ``REAL``-sorted native leaves a ``float32`` result as ``float32``.
+def test_real_sort_native_widens_a_float32_binding_to_float64() -> None:
+    """Test a ``float32`` binding is read as ``float64``, the real domain.
 
-    Real-sorted results are already floating-point, so the evaluator casts
-    nothing and the input's narrower width survives the call.
+    The evaluator computes reals in ``float64``, so a narrower binding is
+    widened and a real-sorted result is ``float64``.
     """
     x = mock_identifier("x", 0)
     values = np.array([0.1, 0.5, 0.9], dtype=np.float32)
@@ -428,65 +463,26 @@ def test_real_sort_native_preserves_float_width() -> None:
     result = evaluate_expression_with_numpy(expression, {x: values})
 
     assert isinstance(result, np.ndarray)
-    assert result.dtype == np.float32
+    assert result.dtype == np.float64
+    assert np.array_equal(result, np.sqrt(values.astype(np.float64)))
 
 
-_RESULT_SORT_DTYPE_CASES = [
-    (FunctionSort.BOOL, np.bool_),
-    (FunctionSort.NAT, np.int64),
-    (FunctionSort.INT, np.int64),
-]
+def test_native_results_take_the_dtype_of_their_result_sort() -> None:
+    """Test an ``INT``-sorted native gives ``int64`` and a ``REAL`` one ``float64``.
 
-
-@pytest.mark.parametrize(
-    "result_sort, expected_dtype",
-    _RESULT_SORT_DTYPE_CASES,
-    ids=[sort.name for sort, _ in _RESULT_SORT_DTYPE_CASES],
-)
-def test_cast_to_result_sort_casts_to_declared_dtype(
-    result_sort: FunctionSort, expected_dtype: type
-) -> None:
-    """Test each cast-table sort casts a float result to its declared dtype.
-
-    No built-in native is ``NAT``- or ``BOOL``-sorted, so those branches
-    are unreachable through a whole-expression walk. Exercise the helper
-    directly to guard the cast table against a dtype-name typo.
+    The cast of each result sort is specified by the Rust evaluator's
+    stories; no built-in native is ``NAT``- or ``BOOL``-sorted, so Python
+    reaches the ``INT`` and ``REAL`` casts only.
     """
-    evaluator = NumpyExpressionEvaluator({}, np)
-
-    result = evaluator._cast_to_result_sort(np.array([1.0, 0.0]), result_sort)
-
-    assert result.dtype == expected_dtype
-
-
-def test_cast_to_result_sort_passes_real_through_unchanged() -> None:
-    """Test a ``REAL`` result sort leaves the array dtype untouched."""
-    evaluator = NumpyExpressionEvaluator({}, np)
+    x = mock_identifier("x", 0)
     values = np.array([1.5, 2.5], dtype=np.float32)
 
-    result = evaluator._cast_to_result_sort(values, FunctionSort.REAL)
+    rounded = evaluate_expression_with_numpy(call("round", x), {x: values})
+    root = evaluate_expression_with_numpy(call("sqrt", x), {x: values})
 
-    assert result.dtype == np.float32
-
-
-@pytest.mark.parametrize(
-    "result_sort",
-    [FunctionSort.BOOL, FunctionSort.NAT, FunctionSort.INT],
-    ids=["BOOL", "NAT", "INT"],
-)
-def test_cast_to_result_sort_raises_for_non_finite_value(
-    result_sort: FunctionSort,
-) -> None:
-    """Test each cast-table sort raises ``NonFiniteCastError`` for a non-finite input.
-
-    Exercised directly (bypassing a whole-expression walk) for the same
-    reason as ``test_cast_to_result_sort_casts_to_declared_dtype``: no
-    built-in native is ``NAT``- or ``BOOL``-sorted.
-    """
-    evaluator = NumpyExpressionEvaluator({}, np)
-
-    with pytest.raises(NonFiniteCastError):
-        evaluator._cast_to_result_sort(np.array([1.0, np.nan]), result_sort)
+    assert rounded.dtype == np.int64
+    assert np.array_equal(rounded, [2, 2])
+    assert root.dtype == np.float64
 
 
 @pytest.mark.parametrize("function_name", _INTEGER_SORT_FUNCTION_NAMES)
@@ -503,11 +499,9 @@ def test_non_finite_integer_sort_result_raises_non_finite_cast_error(
     values = np.array([np.inf, -np.inf, np.nan])
     expression = call(function_name, x)
 
-    with np.errstate(all="ignore"):
-        with pytest.raises(PassExecutionError) as exception_info:
+    with _refuse_warnings():
+        with pytest.raises(NonFiniteCastError):
             evaluate_expression_with_numpy(expression, {x: values})
-
-    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 def test_partially_non_finite_integer_sort_result_raises() -> None:
@@ -520,11 +514,9 @@ def test_partially_non_finite_integer_sort_result_raises() -> None:
     values = np.array([2.7, np.nan, 3.5])
     expression = call("round", x)
 
-    with np.errstate(all="ignore"):
-        with pytest.raises(PassExecutionError) as exception_info:
+    with _refuse_warnings():
+        with pytest.raises(NonFiniteCastError):
             evaluate_expression_with_numpy(expression, {x: values})
-
-    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 def test_floor_of_sqrt_of_negative_raises_non_finite_cast_error() -> None:
@@ -532,11 +524,9 @@ def test_floor_of_sqrt_of_negative_raises_non_finite_cast_error() -> None:
     x = mock_identifier("x", 0)
     expression = call("floor", call("sqrt", x))
 
-    with np.errstate(all="ignore"):
-        with pytest.raises(PassExecutionError) as exception_info:
+    with _refuse_warnings():
+        with pytest.raises(NonFiniteCastError):
             evaluate_expression_with_numpy(expression, {x: np.array([-1.0])})
-
-    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 def test_round_of_reciprocal_at_zero_raises_non_finite_cast_error() -> None:
@@ -544,11 +534,9 @@ def test_round_of_reciprocal_at_zero_raises_non_finite_cast_error() -> None:
     x = mock_identifier("x", 0)
     expression = call("round", LiteralExpression(1.0) / IdentifierExpression(x))
 
-    with np.errstate(all="ignore"):
-        with pytest.raises(PassExecutionError) as exception_info:
+    with _refuse_warnings():
+        with pytest.raises(NonFiniteCastError):
             evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
-
-    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 def test_piecewise_condition_guards_the_non_finite_cast_of_its_own_branch() -> None:
@@ -569,7 +557,7 @@ def test_piecewise_condition_guards_the_non_finite_cast_of_its_own_branch() -> N
         otherwise=LiteralExpression(0),
     )
 
-    with np.errstate(all="ignore"):
+    with _refuse_warnings():
         result = evaluate_expression_with_numpy(
             expression, {x: np.array([-1.0, 4.0, 9.0])}
         )
@@ -594,11 +582,9 @@ def test_piecewise_raises_when_the_selected_branch_is_non_finite() -> None:
         otherwise=LiteralExpression(0),
     )
 
-    with np.errstate(all="ignore"):
-        with pytest.raises(PassExecutionError) as exception_info:
+    with _refuse_warnings():
+        with pytest.raises(NonFiniteCastError):
             evaluate_expression_with_numpy(expression, {x: np.array([-1.0, 4.0])})
-
-    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 def _make_unguarded_sqrt_piecewise(x: Identifier) -> Expression:
@@ -633,7 +619,7 @@ def test_outer_piecewise_condition_guards_a_nested_piecewise() -> None:
         otherwise=LiteralExpression(-1),
     )
 
-    with np.errstate(all="ignore"):
+    with _refuse_warnings():
         result = evaluate_expression_with_numpy(expression, {x: np.array([-1.0, 4.0])})
 
     np.testing.assert_array_equal(result, np.array([-1, 2]))
@@ -655,11 +641,9 @@ def test_nested_piecewise_still_raises_when_the_outer_branch_selects_it() -> Non
         otherwise=LiteralExpression(-1),
     )
 
-    with np.errstate(all="ignore"):
-        with pytest.raises(PassExecutionError) as exception_info:
+    with _refuse_warnings():
+        with pytest.raises(NonFiniteCastError):
             evaluate_expression_with_numpy(expression, {x: np.array([-1.0, 4.0])})
-
-    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 # =============================================================================
@@ -676,7 +660,7 @@ def test_sqrt_of_negative_returns_nan_without_raising() -> None:
     x = mock_identifier("x", 0)
     expression = call("sqrt", x)
 
-    with np.errstate(all="ignore"):
+    with _refuse_warnings():
         result = evaluate_expression_with_numpy(expression, {x: np.array([-1.0])})
 
     assert np.isnan(result).all()
@@ -687,7 +671,7 @@ def test_log_of_zero_returns_negative_infinity_without_raising() -> None:
     x = mock_identifier("x", 0)
     expression = call("log", x)
 
-    with np.errstate(all="ignore"):
+    with _refuse_warnings():
         result = evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
 
     assert np.isneginf(result).all()
@@ -699,7 +683,7 @@ def test_division_by_zero_returns_infinity_without_raising() -> None:
     y = mock_identifier("y", 1)
     expression = IdentifierExpression(x) / IdentifierExpression(y)
 
-    with np.errstate(all="ignore"):
+    with _refuse_warnings():
         result = evaluate_expression_with_numpy(
             expression, {x: np.array([1.0]), y: np.array([0.0])}
         )
@@ -764,6 +748,7 @@ def test_evaluates_negated_float_grammar_string_literal_with_exact_binary_value(
     assert result == -0.5
 
 
+@pytest.mark.sympy
 def test_evaluates_simplified_half_division_of_a_bound_variable() -> None:
     """Test a simplified division-by-two literal evaluates without precision loss."""
     x = mock_identifier("x", 0)
@@ -792,10 +777,8 @@ def test_raises_for_float_grammar_string_literal_with_no_exact_binary_value(
     """Test a float-grammar string literal with no exact binary value is refused."""
     expression = LiteralExpression(value)
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(StringLiteralPrecisionError):
         evaluate_expression_with_numpy(expression, {})
-
-    assert isinstance(exception_info.value.__cause__, StringLiteralPrecisionError)
 
 
 # =============================================================================
@@ -874,12 +857,8 @@ def test_raises_for_unbound_identifier_merely_named_like_a_native_constant() -> 
     pi_lookalike = mock_identifier("pi", 833)
     expression = IdentifierExpression(pi_lookalike) + 1.0
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(UnboundVariableError, match="shares its name with the constant"):
         evaluate_expression_with_numpy(expression, {})
-
-    cause = exception_info.value.__cause__
-    assert isinstance(cause, UnboundVariableError)
-    assert "shares its name with the native constant" in str(cause)
 
 
 def test_raises_for_a_binding_that_shadows_a_referenced_native_constant() -> None:
@@ -1046,14 +1025,13 @@ def test_piecewise_with_over_one_hundred_cases_selects_correctly() -> None:
     assert np.array_equal(result, [0, 37, 149, -1, -1])
 
 
-def test_unselected_case_domain_error_still_warns_and_is_discarded() -> None:
-    """Test a domain error in a never-selected case still warns (no laziness).
+def test_unselected_case_domain_error_is_discarded_without_a_warning() -> None:
+    """Test a domain error in an unselected case is discarded, and warns nothing.
 
-    ``numpy.where`` evaluates every case eagerly regardless of which one
-    is ultimately selected, so a domain error (``log`` of zero) in a case
-    whose condition is always false still raises NumPy's usual warning
-    and produces ``nan``/``inf`` for that case -- even though the value
-    is discarded and never appears in the final result.
+    Every case is evaluated for every element, so ``log(0)`` in a case
+    whose condition is always false still computes ``-inf`` there. The
+    element is discarded, and real arithmetic is IEEE's, with no NumPy
+    ``RuntimeWarning``.
     """
     x = mock_identifier("x", 0)
     x_expression = IdentifierExpression(x)
@@ -1063,7 +1041,8 @@ def test_unselected_case_domain_error_still_warns_and_is_discarded() -> None:
     )
     values = np.array([0.0])
 
-    with pytest.warns(RuntimeWarning, match="divide by zero"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         result = evaluate_expression_with_numpy(expression, {x: values})
 
     assert np.allclose(result, [0.0])
@@ -1120,12 +1099,16 @@ def test_piecewise_with_non_boolean_condition_array_raises() -> None:
     )
     values = np.array([0, 1, 2])
 
-    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="condition of piecewise case 0"
+    ):
         evaluate_expression_with_numpy(expression, {condition: values})
 
 
-def test_piecewise_with_object_dtype_condition_array_raises_during_evaluation() -> None:
-    """Test a condition whose dtype declares no sort still raises during evaluation."""
+def test_piecewise_with_object_dtype_condition_array_is_refused_when_converted() -> (
+    None
+):
+    """Test a condition bound to an object-dtype array is refused as a binding."""
     condition = mock_identifier("c", 0)
     expression = piecewise(
         (IdentifierExpression(condition), LiteralExpression(1)),
@@ -1133,10 +1116,8 @@ def test_piecewise_with_object_dtype_condition_array_raises_during_evaluation() 
     )
     values = np.array([0, 1, 2], dtype=object)
 
-    with pytest.raises(PassExecutionError, match=r"(?i)boolean") as exception_info:
+    with pytest.raises(TypeError, match="dtype object"):
         evaluate_expression_with_numpy(expression, {condition: values})
-
-    assert isinstance(exception_info.value.__cause__, TypeError)
 
 
 def test_piecewise_with_boolean_condition_array_is_unaffected() -> None:
@@ -1471,49 +1452,47 @@ def test_raises_for_unbound_variable() -> None:
     x = mock_identifier("unbound", 0)
     expression = IdentifierExpression(x) + 1.0
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(UnboundVariableError):
         evaluate_expression_with_numpy(expression, {})
-
-    assert isinstance(exception_info.value.__cause__, UnboundVariableError)
 
 
 def test_raises_for_unbound_identifier_matching_a_native_function_name() -> None:
     """Test an unbound identifier named like a native function is not resolved.
 
-    The error message distinguishes this from an unknown name: it names
-    the registered function and points the caller at the call form.
+    The error message distinguishes this from an unknown name: it says the
+    name is a function's and points the caller at the call form.
     """
     exp_reference = mock_identifier("exp", 0)
     expression = IdentifierExpression(exp_reference) + 1.0
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(UnboundVariableError, match=r"names a function.*exp\(\.\.\.\)"):
         evaluate_expression_with_numpy(expression, {})
 
-    cause = exception_info.value.__cause__
-    assert isinstance(cause, UnboundVariableError)
-    assert "names a registered function" in str(cause)
 
+def test_evaluates_erf_as_math_does() -> None:
+    """Test ``erf`` is computed although NumPy has no ufunc for it.
 
-def test_raises_for_unsupported_erf() -> None:
-    """Test ``erf`` raises ``UnsupportedNumpyLoweringError``."""
+    ``erf`` has no NumPy ufunc, so the core computes it.
+    """
     x = mock_identifier("x", 0)
-    expression = call("erf", x)
+    values = np.array([-1.0, 0.0, 0.5, 2.0])
 
-    with pytest.raises(PassExecutionError) as exception_info:
-        evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
+    result = evaluate_expression_with_numpy(call("erf", x), {x: values})
 
-    assert isinstance(exception_info.value.__cause__, UnsupportedNumpyLoweringError)
+    assert np.allclose(result, [math.erf(value) for value in values], rtol=1e-15)
 
 
-def test_raises_for_gelu_due_to_unsupported_erf() -> None:
-    """Test ``gelu`` raises because it inlines to an ``erf`` call."""
+def test_evaluates_gelu_through_erf() -> None:
+    """Test ``gelu`` inlines to its body and evaluates, ``erf`` included."""
     x = mock_identifier("x", 0)
-    expression = call("gelu", x)
+    values = np.array([-1.0, 0.0, 1.5])
 
-    with pytest.raises(PassExecutionError) as exception_info:
-        evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
+    result = evaluate_expression_with_numpy(call("gelu", x), {x: values})
 
-    assert isinstance(exception_info.value.__cause__, UnsupportedNumpyLoweringError)
+    expected = [
+        0.5 * value * (1.0 + math.erf(value / math.sqrt(2.0))) for value in values
+    ]
+    assert np.allclose(result, expected, rtol=1e-15)
 
 
 def test_raises_for_unregistered_function_name() -> None:
@@ -1521,20 +1500,16 @@ def test_raises_for_unregistered_function_name() -> None:
     x = mock_identifier("x", 0)
     expression = call("np_eval_never_registered", x)
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(EntryLookupError):
         evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
-
-    assert isinstance(exception_info.value.__cause__, EntryLookupError)
 
 
 def test_raises_when_calling_native_constant() -> None:
     """Test calling a native constant surfaces ``FunctionArityError``."""
     expression = CallExpression("pi", ())
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(FunctionArityError):
         evaluate_expression_with_numpy(expression, {})
-
-    assert isinstance(exception_info.value.__cause__, FunctionArityError)
 
 
 def test_raises_for_native_function_without_numpy_mapping(
@@ -1551,32 +1526,27 @@ def test_raises_for_native_function_without_numpy_mapping(
     y = mock_identifier("y", 1)
     expression = call("np_eval_atan2", x, y)
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(UnsupportedNumpyLoweringError):
         evaluate_expression_with_numpy(
             expression, {x: np.array([1.0]), y: np.array([1.0])}
         )
 
-    assert isinstance(exception_info.value.__cause__, UnsupportedNumpyLoweringError)
-
 
 def test_integer_base_to_negative_integer_power_raises_value_error() -> None:
-    """Test an integer base to a negative integer power surfaces ``ValueError``.
+    """Test an integer base to a negative integer power raises ``ValueError``.
 
-    ``numpy.power`` rejects integer bases with negative integer exponents
-    (rather than folding to ``nan``/``inf``); the raw ``ValueError`` surfaces
-    wrapped in ``PassExecutionError``.
+    An integer power stays an integer, and no integer is ``2 ** -1``, so
+    the element fails, and the error names the node.
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
         BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(-1)
     )
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(ValueError, match="negative integer power") as exception_info:
         evaluate_expression_with_numpy(expression, {x: np.array([2, 3])})
 
-    cause = exception_info.value.__cause__
-    assert type(cause) is ValueError
-    assert "power" in str(cause)
+    assert type(exception_info.value) is ValueError
 
 
 def test_raises_for_recursive_function(
@@ -1585,8 +1555,7 @@ def test_raises_for_recursive_function(
     """Test a transitively-recursive function surfaces ``RecursionError``.
 
     Inlining runs before the walk; a self-recursive registration cannot be
-    inlined, so the inliner's recursion guard raises ``RecursionError``,
-    wrapped as ``PassExecutionError``.
+    inlined, so the inliner's recursion guard raises ``RecursionError``.
     """
     x = mock_identifier("x", 0)
     register_function(
@@ -1598,10 +1567,8 @@ def test_raises_for_recursive_function(
     )
     expression = call("np_eval_recursive", IdentifierExpression(x))
 
-    with pytest.raises(PassExecutionError) as exception_info:
+    with pytest.raises(RecursionError):
         evaluate_expression_with_numpy(expression, {x: np.array([1.0])})
-
-    assert isinstance(exception_info.value.__cause__, RecursionError)
 
 
 def test_raises_import_error_when_numpy_is_missing(
@@ -1628,57 +1595,105 @@ def test_does_not_mutate_input_expression() -> None:
 
 
 # =============================================================================
-# Lowering-table coverage
+# Every operation and native built-in is evaluated
 # =============================================================================
 
-_UNSUPPORTED_NATIVE_FUNCTION_NAMES = frozenset({"erf"})
 
+@pytest.mark.parametrize("operation", list(BinaryOperation))
+def test_every_binary_operation_is_evaluated(operation: BinaryOperation) -> None:
+    """Test every ``BinaryOperation`` evaluates over arrays, as NumPy does.
 
-def test_every_binary_operation_has_a_lowering() -> None:
-    """Test every ``BinaryOperation`` member maps to a NumPy ufunc.
-
-    ``visit_binary_expression`` subscripts the table directly, so a member
-    added without a lowering would raise a raw ``KeyError`` only when that
-    operator is first evaluated; this makes the drift a deterministic
-    failure instead.
+    The core defines each operation, so this compares every operation with
+    NumPy on values where the two agree.
     """
-    assert set(_BINARY_UFUNC_NAMES) == set(BinaryOperation)
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    left = np.array([6.0, -4.0, 9.0])
+    right = np.array([2.0, 3.0, -3.0])
+    reference = {
+        BinaryOperation.ADD: np.add,
+        BinaryOperation.SUBTRACT: np.subtract,
+        BinaryOperation.MULTIPLY: np.multiply,
+        BinaryOperation.DIVIDE: np.true_divide,
+        BinaryOperation.FLOOR_DIVIDE: np.floor_divide,
+        BinaryOperation.MODULO: np.mod,
+        BinaryOperation.POWER: np.power,
+        BinaryOperation.EQUAL: np.equal,
+        BinaryOperation.NOT_EQUAL: np.not_equal,
+        BinaryOperation.LESS: np.less,
+        BinaryOperation.LESS_EQUAL: np.less_equal,
+        BinaryOperation.GREATER: np.greater,
+        BinaryOperation.GREATER_EQUAL: np.greater_equal,
+    }[operation]
+    expression = BinaryExpression(
+        operation, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    result = evaluate_expression_with_numpy(expression, {x: left, y: right})
+
+    assert np.array_equal(result, reference(left, right))
 
 
-def test_every_unary_operation_has_a_lowering() -> None:
-    """Test every ``UnaryOperation`` member maps to a NumPy ufunc."""
-    assert set(_UNARY_UFUNC_NAMES) == set(UnaryOperation)
+def test_every_unary_operation_is_evaluated() -> None:
+    """Test every ``UnaryOperation`` evaluates over arrays."""
+    x = mock_identifier("x", 0)
+    p = mock_identifier("p", 1)
+    values = np.array([1.5, -2.0])
+    flags = np.array([True, False])
+    results = {
+        UnaryOperation.NEGATE: (IdentifierExpression(x), -values),
+        UnaryOperation.POSITIVE: (IdentifierExpression(x), values),
+        UnaryOperation.LOGICAL_NOT: (IdentifierExpression(p), ~flags),
+    }
+
+    assert set(results) == set(UnaryOperation)
+    for operation, (operand, expected) in results.items():
+        result = evaluate_expression_with_numpy(
+            UnaryExpression(operation, operand), {x: values, p: flags}
+        )
+        assert np.array_equal(result, expected), operation
 
 
-def test_every_lowered_native_name_resolves_to_a_numpy_callable() -> None:
-    """Test every lowering-table value names a real, callable NumPy attribute.
+def test_every_builtin_native_function_is_evaluated() -> None:
+    """Test every built-in native evaluates over arrays, as ``math`` computes it.
 
-    A typo'd ufunc name would otherwise surface only as an ``AttributeError``
-    at call time; this makes the drift a fast, deterministic failure.
+    Every native built-in has a kernel, ``erf`` included, so none raises
+    ``UnsupportedNumpyLoweringError``.
     """
-    for ufunc_name in _NATIVE_FUNCTION_UFUNC_NAMES.values():
-        assert callable(getattr(np, ufunc_name))
-
-
-def test_every_builtin_native_function_has_a_lowering() -> None:
-    """Test every built-in native (besides ``erf``) has a NumPy lowering.
-
-    Guards against a newly-registered built-in native silently falling
-    through to ``UnsupportedNumpyLoweringError`` because nobody added it to
-    the lowering table.
-    """
+    x = mock_identifier("x", 0)
+    values = np.array([0.25, 0.5, 0.75])
+    references: dict[str, Callable[[float], float]] = {
+        "exp": math.exp,
+        "exp2": lambda value: 2.0**value,
+        "log": math.log,
+        "log2": math.log2,
+        "log10": math.log10,
+        "sqrt": math.sqrt,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "arcsin": math.asin,
+        "arccos": math.acos,
+        "arctan": math.atan,
+        "sinh": math.sinh,
+        "cosh": math.cosh,
+        "tanh": math.tanh,
+        "erf": math.erf,
+        "round": round,
+        "floor": math.floor,
+        "ceil": math.ceil,
+    }
     native_function_names = {
         entry.name
         for entry in get_registered_entries().values()
         if isinstance(entry, NativeFunction)
     }
-    unmapped = (
-        native_function_names
-        - set(_NATIVE_FUNCTION_UFUNC_NAMES)
-        - _UNSUPPORTED_NATIVE_FUNCTION_NAMES
-    )
 
-    assert not unmapped
+    assert native_function_names == set(references)
+    for name, reference in references.items():
+        result = evaluate_expression_with_numpy(call(name, x), {x: values})
+        expected = [reference(float(value)) for value in values]
+        assert np.allclose(result, expected, rtol=1e-14), name
 
 
 # =============================================================================
@@ -1697,7 +1712,7 @@ def test_numpy_expression_evaluator_snapshots_environment_at_construction() -> N
     """
     x = mock_identifier("x", 0)
     environment = {x: 1}
-    evaluator = NumpyExpressionEvaluator(environment, np)
+    evaluator = NumpyExpressionEvaluator(environment)
 
     environment[x] = 2
 

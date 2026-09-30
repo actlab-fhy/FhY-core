@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 72c8e949276f72ee9b14efe49733e4b33cba31ac2cc8004a4407eba5a1161652 # shrinks to operations = [AddNamespace(2, Some(1)), AddNamespace(1, None), AddSymbol(2, 3), AddSymbol(1, 3)]

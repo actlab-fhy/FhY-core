@@ -2,6 +2,7 @@
 
 import pytest
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     CallExpression,
     Expression,
@@ -12,8 +13,6 @@ from fhy_core.symbolic.expression import (
     piecewise,
 )
 from fhy_core.traits import FrozenMutationError, HasOperands
-
-from .conftest import mock_identifier
 
 # =============================================================================
 # PiecewiseExpression: construction and accessors
@@ -65,7 +64,7 @@ def test_piecewise_expression_satisfies_has_operands_protocol() -> None:
 
 
 # =============================================================================
-# PiecewiseExpression.__post_init__: validation errors
+# PiecewiseExpression construction: validation errors
 # =============================================================================
 
 
@@ -86,29 +85,35 @@ def test_piecewise_expression_rejects_mismatched_condition_and_value_lengths() -
 
 
 def test_piecewise_expression_rejects_non_expression_condition() -> None:
-    """Test a bare Python value in ``conditions`` raises ``ValueError``.
+    """Test a bare Python value in ``conditions`` raises ``TypeError``.
 
-    A bare ``bool``/``int`` condition would otherwise construct cleanly and
-    silently bypass every ``Expression``-only downstream pass.
+    The core's node holds expressions only, so a bare ``bool``/``int``
+    condition is refused at construction with the argument's type.
     """
-    with pytest.raises(ValueError, match=r"(?i)condition"):
+    with pytest.raises(
+        TypeError, match="PiecewiseExpression conditions must be an Expression"
+    ):
         PiecewiseExpression((True,), (LiteralExpression(1),), LiteralExpression(0))  # type: ignore[arg-type]
 
 
 def test_piecewise_expression_rejects_non_expression_value() -> None:
-    """Test a bare Python value in ``values`` raises ``ValueError``."""
-    with pytest.raises(ValueError, match=r"(?i)value"):
+    """Test a bare Python value in ``values`` raises ``TypeError``."""
+    with pytest.raises(
+        TypeError, match="PiecewiseExpression values must be an Expression"
+    ):
         PiecewiseExpression((LiteralExpression(True),), (1,), LiteralExpression(0))  # type: ignore[arg-type]
 
 
 def test_piecewise_expression_rejects_non_expression_otherwise() -> None:
-    """Test a bare Python value ``otherwise`` raises ``ValueError``."""
-    with pytest.raises(ValueError, match=r"(?i)otherwise"):
+    """Test a bare Python value ``otherwise`` raises ``TypeError``."""
+    with pytest.raises(
+        TypeError, match="PiecewiseExpression otherwise must be an Expression"
+    ):
         PiecewiseExpression((LiteralExpression(True),), (LiteralExpression(1),), 0)  # type: ignore[arg-type]
 
 
 # =============================================================================
-# PiecewiseExpression.__post_init__: literal-condition boolean check
+# PiecewiseExpression construction: literal-condition boolean check
 # =============================================================================
 
 
@@ -139,15 +144,14 @@ def test_piecewise_expression_rejects_non_boolean_literal_condition(
 ) -> None:
     """Test a non-boolean ``LiteralExpression`` condition raises ``ValueError``.
 
-    ``ExpressionTypeChecker`` only ever classifies a literal as boolean
-    when its stored value is a Python ``bool``; every other literal
-    value synthesizes to ``UINT``/``INT``/``FLOAT`` or is unsupported
-    entirely. ``PiecewiseExpression`` mirrors that classification at
-    construction time, since a literal's boolean-ness is knowable
-    without any surrounding type context, unlike a non-literal
-    condition's.
+    A literal's boolean-ness is knowable without any surrounding type
+    context, unlike a non-literal condition's, so the core refuses a
+    literal condition other than a Boolean at construction, naming the
+    case.
     """
-    with pytest.raises(ValueError, match=r"(?i)condition"):
+    with pytest.raises(
+        ValueError, match="condition of piecewise case 0 is a non-boolean literal"
+    ):
         PiecewiseExpression(
             (LiteralExpression(value),),
             (LiteralExpression(1),),
@@ -165,7 +169,7 @@ def test_piecewise_expression_accepts_non_literal_condition_regardless_of_kind()
     whether it is actually boolean-typed is a question for the type
     checker, not construction.
     """
-    identifier = mock_identifier("flag", 0)
+    identifier = Identifier("flag")
     condition = IdentifierExpression(identifier)
 
     expression = PiecewiseExpression(
@@ -176,7 +180,7 @@ def test_piecewise_expression_accepts_non_literal_condition_regardless_of_kind()
 
 
 # =============================================================================
-# PiecewiseExpression.__post_init__: list-to-tuple coercion
+# PiecewiseExpression construction: list-to-tuple coercion
 # =============================================================================
 
 
@@ -185,13 +189,13 @@ def test_piecewise_expression_coerces_list_conditions_and_values_to_tuples() -> 
 
     ``conditions``/``values`` are declared as ``tuple[Expression, ...]``, but
     nothing at the language level stops a caller from passing a ``list``
-    instead; ``__post_init__`` normalizes either input to a real tuple.
+    instead; construction normalizes either input to a real tuple.
     """
     condition = LiteralExpression(True)
     value = LiteralExpression(1)
     otherwise = LiteralExpression(0)
 
-    expression = PiecewiseExpression([condition], [value], otherwise)  # type: ignore[arg-type]
+    expression = PiecewiseExpression([condition], [value], otherwise)
 
     assert type(expression.conditions) is tuple
     assert type(expression.values) is tuple
@@ -207,12 +211,12 @@ def test_piecewise_expression_constructed_from_lists_rejects_in_place_mutation()
     Before coercion, a caller passing a ``list`` produced an instance whose
     ``is_frozen`` was ``True`` yet whose ``.conditions``/``.values`` could
     still be mutated in place via ``.append``, since that mutation never goes
-    through ``__setattr__``. Coercing to a real ``tuple`` in ``__post_init__``
+    through ``__setattr__``. Coercing to a real ``tuple`` at construction
     closes that gap: a ``tuple`` has no ``.append`` at all.
     """
     expression = PiecewiseExpression(
-        [LiteralExpression(True)],  # type: ignore[arg-type]
-        [LiteralExpression(1)],  # type: ignore[arg-type]
+        [LiteralExpression(True)],
+        [LiteralExpression(1)],
         LiteralExpression(0),
     )
 
@@ -330,7 +334,7 @@ def test_rebuild_with_visit_children_rejects_even_or_too_short_child_count(
     )
     bad_children = tuple(LiteralExpression(i) for i in range(child_count))
 
-    with pytest.raises(ValueError, match=r"(?i)child"):
+    with pytest.raises(ValueError, match=f"expected 3 children, got {child_count}"):
         expression.rebuild_with_visit_children(bad_children)
 
 
@@ -367,7 +371,7 @@ def test_piecewise_helper_builds_multiple_cases_in_declared_order() -> None:
 
 def test_piecewise_helper_coerces_identifier_operand_in_condition() -> None:
     """Test ``piecewise(...)`` wraps an ``Identifier`` condition in an expression."""
-    identifier = mock_identifier("flag", 0)
+    identifier = Identifier("flag")
 
     expression = piecewise((identifier, 1), otherwise=0)
 
@@ -377,7 +381,7 @@ def test_piecewise_helper_coerces_identifier_operand_in_condition() -> None:
 
 def test_piecewise_helper_coerces_identifier_operand_in_value() -> None:
     """Test ``piecewise(...)`` wraps an ``Identifier`` value in an expression."""
-    identifier = mock_identifier("x", 0)
+    identifier = Identifier("x")
 
     expression = piecewise((LiteralExpression(True), identifier), otherwise=0)
 
@@ -387,7 +391,7 @@ def test_piecewise_helper_coerces_identifier_operand_in_value() -> None:
 
 def test_piecewise_helper_coerces_identifier_operand_in_otherwise() -> None:
     """Test ``piecewise(...)`` wraps an ``Identifier`` otherwise in an expression."""
-    identifier = mock_identifier("fallback", 0)
+    identifier = Identifier("fallback")
 
     expression = piecewise((LiteralExpression(True), 1), otherwise=identifier)
 
@@ -479,9 +483,8 @@ def test_piecewise_helper_rejects_bare_bool_true_condition() -> None:
     """Test ``piecewise(...)`` rejects a bare Python ``True`` condition.
 
     A literal ``bool`` condition is (almost) always the accidental result
-    of ``expr == k``, which is ``Expression`` identity comparison rather
-    than IR equality (``Expression.__eq__`` is not overridden, so it falls
-    back to object identity, per the class docstring).
+    of ``expr == k``, which compares two expressions structurally and
+    returns a Python ``bool`` rather than building an IR equality.
     """
     with pytest.raises(ValueError, match=r"(?i)equals"):
         piecewise((True, 1), otherwise=0)
@@ -497,20 +500,20 @@ def test_piecewise_helper_rejects_accidental_expression_equality_condition() -> 
     """Test ``piecewise`` rejects a condition built from ``expr == literal``.
 
     ``xe == 0`` does not build an IR equality node; it evaluates to a
-    plain Python ``bool`` via object-identity fallback. ``piecewise``
-    rejects that bare bool rather than accepting it as a constant
-    condition.
+    plain Python ``bool``, since an expression never equals a Python
+    number. ``piecewise`` rejects that bare bool rather than accepting it
+    as a constant condition.
     """
-    identifier = mock_identifier("x", 0)
+    identifier = Identifier("x")
     xe = IdentifierExpression(identifier)
 
     with pytest.raises(ValueError, match=r"(?i)equals"):
-        piecewise((xe == 0, 7), (xe <= 0, 8), otherwise=9)  # type: ignore[comparison-overlap]
+        piecewise((xe == 0, 7), (xe <= 0, 8), otherwise=9)
 
 
 def test_piecewise_helper_accepts_explicit_equals_condition() -> None:
     """Test the still-legal spelling ``xe.equals(0)`` builds a real IR condition."""
-    identifier = mock_identifier("x", 0)
+    identifier = Identifier("x")
     xe = IdentifierExpression(identifier)
 
     expression = piecewise((xe.equals(0), 7), (xe <= 0, 8), otherwise=9)
@@ -546,12 +549,14 @@ def test_substitute_refuses_to_put_a_number_in_a_piecewise_condition() -> None:
     """Test substitution raises the documented ``ValueError`` for a numeric condition.
 
     ``PiecewiseExpression`` refuses a non-``bool`` literal condition, and
-    the rebuild substitution performs goes through the same constructor.
+    the core's substitution refuses to rebuild one.
     """
-    condition = mock_identifier("c", 0)
+    condition = Identifier("c")
     expression = piecewise((IdentifierExpression(condition), 1), otherwise=0)
 
-    with pytest.raises(ValueError, match="condition literal must be a boolean"):
+    with pytest.raises(
+        ValueError, match="condition of piecewise case 0 is a non-boolean literal"
+    ):
         expression.substitute({condition: LiteralExpression(1)})
 
 
@@ -625,22 +630,29 @@ def test_call_expression_supports_zero_arguments() -> None:
 def test_call_expression_rejects_empty_function_name() -> None:
     """Test ``CallExpression`` rejects an empty ``function_name`` at construction.
 
-    This is a value constraint enforced by ``__post_init__``, independent of
-    serialization; deserializing such a payload surfaces it through the generic
-    engine as a value error.
+    This is a value constraint the core enforces, independent of
+    serialization; deserializing such a payload surfaces it through the
+    generic engine as a value error.
     """
-    with pytest.raises(ValueError, match="non-empty"):
+    with pytest.raises(ValueError, match="function name is empty"):
         CallExpression("", (LiteralExpression(1),))
 
 
-def test_call_expression_rejects_non_expression_argument() -> None:
-    """Test a bare Python value in ``arguments`` raises ``ValueError``.
+def test_call_expression_rejects_a_function_name_that_is_not_a_str() -> None:
+    """Test ``CallExpression`` refuses a non-``str`` name with ``TypeError``."""
+    with pytest.raises(TypeError, match="function_name must be a str"):
+        CallExpression(5, ())  # type: ignore[arg-type]
 
-    A bare ``int`` argument would otherwise construct cleanly and
-    silently bypass every ``Expression``-only downstream pass, mirroring
+
+def test_call_expression_rejects_non_expression_argument() -> None:
+    """Test a bare Python value in ``arguments`` raises ``TypeError``.
+
+    The core's node holds expressions only, mirroring
     ``PiecewiseExpression``'s element validation.
     """
-    with pytest.raises(ValueError, match=r"(?i)argument"):
+    with pytest.raises(
+        TypeError, match="CallExpression arguments must be an Expression"
+    ):
         CallExpression("f", (1,))  # type: ignore[arg-type]
 
 
@@ -649,11 +661,11 @@ def test_call_expression_coerces_list_arguments_to_tuple() -> None:
 
     ``arguments`` is declared as ``tuple[Expression, ...]``, but nothing
     at the language level stops a caller from passing a ``list``
-    instead; ``__post_init__`` normalizes either input to a real tuple.
+    instead; construction normalizes either input to a real tuple.
     """
     argument = LiteralExpression(1)
 
-    expression = CallExpression("f", [argument])  # type: ignore[arg-type]
+    expression = CallExpression("f", [argument])
 
     assert type(expression.arguments) is tuple
     assert expression.arguments == (argument,)
@@ -667,13 +679,13 @@ def test_call_expression_constructed_from_a_list_is_unaffected_by_later_mutation
     Before coercion, a caller passing a ``list`` produced an instance
     whose ``arguments`` field aliased the caller's own list: appending to
     the original list after construction would silently change the
-    already-built ``CallExpression``. Coercing to a real ``tuple`` in
-    ``__post_init__`` closes that gap.
+    already-built ``CallExpression``. Coercing to a real ``tuple`` at
+    construction closes that gap.
     """
     argument = LiteralExpression(1)
     original_arguments = [argument]
 
-    expression = CallExpression("f", original_arguments)  # type: ignore[arg-type]
+    expression = CallExpression("f", original_arguments)
     original_arguments.append(LiteralExpression(2))
 
     assert expression.arguments == (argument,)
@@ -701,6 +713,19 @@ def test_call_expression_get_operands_returns_arguments_in_order() -> None:
     expression = CallExpression("select3", (arg_a, arg_b, arg_c))
 
     assert expression.get_operands() == (arg_a, arg_b, arg_c)
+
+
+def test_call_expression_rebuild_keeps_the_callee_and_takes_as_many_children() -> None:
+    """Test a call rebuilds with its callee from exactly its argument count."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+    new_arguments = (LiteralExpression(3), LiteralExpression(4))
+
+    rebuilt = expression.rebuild_with_visit_children(new_arguments)
+
+    assert rebuilt == CallExpression("max", new_arguments)
+    assert rebuilt.arguments[0] is new_arguments[0]
+    with pytest.raises(ValueError, match="expected 2 children, got 1"):
+        expression.rebuild_with_visit_children((LiteralExpression(3),))
 
 
 def test_call_expression_get_visit_children_returns_arguments_in_order() -> None:
@@ -739,7 +764,7 @@ def test_call_helper_supports_zero_arguments() -> None:
 
 def test_call_helper_coerces_identifier_argument_to_identifier_expression() -> None:
     """Test ``call(...)`` wraps an ``Identifier`` argument in identifier expr."""
-    identifier = mock_identifier("x", 0)
+    identifier = Identifier("x")
 
     expression = call("f", identifier)
 

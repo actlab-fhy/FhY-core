@@ -1,0 +1,45 @@
+//! `PyO3` bindings for [`fhy_core::types`].
+//!
+//! - `classes.rs`: the bases `Type` and `DataType`, and the four built-in
+//!   classes.
+//! - `environment.rs`: `TypeUnificationEnvironment`.
+//! - `adapter.rs`: the Python-defined types as core extensions, driven
+//!   through the dispatchers' registered handlers, and the context each
+//!   call runs in.
+//! - `convert.rs`: the conversions between Python objects and core values.
+//! - `dispatch.rs`: the dispatchers' functions and the promotion helpers.
+//! - `enums.rs`: `CoreDataType` and `TypeQualifier`, which stay Python
+//!   enums.
+//! - `error.rs`: the Python exceptions of the core's errors.
+//! - `checking.rs`: the type checker, the body checks and the sort tables.
+
+mod adapter;
+mod checking;
+mod classes;
+mod convert;
+mod dispatch;
+mod enums;
+mod environment;
+mod error;
+
+pub(crate) use checking::{
+    get_core_data_type_from_literal_type, get_result_core_data_type_for_sort,
+    is_core_data_type_compatible_with_sort, types_check_all_function_bodies,
+    types_check_expression, types_check_function_body,
+};
+pub(crate) use classes::{
+    PyDataTypeBase, PyIndexType, PyNumericalType, PyPrimitiveDataType, PyTemplateDataType,
+    PyTypeBase,
+};
+pub(crate) use dispatch::{
+    get_core_data_type_bit_width, is_weak_core_data_type, promote_core_data_types,
+    promote_primitive_data_types, promote_type_qualifiers, resolve_literal_core_data_type,
+    types_bind_data_template, types_bind_template, types_is_structurally_equivalent,
+    types_substitute_data_template, types_substitute_template, types_unify, types_unify_expression,
+};
+pub(crate) use environment::PyTypeUnificationEnvironment;
+// For the symbol table's frames, which hold types and qualifiers.
+pub(crate) use adapter::run_in_context;
+pub(crate) use classes::MayCallPython;
+pub(crate) use convert::{read_data_type_value, read_type_value, type_to_python};
+pub(crate) use enums::{read_type_qualifier, type_qualifier_to_python};

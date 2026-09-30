@@ -21,6 +21,7 @@ from fhy_core.symbolic.param import (
     create_natural_param_with_upper_bound,
 )
 
+from ...v1 import reads_v1
 from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
 # =============================================================================
@@ -28,6 +29,7 @@ from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifi
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_nat_param_with_zero_included_admits_zero_and_positive_integers() -> None:
     """Test a natural param with zero included admits zero and positive integers."""
     param = create_natural_param()
@@ -38,6 +40,7 @@ def test_nat_param_with_zero_included_admits_zero_and_positive_integers() -> Non
         param.assign(-1)
 
 
+@pytest.mark.sympy
 def test_nat_param_with_zero_excluded_rejects_zero() -> None:
     """Test a natural param with zero excluded rejects zero."""
     param = create_natural_param(zero_included=False)
@@ -58,6 +61,7 @@ def test_nat_param_with_zero_excluded_preserves_zero_exclusion_after_add() -> No
         updated.add_lower_bound_constraint(0, is_inclusive=True)
 
 
+@pytest.mark.sympy
 def test_nat_param_with_lower_bound_zero_inclusive_admits_zero() -> None:
     """Test natural param with lower_bound=0 inclusive admits zero and positives."""
     param = create_natural_param().add_lower_bound_constraint(0, is_inclusive=True)
@@ -230,6 +234,7 @@ def test_nat_param_add_upper_bound_constraint_threshold_matrix(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_nat_param_add_upper_bound_constraint_defaults_to_inclusive() -> None:
     """Test natural param `add_upper_bound_constraint` defaults to inclusive bound."""
     param = create_natural_param().add_upper_bound_constraint(5)
@@ -347,6 +352,8 @@ def test_integer_domain_canonicalizes_zero_included_when_not_non_negative() -> N
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
+@pytest.mark.sympy
 def test_nat_param_serialization_round_trip_preserves_constraints() -> None:
     """Test natural param round-trips through dict serialization with constraints."""
     param = create_natural_param(zero_included=False)
@@ -363,6 +370,7 @@ def test_nat_param_serialization_round_trip_preserves_constraints() -> None:
     assert len(redictionary["constraint_system"]["__data__"]["constraints"]) == 3
 
 
+@pytest.mark.sympy
 def test_nat_param_deserialize_round_trip_preserves_zero_inclusion_flag() -> None:
     """Test natural param round-trips ``zero_included=True`` through serialization.
 
@@ -375,6 +383,8 @@ def test_nat_param_deserialize_round_trip_preserves_zero_inclusion_flag() -> Non
     assert restored.is_value_valid(0)
 
 
+@pytest.mark.usefixtures("v1_wire")
+@pytest.mark.sympy
 def test_nat_param_deserialize_recovers_zero_exclusion_without_stored_constraint() -> (
     None
 ):
@@ -396,6 +406,7 @@ def test_nat_param_deserialize_recovers_zero_exclusion_without_stored_constraint
     assert restored.is_value_valid(1)
 
 
+@reads_v1
 def test_nat_param_deserialize_rejects_payload_with_malformed_domain_data() -> None:
     """Test `Param.deserialize_from_dict` rejects payloads with malformed domain data.
 
@@ -423,16 +434,18 @@ def test_nat_param_domain_is_integer_domain_with_non_negative() -> None:
     assert param.domain.non_negative
 
 
-def test_nat_param_is_value_admissible_does_not_gate_on_sign() -> None:
-    """Test `is_value_admissible` is True for negative integers on a natural param.
+@pytest.mark.sympy
+def test_nat_param_is_value_admissible_gates_on_sign() -> None:
+    """Test `is_value_admissible` refuses a negative integer on a natural param.
 
-    Natural params express non-negativity via constraints, not admissibility.
-    ``is_value_admissible(-5)`` returns ``True``; ``is_value_valid(-5)`` is ``False``.
+    The natural domain's own restriction holds at the domain level too, so
+    ``is_value_admissible(-5)`` agrees with ``is_value_valid``.
     """
     param = create_natural_param()
 
-    assert param.is_value_admissible(-5)
+    assert not param.is_value_admissible(-5)
     assert not param.is_value_valid(-5)
+    assert param.is_value_admissible(0)
 
 
 # =============================================================================
@@ -440,6 +453,7 @@ def test_nat_param_is_value_admissible_does_not_gate_on_sign() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_nat_param_between_with_inclusive_bounds_admits_the_endpoints() -> None:
     """Test `create_natural_param_between` admits both inclusive endpoints."""
     param = create_natural_param_between(2, 5)
@@ -452,6 +466,7 @@ def test_nat_param_between_with_inclusive_bounds_admits_the_endpoints() -> None:
     ]
 
 
+@pytest.mark.sympy
 def test_nat_param_between_with_exclusive_bounds_excludes_the_endpoints() -> None:
     """Test exclusive bounds admit only the values strictly inside them."""
     param = create_natural_param_between(
@@ -466,6 +481,7 @@ def test_nat_param_between_with_exclusive_bounds_excludes_the_endpoints() -> Non
     ]
 
 
+@pytest.mark.sympy
 def test_nat_param_between_with_equal_inclusive_bounds_is_a_singleton() -> None:
     """Test equal inclusive bounds admit exactly that one value."""
     param = create_natural_param_between(3, 3)
@@ -490,7 +506,7 @@ def test_nat_param_between_with_equal_bounds_and_an_exclusive_side_raises(
     """Test equal bounds with at least one exclusive side enclose no value."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Lower bound must be less than or equal to upper bound."),
+        match=re.escape("lower bound must be less than or equal to upper bound"),
     ):
         create_natural_param_between(
             3,
@@ -500,6 +516,7 @@ def test_nat_param_between_with_equal_bounds_and_an_exclusive_side_raises(
         )
 
 
+@pytest.mark.z3
 def test_nat_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
     """Test `create_natural_param_between(1, 2)` builds an empty param.
 
@@ -515,6 +532,7 @@ def test_nat_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
     assert param.check_feasibility() is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.sympy
 def test_nat_param_between_with_zero_excluded_and_exclusive_zero_starts_at_one() -> (
     None
 ):
@@ -540,6 +558,7 @@ def test_nat_param_between_binds_the_given_variable() -> None:
     assert param.variable == variable
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("is_inclusive", "expected"),
     [(True, [False, True, True]), (False, [False, False, True])],
@@ -558,11 +577,12 @@ def test_nat_param_with_lower_bound_and_zero_excluded_rejects_a_zero_bound() -> 
     """Test the lower-bound factory rejects a zero bound when zero is excluded."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Lower bound must be at least 1 when zero is not included."),
+        match=re.escape("lower bound must be at least 1 when zero is not included"),
     ):
         create_natural_param_with_lower_bound(0, zero_included=False)
 
 
+@pytest.mark.sympy
 def test_nat_param_with_lower_bound_zero_excluded_exclusive_starts_at_one() -> None:
     """Test an exclusive zero lower bound on a zero-excluded param admits one."""
     param = create_natural_param_with_lower_bound(
@@ -573,6 +593,7 @@ def test_nat_param_with_lower_bound_zero_excluded_exclusive_starts_at_one() -> N
     assert not param.is_value_valid(0)
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("is_inclusive", "expected"),
     [(True, [False, True, True, False]), (False, [False, True, False, False])],
@@ -587,6 +608,7 @@ def test_nat_param_with_upper_bound_admits_values_up_to_the_bound(
     assert [param.is_value_valid(value) for value in (-1, 1, 2, 3)] == expected
 
 
+@pytest.mark.sympy
 def test_nat_param_with_upper_bound_and_zero_excluded_rejects_zero() -> None:
     """Test the upper-bound factory keeps the zero exclusion of the domain."""
     param = create_natural_param_with_upper_bound(3, zero_included=False)
@@ -602,7 +624,7 @@ def test_nat_param_with_upper_bound_and_zero_excluded_rejects_a_zero_bound() -> 
     """Test the upper-bound factory rejects a zero bound when zero is excluded."""
     with pytest.raises(
         ParamError,
-        match=re.escape("Upper bound must be at least 1 when zero is not included."),
+        match=re.escape("upper bound must be at least 1 when zero is not included"),
     ):
         create_natural_param_with_upper_bound(0, zero_included=False)
 
@@ -612,7 +634,7 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
     with pytest.raises(
         ParamError,
         match=re.escape(
-            "Upper bound must be at least 1 if zero is included and bound is exclusive."
+            "upper bound must be at least 1 if zero is included and bound is exclusive"
         ),
     ):
         create_natural_param_with_upper_bound(0, is_inclusive=False)
@@ -623,8 +645,7 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
     [
         pytest.param(
             partial(create_natural_param_with_lower_bound, 0, is_inclusive=False),
-            "Lower bound must be at least 1 if zero is included "
-            "and bound is exclusive.",
+            "lower bound must be at least 1 if zero is included and bound is exclusive",
             id="lower-bound-factory-zero-included",
         ),
         pytest.param(
@@ -634,8 +655,8 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
                 zero_included=False,
                 is_inclusive=False,
             ),
-            "Lower bound must be non-negative when zero is not included "
-            "and bound is exclusive.",
+            "lower bound must be non-negative when zero is not included "
+            "and bound is exclusive",
             id="lower-bound-factory-zero-excluded",
         ),
         pytest.param(
@@ -645,15 +666,14 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
                 zero_included=False,
                 is_inclusive=False,
             ),
-            "Upper bound must be at least 2 when zero is not included "
-            "and bound is exclusive.",
+            "upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive",
             id="upper-bound-factory-zero-excluded",
         ),
         pytest.param(
             # The bounds hold 1, 2, and 3, yet the exclusive zero is refused.
             partial(create_natural_param_between, 0, 3, is_lower_inclusive=False),
-            "Lower bound must be at least 1 if zero is included "
-            "and bound is exclusive.",
+            "lower bound must be at least 1 if zero is included and bound is exclusive",
             id="between-factory-lower-zero-included",
         ),
         pytest.param(
@@ -666,8 +686,8 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
                 is_lower_inclusive=False,
                 is_upper_inclusive=False,
             ),
-            "Upper bound must be at least 2 when zero is not included "
-            "and bound is exclusive.",
+            "upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive",
             id="between-factory-upper-zero-excluded",
         ),
     ],

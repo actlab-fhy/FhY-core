@@ -19,24 +19,29 @@ inlining semantics.
 """
 
 import math
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping
 from typing import Any, cast
 
 import pytest
 
+from fhy_core import _rs
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
     Expression,
-    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NativeConstant,
     NativeFunction,
+    NonFiniteCastError,
     PiecewiseExpression,
     RegisteredFunction,
     UnaryExpression,
+    UnaryOperation,
     call,
     evaluate_expression,
     get_registered_entry,
@@ -44,18 +49,11 @@ from fhy_core.symbolic.expression import (
     is_entry_registered,
 )
 from fhy_core.symbolic.expression.builtins import (
-    _BOOL_PARAMS_2,
-    _BUILTIN_NATIVE_FUNCTIONS,
-    _REAL_PARAMS_1,
-    _REAL_PARAMS_2,
-    _REAL_PARAMS_3,
     BUILTIN_CONSTANTS,
     BUILTIN_FUNCTIONS,
     BuiltinConstants,
     BuiltinFunctions,
 )
-
-from ..conftest import mock_identifier
 
 _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
     BinaryOperation.GREATER: ">",
@@ -64,8 +62,6 @@ _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
     BinaryOperation.LESS_EQUAL: "<=",
     BinaryOperation.EQUAL: "==",
     BinaryOperation.NOT_EQUAL: "!=",
-    BinaryOperation.LOGICAL_AND: "logical_and",
-    BinaryOperation.LOGICAL_OR: "logical_or",
     BinaryOperation.ADD: "+",
     BinaryOperation.SUBTRACT: "-",
     BinaryOperation.MULTIPLY: "*",
@@ -99,6 +95,11 @@ def _structure_summary(expression: Expression) -> str:  # noqa: PLR0911
             f"{operation_symbol}({_structure_summary(expression.left)}, "
             f"{_structure_summary(expression.right)})"
         )
+    if isinstance(expression, LogicalExpression):
+        operand_summaries = ", ".join(
+            _structure_summary(operand) for operand in expression.operands
+        )
+        return f"{expression.operation.value}({operand_summaries})"
     if isinstance(expression, PiecewiseExpression):
         case_summaries = ", ".join(
             f"({_condition_shape_tag(condition)}, {_structure_summary(value)})"
@@ -241,19 +242,19 @@ def test_each_built_in_constant_is_a_native_constant(name: str) -> None:
 
 
 def test_abs_inlining_produces_documented_piecewise_body() -> None:
-    """Test ``abs(x)`` inlines to ``{x if x >= 0; -x otherwise}``."""
-    x = mock_identifier("x", 0)
+    """Test ``abs(x)`` inlines to ``{x if x > 0; 0 - x otherwise}``."""
+    x = Identifier("x")
     expression = call("abs", x)
 
     inlined = inline_functions(expression)
 
-    # The shape is a one-case piecewise; the condition is `x >= 0`; the
-    # case value is `x`; `otherwise` is `-x`. Structural equivalence is
-    # enough — we don't pin down the exact `Identifier` instances used
-    # inside the body.
+    # The shape is a one-case piecewise; the condition is `x > 0`; the
+    # case value is `x`; `otherwise` is `0 - x`, so both zeros give `0.0`.
+    # Structural equivalence is enough — we don't pin down the exact
+    # `Identifier` instances used inside the body.
     assert (
         _structure_summary(inlined)
-        == "piecewise([(>=, identifier)], negate(identifier))"
+        == "piecewise([(>, identifier)], -(literal, identifier))"
     )
 
 
@@ -263,7 +264,7 @@ def test_sign_inlining_produces_two_case_piecewise_body() -> None:
     A single node carries both cases (``x > 0`` and ``x < 0``) plus one
     ``otherwise``, rather than a nested chain of one-case conditionals.
     """
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     expression = call("sign", x)
 
     inlined = inline_functions(expression)
@@ -276,20 +277,25 @@ def test_sign_inlining_produces_two_case_piecewise_body() -> None:
 
 def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
     """Test ``relu(x)`` inlines to ``max(x, 0)``'s piecewise body."""
-    x = mock_identifier("x", 0)
+    x = Identifier("x")
     expression = call("relu", x)
 
     inlined = inline_functions(expression)
 
-    # Inlining max gives a one-case piecewise on `>`.
-    assert _structure_summary(inlined).startswith("piecewise([(>")
+    # Inlining max gives a one-case piecewise on `x > 0 || x != x`.
+    assert isinstance(inlined, PiecewiseExpression)
+    condition = inlined.get_cases()[0][0]
+    assert (
+        _structure_summary(condition)
+        == "or(>(identifier, literal), !=(identifier, identifier))"
+    )
 
 
 def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
     """Test ``clamp(x, lo, hi)`` inlines to the documented nested piecewise tree."""
-    x = mock_identifier("x", 0)
-    lo = mock_identifier("lo", 1)
-    hi = mock_identifier("hi", 2)
+    x = Identifier("x")
+    lo = Identifier("lo")
+    hi = Identifier("hi")
     expression = call("clamp", x, lo, hi)
 
     inlined = inline_functions(expression)
@@ -301,16 +307,52 @@ def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
 
 def test_xor_inlining_produces_or_and_not_and_combination() -> None:
     """Test ``xor(a, b)`` inlines to ``(a || b) && !(a && b)``."""
-    a = mock_identifier("a", 0)
-    b = mock_identifier("b", 1)
+    a = Identifier("a")
+    b = Identifier("b")
     expression = call("xor", a, b)
 
     inlined = inline_functions(expression)
 
-    summary = _structure_summary(inlined)
-    assert "logical_and" in summary
-    assert "logical_or" in summary
-    assert "logical_not" in summary
+    assert _structure_summary(inlined) == (
+        "and(or(identifier, identifier), logical_not(and(identifier, identifier)))"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_body_text"),
+    [
+        ("xor", "((a || b) && (!(a && b)))"),
+        ("nand", "(!(a && b))"),
+        ("nor", "(!(a || b))"),
+        ("implies", "((!a) || b)"),
+        ("iff", "(a == b)"),
+    ],
+)
+def test_boolean_builtin_bodies_are_built_from_logical_expressions(
+    name: str, expected_body_text: str
+) -> None:
+    """Test the Boolean combinators' bodies use n-ary ``LogicalExpression`` nodes.
+
+    The registry and ``builtins.py`` stay Python and build their bodies with
+    the Rust-backed nodes, so a conjunction is a ``LogicalExpression`` there
+    too, printed in the core's text.
+    """
+    body = BUILTIN_FUNCTIONS[name].body  # type: ignore[literal-required]
+
+    assert str(body) == expected_body_text
+
+
+def test_xor_body_conjoins_a_disjunction_and_a_negated_conjunction() -> None:
+    """Test ``xor``'s body is one AND node over its two parts, not a binary node."""
+    body = BUILTIN_FUNCTIONS["xor"].body
+
+    assert isinstance(body, LogicalExpression)
+    assert body.operation is LogicalOperation.AND
+    disjunction, negation = body.operands
+    assert isinstance(disjunction, LogicalExpression)
+    assert disjunction.operation is LogicalOperation.OR
+    assert isinstance(negation, UnaryExpression)
+    assert negation.operation is UnaryOperation.LOGICAL_NOT
 
 
 # =============================================================================
@@ -395,34 +437,65 @@ def test_seeded_nan_constant_is_nan() -> None:
 
 
 @pytest.mark.parametrize(
-    "name, math_callable",
+    "name, math_callable, argument",
     [
-        ("exp", math.exp),
-        ("log", math.log),
-        ("log2", math.log2),
-        ("log10", math.log10),
-        ("sqrt", math.sqrt),
-        ("sin", math.sin),
-        ("cos", math.cos),
-        ("tan", math.tan),
-        ("arcsin", math.asin),
-        ("arccos", math.acos),
-        ("arctan", math.atan),
-        ("sinh", math.sinh),
-        ("cosh", math.cosh),
-        ("tanh", math.tanh),
-        ("erf", math.erf),
-        ("floor", math.floor),
-        ("ceil", math.ceil),
+        ("exp", math.exp, 0.75),
+        ("log", math.log, 0.75),
+        ("log2", math.log2, 0.75),
+        ("log10", math.log10, 0.75),
+        ("sqrt", math.sqrt, 0.75),
+        ("sin", math.sin, 0.75),
+        ("cos", math.cos, 0.75),
+        ("tan", math.tan, 0.75),
+        ("arcsin", math.asin, 0.75),
+        ("arccos", math.acos, 0.75),
+        ("arctan", math.atan, 0.75),
+        ("sinh", math.sinh, 0.75),
+        ("cosh", math.cosh, 0.75),
+        ("tanh", math.tanh, 0.75),
+        ("erf", math.erf, 0.75),
+        ("floor", math.floor, -0.75),
+        ("ceil", math.ceil, -0.75),
     ],
 )
-def test_seeded_native_implementation_matches_math_callable(
-    name: str, math_callable: object
+def test_seeded_native_implementation_agrees_with_math_inside_its_domain(
+    name: str, math_callable: Callable[[float], float], argument: float
 ) -> None:
-    """Test each seeded native binds to the expected ``math`` callable."""
+    """Test each seeded native's implementation agrees with ``math`` in its domain.
+
+    The implementation is the core's kernel, one object per built-in, not
+    the ``math`` callable itself.
+    """
     entry = get_registered_entry(name)
     assert isinstance(entry, NativeFunction)
-    assert entry.implementation is math_callable
+    implementation = entry.implementation
+
+    assert type(implementation) is _rs.BuiltinNativeImplementation
+    assert implementation is _rs.BuiltinNativeImplementation._of(name)
+    result = implementation(argument)
+    expected = math_callable(argument)
+    assert type(result) is type(expected)
+    assert math.isclose(result, expected, rel_tol=1e-15)
+
+
+def test_seeded_native_implementation_follows_ieee_outside_its_domain() -> None:
+    """Test the kernels give IEEE results where ``math`` raises.
+
+    ``math.sqrt(-1)`` and ``math.log(0)`` raise ``ValueError``; the core's
+    kernels give ``nan`` and ``-inf``, as the evaluators compute them, and
+    an integer-sorted result with no integer raises ``NonFiniteCastError``.
+    """
+    sqrt = get_registered_entry("sqrt")
+    log = get_registered_entry("log")
+    floor = get_registered_entry("floor")
+    assert isinstance(sqrt, NativeFunction)
+    assert isinstance(log, NativeFunction)
+    assert isinstance(floor, NativeFunction)
+
+    assert math.isnan(sqrt.implementation(-1.0))
+    assert log.implementation(0.0) == -math.inf
+    with pytest.raises(NonFiniteCastError):
+        floor.implementation(math.inf)
 
 
 # =============================================================================
@@ -431,23 +504,31 @@ def test_seeded_native_implementation_matches_math_callable(
 
 
 def test_max_inlining_yields_greater_piecewise() -> None:
-    """Test inlining ``max(a, b)`` yields ``{a if a > b; b otherwise}``."""
+    """Test inlining ``max(a, b)`` yields ``{a if a > b || a != a; b otherwise}``."""
     a = LiteralExpression(7)
     b = LiteralExpression(2)
 
     result = inline_functions(CallExpression("max", (a, b)))
 
-    assert _structure_summary(result).startswith("piecewise([(>")
+    assert isinstance(result, PiecewiseExpression)
+    condition = result.get_cases()[0][0]
+    assert (
+        _structure_summary(condition) == "or(>(literal, literal), !=(literal, literal))"
+    )
 
 
 def test_min_inlining_yields_less_piecewise() -> None:
-    """Test inlining ``min(a, b)`` yields ``{a if a < b; b otherwise}``."""
+    """Test inlining ``min(a, b)`` yields ``{a if a < b || a != a; b otherwise}``."""
     a = LiteralExpression(7)
     b = LiteralExpression(2)
 
     result = inline_functions(CallExpression("min", (a, b)))
 
-    assert _structure_summary(result).startswith("piecewise([(<")
+    assert isinstance(result, PiecewiseExpression)
+    condition = result.get_cases()[0][0]
+    assert (
+        _structure_summary(condition) == "or(<(literal, literal), !=(literal, literal))"
+    )
 
 
 # =============================================================================
@@ -566,21 +647,24 @@ def test_builtin_typed_dict_declares_every_key_read_only(
 
 
 @pytest.mark.parametrize(
-    "parameter_sorts",
-    [_REAL_PARAMS_1, _REAL_PARAMS_2, _REAL_PARAMS_3, _BOOL_PARAMS_2],
+    "name",
+    ["exp", "max", "clamp", "xor"],
     ids=["real-1", "real-2", "real-3", "bool-2"],
 )
-def test_builtin_parameter_sort_table_is_a_tuple(
-    parameter_sorts: Sequence[FunctionSort],
-) -> None:
-    """Test each seeded parameter-sort table is a tuple, not a list."""
-    assert isinstance(parameter_sorts, tuple)
+def test_builtin_entry_parameter_sorts_are_a_tuple(name: str) -> None:
+    """Test each built-in entry's parameter sorts are a tuple, not a list."""
+    entry = get_registered_entry(name)
+
+    assert isinstance(entry, RegisteredFunction | NativeFunction)
+    assert isinstance(entry.parameter_sorts, tuple)
 
 
-def test_builtin_native_functions_table_item_assignment_raises_type_error() -> None:
-    """Test assigning to an existing key in the native table raises TypeError."""
-    mutable_table = cast(MutableMapping[str, object], _BUILTIN_NATIVE_FUNCTIONS)
-    existing_key = next(iter(_BUILTIN_NATIVE_FUNCTIONS))
+def test_builtin_native_entry_implementation_cannot_be_replaced() -> None:
+    """Test a native built-in's implementation cannot be replaced.
 
-    with pytest.raises(TypeError):
-        mutable_table[existing_key] = _BUILTIN_NATIVE_FUNCTIONS[existing_key]
+    The entry holds the core's kernel, and the entry is frozen.
+    """
+    entry = get_registered_entry("exp")
+
+    with pytest.raises(AttributeError):
+        entry.implementation = math.exp  # type: ignore[misc]

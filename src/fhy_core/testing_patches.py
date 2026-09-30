@@ -4,6 +4,8 @@
 call that returns ``False`` raise an ``AssertionError`` naming the class and
 operands. ``deterministic_identifiers_by_name_hint`` opens a scope in which
 every ``Identifier`` constructed with the same name hint is the same instance.
+``set_function_registry_state`` replaces the user entries of the
+process-wide function registry, to restore a snapshot of it.
 """
 
 from fhy_core.utils.override import override
@@ -11,18 +13,23 @@ from fhy_core.utils.override import override
 __all__ = [
     "deterministic_identifiers_by_name_hint",
     "fail_fast_structural_equivalence",
+    "set_function_registry_state",
 ]
 
 import contextlib
 import functools
 import sys
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import ContextDecorator
 from threading import RLock
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
+from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.traits import StructuralEquivalence
+
+if TYPE_CHECKING:
+    from fhy_core.symbolic.expression.registry import RegisteredEntry
 
 _FunctionT = TypeVar("_FunctionT", bound=Callable[..., Any])
 
@@ -211,3 +218,26 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
 
 
 deterministic_identifiers_by_name_hint = _DeterministicIdentifiersByNameHint()
+
+
+def set_function_registry_state(state: "Mapping[str, RegisteredEntry]") -> None:
+    """Replace the user entries of the function registry with ``state``.
+
+    ``state`` maps names to entries, such as a snapshot taken earlier with
+    :func:`~fhy_core.symbolic.expression.registry.get_registered_entries`.
+    An entry registered under its name keeps its place, and a constant its
+    identifier, when ``state`` holds that very object; the other entries
+    of ``state`` are registered anew after them, a constant with a new
+    identifier. Built-in names in ``state`` are ignored: the built-ins are
+    no state and cannot be removed.
+
+    Args:
+        state: The entries to keep or register, by name.
+
+    Raises:
+        TypeError: If a value is no user entry.
+        EntryRegistrationError: If an entry cannot be registered; the
+            registry is left as it was.
+
+    """
+    _rs.__set_registry_state__(state)

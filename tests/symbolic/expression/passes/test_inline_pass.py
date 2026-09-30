@@ -7,6 +7,7 @@ from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    EntryLookupError,
     Expression,
     FunctionSort,
     IdentifierExpression,
@@ -17,6 +18,7 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     register_native_function,
 )
+from fhy_core.symbolic.expression.passes.inline import FunctionArityError
 
 from ..conftest import mock_identifier
 
@@ -210,8 +212,12 @@ def test_inline_functions_raises_for_unknown_function_name() -> None:
     """Test a call to an unregistered function surfaces ``EntryLookupError``."""
     expression = CallExpression("not_registered", (LiteralExpression(1),))
 
-    with pytest.raises(PassExecutionError, match="EntryLookupError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, EntryLookupError)
+    assert 'no function is registered under "not_registered"' in str(cause)
 
 
 def test_inline_functions_raises_when_argument_count_exceeds_parameters(
@@ -231,8 +237,12 @@ def test_inline_functions_raises_when_argument_count_exceeds_parameters(
         "test_arity_too_many", (LiteralExpression(1), LiteralExpression(2))
     )
 
-    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, FunctionArityError)
+    assert str(cause) == '"test_arity_too_many" takes 1 argument but the call passes 2'
 
 
 def test_inline_functions_raises_when_argument_count_is_too_few(
@@ -251,8 +261,12 @@ def test_inline_functions_raises_when_argument_count_is_too_few(
 
     expression = CallExpression("test_arity_too_few", (LiteralExpression(1),))
 
-    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, FunctionArityError)
+    assert str(cause) == '"test_arity_too_few" takes 2 arguments but the call passes 1'
 
 
 def test_inline_functions_raises_for_recursive_function(
@@ -270,8 +284,14 @@ def test_inline_functions_raises_for_recursive_function(
 
     expression = CallExpression("test_recursive_self", (LiteralExpression(0),))
 
-    with pytest.raises(PassExecutionError, match="RecursionError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RecursionError)
+    assert str(cause) == (
+        'function "test_recursive_self" is recursive and cannot be inlined'
+    )
 
 
 def test_inline_functions_raises_for_mutually_recursive_functions(
@@ -297,8 +317,12 @@ def test_inline_functions_raises_for_mutually_recursive_functions(
 
     expression = CallExpression("test_mutual_a", (LiteralExpression(0),))
 
-    with pytest.raises(PassExecutionError, match="RecursionError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RecursionError)
+    assert str(cause) == 'function "test_mutual_a" is recursive and cannot be inlined'
 
 
 # =============================================================================
@@ -372,8 +396,12 @@ def test_inline_functions_rejects_call_to_native_constant(
 
     expression = CallExpression("test_inline_const", ())
 
-    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, FunctionArityError)
+    assert str(cause) == '"test_inline_const" is a constant, not a function'
 
 
 def test_inline_functions_passes_through_native_function_call_unchanged(
@@ -399,9 +427,7 @@ def test_inline_functions_passes_through_native_function_call_unchanged(
 
     result = inline_functions(expression)
 
-    assert isinstance(result, CallExpression)
-    assert result.function_name == "test_inline_native_passthrough"
-    assert len(result.arguments) == 1
+    assert result is expression
 
 
 def test_inline_functions_rejects_wrong_arity_to_native_function(
@@ -417,5 +443,11 @@ def test_inline_functions_rejects_wrong_arity_to_native_function(
 
     expression = CallExpression("test_inline_native_arity", (LiteralExpression(1),))
 
-    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+    with pytest.raises(PassExecutionError) as exc_info:
         inline_functions(expression)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, FunctionArityError)
+    assert str(cause) == (
+        '"test_inline_native_arity" takes 2 arguments but the call passes 1'
+    )

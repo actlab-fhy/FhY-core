@@ -148,6 +148,7 @@ def test_integer_in_set_subset_sanity_checks(
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_bounded_integer_param_is_not_subset_of_disjoint_in_set_param() -> None:
     """Test a bounded integer param is not a subset of a disjoint in-set param.
 
@@ -165,6 +166,7 @@ def test_bounded_integer_param_is_not_subset_of_disjoint_in_set_param() -> None:
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.z3
 def test_bounded_integer_param_is_not_subset_of_partly_covering_in_set_param() -> None:
     """Test a bounded integer param is not a subset of a partly-covering in-set param.
 
@@ -179,6 +181,7 @@ def test_bounded_integer_param_is_not_subset_of_partly_covering_in_set_param() -
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.z3
 def test_bounded_integer_param_is_subset_of_in_set_param_covering_its_range() -> None:
     """Test a bounded integer param is a subset of a fully-covering in-set param."""
     x = mock_identifier("x", 1)
@@ -191,6 +194,7 @@ def test_bounded_integer_param_is_subset_of_in_set_param_covering_its_range() ->
     assert own.is_subset(other)
 
 
+@pytest.mark.sympy
 def test_in_set_param_is_subset_of_bounded_integer_param_covering_it() -> None:
     """Test an in-set param is a subset of a bounded integer param covering it.
 
@@ -206,6 +210,7 @@ def test_in_set_param_is_subset_of_bounded_integer_param_covering_it() -> None:
     assert own.is_subset(other)
 
 
+@pytest.mark.z3
 def test_unconstrained_integer_param_is_not_subset_of_singleton_in_set_param() -> None:
     """Test an unconstrained integer param is not a subset of a singleton in-set one."""
     x = mock_identifier("x", 1)
@@ -216,6 +221,7 @@ def test_unconstrained_integer_param_is_not_subset_of_singleton_in_set_param() -
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
+@pytest.mark.z3
 def test_lower_bounded_integer_param_is_not_subset_of_in_set_param() -> None:
     """Test a lower-bounded integer param is not a subset of a small in-set param."""
     x = mock_identifier("x", 1)
@@ -233,6 +239,7 @@ def test_lower_bounded_integer_param_is_not_subset_of_in_set_param() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_integer_param_with_consistent_bounds_is_feasible() -> None:
     """Test `x >= 0 and x <= 10` is feasible."""
     x = mock_identifier("x", 1)
@@ -248,6 +255,7 @@ def test_integer_param_with_consistent_bounds_is_feasible() -> None:
     assert not param.is_empty()
 
 
+@pytest.mark.z3
 def test_integer_param_with_contradictory_equation_constraints_is_infeasible() -> None:
     """Test `x < 0 and x > 0` is infeasible."""
     x = mock_identifier("x", 1)
@@ -347,6 +355,7 @@ def test_integer_param_with_in_set_and_a_numeric_result_call_under_not_raises() 
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_integer_param_with_conflicting_not_in_set_string_member_is_infeasible() -> (
     None
 ):
@@ -366,6 +375,7 @@ def test_integer_param_with_conflicting_not_in_set_string_member_is_infeasible()
     assert param.is_empty()
 
 
+@pytest.mark.z3
 def test_integer_param_with_conflicting_not_in_set_container_member_is_infeasible() -> (
     None
 ):
@@ -381,6 +391,7 @@ def test_integer_param_with_conflicting_not_in_set_container_member_is_infeasibl
     assert param.is_empty()
 
 
+@pytest.mark.z3
 def test_integer_param_with_unliftable_not_in_set_member_admits_other_values() -> None:
     """Test a not-in-set constraint with one unliftable member still allows others.
 
@@ -421,6 +432,8 @@ def test_integer_param_with_only_unliftable_not_in_set_members_is_not_empty() ->
 # =============================================================================
 
 
+@pytest.mark.sympy
+@pytest.mark.z3
 def test_bounded_integer_param_round_trip_stays_feasible() -> None:
     """Test `create_integer_param_between` produces a feasible, non-empty param.
 
@@ -434,6 +447,7 @@ def test_bounded_integer_param_round_trip_stays_feasible() -> None:
     param.validate_value(5)
 
 
+@pytest.mark.z3
 def test_integer_param_with_contradictory_bounds_is_still_empty() -> None:
     """Test added lower/upper bound constraints can be jointly empty.
 
@@ -446,6 +460,7 @@ def test_integer_param_with_contradictory_bounds_is_still_empty() -> None:
     assert narrowed.is_empty()
 
 
+@pytest.mark.z3
 def test_narrower_bounded_param_is_subset_of_wider_bounded_param() -> None:
     """Test a narrower bound-constrained param is a subset of a wider one.
 
@@ -489,6 +504,7 @@ def test_is_empty_with_foreign_identifier_constraint_does_not_raise() -> None:
     assert param.is_empty() is False
 
 
+@pytest.mark.z3
 def test_is_subset_with_dependent_constraint_is_two_sided_and_safe() -> None:
     """Test `is_subset` stays boolean in both directions for a dependent constraint.
 
@@ -607,6 +623,8 @@ def test_unbounded_param_stays_subset_when_no_counterexample_is_provable() -> No
     assert own.is_subset(other) is True
 
 
+@pytest.mark.z3
+@pytest.mark.sympy
 @pytest.mark.parametrize("constant_name", ["e", "pi"])
 def test_param_named_after_a_native_constant_binds_like_any_other(
     constant_name: str,
@@ -647,6 +665,7 @@ def test_param_named_after_a_native_constant_binds_like_any_other(
     assert solver_decided.is_feasible() is True
 
 
+@pytest.mark.sympy
 def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
     """Test an expression the bridge cannot lift degrades rather than raising.
 
@@ -691,6 +710,7 @@ def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
         param.validate_value(2)
 
 
+@pytest.mark.sympy
 def test_is_value_valid_degrades_instead_of_raising_for_a_nan_dependent_binding() -> (
     None
 ):
@@ -720,6 +740,7 @@ def test_is_value_valid_degrades_instead_of_raising_for_a_nan_dependent_binding(
     assert param.is_value_valid(1.0, bindings={y: math.nan}) is False
 
 
+@pytest.mark.sympy
 def test_is_value_valid_degrades_instead_of_raising_for_a_zero_divisor_binding() -> (
     None
 ):
@@ -791,6 +812,7 @@ def test_not_in_set_constraint_can_empty_an_in_set_constrained_param() -> None:
     assert param.is_empty() is True
 
 
+@pytest.mark.sympy
 def test_equation_constraint_excludes_in_set_candidates_it_violates() -> None:
     """Test an equation constraint removes candidates it provably violates.
 
@@ -863,6 +885,7 @@ def test_real_in_set_param_is_not_subset_of_an_integer_param() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_real_param_singleton_excluding_its_own_float_value_is_undecided() -> None:
     """Test excluding a real singleton's own float value degrades to UNDECIDED.
 
@@ -882,6 +905,7 @@ def test_real_param_singleton_excluding_its_own_float_value_is_undecided() -> No
     assert param.is_empty() is False
 
 
+@pytest.mark.sympy
 def test_real_param_singleton_excluding_its_own_float_still_admits_string_kind() -> (
     None
 ):
@@ -900,6 +924,7 @@ def test_real_param_singleton_excluding_its_own_float_still_admits_string_kind()
     assert param.is_value_valid("0.5") is True
 
 
+@pytest.mark.z3
 def test_integer_param_singleton_excluding_its_own_value_stays_violated() -> None:
     """Test an integer singleton excluding its own value stays decided VIOLATED.
 
@@ -916,6 +941,7 @@ def test_integer_param_singleton_excluding_its_own_value_stays_violated() -> Non
     assert param.is_empty() is True
 
 
+@pytest.mark.z3
 def test_real_param_violated_without_set_constraints_stays_violated() -> None:
     """Test a real VIOLATED that rests on no set member stays decided."""
     x = mock_identifier("x", 1)

@@ -14,6 +14,8 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -98,15 +100,13 @@ def test_synthesize_logical_not_on_int_raises() -> None:
         synthesize_expression_type(expression, _lookup_failure)
 
 
-@pytest.mark.parametrize(
-    "operation", [BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR]
-)
-def test_synthesize_logical_binary_on_bools_returns_bool(
-    operation: BinaryOperation,
+@pytest.mark.parametrize("operation", [LogicalOperation.AND, LogicalOperation.OR])
+def test_synthesize_logical_expression_on_bools_returns_bool(
+    operation: LogicalOperation,
 ) -> None:
     """Test ``&&`` / ``||`` on two booleans synthesizes ``BOOL``."""
-    expression = BinaryExpression(
-        operation, LiteralExpression(True), LiteralExpression(False)
+    expression = LogicalExpression(
+        operation, (LiteralExpression(True), LiteralExpression(False))
     )
 
     result_type, result_qualifier = synthesize_expression_type(
@@ -117,19 +117,83 @@ def test_synthesize_logical_binary_on_bools_returns_bool(
     assert result_qualifier is TypeQualifier.PARAM
 
 
-@pytest.mark.parametrize(
-    "operation", [BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR]
-)
-def test_synthesize_logical_binary_rejects_non_bool_operand(
-    operation: BinaryOperation,
+@pytest.mark.parametrize("operation", [LogicalOperation.AND, LogicalOperation.OR])
+def test_synthesize_logical_expression_rejects_non_bool_operand(
+    operation: LogicalOperation,
 ) -> None:
     """Test ``&&`` / ``||`` reject a non-boolean operand."""
-    expression = BinaryExpression(
-        operation, LiteralExpression(True), LiteralExpression(1)
+    expression = LogicalExpression(
+        operation, (LiteralExpression(True), LiteralExpression(1))
     )
 
     with pytest.raises(FhYCoreTypeError):
         synthesize_expression_type(expression, _lookup_failure)
+
+
+@pytest.mark.parametrize("operation", [LogicalOperation.AND, LogicalOperation.OR])
+def test_synthesize_three_operand_logical_expression_on_bools_returns_bool(
+    operation: LogicalOperation,
+) -> None:
+    """Test an n-ary connective over three booleans synthesizes ``BOOL``."""
+    expression = LogicalExpression(
+        operation,
+        (LiteralExpression(True), LiteralExpression(False), LiteralExpression(True)),
+    )
+
+    result_type, _ = synthesize_expression_type(expression, _lookup_failure)
+
+    assert result_type.is_structurally_equivalent(_BOOL_TYPE)
+
+
+def test_synthesize_logical_expression_rejects_a_non_bool_last_operand() -> None:
+    """Test every operand is checked, not only the first two.
+
+    The message names the connective and every operand's type.
+    """
+    expression = LogicalExpression(
+        LogicalOperation.OR,
+        (LiteralExpression(True), LiteralExpression(False), LiteralExpression(1)),
+    )
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=(
+            r"logical or requires boolean operands, but got bool\[\], bool\[\] "
+            r"and uint\[\]"
+        ),
+    ):
+        synthesize_expression_type(expression, _lookup_failure)
+
+
+def test_synthesize_logical_expression_promotes_every_operand_qualifier() -> None:
+    """Test the result qualifier promotes the qualifiers of all the operands.
+
+    Two ``PARAM`` operands alone would give ``PARAM``; the third operand's
+    ``INPUT`` makes the promotion ``TEMP``.
+    """
+    first = mock_identifier("a", 0)
+    second = mock_identifier("b", 1)
+    third = mock_identifier("c", 2)
+    checker = make_identifier_checker(
+        {
+            first: (_BOOL_TYPE, TypeQualifier.PARAM),
+            second: (_BOOL_TYPE, TypeQualifier.PARAM),
+            third: (_BOOL_TYPE, TypeQualifier.INPUT),
+        }
+    )
+    expression = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            IdentifierExpression(first),
+            IdentifierExpression(second),
+            IdentifierExpression(third),
+        ),
+    )
+
+    result_type, result_qualifier = checker.synthesize(expression)
+
+    assert result_type.is_structurally_equivalent(_BOOL_TYPE)
+    assert result_qualifier is TypeQualifier.TEMP
 
 
 # =============================================================================

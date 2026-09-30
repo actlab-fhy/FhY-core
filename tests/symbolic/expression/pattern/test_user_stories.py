@@ -16,13 +16,13 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.symbolic.expression.pattern import (
     BinaryExpressionPattern,
+    Capture,
     CapturePattern,
     LiteralPattern,
     MatchBindings,
     Pattern,
     RewriteRule,
     UnaryExpressionPattern,
-    WildcardPattern,
     apply_rewrite_rules,
     match_pattern,
 )
@@ -36,33 +36,34 @@ from ..conftest import mock_identifier
 
 def _make_algebraic_rule_set() -> list[RewriteRule]:
     """Build the four canonical algebraic simplifications."""
-    capture_x = CapturePattern("x", WildcardPattern())
+    x = Capture("x")
+    capture_x = CapturePattern(x)
     rule_left_plus_zero = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD, capture_x, LiteralPattern(value=0)
         ),
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings[x],
         name="x + 0 -> x",
     )
     rule_right_plus_zero = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD, LiteralPattern(value=0), capture_x
         ),
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings[x],
         name="0 + x -> x",
     )
     rule_times_one = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.MULTIPLY, capture_x, LiteralPattern(value=1)
         ),
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings[x],
         name="x * 1 -> x",
     )
     rule_self_subtract = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.SUBTRACT,
-            CapturePattern("x", WildcardPattern()),
-            CapturePattern("x", WildcardPattern()),
+            CapturePattern(x),
+            CapturePattern(x),
         ),
         rewrite=lambda _: LiteralExpression(0),
         name="x - x -> 0",
@@ -125,6 +126,8 @@ def test_algebraic_simplifier_handles_left_zero_addend() -> None:
 
 def test_subtraction_canonicalizer_rewrites_at_every_depth() -> None:
     """Test ``a - b -> a + (-b)`` rewrites every subtraction in a nested tree."""
+    left = Capture("left")
+    right = Capture("right")
     a = mock_identifier("a", 0)
     b = mock_identifier("b", 1)
     c = mock_identifier("c", 2)
@@ -132,13 +135,13 @@ def test_subtraction_canonicalizer_rewrites_at_every_depth() -> None:
     rule = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.SUBTRACT,
-            CapturePattern("left", WildcardPattern()),
-            CapturePattern("right", WildcardPattern()),
+            CapturePattern(left),
+            CapturePattern(right),
         ),
         rewrite=lambda bindings: BinaryExpression(
             BinaryOperation.ADD,
-            bindings.get("left"),
-            UnaryExpression(UnaryOperation.NEGATE, bindings.get("right")),
+            bindings[left],
+            UnaryExpression(UnaryOperation.NEGATE, bindings[right]),
         ),
         name="a - b -> a + (-b)",
     )
@@ -177,15 +180,16 @@ def test_subtraction_canonicalizer_rewrites_at_every_depth() -> None:
 
 def _make_double_negation_rule() -> RewriteRule:
     """Build the peephole rule ``!(!x) -> x``."""
+    x = Capture("x")
     return RewriteRule(
         pattern=UnaryExpressionPattern(
             UnaryOperation.LOGICAL_NOT,
             UnaryExpressionPattern(
                 UnaryOperation.LOGICAL_NOT,
-                CapturePattern("x", WildcardPattern()),
+                CapturePattern(x),
             ),
         ),
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings[x],
         name="!(!x) -> x",
     )
 
@@ -237,6 +241,7 @@ def _collect_matching_subexpressions(
 
 def test_match_pattern_powers_a_manual_subtree_finder() -> None:
     """Test ``match_pattern`` is usable for a read-only subtree-collecting walk."""
+    x = Capture("x")
     a = mock_identifier("a", 0)
     expression = BinaryExpression(
         BinaryOperation.MULTIPLY,
@@ -249,7 +254,7 @@ def test_match_pattern_powers_a_manual_subtree_finder() -> None:
     )
     pattern = BinaryExpressionPattern(
         BinaryOperation.ADD,
-        CapturePattern("x", WildcardPattern()),
+        CapturePattern(x),
         LiteralPattern(value=0),
     )
 
@@ -264,4 +269,4 @@ def test_match_pattern_powers_a_manual_subtree_finder() -> None:
                 LiteralExpression(0),
             )
         )
-        assert bindings.get("x").is_structurally_equivalent(IdentifierExpression(a))
+        assert bindings[x].is_structurally_equivalent(IdentifierExpression(a))

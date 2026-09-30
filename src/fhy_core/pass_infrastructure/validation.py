@@ -1,103 +1,167 @@
-"""Validation pipeline infrastructure built on `CompilerPass[IR, None]`.
+"""Validators and the collect-all validation pipeline.
 
-`ValidationManager` is a sibling to `PassManager`: it sequences validation
-passes and aggregates every diagnostic they emit into a single
-`ValidationReport[PassRunRecord]`.
+A `Validator` checks IR and reports every problem it finds as a
+diagnostic; it raises only when it cannot finish its check. A
+`ValidationManager` runs validators, and passes as checks, into one
+`ValidationReport` of `ValidatorRecord`s. Both are backed by the Rust
+implementation (``fhy_core._rs``), with the Rust core's semantics:
 
-Unlike `PassManager`, which is fail-fast and shaped around `IR -> IR`
-transformations, `ValidationManager`:
+- every validator runs, whatever the earlier ones reported;
+- a pass runs as a check: ``validate_input``, ``should_run`` (and
+  ``get_noop_output``), ``run_pass``, then ``validate_output``; a hook that
+  fails adds the error diagnostic ``pass "X" failed in <hook>: <cause>``;
+- a `Validator` whose ``validate`` raises without reporting an error gains
+  ``validator "X" failed without reporting an error: <cause>``.
 
-- accepts any `CompilerPass[IR, Any]` whose purpose is to `report(...)`
-  diagnostics (no transformation semantics are assumed),
-- runs every validator even when earlier ones produce errors (collect-all),
-- wraps an unexpected validator exception into an ERROR diagnostic and
-  continues with the next validator.
-
+Run on its own, a validation computes the analyses it requests afresh; as a
+pipeline's verifier, its validators share the pipeline's analysis cache.
 """
 
 from fhy_core.utils.override import override
 
 __all__ = [
     "ValidationManager",
+    "Validator",
+    "ValidatorRecord",
 ]
 
-from typing import Any, Generic, TypeVar
+import logging
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from fhy_core.diagnostic import (
-    Diagnostic,
-    DiagnosticLevel,
-    Note,
-    ValidationReport,
-)
-from fhy_core.identifier import HasIdentifier, Identifier
+from fhy_core import _rs
+from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note, ValidationReport
 from fhy_core.logger import get_logger
+from fhy_core.traits import FrozenMixin, PartialEqualMixin
 
-from .core import (
-    CompilerPass,
-    PassExecutionError,
-    PassValidationError,
-    PreservedAnalyses,
-)
-from .manager import PassRunRecord
+from .core import CompilerPass, _log_diagnostic
+
+if TYPE_CHECKING:
+    from .manager import Analysis, AnalysisManager
 
 _LOGGER = get_logger(__name__)
 
 _IRType = TypeVar("_IRType")
+_AnalysisIRT = TypeVar("_AnalysisIRT")
+_AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
-class ValidationManager(HasIdentifier, Generic[_IRType]):
-    """Sequences validation passes and aggregates their diagnostics.
+class ValidatorRecord(_rs.ValidatorRecord, PartialEqualMixin):
+    """The record of one validator in a `ValidationReport`.
 
-    Every registered validator runs against the input IR once, regardless of
-    whether earlier validators produced ERROR diagnostics. If a validator's
-    ``execute`` raises ``PassValidationError`` or ``PassExecutionError``, the
-    already-emitted diagnostics are still captured and the pipeline proceeds
-    to the next validator. Any other exception (an unexpected crash inside a
-    validator) is itself turned into an ERROR diagnostic attributed to that
-    validator, and the pipeline proceeds.
+    Backed by the Rust implementation: ``fhy_core._rs.ValidatorRecord``.
+    Records are immutable, compare, hash and print as frozen dataclasses do,
+    and pickle as a call of their class.
 
-    Unlike :class:`PassManager`, ``ValidationManager`` does **not** provide
-    an :class:`AnalysisManager` to its validators. Each validator runs
-    standalone; ``self.get_analysis(...)`` inside a validator recomputes
-    its result on every call. Validators that need to share an expensive
-    analysis must either compute it themselves once and pass it through
-    state, or be sequenced inside a :class:`PassManager` instead.
+    Attributes:
+        validator_name: The validator's name.
+        failed: Whether the validator could not finish its check.
+        diagnostics: The validator's diagnostics: its slice of the report's
+            diagnostic objects.
 
     """
 
-    _validators: list[CompilerPass[_IRType, Any]]
-    _name: Identifier
+    __slots__ = ()
+    __match_args__ = ("validator_name", "failed", "diagnostics")
 
-    def __init__(self, name: Identifier | None = None) -> None:
-        self._name = name if name is not None else Identifier("validation-pipeline")
-        self._validators = []
 
-    @override
-    def get_identifier(self) -> Identifier:
-        return self._name
+FrozenMixin.register(ValidatorRecord)
+ValidatorRecord._register_public_class()
+
+
+class Validator(_rs.ValidatorBase, ABC, Generic[_IRType]):
+    """A collect-all check over IR.
+
+    Backed by the Rust implementation: ``fhy_core._rs.ValidatorBase``. A
+    subclass implements `validate`, which reports each problem with
+    `report`; it raises only when it cannot finish the check. `name`
+    defaults to the class's ``__name__``, and is the source of the
+    validator's diagnostics.
+    """
 
     @property
-    def name(self) -> Identifier:
-        """Return the name of the validation manager."""
-        return self._name
+    def name(self) -> str:
+        """Return the validator's name."""
+        return type(self).__name__
 
-    @property
-    def validators(self) -> tuple[CompilerPass[_IRType, Any], ...]:
-        """Return the registered validators in pipeline order."""
-        return tuple(self._validators)
-
-    def add(self, validator: CompilerPass[_IRType, Any]) -> None:
-        """Append a validator to the pipeline.
+    @abstractmethod
+    def validate(self, ir: _IRType) -> None:
+        """Check ``ir``, reporting every problem found with `report`.
 
         Args:
-            validator: The validation pass to register. Typically an
-                :class:`~fhy_core.pass_infrastructure.core.AnalysisVisitablePass`
-                subclass that calls ``self.report(...)`` to emit diagnostics.
+            ir: The IR to check.
 
         """
-        self._validators.append(validator)
 
-    def validate(self, ir: _IRType) -> ValidationReport[PassRunRecord]:
+    def report(
+        self,
+        level: DiagnosticLevel,
+        message: str | Note,
+        detail: str | None = None,
+        *,
+        exc_info: BaseException | bool | None = None,
+    ) -> None:
+        """Report a diagnostic of the running check, and log it.
+
+        The diagnostic's source is `name`. It is logged on the logger
+        ``fhy_core.pass_infrastructure.core.<name>``, as a pass's is.
+        """
+        note = message if isinstance(message, Note) else Note(message)
+        diagnostic = Diagnostic(
+            level=level, message=note, source=self.name, detail=detail
+        )
+        self._record_diagnostic(diagnostic)
+        _log_diagnostic(diagnostic.source, level, note.message, detail, exc_info)
+
+    if TYPE_CHECKING:
+        # The stub cannot make `_rs.ValidatorBase` generic.
+        @override
+        def get_analysis(
+            self,
+            analysis_type: "type[Analysis[_AnalysisIRT, _AnalysisResultT]]",
+            ir: _AnalysisIRT,
+        ) -> _AnalysisResultT:
+            """Return the result of ``analysis_type`` for ``ir``."""
+            ...
+
+        @override
+        def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
+            """Return the analyses of the running check, or ``None``."""
+            ...
+
+
+class ValidationManager(_rs.ValidationManager, Generic[_IRType]):
+    """Sequences validators and aggregates their diagnostics.
+
+    Backed by the Rust implementation: ``fhy_core._rs.ValidationManager``.
+    ``ValidationManager(name=None)`` names the pipeline
+    ``validation-pipeline`` by default. `add` takes a `Validator` or a
+    `CompilerPass`, and `validate` returns a `ValidationReport` of one
+    `ValidatorRecord` per validator. It logs INFO lines when it starts and
+    finishes.
+    """
+
+    __slots__ = ()
+
+    if TYPE_CHECKING:
+
+        @property
+        @override
+        def validators(
+            self,
+        ) -> tuple["Validator[_IRType] | CompilerPass[_IRType, Any]", ...]:
+            """The validators, in pipeline order."""
+            ...
+
+        @override
+        def add(
+            self, validator: "Validator[_IRType] | CompilerPass[_IRType, Any]"
+        ) -> None:
+            """Append a validator to the pipeline."""
+            ...
+
+    @override
+    def validate(self, ir: _IRType) -> ValidationReport[ValidatorRecord]:
         """Run every validator and return the aggregated report.
 
         Args:
@@ -106,104 +170,18 @@ class ValidationManager(HasIdentifier, Generic[_IRType]):
         Returns:
             A :class:`ValidationReport` whose ``diagnostics`` are the
             concatenation of every validator's diagnostics, in pipeline
-            order, and whose ``records`` carry one
-            :class:`PassRunRecord` per validator.
+            order, and whose ``records`` carry one :class:`ValidatorRecord`
+            per validator.
 
         """
-        aggregated_diagnostics: list[Diagnostic] = []
-        records: list[PassRunRecord] = []
-
-        _LOGGER.info(
-            "%s starting (validators=%d)",
-            self._name,
-            len(self._validators),
-        )
-
-        for validator in self._validators:
-            diagnostics = self._run_single_validator(validator, ir)
-            aggregated_diagnostics.extend(diagnostics)
-            records.append(
-                PassRunRecord(
-                    pass_name=validator.get_pass_name(),
-                    changed=False,
-                    diagnostics=tuple(diagnostics),
-                    preserved_analyses=PreservedAnalyses.all(),
-                )
+        _LOGGER.info("%s starting (validators=%d)", self.name, len(self.validators))
+        report: ValidationReport[ValidatorRecord] = super().validate(ir)
+        if _LOGGER.isEnabledFor(logging.INFO):
+            _LOGGER.info(
+                "%s finished (errors=%d, warnings=%d, infos=%d)",
+                self.name,
+                len(report.errors()),
+                len(report.warnings()),
+                len(report.infos()),
             )
-
-        report: ValidationReport[PassRunRecord] = ValidationReport(
-            diagnostics=tuple(aggregated_diagnostics),
-            records=tuple(records),
-        )
-        error_count = 0
-        warning_count = 0
-        info_count = 0
-        for diagnostic in report.diagnostics:
-            if diagnostic.level == DiagnosticLevel.ERROR:
-                error_count += 1
-            elif diagnostic.level == DiagnosticLevel.WARNING:
-                warning_count += 1
-            elif diagnostic.level == DiagnosticLevel.INFO:
-                info_count += 1
-        _LOGGER.info(
-            "%s finished (errors=%d, warnings=%d, infos=%d)",
-            self._name,
-            error_count,
-            warning_count,
-            info_count,
-        )
         return report
-
-    @staticmethod
-    def _run_single_validator(
-        validator: CompilerPass[_IRType, Any], ir: _IRType
-    ) -> tuple[Diagnostic, ...]:
-        """Execute one validator and return its captured diagnostics.
-
-        Never raises. Converts an unexpected validator crash into a synthetic
-        ERROR diagnostic so the pipeline can continue.
-        """
-        try:
-            result = validator.execute(ir)
-            return tuple(result.diagnostics)
-        except (PassValidationError, PassExecutionError) as exc:
-            captured = tuple(validator.diagnostics)
-            if any(d.level == DiagnosticLevel.ERROR for d in captured):
-                return captured
-            # Infrastructure raised without emitting an ERROR; synthesize one
-            # so the report accurately reflects the failure.
-            type(validator)._get_pass_logger().error(
-                "raised %s without reporting a diagnostic: %s",
-                type(exc).__name__,
-                exc,
-                exc_info=exc,
-            )
-            return (
-                *captured,
-                Diagnostic(
-                    level=DiagnosticLevel.ERROR,
-                    message=Note(
-                        f'Validator "{validator.get_pass_name()}" raised '
-                        f'"{type(exc).__name__}" without reporting a diagnostic: '
-                        f"{exc}"
-                    ),
-                    source=validator.get_pass_name(),
-                ),
-            )
-        except Exception as exc:
-            captured = tuple(validator.diagnostics)
-            type(validator)._get_pass_logger().error(
-                "validator crashed with %s: %s",
-                type(exc).__name__,
-                exc,
-                exc_info=exc,
-            )
-            synthesized = Diagnostic(
-                level=DiagnosticLevel.ERROR,
-                message=Note(
-                    f'Validator "{validator.get_pass_name()}" crashed with '
-                    f"{type(exc).__name__}: {exc}"
-                ),
-                source=validator.get_pass_name(),
-            )
-            return (*captured, synthesized)

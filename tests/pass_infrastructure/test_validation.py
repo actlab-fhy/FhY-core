@@ -1,7 +1,6 @@
 """Tests the validation pipeline infrastructure."""
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,10 +18,10 @@ from fhy_core.pass_infrastructure import (
     AnalysisVisitablePass,
     CompilerPass,
     PassExecutionError,
-    PassRunRecord,
     PassValidationError,
-    PreservedAnalyses,
     ValidationManager,
+    Validator,
+    ValidatorRecord,
     register_pass,
 )
 from fhy_core.traits import FrozenMixin, PartialEqual, VisitableMixin
@@ -183,7 +182,7 @@ def test_validation_manager_runs_every_validator_even_after_errors() -> None:
     report = manager.validate(ValueBox(0))
 
     assert len(report.records) == 3
-    assert [r.pass_name for r in report.records] == [
+    assert [r.validator_name for r in report.records] == [
         "tests.vm.first_error",
         "tests.vm.second_error",
         "tests.vm.third_clean",
@@ -221,7 +220,7 @@ def test_validation_manager_returns_clean_report_when_all_validators_clean() -> 
 
     assert report.has_errors() is False
     assert report.diagnostics == ()
-    assert [r.pass_name for r in report.records] == [
+    assert [r.validator_name for r in report.records] == [
         "tests.vm.clean_a",
         "tests.vm.clean_b",
     ]
@@ -289,32 +288,40 @@ def test_validation_manager_continues_after_pass_execution_error() -> None:
 
     assert any(d.message_text == "real-problem" for d in report.errors())
     assert any(d.message_text == "still-here" for d in report.warnings())
-    assert [r.pass_name for r in report.records] == [
+    assert [r.validator_name for r in report.records] == [
         "tests.vm.raises_execution_error",
         "tests.vm.after_exec_err",
     ]
 
 
-def test_validation_manager_synthesizes_error_when_pass_raises_without_reporting() -> (
-    None
-):
-    """Test that an ERROR is synthesized when infra raises without reporting."""
+def test_validation_manager_reports_the_failure_of_a_validation_hook() -> None:
+    """Test that a failing validation hook adds the error recording it.
+
+    `validate_input` accepts `None` by default, so the validator refuses
+    it in an override; the check reports the hook's failure.
+    """
 
     @register_pass("tests.vm.rejects_input", "Rejects None via validate_input.")
     class _RejectsInput(AnalysisVisitablePass[Any]):
+        @override
+        def validate_input(self, ir: Any) -> None:
+            if ir is None:
+                raise ValueError("does not accept None")
+
         @override
         def visit_unknown(self, node: Any) -> None:
             _ = node
 
     manager = ValidationManager[Any]()
     manager.add(_RejectsInput())
-    report = manager.validate(None)  # validate_input raises PassValidationError
+    report = manager.validate(None)
 
     assert report.has_errors() is True
-    errors = report.errors()
-    assert any("does not accept None" in d.message_text for d in errors), (
-        f"expected infra-emitted diagnostic, got {[d.message_text for d in errors]}"
-    )
+    assert [d.message_text for d in report.errors()] == [
+        'pass "tests.vm.rejects_input" failed in validate_input: '
+        "ValueError: does not accept None"
+    ]
+    assert report.records[0].failed is True
 
 
 def test_validation_manager_returns_report_that_satisfies_partial_equal() -> None:
@@ -381,18 +388,23 @@ def test_validation_manager_default_and_explicit_identifier() -> None:
     assert named.name.name_hint == "tests.vm.named"
 
 
-def test_validation_manager_record_reports_no_changes_and_preserves_all() -> None:
-    """Test that each record reports changed=False and preserves all."""
+def test_validation_manager_record_holds_the_validators_slice_of_the_report() -> None:
+    """Test that each record names its validator and shares its diagnostics.
+
+    A record is a `ValidatorRecord`, whose diagnostics are its slice of
+    the report's diagnostic objects.
+    """
     manager = ValidationManager[ValueBox]()
     manager.add(_single_warning_validator("tests.vm.record_warn", "msg"))
     report = manager.validate(ValueBox(0))
 
     assert len(report.records) == 1
     record = report.records[0]
-    assert isinstance(record, PassRunRecord)
-    assert record.changed is False
-    assert isinstance(record.preserved_analyses, PreservedAnalyses)
-    assert record.preserved_analyses == PreservedAnalyses.all()
+    assert isinstance(record, ValidatorRecord)
+    assert record.validator_name == "tests.vm.record_warn"
+    assert record.failed is False
+    assert record.diagnostics == report.diagnostics
+    assert record.diagnostics[0] is report.diagnostics[0]
 
 
 def test_validation_manager_does_not_suppress_pass_validation_error_diagnostics() -> (
@@ -454,9 +466,13 @@ def test_validation_manager_attributes_each_diagnostic_to_emitting_validator() -
     ]
 
 
-def test_validation_manager_synthesizes_balanced_quotes_around_exception_type() -> None:
-    """Test that the synthesised "raised X without reporting a diagnostic"
-    message has balanced quotes around the exception type."""
+def test_validation_manager_reports_silent_failures_with_the_cores_text() -> None:
+    """Test the error text of a validator that fails without reporting one.
+
+    A failing pass reports its hook's failure, and a `Validator` that
+    raises without reporting an error gains the core's synthesized text,
+    both with balanced quotes around the names.
+    """
 
     @register_pass(
         "tests.vm.silent_validation_error",
@@ -467,18 +483,23 @@ def test_validation_manager_synthesizes_balanced_quotes_around_exception_type() 
             _ = node
             raise PassValidationError("silent-msg")
 
+    class _SilentValidator(Validator[ValueBox]):
+        @override
+        def validate(self, ir: ValueBox) -> None:
+            raise RuntimeError("silent-crash")
+
     manager = ValidationManager[ValueBox]()
     manager.add(_SilentValidationError())
+    manager.add(_SilentValidator())
     report = manager.validate(ValueBox(0))
 
-    expected_pattern = re.compile(
-        r'^Validator "tests\.vm\.silent_validation_error" raised '
-        r'"PassValidationError" without reporting a diagnostic: silent-msg$'
-    )
-    assert any(expected_pattern.match(d.message_text) for d in report.errors()), (
-        f"expected balanced-quote synthesised message, got "
-        f"{[d.message_text for d in report.errors()]}"
-    )
+    assert [d.message_text for d in report.errors()] == [
+        'pass "tests.vm.silent_validation_error" failed in run_pass: '
+        "PassValidationError: silent-msg",
+        'validator "_SilentValidator" failed without reporting an error: '
+        "RuntimeError: silent-crash",
+    ]
+    assert [record.failed for record in report.records] == [True, True]
 
 
 def test_validation_manager_preserves_multiple_diagnostics_from_single_validator() -> (

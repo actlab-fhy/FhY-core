@@ -349,6 +349,7 @@ def test_ordinal_param_serialization_round_trip_preserves_constraints(
     assert_none_satisfied(restored, [3])
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_ordinal_param_deserialize_rejects_unwrapped_possible_values() -> None:
     """Test ordinal param deserialize_from_dict rejects raw (unwrapped) values.
 
@@ -364,6 +365,7 @@ def test_ordinal_param_deserialize_rejects_unwrapped_possible_values() -> None:
         Param.deserialize_from_dict(payload)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_ordinal_param_deserialize_rejects_a_nan_value() -> None:
     """Test a payload carrying a NaN value is refused, as construction refuses it."""
     payload = create_ordinal_param([1.0, 2.0]).serialize_to_dict()

@@ -1,7 +1,5 @@
 """Tests for ``check_registered_function_body`` and its backing pass class."""
 
-from unittest.mock import patch
-
 import pytest
 
 from fhy_core.pass_infrastructure import CompilerPass, PassExecutionError
@@ -9,17 +7,13 @@ from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    EntryLookupError,
     EntryRegistrationError,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     get_native_constant_identifier,
     get_registered_entry,
-)
-from fhy_core.types import (
-    IndexType,
-    NumericalType,
-    TypeQualifier,
 )
 from fhy_core.types.checking.body_type_checker import (
     RegisteredFunctionBodyTypeChecker,
@@ -207,72 +201,64 @@ def test_pass_is_registered_under_canonical_name(
     assert registry[pass_name].pass_type is RegisteredFunctionBodyTypeChecker
 
 
-def test_check_rejects_body_synthesizing_non_numerical_type(
+def test_check_rejects_body_using_an_unsupported_construct(
     function_registry_snapshot: None,
 ) -> None:
-    """Test a body synthesizing a non-NumericalType raises ``EntryRegistrationError``.
+    """Test a body using an unsupported construct names it as such.
 
-    The check guards the result-sort comparison from receiving an
-    ``IndexType`` or any other non-numerical type. The path is
-    defensive (today's expression IR never synthesizes such types from
-    plain scalar arithmetic) so the test injects the synthesized type
-    via patching the type-checker's ``synthesize`` method.
+    Rewrites the test that patched ``ExpressionTypeChecker.synthesize`` to
+    reach the non-numerical guard: the body is checked in Rust, where that
+    guard is specified by a Rust story, since no body over scalar
+    parameters synthesizes a non-scalar type. The unsupported-construct
+    branch it sat beside is reachable, through a decimal literal.
     """
     x = mock_identifier("x", 0)
-    index_type = IndexType(LiteralExpression(0), LiteralExpression(1))
 
-    with patch(
-        "fhy_core.types.checking.type_checker.ExpressionTypeChecker.synthesize",
-        return_value=(index_type, TypeQualifier.PARAM),
-    ):
-        with pytest.raises(PassExecutionError) as exc_info:
-            check_registered_function_body(
-                name="f",
-                parameters=(x,),
-                parameter_sorts=(FunctionSort.INT,),
-                result_sort=FunctionSort.INT,
-                body=LiteralExpression(0),
-                resolve_call_target=get_registered_entry,
-            )
+    with pytest.raises(PassExecutionError) as exc_info:
+        check_registered_function_body(
+            name="f",
+            parameters=(x,),
+            parameter_sorts=(FunctionSort.REAL,),
+            result_sort=FunctionSort.REAL,
+            body=LiteralExpression("1.5"),
+            resolve_call_target=get_registered_entry,
+        )
 
     cause = exc_info.value.__cause__
     assert isinstance(cause, EntryRegistrationError)
-    assert "must synthesize a scalar numerical type" in str(cause)
+    assert "does not support" in str(cause)
+    assert isinstance(cause.__cause__, NotImplementedError)
 
 
-def test_check_rejects_body_synthesizing_non_primitive_data_type(
+def test_check_refuses_an_unresolved_call_without_deferral(
     function_registry_snapshot: None,
 ) -> None:
-    """Test a body whose ``NumericalType.data_type`` is non-primitive is rejected.
+    """Test a call no entry resolves fails the check when not deferred.
 
-    The path guards against template / tensor types entering the
-    result-sort comparison. As with the previous test, today's
-    expression IR cannot reach this branch from plain scalar arithmetic
-    so the synthesized type is patched in.
+    Rewrites the test that patched ``ExpressionTypeChecker.synthesize`` to
+    reach the non-primitive guard (see the previous test). The lookup's
+    ``EntryLookupError`` is the registration error's cause.
     """
-    from unittest.mock import MagicMock  # noqa: PLC0415
-
     x = mock_identifier("x", 0)
-    fake_numerical = MagicMock(spec=NumericalType)
-    fake_numerical.data_type = MagicMock()  # not a PrimitiveDataType
 
-    with patch(
-        "fhy_core.types.checking.type_checker.ExpressionTypeChecker.synthesize",
-        return_value=(fake_numerical, TypeQualifier.PARAM),
-    ):
-        with pytest.raises(PassExecutionError) as exc_info:
-            check_registered_function_body(
-                name="f",
-                parameters=(x,),
-                parameter_sorts=(FunctionSort.INT,),
-                result_sort=FunctionSort.INT,
-                body=LiteralExpression(0),
-                resolve_call_target=get_registered_entry,
-            )
+    with pytest.raises(PassExecutionError) as exc_info:
+        check_registered_function_body(
+            name="f",
+            parameters=(x,),
+            parameter_sorts=(FunctionSort.INT,),
+            result_sort=FunctionSort.INT,
+            body=CallExpression(
+                "test_body_never_registered", (IdentifierExpression(x),)
+            ),
+            resolve_call_target=get_registered_entry,
+            defer_unresolved_calls=False,
+        )
 
     cause = exc_info.value.__cause__
     assert isinstance(cause, EntryRegistrationError)
-    assert "must synthesize a scalar numerical type" in str(cause)
+    assert "calls a function that is not registered" in str(cause)
+    assert "test_body_never_registered" in str(cause)
+    assert isinstance(cause.__cause__, EntryLookupError)
 
 
 def test_check_accepts_body_referencing_a_native_constant(

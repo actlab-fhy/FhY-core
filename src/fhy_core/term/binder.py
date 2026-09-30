@@ -10,6 +10,11 @@ capture-avoiding substitution.
 The children a binder scopes over (and the values substituted into them) are
 ``Term``s: they compare by alpha-equivalence, report their free identifiers,
 and substitute. ``BinderMixin`` is itself a ``Term``, so binders nest.
+
+The derived methods run the Rust core's ``fhy_core::term::Binder``
+algorithms, which call the node's hooks and its children's methods. A binder
+list that repeats an identifier, on either side, pairs with none, so such a
+binder is alpha-equivalent to no binder, itself included.
 """
 
 from fhy_core.utils.override import override
@@ -18,8 +23,9 @@ __all__ = ["BinderMixin", "HasFreeIdentifiers", "Term"]
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
+from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.utils import Self
 
@@ -95,67 +101,25 @@ class BinderMixin(AlphaEquivalenceMixin):
 
         Derived: ``other`` must be the same concrete type with the same
         number of bound identifiers and scoped children; the renaming is
-        extended with the pairwise binding of the two nodes' bound
-        identifiers and the scoped children are compared under it.
+        extended with a frame pairing the two nodes' bound identifiers by
+        position and the scoped children are compared under it, in order,
+        stopping at the first that differs. A pairing of lists that repeat
+        an identifier is refused, and the nodes are then not equivalent.
         """
-        if not isinstance(other, BinderMixin) or type(self) is not type(other):
-            return False
-        self_bound = self.get_bound_identifiers()
-        other_bound = other.get_bound_identifiers()
-        if len(self_bound) != len(other_bound):
-            return False
-        self_children = self.get_scoped_children()
-        other_children = other.get_scoped_children()
-        if len(self_children) != len(other_children):
-            return False
-        try:
-            extended = renaming.extend(dict(zip(self_bound, other_bound, strict=True)))
-        except ValueError:
-            return False
-        return all(
-            self_child.is_alpha_equivalent_under(other_child, extended)
-            for self_child, other_child in zip(
-                self_children, other_children, strict=True
-            )
-        )
+        return _rs.binder_is_alpha_equivalent_under(self, other, renaming)
 
     def get_free_identifiers(self) -> frozenset[Identifier]:
         """Return the free identifiers of the scoped children minus the bound set."""
-        bound = frozenset(self.get_bound_identifiers())
-        free: frozenset[Identifier] = frozenset()
-        for child in self.get_scoped_children():
-            free |= child.get_free_identifiers()
-        return free - bound
+        return _rs.binder_get_free_identifiers(self)
 
     def substitute(self, replacements: Mapping[Identifier, Term]) -> Self:
         """Return this node with free identifiers replaced, avoiding capture.
 
         Bound identifiers shadow ``replacements`` (entries keyed by a bound
-        identifier do not apply within this node). When a replacement term
-        would be captured by one of this node's binders, that binder is
-        first renamed to a fresh identifier via
+        identifier do not apply within this node), and with no entry left
+        the node itself is returned. When a replacement term would be
+        captured by one of this node's binders, that binder is first
+        renamed to a fresh identifier with the same name hint via
         :meth:`rename_bound_identifier`.
         """
-        bound = frozenset(self.get_bound_identifiers())
-        active = {
-            identifier: term
-            for identifier, term in replacements.items()
-            if identifier not in bound
-        }
-        if not active:
-            return self
-
-        capturable: frozenset[Identifier] = frozenset()
-        for term in active.values():
-            capturable |= term.get_free_identifiers()
-
-        safe = self
-        for bound_identifier in self.get_bound_identifiers():
-            if bound_identifier in capturable:
-                fresh = Identifier(bound_identifier.name_hint)
-                safe = safe.rename_bound_identifier(bound_identifier, fresh)
-
-        substituted_children = [
-            child.substitute(active) for child in safe.get_scoped_children()
-        ]
-        return safe.rebuild_with_scoped_children(substituted_children)
+        return cast(Self, _rs.binder_substitute(self, replacements))

@@ -6,7 +6,6 @@ parametrized over the constraint factory.
 """
 
 import copy
-import dataclasses
 import io
 import json
 import math
@@ -30,7 +29,6 @@ from fhy_core.symbolic.constraint import (
     NotInSetConstraint,
     create_constraint_system,
 )
-from fhy_core.symbolic.constraint import core as constraint_core_module
 from fhy_core.symbolic.expression import LiteralExpression
 from fhy_core.traits import FrozenMutationError
 from fhy_core.utils.override import override
@@ -252,11 +250,9 @@ def test_set_constraint_repr_is_stable_across_construction_order(
 ) -> None:
     """Test ``repr`` renders alike for two constraints built in opposite orders.
 
-    The stored ``values`` tuple order depends on ``frozenset`` iteration
-    order, which depends on insertion order once members collide on
-    hash. ``repr`` has to canonicalize past that rather than expose it,
-    or the same logical constraint would print two different ways
-    depending on nothing but construction history.
+    The members collide on hash and are given in opposite orders; both
+    constraints keep them in the canonical order, so the same logical
+    constraint prints one way whatever its construction history.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
@@ -265,10 +261,8 @@ def test_set_constraint_repr_is_stable_across_construction_order(
     assert isinstance(left, (InSetConstraint, NotInSetConstraint))
     assert isinstance(right, (InSetConstraint, NotInSetConstraint))
 
-    assert left.values != right.values, (
-        "the two constraints must store their members in different orders "
-        "for this test to say anything about repr's ordering"
-    )
+    # Both store their members in canonical order.
+    assert left.values == right.values
     assert repr(left) == repr(right)
 
 
@@ -500,13 +494,12 @@ def test_set_constraint_accepts_the_unified_values_keyword(
     assert set(constraint.values) == {1, 2}  # type: ignore[attr-defined]
 
 
-# Regression guard for a field that used to store the internal type-strict
-# wrapper directly: reading it gave a silently wrong membership answer
-# (`1 in constraint.values` was `False` for an actual member `1`,
-# because the wrapper's `__eq__`/`__hash__` never matched a raw `1`). Direct
-# membership on the field reflects the constructed member set regardless of
-# in-set/not-in-set polarity; `is_satisfied_with_bindings` (exercised
-# elsewhere) is what differs by kind.
+# The field holds the raw members, not the internal type-strict wrapper:
+# the wrapper's `__eq__`/`__hash__` never match a raw `1`, so storing it
+# would make `1 in constraint.values` silently `False` for an actual member
+# `1`. Direct membership on the field reflects the constructed member set
+# regardless of in-set/not-in-set polarity; `is_satisfied_with_bindings`
+# (exercised elsewhere) is what differs by kind.
 @pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_public_field_direct_membership_reflects_true_membership(
     factory: SetConstraintFactory, field_name: str
@@ -547,12 +540,8 @@ def test_set_constraint_members_order_is_independent_of_construction_order(
 ) -> None:
     """Test `members` orders alike for two constraints built in opposite orders.
 
-    Normalization stores members in `frozenset` iteration order, which
-    depends on insertion order once members collide on hash (and, for
-    `str` members, on the per-process hash seed). The members here
-    collide, so the two constraints provably store them in different
-    orders and the accessor has to impose the ordering itself rather
-    than inherit one that happens to agree.
+    The members collide on hash and are given in opposite orders; both the
+    stored field and the accessor hold the canonical order.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
@@ -561,10 +550,8 @@ def test_set_constraint_members_order_is_independent_of_construction_order(
     assert isinstance(left, (InSetConstraint, NotInSetConstraint))
     assert isinstance(right, (InSetConstraint, NotInSetConstraint))
 
-    assert getattr(left, field_name) != getattr(right, field_name), (
-        "the two constraints must store their members in different orders "
-        "for this test to say anything about the accessor's ordering"
-    )
+    # Both store their members in canonical order.
+    assert getattr(left, field_name) == getattr(right, field_name)
     assert left.members == right.members
 
 
@@ -697,35 +684,25 @@ def _assert_membership_agrees_with_public_field(
 
 @pytest.mark.parametrize("factory", SET_KINDS)
 @pytest.mark.parametrize("read", _READERS)
-def test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set(
-    monkeypatch: pytest.MonkeyPatch,
+def test_set_constraint_reader_does_not_rebuild_the_members(
     factory: SetConstraintFactory,
     read: Callable[[Constraint], object],
 ) -> None:
-    """Test no reader re-derives the type-strict member set from the raw field.
+    """Test no reader rebuilds the members from the stored field.
 
-    The set is built once during construction. Re-deriving it on every
-    read turns a constant-time membership check into a full rebuild --
-    one wrapper allocation and one hash per stored member, per call --
-    and ``__repr__`` is exercised here too, since it reads the same
-    cache.
+    The core holds the type-strict member set, built once during
+    construction, and the members' Python tuple is built once with it:
+    every reader, ``__repr__`` included, leaves the same tuple object in
+    place.
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
-    rebuild_count = 0
-    build_member_set = constraint_core_module._wrap_member_collection  # type: ignore[attr-defined]  # test: patches core's own import-by-value binding
-
-    def count_build_member_set_calls(values: Any) -> Any:
-        nonlocal rebuild_count
-        rebuild_count += 1
-        return build_member_set(values)
-
-    monkeypatch.setattr(
-        constraint_core_module, "_wrap_member_collection", count_build_member_set_calls
-    )
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+    stored = constraint.values
 
     read(constraint)
 
-    assert rebuild_count == 0
+    assert constraint.values is stored
+    assert constraint.members is stored
 
 
 @pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
@@ -765,19 +742,19 @@ def test_set_constraint_copy_preserves_evaluation(
 
 
 @pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
-def test_set_constraint_replace_rederives_the_member_set_from_the_new_values(
+def test_set_constraint_rebuilt_with_new_values_decides_against_them(
     factory: SetConstraintFactory, field_name: str
 ) -> None:
-    """Test ``dataclasses.replace`` decides against the replacement members.
+    """Test a constraint rebuilt with other members decides against those.
 
-    The derived member set must not survive from the source instance; a
-    stale set would keep answering for the members that were replaced.
+    The kinds are no dataclasses, so a caller rebuilds one with
+    ``type(constraint)(constraint.variable, values)``, as the param layer
+    does; the rebuilt constraint holds its own member set.
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
 
-    replaced = cast(
-        Constraint, dataclasses.replace(cast(Any, constraint), **{field_name: (7, 8)})
-    )
+    replaced = cast(Constraint, type(constraint)(constraint.variable, (7, 8)))
 
     assert set(getattr(replaced, field_name)) == {7, 8}
     _assert_membership_agrees_with_public_field(replaced, field_name)
@@ -1042,6 +1019,7 @@ def test_set_constraint_rejects_a_declared_numpy_float64_nan_member(
         factory(mock_identifier("x", 0), {np.float64("nan")})
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("kind", SET_KINDS)
 def test_set_constraint_deserialize_rejects_a_tampered_nan_member(
     kind: type[InSetConstraint | NotInSetConstraint],
@@ -1086,7 +1064,6 @@ def test_constraint_system_evaluate_with_bindings_decides_a_nan_binding(
     assert system.evaluate_with_bindings({x: float("nan")}) is outcome
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
 def test_constraint_system_check_satisfiability_with_bindings_decides_a_nan_binding(
     factory: SetConstraintFactory,

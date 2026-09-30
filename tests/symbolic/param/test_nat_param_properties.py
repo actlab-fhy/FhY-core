@@ -70,6 +70,7 @@ def is_within_bounds(
     return above_lower and below_upper
 
 
+@pytest.mark.sympy
 @given(case=draw_between_case())
 def test_between_factory_admits_exactly_the_values_within_its_bounds(
     case: tuple[int, int, bool, bool, bool, int],
@@ -99,7 +100,7 @@ def test_between_factory_admits_exactly_the_values_within_its_bounds(
 )
 def test_between_factory_rejects_reversed_bounds(lower: int, gap: int) -> None:
     """Test a lower bound above the upper bound raises `ParamError`."""
-    with pytest.raises(ParamError, match="Lower bound"):
+    with pytest.raises(ParamError, match="lower bound"):
         create_natural_param_between(lower, lower - gap)
 
 
@@ -113,7 +114,7 @@ def test_between_factory_rejects_equal_bounds_with_an_exclusive_side(
     """Test equal bounds are only admitted when both sides are inclusive."""
     is_lower_inclusive, is_upper_inclusive = inclusivity
 
-    with pytest.raises(ParamError, match="Lower bound"):
+    with pytest.raises(ParamError, match="lower bound"):
         create_natural_param_between(
             bound,
             bound,
@@ -122,6 +123,7 @@ def test_between_factory_rejects_equal_bounds_with_an_exclusive_side(
         )
 
 
+@pytest.mark.sympy
 @given(
     lower=st.integers(min_value=_MIN_BOUND, max_value=_MAX_BOUND),
     is_inclusive=st.booleans(),
@@ -141,6 +143,7 @@ def test_lower_bound_factory_admits_exactly_the_values_from_its_bound(
     assert is_valid == (candidate >= lower if is_inclusive else candidate > lower)
 
 
+@pytest.mark.sympy
 @given(
     upper=st.integers(min_value=_MIN_BOUND + 1, max_value=_MAX_BOUND),
     is_inclusive=st.booleans(),

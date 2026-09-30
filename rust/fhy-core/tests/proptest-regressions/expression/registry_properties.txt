@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 37b61ba88ecc07c996d5ffb6c4a80a118e7e0978e439745207446c467ece551d # shrinks to expression = Expression((implies (between n0::69263 n0::69263 n0::69263) b0::69265)), booleans = [false, false, false], numbers = [0, 0]

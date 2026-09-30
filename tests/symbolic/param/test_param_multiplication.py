@@ -39,6 +39,7 @@ from .conftest import (
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_multiplication_of_positive_intervals_is_positive_product() -> None:
     """Test ``[2,3] * [4,5] -> [8,15]``."""
     x = create_interval_integer_param_between(2, 3)
@@ -50,6 +51,7 @@ def test_multiplication_of_positive_intervals_is_positive_product() -> None:
     assert_none_satisfied(z, [7, 16])
 
 
+@pytest.mark.sympy
 def test_multiplication_of_mixed_sign_interval_uses_min_from_extreme_product() -> None:
     """Test ``[-2,3] * [4,5] -> [-10,15]``.
 
@@ -65,6 +67,7 @@ def test_multiplication_of_mixed_sign_interval_uses_min_from_extreme_product() -
     assert_none_satisfied(z, [-11, 16])
 
 
+@pytest.mark.sympy
 def test_multiplication_of_two_negative_intervals_flips_to_positive() -> None:
     """Test ``[-2,-1] * [-3,-1] -> [1,6]``: negative times negative flips sign."""
     x = create_interval_integer_param_between(-2, -1)
@@ -76,6 +79,7 @@ def test_multiplication_of_two_negative_intervals_flips_to_positive() -> None:
     assert_none_satisfied(z, [0, 7])
 
 
+@pytest.mark.sympy
 def test_multiplication_of_wholly_positive_and_wholly_negative_interval() -> None:
     """Test ``[2,5] * [-3,-1] -> [-15,-2]``.
 
@@ -92,6 +96,7 @@ def test_multiplication_of_wholly_positive_and_wholly_negative_interval() -> Non
     assert_none_satisfied(z, [-16, -1])
 
 
+@pytest.mark.sympy
 def test_multiplication_of_wholly_negative_and_wholly_positive_interval() -> None:
     """Test ``[-3,-1] * [2,5] -> [-15,-2]``: operand order mirrored from above."""
     x = create_interval_integer_param_between(-3, -1)
@@ -103,6 +108,7 @@ def test_multiplication_of_wholly_negative_and_wholly_positive_interval() -> Non
     assert_none_satisfied(z, [-16, -1])
 
 
+@pytest.mark.sympy
 def test_multiplication_by_one_is_identity() -> None:
     """Test ``[2,5] * 1 -> [2,5]``: multiplying by the scalar ``1`` is an identity."""
     x = create_interval_integer_param_between(2, 5)
@@ -118,6 +124,7 @@ def test_multiplication_by_one_is_identity() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_multiplication_with_half_bounded_positive_operand_propagates_lower_bound() -> (
     None
 ):
@@ -141,6 +148,7 @@ def test_multiplication_with_fully_unbounded_operand_stays_fully_unbounded() -> 
     assert_all_satisfied(z, [-(10**6), 0, 10**6])
 
 
+@pytest.mark.sympy
 def test_multiplication_of_zero_singleton_with_unbounded_operand_is_zero() -> None:
     """Test ``[0,0] * (-inf,+inf) -> [0,0]``: zero absorbs an unbounded operand."""
     x = create_interval_integer_param_exactly(0)
@@ -152,6 +160,7 @@ def test_multiplication_of_zero_singleton_with_unbounded_operand_is_zero() -> No
     assert_none_satisfied(z, [-1, 1])
 
 
+@pytest.mark.sympy
 def test_multiplication_of_non_negative_interval_with_unbounded_below_operand() -> None:
     """Test ``[0,5] * (-inf,0] -> (-inf,0]``."""
     x = create_interval_integer_param_between(0, 5)
@@ -163,6 +172,7 @@ def test_multiplication_of_non_negative_interval_with_unbounded_below_operand() 
     assert_none_satisfied(z, [1])
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "left_bounds, right_bounds, admitted, rejected",
     [
@@ -213,6 +223,7 @@ def test_multiplication_negative_finite_endpoint_signs_unbounded_corner_product(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_multiplication_with_int_scalar_on_right_scales_interval() -> None:
     """Test multiplication with a plain ``int`` on the right scales the interval."""
     x = create_interval_integer_param_between(3, 5)
@@ -223,6 +234,7 @@ def test_multiplication_with_int_scalar_on_right_scales_interval() -> None:
     assert_none_satisfied(z, [5, 11])
 
 
+@pytest.mark.sympy
 def test_multiplication_with_int_scalar_on_left_scales_interval() -> None:
     """Test multiplication with a plain ``int`` on the left scales the interval."""
     x = create_interval_integer_param_between(3, 5)
@@ -324,6 +336,7 @@ def test_multiplication_pre_empts_a_third_party_operands_rmul() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_multiplication_accepts_plain_integer_param_on_right() -> None:
     """Test multiplication of interval-integer param with a plain integer param."""
     x = create_interval_integer_param_between(3, 5)
@@ -335,6 +348,7 @@ def test_multiplication_accepts_plain_integer_param_on_right() -> None:
     assert_none_satisfied(z, [5, 16])
 
 
+@pytest.mark.sympy
 def test_multiplication_accepts_plain_integer_param_on_left() -> None:
     """Test multiplication with a plain integer param on the left (via reflection)."""
     x = create_interval_integer_param_between(3, 5)
@@ -369,7 +383,7 @@ def test_multiplication_rejects_integer_param_with_non_bound_constraint() -> Non
     bound = create_interval_integer_param_exactly(2)
 
     with pytest.raises(
-        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+        TypeError, match="cannot coerce an integer parameter with non-bound constraints"
     ):
         _ = bound * integer
 
@@ -380,7 +394,7 @@ def test_multiplication_rejects_integer_param_with_non_bound_constraint() -> Non
 
 
 def test_multiplication_keeps_non_negative_when_both_operands_are() -> None:
-    """Test ``non_negative`` is preserved when both operands are non-negative."""
+    """Test ``non_negative`` is preserved when both operands are non-negative"""
     x = create_interval_natural_param(zero_included=False)
     x = x.add_lower_bound_constraint(1).add_upper_bound_constraint(3)
     y = create_interval_natural_param(zero_included=False)
@@ -393,7 +407,7 @@ def test_multiplication_keeps_non_negative_when_both_operands_are() -> None:
 
 
 def test_multiplication_drops_non_negative_when_only_one_operand_is() -> None:
-    """Test ``non_negative`` is dropped when only one operand is non-negative."""
+    """Test ``non_negative`` is dropped when only one operand is non-negative"""
     x = create_interval_natural_param()
     x = x.add_upper_bound_constraint(3)
     y = create_interval_integer_param_between(-2, 2)
@@ -403,6 +417,7 @@ def test_multiplication_drops_non_negative_when_only_one_operand_is() -> None:
     assert not z.domain.non_negative  # type: ignore[attr-defined]
 
 
+@pytest.mark.sympy
 def test_multiplication_zero_included_is_or_of_operands() -> None:
     """Test the multiplication-specific ``zero_included = left or right`` rule.
 
@@ -422,6 +437,7 @@ def test_multiplication_zero_included_is_or_of_operands() -> None:
     assert_all_satisfied(z, [0])
 
 
+@pytest.mark.sympy
 def test_multiplication_zero_included_is_or_of_operands_in_reversed_order() -> None:
     """Test ``[0,3] * [1,3]`` includes zero when only the LEFT operand admits it.
 
@@ -459,6 +475,7 @@ def test_multiplication_zero_included_false_when_both_operands_exclude_zero() ->
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_multiplication_squares_zero_included_exclusive_preference_natural() -> None:
     """Test squaring a zero-included, exclusive-preference natural param does not raise.
 
@@ -476,6 +493,7 @@ def test_multiplication_squares_zero_included_exclusive_preference_natural() -> 
     assert_none_satisfied(z, [-1])
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "x_zero_included, x_lower, y_zero_included, y_lower, expected_min",
     [
@@ -534,6 +552,7 @@ def test_multiplication_zero_lower_bound_exclusive_preference_matrix(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_multiplication_rendering_follows_left_operand_prefer_inclusive() -> None:
     """Test the result's rendering follows the LEFT operand's `prefer_inclusive`.
 
@@ -658,6 +677,7 @@ def test_multiplication_result_interoperates_with_is_feasible() -> None:
     assert not z.is_empty()
 
 
+@pytest.mark.sympy
 def test_multiplication_result_interoperates_with_assign() -> None:
     """Test a value in the product interval can be assigned to the result."""
     x = create_interval_integer_param_between(2, 3)
@@ -671,6 +691,7 @@ def test_multiplication_result_interoperates_with_assign() -> None:
         z.assign(7)
 
 
+@pytest.mark.sympy
 def test_chained_addition_then_multiplication() -> None:
     """Test ``(a + b) * c`` chains interval addition into interval multiplication."""
     a = create_interval_integer_param_between(1, 2)

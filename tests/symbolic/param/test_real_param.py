@@ -123,6 +123,7 @@ def test_real_param_assign_reports_a_non_literal_value_as_inadmissible(
         param.assign(value)
 
 
+@pytest.mark.sympy
 def test_real_param_validates_an_exact_decimal_beyond_float_range() -> None:
     """Test an admitted exact decimal too wide for a float is checked exactly.
 
@@ -159,6 +160,7 @@ def test_real_param_between_infinite_bound_reports_undecided_feasibility() -> No
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 def test_real_param_with_infinite_upper_bound_still_validates_a_finite_value() -> None:
     """Test `is_value_valid` stays decided against an infinite bound."""
     param = create_real_param_with_upper_bound(math.inf)
@@ -171,6 +173,7 @@ def test_real_param_with_infinite_upper_bound_still_validates_a_finite_value() -
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_real_param_add_constraint_combines_with_existing_constraints(
     default_real_param: Param[str | float],
 ) -> None:
@@ -189,6 +192,7 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "factory, ops, pass_values, fail_values",
     [
@@ -357,7 +361,7 @@ def test_real_param_bounded_construction_with_invalid_string_bounds_raises(
     than ``ParamError`` -- the failure is in expression construction, not in
     param-domain validation.
     """
-    with pytest.raises(ValueError, match="Invalid string-form literal expression"):
+    with pytest.raises(ValueError, match="invalid literal text"):
         param = factory()
         for name, args in ops:
             param = getattr(param, name)(*args)
@@ -374,6 +378,7 @@ def test_real_param_between_with_reversed_bounds_raises() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "factory, boundary_value",
     [
@@ -417,6 +422,7 @@ def test_real_param_default_bound_inclusivity_admits_endpoint(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> None:
     """Test `create_real_param_between(x, x)` admits only ``x`` (both inclusive)."""
     param = create_real_param_between(5.0, 5.0)
@@ -440,7 +446,7 @@ def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> N
 def test_real_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `create_real_param_between(x, x)` raises when either bound is exclusive."""
+    """Test `create_real_param_between(x, x)` raises when either bound is exclusive"""
     with pytest.raises(ParamError):
         create_real_param_between(
             5.0,
@@ -457,11 +463,12 @@ def test_real_param_between_equal_bounds_with_any_exclusive_raises(
 _WIDE_DIGITS = "1" * 400
 """Integer digits that make a decimal too wide for a finite ``float``."""
 
-_UNORDERED_BOUNDS_MESSAGE = "Lower bound must be less than or equal to upper bound."
+_UNORDERED_BOUNDS_MESSAGE = "lower bound must be less than or equal to upper bound"
 
 
 # Every pair below collapses to one ``float`` when both bounds are rounded
 # to binary, so only an exact comparison tells the bounds apart.
+@pytest.mark.z3
 @pytest.mark.parametrize(
     "lower_bound, upper_bound",
     [
@@ -519,7 +526,7 @@ def test_real_param_between_rejects_bounds_reversed_only_exactly(
 def test_real_param_between_rejects_exactly_equal_bounds_with_an_exclusive_side(
     lower_bound: float | str, upper_bound: float | str
 ) -> None:
-    """Test bounds spelled differently but exactly equal raise when one is exclusive."""
+    """Test bounds spelled differently but exactly equal raise when one is exclusive"""
     with pytest.raises(ParamError, match=re.escape(_UNORDERED_BOUNDS_MESSAGE)):
         create_real_param_between(lower_bound, upper_bound, is_upper_inclusive=False)
 
@@ -536,7 +543,7 @@ def test_real_param_between_rejects_a_string_bound_outside_the_literal_grammar(
     lower_bound: float | str, upper_bound: float | str
 ) -> None:
     """Test a string bound the literal grammar refuses raises that literal's error."""
-    with pytest.raises(ValueError, match="Invalid string-form literal expression"):
+    with pytest.raises(ValueError, match="invalid literal text"):
         create_real_param_between(lower_bound, upper_bound)
 
 
@@ -560,6 +567,7 @@ def test_real_param_is_not_structurally_equivalent_to_int_param() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_real_param_serialization_round_trip_preserves_constraints() -> None:
     """Test real param round-trips through dict serialization with its constraints."""
     param = create_real_param()

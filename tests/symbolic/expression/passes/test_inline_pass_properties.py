@@ -7,7 +7,8 @@ Covers the expression-bodied ``RegisteredFunction`` builtins registered in
 ``implies``, ``iff``): inlining removes every call to one of them (even
 when nested two levels deep), inlining is idempotent, and the inlined
 tree evaluates identically to a reference table transcribed from each
-function's registered formula. ``gelu`` is excluded from the evaluation
+function's registered formula, and a nest of 20 to 300 calls inlines too.
+``gelu`` is excluded from the evaluation
 law: it inlines to a call to the native ``erf``, which has no NumPy
 lowering (``fhy_core.symbolic.expression.passes.numpy`` module
 docstring), a documented limitation the NumPy evaluator's example tests
@@ -37,7 +38,7 @@ from fhy_core.symbolic.expression import (
     inline_functions,
 )
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 
@@ -355,9 +356,73 @@ def test_inline_functions_evaluates_like_the_reference_table_for_bool_builtins(
 
 @given(_build_any_builtin_call_strategy())
 def test_inline_functions_is_idempotent(expression: Expression) -> None:
-    """Test inlining an already-inlined tree changes nothing structurally."""
+    """Test inlining an already-inlined tree returns that very tree.
+
+    An inlined tree calls nothing left to inline, so the inliner returns
+    its input object itself.
+    """
     inlined_once = inline_functions(expression)
 
     inlined_twice = inline_functions(inlined_once)
 
-    assert inlined_twice.is_structurally_equivalent(inlined_once)
+    assert inlined_twice is inlined_once
+
+
+# =============================================================================
+# Deep nesting, beyond the reach of the recursive Python inliner
+# =============================================================================
+
+# The one-argument real builtins nested deep. `relu`'s body names its
+# argument twice (through `max`), which made the recursive Python inliner
+# double its work per level.
+_NESTABLE_REAL_FUNCTION_NAMES: Final[tuple[str, ...]] = (
+    "relu",
+    "abs",
+    "sigmoid",
+    "silu",
+)
+
+
+@st.composite
+def _draw_deeply_nested_call(draw: st.DrawFn) -> Expression:
+    """Draw 20 to 300 nested calls of one-argument real builtins over a literal."""
+    depth = draw(st.integers(min_value=20, max_value=300))
+    tree = draw(_build_real_literal_strategy())
+    for _ in range(depth):
+        tree = call(draw(st.sampled_from(_NESTABLE_REAL_FUNCTION_NAMES)), tree)
+    return tree
+
+
+def _collect_distinct_call_expressions(
+    expression: Expression,
+) -> list[CallExpression]:
+    """Return every distinct ``CallExpression`` node, walking a DAG iteratively."""
+    calls: list[CallExpression] = []
+    seen: set[int] = set()
+    pending = [expression]
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, CallExpression):
+            calls.append(node)
+        pending.extend(node.get_visit_children())
+    return calls
+
+
+@given(_draw_deeply_nested_call())
+def test_inline_functions_leaves_no_registered_function_call_in_deep_nesting(
+    expression: Expression,
+) -> None:
+    """Test a deep nest of builtins inlines to a tree calling only natives.
+
+    The recursive Python inliner took about 11 ms at depth 10 and did not
+    finish at depth 100; the Rust inliner is linear in the distinct nodes.
+    """
+    inlined = inline_functions(expression)
+
+    for call_expression in _collect_distinct_call_expressions(inlined):
+        entry = get_registered_entry(call_expression.function_name)
+        assert isinstance(entry, NativeFunction)
+    assert inline_functions(inlined) is inlined

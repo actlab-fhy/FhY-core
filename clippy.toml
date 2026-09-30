@@ -1,0 +1,3 @@
+# Identifiers rustdoc prose may write without backticks, besides the
+# defaults ('..').
+doc-valid-idents = ["SymPy", ".."]

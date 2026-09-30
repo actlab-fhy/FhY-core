@@ -334,8 +334,12 @@ def test_visitable_pass_unknown_node_raises_not_implemented_error() -> None:
     """
     visitor = HandlesNothingVisitablePass()
 
-    with pytest.raises(PassExecutionError, match="UnhandledNode"):
+    with pytest.raises(PassExecutionError) as excinfo:
         visitor.execute(UnhandledNode())
+
+    assert excinfo.value.hook == "run_pass"
+    assert isinstance(excinfo.value.__cause__, NotImplementedError)
+    assert "UnhandledNode" in str(excinfo.value.__cause__)
 
 
 def test_analysis_visitable_pass_unknown_node_is_noop() -> None:
@@ -381,8 +385,11 @@ def test_walk_runs_after_visit_when_visit_raises() -> None:
     tree = ToyTreeNode("root", (ToyTreeNode("boom"),))
     visitor = RaisingVisitPass()
 
-    with pytest.raises(PassExecutionError, match="visit-broken"):
+    with pytest.raises(PassExecutionError) as excinfo:
         visitor.execute(tree)
+
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert str(excinfo.value.__cause__) == "visit-broken"
 
     # before:root, visit:root, before:boom, visit:boom (raises),
     # after:boom (try/finally), after:root (try/finally).

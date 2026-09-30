@@ -13,7 +13,6 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-import dataclasses
 import itertools
 from collections.abc import Sequence
 
@@ -26,14 +25,17 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
 )
 from fhy_core.symbolic.expression.pattern import (
     BinaryExpressionPattern,
     CallExpressionPattern,
+    Capture,
     CapturePattern,
     LiteralPattern,
+    LogicalExpressionPattern,
     Pattern,
     PiecewiseExpressionPattern,
     UnaryExpressionPattern,
@@ -50,10 +52,10 @@ pytestmark = pytest.mark.property
 _POOL = build_identifier_pool(3)
 _STRUCTURAL_MAX_LEAVES = 6
 
-# A decimal-string value longer than `build_decimal_string_value_strategy`'s
+# A decimal value longer than `build_decimal_string_value_strategy`'s
 # 4-digit-per-part limit, so it can never equal a literal
-# `build_structural_expression_strategy` generates; `LiteralPattern` compares
-# by exact stored value and type, not by equivalence class, so this is
+# `build_structural_expression_strategy` generates; `LiteralPattern` matches
+# exactly the literals equal to `LiteralExpression(value)`, so this is
 # genuinely "a literal not in e's alphabet" rather than merely an unlikely
 # draw.
 _LITERAL_NOT_IN_ALPHABET = LiteralPattern(value="99999.99999")
@@ -61,26 +63,26 @@ _LITERAL_NOT_IN_ALPHABET = LiteralPattern(value="99999.99999")
 
 def build_mirroring_pattern(
     expression: Expression,
-) -> tuple[Pattern, dict[str, Expression]]:
+) -> tuple[Pattern, dict[Capture, Expression]]:
     """Build a pattern that mirrors ``expression``'s exact shape.
 
     Every leaf (a ``LiteralExpression`` or an ``IdentifierExpression``,
     identified here as any node with no visit children) becomes a
-    uniquely-named ``CapturePattern(WildcardPattern())``; every
-    ``UnaryExpression``, ``BinaryExpression``, ``CallExpression``, and
-    ``PiecewiseExpression`` node becomes the matching ``*Pattern`` over
-    mirrored children.
+    ``CapturePattern`` of its own ``Capture``; every
+    ``UnaryExpression``, ``BinaryExpression``, ``LogicalExpression``,
+    ``CallExpression``, and ``PiecewiseExpression`` node becomes the
+    matching ``*Pattern`` over mirrored children.
 
     Args:
         expression: Expression tree to mirror.
 
     Returns:
-        The mirroring pattern, and a mapping from each capture name to
-        the leaf subtree it was recorded from.
+        The mirroring pattern, and a mapping from each capture to the
+        leaf subtree it was recorded from.
 
     """
     counter = itertools.count()
-    captures: dict[str, Expression] = {}
+    captures: dict[Capture, Expression] = {}
 
     def build(node: Expression) -> Pattern:
         if isinstance(node, UnaryExpression):
@@ -88,6 +90,10 @@ def build_mirroring_pattern(
         if isinstance(node, BinaryExpression):
             return BinaryExpressionPattern(
                 node.operation, build(node.left), build(node.right)
+            )
+        if isinstance(node, LogicalExpression):
+            return LogicalExpressionPattern(
+                node.operation, tuple(build(operand) for operand in node.operands)
             )
         if isinstance(node, CallExpression):
             return CallExpressionPattern(
@@ -100,9 +106,9 @@ def build_mirroring_pattern(
                 for condition, value in node.get_cases()
             )
             return PiecewiseExpressionPattern(cases, build(node.otherwise))
-        name = f"leaf_{next(counter)}"
-        captures[name] = node
-        return CapturePattern(name, WildcardPattern())
+        capture = Capture(f"leaf_{next(counter)}")
+        captures[capture] = node
+        return CapturePattern(capture)
 
     pattern = build(expression)
     return pattern, captures
@@ -128,9 +134,9 @@ def test_mirroring_pattern_matches_and_binds_recorded_leaves(
     bindings = match_pattern(mirror, expression)
 
     assert bindings is not None
-    assert bindings.names() == frozenset(captures.keys())
-    for name, recorded_subtree in captures.items():
-        assert bindings.get(name).is_structurally_equivalent(recorded_subtree)
+    assert set(bindings) == set(captures)
+    for capture, recorded_subtree in captures.items():
+        assert bindings[capture].is_structurally_equivalent(recorded_subtree)
 
 
 # =============================================================================
@@ -195,6 +201,6 @@ def test_mirror_pattern_with_different_root_operation_does_not_match(
     root, alternate_operation = pair
     mirror, _captures = build_mirroring_pattern(root)
     assert isinstance(mirror, BinaryExpressionPattern)
-    altered = dataclasses.replace(mirror, operation=alternate_operation)
+    altered = BinaryExpressionPattern(alternate_operation, mirror.left, mirror.right)
 
     assert match_pattern(altered, root) is None

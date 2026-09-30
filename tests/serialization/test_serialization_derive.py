@@ -176,7 +176,7 @@ def test_derive_false_without_methods_raises_at_instantiation() -> None:
 
 
 def test_derive_false_with_manual_methods_works() -> None:
-    """Test ``derive=False`` with hand-written methods behaves as before."""
+    """Test ``derive=False`` with hand-written methods round-trips through them."""
 
     @register_serializable(type_id="_test_derive_optout_manual")
     @dataclass(frozen=True)
@@ -432,6 +432,7 @@ def test_register_field_codec_teaches_inference_a_new_leaf() -> None:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_wrapped_family_member_derives_data_methods() -> None:
     """Test a wrapped-family member derives its data serialization."""
 

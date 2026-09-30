@@ -1,178 +1,296 @@
 """Pattern-driven rewriting over the expression IR.
 
-This module ships the `RewriteRule` value object, the
-`apply_rewrite_rule` and `apply_rewrite_rules` free functions, and
-the `RewriteRuleApplier` pass. Together they let callers describe
-local rewrites as ``(pattern, rewrite, optional guard, optional name)``
-tuples and apply rule sets bottom-up over an expression tree.
+This module ships the `RewriteRule` pairing a pattern with a rewrite, the
+`Rule` ABC for rules written in Python, the `apply_rewrite_rule` and
+`apply_rewrite_rules` free functions, the `RewriteRuleApplier` pass, and
+the errors of a rewrite walk.
+
+The rules and the walk are backed by the Rust implementation
+(``fhy_core._rs``), with the Rust core's semantics:
+
+- A rule fires when its pattern matches, every guard allows it, and its
+  rewrite returns a replacement other than the matched node itself;
+  returning the node itself declines, so the next rule is tried.
+- `apply_rewrite_rules` walks bottom-up once, on its own work stack, so a
+  tree of any depth works. A node that occurs in several places is
+  rewritten once, and a replacement is not rewritten again.
+- A failing callback or a refused rebuild raises a `RewriteError` naming
+  the rule.
 """
 
 from fhy_core.utils.override import override
 
 __all__ = [
+    "FiredRule",
+    "RewriteCallbackError",
+    "RewriteError",
+    "RewriteRebuildError",
     "RewriteRule",
     "RewriteRuleApplier",
+    "Rule",
     "apply_rewrite_rule",
     "apply_rewrite_rules",
 ]
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import final
 
+from fhy_core import _rs
 from fhy_core.diagnostic import DiagnosticLevel
-from fhy_core.pass_infrastructure import RewritablePass, register_pass
+from fhy_core.pass_infrastructure import CompilerPass, register_pass
 from fhy_core.traits import FrozenMixin
 
 from ..core import Expression
-from .core import MatchBindings, Pattern
+
+
+class RewriteError(RuntimeError):
+    """A rewrite walk that failed, naming the rule responsible.
+
+    The message is the core's text, such as ``rewrite rule 0 (name)
+    failed``. It is a ``RuntimeError``, as the ``PassExecutionError`` the
+    walk raised before is, so ``except RuntimeError`` still catches it.
+
+    Attributes:
+        rule_index: The position of the responsible rule in the rule list.
+        rule_name: The name of the responsible rule, or ``None``.
+
+    """
+
+    rule_index: int
+    rule_name: str | None
+
+    def __init__(self, message: str, rule_index: int, rule_name: str | None) -> None:
+        super().__init__(message)
+        self.rule_index = rule_index
+        self.rule_name = rule_name
+
+    @override
+    def __reduce__(self) -> tuple[type["RewriteError"], tuple[str, int, str | None]]:
+        return (type(self), (str(self), self.rule_index, self.rule_name))
+
+
+class RewriteCallbackError(RewriteError):
+    """A predicate in a rule's pattern, one of its guards, or its rewrite raised.
+
+    The callback's exception is the ``__cause__``. An exception that is
+    not an ``Exception``, such as ``KeyboardInterrupt``, is never wrapped:
+    it propagates from the walk unchanged.
+    """
+
+
+class RewriteRebuildError(RewriteError):
+    """A node could not be rebuilt around its rewritten children.
+
+    For example, a rule rewrote a piecewise case condition to a literal
+    other than a Boolean. The rule named is the one that rewrote the
+    refused child, and the rebuild's ``ValueError`` is the ``__cause__``.
+    """
+
+
+class Rule(_rs.RuleBase, ABC):
+    """A rewrite tried at the root of one expression, written in Python.
+
+    Subclasses implement `apply`, and may override `name`. A walk calls
+    `apply` from Rust, once per node it tries the rule on, with the node's
+    object, and reads `name` once per walk. A rule list may mix Python
+    rules and `RewriteRule` objects, which are registered as virtual
+    subclasses of this class.
+    """
+
+    @abstractmethod
+    def apply(self, expression: Expression) -> Expression | None:
+        """Return the replacement for ``expression``, or ``None`` to decline.
+
+        Returning ``expression`` itself declines too: the walk records no
+        firing and tries the next rule. Any other result than an
+        `Expression` or ``None`` raises ``TypeError`` in a walk.
+
+        Args:
+            expression: The expression the rule is tried on.
+
+        Returns:
+            The replacement, or ``None``.
+
+        """
+
+    @property
+    def name(self) -> str | None:
+        """Return the rule's name, used in firings and errors, or ``None``."""
+        return None
 
 
 @final
-@dataclass(frozen=True)
-class RewriteRule(FrozenMixin):
-    """A pattern paired with a rewrite that consumes the bindings.
+class RewriteRule(_rs.RewriteRule):
+    """A pattern paired with a rewrite of what it matches, optionally guarded and named.
+
+    ``RewriteRule(pattern, rewrite, guard=None, name=None)`` builds a rule
+    whose ``rewrite`` must return an `Expression`;
+    ``RewriteRule.new_partial(...)`` builds one whose ``rewrite`` may return
+    ``None`` to decline. ``with_guard(guard)`` and ``with_name(name)``
+    return new rules.
+
+    The rule fires on an expression when its pattern matches it at the
+    root, every guard, in order, returns a true value for the match's
+    `MatchBindings`, and the rewrite returns a replacement other than the
+    expression itself; a replacement that is the expression itself
+    declines. Any other rewrite result raises ``TypeError`` naming the
+    rule. A pattern that is not a `Pattern`, a rewrite or guard that is not
+    callable, or a name that is not a ``str`` raises ``TypeError``.
+
+    Rules are immutable, and compare and hash by identity, since callables
+    cannot be compared. A rule pickles only if its callables do.
 
     Attributes:
-        pattern: The pattern to match.
-        rewrite: Callable mapping the successful match's
-            `MatchBindings` to a replacement `Expression`.
-        guard: Optional callable mapping `MatchBindings` to ``bool``.
-            When supplied, the rule fires only when
-            ``guard(bindings)`` returns ``True``. ``None`` disables
-            the guard.
-        name: Optional human-readable rule name. When supplied and
-            the rule fires inside a `RewriteRuleApplier`, an ``INFO``
-            diagnostic naming the rule is emitted. ``None`` indicates
-            an unnamed rule and suppresses the diagnostic.
+        pattern: The pattern.
+        rewrite: The callable mapping the bindings to the replacement.
+        guards: The guard callables, in order.
+        name: The name, reported when the rule fires in a
+            `RewriteRuleApplier`, or ``None``.
 
     """
 
-    pattern: Pattern
-    rewrite: Callable[[MatchBindings], Expression]
-    guard: Callable[[MatchBindings], bool] | None = None
-    name: str | None = None
+    __slots__ = ()
 
 
-def apply_rewrite_rule(rule: RewriteRule, expression: Expression) -> Expression | None:
-    """Attempt ``rule`` at the root of ``expression`` once.
+FrozenMixin.register(RewriteRule)
+Rule.register(RewriteRule)
+RewriteRule._register_public_class()
+
+
+@final
+class FiredRule(_rs.FiredRule):
+    """One firing of a rule during a rewrite walk.
+
+    Firings compare and hash by their fields.
+
+    Attributes:
+        rule_index: The position of the rule in the rule list.
+        name: The rule's name, or ``None``.
+
+    """
+
+    __slots__ = ()
+    __match_args__ = ("rule_index", "name")
+
+
+FrozenMixin.register(FiredRule)
+FiredRule._register_public_class()
+
+
+def apply_rewrite_rule(
+    rule: "Rule | RewriteRule", expression: Expression
+) -> Expression | None:
+    """Try ``rule`` once at the root of ``expression``.
+
+    The free-function form of ``rule.apply(expression)``.
 
     Args:
-        rule: Rule to attempt.
+        rule: Rule to try.
         expression: Expression to rewrite at the root.
 
     Returns:
-        The rewritten expression when the pattern matches and the
-        guard (if any) returns ``True``; otherwise ``None``.
+        The replacement when the rule fires; otherwise ``None``.
 
     Raises:
-        TypeError: When ``rule.rewrite`` returns a non-`Expression`.
-            The error message names the rule so the offending callback
-            is identifiable in a stack trace.
+        TypeError: When the rewrite returns something other than an
+            `Expression` (or ``None``, for a partial rule).
 
     Notes:
-        Exceptions raised by ``rule.guard`` or ``rule.rewrite``
-        propagate to the caller unchanged.
+        Exceptions raised by a predicate, a guard or the rewrite propagate
+        unchanged.
 
     """
-    bindings = rule.pattern.match(expression)
-    if bindings is None:
-        return None
-    if rule.guard is not None and not rule.guard(bindings):
-        return None
-    result = rule.rewrite(bindings)
-    if not isinstance(result, Expression):
-        rule_label = rule.name if rule.name is not None else "<unnamed>"
-        raise TypeError(
-            f"RewriteRule {rule_label!r} rewrite callable must return an "
-            f"Expression; got {type(result).__name__}."
-        )
-    return result
+    return rule.apply(expression)
 
 
 def apply_rewrite_rules(
-    expression: Expression, rules: Sequence[RewriteRule]
+    expression: Expression, rules: Iterable["Rule | RewriteRule"]
 ) -> Expression:
     """Apply ``rules`` bottom-up over ``expression`` in a single pass.
 
-    At each node (visited bottom-up), the rules are tried in order;
-    the first rule whose pattern matches and whose guard returns
-    ``True`` (or has no guard) fires. The resulting expression
-    replaces the node and is *not* re-examined within the same walk.
+    At each node, visited bottom-up, the rules are tried in order, and the
+    first that fires replaces the node. The replacement is not re-examined
+    in the same walk, and a node that occurs in several places is
+    rewritten once.
 
     Args:
         expression: Expression tree to rewrite.
-        rules: Rule sequence in priority (first-match) order.
+        rules: Rules in priority (first-match) order.
 
     Returns:
-        The rewritten expression tree. Identity is preserved iff
-        zero rules fire across the entire walk: even one fire at
-        any depth causes the entire ancestor chain to be rebuilt
-        as new objects.
+        The rewritten tree: ``expression`` itself when no rule fired;
+        otherwise a tree sharing every node object the walk kept.
 
     Raises:
-        PassValidationError: When the underlying ``CompilerPass.execute``
-            input or output validation rejects ``expression``.
-        PassExecutionError: When a rule's ``guard`` or ``rewrite``
-            callable raises any exception other than
-            ``PassValidationError`` or ``PassExecutionError``. The
-            original exception is attached as ``__cause__``. The
-            two pass-framework exceptions are re-raised unchanged.
-            Wrapping happens in ``CompilerPass.execute``.
+        TypeError: When ``expression`` is not an `Expression` or a rule is
+            not a `Rule`.
+        RewriteCallbackError: When a callback raises an ``Exception``,
+            which is its ``__cause__``. Any other exception propagates
+            unchanged.
+        RewriteRebuildError: When a node cannot be rebuilt around its
+            rewritten children.
 
     Notes:
-        Traversal is bottom-up: a node's children are already in
-        their post-rewrite form when its rules are tried. A rule
-        whose pattern matches the *pre*-rewrite shape of a child
-        will not fire at the parent level once that child has been
-        rewritten.
+        Traversal is bottom-up: a node's children are already in their
+        rewritten form when its rules are tried.
 
     """
-    return RewriteRuleApplier(rules)(expression)
+    return _rs.apply_rewrite_rules(expression, rules)
 
 
 @register_pass(
     "fhy_core.symbolic.expression.apply_rewrite_rules",
     "Apply a sequence of rewrite rules bottom-up over an expression tree.",
 )
-class RewriteRuleApplier(RewritablePass[Expression]):
-    """`RewritablePass` driver behind `apply_rewrite_rules`.
+class RewriteRuleApplier(CompilerPass[Expression, Expression]):
+    """The compiler pass behind `apply_rewrite_rules`.
 
-    The class exists so callers running rule application inside a
-    `PassManager` can collect diagnostics and ``PassResult``
-    metadata. Direct use of `apply_rewrite_rules` is the more
-    common path; this class is the underlying pass type and is
-    registered with the global pass registry.
+    A run is `apply_rewrite_rules` with the pass's rules. It changed the
+    IR exactly when its output is not its input object. Each firing of a
+    named rule reports the ``INFO`` diagnostic ``applied rewrite rule
+    "name"``, and `fired` holds the last run's firings, or after a failed
+    run the firings before the failure. A `RewriteError` fails the run
+    with ``PassExecutionError``, whose ``__cause__`` it is.
+
+    The pass is registered, so ``CompilerPass.create(name)`` builds one
+    with no rules.
     """
 
-    _rules: tuple[RewriteRule, ...]
+    _rules: tuple[Rule | RewriteRule, ...]
+    _fired: tuple[FiredRule, ...]
 
-    def __init__(self, rules: Sequence[RewriteRule]) -> None:
+    def __init__(self, rules: Iterable[Rule | RewriteRule] = ()) -> None:
         super().__init__()
         self._rules = tuple(rules)
+        self._fired = ()
 
     @property
-    def rules(self) -> tuple[RewriteRule, ...]:
-        """Return the rule sequence this applier was constructed with."""
+    def rules(self) -> tuple[Rule | RewriteRule, ...]:
+        """Return the rules, in the order they are tried."""
         return self._rules
 
-    @override
-    def visit_unknown(self, node: Expression) -> Expression | None:
-        """Apply rules in order to ``node`` and return the first match.
+    @property
+    def fired(self) -> tuple[FiredRule, ...]:
+        """Return the firings of the last run, in walk order."""
+        return self._fired
 
-        Returns ``None`` when no rule fires, signaling the framework
-        to retain the node (possibly with already-rewritten children).
-        Rewrites are *not* re-examined within the same walk. When a
-        named rule fires, an ``INFO`` diagnostic is emitted naming
-        the rule.
-        """
-        for rule in self._rules:
-            rewritten = apply_rewrite_rule(rule, node)
-            if rewritten is not None:
-                if rule.name is not None:
-                    self.report(
-                        DiagnosticLevel.INFO,
-                        f"Applied rewrite rule {rule.name!r}.",
-                    )
-                return rewritten
-        return None
+    @override
+    def get_noop_output(self, ir: Expression) -> Expression:
+        return ir
+
+    @override
+    def run_pass(self, ir: Expression) -> Expression:
+        fired: list[FiredRule] = []
+        try:
+            return _rs.apply_rewrite_rules(ir, self._rules, fired)
+        finally:
+            self._fired = tuple(fired)
+            for firing in self._fired:
+                message = firing._diagnostic_message()
+                if message is not None:
+                    self.report(DiagnosticLevel.INFO, message)
+
+    @override
+    def did_change(self, input_ir: Expression, output: Expression) -> bool:
+        return output is not input_ir

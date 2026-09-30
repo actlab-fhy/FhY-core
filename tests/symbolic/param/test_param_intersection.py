@@ -60,9 +60,11 @@ from fhy_core.symbolic.param.domains import (
     IntervalIntegerDomain,
     OrdinalDomain,
 )
+from fhy_core.symbolic.solver import SatResult
 from fhy_core.term import compared_as_reference
 from fhy_core.utils.override import override
 
+from ..conftest import RecordingSmtSolver
 from .conftest import (
     assert_all_satisfied,
     assert_all_valid,
@@ -243,6 +245,7 @@ def test_permutation_intersection_of_mutually_exclusive_constraints_is_empty() -
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_interval_intersection_tightens_bounds_via_and_operator() -> None:
     """Test ``[0,10] & [5,20]`` tightens to ``[5,10]``."""
@@ -255,6 +258,7 @@ def test_interval_intersection_tightens_bounds_via_and_operator() -> None:
     assert_none_satisfied(result, [4, 11])
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_interval_intersection_tightens_bounds_via_factory() -> None:
     """Test ``create_intersection_param`` tightens bounds the same as ``&``."""
@@ -267,6 +271,7 @@ def test_interval_intersection_tightens_bounds_via_factory() -> None:
     assert_none_satisfied(result, [4, 11])
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_interval_intersection_of_strict_subset_yields_the_subset_bounds() -> None:
     """Test ``[1,10] & [3,5]`` yields exactly ``[3,5]``: a strict-subset case."""
@@ -302,6 +307,7 @@ def test_interval_intersection_merges_non_negative_attribute() -> None:
     assert result.domain.non_negative  # type: ignore[attr-defined]
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_interval_intersection_rendering_follows_left_operand_prefer_inclusive() -> (
     None
@@ -337,6 +343,7 @@ def test_interval_intersection_rendering_follows_left_operand_prefer_inclusive()
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_intersection_coerces_plain_integer_operand_on_right() -> None:
     """Test intersection coerces a plain integer param (right) into interval form."""
@@ -349,6 +356,7 @@ def test_intersection_coerces_plain_integer_operand_on_right() -> None:
     assert_none_satisfied(result, [4, 11])
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_intersection_coerces_plain_integer_operand_on_left() -> None:
     """Test intersection coerces a plain integer param (left) into interval form."""
@@ -375,7 +383,7 @@ def test_intersection_rejects_integer_param_with_non_bound_constraint_on_right()
     integer = integer.add_constraint(InSetConstraint(integer.variable, {1, 2, 3}))
 
     with pytest.raises(
-        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+        TypeError, match="cannot coerce an integer parameter with non-bound constraints"
     ):
         _ = interval & integer
 
@@ -387,7 +395,7 @@ def test_intersection_rejects_integer_param_with_non_bound_constraint_on_left() 
     integer = integer.add_constraint(InSetConstraint(integer.variable, {1, 2, 3}))
 
     with pytest.raises(
-        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+        TypeError, match="cannot coerce an integer parameter with non-bound constraints"
     ):
         _ = integer & interval
 
@@ -397,6 +405,7 @@ def test_intersection_rejects_integer_param_with_non_bound_constraint_on_left() 
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_integer_intersection_conjoins_bound_constraints() -> None:
     """Test plain-integer intersection conjoins both operands' bound constraints."""
@@ -409,6 +418,7 @@ def test_integer_intersection_conjoins_bound_constraints() -> None:
     assert_none_satisfied(result, [-1, 11])
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_integer_intersection_merges_non_negative_attribute() -> None:
     """Test integer intersection merges ``non_negative``/``zero_included`` attributes.
@@ -429,6 +439,7 @@ def test_integer_intersection_merges_non_negative_attribute() -> None:
     assert_none_satisfied(result, [-1, 11])
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_real_intersection_conjoins_bound_constraints() -> None:
     """Test real-param intersection conjoins both operands' bound constraints."""
@@ -481,6 +492,7 @@ _ZERO_KEEPING_OPERAND_PAIRS = [
 ]
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("build_operand, domain_type", _NATURAL_OPERAND_BUILDERS)
 @pytest.mark.parametrize(
@@ -513,6 +525,7 @@ def test_intersection_domain_excludes_zero_when_a_natural_operand_does(
     assert domain_alone.is_value_valid(1)
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("build_operand, domain_type", _NATURAL_OPERAND_BUILDERS)
 @pytest.mark.parametrize(
@@ -597,29 +610,26 @@ def test_integer_intersection_z3_proven_empty_raises_param_error() -> None:
         create_intersection_param(left, right)
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 def test_intersection_accepts_result_when_z3_returns_unknown(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
     """Test intersection is accepted (not raised) when Z3 cannot decide feasibility.
 
-    Monkeypatches ``check_expression_satisfiability`` -- the seam
-    ``ConstraintSystem.check_satisfiability`` calls on behalf of the
-    domain's ``has_feasible_value`` -- to always return ``None`` (Z3's
-    "unknown" outcome), so the factory sees ``UNDECIDED`` and must not read
-    it as a proven-empty intersection. Asserting the tightened bounds
+    Plugs a backend answering ``unknown`` into the default solver, which
+    ``ConstraintSystem.check_satisfiability`` asks on behalf of the
+    domain's ``has_feasible_value``, so the factory sees ``UNDECIDED`` and
+    must not read it as a proven-empty intersection. Asserting the tightened bounds
     (rather than just ``result is not None``, which a ``Param``-or-raise
     factory can never fail) confirms the returned param is the real, live
     intersection and not some degenerate stand-in.
     """
     left = create_integer_param_with_lower_bound(0)
     right = create_integer_param_with_upper_bound(10)
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        lambda *args, **kwargs: None,
-    )
+    backend = plug_smt_solver(SatResult.unknown("incomplete"))
 
     result = create_intersection_param(left, right)
+    assert backend.checks, "the intersection must ask the backend"
 
     assert_all_satisfied(result, [0, 5, 10])
     assert_none_satisfied(result, [-1, 11])
@@ -670,7 +680,7 @@ def test_intersection_with_unrescopable_constraint_kind_raises_constraint_error(
     left = left.add_constraint(_UnrescopableConstraint(left.variable))
     right = create_integer_param()
 
-    with pytest.raises(ConstraintError, match="Cannot rename an unexpected"):
+    with pytest.raises(ConstraintError, match="unexpected kind"):
         create_intersection_param(left, right)
 
 
@@ -909,6 +919,7 @@ def test_intersection_result_interoperates_with_is_feasible() -> None:
     assert not result.is_empty()
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_intersection_result_interoperates_with_assign() -> None:
     """Test a value valid for both operands can be assigned to the result."""
@@ -987,6 +998,7 @@ def _assert_scoped_to_result_variable(result: Param[Any]) -> None:
         assert constraint.get_free_identifiers() == frozenset({result.variable})
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_intersection_unifies_the_other_operands_variable_into_the_result() -> None:
     """Test `x <= y` & `y >= 10` yields constraints decided without bindings.
@@ -1043,6 +1055,7 @@ def test_intersection_raises_when_the_unified_conjunction_is_provably_empty(
         create_intersection_param(left, right)
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_intersection_leaves_a_third_party_identifier_free() -> None:
     """Test an identifier that is neither operand's variable stays free in the result.
@@ -1072,6 +1085,7 @@ def test_intersection_leaves_a_third_party_identifier_free() -> None:
     assert not result.is_value_valid(12, bindings={z: 5})
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 def test_intersection_of_operands_sharing_one_variable_conjoins_constraints() -> None:
     """Test operands over the same variable object intersect to their conjunction."""
@@ -1116,7 +1130,6 @@ def test_intersection_with_a_provably_empty_operand_raises_despite_undecided_res
         create_intersection_param(left, right)
 
 
-@pytest.mark.z3
 def test_intersection_of_two_undecided_operands_is_returned_live() -> None:
     """Test an undecided conjunction of undecided operands is returned, not raised."""
     left = _create_undecided_integer_param("a", 1)

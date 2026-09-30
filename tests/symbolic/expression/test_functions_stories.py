@@ -11,6 +11,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
+    Expression,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -19,6 +20,7 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     call,
     inline_functions,
+    logical_or,
     piecewise,
     register_function,
 )
@@ -30,8 +32,6 @@ from fhy_core.types import (
     TypeQualifier,
 )
 from fhy_core.types.checking import synthesize_expression_type
-
-from .conftest import mock_identifier
 
 
 def _scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -50,6 +50,13 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 pytestmark = pytest.mark.integration
 
 
+def _or_is_nan(comparison: Expression, operand: Expression) -> Expression:
+    """Return ``comparison || operand != operand``, as ``max`` and ``min`` test."""
+    return logical_or(
+        comparison, BinaryExpression(BinaryOperation.NOT_EQUAL, operand, operand)
+    )
+
+
 def test_max_call_then_inline_yields_expected_piecewise_tree() -> None:
     """Test ``max(1, 2)`` inlines to a literal piecewise tree."""
     expression = call("max", LiteralExpression(1), LiteralExpression(2))
@@ -58,10 +65,13 @@ def test_max_call_then_inline_yields_expected_piecewise_tree() -> None:
 
     expected = PiecewiseExpression(
         (
-            BinaryExpression(
-                BinaryOperation.GREATER,
+            _or_is_nan(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    LiteralExpression(1),
+                    LiteralExpression(2),
+                ),
                 LiteralExpression(1),
-                LiteralExpression(2),
             ),
         ),
         (LiteralExpression(1),),
@@ -115,9 +125,9 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
     a valid bound. They build the call via the public ``call`` helper and
     rely on inlining to substitute the body.
     """
-    low = mock_identifier("low", 0)
-    high = mock_identifier("high", 1)
-    value = mock_identifier("value", 2)
+    low = Identifier("low")
+    high = Identifier("high")
+    value = Identifier("value")
 
     expression = call(
         "max",
@@ -129,10 +139,13 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
 
     inner_min = PiecewiseExpression(
         (
-            BinaryExpression(
-                BinaryOperation.LESS,
+            _or_is_nan(
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(value),
+                    IdentifierExpression(high),
+                ),
                 IdentifierExpression(value),
-                IdentifierExpression(high),
             ),
         ),
         (IdentifierExpression(value),),
@@ -140,10 +153,13 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
     )
     expected = PiecewiseExpression(
         (
-            BinaryExpression(
-                BinaryOperation.GREATER,
+            _or_is_nan(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    IdentifierExpression(low),
+                    inner_min,
+                ),
                 IdentifierExpression(low),
-                inner_min,
             ),
         ),
         (IdentifierExpression(low),),
@@ -166,9 +182,9 @@ def test_user_story_predicate_guarded_fallback_with_piecewise() -> None:
     They build the expression directly via the public ``piecewise``
     helper.
     """
-    x = mock_identifier("x", 0)
-    sqrt_path = mock_identifier("sqrt_path", 1)
-    fallback_path = mock_identifier("fallback_path", 2)
+    x = Identifier("x")
+    sqrt_path = Identifier("sqrt_path")
+    fallback_path = Identifier("fallback_path")
 
     expression = piecewise(
         (IdentifierExpression(x) > 0, IdentifierExpression(sqrt_path)),
@@ -203,7 +219,7 @@ def test_user_story_register_and_inline_custom_abs_function(
     and then references it. Inlining substitutes the body. The inlined
     expression should match an equivalent hand-built tree.
     """
-    parameter = mock_identifier("x", 0)
+    parameter = Identifier("x")
     register_function(
         "test_user_story_abs",
         parameters=[parameter],
@@ -215,7 +231,7 @@ def test_user_story_register_and_inline_custom_abs_function(
         ),
     )
 
-    y = mock_identifier("y", 1)
+    y = Identifier("y")
     expression = call("test_user_story_abs", IdentifierExpression(y))
     inlined = inline_functions(expression)
     expected = PiecewiseExpression(

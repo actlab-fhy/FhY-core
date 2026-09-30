@@ -31,17 +31,20 @@ from fhy_core.symbolic.constraint import (
     create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
-    BinaryExpression,
     BinaryOperation,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     NonBooleanLogicalOperandError,
     get_native_constant_identifier,
+    logical_and,
     logical_or,
     make_binary_expression,
     piecewise,
 )
+from fhy_core.symbolic.solver import SatResult
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import (
     compared_as_reference,
@@ -51,6 +54,7 @@ from fhy_core.term import (
 from fhy_core.traits import Frozen, FrozenMutationError
 from fhy_core.utils.override import override
 
+from ..conftest import RecordingSmtSolver
 from .conftest import SerializableEqualHashable, mock_identifier
 
 # =============================================================================
@@ -614,7 +618,7 @@ def test_convert_to_expression_single_member_is_unwrapped() -> None:
 
 
 def test_convert_to_expression_multi_member_is_a_logical_and() -> None:
-    """Test a multi-member system's expression is a top-level LOGICAL_AND."""
+    """Test a multi-member system's expression is one top-level conjunction."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
@@ -623,8 +627,9 @@ def test_convert_to_expression_multi_member_is_a_logical_and() -> None:
 
     expression = system.convert_to_expression()
 
-    assert isinstance(expression, BinaryExpression)
-    assert expression.operation is BinaryOperation.LOGICAL_AND
+    assert isinstance(expression, LogicalExpression)
+    assert expression.operation is LogicalOperation.AND
+    assert len(expression.operands) == 2
 
 
 def test_convert_to_expression_propagates_constraint_error_from_a_member() -> None:
@@ -634,7 +639,7 @@ def test_convert_to_expression_propagates_constraint_error_from_a_member() -> No
     system = create_constraint_system(member)
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         system.convert_to_expression()
 
@@ -644,6 +649,7 @@ def test_convert_to_expression_propagates_constraint_error_from_a_member() -> No
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_serialize_to_dict_uses_the_pinned_type_id() -> None:
     """Test the wrapped envelope uses the pinned `constraint_system` type id."""
     system = create_constraint_system()
@@ -700,6 +706,7 @@ def test_empty_system_round_trips_through_dict_serialization() -> None:
     assert rebuilt.constraints == ()
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_wire_members_are_emitted_in_canonical_order() -> None:
     """Test serialized members are emitted in the same order as `constraints`."""
     x = mock_identifier("x", 0)
@@ -735,6 +742,7 @@ def test_deserialize_data_from_dict_rejects_non_list_constraints_field() -> None
         ConstraintSystem.deserialize_data_from_dict({"constraints": "not-a-list"})
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_deserialize_data_from_dict_rejects_malformed_member_entry() -> None:
     """Test a malformed member entry raises a deserialization error."""
     with pytest.raises(
@@ -746,6 +754,7 @@ def test_deserialize_data_from_dict_rejects_malformed_member_entry() -> None:
         )
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_json_serialization_rejects_a_nan_literal() -> None:
     """Test a NaN-valued literal propagates the module's NaN-rejection contract."""
     x = mock_identifier("x", 0)
@@ -874,18 +883,20 @@ def test_check_satisfiability_needs_sorts_only_for_the_lowered_conjunction() -> 
 
 
 def _extract_reported_missing_names(error: MissingSymbolTypeError) -> str:
-    """Return the identifier listing a `MissingSymbolTypeError` message carries.
+    """Return the name hints a `MissingSymbolTypeError` message lists.
 
-    The listing is everything after the message's final ``": "``. Reading
-    it out separately keeps an assertion off the fixed prefix, which
-    already contains several of the single-character name hints the tests
-    use and would otherwise satisfy a substring match no matter which
-    identifier the error actually reported.
+    The listing is everything after the message's final ``": "``, each
+    identifier written ``name::id`` and ordered by id; this returns the
+    name hints, joined by ``", "``. Reading it out separately keeps an
+    assertion off the fixed prefix, which already contains several of the
+    single-character name hints the tests use and would otherwise satisfy a
+    substring match no matter which identifier the error actually
+    reported.
     """
-    return str(error).rpartition(": ")[2].rstrip(".")
+    listing = str(error).rpartition(": ")[2].rstrip(".")
+    return ", ".join(item.rpartition("::")[0] for item in listing.split(", "))
 
 
-@pytest.mark.z3
 def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
     """Test a missing `symbol_types` entry raises `MissingSymbolTypeError` naming it."""
     x = mock_identifier("x", 0)
@@ -902,7 +913,6 @@ def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -> None:
     """Test a missing `symbol_types` entry for a residual free identifier raises.
 
@@ -924,15 +934,13 @@ def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
-@pytest.mark.z3
 def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order() -> (
     None
 ):
-    """Test two missing entries are both reported, ordered by name hint.
+    """Test two missing entries are both reported, ordered by id.
 
-    The identifiers are declared so that their ``id`` order (which drives
-    the free-identifier set's iteration order) is the reverse of their
-    name-hint order, so a listing that skipped the sort would come out
+    The identifiers are declared so that their ``id`` order is the reverse
+    of their name-hint order: the core names them by id, so the listing is
     ``b, a``.
     """
     b = mock_identifier("b", 0)
@@ -947,10 +955,11 @@ def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order()
         system.check_satisfiability({})
 
     assert _extract_reported_missing_names(exception_info.value) == (
-        f"{a.name_hint}, {b.name_hint}"
+        f"{b.name_hint}, {a.name_hint}"
     )
 
 
+@pytest.mark.sympy
 def test_evaluate_with_bindings_missing_value_binding_degrades_to_undecided() -> None:
     """Test a missing value binding is UNDECIDED, contrasting a missing symbol type.
 
@@ -1006,7 +1015,7 @@ def test_check_satisfiability_propagates_constraint_error_from_a_member() -> Non
     )
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         system.check_satisfiability({x: SymbolType.INT})
 
@@ -1024,28 +1033,22 @@ def test_check_satisfiability_with_bindings_propagates_constraint_error() -> Non
     )
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         system.check_satisfiability_with_bindings({}, {x: SymbolType.INT})
 
 
 def test_check_satisfiability_empty_system_does_not_invoke_the_solver(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test the empty system short-circuits to SATISFIED without calling z3."""
-
-    def _fail_if_called(*args: object, **kwargs: object) -> bool | None:
-        raise AssertionError("check_expression_satisfiability must not be called")
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fail_if_called,
-    )
+    """Test the empty system short-circuits to SATISFIED without asking a backend."""
+    backend = plug_smt_solver(SatResult.UNSAT)
     system = create_constraint_system()
 
     outcome = system.check_satisfiability({})
 
     assert outcome is ConstraintOutcome.SATISFIED
+    assert backend.checks == []
 
 
 @pytest.mark.z3
@@ -1078,7 +1081,6 @@ _BINDINGS_PATHS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_PATHS)
 def test_every_bindings_path_refuses_a_number_bound_into_a_case_condition(
     decide: Callable[[Constraint, ConstraintBindings], ConstraintOutcome],
@@ -1098,6 +1100,7 @@ def test_every_bindings_path_refuses_a_number_bound_into_a_case_condition(
         decide(constraint, {condition: 1})
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_PATHS)
 @pytest.mark.parametrize(
@@ -1161,7 +1164,6 @@ _ILL_TYPED_SATISFIABILITY_QUESTIONS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("ask", _ILL_TYPED_SATISFIABILITY_QUESTIONS)
 def test_satisfiability_reports_a_missing_symbol_type_ahead_of_ill_typedness(
     ask: Callable[[Identifier, Mapping[Identifier, SymbolType]], ConstraintOutcome],
@@ -1183,7 +1185,6 @@ def test_satisfiability_reports_a_missing_symbol_type_ahead_of_ill_typedness(
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("ask", _ILL_TYPED_SATISFIABILITY_QUESTIONS)
 def test_satisfiability_reports_ill_typedness_ahead_of_the_hazard_screen(
     ask: Callable[[Identifier, Mapping[Identifier, SymbolType]], ConstraintOutcome],
@@ -1200,7 +1201,6 @@ def test_satisfiability_reports_ill_typedness_ahead_of_the_hazard_screen(
         ask(y, {y: SymbolType.INT})
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_counts_identifiers_a_binding_adds() -> None:
     """Test the early symbol-type check sees identifiers a bound expression adds.
 
@@ -1224,6 +1224,7 @@ def test_check_satisfiability_with_bindings_counts_identifiers_a_binding_adds() 
     assert _extract_reported_missing_names(exception_info.value) == z.name_hint
 
 
+@pytest.mark.z3
 def test_check_satisfiability_with_bindings_matches_the_documented_example() -> None:
     """Test `{x: 5}` on `{x<y, y<3}` is VIOLATED after substitution."""
     x = mock_identifier("x", 0)
@@ -1265,26 +1266,20 @@ def test_check_satisfiability_with_closed_conjunction_needs_no_symbol_types() ->
 
 
 def test_check_satisfiability_with_bindings_empty_system_does_not_invoke_the_solver(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test the empty system short-circuits to SATISFIED without calling z3.
+    """Test the empty system short-circuits to SATISFIED without asking a backend.
 
     Mirrors ``test_check_satisfiability_empty_system_does_not_invoke_the_solver``
     for the bindings-aware entry point.
     """
-
-    def _fail_if_called(*args: object, **kwargs: object) -> bool | None:
-        raise AssertionError("check_expression_satisfiability must not be called")
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fail_if_called,
-    )
+    backend = plug_smt_solver(SatResult.UNSAT)
     system = create_constraint_system()
 
     outcome = system.check_satisfiability_with_bindings({}, {})
 
     assert outcome is ConstraintOutcome.SATISFIED
+    assert backend.checks == []
 
 
 @pytest.mark.z3
@@ -1312,6 +1307,7 @@ def test_check_satisfiability_with_bindings_constants_only_needs_no_symbol_types
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> None:
     """Test the two bindings-aware APIs never reach opposite decided outcomes.
 
@@ -1343,7 +1339,6 @@ def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> 
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() -> None:
     """Test a bool-ambiguous system that is type-strictly satisfiable reports UNDECIDED.
 
@@ -1366,7 +1361,6 @@ def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() 
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_bool_member_under_int_sort_is_not_satisfied() -> None:
     """Test a bool member under a non-bool sort is never reported SATISFIED.
 
@@ -1422,7 +1416,7 @@ def test_check_satisfiability_bindings_int_against_bool_member_is_decided() -> N
 # =============================================================================
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 def test_check_satisfiability_equation_bool_literal_ambiguity_is_undecided() -> None:
     """Test an equation's bool literal against a non-bool variable is UNDECIDED.
 
@@ -1485,7 +1479,6 @@ def test_check_satisfiability_equation_bool_literal_under_bool_sort_is_unaffecte
     assert outcome_with_bindings is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_non_bool_member_under_bool_sort_is_undecided() -> None:
     """Test a non-bool member against a `BOOL`-sorted variable is UNDECIDED.
 
@@ -1508,7 +1501,7 @@ def test_check_satisfiability_non_bool_member_under_bool_sort_is_undecided() -> 
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 def test_check_satisfiability_closed_bool_versus_int_comparison_is_undecided() -> None:
     """Test a closed bool-against-int comparison is UNDECIDED, not SATISFIED.
 
@@ -1567,7 +1560,6 @@ def test_check_satisfiability_with_bindings_bool_value_against_int_membership() 
     assert outcome is ConstraintOutcome.VIOLATED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_set_ambiguity_survives_equation_branch() -> None:
     """Test a bool-ambiguous set constraint stays UNDECIDED alongside an equation.
 
@@ -1666,6 +1658,7 @@ def test_check_satisfiability_bare_bool_literal_equation_is_decided() -> None:
 
 
 @pytest.mark.z3
+@pytest.mark.sympy
 def test_check_satisfiability_with_bindings_bool_binding_matching_bool_literal() -> (
     None
 ):
@@ -1716,7 +1709,6 @@ def test_check_satisfiability_piecewise_with_uniform_bool_branches_is_decided() 
     assert outcome is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_piecewise_with_mixed_branches_is_undecided() -> None:
     """Test a piecewise mixing a Boolean and a numeric branch is UNDECIDED.
 
@@ -1750,7 +1742,6 @@ def test_check_satisfiability_piecewise_with_mixed_branches_is_undecided() -> No
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_check_satisfiability_missing_symbol_type_raises_despite_bool_hazard() -> None:
     """Test the missing-symbol-type precondition raises even for a hazardous system.
 
@@ -1765,7 +1756,6 @@ def test_check_satisfiability_missing_symbol_type_raises_despite_bool_hazard() -
         system.check_satisfiability({})
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_missing_symbol_type_raises_on_hazard() -> (
     None
 ):
@@ -1788,58 +1778,30 @@ def test_check_satisfiability_with_bindings_missing_symbol_type_raises_on_hazard
 
 
 def test_check_satisfiability_forwards_timeout_milliseconds_to_the_solver_seam(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test `check_satisfiability` forwards `timeout_milliseconds` to the solver."""
+    """Test `check_satisfiability` forwards `timeout_milliseconds` to the backend."""
+    backend = plug_smt_solver(SatResult.SAT)
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
-    captured: dict[str, Any] = {}
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        captured["timeout_milliseconds"] = timeout_milliseconds
-        return True
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
-    )
 
     outcome = system.check_satisfiability(
         {x: SymbolType.INT}, timeout_milliseconds=2500
     )
 
     assert outcome is ConstraintOutcome.SATISFIED
-    assert captured["timeout_milliseconds"] == 2500
+    assert [timeout for _, timeout in backend.checks] == [2500]
 
 
 def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
     """Test `check_satisfiability_with_bindings` forwards `timeout_milliseconds`."""
+    backend = plug_smt_solver(SatResult.SAT)
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
-    )
-    captured: dict[str, Any] = {}
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        captured["timeout_milliseconds"] = timeout_milliseconds
-        return True
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
     )
 
     outcome = system.check_satisfiability_with_bindings(
@@ -1847,7 +1809,7 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
     )
 
     assert outcome is ConstraintOutcome.SATISFIED
-    assert captured["timeout_milliseconds"] == 1000
+    assert [timeout for _, timeout in backend.checks] == [1000]
 
 
 # =============================================================================
@@ -1856,30 +1818,17 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
 
 
 def test_check_satisfiability_solver_unknown_result_is_undecided(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test `check_satisfiability` maps a solver `None` (unknown) result to UNDECIDED.
+    """Test `check_satisfiability` maps a backend's `unknown` to UNDECIDED.
 
     Complements the `timeout_milliseconds` passthrough tests above, which
-    patch the same seam but always return `True`: this covers the
-    `_decide_satisfiability` branch where the solver itself is
+    plug a backend answering `sat`: this covers the backend itself being
     inconclusive.
     """
+    plug_smt_solver(SatResult.unknown("incomplete"))
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        return None
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
-    )
 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
@@ -1887,30 +1836,18 @@ def test_check_satisfiability_solver_unknown_result_is_undecided(
 
 
 def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
-    monkeypatch: pytest.MonkeyPatch,
+    plug_smt_solver: Callable[[SatResult], RecordingSmtSolver],
 ) -> None:
-    """Test `check_satisfiability_with_bindings` maps solver `None` to UNDECIDED.
+    """Test `check_satisfiability_with_bindings` maps `unknown` to UNDECIDED.
 
     Mirrors `test_check_satisfiability_solver_unknown_result_is_undecided`
     for the bindings-aware entry point.
     """
+    plug_smt_solver(SatResult.unknown("incomplete"))
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
-    )
-
-    def _fake_check(
-        expression: Expression,
-        symbol_types: dict[Identifier, SymbolType],
-        *,
-        timeout_milliseconds: int | None = None,
-    ) -> bool | None:
-        return None
-
-    monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
-        _fake_check,
     )
 
     outcome = system.check_satisfiability_with_bindings({x: 1}, {y: SymbolType.INT})
@@ -2288,24 +2225,27 @@ def test_check_satisfiability_divide_by_nonzero_literal_stays_decided() -> None:
 
 
 # =============================================================================
-# Int/float `EQUAL`/`NOT_EQUAL` sort-mixing hazard screen
+# Int/float `EQUAL`/`NOT_EQUAL` is decided by value
 # =============================================================================
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
-    "operation",
-    [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
+    "operation, expected",
+    [
+        (BinaryOperation.EQUAL, ConstraintOutcome.VIOLATED),
+        (BinaryOperation.NOT_EQUAL, ConstraintOutcome.SATISFIED),
+    ],
     ids=["equal", "not_equal"],
 )
-def test_check_satisfiability_int_identifier_against_float_literal_is_undecided(
-    operation: BinaryOperation,
+def test_check_satisfiability_int_identifier_against_float_literal_is_decided(
+    operation: BinaryOperation, expected: ConstraintOutcome
 ) -> None:
     """Test EQUAL/NOT_EQUAL mixing an INT-sorted identifier and a float literal.
 
-    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
-    this package's type-strict int/float distinction (no ``int`` is ever
-    ``==`` a ``float`` under ``evaluate_with_bindings``), so the screen
-    refuses to hand the comparison to the solver.
+    The expression evaluator compares an ``int`` with a ``float`` by value,
+    and so does the lowering's ``to_real``: no integer equals ``1.5``, and
+    every integer differs from it.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(
@@ -2314,13 +2254,14 @@ def test_check_satisfiability_int_identifier_against_float_literal_is_undecided(
 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
-    assert outcome is ConstraintOutcome.UNDECIDED
+    assert outcome is expected
 
 
-def test_check_satisfiability_logs_warning_for_the_int_float_equality_hazard(
+@pytest.mark.z3
+def test_check_satisfiability_logs_nothing_for_an_int_float_equality(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test the int/float equality screen reports what it refused to lower."""
+    """Test an int/float equality is answered without a refusal warning."""
     x = mock_identifier("x", 0)
     system = create_constraint_system(
         EquationConstraint(make_binary_expression(BinaryOperation.EQUAL, x, 1.5))
@@ -2329,19 +2270,16 @@ def test_check_satisfiability_logs_warning_for_the_int_float_equality_hazard(
     with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = system.check_satisfiability({x: SymbolType.INT})
 
-    assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_solver_records(caplog, logging.WARNING)
-    assert warnings, "expected a WARNING naming the hazardous node"
-    message = warnings[0].getMessage()
-    assert "check_expression_satisfiability" in message
-    assert repr(x) in message
+    assert outcome is ConstraintOutcome.VIOLATED
+    assert _find_solver_records(caplog, logging.WARNING) == []
 
 
-def test_check_satisfiability_with_bindings_int_float_hazard_screens_residual() -> None:
-    """Test the residual after substitution is screened the same way.
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_int_float_residual_is_decided() -> None:
+    """Test the residual after substitution is decided the same way.
 
-    Binding ``y`` to a float-bucket value against an ``INT``-sorted ``x``
-    in ``x == y`` leaves the same hazardous shape in the residual.
+    Binding ``y`` to ``1.5`` against an ``INT``-sorted ``x`` in ``x == y``
+    leaves ``x == 1.5``, which no integer satisfies.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -2351,7 +2289,7 @@ def test_check_satisfiability_with_bindings_int_float_hazard_screens_residual() 
 
     outcome = system.check_satisfiability_with_bindings({y: 1.5}, {x: SymbolType.INT})
 
-    assert outcome is ConstraintOutcome.UNDECIDED
+    assert outcome is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3
@@ -2406,6 +2344,11 @@ def test_check_satisfiability_int_identifier_lt_float_literal_not_screened() -> 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
     assert outcome is ConstraintOutcome.SATISFIED
+
+
+# A set constraint's residual stays refused where its variable's kind and a
+# member's differ: membership is type-strict, while its lowered equality
+# would be read by value.
 
 
 def test_check_satisfiability_with_bindings_int_addition_vs_float_set_undecided() -> (
@@ -2545,7 +2488,7 @@ def test_check_implication_accepts_an_immutabledict_symbol_types() -> None:
     """Test `check_implication` accepts an `immutabledict` `symbol_types`.
 
     Mirrors `test_check_satisfiability_accepts_an_immutabledict_symbol_types`
-    for the implication seam's own removed defensive ``dict()`` copy.
+    for the implication seam, which makes no defensive ``dict()`` copy.
     """
     x = mock_identifier("x", 0)
     antecedent = create_constraint_system(InSetConstraint(x, {1, 2}))
@@ -2634,7 +2577,6 @@ def test_check_implication_logs_warning_for_a_hazardous_side(
     assert "does_expression_imply" in warnings[0].getMessage()
 
 
-@pytest.mark.z3
 def test_check_implication_missing_symbol_type_raises_for_either_side() -> None:
     """Test a missing `symbol_types` entry for either side raises."""
     x = mock_identifier("x", 0)
@@ -2659,7 +2601,7 @@ def test_check_implication_propagates_constraint_error_from_a_member() -> None:
     )
 
     with pytest.raises(
-        ConstraintError, match="Conversion of type SerializableEqualHashable"
+        ConstraintError, match="conversion of type SerializableEqualHashable"
     ):
         antecedent.check_implication(consequent, {x: SymbolType.INT})
 
@@ -2710,7 +2652,6 @@ def _build_system_comparing_pi_with(bound: int) -> ConstraintSystem:
     )
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SATISFIABILITY_CHECKS)
 @pytest.mark.parametrize(
     "declare_a_sort", [False, True], ids=["no_sort", "declared_real"]
@@ -2736,7 +2677,6 @@ def test_satisfiability_is_undecided_for_a_native_constant(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_implication_is_undecided_for_a_native_constant() -> None:
     """Test entailment between systems over ``pi`` is UNDECIDED with no sort for it."""
     antecedent = _build_system_comparing_pi_with(4)
@@ -2746,7 +2686,6 @@ def test_check_implication_is_undecided_for_a_native_constant() -> None:
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_requires_a_sort_for_a_variable_beside_a_constant() -> (
     None
 ):
@@ -2763,7 +2702,6 @@ def test_check_satisfiability_requires_a_sort_for_a_variable_beside_a_constant()
     assert _extract_reported_missing_names(exception_info.value) == x.name_hint
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_refuses_a_bound_native_constant(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2807,7 +2745,6 @@ _DecideWithBindings = Callable[
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize(
     "build_expression, bound_value",
@@ -2845,7 +2782,6 @@ def test_bindings_paths_agree_that_a_bound_native_constant_is_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_report_an_unliftable_value_ahead_of_a_bound_constant(
     decide: _DecideWithBindings,
@@ -2867,7 +2803,6 @@ def test_bindings_paths_report_an_unliftable_value_ahead_of_a_bound_constant(
         decide(system, bindings, {})
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_report_ill_typedness_ahead_of_a_bound_constant(
     decide: _DecideWithBindings,
@@ -2880,17 +2815,14 @@ def test_bindings_paths_report_ill_typedness_ahead_of_a_bound_constant(
     """
     pi = get_native_constant_identifier("pi")
     x = mock_identifier("x", 0)
-    expression = make_binary_expression(
-        BinaryOperation.LOGICAL_AND,
-        x,
-        make_binary_expression(BinaryOperation.GREATER, pi, 3),
-    )
+    expression = logical_and(x, make_binary_expression(BinaryOperation.GREATER, pi, 3))
     system = create_constraint_system(EquationConstraint(expression))
 
     with pytest.raises(NonBooleanLogicalOperandError):
         decide(system, {pi: 4, x: LiteralExpression(2)}, {})
 
 
+@pytest.mark.sympy
 @pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
@@ -2913,7 +2845,6 @@ def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
 # =============================================================================
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 def test_bindings_paths_agree_a_root_bound_to_a_mixed_piecewise_is_refused(
     decide: _DecideWithBindings,
@@ -2955,7 +2886,6 @@ _CONSTANT_MEMBER_BUILDERS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize("kind", _SET_KINDS_OVER_A_CONSTANT)
 @pytest.mark.parametrize(
@@ -2982,7 +2912,6 @@ def test_bindings_paths_agree_on_a_set_constraint_over_a_bound_constant(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize("kind", _SET_KINDS_OVER_A_CONSTANT)
 def test_bindings_paths_report_an_unusable_set_binding_ahead_of_a_bound_constant(
@@ -2998,7 +2927,7 @@ def test_bindings_paths_report_an_unusable_set_binding_ahead_of_a_bound_constant
         decide(system, bindings, {})
 
 
-@pytest.mark.z3
+@pytest.mark.sympy
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize("build_constant_member", _CONSTANT_MEMBER_BUILDERS)
 def test_a_bound_constant_member_leaves_a_satisfied_conjunction_undecided(
@@ -3023,6 +2952,7 @@ def test_a_bound_constant_member_leaves_a_satisfied_conjunction_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize("build_constant_member", _CONSTANT_MEMBER_BUILDERS)
 def test_evaluation_lets_a_violated_member_outrank_a_refused_constant_member(
     build_constant_member: Callable[[Identifier], Constraint],
@@ -3072,6 +3002,13 @@ _LITERAL_BINDING_SET_CASES = [
         id="in_set_categorical_string_member_vs_denoted_int",
     ),
     pytest.param(
+        InSetConstraint,
+        {"0.5"},
+        LiteralExpression("0.5"),
+        ConstraintOutcome.VIOLATED,
+        id="in_set_categorical_string_member_vs_denoted_decimal",
+    ),
+    pytest.param(
         NotInSetConstraint,
         {0.5},
         LiteralExpression("0.5"),
@@ -3116,7 +3053,6 @@ _LITERAL_BINDING_SET_CASES = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
 @pytest.mark.parametrize(
     ("factory", "members", "bound_value", "expected"), _LITERAL_BINDING_SET_CASES
@@ -3186,7 +3122,6 @@ def test_satisfiability_bindings_matching_int_literal_defers_rest_to_solver() ->
     assert outcome is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.z3
 def test_satisfiability_bindings_nonmember_int_literal_violates_system() -> None:
     """Test a non-member int-literal binding violates the system outright."""
     x = mock_identifier("x", 0)
@@ -3252,7 +3187,6 @@ _SOLVER_BACKED_QUESTIONS = [
 ]
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 @pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
 def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
@@ -3264,23 +3198,18 @@ def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
     """Test a variable declared INT or REAL under a connective is ill-typed.
 
     The system hands the caller's sorts to the solver seam, whose screen
-    now reads them, so the sort mismatch is reported as the typed error
-    rather than as Z3's own exception wrapped in ``PassExecutionError``.
+    reads them, so the sort mismatch is reported as the typed error rather
+    than as Z3's own exception wrapped in ``PassExecutionError``.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(
-        EquationConstraint(
-            make_binary_expression(
-                BinaryOperation.LOGICAL_AND, x, LiteralExpression(True)
-            )
-        )
+        EquationConstraint(logical_and(x, LiteralExpression(True)))
     )
 
     with pytest.raises(NonBooleanLogicalOperandError):
         decide(system, {x: sort})
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 def test_solver_questions_report_ill_typedness_despite_a_hazard_elsewhere(
     decide: Callable[
@@ -3317,7 +3246,6 @@ def test_solver_questions_report_ill_typedness_despite_a_hazard_elsewhere(
 # =============================================================================
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expression(
     decide: Callable[
@@ -3328,8 +3256,9 @@ def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expressi
 
     Each constraint of a system is itself a Boolean position, so
     ``x + 1`` is ill-typed on its own. The message names ``x + 1``, the
-    caller's own node, rather than a synthetic ``LOGICAL_AND`` the caller
-    never wrote joining it to the rest of the lowered conjunction.
+    caller's own node, as the root of a predicate, rather than as an
+    operand of a synthetic conjunction the caller never wrote joining it to
+    the rest of the lowered system.
     """
     x = mock_identifier("x", 0)
     numeric_expression = make_binary_expression(
@@ -3342,10 +3271,10 @@ def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expressi
 
     message = str(exc_info.value)
     assert repr(numeric_expression) in message
-    assert "LOGICAL_AND" not in message
+    assert message.startswith("the predicate provably denotes a number")
+    assert "LogicalExpression" not in message
 
 
-@pytest.mark.z3
 @pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
 def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one(
     decide: Callable[
@@ -3355,9 +3284,9 @@ def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one
     """Test the same refusal holds with a well-typed member alongside it.
 
     The lowered conjunction still joins both members with a real
-    ``LOGICAL_AND`` for the solver, but the refusal is decided per member
-    before that join, so the message still names only the offending
-    member's own expression.
+    ``LogicalExpression`` for the solver, but the refusal is decided per
+    member before that join, so the message still names only the offending
+    member's own expression, as the root of a predicate.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -3374,4 +3303,5 @@ def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one
 
     message = str(exc_info.value)
     assert repr(numeric_expression) in message
-    assert "LOGICAL_AND" not in message
+    assert message.startswith("the predicate provably denotes a number")
+    assert "LogicalExpression" not in message

@@ -184,6 +184,7 @@ def test_structural_equivalence_is_false_when_constraint_counts_differ(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("param", "valid_value", "invalid_type_or_shape_value", "constraint_fail_value"),
     [
@@ -238,6 +239,7 @@ def test_add_constraint_returns_new_param_without_mutating_original() -> None:
     assert_all_satisfied(param, [1, 2, 3])
 
 
+@pytest.mark.sympy
 def test_add_constraints_applies_multiple_constraints_in_one_call() -> None:
     """Test `add_constraints` adds multiple constraints in a single call."""
     param = create_real_param()
@@ -665,6 +667,7 @@ def test_param_constructed_directly_with_finite_domain_admits_only_members() -> 
     assert not param.is_value_admissible(4)
 
 
+@pytest.mark.sympy
 def test_validate_value_accepts_valid_value() -> None:
     """Test `Param.validate_value` does not raise for a valid value."""
     param = create_integer_param_between(0, 10, name=mock_identifier("x", 1))
@@ -680,6 +683,7 @@ def test_validate_value_rejects_inadmissible_value() -> None:
         param.validate_value("not an int")
 
 
+@pytest.mark.sympy
 def test_validate_value_rejects_constraint_violating_value() -> None:
     """Test `Param.validate_value` reports a constraint violation distinctly."""
     param = create_integer_param_between(0, 10, name=mock_identifier("x", 1))

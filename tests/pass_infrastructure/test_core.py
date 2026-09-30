@@ -10,8 +10,10 @@ from fhy_core.pass_infrastructure import (
     CompilerPass,
     PassExecutionError,
     PassInfo,
+    PassManager,
     PassRegistrationError,
     PassResult,
+    PassRunRecord,
     PassValidationError,
     PreservedAnalyses,
     register_pass,
@@ -22,8 +24,8 @@ from fhy_core.utils.override import override
 _PASS_INFRA_LOGGER_PREFIX = "fhy_core.pass_infrastructure.core"
 
 
-def test_compiler_pass_executes_and_tracks_stats() -> None:
-    """Test that a registered pass executes and tracks run statistics."""
+def test_compiler_pass_executes_and_reports_run_statistics() -> None:
+    """Test that a registered pass executes and reports an unskipped run."""
 
     @register_pass("tests.append_pass", "Append sentinel value to a list.")
     class AppendPass(CompilerPass[list[int], list[int]]):
@@ -35,16 +37,12 @@ def test_compiler_pass_executes_and_tracks_stats() -> None:
         def run_pass(self, ir: list[int]) -> list[int]:
             return [*ir, 9]
 
-    total_before = CompilerPass.get_total_run_count()
-    per_before = AppendPass.get_run_count()
-
     result = AppendPass().execute([1, 2])
 
     assert result.output == [1, 2, 9]
     assert result.changed is True
     assert result.diagnostics == ()
-    assert AppendPass.get_run_count() == per_before + 1
-    assert CompilerPass.get_total_run_count() == total_before + 1
+    assert result.skipped is False
 
 
 def test_compiler_pass_wraps_internal_exceptions() -> None:
@@ -70,8 +68,11 @@ def test_compiler_pass_wraps_internal_exceptions() -> None:
     assert "boom" in compiler_pass.diagnostics[0].message_text
 
 
-def test_compiler_pass_rejects_none_input() -> None:
-    """Test that None input is rejected by default validation."""
+def test_compiler_pass_accepts_none_input_unless_an_override_refuses_it() -> None:
+    """Test that the default validation accepts None and an override can refuse it.
+
+    The Rust core's `validate_input` accepts every input.
+    """
 
     @register_pass("tests.identity_pass", "Identity pass for object IR.")
     class IdentityPass(CompilerPass[object, object]):
@@ -83,8 +84,17 @@ def test_compiler_pass_rejects_none_input() -> None:
         def run_pass(self, ir: object) -> object:
             return ir
 
-    compiler_pass = IdentityPass()
-    with pytest.raises(PassValidationError):
+    @register_pass("tests.refuses_none_pass", "Identity pass that refuses None.")
+    class RefusesNonePass(IdentityPass):
+        @override
+        def validate_input(self, ir: object) -> None:
+            if ir is None:
+                raise ValueError("does not accept None")
+
+    assert IdentityPass().execute(None).output is None
+
+    compiler_pass = RefusesNonePass()
+    with pytest.raises(PassValidationError, match="failed in validate_input"):
         compiler_pass.execute(None)
 
     assert compiler_pass.diagnostics
@@ -128,7 +138,7 @@ def test_compiler_pass_registry_create_and_collision() -> None:
 
 def test_compiler_pass_skip_path_uses_noop_output() -> None:
     """Test the skipped execution path returns noop output, preserves all
-    analyses, and does not increment the run counter."""
+    analyses, and is reported as skipped."""
 
     @register_pass("tests.skipped_pass", "Skip execution and return noop output.")
     class SkippedPass(CompilerPass[int, int]):
@@ -146,9 +156,6 @@ def test_compiler_pass_skip_path_uses_noop_output() -> None:
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
-    total_before = CompilerPass.get_total_run_count()
-    per_before = SkippedPass.get_run_count()
-
     result = SkippedPass().execute(2)
 
     assert result.output == 102
@@ -157,10 +164,7 @@ def test_compiler_pass_skip_path_uses_noop_output() -> None:
     assert result.diagnostics
     assert result.diagnostics[0].level == DiagnosticLevel.INFO
     assert result.diagnostics[0].message_text == "skip requested"
-
-    # Skipped runs do not count as executions.
-    assert SkippedPass.get_run_count() == per_before
-    assert CompilerPass.get_total_run_count() == total_before
+    assert result.skipped is True
 
 
 def test_preserved_analyses_is_immutable() -> None:
@@ -205,8 +209,10 @@ def test_pass_core_records_support_partial_equal_traits() -> None:
 # ---------------------------------------------------------------------------
 # Lifecycle exceptions are wrapped to PassValidationError /
 # PassExecutionError. The validate_* methods wrap to PassValidationError;
-# the others wrap to PassExecutionError. PassValidationError /
-# PassExecutionError raised by user code pass through unchanged.
+# the others wrap to PassExecutionError. The message is the core's and
+# names the Python hook; the hook's exception is the `__cause__`. A
+# PassValidationError / PassExecutionError raised by user code is wrapped
+# like any other exception.
 # ---------------------------------------------------------------------------
 
 
@@ -238,9 +244,15 @@ def test_validate_input_unexpected_exception_wraps_to_pass_validation_error() ->
             return ir
 
     compiler_pass = WrappedValidateInputPass()
-    with pytest.raises(PassValidationError, match="missing-key"):
+    with pytest.raises(PassValidationError) as excinfo:
         compiler_pass.execute(1)
 
+    assert str(excinfo.value) == (
+        'pass "tests.wrap.validate_input_raises" failed in validate_input'
+    )
+    assert excinfo.value.hook == "validate_input"
+    assert excinfo.value.pass_name == "tests.wrap.validate_input_raises"
+    assert isinstance(excinfo.value.__cause__, KeyError)
     assert compiler_pass.diagnostics
     assert compiler_pass.diagnostics[-1].level == DiagnosticLevel.ERROR
     assert "missing-key" in compiler_pass.diagnostics[-1].message_text
@@ -266,8 +278,14 @@ def test_validate_output_unexpected_exception_wraps_to_pass_validation_error() -
             raise KeyError("output-issue")
 
     compiler_pass = WrappedValidateOutputPass()
-    with pytest.raises(PassValidationError, match="output-issue"):
+    with pytest.raises(PassValidationError) as excinfo:
         compiler_pass.execute(1)
+
+    assert str(excinfo.value) == (
+        'pass "tests.wrap.validate_output_raises" failed in validate_output'
+    )
+    assert excinfo.value.hook == "validate_output"
+    assert isinstance(excinfo.value.__cause__, KeyError)
 
     assert any(
         "output-issue" in d.message_text and d.level == DiagnosticLevel.ERROR
@@ -293,8 +311,15 @@ def test_should_run_unexpected_exception_wraps_to_pass_execution_error() -> None
             return ir
 
     compiler_pass = WrappedShouldRunPass()
-    with pytest.raises(PassExecutionError, match="predicate-broken"):
+    with pytest.raises(PassExecutionError) as excinfo:
         compiler_pass.execute(1)
+
+    assert str(excinfo.value) == (
+        'pass "tests.wrap.should_run_raises" failed in should_run'
+    )
+    assert excinfo.value.hook == "should_run"
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert str(excinfo.value.__cause__) == "predicate-broken"
 
     assert any(
         "predicate-broken" in d.message_text and d.level == DiagnosticLevel.ERROR
@@ -323,8 +348,14 @@ def test_get_noop_output_unexpected_exception_wraps_to_pass_execution_error() ->
         def run_pass(self, ir: int) -> int:
             return ir
 
-    with pytest.raises(PassExecutionError, match="noop-broken"):
+    with pytest.raises(PassExecutionError) as excinfo:
         WrappedNoopPass().execute(1)
+
+    assert str(excinfo.value) == (
+        'pass "tests.wrap.get_noop_output_raises" failed in get_noop_output'
+    )
+    assert excinfo.value.hook == "get_noop_output"
+    assert str(excinfo.value.__cause__) == "noop-broken"
 
 
 def test_did_change_unexpected_exception_wraps_to_pass_execution_error() -> None:
@@ -344,8 +375,14 @@ def test_did_change_unexpected_exception_wraps_to_pass_execution_error() -> None
         def did_change(self, input_ir: int, output: int) -> bool:
             raise RuntimeError("did-change-broken")
 
-    with pytest.raises(PassExecutionError, match="did-change-broken"):
+    with pytest.raises(PassExecutionError) as excinfo:
         WrappedDidChangePass().execute(1)
+
+    assert str(excinfo.value) == (
+        'pass "tests.wrap.did_change_raises" failed in did_change'
+    )
+    assert excinfo.value.hook == "did_change"
+    assert str(excinfo.value.__cause__) == "did-change-broken"
 
 
 def test_get_preserved_analyses_wraps_unexpected_exception() -> None:
@@ -370,12 +407,22 @@ def test_get_preserved_analyses_wraps_unexpected_exception() -> None:
         ) -> PreservedAnalyses:
             raise RuntimeError("preserved-broken")
 
-    with pytest.raises(PassExecutionError, match="preserved-broken"):
+    with pytest.raises(PassExecutionError) as excinfo:
         WrappedPreservedPass().execute(1)
 
+    assert str(excinfo.value) == (
+        'pass "tests.wrap.get_preserved_raises" failed in get_preserved_analyses'
+    )
+    assert excinfo.value.hook == "get_preserved_analyses"
+    assert str(excinfo.value.__cause__) == "preserved-broken"
 
-def test_explicit_pass_validation_error_passes_through_unchanged() -> None:
-    """Test PassValidationError raised by user code is not double-wrapped."""
+
+def test_explicit_pass_validation_error_is_wrapped_as_a_hook_failure() -> None:
+    """Test PassValidationError raised by user code is the cause of the hook failure.
+
+    Only a nested pass run's error nests; an error the hook's own code
+    raises fails the hook like any other exception.
+    """
 
     @register_pass(
         "tests.wrap.explicit_validation_error",
@@ -394,12 +441,23 @@ def test_explicit_pass_validation_error_passes_through_unchanged() -> None:
         def run_pass(self, ir: int) -> int:
             return ir
 
-    with pytest.raises(PassValidationError, match="explicitly-invalid"):
+    with pytest.raises(PassValidationError) as excinfo:
         ExplicitValidationPass().execute(1)
 
+    assert excinfo.value.hook == "validate_input"
+    assert isinstance(excinfo.value.__cause__, PassValidationError)
+    assert str(excinfo.value.__cause__) == "explicitly-invalid"
+    assert excinfo.value.diagnostics[-1].message_text == (
+        'pass "tests.wrap.explicit_validation_error" failed in validate_input: '
+        "PassValidationError: explicitly-invalid"
+    )
 
-def test_explicit_pass_execution_error_passes_through_unchanged() -> None:
-    """Test PassExecutionError raised by user code is not double-wrapped."""
+
+def test_explicit_pass_execution_error_is_wrapped_as_a_hook_failure() -> None:
+    """Test PassExecutionError raised by user code is the cause of the hook failure.
+
+    As for `PassValidationError`, only a nested pass run's error nests.
+    """
 
     @register_pass(
         "tests.wrap.explicit_execution_error",
@@ -414,17 +472,22 @@ def test_explicit_pass_execution_error_passes_through_unchanged() -> None:
         def run_pass(self, ir: int) -> int:
             raise PassExecutionError("explicitly-broken")
 
-    with pytest.raises(PassExecutionError, match="explicitly-broken"):
+    with pytest.raises(PassExecutionError) as excinfo:
         ExplicitExecutionPass().execute(1)
 
+    assert excinfo.value.hook == "run_pass"
+    assert isinstance(excinfo.value.__cause__, PassExecutionError)
+    assert str(excinfo.value.__cause__) == "explicitly-broken"
+
 
 # ---------------------------------------------------------------------------
-# Run counters track real executions, not invocations.
+# Run statistics track real executions, not invocations; each run keeps its
+# own statistics.
 # ---------------------------------------------------------------------------
 
 
-def test_run_counter_counts_only_real_executions() -> None:
-    """Test that `_record_run` only counts passes that actually executed."""
+def test_run_statistics_count_only_real_executions() -> None:
+    """Test that skipped runs are reported as skipped and not counted."""
 
     @register_pass(
         "tests.counter.gated", "Pass that runs only when its input is positive."
@@ -442,25 +505,24 @@ def test_run_counter_counts_only_real_executions() -> None:
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
-    per_before = GatedPass.get_run_count()
-    total_before = CompilerPass.get_total_run_count()
     compiler_pass = GatedPass()
+    manager = PassManager[int]()
+    manager.add_pass(compiler_pass)
+    manager.add_pass(compiler_pass)
 
-    compiler_pass.execute(0)  # skipped - should NOT count
-    compiler_pass.execute(0)  # skipped - should NOT count
+    assert compiler_pass.execute(0).skipped is True
+    skipped = manager.run(0)
+    assert skipped.run_count() == 0
+    assert [record.skipped for record in skipped.pass_runs()] == [True, True]
 
-    assert GatedPass.get_run_count() == per_before
-    assert CompilerPass.get_total_run_count() == total_before
-
-    compiler_pass.execute(1)  # executed
-    compiler_pass.execute(2)  # executed
-
-    assert GatedPass.get_run_count() == per_before + 2
-    assert CompilerPass.get_total_run_count() == total_before + 2
+    assert compiler_pass.execute(1).skipped is False
+    executed = manager.run(1)
+    assert executed.output == 3
+    assert executed.run_count() == 2
 
 
-def test_run_counter_counts_attempts_even_when_run_pass_raises() -> None:
-    """Test run counters increment for a pass that crashes inside ``run_pass``."""
+def test_failed_run_has_no_record_but_the_completed_work_does() -> None:
+    """Test a pass crashing inside ``run_pass`` fails with the earlier records."""
 
     @register_pass(
         "tests.counter.crashes_in_run_pass",
@@ -475,22 +537,23 @@ def test_run_counter_counts_attempts_even_when_run_pass_raises() -> None:
         def run_pass(self, ir: int) -> int:
             raise RuntimeError("intentional crash in run_pass")
 
-    per_before = CrashingRunPass.get_run_count()
-    total_before = CompilerPass.get_total_run_count()
-    compiler_pass = CrashingRunPass()
+    @register_pass("tests.counter.before_crash", "Identity pass before the crash.")
+    class BeforeCrashPass(CompilerPass[int, int]):
+        @override
+        def run_pass(self, ir: int) -> int:
+            return ir
 
-    with pytest.raises(PassExecutionError):
-        compiler_pass.execute(1)
+    manager = PassManager[int]()
+    manager.add_pass(BeforeCrashPass())
+    manager.add_pass(CrashingRunPass())
 
-    assert CrashingRunPass.get_run_count() == per_before + 1
-    assert CompilerPass.get_total_run_count() == total_before + 1
+    with pytest.raises(PassExecutionError) as excinfo:
+        manager.run(1)
 
-    # A second crashed attempt still counts.
-    with pytest.raises(PassExecutionError):
-        compiler_pass.execute(2)
-
-    assert CrashingRunPass.get_run_count() == per_before + 2
-    assert CompilerPass.get_total_run_count() == total_before + 2
+    assert excinfo.value.pass_name == "tests.counter.crashes_in_run_pass"
+    (record,) = excinfo.value.records
+    assert isinstance(record, PassRunRecord)
+    assert record.pass_name == "tests.counter.before_crash"
 
 
 # ---------------------------------------------------------------------------
@@ -814,4 +877,5 @@ def test_execute_emits_lifecycle_debug(
         and record.name.endswith("tests.log.lifecycle")
     ]
     assert entry, "expected entry DEBUG record"
+    assert entry[0].getMessage() == "entering (input type=int)"
     assert finished, "expected finished DEBUG record"

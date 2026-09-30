@@ -20,6 +20,9 @@ import math
 import pickle
 
 import pytest
+
+pytest.importorskip("sympy")
+
 import sympy  # type: ignore[import-untyped]
 
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -41,6 +44,8 @@ from fhy_core.symbolic.expression import (
 from fhy_core.symbolic.solver import simplify_expression
 
 from .conftest import mock_identifier
+
+pytestmark = pytest.mark.sympy
 
 # =============================================================================
 # Native function lowering (IR -> sympy)
@@ -206,8 +211,10 @@ def test_unmapped_native_function_call_lowering_raises_typed_error(
     x = mock_identifier("x", 0)
     expression = call("test_sympy_unmapped_native", x)
 
-    with pytest.raises(PassExecutionError, match="test_sympy_unmapped_native"):
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_expression_to_sympy_expression(expression)
+
+    assert "test_sympy_unmapped_native" in str(exc_info.value.__cause__)
 
 
 # =============================================================================
@@ -233,8 +240,10 @@ def test_expression_bodied_call_lowering_still_raises(
     )
     expression = call("test_sympy_expr_bodied", LiteralExpression(1.0))
 
-    with pytest.raises(PassExecutionError, match="test_sympy_expr_bodied"):
+    with pytest.raises(PassExecutionError) as exc_info:
         convert_expression_to_sympy_expression(expression)
+
+    assert "test_sympy_expr_bodied" in str(exc_info.value.__cause__)
 
 
 # =============================================================================

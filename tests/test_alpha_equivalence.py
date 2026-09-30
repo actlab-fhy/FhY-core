@@ -680,6 +680,33 @@ def test_binder_alpha_equivalence_handles_nested_shadowing_mismatch() -> None:
     assert not left.is_alpha_equivalent(right)
 
 
+def test_binder_alpha_equivalence_rejects_reference_shadowed_on_other_side() -> None:
+    """Test `lambda x. lambda y. x` is not equivalent to `lambda a. lambda a. a`.
+
+    The body `a` refers to the inner binder, the body `x` to the outer one.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    a = mock_identifier("a", 3)
+    left = _Binder(parameter=x, body=_Binder(parameter=y, body=_IdRef(x)))
+    right = _Binder(parameter=a, body=_Binder(parameter=a, body=_IdRef(a)))
+
+    assert not left.is_alpha_equivalent(right)
+    assert not right.is_alpha_equivalent(left)
+
+
+def test_alpha_renaming_rejects_outer_binding_under_inner_capture() -> None:
+    """Test an inner frame binding the other identifier overrides an outer match."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    a = mock_identifier("a", 3)
+
+    renaming = AlphaRenaming.empty().extend({x: a}).extend({y: a})
+
+    assert not renaming.are_identifiers_alpha_equivalent(x, a)
+    assert renaming.are_identifiers_alpha_equivalent(y, a)
+
+
 def test_binder_alpha_equivalence_rejects_capture() -> None:
     """Test `lambda x. (x, y)` is not alpha-equivalent to `lambda y. (y, y)`."""
     x = mock_identifier("x", 1)
@@ -780,7 +807,11 @@ _r = mock_identifier("r", 1003)
 
 @pytest.fixture()
 def example_terms() -> list[AlphaEquivalenceMixin]:
-    """Yield a small set of terms covering leaves, refs, pairs, and binders."""
+    """Yield a small set of terms covering leaves, refs, pairs, and binders.
+
+    Every binder binds one identifier, so no binder list repeats one: the
+    precondition of the laws below, which hold only on such terms.
+    """
     leaf1 = _AlphaLeaf(1)
     leaf2 = _AlphaLeaf(2)
     ref_p = _IdRef(_p)
@@ -805,7 +836,10 @@ def example_terms() -> list[AlphaEquivalenceMixin]:
 def test_alpha_equivalence_is_reflexive(
     example_terms: list[AlphaEquivalenceMixin],
 ) -> None:
-    """Test alpha-equivalence is reflexive on the example-term set."""
+    """Test alpha-equivalence is reflexive on the example-term set.
+
+    Precondition: no binder list of the example terms repeats an identifier.
+    """
     for term in example_terms:
         assert term.is_alpha_equivalent(term)
 
@@ -822,7 +856,10 @@ def test_alpha_equivalence_is_symmetric(
 def test_alpha_equivalence_is_transitive(
     example_terms: list[AlphaEquivalenceMixin],
 ) -> None:
-    """Test alpha-equivalence is transitive on the example-term set."""
+    """Test alpha-equivalence is transitive on the example-term set.
+
+    Precondition: no binder list of the example terms repeats an identifier.
+    """
     triples_exercised = 0
     for left in example_terms:
         for middle in example_terms:

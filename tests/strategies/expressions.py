@@ -45,6 +45,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -65,7 +67,7 @@ __all__ = [
     "BOOLEAN_EQUALITY_OPERATIONS",
     "COMPARISON_OPERATIONS",
     "INTEGER_RESULT_NATIVE_FUNCTIONS",
-    "LOGICAL_BINARY_OPERATIONS",
+    "LOGICAL_OPERATIONS",
     "NUMERIC_DIVISION_OPERATIONS",
     "NUMERIC_GATE_OPERATIONS",
     "SYMPY_STABLE_CALL_FUNCTIONS",
@@ -105,10 +107,8 @@ BOOLEAN_EQUALITY_OPERATIONS: Final = (
     BinaryOperation.NOT_EQUAL,
 )
 """The comparisons defined between two Boolean operands."""
-LOGICAL_BINARY_OPERATIONS: Final = (
-    BinaryOperation.LOGICAL_AND,
-    BinaryOperation.LOGICAL_OR,
-)
+LOGICAL_OPERATIONS: Final = (LogicalOperation.AND, LogicalOperation.OR)
+"""The connectives of a ``LogicalExpression``."""
 INTEGER_RESULT_NATIVE_FUNCTIONS: Final = ("floor", "ceil", "round")
 
 _NONZERO_DIVISORS: Final = (*range(-8, 0), *range(1, 9))
@@ -119,6 +119,7 @@ so a relation holds under some bindings and fails under others."""
 _MIN_LEAVES_FOR_TWO_CHILDREN: Final = 2
 _MIN_PIECEWISE_LEAVES: Final = 3
 _MAX_PIECEWISE_CASES: Final = 3
+_MAX_LOGICAL_OPERANDS: Final = 3
 _MAX_CONSECUTIVE_WRAPS: Final = 4
 """Consecutive zero-leaf-cost wraps (unary op, single-argument call, logical
 not) allowed before a draw is forced to pick a leaf-spending kind. Bounds
@@ -211,6 +212,28 @@ def _draw_piecewise_expression(
     otherwise = parts[-1]
     cases = tuple(zip(conditions, values, strict=True))
     return piecewise(*cases, otherwise=otherwise)
+
+
+def _draw_logical_expression(
+    draw: st.DrawFn,
+    max_leaves: int,
+    build_operand_strategy: Callable[[int], st.SearchStrategy[Expression]],
+) -> LogicalExpression:
+    """Draw a connective over two or three operands within ``max_leaves`` leaves.
+
+    The operand count is capped by the budget, since every operand spends
+    at least one leaf; each operand then draws its own share through
+    :func:`_draw_parts_within_leaf_budget`.
+    """
+    operation = draw(st.sampled_from(LOGICAL_OPERATIONS))
+    max_operands = min(_MAX_LOGICAL_OPERANDS, max_leaves)
+    num_operands = draw(
+        st.integers(min_value=_MIN_LEAVES_FOR_TWO_CHILDREN, max_value=max_operands)
+    )
+    operands = _draw_parts_within_leaf_budget(
+        draw, (build_operand_strategy,) * num_operands, max_leaves
+    )
+    return LogicalExpression(operation, operands)
 
 
 @dataclass(frozen=True)
@@ -380,7 +403,7 @@ def _draw_numeric_expression(
 
 
 @st.composite
-def _draw_boolean_expression(
+def _draw_boolean_expression(  # noqa: PLR0911
     draw: st.DrawFn,
     grammar: _GateGrammar,
     max_leaves: int,
@@ -417,6 +440,10 @@ def _draw_boolean_expression(
         return make_unary_expression(UnaryOperation.LOGICAL_NOT, operand)
     if kind == "sort_ambiguous":
         return draw(grammar.build_sort_ambiguous_strategy(max_leaves))
+    if kind == "and_or":
+        return _draw_logical_expression(
+            draw, max_leaves, grammar.build_boolean_strategy
+        )
     if kind != "piecewise":
         operations, build_operand_strategy = {
             "comparison": (COMPARISON_OPERATIONS, grammar.build_numeric_strategy),
@@ -424,7 +451,6 @@ def _draw_boolean_expression(
                 BOOLEAN_EQUALITY_OPERATIONS,
                 grammar.build_boolean_equality_operand_strategy,
             ),
-            "and_or": (LOGICAL_BINARY_OPERATIONS, grammar.build_boolean_strategy),
         }[kind]
         operation = draw(st.sampled_from(operations))
         left, right = _draw_parts_within_leaf_budget(
@@ -531,7 +557,8 @@ def build_boolean_expression_strategy(
 
     A Boolean node is a Boolean leaf, a relational leaf ``v <op> k`` or
     ``v <op> w`` over integer identifiers, a comparison of two numeric
-    subtrees, an ``==``/``!=`` of two Boolean subtrees, a connective, a
+    subtrees, an ``==``/``!=`` of two Boolean subtrees, a connective over
+    two or three operands, a
     piecewise whose every branch is Boolean, or, given Boolean
     identifiers, a sort-ambiguous subtree: a bare Boolean identifier, or
     a piecewise whose every branch is sort-ambiguous in turn. Every option is forwarded
@@ -957,8 +984,6 @@ _PYTHON_BINARY_EVALUATORS: Final[
     BinaryOperation.MULTIPLY: lambda left, right: left * right,
     BinaryOperation.FLOOR_DIVIDE: lambda left, right: left // right,
     BinaryOperation.MODULO: lambda left, right: left % right,
-    BinaryOperation.LOGICAL_AND: lambda left, right: bool(left) and bool(right),
-    BinaryOperation.LOGICAL_OR: lambda left, right: bool(left) or bool(right),
     BinaryOperation.EQUAL: lambda left, right: left == right,
     BinaryOperation.NOT_EQUAL: lambda left, right: left != right,
     BinaryOperation.LESS: lambda left, right: left < right,
@@ -1040,7 +1065,7 @@ def _evaluate_unary_with_python(
     )
 
 
-def evaluate_with_python(
+def evaluate_with_python(  # noqa: PLR0911
     expression: Expression, environment: Mapping[Identifier, int | bool]
 ) -> "int | bool":
     """Evaluate a numeric or boolean gate-grammar expression with Python semantics.
@@ -1048,7 +1073,8 @@ def evaluate_with_python(
     The test-side reference evaluator for gate trees only, used as the
     oracle ``evaluate_expression_with_numpy`` is checked against.
     Supports literals, identifiers, ``NEGATE``/``POSITIVE``/
-    ``LOGICAL_NOT``, the arithmetic and logical ``BinaryOperation``s,
+    ``LOGICAL_NOT``, the arithmetic ``BinaryOperation``s, the
+    connectives of a ``LogicalExpression`` over any number of operands,
     comparisons (including ``==``/``!=`` between Booleans), piecewise
     (first true condition wins, else ``otherwise``), and floor/ceil/round
     on ints (floor/ceil/round of an int is the int itself). Integer
@@ -1079,6 +1105,14 @@ def evaluate_with_python(
         left = evaluate_with_python(expression.left, environment)
         right = evaluate_with_python(expression.right, environment)
         return _evaluate_binary_with_python(expression.operation, left, right)
+    if isinstance(expression, LogicalExpression):
+        operands = (
+            bool(evaluate_with_python(operand, environment))
+            for operand in expression.operands
+        )
+        if expression.operation is LogicalOperation.AND:
+            return all(operands)
+        return any(operands)
     if isinstance(expression, CallExpression):
         return _evaluate_call_with_python(expression, environment)
     if isinstance(expression, PiecewiseExpression):

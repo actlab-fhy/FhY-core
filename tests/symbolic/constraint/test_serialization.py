@@ -41,6 +41,7 @@ SetConstraintType = type[Constraint]
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_equation_constraint_round_trip_dict_serialization() -> None:
     """Test an `EquationConstraint` round-trips through dict serialization.
 
@@ -106,6 +107,7 @@ def test_set_constraint_round_trip_dict_serialization(
         ) == constraint.is_satisfied_with_bindings({x: member})
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_serialized_payload_uses_the_unified_values_key(
     factory: SetConstraintType, _field: str
@@ -183,6 +185,7 @@ def test_set_constraint_round_trip_preserves_type_strict_distinct_members(
     assert rebuilt.is_satisfied_with_bindings({x: 1.0}) is in_set
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_serialization_keeps_bool_int_and_float_distinct(
     factory: SetConstraintType, field: str
@@ -206,45 +209,41 @@ def _read_wire_members(constraint: Constraint, field: str) -> list[Any]:
     return members
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
-def test_set_constraint_serialized_values_are_repr_sorted(
+def test_set_constraint_serialized_values_are_in_canonical_order(
     factory: SetConstraintType, field: str
 ) -> None:
-    """Test serialized members are emitted in repr-sorted order for determinism.
+    """Test serialized members are emitted in the canonical member order.
 
-    The members are chosen so repr-sorted order (``10, 2, 33, 4`` --
-    lexicographic on the rendered digits) is not the numeric order and is
-    not the order the normalized member set iterates in, so emitting the
-    set as it happens to iterate would produce a different list.
+    Integer members order numerically, so the wire lists ``2, 4, 10, 33``,
+    not the ``repr``-sorted ``10, 2, 33, 4``, and the order the members are
+    given in does not matter.
     """
-    constraint = factory(mock_identifier("x", 0), {10, 2, 33, 4})  # type: ignore[call-arg]
+    constraint = factory(mock_identifier("x", 0), [33, 10, 4, 2])  # type: ignore[call-arg]
 
     serialized_values = _read_wire_members(constraint, field)
 
-    assert [member["__data__"] for member in serialized_values] == [10, 2, 33, 4]
-    assert serialized_values == sorted(serialized_values, key=repr)
+    assert [member["__data__"] for member in serialized_values] == [2, 4, 10, 33]
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_wire_order_is_independent_of_construction_order(
     factory: SetConstraintType, field: str
 ) -> None:
     """Test two constraints over the same members serialize to one byte-identical list.
 
-    The members collide on hash, so the two constraints provably store
-    them in different orders. Determinism of the wire form therefore has
-    to come from sorting at encode time rather than from the stored order
-    happening to agree.
+    The members collide on hash, and are given in opposite orders; both
+    constraints store them in the canonical order, so the wire lists agree.
     """
     x = mock_identifier("x", 0)
     members = [HashCollidingMember(1), HashCollidingMember(2)]
     left = factory(x, list(members))  # type: ignore[call-arg]
     right = factory(x, list(reversed(members)))  # type: ignore[call-arg]
 
-    assert getattr(left, field) != getattr(right, field), (
-        "the two constraints must store their members in different orders "
-        "for this test to say anything about encode-time ordering"
-    )
+    # Both store their members in canonical order.
+    assert getattr(left, field) == getattr(right, field)
     assert _read_wire_members(left, field) == _read_wire_members(right, field)
 
 
@@ -315,14 +314,16 @@ def test_equation_constraint_rejects_a_payload_carrying_the_old_variable_field()
     ]
 )
 def set_payload_with_field(
-    request: pytest.FixtureRequest,
+    request: pytest.FixtureRequest, v1_wire: None
 ) -> tuple[type[Constraint], str, dict[str, Any]]:
-    """Yield the factory, field name, and serialized payload for each set kind."""
+    """Yield the factory, field name, and V1 payload for each set kind."""
+    del v1_wire
     factory, field = request.param
     constraint = factory(mock_identifier("x", 0), {1, 2})
     return factory, field, constraint.serialize_to_dict()["__data__"]
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize(
     "mutate_template",
     [
@@ -394,6 +395,7 @@ def test_set_member_deserializer_rewraps_value_error_with_field_name(
     assert field in str(exc_info.value)
 
 
+@pytest.mark.usefixtures("v1_wire")
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_deserialization_rejects_extra_unknown_fields(
     factory: type[Constraint], _field: str

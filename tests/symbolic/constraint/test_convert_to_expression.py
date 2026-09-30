@@ -15,6 +15,8 @@ from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
     make_binary_expression,
 )
 
@@ -27,13 +29,13 @@ _KIND_SHAPES = [
     pytest.param(
         InSetConstraint,
         BinaryOperation.EQUAL,
-        BinaryOperation.LOGICAL_OR,
+        LogicalOperation.OR,
         id="in_set",
     ),
     pytest.param(
         NotInSetConstraint,
         BinaryOperation.NOT_EQUAL,
-        BinaryOperation.LOGICAL_AND,
+        LogicalOperation.AND,
         id="not_in_set",
     ),
 ]
@@ -61,7 +63,7 @@ def test_empty_set_returns_literal(
 def test_singleton_set_returns_single_leaf(
     factory: SetConstraintFactory,
     leaf_op: BinaryOperation,
-    _combinator: BinaryOperation,
+    _combinator: LogicalOperation,
 ) -> None:
     """Test a singleton constraint returns a bare leaf, not a logical combinator."""
     x = mock_identifier("x", 0)
@@ -79,7 +81,7 @@ def test_singleton_set_returns_single_leaf(
 def test_multi_value_set_returns_combinator_of_leaves(
     factory: SetConstraintFactory,
     leaf_op: BinaryOperation,
-    combinator: BinaryOperation,
+    combinator: LogicalOperation,
 ) -> None:
     """Test a multi-value constraint returns a combinator over leaf comparisons."""
     x = mock_identifier("x", 0)
@@ -87,10 +89,31 @@ def test_multi_value_set_returns_combinator_of_leaves(
 
     expression = constraint.convert_to_expression()
 
-    expected = make_binary_expression(
+    expected = LogicalExpression(
         combinator,
-        make_binary_expression(leaf_op, x, 1),
-        make_binary_expression(leaf_op, x, 2),
+        (
+            make_binary_expression(leaf_op, x, 1),
+            make_binary_expression(leaf_op, x, 2),
+        ),
+    )
+    assert expected.is_structurally_equivalent(expression)
+
+
+@pytest.mark.parametrize("factory, leaf_op, combinator", _KIND_SHAPES)
+def test_multi_value_set_returns_one_flat_combinator_of_every_leaf(
+    factory: SetConstraintFactory,
+    leaf_op: BinaryOperation,
+    combinator: LogicalOperation,
+) -> None:
+    """Test four members give one four-operand combinator, not a nested chain."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3, 4})
+
+    expression = constraint.convert_to_expression()
+
+    expected = LogicalExpression(
+        combinator,
+        tuple(make_binary_expression(leaf_op, x, member) for member in (1, 2, 3, 4)),
     )
     assert expected.is_structurally_equivalent(expression)
 
@@ -171,19 +194,16 @@ def test_multi_value_convert_to_expression_is_deterministic_across_construction_
 @pytest.mark.parametrize(
     "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
 )
-def test_multi_value_convert_to_expression_orders_leaves_by_repr(
+def test_multi_value_convert_to_expression_orders_leaves_canonically(
     factory: SetConstraintFactory,
 ) -> None:
-    """Test the produced combinator's leaves match `repr`-sorted member order.
+    """Test the produced combinator's leaves follow the canonical member order.
 
-    The chosen integer members give a lexicographic-by-repr order
-    (``[12, 3, 7, 9]``) that differs from both numeric order and
-    typical ``frozenset`` iteration order, so the test will fail if
-    the implementation forgets to sort by ``repr`` and falls through
-    to either of those orderings.
+    Integer members order numerically: ``[3, 7, 9, 12]``, not the
+    ``repr``-sorted ``[12, 3, 7, 9]``, whatever order they are given in.
     """
     x = mock_identifier("x", 0)
-    members = [3, 7, 9, 12]
+    members = [12, 9, 3, 7]
     constraint = factory(x, members)
 
     expression = constraint.convert_to_expression()
@@ -191,15 +211,12 @@ def test_multi_value_convert_to_expression_orders_leaves_by_repr(
     leaf_literals: list[object] = []
 
     def _walk(node: object) -> None:
-        if isinstance(node, BinaryExpression) and node.operation in (
-            BinaryOperation.LOGICAL_OR,
-            BinaryOperation.LOGICAL_AND,
-        ):
-            _walk(node.left)
-            _walk(node.right)
+        if isinstance(node, LogicalExpression):
+            for operand in node.operands:
+                _walk(operand)
         elif isinstance(node, BinaryExpression):
             assert isinstance(node.right, LiteralExpression)
             leaf_literals.append(node.right.value)
 
     _walk(expression)
-    assert leaf_literals == sorted(members, key=repr)
+    assert leaf_literals == [3, 7, 9, 12]

@@ -1,6 +1,12 @@
 """Cross-cutting tests that span multiple modules in `fhy_core.symbolic.expression`."""
 
+from decimal import Decimal
+
 import pytest
+
+pytest.importorskip("sympy")
+pytest.importorskip("z3")
+
 import sympy  # type: ignore[import-untyped]
 import z3  # type: ignore[import-untyped]
 
@@ -14,7 +20,8 @@ from fhy_core.symbolic.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
 )
-from fhy_core.symbolic.expression.passes.z3 import ExpressionToZ3Converter
+
+pytestmark = [pytest.mark.sympy, pytest.mark.z3]
 
 # =============================================================================
 # Pass registry - every expression pass must self-register
@@ -23,8 +30,14 @@ from fhy_core.symbolic.expression.passes.z3 import ExpressionToZ3Converter
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
     ("fhy_core.symbolic.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.symbolic.expression.to_sympy", ExpressionToSympyConverter),
-    ("fhy_core.symbolic.expression.to_z3", ExpressionToZ3Converter),
 ]
+
+
+def test_z3_lowering_is_no_registered_pass() -> None:
+    """Test the z3 lowering registers no pass: it is the Rust lowering."""
+    assert (
+        "fhy_core.symbolic.expression.to_z3" not in CompilerPass.get_registered_passes()
+    )
 
 
 @pytest.mark.parametrize("pass_name, pass_class", _EXPECTED_REGISTRATIONS)
@@ -59,15 +72,13 @@ def test_integer_valued_literal_lowers_to_an_integer_in_both_bridges(
 ) -> None:
     """Test every spelling of an integer literal reaches both backends as an integer.
 
-    ``LiteralExpression`` compares literals by bucket, so ``1``, ``"1"``,
-    and ``"01"`` form one structural-equivalence class. Lowering has to be
-    a congruence on that class: a bridge sending the string forms to a
-    different sort than the ``int`` form would let a solver decide for one
-    member of the class what it refuses, or answers differently, for
-    another.
+    ``LiteralExpression`` normalizes its value, so ``1``, ``"1"``, and
+    ``"01"`` build one literal, the integer ``1``, and both bridges see
+    that integer.
     """
     literal = LiteralExpression(value)
-    assert literal.is_structurally_equivalent(LiteralExpression(1))
+    assert literal == LiteralExpression(1)
+    assert literal.value == 1
 
     lowered_z3, _ = convert_expression_to_z3_expression(literal, {})
     lowered_sympy = convert_expression_to_sympy_expression(literal)
@@ -84,21 +95,22 @@ def test_integer_valued_literal_lowers_to_an_integer_in_both_bridges(
         pytest.param(1.5, sympy.Float(1.5), id="float_binary"),
         pytest.param("1.5", sympy.Rational(3, 2), id="float_grammar_string"),
         pytest.param("1.0", sympy.Integer(1), id="float_grammar_string_integral_value"),
+        pytest.param(Decimal("1.5"), sympy.Rational(3, 2), id="decimal"),
+        pytest.param(Decimal("1"), sympy.Integer(1), id="decimal_integral_value"),
     ],
 )
 def test_float_valued_literal_lowers_to_a_real_in_both_bridges(
-    value: float | str, expected_sympy_value: sympy.Expr
+    value: float | str | Decimal, expected_sympy_value: sympy.Expr
 ) -> None:
     """Test a float-valued literal stays real and exact in both bridges.
 
-    The float buckets are unaffected by the integer lowering: a
-    float-grammar string is not integer-valued even when its value has no
-    fractional part, so ``"1.0"`` reaches Z3 as a ``Real`` rather than
-    joining the class of the integer ``1``. SymPy has no sorts to hold
+    A float-grammar string is the exact decimal it spells, a
+    ``decimal.Decimal``, which is not an integer literal even when its
+    value has no fractional part, so ``"1.0"`` reaches Z3 as a ``Real``
+    rather than joining the integer ``1``. SymPy has no sorts to hold
     apart, so what it has to hold instead is the value, which pins the
-    exact number each form lowers to -- ``sympy.Rational`` for the
-    exact-decimal string form, whose unit-denominator case normalizes to
-    ``sympy.Integer``.
+    exact number each form lowers to -- ``sympy.Rational`` for an exact
+    decimal, whose unit-denominator case normalizes to ``sympy.Integer``.
     """
     literal = LiteralExpression(value)
     assert not literal.is_structurally_equivalent(LiteralExpression(1))
@@ -132,8 +144,9 @@ def test_binary_float_literal_lowers_to_its_ieee_value_in_both_bridges() -> None
     lowered_z3, _ = convert_expression_to_z3_expression(literal, {})
     lowered_sympy = convert_expression_to_sympy_expression(literal)
 
-    assert lowered_z3.eq(z3.RatVal(ieee_numerator, ieee_denominator))
-    assert not lowered_z3.eq(z3.RealVal("1/10"))
+    folded_z3 = z3.simplify(lowered_z3)
+    assert folded_z3.eq(z3.RatVal(ieee_numerator, ieee_denominator))
+    assert not folded_z3.eq(z3.RealVal("1/10"))
     assert lowered_sympy == sympy.Float(0.1)
     assert sympy.Rational(lowered_sympy) == sympy.Rational(
         ieee_numerator, ieee_denominator
@@ -144,17 +157,18 @@ def test_binary_float_literal_lowers_to_its_ieee_value_in_both_bridges() -> None
 def test_decimal_string_literal_lowers_to_its_exact_decimal_in_both_bridges() -> None:
     """Test a float-grammar string reaches both backends as its exact decimal.
 
-    ``LiteralExpression("0.1")`` stores exact decimal text, so both
-    bridges have to produce exactly one tenth. Rounding the text to
+    ``LiteralExpression("0.1")`` holds the exact decimal ``Decimal("0.1")``,
+    so both bridges have to produce exactly one tenth. Rounding it to
     binary -- which ``sympy.Float`` does -- would leave simplification
     working on a number the solver never sees.
     """
     literal = LiteralExpression("0.1")
+    assert literal.value == Decimal("0.1")
 
     lowered_z3, _ = convert_expression_to_z3_expression(literal, {})
     lowered_sympy = convert_expression_to_sympy_expression(literal)
 
-    assert lowered_z3.eq(z3.RatVal(1, 10))
+    assert z3.simplify(lowered_z3).eq(z3.RatVal(1, 10))
     assert lowered_sympy == sympy.Rational(1, 10)
     assert lowered_sympy != sympy.Float(0.1)
 
@@ -169,10 +183,11 @@ def test_decimal_string_literal_lowers_to_its_exact_decimal_in_both_bridges() ->
         pytest.param("0.3", id="float_grammar_string_three_tenths"),
         pytest.param(1.5, id="float_binary_exactly_representable"),
         pytest.param("1.5", id="float_grammar_string_exactly_representable"),
+        pytest.param(Decimal("0.3"), id="decimal_three_tenths"),
     ],
 )
 def test_float_literal_lowers_to_the_same_rational_in_both_bridges(
-    value: float | str,
+    value: float | str | Decimal,
 ) -> None:
     """Test both bridges lower one literal form to one rational.
 
@@ -187,4 +202,6 @@ def test_float_literal_lowers_to_the_same_rational_in_both_bridges(
     lowered_sympy = convert_expression_to_sympy_expression(literal)
 
     sympy_rational = sympy.Rational(lowered_sympy)
-    assert lowered_z3.eq(z3.RatVal(int(sympy_rational.p), int(sympy_rational.q)))
+    assert z3.simplify(lowered_z3).eq(
+        z3.RatVal(int(sympy_rational.p), int(sympy_rational.q))
+    )

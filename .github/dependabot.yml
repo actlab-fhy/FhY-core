@@ -1,0 +1,23 @@
+# Weekly dependency updates, opened as pull requests against dev.
+# Minor and patch updates are grouped into one pull request per ecosystem;
+# each major update gets its own. The rust-msrv job checks that a Cargo
+# update still builds on the crate's rust-version.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor-and-patch:
+        update-types: ["minor", "patch"]

@@ -24,6 +24,7 @@ from fhy_core.symbolic.param import (
     ParamError,
     PermutationDomain,
     RealDomain,
+    create_categorical_param,
     create_integer_param,
     create_integer_param_with_lower_bound,
     create_permutation_param,
@@ -31,6 +32,7 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
 )
 
+from ...v1 import reads_v1
 from .conftest import build_case_condition_constraint, mock_identifier
 
 # =============================================================================
@@ -104,6 +106,7 @@ def test_int_param_with_value_rejects_invalid_value() -> None:
         create_integer_param().assign(1.2)  # type: ignore[arg-type]  # test: invalid input
 
 
+@pytest.mark.sympy
 def test_param_assign_creates_immutable_assignment() -> None:
     """Test `Param.assign` returns an immutable `ParamAssignment`."""
     param = create_integer_param_with_lower_bound(0)
@@ -133,6 +136,7 @@ def test_repeated_assigns_share_param_definition_and_record_value(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_assignment_reports_violation_for_genuinely_violated_constraint() -> None:
     """Test a decided violation raises the ``violates`` message."""
     param = create_integer_param_with_lower_bound(0)
@@ -141,6 +145,7 @@ def test_assignment_reports_violation_for_genuinely_violated_constraint() -> Non
         param.assign(-1)
 
 
+@pytest.mark.sympy
 def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
     """Test an undecided constraint raises the ``could not be verified`` message.
 
@@ -160,6 +165,7 @@ def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
         param.assign(3)
 
 
+@pytest.mark.sympy
 def test_assignment_undecided_message_is_distinct_from_violation_message() -> None:
     """Test the undecided error does not use the ``violates`` wording."""
     x = mock_identifier("x", 0)
@@ -182,6 +188,7 @@ def test_assignment_undecided_message_is_distinct_from_violation_message() -> No
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_assignment_round_trips_through_serialize_to_dict() -> None:
     """Test `ParamAssignment` round-trips through `serialize_to_dict`."""
     assignment = create_integer_param_with_lower_bound(0).assign(3)
@@ -214,6 +221,7 @@ def test_assignment_round_trips_through_json_and_binary_serialization() -> None:
     assert from_binary.value == ("n", "c", "h", "w")
 
 
+@pytest.mark.sympy
 def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
     """Test an assignment proven via bindings survives a serialization round-trip.
 
@@ -236,6 +244,7 @@ def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
     assert restored.serialize_to_dict() == dictionary
 
 
+@pytest.mark.sympy
 def test_dependent_assignment_round_trips_when_bridge_fails_without_bindings() -> None:
     """Test round-tripping survives a constraint the bridge cannot lower alone.
 
@@ -280,6 +289,19 @@ def test_deserialization_rejects_a_value_that_provably_violates() -> None:
         ParamAssignment.deserialize_from_dict(tampered)
 
 
+def test_an_inadmissible_assignment_payload_fails_to_decode() -> None:
+    """Test a payload assigning a string to an integer param is rejected."""
+    x = mock_identifier("x", 1)
+    tampered = create_integer_param(name=x).assign(3).serialize_to_dict()
+    donor = create_categorical_param(
+        ["not an integer"], name=mock_identifier("d", 2)
+    ).assign("not an integer")
+    tampered["value"] = donor.serialize_to_dict()["value"]
+
+    with pytest.raises(DeserializationValueError):
+        ParamAssignment.deserialize_from_dict(tampered)
+
+
 def test_permutation_validate_value_normalizes_list_before_constraint_check() -> None:
     """Test `validate_value` normalizes a list to a tuple before checking constraints.
 
@@ -302,6 +324,8 @@ def test_permutation_validate_value_normalizes_list_before_constraint_check() ->
         param.validate_value([3, 2, 1])
 
 
+@pytest.mark.usefixtures("v1_wire")
+@pytest.mark.sympy
 def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:
     """Test assignment deserialization fails when payload value violates constraints."""
     param = create_real_param_with_lower_bound(0.0)
@@ -319,6 +343,7 @@ def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_rejects_value_field_with_wrong_shaped_dict() -> None:
     """Test a wrong-shaped wrapped ``value`` dict is rejected as a structure error.
 
@@ -339,6 +364,7 @@ def test_assignment_deserialize_rejects_value_field_with_wrong_shaped_dict() -> 
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_wraps_value_field_value_error_as_value_error() -> None:
     """Test a wrapped-value validation failure surfaces as `DeserializationValueError`.
 
@@ -360,6 +386,7 @@ def test_assignment_deserialize_wraps_value_field_value_error_as_value_error() -
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@reads_v1
 def test_assignment_deserialize_rejects_payload_missing_param_field() -> None:
     """Test a payload missing the ``param`` field is rejected as malformed."""
     payload = {"value": serialize_registry_wrapped_value(1)}
@@ -370,6 +397,7 @@ def test_assignment_deserialize_rejects_payload_missing_param_field() -> None:
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_rejects_payload_missing_value_field() -> None:
     """Test a payload missing the ``value`` field is rejected as malformed."""
     payload = {"param": create_integer_param().serialize_to_dict()}
@@ -380,6 +408,7 @@ def test_assignment_deserialize_rejects_payload_missing_value_field() -> None:
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@reads_v1
 def test_assignment_deserialize_rejects_payload_with_param_not_serialized_dict() -> (
     None
 ):
@@ -392,6 +421,7 @@ def test_assignment_deserialize_rejects_payload_with_param_not_serialized_dict()
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_assignment_deserialize_rejects_payload_with_value_not_serialized_dict() -> (
     None
 ):
@@ -513,6 +543,7 @@ def test_direct_construction_raises_for_a_number_in_a_case_condition() -> None:
         ParamAssignment(param, 3)
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_deserialization_refuses_a_number_in_a_case_condition() -> None:
     """Test deserialization refuses an ill-typed payload rather than accepting it.
 

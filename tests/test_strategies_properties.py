@@ -61,6 +61,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -90,7 +91,6 @@ from .strategies.constraints import (
 from .strategies.expressions import (
     BOOLEAN_EQUALITY_OPERATIONS,
     COMPARISON_OPERATIONS,
-    LOGICAL_BINARY_OPERATIONS,
     NUMERIC_DIVISION_OPERATIONS,
     SYMPY_STABLE_CALL_FUNCTIONS,
     build_any_sort_expression_strategy,
@@ -160,7 +160,7 @@ from .strategies.types import (
     draw_template_free_type,
 )
 
-pytestmark = pytest.mark.property
+pytestmark = [pytest.mark.property, pytest.mark.numpy]
 
 np = pytest.importorskip("numpy")
 
@@ -423,6 +423,7 @@ def test_params_strategy_reaches_an_exclusive_bound(case: _Case) -> None:
     assert _has_exclusive_bound(found)
 
 
+@pytest.mark.z3
 @pytest.mark.parametrize(
     "case",
     _EMPTY_CAPABLE_PARAM_CASES,
@@ -473,6 +474,7 @@ def test_real_param_strategy_reaches_a_bound_at_the_widest_scale() -> None:
     assert _get_widest_bound_magnitude(found) >= widest_scale
 
 
+@pytest.mark.sympy
 @given(case=draw_interval_integer_param_with_bounds())
 def test_interval_integer_param_with_bounds_reports_its_extreme_members(
     case: tuple[Param[int], int | None, int | None],
@@ -493,6 +495,7 @@ def test_interval_integer_param_with_bounds_reports_its_extreme_members(
         assert not param.is_value_valid(upper + 1)
 
 
+@pytest.mark.z3
 @given(case=draw_interval_integer_param_with_bounds(include_empty=True))
 def test_interval_integer_param_with_bounds_crosses_endpoints_exactly_when_empty(
     case: tuple[Param[int], int | None, int | None],
@@ -505,6 +508,7 @@ def test_interval_integer_param_with_bounds_crosses_endpoints_exactly_when_empty
     assert param.is_empty() == is_crossed
 
 
+@pytest.mark.z3
 @given(param=st.one_of(draw_interval_integer_param(), draw_bounded_integer_param()))
 def test_params_strategy_draws_no_empty_param_by_default(param: Param[int]) -> None:
     """Test an empty-capable strategy draws no empty param without include_empty."""
@@ -733,7 +737,7 @@ def _is_typed_boolean(expression: Expression) -> bool:
     )
 
 
-def _is_boolean_sorted(expression: Expression) -> bool:
+def _is_boolean_sorted(expression: Expression) -> bool:  # noqa: PLR0911
     """Return whether a gate tree over the two pools denotes a Boolean.
 
     Reads the sort off the root alone, which is exact for a well-typed
@@ -747,10 +751,9 @@ def _is_boolean_sorted(expression: Expression) -> bool:
     if isinstance(expression, UnaryExpression):
         return expression.operation is UnaryOperation.LOGICAL_NOT
     if isinstance(expression, BinaryExpression):
-        return expression.operation in (
-            *COMPARISON_OPERATIONS,
-            *LOGICAL_BINARY_OPERATIONS,
-        )
+        return expression.operation in COMPARISON_OPERATIONS
+    if isinstance(expression, LogicalExpression):
+        return True
     if isinstance(expression, PiecewiseExpression):
         return _is_boolean_sorted(expression.otherwise)
     return False
@@ -789,8 +792,10 @@ def _holds_open_boolean_piecewise_under_binary(
 
 def _holds_open_boolean_piecewise_under_and_or(expression: Expression) -> bool:
     """Return whether an ``&&``/``||`` node has an open Boolean piecewise operand."""
-    return _holds_open_boolean_piecewise_under_binary(
-        expression, LOGICAL_BINARY_OPERATIONS
+    return any(
+        isinstance(node, LogicalExpression)
+        and any(_is_open_boolean_piecewise(operand) for operand in node.operands)
+        for node in _iter_expression_nodes(expression)
     )
 
 

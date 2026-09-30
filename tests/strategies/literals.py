@@ -3,12 +3,16 @@
 Each value strategy draws a plain Python value; the matching literal
 strategy wraps that value in a
 :class:`~fhy_core.symbolic.expression.LiteralExpression`. The decimal
-string strategy is unsigned by construction: ``LiteralExpression``'s
-string grammar (``src/fhy_core/symbolic/expression/core.py``, around
-line 914) accepts only ``\\d+\\.\\d*`` or ``\\.\\d+``, with no leading
-sign, so every drawn string matches one of those forms exactly.
+string and decimal strategies are unsigned by construction: the Rust
+core's literal grammar (``LiteralValue::parse_text``) accepts only ASCII
+digits with at most one decimal point and at least one digit, with no
+sign, and its decimals are non-negative, so every drawn string matches
+``[0-9]+\\.[0-9]*`` or ``\\.[0-9]+`` exactly, and every drawn
+``decimal.Decimal`` is finite and non-negative. A decimal string's
+literal holds the ``decimal.Decimal`` it spells, normalized.
 """
 
+from decimal import Decimal
 from typing import Final
 
 from hypothesis import strategies as st
@@ -19,8 +23,10 @@ __all__ = [
     "build_any_literal_strategy",
     "build_boolean_literal_strategy",
     "build_boolean_value_strategy",
+    "build_decimal_literal_strategy",
     "build_decimal_string_literal_strategy",
     "build_decimal_string_value_strategy",
+    "build_decimal_value_strategy",
     "build_finite_float_literal_strategy",
     "build_finite_float_value_strategy",
     "build_integer_literal_strategy",
@@ -81,6 +87,16 @@ def build_decimal_string_value_strategy() -> st.SearchStrategy[str]:
     return st.one_of(whole_dot_fraction, dot_fraction_only)
 
 
+def build_decimal_value_strategy() -> st.SearchStrategy[Decimal]:
+    """Return a strategy for the finite, non-negative decimals a literal holds.
+
+    Each is the ``decimal.Decimal`` of a string
+    :func:`build_decimal_string_value_strategy` draws, so it keeps that
+    string's digits and exponent, which the literal then normalizes.
+    """
+    return build_decimal_string_value_strategy().map(Decimal)
+
+
 def build_integer_literal_strategy(
     min_value: int = -64, max_value: int = 64
 ) -> st.SearchStrategy[LiteralExpression]:
@@ -107,6 +123,11 @@ def build_decimal_string_literal_strategy() -> st.SearchStrategy[LiteralExpressi
     return build_decimal_string_value_strategy().map(LiteralExpression)
 
 
+def build_decimal_literal_strategy() -> st.SearchStrategy[LiteralExpression]:
+    """Return a strategy for ``LiteralExpression`` leaves built from a Decimal."""
+    return build_decimal_value_strategy().map(LiteralExpression)
+
+
 def build_any_literal_strategy() -> st.SearchStrategy[LiteralExpression]:
     """Return a strategy drawing from every literal kind this module covers."""
     return st.one_of(
@@ -114,4 +135,5 @@ def build_any_literal_strategy() -> st.SearchStrategy[LiteralExpression]:
         build_boolean_literal_strategy(),
         build_finite_float_literal_strategy(),
         build_decimal_string_literal_strategy(),
+        build_decimal_literal_strategy(),
     )

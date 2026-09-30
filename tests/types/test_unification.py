@@ -9,6 +9,10 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
+    call,
+    piecewise,
 )
 from fhy_core.traits import VerificationError
 from fhy_core.types import (
@@ -393,15 +397,10 @@ def test_bind_data_template_raises_for_weak_literal_actual_against_constrained_t
         )
 
 
-def test_bind_data_template_empty_widths_rejects_every_concrete_actual(
-    empty_environment: TypeUnificationEnvironment,
-) -> None:
-    """Test ``widths=[]`` causes every concrete bind to raise."""
-    template = TemplateDataType(Identifier("T"), widths=[])
-    with pytest.raises(VerificationError, match="width"):
-        bind_data_template(
-            template, PrimitiveDataType(CoreDataType.INT8), empty_environment
-        )
+def test_template_data_type_refuses_empty_widths() -> None:
+    """Test ``widths=[]``, which no concrete data type could bind, is refused."""
+    with pytest.raises(ValueError, match="must not be empty"):
+        TemplateDataType(Identifier("T"), widths=[])
 
 
 def test_bind_data_template_unconstrained_template_accepts_any_width(
@@ -780,6 +779,45 @@ def test_unify_expression_raises_when_occurs_check_fails(
         unify_expression(left, right, empty_environment)
 
 
+def test_unify_expression_occurs_check_looks_inside_a_logical_expression(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check finds a placeholder among a connective's operands."""
+    n_identifier = Identifier("N")
+    left = IdentifierExpression(n_identifier)
+    right = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            LiteralExpression(True),
+            BinaryExpression(
+                BinaryOperation.LESS,
+                IdentifierExpression(n_identifier),
+                LiteralExpression(1),
+            ),
+        ),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, empty_environment)
+
+
+def test_unify_expression_occurs_check_follows_bindings_into_a_logical_expression(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check substitutes through a connective's operands."""
+    m_identifier = Identifier("M")
+    n_identifier = Identifier("N")
+    pre_bound_environment = empty_environment.with_expression_binding(
+        m_identifier, IdentifierExpression(n_identifier)
+    )
+    left = IdentifierExpression(n_identifier)
+    right = LogicalExpression(
+        LogicalOperation.OR,
+        (LiteralExpression(False), IdentifierExpression(m_identifier)),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, pre_bound_environment)
+
+
 def test_unify_expression_raises_when_occurs_check_fails_indirectly_via_binding(
     empty_environment: TypeUnificationEnvironment,
 ) -> None:
@@ -961,3 +999,43 @@ def test_bind_data_template_default_raises_for_unregistered_class_pair(
     actual = _UnregisteredDataType()
     with pytest.raises(VerificationError):
         bind_data_template(pattern, actual, empty_environment)
+
+
+# =============================================================================
+# The walks reach every expression node
+# =============================================================================
+
+
+def test_substitute_template_substitutes_a_shape_variable_inside_a_call(
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test substitution reaches a shape variable inside a call dimension."""
+    n_identifier = Identifier("N")
+    pattern = NumericalType(
+        int32_data_type, [call("max", IdentifierExpression(n_identifier), 1)]
+    )
+    environment = TypeUnificationEnvironment.empty().with_expression_binding(
+        n_identifier, LiteralExpression(4)
+    )
+
+    substituted = substitute_template(pattern, environment)
+
+    assert isinstance(substituted, NumericalType)
+    assert substituted.shape[0].is_structurally_equivalent(call("max", 4, 1))
+
+
+@pytest.mark.parametrize("kind", ["call", "piecewise"])
+def test_unify_expression_occurs_check_looks_inside_calls_and_piecewise(
+    empty_environment: TypeUnificationEnvironment, kind: str
+) -> None:
+    """Test the occurs check sees a placeholder inside a call or a piecewise."""
+    n_identifier = Identifier("N")
+    reference = IdentifierExpression(n_identifier)
+    right = (
+        call("max", reference, 1)
+        if kind == "call"
+        else piecewise((reference > 0, 1), otherwise=0)
+    )
+
+    with pytest.raises(VerificationError, match="occurs check failed"):
+        unify_expression(reference, right, empty_environment)

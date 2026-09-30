@@ -61,6 +61,7 @@ def dependent_param() -> tuple[Param[int], Identifier, Identifier]:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_is_value_valid_without_bindings_is_false_for_dependent_constraint(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -70,6 +71,7 @@ def test_is_value_valid_without_bindings_is_false_for_dependent_constraint(
     assert not param.is_value_valid(3)
 
 
+@pytest.mark.sympy
 def test_is_value_valid_with_satisfying_binding_is_true(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -79,6 +81,7 @@ def test_is_value_valid_with_satisfying_binding_is_true(
     assert param.is_value_valid(3, bindings={y: 5})
 
 
+@pytest.mark.sympy
 def test_is_value_valid_with_violating_binding_is_false(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -88,6 +91,7 @@ def test_is_value_valid_with_violating_binding_is_false(
     assert not param.is_value_valid(3, bindings={y: 2})
 
 
+@pytest.mark.sympy
 def test_is_constraints_satisfied_uses_bindings_to_decide_dependent_constraint(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -99,6 +103,7 @@ def test_is_constraints_satisfied_uses_bindings_to_decide_dependent_constraint(
     assert not param.is_constraints_satisfied(3, bindings={y: 2})
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("value", "extra_binding_value", "expect_valid"),
     [
@@ -131,6 +136,7 @@ def test_bindings_for_unreferenced_identifiers_are_ignored(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_validate_value_accepts_value_when_binding_proves_satisfaction(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -140,6 +146,7 @@ def test_validate_value_accepts_value_when_binding_proves_satisfaction(
     param.validate_value(3, bindings={y: 5})
 
 
+@pytest.mark.sympy
 def test_validate_value_raises_could_not_be_verified_without_bindings(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -150,6 +157,7 @@ def test_validate_value_raises_could_not_be_verified_without_bindings(
         param.validate_value(3)
 
 
+@pytest.mark.sympy
 def test_validate_value_raises_violates_with_a_violating_binding(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -160,6 +168,7 @@ def test_validate_value_raises_violates_with_a_violating_binding(
         param.validate_value(3, bindings={y: 2})
 
 
+@pytest.mark.sympy
 def test_validate_value_message_distinguishes_undecided_from_violated(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -268,6 +277,7 @@ def test_is_value_valid_with_well_formed_bindings_is_false_for_inadmissible_valu
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_assign_with_satisfying_bindings_matches_plain_assignment_value(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -281,6 +291,7 @@ def test_assign_with_satisfying_bindings_matches_plain_assignment_value(
     assert dependent_assignment.value == independent_assignment.value == 3
 
 
+@pytest.mark.sympy
 def test_assign_without_bindings_raises_for_dependent_constraint(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -291,6 +302,7 @@ def test_assign_without_bindings_raises_for_dependent_constraint(
         param.assign(3)
 
 
+@pytest.mark.sympy
 def test_assign_with_violating_binding_raises(
     dependent_param: tuple[Param[int], Identifier, Identifier],
 ) -> None:
@@ -301,6 +313,7 @@ def test_assign_with_violating_binding_raises(
         param.assign(3, bindings={y: 2})
 
 
+@pytest.mark.sympy
 def test_validate_value_reports_a_violation_that_a_later_constraint_proves() -> None:
     """Test a provable violation is reported as such despite an earlier undecided one.
 
@@ -391,6 +404,7 @@ def test_a_number_bound_into_a_case_condition_raises_on_every_entry_point(
         call(param, {condition: number})
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("condition_value", "value", "expected"),
     [
@@ -509,6 +523,7 @@ def test_domain_helper_refuses_a_value_no_literal_can_hold(
     assert isinstance(exception_info.value.__cause__, ValueError)
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     ("call", "expected"),
     [
@@ -553,6 +568,7 @@ def test_param_bindings_method_lifts_a_number_subclass_as_the_value_it_denotes(
     assert call(param, {y: value}) == expected
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize("value", _NUMBER_SUBCLASS_VALUES)
 def test_domain_helpers_lift_a_number_subclass_as_the_value_it_denotes(
     value: float,

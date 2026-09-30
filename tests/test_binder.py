@@ -286,3 +286,33 @@ def test_block_alpha_equivalence_recurses_over_all_statements() -> None:
     mismatch = _Block((y,), (_Var(y), _Var(mock_identifier("free", 6))))
     assert left.is_alpha_equivalent(right)
     assert not left.is_alpha_equivalent(mismatch)
+
+
+def test_lambda_repeating_a_parameter_matches_no_lambda_in_either_direction() -> None:
+    """Test a lambda binding one identifier twice pairs with no lambda.
+
+    A binder list that repeats an identifier, on either side, pairs with
+    nothing, so ``\\x x. x`` is not alpha-equivalent to ``\\a b. b`` in
+    either direction.
+    """
+    x = mock_identifier("x", 1)
+    a = mock_identifier("a", 4)
+    b = mock_identifier("b", 5)
+    repeating = _Lam((x, x), _Var(x))
+    distinct = _Lam((a, b), _Var(b))
+
+    assert not repeating.is_alpha_equivalent(distinct)
+    assert not distinct.is_alpha_equivalent(repeating)
+
+
+def test_lambda_repeating_a_parameter_is_not_alpha_equivalent_to_itself() -> None:
+    """Test a lambda binding one identifier twice is not alpha-equivalent to itself.
+
+    Alpha-equivalence is reflexive only on binders whose lists repeat no
+    identifier.
+    """
+    x = mock_identifier("x", 1)
+    repeating = _Lam((x, x), _Var(x))
+
+    assert not repeating.is_alpha_equivalent(repeating)
+    assert repeating == _Lam((x, x), _Var(x))

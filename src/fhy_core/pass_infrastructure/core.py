@@ -1,4 +1,28 @@
-"""Core compiler pass abstractions and registration."""
+"""Core compiler pass abstractions and registration.
+
+The pass machinery is backed by the Rust implementation (``fhy_core._rs``),
+with the Rust core's semantics:
+
+- `CompilerPass` is a Python abstract class over ``_rs.CompilerPassBase``.
+  A subclass implements the hooks under their Python names, and the Rust
+  lifecycle drives them: ``validate_input``, ``should_run`` (and
+  ``get_noop_output`` when it is false), ``run_pass``, ``validate_output``,
+  ``did_change`` and ``get_preserved_analyses``. The hooks a class does not
+  override run their defaults in Rust.
+- A failing hook raises `PassValidationError` or `PassExecutionError` with
+  the core's message, such as ``pass "X" failed in run_pass``, whose
+  ``__cause__`` is the hook's exception; the error of a nested pass run
+  nests in the outer one.
+- A standalone `CompilerPass.execute` computes analyses afresh and never
+  verifies; a `PassManager` caches analyses for one run and verifies its IR.
+- Run statistics come from each run: `PassResult.skipped`,
+  ``PassRunRecord.skipped`` and ``PassManagerResult.run_count()``.
+
+The pass registry (`register_pass`, `CompilerPass.create`) stays a registry
+of Python classes. `VisitablePass`, `AnalysisVisitablePass` and
+`RewritablePass` are Python classes over `CompilerPass` whose walks run in
+Python inside ``run_pass``.
+"""
 
 from fhy_core.utils.override import override
 
@@ -19,8 +43,8 @@ __all__ = [
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from threading import Lock
 from typing import (
     TYPE_CHECKING,
@@ -35,9 +59,9 @@ from typing import (
 
 from immutabledict import immutabledict
 
+from fhy_core import _rs
 from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note
 from fhy_core.error import register_error
-from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.traits import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
@@ -46,7 +70,7 @@ from fhy_core.utils.self import Self
 if TYPE_CHECKING:
     from fhy_core.diagnostic import ValidationReport
 
-    from .manager import Analysis, AnalysisManager
+    from .manager import Analysis, AnalysisManager, FixpointGroupRecord, PassRunRecord
 
 _PassInputT = TypeVar("_PassInputT")
 _PassOutputT = TypeVar("_PassOutputT")
@@ -64,6 +88,59 @@ _DIAGNOSTIC_TO_LOGGING_LEVEL: immutabledict[DiagnosticLevel, int] = immutabledic
     }
 )
 
+# The hooks whose defaults the binding runs in Rust when a class does not
+# override them, in the bit order of `CompilerPass._python_hooks`. Matches
+# the Rust implementation: `fhy-core-py`'s `pass::compiler_pass::hook_bit`.
+_HOOKS_WITH_RUST_DEFAULTS: tuple[str, ...] = (
+    "validate_input",
+    "should_run",
+    "validate_output",
+    "did_change",
+    "get_preserved_analyses",
+    "get_pass_name",
+)
+
+
+def _get_pass_logger_by_name(pass_name: str) -> logging.Logger:
+    """Return the logger of the pass named ``pass_name``."""
+    return get_logger(__name__).getChild(pass_name)
+
+
+def _log_diagnostic(
+    source: str,
+    level: DiagnosticLevel,
+    message: str,
+    detail: str | None,
+    exc_info: BaseException | bool | None,
+) -> None:
+    """Log a diagnostic on the logger of the pass ``source``.
+
+    The binding calls this for the diagnostics it makes, such as a failed
+    hook's, so they are logged as `CompilerPass.report` logs the ones a
+    pass reports.
+    """
+    log_message = message if detail is None else f"{message} | detail: {detail}"
+    _get_pass_logger_by_name(source).log(
+        _DIAGNOSTIC_TO_LOGGING_LEVEL[level], log_message, exc_info=exc_info
+    )
+
+
+def _lifecycle_logger(pass_name: str) -> logging.Logger | None:
+    """Return the logger of the pass ``pass_name`` if it logs DEBUG lines.
+
+    The binding logs a run's lifecycle lines only when this returns one.
+    """
+    logger = _get_pass_logger_by_name(pass_name)
+    return logger if logger.isEnabledFor(logging.DEBUG) else None
+
+
+def _find_defining_class(cls: type, name: str) -> type | None:
+    """Return the first class in ``cls``'s MRO whose namespace defines ``name``."""
+    for base in cls.__mro__:
+        if name in base.__dict__:
+            return base
+    return None
+
 
 class TraversalOrder(StrEnum):
     """Traversal order for automatic visitable analysis passes."""
@@ -72,44 +149,30 @@ class TraversalOrder(StrEnum):
     POST = "post"
 
 
-@dataclass(frozen=True)
-class PreservedAnalyses(FrozenMixin, PartialEqualMixin):
-    """Set of analyses preserved by a pass run."""
+class PreservedAnalyses(_rs.PreservedAnalyses, PartialEqualMixin):
+    """Set of analyses preserved by a pass run, keyed by analysis name.
 
-    preserve_all: bool = field(default=False)
-    analysis_names: frozenset[Identifier] = field(default_factory=frozenset)
+    Backed by the Rust implementation: ``fhy_core._rs.PreservedAnalyses``
+    holds the core's set. ``PreservedAnalyses(preserve_all=False,
+    analysis_names=frozenset())`` builds a set; setting both raises
+    ``ValueError``, a ``preserve_all`` that is not a ``bool`` or a name that
+    is not an `Identifier` raises ``TypeError``. Sets are immutable,
+    compare and hash by what they preserve, and pickle as a call of their
+    class with their fields.
 
-    def __post_init__(self) -> None:
-        if self.preserve_all and self.analysis_names:
-            raise ValueError(
-                "PreservedAnalyses: analysis_names must be empty when "
-                "preserve_all=True."
-            )
+    Attributes:
+        preserve_all: Whether every analysis is preserved.
+        analysis_names: The names of the preserved analyses; empty when every
+            analysis is preserved.
 
-    @classmethod
-    def all(cls) -> "PreservedAnalyses":
-        """Create a preserved set representing all analyses."""
-        return cls(preserve_all=True)
+    """
 
-    @classmethod
-    def none(cls) -> "PreservedAnalyses":
-        """Create a preserved set representing no analyses."""
-        return cls(preserve_all=False)
+    __slots__ = ()
+    __match_args__ = ("preserve_all", "analysis_names")
 
-    def preserve(self, analysis_name: Identifier) -> "PreservedAnalyses":
-        """Mark one analysis as preserved."""
-        if self.preserve_all:
-            return self
-        if analysis_name in self.analysis_names:
-            return self
-        return PreservedAnalyses(
-            preserve_all=False,
-            analysis_names=self.analysis_names | {analysis_name},
-        )
 
-    def is_preserved(self, analysis_name: Identifier) -> bool:
-        """Return whether an analysis is preserved."""
-        return self.preserve_all or analysis_name in self.analysis_names
+FrozenMixin.register(PreservedAnalyses)
+PreservedAnalyses._register_public_class()
 
 
 @dataclass(frozen=True)
@@ -126,17 +189,37 @@ class PassRegistrationError(RuntimeError):
     """Pass registration failure."""
 
 
+def _without_rust_error(state: dict[str, Any]) -> dict[str, Any]:
+    """Return an exception's ``__dict__`` without the Rust error it keeps."""
+    return {key: value for key, value in state.items() if key != "_rust_error"}
+
+
 @register_error
 class PassValidationError(RuntimeError):
-    """Pass validation failure.
+    """Pass validation failure: a validation hook failed, or verification rejected IR.
 
-    Carries the underlying :class:`ValidationReport` when raised by the
-    auto-verification hook (see :class:`VerificationAnalysis`).
-    ``report`` is ``None`` when the error originated from a user's
-    ``validate_input`` / ``validate_output`` raising something other
-    than auto-verification.
+    The binding raises it with the core's message, such as ``pass "X"
+    failed in validate_input`` or ``verification rejected the output of
+    pass "X" (errors: 2)``, and the failing hook's exception as the
+    ``__cause__``. Code may raise it too.
+
+    Attributes:
+        report: The verifier's `ValidationReport` of a verification
+            failure, or ``None``.
+        pass_name: The name of the failing or blamed pass, or ``None``.
+        hook: The name of the Python hook that failed, such as
+            ``"validate_input"``, or ``None``.
+        diagnostics: The failing run's diagnostics, ending with the error
+            diagnostic that records the failure.
+        records: The records of the pipeline work completed before the
+            failure.
+
     """
 
+    pass_name: str | None
+    hook: str | None
+    diagnostics: tuple[Diagnostic, ...]
+    records: "tuple[PassRunRecord | FixpointGroupRecord, ...]"
     _report: "ValidationReport[Any] | None"
 
     def __init__(
@@ -144,57 +227,161 @@ class PassValidationError(RuntimeError):
         message: str = "",
         *,
         report: "ValidationReport[Any] | None" = None,
+        pass_name: str | None = None,
+        hook: str | None = None,
+        diagnostics: Iterable[Diagnostic] = (),
+        records: "Iterable[PassRunRecord | FixpointGroupRecord]" = (),
     ) -> None:
         super().__init__(message)
         self._report = report
+        self.pass_name = pass_name
+        self.hook = hook
+        self.diagnostics = tuple(diagnostics)
+        self.records = tuple(records)
 
     @property
     def report(self) -> "ValidationReport[Any] | None":
         """The attached :class:`ValidationReport`, or ``None`` if none was set."""
         return self._report
 
+    @override
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), self.args, _without_rust_error(self.__dict__))
+
 
 @register_error
 class PassExecutionError(RuntimeError):
-    """Pass execution failure."""
+    """Pass execution failure: a hook other than a validation hook failed.
+
+    It is also raised when a fixpoint group does not converge.
+    The binding raises it with the core's message, such as ``pass "X"
+    failed in run_pass`` or ``fixpoint group "g" did not converge (max
+    iterations: 10)``, and the failing hook's exception as the
+    ``__cause__``. Code may raise it too.
+
+    Attributes:
+        pass_name: The name of the failing pass, or ``None``.
+        hook: The name of the Python hook that failed, such as
+            ``"run_pass"``, or ``None``.
+        diagnostics: The failing run's diagnostics, ending with the error
+            diagnostic that records the failure.
+        records: The records of the pipeline work completed before the
+            failure, a partial fixpoint group record included.
+
+    """
+
+    pass_name: str | None
+    hook: str | None
+    diagnostics: tuple[Diagnostic, ...]
+    records: "tuple[PassRunRecord | FixpointGroupRecord, ...]"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        pass_name: str | None = None,
+        hook: str | None = None,
+        diagnostics: Iterable[Diagnostic] = (),
+        records: "Iterable[PassRunRecord | FixpointGroupRecord]" = (),
+    ) -> None:
+        super().__init__(message)
+        self.pass_name = pass_name
+        self.hook = hook
+        self.diagnostics = tuple(diagnostics)
+        self.records = tuple(records)
+
+    @override
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), self.args, _without_rust_error(self.__dict__))
 
 
-@dataclass(frozen=True)
-class PassResult(FrozenMixin, PartialEqualMixin, Generic[_PassOutputT]):
-    """Result of a pass execution."""
+class PassResult(_rs.PassResult, PartialEqualMixin, Generic[_PassOutputT]):
+    """Result of a pass execution.
 
-    output: _PassOutputT
-    changed: bool
-    diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
-    preserved_analyses: PreservedAnalyses = field(
-        default_factory=PreservedAnalyses.none
-    )
+    Backed by the Rust implementation: ``fhy_core._rs.PassResult``.
+    ``PassResult(output, changed, diagnostics=(), preserved_analyses=none,
+    skipped=False)``; results are immutable, compare, hash and print as
+    frozen dataclasses do, and pickle as a call of their class.
+
+    Attributes:
+        output: The output IR, the object the pass returned.
+        changed: Whether the run changed the IR.
+        diagnostics: The run's diagnostics, in emission order.
+        preserved_analyses: The analyses the run left valid.
+        skipped: Whether the pass skipped the run: its output came from
+            ``get_noop_output`` and ``run_pass`` was not called.
+
+    """
+
+    __slots__ = ()
+    __match_args__ = ("output", "changed", "diagnostics", "preserved_analyses")
+
+    if TYPE_CHECKING:
+        # The stub cannot make `_rs.PassResult` generic in the output type.
+        def __new__(
+            cls,
+            output: _PassOutputT,
+            changed: bool,
+            diagnostics: Iterable[Diagnostic] = (),
+            preserved_analyses: PreservedAnalyses = ...,
+            skipped: bool = False,
+        ) -> Self:
+            """Return the result of a run."""
+            ...
+
+        @property
+        @override
+        def output(self) -> _PassOutputT:
+            """The output IR."""
+            ...
 
 
-class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
-    """Base class for standardized compiler passes."""
+FrozenMixin.register(PassResult)
+PassResult._register_public_class()
+
+
+class CompilerPass(_rs.CompilerPassBase, ABC, Generic[_PassInputT, _PassOutputT]):
+    """Base class for standardized compiler passes.
+
+    Backed by the Rust implementation: ``fhy_core._rs.CompilerPassBase``
+    drives the hooks through the Rust core's lifecycle. A subclass
+    implements `run_pass`, and may override the other hooks:
+
+    1. `validate_input`, which accepts every input by default;
+    2. `should_run`, true by default; when it is false, `get_noop_output`
+       gives the run's output, the run is skipped and unchanged, and
+       `get_preserved_analyses` is asked with ``changed=False``;
+    3. `run_pass`;
+    4. `validate_output`;
+    5. `did_change`, by default ``input != output``, falling back to
+       ``is not`` when ``!=`` raises;
+    6. `get_preserved_analyses`, by default none when changed and all
+       otherwise.
+
+    The hooks a class does not override run in Rust, without a Python
+    call. `report`, `get_analysis` and `get_analysis_manager` work in the
+    hooks the core gives a context, all but `did_change` and
+    `get_preserved_analyses`, where they raise ``RuntimeError``; outside a
+    run, `report` records on the pass, and `get_analysis` computes afresh.
+    """
 
     _registry: ClassVar[dict[str, PassInfo]] = {}
-    _run_counts: ClassVar[dict[str, int]] = {}
-    _total_run_count: ClassVar[int] = 0
     _registry_lock: ClassVar[Lock] = Lock()
 
     _pass_name: ClassVar[str | None] = None
     _pass_description: ClassVar[str] = ""
-    _auto_verify: ClassVar[bool] = True
-    """When True, ``_guarded_validate_input`` and ``_guarded_validate_output``
-    additionally run :class:`VerificationAnalysis` against the input and
-    output IR and raise :class:`PassValidationError` (carrying the
-    :class:`ValidationReport`) if it reports errors. When False, the
-    auto-verify hooks are skipped entirely. Verification pass classes
-    registered through ``register_verification`` are stamped to ``False``
-    automatically to prevent recursive verification."""
-    _diagnostics: list[Diagnostic]
-    _analysis_manager: "AnalysisManager[Any] | None"
+    _python_hooks: ClassVar[int] = 0
+    """The hooks of `_HOOKS_WITH_RUST_DEFAULTS` the class overrides, one bit
+    each; the binding runs the others' defaults in Rust."""
 
-    def __init__(self) -> None:
-        self._diagnostics = []
-        self._analysis_manager = None
+    @override
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        hooks = 0
+        for bit, name in enumerate(_HOOKS_WITH_RUST_DEFAULTS):
+            if _find_defining_class(cls, name) is not CompilerPass:
+                hooks |= 1 << bit
+        cls._python_hooks = hooks
 
     @classmethod
     def get_pass_name(cls) -> str:
@@ -212,18 +399,6 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         with CompilerPass._registry_lock:
             return dict(CompilerPass._registry)
 
-    @classmethod
-    def get_run_count(cls) -> int:
-        """Return execution count for this pass class."""
-        with CompilerPass._registry_lock:
-            return CompilerPass._run_counts.get(cls.get_pass_name(), 0)
-
-    @staticmethod
-    def get_total_run_count() -> int:
-        """Return total executions across all pass classes."""
-        with CompilerPass._registry_lock:
-            return CompilerPass._total_run_count
-
     @staticmethod
     def create(pass_name: str, *args: Any, **kwargs: Any) -> "CompilerPass[Any, Any]":
         """Create an instance from the global pass registry."""
@@ -233,254 +408,31 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             raise PassRegistrationError(f'Unknown pass "{pass_name}".')
         return pass_info.pass_type(*args, **kwargs)
 
-    @property
-    def diagnostics(self) -> tuple[Diagnostic, ...]:
-        """Return diagnostics emitted during the most recent run."""
-        return tuple(self._diagnostics)
+    if TYPE_CHECKING:
+        # The stub cannot make `_rs.CompilerPassBase` generic.
+        @override
+        def execute(self, ir: _PassInputT) -> PassResult[_PassOutputT]:
+            """Run the pass over ``ir`` through its lifecycle."""
+            ...
 
-    def __call__(self, ir: _PassInputT) -> _PassOutputT:
-        """Run the pass and return only the output IR.
+        @override
+        def __call__(self, ir: _PassInputT) -> _PassOutputT:
+            """Run the pass over ``ir`` and return only its output."""
+            ...
 
-        Use :meth:`execute` instead when diagnostics, the changed flag, or
-        preserved analyses are needed; this convenience form discards them.
-        """
-        return self.execute(ir).output
+        @override
+        def get_analysis(
+            self,
+            analysis_type: "type[Analysis[_AnalysisIRT, _AnalysisResultT]]",
+            ir: _AnalysisIRT,
+        ) -> _AnalysisResultT:
+            """Return the result of ``analysis_type`` for ``ir``."""
+            ...
 
-    def execute(self, ir: _PassInputT) -> PassResult[_PassOutputT]:
-        """Execute the pass with validation and standardized error handling.
-
-        Every user-overridable lifecycle method is executed inside a guard
-        with a method-specific error contract:
-
-        - ``validate_input`` / ``validate_output``: any unexpected exception
-          is converted to ``PassValidationError`` after emitting an ERROR
-          diagnostic. ``PassValidationError`` raised directly by user code
-          passes through unchanged.
-        - ``should_run`` / ``get_noop_output`` / ``run_pass`` /
-          ``did_change`` / ``get_preserved_analyses``: any unexpected
-          exception is converted to ``PassExecutionError`` after emitting
-          an ERROR diagnostic. ``PassExecutionError`` raised directly by
-          user code passes through unchanged.
-
-        Run counters (``get_run_count`` / ``get_total_run_count``) increment
-        once per ``execute(ir)`` invocation where ``should_run(ir)`` returned
-        True. The counter increments before ``run_pass`` is invoked, so a
-        pass that raises during ``run_pass``, ``validate_output``,
-        ``did_change``, or ``get_preserved_analyses`` still counts toward
-        its run total. Skipped runs (``should_run`` returned False) do not
-        count.
-        """
-        pass_logger = self._get_pass_logger()
-        pass_logger.debug(
-            "entering (prospective run #%d, input type=%s)",
-            self.get_run_count() + 1,
-            type(ir).__name__,
-        )
-
-        self._diagnostics = []
-        self._guarded_validate_input(ir)
-
-        if not self._guarded_should_run(ir):
-            pass_logger.debug("skipped: should_run returned False")
-            noop_output = self._guarded_get_noop_output(ir)
-            preserved_skip = self._guarded_get_preserved_analyses(
-                ir, noop_output, changed=False
-            )
-            return PassResult(
-                noop_output,
-                False,
-                diagnostics=tuple(self._diagnostics),
-                preserved_analyses=preserved_skip,
-            )
-
-        self._record_run()
-        try:
-            output = self.run_pass(ir)
-        except (PassValidationError, PassExecutionError):
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed with {type(exc).__name__}: {exc}'
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassExecutionError(message) from exc
-
-        self._guarded_validate_output(ir, output)
-        changed = self._guarded_did_change(ir, output)
-        preserved = self._guarded_get_preserved_analyses(ir, output, changed=changed)
-        pass_logger.debug(
-            "finished (changed=%s, output type=%s, diagnostics=%d)",
-            changed,
-            type(output).__name__,
-            len(self._diagnostics),
-        )
-        return PassResult(
-            output=output,
-            changed=changed,
-            diagnostics=tuple(self._diagnostics),
-            preserved_analyses=preserved,
-        )
-
-    def _guarded_validate_input(self, ir: _PassInputT) -> None:
-        try:
-            self.validate_input(ir)
-        except PassValidationError:
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed validate_input with '
-                f"{type(exc).__name__}: {exc}"
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassValidationError(message) from exc
-
-        if type(self)._auto_verify:
-            self._auto_verify_input(ir)
-
-    def _guarded_validate_output(
-        self, input_ir: _PassInputT, output: _PassOutputT
-    ) -> None:
-        try:
-            self.validate_output(input_ir, output)
-        except PassValidationError:
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed validate_output with '
-                f"{type(exc).__name__}: {exc}"
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassValidationError(message) from exc
-
-        if type(self)._auto_verify:
-            self._auto_verify_output(output)
-
-    def _auto_verify_input(self, ir: _PassInputT) -> None:
-        self._auto_verify_ir(ir, "rejected input IR")
-
-    def _auto_verify_output(self, output: _PassOutputT) -> None:
-        self._auto_verify_ir(output, "produced invalid output IR")
-
-    def _auto_verify_ir(self, ir: object, phase_summary: str) -> None:
-        # Lazy import: verification.py imports CompilerPass from this module.
-        from .verification import VerificationAnalysis  # noqa: PLC0415
-
-        report = self.get_analysis(VerificationAnalysis, ir)
-        if not report.has_errors():
-            return
-        summary = (
-            f'Pass "{self.get_pass_name()}" {phase_summary}: '
-            f"verification reported {len(report.errors())} error(s)."
-        )
-        self.report(DiagnosticLevel.ERROR, summary, detail=report.format())
-        raise PassValidationError(summary, report=report)
-
-    def _guarded_should_run(self, ir: _PassInputT) -> bool:
-        try:
-            return self.should_run(ir)
-        except PassExecutionError:
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed should_run with '
-                f"{type(exc).__name__}: {exc}"
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassExecutionError(message) from exc
-
-    def _guarded_get_noop_output(self, ir: _PassInputT) -> _PassOutputT:
-        try:
-            return self.get_noop_output(ir)
-        except PassExecutionError:
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed get_noop_output with '
-                f"{type(exc).__name__}: {exc}"
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassExecutionError(message) from exc
-
-    def _guarded_did_change(self, input_ir: _PassInputT, output: _PassOutputT) -> bool:
-        try:
-            return self.did_change(input_ir, output)
-        except PassExecutionError:
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed did_change with '
-                f"{type(exc).__name__}: {exc}"
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassExecutionError(message) from exc
-
-    def _guarded_get_preserved_analyses(
-        self, input_ir: _PassInputT, output: _PassOutputT, *, changed: bool
-    ) -> PreservedAnalyses:
-        try:
-            return self.get_preserved_analyses(input_ir, output, changed=changed)
-        except PassExecutionError:
-            raise
-        except Exception as exc:
-            message = (
-                f'Pass "{self.get_pass_name()}" failed get_preserved_analyses '
-                f"with {type(exc).__name__}: {exc}"
-            )
-            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
-            raise PassExecutionError(message) from exc
-
-    def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
-        """Return the analysis manager currently bound to this pass, if any."""
-        return self._analysis_manager
-
-    def bind_analysis_manager(self, analysis_manager: "AnalysisManager[Any]") -> None:
-        """Attach an analysis manager to this pass.
-
-        Typically called by :class:`PassManager` before executing this pass,
-        so that :meth:`get_analysis` resolves against the cache. Use
-        :meth:`unbind_analysis_manager` to detach.
-        """
-        if analysis_manager is None:
-            raise TypeError(
-                "bind_analysis_manager requires a non-None AnalysisManager; "
-                "use unbind_analysis_manager() to detach."
-            )
-        self._analysis_manager = analysis_manager
-
-    def unbind_analysis_manager(self) -> None:
-        """Detach the analysis manager, returning the pass to standalone mode.
-
-        After this call, :meth:`get_analysis` recomputes results on every
-        call. Calling this method when no manager is bound is a no-op.
-        """
-        self._analysis_manager = None
-
-    def get_analysis(
-        self,
-        analysis_type: "type[Analysis[_AnalysisIRT, _AnalysisResultT]]",
-        ir: _AnalysisIRT,
-    ) -> _AnalysisResultT:
-        """Obtain an analysis result for ``ir``.
-
-        When this pass is executed under a :class:`PassManager`, results are
-        fetched from the manager's :class:`AnalysisManager`, which caches them
-        and preserves/invalidates across passes based on each pass's
-        ``get_preserved_analyses`` return value. When the pass is executed
-        standalone (no manager has been bound), the analysis is computed fresh
-        on every call.
-
-        Args:
-            analysis_type: The analysis class to obtain results for.
-            ir: The IR instance to analyze. Typically the same IR being passed
-                to the current pass, but sub-IR is also accepted.
-
-        Returns:
-            The analysis result, cached when possible.
-
-        """
-        if self._analysis_manager is None:
-            return analysis_type().run(ir)
-        return self._analysis_manager.get(analysis_type, ir)
+        @override
+        def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
+            """Return the analyses of the running hook, or ``None``."""
+            ...
 
     def report(
         self,
@@ -492,53 +444,47 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
     ) -> None:
         """Emit a diagnostic for this pass execution.
 
-        The diagnostic is recorded on the in-memory list (returned via
-        :attr:`diagnostics` and ``PassResult.diagnostics``) and additionally
-        emitted on a per-pass-class logger named
-        ``<core-module>.<pass-name>``. The logging level mirrors the
-        diagnostic level (ERROR/WARNING/INFO). When ``detail`` is provided
-        it is appended to the log message as ``" | detail: <detail>"``;
-        the in-memory record stores the detail separately on the
-        :class:`Diagnostic`. When ``exc_info`` is provided, it is
-        forwarded to the underlying log call so the originating traceback
-        is preserved alongside the structured record; the in-memory
-        diagnostic does not carry it.
+        During a hook, the diagnostic is recorded in the running pass's
+        context, so it appears in the run's `PassResult` or error, as this
+        object. Outside a run it is recorded on the pass, where the next run
+        forgets it. It is also logged on the pass's logger,
+        ``fhy_core.pass_infrastructure.core.<pass-name>``, at the matching
+        level, with ``" | detail: <detail>"`` appended when ``detail`` is
+        given and ``exc_info`` forwarded.
+
+        Raises:
+            RuntimeError: In `did_change` or `get_preserved_analyses`, which
+                run without a context.
+
         """
         note = message if isinstance(message, Note) else Note(message)
-        self._diagnostics.append(
-            Diagnostic(
-                level=level,
-                message=note,
-                source=self.get_pass_name(),
-                detail=detail,
-            )
+        diagnostic = Diagnostic(
+            level=level, message=note, source=self.get_pass_name(), detail=detail
         )
-
-        log_message = note.message
-        if detail is not None:
-            log_message = f"{log_message} | detail: {detail}"
-        self._get_pass_logger().log(
-            _DIAGNOSTIC_TO_LOGGING_LEVEL[level], log_message, exc_info=exc_info
-        )
+        self._record_diagnostic(diagnostic)
+        _log_diagnostic(diagnostic.source, level, note.message, detail, exc_info)
 
     @classmethod
     def _get_pass_logger(cls) -> logging.Logger:
-        return get_logger(__name__).getChild(cls.get_pass_name())
+        return _get_pass_logger_by_name(cls.get_pass_name())
 
     def validate_input(self, ir: _PassInputT) -> None:
-        """Validate input IR before execution."""
-        if ir is None:
-            message = f'Pass "{self.get_pass_name()}" does not accept None input.'
-            self.report(DiagnosticLevel.ERROR, message)
-            raise PassValidationError(message)
+        """Validate input IR before execution; by default, accept it."""
 
     def should_run(self, ir: _PassInputT) -> bool:
         """Return whether this pass should run for the input IR."""
         return True
 
-    @abstractmethod
     def get_noop_output(self, ir: _PassInputT) -> _PassOutputT:
-        """Return output when pass execution is skipped."""
+        """Return the output of a run `should_run` skips.
+
+        A pass whose `should_run` can be false overrides this; the default
+        raises ``NotImplementedError``.
+        """
+        raise NotImplementedError(
+            f'Pass "{self.get_pass_name()}" does not define get_noop_output, '
+            "which a skipped run needs."
+        )
 
     @abstractmethod
     def run_pass(self, ir: _PassInputT) -> _PassOutputT:
@@ -570,14 +516,6 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         if changed:
             return PreservedAnalyses.none()
         return PreservedAnalyses.all()
-
-    def _record_run(self) -> None:
-        pass_name = self.get_pass_name()
-        with CompilerPass._registry_lock:
-            CompilerPass._total_run_count += 1
-            CompilerPass._run_counts[pass_name] = (
-                CompilerPass._run_counts.get(pass_name, 0) + 1
-            )
 
 
 class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
@@ -1006,7 +944,6 @@ def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassC
             pass_cls._pass_name = name
             pass_cls._pass_description = description
             CompilerPass._registry[name] = PassInfo(name, description, pass_cls)
-            CompilerPass._run_counts.setdefault(name, 0)
             get_logger(__name__).debug(
                 "registered %s -> %s", name, pass_cls.__qualname__
             )

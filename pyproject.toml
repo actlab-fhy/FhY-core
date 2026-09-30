@@ -30,25 +30,31 @@ classifiers = [
 ]
 dependencies = [
    "immutabledict",
-   "networkx",
-   "sympy",
-   "z3-solver",
    "typing_extensions; python_version < '3.13'",
 ]
 
 [project.optional-dependencies]
 numpy = ["numpy"]
+# The solver's shipped backends, each imported only when a question needs it.
+sympy = ["sympy"]
+z3 = ["z3-solver"]
+solvers = ["sympy", "z3-solver"]
 
 [project.urls]
 Homepage = "https://github.com/actlab-fhy/FhY-core"
 Issues = "https://github.com/actlab-fhy/FhY-core/issues"
 
 [dependency-groups]
-test = ["pytest", "coverage[toml]", "pytest-xdist", "pytest-timeout", "numpy"]
+# The suite without the optional packages (the solvers' sympy and
+# z3-solver, and NumPy), for the tests_minimal session; the ordinary
+# sessions install all three.
+test-minimal = ["pytest", "coverage[toml]", "pytest-xdist", "pytest-timeout"]
+test = [{include-group = "test-minimal"}, "numpy", "sympy", "z3-solver"]
 property = ["hypothesis", {include-group = "test"}]
 lint = ["ruff"]
 type = ["ty", "mypy", {include-group = "property"}]
 mutation = ["cosmic-ray", {include-group = "property"}]
+bench = ["pytest-benchmark"]
 dev = [
    {include-group = "test"},
    {include-group = "property"},
@@ -62,17 +68,19 @@ dev = [
 [tool.maturin]
 python-source = "src"
 module-name = "fhy_core._rs"
-manifest-path = "rust/fhy-core-py/Cargo.toml"
+manifest-path = "rust/fhy-core-ext/Cargo.toml"
 
 [tool.uv]
 # uv reuses a built project unless one of these changes, so list the Rust
-# sources the extension is compiled from alongside the default pyproject.toml.
+# sources the extension is compiled from alongside the default pyproject.toml,
+# and the SymPy backend's prelude, which the binding compiles in.
 cache-keys = [
    { file = "pyproject.toml" },
    { file = "Cargo.toml" },
    { file = "Cargo.lock" },
    { file = "rust/*/Cargo.toml" },
    { file = "rust/**/*.rs" },
+   { file = "rust/fhy-core-py/src/**/*.py" },
 ]
 
 [tool.pytest.ini_options]
@@ -82,11 +90,16 @@ addopts = "-n auto -rfEs --strict-markers --durations=20 -m 'not slow'"
 # thread method also interrupts time spent inside a C extension (z3).
 timeout = 600
 timeout_method = "thread"
+# A test that reads or writes the deprecated V1 wire format says so (tests/v1.py);
+# an unmarked V1 warning fails the test.
+filterwarnings = ["error:.*V1 wire format.*:DeprecationWarning"]
 markers = [
     "slow: takes more than ~1s; excluded from default run",
     "very_slow: takes more than ~30s; nightly only",
     "subprocess: spawns a Python subprocess",
-    "z3: requires the z3-solver package",
+    "z3: reaches the z3 solver backend, which needs the z3-solver package",
+    "sympy: reaches the sympy simplifier, which needs the sympy package",
+    "numpy: evaluates with NumPy, which needs the numpy package",
     "integration: exercises multiple modules together",
     "network: requires network access",
     "property: hypothesis-based property test",
@@ -121,7 +134,13 @@ exclude_also = [
 python-version = "3.10"
 
 [tool.ty.src]
-include = ["src", "tests", "rust/fhy-core/tests/golden"]
+include = [
+    "src",
+    "tests",
+    "benchmarks",
+    "rust/fhy-core/tests/golden",
+    "rust/fhy-core/src/solver/sympy",
+]
 
 [tool.ty.rules]
 # ty defaults to strict inference; start clean and only relax on real friction.

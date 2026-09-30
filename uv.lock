@@ -466,7 +466,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -496,11 +496,7 @@ name = "fhy-core"
 source = { editable = "." }
 dependencies = [
     { name = "immutabledict" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "sympy" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "z3-solver" },
 ]
 
 [package.optional-dependencies]
@@ -509,8 +505,21 @@ numpy = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
+solvers = [
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+sympy = [
+    { name = "sympy" },
+]
+z3 = [
+    { name = "z3-solver" },
+]
 
 [package.dev-dependencies]
+bench = [
+    { name = "pytest-benchmark" },
+]
 dev = [
     { name = "coverage", extra = ["toml"] },
     { name = "hypothesis" },
@@ -525,7 +534,9 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 lint = [
     { name = "ruff" },
@@ -540,6 +551,8 @@ mutation = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 property = [
     { name = "coverage", extra = ["toml"] },
@@ -550,12 +563,22 @@ property = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 test = [
     { name = "coverage", extra = ["toml"] },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+test-minimal = [
+    { name = "coverage", extra = ["toml"] },
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
@@ -570,21 +593,25 @@ type = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "immutabledict" },
-    { name = "networkx" },
     { name = "numpy", marker = "extra == 'numpy'" },
-    { name = "sympy" },
+    { name = "sympy", marker = "extra == 'solvers'" },
+    { name = "sympy", marker = "extra == 'sympy'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "z3-solver" },
+    { name = "z3-solver", marker = "extra == 'solvers'" },
+    { name = "z3-solver", marker = "extra == 'z3'" },
 ]
-provides-extras = ["numpy"]
+provides-extras = ["numpy", "solvers", "sympy", "z3"]
 
 [package.metadata.requires-dev]
+bench = [{ name = "pytest-benchmark" }]
 dev = [
     { name = "coverage", extras = ["toml"] },
     { name = "hypothesis" },
@@ -597,7 +624,9 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 lint = [{ name = "ruff" }]
 mutation = [
@@ -608,6 +637,8 @@ mutation = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 property = [
     { name = "coverage", extras = ["toml"] },
@@ -616,10 +647,20 @@ property = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
 ]
 test = [
     { name = "coverage", extras = ["toml"] },
     { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+test-minimal = [
+    { name = "coverage", extras = ["toml"] },
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
@@ -632,7 +673,9 @@ type = [
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "sympy" },
     { name = "ty" },
+    { name = "z3-solver" },
 ]
 
 [[package]]
@@ -1239,32 +1282,6 @@ wheels = [
 ]
 
 [[package]]
-name = "networkx"
-version = "3.4.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/1d/06475e1cd5264c0b870ea2cc6fdb3e37177c1e565c43f56ff17a10e3937f/networkx-3.4.2.tar.gz", hash = "sha256:307c3669428c5362aab27c8a1260aa8f47c4e91d3891f48be0141738d8d053e1", size = 2151368, upload-time = "2024-10-21T12:39:38.695Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl", hash = "sha256:df5d4365b724cf81b8c6a7312509d0c22386097011ad1abe274afd5e9d3bbc5f", size = 1723263, upload-time = "2024-10-21T12:39:36.247Z" },
-]
-
-[[package]]
-name = "networkx"
-version = "3.6.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version >= '3.12' and python_full_version < '3.15'",
-    "python_full_version == '3.11.*'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
-]
-
-[[package]]
 name = "nodeenv"
 version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1697,6 +1714,15 @@ wheels = [
 ]
 
 [[package]]
+name = "py-cpuinfo2"
+version = "10.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/97/a8b1ddada14c8280a047c0746f95cb05d94a31b1a331cea22bcdc2b2a82d/py_cpuinfo2-10.1.1.tar.gz", hash = "sha256:7861133863663f16e06eca63b12904ef100b5760415e92372dac0162799a4771", size = 100840, upload-time = "2026-03-25T21:49:40.797Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/0a/ba69d2dde1ae12ef1d389ea5a216384c5ff6ef7a1e7a48d1e9b6686f6790/py_cpuinfo2-10.1.1-py3-none-any.whl", hash = "sha256:adc53396bfb206e6498d078ec2ab407f85799ecd819584ac36a8f80a2d4d762d", size = 23791, upload-time = "2026-03-25T21:49:39.574Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1721,6 +1747,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
+]
+
+[[package]]
+name = "pytest-benchmark"
+version = "5.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "py-cpuinfo2" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/8f/83a15e40dbc34a580ee56eb56983cae5394c6e94d50cf28fe268e457be25/pytest_benchmark-5.3.0.tar.gz", hash = "sha256:358444d4e89be901ee2b6404fb043ac3d7684002ad7f3563cc153fca6339c965", size = 375410, upload-time = "2026-08-23T17:45:08.891Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/42/7e80f7cfa191e0a766d1de99b4661847415ad5db34f8209d81fd42175b59/pytest_benchmark-5.3.0-py3-none-any.whl", hash = "sha256:920ab1dfcffa718d49aa15ba144c7e357bda59216a0dc308016cc1c7236f719d", size = 48401, upload-time = "2026-08-23T17:45:07.094Z" },
 ]
 
 [[package]]

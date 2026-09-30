@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 42c8a2b6ea9f4347364102ff94d9b31424450f5d2378f978041427b4d36f0056 # shrinks to dag = Expression((and v0::65537 v0::65537))

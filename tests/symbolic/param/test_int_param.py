@@ -56,6 +56,7 @@ def test_int_param_admissibility_matrix(value: Any, expected: bool) -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_int_param_add_constraint_combines_with_existing_constraints(
     default_int_param: Param[int],
 ) -> None:
@@ -75,6 +76,7 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "factory, ops, pass_values, fail_values",
     [
@@ -209,6 +211,7 @@ def test_int_param_between_orders_bounds_past_float_precision() -> None:
         create_integer_param_between(2**53 + 1, 2**53)
 
 
+@pytest.mark.z3
 def test_int_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
     """Test `create_integer_param_between(1, 2)` builds an empty param.
 
@@ -229,6 +232,7 @@ def test_int_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
 # =============================================================================
 
 
+@pytest.mark.sympy
 @pytest.mark.parametrize(
     "factory, boundary_value",
     [
@@ -268,6 +272,7 @@ def test_int_param_default_bound_inclusivity_admits_endpoint(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_int_param_between_equal_bounds_with_both_inclusive_is_singleton() -> None:
     """Test `create_integer_param_between(x, x)` admits only ``x`` (both inclusive)."""
     param = create_integer_param_between(5, 5)
@@ -306,6 +311,7 @@ def test_int_param_between_equal_bounds_with_any_exclusive_raises(
 # =============================================================================
 
 
+@pytest.mark.sympy
 def test_int_param_serialization_round_trip_preserves_constraints() -> None:
     """Test integer param round-trips through dict serialization with constraints."""
     param = create_integer_param()

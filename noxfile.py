@@ -11,12 +11,22 @@ nox.options.sessions = ["lint", "type_check", "tests", "coverage"]
 
 PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 ROOT = pathlib.Path(__file__).parent
-# The golden-corpus generators are the Rust port's equivalence oracle, so they
-# pass the same lint and type gates as the package.
-SOURCES = ["src", "tests", "rust/fhy-core/tests/golden"]
-# `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
-BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
+# The golden-corpus generators are the Rust core's equivalence oracle, and the
+# benchmarks measure the package's hot paths, so both pass the same lint and
+# type gates as the package.
+SOURCES = [
+    "src",
+    "tests",
+    "benchmarks",
+    "rust/fhy-core/tests/golden",
+    # The SymPy backend's prelude, the one Python module of the binding crate.
+    "rust/fhy-core-py/src/solver/sympy",
+]
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
+# Where the benchmark session saves its runs (gitignored).
+BENCHMARK_DIRECTORY = ROOT / ".benchmarks"
+# The integration-test binary the expanded replays run in.
+RUST_TEST_TARGET = "it"
 # `cargo test` summary of a run that replayed one expanded corpus.
 _EXPANDED_REPLAY_PASSED = re.compile(r"^test result: ok\. 1 passed;", re.MULTILINE)
 
@@ -25,29 +35,24 @@ class ExpandedGoldenCorpus(NamedTuple):
     """How to generate and replay one generator's expanded random corpus."""
 
     options: str
-    rust_test: str
+    test_filter: str
     variable: str
 
 
 # Expanded corpus settings for each generator under GOLDEN_DIRECTORY, keyed by
-# file name: the generator options (space-separated), the Rust test target
-# whose ignored test replays the corpus, and the variable that names the corpus
-# file for that test.
+# file name: the generator options (space-separated), the filter selecting the
+# ignored test in RUST_TEST_TARGET that replays the corpus, and the variable
+# that names the corpus file for that test.
 EXPANDED_GOLDEN_CORPORA = {
-    "generate_deterministic_identifier_cases.py": ExpandedGoldenCorpus(
-        options="--seed 7 --random-count 2000 --max-ops 40 --hints a,b,c,d,e",
-        rust_test="deterministic_identifiers_equivalence",
-        variable="FHY_DETERMINISTIC_IDENTIFIER_CORPUS",
-    ),
     "generate_interned_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 60 --keys a,b,c,d,e",
-        rust_test="interned_equivalence",
+        test_filter="interned::equivalence::",
         variable="FHY_INTERNED_CORPUS",
     ),
-    "generate_tag_type_cases.py": ExpandedGoldenCorpus(
-        options="--seed 7 --random-count 2000 --max-ops 40 --slots s0,s1,s2,s3,s4",
-        rust_test="tag_type_equivalence",
-        variable="FHY_TAG_TYPE_CORPUS",
+    "generate_serialization_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 40",
+        test_filter="serialization_golden::",
+        variable="FHY_SERIALIZATION_CORPUS",
     ),
 }
 
@@ -63,30 +68,10 @@ def _sync(session: nox.Session, *groups: str) -> None:
     )
 
 
-def _select_backend(session: nox.Session, backend: str) -> None:
-    """Select the session's backend and fail unless the package reports it."""
-    session.env["FHY_CORE_NO_EXTENSIONS"] = BACKEND_EXTENSION_SETTINGS[backend]
-    is_rust_expected = backend == "rust"
-    session.run(
-        "python",
-        "-c",
-        "import sys, fhy_core; "
-        f"sys.exit(None if fhy_core.RUST_BACKEND_SELECTED is {is_rust_expected} "
-        f"else 'expected RUST_BACKEND_SELECTED to be {is_rust_expected}')",
-    )
-
-
 @nox.session(python=PYTHONS)
-@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
-def tests(session: nox.Session, backend: str) -> None:
-    """Run the unit and integration test suite under coverage on one backend.
-
-    ``FHY_CORE_NO_EXTENSIONS`` selects the backend, and the session fails
-    before testing unless the package reports the backend it was asked for,
-    so an extension that silently fails to import cannot pass as a Rust run.
-    """
+def tests(session: nox.Session) -> None:
+    """Run the unit and integration test suite under coverage."""
     _sync(session, "test")
-    _select_backend(session, backend)
     # Start coverage inside pytest-xdist worker subprocesses.
     purelib = session.run(
         "python",
@@ -107,6 +92,29 @@ def tests(session: nox.Session, backend: str) -> None:
         *session.posargs,
         env={"COVERAGE_PROCESS_START": str(ROOT / "pyproject.toml")},
     )
+
+
+@nox.session
+def tests_minimal(session: nox.Session) -> None:
+    """Run the suite without the optional packages: sympy, z3-solver and NumPy.
+
+    The tests that reach a solver backend carry the `sympy` or `z3` marker,
+    and those that evaluate with NumPy the `numpy` marker; they are skipped
+    here. An unmarked test that reaches a missing backend fails with
+    `SolverBackendUnavailableError`, and one that evaluates with NumPy with
+    the NumPy evaluator's `ImportError`, so a wrong mark cannot hide.
+    """
+    _sync(session, "test-minimal")
+    session.run(
+        "python",
+        "-c",
+        "import importlib.util, sys; "
+        "installed = [name for name in ('sympy', 'z3', 'numpy') "
+        "if importlib.util.find_spec(name)]; "
+        "sys.exit(f'optional packages installed: {installed}' "
+        "if installed else 0)",
+    )
+    session.run("pytest", "-m", "slow or not slow", *session.posargs)
 
 
 @nox.session
@@ -147,18 +155,13 @@ def coverage(session: nox.Session) -> None:
 
 
 @nox.session
-@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
-def property(session: nox.Session, backend: str) -> None:
-    """Run hypothesis-based property tests under the thorough profile on one backend.
+def property(session: nox.Session) -> None:
+    """Run hypothesis-based property tests under the thorough profile.
 
     This is the CI release gate (opt-in locally); it forces
     ``HYPOTHESIS_PROFILE=thorough`` regardless of the caller's environment.
-    As in ``tests``, the session fails before testing unless the package
-    reports the backend it was asked for, so the Rust run cannot silently skip
-    the tests that need the extension.
     """
     _sync(session, "property")
-    _select_backend(session, backend)
     # No success_codes override: exit 5 (nothing collected) must fail, so a
     # marker typo or a collection error cannot pass as a clean run.
     session.run(
@@ -170,6 +173,31 @@ def property(session: nox.Session, backend: str) -> None:
     )
 
 
+@nox.session(python=PYTHONS)
+def benchmark(session: nox.Session) -> None:
+    """Run the pytest-benchmark benchmarks under ``benchmarks/``.
+
+    Opt-in: neither a default session nor a CI job. Every run is saved under
+    ``.benchmarks/storage/``, so passing ``--benchmark-compare`` compares a
+    run with the previous one, and the run's results are also written to
+    ``.benchmarks/<python>.json`` for ``pytest-benchmark compare``.
+    """
+    _sync(session, "bench", "test")
+    session.run(
+        "pytest",
+        "benchmarks",
+        "--benchmark-only",
+        # pytest-benchmark disables itself under pytest-xdist, which the
+        # configured addopts turn on with `-n auto`.
+        "-n",
+        "0",
+        "--benchmark-autosave",
+        f"--benchmark-storage={BENCHMARK_DIRECTORY / 'storage'}",
+        f"--benchmark-json={BENCHMARK_DIRECTORY / f'{session.python}.json'}",
+        *session.posargs,
+    )
+
+
 @nox.session
 def golden_expanded(session: nox.Session) -> None:
     """Replay expanded random golden corpora through the Rust equivalence tests.
@@ -178,7 +206,7 @@ def golden_expanded(session: nox.Session) -> None:
     review; each generator can also write a much larger random corpus, which
     its equivalence test replays in an ignored test that reads the corpus
     path from an environment variable. The session writes every expanded
-    corpus from the pure-Python oracle into a temporary directory and runs
+    corpus from its Python oracle into a temporary directory and runs
     the matching ignored test on it. It needs ``cargo`` on ``PATH`` and fails
     if a generator has no expanded settings in ``EXPANDED_GOLDEN_CORPORA``.
     """
@@ -194,7 +222,6 @@ def golden_expanded(session: nox.Session) -> None:
             "add them to EXPANDED_GOLDEN_CORPORA in noxfile.py"
         )
     _sync(session)
-    _select_backend(session, "python")
     # Absolute: `cargo test -p fhy-core` runs its test binaries with the
     # fhy-core crate directory as the working directory, not the repository
     # root nox itself runs from, so a relative corpus path would miss.
@@ -214,21 +241,17 @@ def golden_expanded(session: nox.Session) -> None:
             str(corpus_path),
             silent=True,
         )
-        # `testing` is on for this crate's own tests already; naming it keeps
-        # the deterministic-identifier test, which requires it, from being
-        # skipped if that ever changes.
         output = session.run(
             "cargo",
             "test",
             "--locked",
             "-p",
             "fhy-core",
-            "--features",
-            "testing",
             "--test",
-            corpus.rust_test,
+            RUST_TEST_TARGET,
             "--",
             "--ignored",
+            corpus.test_filter,
             env={corpus.variable: str(corpus_path)},
             external=True,
             silent=True,
@@ -237,10 +260,10 @@ def golden_expanded(session: nox.Session) -> None:
         # test that lost its `#[ignore]` would pass without a replay.
         if not isinstance(output, str) or not _EXPANDED_REPLAY_PASSED.search(output):
             session.error(
-                f"{corpus.rust_test} did not replay the expanded corpus in "
+                f"{corpus.test_filter} did not replay the expanded corpus in "
                 f"exactly one ignored test:\n{output}"
             )
-        session.log(f"{corpus.rust_test}: the expanded corpus replayed")
+        session.log(f"{corpus.test_filter}: the expanded corpus replayed")
 
 
 @nox.session

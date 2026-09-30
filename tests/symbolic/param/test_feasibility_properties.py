@@ -165,6 +165,7 @@ def draw_finite_domain_case(draw: st.DrawFn) -> tuple[Param[Any], tuple[Any, ...
 
 
 # Z3-backed: some drawn cases route check_feasibility through the solver.
+@pytest.mark.sympy
 @cap_max_examples(50)
 @given(case=draw_finite_domain_case())
 def test_check_feasibility_matches_brute_force_over_finite_domains(

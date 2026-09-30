@@ -22,12 +22,10 @@ protocol shared by ``Constraint`` and ``ConstraintSystem``.
 The package is organized by concern:
 
 - ``errors``: ``ConstraintError``, ``MissingSymbolTypeError``.
-- ``members``: constraint-member validation, type-strict wrapping,
-  canonical ordering, and the set-constraint member codec.
-- ``core``: ``ConstraintOutcome``, bindings coercion, the
-  ``SymbolicPredicate`` protocol, and the ``Constraint`` family.
-- ``ordering``: expression-level ordering keys, used by
-  ``Constraint.build_ordering_key``.
+- ``members``: the member kinds and ``does_member_lift_to_expression``.
+- ``core``: ``ConstraintOutcome``, the ``SymbolicPredicate`` protocol, and
+  the ``Constraint`` family, whose three leaves run on the Rust core
+  (``fhy_core::constraint``).
 - ``system``: ``create_constraint_system`` and ``ConstraintSystem``.
 """
 

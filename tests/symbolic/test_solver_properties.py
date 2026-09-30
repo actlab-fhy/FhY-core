@@ -133,6 +133,7 @@ _RATIONAL_COEFFICIENT_ENVIRONMENT: Final[dict[Identifier, int]] = dict.fromkeys(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @given(
     tree_and_environment=draw_numeric_tree_with_environment(
         _POOL,
@@ -144,6 +145,7 @@ _RATIONAL_COEFFICIENT_ENVIRONMENT: Final[dict[Identifier, int]] = dict.fromkeys(
         include_piecewise=True,
     )
 )
+@pytest.mark.numpy
 def test_simplify_expression_preserves_evaluation_on_integer_trees(
     tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
 ) -> None:
@@ -161,6 +163,7 @@ def test_simplify_expression_preserves_evaluation_on_integer_trees(
     )
 
 
+@pytest.mark.sympy
 @given(
     tree_and_environment=draw_boolean_tree_with_environment(
         _POOL,
@@ -172,6 +175,7 @@ def test_simplify_expression_preserves_evaluation_on_integer_trees(
         include_piecewise=True,
     )
 )
+@pytest.mark.numpy
 def test_simplify_expression_preserves_evaluation_on_boolean_trees(
     tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
 ) -> None:
@@ -189,6 +193,8 @@ def test_simplify_expression_preserves_evaluation_on_boolean_trees(
     )
 
 
+@pytest.mark.sympy
+@pytest.mark.numpy
 def test_simplify_expression_preserves_a_rational_coefficient_comparison() -> None:
     """Test simplifying ``21 == 15 * v0`` keeps its truth value at ``v0 = 0``.
 
@@ -235,6 +241,7 @@ def _convert_to_literal_environment(
     }
 
 
+@pytest.mark.sympy
 @given(tree_and_environment=_DIVISION_TREES_WITH_ENVIRONMENTS)
 def test_simplify_expression_with_full_environment_evaluates(
     tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
@@ -260,6 +267,7 @@ def test_simplify_expression_with_full_environment_evaluates(
 # =============================================================================
 
 
+@pytest.mark.sympy
 @given(tree_and_environment=_DIVISION_TREES_WITH_ENVIRONMENTS)
 def test_simplify_expression_twice_preserves_evaluation(
     tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
