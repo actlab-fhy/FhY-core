@@ -552,3 +552,6 @@ pub fn array_value_to_numpy<'py>(
 pub fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError) -> PyErr {
     crate::expression::evaluation_error_to_python(py, error)
 }
+
+#[cfg(test)]
+mod tests;
