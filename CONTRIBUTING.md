@@ -394,6 +394,14 @@ with `NumPy`'s ufuncs; `array_value_to_numpy` and `scalar_to_numpy` convert
 results back; and `evaluation_error_to_python` raises the same exceptions
 `evaluate_expression_with_numpy` does. No `rust-numpy` type appears in its
 signatures, so a downstream crate needs no `numpy` dependency of its own.
+Its `convert::param` module is the public entry to the param questions:
+`with_param_context(py, detach, question)` runs `question` with the
+`ParamContext` that `fhy_core`'s own param methods use (the default solver
+`set_default_solver` chose, a snapshot of the function registry, and the
+param observer that logs to `fhy_core`'s loggers), detached from the
+interpreter when `detach`, and re-raises after the question the Python
+exception a hook raised during it. `fhy_core`'s methods run over the same
+code, so a downstream crate decides a question as `fhy_core` does.
 A conversion that another crate needs and `convert` lacks is
 added there, as a documented `pub fn` over the `pub(crate)` one, and no
 `#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with
@@ -855,7 +863,7 @@ the SymPy backend's stories are `#[cfg(test)]` modules of `fhy-core-py`'s
 `solver::sympy`, and `cargo test -p fhy-core-py`, and so `cargo test
 --workspace`, builds a test binary that links libpython, embeds an
 interpreter and imports SymPy, and fails them, with the recipe, when SymPy
-cannot be imported. The `convert::numpy` stories likewise need `numpy`. Build and run them with `PYO3_PYTHON` naming a Python
+cannot be imported. The `convert::numpy` stories likewise need `numpy`; the `convert::param` stories need only the standard library. Build and run them with `PYO3_PYTHON` naming a Python
 that has a shared libpython and the `sympy` and `numpy` packages, `PYTHONPATH` naming
 that Python's `site-packages` (an embedded interpreter does not read a
 virtualenv's `pyvenv.cfg`), and `LD_LIBRARY_PATH` naming its libpython's
