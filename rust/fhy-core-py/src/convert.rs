@@ -15,6 +15,10 @@
 //! building it raises. All of them need the GIL, and none holds a lock across
 //! a call into Python.
 //!
+//! The values of `NumPy` arrays, which the evaluators take and return, are
+//! converted in the [`numpy`] submodule, which has its own rules and needs
+//! `NumPy` at run time, unlike the functions above.
+//!
 //! # Identity
 //!
 //! - An identifier is converted by id and name hint, in both directions,
@@ -26,6 +30,8 @@
 //! - An expression, a type, a param and a diagnostic are values: converting
 //!   one to Python builds new objects for it, and converting those back
 //!   gives a value equal to the original, sharing its structure.
+
+pub mod numpy;
 
 use pyo3::prelude::*;
 

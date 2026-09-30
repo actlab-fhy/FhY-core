@@ -34,7 +34,7 @@ expression_error_fn!(unbound_variable_error, UNBOUND_VARIABLE_ERROR);
 expression_error_fn!(unsupported_lowering_error, UNSUPPORTED_NUMPY_LOWERING_ERROR);
 
 /// Return the Python exception of the evaluation error `error`.
-pub(super) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError) -> PyErr {
+pub(crate) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError) -> PyErr {
     let message = error.to_string();
     match error {
         EvaluationError::Inline(error) => inline_error_to_python(py, &error),

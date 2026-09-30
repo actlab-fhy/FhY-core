@@ -29,7 +29,7 @@ mod text;
 
 pub(crate) use evaluate::{
     PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
-    fold_expression, is_decimal_text_exactly_binary,
+    evaluation_error_to_python, fold_expression, is_decimal_text_exactly_binary,
 };
 pub(crate) use literal::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 pub(crate) use materialize::{
