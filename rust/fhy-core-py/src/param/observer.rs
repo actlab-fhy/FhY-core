@@ -269,7 +269,7 @@ fn log_domain_event(py: Python<'_>, event: &ParamEvent<'_>) -> PyResult<()> {
 }
 
 /// The observer of one param question.
-pub(super) struct PyParamObserver {
+pub(crate) struct PyParamObserver {
     /// The name of the solver's SMT backend, for the `unknown` warning.
     backend: String,
 }
@@ -277,7 +277,7 @@ pub(super) struct PyParamObserver {
 impl PyParamObserver {
     /// Return the observer of a question of a solver whose SMT backend is
     /// named `backend`.
-    pub(super) const fn new(backend: String) -> Self {
+    pub(crate) const fn new(backend: String) -> Self {
         Self { backend }
     }
 

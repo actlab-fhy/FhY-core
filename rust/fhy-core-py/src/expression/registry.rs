@@ -25,3 +25,5 @@ pub(crate) use lookups::{
 };
 pub(crate) use state::RegistryState;
 pub(crate) use state::snapshot;
+#[cfg(test)]
+pub(crate) use state::{install_core_registry, reinstall};

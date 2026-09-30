@@ -22,45 +22,18 @@ use crate::constraint::{
     capture_pending_errors, join_items, member_to_python, outcome_to_python, with_pending_errors,
 };
 use crate::dataclass::OptionalArgument;
-use crate::expression::registry_snapshot;
 use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::restore_identifier;
 use crate::serialization::{construct_from_decoded_fields, is_serialized_dict};
-use crate::solver::{get_default_solver, symbol_type_to_python};
+use crate::solver::symbol_type_to_python;
 
 use super::error::{ParamFailure, ordinal_error_to_py, param_error_to_py};
 use super::objects::{
     constraints_to_python, domain_to_python, profile_to_python, read_constraints, read_domain,
 };
-use super::observer::PyParamObserver;
 use super::value::{read_candidate, read_finite_values, to_tuple};
 
-/// Run `question` with the default solver, the registry snapshot and a
-/// logging observer, detached from the interpreter when `is_detached`, and
-/// map its error with `map_error`.
-pub(super) fn run_with_context<T: Send, E: Send>(
-    py: Python<'_>,
-    is_detached: bool,
-    question: impl FnOnce(&ParamContext<'_>) -> Result<T, E> + Send,
-    map_error: impl FnOnce(E) -> PyErr,
-) -> PyResult<T> {
-    let solver = get_default_solver(py)?;
-    let solver = solver.bind(py).get();
-    let registry = registry_snapshot();
-    let observer = PyParamObserver::new(solver.backend_name());
-    let core = solver.core();
-    let registry = registry.registry();
-    with_pending_errors(|| {
-        let ask = || {
-            let context = ParamContext::new(core)
-                .with_registry(registry)
-                .with_observer(&observer);
-            question(&context)
-        };
-        let result = if is_detached { py.detach(ask) } else { ask() };
-        result.map_err(map_error)
-    })
-}
+pub(super) use crate::convert::param::run_with_context;
 
 /// Return the context of a value-set question: a solver without backends,
 /// which the built-in domains never ask, and which a Python-defined domain,
