@@ -381,7 +381,20 @@ already. Its `convert` module is the public conversion surface: for an
 `…_from_python` reads a Python object as the Rust value and `…_to_python`
 builds the object of a Rust value through the public class. A downstream
 binding crate calls them at the boundary of its own `#[pyfunction]`s and
-`#[pymethods]`. A conversion that another crate needs and `convert` lacks is
+`#[pymethods]`. Its `convert::numpy` module is the public conversion surface
+for `NumPy` arrays, the one `evaluate_expression_with_numpy` is written over:
+`require_numpy` imports `NumPy` or raises the `ImportError` naming the
+caller's entry point; `NumpyValue::from_python` converts a Python number or
+anything `numpy.asarray` accepts to a scalar or an array of the core's three
+domains (`bool`, `i64`, `f64`), borrowing `bool_`, `int64` and `float64`
+arrays in native byte order and casting every other admitted dtype once;
+`NumpyValue::as_binding`, `to_array_value` and `as_scalar` hand the value to
+the core's evaluators; `NumpyKernels` computes the 14 transcendental natives
+with `NumPy`'s ufuncs; `array_value_to_numpy` and `scalar_to_numpy` convert
+results back; and `evaluation_error_to_python` raises the same exceptions
+`evaluate_expression_with_numpy` does. No `rust-numpy` type appears in its
+signatures, so a downstream crate needs no `numpy` dependency of its own.
+A conversion that another crate needs and `convert` lacks is
 added there, as a documented `pub fn` over the `pub(crate)` one, and no
 `#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with
 an `rlib` beside it because a `#[pymodule]` exports a `PyInit_<name>`
@@ -842,8 +855,8 @@ the SymPy backend's stories are `#[cfg(test)]` modules of `fhy-core-py`'s
 `solver::sympy`, and `cargo test -p fhy-core-py`, and so `cargo test
 --workspace`, builds a test binary that links libpython, embeds an
 interpreter and imports SymPy, and fails them, with the recipe, when SymPy
-cannot be imported. Build and run them with `PYO3_PYTHON` naming a Python
-that has a shared libpython and the `sympy` package, `PYTHONPATH` naming
+cannot be imported. The `convert::numpy` stories likewise need `numpy`. Build and run them with `PYO3_PYTHON` naming a Python
+that has a shared libpython and the `sympy` and `numpy` packages, `PYTHONPATH` naming
 that Python's `site-packages` (an embedded interpreter does not read a
 virtualenv's `pyvenv.cfg`), and `LD_LIBRARY_PATH` naming its libpython's
 directory when the loader does not find it. A Python built without a
@@ -855,7 +868,7 @@ shared libpython, such as a distribution's `python3.11` without
 G=$PWD/target/gate-python
 uv python install --no-bin --install-dir "$G/pythons" 3.11
 uv venv --python "$G"/pythons/cpython-3.11*/bin/python3.11 "$G/venv"
-VIRTUAL_ENV="$G/venv" uv pip install sympy
+VIRTUAL_ENV="$G/venv" uv pip install sympy numpy
 export PYO3_PYTHON="$G/venv/bin/python"
 export PYTHONPATH="$G/venv/lib/python3.11/site-packages"
 export LD_LIBRARY_PATH="$(echo "$G"/pythons/cpython-3.11*/lib)"
