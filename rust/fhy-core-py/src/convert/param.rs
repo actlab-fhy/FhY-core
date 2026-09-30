@@ -86,3 +86,6 @@ pub(crate) fn run_with_context<T: Send, E: Send>(
         result.map_err(map_error)
     })
 }
+
+#[cfg(test)]
+mod tests;
