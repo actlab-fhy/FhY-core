@@ -51,9 +51,9 @@ fn outranks(py: Python<'_>, error: &PyErr, kept: &PyErr) -> bool {
 ///
 /// # Panics
 ///
-/// Never panics on its own; it may panic if the interpreter is not
-/// initialized, as [`Python::attach`] does.
-pub(crate) fn record_pending_error(error: PyErr) {
+/// Panics if the Python interpreter is not initialized, as
+/// [`Python::attach`] does.
+pub fn record_pending_error(error: PyErr) {
     Python::attach(|py| {
         let mut error = Some(error);
         let replaced = ScopedStack::with_top_or_base_mut(
@@ -80,7 +80,7 @@ pub(crate) fn record_pending_error(error: PyErr) {
 /// Return whether an exception is pending on this thread, so that no
 /// further hook may call Python during the current call.
 #[must_use]
-pub(crate) fn has_pending_error() -> bool {
+pub fn has_pending_error() -> bool {
     ScopedStack::with_top(&PENDING_ERROR, |pending| {
         pending.is_some_and(Option::is_some)
     })
@@ -96,7 +96,7 @@ pub(crate) fn has_pending_error() -> bool {
 ///
 /// Returns the exception a hook recorded during `call`, even when `call`
 /// itself returned `Ok`, and otherwise what `call` returns.
-pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
+pub fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     // A frame of its own, popped when the guard drops, on unwind included,
     // so the outer frame is restored.
     let scope = ScopedStack::push(&PENDING_ERROR, None);
@@ -114,7 +114,7 @@ pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyRe
 /// The frame is the one [`with_pending_errors`] uses; this form is for a
 /// `call` that does not return a `PyResult`, and leaves what to do with the
 /// exception to the caller.
-pub(crate) fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<PyErr>) {
+pub fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<PyErr>) {
     let scope = ScopedStack::push(&PENDING_ERROR, None);
     let result = call();
     (result, scope.pop())

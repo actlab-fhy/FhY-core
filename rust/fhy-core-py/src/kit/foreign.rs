@@ -30,12 +30,12 @@ static FOREIGN_PAYLOAD: ImportedAttr =
 /// It carries the text only: the exception itself is kept pending, so that
 /// the entry point raises it as itself.
 #[derive(Debug)]
-pub(crate) struct RaisedError(String);
+pub struct RaisedError(String);
 
 impl RaisedError {
     /// Return the error that displays as `message`.
     #[must_use]
-    pub(crate) const fn new(message: String) -> Self {
+    pub const fn new(message: String) -> Self {
         Self(message)
     }
 }
@@ -53,7 +53,7 @@ impl Error for RaisedError {}
 ///
 /// The returned [`ForeignError::Failed`] holds a [`RaisedError`] with the
 /// exception's message.
-pub(crate) fn foreign_failure(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignError {
+pub fn foreign_failure(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignError {
     let message = error.value(py).to_string();
     record_pending_error(error);
     ForeignError::Failed {
@@ -76,9 +76,9 @@ pub(crate) fn foreign_failure(py: Python<'_>, type_id: &str, error: PyErr) -> Fo
 ///
 /// # Panics
 ///
-/// Never panics on its own; it may panic if the interpreter is not
-/// initialized, as [`Python::attach`] does.
-pub(crate) fn foreign_of(object: &Py<PyAny>, family: bool) -> Result<Foreign, ForeignError> {
+/// Panics if the Python interpreter is not initialized, as
+/// [`Python::attach`] does.
+pub fn foreign_of(object: &Py<PyAny>, family: bool) -> Result<Foreign, ForeignError> {
     Python::attach(|py| {
         let object = object.bind(py);
         let result = (|| -> PyResult<(String, String)> {
@@ -95,3 +95,6 @@ pub(crate) fn foreign_of(object: &Py<PyAny>, family: bool) -> Result<Foreign, Fo
         }
     })
 }
+
+#[cfg(test)]
+mod tests;
