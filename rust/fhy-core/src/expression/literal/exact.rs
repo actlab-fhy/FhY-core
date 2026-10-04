@@ -102,13 +102,11 @@ impl Rational {
     }
 
     /// Return the numerator, of the rational's sign.
-    #[cfg(test)]
     pub(crate) fn numerator(&self) -> &BigInt {
         &self.numerator
     }
 
     /// Return the denominator, positive.
-    #[cfg(test)]
     pub(crate) fn denominator(&self) -> &BigInt {
         &self.denominator
     }

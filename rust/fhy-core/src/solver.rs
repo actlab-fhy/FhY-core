@@ -4,7 +4,8 @@
 //! expression simplifies to.
 //!
 //! A [`Solver`] holds the backends: an [`SmtSolver`] for the three logical
-//! questions, and a [`Simplifier`] for simplification. It checks and
+//! questions, and a [`Simplifier`] for simplification, such as the pure-Rust
+//! [`GroundSimplifier`]. It checks and
 //! screens each question in Rust, encodes a logical question as one
 //! SMT-LIB2 [`SmtScript`], and calls its backend once.
 //!
@@ -82,9 +83,11 @@
 
 mod backend;
 mod error;
+mod ground;
 mod process;
 mod screen;
 mod smt;
+pub mod strategy;
 #[cfg(feature = "z3")]
 mod z3;
 
@@ -101,6 +104,7 @@ use crate::identifier::Identifier;
 
 pub use backend::{CheckLimits, SatResult, Simplifier, SimplifyContext, SimplifyLimits, SmtSolver};
 pub use error::{LoweringError, SolveError};
+pub use ground::{GroundSimplifier, GroundWithFallback};
 pub use process::{ProcessError, SmtLib2Process};
 pub use screen::Hazard;
 pub use smt::{Declaration, Logic, SmtScript};
