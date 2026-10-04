@@ -24,6 +24,7 @@
 //! | [`pending`] | the pending exception of an infallible hook |
 //! | [`frames`] | [`Frames`](frames::Frames), the per-call context a hook reads, whose miss is loud |
 //! | [`hook`] | [`ask`](hook::ask), a Python hook behind an infallible trait method |
+//! | [`integers`] | [`read_unsigned`](integers::read_unsigned), a Python int as a Rust unsigned integer with exact errors |
 //! | [`gc`] | [`Slot`](gc::Slot), [`collect_slots`](gc::collect_slots) and the traverse helpers |
 //! | [`foreign`] | [`foreign_of`](foreign::foreign_of), a Python-defined part as a core `Foreign` |
 //!
@@ -38,6 +39,7 @@ pub mod frames;
 pub mod frozen;
 pub mod gc;
 pub mod hook;
+pub mod integers;
 pub mod interned;
 pub mod pending;
 pub mod public_class;
