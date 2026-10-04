@@ -9,8 +9,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString, PyTuple, PyType};
 
 /// Return the `TypeError` for an argument `field` of `owner` that is not a
-/// `expected`.
-pub(crate) fn build_argument_type_error(
+/// `expected`: `<owner> <field> must be <expected>, got <type>.`
+///
+/// # Errors
+///
+/// Raises what reading the name of `value`'s type raises.
+pub fn build_argument_type_error(
     owner: &str,
     field: &str,
     expected: &str,
@@ -24,7 +28,12 @@ pub(crate) fn build_argument_type_error(
 
 /// Return `value` as a `str`, or raise the `TypeError` naming `owner` and
 /// `field`.
-pub(crate) fn read_str<'a, 'py>(
+///
+/// # Errors
+///
+/// Raises the `TypeError` of [`build_argument_type_error`], expecting `a str`,
+/// for a `value` that is not a `str`.
+pub fn read_str<'a, 'py>(
     value: &'a Bound<'py, PyAny>,
     owner: &str,
     field: &str,
@@ -38,37 +47,98 @@ pub(crate) fn read_str<'a, 'py>(
 /// Return the hash of `value` from the standard hasher.
 ///
 /// Equal values hash equally within a process, which is all Python needs.
-pub(crate) fn hash_value(value: &impl Hash) -> u64 {
+#[must_use]
+pub fn hash_value(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
 }
 
+/// An answer that is either a plain value or a Python exception, so a class
+/// whose equality or hash asks Python, and can raise, shares the members of
+/// a class whose equality and hash cannot fail.
+///
+/// It is implemented for `bool`, `u64` and `PyResult<T>`.
+pub trait Outcome<T> {
+    /// Return the value, or the exception.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exception a `PyResult` holds.
+    fn into_result(self) -> PyResult<T>;
+}
+
+impl Outcome<bool> for bool {
+    fn into_result(self) -> PyResult<bool> {
+        Ok(self)
+    }
+}
+
+impl Outcome<u64> for u64 {
+    fn into_result(self) -> PyResult<u64> {
+        Ok(self)
+    }
+}
+
+impl<T> Outcome<T> for PyResult<T> {
+    fn into_result(self) -> PyResult<T> {
+        self
+    }
+}
+
 /// Return `NotImplemented` unless `other` is an instance of exactly the
 /// class of `object`, and otherwise whether `is_equal` holds for the two.
 ///
+/// `is_equal` answers a `bool` or a `PyResult<bool>` (see [`Outcome`]), so a
+/// class whose equality asks Python uses the same function.
+///
 /// Matches the Python implementation: the `__eq__` a dataclass generates.
-pub(crate) fn compare_as_dataclass<'py, T, F>(
+///
+/// # Errors
+///
+/// Raises what `is_equal` raises, and `TypeError` if `other` has the class
+/// of `object` but is not a `T`, which only a class that is not its own
+/// `PyO3` type can cause.
+pub fn compare_as_dataclass<'py, T, F, R>(
     object: &Bound<'py, T>,
     other: &Bound<'py, PyAny>,
     is_equal: F,
 ) -> PyResult<Bound<'py, PyAny>>
 where
     T: pyo3::PyClass<Frozen = pyo3::pyclass::boolean_struct::True> + Sync,
-    F: FnOnce(&T, &T) -> PyResult<bool>,
+    F: FnOnce(&T, &T) -> R,
+    R: Outcome<bool>,
 {
     let py = object.py();
     if !object.as_any().get_type().is(other.get_type()) {
         return Ok(py.NotImplemented().into_bound(py));
     }
     let other = other.cast::<T>()?;
-    let is_equal = is_equal(object.get(), other.get())?;
+    let is_equal = is_equal(object.get(), other.get()).into_result()?;
     Ok(PyBool::new(py, is_equal).to_owned().into_any())
+}
+
+/// Return whether `left` and `right` are one object or equal by Python's
+/// `==`, as a dataclass compares a field.
+///
+/// # Errors
+///
+/// Raises what `==` raises.
+pub fn is_same_or_equal(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if left.is(right) {
+        Ok(true)
+    } else {
+        left.eq(right)
+    }
 }
 
 /// Return the items of the iterable `values` as a tuple, `values` itself if
 /// it is a tuple.
-pub(crate) fn collect_tuple<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
+///
+/// # Errors
+///
+/// Raises `TypeError` if `values` is not iterable, and what iterating raises.
+pub fn collect_tuple<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     if let Ok(values) = values.cast_exact::<PyTuple>() {
         return Ok(values.clone());
     }
@@ -80,7 +150,12 @@ pub(crate) fn collect_tuple<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'
 
 /// Render `class(field=value, ...)` from the reprs of `fields`, as a
 /// dataclass's `__repr__` does.
-pub(crate) fn format_dataclass_repr(
+///
+/// # Errors
+///
+/// Raises what reading the class's qualified name or a field's `repr`
+/// raises.
+pub fn format_dataclass_repr(
     class: &Bound<'_, PyType>,
     fields: &[(&str, &Bound<'_, PyAny>)],
 ) -> PyResult<String> {
@@ -100,7 +175,16 @@ pub(crate) fn format_dataclass_repr(
 
 /// A constructor argument that may be omitted, so that an explicit `None`
 /// is not mistaken for the omitted argument's default.
-pub(crate) enum OptionalArgument<'py> {
+///
+/// A `#[pyfunction]` or `#[new]` takes it as `#[pyo3(signature = (value =
+/// OptionalArgument::Omitted))]`: any object the caller passes, `None`
+/// included, extracts as [`Given`](Self::Given).
+#[derive(Debug)]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "an argument is either omitted or given, and callers match both"
+)]
+pub enum OptionalArgument<'py> {
     /// The caller did not pass the argument.
     Omitted,
     /// The caller passed this object.
@@ -114,3 +198,6 @@ impl<'a, 'py> FromPyObject<'a, 'py> for OptionalArgument<'py> {
         Ok(Self::Given(object.to_owned()))
     }
 }
+
+#[cfg(test)]
+mod tests;
