@@ -824,6 +824,10 @@ the workspace lints `clippy::exhaustive_enums` and
 `clippy::exhaustive_structs` reject any other exhaustive public enum, or
 struct with only public fields.
 
+### Comparing term fields
+
+`AlphaEquivalence` is implemented for `Option<T>`, `[T]`, `Vec<T>`, `[T; N]`, `Box<T>`, `Rc<T>`, `Arc<T>` and tuples of up to eight terms. A type with term fields implements the trait by calling those on its fields, `&&`-ing the answers in field order with `?`, under the renaming it was given, rather than writing a comparison loop. Elements compare in order, lengths must match, and `None` matches only `None`. Do not add impls for `HashSet` or `HashMap`: the answer would depend on iteration order. A map keyed by identifiers goes through `is_mapping_alpha_equivalent_under`. The impls live in `rust/fhy-core/src/term/containers.rs`; there is no `&T` impl, because it would change which method `value.is_alpha_equivalent_under(..)` resolves to on a `&&T`.
+
 ### Python parity is limited to dual-defined concepts
 
 Rust matches the Python implementation's behavior and text only for

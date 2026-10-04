@@ -22,6 +22,56 @@ use super::renaming::AlphaRenaming;
 /// fail, such as an [`Expression`](crate::expression::Expression), uses
 /// [`Infallible`](std::convert::Infallible), and its callers write
 /// `let Ok(is_equivalent) = ...;`.
+///
+/// # Containers of terms
+///
+/// `Option<T>`, `[T]`, `Vec<T>`, `[T; N]`, `Box<T>`, `Rc<T>`, `Arc<T>` and
+/// tuples of one to eight terms implement the trait when their elements do:
+/// they compare the elements in order under the renaming they are given,
+/// require equal lengths, and match `None` only with `None`. A type with
+/// term fields calls them instead of chaining its fields by hand. The
+/// elements of a tuple share the error type of its first. There is no impl
+/// for sets or maps, whose iteration order would decide the answer; for maps
+/// keyed by identifiers use [`is_mapping_alpha_equivalent_under`](super::is_mapping_alpha_equivalent_under).
+///
+/// ```
+/// use std::convert::Infallible;
+///
+/// use fhy_core::expression::Expression;
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
+///
+/// struct Access {
+///     base: Expression,
+///     offset: Option<Expression>,
+///     strides: Vec<Expression>,
+/// }
+///
+/// impl AlphaEquivalence for Access {
+///     type Error = Infallible;
+///
+///     fn is_alpha_equivalent_under(
+///         &self,
+///         other: &Self,
+///         renaming: &AlphaRenaming,
+///     ) -> Result<bool, Infallible> {
+///         Ok(self.base.is_alpha_equivalent_under(&other.base, renaming)
+///             && self.offset.is_alpha_equivalent_under(&other.offset, renaming)?
+///             && self.strides.is_alpha_equivalent_under(&other.strides, renaming)?)
+///     }
+/// }
+///
+/// let (base, stride) = (Identifier::new("base"), Identifier::new("stride"));
+/// let access = |offset: Option<Expression>| Access {
+///     base: Expression::from(base.clone()),
+///     offset,
+///     strides: vec![Expression::from(stride.clone())],
+/// };
+/// let offset = Some(Expression::from(Identifier::new("offset")));
+/// let Ok(same) = access(offset.clone()).is_alpha_equivalent(&access(offset.clone()));
+/// let Ok(missing) = access(offset).is_alpha_equivalent(&access(None));
+/// assert!(same && !missing);
+/// ```
 pub trait AlphaEquivalence {
     /// The error a comparison fails with.
     type Error: Error + Send + Sync + 'static;
