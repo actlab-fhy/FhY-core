@@ -40,3 +40,6 @@ pub mod public_class;
 pub mod python;
 pub mod scoped;
 pub mod serialization;
+
+#[cfg(test)]
+mod testing;
