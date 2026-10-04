@@ -36,6 +36,12 @@ class MalformedPayloadError(SerializationError):
     pass
 
 
+class KeywordError(Exception):
+    def __init__(self, *args, **keywords):
+        super().__init__(*args)
+        self.keywords = keywords
+
+
 def is_serialized_dict(value):
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
