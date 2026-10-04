@@ -271,12 +271,7 @@ pub trait Binder: Clone {
         if extended.enter_binders(bound, other_bound).is_err() {
             return Ok(false);
         }
-        for (child, other_child) in children.iter().zip(other_children) {
-            if !child.is_alpha_equivalent_under(other_child, &extended)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(children.is_alpha_equivalent_under(other_children, &extended)?)
     }
 
     /// Return the free identifiers of the scoped children, minus the bound
