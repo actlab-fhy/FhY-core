@@ -402,6 +402,43 @@ param observer that logs to `fhy_core`'s loggers), detached from the
 interpreter when `detach`, and re-raises after the question the Python
 exception a hook raised during it. `fhy_core`'s methods run over the same
 code, so a downstream crate decides a question as `fhy_core` does.
+Its `kit` module is the public surface for writing a Rust-backed class the way
+`fhy_core`'s are written, which `fhy_core`'s own classes use and a downstream
+`-py` crate copies no longer. `kit::python` has `Seed` (the contents a private
+seed class hands a class's `__new__`, taken once), `ImportedAttr` and the
+`cached_attr!` macro (an attribute of a Python module, imported on first use
+and kept; the macro is exported at the crate root and re-exported there) and
+`type_name`. `kit::exceptions` has `ExceptionClass` (`new`, `class`, `build`,
+`err`, `is_instance_of`, declared as a `static`), `unbox_py_err`,
+`boxed_error_to_py` and the framework's classes `SERIALIZATION_ERROR`,
+`DESERIALIZATION_VALUE_ERROR`, `DESERIALIZATION_DICT_STRUCTURE_ERROR`,
+`MALFORMED_PAYLOAD_ERROR`, `FROZEN_MUTATION_ERROR` and
+`EQUIVALENCE_DERIVATION_ERROR`. `kit::interned` has `IdentityCache<K>`, the
+`is` identity of canonical values, generic over its key (the identifier id,
+`u64`, by default, and a `String` or tuple for a downstream class, read by the
+borrowed form) and the `InternedMixin` helpers. `kit::public_class` has
+`PublicClass::new` and `PublicClass::in_module`, which names a downstream
+module in its messages; `kit::frozen` the `FrozenMixin` refusals;
+`kit::dataclass` `compare_as_dataclass` (the equality answers a `bool` or a
+`PyResult<bool>`, through `Outcome`), `is_same_or_equal`, `hash_value`,
+`collect_tuple`, `format_dataclass_repr`, the argument checks and
+`OptionalArgument`; `kit::serialization` the payload readers,
+`read_payload_fields` over an array of `(name, FieldShape)` pairs or
+`PayloadFields::allowing_extra` for a reader that ignores other keys,
+`read_constructor_fields`, `read_nested_value`, `read_nested_list`,
+`keep_fields`, `serialize_nested`, `is_serialized_dict` and
+`construct_from_decoded_fields`, with
+`construct_from_decoded_fields_reporting_overflow` for a class that takes
+machine integers; `kit::scoped` `ScopedStack` and `ScopedGuard`;
+`kit::pending` the pending exception of an infallible hook
+(`record_pending_error`, `has_pending_error`, `with_pending_errors`,
+`capture_pending_errors`); `kit::gc` `Slot`, `Slots`, `collect_slots`,
+`traverse_locked`, `clear_locked` and `traverse_all`; and `kit::foreign`
+`foreign_of`, `foreign_failure` and `RaisedError`, which turn a Python-defined
+part into a core `Foreign`. Each item is documented with its errors and
+panics, and the stories in `kit/*/tests.rs` run them in the embedded
+interpreter against small stand-ins for the `fhy_core` modules the kit
+imports (`kit::testing`, since `fhy_core` itself is not importable there).
 A conversion that another crate needs and `convert` lacks is
 added there, as a documented `pub fn` over the `pub(crate)` one, and no
 `#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with
@@ -515,7 +552,7 @@ Each Rust-backed interned class has an identity cache from canonical keys
 to their Python objects, which is append-only like the registry it
 mirrors. Each Rust-backed class has a write-once slot for the public
 Python class that registers itself at import
-(`rust/fhy-core-py/src/public_class.rs`), so a value the binding builds
+(`rust/fhy-core-py/src/kit/public_class.rs`), so a value the binding builds
 from Rust is an instance of that class. The shared empty `AlphaRenaming`
 that `AlphaRenaming.empty()` returns is a write-once slot
 (`rust/fhy-core-py/src/term/renaming.rs`), an immutable value built on
@@ -566,7 +603,7 @@ call:
   Python objects the call was given, the class of its environment, and the
   first exception a Python-defined type's `==` or `hash` raised inside the
   core's infallible equality or hashing;
-- a pending-exception slot (`rust/fhy-core-py/src/constraint/value.rs`)
+- a pending-exception slot (`rust/fhy-core-py/src/kit/pending.rs`)
   holding the first exception a Python member's `==`, or a Python-defined
   constraint's or domain's structural equivalence, raised during one call
   into the core, which the call raises when the core returns: those back
@@ -575,9 +612,9 @@ call:
   `KeyboardInterrupt`, replaces a kept `Exception`, and once one is kept no
   comparison calls Python again during that call. The same slot holds the
   exception a Python-defined part's serialization hook raises while the
-  core serializes or resolves it (`rust/fhy-core-py/src/wire.rs`); the wire
+  core serializes or resolves it (`rust/fhy-core-py/src/kit/foreign.rs`); the wire
   version is a Python context variable, not Rust state;
-- a stack of slot collections (`rust/fhy-core-py/src/gc.rs`): a Python
+- a stack of slot collections (`rust/fhy-core-py/src/kit/gc.rs`): a Python
   object the binding keeps inside a Rust closure or a core trait object,
   where the cycle collector cannot see it, is held in a `Slot`, and the
   construction that makes it runs inside `collect_slots`, so the object it
@@ -586,7 +623,7 @@ call:
 
 Each frame lives only for its call, so every stack is empty whenever no
 such call runs. Every one of these, the pending-exception slot included,
-is a `ScopedStack` (`rust/fhy-core-py/src/scoped.rs`): a frame is pushed
+is a `ScopedStack` (`rust/fhy-core-py/src/kit/scoped.rs`): a frame is pushed
 only through a guard that pops it when dropped, on unwind included, so a
 panic, which PyO3 raises as `PanicException`, never leaves a stale frame
 for the thread's next call; the slot keeps an exception raised outside
@@ -888,7 +925,7 @@ When a canonical Rust value, such as an interned `OpAttribute`, reaches
 Python, the binding returns the same Python object for the same canonical
 instance every time, so `is` holds exactly as it does for values interned
 in Python. The binding crate keeps that cache, an `IdentityCache` per
-interned class in `rust/fhy-core-py/src/interned.rs`; the core crate holds
+interned class in `rust/fhy-core-py/src/kit/interned.rs`; the core crate holds
 no Python objects.
 
 ## Creating a new Pull Request
