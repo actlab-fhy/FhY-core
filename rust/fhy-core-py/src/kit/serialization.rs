@@ -35,7 +35,7 @@ pub(crate) fn serialize_nested<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound
 /// serializable values, as `fhy_core.serialization.is_serialized_dict`
 /// decides.
 pub(crate) fn is_serialized_dict(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    crate::python::cached_attr!(value.py(), MODULE, "is_serialized_dict" => PyAny)?
+    crate::kit::python::cached_attr!(value.py(), MODULE, "is_serialized_dict" => PyAny)?
         .call1((value,))?
         .is_truthy()
 }
@@ -151,7 +151,7 @@ pub(crate) fn read_payload_fields<'py, const N: usize>(
     for (name, shape) in fields {
         expected.set_item(name, shape.expected_type(py)?)?;
     }
-    Err(crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data)))
+    Err(crate::kit::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data)))
 }
 
 /// Return the values of `fields` in `data`, or `None` if `data` is not a
@@ -251,12 +251,12 @@ pub(crate) fn construct_from_decoded_fields<'py>(
     match cls.call_method1(pyo3::intern!(py, "construct_from_fields"), (fields,)) {
         Ok(instance) => Ok(instance),
         Err(error)
-            if !error.is_instance(py, crate::exceptions::SERIALIZATION_ERROR.class(py)?)
+            if !error.is_instance(py, crate::kit::exceptions::SERIALIZATION_ERROR.class(py)?)
                 && (error.is_instance_of::<PyValueError>(py)
                     || error.is_instance_of::<PyTypeError>(py)) =>
         {
             let message = error.value(py).str()?;
-            let wrapped = crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(py, (message,));
+            let wrapped = crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.err(py, (message,));
             wrapped.set_cause(py, Some(error));
             Err(wrapped)
         }

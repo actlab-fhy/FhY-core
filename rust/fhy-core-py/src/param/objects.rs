@@ -58,7 +58,7 @@ pub(crate) fn constraint_to_python<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     match constraint {
         Constraint::Equation(equation) => {
-            crate::python::cached_attr!(py, CONSTRAINTS, "EquationConstraint" => PyType)?
+            crate::kit::python::cached_attr!(py, CONSTRAINTS, "EquationConstraint" => PyType)?
                 .call1((materialize_expression(py, equation.expression())?,))
         }
         Constraint::Set(set) => {
@@ -69,9 +69,11 @@ pub(crate) fn constraint_to_python<'py>(
                 .collect::<PyResult<Vec<_>>>()?;
             let class = match set.polarity() {
                 Polarity::NotIn => {
-                    crate::python::cached_attr!(py, CONSTRAINTS, "NotInSetConstraint" => PyType)?
+                    crate::kit::python::cached_attr!(py, CONSTRAINTS, "NotInSetConstraint" => PyType)?
                 }
-                _ => crate::python::cached_attr!(py, CONSTRAINTS, "InSetConstraint" => PyType)?,
+                _ => {
+                    crate::kit::python::cached_attr!(py, CONSTRAINTS, "InSetConstraint" => PyType)?
+                }
             };
             class.call1((
                 identifier_to_python(py, set.variable())?,
@@ -187,7 +189,9 @@ pub(super) fn read_domain(domain: &Bound<'_, PyAny>) -> ParamDomain {
 /// Raises `TypeError` for an object that is not a `ParamDomain`.
 pub(super) fn read_domain_object(object: &Bound<'_, PyAny>) -> PyResult<ParamDomain> {
     let py = object.py();
-    if !object.is_instance(crate::python::cached_attr!(py, DOMAINS, "ParamDomain" => PyType)?)? {
+    if !object
+        .is_instance(crate::kit::python::cached_attr!(py, DOMAINS, "ParamDomain" => PyType)?)?
+    {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "expected a ParamDomain, got {}",
             crate::constraint::type_name(object)
@@ -215,29 +219,31 @@ pub(crate) fn domain_to_python<'py>(
     };
     match domain {
         ParamDomain::Integer(domain) => {
-            crate::python::cached_attr!(py, DOMAINS, "IntegerDomain" => PyType)?
+            crate::kit::python::cached_attr!(py, DOMAINS, "IntegerDomain" => PyType)?
                 .call1((domain.is_non_negative(), domain.is_zero_included()))
         }
         ParamDomain::IntervalInteger(domain) => {
-            crate::python::cached_attr!(py, DOMAINS, "IntervalIntegerDomain" => PyType)?.call1((
-                domain.is_inclusive_preferred(),
-                domain.is_non_negative(),
-                domain.is_zero_included(),
-            ))
+            crate::kit::python::cached_attr!(py, DOMAINS, "IntervalIntegerDomain" => PyType)?.call1(
+                (
+                    domain.is_inclusive_preferred(),
+                    domain.is_non_negative(),
+                    domain.is_zero_included(),
+                ),
+            )
         }
         ParamDomain::Real(_) => {
-            crate::python::cached_attr!(py, DOMAINS, "RealDomain" => PyType)?.call0()
+            crate::kit::python::cached_attr!(py, DOMAINS, "RealDomain" => PyType)?.call0()
         }
         ParamDomain::Ordinal(domain) => {
-            crate::python::cached_attr!(py, DOMAINS, "OrdinalDomain" => PyType)?
+            crate::kit::python::cached_attr!(py, DOMAINS, "OrdinalDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Categorical(domain) => {
-            crate::python::cached_attr!(py, DOMAINS, "CategoricalDomain" => PyType)?
+            crate::kit::python::cached_attr!(py, DOMAINS, "CategoricalDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Permutation(domain) => {
-            crate::python::cached_attr!(py, DOMAINS, "PermutationDomain" => PyType)?
+            crate::kit::python::cached_attr!(py, DOMAINS, "PermutationDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Custom(custom) => custom
@@ -271,7 +277,8 @@ pub(super) fn profile_to_python(
         intern!(py, "prefer_inclusive"),
         profile.is_inclusive_preferred(),
     )?;
-    crate::python::cached_attr!(py, DOMAINS, "IntervalProfile" => PyType)?.call((), Some(&keywords))
+    crate::kit::python::cached_attr!(py, DOMAINS, "IntervalProfile" => PyType)?
+        .call((), Some(&keywords))
 }
 
 /// Return the core profile of the Python `IntervalProfile` `profile`, read

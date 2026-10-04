@@ -12,8 +12,8 @@ use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PyValueError};
 use fhy_core::expression::registry::{FunctionRegistry, NativeFunction};
 use fhy_core::expression::{FunctionName, FunctionSort};
 
-use crate::constraint::record_pending_error;
 use crate::expression::{install_core_registry, reinstall};
+use crate::kit::pending::record_pending_error;
 use crate::solver::{PySolver, get_default_solver, set_default_solver};
 
 use super::*;

@@ -10,7 +10,7 @@ use crate::error::IntoPyErr;
 /// Raises `FhYCoreTypeError` with the core's text.
 impl IntoPyErr for PromotionError {
     fn into_py_err(self) -> PyErr {
-        Python::attach(|py| crate::exceptions::CORE_TYPE_ERROR.err(py, (self.to_string(),)))
+        Python::attach(|py| crate::kit::exceptions::CORE_TYPE_ERROR.err(py, (self.to_string(),)))
     }
 }
 
@@ -21,7 +21,7 @@ impl IntoPyErr for LiteralTypeError {
         if self.is_unsupported() {
             return PyNotImplementedError::new_err(self.to_string());
         }
-        Python::attach(|py| crate::exceptions::CORE_TYPE_ERROR.err(py, (self.to_string(),)))
+        Python::attach(|py| crate::kit::exceptions::CORE_TYPE_ERROR.err(py, (self.to_string(),)))
     }
 }
 
@@ -40,20 +40,20 @@ impl IntoPyErr for UnificationError {
     fn into_py_err(self) -> PyErr {
         match self {
             Self::Extension(source) => {
-                crate::exceptions::unbox_py_err(source).unwrap_or_else(|other| {
+                crate::kit::exceptions::unbox_py_err(source).unwrap_or_else(|other| {
                     Python::attach(|py| {
-                        crate::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
+                        crate::kit::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
                     })
                 })
             }
             Self::Substitution(source) => Python::attach(|py| {
                 let text = format!("{self}: {source}");
-                let error = crate::exceptions::VERIFICATION_ERROR.err(py, (text,));
+                let error = crate::kit::exceptions::VERIFICATION_ERROR.err(py, (text,));
                 error.set_cause(py, Some(source.into_py_err()));
                 error
             }),
             other => Python::attach(|py| {
-                crate::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
+                crate::kit::exceptions::VERIFICATION_ERROR.err(py, (other.to_string(),))
             }),
         }
     }

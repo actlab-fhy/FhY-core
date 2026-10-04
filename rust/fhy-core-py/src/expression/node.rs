@@ -29,13 +29,13 @@ use fhy_core::expression::{
     PiecewiseError, RebuildError, UnaryOperation,
 };
 
-use crate::dataclass::{build_argument_type_error, collect_tuple, hash_value, read_str};
 use crate::error::{IntoPyErr, IntoPyResult};
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::{read_identifier_id, restore_identifier};
-use crate::public_class::PublicClass;
-use crate::python::Seed;
-use crate::serialization::{FieldShape, construct_from_decoded_fields, read_payload_fields};
+use crate::kit::dataclass::{build_argument_type_error, collect_tuple, hash_value, read_str};
+use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::kit::public_class::PublicClass;
+use crate::kit::python::Seed;
+use crate::kit::serialization::{FieldShape, construct_from_decoded_fields, read_payload_fields};
 
 use super::literal::{literal_to_python, read_literal};
 use super::materialize::{materialize_expression, substitute};
@@ -261,7 +261,7 @@ fn decode_operation<'py, T: PythonOperation + std::str::FromStr>(
     let py = cls.py();
     match name.cast::<PyString>()?.to_str()?.parse::<T>() {
         Ok(operation) => operation_to_python(py, operation),
-        Err(_unknown) => Err(crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+        Err(_unknown) => Err(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.err(
             py,
             (
                 cls,
@@ -293,7 +293,7 @@ fn build_child_count_error(expected: usize, actual: usize) -> PyErr {
 
 /// Return `fhy_core.traits.visitable._camel_to_snake`.
 fn camel_to_snake(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
-    crate::python::cached_attr!(py, "fhy_core.traits.visitable", "_camel_to_snake" => PyAny)
+    crate::kit::python::cached_attr!(py, "fhy_core.traits.visitable", "_camel_to_snake" => PyAny)
 }
 
 // ---------------------------------------------------------------------------

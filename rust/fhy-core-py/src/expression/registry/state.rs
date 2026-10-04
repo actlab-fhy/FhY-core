@@ -215,7 +215,7 @@ impl RegistryState {
                     }
                 }
                 let class =
-                    crate::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)?;
+                    crate::kit::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)?;
                 class.call1((entries,)).map(Bound::unbind)
             })
             .map(|view| view.bind(py).clone())

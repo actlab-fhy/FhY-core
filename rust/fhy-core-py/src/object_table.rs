@@ -10,7 +10,7 @@
 //! holds so its identity stays unique while recorded, and `Identifier`
 //! objects by id. A table a call reaches through a thread-local, the
 //! pattern tables and the type-system contexts, is pushed on a
-//! [`ScopedStack`](crate::scoped::ScopedStack).
+//! [`ScopedStack`](crate::kit::scoped::ScopedStack).
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;

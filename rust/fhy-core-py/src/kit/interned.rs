@@ -112,7 +112,7 @@ pub(crate) fn warn_if_description_ignored(
         return Ok(());
     }
     let py = cls.py();
-    let logger = crate::python::cached_attr!(py, "logging", "getLogger" => PyAny)?
+    let logger = crate::kit::python::cached_attr!(py, "logging", "getLogger" => PyAny)?
         .call1((intern!(py, "fhy_core.traits.interned"),))?;
     logger.call_method1(
         intern!(py, "warning"),
@@ -151,5 +151,5 @@ pub(crate) fn build_conflict_error(
         canonical_value.repr()?,
         payload_value.repr()?,
     );
-    Ok(crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(cls.py(), (message,)))
+    Ok(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.err(cls.py(), (message,)))
 }

@@ -15,8 +15,8 @@ use fhy_core::param::{ParamEvent, ParamObserver, ScreenReason};
 use fhy_core::solver::QueryKind;
 
 use crate::constraint::{
-    DEBUG, LoggingObserver, WARNING, core_logger, join_items, log, member_to_python,
-    record_pending_error, repr_text, system_logger,
+    DEBUG, LoggingObserver, WARNING, core_logger, join_items, log, member_to_python, repr_text,
+    system_logger,
 };
 use crate::solver::{is_pass_execution_failure, warn_hazard, warn_unknown};
 
@@ -24,6 +24,7 @@ use super::objects::{
     bindings_to_python, bound_identifiers_text, constraint_class_name, constraint_repr,
     identifier_object,
 };
+use crate::kit::pending::record_pending_error;
 
 /// Return `fhy_core.symbolic.param.domains`'s logger.
 fn domains_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {

@@ -12,7 +12,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyType};
 
-use crate::python::ImportedAttr;
+use crate::kit::python::ImportedAttr;
 
 /// A Python exception class, imported on first use.
 pub(crate) struct ExceptionClass(ImportedAttr<PyType>);

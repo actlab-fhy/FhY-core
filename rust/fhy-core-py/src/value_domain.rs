@@ -29,12 +29,12 @@ use crate::identifier::{
     deserialize_identifier, identifier_to_python, read_identifier_id, restore_identifier,
     serialize_identifier,
 };
-use crate::interned::{
+use crate::kit::interned::{
     IdentityCache, build_conflict_error, build_not_interned_error, raise_registry_append_only,
     warn_if_description_ignored,
 };
-use crate::python::Seed;
-use crate::serialization::{FieldShape, read_constructor_fields, read_payload_fields};
+use crate::kit::python::Seed;
+use crate::kit::serialization::{FieldShape, read_constructor_fields, read_payload_fields};
 
 /// The class name errors and restored identifiers name.
 const CLASS_NAME: &str = "ValueDomain";
@@ -366,11 +366,11 @@ impl PyValueDomain {
     }
 
     fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
-        crate::frozen::refuse_attribute_assignment(slf, name)
+        crate::kit::frozen::refuse_attribute_assignment(slf, name)
     }
 
     fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        crate::frozen::refuse_attribute_deletion(slf, name)
+        crate::kit::frozen::refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as the V2 payload, so unpickling returns the canonical domain.
@@ -482,7 +482,7 @@ impl PyValueDomain {
         let mut parent = py.None().into_bound(py);
         let levels = levels.cast::<pyo3::types::PyList>()?;
         if levels.is_empty() {
-            return Err(crate::exceptions::DESERIALIZATION_VALUE_ERROR
+            return Err(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR
                 .err(py, (cls, "levels", "a non-empty list of levels", levels)));
         }
         for level in levels.iter() {

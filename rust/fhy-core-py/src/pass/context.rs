@@ -19,10 +19,10 @@ use pyo3::types::PyType;
 
 use fhy_core::pass::{AnalysisId, DetachedAnalyses};
 
-use crate::dataclass::build_argument_type_error;
 use crate::diagnostic::borrow_python_diagnostic;
 use crate::identifier::restore_identifier;
-use crate::scoped::{ScopedGuard, ScopedStack};
+use crate::kit::dataclass::build_argument_type_error;
+use crate::kit::scoped::{ScopedGuard, ScopedStack};
 
 use super::analysis::PyAnalysisBase;
 use super::ir::PyIr;
@@ -333,8 +333,8 @@ impl PyAnalysisManager {
         if Arc::strong_count(&self.frame) != 1 {
             return Ok(());
         }
-        crate::gc::traverse_locked(&self.frame.state, |state| {
-            crate::gc::traverse_all(&visit, &state.reported)
+        crate::kit::gc::traverse_locked(&self.frame.state, |state| {
+            crate::kit::gc::traverse_all(&visit, &state.reported)
         })
     }
 

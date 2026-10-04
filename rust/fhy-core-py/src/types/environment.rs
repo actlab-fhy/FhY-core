@@ -18,12 +18,12 @@ use pyo3::types::{PyBool, PyDict, PyMapping, PyTuple, PyType};
 use fhy_core::identifier::Identifier;
 use fhy_core::types::TypeUnificationEnvironment;
 
-use crate::dataclass::{build_argument_type_error, hash_value};
 use crate::error::IntoPyErr;
-use crate::gc::{Slots, collect_slots};
 use crate::identifier::{read_identifier_id, restore_identifier};
-use crate::public_class::PublicClass;
-use crate::python::Seed;
+use crate::kit::dataclass::{build_argument_type_error, hash_value};
+use crate::kit::gc::{Slots, collect_slots};
+use crate::kit::public_class::PublicClass;
+use crate::kit::python::Seed;
 
 use super::adapter::{Context, environment_class, run_in_context};
 use super::convert::{
@@ -98,7 +98,7 @@ pub(crate) struct PyTypeUnificationEnvironment {
 
 /// Return `immutabledict.immutabledict`.
 fn immutabledict_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)
+    crate::kit::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)
 }
 
 /// Which table a binding belongs to.

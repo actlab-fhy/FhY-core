@@ -15,14 +15,14 @@ use pyo3::types::{PyBool, PyDict, PyFrozenSet, PyTuple, PyType};
 
 use fhy_core::pass::{AnalysisId, PreservedAnalyses};
 
-use crate::dataclass::{
+use crate::identifier::{identifier_to_python, restore_identifier};
+use crate::kit::dataclass::{
     OptionalArgument, build_argument_type_error, compare_as_dataclass, format_dataclass_repr,
     hash_value,
 };
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::identifier::{identifier_to_python, restore_identifier};
-use crate::public_class::PublicClass;
-use crate::python::Seed;
+use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::kit::public_class::PublicClass;
+use crate::kit::python::Seed;
 
 use super::compiler_pass::refuse_unused_arguments;
 

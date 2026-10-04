@@ -29,20 +29,13 @@ use fhy_core::solver::{
 };
 
 use crate::expression::{PyExpression, materialize_expression, materialize_substituted};
-use crate::gc::Slot;
+use crate::kit::gc::Slot;
+pub(super) use crate::kit::python::type_name;
+use crate::kit::scoped::ScopedStack;
 use crate::object_table::ObjectTable;
 use crate::pass::refuse_unused_arguments;
-use crate::scoped::ScopedStack;
 
 use super::values::{PySatResult, PySmtScript};
-
-/// Return the name of the type of `value`, for messages.
-pub(super) fn type_name(value: &Bound<'_, PyAny>) -> String {
-    value
-        .get_type()
-        .name()
-        .map_or_else(|_| "?".to_owned(), |name| name.to_string())
-}
 
 /// Return the `name` of the Python backend `object`, or its class name if
 /// reading it fails or gives no `str`.

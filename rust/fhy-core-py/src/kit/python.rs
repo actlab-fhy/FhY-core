@@ -83,13 +83,21 @@ impl<T: PyTypeCheck> ImportedAttr<T> {
 /// type, `cached_attr!(py, "fhy_core.types", "Type" => PyType)`.
 macro_rules! cached_attr {
     ($py:expr, $module:expr, $name:expr) => {
-        $crate::python::cached_attr!($py, $module, $name => ::pyo3::PyAny)
+        $crate::kit::python::cached_attr!($py, $module, $name => ::pyo3::PyAny)
     };
     ($py:expr, $module:expr, $name:expr => $type:ty) => {{
-        static ATTRIBUTE: $crate::python::ImportedAttr<$type> =
-            $crate::python::ImportedAttr::new($module, $name);
+        static ATTRIBUTE: $crate::kit::python::ImportedAttr<$type> =
+            $crate::kit::python::ImportedAttr::new($module, $name);
         ATTRIBUTE.get($py)
     }};
 }
 
 pub(crate) use cached_attr;
+
+/// Return the name of `value`'s type, or `?` if it has none, for messages.
+pub(crate) fn type_name(value: &Bound<'_, PyAny>) -> String {
+    value
+        .get_type()
+        .name()
+        .map_or_else(|_| "?".to_owned(), |name| name.to_string())
+}

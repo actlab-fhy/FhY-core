@@ -103,9 +103,9 @@ fn render_chain(error: &(dyn Error + 'static)) -> String {
 /// Return the Python error class of `class`.
 fn error_class(py: Python<'_>, class: FailureClass) -> PyResult<&Bound<'_, PyType>> {
     if matches!(class, FailureClass::Validation) {
-        crate::exceptions::PASS_VALIDATION_ERROR.class(py)
+        crate::kit::exceptions::PASS_VALIDATION_ERROR.class(py)
     } else {
-        crate::exceptions::PASS_EXECUTION_ERROR.class(py)
+        crate::kit::exceptions::PASS_EXECUTION_ERROR.class(py)
     }
 }
 

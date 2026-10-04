@@ -7,15 +7,12 @@
 //! by parsing into the core's wire form and building the value with
 //! [`PyResolver`], which turns each foreign part back into the Python
 //! object its registered class decodes. The Python-defined parts of a
-//! value give their foreign parts through [`foreign_of`]. A Python exception
+//! value give their foreign parts through [`foreign_of`](crate::kit::foreign::foreign_of). A Python exception
 //! raised inside either hook is kept in the constraint binding's
 //! pending-error slot and raised as itself when serde returns.
 //!
 //! V1, the deprecated envelope format, is read and written by the classes'
 //! own V1 code; [`is_writing_v1`] and [`is_v1_payload`] choose it.
-
-use std::error::Error;
-use std::fmt;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
@@ -30,12 +27,12 @@ use fhy_core::foreign::{BuildError, Foreign, ForeignError, Part, Resolve};
 use fhy_core::param::{CustomDomain, ParamDomain};
 use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 
-use crate::constraint::{
-    read_constraint, read_opaque_member, record_pending_error, with_pending_errors,
-};
-use crate::exceptions::{
+use crate::constraint::{read_constraint, read_opaque_member};
+use crate::kit::exceptions::{
     DESERIALIZATION_VALUE_ERROR, MALFORMED_PAYLOAD_ERROR, SERIALIZATION_ERROR,
 };
+use crate::kit::foreign::foreign_failure;
+use crate::kit::pending::with_pending_errors;
 
 mod families;
 mod python_value;
@@ -56,7 +53,7 @@ const MODULE: &str = "fhy_core.serialization";
 /// Raises what reading the framework's context variable raises.
 pub(crate) fn is_writing_v1(py: Python<'_>) -> PyResult<bool> {
     static V1: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    let version = crate::python::cached_attr!(py, MODULE, "_WIRE_VERSION" => PyAny)?
+    let version = crate::kit::python::cached_attr!(py, MODULE, "_WIRE_VERSION" => PyAny)?
         .call_method0(intern!(py, "get"))?;
     let v1 = V1.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
         Ok(py
@@ -85,7 +82,7 @@ pub(crate) fn is_v1_payload(data: &Bound<'_, PyAny>) -> bool {
 
 /// Return whether a V1 payload is being read in this context.
 pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
-    crate::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)
+    crate::kit::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)
         .and_then(|flag| flag.call_method0(intern!(py, "get")))
         .and_then(|value| value.is_truthy())
         .unwrap_or(false)
@@ -97,7 +94,7 @@ pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
 ///
 /// Raises the warning when warnings are errors.
 pub(crate) fn warn_v1_read(cls: &Bound<'_, PyType>) -> PyResult<()> {
-    crate::python::cached_attr!(cls.py(), MODULE, "_warn_v1_read" => PyAny)?.call1((cls,))?;
+    crate::kit::python::cached_attr!(cls.py(), MODULE, "_warn_v1_read" => PyAny)?.call1((cls,))?;
     Ok(())
 }
 
@@ -323,60 +320,6 @@ pub(crate) fn build<T>(
     })
 }
 
-/// A message of a Python exception, the source of a failed foreign part.
-#[derive(Debug)]
-struct RaisedError(String);
-
-impl fmt::Display for RaisedError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Error for RaisedError {}
-
-/// Keep `error` as the pending exception, and return the foreign error of
-/// the part `type_id` it stands for.
-fn failed(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignError {
-    let message = error.value(py).to_string();
-    record_pending_error(error);
-    ForeignError::Failed {
-        type_id: type_id.to_owned(),
-        source: Box::new(RaisedError(message)),
-    }
-}
-
-/// Return the foreign part of the Python-defined part `object`: its type
-/// id and the canonical text of its data, as a family member when
-/// `family`, and its whole payload otherwise.
-///
-/// # Errors
-///
-/// Returns [`ForeignError::Failed`], keeping the Python exception pending,
-/// when the object's hooks raise.
-pub(crate) fn foreign_of(object: &Py<PyAny>, family: bool) -> Result<Foreign, ForeignError> {
-    Python::attach(|py| {
-        let object = object.bind(py);
-        let result = (|| -> PyResult<(String, String)> {
-            let keywords = PyDict::new(py);
-            keywords.set_item(intern!(py, "family"), family)?;
-            crate::python::cached_attr!(py, MODULE, "_foreign_payload" => PyAny)?
-                .call((object,), Some(&keywords))?
-                .extract()
-        })();
-        match result {
-            Ok((type_id, data)) => Ok(Foreign::new(type_id, data)),
-            Err(error) => {
-                let name = object
-                    .get_type()
-                    .name()
-                    .map_or_else(|_| "?".to_owned(), |name| name.to_string());
-                Err(failed(py, &name, error))
-            }
-        }
-    })
-}
-
 /// The resolver of the foreign parts a Python payload holds: each part's
 /// type id is looked up in the framework's registry, its class decodes its
 /// data, and the object becomes the part through the binding's adapter.
@@ -393,15 +336,15 @@ fn resolve_object<'py>(
     let result = (|| -> PyResult<Bound<'py, PyAny>> {
         let keywords = PyDict::new(py);
         keywords.set_item(intern!(py, "family"), family)?;
-        crate::python::cached_attr!(py, MODULE, "_resolve_foreign" => PyAny)?
+        crate::kit::python::cached_attr!(py, MODULE, "_resolve_foreign" => PyAny)?
             .call((foreign.type_id(), foreign.data()), Some(&keywords))
     })();
-    result.map_err(|error| failed(py, foreign.type_id(), error))
+    result.map_err(|error| foreign_failure(py, foreign.type_id(), error))
 }
 
 /// Return the error of a resolved object of the wrong kind for its place.
 fn wrong_kind(py: Python<'_>, foreign: &Foreign, expected: &str) -> ForeignError {
-    failed(
+    foreign_failure(
         py,
         foreign.type_id(),
         PyTypeError::new_err(format!(
@@ -418,7 +361,7 @@ impl Resolve<Part<dyn OpaqueValue>> for PyResolver {
             match read_opaque_member(&object) {
                 Ok(Value::Opaque(opaque)) => Ok(opaque),
                 Ok(_) => Err(wrong_kind(py, foreign, "Serializable value")),
-                Err(error) => Err(failed(py, foreign.type_id(), error)),
+                Err(error) => Err(foreign_failure(py, foreign.type_id(), error)),
             }
         })
     }
@@ -431,7 +374,7 @@ impl Resolve<Part<dyn CustomConstraint>> for PyResolver {
             match read_constraint(&object) {
                 Ok(Constraint::Custom(custom)) => Ok(custom),
                 Ok(_) => Err(wrong_kind(py, foreign, "Python-defined Constraint")),
-                Err(error) => Err(failed(py, foreign.type_id(), error)),
+                Err(error) => Err(foreign_failure(py, foreign.type_id(), error)),
             }
         })
     }
@@ -444,7 +387,7 @@ impl Resolve<Part<dyn CustomDomain>> for PyResolver {
             match crate::param::read_domain_object(&object) {
                 Ok(ParamDomain::Custom(custom)) => Ok(custom),
                 Ok(_) => Err(wrong_kind(py, foreign, "Python-defined ParamDomain")),
-                Err(error) => Err(failed(py, foreign.type_id(), error)),
+                Err(error) => Err(foreign_failure(py, foreign.type_id(), error)),
             }
         })
     }
@@ -517,7 +460,7 @@ fn base_method<'py>(
 ///
 /// Raises what the member's V1 data hook raises.
 pub(crate) fn write_v1_envelope<'py>(object: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    crate::python::cached_attr!(object.py(), MODULE, "_write_v1_envelope" => PyAny)?
+    crate::kit::python::cached_attr!(object.py(), MODULE, "_write_v1_envelope" => PyAny)?
         .call1((object,))
 }
 
@@ -532,7 +475,7 @@ pub(crate) fn reading_v1<T>(
     read: impl FnOnce() -> PyResult<T>,
 ) -> PyResult<T> {
     let py = cls.py();
-    let flag = crate::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)?;
+    let flag = crate::kit::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)?;
     if flag.call_method0(intern!(py, "get"))?.is_truthy()? {
         return read();
     }

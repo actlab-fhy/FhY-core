@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, TryLockError};
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 
-use crate::scoped::ScopedStack;
+use crate::kit::scoped::ScopedStack;
 
 /// A Python object held where no traversal can see it, visible to the one
 /// object that owns it (see the [module docs](self)).

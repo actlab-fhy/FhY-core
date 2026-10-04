@@ -85,7 +85,7 @@ pub(super) fn log_diagnostic(
     diagnostic: &Diagnostic,
     exc_info: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    crate::python::cached_attr!(py, CORE_MODULE, "_log_diagnostic" => PyAny)?.call1((
+    crate::kit::python::cached_attr!(py, CORE_MODULE, "_log_diagnostic" => PyAny)?.call1((
         diagnostic.source(),
         level_to_python(py, diagnostic.level())?,
         diagnostic.message_text(),
@@ -98,7 +98,7 @@ pub(super) fn log_diagnostic(
 /// Return the logger of the pass `name` if it logs `DEBUG` lines, and
 /// otherwise `None`: `fhy_core.pass_infrastructure.core._lifecycle_logger`.
 fn lifecycle_logger(py: Python<'_>, name: &str) -> PyResult<Option<Py<PyAny>>> {
-    let logger = crate::python::cached_attr!(py, CORE_MODULE, "_lifecycle_logger" => PyAny)?
+    let logger = crate::kit::python::cached_attr!(py, CORE_MODULE, "_lifecycle_logger" => PyAny)?
         .call1((name,))?;
     Ok((!logger.is_none()).then(|| logger.unbind()))
 }
@@ -603,14 +603,14 @@ impl PyCompilerPassBase {
         reason = "PyO3 hands `__traverse__` its visitor by value"
     )]
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        crate::gc::traverse_locked(&self.diagnostics, |diagnostics| {
-            crate::gc::traverse_all(&visit, diagnostics)
+        crate::kit::gc::traverse_locked(&self.diagnostics, |diagnostics| {
+            crate::kit::gc::traverse_all(&visit, diagnostics)
         })
     }
 
     /// Drop what only this object holds, for the cycle collector.
     fn __clear__(&self) {
-        crate::gc::clear_locked(&self.diagnostics);
+        crate::kit::gc::clear_locked(&self.diagnostics);
     }
 
     /// Accept any arguments, so a subclass's `__init__` takes its own.

@@ -76,7 +76,7 @@ pub(crate) fn next_identifier_id() -> u64 {
 /// The Python `fhy_core.identifier.Identifier` class, which stays a Python
 /// class.
 fn python_identifier_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)
+    crate::kit::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)
 }
 
 /// Return a new Python `Identifier` named `name_hint`, with a new id.

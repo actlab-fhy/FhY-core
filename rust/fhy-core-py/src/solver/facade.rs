@@ -23,7 +23,7 @@ use fhy_core::solver::{
 };
 
 use crate::expression::{PyExpression, materialize_substituted, registry_snapshot};
-use crate::gc::{Slots, collect_slots};
+use crate::kit::gc::{Slots, collect_slots};
 use crate::object_table::ObjectTable;
 
 use crate::identifier::{read_identifier_id, restore_identifier};
@@ -59,7 +59,7 @@ fn read_expression(value: &Bound<'_, PyAny>, owner: &str, field: &str) -> PyResu
 /// `2**64` milliseconds.
 pub(crate) fn read_limits(timeout_milliseconds: &Bound<'_, PyAny>) -> PyResult<CheckLimits> {
     let py = timeout_milliseconds.py();
-    crate::python::cached_attr!(py, "fhy_core.symbolic.solver", "validate_timeout_milliseconds" => PyAny)?
+    crate::kit::python::cached_attr!(py, "fhy_core.symbolic.solver", "validate_timeout_milliseconds" => PyAny)?
         .call1((timeout_milliseconds,))?;
     if timeout_milliseconds.is_none() {
         return Ok(CheckLimits::new());

@@ -18,13 +18,11 @@ use fhy_core::param::{
     OrdinalDomain, ParamContext, ParamDomain, PermutationDomain, RealDomain, Side,
 };
 
-use crate::constraint::{
-    capture_pending_errors, join_items, member_to_python, outcome_to_python, with_pending_errors,
-};
-use crate::dataclass::OptionalArgument;
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::constraint::{join_items, member_to_python, outcome_to_python};
 use crate::identifier::restore_identifier;
-use crate::serialization::{construct_from_decoded_fields, is_serialized_dict};
+use crate::kit::dataclass::OptionalArgument;
+use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::kit::serialization::{construct_from_decoded_fields, is_serialized_dict};
 use crate::solver::symbol_type_to_python;
 
 use super::error::{ParamFailure, ordinal_error_to_py, param_error_to_py};
@@ -32,6 +30,7 @@ use super::objects::{
     constraints_to_python, domain_to_python, profile_to_python, read_constraints, read_domain,
 };
 use super::value::{read_candidate, read_finite_values, to_tuple};
+use crate::kit::pending::{capture_pending_errors, with_pending_errors};
 
 pub(super) use crate::convert::param::run_with_context;
 
@@ -68,7 +67,7 @@ pub(crate) struct DomainState {
     core: ParamDomain,
     values: Option<Py<PyTuple>>,
     /// The slots of the opaque values' adapters, which the domain owns.
-    slots: crate::gc::Slots,
+    slots: crate::kit::gc::Slots,
 }
 
 impl DomainState {
@@ -77,7 +76,7 @@ impl DomainState {
         Self {
             core: core.into(),
             values: None,
-            slots: crate::gc::Slots::default(),
+            slots: crate::kit::gc::Slots::default(),
         }
     }
 
@@ -90,7 +89,7 @@ impl DomainState {
         Ok(Self {
             core: core.into(),
             values: Some(PyTuple::new(py, objects)?.unbind()),
-            slots: crate::gc::Slots::default(),
+            slots: crate::kit::gc::Slots::default(),
         })
     }
 
@@ -297,7 +296,7 @@ impl DomainState {
 /// the serialization framework's wrapped registry.
 fn serialize_values<'py>(values: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyList>> {
     let py = values.py();
-    let serialize = crate::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
+    let serialize = crate::kit::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
     let payloads = values
         .iter()
         .map(|value| serialize.call1((value,)))
@@ -322,7 +321,7 @@ fn value_error(
     value: &Bound<'_, PyAny>,
 ) -> PyErr {
     let py = class.py();
-    crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(py, (class, field, description, value))
+    crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.err(py, (class, field, description, value))
 }
 
 /// Return the values of the payload `data` of a finite domain of `kind`,
@@ -334,7 +333,7 @@ fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bo
             "Expected a list of wrapped leaf values.",
         ));
     };
-    let owner = crate::python::cached_attr!(py, "fhy_core.symbolic.param.domains", "ParamDomain" => PyType)?;
+    let owner = crate::kit::python::cached_attr!(py, "fhy_core.symbolic.param.domains", "ParamDomain" => PyType)?;
     let description = values_description(kind);
     for payload in payloads.iter() {
         if !is_serialized_dict(&payload)? {
@@ -346,7 +345,7 @@ fn decode_values<'py>(kind: DomainKind, data: &Bound<'py, PyAny>) -> PyResult<Bo
             ));
         }
     }
-    let deserialize = crate::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
+    let deserialize = crate::kit::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
     let decoded = PyList::empty(py);
     for payload in payloads.iter() {
         decoded.append(deserialize.call1((payload,))?)?;
@@ -397,9 +396,8 @@ fn deserialize_domain<'py>(
                 expected.set_item(*name, py.get_type::<PyBool>())?;
             }
         }
-        return Err(
-            crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data))
-        );
+        return Err(crate::kit::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR
+            .err(py, (cls, expected, data)));
     }
     let decoded = PyDict::new(py);
     for (name, kind) in fields {
@@ -641,7 +639,7 @@ macro_rules! domain_class {
                 let fields = slf.get().fields(py);
                 let fields: Vec<(&str, &Bound<'_, PyAny>)> =
                     fields.iter().map(|(name, value)| (*name, value)).collect();
-                crate::dataclass::format_dataclass_repr(&slf.get_type(), &fields)
+                crate::kit::dataclass::format_dataclass_repr(&slf.get_type(), &fields)
             }
 
             /// Always true: domains are immutable.
@@ -828,7 +826,7 @@ fn build_finite(
     values: &Bound<'_, PyAny>,
 ) -> PyResult<DomainState> {
     // The opaque values' adapters are this domain's to traverse.
-    let (state, slots) = crate::gc::collect_slots(|| build_finite_state(py, kind, values));
+    let (state, slots) = crate::kit::gc::collect_slots(|| build_finite_state(py, kind, values));
     let mut state = state?;
     state.slots = slots;
     Ok(state)

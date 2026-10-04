@@ -41,8 +41,8 @@ use fhy_core::types::{
 
 use super::convert;
 use super::environment::PyTypeUnificationEnvironment;
-use crate::gc::Slot;
-use crate::scoped::ScopedStack;
+use crate::kit::gc::Slot;
+use crate::kit::scoped::ScopedStack;
 
 /// The Python objects of the values a call has seen, by the values' Rust
 /// identity.
@@ -308,7 +308,7 @@ impl ForeignPart for PyTypeAdapter {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::kit::foreign::foreign_of(&self.object.object(py), true))
     }
 }
 
@@ -476,7 +476,7 @@ impl ForeignPart for PyDataTypeAdapter {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::kit::foreign::foreign_of(&self.object.object(py), true))
     }
 }
 

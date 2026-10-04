@@ -35,5 +35,5 @@ fn build_frozen_mutation_error(
         "Cannot {action} \"{name}\" on frozen {}.",
         object.get_type().name()?
     );
-    Ok(crate::exceptions::FROZEN_MUTATION_ERROR.err(object.py(), (message,)))
+    Ok(crate::kit::exceptions::FROZEN_MUTATION_ERROR.err(object.py(), (message,)))
 }

@@ -27,8 +27,8 @@ use pyo3::prelude::*;
 
 use fhy_core::param::ParamContext;
 
-use crate::constraint::with_pending_errors;
 use crate::expression::registry_snapshot;
+use crate::kit::pending::with_pending_errors;
 use crate::param::PyParamObserver;
 use crate::solver::get_default_solver;
 

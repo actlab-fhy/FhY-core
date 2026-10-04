@@ -28,14 +28,14 @@ use fhy_core::provenance::{
     Position, PositionError, Provenance, Span, SpanError,
 };
 
-use crate::dataclass::{
+use crate::error::{IntoPyErr, IntoPyResult};
+use crate::kit::dataclass::{
     build_argument_type_error, collect_tuple, compare_as_dataclass, format_dataclass_repr,
     hash_value, read_str,
 };
-use crate::error::{IntoPyErr, IntoPyResult};
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::public_class::PublicClass;
-use crate::serialization::{
+use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::kit::public_class::PublicClass;
+use crate::kit::serialization::{
     FieldShape, construct_from_decoded_fields, read_payload_fields, serialize_nested,
 };
 
@@ -212,12 +212,12 @@ fn build_fields<'py>(
 
 /// Return `pathlib.PurePath`.
 fn pure_path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "pathlib", "PurePath" => PyType)
+    crate::kit::python::cached_attr!(py, "pathlib", "PurePath" => PyType)
 }
 
 /// Return `pathlib.Path`.
 fn path_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "pathlib", "Path" => PyType)
+    crate::kit::python::cached_attr!(py, "pathlib", "Path" => PyType)
 }
 
 // ---------------------------------------------------------------------------

@@ -44,26 +44,17 @@
 //! module it has registered into already.
 
 mod constraint;
-mod dataclass;
 mod described_tag;
 mod diagnostic;
 mod error;
-mod exceptions;
 mod expression;
-mod frozen;
-mod gc;
 mod identifier;
-mod interned;
 mod lattice;
 mod object_table;
 mod op_attribute;
 mod param;
 mod pass;
 mod provenance;
-mod public_class;
-mod python;
-mod scoped;
-mod serialization;
 mod solver;
 mod symbol_table;
 mod term;
@@ -72,6 +63,7 @@ mod value_domain;
 mod wire;
 
 pub mod convert;
+pub mod kit;
 
 use pyo3::prelude::*;
 

@@ -29,12 +29,13 @@ use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
 
 use crate::expression::{PyExpression, materialize_expression};
-use crate::gc::Slot;
 use crate::identifier::{identifier_to_python, restore_identifier};
+use crate::kit::gc::Slot;
 use crate::term::PyAlphaRenaming;
 
 use super::kinds::outcome_to_python;
-use super::value::{has_pending_error, record_pending_error, type_name, value_to_python};
+use super::value::{type_name, value_to_python};
+use crate::kit::pending::{has_pending_error, record_pending_error};
 
 /// The Python form of a system's bindings: the snapshot of the caller's
 /// mapping.
@@ -159,7 +160,7 @@ impl ForeignPart for PyCustomConstraint {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::kit::foreign::foreign_of(&self.object.object(py), true))
     }
 }
 
