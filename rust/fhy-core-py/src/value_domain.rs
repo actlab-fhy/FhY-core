@@ -129,7 +129,7 @@ impl PyValueDomain {
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = cls.py();
         let id = domain.name().id();
-        if let Some(object) = IDENTITY_CACHE.get(py, id) {
+        if let Some(object) = IDENTITY_CACHE.get(py, &id) {
             return Ok(object);
         }
         let parent = domain
@@ -275,7 +275,7 @@ impl PyValueDomain {
         // first registration wins; any other case registers, which also
         // reports a conflicting parent.
         if let Some(id) = read_identifier_id(name)? {
-            if let Some(object) = IDENTITY_CACHE.get(py, id) {
+            if let Some(object) = IDENTITY_CACHE.get(py, &id) {
                 let cached_parent = object.cast::<Self>()?.get().domain.parent();
                 if cached_parent.map(|domain| domain.name())
                     == parent.as_ref().map(|domain| domain.name())
@@ -423,7 +423,7 @@ impl PyValueDomain {
             key.hash()?;
             return Ok(None);
         };
-        let object = if let Some(object) = IDENTITY_CACHE.get(cls.py(), id) {
+        let object = if let Some(object) = IDENTITY_CACHE.get(cls.py(), &id) {
             object
         } else {
             let identifier = restore_identifier(key, CLASS_NAME, "key")?;

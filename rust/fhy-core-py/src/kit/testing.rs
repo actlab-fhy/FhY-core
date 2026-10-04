@@ -118,3 +118,23 @@ pub(crate) fn evaluate<'py>(py: Python<'py>, source: &str) -> Bound<'py, PyAny> 
     py.eval(&code, None, None)
         .unwrap_or_else(|error| panic!("evaluating {source:?} failed: {error}"))
 }
+
+/// Run the Python `source` in a new namespace, and return the namespace.
+pub(crate) fn define<'py>(py: Python<'py>, source: &str) -> Bound<'py, pyo3::types::PyDict> {
+    let namespace = pyo3::types::PyDict::new(py);
+    let code = CString::new(source).expect("no nul");
+    py.run(&code, Some(&namespace), None)
+        .unwrap_or_else(|error| panic!("running {source:?} failed: {error}"));
+    namespace
+}
+
+/// Return the entry `name` of `namespace`.
+pub(crate) fn entry<'py>(
+    namespace: &Bound<'py, pyo3::types::PyDict>,
+    name: &str,
+) -> Bound<'py, PyAny> {
+    namespace
+        .get_item(name)
+        .expect("a readable namespace")
+        .unwrap_or_else(|| panic!("the namespace has no {name:?}"))
+}

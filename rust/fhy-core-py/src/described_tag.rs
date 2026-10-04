@@ -89,7 +89,7 @@ macro_rules! define_described_tag_class {
                 name: Option<&Bound<'py, PyAny>>,
             ) -> PyResult<Bound<'py, PyAny>> {
                 let id = tag.name().id();
-                if let Some(object) = Self::identity_cache().get(py, id) {
+                if let Some(object) = Self::identity_cache().get(py, &id) {
                     return Ok(object);
                 }
                 let cls = match cls {
@@ -201,7 +201,7 @@ macro_rules! define_described_tag_class {
                 // A cached key is registered, and the first registration
                 // wins, so the cached object is the answer.
                 if let Some(id) = $crate::identifier::read_identifier_id(name)? {
-                    if let Some(object) = Self::identity_cache().get(target_class.py(), id) {
+                    if let Some(object) = Self::identity_cache().get(target_class.py(), &id) {
                         return Ok(object);
                     }
                 }
@@ -321,7 +321,7 @@ macro_rules! define_described_tag_class {
                     key.hash()?;
                     return Ok(None);
                 };
-                let object = if let Some(object) = Self::identity_cache().get(cls.py(), id) {
+                let object = if let Some(object) = Self::identity_cache().get(cls.py(), &id) {
                     object
                 } else {
                     let identifier =
