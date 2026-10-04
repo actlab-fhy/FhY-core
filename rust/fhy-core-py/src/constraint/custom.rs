@@ -35,7 +35,8 @@ use crate::util::gc::Slot;
 
 use super::kinds::outcome_to_python;
 use super::value::{type_name, value_to_python};
-use crate::util::pending::{has_pending_error, record_pending_error};
+use crate::util::hook::ask;
+use crate::util::pending::has_pending_error;
 
 /// The Python form of a system's bindings: the snapshot of the caller's
 /// mapping.
@@ -234,10 +235,7 @@ impl CustomConstraint for PyCustomConstraint {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
-        if has_pending_error() {
-            return false;
-        }
-        Python::attach(|py| {
+        ask(false, |py| {
             self.object
                 .get(py)
                 .call_method1(
@@ -245,10 +243,6 @@ impl CustomConstraint for PyCustomConstraint {
                     (other.object.get(py),),
                 )
                 .and_then(|answer| answer.is_truthy())
-                .unwrap_or_else(|error| {
-                    record_pending_error(error);
-                    false
-                })
         })
     }
 

@@ -34,7 +34,8 @@ use fhy_core::foreign::{BoxError, ForeignPart, Part};
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 use crate::util::gc::Slot;
-use crate::util::pending::{has_pending_error, record_pending_error};
+use crate::util::hook::ask;
+use crate::util::pending::has_pending_error;
 pub(crate) use crate::util::python::type_name;
 
 /// Return the `ConstraintError` with `message`.
@@ -158,20 +159,11 @@ impl OpaqueValue for PyOpaqueValue {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
-        if has_pending_error() {
-            return false;
-        }
-        Python::attach(|py| {
+        ask(false, |py| {
             if !self.class.get(py).is(other.class.get(py)) {
-                return false;
+                return Ok(false);
             }
-            match self.object.get(py).eq(other.object.get(py)) {
-                Ok(is_equal) => is_equal,
-                Err(error) => {
-                    record_pending_error(error);
-                    false
-                }
-            }
+            self.object.get(py).eq(other.object.get(py))
         })
     }
 

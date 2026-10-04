@@ -28,7 +28,7 @@ use super::objects::{
     constraint_to_python, constraints_to_python, domain_to_python, identifier_object, read_domain,
     read_profile,
 };
-use crate::util::pending::{has_pending_error, record_pending_error};
+use crate::util::hook::ask;
 
 /// A Python-defined domain, driven through its methods.
 ///
@@ -312,10 +312,7 @@ impl CustomDomain for PyCustomDomain {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
-        if has_pending_error() {
-            return false;
-        }
-        Python::attach(|py| {
+        ask(false, |py| {
             self.object
                 .get(py)
                 .call_method1(
@@ -323,10 +320,6 @@ impl CustomDomain for PyCustomDomain {
                     (other.object.get(py),),
                 )
                 .and_then(|answer| answer.is_truthy())
-                .unwrap_or_else(|error| {
-                    record_pending_error(error);
-                    false
-                })
         })
     }
 }

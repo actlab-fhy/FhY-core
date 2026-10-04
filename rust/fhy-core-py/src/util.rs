@@ -22,6 +22,8 @@
 //! | [`serialization`] | the payload readers and field shapes of `fhy_core.serialization` |
 //! | [`scoped`] | [`ScopedStack`](scoped::ScopedStack), a thread-local stack that unwinds safely |
 //! | [`pending`] | the pending exception of an infallible hook |
+//! | [`frames`] | [`Frames`](frames::Frames), the per-call context a hook reads, whose miss is loud |
+//! | [`hook`] | [`ask`](hook::ask), a Python hook behind an infallible trait method |
 //! | [`gc`] | [`Slot`](gc::Slot), [`collect_slots`](gc::collect_slots) and the traverse helpers |
 //! | [`foreign`] | [`foreign_of`](foreign::foreign_of), a Python-defined part as a core `Foreign` |
 //!
@@ -32,8 +34,10 @@
 pub mod dataclass;
 pub mod exceptions;
 pub mod foreign;
+pub mod frames;
 pub mod frozen;
 pub mod gc;
+pub mod hook;
 pub mod interned;
 pub mod pending;
 pub mod public_class;

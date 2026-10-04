@@ -433,7 +433,13 @@ module in its messages; `util::frozen` the `FrozenMixin` refusals;
 machine integers; `util::scoped` `ScopedStack` and `ScopedGuard`;
 `util::pending` the pending exception of an infallible hook
 (`record_pending_error`, `has_pending_error`, `with_pending_errors`,
-`capture_pending_errors`); `util::gc` `Slot`, `Slots`, `collect_slots`,
+`capture_pending_errors`); `util::hook` `ask`, which answers a Python hook
+behind a trait method that cannot fail (it answers the fallback while an
+exception is pending, and keeps the exception the hook raises as the pending
+one); `util::frames` `Frames<T>`, the per-call context a hook reads
+(`push` returns the guard that pops it, and a `read`, `read_or` or `cloned`
+that finds no frame records a `RuntimeError` as the pending exception, so a
+missed push is an error and never a silent default); `util::gc` `Slot`, `Slots`, `collect_slots`,
 `traverse_locked`, `clear_locked` and `traverse_all`; and `util::foreign`
 `foreign_of`, `foreign_failure` and `RaisedError`, which turn a Python-defined
 part into a core `Foreign`. Each item is documented with its errors and
