@@ -350,7 +350,8 @@ no Python at build or test time. `rust/fhy-core-py` holds the PyO3
 bindings, as a library: it builds no extension module, and its
 `register(py, module)` adds the bindings to a module it is given. It also
 holds the SymPy backend, `solver::sympy`, a `fhy_core::solver::Simplifier`
-that drives SymPy in the interpreter the extension runs in.
+that drives SymPy in the interpreter the extension runs in, and the Python
+class of the pure-Rust ground simplifier, `solver::ground`.
 `rust/fhy-core-ext` is the thin `cdylib` that maturin builds into the
 extension module `fhy_core._rs`, and `rust/example-aggregate` is a
 test-only aggregate extension (see "One extension module per process").
@@ -785,6 +786,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
 | `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | the binding (`fhy-core-py`'s `solver::sympy`), a `fhy_core::solver::Simplifier` |
+| `fhy_core.symbolic.solver.GroundSimplifier` (`SolverBackend.GROUND`, `GROUND_THEN_SYMPY`) | `fhy_core::solver::{GroundSimplifier, GroundWithFallback}`; the binding's `solver::ground` is the Python class |
 | `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
 | `fhy_core.lattice`, `fhy_core.utils.poset` | `fhy_core::lattice` |
 | `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
@@ -877,6 +879,64 @@ monkeypatching or reloading its module afterwards does not reach the
 binding.
 `src/fhy_core/_rs.pyi` is written by hand, and `tests/test_rs_stub.py`
 checks its names and parameters against the built extension.
+
+### The ground simplifier
+
+`fhy_core::solver::GroundSimplifier` is a `Simplifier` that needs neither
+Python nor SymPy. It is a driver over an ordered list of strategies
+(`fhy_core::solver::strategy`): each strategy is a local rewrite of one
+node whose children are already simplified, one concern each, and the
+default list is exact integer and rational arithmetic, comparisons, logical
+operators, a decided `piecewise`, exact built-ins, registered constants and
+the form of decimal literals. The driver rewrites bottom-up, tries the
+strategies in order on each node until none rewrites it, and stops at a
+documented bound of rewrites (`with_max_rewrites`, 100 000 by default). A
+caller adds, removes and reorders strategies with `with_strategy`,
+`with_strategy_first`, `without` and `empty`, without touching the driver.
+
+The contract every strategy keeps, and every change to one:
+
+- **A rewrite is exactly what the SymPy backend returns for the node it
+  rewrites, or the strategy declines.** Exactly means the same expression,
+  in the form the SymPy lifting gives: an `Int` literal, a `Bool`, a decimal
+  literal for a rational some binary float equals (negated when negative),
+  and the quotient of two integers otherwise.
+- It never approximates. It declines a float, a free identifier, a user
+  function, an irrational or undefined value, and anything else it is not
+  sure SymPy answers alike.
+- It is local, deterministic and assumes nothing about the other
+  strategies; it returns `None` when it has nothing to rewrite.
+- A strategy that is not sure of SymPy's form of a partly folded
+  expression leaves it: the driver returns a rewritten expression only when
+  it is decided, a literal in SymPy's form (`with_partial_rewrites` is for
+  strategies that match SymPy's form of a larger one). It folds every
+  branch of a piecewise, the ones it does not take too, because SymPy lowers
+  them all and raises on a modulo by zero in any.
+
+`GroundWithFallback` is the composition that asks another simplifier for
+what the ground one declines; the Python class `GroundSimplifier`
+(`SolverBackend.GROUND`) is the ground simplifier with its default
+strategies, and `GroundSimplifier(fallback)` (`SolverBackend.GROUND_THEN_SYMPY`
+with SymPy) is the chain. SymPy stays the default solver's simplifier.
+
+To add a strategy:
+
+1. Implement `SimplificationStrategy` in a file of
+   `rust/fhy-core/src/solver/strategy/`, with rustdoc that says what it
+   rewrites and declines, and add it to `default_strategies` and the table
+   in `strategy.rs` if it should run by default.
+2. Test it alone in `rust/fhy-core/tests/it/solver/ground_strategy_stories.rs`
+   (what it rewrites and what it declines through `rewrite`, and in a
+   simplifier holding only it), and add to
+   `ground_stories.rs` what the whole pipeline does with it.
+3. Add its cases to the differential tests in
+   `rust/fhy-core-py/src/solver/sympy/ground_differential.rs`, which check
+   each strategy's rewrites against SymPy as the oracle, on tables of nodes
+   and on random nodes, and the default pipeline on random trees. They need
+   Python with SymPy, as the SymPy backend's stories do:
+   `cargo test -p fhy-core-py ground_differential` (see "Rust test layout").
+   `... ground_differential::timing -- --ignored --nocapture`, in a release
+   build, prints the cost of the strategies' pipeline against SymPy's.
 
 ### Rust test layout
 
