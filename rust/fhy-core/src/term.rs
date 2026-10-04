@@ -8,6 +8,9 @@
 //!   [`Term`] joins both with substitution.
 //! - [`Binder`] derives all three for a node that binds identifiers over
 //!   its scoped children, with substitution that avoids capture.
+//! - [`AlphaEquivalence`] is implemented for `Option`, slices, `Vec`, arrays,
+//!   `Box`, `Rc`, `Arc` and tuples of terms, which compare their elements in
+//!   order under one renaming.
 //! - [`is_mapping_alpha_equivalent_under`] compares two maps keyed by
 //!   identifiers.
 //!
@@ -18,6 +21,7 @@
 //! [`Infallible`](std::convert::Infallible).
 
 mod binder;
+mod containers;
 mod error;
 mod mapping;
 mod renaming;
