@@ -4,7 +4,7 @@
 use pyo3::exceptions::{PyAttributeError, PyImportError, PyModuleNotFoundError, PyTypeError};
 use pyo3::types::{PyList, PyType};
 
-use crate::util::testing::{evaluate, with_framework};
+use crate::util::testing::{evaluate, with_stand_ins};
 
 use super::*;
 
@@ -17,7 +17,7 @@ static LATE: ImportedAttr = ImportedAttr::new("fhy_core_util_late_module", "Valu
 
 #[test]
 fn a_seed_is_taken_once_and_the_second_take_names_its_kind() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let seed = Seed::new(vec![1, 2]);
 
         assert_eq!(seed.take("a list").expect("first take"), vec![1, 2]);
@@ -29,7 +29,7 @@ fn a_seed_is_taken_once_and_the_second_take_names_its_kind() {
 
 #[test]
 fn a_seed_whose_lock_was_poisoned_still_gives_its_contents() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let seed = Seed::new(7_u32);
         let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = seed.0.lock().expect("lock");
@@ -43,7 +43,7 @@ fn a_seed_whose_lock_was_poisoned_still_gives_its_contents() {
 
 #[test]
 fn an_imported_attribute_is_the_one_object_every_time() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let first = LEN.get(py).expect("len");
         let second = LEN.get(py).expect("len");
 
@@ -62,7 +62,7 @@ fn an_imported_attribute_is_the_one_object_every_time() {
 
 #[test]
 fn a_typed_attribute_is_checked_against_its_type() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let class = VALUE_ERROR.get(py).expect("a class");
         assert!(class.is(evaluate(py, "ValueError")));
 
@@ -73,7 +73,7 @@ fn a_typed_attribute_is_checked_against_its_type() {
 
 #[test]
 fn an_attribute_that_cannot_be_imported_raises_what_the_import_raises() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let error = NO_MODULE.get(py).expect_err("no module");
         assert!(error.is_instance_of::<PyModuleNotFoundError>(py));
 
@@ -87,7 +87,7 @@ fn an_attribute_that_cannot_be_imported_raises_what_the_import_raises() {
 
 #[test]
 fn a_failed_import_is_not_kept() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         LATE.get(py).expect_err("the module does not exist yet");
         py.run(
             c"import sys, types\nm = types.ModuleType('fhy_core_util_late_module')\nm.Value = 5\nsys.modules['fhy_core_util_late_module'] = m",
@@ -108,7 +108,7 @@ fn a_failed_import_is_not_kept() {
 
 #[test]
 fn cached_attr_imports_for_its_call_site_with_or_without_a_type() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let lookup = |py| crate::cached_attr!(py, "builtins", "len");
         let first = lookup(py).expect("len");
         let second = lookup(py).expect("len");
@@ -126,7 +126,7 @@ fn cached_attr_imports_for_its_call_site_with_or_without_a_type() {
 
 #[test]
 fn type_name_is_the_name_of_the_type() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         assert_eq!(type_name(&evaluate(py, "3")), "int");
         assert_eq!(type_name(&evaluate(py, "[]")), "list");
         assert_eq!(

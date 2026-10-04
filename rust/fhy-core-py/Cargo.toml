@@ -29,5 +29,11 @@ serde_json = { workspace = true }
 proptest = { workspace = true }
 rstest = { workspace = true }
 
+[features]
+# Test-only: exposes `util::testing`, the `fhy_core` stand-ins of the
+# embedded-interpreter tests, so a downstream `-py` crate's tests share them.
+# Enable it in `[dev-dependencies]` only.
+testing = []
+
 [lints]
 workspace = true

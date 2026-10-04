@@ -156,7 +156,7 @@ exception_classes! {
 mod tests {
     use pyo3::exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError};
 
-    use crate::util::testing::{evaluate, with_framework};
+    use crate::util::testing::{evaluate, with_stand_ins};
 
     use super::*;
 
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_class_hands_back_the_one_class_it_imported() {
-        with_framework(|py| {
+        with_stand_ins(|py| {
             let class = VALUE_ERROR.class(py).expect("a class");
 
             assert!(class.is(evaluate(py, "ValueError")));
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn build_passes_the_arguments_and_keywords_to_the_class() {
-        with_framework(|py| {
+        with_stand_ins(|py| {
             let keywords = pyo3::types::PyDict::new(py);
             keywords.set_item("field", 3).expect("set");
 
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn the_public_classes_are_the_frameworks() {
-        with_framework(|py| {
+        with_stand_ins(|py| {
             let serialization = SERIALIZATION_ERROR.class(py).expect("class");
             for class in [
                 &DESERIALIZATION_VALUE_ERROR,

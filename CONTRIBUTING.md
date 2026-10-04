@@ -452,6 +452,12 @@ part into a core `Foreign`. Each item is documented with its errors and
 panics, and the stories in `util/*/tests.rs` run them in the embedded
 interpreter against small stand-ins for the `fhy_core` modules the util module
 imports (`util::testing`, since `fhy_core` itself is not importable there).
+`util::testing` is public behind the test-only `testing` cargo feature, which
+a downstream crate enables in `[dev-dependencies]` and never in
+`[dependencies]`, so its embedded-interpreter tests share the stand-ins:
+`with_stand_ins` (the interpreter, with the stand-ins installed once),
+`install_module` (a downstream crate's own stand-ins, parents created),
+`evaluate`, `define` and `entry`.
 A conversion that another crate needs and `convert` lacks is
 added there, as a documented `pub fn` over the `pub(crate)` one, and no
 `#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with

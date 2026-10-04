@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::types::PyList;
 
-use crate::util::testing::with_framework;
+use crate::util::testing::with_stand_ins;
 
 use super::*;
 
@@ -82,7 +82,7 @@ fn flag() -> Arc<AtomicBool> {
 
 #[test]
 fn a_slot_made_inside_a_collection_is_owned_by_it_alone() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let (outer, outer_slots) = collect_slots(|| {
             let first = Slot::new(py.None());
             let ((), inner_slots) = collect_slots(|| {
@@ -100,7 +100,7 @@ fn a_slot_made_inside_a_collection_is_owned_by_it_alone() {
 
 #[test]
 fn a_collection_that_made_no_slot_is_empty() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let (value, slots) = collect_slots(|| 5);
 
         assert_eq!(value, 5);
@@ -111,7 +111,7 @@ fn a_collection_that_made_no_slot_is_empty() {
 
 #[test]
 fn a_slot_made_outside_any_collection_has_no_owner() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let slot = Slot::new(py.None());
 
         assert!(matches!(slot.0, SlotKind::Unowned(_)));
@@ -121,7 +121,7 @@ fn a_slot_made_outside_any_collection_has_no_owner() {
 
 #[test]
 fn an_unowned_slot_stays_out_of_the_innermost_collection() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let ((), slots) = collect_slots(|| {
             let slot = Slot::unowned(py.None());
             assert!(matches!(slot.0, SlotKind::Unowned(_)));
@@ -134,7 +134,7 @@ fn an_unowned_slot_stays_out_of_the_innermost_collection() {
 
 #[test]
 fn a_collection_that_panics_leaves_no_collector_behind() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             collect_slots(|| -> () { panic!("inside a collection") })
         }));
@@ -148,7 +148,7 @@ fn a_collection_that_panics_leaves_no_collector_behind() {
 
 #[test]
 fn a_slots_object_is_the_one_it_was_made_from_in_both_forms() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let list = PyList::empty(py).into_any().unbind();
         let ((slot, owned), _slots) = collect_slots(|| {
             (
@@ -166,7 +166,7 @@ fn a_slots_object_is_the_one_it_was_made_from_in_both_forms() {
 
 #[test]
 fn a_cycle_through_an_owned_slot_is_collected() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let freed = flag();
         let list = PyList::empty(py);
         let ((), slots) = collect_slots(|| drop(Slot::new(list.clone().into_any().unbind())));
@@ -184,7 +184,7 @@ fn a_cycle_through_an_owned_slot_is_collected() {
 
 #[test]
 fn a_cycle_through_a_slot_nothing_owns_is_not_visited() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let freed = flag();
         let list = PyList::empty(py);
         let slot = Slot::unowned(list.clone().into_any().unbind());
@@ -210,7 +210,7 @@ fn a_cycle_through_a_slot_nothing_owns_is_not_visited() {
 
 #[test]
 fn a_cycle_through_a_field_is_collected() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let freed = flag();
         let list = PyList::empty(py);
         let fields = vec![list.clone().into_any().unbind()];
@@ -231,7 +231,7 @@ fn a_cycle_through_a_field_is_collected() {
 
 #[test]
 fn a_cycle_through_a_locked_field_is_collected() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let freed = flag();
         let list = PyList::empty(py);
         let locked = vec![list.clone().into_any().unbind()];

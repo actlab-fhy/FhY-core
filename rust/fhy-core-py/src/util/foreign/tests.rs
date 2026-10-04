@@ -6,7 +6,7 @@ use std::error::Error;
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 
 use crate::util::pending::{capture_pending_errors, has_pending_error};
-use crate::util::testing::{define, entry, with_framework};
+use crate::util::testing::{define, entry, with_stand_ins};
 
 use super::*;
 
@@ -33,7 +33,7 @@ interrupted = Part(KeyboardInterrupt())
 
 #[test]
 fn a_part_gives_its_type_id_and_data_as_a_family_member_or_whole() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, PARTS);
         let part = entry(&namespace, "ok").unbind();
 
@@ -50,7 +50,7 @@ fn a_part_gives_its_type_id_and_data_as_a_family_member_or_whole() {
 
 #[test]
 fn a_hook_that_raises_fails_the_part_and_keeps_the_exception_pending() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, PARTS);
         let part = entry(&namespace, "broken").unbind();
 
@@ -69,7 +69,7 @@ fn a_hook_that_raises_fails_the_part_and_keeps_the_exception_pending() {
 
 #[test]
 fn an_answer_that_is_not_a_pair_of_strings_fails_the_part_with_a_type_error() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, PARTS);
         let part = entry(&namespace, "NotAPair")
             .call0()
@@ -88,7 +88,7 @@ fn an_answer_that_is_not_a_pair_of_strings_fails_the_part_with_a_type_error() {
 
 #[test]
 fn the_first_failure_stays_pending_unless_an_interrupt_follows() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, PARTS);
         let broken = entry(&namespace, "broken").unbind();
         let interrupted = entry(&namespace, "interrupted").unbind();
@@ -106,7 +106,7 @@ fn the_first_failure_stays_pending_unless_an_interrupt_follows() {
 
 #[test]
 fn a_failure_keeps_the_given_exception_and_the_core_sees_its_message() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let (error, pending) =
             capture_pending_errors(|| foreign_failure(py, "tests.Id", PyKeyError::new_err("gone")));
 

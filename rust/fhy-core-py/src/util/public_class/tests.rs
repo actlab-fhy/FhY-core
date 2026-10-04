@@ -4,7 +4,7 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::PyType;
 
-use crate::util::testing::{evaluate, with_framework};
+use crate::util::testing::{evaluate, with_stand_ins};
 
 use super::*;
 
@@ -17,7 +17,7 @@ fn class_named<'py>(py: Python<'py>, name: &str) -> Bound<'py, PyType> {
 
 #[test]
 fn a_registered_class_is_the_one_get_returns() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let slot = PublicClass::new("Thing");
         let class = class_named(py, "PublicThing");
 
@@ -29,7 +29,7 @@ fn a_registered_class_is_the_one_get_returns() {
 
 #[test]
 fn registering_the_registered_class_again_does_nothing() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let slot = PublicClass::new("Thing");
         let class = class_named(py, "PublicThing");
 
@@ -42,7 +42,7 @@ fn registering_the_registered_class_again_does_nothing() {
 
 #[test]
 fn registering_another_class_is_a_runtime_error_naming_the_first() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let slot = PublicClass::new("Thing");
         let first = class_named(py, "First");
         let second = class_named(py, "Second");
@@ -61,7 +61,7 @@ fn registering_another_class_is_a_runtime_error_naming_the_first() {
 
 #[test]
 fn an_empty_slot_is_a_runtime_error_naming_the_class() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let error = PublicClass::new("Thing")
             .get(py)
             .expect_err("nothing registered");
@@ -76,7 +76,7 @@ fn an_empty_slot_is_a_runtime_error_naming_the_class() {
 
 #[test]
 fn a_slot_of_another_module_names_that_module() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let slot = PublicClass::in_module("moga._rs", "Rule");
         let error = slot.get(py).expect_err("nothing registered");
         assert_eq!(

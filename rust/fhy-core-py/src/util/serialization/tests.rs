@@ -11,7 +11,7 @@ use pyo3::exceptions::{
 use crate::util::exceptions::{
     DESERIALIZATION_DICT_STRUCTURE_ERROR, DESERIALIZATION_VALUE_ERROR, SERIALIZATION_ERROR,
 };
-use crate::util::testing::{define, entry, evaluate, with_framework};
+use crate::util::testing::{define, entry, evaluate, with_stand_ins};
 
 use super::*;
 
@@ -162,7 +162,7 @@ const SHAPES: &[(FieldShape, &[&str], &[&str], &str)] = &[
 
 #[test]
 fn every_shape_accepts_what_it_describes_and_refuses_the_rest() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         for (shape, accepted, refused, _expected) in SHAPES {
             for source in *accepted {
@@ -185,7 +185,7 @@ fn every_shape_accepts_what_it_describes_and_refuses_the_rest() {
 
 #[test]
 fn a_refused_payload_names_the_expected_type_of_each_shape() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         // `None` is refused by every shape but the optional ones and `Any`.
         let data = evaluate(py, "'not a mapping'");
@@ -206,7 +206,7 @@ fn a_refused_payload_names_the_expected_type_of_each_shape() {
 
 #[test]
 fn the_values_come_back_in_the_order_of_the_fields_not_the_payload() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         let data = evaluate(py, "{'b': 2, 'a': 'x'}");
 
@@ -224,7 +224,7 @@ fn the_values_come_back_in_the_order_of_the_fields_not_the_payload() {
 
 #[test]
 fn a_missing_extra_or_misshapen_field_is_a_structure_error_naming_the_expected_fields() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         let fields = [("a", FieldShape::Str), ("b", FieldShape::OptionalInt)];
         for source in [
@@ -247,7 +247,7 @@ fn a_missing_extra_or_misshapen_field_is_a_structure_error_naming_the_expected_f
 
 #[test]
 fn a_payload_that_allows_extra_keys_ignores_them_but_still_checks_its_own() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         let fields =
             PayloadFields::allowing_extra([("a", FieldShape::Str), ("b", FieldShape::Int)]);
@@ -273,7 +273,7 @@ fn a_payload_that_allows_extra_keys_ignores_them_but_still_checks_its_own() {
 
 #[test]
 fn an_exact_payload_refuses_what_the_array_form_refuses() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         let data = evaluate(py, "{'a': 'x', 'extra': 1}");
         let exact = PayloadFields::exact([("a", FieldShape::Str)]);
@@ -291,7 +291,7 @@ fn an_exact_payload_refuses_what_the_array_form_refuses() {
 
 #[test]
 fn a_payload_of_no_fields_is_an_empty_mapping() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
 
         let [] = read_payload_fields(&cls, &evaluate(py, "{}"), []).expect("empty");
@@ -307,7 +307,7 @@ fn a_payload_of_no_fields_is_an_empty_mapping() {
 
 #[test]
 fn the_constructor_fields_come_back_in_order() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
         let fields = evaluate(py, "{'b': 2, 'a': 1}");
 
@@ -322,7 +322,7 @@ fn the_constructor_fields_come_back_in_order() {
 
 #[test]
 fn the_constructor_fields_refuse_a_missing_extra_or_non_mapping_input_as_a_type_error() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
 
         let error = read_constructor_fields(&cls, &evaluate(py, "{'a': 1}"), ["a", "b"], 0)
@@ -356,7 +356,7 @@ fn the_constructor_fields_refuse_a_missing_extra_or_non_mapping_input_as_a_type_
 
 #[test]
 fn the_last_optional_constructor_fields_may_be_missing_and_read_as_none() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cls = thing(py);
 
         let [a, b, c] =
@@ -379,7 +379,7 @@ fn the_last_optional_constructor_fields_may_be_missing_and_read_as_none() {
 
 #[test]
 fn a_mapping_whose_lookup_fails_for_another_reason_raises_that() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(
             py,
             "import collections.abc\nclass Broken(collections.abc.Mapping):\n    def __getitem__(self, key):\n        raise RuntimeError('broken')\n    def __iter__(self):\n        return iter(())\n    def __len__(self):\n        return 0\nbroken = Broken()",
@@ -395,7 +395,7 @@ fn a_mapping_whose_lookup_fails_for_another_reason_raises_that() {
 
 #[test]
 fn keeping_fields_returns_them_unchanged() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let values = [evaluate(py, "1"), evaluate(py, "[]")];
 
         let kept = keep_fields(&thing(py), values.clone()).expect("never fails");
@@ -406,7 +406,7 @@ fn keeping_fields_returns_them_unchanged() {
 
 #[test]
 fn a_nested_value_is_read_by_its_class() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(
             py,
             "class Leaf:\n    def __init__(self, data):\n        self.data = data\n    @classmethod\n    def deserialize_from_dict(cls, data):\n        if data is None:\n            raise ValueError('no data')\n        return cls(data)\n",
@@ -472,7 +472,7 @@ class Built:
 
 #[test]
 fn a_construction_that_succeeds_returns_the_instance() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, CONSTRUCTOR);
         let built = entry(&namespace, "Built").cast_into::<PyType>().unwrap();
         let fields = PyDict::new(py);
@@ -489,7 +489,7 @@ fn a_construction_that_succeeds_returns_the_instance() {
 
 #[test]
 fn a_refused_value_becomes_a_deserialization_value_error_caused_by_it() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, CONSTRUCTOR);
         let built = entry(&namespace, "Built").cast_into::<PyType>().unwrap();
 
@@ -517,7 +517,7 @@ fn a_refused_value_becomes_a_deserialization_value_error_caused_by_it() {
 
 #[test]
 fn an_overflow_is_a_value_error_only_when_asked() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, CONSTRUCTOR);
         let built = entry(&namespace, "Built").cast_into::<PyType>().unwrap();
         let fields = PyDict::new(py);
@@ -542,7 +542,7 @@ fn an_overflow_is_a_value_error_only_when_asked() {
 
 #[test]
 fn any_other_exception_passes_through_unchanged() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, CONSTRUCTOR);
         let built = entry(&namespace, "Built").cast_into::<PyType>().unwrap();
 
@@ -571,7 +571,7 @@ fn any_other_exception_passes_through_unchanged() {
 
 #[test]
 fn a_nested_value_is_serialized_by_its_own_method_and_none_stays_none() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(
             py,
             "class Leaf:\n    def serialize_to_dict(self):\n        return {'leaf': 1}\nleaf = Leaf()",
@@ -589,7 +589,7 @@ fn a_nested_value_is_serialized_by_its_own_method_and_none_stays_none() {
 
 #[test]
 fn a_payload_dict_is_what_the_framework_says() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         assert!(is_serialized_dict(&evaluate(py, "{'a': 1}")).unwrap());
         assert!(!is_serialized_dict(&evaluate(py, "{1: 2}")).unwrap());
         assert!(!is_serialized_dict(&evaluate(py, "[]")).unwrap());

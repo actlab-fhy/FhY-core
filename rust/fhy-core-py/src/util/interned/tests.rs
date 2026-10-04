@@ -6,7 +6,7 @@ use std::thread;
 use pyo3::exceptions::{PyKeyError, PyNotImplementedError};
 use pyo3::types::{PyList, PyString, PyType};
 
-use crate::util::testing::{define, entry, evaluate, with_framework};
+use crate::util::testing::{define, entry, evaluate, with_stand_ins};
 
 use super::*;
 
@@ -24,7 +24,7 @@ fn class_named<'py>(py: Python<'py>, name: &str) -> Bound<'py, PyType> {
 
 #[test]
 fn a_cache_keyed_by_id_keeps_the_first_object_of_a_key() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cache: IdentityCache = IdentityCache::new();
         assert!(cache.get(py, &7).is_none());
 
@@ -41,7 +41,7 @@ fn a_cache_keyed_by_id_keeps_the_first_object_of_a_key() {
 
 #[test]
 fn a_cache_keyed_by_string_is_read_by_str() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cache: IdentityCache<String> = IdentityCache::default();
         let alpha = fresh(py);
         let beta = fresh(py);
@@ -60,7 +60,7 @@ fn a_cache_keyed_by_string_is_read_by_str() {
 
 #[test]
 fn a_cache_keyed_by_a_tuple_of_strings_is_read_by_the_borrowed_tuple() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cache: IdentityCache<(String, u32)> = IdentityCache::new();
         let object = fresh(py);
 
@@ -106,7 +106,7 @@ fn threads_racing_to_cache_one_key_agree_on_one_object() {
 
 #[test]
 fn a_cache_whose_lock_was_poisoned_still_works() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let cache: IdentityCache = IdentityCache::new();
         let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = cache.objects.lock().expect("lock");
@@ -122,7 +122,7 @@ fn a_cache_whose_lock_was_poisoned_still_works() {
 
 #[test]
 fn the_registry_operations_raise_not_implemented_naming_the_class() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let class = class_named(py, "Tag");
 
         let error = raise_registry_append_only(&class, "unregister").expect_err("raises");
@@ -139,7 +139,7 @@ fn the_registry_operations_raise_not_implemented_naming_the_class() {
 
 #[test]
 fn a_missing_instance_is_the_key_error_of_require_interned() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let class = class_named(py, "Tag");
         let key = PyString::new(py, "k").into_any();
 
@@ -155,7 +155,7 @@ fn a_missing_instance_is_the_key_error_of_require_interned() {
 
 #[test]
 fn a_conflicting_payload_is_a_deserialization_value_error() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let class = class_named(py, "Tag");
         let key = PyString::new(py, "k").into_any();
         let canonical = 1_i32.into_pyobject(py).unwrap().into_any();
@@ -189,7 +189,7 @@ logger.propagate = False
 
 #[test]
 fn an_ignored_description_is_logged_only_when_it_differs() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(py, RECORDER);
         let class = class_named(py, "Tag");
         let key = PyString::new(py, "k").into_any();

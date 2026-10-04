@@ -6,7 +6,7 @@ use pyo3::exceptions::PyRuntimeError;
 use super::Frames;
 use crate::util::pending::{capture_pending_errors, has_pending_error};
 use crate::util::scoped::ScopedStack;
-use crate::util::testing::with_framework;
+use crate::util::testing::with_stand_ins;
 
 thread_local! {
     static STACK: ScopedStack<u32> = const { ScopedStack::new() };
@@ -16,7 +16,7 @@ static NUMBERS: Frames<u32> = Frames::new(&STACK, "the numbers");
 
 #[test]
 fn a_read_returns_the_innermost_frame_and_pops_with_its_guard() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let ((), raised) = capture_pending_errors(|| {
             let outer = NUMBERS.push(1);
             {
@@ -35,7 +35,7 @@ fn a_read_returns_the_innermost_frame_and_pops_with_its_guard() {
 
 #[test]
 fn a_miss_is_a_pending_runtime_error_naming_what_was_asked() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let (read, raised) = capture_pending_errors(|| {
             let read = NUMBERS.read_or(99, |number| *number);
             assert!(has_pending_error());
@@ -54,7 +54,7 @@ fn a_miss_is_a_pending_runtime_error_naming_what_was_asked() {
 
 #[test]
 fn a_miss_does_not_call_the_reader_and_is_none() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let mut called = false;
         let (read, raised) = capture_pending_errors(|| {
             NUMBERS.read(|_number| {
@@ -70,7 +70,7 @@ fn a_miss_does_not_call_the_reader_and_is_none() {
 
 #[test]
 fn a_hit_records_nothing() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let ((), raised) = capture_pending_errors(|| {
             let _guard = NUMBERS.push(5);
             let _ = NUMBERS.read(|number| *number);
@@ -83,7 +83,7 @@ fn a_hit_records_nothing() {
 
 #[test]
 fn a_panic_inside_an_entry_point_pops_its_frame() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let ((), raised) = capture_pending_errors(|| {
             let unwound = std::panic::catch_unwind(|| {
                 let _guard = NUMBERS.push(8);
@@ -100,7 +100,7 @@ fn a_panic_inside_an_entry_point_pops_its_frame() {
 
 #[test]
 fn is_pushed_is_silent_on_a_miss() {
-    with_framework(|_py| {
+    with_stand_ins(|_py| {
         let (pushed, raised) = capture_pending_errors(|| NUMBERS.is_pushed());
 
         assert!(!pushed);

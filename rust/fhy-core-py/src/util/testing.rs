@@ -1,5 +1,10 @@
-//! What the stories of the util module share: an embedded interpreter, and stand-ins
-//! for the few modules of `fhy_core` the util module imports.
+//! What the stories of the util module share: an embedded interpreter, and
+//! stand-ins for the few modules of `fhy_core` the util module imports.
+//!
+//! **Test-only.** This module is public behind the `testing` cargo feature,
+//! so a downstream `-py` crate's own tests can use the same stand-ins
+//! instead of rewriting them; enable the feature in `[dev-dependencies]`
+//! only, never in `[dependencies]`, so that no release build carries it.
 //!
 //! `fhy_core` itself is not importable in the embedded interpreter, so the
 //! stories that raise or read one of its classes install small stand-ins in
@@ -7,6 +12,12 @@
 //! keeps the class it first imported for the life of the process, so the
 //! stand-ins must not change between stories. The Python suite covers the
 //! behavior against the real classes.
+//!
+//! The stand-ins cover `fhy_core.serialization`, `fhy_core.traits.frozen` and
+//! `fhy_core.term.derived_equivalence`. A downstream crate that imports
+//! more of `fhy_core` installs its own stand-ins for the rest with
+//! [`install_module`], inside its own once-only guard, and must install
+//! them before it first reads an attribute of them.
 
 use std::ffi::CString;
 use std::sync::{Mutex, PoisonError};
@@ -67,7 +78,16 @@ const DERIVED_EQUIVALENCE: &str = "class EquivalenceDerivationError(Exception):\
 
 /// Install the module `name`, run from `source`, in `sys.modules` and as an
 /// attribute of each of its parent packages, which are created when missing.
-fn install(py: Python<'_>, name: &str, source: &str) -> PyResult<()> {
+///
+/// # Errors
+///
+/// Returns the exception `source` raises while it runs, or that setting an
+/// attribute of a parent package raises.
+///
+/// # Panics
+///
+/// Panics if `name` or `source` holds a nul character.
+pub fn install_module(py: Python<'_>, name: &str, source: &str) -> PyResult<()> {
     let modules = py.import("sys")?.getattr("modules")?;
     let code = CString::new(source).expect("no nul");
     let file = CString::new(format!("{name}.py")).expect("no nul");
@@ -91,8 +111,13 @@ fn install(py: Python<'_>, name: &str, source: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// Run `body` with the embedded interpreter, with the stand-ins installed.
-pub(crate) fn with_framework<R>(body: impl FnOnce(Python<'_>) -> R) -> R {
+/// Run `body` with the embedded interpreter, with the stand-ins installed
+/// (once, for the process: later calls find them in place).
+///
+/// # Panics
+///
+/// Panics if a stand-in fails to install, which is a defect of this crate.
+pub fn with_stand_ins<R>(body: impl FnOnce(Python<'_>) -> R) -> R {
     // Held while no thread is attached: a thread waiting for this lock with
     // the interpreter attached would keep the installer from running Python.
     static INSTALLED: Mutex<bool> = Mutex::new(false);
@@ -101,9 +126,9 @@ pub(crate) fn with_framework<R>(body: impl FnOnce(Python<'_>) -> R) -> R {
         let mut installed = INSTALLED.lock().unwrap_or_else(PoisonError::into_inner);
         if !*installed {
             Python::attach(|py| {
-                install(py, "fhy_core.serialization", SERIALIZATION).expect("serialization");
-                install(py, "fhy_core.traits.frozen", FROZEN).expect("frozen");
-                install(py, "fhy_core.term.derived_equivalence", DERIVED_EQUIVALENCE)
+                install_module(py, "fhy_core.serialization", SERIALIZATION).expect("serialization");
+                install_module(py, "fhy_core.traits.frozen", FROZEN).expect("frozen");
+                install_module(py, "fhy_core.term.derived_equivalence", DERIVED_EQUIVALENCE)
                     .expect("derived_equivalence");
             });
             *installed = true;
@@ -113,14 +138,24 @@ pub(crate) fn with_framework<R>(body: impl FnOnce(Python<'_>) -> R) -> R {
 }
 
 /// Return the value of the Python expression `source`.
-pub(crate) fn evaluate<'py>(py: Python<'py>, source: &str) -> Bound<'py, PyAny> {
+///
+/// # Panics
+///
+/// Panics if `source` holds a nul character or its evaluation raises.
+#[must_use]
+pub fn evaluate<'py>(py: Python<'py>, source: &str) -> Bound<'py, PyAny> {
     let code = CString::new(source).expect("no nul");
     py.eval(&code, None, None)
         .unwrap_or_else(|error| panic!("evaluating {source:?} failed: {error}"))
 }
 
 /// Run the Python `source` in a new namespace, and return the namespace.
-pub(crate) fn define<'py>(py: Python<'py>, source: &str) -> Bound<'py, pyo3::types::PyDict> {
+///
+/// # Panics
+///
+/// Panics if `source` holds a nul character or running it raises.
+#[must_use]
+pub fn define<'py>(py: Python<'py>, source: &str) -> Bound<'py, pyo3::types::PyDict> {
     let namespace = pyo3::types::PyDict::new(py);
     let code = CString::new(source).expect("no nul");
     py.run(&code, Some(&namespace), None)
@@ -128,13 +163,18 @@ pub(crate) fn define<'py>(py: Python<'py>, source: &str) -> Bound<'py, pyo3::typ
     namespace
 }
 
-/// Return the entry `name` of `namespace`.
-pub(crate) fn entry<'py>(
-    namespace: &Bound<'py, pyo3::types::PyDict>,
-    name: &str,
-) -> Bound<'py, PyAny> {
+/// Return the entry `name` of `namespace`, a dictionary [`define`] returned.
+///
+/// # Panics
+///
+/// Panics if the namespace has no entry `name`.
+#[must_use]
+pub fn entry<'py>(namespace: &Bound<'py, pyo3::types::PyDict>, name: &str) -> Bound<'py, PyAny> {
     namespace
         .get_item(name)
         .expect("a readable namespace")
         .unwrap_or_else(|| panic!("the namespace has no {name:?}"))
 }
+
+#[cfg(test)]
+mod tests;

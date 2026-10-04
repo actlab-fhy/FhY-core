@@ -5,7 +5,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::types::{PyDict, PyList, PyString};
 use pyo3::wrap_pyfunction;
 
-use crate::util::testing::{define, entry, evaluate, with_framework};
+use crate::util::testing::{define, entry, evaluate, with_stand_ins};
 
 use super::*;
 
@@ -56,7 +56,7 @@ fn pair(py: Python<'_>, left: i32, right: i32) -> Bound<'_, Pair> {
 
 #[test]
 fn an_argument_type_error_names_the_owner_field_and_type_found() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let value = evaluate(py, "3.5");
 
         let error = build_argument_type_error("Span", "start", "an int", &value).expect("builds");
@@ -71,7 +71,7 @@ fn an_argument_type_error_names_the_owner_field_and_type_found() {
 
 #[test]
 fn read_str_returns_a_str_and_refuses_anything_else() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let text = PyString::new(py, "x").into_any();
         assert_eq!(
             read_str(&text, "Note", "text")
@@ -99,7 +99,7 @@ fn equal_values_hash_equally_and_different_ones_differ() {
 
 #[test]
 fn a_dataclass_compares_by_value_within_its_own_class() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let a = pair(py, 1, 2);
         let same = pair(py, 1, 2);
         let other = pair(py, 1, 3);
@@ -114,7 +114,7 @@ fn a_dataclass_compares_by_value_within_its_own_class() {
 
 #[test]
 fn another_class_is_not_implemented_even_a_subclass() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let a = pair(py, 1, 2);
         let namespace = define(py, "");
         namespace
@@ -137,7 +137,7 @@ fn another_class_is_not_implemented_even_a_subclass() {
 
 #[test]
 fn a_comparison_that_raises_is_the_error() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let a = pair(py, 1, 2);
 
         let error = Pair::compare_failing(&a, pair(py, 1, 2).as_any()).expect_err("raises");
@@ -150,7 +150,7 @@ fn a_comparison_that_raises_is_the_error() {
 
 #[test]
 fn an_outcome_is_a_value_or_the_exception() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         assert!(Outcome::<bool>::into_result(true).unwrap());
         assert_eq!(Outcome::<u64>::into_result(5_u64).unwrap(), 5);
         assert_eq!(Outcome::into_result(Ok::<_, PyErr>(7_u8)).unwrap(), 7);
@@ -161,7 +161,7 @@ fn an_outcome_is_a_value_or_the_exception() {
 
 #[test]
 fn fields_are_the_same_when_one_object_or_equal() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let nan = evaluate(py, "float('nan')");
         assert!(is_same_or_equal(&nan, &nan).unwrap());
         assert!(!nan.eq(&nan).unwrap());
@@ -172,7 +172,7 @@ fn fields_are_the_same_when_one_object_or_equal() {
 
 #[test]
 fn a_field_whose_equality_raises_is_the_error() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let namespace = define(
             py,
             "class Angry:\n    def __eq__(self, other):\n        raise ValueError('angry')\na = Angry()\nb = Angry()",
@@ -187,7 +187,7 @@ fn a_field_whose_equality_raises_is_the_error() {
 
 #[test]
 fn a_tuple_is_returned_as_it_is_and_anything_else_is_collected() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let tuple = evaluate(py, "(1, 2)");
         assert!(collect_tuple(&tuple).unwrap().is(&tuple));
 
@@ -205,7 +205,7 @@ fn a_tuple_is_returned_as_it_is_and_anything_else_is_collected() {
 
 #[test]
 fn collecting_what_is_not_iterable_or_fails_while_iterating_raises() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let error = collect_tuple(&evaluate(py, "3")).expect_err("not iterable");
         assert!(error.is_instance_of::<PyTypeError>(py));
 
@@ -217,7 +217,7 @@ fn collecting_what_is_not_iterable_or_fails_while_iterating_raises() {
 
 #[test]
 fn a_repr_lists_the_fields_as_a_dataclass_does() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let class = evaluate(py, "type('Point', (), {})")
             .cast_into::<pyo3::types::PyType>()
             .unwrap();
@@ -234,7 +234,7 @@ fn a_repr_lists_the_fields_as_a_dataclass_does() {
 
 #[test]
 fn an_argument_that_may_be_omitted_tells_none_from_omitted() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let function = wrap_pyfunction!(describe, py).expect("function");
         let namespace = PyDict::new(py);
         namespace.set_item("describe", function).expect("set");

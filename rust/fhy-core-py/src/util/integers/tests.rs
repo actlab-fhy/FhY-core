@@ -9,7 +9,7 @@ use super::{
     Label, Minimum, Reading, build_too_large_error, classify_unsigned, read_unsigned,
     read_unsigned_lenient,
 };
-use crate::util::testing::{evaluate, with_framework};
+use crate::util::testing::{evaluate, with_stand_ins};
 
 /// Return the message of the exception `error`.
 fn message(py: Python<'_>, error: &PyErr) -> String {
@@ -21,7 +21,7 @@ fn message(py: Python<'_>, error: &PyErr) -> String {
 #[case("7", 7)]
 #[case("2**64 - 1", u64::MAX)]
 fn an_integer_in_range_is_read_as_the_value(#[case] source: &str, #[case] expected: u64) {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let object = evaluate(py, source);
         let label = Label::argument("count");
 
@@ -47,7 +47,7 @@ fn an_integer_in_range_is_read_as_the_value(#[case] source: &str, #[case] expect
 #[case("'3'")]
 #[case("None")]
 fn a_bool_a_float_or_a_non_integer_is_a_type_error(#[case] source: &str) {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let object = evaluate(py, source);
         let label = Label::argument("count");
 
@@ -71,7 +71,7 @@ fn a_negative_is_a_value_error_worded_by_the_minimum(
     #[case] minimum: Minimum,
     #[case] expected: &str,
 ) {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let object = evaluate(py, "-1");
         let label = Label::argument("extent");
 
@@ -84,7 +84,7 @@ fn a_negative_is_a_value_error_worded_by_the_minimum(
 
 #[test]
 fn zero_is_accepted_under_either_minimum() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let zero = evaluate(py, "0");
         let label = Label::argument("extent");
 
@@ -96,7 +96,7 @@ fn zero_is_accepted_under_either_minimum() {
 
 #[test]
 fn an_integer_above_the_maximum_is_an_overflow_error_naming_the_width() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let object = evaluate(py, "2**64");
         let label = Label::entry("origin", 1);
 
@@ -116,7 +116,7 @@ fn an_integer_above_the_maximum_is_an_overflow_error_naming_the_width() {
 
 #[test]
 fn the_lenient_reader_answers_none_for_an_integer_out_of_every_range() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let label = Label::argument("offset");
 
         for source in ["-1", "-(2**100)", "2**64", "2**100"] {
@@ -128,7 +128,7 @@ fn the_lenient_reader_answers_none_for_an_integer_out_of_every_range() {
 
 #[test]
 fn classify_separates_negative_from_too_large() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let label = Label::argument("n");
 
         assert_eq!(
@@ -149,7 +149,7 @@ fn the_target_type_sets_the_maximum_and_the_width_in_the_message(
     #[case] too_large: &str,
     #[case] bits: u32,
 ) {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let label = Label::argument("byte");
 
         assert_eq!(
@@ -168,7 +168,7 @@ fn the_target_type_sets_the_maximum_and_the_width_in_the_message(
 
 #[test]
 fn the_other_unsigned_targets_read_their_ranges() {
-    with_framework(|py| {
+    with_stand_ins(|py| {
         let label = Label::argument("n");
         let minimum = Minimum::NonNegative;
 
