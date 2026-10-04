@@ -195,8 +195,9 @@ fn a_pointer_compares_the_pointee_and_never_the_pointer() {
     let [a, b] = build_identifiers(["a", "b"]);
     let renaming = renaming_of(&[(&a, &b)]);
 
-    assert!(Box::new(reference(&a)).alpha_equivalent_under(&Box::new(reference(&b)), &renaming));
-    assert!(!Box::new(reference(&a)).alpha_equivalent(&Box::new(reference(&b))));
+    let (boxed_a, boxed_b) = (Box::new(reference(&a)), Box::new(reference(&b)));
+    assert!(boxed_a.alpha_equivalent_under(&boxed_b, &renaming));
+    assert!(!boxed_a.alpha_equivalent(&boxed_b));
     assert!(Rc::new(reference(&a)).alpha_equivalent_under(&Rc::new(reference(&b)), &renaming));
     assert!(!Rc::new(reference(&a)).alpha_equivalent(&Rc::new(reference(&b))));
     assert!(Arc::new(reference(&a)).alpha_equivalent_under(&Arc::new(reference(&b)), &renaming));
@@ -395,10 +396,8 @@ proptest! {
             (left_option.clone(), left.clone()).alpha_equivalent(&(right_option.clone(), right.clone())),
             left_option == right_option && left == right
         );
-        prop_assert_eq!(
-            Box::new(left.clone()).alpha_equivalent(&Box::new(right.clone())),
-            left == right
-        );
+        let (boxed_left, boxed_right) = (Box::new(left.clone()), Box::new(right.clone()));
+        prop_assert_eq!(boxed_left.alpha_equivalent(&boxed_right), left == right);
     }
 
     /// Test a vector is alpha-equivalent under the renaming that swaps
