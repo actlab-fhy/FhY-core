@@ -256,6 +256,7 @@ fn register_part_2(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<provenance::PyProvenance>()?;
     module.add_class::<provenance::PySpan>()?;
     module.add_class::<provenance::PyUnknownProvenance>()?;
+    module.add_class::<solver::PyGroundSimplifier>()?;
     module.add_class::<solver::PySatResult>()?;
     module.add_class::<solver::PySimplifierBase>()?;
     module.add_class::<solver::PySimplifyContext>()?;
