@@ -33,23 +33,23 @@ use fhy_core::constraint::{Member, MemberKind, OpaqueValue, Value};
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
-use crate::kit::gc::Slot;
-use crate::kit::pending::{has_pending_error, record_pending_error};
-pub(crate) use crate::kit::python::type_name;
+use crate::util::gc::Slot;
+use crate::util::pending::{has_pending_error, record_pending_error};
+pub(crate) use crate::util::python::type_name;
 
 /// Return the `ConstraintError` with `message`.
 pub(crate) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
-    crate::kit::exceptions::CONSTRAINT_ERROR.err(py, (message.into(),))
+    crate::util::exceptions::CONSTRAINT_ERROR.err(py, (message.into(),))
 }
 
 /// Return `fhy_core.serialization.Serializable`.
 fn serializable_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "fhy_core.serialization", "Serializable" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.serialization", "Serializable" => PyType)
 }
 
 /// Return `collections.abc.Hashable`.
 fn hashable_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "collections.abc", "Hashable" => PyType)
+    crate::util::python::cached_attr!(py, "collections.abc", "Hashable" => PyType)
 }
 
 /// Return whether `value` is both `Serializable` and `Hashable`.
@@ -127,7 +127,7 @@ fn build_ordering_key(value: &Bound<'_, PyAny>) -> PyResult<String> {
     let module: String = class.getattr(intern!(py, "__module__"))?.str()?.to_string();
     let qualified_name = class.qualname()?;
     let payload = if value.is_instance(serializable_class(py)?)? {
-        crate::kit::python::cached_attr!(py, "fhy_core.serialization", "_serialize_ordering_payload" => PyAny)?
+        crate::util::python::cached_attr!(py, "fhy_core.serialization", "_serialize_ordering_payload" => PyAny)?
             .call1((value,))?
     } else {
         value.clone()
@@ -141,7 +141,7 @@ impl ForeignPart for PyOpaqueValue {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::kit::foreign::foreign_of(&self.object.object(py), false))
+        Python::attach(|py| crate::util::foreign::foreign_of(&self.object.object(py), false))
     }
 }
 
@@ -401,7 +401,7 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
                     );
                     // The opaque value is a Python object, so the error is
                     // the exception its hash raised.
-                    refused.set_cause(py, Some(crate::kit::exceptions::boxed_error_to_py(error)));
+                    refused.set_cause(py, Some(crate::util::exceptions::boxed_error_to_py(error)));
                     return Err(refused);
                 }
             }

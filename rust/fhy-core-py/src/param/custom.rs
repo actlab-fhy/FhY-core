@@ -22,13 +22,13 @@ use fhy_core::param::{CustomDomain, IntervalProfile, ParamContext, ParamDomain, 
 
 use crate::constraint::{read_constraint, read_outcome, type_name, value_to_python};
 
-use crate::kit::gc::Slot;
+use crate::util::gc::Slot;
 
 use super::objects::{
     constraint_to_python, constraints_to_python, domain_to_python, identifier_object, read_domain,
     read_profile,
 };
-use crate::kit::pending::{has_pending_error, record_pending_error};
+use crate::util::pending::{has_pending_error, record_pending_error};
 
 /// A Python-defined domain, driven through its methods.
 ///
@@ -133,7 +133,7 @@ impl ForeignPart for PyCustomDomain {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::kit::foreign::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::util::foreign::foreign_of(&self.object.object(py), true))
     }
 }
 

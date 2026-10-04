@@ -30,14 +30,14 @@ use fhy_core::solver::{CheckLimits, QueryKind};
 use fhy_core::term::AlphaRenaming;
 
 use crate::expression::{PyExpression, registry_snapshot};
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::gc::{Slots, collect_slots};
-use crate::kit::serialization::{
-    FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
-    serialize_nested,
-};
 use crate::solver::{
     get_default_solver, read_limits, read_symbol_types, warn_hazard, warn_unknown,
+};
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::{Slots, collect_slots};
+use crate::util::serialization::{
+    FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
+    serialize_nested,
 };
 
 use super::custom::{PyCustomConstraint, PythonBindings};
@@ -48,11 +48,11 @@ use super::kinds::{
 };
 use super::observer::{DEBUG, LoggingObserver, WARNING, log, native_constant_refusal};
 use super::value::{constraint_error, repr_text, type_name};
-use crate::kit::pending::{record_pending_error, with_pending_errors};
+use crate::util::pending::{record_pending_error, with_pending_errors};
 
 /// Return `fhy_core.symbolic.constraint.core.Constraint`.
 fn constraint_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "fhy_core.symbolic.constraint.core", "Constraint" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.constraint.core", "Constraint" => PyType)
 }
 
 /// Return `fhy_core.symbolic.constraint.system`'s logger.

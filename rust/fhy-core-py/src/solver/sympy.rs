@@ -88,7 +88,7 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
     let text = error.to_string();
     match error.into_kind() {
         SympyErrorKind::Unavailable(unavailable) => {
-            let error = crate::kit::exceptions::SOLVER_BACKEND_UNAVAILABLE_ERROR
+            let error = crate::util::exceptions::SOLVER_BACKEND_UNAVAILABLE_ERROR
                 .err(py, (UNAVAILABLE_MESSAGE,));
             let (SympyUnavailableError::MissingSympy(cause)
             | SympyUnavailableError::Incompatible(cause)) = unavailable;
@@ -97,13 +97,13 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
         }
         SympyErrorKind::IllTyped(error) => error.into_py_err(),
         SympyErrorKind::BoundNativeConstant(_) => {
-            crate::kit::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
+            crate::util::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
         }
         SympyErrorKind::ComplexInfinity => {
-            crate::kit::exceptions::COMPLEX_INFINITY_LIFT_ERROR.err(py, (text,))
+            crate::util::exceptions::COMPLEX_INFINITY_LIFT_ERROR.err(py, (text,))
         }
         SympyErrorKind::PartialPiecewise(_) => {
-            crate::kit::exceptions::PARTIAL_PIECEWISE_ERROR.err(py, (text,))
+            crate::util::exceptions::PARTIAL_PIECEWISE_ERROR.err(py, (text,))
         }
         SympyErrorKind::Arity(_) => PyValueError::new_err(text),
         SympyErrorKind::Implies(node) => {
@@ -181,7 +181,7 @@ pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -
     {
         return error;
     }
-    match crate::kit::exceptions::PASS_EXECUTION_ERROR.build(
+    match crate::util::exceptions::PASS_EXECUTION_ERROR.build(
         py,
         (format!("pass {name:?} failed in run_pass"),),
         Some(&keywords),

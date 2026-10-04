@@ -10,10 +10,10 @@ use pyo3::types::{PyBool, PyTuple, PyType};
 
 use fhy_core::expression::pattern::{Capture, MatchBindings};
 
-use crate::kit::dataclass::hash_value;
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
-use crate::kit::python::Seed;
+use crate::util::dataclass::hash_value;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
+use crate::util::python::Seed;
 
 use super::capture::PyCapture;
 use super::objects::current_bindings_object;

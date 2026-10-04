@@ -7,7 +7,7 @@
 //! by parsing into the core's wire form and building the value with
 //! [`PyResolver`], which turns each foreign part back into the Python
 //! object its registered class decodes. The Python-defined parts of a
-//! value give their foreign parts through [`foreign_of`](crate::kit::foreign::foreign_of). A Python exception
+//! value give their foreign parts through [`foreign_of`](crate::util::foreign::foreign_of). A Python exception
 //! raised inside either hook is kept in the constraint binding's
 //! pending-error slot and raised as itself when serde returns.
 //!
@@ -28,11 +28,11 @@ use fhy_core::param::{CustomDomain, ParamDomain};
 use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 
 use crate::constraint::{read_constraint, read_opaque_member};
-use crate::kit::exceptions::{
+use crate::util::exceptions::{
     DESERIALIZATION_VALUE_ERROR, MALFORMED_PAYLOAD_ERROR, SERIALIZATION_ERROR,
 };
-use crate::kit::foreign::foreign_failure;
-use crate::kit::pending::with_pending_errors;
+use crate::util::foreign::foreign_failure;
+use crate::util::pending::with_pending_errors;
 
 mod families;
 mod python_value;
@@ -53,7 +53,7 @@ const MODULE: &str = "fhy_core.serialization";
 /// Raises what reading the framework's context variable raises.
 pub(crate) fn is_writing_v1(py: Python<'_>) -> PyResult<bool> {
     static V1: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-    let version = crate::kit::python::cached_attr!(py, MODULE, "_WIRE_VERSION" => PyAny)?
+    let version = crate::util::python::cached_attr!(py, MODULE, "_WIRE_VERSION" => PyAny)?
         .call_method0(intern!(py, "get"))?;
     let v1 = V1.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
         Ok(py
@@ -82,7 +82,7 @@ pub(crate) fn is_v1_payload(data: &Bound<'_, PyAny>) -> bool {
 
 /// Return whether a V1 payload is being read in this context.
 pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
-    crate::kit::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)
+    crate::util::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)
         .and_then(|flag| flag.call_method0(intern!(py, "get")))
         .and_then(|value| value.is_truthy())
         .unwrap_or(false)
@@ -94,7 +94,7 @@ pub(crate) fn is_reading_v1(py: Python<'_>) -> bool {
 ///
 /// Raises the warning when warnings are errors.
 pub(crate) fn warn_v1_read(cls: &Bound<'_, PyType>) -> PyResult<()> {
-    crate::kit::python::cached_attr!(cls.py(), MODULE, "_warn_v1_read" => PyAny)?.call1((cls,))?;
+    crate::util::python::cached_attr!(cls.py(), MODULE, "_warn_v1_read" => PyAny)?.call1((cls,))?;
     Ok(())
 }
 
@@ -336,7 +336,7 @@ fn resolve_object<'py>(
     let result = (|| -> PyResult<Bound<'py, PyAny>> {
         let keywords = PyDict::new(py);
         keywords.set_item(intern!(py, "family"), family)?;
-        crate::kit::python::cached_attr!(py, MODULE, "_resolve_foreign" => PyAny)?
+        crate::util::python::cached_attr!(py, MODULE, "_resolve_foreign" => PyAny)?
             .call((foreign.type_id(), foreign.data()), Some(&keywords))
     })();
     result.map_err(|error| foreign_failure(py, foreign.type_id(), error))
@@ -460,7 +460,7 @@ fn base_method<'py>(
 ///
 /// Raises what the member's V1 data hook raises.
 pub(crate) fn write_v1_envelope<'py>(object: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-    crate::kit::python::cached_attr!(object.py(), MODULE, "_write_v1_envelope" => PyAny)?
+    crate::util::python::cached_attr!(object.py(), MODULE, "_write_v1_envelope" => PyAny)?
         .call1((object,))
 }
 
@@ -475,7 +475,7 @@ pub(crate) fn reading_v1<T>(
     read: impl FnOnce() -> PyResult<T>,
 ) -> PyResult<T> {
     let py = cls.py();
-    let flag = crate::kit::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)?;
+    let flag = crate::util::python::cached_attr!(py, MODULE, "_READING_V1" => PyAny)?;
     if flag.call_method0(intern!(py, "get"))?.is_truthy()? {
         return read();
     }

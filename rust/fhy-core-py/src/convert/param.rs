@@ -28,9 +28,9 @@ use pyo3::prelude::*;
 use fhy_core::param::ParamContext;
 
 use crate::expression::registry_snapshot;
-use crate::kit::pending::with_pending_errors;
 use crate::param::PyParamObserver;
 use crate::solver::get_default_solver;
+use crate::util::pending::with_pending_errors;
 
 /// Run `question` with the context `fhy_core`'s own param methods use: the
 /// default solver, a snapshot of the function registry and `fhy_core`'s

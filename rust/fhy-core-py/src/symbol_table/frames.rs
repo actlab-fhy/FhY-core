@@ -25,17 +25,17 @@ use fhy_core::types::{Type, TypeQualifier};
 
 use crate::error::IntoPyErr;
 use crate::identifier::{deserialize_identifier, restore_identifier, serialize_identifier};
-use crate::kit::dataclass::{
-    build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
-};
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::pending::with_pending_errors;
-use crate::kit::serialization::{
-    FieldShape, is_serialized_dict, read_payload_fields, serialize_nested,
-};
 use crate::term::read_renaming;
 use crate::types::{
     MayCallPython, read_type_qualifier, read_type_value, run_in_context, type_qualifier_to_python,
+};
+use crate::util::dataclass::{
+    build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
+};
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::pending::with_pending_errors;
+use crate::util::serialization::{
+    FieldShape, is_serialized_dict, read_payload_fields, serialize_nested,
 };
 
 /// The module that defines `FunctionKeyword` and `SymbolTableFrame`.
@@ -220,7 +220,7 @@ fn cached_hash(py: Python<'_>, cache: &OnceLock<u64>, value: &SymbolFrame) -> Py
 /// Return the type a payload encodes, through `Type`'s family dispatch.
 fn deserialize_type<'py>(payload: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     let py = payload.py();
-    crate::kit::python::cached_attr!(py, "fhy_core.types", "Type" => PyType)?
+    crate::util::python::cached_attr!(py, "fhy_core.types", "Type" => PyType)?
         .call_method1(intern!(py, "deserialize_from_dict"), (payload,))
 }
 
@@ -245,7 +245,7 @@ pub(super) fn structure_error(
     for (name, ty) in expected {
         fields.set_item(name, ty)?;
     }
-    Ok(crate::kit::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, fields, data)))
+    Ok(crate::util::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, fields, data)))
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +407,7 @@ pub(crate) struct PyVariableSymbolTableFrame {
     value: SymbolFrame,
     hash: OnceLock<u64>,
     /// The slot of a Python-defined type's adapter, which the frame owns.
-    slots: crate::kit::gc::Slots,
+    slots: crate::util::gc::Slots,
 }
 
 #[pymethods]
@@ -439,7 +439,7 @@ impl PyVariableSymbolTableFrame {
         const OWNER: &str = "VariableSymbolTableFrame";
         let identifier = restore_identifier(name, OWNER, "name")?;
         let (ty, slots) =
-            crate::kit::gc::collect_slots(|| read_type_argument(r#type, OWNER, "type"));
+            crate::util::gc::collect_slots(|| read_type_argument(r#type, OWNER, "type"));
         let ty = ty?;
         let qualifier = read_type_qualifier(type_qualifier, OWNER, "type_qualifier")?;
         Ok(Self {
@@ -578,7 +578,7 @@ impl PyVariableSymbolTableFrame {
             .to_str()?
             .parse::<TypeQualifier>()
         else {
-            return Err(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+            return Err(crate::util::exceptions::DESERIALIZATION_VALUE_ERROR.err(
                 py,
                 (
                     cls,
@@ -621,7 +621,7 @@ pub(crate) struct PyFunctionSymbolTableFrame {
     hash: OnceLock<u64>,
     /// The slots of the Python-defined parameter types' adapters, which the
     /// frame owns.
-    slots: crate::kit::gc::Slots,
+    slots: crate::util::gc::Slots,
 }
 
 /// The core values of a function frame's signature.
@@ -703,7 +703,7 @@ impl PyFunctionSymbolTableFrame {
                 keyword,
             )?);
         };
-        let (read, slots) = crate::kit::gc::collect_slots(|| match signature {
+        let (read, slots) = crate::util::gc::collect_slots(|| match signature {
             Some(signature) => read_signature(signature),
             None => Ok((PyTuple::empty(py), Vec::new())),
         });
@@ -882,7 +882,7 @@ impl PyFunctionSymbolTableFrame {
             parts.push(part);
         }
         let invalid = |text: String| -> PyResult<PyErr> {
-            Ok(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR
+            Ok(crate::util::exceptions::DESERIALIZATION_VALUE_ERROR
                 .err(py, (format!("Invalid function frame values: {text}"),)))
         };
         let keyword_text = keyword.cast::<PyString>()?.to_str()?;
@@ -941,7 +941,7 @@ pub(crate) fn frame_wire_data(
     with_pending_errors(|| {
         match read_frame_value(object) {
             Some(frame) => SymbolFrameData::of(&frame),
-            None => crate::kit::foreign::foreign_of(&object.clone().unbind(), true)
+            None => crate::util::foreign::foreign_of(&object.clone().unbind(), true)
                 .map(SymbolFrameData::custom),
         }
         .map_err(|error| crate::wire::foreign_error(object.py(), &error))
@@ -965,11 +965,11 @@ pub(crate) fn frame_to_python<'py>(
     };
     match frame {
         SymbolFrame::Import(frame) => {
-            crate::kit::python::cached_attr!(py, MODULE, "ImportSymbolTableFrame" => PyType)?
+            crate::util::python::cached_attr!(py, MODULE, "ImportSymbolTableFrame" => PyType)?
                 .call1((crate::identifier::identifier_to_python(py, frame.name())?,))
         }
         SymbolFrame::Variable(frame) => {
-            crate::kit::python::cached_attr!(py, MODULE, "VariableSymbolTableFrame" => PyType)?
+            crate::util::python::cached_attr!(py, MODULE, "VariableSymbolTableFrame" => PyType)?
                 .call1((
                     crate::identifier::identifier_to_python(py, frame.name())?,
                     type_object(frame.ty())?,
@@ -990,7 +990,7 @@ pub(crate) fn frame_to_python<'py>(
                     )
                 })
                 .collect::<PyResult<Vec<_>>>()?;
-            crate::kit::python::cached_attr!(py, MODULE, "FunctionSymbolTableFrame" => PyType)?
+            crate::util::python::cached_attr!(py, MODULE, "FunctionSymbolTableFrame" => PyType)?
                 .call1((
                     crate::identifier::identifier_to_python(py, frame.name())?,
                     keyword_to_python(py, frame.keyword())?,

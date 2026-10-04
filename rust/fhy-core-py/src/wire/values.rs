@@ -24,7 +24,7 @@ pub(crate) fn serialize_wire_value<'py>(value: &Bound<'py, PyAny>) -> PyResult<B
             Ok(member) => return to_dict(py, &member),
             // An opaque value whose key raised: raise its exception.
             Err(MemberError::OrderingKey { source, .. }) => {
-                return Err(crate::kit::exceptions::boxed_error_to_py(source));
+                return Err(crate::util::exceptions::boxed_error_to_py(source));
             }
             Err(_not_a_member) => {}
         }

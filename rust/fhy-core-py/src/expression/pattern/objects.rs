@@ -34,8 +34,8 @@ use fhy_core::expression::pattern::{Capture, MatchBindings};
 use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use super::super::node::{PyExpression, build_node};
-use crate::kit::scoped::{ScopedGuard, ScopedStack};
 use crate::object_table::ObjectTable;
+use crate::util::scoped::{ScopedGuard, ScopedStack};
 
 /// The last bindings object a table built: the identities of its captures'
 /// nodes, in binding order, and the object.

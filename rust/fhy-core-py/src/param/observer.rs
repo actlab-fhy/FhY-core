@@ -24,7 +24,7 @@ use super::objects::{
     bindings_to_python, bound_identifiers_text, constraint_class_name, constraint_repr,
     identifier_object,
 };
-use crate::kit::pending::record_pending_error;
+use crate::util::pending::record_pending_error;
 
 /// Return `fhy_core.symbolic.param.domains`'s logger.
 fn domains_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {

@@ -20,7 +20,7 @@ use pyo3::types::{PyBool, PyInt, PyTuple};
 use fhy_core::pass::{FixpointPassGroup, PassManager};
 
 use crate::identifier::{read_identifier_id, restore_identifier};
-use crate::kit::dataclass::build_argument_type_error;
+use crate::util::dataclass::build_argument_type_error;
 
 use super::compiler_pass::{PyCompilerPassBase, PythonPass};
 use super::convert::records_to_python;
@@ -71,14 +71,14 @@ impl PyFixpointPassGroup {
     )]
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.name)?;
-        crate::kit::gc::traverse_locked(&self.passes, |passes| {
-            crate::kit::gc::traverse_all(&visit, passes)
+        crate::util::gc::traverse_locked(&self.passes, |passes| {
+            crate::util::gc::traverse_all(&visit, passes)
         })
     }
 
     /// Drop what only this object holds, for the cycle collector.
     fn __clear__(&self) {
-        crate::kit::gc::clear_locked(&self.passes);
+        crate::util::gc::clear_locked(&self.passes);
     }
 
     /// Create the empty group `name`, an `Identifier`, with a budget of
@@ -298,13 +298,13 @@ impl PyPassManager {
     )]
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.name)?;
-        crate::kit::gc::traverse_locked(&self.items, |items| {
+        crate::util::gc::traverse_locked(&self.items, |items| {
             items.iter().try_for_each(|item| match item {
                 Item::Pass(compiler_pass) => visit.call(compiler_pass),
                 Item::FixpointGroup(group) => visit.call(group),
             })
         })?;
-        crate::kit::gc::traverse_locked(&self.verifier, |verifier| match verifier {
+        crate::util::gc::traverse_locked(&self.verifier, |verifier| match verifier {
             Verifier::Manager(manager) => visit.call(manager),
             Verifier::Registry | Verifier::Off => Ok(()),
         })
@@ -312,7 +312,7 @@ impl PyPassManager {
 
     /// Drop what only this object holds, for the cycle collector.
     fn __clear__(&self) {
-        crate::kit::gc::clear_locked(&self.items);
+        crate::util::gc::clear_locked(&self.items);
         let verifier = std::mem::replace(&mut *lock(&self.verifier), Verifier::Off);
         drop(verifier);
     }

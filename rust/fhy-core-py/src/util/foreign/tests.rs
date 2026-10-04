@@ -5,8 +5,8 @@ use std::error::Error;
 
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 
-use crate::kit::pending::{capture_pending_errors, has_pending_error};
-use crate::kit::testing::{define, entry, with_framework};
+use crate::util::pending::{capture_pending_errors, has_pending_error};
+use crate::util::testing::{define, entry, with_framework};
 
 use super::*;
 

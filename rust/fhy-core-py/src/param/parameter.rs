@@ -36,13 +36,13 @@ use crate::identifier::{
     deserialize_identifier, identifier_to_python, new_python_identifier, restore_identifier,
     serialize_identifier,
 };
-use crate::kit::dataclass::OptionalArgument;
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::gc::{Slots, collect_slots};
-use crate::kit::pending::with_pending_errors;
-use crate::kit::python::Seed;
-use crate::kit::serialization::{construct_from_decoded_fields, is_serialized_dict};
 use crate::term::read_renaming;
+use crate::util::dataclass::OptionalArgument;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::{Slots, collect_slots};
+use crate::util::pending::with_pending_errors;
+use crate::util::python::Seed;
+use crate::util::serialization::{construct_from_decoded_fields, is_serialized_dict};
 
 use super::domains::run_with_context;
 use super::error::{ParamFailure, param_error, param_error_to_py};
@@ -54,22 +54,22 @@ const CORE: &str = "fhy_core.symbolic.param.core";
 
 /// Return the public `Param` class.
 fn param_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, CORE, "Param" => PyType)
+    crate::util::python::cached_attr!(py, CORE, "Param" => PyType)
 }
 
 /// Return the public `ParamAssignment` class.
 fn assignment_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, CORE, "ParamAssignment" => PyType)
+    crate::util::python::cached_attr!(py, CORE, "ParamAssignment" => PyType)
 }
 
 /// Return the public `ConstraintSystem` class.
 fn system_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "fhy_core.symbolic.constraint.system", "ConstraintSystem" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.constraint.system", "ConstraintSystem" => PyType)
 }
 
 /// Return `fhy_core.symbolic.param.domains.ParamDomain`.
 fn domain_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "fhy_core.symbolic.param.domains", "ParamDomain" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.param.domains", "ParamDomain" => PyType)
 }
 
 /// The Python objects a param holds beside its core.
@@ -1738,7 +1738,10 @@ fn check_structure(
             expected.set_item(*name, py.get_type::<PyAny>())?;
         }
     }
-    Err(crate::kit::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.err(py, (cls, expected, data)))
+    Err(
+        crate::util::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR
+            .err(py, (cls, expected, data)),
+    )
 }
 
 /// An assignment and the Python objects of its param and value.
@@ -1902,7 +1905,7 @@ impl PyParamAssignment {
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
         let py = slf.py();
         let this = slf.get();
-        crate::kit::dataclass::format_dataclass_repr(
+        crate::util::dataclass::format_dataclass_repr(
             &slf.get_type(),
             &[
                 ("param", this.param.bind(py)),
@@ -2032,7 +2035,7 @@ impl PyParamAssignment {
     ///
     /// V1: removed with the V1 wire format.
     fn serialize_v1<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let serialize = crate::kit::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
+        let serialize = crate::util::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
         let payload = PyDict::new(py);
         payload.set_item(
             intern!(py, "param"),
@@ -2067,14 +2070,14 @@ impl PyParamAssignment {
             )?,
         )?;
         let payload = data.get_item("value")?;
-        let deserialize = crate::kit::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
+        let deserialize = crate::util::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
         let value = match deserialize.call1((&payload,)) {
             Ok(value) => value,
             Err(error)
                 if error.is_instance_of::<pyo3::exceptions::PyValueError>(py)
                     || error.is_instance_of::<PyTypeError>(py) =>
             {
-                let wrapped = crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR
+                let wrapped = crate::util::exceptions::DESERIALIZATION_VALUE_ERROR
                     .err(py, (cls, "value", "a decodable value", &payload));
                 wrapped.set_cause(py, Some(error));
                 return Err(wrapped);

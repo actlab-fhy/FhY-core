@@ -29,11 +29,11 @@ use fhy_core::solver::{
 };
 
 use crate::expression::{PyExpression, materialize_expression, materialize_substituted};
-use crate::kit::gc::Slot;
-pub(super) use crate::kit::python::type_name;
-use crate::kit::scoped::ScopedStack;
 use crate::object_table::ObjectTable;
 use crate::pass::refuse_unused_arguments;
+use crate::util::gc::Slot;
+pub(super) use crate::util::python::type_name;
+use crate::util::scoped::ScopedStack;
 
 use super::values::{PySatResult, PySmtScript};
 

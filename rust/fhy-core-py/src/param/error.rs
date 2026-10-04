@@ -21,7 +21,7 @@ use super::value::value_kind_message;
 
 /// Return the `ParamError` with `message`.
 pub(super) fn param_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
-    crate::kit::exceptions::PARAM_ERROR.err(py, (message.into(),))
+    crate::util::exceptions::PARAM_ERROR.err(py, (message.into(),))
 }
 
 /// Return the name of the Python class of a domain of `kind`, after its
@@ -100,7 +100,7 @@ impl From<ConstraintError> for ParamFailure {
 /// Return the Python exception a custom domain or value raised, boxed as
 /// `error`, or a `RuntimeError` naming it and `text`.
 fn custom_error_to_py(text: &str, error: BoxError) -> PyErr {
-    crate::kit::exceptions::unbox_py_err(error)
+    crate::util::exceptions::unbox_py_err(error)
         .unwrap_or_else(|error| PyRuntimeError::new_err(format!("{text}: {error}")))
 }
 
@@ -224,13 +224,15 @@ pub(super) fn ordinal_error_to_py(
         (_, Some(raised)) => raised,
         // A value's `<` that raised: a `TypeError` means the values do not
         // order, as the order error says.
-        (DomainError::Custom(source), None) => match crate::kit::exceptions::unbox_py_err(source) {
-            Ok(raised) if raised.is_instance_of::<PyTypeError>(py) => {
-                chain_under_incomparable(raised)
+        (DomainError::Custom(source), None) => {
+            match crate::util::exceptions::unbox_py_err(source) {
+                Ok(raised) if raised.is_instance_of::<PyTypeError>(py) => {
+                    chain_under_incomparable(raised)
+                }
+                Ok(raised) => raised,
+                Err(other) => param_error_to_py(py, DomainError::Custom(other), None),
             }
-            Ok(raised) => raised,
-            Err(other) => param_error_to_py(py, DomainError::Custom(other), None),
-        },
+        }
         (error, None) => param_error_to_py(py, error, None),
     }
 }

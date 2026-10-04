@@ -111,8 +111,8 @@ macro_rules! cached_attr {
         $crate::cached_attr!($py, $module, $name => ::pyo3::PyAny)
     };
     ($py:expr, $module:expr, $name:expr => $type:ty) => {{
-        static ATTRIBUTE: $crate::kit::python::ImportedAttr<$type> =
-            $crate::kit::python::ImportedAttr::new($module, $name);
+        static ATTRIBUTE: $crate::util::python::ImportedAttr<$type> =
+            $crate::util::python::ImportedAttr::new($module, $name);
         ATTRIBUTE.get($py)
     }};
 }

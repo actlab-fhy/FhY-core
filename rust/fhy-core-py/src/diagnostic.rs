@@ -27,13 +27,13 @@ use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, NoteKind};
 use fhy_core::interned::Canonical;
 
 use crate::described_tag::define_described_tag_class;
-use crate::kit::dataclass::{
+use crate::util::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, compare_as_dataclass, hash_value,
     read_str,
 };
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
-use crate::kit::serialization::{FieldShape, read_payload_fields};
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
+use crate::util::serialization::{FieldShape, read_payload_fields};
 
 /// The Python module that defines the public classes.
 const MODULE: &str = "fhy_core.diagnostic";
@@ -791,7 +791,7 @@ impl PyValidationReport {
         if !slf.get().contains_errors(slf.py())? {
             return Ok(());
         }
-        Err(crate::kit::exceptions::VALIDATION_FAILED_ERROR.err(slf.py(), (slf,)))
+        Err(crate::util::exceptions::VALIDATION_FAILED_ERROR.err(slf.py(), (slf,)))
     }
 
     /// Always true: reports are immutable.

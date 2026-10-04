@@ -1,19 +1,19 @@
-//! The stories of the Python helpers of the kit, run in an interpreter this
+//! The stories of the Python helpers of the util module, run in an interpreter this
 //! test binary embeds; they need no package but the standard library.
 
 use pyo3::exceptions::{PyAttributeError, PyImportError, PyModuleNotFoundError, PyTypeError};
 use pyo3::types::{PyList, PyType};
 
-use crate::kit::testing::{evaluate, with_framework};
+use crate::util::testing::{evaluate, with_framework};
 
 use super::*;
 
 static LEN: ImportedAttr = ImportedAttr::new("builtins", "len");
 static VALUE_ERROR: ImportedAttr<PyType> = ImportedAttr::new("builtins", "ValueError");
 static LEN_AS_A_TYPE: ImportedAttr<PyType> = ImportedAttr::new("builtins", "len");
-static NO_MODULE: ImportedAttr = ImportedAttr::new("fhy_core_kit_no_such_module", "Thing");
-static NO_ATTRIBUTE: ImportedAttr = ImportedAttr::new("builtins", "fhy_core_kit_no_such_name");
-static LATE: ImportedAttr = ImportedAttr::new("fhy_core_kit_late_module", "Value");
+static NO_MODULE: ImportedAttr = ImportedAttr::new("fhy_core_util_no_such_module", "Thing");
+static NO_ATTRIBUTE: ImportedAttr = ImportedAttr::new("builtins", "fhy_core_util_no_such_name");
+static LATE: ImportedAttr = ImportedAttr::new("fhy_core_util_late_module", "Value");
 
 #[test]
 fn a_seed_is_taken_once_and_the_second_take_names_its_kind() {
@@ -90,7 +90,7 @@ fn a_failed_import_is_not_kept() {
     with_framework(|py| {
         LATE.get(py).expect_err("the module does not exist yet");
         py.run(
-            c"import sys, types\nm = types.ModuleType('fhy_core_kit_late_module')\nm.Value = 5\nsys.modules['fhy_core_kit_late_module'] = m",
+            c"import sys, types\nm = types.ModuleType('fhy_core_util_late_module')\nm.Value = 5\nsys.modules['fhy_core_util_late_module'] = m",
             None,
             None,
         )

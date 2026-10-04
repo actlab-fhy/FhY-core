@@ -1,4 +1,4 @@
-//! The stories of the cycle-collector helpers of the kit, run in an
+//! The stories of the cycle-collector helpers of the util module, run in an
 //! interpreter this test binary embeds. The ones that traverse use a class of
 //! this module that holds its objects as the helpers prescribe, and run the
 //! interpreter's collector over a cycle that runs through it.
@@ -8,13 +8,13 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::types::PyList;
 
-use crate::kit::testing::with_framework;
+use crate::util::testing::with_framework;
 
 use super::*;
 
 /// A class that holds Python objects in each place the module prescribes a
 /// rule for, and records that it was freed.
-#[pyclass(module = "fhy_core_kit_tests")]
+#[pyclass(module = "fhy_core_util_tests")]
 struct Holder {
     slots: Slots,
     fields: Vec<Py<PyAny>>,

@@ -13,9 +13,9 @@ use fhy_core::expression::Expression;
 use fhy_core::expression::pattern::RewriteRule;
 use fhy_core::foreign::BoxError;
 
-use crate::kit::dataclass::{compare_as_dataclass, format_dataclass_repr, hash_value};
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
+use crate::util::dataclass::{compare_as_dataclass, format_dataclass_repr, hash_value};
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
 
 use super::super::node::{PyExpression, read_expression};
 use super::bindings::PyMatchBindings;
@@ -24,8 +24,8 @@ use super::kinds::{
     read_optional_str, type_name,
 };
 use super::objects::{ActiveTable, current_adopt, current_object_of};
-use crate::kit::gc::{Slot, Slots, collect_slots};
-use crate::kit::python::Seed;
+use crate::util::gc::{Slot, Slots, collect_slots};
+use crate::util::python::Seed;
 
 // ---------------------------------------------------------------------------
 // RewriteRule
@@ -327,7 +327,7 @@ impl PyRewriteRule {
         name: &Bound<'py, PyAny>,
         is_partial: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let guards = crate::kit::dataclass::collect_tuple(guards)?;
+        let guards = crate::util::dataclass::collect_tuple(guards)?;
         let rule = RuleFields::read(pattern, rewrite, &guards, name, is_partial)?.into_rule()?;
         Self::build_object(cls, rule)
     }
@@ -388,7 +388,7 @@ impl PyRewriteRule {
         let replacement = self
             .rule
             .apply(expression.get().expression())
-            .map_err(crate::kit::exceptions::boxed_error_to_py)?;
+            .map_err(crate::util::exceptions::boxed_error_to_py)?;
         let result = match replacement {
             Some(replacement) => Some(table.object_of(py, &replacement)?),
             None => None,

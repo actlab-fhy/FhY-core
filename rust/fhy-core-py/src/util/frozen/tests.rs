@@ -1,8 +1,8 @@
 //! The stories of the frozen refusals, run in an interpreter this test binary
 //! embeds, against the stand-in of `FrozenMutationError`.
 
-use crate::kit::exceptions::FROZEN_MUTATION_ERROR;
-use crate::kit::testing::{evaluate, with_framework};
+use crate::util::exceptions::FROZEN_MUTATION_ERROR;
+use crate::util::testing::{evaluate, with_framework};
 
 use super::*;
 

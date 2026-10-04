@@ -40,7 +40,7 @@ macro_rules! define_described_tag_class {
         /// instance, and each canonical tag gets one Python object.
         #[pyclass(frozen, module = "fhy_core._rs")]
         pub(crate) struct $seed(
-            $crate::kit::python::Seed<(
+            $crate::util::python::Seed<(
                 ::fhy_core::interned::Canonical<$tag>,
                 Py<PyAny>,
                 Py<::pyo3::types::PyString>,
@@ -62,16 +62,16 @@ macro_rules! define_described_tag_class {
         impl $class {
             /// Return the cache from each canonical tag's key to its Python
             /// object.
-            fn identity_cache() -> &'static $crate::kit::interned::IdentityCache {
-                static CACHE: $crate::kit::interned::IdentityCache =
-                    $crate::kit::interned::IdentityCache::new();
+            fn identity_cache() -> &'static $crate::util::interned::IdentityCache {
+                static CACHE: $crate::util::interned::IdentityCache =
+                    $crate::util::interned::IdentityCache::new();
                 &CACHE
             }
 
             /// Return the public Python class registered for this class.
-            fn public_class() -> &'static $crate::kit::public_class::PublicClass {
-                static PUBLIC_CLASS: $crate::kit::public_class::PublicClass =
-                    $crate::kit::public_class::PublicClass::new($py_name);
+            fn public_class() -> &'static $crate::util::public_class::PublicClass {
+                static PUBLIC_CLASS: $crate::util::public_class::PublicClass =
+                    $crate::util::public_class::PublicClass::new($py_name);
                 &PUBLIC_CLASS
             }
 
@@ -109,7 +109,7 @@ macro_rules! define_described_tag_class {
                 let description = ::pyo3::types::PyString::new(py, tag.description());
                 let seed = Bound::new(
                     py,
-                    $seed($crate::kit::python::Seed::new((
+                    $seed($crate::util::python::Seed::new((
                         tag,
                         name.unbind(),
                         description.unbind(),
@@ -157,7 +157,7 @@ macro_rules! define_described_tag_class {
             ) -> PyResult<Bound<'py, PyAny>> {
                 let description = description.cast::<::pyo3::types::PyString>()?;
                 let (object, tag) = Self::register(cls, name, description)?;
-                $crate::kit::interned::warn_if_description_ignored(
+                $crate::util::interned::warn_if_description_ignored(
                     cls,
                     name,
                     &::pyo3::types::PyString::new(cls.py(), tag.description()),
@@ -280,11 +280,11 @@ macro_rules! define_described_tag_class {
                 name: &str,
                 _value: &Bound<'_, PyAny>,
             ) -> PyResult<()> {
-                $crate::kit::frozen::refuse_attribute_assignment(slf, name)
+                $crate::util::frozen::refuse_attribute_assignment(slf, name)
             }
 
             fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-                $crate::kit::frozen::refuse_attribute_deletion(slf, name)
+                $crate::util::frozen::refuse_attribute_deletion(slf, name)
             }
 
             /// Pickle as the payload, so unpickling returns the canonical
@@ -345,7 +345,7 @@ macro_rules! define_described_tag_class {
             ) -> PyResult<Bound<'py, PyAny>> {
                 match Self::get_interned(cls, key)? {
                     Some(object) => Ok(object),
-                    None => Err($crate::kit::interned::build_not_interned_error(cls, key)?),
+                    None => Err($crate::util::interned::build_not_interned_error(cls, key)?),
                 }
             }
 
@@ -357,7 +357,7 @@ macro_rules! define_described_tag_class {
                 fields: &Bound<'py, PyAny>,
             ) -> PyResult<Bound<'py, PyAny>> {
                 let [name, description] =
-                    $crate::kit::serialization::read_constructor_fields(
+                    $crate::util::serialization::read_constructor_fields(
                         cls,
                         fields,
                         ["name", "description"],
@@ -373,8 +373,8 @@ macro_rules! define_described_tag_class {
                 cls: &Bound<'py, ::pyo3::types::PyType>,
                 data: &Bound<'py, PyAny>,
             ) -> PyResult<Bound<'py, PyAny>> {
-                use $crate::kit::serialization::FieldShape;
-                let [name, description] = $crate::kit::serialization::read_payload_fields(
+                use $crate::util::serialization::FieldShape;
+                let [name, description] = $crate::util::serialization::read_payload_fields(
                     cls,
                     data,
                     [("name", FieldShape::Payload), ("description", FieldShape::Str)],
@@ -396,7 +396,7 @@ macro_rules! define_described_tag_class {
             /// append-only.
             #[classmethod]
             fn clear_interned_registry(cls: &Bound<'_, ::pyo3::types::PyType>) -> PyResult<()> {
-                $crate::kit::interned::raise_registry_append_only(cls, "clear_interned_registry")
+                $crate::util::interned::raise_registry_append_only(cls, "clear_interned_registry")
             }
 
             /// Raise `NotImplementedError`: the Rust registry is
@@ -405,7 +405,7 @@ macro_rules! define_described_tag_class {
             fn register_default_instances(
                 cls: &Bound<'_, ::pyo3::types::PyType>,
             ) -> PyResult<()> {
-                $crate::kit::interned::raise_registry_append_only(cls, "register_default_instances")
+                $crate::util::interned::raise_registry_append_only(cls, "register_default_instances")
             }
 
             $($extra)*

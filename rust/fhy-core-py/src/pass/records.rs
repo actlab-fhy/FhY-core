@@ -15,12 +15,12 @@ use pyo3::types::{PyBool, PyInt, PyString, PyTuple, PyType};
 
 use crate::diagnostic::borrow_python_diagnostic;
 use crate::identifier::read_identifier_id;
-use crate::kit::dataclass::{
+use crate::util::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, compare_as_dataclass,
     format_dataclass_repr,
 };
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
 
 use super::analysis::{PyPreservedAnalyses, preserved_to_python};
 

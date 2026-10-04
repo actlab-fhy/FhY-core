@@ -17,7 +17,7 @@ use fhy_core::types::{
 
 use crate::error::{IntoPyErr, IntoPyResult};
 use crate::expression::read_big_int;
-use crate::kit::dataclass::build_argument_type_error;
+use crate::util::dataclass::build_argument_type_error;
 
 use super::adapter::run_in_context;
 use super::classes::{MayCallPython, PyPrimitiveDataType, build_not_a_type_error};
@@ -66,7 +66,7 @@ fn structural_mismatch(
 
 /// Return the `VerificationError` with `message`.
 fn verification_error(message: String) -> PyErr {
-    Python::attach(|py| crate::kit::exceptions::VERIFICATION_ERROR.err(py, (message,)))
+    Python::attach(|py| crate::util::exceptions::VERIFICATION_ERROR.err(py, (message,)))
 }
 
 /// Return the kind mismatch of a built-in `pattern` meeting `actual`, which

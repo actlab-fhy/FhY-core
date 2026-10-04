@@ -1,4 +1,4 @@
-//! The stories of the serialization helpers of the kit, run in an
+//! The stories of the serialization helpers of the util module, run in an
 //! interpreter this test binary embeds, against the stand-in of
 //! `fhy_core.serialization`: the structure of the framework's exceptions and
 //! the payload check are the stand-in's, and the Python suite covers the
@@ -8,10 +8,10 @@ use pyo3::exceptions::{
     PyAttributeError, PyKeyError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
 };
 
-use crate::kit::exceptions::{
+use crate::util::exceptions::{
     DESERIALIZATION_DICT_STRUCTURE_ERROR, DESERIALIZATION_VALUE_ERROR, SERIALIZATION_ERROR,
 };
-use crate::kit::testing::{define, entry, evaluate, with_framework};
+use crate::util::testing::{define, entry, evaluate, with_framework};
 
 use super::*;
 

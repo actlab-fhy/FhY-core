@@ -154,7 +154,7 @@ pub fn warn_if_description_ignored(
         return Ok(());
     }
     let py = cls.py();
-    let logger = crate::kit::python::cached_attr!(py, "logging", "getLogger" => PyAny)?
+    let logger = crate::util::python::cached_attr!(py, "logging", "getLogger" => PyAny)?
         .call1((intern!(py, "fhy_core.traits.interned"),))?;
     logger.call_method1(
         intern!(py, "warning"),

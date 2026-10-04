@@ -1,4 +1,4 @@
-//! The stories of the interned-class helpers of the kit, run in an
+//! The stories of the interned-class helpers of the util module, run in an
 //! interpreter this test binary embeds.
 
 use std::thread;
@@ -6,7 +6,7 @@ use std::thread;
 use pyo3::exceptions::{PyKeyError, PyNotImplementedError};
 use pyo3::types::{PyList, PyString, PyType};
 
-use crate::kit::testing::{define, entry, evaluate, with_framework};
+use crate::util::testing::{define, entry, evaluate, with_framework};
 
 use super::*;
 

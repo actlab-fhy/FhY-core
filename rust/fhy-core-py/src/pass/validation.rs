@@ -23,7 +23,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::pass::{CompilerPass, PassContext, ValidationManager, Validator};
 
 use crate::identifier::{new_python_identifier, read_identifier_id, restore_identifier};
-use crate::kit::dataclass::build_argument_type_error;
+use crate::util::dataclass::build_argument_type_error;
 
 use super::compiler_pass::{
     HookFailure, PyCompilerPassBase, PythonPass, build_interrupted_failure, log_diagnostic,
@@ -292,14 +292,14 @@ impl PyValidationManager {
     )]
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.name)?;
-        crate::kit::gc::traverse_locked(&self.validators, |validators| {
-            crate::kit::gc::traverse_all(&visit, validators)
+        crate::util::gc::traverse_locked(&self.validators, |validators| {
+            crate::util::gc::traverse_all(&visit, validators)
         })
     }
 
     /// Drop what only this object holds, for the cycle collector.
     fn __clear__(&self) {
-        crate::kit::gc::clear_locked(&self.validators);
+        crate::util::gc::clear_locked(&self.validators);
     }
 
     /// Create the empty validation pipeline `name`, by default an

@@ -21,7 +21,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyType};
 
-use crate::kit::python::ImportedAttr;
+use crate::util::python::ImportedAttr;
 
 /// A Python exception class, imported on first use.
 #[derive(Debug)]
@@ -156,7 +156,7 @@ exception_classes! {
 mod tests {
     use pyo3::exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError};
 
-    use crate::kit::testing::{evaluate, with_framework};
+    use crate::util::testing::{evaluate, with_framework};
 
     use super::*;
 

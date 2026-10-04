@@ -17,7 +17,7 @@
 //! - an aggregate extension for a downstream product is a `cdylib` whose
 //!   `#[pymodule]` calls [`register`] and then its own crates' registration
 //!   functions, and takes and returns `fhy-core` values through [`convert`].
-//!   Its classes are written over the building blocks of [`kit`], as `fhy_core`'s are.
+//!   Its classes are written over the building blocks of [`util`], as `fhy_core`'s are.
 //!
 //! The split into a library and a thin `cdylib` is deliberate. A `#[pymodule]`
 //! exports a `PyInit_<name>` symbol, which an `rlib` that is linked into an
@@ -64,7 +64,7 @@ mod value_domain;
 mod wire;
 
 pub mod convert;
-pub mod kit;
+pub mod util;
 
 use pyo3::prelude::*;
 

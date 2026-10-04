@@ -27,13 +27,13 @@ use fhy_core::types::checking::CallTarget;
 
 use crate::error::{IntoPyErr, IntoPyResult};
 use crate::identifier::{identifier_to_python, restore_identifier};
-use crate::kit::dataclass::{
+use crate::util::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, format_dataclass_repr, hash_value,
     read_str,
 };
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
-use crate::kit::python::Seed;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
+use crate::util::python::Seed;
 
 use super::super::literal::read_big_int;
 use super::super::materialize::materialize_expression;
@@ -61,7 +61,7 @@ impl IntoPyErr for ConstantValueError {
 
 /// Return `fhy_core.symbolic.expression.sort.FunctionSort`.
 fn sort_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "fhy_core.symbolic.expression.sort", "FunctionSort" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.expression.sort", "FunctionSort" => PyType)
 }
 
 /// Every sort, in the order of [`sort_index`].
@@ -628,7 +628,7 @@ struct NativeFunctionSeed(Seed<PyNativeFunction>);
 /// Return the Python function checking a native implementation's arity,
 /// `_check_native_implementation_arity(name, count, implementation)`.
 fn arity_check(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
-    crate::kit::python::cached_attr!(py, "fhy_core.symbolic.expression.registry.entries", "_check_native_implementation_arity" => PyAny)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.expression.registry.entries", "_check_native_implementation_arity" => PyAny)
 }
 
 /// A named function computed by a Python callable, backed by the Rust

@@ -7,9 +7,9 @@ use pyo3::types::{PyString, PyTuple, PyType};
 
 use fhy_core::expression::pattern::Capture;
 
-use crate::kit::dataclass::read_str;
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
+use crate::util::dataclass::read_str;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
 
 /// A handle a capture pattern binds a matched expression to, backed by the
 /// Rust [`Capture`].

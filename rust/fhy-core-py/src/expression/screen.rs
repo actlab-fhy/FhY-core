@@ -25,7 +25,7 @@ use super::text::render_kind_repr;
 
 /// Return `NonBooleanLogicalOperandError` with `message`.
 pub(crate) fn non_boolean_operand_error(py: Python<'_>, message: String) -> PyErr {
-    crate::kit::exceptions::NON_BOOLEAN_LOGICAL_OPERAND_ERROR.err(py, (message,))
+    crate::util::exceptions::NON_BOOLEAN_LOGICAL_OPERAND_ERROR.err(py, (message,))
 }
 
 /// Raises `NonBooleanLogicalOperandError` (a `TypeError`) with the core's
@@ -43,7 +43,7 @@ impl IntoPyErr for NonBooleanLogicalOperandError {
             None => format!("{self}: {}", render_kind_repr(self.operand())),
         };
         Python::attach(|py| {
-            crate::kit::exceptions::NON_BOOLEAN_LOGICAL_OPERAND_ERROR.err(py, (message,))
+            crate::util::exceptions::NON_BOOLEAN_LOGICAL_OPERAND_ERROR.err(py, (message,))
         })
     }
 }

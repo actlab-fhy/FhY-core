@@ -58,7 +58,7 @@ pub(crate) fn constraint_to_python<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     match constraint {
         Constraint::Equation(equation) => {
-            crate::kit::python::cached_attr!(py, CONSTRAINTS, "EquationConstraint" => PyType)?
+            crate::util::python::cached_attr!(py, CONSTRAINTS, "EquationConstraint" => PyType)?
                 .call1((materialize_expression(py, equation.expression())?,))
         }
         Constraint::Set(set) => {
@@ -69,10 +69,10 @@ pub(crate) fn constraint_to_python<'py>(
                 .collect::<PyResult<Vec<_>>>()?;
             let class = match set.polarity() {
                 Polarity::NotIn => {
-                    crate::kit::python::cached_attr!(py, CONSTRAINTS, "NotInSetConstraint" => PyType)?
+                    crate::util::python::cached_attr!(py, CONSTRAINTS, "NotInSetConstraint" => PyType)?
                 }
                 _ => {
-                    crate::kit::python::cached_attr!(py, CONSTRAINTS, "InSetConstraint" => PyType)?
+                    crate::util::python::cached_attr!(py, CONSTRAINTS, "InSetConstraint" => PyType)?
                 }
             };
             class.call1((
@@ -190,7 +190,7 @@ pub(super) fn read_domain(domain: &Bound<'_, PyAny>) -> ParamDomain {
 pub(super) fn read_domain_object(object: &Bound<'_, PyAny>) -> PyResult<ParamDomain> {
     let py = object.py();
     if !object
-        .is_instance(crate::kit::python::cached_attr!(py, DOMAINS, "ParamDomain" => PyType)?)?
+        .is_instance(crate::util::python::cached_attr!(py, DOMAINS, "ParamDomain" => PyType)?)?
     {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "expected a ParamDomain, got {}",
@@ -219,31 +219,30 @@ pub(crate) fn domain_to_python<'py>(
     };
     match domain {
         ParamDomain::Integer(domain) => {
-            crate::kit::python::cached_attr!(py, DOMAINS, "IntegerDomain" => PyType)?
+            crate::util::python::cached_attr!(py, DOMAINS, "IntegerDomain" => PyType)?
                 .call1((domain.is_non_negative(), domain.is_zero_included()))
         }
         ParamDomain::IntervalInteger(domain) => {
-            crate::kit::python::cached_attr!(py, DOMAINS, "IntervalIntegerDomain" => PyType)?.call1(
-                (
+            crate::util::python::cached_attr!(py, DOMAINS, "IntervalIntegerDomain" => PyType)?
+                .call1((
                     domain.is_inclusive_preferred(),
                     domain.is_non_negative(),
                     domain.is_zero_included(),
-                ),
-            )
+                ))
         }
         ParamDomain::Real(_) => {
-            crate::kit::python::cached_attr!(py, DOMAINS, "RealDomain" => PyType)?.call0()
+            crate::util::python::cached_attr!(py, DOMAINS, "RealDomain" => PyType)?.call0()
         }
         ParamDomain::Ordinal(domain) => {
-            crate::kit::python::cached_attr!(py, DOMAINS, "OrdinalDomain" => PyType)?
+            crate::util::python::cached_attr!(py, DOMAINS, "OrdinalDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Categorical(domain) => {
-            crate::kit::python::cached_attr!(py, DOMAINS, "CategoricalDomain" => PyType)?
+            crate::util::python::cached_attr!(py, DOMAINS, "CategoricalDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Permutation(domain) => {
-            crate::kit::python::cached_attr!(py, DOMAINS, "PermutationDomain" => PyType)?
+            crate::util::python::cached_attr!(py, DOMAINS, "PermutationDomain" => PyType)?
                 .call1((members(domain.values())?,))
         }
         ParamDomain::Custom(custom) => custom
@@ -277,7 +276,7 @@ pub(super) fn profile_to_python(
         intern!(py, "prefer_inclusive"),
         profile.is_inclusive_preferred(),
     )?;
-    crate::kit::python::cached_attr!(py, DOMAINS, "IntervalProfile" => PyType)?
+    crate::util::python::cached_attr!(py, DOMAINS, "IntervalProfile" => PyType)?
         .call((), Some(&keywords))
 }
 

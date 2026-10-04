@@ -13,8 +13,8 @@ use fhy_core::solver::{
 };
 
 use crate::expression::{PyExpression, materialize_substituted, registry_snapshot};
-use crate::kit::gc::{Slots, collect_slots};
 use crate::object_table::ObjectTable;
+use crate::util::gc::{Slots, collect_slots};
 
 use super::backends::{PySimplifierBase, build_simplifier, type_name};
 use super::error::solve_error_to_py;

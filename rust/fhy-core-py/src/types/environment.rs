@@ -20,10 +20,10 @@ use fhy_core::types::TypeUnificationEnvironment;
 
 use crate::error::IntoPyErr;
 use crate::identifier::{read_identifier_id, restore_identifier};
-use crate::kit::dataclass::{build_argument_type_error, hash_value};
-use crate::kit::gc::{Slots, collect_slots};
-use crate::kit::public_class::PublicClass;
-use crate::kit::python::Seed;
+use crate::util::dataclass::{build_argument_type_error, hash_value};
+use crate::util::gc::{Slots, collect_slots};
+use crate::util::public_class::PublicClass;
+use crate::util::python::Seed;
 
 use super::adapter::{Context, environment_class, run_in_context};
 use super::convert::{
@@ -98,7 +98,7 @@ pub(crate) struct PyTypeUnificationEnvironment {
 
 /// Return `immutabledict.immutabledict`.
 fn immutabledict_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)
+    crate::util::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)
 }
 
 /// Which table a binding belongs to.

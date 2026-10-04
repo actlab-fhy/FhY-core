@@ -31,19 +31,19 @@ use super::renaming::{IdentifierList, PyAlphaRenaming, RenamingValue, read_renam
 const MODULE: &str = "fhy_core.term.derived_equivalence";
 
 fn plan_cache(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
-    Ok(crate::kit::python::cached_attr!(py, MODULE, "_PLAN_CACHE" => PyDict)?.clone())
+    Ok(crate::util::python::cached_attr!(py, MODULE, "_PLAN_CACHE" => PyDict)?.clone())
 }
 
 fn metadata_key(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
-    Ok(crate::kit::python::cached_attr!(py, MODULE, "EQUIVALENCE_METADATA_KEY")?.clone())
+    Ok(crate::util::python::cached_attr!(py, MODULE, "EQUIVALENCE_METADATA_KEY")?.clone())
 }
 
 fn derivation_error(py: Python<'_>, message: String) -> PyErr {
-    crate::kit::exceptions::EQUIVALENCE_DERIVATION_ERROR.err(py, (message,))
+    crate::util::exceptions::EQUIVALENCE_DERIVATION_ERROR.err(py, (message,))
 }
 
 fn mixin_method<'py>(py: Python<'py>, name: &Bound<'py, PyString>) -> PyResult<Bound<'py, PyAny>> {
-    crate::kit::python::cached_attr!(py, MODULE, "DerivedEquivalenceMixin")?.getattr(name)
+    crate::util::python::cached_attr!(py, MODULE, "DerivedEquivalenceMixin")?.getattr(name)
 }
 
 fn dataclasses_function<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -51,12 +51,12 @@ fn dataclasses_function<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py,
 }
 
 fn enum_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
-    Ok(crate::kit::python::cached_attr!(py, "enum", "Enum" => PyType)?.clone())
+    Ok(crate::util::python::cached_attr!(py, "enum", "Enum" => PyType)?.clone())
 }
 
 fn identifier_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
     Ok(
-        crate::kit::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)?
+        crate::util::python::cached_attr!(py, "fhy_core.identifier", "Identifier" => PyType)?
             .clone(),
     )
 }

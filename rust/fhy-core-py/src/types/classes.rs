@@ -23,10 +23,10 @@ use fhy_core::types::{
 use crate::error::IntoPyErr;
 use crate::expression::PyExpression;
 use crate::identifier::{deserialize_identifier, restore_identifier};
-use crate::kit::dataclass::{build_argument_type_error, collect_tuple, hash_value};
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::public_class::PublicClass;
-use crate::kit::serialization::{FieldShape, read_payload_fields, serialize_nested};
+use crate::util::dataclass::{build_argument_type_error, collect_tuple, hash_value};
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
+use crate::util::serialization::{FieldShape, read_payload_fields, serialize_nested};
 
 use super::adapter::run_in_context;
 use super::convert::{read_data_type_value, read_type_value};
@@ -517,7 +517,7 @@ impl PyPrimitiveDataType {
         let py = cls.py();
         let [name] = read_payload_fields(cls, data, [("core_data_type", FieldShape::Str)])?;
         let Ok(value) = name.cast::<PyString>()?.to_str()?.parse::<CoreDataType>() else {
-            return Err(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR
+            return Err(crate::util::exceptions::DESERIALIZATION_VALUE_ERROR
                 .err(py, (cls, "core_data_type", "a valid core data type", name)));
         };
         cls.call1((core_data_type_to_python(py, value)?,))
@@ -774,7 +774,7 @@ impl PyTemplateDataType {
         )?;
         if !widths.is_none() {
             let refuse = |expected: &str| -> PyResult<PyErr> {
-                Ok(crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR
+                Ok(crate::util::exceptions::DESERIALIZATION_VALUE_ERROR
                     .err(py, (cls, "widths", expected, &widths)))
             };
             if widths.len()? == 0 {
@@ -812,7 +812,7 @@ pub(crate) struct PyNumericalType {
     hash: OnceLock<u64>,
     /// The slot of a Python-defined data type's adapter, which the type
     /// owns.
-    slots: crate::kit::gc::Slots,
+    slots: crate::util::gc::Slots,
 }
 
 impl_public_class!(PyNumericalType, "NumericalType");
@@ -890,7 +890,7 @@ impl PyNumericalType {
     ) -> PyResult<PyClassInitializer<Self>> {
         let py = data_type.py();
         let (rust_data_type, slots) =
-            crate::kit::gc::collect_slots(|| read_data_type_value(data_type));
+            crate::util::gc::collect_slots(|| read_data_type_value(data_type));
         let Some(rust_data_type) = rust_data_type else {
             return Err(build_argument_type_error(
                 "NumericalType",

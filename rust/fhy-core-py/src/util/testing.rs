@@ -1,5 +1,5 @@
-//! What the stories of the kit share: an embedded interpreter, and stand-ins
-//! for the few modules of `fhy_core` the kit imports.
+//! What the stories of the util module share: an embedded interpreter, and stand-ins
+//! for the few modules of `fhy_core` the util module imports.
 //!
 //! `fhy_core` itself is not importable in the embedded interpreter, so the
 //! stories that raise or read one of its classes install small stand-ins in

@@ -1,16 +1,16 @@
-//! The stories of the dataclass helpers of the kit, run in an interpreter
+//! The stories of the dataclass helpers of the util module, run in an interpreter
 //! this test binary embeds; they need no package but the standard library.
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::types::{PyDict, PyList, PyString};
 use pyo3::wrap_pyfunction;
 
-use crate::kit::testing::{define, entry, evaluate, with_framework};
+use crate::util::testing::{define, entry, evaluate, with_framework};
 
 use super::*;
 
 /// A frozen class of two numbers, which compares as a dataclass.
-#[pyclass(frozen, subclass, module = "fhy_core_kit_tests")]
+#[pyclass(frozen, subclass, module = "fhy_core_util_tests")]
 struct Pair {
     left: i32,
     right: i32,

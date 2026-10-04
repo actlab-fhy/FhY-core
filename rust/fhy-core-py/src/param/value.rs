@@ -16,7 +16,7 @@ use crate::expression::read_big_int;
 
 /// Return whether `value` is a `Serializable`.
 fn is_serializable(value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    value.is_instance(crate::kit::python::cached_attr!(value.py(), "fhy_core.serialization", "Serializable" => PyType)?)
+    value.is_instance(crate::util::python::cached_attr!(value.py(), "fhy_core.serialization", "Serializable" => PyType)?)
 }
 
 /// Return whether `value` defines usable equality: through the `Equal`
@@ -25,7 +25,7 @@ fn supports_equal_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     static OBJECT_EQ: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let py = value.py();
     if value
-        .is_instance(crate::kit::python::cached_attr!(py, "fhy_core.traits", "Equal" => PyType)?)?
+        .is_instance(crate::util::python::cached_attr!(py, "fhy_core.traits", "Equal" => PyType)?)?
     {
         return value.getattr(intern!(py, "supports_equality"))?.is_truthy();
     }
@@ -48,7 +48,7 @@ fn supports_equal_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool> {
 fn supports_orderable_value_semantics(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     let py = value.py();
     if value.is_instance(
-        crate::kit::python::cached_attr!(py, "fhy_core.traits", "Orderable" => PyType)?,
+        crate::util::python::cached_attr!(py, "fhy_core.traits", "Orderable" => PyType)?,
     )? {
         return value.getattr(intern!(py, "supports_ordering"))?.is_truthy();
     }
@@ -150,7 +150,7 @@ fn is_permutation_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
         return Ok(false);
     }
     value.is_instance(
-        crate::kit::python::cached_attr!(value.py(), "collections.abc", "Sequence" => PyType)?,
+        crate::util::python::cached_attr!(value.py(), "collections.abc", "Sequence" => PyType)?,
     )
 }
 

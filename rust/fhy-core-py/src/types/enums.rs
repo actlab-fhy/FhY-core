@@ -7,7 +7,7 @@ use pyo3::types::PyType;
 
 use fhy_core::types::{CoreDataType, TypeQualifier};
 
-use crate::kit::dataclass::build_argument_type_error;
+use crate::util::dataclass::build_argument_type_error;
 
 /// The module that defines both enums.
 const MODULE: &str = "fhy_core.types.core";

@@ -4,7 +4,7 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::PyType;
 
-use crate::kit::testing::{evaluate, with_framework};
+use crate::util::testing::{evaluate, with_framework};
 
 use super::*;
 

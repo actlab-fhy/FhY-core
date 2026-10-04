@@ -33,14 +33,14 @@ use crate::expression::{
     registry_snapshot,
 };
 use crate::identifier::{deserialize_identifier, read_identifier_id, restore_identifier};
-use crate::kit::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::kit::gc::{Slots, collect_slots};
-use crate::kit::serialization::{
+use crate::solver::get_default_solver;
+use crate::term::read_renaming;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::{Slots, collect_slots};
+use crate::util::serialization::{
     FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
     serialize_nested,
 };
-use crate::solver::get_default_solver;
-use crate::term::read_renaming;
 
 use super::error::constraint_error_to_py;
 use super::observer::LoggingObserver;
@@ -48,7 +48,7 @@ use super::value::{
     constraint_error, member_to_python, read_bound_value, read_member, read_member_value,
     repr_text, type_name,
 };
-use crate::kit::pending::with_pending_errors;
+use crate::util::pending::with_pending_errors;
 
 /// Return the `ConstraintOutcome` member of `outcome`.
 pub(crate) fn outcome_to_python(py: Python<'_>, outcome: Outcome) -> PyResult<Bound<'_, PyAny>> {
@@ -580,7 +580,7 @@ impl SetState {
 
     /// Return the data payload `{"variable": .., "values": [..]}`.
     fn serialize_data_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let serialize = crate::kit::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
+        let serialize = crate::util::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
         let members = self
             .values
             .bind(py)
@@ -648,8 +648,9 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
 /// does not decode, and `ConstraintError` for one that cannot be a member.
 fn decode_members<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
     let py = values.py();
-    let deserialize = crate::kit::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
-    let structure_error = crate::kit::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.class(py)?;
+    let deserialize = crate::util::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
+    let structure_error =
+        crate::util::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.class(py)?;
     let decoded = PyList::empty(py);
     for payload in values.try_iter()? {
         let member = match deserialize.call1((payload?,)) {
@@ -658,10 +659,10 @@ fn decode_members<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList
                 if error.is_instance(py, structure_error)
                     || error.is_instance(
                         py,
-                        crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.class(py)?,
+                        crate::util::exceptions::DESERIALIZATION_VALUE_ERROR.class(py)?,
                     ) =>
             {
-                let wrapped = crate::kit::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+                let wrapped = crate::util::exceptions::DESERIALIZATION_VALUE_ERROR.err(
                     py,
                     (format!(
                         "Invalid serialized member in field \"values\": {}",

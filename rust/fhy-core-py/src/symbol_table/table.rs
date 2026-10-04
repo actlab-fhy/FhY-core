@@ -23,8 +23,8 @@ use crate::error::IntoPyErr;
 use crate::identifier::{
     deserialize_identifier, identifier_to_python, restore_identifier, serialize_identifier,
 };
-use crate::kit::dataclass::build_argument_type_error;
-use crate::kit::serialization::is_serialized_dict;
+use crate::util::dataclass::build_argument_type_error;
+use crate::util::serialization::is_serialized_dict;
 
 use super::frames::{MODULE, read_frame_value, structure_error};
 
@@ -37,7 +37,9 @@ const OWNER: &str = "SymbolTable";
 /// Raises `fhy_core.symbol_table.SymbolTableError` with the core's text.
 impl IntoPyErr for SymbolTableError {
     fn into_py_err(self) -> PyErr {
-        Python::attach(|py| crate::kit::exceptions::SYMBOL_TABLE_ERROR.err(py, (self.to_string(),)))
+        Python::attach(|py| {
+            crate::util::exceptions::SYMBOL_TABLE_ERROR.err(py, (self.to_string(),))
+        })
     }
 }
 
@@ -48,7 +50,7 @@ fn raise(error: SymbolTableError) -> PyErr {
 
 /// Return `fhy_core.symbol_table.SymbolTableFrame`.
 fn frame_base_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::kit::python::cached_attr!(py, MODULE, "SymbolTableFrame" => PyType)
+    crate::util::python::cached_attr!(py, MODULE, "SymbolTableFrame" => PyType)
 }
 
 /// Return the module's logger, which the DEBUG lines go to.
@@ -255,7 +257,7 @@ impl PySymbolTable {
                 entry.traverse(&visit)?;
             }
         }
-        crate::kit::gc::traverse_all(&visit, self.namespace_dicts.values())
+        crate::util::gc::traverse_all(&visit, self.namespace_dicts.values())
     }
 
     /// Drop the table's entries and dicts, for the cycle collector: the
@@ -619,7 +621,7 @@ impl PySymbolTable {
         };
         let state = PyTuple::new(py, [slf.borrow().state(py)?.into_any(), instance_dict])?;
         let new_object =
-            crate::kit::python::cached_attr!(py, "copyreg", "__newobj__" => PyAny)?.clone();
+            crate::util::python::cached_attr!(py, "copyreg", "__newobj__" => PyAny)?.clone();
         Ok((new_object, PyTuple::new(py, [slf.get_type()])?, state))
     }
 

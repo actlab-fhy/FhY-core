@@ -26,7 +26,7 @@ use super::values::symbol_type_name;
 
 /// Return `SolverCapabilityError` with `message`.
 pub(super) fn capability_error(py: Python<'_>, message: String) -> PyErr {
-    crate::kit::exceptions::SOLVER_CAPABILITY_ERROR.err(py, (message,))
+    crate::util::exceptions::SOLVER_CAPABILITY_ERROR.err(py, (message,))
 }
 
 /// Return `UndecidableError(message, reason=reason)`.
@@ -35,7 +35,7 @@ pub(super) fn undecidable_error(py: Python<'_>, message: String, reason: &str) -
     if let Err(error) = keywords.set_item(intern!(py, "reason"), reason) {
         return error;
     }
-    crate::kit::exceptions::UNDECIDABLE_ERROR
+    crate::util::exceptions::UNDECIDABLE_ERROR
         .build(py, (message,), Some(&keywords))
         .unwrap_or_else(|error| error)
 }
@@ -46,7 +46,7 @@ pub(super) fn lowering_error_to_py(py: Python<'_>, error: LoweringError) -> PyEr
         LoweringError::MissingSymbolTypes(_) => PyKeyError::new_err(error.to_string()),
         LoweringError::IllTyped(error) => error.into_py_err(),
         LoweringError::NativeConstants(_) => {
-            crate::kit::exceptions::NATIVE_CONSTANT_LOWERING_ERROR.err(py, (error.to_string(),))
+            crate::util::exceptions::NATIVE_CONSTANT_LOWERING_ERROR.err(py, (error.to_string(),))
         }
         other => PyTypeError::new_err(other.to_string()),
     }
@@ -60,16 +60,16 @@ pub(crate) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
         SolveError::MissingSymbolTypes(_) => PyKeyError::new_err(text),
         SolveError::IllTyped(error) => error.into_py_err(),
         SolveError::BoundNativeConstant(_) => {
-            crate::kit::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
+            crate::util::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
         }
         SolveError::Substitution(source) => PyValueError::new_err(format!("{text}: {source}")),
         SolveError::Lowering(error) => lowering_error_to_py(py, error),
         SolveError::Backend { backend, source } => {
-            match crate::kit::exceptions::unbox_py_err(source) {
+            match crate::util::exceptions::unbox_py_err(source) {
                 Ok(error) => error,
                 Err(source) => match source.downcast::<SympyError>() {
                     Ok(error) => super::sympy::sympy_error_to_py(py, *error, true),
-                    Err(source) => crate::kit::exceptions::SOLVER_BACKEND_ERROR
+                    Err(source) => crate::util::exceptions::SOLVER_BACKEND_ERROR
                         .err(py, (format!("the backend {backend:?} failed: {source}"),)),
                 },
             }
@@ -86,7 +86,7 @@ pub(crate) fn is_pass_execution_failure(py: Python<'_>, error: &SolveError) -> b
         return false;
     };
     if let Some(error) = source.downcast_ref::<PyErr>() {
-        return crate::kit::exceptions::PASS_EXECUTION_ERROR.is_instance_of(py, error);
+        return crate::util::exceptions::PASS_EXECUTION_ERROR.is_instance_of(py, error);
     }
     source
         .downcast_ref::<SympyError>()
