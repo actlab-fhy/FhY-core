@@ -1157,7 +1157,7 @@ class FieldCodec(Protocol):
 _SERIALIZE_SETUP_FLAG: Final[str] = "_fhy_serialize_setup_done"
 # Serialization plans are built once per class and cached forever; this assumes
 # a class's dataclass field schema is frozen after first use (see the matching
-# note on ``_PLAN_CACHE`` in ``traits/derived_equivalence.py``).
+# note on ``_PLAN_CACHE`` in ``term/derived_equivalence.py``).
 _SERIALIZE_PLAN_CACHE: dict[type, dict[str, FieldCodec]] = {}
 _FIELD_CODEC_REGISTRY: dict[type, FieldCodec] = {}
 

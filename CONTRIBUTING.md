@@ -338,9 +338,9 @@ the same machine.
 A class's benchmark must be run before it switches to Rust and again
 after. A class without a benchmark gets one in `benchmarks/` first,
 covering construction, attribute access, `==`, `hash` and the module's main
-operations. The port records the numbers behind its pattern choice, and a
-switch that makes a hot path slower either changes pattern or is recorded
-as an accepted cost.
+operations. The pull request description gives the numbers before and
+after, and a switch that makes a hot path slower either changes pattern or
+states the accepted cost there.
 
 ## Porting to Rust
 
@@ -403,61 +403,77 @@ param observer that logs to `fhy_core`'s loggers), detached from the
 interpreter when `detach`, and re-raises after the question the Python
 exception a hook raised during it. `fhy_core`'s methods run over the same
 code, so a downstream crate decides a question as `fhy_core` does.
-Its `util` module is the public surface for writing a Rust-backed class the way
-`fhy_core`'s are written, which `fhy_core`'s own classes use and a downstream
-`-py` crate copies no longer. `util::python` has `Seed` (the contents a private
-seed class hands a class's `__new__`, taken once), `ImportedAttr` and the
-`cached_attr!` macro (an attribute of a Python module, imported on first use
-and kept; the macro is exported at the crate root and re-exported there) and
-`type_name`. `util::exceptions` has `ExceptionClass` (`new`, `class`, `build`,
-`err`, `is_instance_of`, declared as a `static`), `unbox_py_err`,
-`boxed_error_to_py` and the framework's classes `SERIALIZATION_ERROR`,
-`DESERIALIZATION_VALUE_ERROR`, `DESERIALIZATION_DICT_STRUCTURE_ERROR`,
-`MALFORMED_PAYLOAD_ERROR`, `FROZEN_MUTATION_ERROR` and
-`EQUIVALENCE_DERIVATION_ERROR`. `util::interned` has `IdentityCache<K>`, the
-`is` identity of canonical values, generic over its key (the identifier id,
-`u64`, by default, and a `String` or tuple for a downstream class, read by the
-borrowed form) and the `InternedMixin` helpers. `util::public_class` has
-`PublicClass::new` and `PublicClass::in_module`, which names a downstream
-module in its messages; `util::frozen` the `FrozenMixin` refusals;
-`util::dataclass` `compare_as_dataclass` (the equality answers a `bool` or a
-`PyResult<bool>`, through `Outcome`), `is_same_or_equal`, `hash_value`,
-`collect_tuple`, `format_dataclass_repr`, the argument checks and
-`OptionalArgument`; `util::serialization` the payload readers,
-`read_payload_fields` over an array of `(name, FieldShape)` pairs or
-`PayloadFields::allowing_extra` for a reader that ignores other keys,
-`read_constructor_fields`, `read_nested_value`, `read_nested_list`,
-`keep_fields`, `serialize_nested`, `is_serialized_dict` and
-`construct_from_decoded_fields`, with
-`construct_from_decoded_fields_reporting_overflow` for a class that takes
-machine integers; `util::scoped` `ScopedStack` and `ScopedGuard`;
-`util::pending` the pending exception of an infallible hook
-(`record_pending_error`, `has_pending_error`, `with_pending_errors`,
-`capture_pending_errors`); `util::hook` `ask`, which answers a Python hook
-behind a trait method that cannot fail (it answers the fallback while an
-exception is pending, and keeps the exception the hook raises as the pending
-one); `util::frames` `Frames<T>`, the per-call context a hook reads
-(`push` returns the guard that pops it, and a `read`, `read_or` or `cloned`
-that finds no frame records a `RuntimeError` as the pending exception, so a
-missed push is an error and never a silent default); `util::integers`
-`read_unsigned` and `read_unsigned_lenient`, which read a Python `int` as a
-`u8`, `u16`, `u32`, `u64`, `u128` or `usize` (a `bool` or float is a
-`TypeError`, a negative a `ValueError` worded by a `Label` and a `Minimum`,
-and a number above the maximum an `OverflowError`; the lenient reader answers
-`None` for a negative or oversized `int`), with `classify_unsigned` and
-`Reading` for a caller that chooses its own errors (`build_too_large_error` words the overflow one; `UnsignedInteger` is sealed); `util::gc` `Slot`, `Slots`, `collect_slots`,
-`traverse_locked`, `clear_locked` and `traverse_all`; and `util::foreign`
-`foreign_of`, `foreign_failure` and `RaisedError`, which turn a Python-defined
-part into a core `Foreign`. Each item is documented with its errors and
-panics, and the stories in `util/*/tests.rs` run them in the embedded
-interpreter against small stand-ins for the `fhy_core` modules the util module
-imports (`util::testing`, since `fhy_core` itself is not importable there).
-`util::testing` is public behind the test-only `testing` cargo feature, which
-a downstream crate enables in `[dev-dependencies]` and never in
-`[dependencies]`, so its embedded-interpreter tests share the stand-ins:
-`with_stand_ins` (the interpreter, with the stand-ins installed once),
-`install_module` (a downstream crate's own stand-ins, parents created),
-`evaluate`, `define` and `entry`.
+Its `util` module is the public surface for writing a Rust-backed class the
+way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
+downstream `-py` crate builds on:
+
+- `util::python` has `Seed` (the contents a private seed class hands a
+  class's `__new__`, taken once), `ImportedAttr` and the `cached_attr!`
+  macro (an attribute of a Python module, imported on first use and kept;
+  the macro is exported at the crate root and re-exported there) and
+  `read_type_name`.
+- `util::exceptions` has `ExceptionClass` (`new`, `class`, `build`, `err`,
+  `is_instance_of`, declared as a `static`), `unbox_py_err`,
+  `boxed_error_to_py` and the framework's classes `SERIALIZATION_ERROR`,
+  `DESERIALIZATION_VALUE_ERROR`, `DESERIALIZATION_DICT_STRUCTURE_ERROR`,
+  `MALFORMED_PAYLOAD_ERROR`, `FROZEN_MUTATION_ERROR` and
+  `EQUIVALENCE_DERIVATION_ERROR`.
+- `util::interned` has `IdentityCache<K>`, the `is` identity of canonical
+  values, generic over its key (the identifier id, `u64`, by default, and a
+  `String` or tuple for a downstream class, read by the borrowed form), and
+  the `InternedMixin` helpers `raise_registry_append_only`,
+  `build_not_interned_error`, `warn_if_description_ignored` and
+  `build_conflict_error`.
+- `util::public_class` has `PublicClass::new` and `PublicClass::in_module`,
+  which names a downstream module in its messages.
+- `util::frozen` has the `FrozenMixin` refusals,
+  `refuse_attribute_assignment` and `refuse_attribute_deletion`.
+- `util::dataclass` has `compare_as_dataclass` (the equality answers a
+  `bool` or a `PyResult<bool>`, through `Outcome`), `is_same_or_equal`,
+  `hash_value`, `collect_tuple`, `format_dataclass_repr`, the argument
+  checks `build_argument_type_error` and `read_str`, and `OptionalArgument`.
+- `util::serialization` has the payload readers: `read_payload_fields` over
+  an array of `(name, FieldShape)` pairs or `PayloadFields::allowing_extra`
+  for a reader that ignores other keys, `read_constructor_fields`,
+  `read_nested_value`, `read_nested_list`, `keep_fields`, `serialize_nested`,
+  `is_serialized_dict` and `construct_from_decoded_fields`, with
+  `construct_from_decoded_fields_reporting_overflow` for a class that takes
+  machine integers.
+- `util::scoped` has `ScopedStack` and `ScopedGuard`.
+- `util::pending` has the pending exception of an infallible hook:
+  `record_pending_error`, `has_pending_error`, `with_pending_errors` and
+  `capture_pending_errors`.
+- `util::hook` has `ask`, which answers a Python hook behind a trait method
+  that cannot fail: it answers the fallback while an exception is pending,
+  and keeps the exception the hook raises as the pending one.
+- `util::frames` has `Frames<T>`, the per-call context a hook reads: `push`
+  returns the guard that pops it, and a `read`, `read_or` or `cloned` that
+  finds no frame records a `RuntimeError` as the pending exception, so a
+  missed push is an error and never a silent default.
+- `util::integers` has `read_unsigned` and `read_unsigned_lenient`, which
+  read a Python `int` as a `u8`, `u16`, `u32`, `u64`, `u128` or `usize`: a
+  `bool` or float is a `TypeError`, a negative number (or zero under
+  `Minimum::Positive`) a `ValueError` worded by a `Label` and a `Minimum`,
+  and a number above the maximum an `OverflowError`; the lenient reader
+  answers `None` for a negative or oversized `int`. `classify_unsigned` and
+  `Reading` serve a caller that chooses its own errors (`build_too_large_error`
+  words the overflow one; `UnsignedInteger` is sealed).
+- `util::gc` has `Slot`, `Slots`, `collect_slots`, `traverse_locked`,
+  `clear_locked` and `traverse_all`.
+- `util::foreign` has `read_foreign`, `record_foreign_failure` and
+  `RaisedError`, which turn a Python-defined part into a core `Foreign`.
+
+Each item is documented with its errors and panics, and the stories beside
+each module run them in the embedded interpreter against small stand-ins for
+the `fhy_core` modules the util module imports (`util::testing`, since
+`fhy_core` itself is not importable there). `util::testing` is public behind
+the test-only `testing` cargo feature, which a downstream crate enables in
+`[dev-dependencies]` and never in `[dependencies]`, so its
+embedded-interpreter tests share the stand-ins: `with_stand_ins` (the
+interpreter, with the stand-ins installed once), `install_module` (a
+downstream crate's own stand-ins, parents created), `evaluate`, `define` and
+`entry`.
+
 A conversion that another crate needs and `convert` lacks is
 added there, as a documented `pub fn` over the `pub(crate)` one, and no
 `#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with
@@ -844,7 +860,19 @@ struct with only public fields.
 
 ### Comparing term fields
 
-`AlphaEquivalence` is implemented for `Option<T>`, `[T]`, `Vec<T>`, `[T; N]` and tuples of up to eight terms. A type with term fields implements the trait by calling those on its fields, `&&`-ing the answers in field order with `?`, under the renaming it was given, rather than writing a comparison loop. Elements compare in order, lengths must match, and `None` matches only `None`. Do not add impls for `HashSet` or `HashMap`: the answer would depend on iteration order. A map keyed by identifiers goes through `is_mapping_alpha_equivalent_under`. The impls live in `rust/fhy-core/src/term/containers.rs`; there is no impl for `&T`, `Box<T>`, `Rc<T>` or `Arc<T>`, because it would change which method `value.is_alpha_equivalent_under(..)` resolves to on a `&&T` or on a pointer to a term with an inherent method such as `Expression`.
+`AlphaEquivalence` is implemented for `Option<T>`, `[T]`, `Vec<T>`, `[T; N]`
+and tuples of up to eight terms. A type with term fields implements the
+trait by calling those on its fields, `&&`-ing the answers in field order
+with `?`, under the renaming it was given, rather than writing a comparison
+loop. Elements compare in order, lengths must match, and `None` matches only
+`None`. Do not add impls for `HashSet` or `HashMap`: the answer would depend
+on iteration order. A map keyed by identifiers goes through
+`is_mapping_alpha_equivalent_under`.
+
+The impls live in `rust/fhy-core/src/term/containers.rs`. There is no impl
+for `&T`, `Box<T>`, `Rc<T>` or `Arc<T>`, because it would change which
+method `value.is_alpha_equivalent_under(..)` resolves to on a `&&T` or on a
+pointer to a term with an inherent method such as `Expression`.
 
 ### Python parity is limited to dual-defined concepts
 
@@ -882,19 +910,21 @@ converts: `fn …_to_py(…, context)` for an error and
 `fn …_to_python(…, context)` for a value.
 
 Shared helpers live in their own files, and no module writes its own:
-- `python.rs`: `cached_attr!` and `ImportedAttr`, for an attribute of a
+- `util/python.rs`: `cached_attr!` and `ImportedAttr`, for an attribute of a
   Python module imported on first use, and `Seed`, the contents a private
   seed class hands a class's `__new__`, taken once;
-- `exceptions.rs`: one `ExceptionClass` per Python exception class the
+- `util/exceptions.rs`: one `ExceptionClass` per Python exception class the
   binding raises, and `unbox_py_err` for a Python exception a core error
   boxed;
 - `object_table.rs`: `ObjectTable`, the Python objects of the nodes and
   identifiers a call has seen, so that a node the call returns keeps its
   object;
-- `scoped.rs`: `ScopedStack`, a thread-local stack whose guard pops its
+- `util/scoped.rs`: `ScopedStack`, a thread-local stack whose guard pops its
   frame, on unwind included;
-- `gc.rs`: the slots through which a class takes part in cyclic garbage
+- `util/gc.rs`: the slots through which a class takes part in cyclic garbage
   collection.
+
+The `util` modules are described under "One extension module per process".
 
 An imported attribute is kept for the life of the process, so
 monkeypatching or reloading its module afterwards does not reach the
@@ -914,18 +944,20 @@ registered constants and the form of decimal literals. The composed
 built-ins (`max`, `abs`, `clamp`, `xor`, ...), which SymPy refuses until
 they are inlined, are the opt-in `ComposedBuiltins` strategy, an extension
 added with `with_strategy`: it is not in the default list, so the default
-pipeline is SymPy's answer or a decline. The driver rewrites bottom-up, tries the
-strategies in order on each node until none rewrites it, and stops at a
-documented bound of rewrites (`with_max_rewrites`, 100 000 by default) and
-at the `timeout` of the context's `SimplifyLimits`, read from the clock once
-per node and per rewrite and only when a timeout is set; a run out of time
-declines whole, like a run at the rewrite bound, and never returns a partial
-result. One rewrite is not interrupted, so a strategy that can be slow on
-a large number guards its sizes (the default ones: integers of at most 2^20
+pipeline is SymPy's answer or a decline. The driver rewrites bottom-up,
+tries the strategies in order on each node until none rewrites it, and stops
+at a documented bound of rewrites (`with_max_rewrites`, 100 000 by default)
+and at the `timeout` of the context's `SimplifyLimits`, read from the clock
+once per node and per rewrite and only when a timeout is set; a run out of
+time declines whole and never returns a partial result; a run at the
+rewrite bound stops rewriting and keeps what it has. An expression nested
+more than 256 deep is declined, which keeps a deep tree from exhausting the
+stack. One rewrite is not interrupted, so a strategy that can be slow on a
+large number guards its sizes (the default ones: integers of at most 2^20
 bits, fractions with parts of at most 4096 bits, since reducing a fraction
-is quadratic) and declines past them. A
-caller adds, removes and reorders strategies with `with_strategy`,
-`with_strategy_first`, `without` and `empty`, without touching the driver.
+is quadratic) and declines past them. A caller adds, removes and reorders
+strategies with `with_strategy`, `with_strategy_first`, `without` and
+`empty`, without touching the driver.
 
 The contract every strategy keeps, and every change to one:
 

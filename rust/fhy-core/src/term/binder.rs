@@ -25,14 +25,16 @@ use super::renaming::AlphaRenaming;
 ///
 /// # Containers of terms
 ///
-/// `Option<T>`, `[T]`, `Vec<T>`, `[T; N]`, `Box<T>`, `Rc<T>`, `Arc<T>` and
-/// tuples of one to eight terms implement the trait when their elements do:
-/// they compare the elements in order under the renaming they are given,
-/// require equal lengths, and match `None` only with `None`. A type with
-/// term fields calls them instead of chaining its fields by hand. The
-/// elements of a tuple share the error type of its first. There is no impl
-/// for sets or maps, whose iteration order would decide the answer; for maps
-/// keyed by identifiers use [`is_mapping_alpha_equivalent_under`](super::is_mapping_alpha_equivalent_under).
+/// `Option<T>`, `[T]`, `Vec<T>`, `[T; N]` and tuples of one to eight terms
+/// implement the trait when their elements do: they compare the elements in
+/// order under the renaming they are given, require equal lengths, and
+/// match `None` only with `None`. A type with term fields calls them instead
+/// of chaining its fields by hand. The elements of a tuple share the error
+/// type of its first. There is no impl for `&T`, `Box<T>`, `Rc<T>` or
+/// `Arc<T>` (compare through the pointee), nor for sets or maps, whose
+/// iteration order would decide the answer; for maps keyed by identifiers
+/// use
+/// [`is_mapping_alpha_equivalent_under`](super::is_mapping_alpha_equivalent_under).
 ///
 /// ```
 /// use std::convert::Infallible;

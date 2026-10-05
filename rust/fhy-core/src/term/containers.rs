@@ -14,7 +14,7 @@
 //! - Tuples of one to eight elements: the elements match pairwise, in order.
 //!   A tuple's elements share one error type, that of its first element.
 //!
-//! There is no impl for `&T`, [`Box<T>`], [`Rc<T>`] or [`Arc<T>`]: with one,
+//! There is no impl for `&T`, [`Box<T>`], `Rc<T>` or `Arc<T>`: with one,
 //! `value.is_alpha_equivalent_under(..)` on a `&&T`, or on a pointer to a
 //! term that has the method itself, such as an
 //! [`Expression`](crate::expression::Expression), would resolve to the
