@@ -127,7 +127,6 @@ impl Bindings {
     }
 
     /// Return the bindings in the order they were made.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Binding)> + '_ {
         self.entries
             .iter()

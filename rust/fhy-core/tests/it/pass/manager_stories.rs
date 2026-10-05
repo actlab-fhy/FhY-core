@@ -202,7 +202,7 @@ fn pass_manager_without_items_returns_the_input() {
     let result = manager.run(&input).expect("the run succeeds");
 
     assert!(result.output().is_same_node(&input));
-    assert!(result.records().is_empty());
+    assert_eq!(result.records(), []);
 }
 
 /// Test a pass record holds the run's name, change flag, diagnostics, and
@@ -227,7 +227,7 @@ fn pass_run_record_holds_the_outcome_of_the_run() {
     assert_eq!(changing.preserved_analyses(), &PreservedAnalyses::none());
     let unchanged = expect_pass_record(&result.records()[1]);
     assert!(!unchanged.is_changed());
-    assert!(unchanged.diagnostics().is_empty());
+    assert_eq!(unchanged.diagnostics(), []);
     assert_eq!(unchanged.preserved_analyses(), &PreservedAnalyses::all());
 }
 
@@ -420,7 +420,7 @@ fn pass_manager_default_is_an_empty_pipeline_named_pipeline() {
     let result = manager.run(&input).expect("an empty pipeline cannot fail");
 
     assert_eq!(manager.name().name_hint(), "pipeline");
-    assert!(result.records().is_empty());
+    assert_eq!(result.records(), []);
 }
 
 // =============================================================================
@@ -877,7 +877,7 @@ fn fixpoint_group_without_passes_converges_immediately() {
     let record = expect_group_record(&result.records()[0]);
     assert!(record.is_converged());
     assert_eq!(record.iterations(), 1);
-    assert!(record.iteration_records()[0].pass_runs().is_empty());
+    assert_eq!(record.iteration_records()[0].pass_runs(), []);
     assert_eq!(result.output().value(), 4);
 }
 
@@ -1032,7 +1032,7 @@ fn non_convergence_error_is_structured() {
     assert_eq!(max_iterations.get(), 4);
     assert_eq!(error.class(), FailureClass::Execution);
     assert_eq!(error.pass_name(), None);
-    assert!(error.diagnostics().is_empty());
+    assert_eq!(error.diagnostics(), []);
     assert!(error.source().is_none());
     assert_eq!(error.records().len(), 2);
     let record = expect_group_record(&error.records()[1]);
@@ -1080,7 +1080,7 @@ fn a_pass_error_from_a_nested_pipeline_is_nested_with_its_records() {
     assert_eq!((pass_name, hook), ("tests.pm.runs_inner", PassHook::Run));
     assert_eq!(inner.pass_name(), Some("tests.pm.inner_fails"));
     assert_eq!(collect_pass_names(inner.records()), ["tests.pm.inner_add"]);
-    assert!(error.records().is_empty());
+    assert_eq!(error.records(), []);
     assert_eq!(error.class(), FailureClass::Execution);
 }
 
@@ -1186,7 +1186,7 @@ fn pass_manager_verifier_rejects_invalid_input_blaming_the_first_pass() {
     assert_eq!(errors, ["negative value: -1"]);
     assert_eq!(error.class(), FailureClass::Validation);
     assert_eq!(error.pass_name(), Some("tests.pm.first"));
-    assert!(error.records().is_empty());
+    assert_eq!(error.records(), []);
     let message = error.to_string();
     let diagnostics: Vec<_> = error
         .diagnostics()
@@ -1370,7 +1370,7 @@ fn pass_manager_verifier_validates_changed_outputs_inside_a_group() {
     assert_eq!(error.class(), FailureClass::Validation);
     let record = expect_group_record(error.records().last().expect("the group's record"));
     assert_eq!(record.iterations(), 3);
-    assert!(record.iteration_records()[2].pass_runs().is_empty());
+    assert_eq!(record.iteration_records()[2].pass_runs(), []);
 }
 
 /// Reads [`DoubleAnalysis`] of every node it validates.

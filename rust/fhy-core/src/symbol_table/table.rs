@@ -103,7 +103,6 @@ impl<'a, F> Namespace<'a, F> {
     }
 
     /// Return the namespace's symbols and their frames, in insertion order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a Identifier, &'a F)> + 'a {
         self.data.symbols.iter()
     }
@@ -155,7 +154,6 @@ impl<F> SymbolTable<F> {
     }
 
     /// Return the views of the namespaces, in insertion order.
-    #[must_use]
     pub fn namespaces(&self) -> impl ExactSizeIterator<Item = Namespace<'_, F>> + '_ {
         self.namespaces
             .iter()

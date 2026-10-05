@@ -235,7 +235,10 @@ fn a_table_whose_child_was_added_before_its_parent_round_trips() {
     table
         .add_symbol(&child, x.clone(), SymbolFrame::Import(ImportFrame::new(x)))
         .expect("new");
-    assert!(table.violations().is_empty());
+    assert_eq!(
+        table.violations(),
+        [] as [fhy_core::symbol_table::Violation; 0]
+    );
 
     for decoded in [round_trip_json(&table), round_trip_postcard(&table)] {
         assert_eq!(decoded, table);

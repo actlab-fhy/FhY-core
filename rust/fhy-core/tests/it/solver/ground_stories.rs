@@ -610,7 +610,7 @@ fn the_chain_answers_a_ground_expression_without_asking_the_fallback() {
         .expect("simplified");
 
     assert_eq!(result, n(5));
-    assert!(fallback.inputs().is_empty());
+    assert_eq!(fallback.inputs(), [] as [Expression; 0]);
 }
 
 #[test]
@@ -756,7 +756,7 @@ fn the_chain_does_not_ask_its_fallback_after_the_ground_part_used_the_timeout() 
         .expect("simplified");
 
     assert!(Expression::ptr_eq(&answer, &expression));
-    assert!(fallback.inputs().is_empty());
+    assert_eq!(fallback.inputs(), [] as [Expression; 0]);
 }
 
 #[test]
@@ -771,7 +771,7 @@ fn the_chain_does_not_ask_its_fallback_under_a_zero_timeout() {
         .expect("simplified");
 
     assert!(Expression::ptr_eq(&answer, &expression));
-    assert!(fallback.inputs().is_empty());
+    assert_eq!(fallback.inputs(), [] as [Expression; 0]);
 }
 
 #[test]

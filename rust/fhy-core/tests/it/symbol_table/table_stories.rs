@@ -310,7 +310,7 @@ fn a_sibling_may_define_the_same_symbol() {
             .expect("siblings do not shadow each other");
     }
 
-    assert!(table.violations().is_empty());
+    assert_eq!(table.violations(), [] as [Violation; 0]);
 }
 
 #[test]
@@ -476,7 +476,7 @@ fn remove_namespace_drops_it_and_its_parent() {
 
     assert!(!table.contains_namespace(&child));
     assert_eq!(namespace_names(&table), std::slice::from_ref(&root));
-    assert!(table.violations().is_empty());
+    assert_eq!(table.violations(), [] as [Violation; 0]);
     table.remove_namespace(&root).expect("no child is left");
     assert!(table.is_empty());
     assert_eq!(table.find(&symbol), None);
@@ -721,7 +721,7 @@ fn violations_are_empty_for_a_well_formed_table() {
     let [root, child, symbol] = identifiers(["root", "child", "symbol"]);
     let table = parent_and_child(&root, &child, &symbol);
 
-    assert!(table.violations().is_empty());
+    assert_eq!(table.violations(), [] as [Violation; 0]);
 }
 
 #[test]
@@ -1051,7 +1051,7 @@ fn a_long_parent_chain_walks_on_a_small_stack() {
                 .expect("sound")
                 .is_some()
         );
-        assert!(table.violations().is_empty());
+        assert_eq!(table.violations(), [] as [Violation; 0]);
     });
 }
 

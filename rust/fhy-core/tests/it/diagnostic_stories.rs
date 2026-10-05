@@ -94,7 +94,7 @@ fn shipped_note_kind_is_registered_under_its_name(#[case] get_kind: DefaultKind)
         NoteKind::intern_registry().get(kind.name()),
         Some(kind.clone())
     );
-    assert!(!kind.description().trim().is_empty());
+    assert_ne!(kind.description().trim(), "");
 }
 
 /// Test the four shipped kinds are pairwise distinct.
@@ -473,8 +473,8 @@ fn diagnostic_equality_is_by_value() {
 fn empty_report_has_no_errors_and_displays_as_empty_text() {
     let report = build_report(Vec::new());
 
-    assert!(report.diagnostics().is_empty());
-    assert!(report.records().is_empty());
+    assert_eq!(report.diagnostics(), []);
+    assert_eq!(report.records(), []);
     assert!(!report.has_errors());
     assert_eq!(report.errors().count(), 0);
     assert_eq!(report.warnings().count(), 0);

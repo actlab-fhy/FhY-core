@@ -239,7 +239,7 @@ fn hazard_answers_unknown_without_asking_the_backend() {
         answer,
         Answer::Unknown(UnknownReason::Refused(Hazard::BooleanCoercion(hazard)))
     );
-    assert!(backend.checks().is_empty());
+    assert_eq!(backend.checks(), [] as [(String, CheckLimits); 0]);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn native_constant_is_refused_by_the_screen_needing_no_symbol_type() {
         answer,
         Answer::Unknown(UnknownReason::Refused(Hazard::NativeConstant(vec![pi])))
     );
-    assert!(checks.is_empty());
+    assert_eq!(checks, [] as [(String, CheckLimits); 0]);
 }
 
 #[test]
@@ -674,7 +674,7 @@ fn simplification_screens_with_the_environment() {
         .expect_err("a number bound into a connective");
 
     assert!(matches!(error, SolveError::IllTyped(_)));
-    assert!(simplifier.inputs().is_empty());
+    assert_eq!(simplifier.inputs(), [] as [Expression; 0]);
 }
 
 #[test]
@@ -738,7 +738,7 @@ fn simplification_screens_with_the_sorts_of_a_registry_context() {
         .expect_err("an integer constant in a connective");
 
     assert!(matches!(error, SolveError::IllTyped(_)));
-    assert!(simplifier.inputs().is_empty());
+    assert_eq!(simplifier.inputs(), [] as [Expression; 0]);
 }
 
 #[test]

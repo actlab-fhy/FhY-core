@@ -795,7 +795,7 @@ fn expression_call_supports_zero_arguments() {
 
     let node = expect_call(&built);
     assert_eq!(node.callee(), &Callee::Named(nullary));
-    assert!(node.arguments().is_empty());
+    assert_eq!(node.arguments(), []);
 }
 
 #[test]

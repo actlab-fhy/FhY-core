@@ -150,7 +150,6 @@ impl<T: Eq + Hash + Clone> PartiallyOrderedSet<T> {
     /// Return the elements in a topological order: every element comes
     /// before the elements it is ordered below. Among the elements that can
     /// come next, the one added first does.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &T> + '_ {
         self.topological_positions(|position| position)
             .into_iter()

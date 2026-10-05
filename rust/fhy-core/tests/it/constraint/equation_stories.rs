@@ -131,7 +131,7 @@ fn value_that_is_no_literal_is_refused_naming_the_identifier(#[case] value: Valu
         error.to_string(),
         format!("the binding of {x:?} is neither an expression nor a literal")
     );
-    assert!(simplifier.inputs().is_empty());
+    assert_eq!(simplifier.inputs(), [] as [Expression; 0]);
 }
 
 #[rstest]
@@ -224,7 +224,7 @@ fn numeric_root_is_ill_typed_before_the_simplifier_is_asked() {
         matches!(outcome, Err(ConstraintError::IllTyped(_))),
         "{outcome:?}"
     );
-    assert!(simplifier.inputs().is_empty());
+    assert_eq!(simplifier.inputs(), [] as [Expression; 0]);
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn bound_native_constant_is_undecided_and_reported_after_the_screen() {
 
     assert_eq!(outcome.expect("refused"), Outcome::Undecided);
     assert_eq!(events, [RecordedEvent::BoundNativeConstants(vec![pi])]);
-    assert!(simplifier.inputs().is_empty());
+    assert_eq!(simplifier.inputs(), [] as [Expression; 0]);
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn unreferenced_native_constant_binding_is_ignored() {
     );
 
     assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
-    assert!(events.is_empty());
+    assert_eq!(events, [] as [RecordedEvent; 0]);
 }
 
 #[test]

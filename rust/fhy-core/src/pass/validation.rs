@@ -236,7 +236,6 @@ impl ValidationReport<ValidatorRecord> {
     /// so each pair holds that validator's diagnostics; a record of a report
     /// built with [`ValidationReport::new`] from another run's records that
     /// refers past the diagnostics is paired with none.
-    #[must_use]
     pub fn records_with_diagnostics(
         &self,
     ) -> impl ExactSizeIterator<Item = (&ValidatorRecord, &[Diagnostic])> + '_ {

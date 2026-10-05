@@ -215,7 +215,10 @@ fn every_member_satisfied_satisfies_the_system() {
     let outcome = system.evaluate(&bind([(x, Binding::Value(int(2)))]), &harness.context());
 
     assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
-    assert!(harness.observer.events().is_empty());
+    assert_eq!(
+        harness.observer.events(),
+        [] as [crate::support::constraint::RecordedEvent; 0]
+    );
 }
 
 #[test]
@@ -300,7 +303,7 @@ fn the_empty_system_is_satisfiable_without_asking_the_solver() {
         .check_satisfiability(&HashMap::new(), CheckLimits::new(), &harness.context());
 
     assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 #[test]
@@ -374,7 +377,7 @@ fn a_hazard_is_undecided_and_reported_without_asking_the_backend() {
         harness.observer.events(),
         [RecordedEvent::Refused(QueryKind::Satisfiability)]
     );
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +445,7 @@ fn a_set_member_of_the_other_numeric_kind_is_refused_in_every_question() {
             RecordedEvent::Refused(QueryKind::Satisfiability),
         ]
     );
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 #[test]
@@ -524,7 +527,7 @@ fn an_ill_typed_member_is_refused_naming_its_own_expression() {
         matches!(outcome, Err(ConstraintError::IllTyped(_))),
         "{outcome:?}"
     );
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 #[test]
@@ -567,7 +570,7 @@ fn a_violated_decided_set_member_answers_without_the_solver() {
     );
 
     assert_eq!(outcome.expect("decided"), Outcome::Violated);
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 #[test]
@@ -585,7 +588,7 @@ fn decided_set_members_alone_answer_their_fold() {
     );
 
     assert_eq!(outcome.expect("decided"), Outcome::Satisfied);
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 #[test]
@@ -672,7 +675,7 @@ fn a_bound_native_constant_the_system_refers_to_is_undecided_and_reported() {
         harness.observer.events(),
         [RecordedEvent::BoundNativeConstants(vec![pi])]
     );
-    assert!(harness.scripts().is_empty());
+    assert_eq!(harness.scripts(), [] as [String; 0]);
 }
 
 #[test]
