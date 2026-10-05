@@ -57,9 +57,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install Rust
+      - name: Read the Pinned Rust Version
+        # From rust-toolchain.toml, so CI lints with the toolchain a
+        # contributor's rustup picks locally.
+        id: pinned
+        run: |
+          VERSION="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::No channel in rust-toolchain.toml."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.pinned.outputs.version }}
+        # The ref pins the action; the input picks the Rust version.
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ steps.pinned.outputs.version }}
           components: clippy, rustfmt
       - name: Cache Rust Build Artifacts
         uses: Swatinem/rust-cache@v2
@@ -235,8 +248,8 @@ jobs:
       - name: Cache Rust Build Artifacts
         uses: Swatinem/rust-cache@v2
       - name: Build the Library on the MSRV
-        # `cargo +<toolchain>`: rust-toolchain.toml pins the channel to stable
-        # and would otherwise win over the toolchain installed here.
+        # `cargo +<toolchain>`: rust-toolchain.toml pins a newer version,
+        # which would otherwise win over the toolchain installed here.
         run: |
           cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --locked
       - name: Build fhy-core's Targets on the MSRV
@@ -355,8 +368,19 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Install Rust
+      - name: Read the Pinned Rust Version
+        id: pinned
+        run: |
+          VERSION="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::No channel in rust-toolchain.toml."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.pinned.outputs.version }}
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.pinned.outputs.version }}
       - name: Cache Rust Build Artifacts
         uses: Swatinem/rust-cache@v2
       - name: Expanded Golden Corpus Equivalence

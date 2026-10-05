@@ -11,7 +11,7 @@ git clone https://github.com/actlab-fhy/FhY-core.git -b dev
 cd FhY-core
 ```
 
-2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management) and a Rust toolchain (stable, 1.85 or newer; [rustup](https://rustup.rs/) picks the channel from `rust-toolchain.toml`), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group, and compiles the Rust extension `fhy_core._rs` with maturin.
+2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management) and [rustup](https://rustup.rs/), which installs the Rust version `rust-toolchain.toml` pins, the one CI lints with (the crates themselves build on 1.85 or newer), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group, and compiles the Rust extension `fhy_core._rs` with maturin.
 
 ```bash
 uv sync
