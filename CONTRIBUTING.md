@@ -909,8 +909,12 @@ Python nor SymPy. It is a driver over an ordered list of strategies
 (`fhy_core::solver::strategy`): each strategy is a local rewrite of one
 node whose children are already simplified, one concern each, and the
 default list is exact integer and rational arithmetic, comparisons, logical
-operators, a decided `piecewise`, exact built-ins, registered constants and
-the form of decimal literals. The driver rewrites bottom-up, tries the
+operators, a decided `piecewise`, the exact built-ins SymPy folds itself,
+registered constants and the form of decimal literals. The composed
+built-ins (`max`, `abs`, `clamp`, `xor`, ...), which SymPy refuses until
+they are inlined, are the opt-in `ComposedBuiltins` strategy, an extension
+added with `with_strategy`: it is not in the default list, so the default
+pipeline is SymPy's answer or a decline. The driver rewrites bottom-up, tries the
 strategies in order on each node until none rewrites it, and stops at a
 documented bound of rewrites (`with_max_rewrites`, 100 000 by default). A
 caller adds, removes and reorders strategies with `with_strategy`,

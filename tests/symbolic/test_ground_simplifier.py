@@ -14,6 +14,7 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
+    CallExpression,
     BinaryOperation,
     Expression,
     IdentifierExpression,
@@ -265,6 +266,38 @@ def test_every_fold_is_what_the_sympy_backend_returns(
     assert simplify_expression(expression, backend=SolverBackend.GROUND) == expected, (
         label
     )
+
+
+_COMPOSED_CALLS: list[tuple[str, Expression]] = [
+    ("max", CallExpression("max", (_int(2), _int(5)))),
+    ("min", CallExpression("min", (_int(2), _int(5)))),
+    ("abs", CallExpression("abs", (_int(-5),))),
+    ("sign", CallExpression("sign", (_int(-5),))),
+    ("clamp", CallExpression("clamp", (_int(15), _int(0), _int(10)))),
+    ("relu", CallExpression("relu", (_int(-3),))),
+    ("xor", CallExpression("xor", (_literal(True), _literal(False)))),
+    ("iff", CallExpression("iff", (_literal(False), _literal(False)))),
+]
+
+
+def _outcome(expression: Expression, backend: SolverBackend) -> object:
+    """Return SymPy's answer, or the type of the error the backend raises."""
+    try:
+        return simplify_expression(expression, backend=backend)
+    except Exception as error:  # noqa: BLE001
+        return type(error)
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(("label", "expression"), _COMPOSED_CALLS)
+def test_the_chain_and_sympy_agree_on_a_composed_built_in(
+    label: str, expression: Expression
+) -> None:
+    """Test the chain answers or fails as SymPy does: the ground fold declines it."""
+    assert _outcome(expression, SolverBackend.GROUND) == expression, label
+    assert _outcome(expression, SolverBackend.GROUND_THEN_SYMPY) == _outcome(
+        expression, SolverBackend.SYMPY
+    ), label
 
 
 # =============================================================================

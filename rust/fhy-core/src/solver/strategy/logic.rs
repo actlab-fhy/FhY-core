@@ -2,16 +2,19 @@
 
 use std::borrow::Cow;
 
-use crate::expression::builtins::BuiltinFunction;
-use crate::expression::{Callee, Expression, ExpressionKind, LogicalOperation, UnaryOperation};
+use crate::expression::{Expression, ExpressionKind, LogicalOperation, UnaryOperation};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
 use super::exact::boolean;
 
-/// Rewrites `!`, `&&` and `||` of Boolean literals, and a call of `xor`,
-/// `nand`, `nor`, `implies` or `iff` of two, to the Boolean literal they
-/// decide.
+/// Rewrites `!`, `&&` and `||` of Boolean literals to the Boolean literal
+/// they decide.
+///
+/// The Boolean built-ins (`xor`, `nand`, `nor`, `implies`, `iff`), which the
+/// `SymPy` backend refuses until they are inlined, are
+/// [`ComposedBuiltins`](super::ComposedBuiltins)', a strategy that is not a
+/// default.
 ///
 /// Every operand must be a Boolean literal: `false && x` is declined, as
 /// the `SymPy` backend refuses an operand that is not a Boolean, and a
@@ -64,23 +67,6 @@ impl SimplificationStrategy for LogicalOperators {
                         let values: Option<Vec<bool>> = operands.by_ref().collect();
                         values?.into_iter().any(|value| value)
                     }
-                }
-            }
-            ExpressionKind::Call(call) => {
-                let Callee::Builtin(function) = call.callee() else {
-                    return None;
-                };
-                let [left, right] = call.arguments() else {
-                    return None;
-                };
-                let (left, right) = (boolean(left)?, boolean(right)?);
-                match function {
-                    BuiltinFunction::Xor => left != right,
-                    BuiltinFunction::Nand => !(left && right),
-                    BuiltinFunction::Nor => !(left || right),
-                    BuiltinFunction::Implies => !left || right,
-                    BuiltinFunction::Iff => left == right,
-                    _ => return None,
                 }
             }
             _ => return None,

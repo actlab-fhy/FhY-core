@@ -23,7 +23,8 @@ three logical questions and a :class:`Simplifier` for simplification:
   in exact arithmetic, returns exactly what the SymPy backend returns
   wherever it folds, and returns the expression unchanged wherever it
   cannot match SymPy exactly (a free identifier, a float, a user function,
-  an irrational value), so it never approximates;
+  an irrational value, a composed built-in such as ``max`` or ``abs`` that
+  SymPy refuses until it is inlined), so it never approximates;
 - ``SolverBackend.GROUND_THEN_SYMPY`` is the ground simplifier in front of
   the SymPy backend, ``GroundSimplifier(SympySimplifier())``: SymPy answers
   what the ground fold declines, so the answer is SymPy's, faster where the

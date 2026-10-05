@@ -24,8 +24,9 @@ use super::error::solve_error_to_py;
 ///
 /// It is the core's `GroundSimplifier` with its default strategies, exact
 /// integer and rational arithmetic, comparisons, logical operators, a
-/// decided piecewise and exact built-ins, which Rust callers extend with
-/// their own. Where it folds, its result is exactly what the SymPy backend
+/// decided piecewise and the exact built-ins SymPy folds itself, which Rust
+/// callers extend with their own strategies (the composed built-ins, which
+/// SymPy refuses until they are inlined, are an opt-in one, not included). Where it folds, its result is exactly what the SymPy backend
 /// returns for the same input; where it cannot match SymPy exactly (a free
 /// identifier, a float, a user function, an irrational or undefined value, a
 /// power beyond a million bits) it returns the expression unchanged, and

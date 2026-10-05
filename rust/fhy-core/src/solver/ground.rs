@@ -43,8 +43,11 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 /// identifier, the identifier of a built-in constant, a float, a call of a
 /// user function, an operation without an exact rational result, a value
 /// that is not of the sort an operation takes, and a power of more than a
-/// million bits. [`strategy`](super::strategy) lists what each default
-/// strategy rewrites.
+/// million bits, and a call of a composed built-in (`max`, `abs`, `xor`, ...),
+/// which `SymPy` refuses until it is inlined. [`strategy`](super::strategy)
+/// lists what each default strategy rewrites, and the opt-in
+/// [`ComposedBuiltins`](super::strategy::ComposedBuiltins) that folds the
+/// composed calls, an extension that goes beyond `SymPy`'s answer.
 ///
 /// # How it works
 ///

@@ -4,9 +4,11 @@
 //! The contract under test: wherever the ground simplifier folds an
 //! expression, its result is exactly what [`SympySimplifier`] returns for
 //! the same input, literal kind and form included; wherever it cannot, it
-//! returns `None`, and never an approximation. A composed built-in is
-//! checked against SymPy's answer for its inlined form, since the SymPy
-//! backend refuses the call itself.
+//! returns `None`, and never an approximation. The default pipeline is
+//! compared with SymPy directly, with no inlining. The composed built-ins,
+//! which the SymPy backend refuses until they are inlined, are the opt-in
+//! `ComposedBuiltins` strategy: an extension, checked against SymPy's
+//! answer for the inlined form.
 //!
 //! The contract is checked at two levels. The whole default pipeline runs on
 //! tables of expressions and on random trees. And each strategy, which keeps
@@ -16,6 +18,7 @@
 //! cases here.
 
 use std::collections::HashMap;
+use std::error::Error;
 
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::FunctionRegistry;
@@ -23,8 +26,8 @@ use fhy_core::expression::{
     BinaryOperation, Callee, Expression, LiteralValue, LogicalOperation, UnaryOperation,
 };
 use fhy_core::solver::strategy::{
-    Comparisons, ExactArithmetic, ExactBuiltins, LogicalOperators, NormalizeLiterals,
-    PiecewiseDecision, SimplificationStrategy, default_strategies,
+    Comparisons, ComposedBuiltins, ExactArithmetic, ExactBuiltins, LogicalOperators,
+    NormalizeLiterals, PiecewiseDecision, SimplificationStrategy, default_strategies,
 };
 use fhy_core::solver::{GroundSimplifier, GroundWithFallback, SimplifyContext, SolveError, Solver};
 use proptest::prelude::*;
@@ -49,35 +52,65 @@ fn call(function: BuiltinFunction, arguments: impl IntoIterator<Item = Expressio
     Expression::call(function, arguments)
 }
 
-/// Return what the ground simplifier folds `expression` to, or `None`.
+/// Return what the default ground simplifier folds `expression` to, or
+/// `None`.
 fn ground(expression: &Expression) -> Option<Expression> {
     let registry = FunctionRegistry::new();
     GroundSimplifier::new().try_simplify(expression, &SimplifyContext::from_registry(&registry))
 }
 
-/// Return SymPy's simplification of `expression`, with every composed
-/// built-in inlined first.
+/// Return what the ground simplifier extended with `ComposedBuiltins` folds
+/// `expression` to, or `None`.
+fn ground_extended(expression: &Expression) -> Option<Expression> {
+    let registry = FunctionRegistry::new();
+    GroundSimplifier::new()
+        .with_strategy(ComposedBuiltins::new())
+        .try_simplify(expression, &SimplifyContext::from_registry(&registry))
+}
+
+/// Return SymPy's simplification of `expression`, as it is.
 fn sympy(expression: &Expression) -> Result<Expression, SolveError> {
     backend();
     let registry = FunctionRegistry::new();
-    let inlined = registry.inline(expression).expect("inlined");
     Solver::new()
         .with_simplifier(SympySimplifier::new())
         .simplify(
-            &inlined,
+            expression,
             &HashMap::new(),
             &SimplifyContext::from_registry(&registry),
         )
 }
 
-/// Assert the contract on `expression`: if the ground simplifier folds
-/// it, SymPy answers the same expression.
+/// Return SymPy's simplification of `expression` with every composed
+/// built-in inlined first, which is the answer the opt-in strategy gives.
+fn sympy_inlined(expression: &Expression) -> Result<Expression, SolveError> {
+    let registry = FunctionRegistry::new();
+    sympy(&registry.inline(expression).expect("inlined"))
+}
+
+/// Assert the contract on `expression`: if the default ground simplifier
+/// folds it, SymPy answers the same expression, with no inlining.
 fn assert_agrees(expression: &Expression) -> Option<Expression> {
     let folded = ground(expression)?;
     match sympy(expression) {
         Ok(expected) => assert_eq!(
             folded, expected,
             "{expression} folded to {folded:?}, SymPy says {expected:?}"
+        ),
+        Err(error) => panic!("{expression} folded to {folded:?}, but SymPy fails: {error}"),
+    }
+    Some(folded)
+}
+
+/// Assert the extension's contract on `expression`: if the extended ground
+/// simplifier folds it, SymPy answers the same expression for the inlined
+/// form.
+fn assert_extended_agrees(expression: &Expression) -> Option<Expression> {
+    let folded = ground_extended(expression)?;
+    match sympy_inlined(expression) {
+        Ok(expected) => assert_eq!(
+            folded, expected,
+            "{expression} folded to {folded:?}, SymPy says {expected:?} once inlined"
         ),
         Err(error) => panic!("{expression} folded to {folded:?}, but SymPy fails: {error}"),
     }
@@ -203,26 +236,6 @@ fn assert_agrees(expression: &Expression) -> Option<Expression> {
 #[case::cosh_of_zero(call(BuiltinFunction::Cosh, [n(0)]))]
 #[case::tanh_of_zero(call(BuiltinFunction::Tanh, [n(0)]))]
 #[case::erf_of_zero(call(BuiltinFunction::Erf, [n(0)]))]
-#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]))]
-#[case::max_of_equals(call(BuiltinFunction::Max, [n(5), n(5)]))]
-#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]))]
-#[case::min_of_rationals(call(BuiltinFunction::Min, [n(1) / n(2), n(1) / n(3)]))]
-#[case::abs(call(BuiltinFunction::Abs, [n(-5)]))]
-#[case::abs_of_a_positive(call(BuiltinFunction::Abs, [n(5)]))]
-#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]))]
-#[case::sign(call(BuiltinFunction::Sign, [n(-5)]))]
-#[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]))]
-#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]))]
-#[case::clamp_inside(call(BuiltinFunction::Clamp, [n(5), n(0), n(10)]))]
-#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]))]
-#[case::relu(call(BuiltinFunction::Relu, [n(-3)]))]
-#[case::relu_of_a_positive(call(BuiltinFunction::Relu, [n(3)]))]
-#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), n(1) / n(2)]))]
-#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]))]
-#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]))]
-#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]))]
-#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]))]
-#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]))]
 #[case::piecewise_first_case(
     Expression::piecewise([(n(1).less(n(2)), n(10))], n(20)).expect("a piecewise")
 )]
@@ -257,6 +270,79 @@ fn the_ground_simplifier_folds_what_sympy_returns(#[case] expression: Expression
     let folded = assert_agrees(&expression);
 
     assert!(folded.is_some(), "{expression} should fold");
+}
+
+#[rstest]
+#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]))]
+#[case::max_of_equals(call(BuiltinFunction::Max, [n(5), n(5)]))]
+#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]))]
+#[case::min_of_rationals(call(BuiltinFunction::Min, [n(1) / n(2), n(1) / n(3)]))]
+#[case::abs(call(BuiltinFunction::Abs, [n(-5)]))]
+#[case::abs_of_a_positive(call(BuiltinFunction::Abs, [n(5)]))]
+#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]))]
+#[case::sign(call(BuiltinFunction::Sign, [n(-5)]))]
+#[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]))]
+#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]))]
+#[case::clamp_inside(call(BuiltinFunction::Clamp, [n(5), n(0), n(10)]))]
+#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]))]
+#[case::relu(call(BuiltinFunction::Relu, [n(-3)]))]
+#[case::relu_of_a_positive(call(BuiltinFunction::Relu, [n(3)]))]
+#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), n(1) / n(2)]))]
+#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]))]
+#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]))]
+#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]))]
+#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]))]
+#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]))]
+fn the_opt_in_composed_builtins_fold_what_sympy_returns_for_the_inlined_form(
+    #[case] expression: Expression,
+) {
+    let folded = assert_extended_agrees(&expression);
+
+    assert!(folded.is_some(), "{expression} should fold");
+}
+
+/// SymPy refuses a composed built-in as it is, so the default pipeline has
+/// no answer to give, and declines: the chain, with SymPy behind the ground
+/// fold, answers or fails exactly as SymPy does.
+#[rstest]
+#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]))]
+#[case::max_of_equals(call(BuiltinFunction::Max, [n(5), n(5)]))]
+#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]))]
+#[case::min_of_rationals(call(BuiltinFunction::Min, [n(1) / n(2), n(1) / n(3)]))]
+#[case::abs(call(BuiltinFunction::Abs, [n(-5)]))]
+#[case::abs_of_a_positive(call(BuiltinFunction::Abs, [n(5)]))]
+#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]))]
+#[case::sign(call(BuiltinFunction::Sign, [n(-5)]))]
+#[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]))]
+#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]))]
+#[case::clamp_inside(call(BuiltinFunction::Clamp, [n(5), n(0), n(10)]))]
+#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]))]
+#[case::relu(call(BuiltinFunction::Relu, [n(-3)]))]
+#[case::relu_of_a_positive(call(BuiltinFunction::Relu, [n(3)]))]
+#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), n(1) / n(2)]))]
+#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]))]
+#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]))]
+#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]))]
+#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]))]
+#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]))]
+fn the_default_pipeline_declines_a_composed_built_in_sympy_refuses(#[case] expression: Expression) {
+    assert!(
+        sympy(&expression).is_err(),
+        "SymPy should refuse {expression}"
+    );
+    assert_eq!(ground(&expression), None);
+
+    backend();
+    let registry = FunctionRegistry::new();
+    let context = SimplifyContext::from_registry(&registry);
+    let chain = Solver::new().with_simplifier(GroundWithFallback::new(SympySimplifier::new()));
+    // The backends' names differ in the error's text, its source is SymPy's.
+    let expected = sympy(&expression).map_err(|error| error.source().map(ToString::to_string));
+    let answer = chain
+        .simplify(&expression, &HashMap::new(), &context)
+        .map_err(|error| error.source().map(ToString::to_string));
+
+    assert_eq!(answer, expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +411,15 @@ fn the_ground_simplifier_declines_what_it_cannot_match(#[case] expression: Expre
 /// rewrites it to SymPy's simplification of the node, and return how many
 /// nodes it rewrote.
 fn assert_strategy_agrees(strategy: &dyn SimplificationStrategy, nodes: &[Expression]) -> usize {
+    assert_strategy_agrees_with(strategy, nodes, sympy)
+}
+
+/// Like [`assert_strategy_agrees`], with `oracle` giving SymPy's answer.
+fn assert_strategy_agrees_with(
+    strategy: &dyn SimplificationStrategy,
+    nodes: &[Expression],
+    oracle: fn(&Expression) -> Result<Expression, SolveError>,
+) -> usize {
     let registry = FunctionRegistry::new();
     let context = SimplifyContext::from_registry(&registry);
     let mut rewritten = 0;
@@ -333,7 +428,7 @@ fn assert_strategy_agrees(strategy: &dyn SimplificationStrategy, nodes: &[Expres
             continue;
         };
         rewritten += 1;
-        match sympy(node) {
+        match oracle(node) {
             Ok(expected) => assert_eq!(
                 rewrite,
                 expected,
@@ -469,15 +564,6 @@ fn logical_operators_rewrite_what_sympy_returns() {
                 LogicalOperation::Or,
                 [a.clone(), b.clone()],
             ));
-            for function in [
-                BuiltinFunction::Xor,
-                BuiltinFunction::Nand,
-                BuiltinFunction::Nor,
-                BuiltinFunction::Implies,
-                BuiltinFunction::Iff,
-            ] {
-                nodes.push(call(function, [a.clone(), b.clone()]));
-            }
             for c in &booleans {
                 nodes.push(Expression::all([a.clone(), b.clone(), c.clone()]));
                 nodes.push(Expression::any([a.clone(), b.clone(), c.clone()]));
@@ -556,15 +642,30 @@ fn exact_builtins_rewrite_what_sympy_returns() {
         BuiltinFunction::Cosh,
         BuiltinFunction::Tanh,
         BuiltinFunction::Erf,
-        BuiltinFunction::Abs,
-        BuiltinFunction::Sign,
-        BuiltinFunction::Relu,
     ] {
         for operand in
             operands
                 .iter()
                 .chain(&[n(4), n(8), n(16), n(100), n(1000), n(1) / n(4), n(1) / n(8)])
         {
+            nodes.push(call(function, [operand.clone()]));
+        }
+    }
+    let rewritten = assert_strategy_agrees(&ExactBuiltins::new(), &nodes);
+
+    assert!(rewritten > 80, "only {rewritten} nodes were rewritten");
+}
+
+#[test]
+fn composed_builtins_rewrite_what_sympy_returns_for_the_inlined_form() {
+    let operands = number_operands();
+    let mut nodes = Vec::new();
+    for function in [
+        BuiltinFunction::Abs,
+        BuiltinFunction::Sign,
+        BuiltinFunction::Relu,
+    ] {
+        for operand in &operands {
             nodes.push(call(function, [operand.clone()]));
         }
     }
@@ -585,9 +686,26 @@ fn exact_builtins_rewrite_what_sympy_returns() {
         nodes.push(call(BuiltinFunction::Clamp, [x, n(0), n(1) / n(3)]));
     }
 
-    let rewritten = assert_strategy_agrees(&ExactBuiltins::new(), &nodes);
+    let booleans = [truth(true), truth(false)];
+    for function in [
+        BuiltinFunction::Xor,
+        BuiltinFunction::Nand,
+        BuiltinFunction::Nor,
+        BuiltinFunction::Implies,
+        BuiltinFunction::Iff,
+    ] {
+        for a in &booleans {
+            for b in &booleans {
+                nodes.push(call(function, [a.clone(), b.clone()]));
+            }
+        }
+    }
+
+    let rewritten = assert_strategy_agrees_with(&ComposedBuiltins::new(), &nodes, sympy_inlined);
 
     assert!(rewritten > 150, "only {rewritten} nodes were rewritten");
+    // SymPy refuses every one of these calls as they are.
+    assert!(nodes.iter().all(|node| sympy(node).is_err()));
 }
 
 #[test]
@@ -733,12 +851,17 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
     #[test]
-    fn every_default_strategy_rewrites_a_decided_node_to_sympy_s_answer_or_declines(
+    fn every_strategy_rewrites_a_decided_node_to_sympy_s_answer_or_declines(
         node in decided_node(),
     ) {
         for strategy in default_strategies() {
             assert_strategy_agrees(strategy.as_ref(), std::slice::from_ref(&node));
         }
+        assert_strategy_agrees_with(
+            &ComposedBuiltins::new(),
+            std::slice::from_ref(&node),
+            sympy_inlined,
+        );
     }
 }
 
@@ -884,6 +1007,20 @@ proptest! {
     }
 
     #[test]
+    fn an_extended_number_tree_folds_to_sympy_s_inlined_answer_or_is_declined(
+        tree in number_tree(),
+    ) {
+        assert_extended_agrees(&tree);
+    }
+
+    #[test]
+    fn an_extended_boolean_tree_folds_to_sympy_s_inlined_answer_or_is_declined(
+        tree in boolean_tree(),
+    ) {
+        assert_extended_agrees(&tree);
+    }
+
+    #[test]
     fn a_tree_with_a_free_identifier_is_declined(
         tree in number_tree().prop_map(|tree| tree + build_identifier("free").1),
     ) {
@@ -900,14 +1037,20 @@ fn the_random_trees_fold_often_enough_to_test_something() {
 
     let mut runner = TestRunner::deterministic();
     for (name, strategy) in [("number", number_tree()), ("boolean", boolean_tree())] {
-        let folded = (0..400)
-            .filter(|_| {
-                let tree = strategy.new_tree(&mut runner).expect("a tree").current();
-                ground(&tree).is_some()
-            })
+        let trees: Vec<Expression> = (0..400)
+            .map(|_| strategy.new_tree(&mut runner).expect("a tree").current())
+            .collect();
+        let folded = trees.iter().filter(|tree| ground(tree).is_some()).count();
+        let extended = trees
+            .iter()
+            .filter(|tree| ground_extended(tree).is_some())
             .count();
 
-        assert!(folded >= 80, "only {folded} of 400 {name} trees fold");
+        assert!(folded >= 40, "only {folded} of 400 {name} trees fold");
+        assert!(
+            extended >= 80,
+            "only {extended} of 400 {name} trees fold with the extension"
+        );
     }
 }
 

@@ -5,13 +5,12 @@ use std::borrow::Cow;
 use num_traits::One;
 
 use crate::expression::builtins::BuiltinFunction;
-use crate::expression::{BinaryOperation, Callee, Expression, ExpressionKind, Rational};
+use crate::expression::{Callee, Expression, ExpressionKind, Rational};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
 use super::exact::{
-    absolute, arithmetic, ceiling, floor, integer, integer_logarithm, larger, negated, number,
-    number_expression, power, sign, smaller, zero,
+    ceiling, floor, integer, integer_logarithm, number, number_expression, power, zero,
 };
 
 /// Rewrites a call of a built-in function of exact numbers to its value,
@@ -22,15 +21,13 @@ use super::exact::{
 ///   where it is an integer;
 /// - `exp`, `log`, the trigonometric, hyperbolic and `erf` functions at the
 ///   points where `SymPy` knows their value (`exp(0)`, `log(1)`, `sin(0)`,
-///   `cos(0)`, `acos(1)`, ...);
-/// - the composed functions `max`, `min`, `abs`, `sign`, `clamp`,
-///   `clamp_symmetric`, `relu` and `leaky_relu`, by their definitions.
+///   `cos(0)`, `acos(1)`, ...).
 ///
-/// The `SymPy` backend refuses a call of a composed function until it is
-/// inlined, so it has no answer for it to agree with; the strategy gives
-/// the answer the function's inlined form has. `sigmoid`, `silu`, `gelu`,
-/// `round` of a non-integer and every other call are declined. The Boolean
-/// built-ins are [`LogicalOperators`](super::LogicalOperators)'.
+/// Each of these is a function the `SymPy` backend folds itself. The
+/// composed functions (`max`, `min`, `abs`, ...), which it refuses until
+/// they are inlined, are [`ComposedBuiltins`](super::ComposedBuiltins)', a
+/// strategy that is not a default. `sigmoid`, `silu`, `gelu`, `round` of a
+/// non-integer and every other call are declined.
 ///
 /// # Examples
 ///
@@ -107,29 +104,10 @@ fn call_value(function: BuiltinFunction, arguments: &[Rational]) -> Option<Ratio
             [x],
         ) if is_zero(x) => zero(),
         (BuiltinFunction::Log | BuiltinFunction::Arccos, [x]) if *x == integer(1.into()) => zero(),
-        (BuiltinFunction::Max, [a, b]) => larger(a, b).clone(),
-        (BuiltinFunction::Min, [a, b]) => smaller(a, b).clone(),
-        (BuiltinFunction::Abs, [x]) => absolute(x),
-        (BuiltinFunction::Sign, [x]) => sign(x),
-        (BuiltinFunction::Clamp, [x, low, high]) => clamp(x, low, high),
-        (BuiltinFunction::ClampSymmetric, [x, bound]) => clamp(x, &negated(bound.clone()), bound),
-        (BuiltinFunction::Relu, [x]) => larger(x, &zero()).clone(),
-        (BuiltinFunction::LeakyRelu, [x, slope]) => {
-            if *x > zero() {
-                x.clone()
-            } else {
-                arithmetic(BinaryOperation::Multiply, x, slope)?
-            }
-        }
         _ => return None,
     })
 }
 
 fn is_zero(number: &Rational) -> bool {
     *number == zero()
-}
-
-/// Return `min(max(x, low), high)`.
-fn clamp(x: &Rational, low: &Rational, high: &Rational) -> Rational {
-    smaller(larger(x, low), high).clone()
 }

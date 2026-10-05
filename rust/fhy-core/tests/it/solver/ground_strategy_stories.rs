@@ -15,8 +15,9 @@ use fhy_core::expression::{
     Callee, Expression, ExpressionKind, FunctionName, FunctionSort, LiteralValue,
 };
 use fhy_core::solver::strategy::{
-    Comparisons, ExactArithmetic, ExactBuiltins, LogicalOperators, NormalizeLiterals,
-    PiecewiseDecision, RegisteredConstants, SimplificationStrategy, default_strategies,
+    Comparisons, ComposedBuiltins, ExactArithmetic, ExactBuiltins, LogicalOperators,
+    NormalizeLiterals, PiecewiseDecision, RegisteredConstants, SimplificationStrategy,
+    default_strategies,
 };
 use fhy_core::solver::{GroundSimplifier, SimplifyContext};
 use rstest::rstest;
@@ -228,15 +229,10 @@ fn comparisons_alone_decide_a_comparison_only_once_its_operands_are_numbers() {
 #[case::conjunction(truth(true).and(truth(false)), Some(false))]
 #[case::disjunction(truth(false).or(truth(true)), Some(true))]
 #[case::many_operands(Expression::all([truth(true), truth(true), truth(true)]), Some(true))]
-#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]), Some(true))]
-#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]), Some(false))]
-#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]), Some(true))]
-#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]), Some(false))]
-#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]), Some(true))]
 #[case::short_circuit_is_not_taken(truth(false).and(build_identifier("x").1.less(n(1))), None)]
 #[case::number_operand(Expression::all([n(1), truth(true)]), None)]
 #[case::undecided_operand((!(!truth(true))).and(truth(true)), None)]
-#[case::not_a_boolean_builtin(call(BuiltinFunction::Max, [n(1), n(2)]), None)]
+#[case::a_boolean_builtin(call(BuiltinFunction::Xor, [truth(true), truth(false)]), None)]
 #[case::user_function(Expression::call("f".parse::<Callee>().expect("a name"), [truth(true), truth(true)]), None)]
 fn logical_operators_decide_an_operator_of_boolean_literals(
     #[case] node: Expression,
@@ -296,15 +292,8 @@ fn piecewise_decision_chooses_among_decided_branches(
 #[case::exp_of_one(call(BuiltinFunction::Exp, [n(1)]), None)]
 #[case::sin_of_zero(call(BuiltinFunction::Sin, [n(0)]), Some(n(0)))]
 #[case::acos_of_one(call(BuiltinFunction::Arccos, [n(1)]), Some(n(0)))]
-#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]), Some(n(5)))]
-#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]), Some(n(2)))]
-#[case::abs(call(BuiltinFunction::Abs, [n(-5)]), Some(n(5)))]
-#[case::sign(call(BuiltinFunction::Sign, [n(-5)]), Some(n(-1)))]
-#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]), Some(n(10)))]
-#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]), Some(n(-10)))]
-#[case::relu(call(BuiltinFunction::Relu, [n(-3)]), Some(n(0)))]
-#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), quotient(1, 2)]), Some(n(-2)))]
 #[case::sigmoid(call(BuiltinFunction::Sigmoid, [n(0)]), None)]
+#[case::composed_builtin(call(BuiltinFunction::Max, [n(2), n(5)]), None)]
 #[case::boolean_builtin(call(BuiltinFunction::Xor, [truth(true), truth(false)]), None)]
 #[case::free_argument(call(BuiltinFunction::Floor, [build_identifier("x").1]), None)]
 #[case::undecided_argument(call(BuiltinFunction::Floor, [n(1) + n(1)]), None)]
@@ -314,6 +303,61 @@ fn exact_builtins_rewrite_a_call_with_an_exact_value(
     #[case] expected: Option<Expression>,
 ) {
     assert_eq!(rewrite(&ExactBuiltins::new(), &node), expected);
+}
+
+// ---------------------------------------------------------------------------
+// ComposedBuiltins
+// ---------------------------------------------------------------------------
+
+#[rstest]
+#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]), Some(n(5)))]
+#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]), Some(n(2)))]
+#[case::abs(call(BuiltinFunction::Abs, [n(-5)]), Some(n(5)))]
+#[case::sign(call(BuiltinFunction::Sign, [n(-5)]), Some(n(-1)))]
+#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]), Some(n(10)))]
+#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]), Some(n(-10)))]
+#[case::relu(call(BuiltinFunction::Relu, [n(-3)]), Some(n(0)))]
+#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), quotient(1, 2)]), Some(n(-2)))]
+#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]), Some(truth(true)))]
+#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]), Some(truth(false)))]
+#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]), Some(truth(true)))]
+#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]), Some(truth(false)))]
+#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]), Some(truth(true)))]
+#[case::max_of_a_free_argument(call(BuiltinFunction::Max, [build_identifier("x").1, n(1)]), None)]
+#[case::max_of_an_undecided_argument(call(BuiltinFunction::Max, [n(1) + n(1), n(1)]), None)]
+#[case::xor_of_numbers(call(BuiltinFunction::Xor, [n(1), n(2)]), None)]
+#[case::xor_of_an_undecided_argument(call(BuiltinFunction::Xor, [truth(true), !(!truth(true))]), None)]
+#[case::an_exact_builtin(call(BuiltinFunction::Floor, [n(2)]), None)]
+#[case::user_function(Expression::call("f".parse::<Callee>().expect("a name"), [n(1)]), None)]
+fn composed_builtins_rewrite_a_call_by_its_definition(
+    #[case] node: Expression,
+    #[case] expected: Option<Expression>,
+) {
+    assert_eq!(rewrite(&ComposedBuiltins::new(), &node), expected);
+}
+
+#[test]
+fn composed_builtins_are_not_a_default_strategy() {
+    let names: Vec<String> = default_strategies()
+        .iter()
+        .map(|strategy| strategy.name().into_owned())
+        .collect();
+
+    assert!(!names.contains(&ComposedBuiltins::new().name().into_owned()));
+    assert_eq!(
+        run(
+            &GroundSimplifier::new(),
+            &call(BuiltinFunction::Max, [n(2), n(5)])
+        ),
+        None
+    );
+    assert_eq!(
+        run(
+            &GroundSimplifier::new().with_strategy(ComposedBuiltins::new()),
+            &call(BuiltinFunction::Max, [n(2), n(5)])
+        ),
+        Some(n(5)),
+    );
 }
 
 // ---------------------------------------------------------------------------

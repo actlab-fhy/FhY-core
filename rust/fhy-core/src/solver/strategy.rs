@@ -17,9 +17,23 @@
 //! | [`NormalizeLiterals`] | `normalize_literals` | a decimal literal, to the form `SymPy` writes it in |
 //! | [`ExactArithmetic`] | `exact_arithmetic` | `+`, `-`, `*`, `/`, `//`, `%`, `**` and the unary `-` and `+` of exact numbers |
 //! | [`Comparisons`] | `comparisons` | a comparison of numbers, or of Booleans for `==` and `!=` |
-//! | [`LogicalOperators`] | `logical_operators` | `!`, `&&`, `\|\|` and the Boolean built-ins of Booleans |
+//! | [`LogicalOperators`] | `logical_operators` | `!`, `&&` and `\|\|` of Booleans |
 //! | [`PiecewiseDecision`] | `piecewise` | a piecewise whose conditions and values are decided, to the value of its first true case |
-//! | [`ExactBuiltins`] | `exact_builtins` | a call of a built-in with an exact result |
+//! | [`ExactBuiltins`] | `exact_builtins` | a call of a built-in with an exact result that `SymPy` folds itself |
+//!
+//! # The opt-in strategies
+//!
+//! A strategy outside the default list is an extension: a caller adds it with
+//! [`GroundSimplifier::with_strategy`](super::GroundSimplifier::with_strategy).
+//!
+//! | Strategy | Name | Rewrites |
+//! |---|---|---|
+//! | [`ComposedBuiltins`] | `composed_builtins` | a call of a composed built-in (`max`, `min`, `abs`, `sign`, `clamp`, `clamp_symmetric`, `relu`, `leaky_relu`, `xor`, `nand`, `nor`, `implies`, `iff`), by its definition |
+//!
+//! `SymPy` refuses these calls until they are inlined, so the default
+//! simplifier declines them and, with it, the default pipeline is exactly
+//! `SymPy`'s answer or a decline. An opt-in strategy gives the answer `SymPy`
+//! gives for the inlined form instead.
 //!
 //! # The contract
 //!
@@ -58,7 +72,9 @@
 //!    `cargo test -p fhy-core-py ground_differential`, which needs Python
 //!    with `SymPy` (`CONTRIBUTING.md`, "Rust test layout").
 //! 4. Add it to [`default_strategies`] if it should run by default, and to
-//!    the table above; else a caller adds it with
+//!    the table above. It belongs there only if `SymPy` answers the node
+//!    itself, without inlining. Any other strategy is opt-in: list it in the
+//!    second table, and a caller adds it with
 //!    [`GroundSimplifier::with_strategy`](super::GroundSimplifier::with_strategy).
 //!
 //! # Examples
@@ -103,6 +119,7 @@
 mod arithmetic;
 mod builtins;
 mod comparison;
+mod composed;
 mod constants;
 mod exact;
 mod literals;
@@ -120,6 +137,7 @@ use super::backend::SimplifyContext;
 pub use arithmetic::ExactArithmetic;
 pub use builtins::ExactBuiltins;
 pub use comparison::Comparisons;
+pub use composed::ComposedBuiltins;
 pub use constants::RegisteredConstants;
 pub use literals::NormalizeLiterals;
 pub use logic::LogicalOperators;

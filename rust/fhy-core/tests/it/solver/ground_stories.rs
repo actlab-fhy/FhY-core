@@ -16,6 +16,7 @@ use fhy_core::expression::{
     Expression, FunctionName, FunctionSort, LiteralValue, LogicalOperation,
 };
 use fhy_core::foreign::BoxError;
+use fhy_core::solver::strategy::ComposedBuiltins;
 use fhy_core::solver::{
     GroundSimplifier, GroundWithFallback, Simplifier, SimplifyContext, SolveError, Solver,
 };
@@ -210,17 +211,6 @@ fn piecewise_with_a_boolean_value_folds_to_it() {
 #[case::exp_of_zero(call(BuiltinFunction::Exp, [n(0)]), n(1))]
 #[case::sin_of_zero(call(BuiltinFunction::Sin, [n(0)]), n(0))]
 #[case::cos_of_zero(call(BuiltinFunction::Cos, [n(0)]), n(1))]
-#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]), n(5))]
-#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]), n(2))]
-#[case::min_of_rationals(call(BuiltinFunction::Min, [n(1) / n(2), n(1) / n(3)]), quotient(1, 3))]
-#[case::abs(call(BuiltinFunction::Abs, [n(-5)]), n(5))]
-#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]), decimal("0.5"))]
-#[case::sign(call(BuiltinFunction::Sign, [n(-5)]), n(-1))]
-#[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]), n(0))]
-#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]), n(10))]
-#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]), n(-10))]
-#[case::relu(call(BuiltinFunction::Relu, [n(-3)]), n(0))]
-#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), n(1) / n(2)]), n(-2))]
 fn built_ins_fold_where_the_value_is_exact(
     #[case] expression: Expression,
     #[case] expected: Expression,
@@ -234,11 +224,37 @@ fn built_ins_fold_where_the_value_is_exact(
 #[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]), true)]
 #[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]), false)]
 #[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]), true)]
-fn boolean_built_ins_fold_by_their_definition(
+fn the_default_simplifier_declines_a_boolean_built_in_sympy_refuses(
     #[case] expression: Expression,
-    #[case] expected: bool,
+    #[case] _expected: bool,
 ) {
-    assert_eq!(folded(&expression), Some(truth(expected)));
+    assert_eq!(folded(&expression), None);
+}
+
+/// The composed built-ins are not folded by default: `SymPy` refuses them
+/// until they are inlined, so the default pipeline declines them, and they
+/// are the opt-in `ComposedBuiltins`.
+#[rstest]
+#[case::max(call(BuiltinFunction::Max, [n(2), n(5)]), n(5))]
+#[case::min(call(BuiltinFunction::Min, [n(2), n(5)]), n(2))]
+#[case::min_of_rationals(call(BuiltinFunction::Min, [n(1) / n(2), n(1) / n(3)]), quotient(1, 3))]
+#[case::abs(call(BuiltinFunction::Abs, [n(-5)]), n(5))]
+#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]), decimal("0.5"))]
+#[case::sign(call(BuiltinFunction::Sign, [n(-5)]), n(-1))]
+#[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]), n(0))]
+#[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]), n(10))]
+#[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]), n(-10))]
+#[case::relu(call(BuiltinFunction::Relu, [n(-3)]), n(0))]
+#[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), n(1) / n(2)]), n(-2))]
+fn the_default_simplifier_declines_a_composed_built_in_and_the_opt_in_strategy_folds_it(
+    #[case] expression: Expression,
+    #[case] expected: Expression,
+) {
+    let context = SimplifyContext::default();
+    let extended = GroundSimplifier::new().with_strategy(ComposedBuiltins::new());
+
+    assert_eq!(folded(&expression), None);
+    assert_eq!(extended.try_simplify(&expression, &context), Some(expected));
 }
 
 // ---------------------------------------------------------------------------
