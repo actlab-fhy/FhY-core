@@ -14,8 +14,8 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
-    CallExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
@@ -284,7 +284,7 @@ def _outcome(expression: Expression, backend: SolverBackend) -> object:
     """Return SymPy's answer, or the type of the error the backend raises."""
     try:
         return simplify_expression(expression, backend=backend)
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         return type(error)
 
 
