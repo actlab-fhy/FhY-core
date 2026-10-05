@@ -12,7 +12,9 @@
 //!   reads leniently ([`read_unsigned_lenient`]).
 //!
 //! The readers are generic over the target, any of [`UnsignedInteger`]:
-//! `u8`, `u16`, `u32`, `u64`, `u128` and `usize`.
+//! `u8`, `u16`, `u32`, `u64`, `u128` and `usize`. A caller that chooses its
+//! own errors reads with [`classify_unsigned`] and builds the overflow with
+//! [`build_too_large_error`].
 
 use std::fmt;
 
@@ -22,8 +24,10 @@ use pyo3::types::{PyBool, PyInt};
 
 /// An unsigned machine integer a Python `int` is read as.
 ///
-/// Implemented for `u8`, `u16`, `u32`, `u64`, `u128` and `usize`.
-pub trait UnsignedInteger: Copy + Sized + 'static {
+/// Implemented for `u8`, `u16`, `u32`, `u64`, `u128` and `usize`, and sealed:
+/// no other type implements it, so the set of targets can grow without a
+/// breaking change.
+pub trait UnsignedInteger: sealed::Sealed + Copy + Sized + 'static {
     /// The width of the type in bits, which the `OverflowError` names.
     const BITS: u32;
 
@@ -37,8 +41,20 @@ pub trait UnsignedInteger: Copy + Sized + 'static {
     fn extract_from(object: &Bound<'_, PyAny>) -> PyResult<Self>;
 }
 
+/// The supertrait that seals [`UnsignedInteger`]: it is not nameable outside
+/// this module.
+mod sealed {
+    #[expect(
+        unnameable_types,
+        reason = "the sealed-trait pattern: nothing outside names it"
+    )]
+    pub trait Sealed {}
+}
+
 macro_rules! impl_unsigned_integer {
     ($($target:ty),*) => {$(
+        impl sealed::Sealed for $target {}
+
         impl UnsignedInteger for $target {
             const BITS: u32 = <$target>::BITS;
 
