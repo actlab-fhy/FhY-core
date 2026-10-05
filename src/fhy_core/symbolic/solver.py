@@ -24,11 +24,18 @@ three logical questions and a :class:`Simplifier` for simplification:
   wherever it folds, and returns the expression unchanged wherever it
   cannot match SymPy exactly (a free identifier, a float, a user function,
   an irrational value, a composed built-in such as ``max`` or ``abs`` that
-  SymPy refuses until it is inlined), so it never approximates;
+  SymPy refuses until it is inlined), so it never approximates. It honors
+  the ``timeout_milliseconds`` of ``simplify_expression``: when the time is
+  up it returns the expression unchanged, never a partial result. A single
+  operation is not interrupted, but its size is bounded (a power or an
+  integer result of at most a million bits, a fraction with parts of at most
+  4096 bits), which keeps one to milliseconds;
 - ``SolverBackend.GROUND_THEN_SYMPY`` is the ground simplifier in front of
   the SymPy backend, ``GroundSimplifier(SympySimplifier())``: SymPy answers
   what the ground fold declines, so the answer is SymPy's, faster where the
-  expression is ground;
+  expression is ground. The timeout bounds the ground part, and SymPy is
+  asked under what is left of it, but SymPy cannot be cancelled and runs to
+  its end;
 - :class:`SmtLib2ProcessSolver` drives any SMT-LIB2 executable, such as
   ``z3 -in`` or ``cvc5 --lang=smt2``, from Rust;
 - a Python subclass of :class:`SmtSolver` or :class:`Simplifier` plugs in any

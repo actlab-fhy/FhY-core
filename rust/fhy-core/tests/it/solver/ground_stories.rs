@@ -9,6 +9,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::{FunctionRegistry, NativeConstant};
@@ -18,7 +19,8 @@ use fhy_core::expression::{
 use fhy_core::foreign::BoxError;
 use fhy_core::solver::strategy::ComposedBuiltins;
 use fhy_core::solver::{
-    GroundSimplifier, GroundWithFallback, Simplifier, SimplifyContext, SolveError, Solver,
+    GroundSimplifier, GroundWithFallback, Simplifier, SimplifyContext, SimplifyLimits, SolveError,
+    Solver,
 };
 use rstest::rstest;
 
@@ -277,6 +279,9 @@ fn the_default_simplifier_declines_a_composed_built_in_and_the_opt_in_strategy_f
 #[case::root_of_a_negative(n(-4).power(n(1) / n(2)))]
 #[case::huge_power(n(3).power(n(1_000_000)))]
 #[case::huge_exponent(n(3).power(n(1_000_000_000_000)))]
+#[case::fraction_too_large_to_reduce((n(3) / n(5)).power(n(100_000)))]
+#[case::negative_power_too_large_to_reduce(n(2).power(n(-500_000)))]
+#[case::product_past_the_size_bound(n(3).power(n(400_000)) * n(3).power(n(400_000)))]
 #[case::sqrt_of_a_non_square(call(BuiltinFunction::Sqrt, [n(2)]))]
 #[case::sqrt_of_a_negative(call(BuiltinFunction::Sqrt, [n(-4)]))]
 #[case::log2_of_a_non_power(call(BuiltinFunction::Log2, [n(6)]))]
@@ -488,6 +493,108 @@ fn the_chain_reports_the_fallback_s_failure_unchanged() {
         error.downcast_ref::<FakeBackendError>(),
         Some(&FakeBackendError("boom".to_owned()))
     );
+}
+
+// ---------------------------------------------------------------------------
+// Limits
+// ---------------------------------------------------------------------------
+
+fn limited_to(timeout: Duration) -> SimplifyContext<'static> {
+    SimplifyContext::default().with_limits(SimplifyLimits::new().with_timeout(timeout))
+}
+
+/// A sum of powers each of which takes milliseconds to compute and which
+/// nothing shares, so the driver has work to do between clock reads.
+fn heavy_sum() -> Expression {
+    (0..20).fold(n(0), |sum, index| {
+        sum + n(1_000_003 + 2 * index).power(n(52_000))
+    })
+}
+
+#[test]
+fn a_zero_timeout_declines_even_an_expression_that_folds() {
+    let ground = GroundSimplifier::new();
+    let expression = n(2) + n(3);
+
+    assert_eq!(
+        ground.try_simplify(&expression, &limited_to(Duration::ZERO)),
+        None
+    );
+    let simplified = ground
+        .simplify(&expression, &limited_to(Duration::ZERO))
+        .expect("never fails");
+    assert!(Expression::ptr_eq(&simplified, &expression));
+}
+
+#[test]
+fn a_timeout_the_run_exceeds_declines_whole_rather_than_returning_a_partial_result() {
+    let expression = heavy_sum();
+    let ground = GroundSimplifier::new().with_partial_rewrites();
+
+    // The first power alone takes longer than the timeout, and the run
+    // stops after it: not with the sum partly folded, but with the input.
+    let bounded = ground.try_simplify(&expression, &limited_to(Duration::from_millis(1)));
+    let unbounded = ground.try_simplify(&expression, &SimplifyContext::default());
+
+    assert_eq!(bounded, None);
+    assert!(unbounded.is_some_and(|folded| is_literal(&folded)));
+}
+
+fn is_literal(expression: &Expression) -> bool {
+    matches!(
+        expression.kind(),
+        fhy_core::expression::ExpressionKind::Literal(_)
+    )
+}
+
+#[test]
+fn a_generous_timeout_changes_nothing() {
+    let ground = GroundSimplifier::new();
+    let hour = limited_to(Duration::from_secs(3600));
+    let expression = (n(2) * n(3) + n(1)).floor_divide(n(4)) - n(7).floor_mod(n(3));
+
+    assert_eq!(
+        ground.try_simplify(&expression, &hour),
+        ground.try_simplify(&expression, &SimplifyContext::default())
+    );
+    assert_eq!(ground.try_simplify(&expression, &hour), Some(n(0)));
+}
+
+#[test]
+fn the_chain_asks_the_fallback_under_what_is_left_of_the_timeout() {
+    let (_, x) = build_identifier("x");
+    let fallback = RecordingSimplifier::identity();
+    let chain = GroundWithFallback::from_shared(Arc::clone(&fallback) as Arc<dyn Simplifier>);
+    let hour = Duration::from_secs(3600);
+
+    chain
+        .simplify(&(x.clone() + n(1)), &limited_to(hour))
+        .expect("simplified");
+    chain
+        .simplify(&(x + n(1)), &SimplifyContext::default())
+        .expect("simplified");
+
+    let limits = fallback.limits();
+    let remaining = limits[0].timeout().expect("the fallback is bounded too");
+    assert!(remaining <= hour && remaining > hour - Duration::from_secs(60));
+    assert_eq!(limits[1].timeout(), None);
+}
+
+#[test]
+fn the_chain_does_not_give_its_fallback_a_fresh_timeout_after_the_ground_part_used_it() {
+    let fallback = RecordingSimplifier::returning(n(99));
+    let chain = GroundWithFallback::from_shared(Arc::clone(&fallback) as Arc<dyn Simplifier>);
+    let expression = heavy_sum();
+
+    // The ground part times out and declines; the fallback is asked, and
+    // finds none of the 1 ms left.
+    let answer = chain
+        .simplify(&expression, &limited_to(Duration::from_millis(1)))
+        .expect("simplified");
+
+    assert_eq!(answer, n(99));
+    assert_eq!(fallback.inputs(), vec![expression]);
+    assert_eq!(fallback.limits()[0].timeout(), Some(Duration::ZERO));
 }
 
 #[test]

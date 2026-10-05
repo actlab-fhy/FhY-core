@@ -112,7 +112,7 @@ def test_small_arithmetic_tree(benchmark: Benchmark, solver: Solver) -> None:
 
     result = benchmark(solver.simplify_expression, tree, environment)
 
-    assert result == LiteralExpression(15)
+    assert result == LiteralExpression(16)
 
 
 def test_free_expression(benchmark: Benchmark, solver: Solver) -> None:

@@ -29,13 +29,17 @@ use super::error::solve_error_to_py;
 /// SymPy refuses until they are inlined, are an opt-in one, not included). Where it folds, its result is exactly what the SymPy backend
 /// returns for the same input; where it cannot match SymPy exactly (a free
 /// identifier, a float, a user function, an irrational or undefined value, a
-/// power beyond a million bits) it returns the expression unchanged, and
-/// never approximates.
+/// power beyond a million bits, a fraction with a part beyond 4096 bits) it
+/// returns the expression unchanged, and never approximates. It honors the
+/// simplification's timeout: when the time is up it returns the expression
+/// unchanged, never a partial result.
 ///
 /// With `fallback`, a `Simplifier`, it is the chain: it tries the ground
 /// simplifier first and asks `fallback` for what it declines, so with a
 /// `SympySimplifier` the answer is SymPy's, faster where the expression is
-/// ground. A `Solver` holding it simplifies in Rust, with the interpreter
+/// ground. The timeout bounds the ground part, and the fallback is asked
+/// under what is left of it (a fallback such as SymPy that cannot be
+/// cancelled still runs to its end). A `Solver` holding it simplifies in Rust, with the interpreter
 /// detached unless the fallback is a Python backend.
 #[pyclass(extends = PySimplifierBase, frozen, module = "fhy_core._rs", name = "GroundSimplifier")]
 pub(crate) struct PyGroundSimplifier {

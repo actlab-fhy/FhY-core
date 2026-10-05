@@ -17,8 +17,9 @@ use super::exact::{
 /// The numbers are integers, decimals and quotients of integers, computed
 /// over [`BigInt`](crate::expression::BigInt)s. It declines a float, a
 /// division or a modulo by zero, a zero raised to a negative power, a power
-/// whose result is irrational or complex, and a power of more than a
-/// million bits.
+/// whose result is irrational or complex, a power or other integer result
+/// of more than a million bits, and a fraction with a numerator or
+/// denominator of more than 4096 bits.
 ///
 /// # Examples
 ///

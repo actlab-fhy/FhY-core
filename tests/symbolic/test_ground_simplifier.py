@@ -88,6 +88,31 @@ class _FailingSimplifier(Simplifier):
         raise ValueError("the fallback failed")
 
 
+class _TimeoutRecordingSimplifier(Simplifier):
+    """A Python simplifier recording the timeout it is asked under."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.timeouts: list[float | None] = []
+
+    @override
+    def simplify(self, expression: Expression) -> Expression:
+        self.timeouts.append(self.context.timeout)
+        return expression
+
+
+def _heavy_sum() -> Expression:
+    """Return a sum of powers, each taking milliseconds, that nothing shares."""
+    total: Expression = _int(0)
+    for index in range(20):
+        total = _binary(
+            _ADD,
+            total,
+            _binary(_POWER, _int(1_000_003 + 2 * index), _int(52_000)),
+        )
+    return total
+
+
 @pytest.fixture
 def x() -> Identifier:
     return mock_identifier("x", 0)
@@ -447,6 +472,63 @@ def test_chains_nest(x: Identifier) -> None:
     assert chain.simplify(_binary(_ADD, _int(1), _int(1))) == _int(2)
     assert chain.simplify(IdentifierExpression(x)) == _int(7)
     assert chain.name == "ground+ground+_RecordingSimplifier"
+
+
+# =============================================================================
+# Timeouts
+# =============================================================================
+
+
+def test_a_timeout_applies_to_the_ground_backend() -> None:
+    """Test a timeout the run exceeds declines it, and none folds it."""
+    solver = Solver(simplifier=_resolve_adapter(SolverBackend.GROUND))
+    expression = _heavy_sum()
+
+    bounded = solver.simplify_expression(expression, timeout_milliseconds=1)
+    unbounded = solver.simplify_expression(expression)
+
+    assert bounded == expression
+    assert isinstance(unbounded, LiteralExpression)
+
+
+@pytest.mark.sympy
+def test_a_timeout_is_accepted_by_the_sympy_chain() -> None:
+    """Test ``GROUND_THEN_SYMPY`` answers under a timeout, ground or not."""
+    solver = Solver(simplifier=_resolve_adapter(SolverBackend.GROUND_THEN_SYMPY))
+
+    result = solver.simplify_expression(
+        _binary(_ADD, _int(2), _int(3)), timeout_milliseconds=60_000
+    )
+
+    assert result == _int(5)
+
+
+def test_a_normal_expression_is_unaffected_by_a_timeout() -> None:
+    """Test a generous timeout leaves the answer as it is."""
+    solver = Solver(simplifier=GroundSimplifier())
+    expression = _binary(_ADD, _binary(_POWER, _int(2), _int(10)), _int(1))
+
+    assert solver.simplify_expression(expression, timeout_milliseconds=60_000) == _int(
+        1025
+    )
+
+
+def test_the_chain_asks_its_fallback_under_the_remaining_timeout(
+    x: Identifier,
+) -> None:
+    """Test the fallback gets what the ground part left, not a fresh timeout."""
+    fallback = _TimeoutRecordingSimplifier()
+    solver = Solver(simplifier=GroundSimplifier(fallback))
+
+    solver.simplify_expression(IdentifierExpression(x), timeout_milliseconds=60_000)
+    solver.simplify_expression(_heavy_sum(), timeout_milliseconds=1)
+    solver.simplify_expression(IdentifierExpression(x))
+
+    first, second, third = fallback.timeouts
+    assert first is not None
+    assert 59.0 < first <= 60.0
+    assert second == 0.0
+    assert third is None
 
 
 # =============================================================================

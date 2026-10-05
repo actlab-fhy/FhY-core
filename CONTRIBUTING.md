@@ -916,7 +916,14 @@ they are inlined, are the opt-in `ComposedBuiltins` strategy, an extension
 added with `with_strategy`: it is not in the default list, so the default
 pipeline is SymPy's answer or a decline. The driver rewrites bottom-up, tries the
 strategies in order on each node until none rewrites it, and stops at a
-documented bound of rewrites (`with_max_rewrites`, 100 000 by default). A
+documented bound of rewrites (`with_max_rewrites`, 100 000 by default) and
+at the `timeout` of the context's `SimplifyLimits`, read from the clock once
+per node and per rewrite and only when a timeout is set; a run out of time
+declines whole, like a run at the rewrite bound, and never returns a partial
+result. One rewrite is not interrupted, so a strategy that can be slow on
+a large number guards its sizes (the default ones: integers of at most 2^20
+bits, fractions with parts of at most 4096 bits, since reducing a fraction
+is quadratic) and declines past them. A
 caller adds, removes and reorders strategies with `with_strategy`,
 `with_strategy_first`, `without` and `empty`, without touching the driver.
 
@@ -943,7 +950,9 @@ The contract every strategy keeps, and every change to one:
 what the ground one declines; the Python class `GroundSimplifier`
 (`SolverBackend.GROUND`) is the ground simplifier with its default
 strategies, and `GroundSimplifier(fallback)` (`SolverBackend.GROUND_THEN_SYMPY`
-with SymPy) is the chain. SymPy stays the default solver's simplifier.
+with SymPy) is the chain. The chain's timeout is one budget: the fallback
+is asked under what the ground part left of it, though SymPy cannot be
+cancelled. SymPy stays the default solver's simplifier.
 
 To add a strategy:
 

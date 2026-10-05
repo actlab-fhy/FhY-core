@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::expression::Expression;
 use crate::foreign::BoxError;
@@ -43,7 +44,8 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 /// identifier, the identifier of a built-in constant, a float, a call of a
 /// user function, an operation without an exact rational result, a value
 /// that is not of the sort an operation takes, and a power of more than a
-/// million bits, and a call of a composed built-in (`max`, `abs`, `xor`, ...),
+/// million bits, a fraction with a numerator or denominator of more than
+/// 4096 bits, an integer result of more than a million bits, and a call of a composed built-in (`max`, `abs`, `xor`, ...),
 /// which `SymPy` refuses until it is inlined. [`strategy`](super::strategy)
 /// lists what each default strategy rewrites, and the opt-in
 /// [`ComposedBuiltins`](super::strategy::ComposedBuiltins) that folds the
@@ -83,8 +85,23 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 /// [`empty`](Self::empty) starts from none. The [`strategy`](super::strategy)
 /// module states the contract a strategy keeps and how to add one.
 ///
-/// The simplifier ignores [`SimplifyLimits`](super::SimplifyLimits): its
-/// run is bounded by rewrites, not time.
+/// # Limits
+///
+/// A run also honors the [`timeout`](super::SimplifyLimits::timeout) of the
+/// context's [`SimplifyLimits`](super::SimplifyLimits). The driver reads the
+/// clock at each node it visits and before each rewrite, and only when the
+/// run has a timeout, so an unbounded run never reads it. When the time is
+/// up the run **declines**: it returns the expression unchanged, as it does
+/// at the rewrite bound, and never a partial result. A strategy's rewrite is
+/// never interrupted, so one operation runs to its end; what bounds that is
+/// the size guards of the default strategies (a power of at most 2^20 bits,
+/// a logarithm of at most 4096 bits, a root of index at most 4096), each of
+/// which keeps one operation to milliseconds. The deadline is therefore
+/// missed by at most the cost of one such operation, plus that of a custom
+/// strategy's own rewrite. A timeout of zero declines every expression.
+///
+/// A [`GroundWithFallback`] gives its fallback the budget the ground part
+/// left over.
 ///
 /// # Examples
 ///
@@ -247,6 +264,7 @@ impl GroundSimplifier {
         let mut run = Run {
             simplifier: self,
             context,
+            deadline: Deadline::of(context),
             memo: HashMap::default(),
             rewrites: 0,
         };
@@ -295,12 +313,37 @@ impl Simplifier for GroundSimplifier {
     }
 }
 
+/// The moment a run must stop by, if its context bounds it.
+#[derive(Clone, Copy)]
+struct Deadline(Option<Instant>);
+
+impl Deadline {
+    /// Return the deadline of a run that starts now under `context`'s
+    /// timeout, which is none when the timeout is unset or too far away to
+    /// represent.
+    fn of(context: &SimplifyContext<'_>) -> Self {
+        Self(
+            context
+                .limits()
+                .timeout()
+                .and_then(|timeout| Instant::now().checked_add(timeout)),
+        )
+    }
+
+    /// Return whether the deadline has been reached. It reads the clock only
+    /// when there is a deadline.
+    fn is_reached(self) -> bool {
+        self.0.is_some_and(|deadline| Instant::now() >= deadline)
+    }
+}
+
 /// One run of the driver: the context, the simplified form of each node it
 /// has met by the node's identity, so a node the expression shares is
 /// simplified once, and the rewrites made so far.
 struct Run<'s, 'c, 'a> {
     simplifier: &'s GroundSimplifier,
     context: &'c SimplifyContext<'a>,
+    deadline: Deadline,
     memo: HashMap<NodeIdentity, Expression, BuildIdentityHasher>,
     rewrites: usize,
 }
@@ -308,7 +351,7 @@ struct Run<'s, 'c, 'a> {
 impl Run<'_, '_, '_> {
     /// Return `node` simplified, or `None` to decline the whole run.
     fn simplify(&mut self, node: &Expression, depth: usize) -> Option<Expression> {
-        if depth > MAX_DEPTH {
+        if depth > MAX_DEPTH || self.deadline.is_reached() {
             return None;
         }
         let has_children = node.children().len() > 0;
@@ -325,6 +368,11 @@ impl Run<'_, '_, '_> {
             node.clone()
         };
         while let Some(rewritten) = self.rewrite_once(&current) {
+            // The deadline is read once per rewrite, after it: a run that
+            // is out of time declines whole, so no partial result escapes.
+            if self.deadline.is_reached() {
+                return None;
+            }
             if rewritten.children().len() == 0 {
                 current = rewritten;
             } else {
@@ -466,6 +514,20 @@ impl GroundWithFallback {
     }
 }
 
+impl GroundWithFallback {
+    /// Return `context` with its timeout reduced by the time since
+    /// `started`, which the fallback runs under, or `None` when the context
+    /// has no timeout to reduce.
+    fn remaining_context<'a>(
+        context: &SimplifyContext<'a>,
+        started: Instant,
+    ) -> Option<SimplifyContext<'a>> {
+        let timeout = context.limits().timeout()?;
+        let remaining = timeout.saturating_sub(started.elapsed());
+        Some(context.with_limits(context.limits().with_timeout(remaining)))
+    }
+}
+
 impl fmt::Debug for GroundWithFallback {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GroundWithFallback")
@@ -484,6 +546,13 @@ impl Simplifier for GroundWithFallback {
     /// Return the ground simplifier's answer when it decides `expression`,
     /// and the fallback's for what is left otherwise.
     ///
+    /// The context's [`timeout`](super::SimplifyLimits::timeout) bounds the
+    /// chain as a whole: the ground simplifier runs under it, and when it
+    /// declines, whether for the expression or because time ran out, the
+    /// fallback is asked under what is left of it (zero when the ground part
+    /// used it all), not under a fresh timeout. A fallback that cannot
+    /// cancel its work, such as the `SymPy` backend, still runs to its end.
+    ///
     /// # Errors
     ///
     /// Returns the fallback's failure, when the ground simplifier does not
@@ -493,7 +562,11 @@ impl Simplifier for GroundWithFallback {
         expression: &Expression,
         context: &SimplifyContext<'_>,
     ) -> Result<Expression, BoxError> {
-        match self.ground.try_simplify(expression, context) {
+        let started = Instant::now();
+        let answer = self.ground.try_simplify(expression, context);
+        let remaining = Self::remaining_context(context, started);
+        let context = remaining.as_ref().unwrap_or(context);
+        match answer {
             Some(rewritten) if is_decided(&rewritten) => Ok(rewritten),
             Some(rewritten) => self.fallback.simplify(&rewritten, context),
             None => self.fallback.simplify(expression, context),

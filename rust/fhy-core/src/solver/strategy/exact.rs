@@ -12,6 +12,13 @@ use crate::expression::{
 /// decline rather than compute a number of that size.
 const MAX_POWER_BITS: u64 = 1 << 20;
 
+/// The most bits a part of a number that is not an integer may have, past
+/// which the strategies decline rather than reduce or expand it. Reducing a
+/// fraction by its greatest common divisor, and finding out whether it is a
+/// decimal, take time quadratic in its size, so this keeps one operation
+/// to milliseconds. An integer is bounded by [`MAX_POWER_BITS`] instead.
+const MAX_FRACTION_BITS: u64 = 4096;
+
 /// The most bits of an argument whose logarithm is taken.
 const MAX_LOGARITHM_BITS: u64 = 4096;
 
@@ -42,7 +49,7 @@ pub(super) fn number(expression: &Expression) -> Option<Rational> {
                 (
                     ExpressionKind::Literal(LiteralValue::Int(numerator)),
                     ExpressionKind::Literal(LiteralValue::Int(denominator)),
-                ) => Rational::new(numerator.clone(), denominator.clone()),
+                ) => reduced(numerator.clone(), denominator.clone()),
                 _ => None,
             }
         }
@@ -52,7 +59,26 @@ pub(super) fn number(expression: &Expression) -> Option<Rational> {
 
 fn decimal(value: &Decimal) -> Option<Rational> {
     let (numerator, denominator) = value.to_rational_parts();
-    Rational::new(numerator, denominator)
+    reduced(numerator, denominator)
+}
+
+/// Return the rational `numerator / denominator`, reduced, or `None` for a
+/// zero denominator or a result the strategies decline to hold: an integer
+/// of more than [`MAX_POWER_BITS`] bits, or a fraction with a part of more
+/// than [`MAX_FRACTION_BITS`]. It declines before the reduction when it
+/// would take too long, so the cost of one call is bounded by the sizes.
+fn reduced(numerator: BigInt, denominator: BigInt) -> Option<Rational> {
+    if numerator.bits().min(denominator.bits()) > MAX_FRACTION_BITS {
+        return None;
+    }
+    let rational = Rational::new(numerator, denominator)?;
+    let (numerator, denominator) = parts(&rational);
+    let limit = if denominator.is_one() {
+        MAX_POWER_BITS
+    } else {
+        MAX_FRACTION_BITS
+    };
+    (numerator.bits().max(denominator.bits()) <= limit).then_some(rational)
 }
 
 /// Return the integer `expression` is, if it is an integer literal that
@@ -166,10 +192,10 @@ pub(super) fn arithmetic(
 ) -> Option<Rational> {
     let ((a, b), (c, d)) = (parts(left), parts(right));
     match operation {
-        BinaryOperation::Add => Rational::new(a * d + c * b, b * d),
-        BinaryOperation::Subtract => Rational::new(a * d - c * b, b * d),
-        BinaryOperation::Multiply => Rational::new(a * c, b * d),
-        BinaryOperation::Divide => Rational::new(a * d, b * c),
+        BinaryOperation::Add => reduced(a * d + c * b, b * d),
+        BinaryOperation::Subtract => reduced(a * d - c * b, b * d),
+        BinaryOperation::Multiply => reduced(a * c, b * d),
+        BinaryOperation::Divide => reduced(a * d, b * c),
         BinaryOperation::FloorDivide => {
             if c.is_zero() {
                 return None;
@@ -261,7 +287,7 @@ pub(super) fn power(base: &Rational, exponent: &Rational) -> Option<Rational> {
         .filter(|&index| index <= MAX_ROOT_INDEX)?;
     let numerator = exact_root(base_numerator, index)?;
     let denominator = exact_root(base_denominator, index)?;
-    let root = Rational::new(numerator, denominator)?;
+    let root = reduced(numerator, denominator)?;
     power(&root, &integer(exponent_numerator.clone()))
 }
 
@@ -285,15 +311,22 @@ fn integer_power(numerator: &BigInt, denominator: &BigInt, exponent: &BigInt) ->
     } else {
         let size = numerator.bits().max(denominator.bits());
         let count = magnitude.to_u32()?;
-        if size.checked_mul(u64::from(count))? > MAX_POWER_BITS {
+        let result_bits = size.checked_mul(u64::from(count))?;
+        let is_fraction = !denominator.is_one() || exponent.is_negative();
+        let limit = if is_fraction {
+            MAX_FRACTION_BITS
+        } else {
+            MAX_POWER_BITS
+        };
+        if result_bits > limit {
             return None;
         }
         (numerator.pow(count), denominator.pow(count))
     };
     if exponent.is_negative() {
-        Rational::new(powered_denominator, powered_numerator)
+        reduced(powered_denominator, powered_numerator)
     } else {
-        Rational::new(powered_numerator, powered_denominator)
+        reduced(powered_numerator, powered_denominator)
     }
 }
 
