@@ -219,14 +219,13 @@ fn built_ins_fold_where_the_value_is_exact(
 }
 
 #[rstest]
-#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]), true)]
-#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]), false)]
-#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]), true)]
-#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]), false)]
-#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]), true)]
+#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]))]
+#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]))]
+#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]))]
+#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]))]
+#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]))]
 fn the_default_simplifier_declines_a_boolean_built_in_sympy_refuses(
     #[case] expression: Expression,
-    #[case] _expected: bool,
 ) {
     assert_eq!(folded(&expression), None);
 }
