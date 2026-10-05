@@ -34,6 +34,7 @@ from fhy_core.symbolic.solver import (
     SolverCapabilityError,
     SolverQueryKind,
     _resolve_adapter,
+    _solver_of,
     check_expression_satisfiability,
     get_backend_capabilities,
     get_default_solver,
@@ -481,7 +482,7 @@ def test_chains_nest(x: Identifier) -> None:
 
 def test_a_timeout_applies_to_the_ground_backend() -> None:
     """Test a timeout the run exceeds declines it, and none folds it."""
-    solver = Solver(simplifier=_resolve_adapter(SolverBackend.GROUND))
+    solver = _solver_of(SolverBackend.GROUND)
     expression = _heavy_sum()
 
     bounded = solver.simplify_expression(expression, timeout_milliseconds=1)
@@ -494,7 +495,7 @@ def test_a_timeout_applies_to_the_ground_backend() -> None:
 @pytest.mark.sympy
 def test_a_timeout_is_accepted_by_the_sympy_chain() -> None:
     """Test ``GROUND_THEN_SYMPY`` answers under a timeout, ground or not."""
-    solver = Solver(simplifier=_resolve_adapter(SolverBackend.GROUND_THEN_SYMPY))
+    solver = _solver_of(SolverBackend.GROUND_THEN_SYMPY)
 
     result = solver.simplify_expression(
         _binary(_ADD, _int(2), _int(3)), timeout_milliseconds=60_000
