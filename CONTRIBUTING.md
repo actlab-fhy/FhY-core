@@ -445,7 +445,7 @@ missed push is an error and never a silent default); `util::integers`
 `TypeError`, a negative a `ValueError` worded by a `Label` and a `Minimum`,
 and a number above the maximum an `OverflowError`; the lenient reader answers
 `None` for a negative or oversized `int`), with `classify_unsigned` and
-`Reading` for a caller that chooses its own errors; `util::gc` `Slot`, `Slots`, `collect_slots`,
+`Reading` for a caller that chooses its own errors (`build_too_large_error` words the overflow one; `UnsignedInteger` is sealed); `util::gc` `Slot`, `Slots`, `collect_slots`,
 `traverse_locked`, `clear_locked` and `traverse_all`; and `util::foreign`
 `foreign_of`, `foreign_failure` and `RaisedError`, which turn a Python-defined
 part into a core `Foreign`. Each item is documented with its errors and
