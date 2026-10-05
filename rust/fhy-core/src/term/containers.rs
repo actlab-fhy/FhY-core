@@ -11,16 +11,30 @@
 //!   when the contents do.
 //! - [`[T]`](slice), [`Vec<T>`] and [`[T; N]`](array): the lengths match, and
 //!   the elements match pairwise, in order.
-//! - [`Box<T>`], [`Rc<T>`] and [`Arc<T>`]: the pointee, whether or not the
-//!   two pointers are the same allocation. Pointer identity is no shortcut:
-//!   a term that binds one identifier twice is alpha-equivalent to none,
-//!   itself included.
 //! - Tuples of one to eight elements: the elements match pairwise, in order.
 //!   A tuple's elements share one error type, that of its first element.
 //!
-//! There is no impl for `&T`: with it, `value.is_alpha_equivalent_under(..)`
-//! on a `&&T` would resolve to the reference's impl and fail to type-check
-//! in code written before it. Compare through the references.
+//! There is no impl for `&T`, [`Box<T>`], [`Rc<T>`] or [`Arc<T>`]: with one,
+//! `value.is_alpha_equivalent_under(..)` on a `&&T`, or on a pointer to a
+//! term that has the method itself, such as an
+//! [`Expression`](crate::expression::Expression), would resolve to the
+//! trait's impl for the reference or pointer, which returns a `Result`, and
+//! not to the inherent method, which returns a `bool`. Compare through the
+//! references and pointers: `(*boxed).is_alpha_equivalent_under(&*other, ..)`
+//! for a pointee that has no inherent method, and the plain method call, which
+//! reaches it by auto-deref, for one that has.
+//!
+//! ```
+//! use fhy_core::expression::Expression;
+//! use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
+//!
+//! let boxed = Box::new(Expression::from(1));
+//! let other = Box::new(Expression::from(1));
+//!
+//! // With the trait in scope, the call still reaches the inherent method.
+//! let same: bool = boxed.is_alpha_equivalent_under(&other, &AlphaRenaming::default());
+//! assert!(same);
+//! ```
 //!
 //! Every comparison stops at the first element that differs or fails, so
 //! an error after that element is never reported.
@@ -32,9 +46,6 @@
 //! blanket impl cannot tell from plain data.
 //! [`is_mapping_alpha_equivalent_under`](super::is_mapping_alpha_equivalent_under)
 //! compares maps keyed by identifiers.
-
-use std::rc::Rc;
-use std::sync::Arc;
 
 use super::binder::AlphaEquivalence;
 use super::renaming::AlphaRenaming;
@@ -123,31 +134,6 @@ impl<T: AlphaEquivalence, const N: usize> AlphaEquivalence for [T; N] {
             .is_alpha_equivalent_under(other.as_slice(), renaming)
     }
 }
-
-/// Implement [`AlphaEquivalence`] for a smart pointer to a term: compare the
-/// pointees.
-macro_rules! impl_for_pointer {
-    ($($pointer:ident),+) => {$(
-        impl<T: AlphaEquivalence + ?Sized> AlphaEquivalence for $pointer<T> {
-            type Error = T::Error;
-
-            /// Compare the pointees under `renaming`, never the pointers.
-            ///
-            /// # Errors
-            ///
-            /// Returns the pointees' error.
-            fn is_alpha_equivalent_under(
-                &self,
-                other: &Self,
-                renaming: &AlphaRenaming,
-            ) -> Result<bool, T::Error> {
-                (**self).is_alpha_equivalent_under(&**other, renaming)
-            }
-        }
-    )+};
-}
-
-impl_for_pointer!(Box, Rc, Arc);
 
 /// Implement [`AlphaEquivalence`] for a tuple: the elements, in order, under
 /// the one renaming, with the error of the first.

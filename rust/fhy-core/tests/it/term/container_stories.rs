@@ -1,5 +1,5 @@
-//! Tests for the `AlphaEquivalence` impls of `Option`, slices, `Vec`, arrays,
-//! `Box`, `Rc`, `Arc` and tuples, and for a downstream-style type that
+//! Tests for the `AlphaEquivalence` impls of `Option`, slices, `Vec`, arrays
+//! and tuples, and for a downstream-style type that
 //! implements the trait next to them.
 //!
 //! The impls compare their elements in order under the one renaming they
@@ -14,6 +14,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 
+use fhy_core::expression::Expression;
 use fhy_core::identifier::Identifier;
 use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
 use proptest::prelude::*;
@@ -191,28 +192,50 @@ fn a_container_of_binders_compares_each_under_the_renaming_it_is_given() {
 }
 
 #[test]
-fn a_pointer_compares_the_pointee_and_never_the_pointer() {
+fn a_pointer_is_compared_through_its_pointee() {
     let [a, b] = build_identifiers(["a", "b"]);
     let renaming = renaming_of(&[(&a, &b)]);
 
     let (boxed_a, boxed_b) = (Box::new(reference(&a)), Box::new(reference(&b)));
-    assert!(boxed_a.alpha_equivalent_under(&boxed_b, &renaming));
-    assert!(!boxed_a.alpha_equivalent(&boxed_b));
-    assert!(Rc::new(reference(&a)).alpha_equivalent_under(&Rc::new(reference(&b)), &renaming));
-    assert!(!Rc::new(reference(&a)).alpha_equivalent(&Rc::new(reference(&b))));
-    assert!(Arc::new(reference(&a)).alpha_equivalent_under(&Arc::new(reference(&b)), &renaming));
-    assert!(!Arc::new(reference(&a)).alpha_equivalent(&Arc::new(reference(&b))));
+    assert!((*boxed_a).alpha_equivalent_under(&*boxed_b, &renaming));
+    assert!(!(*boxed_a).alpha_equivalent(&*boxed_b));
+    let (rc_a, rc_b) = (Rc::new(reference(&a)), Rc::new(reference(&b)));
+    assert!((*rc_a).alpha_equivalent_under(&*rc_b, &renaming));
+    assert!(!(*rc_a).alpha_equivalent(&*rc_b));
+    let (arc_a, arc_b) = (Arc::new(reference(&a)), Arc::new(reference(&b)));
+    assert!((*arc_a).alpha_equivalent_under(&*arc_b, &renaming));
+    assert!(!(*arc_a).alpha_equivalent(&*arc_b));
 
     let shared = Arc::new(reference(&a));
-    assert!(shared.alpha_equivalent(&Arc::clone(&shared)));
+    assert!((*shared).alpha_equivalent(&*Arc::clone(&shared)));
     // A shared allocation is compared under the renaming as any other: `a`
     // does not correspond to itself once the renaming sends it to `b`.
-    assert!(!shared.alpha_equivalent_under(&Arc::clone(&shared), &renaming));
+    assert!(!(*shared).alpha_equivalent_under(&*Arc::clone(&shared), &renaming));
 
     let left: Box<[Reference]> = references([&a, &b]).into();
     let right: Box<[Reference]> = references([&a, &b]).into();
     assert!(left.alpha_equivalent(&right));
-    assert!(!left.alpha_equivalent(&references([&a]).into()));
+    assert!(!left.alpha_equivalent(&references([&a])[..]));
+}
+
+/// With the trait in scope, a method call on a pointer to a term that has an
+/// inherent method still reaches it, and answers a `bool`, not the trait's
+/// `Result`. This is a compile-level check: the annotations are the test.
+#[test]
+fn a_pointer_to_an_expression_keeps_the_inherent_boolean_method() {
+    let renaming = AlphaRenaming::default();
+    let boxed = Box::new(Expression::from(1));
+    let shared = Arc::new(Expression::from(1));
+    let counted = Rc::new(Expression::from(2));
+
+    let same: bool = boxed.is_alpha_equivalent_under(&boxed, &renaming);
+    let shared_same: bool = shared.is_alpha_equivalent_under(&shared, &renaming);
+    let counted_differs: bool =
+        counted.is_alpha_equivalent_under(&Rc::new(Expression::from(3)), &renaming);
+
+    assert!(same);
+    assert!(shared_same);
+    assert!(!counted_differs);
 }
 
 #[test]
@@ -258,7 +281,7 @@ fn a_nested_container_compares_through_every_level() {
     let [a, b, c] = build_identifiers(["a", "b", "c"]);
     let nested = |first: &Identifier, last: &Identifier| {
         vec![
-            (Some(Box::new(reference(first))), references([first, last])),
+            (Some(reference(first)), references([first, last])),
             (None, Vec::new()),
         ]
     };
@@ -396,8 +419,6 @@ proptest! {
             (left_option.clone(), left.clone()).alpha_equivalent(&(right_option.clone(), right.clone())),
             left_option == right_option && left == right
         );
-        let (boxed_left, boxed_right) = (Box::new(left.clone()), Box::new(right.clone()));
-        prop_assert_eq!(boxed_left.alpha_equivalent(&boxed_right), left == right);
     }
 
     /// Test a vector is alpha-equivalent under the renaming that swaps

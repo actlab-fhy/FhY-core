@@ -844,7 +844,7 @@ struct with only public fields.
 
 ### Comparing term fields
 
-`AlphaEquivalence` is implemented for `Option<T>`, `[T]`, `Vec<T>`, `[T; N]`, `Box<T>`, `Rc<T>`, `Arc<T>` and tuples of up to eight terms. A type with term fields implements the trait by calling those on its fields, `&&`-ing the answers in field order with `?`, under the renaming it was given, rather than writing a comparison loop. Elements compare in order, lengths must match, and `None` matches only `None`. Do not add impls for `HashSet` or `HashMap`: the answer would depend on iteration order. A map keyed by identifiers goes through `is_mapping_alpha_equivalent_under`. The impls live in `rust/fhy-core/src/term/containers.rs`; there is no `&T` impl, because it would change which method `value.is_alpha_equivalent_under(..)` resolves to on a `&&T`.
+`AlphaEquivalence` is implemented for `Option<T>`, `[T]`, `Vec<T>`, `[T; N]` and tuples of up to eight terms. A type with term fields implements the trait by calling those on its fields, `&&`-ing the answers in field order with `?`, under the renaming it was given, rather than writing a comparison loop. Elements compare in order, lengths must match, and `None` matches only `None`. Do not add impls for `HashSet` or `HashMap`: the answer would depend on iteration order. A map keyed by identifiers goes through `is_mapping_alpha_equivalent_under`. The impls live in `rust/fhy-core/src/term/containers.rs`; there is no impl for `&T`, `Box<T>`, `Rc<T>` or `Arc<T>`, because it would change which method `value.is_alpha_equivalent_under(..)` resolves to on a `&&T` or on a pointer to a term with an inherent method such as `Expression`.
 
 ### Python parity is limited to dual-defined concepts
 
