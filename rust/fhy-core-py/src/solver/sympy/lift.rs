@@ -99,7 +99,18 @@ impl<'h> Lifter<'h> {
     /// expression it lifted to, so a SymPy DAG costs its distinct nodes and
     /// lifts to an expression that shares as it does. The memo holds every
     /// node it keys by, so no id is reused while the lifting runs.
-    pub(super) fn lift<'py>(&self, root: &Bound<'py, PyAny>) -> Fallible<Expression> {
+    pub(super) fn lift(&self, root: &Bound<'_, PyAny>) -> Fallible<Expression> {
+        self.lift_counting(root).map(|(expression, _)| expression)
+    }
+
+    /// Return what [`lift`](Self::lift) returns and how many nodes it
+    /// visited, not counting the repeats the memo answered: the work of the
+    /// lifting, which a test pins to the number of distinct nodes.
+    pub(super) fn lift_counting<'py>(
+        &self,
+        root: &Bound<'py, PyAny>,
+    ) -> Fallible<(Expression, usize)> {
+        let mut visited = 0_usize;
         let mut tasks = vec![Task::Visit(root.clone())];
         let mut results: Vec<Expression> = Vec::new();
         let mut memo: HashMap<usize, (Bound<'py, PyAny>, Expression), BuildAddressHasher> =
@@ -111,6 +122,7 @@ impl<'h> Lifter<'h> {
                         results.push(lifted.clone());
                         continue;
                     }
+                    visited += 1;
                     match self.visit(&node)? {
                         Step::Done(expression) => {
                             results.push(expression.clone());
@@ -137,7 +149,7 @@ impl<'h> Lifter<'h> {
                 }
             }
         }
-        Ok(results.pop().expect("the root is lifted last"))
+        Ok((results.pop().expect("the root is lifted last"), visited))
     }
 
     /// Return what visiting `node` gives, in the order SymPy's kinds are

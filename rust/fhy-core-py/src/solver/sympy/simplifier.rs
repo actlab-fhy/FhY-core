@@ -153,6 +153,20 @@ impl SympySimplifier {
             .map_err(|kind| SympyError::new(phase, kind))
     }
 
+    /// Return what [`lift`](Self::lift) returns and the number of nodes the
+    /// lifting visited, for the tests that pin its cost.
+    #[cfg(test)]
+    pub(crate) fn lift_counting(
+        &self,
+        object: &Bound<'_, PyAny>,
+    ) -> Result<(Expression, usize), SympyError> {
+        let phase = SympyPhase::Lifting;
+        let handles = self.handles_in(object.py(), phase)?;
+        lift::Lifter::new(handles)
+            .lift_counting(object)
+            .map_err(|kind| SympyError::new(phase, kind))
+    }
+
     /// Return the best-effort simplification of the SymPy object `object`,
     /// or `object` itself where SymPy gives up.
     ///
