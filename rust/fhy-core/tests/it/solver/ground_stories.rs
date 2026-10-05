@@ -576,7 +576,7 @@ fn the_chain_asks_the_fallback_under_what_is_left_of_the_timeout() {
 
     let limits = fallback.limits();
     let remaining = limits[0].timeout().expect("the fallback is bounded too");
-    assert!(remaining <= hour && remaining > hour - Duration::from_secs(60));
+    assert!(remaining <= hour && remaining > Duration::from_secs(3540));
     assert_eq!(limits[1].timeout(), None);
 }
 
