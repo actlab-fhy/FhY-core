@@ -896,12 +896,12 @@ def test_auto_freeze_subclass_can_set_own_state_before_outermost_freeze() -> Non
 
 
 def test_frozen_protocol_does_not_expose_assert_write_protected() -> None:
-    """Test the ``Frozen`` protocol no longer exposes ``assert_write_protected``."""
+    """Test the ``Frozen`` protocol does not expose ``assert_write_protected``."""
     assert not hasattr(Frozen, "assert_write_protected")
 
 
 def test_frozen_freeze_method_takes_no_arguments() -> None:
-    """Test ``freeze()`` no longer accepts ``deep`` (or any) keyword argument."""
+    """Test ``freeze()`` does not accept ``deep`` (or any) keyword argument."""
 
     class _SimpleFrozen(FrozenMixin):
         def __init__(self, value: int) -> None:
@@ -914,7 +914,7 @@ def test_frozen_freeze_method_takes_no_arguments() -> None:
 
 
 def test_assert_frozen_takes_no_arguments() -> None:
-    """Test ``assert_frozen()`` no longer accepts ``deep``/``strict`` kwargs."""
+    """Test ``assert_frozen()`` does not accept ``deep``/``strict`` kwargs."""
 
     class _SimpleFrozen(FrozenMixin):
         def __init__(self, value: int) -> None:

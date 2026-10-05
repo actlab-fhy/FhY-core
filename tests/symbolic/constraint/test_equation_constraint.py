@@ -946,7 +946,7 @@ def test_str_matches_expression_pformat() -> None:
 
 
 # =============================================================================
-# Extra shapes carried over from the retired unary contract
+# Extra shapes of the equation constraint
 # =============================================================================
 
 

@@ -414,7 +414,7 @@ def test_native_call_with_constant_argument_round_trips_through_sympy() -> None:
     """Test `sin(pi)` round-trips: lowers, simplifies, lifts back to literal.
 
     Sympy simplifies ``sin(pi)`` to ``0``; the lifted expression is the
-    integer literal ``0`` (not a constant reference any more).
+    integer literal ``0``, not a constant reference.
     """
     expression = call("sin", get_native_constant_identifier("pi"))
 

@@ -2,7 +2,7 @@
 //! its events, the expression, the three questions and the order of their
 //! checks, the decided set members, custom members, and equivalence.
 //!
-//! The cases are ported from `test_constraint_system.py`; a recording fake
+//! The cases mirror `test_constraint_system.py`; a recording fake
 //! backend stands in for z3.
 
 use std::collections::HashMap;

@@ -1,7 +1,7 @@
 //! Tests for `Scope`: frames, the root frame, shadowing, the local and
 //! global queries, and the scoped frame of `with_frame`.
 //!
-//! Ported from `tests/test_scope.py`.
+//! Mirrors `tests/test_scope.py`.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 

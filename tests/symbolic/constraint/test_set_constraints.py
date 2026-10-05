@@ -484,8 +484,7 @@ def test_set_constraint_accepts_the_unified_values_keyword(
 
     ``InSetConstraint`` and ``NotInSetConstraint`` are implemented by one
     shared base holding a single ``values`` field, so both accept the
-    same keyword regardless of kind (the retired ``valid_values``/
-    ``invalid_values`` split no longer exists).
+    same keyword regardless of kind.
     """
     x = mock_identifier("x", 0)
 

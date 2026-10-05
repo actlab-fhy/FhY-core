@@ -1,7 +1,7 @@
 //! Tests for `Stack`: push, pop and peek, the empty stack, clearing, and
 //! iteration.
 //!
-//! Ported from `tests/test_stack.py`.
+//! Mirrors `tests/test_stack.py`.
 
 use fhy_core::stack::Stack;
 

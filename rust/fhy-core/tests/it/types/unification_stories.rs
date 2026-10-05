@@ -1,7 +1,7 @@
 //! Tests for the environment, template binding, substitution and
 //! unification of the built-in types.
 //!
-//! Ported from `tests/types/test_unification.py`.
+//! Mirrors `tests/types/test_unification.py`.
 
 use crate::support::expression::build_call_or_panic;
 use crate::support::param::reference;

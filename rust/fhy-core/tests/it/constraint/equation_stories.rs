@@ -2,7 +2,7 @@
 //! order of its checks, the native constant refusal, how it reads the
 //! simplifier's result, and its events.
 //!
-//! The cases are ported from `test_equation_constraint.py` and
+//! The cases mirror `test_equation_constraint.py` and
 //! `test_bindings_evaluation.py`; a fake simplifier stands in for SymPy.
 
 use std::sync::Arc;

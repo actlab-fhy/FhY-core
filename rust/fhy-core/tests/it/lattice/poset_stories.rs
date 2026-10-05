@@ -1,7 +1,7 @@
 //! Tests for `PartiallyOrderedSet`: membership, orders and their
 //! refusals, reachability, and the two iteration orders.
 //!
-//! Ported from `tests/test_poset.py`.
+//! Mirrors `tests/test_poset.py`.
 
 use crate::support::stack::{SMALL_STACK_DEPTH, run_on_small_stack};
 

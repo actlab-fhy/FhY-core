@@ -1844,7 +1844,7 @@ def test_logical_expression_refuses_an_unknown_operation() -> None:
 
 
 def test_binary_operation_has_no_logical_connective() -> None:
-    """Test conjunction and disjunction are not binary operations any more."""
+    """Test conjunction and disjunction are not binary operations."""
     names = {operation.name for operation in BinaryOperation}
 
     assert "LOGICAL_AND" not in names

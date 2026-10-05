@@ -2,7 +2,7 @@
 //! equality, the refused values, normalization, the canonical order,
 //! deduplication, opaque values, lookups, and lifting.
 //!
-//! The cases are ported from `test_member_validation.py` and the member
+//! The cases mirror `test_member_validation.py` and the member
 //! tests of `test_set_constraints.py`.
 
 use fhy_core::constraint::{Member, MemberError, MemberKind, Value};

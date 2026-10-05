@@ -2,7 +2,7 @@
 //! wrapper type with rules of its own through every operation, and bare
 //! extensions that take the core's default rules.
 //!
-//! Ported from `tests/types/test_extension.py` and the dispatcher-default
+//! Mirrors `tests/types/test_extension.py` and the dispatcher-default
 //! tests of `tests/types/test_unification.py`.
 
 use crate::support::hashing::hash_of;

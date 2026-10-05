@@ -64,9 +64,9 @@ def test_assignment_is_value_set_after_assign(
 def test_param_no_longer_exposes_get_value_attribute(
     default_real_param: Param[str | float],
 ) -> None:
-    """Test `Param` no longer exposes a direct `get_value` attribute."""
+    """Test `Param` does not expose a direct `get_value` attribute."""
     with pytest.raises(AttributeError, match="get_value"):
-        default_real_param.get_value()  # type: ignore[attr-defined]  # test: removed
+        default_real_param.get_value()  # type: ignore[attr-defined]  # test: attribute absent
 
 
 def test_assignment_value_property_returns_assigned_value(

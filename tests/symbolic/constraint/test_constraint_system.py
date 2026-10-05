@@ -793,9 +793,8 @@ def test_check_satisfiability_is_satisfied_for_a_satisfiable_system() -> None:
 def test_check_satisfiability_accepts_an_immutabledict_symbol_types() -> None:
     """Test `check_satisfiability` accepts an `immutabledict` `symbol_types`.
 
-    Guards the removal of the seam's defensive ``dict(symbol_types)``
-    copy: the solver call it forwards to now accepts any `Mapping`
-    directly, so an `immutabledict` needs no such copy.
+    The solver call it forwards to accepts any `Mapping`, so an
+    `immutabledict` passes through uncopied.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)

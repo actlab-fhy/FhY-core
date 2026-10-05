@@ -2,7 +2,7 @@
 //! through the renaming, collisions, capture, and the values compared in
 //! the left map's order.
 //!
-//! The cases are ported from the mapping-helper tests of
+//! The cases mirror the mapping-helper tests of
 //! `tests/test_alpha_equivalence.py`.
 
 use std::cell::RefCell;

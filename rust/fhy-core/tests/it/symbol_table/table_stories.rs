@@ -1,7 +1,7 @@
 //! Tests for `SymbolTable`: namespaces and their parents, symbols, the
 //! lookups, merging, canonical order, violations and equivalence.
 //!
-//! Ported from `tests/test_symbol_table.py`.
+//! Mirrors `tests/test_symbol_table.py`.
 
 use std::convert::Infallible;
 
