@@ -1,7 +1,8 @@
 //! What the stories of the util module share: an embedded interpreter, and
 //! stand-ins for the few modules of `fhy_core` the util module imports.
 //!
-//! **Test-only.** This module is public behind the `testing` cargo feature,
+//! **Test-only, not stable API:** it is hidden from the documentation, and
+//! it may change in any release. This module is public behind the `testing` cargo feature,
 //! so a downstream `-py` crate's own tests can use the same stand-ins
 //! instead of rewriting them; enable the feature in `[dev-dependencies]`
 //! only, never in `[dependencies]`, so that no release build carries it.
