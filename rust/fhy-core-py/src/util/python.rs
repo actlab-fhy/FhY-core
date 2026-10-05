@@ -4,7 +4,7 @@
 //!   taken once.
 //! - [`ImportedAttr`] and [`cached_attr!`](crate::cached_attr): an attribute
 //!   of a Python module, imported on first use and kept.
-//! - [`type_name`]: the name of an object's type, for messages.
+//! - [`read_type_name`]: the name of an object's type, for messages.
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
@@ -53,8 +53,8 @@ impl<T> Seed<T> {
 /// An attribute of a Python module, such as a class, imported on first use
 /// and kept for the life of the process.
 ///
-/// Declared as a `static`, it replaces a `PyOnceLock` and an import helper
-/// per call site: `static CLASS: ImportedAttr<PyType> =
+/// Declared as a `static`, it stands in for a `PyOnceLock` and an import
+/// helper at each call site: `static CLASS: ImportedAttr<PyType> =
 /// ImportedAttr::new("fhy_core.types", "Type");`, then `CLASS.get(py)?`.
 pub struct ImportedAttr<T = PyAny> {
     module: &'static str,
@@ -122,7 +122,7 @@ pub use cached_attr;
 /// Return the name of `value`'s type, or `?` if reading it raises, for
 /// messages.
 #[must_use]
-pub fn type_name(value: &Bound<'_, PyAny>) -> String {
+pub fn read_type_name(value: &Bound<'_, PyAny>) -> String {
     value
         .get_type()
         .name()

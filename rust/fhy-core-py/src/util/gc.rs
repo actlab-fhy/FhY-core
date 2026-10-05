@@ -2,10 +2,10 @@
 //!
 //! A class that holds Python objects implements `__traverse__`, which
 //! visits each Python object it holds a strong reference to, so the
-//! interpreter's cycle collector can free a cycle that runs through it. The collector
-//! subtracts one visit per reference, so each reference must be visited at
-//! most once, by the object that holds it: visiting it twice could free an
-//! object that is still referenced from outside the cycle, while not
+//! interpreter's cycle collector can free a cycle that runs through it. The
+//! collector subtracts one visit per reference, so each reference must be
+//! visited at most once, by the object that holds it: visiting it twice could
+//! free an object that is still referenced from outside the cycle, while not
 //! visiting it only keeps the cycle alive. Every rule here follows from
 //! that.
 //!
@@ -75,6 +75,8 @@ impl Slot {
 
     /// Return a slot for `object` that no collection owns, wherever it is
     /// made: the temporary of one call, which the collector needs not visit.
+    /// The slot must not outlive the call: nothing visits it, so a cycle
+    /// that runs through a slot kept longer is never collected.
     #[must_use]
     pub const fn unowned(object: Py<PyAny>) -> Self {
         Self(SlotKind::Unowned(object))
@@ -103,8 +105,9 @@ impl Slot {
 /// The slots one object owns: the ones its construction made.
 ///
 /// The object keeps them in a field and visits them from its
-/// `__traverse__` with [`traverse`](Self::traverse).
-#[derive(Debug, Default, Clone)]
+/// `__traverse__` with [`traverse`](Self::traverse). It is not `Clone`: a
+/// copy would let two objects visit one strong reference.
+#[derive(Debug, Default)]
 pub struct Slots(Vec<Arc<Py<PyAny>>>);
 
 impl Slots {
@@ -145,6 +148,7 @@ thread_local! {
 /// # Panics
 ///
 /// Panics if the thread's local storage is being destroyed.
+#[must_use]
 pub fn collect_slots<T>(build: impl FnOnce() -> T) -> (T, Slots) {
     let scope = ScopedStack::push(&COLLECTORS, Vec::new());
     let value = build();

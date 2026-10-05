@@ -10,7 +10,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use numpy::ndarray::{ArrayD, Axis, CowArray, IxDyn, Slice, arr0, arr1, arr2};
 use pyo3::exceptions::{
-    PyImportError, PyMemoryError, PyOverflowError, PyTypeError, PyValueError, PyZeroDivisionError,
+    PyImportError, PyMemoryError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
+    PyZeroDivisionError,
 };
 use pyo3::types::{PyDict, PyModule};
 
@@ -146,12 +147,15 @@ mod from_python {
     #[test]
     fn an_int_outside_the_64_bit_range_is_an_overflow_error_naming_the_binding() {
         with_numpy(|py, numpy| {
-            let error = convert(numpy, "2**63").expect_err("out of range");
-            assert!(error.is_instance_of::<PyOverflowError>(py));
-            assert_eq!(
-                error.value(py).to_string(),
-                "the int bound to \"x\" is outside the 64-bit range"
-            );
+            for source in ["2**63", "-(2**63) - 1"] {
+                let error = convert(numpy, source).expect_err("out of range");
+                assert!(error.is_instance_of::<PyOverflowError>(py), "{source}");
+                assert_eq!(
+                    error.value(py).to_string(),
+                    "the int bound to \"x\" is outside the 64-bit range",
+                    "{source}"
+                );
+            }
         });
     }
 
@@ -297,13 +301,21 @@ mod from_python {
     #[test]
     fn a_dtype_that_is_not_boolean_integer_or_real_is_a_type_error_naming_it() {
         with_numpy(|py, numpy| {
-            for (source, dtype) in [
+            let mut cases = vec![
                 ("np.array([1j])", "complex128"),
                 ("np.array(['a'])", "<U1"),
                 ("np.array([1], dtype='timedelta64[s]')", "timedelta64[s]"),
                 ("np.array([None], dtype=object)", "object"),
-                ("np.array([1.0], dtype=np.longdouble)", "float128"),
-            ] {
+            ];
+            // `longdouble` is a wider type only on some platforms; where it
+            // is binary64, it is a real like `float64`.
+            let is_wide = python(numpy, "np.dtype(np.longdouble).itemsize > 8")
+                .is_truthy()
+                .expect("a bool");
+            if is_wide {
+                cases.push(("np.array([1.0], dtype=np.longdouble)", "float128"));
+            }
+            for (source, dtype) in cases {
                 let error = convert(numpy, source).expect_err(source);
                 assert!(error.is_instance_of::<PyTypeError>(py), "{source}");
                 assert_eq!(
@@ -608,9 +620,158 @@ mod kernels {
         });
     }
 
+    /// A stand-in for the `numpy` module, run from `source` over the real
+    /// one: it has `asarray`, `float64` and an `errstate` that records its
+    /// entry and exit in `states`, and `source` defines the ufuncs.
+    fn stand_in<'py>(py: Python<'py>, source: &str) -> Bound<'py, PyModule> {
+        let prelude = "
+import numpy as _numpy
+
+asarray = _numpy.asarray
+float64 = _numpy.float64
+calls = []
+states = []
+
+
+class _State:
+    def __init__(self, settings):
+        self.settings = settings
+
+    def __enter__(self):
+        states.append(('enter', self.settings))
+
+    def __exit__(self, *arguments):
+        states.append(('exit', arguments))
+        if exit_message is not None:
+            raise RuntimeError(exit_message)
+
+
+exit_message = None
+
+
+def errstate(**settings):
+    return _State(settings)
+";
+        let code = CString::new(format!("{prelude}{source}")).expect("no nul");
+        PyModule::from_code(py, &code, c"stand_in_numpy.py", c"stand_in_numpy")
+            .unwrap_or_else(|error| panic!("the stand-in failed: {error}"))
+    }
+
+    /// Return the shape of `array` as a list.
+    fn shape_of(array: &Bound<'_, PyAny>) -> Vec<usize> {
+        array
+            .getattr("shape")
+            .and_then(|shape| shape.extract())
+            .expect("a shape")
+    }
+
+    /// Return the elements of `array`, flattened.
+    fn flattened(array: &Bound<'_, PyAny>) -> Vec<f64> {
+        array
+            .call_method0("ravel")
+            .and_then(|flat| flat.call_method0("tolist"))
+            .and_then(|list| list.extract())
+            .expect("a list of reals")
+    }
+
+    #[test]
+    fn find_input_returns_the_inputs_own_array_for_its_whole_view() {
+        with_numpy(|py, numpy| {
+            let array = python(numpy, "np.arange(6, dtype='float64').reshape(2, 3)");
+            let input = NumpyValue::from_python(numpy, "x", &array).expect("converts");
+            let kernels = NumpyKernels::new(numpy, &[&input]);
+            let binding = input.as_binding();
+            let view = reals(binding);
+
+            let found = kernels
+                .find_input(py, &CowArray::from(view.view()))
+                .expect("searches")
+                .expect("the whole view is the input");
+
+            assert!(found.is(&array));
+        });
+    }
+
+    #[test]
+    fn find_input_returns_a_view_of_the_inputs_buffer_for_a_chunk() {
+        with_numpy(|py, numpy| {
+            let array = python(numpy, "np.arange(6, dtype='float64').reshape(2, 3)");
+            let input = NumpyValue::from_python(numpy, "x", &array).expect("converts");
+            let kernels = NumpyKernels::new(numpy, &[&input]);
+            let binding = input.as_binding();
+            let view = reals(binding);
+            let chunk = view.slice_axis(Axis(0), Slice::from(1..2));
+
+            let found = kernels
+                .find_input(py, &CowArray::from(chunk))
+                .expect("searches")
+                .expect("a chunk is a run of the input");
+
+            assert!(!found.is(&array));
+            assert_eq!(shape_of(&found), [1, 3]);
+            assert_eq!(flattened(&found), [3.0, 4.0, 5.0]);
+            assert_eq!(address(&found), address(&array) + 3 * size_of::<f64>());
+        });
+    }
+
+    #[test]
+    fn find_input_finds_nothing_for_a_strided_or_foreign_view() {
+        with_numpy(|py, numpy| {
+            let array = python(numpy, "np.arange(6, dtype='float64').reshape(2, 3)");
+            let input = NumpyValue::from_python(numpy, "x", &array).expect("converts");
+            let kernels = NumpyKernels::new(numpy, &[&input]);
+            let binding = input.as_binding();
+            let view = reals(binding);
+
+            let strided = view.slice_axis(Axis(1), Slice::new(0, None, 2));
+            let found = kernels
+                .find_input(py, &CowArray::from(strided))
+                .expect("searches");
+            assert!(found.is_none(), "a strided view is not a run");
+
+            let other = arr2(&[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]).into_dyn();
+            let found = kernels
+                .find_input(py, &CowArray::from(other.view()))
+                .expect("searches");
+            assert!(found.is_none(), "another allocation is not an input");
+
+            let found = kernels
+                .find_input(py, &CowArray::from(other))
+                .expect("searches");
+            assert!(found.is_none(), "an owned argument is not a view");
+        });
+    }
+
+    #[test]
+    fn find_input_gives_a_reshaped_view_its_own_shape() {
+        with_numpy(|py, numpy| {
+            let array = python(numpy, "np.arange(6, dtype='float64').reshape(2, 3)");
+            let input = NumpyValue::from_python(numpy, "x", &array).expect("converts");
+            let kernels = NumpyKernels::new(numpy, &[&input]);
+            let binding = input.as_binding();
+            let view = reals(binding);
+
+            for shape in [vec![3, 2], vec![1, 6], vec![6]] {
+                let reshaped = view
+                    .view()
+                    .into_shape_with_order(IxDyn(&shape))
+                    .expect("six lanes");
+
+                let found = kernels
+                    .find_input(py, &CowArray::from(reshaped))
+                    .expect("searches")
+                    .expect("the lanes are the input's");
+
+                assert_eq!(shape_of(&found), shape);
+                assert_eq!(flattened(&found), [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+                assert_eq!(address(&found), address(&array));
+            }
+        });
+    }
+
     #[test]
     fn a_transcendental_over_a_view_of_an_input_reuses_its_array() {
-        with_numpy(|_py, numpy| {
+        with_numpy(|py, numpy| {
             let array = python(numpy, "np.array([0.0, 0.5, 1.0, 1.5], dtype='float64')");
             let input = NumpyValue::from_python(numpy, "x", &array).expect("converts");
             let kernels = NumpyKernels::new(numpy, &[&input]);
@@ -621,6 +782,101 @@ mod kernels {
             let chunk = view.slice_axis(Axis(0), Slice::from(1..3));
             let part = native(&kernels, BuiltinFunction::Cos, CowArray::from(chunk));
             assert_close(&part, &[0.5_f64.cos(), 1.0_f64.cos()]);
+
+            // The ufunc is handed the input's own array for the whole view,
+            // and a view of its buffer for the chunk, never a copy.
+            let recorder = stand_in(
+                py,
+                "
+def sin(argument, out=None):
+    calls.append(argument)
+    return _numpy.sin(argument)
+",
+            );
+            let kernels = NumpyKernels::new(&recorder, &[&input]);
+            native(&kernels, BuiltinFunction::Sin, CowArray::from(view.view()));
+            let chunk = view.slice_axis(Axis(0), Slice::from(1..3));
+            native(&kernels, BuiltinFunction::Sin, CowArray::from(chunk));
+            let calls = recorder.getattr("calls").expect("calls");
+            let first = calls.get_item(0).expect("the whole view's call");
+            let second = calls.get_item(1).expect("the chunk's call");
+            assert!(first.is(&array));
+            assert_eq!(address(&second), address(&array) + size_of::<f64>());
+            assert_eq!(flattened(&second), [0.5, 1.0]);
+        });
+    }
+
+    #[test]
+    fn a_kernels_failure_is_the_pythons_own_exception_and_the_warnings_are_restored() {
+        with_numpy(|py, _numpy| {
+            let failing = stand_in(
+                py,
+                "
+failure = ValueError('sin failed')
+
+
+def sin(argument, out=None):
+    raise failure
+",
+            );
+            let kernels = NumpyKernels::new(&failing, &[]);
+            let lanes = arr1(&[0.0, 1.0]).into_dyn();
+
+            let error = kernels
+                .native(BuiltinFunction::Sin, CowArray::from(lanes))
+                .expect_err("the ufunc raises");
+
+            let error = crate::util::exceptions::unbox_py_err(error).expect("a Python exception");
+            let failure = failing.getattr("failure").expect("the exception");
+            assert!(error.value(py).is(&failure));
+            let states = failing.getattr("states").expect("states");
+            assert_eq!(
+                states.repr().expect("repr").to_string(),
+                "[('enter', {'all': 'ignore'}), ('exit', (None, None, None))]"
+            );
+        });
+    }
+
+    #[test]
+    fn a_failing_exit_wins_over_the_body_with_the_body_as_its_context() {
+        with_numpy(|py, _numpy| {
+            let failing = stand_in(
+                py,
+                "
+exit_message = 'exit failed'
+",
+            );
+
+            let after_success = with_floating_point_warnings_silenced(&failing, || Ok(5));
+            let after_failure: PyResult<i32> =
+                with_floating_point_warnings_silenced(&failing, || {
+                    Err(PyValueError::new_err("body failed"))
+                });
+
+            let error = after_success.expect_err("the exit's exception replaces the result");
+            assert!(error.is_instance_of::<PyRuntimeError>(py));
+            assert!(error.context(py).is_none());
+            let error = after_failure.expect_err("the exit's exception wins");
+            assert_eq!(error.value(py).to_string(), "exit failed");
+            let context = error.context(py).expect("the body's exception is chained");
+            assert_eq!(context.value(py).to_string(), "body failed");
+        });
+    }
+
+    #[test]
+    fn the_warnings_are_silenced_around_the_body_and_its_result_returned() {
+        with_numpy(|py, _numpy| {
+            let recorder = stand_in(py, "");
+
+            let result = with_floating_point_warnings_silenced(&recorder, || {
+                let states = recorder.getattr("states").expect("states");
+                assert_eq!(states.len().expect("len"), 1, "entered before the body");
+                Ok(7)
+            });
+
+            assert_eq!(result.expect("the body's result"), 7);
+            let states = recorder.getattr("states").expect("states");
+            assert_eq!(states.len().expect("len"), 2, "exited after the body");
         });
     }
 

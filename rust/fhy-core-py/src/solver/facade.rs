@@ -28,7 +28,7 @@ use crate::util::gc::{Slots, collect_slots};
 
 use crate::identifier::{read_identifier_id, restore_identifier};
 
-use super::backends::{build_simplifier, build_smt_solver, run_simplification, type_name};
+use super::backends::{build_simplifier, build_smt_solver, read_type_name, run_simplification};
 use super::error::{solve_error_to_py, undecidable_error, warn_hazard, warn_unknown};
 use super::values::{read_query_kind, read_symbol_types};
 
@@ -45,7 +45,7 @@ fn read_expression(value: &Bound<'_, PyAny>, owner: &str, field: &str) -> PyResu
         .map_err(|_not_an_expression| {
             PyTypeError::new_err(format!(
                 "{owner} {field} must be an Expression, got {}.",
-                type_name(value)
+                read_type_name(value)
             ))
         })
 }
@@ -329,7 +329,7 @@ impl PySolver {
             .map_err(|_not_an_expression| {
                 PyTypeError::new_err(format!(
                     "simplify_expression expression must be an Expression, got {}.",
-                    type_name(expression)
+                    read_type_name(expression)
                 ))
             })?
             .clone();
@@ -351,7 +351,7 @@ impl PySolver {
                 let bound = value.cast::<PyExpression>().map_err(|_not_an_expression| {
                     PyTypeError::new_err(format!(
                         "environment values must be Expressions, got {} for {}.",
-                        type_name(&value),
+                        read_type_name(&value),
                         key.repr()
                             .map_or_else(|_| "?".to_owned(), |text| text.to_string())
                     ))

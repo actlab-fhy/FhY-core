@@ -9,7 +9,7 @@ use super::{
     Label, Minimum, Reading, build_too_large_error, classify_unsigned, read_unsigned,
     read_unsigned_lenient,
 };
-use crate::util::testing::{evaluate, with_stand_ins};
+use crate::util::testing::{define, entry, evaluate, with_stand_ins};
 
 /// Return the message of the exception `error`.
 fn message(py: Python<'_>, error: &PyErr) -> String {
@@ -26,7 +26,7 @@ fn an_integer_in_range_is_read_as_the_value(#[case] source: &str, #[case] expect
         let label = Label::argument("count");
 
         assert_eq!(
-            read_unsigned::<u64>(&object, &label, Minimum::Positive).unwrap(),
+            read_unsigned::<u64>(&object, &label, Minimum::NonNegative).unwrap(),
             expected
         );
         assert_eq!(
@@ -83,14 +83,68 @@ fn a_negative_is_a_value_error_worded_by_the_minimum(
 }
 
 #[test]
-fn zero_is_accepted_under_either_minimum() {
+fn zero_is_accepted_under_the_non_negative_minimum() {
     with_stand_ins(|py| {
         let zero = evaluate(py, "0");
         let label = Label::argument("extent");
 
-        for minimum in [Minimum::Positive, Minimum::NonNegative] {
-            assert_eq!(read_unsigned::<u64>(&zero, &label, minimum).unwrap(), 0);
-        }
+        assert_eq!(
+            read_unsigned::<u64>(&zero, &label, Minimum::NonNegative).unwrap(),
+            0
+        );
+    });
+}
+
+#[test]
+fn zero_is_a_value_error_under_the_positive_minimum() {
+    with_stand_ins(|py| {
+        let zero = evaluate(py, "0");
+        let label = Label::argument("extent");
+
+        let error = read_unsigned::<u64>(&zero, &label, Minimum::Positive).unwrap_err();
+
+        assert!(error.is_instance_of::<PyValueError>(py));
+        assert_eq!(
+            message(py, &error),
+            "extent must be a positive integer, but got 0"
+        );
+    });
+}
+
+#[test]
+fn an_int_subclass_is_read_as_its_value_and_worded_by_its_repr() {
+    with_stand_ins(|py| {
+        let namespace = define(
+            py,
+            "import enum\n\
+             class Rank(enum.IntEnum):\n    ZERO = 0\n    THREE = 3\n\
+             class Offset(int):\n    pass\n\
+             negative = Offset(-4)\n",
+        );
+        let label = Label::argument("rank");
+        let three = entry(&namespace, "Rank").getattr("THREE").unwrap();
+        let zero = entry(&namespace, "Rank").getattr("ZERO").unwrap();
+        let negative = entry(&namespace, "negative");
+
+        assert_eq!(
+            read_unsigned::<u64>(&three, &label, Minimum::Positive).unwrap(),
+            3
+        );
+        assert_eq!(
+            read_unsigned::<u64>(&zero, &label, Minimum::NonNegative).unwrap(),
+            0
+        );
+        assert_eq!(
+            message(
+                py,
+                &read_unsigned::<u64>(&zero, &label, Minimum::Positive).unwrap_err()
+            ),
+            "rank must be a positive integer, but got <Rank.ZERO: 0>"
+        );
+        assert_eq!(
+            classify_unsigned::<u64>(&negative, &label).unwrap(),
+            Reading::Negative
+        );
     });
 }
 

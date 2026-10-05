@@ -107,21 +107,15 @@ pub struct NumpyValue<'py> {
 
 impl fmt::Debug for NumpyValue<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.held {
-            Held::Scalar(scalar, _) => f.debug_tuple("NumpyValue::Scalar").field(scalar).finish(),
-            Held::Bool(array) => f
-                .debug_tuple("NumpyValue::Bool")
-                .field(&array.shape())
-                .finish(),
-            Held::Int(array) => f
-                .debug_tuple("NumpyValue::Int")
-                .field(&array.shape())
-                .finish(),
-            Held::Real(array) => f
-                .debug_tuple("NumpyValue::Real")
-                .field(&array.shape())
-                .finish(),
-        }
+        let (name, shape) = match &self.held {
+            Held::Scalar(scalar, _) => {
+                return f.debug_tuple("NumpyValue::Scalar").field(scalar).finish();
+            }
+            Held::Bool(array) => ("NumpyValue::Bool", array.shape()),
+            Held::Int(array) => ("NumpyValue::Int", array.shape()),
+            Held::Real(array) => ("NumpyValue::Real", array.shape()),
+        };
+        f.debug_tuple(name).field(&shape).finish()
     }
 }
 
@@ -312,6 +306,8 @@ struct HeldInput {
     start: usize,
     /// The number of lanes.
     length: usize,
+    /// The array's shape.
+    shape: Vec<usize>,
     array: Py<PyAny>,
 }
 
@@ -357,6 +353,7 @@ impl NumpyKernels {
                 view.is_standard_layout().then(|| HeldInput {
                     start: view.as_ptr() as usize,
                     length: view.len(),
+                    shape: view.shape().to_vec(),
                     array: array.as_any().clone().unbind(),
                 })
             })
@@ -367,9 +364,13 @@ impl NumpyKernels {
         }
     }
 
-    /// Return a `NumPy` view of the lanes of `argument`, when they are a
-    /// contiguous run of a binding's: the whole binding, or the slice of it
-    /// a chunk of the evaluation reads.
+    /// Return a `NumPy` array of the lanes of `argument` in `argument`'s
+    /// shape, when they are a contiguous run of a binding's: the whole
+    /// binding, or the slice of it a chunk of the evaluation reads.
+    ///
+    /// The binding's own array is returned only when `argument` has its
+    /// shape; the same lanes in another shape (a reshaped view) are returned
+    /// as a view reshaped to `argument`'s.
     fn find_input<'py>(
         &self,
         py: Python<'py>,
@@ -389,7 +390,7 @@ impl NumpyKernels {
         };
         let offset = (start - input.start) / lane_size;
         let array = input.array.bind(py);
-        if offset == 0 && argument.len() == input.length {
+        if offset == 0 && argument.len() == input.length && argument.shape() == input.shape {
             return Ok(Some(array.clone()));
         }
         let flat = array.call_method1(intern!(py, "reshape"), (-1,))?;
@@ -408,10 +409,10 @@ impl NumpyKernels {
     /// Return the lanes of `NumPy`'s ufunc for `function` over `argument`,
     /// with `NumPy`'s floating-point warnings silenced.
     ///
-    /// A binding `NumPy` holds is passed as its own array. Any other lanes
-    /// are copied into a `NumPy` array, which the ufunc overwrites; an owned
-    /// temporary then receives the result back in place, so no buffer is
-    /// allocated on the Rust side.
+    /// # Errors
+    ///
+    /// Raises what the ufunc raises, unchanged, and what silencing the
+    /// warnings raises (see [`with_floating_point_warnings_silenced`]).
     fn compute(
         &self,
         py: Python<'_>,
@@ -420,18 +421,16 @@ impl NumpyKernels {
     ) -> PyResult<ArrayD<f64>> {
         let numpy = self.numpy.bind(py);
         let ufunc = numpy.getattr(function.name())?;
-        let settings = PyDict::new(py);
-        settings.set_item(intern!(py, "all"), intern!(py, "ignore"))?;
-        let silenced = numpy
-            .getattr(intern!(py, "errstate"))?
-            .call((), Some(&settings))?;
-        silenced.call_method0(intern!(py, "__enter__"))?;
-        let result = self.apply(py, &ufunc, argument);
-        silenced.call_method1(intern!(py, "__exit__"), (py.None(), py.None(), py.None()))?;
-        result
+        with_floating_point_warnings_silenced(numpy, || self.apply(py, &ufunc, argument))
     }
 
     /// Return the lanes of `ufunc` over `argument`.
+    ///
+    /// A binding `NumPy` holds is passed as its own array, and its result is
+    /// copied out. Any other lanes are copied into a `NumPy` array, which the
+    /// ufunc overwrites; an owned `argument` then receives the result back in
+    /// place, so no buffer is allocated on the Rust side, and a view's result
+    /// is copied into a new array.
     fn apply(
         &self,
         py: Python<'_>,
@@ -488,6 +487,40 @@ impl ArrayKernels for NumpyKernels {
     }
 }
 
+/// Run `body` with `NumPy`'s floating-point warnings silenced
+/// (`numpy.errstate(all="ignore")`), and return its result.
+///
+/// The `errstate` context is exited whether `body` succeeds or fails.
+///
+/// # Errors
+///
+/// Raises what entering the context raises, without running `body`. Otherwise
+/// raises what `body` raised, unchanged, unless exiting the context fails
+/// too: the exit's exception then wins, with the body's as its `__context__`,
+/// and it replaces the result of a `body` that succeeded.
+pub(crate) fn with_floating_point_warnings_silenced<R>(
+    numpy: &Bound<'_, PyModule>,
+    body: impl FnOnce() -> PyResult<R>,
+) -> PyResult<R> {
+    let py = numpy.py();
+    let settings = PyDict::new(py);
+    settings.set_item(intern!(py, "all"), intern!(py, "ignore"))?;
+    let silenced = numpy
+        .getattr(intern!(py, "errstate"))?
+        .call((), Some(&settings))?;
+    silenced.call_method0(intern!(py, "__enter__"))?;
+    let result = body();
+    let exited = silenced.call_method1(intern!(py, "__exit__"), (py.None(), py.None(), py.None()));
+    match (result, exited) {
+        (result, Ok(_exited)) => result,
+        (Ok(_value), Err(failure)) => Err(failure),
+        (Err(error), Err(failure)) => {
+            failure.set_context(py, Some(error));
+            Err(failure)
+        }
+    }
+}
+
 /// Return the `NumPy` scalar of `value`: a `numpy.bool_`, `numpy.int64` or
 /// `numpy.float64`, by its domain.
 ///
@@ -536,14 +569,15 @@ pub fn array_value_to_numpy<'py>(
 ///
 /// Errors of the expression map to the exception classes of
 /// `fhy_core.symbolic.expression.errors` (unbound variable, bound constant,
-/// inexact decimal, unsupported lowering, non-finite cast, and the inliner's
-/// and screen's errors); `IntegerOutOfRange` and a lane's overflow or
-/// out-of-range cast are `OverflowError`; a Boolean used as a number, or
-/// mixed branches, `TypeError`; a shape that does not broadcast, or a
-/// broadcast that is too large, `ValueError`; a lane's division by zero
-/// `ZeroDivisionError`; `OutOfMemory` `MemoryError`; and a kernel's failure
-/// is the Python exception the kernel raised, unchanged. Anything else is
-/// `RuntimeError`.
+/// inexact decimal, unsupported lowering, non-finite cast (a lane's too), and
+/// the inliner's and screen's errors); `IntegerOutOfRange` and a lane's
+/// overflow or out-of-range cast are `OverflowError`; a Boolean used as a
+/// number, or mixed branches, `TypeError`; a shape that does not broadcast,
+/// or a broadcast that is too large, `ValueError`; a lane's division by zero
+/// `ZeroDivisionError`, and any other lane failure `ValueError`; `OutOfMemory`
+/// `MemoryError`; and a kernel's failure is the Python exception the kernel
+/// raised, unchanged, or a `RuntimeError` with its text when it raised none.
+/// Anything else is `RuntimeError`.
 ///
 /// The `fhy_core` classes are imported on first use, so building one of
 /// them needs `fhy_core` importable; when it is not, the returned error is

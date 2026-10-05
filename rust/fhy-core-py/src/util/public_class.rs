@@ -50,8 +50,8 @@ impl PublicClass {
     }
 
     /// Create the slot of the `PyO3` class named `rust_class_name` of the
-    /// module `module` (`"moga._rs"`), which the error messages name, with
-    /// no public class registered.
+    /// module `module` (`"downstream._rs"`), which the error messages name,
+    /// with no public class registered.
     #[must_use]
     pub const fn in_module(module: &'static str, rust_class_name: &'static str) -> Self {
         Self {

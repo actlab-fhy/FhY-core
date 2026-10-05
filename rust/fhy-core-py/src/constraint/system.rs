@@ -47,7 +47,7 @@ use super::kinds::{
     with_renaming,
 };
 use super::observer::{DEBUG, LoggingObserver, WARNING, log, native_constant_refusal};
-use super::value::{constraint_error, repr_text, type_name};
+use super::value::{constraint_error, read_type_name, repr_text};
 use crate::util::pending::{record_pending_error, with_pending_errors};
 
 /// Return `fhy_core.symbolic.constraint.core.Constraint`.
@@ -88,7 +88,7 @@ pub(crate) fn read_member(member: &Bound<'_, PyAny>) -> PyResult<Constraint> {
                 "ConstraintSystem members must be Constraint instances, but got value {} of \
                  type {}.",
                 repr_text(member),
-                type_name(member)
+                read_type_name(member)
             ),
         ));
     }
@@ -458,7 +458,7 @@ impl PyConstraintSystem {
         let other = other.cast::<Self>().map_err(|_not_a_system| {
             PyTypeError::new_err(format!(
                 "check_implication other must be a ConstraintSystem, got {}.",
-                type_name(other)
+                read_type_name(other)
             ))
         })?;
         let consequent = other.get().core.clone();

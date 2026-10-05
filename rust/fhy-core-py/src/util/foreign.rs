@@ -1,7 +1,7 @@
 //! A Python-defined part as a core [`Foreign`].
 //!
 //! The core serializes a part it does not ship as the type id the part is
-//! registered under and its own payload as text. [`foreign_of`] asks the
+//! registered under and its own payload as text. [`read_foreign`] asks the
 //! framework, `fhy_core.serialization._foreign_payload`, for both, for a
 //! `to_foreign` of a core part trait that a Python object stands behind.
 //! A Python exception a hook raises while it does is kept as the pending
@@ -18,7 +18,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use super::pending::record_pending_error;
-use super::python::{ImportedAttr, type_name};
+use super::python::{ImportedAttr, read_type_name};
 
 /// The framework function that returns a part's type id and payload text.
 static FOREIGN_PAYLOAD: ImportedAttr =
@@ -48,12 +48,17 @@ impl fmt::Display for RaisedError {
 
 impl Error for RaisedError {}
 
-/// Keep `error` as the pending exception, and return the foreign error of
-/// the part named `type_id` it stands for.
+/// Record `error` as the pending exception ([`record_pending_error`]), and
+/// return the foreign error of the part named `type_id` it stands for.
 ///
 /// The returned [`ForeignError::Failed`] holds a [`RaisedError`] with the
 /// exception's message.
-pub fn foreign_failure(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignError {
+///
+/// # Panics
+///
+/// Panics if the Python interpreter is not initialized, as
+/// [`Python::attach`] does.
+pub fn record_foreign_failure(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignError {
     let message = error.value(py).to_string();
     record_pending_error(error);
     ForeignError::Failed {
@@ -78,20 +83,27 @@ pub fn foreign_failure(py: Python<'_>, type_id: &str, error: PyErr) -> ForeignEr
 ///
 /// Panics if the Python interpreter is not initialized, as
 /// [`Python::attach`] does.
-pub fn foreign_of(object: &Py<PyAny>, family: bool) -> Result<Foreign, ForeignError> {
+pub fn read_foreign(object: &Py<PyAny>, family: bool) -> Result<Foreign, ForeignError> {
+    read_foreign_through(&FOREIGN_PAYLOAD, object, family)
+}
+
+/// Return the foreign part of `object` as [`read_foreign`] does, asking the
+/// framework function `payload`.
+fn read_foreign_through(
+    payload: &'static ImportedAttr,
+    object: &Py<PyAny>,
+    family: bool,
+) -> Result<Foreign, ForeignError> {
     Python::attach(|py| {
         let object = object.bind(py);
         let result = (|| -> PyResult<(String, String)> {
             let keywords = PyDict::new(py);
             keywords.set_item(intern!(py, "family"), family)?;
-            FOREIGN_PAYLOAD
-                .get(py)?
-                .call((object,), Some(&keywords))?
-                .extract()
+            payload.get(py)?.call((object,), Some(&keywords))?.extract()
         })();
         match result {
             Ok((type_id, data)) => Ok(Foreign::new(type_id, data)),
-            Err(error) => Err(foreign_failure(py, &type_name(object), error)),
+            Err(error) => Err(record_foreign_failure(py, &read_type_name(object), error)),
         }
     })
 }

@@ -40,7 +40,7 @@ pub(super) fn constraint_class_name(py: Python<'_>, constraint: &Constraint) -> 
             .downcast_ref::<PyCustomConstraint>()
             .map_or_else(
                 || "Constraint".to_owned(),
-                |custom| crate::constraint::type_name(&custom.object(py)),
+                |custom| crate::constraint::read_type_name(&custom.object(py)),
             ),
         _ => "Constraint".to_owned(),
     }
@@ -194,7 +194,7 @@ pub(super) fn read_domain_object(object: &Bound<'_, PyAny>) -> PyResult<ParamDom
     {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "expected a ParamDomain, got {}",
-            crate::constraint::type_name(object)
+            crate::constraint::read_type_name(object)
         )));
     }
     Ok(read_domain(object))

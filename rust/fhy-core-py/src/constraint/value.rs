@@ -36,7 +36,7 @@ use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_dec
 use crate::util::gc::Slot;
 use crate::util::hook::ask;
 use crate::util::pending::has_pending_error;
-pub(crate) use crate::util::python::type_name;
+pub(crate) use crate::util::python::read_type_name;
 
 /// Return the `ConstraintError` with `message`.
 pub(crate) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
@@ -98,7 +98,7 @@ impl PyOpaqueValue {
         Self {
             object: Slot::new(object.clone().unbind()),
             class: Slot::new(object.get_type().into_any().unbind()),
-            type_name: type_name(object),
+            type_name: read_type_name(object),
             is_member_shaped,
             key: key.map_or_else(OnceLock::new, OnceLock::from),
         }
@@ -142,7 +142,7 @@ impl ForeignPart for PyOpaqueValue {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::util::foreign::foreign_of(&self.object.object(py), false))
+        Python::attach(|py| crate::util::foreign::read_foreign(&self.object.object(py), false))
     }
 }
 
@@ -388,7 +388,7 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
                             "Constraint member is unhashable after validation: value {} of \
                              type {}.",
                             repr_text(value),
-                            type_name(value)
+                            read_type_name(value)
                         ),
                     );
                     // The opaque value is a Python object, so the error is

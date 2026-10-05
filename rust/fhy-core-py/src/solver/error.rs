@@ -15,6 +15,7 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::PyDict;
 
 use fhy_core::expression::{Expression, SymbolType};
+use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{Hazard, LoweringError, SolveError};
 
@@ -76,6 +77,22 @@ pub(crate) fn solve_error_to_py(py: Python<'_>, error: SolveError) -> PyErr {
         }
         _ => PyRuntimeError::new_err(text),
     }
+}
+
+/// Return the Python exception of the failure `source` of the backend
+/// `backend`.
+pub(super) fn backend_error_to_py(
+    py: Python<'_>,
+    backend: impl Into<String>,
+    source: BoxError,
+) -> PyErr {
+    solve_error_to_py(
+        py,
+        SolveError::Backend {
+            backend: backend.into(),
+            source,
+        },
+    )
 }
 
 /// Return whether `error` is a backend failure [`solve_error_to_py`]

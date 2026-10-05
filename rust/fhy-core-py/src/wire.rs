@@ -7,9 +7,11 @@
 //! by parsing into the core's wire form and building the value with
 //! [`PyResolver`], which turns each foreign part back into the Python
 //! object its registered class decodes. The Python-defined parts of a
-//! value give their foreign parts through [`foreign_of`](crate::util::foreign::foreign_of). A Python exception
-//! raised inside either hook is kept in the constraint binding's
-//! pending-error slot and raised as itself when serde returns.
+//! value give their foreign parts through
+//! [`read_foreign`](crate::util::foreign::read_foreign). A Python exception
+//! raised inside either hook is kept as the pending exception
+//! ([`util::pending`](crate::util::pending)) and raised as itself when serde
+//! returns.
 //!
 //! V1, the deprecated envelope format, is read and written by the classes'
 //! own V1 code; [`is_writing_v1`] and [`is_v1_payload`] choose it.
@@ -31,7 +33,7 @@ use crate::constraint::{read_constraint, read_opaque_member};
 use crate::util::exceptions::{
     DESERIALIZATION_VALUE_ERROR, MALFORMED_PAYLOAD_ERROR, SERIALIZATION_ERROR,
 };
-use crate::util::foreign::foreign_failure;
+use crate::util::foreign::record_foreign_failure;
 use crate::util::pending::with_pending_errors;
 
 mod families;
@@ -339,12 +341,12 @@ fn resolve_object<'py>(
         crate::util::python::cached_attr!(py, MODULE, "_resolve_foreign" => PyAny)?
             .call((foreign.type_id(), foreign.data()), Some(&keywords))
     })();
-    result.map_err(|error| foreign_failure(py, foreign.type_id(), error))
+    result.map_err(|error| record_foreign_failure(py, foreign.type_id(), error))
 }
 
 /// Return the error of a resolved object of the wrong kind for its place.
 fn wrong_kind(py: Python<'_>, foreign: &Foreign, expected: &str) -> ForeignError {
-    foreign_failure(
+    record_foreign_failure(
         py,
         foreign.type_id(),
         PyTypeError::new_err(format!(
@@ -361,7 +363,7 @@ impl Resolve<Part<dyn OpaqueValue>> for PyResolver {
             match read_opaque_member(&object) {
                 Ok(Value::Opaque(opaque)) => Ok(opaque),
                 Ok(_) => Err(wrong_kind(py, foreign, "Serializable value")),
-                Err(error) => Err(foreign_failure(py, foreign.type_id(), error)),
+                Err(error) => Err(record_foreign_failure(py, foreign.type_id(), error)),
             }
         })
     }
@@ -374,7 +376,7 @@ impl Resolve<Part<dyn CustomConstraint>> for PyResolver {
             match read_constraint(&object) {
                 Ok(Constraint::Custom(custom)) => Ok(custom),
                 Ok(_) => Err(wrong_kind(py, foreign, "Python-defined Constraint")),
-                Err(error) => Err(foreign_failure(py, foreign.type_id(), error)),
+                Err(error) => Err(record_foreign_failure(py, foreign.type_id(), error)),
             }
         })
     }
@@ -387,7 +389,7 @@ impl Resolve<Part<dyn CustomDomain>> for PyResolver {
             match crate::param::read_domain_object(&object) {
                 Ok(ParamDomain::Custom(custom)) => Ok(custom),
                 Ok(_) => Err(wrong_kind(py, foreign, "Python-defined ParamDomain")),
-                Err(error) => Err(foreign_failure(py, foreign.type_id(), error)),
+                Err(error) => Err(record_foreign_failure(py, foreign.type_id(), error)),
             }
         })
     }

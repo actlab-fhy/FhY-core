@@ -187,9 +187,30 @@ logger.setLevel(logging.WARNING)
 logger.propagate = False
 ";
 
+/// Puts the logger `RECORDER` changed back to the way logging starts, when
+/// dropped, so a failing story leaves it as it found it.
+struct LoggerRestorer<'py>(Python<'py>);
+
+impl Drop for LoggerRestorer<'_> {
+    fn drop(&mut self) {
+        self.0
+            .run(
+                c"import logging
+logger = logging.getLogger('fhy_core.traits.interned')
+logger.handlers.clear()
+logger.propagate = True
+logger.setLevel(logging.NOTSET)",
+                None,
+                None,
+            )
+            .expect("restore the logger");
+    }
+}
+
 #[test]
 fn an_ignored_description_is_logged_only_when_it_differs() {
     with_stand_ins(|py| {
+        let _restorer = LoggerRestorer(py);
         let namespace = define(py, RECORDER);
         let class = class_named(py, "Tag");
         let key = PyString::new(py, "k").into_any();
@@ -208,11 +229,5 @@ fn an_ignored_description_is_logged_only_when_it_differs() {
             messages.get_item(0).unwrap().to_string(),
             "Tag 'k' already canonical; keeping description='kept' and ignoring payload 'other'."
         );
-        py.run(
-            c"import logging\nlogging.getLogger('fhy_core.traits.interned').handlers.clear()",
-            None,
-            None,
-        )
-        .expect("remove the handler");
     });
 }

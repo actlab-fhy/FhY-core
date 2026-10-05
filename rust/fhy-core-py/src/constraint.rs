@@ -24,6 +24,6 @@ pub(crate) use kinds::{ReadBindings, outcome_to_python, read_binding, read_scope
 pub(crate) use observer::{DEBUG, LoggingObserver, WARNING, core_logger, join_items, log};
 pub(crate) use system::{PyConstraintSystem, read_member as read_constraint, system_logger};
 pub(crate) use value::{
-    constraint_error, member_to_python, read_bound_value, read_opaque_member, repr_text, type_name,
-    value_to_python,
+    constraint_error, member_to_python, read_bound_value, read_opaque_member, read_type_name,
+    repr_text, value_to_python,
 };

@@ -29,11 +29,11 @@ use super::pending::{has_pending_error, record_pending_error};
 /// can use without surprise, such as `false` for an equality or an empty
 /// collection for a listing.
 ///
-/// # Errors
+/// # Pending exception
 ///
-/// Nothing is returned, since the hook cannot fail: an exception `call`
-/// returns is recorded as the pending exception, which the entry point
-/// raises, and the first one pending stays.
+/// Nothing is returned for a failure, since the hook cannot fail: an
+/// exception `call` returns is recorded as the pending exception, which the
+/// entry point raises, and the first one pending stays.
 ///
 /// # Panics
 ///

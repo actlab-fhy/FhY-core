@@ -13,7 +13,7 @@
 //!
 //! | Module | What it holds |
 //! | --- | --- |
-//! | [`python`] | [`Seed`](python::Seed), [`ImportedAttr`](python::ImportedAttr), [`cached_attr!`](crate::cached_attr), [`type_name`](python::type_name) |
+//! | [`python`] | [`Seed`](python::Seed), [`ImportedAttr`](python::ImportedAttr), [`cached_attr!`](crate::cached_attr), [`read_type_name`](python::read_type_name) |
 //! | [`exceptions`] | [`ExceptionClass`](exceptions::ExceptionClass) and the framework's exception classes |
 //! | [`interned`] | [`IdentityCache`](interned::IdentityCache) and the `InternedMixin` contract |
 //! | [`public_class`] | [`PublicClass`](public_class::PublicClass), the public class a binding class is registered under |
@@ -27,7 +27,7 @@
 //! | [`integers`] | [`read_unsigned`](integers::read_unsigned), a Python int as a Rust unsigned integer with exact errors, and [`build_too_large_error`](integers::build_too_large_error), the `OverflowError` for a number above the target's maximum |
 //! | `testing` | (behind the `testing` feature; test-only, not stable API) the embedded interpreter and `fhy_core` stand-ins for a downstream crate's tests |
 //! | [`gc`] | [`Slot`](gc::Slot), [`collect_slots`](gc::collect_slots) and the traverse helpers |
-//! | [`foreign`] | [`foreign_of`](foreign::foreign_of), a Python-defined part as a core `Foreign` |
+//! | [`foreign`] | [`read_foreign`](foreign::read_foreign), a Python-defined part as a core `Foreign` |
 //!
 //! Every function that takes a `Python` token or a Python object needs the
 //! GIL (or an attached thread), and none holds a lock of its own across a

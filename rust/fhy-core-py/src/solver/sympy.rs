@@ -60,12 +60,10 @@ use fhy_core::identifier::Identifier;
 use fhy_core::solver::SimplifyContext;
 
 use crate::error::IntoPyErr;
-use crate::expression::{
-    PyExpression, materialize_expression, materialize_substituted, registry_snapshot,
-};
+use crate::expression::{materialize_expression, materialize_substituted, registry_snapshot};
 use crate::identifier::{read_identifier_id, restore_identifier};
 
-use super::backends::{PySimplifierBase, type_name};
+use super::backends::{PySimplifierBase, read_expression};
 
 /// The registered name of the bridge's pass for each phase that runs as a
 /// pass.
@@ -211,22 +209,6 @@ impl PySympySimplifier {
     pub(super) fn backend(&self) -> Arc<SympySimplifier> {
         Arc::clone(&self.backend)
     }
-}
-
-/// Return the Rust expression of `value`, an `Expression`.
-fn read_expression<'py>(
-    value: &Bound<'py, PyAny>,
-    owner: &str,
-) -> PyResult<Bound<'py, PyExpression>> {
-    value
-        .cast::<PyExpression>()
-        .cloned()
-        .map_err(|_not_an_expression| {
-            PyTypeError::new_err(format!(
-                "{owner} expression must be an Expression, got {}.",
-                type_name(value)
-            ))
-        })
 }
 
 #[pymethods]

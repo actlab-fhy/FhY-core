@@ -154,11 +154,14 @@ impl<T: 'static> ScopedGuard<T> {
     /// # Panics
     ///
     /// Panics if the stack is borrowed, which only a closure of a reader of
-    /// this stack that pops from it can cause.
+    /// this stack that pops from it can cause, and if an outer guard dropped
+    /// first has already removed the frame.
     #[must_use]
     pub fn pop(mut self) -> T {
         self.popped = true;
-        let (frame, above) = self.take();
+        let Some((frame, above)) = self.take() else {
+            panic!("the frame was removed by a guard of an outer frame");
+        };
         drop(above);
         frame
     }
@@ -167,20 +170,19 @@ impl<T: 'static> ScopedGuard<T> {
     ///
     /// Guards are dropped in scope order, so the guard's frame is the
     /// innermost one; a frame above it can only be one whose guard was
-    /// leaked, which goes with it. What is removed is dropped by the caller,
-    /// outside the stack's borrow: a frame may hold Python objects, whose
-    /// finalizers may run Python.
-    fn take(&self) -> (T, Vec<T>) {
+    /// leaked, which goes with it. A guard dropped after the guard of a frame
+    /// below it finds its frame gone, which the removal of that frame took
+    /// along, and removes nothing: it answers `None`. What is removed is
+    /// dropped by the caller, outside the stack's borrow: a frame may hold
+    /// Python objects, whose finalizers may run Python.
+    fn take(&self) -> Option<(T, Vec<T>)> {
         let mut removed = self.key.with(|stack| {
             let mut frames = stack.0.borrow_mut();
             let start = self.depth.saturating_sub(1).min(frames.len());
             frames.split_off(start)
         });
         let above = removed.split_off(1.min(removed.len()));
-        let frame = removed
-            .pop()
-            .unwrap_or_else(|| unreachable!("the guard's frame is on the stack"));
-        (frame, above)
+        removed.pop().map(|frame| (frame, above))
     }
 }
 
@@ -300,6 +302,21 @@ mod tests {
         std::mem::forget(ScopedStack::push(&FRAMES, 2));
 
         assert_eq!(outer.pop(), 1);
+        assert_eq!(ScopedStack::depth(&FRAMES), 0);
+    }
+
+    #[test]
+    fn a_guard_dropped_after_the_guard_of_a_frame_below_it_removes_nothing() {
+        thread_local! {
+            static FRAMES: ScopedStack<u32> = const { ScopedStack::new() };
+        }
+        let outer = ScopedStack::push(&FRAMES, 1);
+        let inner = ScopedStack::push(&FRAMES, 2);
+
+        drop(outer);
+        assert_eq!(ScopedStack::depth(&FRAMES), 0);
+        drop(inner);
+
         assert_eq!(ScopedStack::depth(&FRAMES), 0);
     }
 

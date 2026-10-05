@@ -184,6 +184,27 @@ fn every_shape_accepts_what_it_describes_and_refuses_the_rest() {
 }
 
 #[test]
+fn a_custom_mapping_whose_values_raise_is_not_a_structure_error() {
+    with_stand_ins(|py| {
+        let namespace = define(
+            py,
+            "import collections.abc\nclass Broken(collections.abc.Mapping):\n    def __getitem__(self, key):\n        raise KeyError(key)\n    def __iter__(self):\n        return iter(())\n    def __len__(self):\n        return 0\n    def values(self):\n        raise RuntimeError('values failed')\ndata = {'field': Broken()}",
+        );
+        let cls = thing(py);
+
+        let error = read_payload_fields(
+            &cls,
+            &entry(&namespace, "data"),
+            [("field", FieldShape::ObjectMap)],
+        )
+        .expect_err("raises");
+
+        assert!(error.is_instance_of::<PyRuntimeError>(py));
+        assert_eq!(error.value(py).to_string(), "values failed");
+    });
+}
+
+#[test]
 fn a_refused_payload_names_the_expected_type_of_each_shape() {
     with_stand_ins(|py| {
         let cls = thing(py);
@@ -394,6 +415,22 @@ fn a_mapping_whose_lookup_fails_for_another_reason_raises_that() {
 }
 
 #[test]
+fn more_optional_constructor_fields_than_names_is_a_value_error() {
+    with_stand_ins(|py| {
+        let cls = thing(py);
+
+        let error = read_constructor_fields(&cls, &evaluate(py, "{'a': 1}"), ["a"], 2)
+            .expect_err("refused");
+
+        assert!(error.is_instance_of::<PyValueError>(py));
+        assert_eq!(
+            error.value(py).to_string(),
+            "Thing.construct_from_fields() cannot leave 2 of its 1 fields optional"
+        );
+    });
+}
+
+#[test]
 fn keeping_fields_returns_them_unchanged() {
     with_stand_ins(|py| {
         let values = [evaluate(py, "1"), evaluate(py, "[]")];
@@ -448,6 +485,10 @@ fn a_nested_value_is_read_by_its_class() {
 const CONSTRUCTOR: &str = "
 import fhy_core.serialization as framework
 
+class UnprintableError(ValueError):
+    def __str__(self):
+        raise RuntimeError('no text')
+
 class Built:
     def __init__(self, fields):
         self.fields = fields
@@ -463,6 +504,8 @@ class Built:
             raise OverflowError('too large')
         if kind == 'key':
             raise KeyError('missing')
+        if kind == 'unprintable':
+            raise UnprintableError('bad value')
         if kind == 'serialization':
             raise framework.DeserializationValueError('already framed')
         if kind == 'base':
@@ -536,6 +579,28 @@ fn an_overflow_is_a_value_error_only_when_asked() {
                 .cause(py)
                 .expect("cause")
                 .is_instance_of::<PyOverflowError>(py)
+        );
+    });
+}
+
+#[test]
+fn a_refusal_whose_message_cannot_be_read_is_chained_to_the_failure() {
+    with_stand_ins(|py| {
+        let namespace = define(py, CONSTRUCTOR);
+        let built = entry(&namespace, "Built").cast_into::<PyType>().unwrap();
+        let fields = PyDict::new(py);
+        fields.set_item("raise", "unprintable").unwrap();
+
+        let error = construct_from_decoded_fields(&built, &fields).expect_err("raises");
+
+        assert!(error.is_instance_of::<PyRuntimeError>(py));
+        assert_eq!(error.value(py).to_string(), "no text");
+        let original = error
+            .context(py)
+            .expect("the refusal is kept as the context");
+        assert_eq!(
+            original.get_type(py).name().unwrap().to_string(),
+            "UnprintableError"
         );
     });
 }

@@ -68,11 +68,20 @@ impl Holder {
     }
 }
 
-/// Run the interpreter's collector.
+/// Run the interpreter's collector until a pass finds nothing left to
+/// collect (at most a few passes): an object a first pass finalizes can
+/// release a second cycle.
 fn collect_garbage(py: Python<'_>) {
-    py.import("gc")
-        .and_then(|gc| gc.call_method0("collect"))
-        .expect("the collector runs");
+    let collector = py.import("gc").expect("the gc module");
+    for _pass in 0..4 {
+        let found: usize = collector
+            .call_method0("collect")
+            .and_then(|found| found.extract())
+            .expect("the collector runs");
+        if found == 0 {
+            break;
+        }
+    }
 }
 
 /// Return the flag that a holder sets when freed.

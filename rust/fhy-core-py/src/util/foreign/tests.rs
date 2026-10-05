@@ -1,4 +1,4 @@
-//! The stories of [`foreign_of`], run in an interpreter this test binary
+//! The stories of [`read_foreign`], run in an interpreter this test binary
 //! embeds, against the stand-in of `fhy_core.serialization._foreign_payload`.
 
 use std::error::Error;
@@ -37,8 +37,8 @@ fn a_part_gives_its_type_id_and_data_as_a_family_member_or_whole() {
         let namespace = define(py, PARTS);
         let part = entry(&namespace, "ok").unbind();
 
-        let family = foreign_of(&part, true).expect("a foreign part");
-        let whole = foreign_of(&part, false).expect("a foreign part");
+        let family = read_foreign(&part, true).expect("a foreign part");
+        let whole = read_foreign(&part, false).expect("a foreign part");
 
         assert_eq!(family.type_id(), "tests.Part:family");
         assert_eq!(whole.type_id(), "tests.Part:whole");
@@ -54,7 +54,7 @@ fn a_hook_that_raises_fails_the_part_and_keeps_the_exception_pending() {
         let namespace = define(py, PARTS);
         let part = entry(&namespace, "broken").unbind();
 
-        let (result, pending) = capture_pending_errors(|| foreign_of(&part, true));
+        let (result, pending) = capture_pending_errors(|| read_foreign(&part, true));
 
         let Err(ForeignError::Failed { type_id, source }) = result else {
             panic!("expected a failed foreign part");
@@ -76,7 +76,7 @@ fn an_answer_that_is_not_a_pair_of_strings_fails_the_part_with_a_type_error() {
             .expect("an instance")
             .unbind();
 
-        let (result, pending) = capture_pending_errors(|| foreign_of(&part, false));
+        let (result, pending) = capture_pending_errors(|| read_foreign(&part, false));
 
         let Err(ForeignError::Failed { type_id, .. }) = result else {
             panic!("expected a failed foreign part");
@@ -94,8 +94,8 @@ fn the_first_failure_stays_pending_unless_an_interrupt_follows() {
         let interrupted = entry(&namespace, "interrupted").unbind();
 
         let (_results, pending) = capture_pending_errors(|| {
-            let first = foreign_of(&broken, true);
-            let second = foreign_of(&interrupted, true);
+            let first = read_foreign(&broken, true);
+            let second = read_foreign(&interrupted, true);
             (first.is_err(), second.is_err())
         });
 
@@ -105,10 +105,36 @@ fn the_first_failure_stays_pending_unless_an_interrupt_follows() {
 }
 
 #[test]
+fn a_framework_that_cannot_be_imported_fails_the_part_with_the_import_error() {
+    static MISSING: ImportedAttr =
+        ImportedAttr::new("fhy_core_no_such_framework_module", "_foreign_payload");
+    with_stand_ins(|py| {
+        let namespace = define(py, PARTS);
+        let part = entry(&namespace, "ok").unbind();
+
+        let (result, pending) =
+            capture_pending_errors(|| read_foreign_through(&MISSING, &part, true));
+
+        let Err(ForeignError::Failed { type_id, source }) = result else {
+            panic!("expected a failed foreign part");
+        };
+        assert_eq!(type_id, "Part");
+        assert!(
+            source
+                .to_string()
+                .contains("fhy_core_no_such_framework_module")
+        );
+        let pending = pending.expect("the import error is kept");
+        assert!(pending.is_instance_of::<pyo3::exceptions::PyModuleNotFoundError>(py));
+    });
+}
+
+#[test]
 fn a_failure_keeps_the_given_exception_and_the_core_sees_its_message() {
     with_stand_ins(|py| {
-        let (error, pending) =
-            capture_pending_errors(|| foreign_failure(py, "tests.Id", PyKeyError::new_err("gone")));
+        let (error, pending) = capture_pending_errors(|| {
+            record_foreign_failure(py, "tests.Id", PyKeyError::new_err("gone"))
+        });
 
         let ForeignError::Failed { type_id, source } = error else {
             panic!("expected Failed");

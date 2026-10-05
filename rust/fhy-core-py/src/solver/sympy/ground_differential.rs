@@ -52,20 +52,25 @@ fn call(function: BuiltinFunction, arguments: impl IntoIterator<Item = Expressio
     Expression::call(function, arguments)
 }
 
+/// Return what `simplifier` folds `expression` to, or `None`.
+fn fold(simplifier: &GroundSimplifier, expression: &Expression) -> Option<Expression> {
+    let registry = FunctionRegistry::new();
+    simplifier.try_simplify(expression, &SimplifyContext::from_registry(&registry))
+}
+
 /// Return what the default ground simplifier folds `expression` to, or
 /// `None`.
 fn ground(expression: &Expression) -> Option<Expression> {
-    let registry = FunctionRegistry::new();
-    GroundSimplifier::new().try_simplify(expression, &SimplifyContext::from_registry(&registry))
+    fold(&GroundSimplifier::new(), expression)
 }
 
 /// Return what the ground simplifier extended with `ComposedBuiltins` folds
 /// `expression` to, or `None`.
 fn ground_extended(expression: &Expression) -> Option<Expression> {
-    let registry = FunctionRegistry::new();
-    GroundSimplifier::new()
-        .with_strategy(ComposedBuiltins::new())
-        .try_simplify(expression, &SimplifyContext::from_registry(&registry))
+    fold(
+        &GroundSimplifier::new().with_strategy(ComposedBuiltins::new()),
+        expression,
+    )
 }
 
 /// Return SymPy's simplification of `expression`, as it is.
@@ -88,33 +93,46 @@ fn sympy_inlined(expression: &Expression) -> Result<Expression, SolveError> {
     sympy(&registry.inline(expression).expect("inlined"))
 }
 
+/// Assert that `rewrite`, what `label` made of `node`, is `oracle`'s answer
+/// for `node`, and that the oracle does not fail on it.
+fn assert_same_as_oracle(
+    label: &str,
+    node: &Expression,
+    rewrite: &Expression,
+    oracle: fn(&Expression) -> Result<Expression, SolveError>,
+) {
+    match oracle(node) {
+        Ok(expected) => assert_eq!(
+            *rewrite, expected,
+            "{label}: {node} became {rewrite:?}, SymPy says {expected:?}"
+        ),
+        Err(error) => panic!("{label}: {node} became {rewrite:?}, but SymPy fails: {error}"),
+    }
+}
+
+/// Assert the contract on `expression`: if `folding` folds it, `oracle`
+/// answers the same expression.
+fn assert_agrees_with(
+    expression: &Expression,
+    folding: fn(&Expression) -> Option<Expression>,
+    oracle: fn(&Expression) -> Result<Expression, SolveError>,
+) -> Option<Expression> {
+    let folded = folding(expression)?;
+    assert_same_as_oracle("fold", expression, &folded, oracle);
+    Some(folded)
+}
+
 /// Assert the contract on `expression`: if the default ground simplifier
 /// folds it, SymPy answers the same expression, with no inlining.
 fn assert_agrees(expression: &Expression) -> Option<Expression> {
-    let folded = ground(expression)?;
-    match sympy(expression) {
-        Ok(expected) => assert_eq!(
-            folded, expected,
-            "{expression} folded to {folded:?}, SymPy says {expected:?}"
-        ),
-        Err(error) => panic!("{expression} folded to {folded:?}, but SymPy fails: {error}"),
-    }
-    Some(folded)
+    assert_agrees_with(expression, ground, sympy)
 }
 
 /// Assert the extension's contract on `expression`: if the extended ground
 /// simplifier folds it, SymPy answers the same expression for the inlined
 /// form.
 fn assert_extended_agrees(expression: &Expression) -> Option<Expression> {
-    let folded = ground_extended(expression)?;
-    match sympy_inlined(expression) {
-        Ok(expected) => assert_eq!(
-            folded, expected,
-            "{expression} folded to {folded:?}, SymPy says {expected:?} once inlined"
-        ),
-        Err(error) => panic!("{expression} folded to {folded:?}, but SymPy fails: {error}"),
-    }
-    Some(folded)
+    assert_agrees_with(expression, ground_extended, sympy_inlined)
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +363,47 @@ fn the_default_pipeline_declines_a_composed_built_in_sympy_refuses(#[case] expre
     assert_eq!(answer, expected);
 }
 
+/// Shapes proptest once found a disagreement on, each of which must agree
+/// with SymPy, as it is and as the extension folds it, whether or not it
+/// folds.
+#[rstest]
+#[case::piecewise_of_a_composed_call_of_an_imaginary_root(
+    Expression::piecewise(
+        [(n(0).less(n(1)), n(0))],
+        call(
+            BuiltinFunction::Max,
+            [call(BuiltinFunction::Sqrt, [n(-1)]) * n(1), n(0)],
+        ),
+    )
+    .expect("a piecewise")
+)]
+#[case::disjunction_over_a_piecewise_with_an_undefined_modulo(
+    Expression::new_logical(
+        LogicalOperation::Or,
+        [
+            Expression::new_logical(
+                LogicalOperation::Or,
+                [
+                    n(0).less(n(0)),
+                    n(0).less(
+                        Expression::piecewise(
+                            [(truth(true), n(0))],
+                            call(BuiltinFunction::Clamp, [n(0), n(0), n(0).floor_mod(n(0))]),
+                        )
+                        .expect("a piecewise")
+                        .floor_mod(n(-1)),
+                    ),
+                ],
+            ),
+            n(0).less(n(0)),
+        ],
+    )
+)]
+fn a_shape_proptest_once_failed_on_agrees_with_sympy(#[case] expression: Expression) {
+    assert_agrees(&expression);
+    assert_extended_agrees(&expression);
+}
+
 // ---------------------------------------------------------------------------
 // The table: every case it declines
 // ---------------------------------------------------------------------------
@@ -428,18 +487,7 @@ fn assert_strategy_agrees_with(
             continue;
         };
         rewritten += 1;
-        match oracle(node) {
-            Ok(expected) => assert_eq!(
-                rewrite,
-                expected,
-                "{}: {node} rewrote to {rewrite:?}, SymPy says {expected:?}",
-                strategy.name()
-            ),
-            Err(error) => panic!(
-                "{}: {node} rewrote to {rewrite:?}, but SymPy fails: {error}",
-                strategy.name()
-            ),
-        }
+        assert_same_as_oracle(&strategy.name(), node, &rewrite, oracle);
     }
     rewritten
 }
@@ -527,7 +575,10 @@ fn exact_arithmetic_rewrites_what_sympy_returns() {
 
     let rewritten = assert_strategy_agrees(&ExactArithmetic::new(), &nodes);
 
-    assert!(rewritten > 400, "only {rewritten} nodes were rewritten");
+    // The 93 nodes it leaves are the 36 divisions, floor divisions and
+    // modulos by zero, and 57 powers that have no exact rational value.
+    assert_eq!(nodes.len(), 1046);
+    assert_eq!(rewritten, 953);
 }
 
 #[test]
@@ -703,7 +754,7 @@ fn composed_builtins_rewrite_what_sympy_returns_for_the_inlined_form() {
 
     let rewritten = assert_strategy_agrees_with(&ComposedBuiltins::new(), &nodes, sympy_inlined);
 
-    assert!(rewritten > 150, "only {rewritten} nodes were rewritten");
+    assert_eq!(rewritten, nodes.len());
     // SymPy refuses every one of these calls as they are.
     assert!(nodes.iter().all(|node| sympy(node).is_err()));
 }
@@ -879,7 +930,6 @@ fn number_tree() -> BoxedStrategy<Expression> {
         1 => Just(decimal("0.5")),
         1 => Just(decimal("0.1")),
         1 => Just(decimal("2.25")),
-        1 => Just(build_literal(1.5)),
         1 => Just(n(1) / n(3)),
     ];
     leaves
@@ -1036,7 +1086,14 @@ fn the_random_trees_fold_often_enough_to_test_something() {
     use proptest::test_runner::TestRunner;
 
     let mut runner = TestRunner::deterministic();
-    for (name, strategy) in [("number", number_tree()), ("boolean", boolean_tree())] {
+    // The fewest of 400 trees that must fold, by default and with the
+    // extension. The deterministic runner gives 123 and 249 for numbers and
+    // 40 and 126 for Booleans. A Boolean tree folds by default only when
+    // every number it compares does, and it declines a composed built-in.
+    for (name, strategy, at_least_by_default, at_least_extended) in [
+        ("number", number_tree(), 90, 190),
+        ("boolean", boolean_tree(), 30, 95),
+    ] {
         let trees: Vec<Expression> = (0..400)
             .map(|_| strategy.new_tree(&mut runner).expect("a tree").current())
             .collect();
@@ -1046,9 +1103,12 @@ fn the_random_trees_fold_often_enough_to_test_something() {
             .filter(|tree| ground_extended(tree).is_some())
             .count();
 
-        assert!(folded >= 40, "only {folded} of 400 {name} trees fold");
         assert!(
-            extended >= 80,
+            folded >= at_least_by_default,
+            "only {folded} of 400 {name} trees fold"
+        );
+        assert!(
+            extended >= at_least_extended,
             "only {extended} of 400 {name} trees fold with the extension"
         );
     }

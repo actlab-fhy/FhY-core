@@ -941,7 +941,7 @@ pub(crate) fn frame_wire_data(
     with_pending_errors(|| {
         match read_frame_value(object) {
             Some(frame) => SymbolFrameData::of(&frame),
-            None => crate::util::foreign::foreign_of(&object.clone().unbind(), true)
+            None => crate::util::foreign::read_foreign(&object.clone().unbind(), true)
                 .map(SymbolFrameData::custom),
         }
         .map_err(|error| crate::wire::foreign_error(object.py(), &error))

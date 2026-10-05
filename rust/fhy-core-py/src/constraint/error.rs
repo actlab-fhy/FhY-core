@@ -19,7 +19,7 @@ use crate::error::IntoPyErr;
 use crate::expression::{decimal_class, non_boolean_operand_error};
 use crate::solver::solve_error_to_py;
 
-use super::value::{constraint_error, read_member_value, repr_text, type_name};
+use super::value::{constraint_error, read_member_value, read_type_name, repr_text};
 
 /// Return `fhy_core.symbolic.expression.LiteralExpression`.
 fn literal_expression_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
@@ -75,7 +75,7 @@ fn unusable_binding_error(
     let py = identifier.py();
     let identifier_repr = repr_text(identifier);
     let value_repr = repr_text(value);
-    let value_type = type_name(value);
+    let value_type = read_type_name(value);
     match reason {
         UnusableBindingReason::NotMemberShaped => {
             let cause = read_member_value(value).err();

@@ -17,6 +17,7 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     LogicalExpression,
@@ -25,6 +26,7 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     get_native_constant_identifier,
     piecewise,
+    register_native_constant,
 )
 from fhy_core.symbolic.solver import (
     GroundSimplifier,
@@ -83,6 +85,12 @@ class _RecordingSimplifier(Simplifier):
         return expression if self.result is None else self.result
 
 
+class _PicklableSimplifier(Simplifier):
+    @override
+    def simplify(self, expression: Expression) -> Expression:
+        return expression
+
+
 class _FailingSimplifier(Simplifier):
     @override
     def simplify(self, expression: Expression) -> Expression:
@@ -99,6 +107,36 @@ class _TimeoutRecordingSimplifier(Simplifier):
     @override
     def simplify(self, expression: Expression) -> Expression:
         self.timeouts.append(self.context.timeout)
+        return expression
+
+
+class _MillisecondRecordingSimplifier(Simplifier):
+    """A Python simplifier recording the whole milliseconds it is asked under."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.milliseconds: list[int | None] = []
+
+    @override
+    def simplify(self, expression: Expression) -> Expression:
+        self.milliseconds.append(self.context.timeout_milliseconds)
+        return expression
+
+
+class _NestedDirectCallSimplifier(Simplifier):
+    """A Python simplifier that calls a ground simplifier's `simplify` itself."""
+
+    def __init__(self, inner: GroundSimplifier) -> None:
+        super().__init__()
+        self.inner = inner
+        self.before: int | None = None
+        self.after: int | None = None
+
+    @override
+    def simplify(self, expression: Expression) -> Expression:
+        self.before = self.context.timeout_milliseconds
+        self.inner.simplify(expression)
+        self.after = self.context.timeout_milliseconds
         return expression
 
 
@@ -250,13 +288,12 @@ def test_simplify_refuses_what_is_not_an_expression() -> None:
 
 def test_pickling_round_trips_the_class_and_its_fallback() -> None:
     """Test a ground simplifier pickles as a call of the class."""
-    fallback = GroundSimplifier()
-
     plain = pickle.loads(pickle.dumps(GroundSimplifier()))
-    chain = pickle.loads(pickle.dumps(GroundSimplifier(fallback)))
+    chain = pickle.loads(pickle.dumps(GroundSimplifier(_PicklableSimplifier())))
 
-    assert (plain.fallback, chain.fallback.name) == (None, "ground")
-    assert chain.name == "ground+ground"
+    assert plain.fallback is None
+    assert isinstance(chain.fallback, _PicklableSimplifier)
+    assert chain.name == "ground+_PicklableSimplifier"
 
 
 @pytest.mark.parametrize(("label", "expression", "expected"), _FOLDS)
@@ -465,14 +502,23 @@ def test_the_fallback_s_exception_propagates(x: Identifier) -> None:
         Solver(simplifier=chain).simplify_expression(IdentifierExpression(x))
 
 
-def test_chains_nest(x: Identifier) -> None:
-    """Test a chain is itself a valid fallback."""
+def test_a_ground_simplifier_given_as_a_fallback_is_unwrapped(x: Identifier) -> None:
+    """Test the ground pass runs once: the inner fallback is the fallback."""
     fallback = _RecordingSimplifier(_int(7))
     chain = GroundSimplifier(GroundSimplifier(fallback))
 
     assert chain.simplify(_binary(_ADD, _int(1), _int(1))) == _int(2)
     assert chain.simplify(IdentifierExpression(x)) == _int(7)
-    assert chain.name == "ground+ground+_RecordingSimplifier"
+    assert chain.name == "ground+_RecordingSimplifier"
+    assert chain.fallback is fallback
+
+
+def test_a_ground_simplifier_without_a_fallback_given_as_a_fallback_is_plain() -> None:
+    """Test wrapping a plain ground simplifier gives a plain one."""
+    chain = GroundSimplifier(GroundSimplifier())
+
+    assert chain.name == "ground"
+    assert chain.fallback is None
 
 
 # =============================================================================
@@ -520,16 +566,77 @@ def test_the_chain_asks_its_fallback_under_the_remaining_timeout(
     """Test the fallback gets what the ground part left, not a fresh timeout."""
     fallback = _TimeoutRecordingSimplifier()
     solver = Solver(simplifier=GroundSimplifier(fallback))
+    hour_milliseconds = 3_600_000
 
-    solver.simplify_expression(IdentifierExpression(x), timeout_milliseconds=60_000)
-    solver.simplify_expression(_heavy_sum(), timeout_milliseconds=1)
+    solver.simplify_expression(
+        IdentifierExpression(x), timeout_milliseconds=hour_milliseconds
+    )
     solver.simplify_expression(IdentifierExpression(x))
 
-    first, second, third = fallback.timeouts
+    first, second = fallback.timeouts
     assert first is not None
-    assert 59.0 < first <= 60.0
-    assert second == 0.0
-    assert third is None
+    assert 3_540.0 < first <= 3_600.0
+    assert second is None
+
+
+def test_the_chain_skips_its_fallback_once_the_ground_part_used_the_timeout() -> None:
+    """Test a fallback is never asked under a timeout of zero."""
+    fallback = _TimeoutRecordingSimplifier()
+    solver = Solver(simplifier=GroundSimplifier(fallback))
+    expression = _heavy_sum()
+
+    result = solver.simplify_expression(expression, timeout_milliseconds=1)
+
+    assert result == expression
+    assert fallback.timeouts == []
+
+
+def test_a_fallback_never_observes_a_zero_timeout_in_milliseconds(
+    x: Identifier,
+) -> None:
+    """Test a remainder below a millisecond reads as 1, not as 0."""
+    fallback = _MillisecondRecordingSimplifier()
+    solver = Solver(simplifier=GroundSimplifier(fallback))
+
+    for _ in range(20):
+        solver.simplify_expression(IdentifierExpression(x), timeout_milliseconds=1)
+
+    assert 0 not in fallback.milliseconds
+    assert all(milliseconds == 1 for milliseconds in fallback.milliseconds)
+
+
+# =============================================================================
+# Direct calls
+# =============================================================================
+
+
+def test_a_direct_call_hands_the_fallback_the_object_it_was_given(
+    x: Identifier,
+) -> None:
+    """Test the fallback gets the caller's object and the caller gets its return."""
+    returned = _int(99)
+    fallback = _RecordingSimplifier(returned)
+    expression = IdentifierExpression(x)
+
+    result = GroundSimplifier(fallback).simplify(expression)
+
+    assert fallback.inputs[0] is expression
+    assert result is returned
+
+
+def test_a_direct_call_inside_another_simplifier_leaves_its_context_alone(
+    x: Identifier,
+) -> None:
+    """Test a nested direct call does not overwrite the outer limits."""
+    inner = GroundSimplifier(_MillisecondRecordingSimplifier())
+    outer = _NestedDirectCallSimplifier(inner)
+
+    Solver(simplifier=outer).simplify_expression(
+        IdentifierExpression(x), timeout_milliseconds=60_000
+    )
+
+    assert outer.before == 60_000
+    assert outer.after == 60_000
 
 
 # =============================================================================
@@ -550,9 +657,44 @@ def test_the_default_solver_can_be_the_ground_simplifier(x: Identifier) -> None:
     assert kept == expression
 
 
-def test_the_default_solver_is_still_sympy() -> None:
-    """Test the ground backends are opt-in: the default solver is unchanged."""
+def test_the_default_solver_simplifies_with_sympy() -> None:
+    """Test the ground backends are opt-in: the default solver's simplifier is SymPy."""
     simplifier = get_default_solver().simplifier
 
     assert simplifier is not None
     assert simplifier.name == "sympy"
+
+
+# =============================================================================
+# Registered constants and the depth limit
+# =============================================================================
+
+
+@pytest.mark.usefixtures("function_registry_snapshot")
+def test_a_registered_native_constant_folds() -> None:
+    """Test a native constant folds to its value, directly and through a solver."""
+    register_native_constant("test_ground_answer", FunctionSort.INT, 42)
+    expression = _binary(
+        _ADD,
+        IdentifierExpression(get_native_constant_identifier("test_ground_answer")),
+        _int(1),
+    )
+
+    assert GroundSimplifier().simplify(expression) == _int(43)
+    assert simplify_expression(expression, backend=SolverBackend.GROUND) == _int(43)
+
+
+def _repeated_sum(terms: int) -> Expression:
+    total: Expression = _int(1)
+    for _ in range(terms):
+        total = _binary(_ADD, total, _int(1))
+    return total
+
+
+def test_a_sum_nested_beyond_the_depth_limit_is_returned_unchanged() -> None:
+    """Test 200 additions fold, and 300, nested beyond 256 deep, are declined."""
+    shallow = _repeated_sum(200)
+    deep = _repeated_sum(300)
+
+    assert GroundSimplifier().simplify(shallow) == _int(201)
+    assert GroundSimplifier().simplify(deep) == deep

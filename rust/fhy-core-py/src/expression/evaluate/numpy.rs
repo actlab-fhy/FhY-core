@@ -15,9 +15,8 @@
 use std::collections::{HashMap, HashSet};
 
 use numpy::PyUntypedArrayMethods;
-use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyMapping, PyModule};
+use pyo3::types::{PyMapping, PyModule};
 
 use fhy_core::expression::builtins::BuiltinConstant;
 use fhy_core::expression::evaluate::{ArrayBinding, ArrayKernels, Evaluator, Prepared, Scalar};
@@ -27,7 +26,7 @@ use fhy_core::identifier::Identifier;
 
 use crate::convert::numpy::{
     NumpyKernels, NumpyValue, array_value_to_numpy, evaluation_error_to_python, require_numpy,
-    scalar_to_numpy,
+    scalar_to_numpy, with_floating_point_warnings_silenced,
 };
 use crate::identifier::read_identifier_id;
 
@@ -72,7 +71,6 @@ fn evaluate_lone_kernel_call<'py>(
     registry: &FunctionRegistry,
     bindings: &[(Identifier, NumpyValue<'py>)],
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
-    let py = numpy.py();
     let ExpressionKind::Call(call) = prepared.expression().kind() else {
         return Ok(None);
     };
@@ -99,15 +97,7 @@ fn evaluate_lone_kernel_call<'py>(
         return Ok(None);
     }
     let ufunc = numpy.getattr(function.name())?;
-    let settings = PyDict::new(py);
-    settings.set_item(intern!(py, "all"), intern!(py, "ignore"))?;
-    let silenced = numpy
-        .getattr(intern!(py, "errstate"))?
-        .call((), Some(&settings))?;
-    silenced.call_method0(intern!(py, "__enter__"))?;
-    let result = ufunc.call1((array.as_any(),));
-    silenced.call_method1(intern!(py, "__exit__"), (py.None(), py.None(), py.None()))?;
-    Ok(Some(result?))
+    with_floating_point_warnings_silenced(numpy, || ufunc.call1((array.as_any(),))).map(Some)
 }
 
 /// Evaluate the prepared expression over `bindings`, converted.

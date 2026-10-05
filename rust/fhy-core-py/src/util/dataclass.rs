@@ -58,8 +58,10 @@ pub fn hash_value(value: &impl Hash) -> u64 {
 /// whose equality or hash asks Python, and can raise, shares the members of
 /// a class whose equality and hash cannot fail.
 ///
-/// It is implemented for `bool`, `u64` and `PyResult<T>`.
-pub trait Outcome<T> {
+/// It is implemented for `bool`, `u64` and `PyResult<T>`, and sealed: no
+/// other type implements it, so the set of answers can grow without a
+/// breaking change.
+pub trait Outcome<T>: sealed::Sealed {
     /// Return the value, or the exception.
     ///
     /// # Errors
@@ -67,6 +69,22 @@ pub trait Outcome<T> {
     /// Returns the exception a `PyResult` holds.
     fn into_result(self) -> PyResult<T>;
 }
+
+/// The supertrait that seals [`Outcome`]: it is not nameable outside this
+/// module.
+mod sealed {
+    #[expect(
+        unnameable_types,
+        reason = "the sealed-trait pattern: nothing outside names it"
+    )]
+    pub trait Sealed {}
+}
+
+impl sealed::Sealed for bool {}
+
+impl sealed::Sealed for u64 {}
+
+impl<T> sealed::Sealed for PyResult<T> {}
 
 impl Outcome<bool> for bool {
     fn into_result(self) -> PyResult<bool> {
@@ -133,7 +151,7 @@ pub fn is_same_or_equal(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> Py
 }
 
 /// Return the items of the iterable `values` as a tuple, `values` itself if
-/// it is a tuple.
+/// it is exactly a `tuple`; an instance of a subclass is copied.
 ///
 /// # Errors
 ///

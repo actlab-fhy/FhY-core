@@ -27,7 +27,7 @@ use fhy_core::term::AlphaEquivalence;
 
 use crate::constraint::{
     PythonBindings, ReadBindings, constraint_error_to_py, outcome_to_python, read_binding,
-    read_constraint, read_scoped_bindings, repr_text, type_name,
+    read_constraint, read_scoped_bindings, read_type_name, repr_text,
 };
 use crate::expression::{
     PyExpression, coerce_to_expression, read_big_int, try_get_native_constant_for_identifier,
@@ -191,7 +191,7 @@ fn read_bound_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> {
         ExpressionKind::Literal(literal) => Ok(literal.clone()),
         _ => Err(PyTypeError::new_err(format!(
             "a bound must be a number, got {}.",
-            type_name(value)
+            read_type_name(value)
         ))),
     }
 }
@@ -264,7 +264,7 @@ impl PyParam {
             ParamFailure::Question(ParamError::UnsupportedUnion(_)) => {
                 PyTypeError::new_err(format!(
                     "Union is not supported for domain kind {}.",
-                    type_name(objects.domain.bind(py))
+                    read_type_name(objects.domain.bind(py))
                 ))
             }
             ParamFailure::Interval(IntervalError::UnsupportedOperand) => {
@@ -1538,7 +1538,7 @@ fn read_param(other: &Bound<'_, PyAny>) -> PyResult<Param> {
         .cast::<PyParam>()
         .map(|param| param.get().core.clone())
         .map_err(|_not_a_param| {
-            PyTypeError::new_err(format!("expected a Param, got {}.", type_name(other)))
+            PyTypeError::new_err(format!("expected a Param, got {}.", read_type_name(other)))
         })
 }
 
@@ -1575,7 +1575,7 @@ pub(crate) fn assignment_from_python(object: &Bound<'_, PyAny>) -> PyResult<Para
         .map_err(|_not_an_assignment| {
             PyTypeError::new_err(format!(
                 "expected a ParamAssignment, got {}.",
-                type_name(object)
+                read_type_name(object)
             ))
         })
 }
@@ -1819,7 +1819,7 @@ impl PyParamAssignment {
         let param_object = param.cast::<PyParam>().map_err(|_not_a_param| {
             PyTypeError::new_err(format!(
                 "ParamAssignment param must be a Param, got {}.",
-                type_name(param)
+                read_type_name(param)
             ))
         })?;
         let (normalized, core) = PyParam::assign_checked(param_object, value, None, true)?;

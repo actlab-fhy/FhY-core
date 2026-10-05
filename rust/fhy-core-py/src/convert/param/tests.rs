@@ -140,3 +140,88 @@ fn test_detached_question_releases_the_interpreter() {
         assert!(attached);
     });
 }
+
+/// The environment variable that tells a re-run of the test binary it is the
+/// child of the story that needs a process in which no default solver was
+/// ever set.
+const CHILD_VARIABLE: &str = "FHY_CONVERT_PARAM_NO_DEFAULT_SOLVER";
+
+#[test]
+fn test_question_raises_a_runtime_error_when_no_default_solver_is_set() {
+    // The default solver is process-wide state with no way to clear it, and
+    // the other stories set it, so this one runs alone in a child process.
+    if std::env::var_os(CHILD_VARIABLE).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "convert::param::tests::test_question_raises_a_runtime_error_when_no_default_solver_is_set",
+                "--test-threads=1",
+            ])
+            .env(CHILD_VARIABLE, "1")
+            .status()
+            .expect("the child process runs");
+        assert!(status.success(), "the child story failed");
+        return;
+    }
+    with_interpreter(|py| {
+        for detach in [false, true] {
+            let mut ran = false;
+            let error = with_param_context(py, detach, |_context| ran = true)
+                .expect_err("no default solver is set");
+
+            assert!(!ran, "the question never ran");
+            assert!(error.is_instance_of::<PyRuntimeError>(py));
+            assert_eq!(
+                error.value(py).to_string(),
+                "no default solver is set: import fhy_core.symbolic.solver first"
+            );
+        }
+    });
+}
+
+#[test]
+fn test_run_with_context_maps_the_error_of_the_question() {
+    with_interpreter(|py| {
+        set_default_solver(&new_solver(py)).expect("set");
+
+        let mapped: PyResult<()> = run_with_context(
+            py,
+            false,
+            |_context| Err("refused".to_owned()),
+            PyValueError::new_err,
+        );
+        let error = mapped.expect_err("the question's error is mapped");
+        assert!(error.is_instance_of::<PyValueError>(py));
+        assert_eq!(error.value(py).to_string(), "refused");
+
+        let kept = run_with_context(
+            py,
+            true,
+            |_context| Ok::<_, String>(4),
+            PyValueError::new_err,
+        );
+        assert_eq!(kept.expect("an answer is not mapped"), 4);
+    });
+}
+
+#[test]
+fn test_run_with_context_raises_the_exception_of_a_hook_in_place_of_the_mapped_error() {
+    with_interpreter(|py| {
+        set_default_solver(&new_solver(py)).expect("set");
+
+        let result: PyResult<()> = run_with_context(
+            py,
+            false,
+            |_context| {
+                record_pending_error(PyRuntimeError::new_err("the hook failed"));
+                Err("refused".to_owned())
+            },
+            PyValueError::new_err,
+        );
+
+        let error = result.expect_err("the hook's exception wins");
+        assert!(error.is_instance_of::<PyRuntimeError>(py));
+        let context = error.context(py).expect("the mapped error is chained");
+        assert_eq!(context.value(py).to_string(), "refused");
+    });
+}

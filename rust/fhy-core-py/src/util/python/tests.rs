@@ -127,12 +127,12 @@ fn cached_attr_imports_for_its_call_site_with_or_without_a_type() {
 #[test]
 fn type_name_is_the_name_of_the_type() {
     with_stand_ins(|py| {
-        assert_eq!(type_name(&evaluate(py, "3")), "int");
-        assert_eq!(type_name(&evaluate(py, "[]")), "list");
+        assert_eq!(read_type_name(&evaluate(py, "3")), "int");
+        assert_eq!(read_type_name(&evaluate(py, "[]")), "list");
         assert_eq!(
-            type_name(&evaluate(py, "type('Custom', (), {})()")),
+            read_type_name(&evaluate(py, "type('Custom', (), {})()")),
             "Custom"
         );
-        assert_eq!(type_name(&evaluate(py, "int")), "type");
+        assert_eq!(read_type_name(&evaluate(py, "int")), "type");
     });
 }

@@ -2,10 +2,11 @@
 //! stand-ins for the few modules of `fhy_core` the util module imports.
 //!
 //! **Test-only, not stable API:** it is hidden from the documentation, and
-//! it may change in any release. This module is public behind the `testing` cargo feature,
-//! so a downstream `-py` crate's own tests can use the same stand-ins
-//! instead of rewriting them; enable the feature in `[dev-dependencies]`
-//! only, never in `[dependencies]`, so that no release build carries it.
+//! it may change in any release. This module is public behind the `testing`
+//! cargo feature, so a downstream `-py` crate's own tests can use the same
+//! stand-ins instead of rewriting them; enable the feature in
+//! `[dev-dependencies]` only, never in `[dependencies]`, so that no release
+//! build carries it.
 //!
 //! `fhy_core` itself is not importable in the embedded interpreter, so the
 //! stories that raise or read one of its classes install small stand-ins in

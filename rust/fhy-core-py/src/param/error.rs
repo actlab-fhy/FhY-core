@@ -14,7 +14,7 @@ use fhy_core::param::{
     SetOperation,
 };
 
-use crate::constraint::{constraint_error, constraint_error_to_py, type_name};
+use crate::constraint::{constraint_error, constraint_error_to_py, read_type_name};
 use crate::error::IntoPyErr;
 
 use super::value::value_kind_message;
@@ -159,7 +159,7 @@ pub(crate) fn param_error_to_py(
                     SetOperation::Union => "union",
                     _ => "intersect",
                 };
-                let other = other.map_or_else(|| "?".to_owned(), type_name);
+                let other = other.map_or_else(|| "?".to_owned(), read_type_name);
                 PyTypeError::new_err(format!(
                     "Cannot {verb} {} with a domain of type {other}.",
                     class_with_article(own)

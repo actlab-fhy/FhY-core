@@ -46,7 +46,7 @@ use super::error::constraint_error_to_py;
 use super::observer::LoggingObserver;
 use super::value::{
     constraint_error, member_to_python, read_bound_value, read_member, read_member_value,
-    repr_text, type_name,
+    read_type_name, repr_text,
 };
 use crate::util::pending::with_pending_errors;
 
@@ -120,7 +120,7 @@ pub(crate) fn read_scoped_bindings<'py>(
             let mapping = mapping.cast::<PyMapping>().map_err(|_not_a_mapping| {
                 PyTypeError::new_err(format!(
                     "bindings must be a mapping, got {}.",
-                    type_name(mapping)
+                    read_type_name(mapping)
                 ))
             })?;
             mapping
@@ -228,7 +228,7 @@ impl PyEquationConstraint {
                     "EquationConstraint requires an `Expression` instance, but got value {} of \
                      type {}.",
                     repr_text(expression),
-                    type_name(expression)
+                    read_type_name(expression)
                 ),
             ));
         };
@@ -456,7 +456,7 @@ impl SetState {
                      canonical ordering, and evaluation all key on the identifier, so a \
                      non-identifier fails far from here.",
                     repr_text(variable),
-                    type_name(variable)
+                    read_type_name(variable)
                 ),
             ));
         }
@@ -610,7 +610,7 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
         || values.is_instance_of::<PyBytes>()
         || values.is_instance_of::<PyByteArray>()
     {
-        let class = type_name(values);
+        let class = read_type_name(values);
         return Err(constraint_error(
             py,
             format!(
@@ -628,7 +628,7 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
                 "Constraint members must be given as a collection of members, not a {}, whose \
                  values would be silently discarded and only its keys kept as members. Pass \
                  the intended members directly, e.g. as a set or tuple.",
-                type_name(values)
+                read_type_name(values)
             ),
         ));
     }

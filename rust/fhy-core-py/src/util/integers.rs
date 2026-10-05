@@ -125,17 +125,16 @@ impl fmt::Display for Label<'_> {
     }
 }
 
-/// How an argument's `ValueError` for a negative number is worded.
-///
-/// The minimum words the message only: reading accepts zero under either,
-/// and a caller that refuses zero judges it itself, as the value's own
-/// constructor does.
+/// The smallest number [`read_unsigned`] accepts, which also words the
+/// `ValueError` for a number below it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Minimum {
-    /// "must be a positive integer".
+    /// One or more: zero and a negative number are refused, "must be a
+    /// positive integer".
     Positive,
-    /// "must be a non-negative integer".
+    /// Zero or more: a negative number is refused, "must be a non-negative
+    /// integer".
     NonNegative,
 }
 
@@ -195,32 +194,41 @@ pub fn build_too_large_error<T: UnsignedInteger>(label: &Label<'_>) -> PyErr {
     ))
 }
 
-/// Read `object` as an unsigned integer `T`; `minimum` words the error of a
-/// negative number.
+/// Read `object` as an unsigned integer `T` of at least `minimum`.
 ///
 /// # Errors
 ///
 /// Raises `TypeError` for a `bool` or a non-integer, `ValueError` for a
-/// negative number, and `OverflowError` for a number above the maximum of
-/// `T`, each naming `label`.
+/// negative number, or for zero under [`Minimum::Positive`], and
+/// `OverflowError` for a number above the maximum of `T`, each naming
+/// `label`.
 pub fn read_unsigned<T: UnsignedInteger>(
     object: &Bound<'_, PyAny>,
     label: &Label<'_>,
     minimum: Minimum,
 ) -> PyResult<T> {
-    match classify_unsigned(object, label)? {
-        Reading::Value(value) => Ok(value),
-        Reading::Negative => {
-            let kind = match minimum {
-                Minimum::Positive => "a positive",
-                Minimum::NonNegative => "a non-negative",
-            };
-            Err(PyValueError::new_err(format!(
-                "{label} must be {kind} integer, but got {}",
-                object.repr()?
-            )))
+    let value = match classify_unsigned::<T>(object, label)? {
+        Reading::Value(value) => value,
+        Reading::Negative => return Err(build_minimum_error(object, label, minimum)),
+        Reading::TooLarge => return Err(build_too_large_error::<T>(label)),
+    };
+    if minimum == Minimum::Positive && object.eq(0)? {
+        return Err(build_minimum_error(object, label, minimum));
+    }
+    Ok(value)
+}
+
+/// Return the `ValueError` for the argument `label` below `minimum`.
+fn build_minimum_error(object: &Bound<'_, PyAny>, label: &Label<'_>, minimum: Minimum) -> PyErr {
+    let kind = match minimum {
+        Minimum::Positive => "a positive",
+        Minimum::NonNegative => "a non-negative",
+    };
+    match object.repr() {
+        Ok(repr) => {
+            PyValueError::new_err(format!("{label} must be {kind} integer, but got {repr}"))
         }
-        Reading::TooLarge => Err(build_too_large_error::<T>(label)),
+        Err(error) => error,
     }
 }
 

@@ -4,7 +4,8 @@
 //!
 //! An exception a hook raises propagates as the same object; the
 //! equivalence hook, which the core cannot fail, answers `false` and keeps
-//! its exception in the constraint module's pending-error slot.
+//! its exception as the pending exception
+//! ([`util::pending`](crate::util::pending)).
 
 use std::borrow::Cow;
 use std::fmt;
@@ -20,7 +21,7 @@ use fhy_core::foreign::{BoxError, ForeignPart};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{CustomDomain, IntervalProfile, ParamContext, ParamDomain, Side};
 
-use crate::constraint::{read_constraint, read_outcome, type_name, value_to_python};
+use crate::constraint::{read_constraint, read_outcome, read_type_name, value_to_python};
 
 use crate::util::gc::Slot;
 
@@ -91,8 +92,8 @@ fn read_domain_and_constraints(
         .ok_or_else(|| {
             PyTypeError::new_err(format!(
                 "{}.{hook} must return a (domain, constraints) pair, got {}.",
-                type_name(object),
-                type_name(result)
+                read_type_name(object),
+                read_type_name(result)
             ))
         })?;
     let domain = read_domain(&pair.get_item(0)?);
@@ -121,19 +122,19 @@ fn read_symbol_type(
         .ok_or_else(|| {
             PyTypeError::new_err(format!(
                 "{}.symbol_type must be a SymbolType or None, got {}.",
-                type_name(object),
-                type_name(value)
+                read_type_name(object),
+                read_type_name(value)
             ))
         })
 }
 
 impl ForeignPart for PyCustomDomain {
     fn type_name(&self) -> Cow<'_, str> {
-        Cow::Owned(Python::attach(|py| type_name(&self.object.get(py))))
+        Cow::Owned(Python::attach(|py| read_type_name(&self.object.get(py))))
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::util::foreign::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::util::foreign::read_foreign(&self.object.object(py), true))
     }
 }
 

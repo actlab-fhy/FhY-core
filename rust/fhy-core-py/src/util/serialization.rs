@@ -15,9 +15,8 @@
 //! class takes the shapes it needs: the list of [`FieldShape`] variants is
 //! `#[non_exhaustive]`.
 //!
-//! V1 (the deprecated envelope format) is read and written by the classes'
-//! own code over these functions, except that the V2 wire format is
-//! `wire.rs`'s.
+//! The classes read and write V1, the deprecated envelope format, with their
+//! own code over these functions; the V2 wire format is in `wire.rs`.
 
 use pyo3::exceptions::{PyKeyError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::intern;
@@ -115,6 +114,13 @@ fn is_int(value: &Bound<'_, PyAny>) -> bool {
     value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>()
 }
 
+/// Return whether `value` is a list whose items all satisfy `accepts`.
+fn is_list_of(value: &Bound<'_, PyAny>, accepts: impl Fn(&Bound<'_, PyAny>) -> bool) -> bool {
+    value
+        .cast::<PyList>()
+        .is_ok_and(|items| items.iter().all(|item| accepts(&item)))
+}
+
 /// Return whether `value` is a mapping.
 fn is_mapping(value: &Bound<'_, PyAny>) -> bool {
     value.cast::<PyMapping>().is_ok()
@@ -122,6 +128,9 @@ fn is_mapping(value: &Bound<'_, PyAny>) -> bool {
 
 impl FieldShape {
     /// Return whether `value` has this shape.
+    ///
+    /// Raises what a payload's own check or a custom mapping's iteration
+    /// raises.
     fn accepts(self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         match self {
             Self::Payload => is_serialized_dict(value),
@@ -141,47 +150,29 @@ impl FieldShape {
                 }
                 Ok(true)
             }
-            Self::OptionalIntList => {
-                if value.is_none() {
-                    return Ok(true);
-                }
-                let Ok(items) = value.cast::<PyList>() else {
-                    return Ok(false);
-                };
-                Ok(items.iter().all(|item| is_int(&item)))
-            }
+            Self::OptionalIntList => Ok(value.is_none() || is_list_of(value, is_int)),
             Self::Literal => Ok(value.is_instance_of::<PyString>()
                 || value.is_instance_of::<PyFloat>()
                 || value.is_instance_of::<PyInt>()),
             Self::Bool => Ok(value.is_instance_of::<PyBool>()),
-            Self::IntList => Ok(value
-                .cast::<PyList>()
-                .is_ok_and(|items| items.iter().all(|item| is_int(&item)))),
-            Self::IntListList => Ok(value.cast::<PyList>().is_ok_and(|rows| {
-                rows.iter().all(|row| {
-                    row.cast::<PyList>()
-                        .is_ok_and(|items| items.iter().all(|item| is_int(&item)))
-                })
-            })),
-            Self::ObjectListList => Ok(value.cast::<PyList>().is_ok_and(|rows| {
-                rows.iter().all(|row| {
-                    row.cast::<PyList>()
-                        .is_ok_and(|items| items.iter().all(|item| is_mapping(&item)))
-                })
-            })),
+            Self::IntList => Ok(is_list_of(value, is_int)),
+            Self::IntListList => Ok(is_list_of(value, |row| is_list_of(row, is_int))),
+            Self::ObjectListList => Ok(is_list_of(value, |row| is_list_of(row, is_mapping))),
             Self::Object => Ok(is_mapping(value)),
             Self::OptionalObject => Ok(value.is_none() || is_mapping(value)),
             Self::List => Ok(value.is_instance_of::<PyList>()),
-            Self::ObjectList => Ok(value
-                .cast::<PyList>()
-                .is_ok_and(|items| items.iter().all(|item| is_mapping(&item)))),
-            Self::ObjectMap => Ok(value.cast::<PyMapping>().is_ok_and(|entries| {
-                entries.values().is_ok_and(|values| {
-                    values.try_iter().is_ok_and(|mut values| {
-                        values.all(|item| item.is_ok_and(|item| is_mapping(&item)))
-                    })
-                })
-            })),
+            Self::ObjectList => Ok(is_list_of(value, is_mapping)),
+            Self::ObjectMap => {
+                let Ok(entries) = value.cast::<PyMapping>() else {
+                    return Ok(false);
+                };
+                for item in entries.values()?.try_iter()? {
+                    if !is_mapping(&item?) {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
             Self::Any => Ok(true),
         }
     }
@@ -324,8 +315,9 @@ fn read_fields_of_shape<'py, const N: usize>(
 ///
 /// # Errors
 ///
-/// Raises `TypeError` if `fields` is not a mapping, lacks a required name,
-/// or holds a name not in `names`, and what reading an entry raises.
+/// Raises `ValueError` if `optional` is more than the number of names,
+/// `TypeError` if `fields` is not a mapping, lacks a required name, or holds
+/// a name not in `names`, and what reading an entry raises.
 pub fn read_constructor_fields<'py, const N: usize>(
     cls: &Bound<'py, PyType>,
     fields: &Bound<'py, PyAny>,
@@ -333,6 +325,12 @@ pub fn read_constructor_fields<'py, const N: usize>(
     optional: usize,
 ) -> PyResult<[Bound<'py, PyAny>; N]> {
     let py = cls.py();
+    if optional > N {
+        return Err(PyValueError::new_err(format!(
+            "{}.construct_from_fields() cannot leave {optional} of its {N} fields optional",
+            cls.name()?
+        )));
+    }
     let mapping = fields.cast::<PyMapping>()?;
     let mut values = Vec::with_capacity(N);
     let mut found = 0;
@@ -362,19 +360,16 @@ pub fn read_constructor_fields<'py, const N: usize>(
             mapping.keys()?.repr()?,
         )));
     }
-    values
-        .try_into()
-        .map_err(|_values: Vec<_>| build_arity_error())
-}
-
-/// Return the error for a read that found a different number of values than
-/// it has names, which no caller can cause.
-fn build_arity_error() -> PyErr {
-    PyRuntimeError::new_err("a payload read returned one value per field")
+    // One value per name was pushed above, so the length is `N`.
+    values.try_into().map_err(|_values: Vec<_>| {
+        PyRuntimeError::new_err("a payload read returned one value per field")
+    })
 }
 
 /// Return the values of `fields` unchanged: the decoding step of a class
-/// whose payload holds no nested value.
+/// whose payload holds no nested value, which sits between
+/// [`read_payload_fields`] and [`construct_from_decoded_fields`] and takes the
+/// class and the values the first returned.
 ///
 /// # Errors
 ///
@@ -465,20 +460,39 @@ fn construct_reporting<'py>(
     overflow: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let py = cls.py();
-    match cls.call_method1(intern!(py, "construct_from_fields"), (fields,)) {
-        Ok(instance) => Ok(instance),
-        Err(error)
-            if !error.is_instance(py, SERIALIZATION_ERROR.class(py)?)
-                && (error.is_instance_of::<PyValueError>(py)
-                    || error.is_instance_of::<PyTypeError>(py)
-                    || (overflow && error.is_instance_of::<PyOverflowError>(py))) =>
-        {
-            let message = error.value(py).str()?;
-            let wrapped = DESERIALIZATION_VALUE_ERROR.err(py, (message,));
-            wrapped.set_cause(py, Some(error));
-            Err(wrapped)
+    cls.call_method1(intern!(py, "construct_from_fields"), (fields,))
+        .map_err(|error| report_refusal(py, error, overflow))
+}
+
+/// Return what the construction's `error` is reported as: a
+/// `DeserializationValueError` with its message, caused by it, for a refusal
+/// outside the serialization hierarchy (`OverflowError` too when `overflow`),
+/// and `error` itself otherwise.
+///
+/// A failure to import the hierarchy or to read the message is returned
+/// instead, with `error` as its `__context__`.
+fn report_refusal(py: Python<'_>, error: PyErr, overflow: bool) -> PyErr {
+    let wrapping = (|| -> PyResult<Option<PyErr>> {
+        let refused = !error.is_instance(py, SERIALIZATION_ERROR.class(py)?)
+            && (error.is_instance_of::<PyValueError>(py)
+                || error.is_instance_of::<PyTypeError>(py)
+                || (overflow && error.is_instance_of::<PyOverflowError>(py)));
+        if !refused {
+            return Ok(None);
         }
-        Err(error) => Err(error),
+        let message = error.value(py).str()?;
+        Ok(Some(DESERIALIZATION_VALUE_ERROR.err(py, (message,))))
+    })();
+    match wrapping {
+        Ok(None) => error,
+        Ok(Some(wrapped)) => {
+            wrapped.set_cause(py, Some(error));
+            wrapped
+        }
+        Err(failure) => {
+            failure.set_context(py, Some(error));
+            failure
+        }
     }
 }
 

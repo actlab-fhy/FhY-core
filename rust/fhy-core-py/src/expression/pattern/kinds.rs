@@ -32,7 +32,7 @@ use crate::util::dataclass::{
 };
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::public_class::PublicClass;
-pub(super) use crate::util::python::type_name;
+pub(super) use crate::util::python::read_type_name;
 
 use super::super::literal::read_literal;
 use super::super::node::read_expression;
@@ -1232,7 +1232,7 @@ pub(super) fn argument_type_error(
 ) -> PyErr {
     PyTypeError::new_err(format!(
         "{owner} {field} must be {expected}, got {}.",
-        type_name(value)
+        read_type_name(value)
     ))
 }
 

@@ -308,7 +308,7 @@ impl ForeignPart for PyTypeAdapter {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::util::foreign::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::util::foreign::read_foreign(&self.object.object(py), true))
     }
 }
 
@@ -476,7 +476,7 @@ impl ForeignPart for PyDataTypeAdapter {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::util::foreign::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::util::foreign::read_foreign(&self.object.object(py), true))
     }
 }
 

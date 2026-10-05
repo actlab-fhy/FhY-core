@@ -471,7 +471,7 @@ fn lifting_a_depth_16_sin_cos_dag_is_linear() {
         )
     });
 
-    // Linear is counted, not timed: the lifting visits each distinct node
+    // Linearity is asserted by count: the lifting visits each distinct node
     // once (a node is the symbol, or a sine, cosine or sum of a level), so
     // 49 visits. Without the memo it would visit every path, about 2^17.
     assert_eq!(visited, 3 * 16 + 1, "each distinct node is lifted once");

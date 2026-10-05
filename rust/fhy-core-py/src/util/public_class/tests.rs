@@ -77,11 +77,11 @@ fn an_empty_slot_is_a_runtime_error_naming_the_class() {
 #[test]
 fn a_slot_of_another_module_names_that_module() {
     with_stand_ins(|py| {
-        let slot = PublicClass::in_module("moga._rs", "Rule");
+        let slot = PublicClass::in_module("downstream._rs", "Rule");
         let error = slot.get(py).expect_err("nothing registered");
         assert_eq!(
             error.value(py).to_string(),
-            "no public class is registered for moga._rs.Rule"
+            "no public class is registered for downstream._rs.Rule"
         );
 
         let first = class_named(py, "First");
@@ -91,16 +91,16 @@ fn a_slot_of_another_module_names_that_module() {
             .expect_err("another");
         assert_eq!(
             error.value(py).to_string(),
-            "the public class of moga._rs.Rule is registered already, as First"
+            "the public class of downstream._rs.Rule is registered already, as First"
         );
     });
 }
 
 #[test]
 fn a_slot_is_a_debug_value_naming_its_class() {
-    let slot = PublicClass::in_module("moga._rs", "Rule");
+    let slot = PublicClass::in_module("downstream._rs", "Rule");
 
     let text = format!("{slot:?}");
 
-    assert!(text.contains("moga._rs") && text.contains("Rule"));
+    assert!(text.contains("downstream._rs") && text.contains("Rule"));
 }

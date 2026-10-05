@@ -83,10 +83,10 @@ impl<T: 'static> Frames<T> {
     /// `read` runs while the stack is borrowed, so it must not push onto or
     /// pop from it; clone out what it needs.
     ///
-    /// # Errors
+    /// # Pending exception
     ///
-    /// Nothing is returned, since the hook cannot fail: a miss records a
-    /// `RuntimeError` as the pending exception, which the entry point
+    /// Nothing is returned for a miss, since the hook cannot fail: it records
+    /// a `RuntimeError` as the pending exception, which the entry point
     /// raises.
     ///
     /// # Panics

@@ -21,7 +21,7 @@ use super::super::node::{PyExpression, read_expression};
 use super::bindings::PyMatchBindings;
 use super::kinds::{
     PyPattern, argument_type_error, ensure_depth_within_recursion_limit, into_callback_error,
-    read_optional_str, type_name,
+    read_optional_str, read_type_name,
 };
 use super::objects::{ActiveTable, current_adopt, current_object_of};
 use crate::util::gc::{Slot, Slots, collect_slots};
@@ -170,7 +170,7 @@ fn read_rewrite_result(
         Err(_not_an_expression) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "{label} rewrite must return an Expression{}, got {}.",
             if is_partial { " or None" } else { "" },
-            type_name(result)
+            read_type_name(result)
         ))),
     }
 }
@@ -518,7 +518,7 @@ impl PythonRule {
                 Err(_not_an_expression) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
                     "{}.apply must return an Expression or None, got {}.",
                     rule.get_type().qualname()?,
-                    type_name(&result)
+                    read_type_name(&result)
                 ))),
             }
         })
