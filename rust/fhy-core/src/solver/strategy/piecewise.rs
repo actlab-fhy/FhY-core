@@ -6,7 +6,7 @@ use crate::expression::{Expression, ExpressionKind};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
-use super::exact::{boolean, is_decided};
+use super::exact::{is_decided, read_boolean};
 
 /// Rewrites a piecewise whose every condition is a Boolean literal and
 /// whose every value is decided, to the value of its first true case, or
@@ -39,6 +39,10 @@ use super::exact::{boolean, is_decided};
 pub struct PiecewiseDecision;
 
 impl PiecewiseDecision {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "piecewise";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -48,7 +52,7 @@ impl PiecewiseDecision {
 
 impl SimplificationStrategy for PiecewiseDecision {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("piecewise")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
@@ -60,7 +64,7 @@ impl SimplificationStrategy for PiecewiseDecision {
         }
         let mut chosen = None;
         for (condition, value) in piecewise.cases() {
-            let holds = boolean(condition)?;
+            let holds = read_boolean(condition)?;
             if !is_decided(value) {
                 return None;
             }

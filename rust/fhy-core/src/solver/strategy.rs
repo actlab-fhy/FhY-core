@@ -62,8 +62,10 @@
 //! # Adding a strategy
 //!
 //! 1. Implement [`SimplificationStrategy`] and meet the contract above.
-//! 2. Test it alone in `rust/fhy-core/tests/it/solver/ground_stories.rs`:
-//!    what it rewrites, and what it declines, through
+//! 2. Test it alone in
+//!    `rust/fhy-core/tests/it/solver/ground_strategy_stories.rs`
+//!    (`ground_stories.rs` tests the whole pipeline): what it rewrites, and
+//!    what it declines, through
 //!    [`rewrite`](SimplificationStrategy::rewrite) and through a
 //!    [`GroundSimplifier`](super::GroundSimplifier) holding only it.
 //! 3. Add its cases to the differential tests of the binding
@@ -154,7 +156,13 @@ pub(super) use exact::is_decided;
 pub trait SimplificationStrategy: Send + Sync + fmt::Debug {
     /// Return the strategy's name, which
     /// [`GroundSimplifier::without`](super::GroundSimplifier::without)
-    /// removes it by.
+    /// removes it by and
+    /// [`GroundSimplifier::holds`](super::GroundSimplifier::holds) looks it
+    /// up by.
+    ///
+    /// Each strategy the crate ships exposes its name as the constant
+    /// `Type::NAME` (`Comparisons::NAME`, for one), which a caller uses in
+    /// place of the text so a misspelling does not compile.
     fn name(&self) -> Cow<'_, str>;
 
     /// Return the expression `node` rewrites to, or `None` where the

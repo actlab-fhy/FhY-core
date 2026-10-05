@@ -6,15 +6,14 @@ use crate::expression::{Expression, ExpressionKind, LogicalOperation, UnaryOpera
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
-use super::exact::boolean;
+use super::exact::read_boolean;
 
 /// Rewrites `!`, `&&` and `||` of Boolean literals to the Boolean literal
 /// they decide.
 ///
 /// The Boolean built-ins (`xor`, `nand`, `nor`, `implies`, `iff`), which the
-/// `SymPy` backend refuses until they are inlined, are
-/// [`ComposedBuiltins`](super::ComposedBuiltins)', a strategy that is not a
-/// default.
+/// `SymPy` backend refuses until they are inlined, are folded by
+/// [`ComposedBuiltins`](super::ComposedBuiltins), an opt-in strategy.
 ///
 /// Every operand must be a Boolean literal: `false && x` is declined, as
 /// the `SymPy` backend refuses an operand that is not a Boolean, and a
@@ -39,6 +38,10 @@ use super::exact::boolean;
 pub struct LogicalOperators;
 
 impl LogicalOperators {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "logical_operators";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -48,25 +51,24 @@ impl LogicalOperators {
 
 impl SimplificationStrategy for LogicalOperators {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("logical_operators")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
         let value = match node.kind() {
             ExpressionKind::Unary(unary) if unary.operation() == UnaryOperation::LogicalNot => {
-                !boolean(unary.operand())?
+                !read_boolean(unary.operand())?
             }
             ExpressionKind::Logical(logical) => {
-                let mut operands = logical.operands().iter().map(boolean);
+                let (mut all, mut any) = (true, false);
+                for operand in logical.operands() {
+                    let value = read_boolean(operand)?;
+                    all &= value;
+                    any |= value;
+                }
                 match logical.operation() {
-                    LogicalOperation::And => {
-                        let values: Option<Vec<bool>> = operands.by_ref().collect();
-                        values?.into_iter().all(|value| value)
-                    }
-                    LogicalOperation::Or => {
-                        let values: Option<Vec<bool>> = operands.by_ref().collect();
-                        values?.into_iter().any(|value| value)
-                    }
+                    LogicalOperation::And => all,
+                    LogicalOperation::Or => any,
                 }
             }
             _ => return None,

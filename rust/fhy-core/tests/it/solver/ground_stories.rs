@@ -14,25 +14,24 @@ use std::time::Duration;
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::{FunctionRegistry, NativeConstant};
 use fhy_core::expression::{
-    Expression, FunctionName, FunctionSort, LiteralValue, LogicalOperation,
+    Callee, Expression, ExpressionKind, FunctionName, FunctionSort, LogicalOperation,
 };
 use fhy_core::foreign::BoxError;
-use fhy_core::solver::strategy::ComposedBuiltins;
+use fhy_core::solver::strategy::{ComposedBuiltins, SimplificationStrategy};
 use fhy_core::solver::{
     GroundSimplifier, GroundWithFallback, Simplifier, SimplifyContext, SimplifyLimits, SolveError,
     Solver,
 };
 use rstest::rstest;
 
-use crate::support::expression::{build_identifier, build_literal};
+use crate::support::expression::{
+    build_decimal_literal, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
+    call,
+};
 use crate::support::solver::{FakeBackendError, RecordingSimplifier};
 
 fn n(value: i64) -> Expression {
     Expression::from(value)
-}
-
-fn decimal(text: &str) -> Expression {
-    build_literal(LiteralValue::Decimal(text.parse().expect("a decimal")))
 }
 
 fn float(value: f64) -> Expression {
@@ -56,10 +55,6 @@ fn negated(expression: Expression) -> Expression {
     Expression::new_unary(fhy_core::expression::UnaryOperation::Negate, expression)
 }
 
-fn call(function: BuiltinFunction, arguments: impl IntoIterator<Item = Expression>) -> Expression {
-    Expression::call(function, arguments)
-}
-
 fn folded(expression: &Expression) -> Option<Expression> {
     GroundSimplifier::new().try_simplify(expression, &SimplifyContext::default())
 }
@@ -75,11 +70,11 @@ fn folded(expression: &Expression) -> Option<Expression> {
 #[case::negation(-n(7), n(-7))]
 #[case::positive(n(7).positive(), n(7))]
 #[case::integer_quotient(n(6) / n(3), n(2))]
-#[case::quotient_that_a_float_equals(n(1) / n(2), decimal("0.5"))]
-#[case::negative_quotient_that_a_float_equals(n(-3) / n(8), negated(decimal("0.375")))]
+#[case::quotient_that_a_float_equals(n(1) / n(2), build_decimal_literal("0.5"))]
+#[case::negative_quotient_that_a_float_equals(n(-3) / n(8), negated(build_decimal_literal("0.375")))]
 #[case::quotient_no_float_equals(n(1) / n(3), quotient(1, 3))]
 #[case::negative_quotient_no_float_equals(n(-1) / n(3), quotient(-1, 3))]
-#[case::quotient_reduces(n(10) / n(4), decimal("2.5"))]
+#[case::quotient_reduces(n(10) / n(4), build_decimal_literal("2.5"))]
 #[case::floor_division(n(7).floor_divide(n(2)), n(3))]
 #[case::floor_division_rounds_down(n(-7).floor_divide(n(2)), n(-4))]
 #[case::floor_division_by_a_negative(n(7).floor_divide(n(-2)), n(-4))]
@@ -90,20 +85,20 @@ fn folded(expression: &Expression) -> Option<Expression> {
 #[case::modulo(n(7).floor_mod(n(3)), n(1))]
 #[case::modulo_takes_the_divisor_s_sign(n(7).floor_mod(n(-3)), n(-2))]
 #[case::modulo_of_a_negative(n(-7).floor_mod(n(3)), n(2))]
-#[case::modulo_of_a_rational((n(7) / n(2)).floor_mod(n(2)), decimal("1.5"))]
+#[case::modulo_of_a_rational((n(7) / n(2)).floor_mod(n(2)), build_decimal_literal("1.5"))]
 #[case::power(n(2).power(n(10)), n(1024))]
 #[case::power_of_a_negative(n(-2).power(n(3)), n(-8))]
 #[case::zero_power_zero(n(0).power(n(0)), n(1))]
-#[case::negative_power(n(2).power(n(-2)), decimal("0.25"))]
+#[case::negative_power(n(2).power(n(-2)), build_decimal_literal("0.25"))]
 #[case::power_of_a_rational((n(2) / n(3)).power(n(2)), quotient(4, 9))]
 #[case::exact_square_root_power(n(4).power(n(1) / n(2)), n(2))]
 #[case::exact_fractional_power(n(8).power(n(2) / n(3)), n(4))]
-#[case::exact_negative_fractional_power(n(8).power(n(-1) / n(3)), decimal("0.5"))]
+#[case::exact_negative_fractional_power(n(8).power(n(-1) / n(3)), build_decimal_literal("0.5"))]
 #[case::power_of_minus_one(n(-1).power(n(1_000_001)), n(-1))]
 #[case::huge_power_of_one(n(1).power(n(1_000_000_000_000)), n(1))]
-#[case::decimal_arithmetic_is_exact(decimal("0.1") + decimal("0.2"), quotient(3, 10))]
-#[case::decimal_literal_normalizes(decimal("0.1"), quotient(1, 10))]
-#[case::decimal_integer_is_an_int(decimal("2.50") * n(2), n(5))]
+#[case::decimal_arithmetic_is_exact(build_decimal_literal("0.1") + build_decimal_literal("0.2"), quotient(3, 10))]
+#[case::decimal_literal_normalizes(build_decimal_literal("0.1"), quotient(1, 10))]
+#[case::decimal_integer_is_an_int(build_decimal_literal("2.50") * n(2), n(5))]
 #[case::large_integers_are_exact(
     n(i64::MAX) * n(i64::MAX) + n(1),
     build_literal("85070591730234615847396907784232501250".parse::<fhy_core::expression::BigInt>().expect("digits"))
@@ -127,8 +122,8 @@ fn arithmetic_folds_to_the_literal_sympy_lifts(
 #[case::greater_equal_fails(n(1).greater_equal(n(2)), false)]
 #[case::equal(n(2).equals(n(2)), true)]
 #[case::not_equal(n(2).not_equals(n(2)), false)]
-#[case::rationals_compare_exactly((n(1) / n(3)).less(decimal("0.34")), true)]
-#[case::integer_equals_decimal(n(1).equals(decimal("1.0")), true)]
+#[case::rationals_compare_exactly((n(1) / n(3)).less(build_decimal_literal("0.34")), true)]
+#[case::integer_equals_build_decimal_literal(n(1).equals(build_decimal_literal("1.0")), true)]
 #[case::booleans_equal(truth(true).equals(truth(true)), true)]
 #[case::booleans_differ(truth(true).equals(truth(false)), false)]
 #[case::booleans_not_equal(truth(true).not_equals(truth(false)), true)]
@@ -159,7 +154,7 @@ fn piecewise_takes_the_otherwise_when_no_case_holds() {
     let piecewise =
         Expression::piecewise([(n(1).greater(n(2)), n(10))], n(1) / n(2)).expect("a piecewise");
 
-    assert_eq!(folded(&piecewise), Some(decimal("0.5")));
+    assert_eq!(folded(&piecewise), Some(build_decimal_literal("0.5")));
 }
 
 #[test]
@@ -202,10 +197,10 @@ fn piecewise_with_a_boolean_value_folds_to_it() {
 #[case::ceil_of_an_integer(call(BuiltinFunction::Ceil, [n(5)]), n(5))]
 #[case::round_of_an_integer(call(BuiltinFunction::Round, [n(5)]), n(5))]
 #[case::sqrt_of_a_perfect_square(call(BuiltinFunction::Sqrt, [n(16)]), n(4))]
-#[case::sqrt_of_a_rational_square(call(BuiltinFunction::Sqrt, [n(1) / n(4)]), decimal("0.5"))]
+#[case::sqrt_of_a_rational_square(call(BuiltinFunction::Sqrt, [n(1) / n(4)]), build_decimal_literal("0.5"))]
 #[case::sqrt_of_zero(call(BuiltinFunction::Sqrt, [n(0)]), n(0))]
 #[case::exp2(call(BuiltinFunction::Exp2, [n(10)]), n(1024))]
-#[case::exp2_of_a_negative(call(BuiltinFunction::Exp2, [n(-3)]), decimal("0.125"))]
+#[case::exp2_of_a_negative(call(BuiltinFunction::Exp2, [n(-3)]), build_decimal_literal("0.125"))]
 #[case::log2(call(BuiltinFunction::Log2, [n(8)]), n(3))]
 #[case::log2_of_a_unit_fraction(call(BuiltinFunction::Log2, [n(1) / n(8)]), n(-3))]
 #[case::log10(call(BuiltinFunction::Log10, [n(1000)]), n(3))]
@@ -240,7 +235,7 @@ fn the_default_simplifier_declines_a_boolean_built_in_sympy_refuses(
 #[case::min(call(BuiltinFunction::Min, [n(2), n(5)]), n(2))]
 #[case::min_of_rationals(call(BuiltinFunction::Min, [n(1) / n(2), n(1) / n(3)]), quotient(1, 3))]
 #[case::abs(call(BuiltinFunction::Abs, [n(-5)]), n(5))]
-#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]), decimal("0.5"))]
+#[case::abs_of_a_rational(call(BuiltinFunction::Abs, [n(-1) / n(2)]), build_decimal_literal("0.5"))]
 #[case::sign(call(BuiltinFunction::Sign, [n(-5)]), n(-1))]
 #[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]), n(0))]
 #[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]), n(10))]
@@ -321,25 +316,193 @@ fn simplify_returns_the_expression_it_declines_unchanged() {
 
 #[test]
 fn a_deep_tree_declines_rather_than_overflowing_the_stack() {
-    let mut deep = n(1);
-    for _ in 0..100_000 {
-        deep = deep + n(1);
-    }
+    let deep = build_deep_sum(&n(1), 100_000);
 
     assert_eq!(folded(&deep), None);
 }
 
 #[test]
 fn a_shared_subtree_is_folded_once() {
-    let mut shared = n(1);
-    for _ in 0..200 {
-        shared = &shared + &shared;
-    }
+    let shared = build_doubling_dag(&n(1), 200);
 
     let expected = "1606938044258990275541962092341162602522202993782792835301376"
         .parse::<fhy_core::expression::BigInt>()
         .expect("digits");
     assert_eq!(folded(&shared), Some(build_literal(expected)));
+}
+
+/// A strategy rewriting `relu(a)` to `(a * 1 + a * 1) - a`, where the two
+/// products are one fresh node that the rewrite holds twice and drops when
+/// the rewrite is done.
+#[derive(Debug)]
+struct SharingRelu;
+
+impl SimplificationStrategy for SharingRelu {
+    fn name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("sharing_relu")
+    }
+
+    fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
+        let ExpressionKind::Call(call) = node.kind() else {
+            return None;
+        };
+        let (Callee::Builtin(BuiltinFunction::Relu), [argument]) =
+            (call.callee(), call.arguments())
+        else {
+            return None;
+        };
+        let product = argument.clone() * n(1);
+        Some((&product + &product) - argument.clone())
+    }
+}
+
+#[rstest]
+#[case::ten_terms(10, 55_000)]
+#[case::fifty_terms(50, 1_275_000)]
+fn a_node_a_strategy_builds_and_drops_does_not_answer_for_a_later_node(
+    #[case] terms: i64,
+    #[case] expected: i64,
+) {
+    let sum = (1..=terms).fold(n(0), |sum, k| {
+        sum + call(BuiltinFunction::Relu, [n(1000 * k)])
+    });
+    let simplifier = GroundSimplifier::new().with_strategy_first(SharingRelu);
+
+    let result = simplifier.try_simplify(&sum, &SimplifyContext::default());
+
+    assert_eq!(result, Some(n(expected)));
+}
+
+#[rstest]
+#[case::at_the_bound(256, Some(n(257)))]
+#[case::past_the_bound(257, None)]
+fn a_left_nested_sum_folds_to_a_depth_of_256_and_declines_past_it(
+    #[case] depth: usize,
+    #[case] expected: Option<Expression>,
+) {
+    let sum = build_deep_sum(&n(1), depth);
+
+    assert_eq!(folded(&sum), expected);
+}
+
+#[rstest]
+#[case::bound_of_two_declines(2, false, None)]
+#[case::bound_of_three_folds(3, false, Some(n(10)))]
+#[case::partial_rewrites_keep_what_a_bound_of_two_made(2, true, Some(n(3) + n(7)))]
+fn a_run_that_reaches_its_rewrite_bound_keeps_what_it_has(
+    #[case] max_rewrites: usize,
+    #[case] keeps_partial_rewrites: bool,
+    #[case] expected: Option<Expression>,
+) {
+    // `1 + 2` and `3 + 4` fold in two rewrites, and `3 + 7` in a third.
+    let sum = (n(1) + n(2)) + (n(3) + n(4));
+    let simplifier = GroundSimplifier::new().with_max_rewrites(max_rewrites);
+    let simplifier = if keeps_partial_rewrites {
+        simplifier.with_partial_rewrites()
+    } else {
+        simplifier
+    };
+
+    assert_eq!(
+        simplifier.try_simplify(&sum, &SimplifyContext::default()),
+        expected
+    );
+}
+
+/// A strategy rewriting the integer literal `from` to the integer literal
+/// `to`.
+#[derive(Debug)]
+struct Replacing {
+    from: i64,
+    to: i64,
+}
+
+impl SimplificationStrategy for Replacing {
+    fn name(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("replace_{}_with_{}", self.from, self.to))
+    }
+
+    fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
+        (*node == n(self.from)).then(|| n(self.to))
+    }
+}
+
+#[test]
+fn strategies_that_undo_each_other_on_a_leaf_stop_at_the_rewrite_bound() {
+    let flipping = GroundSimplifier::empty()
+        .with_strategy(Replacing { from: 1, to: 2 })
+        .with_strategy(Replacing { from: 2, to: 1 })
+        .with_max_rewrites(5);
+
+    // Five rewrites flip the literal five times, and the run stops there.
+    assert_eq!(
+        flipping.try_simplify(&n(1), &SimplifyContext::default()),
+        Some(n(2))
+    );
+}
+
+/// A strategy rewriting the call of the user function `from` to the call of
+/// `to`.
+#[derive(Debug)]
+struct Renaming {
+    from: &'static str,
+    to: &'static str,
+}
+
+impl SimplificationStrategy for Renaming {
+    fn name(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("rename_{}_to_{}", self.from, self.to))
+    }
+
+    fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
+        let ExpressionKind::Call(call) = node.kind() else {
+            return None;
+        };
+        let Callee::Named(name) = call.callee() else {
+            return None;
+        };
+        (name.as_str() == self.from).then(|| {
+            Expression::call(
+                self.to.parse::<Callee>().expect("a name"),
+                call.arguments().iter().cloned(),
+            )
+        })
+    }
+}
+
+#[test]
+fn strategies_that_undo_each_other_on_a_node_with_children_decline_at_the_depth_bound() {
+    let flipping = GroundSimplifier::empty()
+        .with_strategy(Renaming { from: "f", to: "g" })
+        .with_strategy(Renaming { from: "g", to: "f" })
+        .with_partial_rewrites();
+    let call = Expression::call("f".parse::<Callee>().expect("a name"), [n(1)]);
+
+    // Each rewrite builds a node with a child, which nests one deeper, so
+    // the depth bound ends the run, declined, before the rewrite bound.
+    assert_eq!(
+        flipping.try_simplify(&call, &SimplifyContext::default()),
+        None
+    );
+    assert_eq!(
+        flipping
+            .with_max_rewrites(300)
+            .try_simplify(&call, &SimplifyContext::default()),
+        None
+    );
+}
+
+#[test]
+fn holds_tells_which_strategies_are_held() {
+    let ground = GroundSimplifier::new();
+    let without = GroundSimplifier::new().without("comparisons");
+    let misspelled = GroundSimplifier::new().without("comparison");
+
+    assert!(ground.holds("comparisons"));
+    assert!(!without.holds("comparisons"));
+    // A name that matches nothing removes nothing, and `holds` shows it.
+    assert!(misspelled.holds("comparisons"));
+    assert!(!GroundSimplifier::empty().holds("comparisons"));
 }
 
 // ---------------------------------------------------------------------------
@@ -581,20 +744,49 @@ fn the_chain_asks_the_fallback_under_what_is_left_of_the_timeout() {
 }
 
 #[test]
-fn the_chain_does_not_give_its_fallback_a_fresh_timeout_after_the_ground_part_used_it() {
+fn the_chain_does_not_ask_its_fallback_after_the_ground_part_used_the_timeout() {
     let fallback = RecordingSimplifier::returning(n(99));
     let chain = GroundWithFallback::from_shared(Arc::clone(&fallback) as Arc<dyn Simplifier>);
     let expression = heavy_sum();
 
-    // The ground part times out and declines; the fallback is asked, and
-    // finds none of the 1 ms left.
+    // The ground part times out and declines, and none of the 1 ms is left
+    // for the fallback, so the chain declines too.
     let answer = chain
         .simplify(&expression, &limited_to(Duration::from_millis(1)))
         .expect("simplified");
 
+    assert!(Expression::ptr_eq(&answer, &expression));
+    assert!(fallback.inputs().is_empty());
+}
+
+#[test]
+fn the_chain_does_not_ask_its_fallback_under_a_zero_timeout() {
+    let (_, x) = build_identifier("x");
+    let fallback = RecordingSimplifier::returning(n(99));
+    let chain = GroundWithFallback::from_shared(Arc::clone(&fallback) as Arc<dyn Simplifier>);
+    let expression = x + n(1);
+
+    let answer = chain
+        .simplify(&expression, &limited_to(Duration::ZERO))
+        .expect("simplified");
+
+    assert!(Expression::ptr_eq(&answer, &expression));
+    assert!(fallback.inputs().is_empty());
+}
+
+#[test]
+fn the_chain_asks_the_fallback_to_simplify_the_rewrite_a_ground_part_keeps() {
+    let (_, x) = build_identifier("x");
+    let fallback = RecordingSimplifier::returning(n(99));
+    let chain = GroundWithFallback::from_shared(Arc::clone(&fallback) as Arc<dyn Simplifier>)
+        .with_ground(GroundSimplifier::new().with_partial_rewrites());
+
+    let answer = chain
+        .simplify(&(x.clone() + (n(1) + n(2))), &SimplifyContext::default())
+        .expect("simplified");
+
     assert_eq!(answer, n(99));
-    assert_eq!(fallback.inputs(), vec![expression]);
-    assert_eq!(fallback.limits()[0].timeout(), Some(Duration::ZERO));
+    assert_eq!(fallback.inputs(), vec![x + n(3)]);
 }
 
 #[test]

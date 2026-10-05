@@ -3,12 +3,15 @@
 use std::borrow::Cow;
 
 use crate::expression::builtins::BuiltinFunction;
-use crate::expression::{BinaryOperation, Callee, Expression, ExpressionKind, Rational};
+use num_traits::Signed;
+
+use crate::expression::{BinaryOperation, Expression, Rational};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
 use super::exact::{
-    absolute, arithmetic, boolean, larger, negated, number, number_expression, sign, smaller, zero,
+    build_number_expression, build_zero, compute_arithmetic, pick_larger, pick_smaller,
+    read_boolean, read_builtin_call, read_numbers, take_absolute, take_sign,
 };
 
 /// Rewrites a call of a composed built-in function of exact numbers or
@@ -54,6 +57,10 @@ use super::exact::{
 pub struct ComposedBuiltins;
 
 impl ComposedBuiltins {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "composed_builtins";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -63,32 +70,25 @@ impl ComposedBuiltins {
 
 impl SimplificationStrategy for ComposedBuiltins {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("composed_builtins")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
-        let ExpressionKind::Call(call) = node.kind() else {
-            return None;
-        };
-        let Callee::Builtin(function) = call.callee() else {
-            return None;
-        };
-        if let [left, right] = call.arguments() {
-            if let (Some(left), Some(right)) = (boolean(left), boolean(right)) {
-                return boolean_value(*function, left, right).map(Expression::literal);
+        let (function, arguments) = read_builtin_call(node)?;
+        if let [left, right] = arguments {
+            if let (Some(left), Some(right)) = (read_boolean(left), read_boolean(right)) {
+                return evaluate_boolean(function, left, right).map(Expression::literal);
             }
         }
-        let numbers = call
-            .arguments()
-            .iter()
-            .map(number)
-            .collect::<Option<Vec<Rational>>>()?;
-        Some(number_expression(numeric_value(*function, &numbers)?))
+        let numbers = read_numbers(arguments)?;
+        Some(build_number_expression(evaluate_numeric(
+            function, &numbers,
+        )?))
     }
 }
 
 /// Return the value of the Boolean built-in `function` of two Booleans.
-fn boolean_value(function: BuiltinFunction, left: bool, right: bool) -> Option<bool> {
+fn evaluate_boolean(function: BuiltinFunction, left: bool, right: bool) -> Option<bool> {
     Some(match function {
         BuiltinFunction::Xor => left != right,
         BuiltinFunction::Nand => !(left && right),
@@ -100,20 +100,26 @@ fn boolean_value(function: BuiltinFunction, left: bool, right: bool) -> Option<b
 }
 
 /// Return the value of the numeric built-in `function` of `arguments`.
-fn numeric_value(function: BuiltinFunction, arguments: &[Rational]) -> Option<Rational> {
+fn evaluate_numeric(function: BuiltinFunction, arguments: &[Rational]) -> Option<Rational> {
     Some(match (function, arguments) {
-        (BuiltinFunction::Max, [a, b]) => larger(a, b).clone(),
-        (BuiltinFunction::Min, [a, b]) => smaller(a, b).clone(),
-        (BuiltinFunction::Abs, [x]) => absolute(x),
-        (BuiltinFunction::Sign, [x]) => sign(x),
+        (BuiltinFunction::Max, [a, b]) => pick_larger(a, b).clone(),
+        (BuiltinFunction::Min, [a, b]) => pick_smaller(a, b).clone(),
+        (BuiltinFunction::Abs, [x]) => take_absolute(x),
+        (BuiltinFunction::Sign, [x]) => take_sign(x),
         (BuiltinFunction::Clamp, [x, low, high]) => clamp(x, low, high),
-        (BuiltinFunction::ClampSymmetric, [x, bound]) => clamp(x, &negated(bound.clone()), bound),
-        (BuiltinFunction::Relu, [x]) => larger(x, &zero()).clone(),
-        (BuiltinFunction::LeakyRelu, [x, slope]) => {
-            if *x > zero() {
+        (BuiltinFunction::ClampSymmetric, [x, bound]) => clamp(x, &-bound.clone(), bound),
+        (BuiltinFunction::Relu, [x]) => {
+            if x.numerator().is_positive() {
                 x.clone()
             } else {
-                arithmetic(BinaryOperation::Multiply, x, slope)?
+                build_zero()
+            }
+        }
+        (BuiltinFunction::LeakyRelu, [x, slope]) => {
+            if x.numerator().is_positive() {
+                x.clone()
+            } else {
+                compute_arithmetic(BinaryOperation::Multiply, x, slope)?
             }
         }
         _ => return None,
@@ -122,5 +128,5 @@ fn numeric_value(function: BuiltinFunction, arguments: &[Rational]) -> Option<Ra
 
 /// Return `min(max(x, low), high)`.
 fn clamp(x: &Rational, low: &Rational, high: &Rational) -> Rational {
-    smaller(larger(x, low), high).clone()
+    pick_smaller(pick_larger(x, low), high).clone()
 }

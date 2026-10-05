@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use fhy_core::expression::builtins::{BuiltinConstant, BuiltinFunction};
 use fhy_core::expression::registry::{FunctionRegistry, NativeConstant};
 use fhy_core::expression::{
-    Callee, Expression, ExpressionKind, FunctionName, FunctionSort, LiteralValue,
+    BigInt, Callee, Expression, ExpressionKind, FunctionName, FunctionSort, LiteralValue,
 };
 use fhy_core::solver::strategy::{
     Comparisons, ComposedBuiltins, ExactArithmetic, ExactBuiltins, LogicalOperators,
@@ -184,6 +184,204 @@ fn exact_arithmetic_alone_folds_a_nested_tree_but_not_a_comparison() {
     assert_eq!(run(&simplifier, &(n(2) + n(3)).less(n(9))), None);
 }
 
+fn power_of_two(exponent: u32) -> BigInt {
+    BigInt::from(1) << exponent
+}
+
+fn big(value: BigInt) -> Expression {
+    Expression::literal(value)
+}
+
+#[rstest]
+#[case::floor_division_by_minus_one(n(i64::MIN).floor_divide(n(-1)), Some(big(power_of_two(63))))]
+#[case::modulo_by_minus_one(n(i64::MIN).floor_mod(n(-1)), Some(n(0)))]
+#[case::negating_the_least_integer(-n(i64::MIN), Some(big(power_of_two(63))))]
+#[case::the_least_integer_squared(n(i64::MIN) * n(i64::MIN), Some(big(power_of_two(126))))]
+#[case::the_greatest_integer_summed(n(i64::MAX) + n(i64::MAX), Some(big(power_of_two(64) - 2)))]
+#[case::the_least_integer_subtracted(n(i64::MIN) - n(1), Some(big(-power_of_two(63) - 1)))]
+fn exact_arithmetic_folds_the_extremes_of_the_small_integers(
+    #[case] node: Expression,
+    #[case] expected: Option<Expression>,
+) {
+    assert_eq!(rewrite(&ExactArithmetic::new(), &node), expected);
+}
+
+#[test]
+fn exact_arithmetic_folds_a_product_past_the_small_integers() {
+    // (2^63 - 1)^2 + 1 = 2^126 - 2^64 + 2.
+    let expression = n(i64::MAX) * n(i64::MAX) + n(1);
+
+    assert_eq!(
+        run(&alone(ExactArithmetic::new()), &expression),
+        Some(big(power_of_two(126) - power_of_two(64) + 2))
+    );
+}
+
+#[test]
+fn exact_arithmetic_folds_a_product_up_to_a_million_bits_and_declines_past_it() {
+    // 2^(2^19) has 2^19 + 1 bits, and 2^(2^19 - 1) has 2^19.
+    let fits = big(power_of_two(1 << 19)) * big(power_of_two((1 << 19) - 1));
+    let past = big(power_of_two(1 << 19)) * big(power_of_two(1 << 19));
+
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &fits),
+        Some(big(power_of_two((1 << 20) - 1)))
+    );
+    assert_eq!(rewrite(&ExactArithmetic::new(), &past), None);
+}
+
+#[test]
+fn exact_arithmetic_declines_a_product_of_two_huge_literals_and_folds_a_zero_one() {
+    let huge = || big(power_of_two(4_000_000));
+
+    assert_eq!(rewrite(&ExactArithmetic::new(), &(huge() * huge())), None);
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &(huge() * n(0))),
+        Some(n(0))
+    );
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &(n(0) * huge())),
+        Some(n(0))
+    );
+}
+
+#[test]
+fn exact_arithmetic_declines_a_huge_literal_with_a_fraction_unless_the_result_is_an_integer() {
+    let huge = || big(power_of_two(5000));
+
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &(huge() + quotient(1, 3))),
+        None
+    );
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &(quotient(1, 3) - huge())),
+        None
+    );
+    // A quotient that is an integer folds, and one that is not declines.
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &(huge() / quotient(1, 3))),
+        Some(big(BigInt::from(3) * power_of_two(5000)))
+    );
+    assert_eq!(
+        rewrite(&ExactArithmetic::new(), &(huge() / quotient(3, 7))),
+        None
+    );
+}
+
+#[test]
+fn exact_arithmetic_folds_a_floor_division_and_a_modulo_of_a_big_integer() {
+    // 2^5000 = 3k + 1, as 2^2 = 4 = 3 + 1 and the exponent is even.
+    let k: BigInt = (power_of_two(5000) - 1) / 3;
+    let two_to_5000 = || big(power_of_two(5000));
+    let minus_two_to_5000 = || big(-power_of_two(5000));
+    let strategy = ExactArithmetic::new();
+
+    assert_eq!(
+        rewrite(&strategy, &two_to_5000().floor_divide(n(3))),
+        Some(big(k.clone()))
+    );
+    assert_eq!(
+        rewrite(&strategy, &two_to_5000().floor_mod(n(3))),
+        Some(n(1))
+    );
+    // Floor division rounds toward negative infinity, and the modulo takes
+    // the divisor's sign.
+    assert_eq!(
+        rewrite(&strategy, &minus_two_to_5000().floor_divide(n(3))),
+        Some(big(-k.clone() - 1))
+    );
+    assert_eq!(
+        rewrite(&strategy, &minus_two_to_5000().floor_mod(n(3))),
+        Some(n(2))
+    );
+    assert_eq!(
+        rewrite(&strategy, &two_to_5000().floor_divide(n(-3))),
+        Some(big(-k.clone() - 1))
+    );
+    assert_eq!(
+        rewrite(&strategy, &two_to_5000().floor_mod(n(-3))),
+        Some(n(-2))
+    );
+    assert_eq!(
+        rewrite(&strategy, &minus_two_to_5000().floor_divide(n(-3))),
+        Some(big(k))
+    );
+    assert_eq!(
+        rewrite(&strategy, &minus_two_to_5000().floor_mod(n(-3))),
+        Some(n(-1))
+    );
+    // An exact quotient has no remainder.
+    assert_eq!(
+        rewrite(
+            &strategy,
+            &two_to_5000().floor_divide(big(power_of_two(4000)))
+        ),
+        Some(big(power_of_two(1000)))
+    );
+    assert_eq!(
+        rewrite(&strategy, &two_to_5000().floor_mod(big(power_of_two(4000)))),
+        Some(n(0))
+    );
+}
+
+#[test]
+fn exact_arithmetic_takes_a_root_up_to_an_index_of_4096_and_declines_past_it() {
+    let strategy = ExactArithmetic::new();
+
+    // (2^4096)^(1/4096) = 2, and (2^4097)^(1/4097) would be, past the bound.
+    assert_eq!(
+        rewrite(&strategy, &big(power_of_two(4096)).power(quotient(1, 4096))),
+        Some(n(2))
+    );
+    assert_eq!(
+        rewrite(&strategy, &big(power_of_two(4097)).power(quotient(1, 4097))),
+        None
+    );
+}
+
+#[test]
+fn exact_arithmetic_declines_a_big_floor_division_by_zero() {
+    let strategy = ExactArithmetic::new();
+
+    assert_eq!(
+        rewrite(&strategy, &big(power_of_two(5000)).floor_divide(n(0))),
+        None
+    );
+    assert_eq!(
+        rewrite(&strategy, &big(power_of_two(5000)).floor_mod(n(0))),
+        None
+    );
+    assert_eq!(
+        rewrite(&strategy, &n(5).floor_divide(big(BigInt::from(0)))),
+        None
+    );
+}
+
+#[test]
+fn exact_arithmetic_declines_a_floor_division_only_when_divisor_and_quotient_are_both_large() {
+    let strategy = ExactArithmetic::new();
+    let dividend = |exponent| big(power_of_two(exponent));
+
+    // A divisor of 4001 bits, or a quotient of 4000, folds.
+    assert_eq!(
+        rewrite(&strategy, &dividend(10_000).floor_divide(dividend(4000))),
+        Some(big(power_of_two(6000)))
+    );
+    assert_eq!(
+        rewrite(&strategy, &dividend(9000).floor_divide(dividend(5000))),
+        Some(big(power_of_two(4000)))
+    );
+    // Both past 4096 bits decline, for the modulo too.
+    assert_eq!(
+        rewrite(&strategy, &dividend(10_000).floor_divide(dividend(5000))),
+        None
+    );
+    assert_eq!(
+        rewrite(&strategy, &dividend(10_000).floor_mod(dividend(5000))),
+        None
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Comparisons
 // ---------------------------------------------------------------------------
@@ -291,7 +489,21 @@ fn piecewise_decision_chooses_among_decided_branches(
 #[case::exp_of_zero(call(BuiltinFunction::Exp, [n(0)]), Some(n(1)))]
 #[case::exp_of_one(call(BuiltinFunction::Exp, [n(1)]), None)]
 #[case::sin_of_zero(call(BuiltinFunction::Sin, [n(0)]), Some(n(0)))]
+#[case::cos_of_zero(call(BuiltinFunction::Cos, [n(0)]), Some(n(1)))]
+#[case::tan_of_zero(call(BuiltinFunction::Tan, [n(0)]), Some(n(0)))]
+#[case::arcsin_of_zero(call(BuiltinFunction::Arcsin, [n(0)]), Some(n(0)))]
+#[case::arctan_of_zero(call(BuiltinFunction::Arctan, [n(0)]), Some(n(0)))]
+#[case::sinh_of_zero(call(BuiltinFunction::Sinh, [n(0)]), Some(n(0)))]
+#[case::cosh_of_zero(call(BuiltinFunction::Cosh, [n(0)]), Some(n(1)))]
+#[case::tanh_of_zero(call(BuiltinFunction::Tanh, [n(0)]), Some(n(0)))]
+#[case::erf_of_zero(call(BuiltinFunction::Erf, [n(0)]), Some(n(0)))]
+#[case::sin_of_one(call(BuiltinFunction::Sin, [n(1)]), None)]
+#[case::log_of_one(call(BuiltinFunction::Log, [n(1)]), Some(n(0)))]
+#[case::log_of_two(call(BuiltinFunction::Log, [n(2)]), None)]
 #[case::acos_of_one(call(BuiltinFunction::Arccos, [n(1)]), Some(n(0)))]
+#[case::acos_of_zero(call(BuiltinFunction::Arccos, [n(0)]), None)]
+#[case::sqrt_of_zero(call(BuiltinFunction::Sqrt, [n(0)]), Some(n(0)))]
+#[case::sqrt_of_a_fraction(call(BuiltinFunction::Sqrt, [quotient(1, 4)]), Some(decimal("0.5")))]
 #[case::sigmoid(call(BuiltinFunction::Sigmoid, [n(0)]), None)]
 #[case::composed_builtin(call(BuiltinFunction::Max, [n(2), n(5)]), None)]
 #[case::boolean_builtin(call(BuiltinFunction::Xor, [truth(true), truth(false)]), None)]
@@ -299,6 +511,19 @@ fn piecewise_decision_chooses_among_decided_branches(
 #[case::undecided_argument(call(BuiltinFunction::Floor, [n(1) + n(1)]), None)]
 #[case::user_function(Expression::call("f".parse::<Callee>().expect("a name"), [n(1)]), None)]
 fn exact_builtins_rewrite_a_call_with_an_exact_value(
+    #[case] node: Expression,
+    #[case] expected: Option<Expression>,
+) {
+    assert_eq!(rewrite(&ExactBuiltins::new(), &node), expected);
+}
+
+#[rstest]
+#[case::log2_inside_the_bound(call(BuiltinFunction::Log2, [big(power_of_two(4095))]), Some(n(4095)))]
+#[case::log2_past_the_bound(call(BuiltinFunction::Log2, [big(power_of_two(4096))]), None)]
+#[case::log2_far_past_the_bound(call(BuiltinFunction::Log2, [big(power_of_two(5000))]), None)]
+#[case::log10_inside_the_bound(call(BuiltinFunction::Log10, [big(BigInt::from(10).pow(1200))]), Some(n(1200)))]
+#[case::log10_past_the_bound(call(BuiltinFunction::Log10, [big(BigInt::from(10).pow(1300))]), None)]
+fn exact_builtins_decline_an_argument_past_their_size_bounds(
     #[case] node: Expression,
     #[case] expected: Option<Expression>,
 ) {
@@ -313,16 +538,21 @@ fn exact_builtins_rewrite_a_call_with_an_exact_value(
 #[case::max(call(BuiltinFunction::Max, [n(2), n(5)]), Some(n(5)))]
 #[case::min(call(BuiltinFunction::Min, [n(2), n(5)]), Some(n(2)))]
 #[case::abs(call(BuiltinFunction::Abs, [n(-5)]), Some(n(5)))]
+#[case::abs_of_a_positive(call(BuiltinFunction::Abs, [n(5)]), Some(n(5)))]
+#[case::abs_of_zero(call(BuiltinFunction::Abs, [n(0)]), Some(n(0)))]
 #[case::sign(call(BuiltinFunction::Sign, [n(-5)]), Some(n(-1)))]
+#[case::sign_of_a_positive(call(BuiltinFunction::Sign, [n(5)]), Some(n(1)))]
+#[case::sign_of_zero(call(BuiltinFunction::Sign, [n(0)]), Some(n(0)))]
 #[case::clamp(call(BuiltinFunction::Clamp, [n(15), n(0), n(10)]), Some(n(10)))]
+#[case::clamp_inside(call(BuiltinFunction::Clamp, [n(5), n(0), n(10)]), Some(n(5)))]
+#[case::clamp_below(call(BuiltinFunction::Clamp, [n(-5), n(0), n(10)]), Some(n(0)))]
 #[case::clamp_symmetric(call(BuiltinFunction::ClampSymmetric, [n(-15), n(10)]), Some(n(-10)))]
 #[case::relu(call(BuiltinFunction::Relu, [n(-3)]), Some(n(0)))]
+#[case::relu_of_a_positive(call(BuiltinFunction::Relu, [n(3)]), Some(n(3)))]
+#[case::relu_of_zero(call(BuiltinFunction::Relu, [n(0)]), Some(n(0)))]
 #[case::leaky_relu(call(BuiltinFunction::LeakyRelu, [n(-4), quotient(1, 2)]), Some(n(-2)))]
-#[case::xor(call(BuiltinFunction::Xor, [truth(true), truth(false)]), Some(truth(true)))]
-#[case::nand(call(BuiltinFunction::Nand, [truth(true), truth(true)]), Some(truth(false)))]
-#[case::nor(call(BuiltinFunction::Nor, [truth(false), truth(false)]), Some(truth(true)))]
-#[case::implies(call(BuiltinFunction::Implies, [truth(true), truth(false)]), Some(truth(false)))]
-#[case::iff(call(BuiltinFunction::Iff, [truth(false), truth(false)]), Some(truth(true)))]
+#[case::leaky_relu_of_a_positive(call(BuiltinFunction::LeakyRelu, [n(3), quotient(1, 2)]), Some(n(3)))]
+#[case::leaky_relu_of_zero(call(BuiltinFunction::LeakyRelu, [n(0), quotient(1, 2)]), Some(n(0)))]
 #[case::max_of_a_free_argument(call(BuiltinFunction::Max, [build_identifier("x").1, n(1)]), None)]
 #[case::max_of_an_undecided_argument(call(BuiltinFunction::Max, [n(1) + n(1), n(1)]), None)]
 #[case::xor_of_numbers(call(BuiltinFunction::Xor, [n(1), n(2)]), None)]
@@ -334,6 +564,32 @@ fn composed_builtins_rewrite_a_call_by_its_definition(
     #[case] expected: Option<Expression>,
 ) {
     assert_eq!(rewrite(&ComposedBuiltins::new(), &node), expected);
+}
+
+/// The truth table of each Boolean built-in, over `(false, false)`,
+/// `(false, true)`, `(true, false)` and `(true, true)`.
+#[rstest]
+#[case::xor(BuiltinFunction::Xor, [false, true, true, false])]
+#[case::nand(BuiltinFunction::Nand, [true, true, true, false])]
+#[case::nor(BuiltinFunction::Nor, [true, false, false, false])]
+#[case::implies(BuiltinFunction::Implies, [true, true, false, true])]
+#[case::iff(BuiltinFunction::Iff, [true, false, false, true])]
+fn composed_builtins_follow_the_truth_table_of_a_boolean_function(
+    #[case] function: BuiltinFunction,
+    #[case] table: [bool; 4],
+) {
+    let inputs = [(false, false), (false, true), (true, false), (true, true)];
+
+    for ((left, right), expected) in inputs.into_iter().zip(table) {
+        assert_eq!(
+            rewrite(
+                &ComposedBuiltins::new(),
+                &call(function, [truth(left), truth(right)])
+            ),
+            Some(truth(expected)),
+            "{function:?}({left}, {right})",
+        );
+    }
 }
 
 #[test]
@@ -561,6 +817,20 @@ fn a_run_that_reaches_its_bound_keeps_what_it_decided() {
 }
 
 #[test]
+fn a_run_that_stops_at_its_bound_keeps_the_rewrites_it_made() {
+    // The one rewrite the bound allows folds the left sum; the right sum is
+    // left as it is, so the result is not decided.
+    let expression = (n(1) + n(2)) + (n(3) + n(4));
+    let bounded = GroundSimplifier::new().with_max_rewrites(1);
+
+    assert_eq!(run(&bounded, &expression), None);
+    assert_eq!(
+        run(&bounded.with_partial_rewrites(), &expression),
+        Some(n(3) + (n(3) + n(4)))
+    );
+}
+
+#[test]
 fn partial_rewrites_are_kept_only_when_asked_for() {
     let (_, x) = build_identifier("x");
     let expression = x.clone() + (n(1) + n(2));
@@ -585,18 +855,8 @@ fn partial_rewrites_still_decline_what_nothing_rewrites() {
 
 #[test]
 fn a_registered_constant_is_folded_in_place_with_the_context_registry() {
-    let mut registry = FunctionRegistry::new();
-    let answer = registry
-        .register_constant(
-            NativeConstant::new(
-                FunctionName::new("answer").expect("a name"),
-                FunctionSort::Int,
-                42,
-            )
-            .expect("a constant"),
-        )
-        .expect("registered");
-    let expression = (Expression::from(answer) + n(1)).greater(n(42));
+    let (registry, answer) = registry_with("answer", 42, FunctionSort::Int);
+    let expression = (answer + n(1)).greater(n(42));
 
     let result = GroundSimplifier::new()
         .try_simplify(&expression, &SimplifyContext::from_registry(&registry));

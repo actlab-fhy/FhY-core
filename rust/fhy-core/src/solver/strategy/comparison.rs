@@ -7,7 +7,7 @@ use crate::expression::{BinaryOperation, Expression, ExpressionKind, LiteralValu
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
-use super::exact::{boolean, number};
+use super::exact::{read_boolean, read_number};
 
 /// Rewrites a comparison of exact numbers to the Boolean literal it
 /// decides, and an `==` or `!=` of two Booleans likewise.
@@ -34,6 +34,10 @@ use super::exact::{boolean, number};
 pub struct Comparisons;
 
 impl Comparisons {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "comparisons";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -43,7 +47,7 @@ impl Comparisons {
 
 impl SimplificationStrategy for Comparisons {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("comparisons")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
@@ -51,7 +55,9 @@ impl SimplificationStrategy for Comparisons {
             return None;
         };
         let operation = binary.operation();
-        if let (Some(left), Some(right)) = (boolean(binary.left()), boolean(binary.right())) {
+        if let (Some(left), Some(right)) =
+            (read_boolean(binary.left()), read_boolean(binary.right()))
+        {
             let is_equal = match operation {
                 BinaryOperation::Equal => left == right,
                 BinaryOperation::NotEqual => left != right,
@@ -65,7 +71,7 @@ impl SimplificationStrategy for Comparisons {
                 ExpressionKind::Literal(LiteralValue::Int(left)),
                 ExpressionKind::Literal(LiteralValue::Int(right)),
             ) => left.cmp(right),
-            _ => number(binary.left())?.cmp(&number(binary.right())?),
+            _ => read_number(binary.left())?.cmp(&read_number(binary.right())?),
         };
         let holds = match operation {
             BinaryOperation::Equal => order == Ordering::Equal,

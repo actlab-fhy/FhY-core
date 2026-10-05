@@ -42,12 +42,15 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 /// expression unchanged, as the best-effort contract of [`Simplifier`]
 /// allows, and never approximates. It declines an expression with a free
 /// identifier, the identifier of a built-in constant, a float, a call of a
-/// user function, an operation without an exact rational result, a value
-/// that is not of the sort an operation takes, and a power of more than a
-/// million bits, a fraction with a numerator or denominator of more than
-/// 4096 bits, an integer result of more than a million bits, and a call of a composed built-in (`max`, `abs`, `xor`, ...),
-/// which `SymPy` refuses until it is inlined. [`strategy`](super::strategy)
-/// lists what each default strategy rewrites, and the opt-in
+/// user function, an operation without an exact rational result, and a value
+/// that is not of the sort an operation takes.
+///
+/// It also declines what is too large to fold: a power of more than a
+/// million bits, a fraction with a numerator or denominator of more than 4096
+/// bits, and an integer result of more than a million bits. And it declines a
+/// call of a composed built-in (`max`, `abs`, `xor`, ...), which `SymPy`
+/// refuses until it is inlined. [`strategy`](super::strategy) lists what each
+/// default strategy rewrites, and the opt-in
 /// [`ComposedBuiltins`](super::strategy::ComposedBuiltins) that folds the
 /// composed calls, an extension that goes beyond `SymPy`'s answer.
 ///
@@ -59,11 +62,14 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 /// rewrites it, a fixed point. A node the expression shares is simplified
 /// once.
 ///
-/// The run is bounded: it makes at most
+/// The run is bounded in two ways. It makes at most
 /// [`max_rewrites`](Self::max_rewrites) rewrites (100 000 by default), and
-/// when it reaches the bound it stops where it is, cleanly, so strategies
-/// that undo each other's rewrites end the run instead of looping. A tree
-/// nested more than 256 deep is declined.
+/// when it reaches the bound it stops rewriting and keeps what it has. A tree
+/// nested more than 256 deep, counting the nodes a rewrite builds, is
+/// declined, so strategies that undo each other's rewrites of a node with
+/// children end the run, declined, after about 256 rewrites, before the
+/// rewrite bound; strategies that undo each other's rewrites of a leaf are
+/// stopped by the rewrite bound.
 ///
 /// # What it returns
 ///
@@ -89,10 +95,12 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 ///
 /// A run also honors the [`timeout`](super::SimplifyLimits::timeout) of the
 /// context's [`SimplifyLimits`](super::SimplifyLimits). The driver reads the
-/// clock at each node it visits and before each rewrite, and only when the
+/// clock at each node it visits and after each rewrite, and only when the
 /// run has a timeout, so an unbounded run never reads it. When the time is
-/// up the run **declines**: it returns the expression unchanged, as it does
-/// at the rewrite bound, and never a partial result. A strategy's rewrite is
+/// up the run **declines whole**: it returns the expression unchanged, and
+/// never a partial result. (The rewrite bound does not decline: a run that
+/// reaches it stops rewriting, and returns what it has if that is decided or
+/// if partial rewrites are kept.) A strategy's rewrite is
 /// never interrupted, so one operation runs to its end; what bounds that is
 /// the size guards of the default strategies (a power of at most 2^20 bits,
 /// a logarithm of at most 4096 bits, a root of index at most 4096), each of
@@ -101,7 +109,7 @@ const DEFAULT_MAX_REWRITES: usize = 100_000;
 /// strategy's own rewrite. A timeout of zero declines every expression.
 ///
 /// A [`GroundWithFallback`] gives its fallback the budget the ground part
-/// left over.
+/// left over, and does not ask it when none is left.
 ///
 /// # Examples
 ///
@@ -188,6 +196,11 @@ impl GroundSimplifier {
     }
 
     /// Return this simplifier without the strategies named `name`.
+    ///
+    /// A name that no held strategy has removes nothing, so
+    /// [`holds`](Self::holds) tells a misspelled name from a removal that
+    /// took effect. Each strategy the crate ships exposes its name as the
+    /// constant `Type::NAME` (`Comparisons::NAME`, for one).
     #[must_use]
     pub fn without(mut self, name: &str) -> Self {
         self.strategies.retain(|strategy| strategy.name() != name);
@@ -207,11 +220,20 @@ impl GroundSimplifier {
     /// Only for strategies whose rewrites match `SymPy`'s form of an
     /// expression that is not a literal; the default strategies do not,
     /// so with them `x + (1 + 2)` would come back as `x + 3`, where `SymPy`
-    /// answers `3 + x`.
+    /// answers `3 + x`. Enabling it therefore voids the guarantee that an
+    /// answer equals `SymPy`'s.
     #[must_use]
     pub const fn with_partial_rewrites(mut self) -> Self {
         self.keeps_partial_rewrites = true;
         self
+    }
+
+    /// Return whether a strategy named `name` is held.
+    #[must_use]
+    pub fn holds(&self, name: &str) -> bool {
+        self.strategies
+            .iter()
+            .any(|strategy| strategy.name() == name)
     }
 
     /// Return the names of the strategies, in the order they are tried.
@@ -340,11 +362,15 @@ impl Deadline {
 /// One run of the driver: the context, the simplified form of each node it
 /// has met by the node's identity, so a node the expression shares is
 /// simplified once, and the rewrites made so far.
+///
+/// The memo holds every node it keys by, next to its result: a node a
+/// strategy built and dropped would otherwise free its address for a later
+/// node, which the memo would then answer for.
 struct Run<'s, 'c, 'a> {
     simplifier: &'s GroundSimplifier,
     context: &'c SimplifyContext<'a>,
     deadline: Deadline,
-    memo: HashMap<NodeIdentity, Expression, BuildIdentityHasher>,
+    memo: HashMap<NodeIdentity, (Expression, Expression), BuildIdentityHasher>,
     rewrites: usize,
 }
 
@@ -358,7 +384,7 @@ impl Run<'_, '_, '_> {
         // Only a node held in several places is worth remembering.
         let is_shared = has_children && node.is_shared();
         if is_shared {
-            if let Some(simplified) = self.memo.get(&node.identity()) {
+            if let Some((_, simplified)) = self.memo.get(&node.identity()) {
                 return Some(simplified.clone());
             }
         }
@@ -383,7 +409,8 @@ impl Run<'_, '_, '_> {
             }
         }
         if is_shared {
-            self.memo.insert(node.identity(), current.clone());
+            self.memo
+                .insert(node.identity(), (node.clone(), current.clone()));
         }
         Some(current)
     }
@@ -413,7 +440,7 @@ impl Run<'_, '_, '_> {
         let rewritten = self.simplifier.strategies.iter().find_map(|strategy| {
             strategy
                 .rewrite(node, self.context)
-                .filter(|rewritten| rewritten != node)
+                .filter(|rewritten| !Expression::ptr_eq(rewritten, node) && rewritten != node)
         })?;
         self.rewrites += 1;
         Some(rewritten)
@@ -512,9 +539,7 @@ impl GroundWithFallback {
     pub const fn fallback(&self) -> &Arc<dyn Simplifier> {
         &self.fallback
     }
-}
 
-impl GroundWithFallback {
     /// Return `context` with its timeout reduced by the time since
     /// `started`, which the fallback runs under, or `None` when the context
     /// has no timeout to reduce.
@@ -549,9 +574,11 @@ impl Simplifier for GroundWithFallback {
     /// The context's [`timeout`](super::SimplifyLimits::timeout) bounds the
     /// chain as a whole: the ground simplifier runs under it, and when it
     /// declines, whether for the expression or because time ran out, the
-    /// fallback is asked under what is left of it (zero when the ground part
-    /// used it all), not under a fresh timeout. A fallback that cannot
-    /// cancel its work, such as the `SymPy` backend, still runs to its end.
+    /// fallback is asked under what is left of it, not under a fresh timeout.
+    /// When the ground part used it all, the fallback is not asked, and the
+    /// chain declines as the ground part does: it returns `expression`
+    /// unchanged. A fallback that cannot cancel its work, such as the `SymPy`
+    /// backend, still runs to its end.
     ///
     /// # Errors
     ///
@@ -563,13 +590,20 @@ impl Simplifier for GroundWithFallback {
         context: &SimplifyContext<'_>,
     ) -> Result<Expression, BoxError> {
         let started = Instant::now();
-        let answer = self.ground.try_simplify(expression, context);
+        let rewritten = match self.ground.try_simplify(expression, context) {
+            Some(rewritten) if is_decided(&rewritten) => return Ok(rewritten),
+            undecided => undecided,
+        };
         let remaining = Self::remaining_context(context, started);
-        let context = remaining.as_ref().unwrap_or(context);
-        match answer {
-            Some(rewritten) if is_decided(&rewritten) => Ok(rewritten),
-            Some(rewritten) => self.fallback.simplify(&rewritten, context),
-            None => self.fallback.simplify(expression, context),
+        let is_out_of_time = remaining
+            .as_ref()
+            .and_then(|remaining| remaining.limits().timeout())
+            .is_some_and(|timeout| timeout.is_zero());
+        if is_out_of_time {
+            return Ok(expression.clone());
         }
+        let context = remaining.as_ref().unwrap_or(context);
+        self.fallback
+            .simplify(rewritten.as_ref().unwrap_or(expression), context)
     }
 }

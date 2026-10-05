@@ -6,7 +6,7 @@ use crate::expression::{Expression, ExpressionKind, LiteralValue};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
-use super::exact::{number, number_expression};
+use super::exact::{build_number_expression, read_number};
 
 /// Rewrites a decimal literal to the form `SymPy` lifts its value to: an
 /// integer literal for an integer, and the quotient of two integers for a
@@ -32,6 +32,10 @@ use super::exact::{number, number_expression};
 pub struct NormalizeLiterals;
 
 impl NormalizeLiterals {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "normalize_literals";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -41,13 +45,13 @@ impl NormalizeLiterals {
 
 impl SimplificationStrategy for NormalizeLiterals {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("normalize_literals")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
         let ExpressionKind::Literal(LiteralValue::Decimal(_)) = node.kind() else {
             return None;
         };
-        Some(number_expression(number(node)?)).filter(|normalized| normalized != node)
+        Some(build_number_expression(read_number(node)?)).filter(|normalized| normalized != node)
     }
 }

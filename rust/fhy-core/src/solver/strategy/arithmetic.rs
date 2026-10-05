@@ -6,9 +6,7 @@ use crate::expression::{BinaryOperation, Expression, ExpressionKind, UnaryOperat
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
-use super::exact::{
-    arithmetic, negated, number, number_expression, small_integer, small_integer_arithmetic,
-};
+use super::exact::{build_number_expression, compute_arithmetic, fold_small_integers, read_number};
 
 /// Rewrites `+`, `-`, `*`, `/`, `//` (floor division), `%` (the floor
 /// modulo) and `**` of exact numbers, and the unary `-` and `+`, to the
@@ -17,9 +15,10 @@ use super::exact::{
 /// The numbers are integers, decimals and quotients of integers, computed
 /// over [`BigInt`](crate::expression::BigInt)s. It declines a float, a
 /// division or a modulo by zero, a zero raised to a negative power, a power
-/// whose result is irrational or complex, a power or other integer result
-/// of more than a million bits, and a fraction with a numerator or
-/// denominator of more than 4096 bits.
+/// whose result is irrational or complex, an integer result of more than a
+/// million bits, a fraction with a numerator or denominator of more than
+/// 4096 bits, and a floor division or modulo of integers whose divisor and
+/// quotient both have more than 4096 bits.
 ///
 /// # Examples
 ///
@@ -45,6 +44,10 @@ use super::exact::{
 pub struct ExactArithmetic;
 
 impl ExactArithmetic {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "exact_arithmetic";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -54,37 +57,34 @@ impl ExactArithmetic {
 
 impl SimplificationStrategy for ExactArithmetic {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("exact_arithmetic")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, _context: &SimplifyContext<'_>) -> Option<Expression> {
         let value = match node.kind() {
             ExpressionKind::Unary(unary) => match unary.operation() {
-                UnaryOperation::Negate => negated(number(unary.operand())?),
-                UnaryOperation::Positive => number(unary.operand())?,
+                UnaryOperation::Negate => -read_number(unary.operand())?,
+                UnaryOperation::Positive => read_number(unary.operand())?,
                 UnaryOperation::LogicalNot => return None,
             },
             ExpressionKind::Binary(binary) => {
                 if !is_arithmetic(binary.operation()) {
                     return None;
                 }
-                if let (Some(left), Some(right)) =
-                    (small_integer(binary.left()), small_integer(binary.right()))
+                if let Some(folded) =
+                    fold_small_integers(binary.operation(), binary.left(), binary.right())
                 {
-                    if let Some(folded) = small_integer_arithmetic(binary.operation(), left, right)
-                    {
-                        return Some(folded);
-                    }
+                    return Some(folded);
                 }
-                arithmetic(
+                compute_arithmetic(
                     binary.operation(),
-                    &number(binary.left())?,
-                    &number(binary.right())?,
+                    &read_number(binary.left())?,
+                    &read_number(binary.right())?,
                 )?
             }
             _ => return None,
         };
-        Some(number_expression(value)).filter(|rewritten| rewritten != node)
+        Some(build_number_expression(value)).filter(|rewritten| rewritten != node)
     }
 }
 

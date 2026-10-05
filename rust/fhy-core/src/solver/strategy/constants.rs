@@ -39,6 +39,10 @@ use super::SimplificationStrategy;
 pub struct RegisteredConstants;
 
 impl RegisteredConstants {
+    /// The strategy's name, which [`name`](SimplificationStrategy::name)
+    /// returns.
+    pub const NAME: &str = "registered_constants";
+
     /// Return the strategy.
     #[must_use]
     pub const fn new() -> Self {
@@ -48,7 +52,7 @@ impl RegisteredConstants {
 
 impl SimplificationStrategy for RegisteredConstants {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("registered_constants")
+        Cow::Borrowed(Self::NAME)
     }
 
     fn rewrite(&self, node: &Expression, context: &SimplifyContext<'_>) -> Option<Expression> {
