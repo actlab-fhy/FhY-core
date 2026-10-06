@@ -183,6 +183,7 @@ pub(super) fn lift_binding(
             Value::Decimal(value) => LiteralValue::Decimal(value.clone()),
             Value::Str(text) => LiteralValue::parse_text(text)
                 .map_err(|error| refuse(UnusableBindingReason::UnparsableText(error)))?,
+            Value::Identifier(_) => todo!(),
             Value::Tuple(_) | Value::FrozenSet(_) | Value::Opaque(_) => {
                 return Err(refuse(UnusableBindingReason::NotALiteral));
             }

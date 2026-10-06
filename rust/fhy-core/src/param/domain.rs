@@ -403,6 +403,7 @@ fn read_leaf_values(
             Value::Bool(_) | Value::Int(_) | Value::Str(_) => true,
             Value::Float(_) => allows_float,
             Value::Opaque(opaque) => opaque.get().is_member_shaped(),
+            Value::Identifier(_) => todo!(),
             Value::Decimal(_) | Value::Tuple(_) | Value::FrozenSet(_) => false,
         };
         if !is_leaf {

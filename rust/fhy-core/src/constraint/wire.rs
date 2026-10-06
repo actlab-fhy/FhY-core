@@ -92,6 +92,7 @@ enum ValueRepr {
     Tuple(Vec<Self>),
     FrozenSet(Vec<Self>),
     Opaque(Foreign),
+    Identifier(Identifier),
 }
 
 /// The names of [`ValueRepr`]'s variants, in declaration order.
@@ -104,6 +105,7 @@ const VALUE_VARIANTS: &[&str] = &[
     "tuple",
     "frozen_set",
     "opaque",
+    "identifier",
 ];
 
 /// The variant tags of [`ValueRepr`].
@@ -118,6 +120,7 @@ enum ValueTag {
     Tuple,
     FrozenSet,
     Opaque,
+    Identifier,
 }
 
 /// An integer's decimal digits, decoded as [`integer_text`] reads them.
@@ -180,6 +183,7 @@ impl<'de> de::Visitor<'de> for ValueSeed {
             ValueTag::Tuple => ValueRepr::Tuple(variant.newtype_variant_seed(elements)?),
             ValueTag::FrozenSet => ValueRepr::FrozenSet(variant.newtype_variant_seed(elements)?),
             ValueTag::Opaque => ValueRepr::Opaque(variant.newtype_variant()?),
+            ValueTag::Identifier => todo!(),
         })
     }
 }
@@ -237,6 +241,7 @@ impl ValueRepr {
             Value::Float(value) => Self::Float(*value),
             Value::Decimal(value) => Self::Decimal(value.clone()),
             Value::Str(value) => Self::Str(value.clone()),
+            Value::Identifier(_) => todo!(),
             Value::Tuple(values) => Self::Tuple(
                 values
                     .iter()
@@ -259,6 +264,7 @@ impl ValueRepr {
             MemberKind::Int(value) => Self::Int(value.clone()),
             MemberKind::Float(value) => Self::Float(value),
             MemberKind::Str(value) => Self::Str(value.to_owned()),
+            MemberKind::Identifier(_) => todo!(),
             MemberKind::Tuple(members) => Self::Tuple(
                 members
                     .iter()
@@ -283,6 +289,7 @@ impl ValueRepr {
             Self::Tuple(values) => Value::Tuple(build_values(values, resolver)?),
             Self::FrozenSet(values) => Value::FrozenSet(build_values(values, resolver)?),
             Self::Opaque(foreign) => Value::Opaque(resolver.resolve(&foreign)?),
+            Self::Identifier(_) => todo!(),
         })
     }
 }

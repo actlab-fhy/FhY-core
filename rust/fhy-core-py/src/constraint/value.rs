@@ -31,6 +31,7 @@ use pyo3::types::{PyBool, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple, PyType
 
 use fhy_core::constraint::{Member, MemberKind, OpaqueValue, Value};
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
+use fhy_core::identifier::Identifier;
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 use crate::util::gc::Slot;
@@ -212,6 +213,12 @@ impl OpaqueValue for PyOpaqueValue {
                 .map_err(|error| Box::new(error) as BoxError)
         })
     }
+
+    /// Return the identifier the object is, for a Python `Identifier` that
+    /// a resolver read from the opaque form 0.2.0 writes.
+    fn identifier(&self) -> Option<Identifier> {
+        todo!()
+    }
 }
 
 /// Return the key `cell` holds, or compute it with `compute` and keep it.
@@ -307,6 +314,7 @@ fn value_to_python_at<'py>(
         Value::Float(value) => Ok(PyFloat::new(py, *value).into_any()),
         Value::Decimal(value) => decimal_class(py)?.call1((value.to_string(),)),
         Value::Str(value) => Ok(PyString::new(py, value).into_any()),
+        Value::Identifier(_) => todo!(),
         Value::Tuple(values) => {
             let elements = values
                 .iter()
@@ -403,6 +411,7 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
             | MemberKind::Int(_)
             | MemberKind::Float(_)
             | MemberKind::Str(_) => {}
+            MemberKind::Identifier(_) => todo!(),
         }
     }
     Ok(())
@@ -549,6 +558,7 @@ pub(crate) fn member_to_python<'py>(
         MemberKind::Int(value) => big_int_to_python(py, value),
         MemberKind::Float(value) => Ok(PyFloat::new(py, value).into_any()),
         MemberKind::Str(value) => Ok(PyString::new(py, value).into_any()),
+        MemberKind::Identifier(_) => todo!(),
         MemberKind::Tuple(members) => {
             let elements = members
                 .iter()
