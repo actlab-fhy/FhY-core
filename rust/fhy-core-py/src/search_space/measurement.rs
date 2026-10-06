@@ -9,6 +9,8 @@
 //! `bool` is refused. A measurement holds only the core measurement: its
 //! notes are read into core notes and written as new `Note` objects.
 
+use std::cmp::Ordering;
+
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
@@ -42,7 +44,7 @@ const PUBLIC_MODULE: &str = "fhy_core.search_space.core";
 ///
 /// Raises `TypeError` for an object that is no `str`, and `ValueError` for
 /// another string.
-pub(super) fn read_direction(direction: &Bound<'_, PyAny>) -> PyResult<Direction> {
+fn read_direction(direction: &Bound<'_, PyAny>) -> PyResult<Direction> {
     let text = direction.cast::<PyString>().map_err(|_not_text| {
         PyTypeError::new_err(format!(
             "a direction must be a Direction or its value, got {}.",
@@ -64,7 +66,7 @@ pub(super) fn read_direction(direction: &Bound<'_, PyAny>) -> PyResult<Direction
 /// # Errors
 ///
 /// Raises what importing `fhy_core.search_space` raises.
-pub(super) fn direction_to_python(
+fn direction_to_python(
     py: Python<'_>,
     direction: Direction,
 ) -> PyResult<Bound<'_, PyAny>> {
@@ -107,7 +109,7 @@ impl PyObjective {
     }
 
     /// Return the core objective.
-    pub(crate) const fn core(&self) -> &Objective {
+    const fn core(&self) -> &Objective {
         &self.objective
     }
 }
@@ -117,7 +119,7 @@ impl PyObjective {
 /// # Errors
 ///
 /// Raises what building the object raises.
-pub(super) fn objective_to_python<'py>(
+fn objective_to_python<'py>(
     py: Python<'py>,
     objective: &Objective,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -215,22 +217,26 @@ impl PyObjective {
         let ordering = self
             .objective
             .compare(read_number(left)?, read_number(right)?);
-        Ok(ordering.map(|ordering| ordering as i8))
+        Ok(ordering.map(|ordering| match ordering {
+            Ordering::Greater => 1,
+            Ordering::Equal => 0,
+            Ordering::Less => -1,
+        }))
     }
 
     /// Compare structurally with another objective; another type is
     /// `NotImplemented`.
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
         let py = other.py();
         let Ok(other) = other.cast::<Self>() else {
-            return Ok(py.NotImplemented());
+            return py.NotImplemented();
         };
         let equal = self.objective == other.get().objective;
-        Ok(match op {
+        match op {
             CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
             CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
             _ => py.NotImplemented(),
-        })
+        }
     }
 
     /// Return the objective's hash, consistent with `==`.
@@ -327,7 +333,7 @@ impl PyMeasurement {
     }
 
     /// Return the core measurement.
-    pub(crate) const fn core(&self) -> &Measurement {
+    const fn core(&self) -> &Measurement {
         &self.measurement
     }
 }
@@ -425,9 +431,8 @@ impl PyMeasurement {
     ///
     /// Raises `TypeError` unless the binding seeds the instance.
     #[new]
-    #[pyo3(signature = (*args, **kwargs))]
-    fn new(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
-        let _ = args;
+    #[pyo3(signature = (*_args, **kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
         match take_seed(kwargs)? {
             Some(Seeded::Measurement(measurement)) => Ok(measurement),
             Some(_) => Err(wrong_seed()),
