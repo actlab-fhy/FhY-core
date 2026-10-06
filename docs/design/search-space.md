@@ -519,7 +519,9 @@ lowercase line each, naming identifiers as `name::id`.
   alternatives: such a member never matches, and is allowed.
 - Bounding the nesting depth of a decoded space: serde recurses once per
   choice level, as the space that wrote it did. (Values keep their
-  `MAX_VALUE_DEPTH`.)
+  `MAX_VALUE_DEPTH`.) The binding (SS1.6) must refuse a payload nested
+  deeper than Python's recursion limit before it reaches the core, as
+  `fhy-core-py`'s `provenance.rs` does for provenance.
 
 ### Test plan (SS1.3)
 
@@ -554,7 +556,14 @@ builders, strategies and the test implementors in
   capture (F-SS-003), no `1`/`true`/`1.0` conflation (F-SS-004), equal
   keys for corresponding configurations and `Eq`/`Hash` agreement, activity
   against a brute-force reference evaluator, serde round trips;
-- `tests/it/search_space_golden.rs`: the oracle corpus, below.
+- `tests/it/search_space_golden.rs`: the oracle corpus, recorded by
+  `tests/golden/record_search_space_cases.py` (how to regenerate it is in
+  "Equivalence plan"); CI only replays it;
+- non-vacuity guards in `properties.rs`: each property's strategy drawn by
+  a fixed-seed runner over 256 cases, with a floor on how often its
+  interesting branch is reached (models holding a variable, perturbations
+  that apply, accepted repaired configurations and pairs of them, and
+  structurally equivalent pairs).
 
 ### Changes to the design's sketch
 
@@ -1289,10 +1298,17 @@ the status), 2 `metric` cases moved to SS3, 1 replaced, 48 stay in MOGA-VM.
 The oracle (MOGA-VM `3d93ba3` on fhy_core v0.1.8, with stand-ins, as the
 audit ran it) still defines the behavior (C) keeps.
 
-- **Golden corpus:** `rust/fhy-core/tests/golden/record_search_space_cases.py`,
-  run by hand with `--moga-vm-src` naming the oracle's import paths, writes
-  `search_space_cases.json`, which `tests/it/search_space_golden.rs`
-  replays. It is a recorder, not a `generate_*.py` generator: the drift
+- **Golden corpus:** `rust/fhy-core/tests/golden/record_search_space_cases.py`
+  writes `search_space_cases.json`, which `tests/it/search_space_golden.rs`
+  replays. It assembles the oracle in a temporary directory: `git archive`
+  of MOGA-VM's `src/moga_vm/cir/space` at `3d93ba3` from the checkout
+  `--moga-vm-repo` names, `git archive` of this repository's `src/fhy_core`
+  at the tag `v0.1.8`, and the audit's stand-ins for the rest of
+  `moga_vm.cir` and for `moga`, which the recorder holds as text. To
+  regenerate, from the repository root: `uv run --no-sync --with networkx
+  python rust/fhy-core/tests/golden/record_search_space_cases.py
+  --moga-vm-repo <MOGA-VM checkout>` (fhy_core v0.1.8 imports `networkx`).
+  CI only replays the corpus. It is a recorder, not a `generate_*.py` generator: the drift
   check (`tests/test_golden_corpora.py`) and the `golden_expanded` session
   rerun every generator in CI, which cannot install MOGA-VM, and this
   oracle is frozen (MOGA-VM `3d93ba3` on fhy_core v0.1.8), so its corpus is
