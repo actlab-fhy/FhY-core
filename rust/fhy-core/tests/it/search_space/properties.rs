@@ -37,7 +37,7 @@ use crate::support::search_space::{ground_solver, system};
 use crate::support::serde::check_serde_round_trip;
 
 /// The labels a model may name, and so the size of a label table.
-const LABEL_COUNT: usize = 40;
+const LABEL_COUNT: usize = 96;
 /// The free identifiers a model's members may name.
 const FREE_COUNT: usize = 3;
 
@@ -247,18 +247,23 @@ impl Table {
 
 /// Return the param of `variable`, whose own variable is `param_variable`.
 fn build_param(variable: &VariableModel, table: &Table, param_variable: &Identifier) -> Param {
-    let values: Vec<Value> = variable
-        .members
-        .iter()
-        .map(|&member| table.value(member))
-        .collect();
+    let mut values: Vec<Value> = Vec::new();
+    for &member in &variable.members {
+        let value = table.value(member);
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
     let constraints: Vec<Constraint> = variable
         .narrowed
         .iter()
         .map(|kept| {
             Constraint::from(SetConstraint::new(
                 param_variable.clone(),
-                member_set(kept.iter().map(|&index| values[index].clone())),
+                member_set(
+                    kept.iter()
+                        .map(|&index| table.value(variable.members[index])),
+                ),
                 Polarity::In,
             ))
         })
@@ -946,8 +951,8 @@ proptest! {
         let bound = 1 + name % (used - 1).max(1);
         let mut left_model = model.clone();
         let mut right_model = model.clone();
-        set_first_member(&mut left_model, position, Member::Free(0));
-        set_first_member(&mut right_model, position, Member::Label(bound));
+        set_first_member(&mut left_model, position, Member::Free(0), &[]);
+        set_first_member(&mut right_model, position, Member::Label(bound), &[]);
         let table = Table::fresh();
         let mut right_table = table.relabeled(used, false);
         right_table.labels[bound] = table.free[0].clone();
@@ -976,8 +981,8 @@ proptest! {
         };
         let mut left_model = model.clone();
         let mut right_model = model.clone();
-        set_first_member(&mut left_model, position, Member::Int(1));
-        set_first_member(&mut right_model, position, Member::Bool(true));
+        set_first_member(&mut left_model, position, Member::Int(1), &[Member::Bool(true)]);
+        set_first_member(&mut right_model, position, Member::Bool(true), &[Member::Int(1)]);
         let table = Table::fresh();
 
         let left = build_valid(&left_model, &table);
@@ -1107,8 +1112,9 @@ proptest! {
 }
 
 /// Replace the first category of the variable at canonical `position` of
-/// `model` with `member`, dropping another category equal to it.
-fn set_first_member(model: &mut Model, position: usize, member: Member) {
+/// `model` with `member`, dropping any other category equal to it or to one
+/// of `rivals`.
+fn set_first_member(model: &mut Model, position: usize, member: Member, rivals: &[Member]) {
     let (decisions, _) = model.decisions();
     let target_label = decisions[position].label;
     let mut variables: Vec<&mut VariableModel> = Vec::new();
@@ -1123,7 +1129,9 @@ fn set_first_member(model: &mut Model, position: usize, member: Member) {
         .position(|&label| label == target_label)
         .expect("the position is a variable");
     let variable: &mut VariableModel = variables.swap_remove(index);
-    variable.members.retain(|&other| other != member);
+    variable
+        .members
+        .retain(|other| *other != member && !rivals.contains(other));
     if variable.members.is_empty() {
         variable.members.push(member);
     } else {

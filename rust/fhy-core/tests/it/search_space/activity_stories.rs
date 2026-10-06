@@ -537,7 +537,7 @@ fn failing_condition_is_a_problem_naming_its_target() {
     let [n, w] = ["n", "w"].map(Identifier::new);
     let space = Space::new(
         Identifier::new("failing"),
-        vec![plain_variable(&n, natural_param()), int_variable(&w, &[1])],
+        vec![int_variable(&n, &[1, 2, 3]), int_variable(&w, &[1])],
         Vec::new(),
         vec![condition(&w, [at_least(&n, 2)])],
         Vec::new(),
@@ -553,6 +553,31 @@ fn failing_condition_is_a_problem_naming_its_target() {
     };
     assert_eq!(target, &w);
     assert!(matches!(error, ConstraintError::Solve(_)), "got {error:?}");
+}
+
+#[test]
+fn condition_over_a_refused_value_is_not_evaluated() {
+    let [n, w] = ["n", "w"].map(Identifier::new);
+    let space = Space::new(
+        Identifier::new("refused_value"),
+        vec![plain_variable(&n, natural_param()), int_variable(&w, &[1])],
+        Vec::new(),
+        vec![condition(&w, [at_least(&n, 2)])],
+        Vec::new(),
+    )
+    .expect("the space is valid");
+    let solver = failing_simplifier_solver();
+
+    let result = Configuration::new(&space, [(n.clone(), int(3))], &ParamContext::new(&solver));
+
+    let errors = result.expect_err("the simplifier fails the value check");
+    let [ConfigurationError::Assignment { variable, .. }] = errors.errors() else {
+        panic!("expected the value's problem alone, got {errors:?}");
+    };
+    assert_eq!(
+        variable, &n,
+        "n's refused value counts as unassigned, so w's condition is pending and not evaluated"
+    );
 }
 
 #[test]

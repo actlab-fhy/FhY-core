@@ -755,7 +755,13 @@ fn configurations_over_unrelated_spaces_are_not_equivalent() {
     )
     .expect("the space is valid");
 
-    let left = configure(&standard, [(labels.v.clone(), int(1))]);
+    let left = configure(
+        &standard,
+        [
+            (labels.c.clone(), chosen(&labels.a)),
+            (labels.v.clone(), int(1)),
+        ],
+    );
     let right = configure(&other, [(q.clone(), int(1))]);
 
     assert_eq!(alpha_both_ways(&left, &right), [false, false]);

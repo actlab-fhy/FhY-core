@@ -333,7 +333,7 @@ fn failing_clause_is_a_problem_naming_its_index() {
     let n = Identifier::new("n");
     let space = Space::new(
         Identifier::new("failing_clause"),
-        vec![plain_variable(&n, natural_param())],
+        vec![int_variable(&n, &[1, 2])],
         Vec::new(),
         Vec::new(),
         vec![forbidden([at_least(&n, 5)])],
@@ -349,6 +349,31 @@ fn failing_clause_is_a_problem_naming_its_index() {
     };
     assert_eq!(*index, 0);
     assert!(matches!(error, ConstraintError::Solve(_)), "got {error:?}");
+}
+
+#[test]
+fn clause_over_a_refused_value_is_not_evaluated() {
+    let n = Identifier::new("n");
+    let space = Space::new(
+        Identifier::new("refused_clause_value"),
+        vec![plain_variable(&n, natural_param())],
+        Vec::new(),
+        Vec::new(),
+        vec![forbidden([at_least(&n, 5)])],
+    )
+    .expect("the space is valid");
+    let solver = failing_simplifier_solver();
+
+    let result = Configuration::new(&space, [(n.clone(), int(1))], &ParamContext::new(&solver));
+
+    let errors = result.expect_err("the simplifier fails the value check");
+    let [ConfigurationError::Assignment { variable, .. }] = errors.errors() else {
+        panic!("expected the value's problem alone, got {errors:?}");
+    };
+    assert_eq!(
+        variable, &n,
+        "n's refused value counts as unassigned, so the clause does not apply yet"
+    );
 }
 
 #[test]

@@ -641,9 +641,10 @@ fn a_failing_hook_fails_the_comparison_of_the_choices_that_hold_it() {
 fn a_failing_hook_of_a_variable_fails_the_comparison_of_the_spaces_that_hold_it() {
     let name = Identifier::new("x");
     let param = int_param(&[1]);
+    let space_name = Identifier::new("s");
     let build = || {
         space_of(
-            &Identifier::new("s"),
+            &space_name,
             vec![Part::new(FailingVariable {
                 name: name.clone(),
                 param: param.clone(),
