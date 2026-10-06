@@ -320,6 +320,7 @@ _NOT_TRACKED = {
     "SmtScript": "caches only its declarations' identifiers and names, read "
     "through a `PyOnceLock`, which cannot be read without the interpreter",
     "PreservedAnalyses": "caches only the preserved analyses' names",
+    "ConfigurationKey": "holds only the core key, no Python object",
     "SympySimplifier": "holds only the SymPy module and its classes, which "
     "`sys.modules` keeps reachable, so no garbage cycle runs through them",
 }

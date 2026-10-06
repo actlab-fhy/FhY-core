@@ -595,6 +595,301 @@ builders, strategies and the test implementors in
 None. The lead's decision on conditions over choices and D-SS-3's
 resolution are recorded under "Decisions".
 
+## SS1.5 to SS1.7: the binding and the Python package (plan)
+
+The concrete plan for the binding (SS1.5, SS1.6) and `fhy_core.search_space`
+(SS1.7), in fhy-development-rs's planning template. The stub follows it.
+It applies "The Python interface (N-4 (a): both paths)" and "Serialization
+and type ids"; where it is more specific, this plan holds.
+
+### Placement
+
+| Where | Files |
+|---|---|
+| `fhy-core-py` | `search_space.rs` (module docs, `pub(crate) use`); `search_space/variable.rs` (`PyVariableBase`), `alternative.rs` (`PyAlternativeBase`), `choice.rs` (`PyChoice`), `space.rs` (`PySpace`, `PyCondition`, `PyForbidden`), `configuration.rs` (`PyConfiguration`, `PyConfigurationKey`), `adapter.rs` (`PythonVariable`, `PythonAlternative`), `kinds.rs` (the kind registry), `errors.rs` (the exception classes and the error conversions), `wire.rs` (the `Resolve` impls of `PyResolver`, the payload depth check); `convert/search_space.rs` (public); `lib.rs` (`register_part_4`) |
+| Python | `src/fhy_core/search_space/__init__.py` (re-exports, `__all__`), `core.py` (the public classes, `Activity`), `errors.py` (the exceptions); `fhy_core/__init__.py` imports it; `_rs.pyi`; `fhy_core.traits.frozen` receives `_FrozenAfterInit` from `fhy_core.types.core`, which both packages then use |
+| `rust/example-aggregate` | two downstream Rust kinds and their registration (see "Path 2") |
+| tests | `tests/search_space/{__init__,conftest}.py`, `test_search_space.py`, `test_search_space_rust_binding.py`, `test_extension.py`, `test_search_space_properties.py`, `test_composed_search_space.py`; `_ENTRY_POINTS` of `tests/test_import_graph.py` |
+
+The design's `classes.rs` is split by class, since the five classes
+together would exceed 3000 lines, and its `PyVariable`/`PyAlternative`
+adapter names become `PythonVariable`/`PythonAlternative`, since the
+binding's `Py*` names are pyclasses.
+
+### Visibility
+
+- No pyclass is `pub`. Every pyclass and helper is `pub(crate)` or
+  narrower; `search_space`'s submodules are private and the parent
+  re-exports what `lib.rs`, `wire.rs` and `convert` need.
+- The public surface is `convert::search_space` (below), the only new
+  `pub` items of the crate.
+- `term::renaming` gains a `pub(crate)` constructor of a Python
+  `AlphaRenaming` from a core one (the alpha hook's argument), and
+  `wire::PyResolver` gains two `Resolve` impls from `search_space::wire`.
+
+### The Python classes
+
+Every class is `module = "fhy_core._rs"`, frozen, and `==`/`hash` by
+identity except `ConfigurationKey`. Each public class is a thin subclass of
+its pyclass, registered with `_register_public_class()` at import, so an
+object the binding builds is an instance of it. Each container keeps the
+objects it was given and returns them (`choice.alternatives[0] is
+alternative`); an object built from a core value (a decoded payload, a
+merged condition) is built once and kept. A `name` left `None` is a fresh
+`Identifier` named `variable`, `alternative`, `choice` or `space`.
+
+Arguments are checked strictly, with `util::dataclass`'s message
+`<Class> <field> must be <expected>, got <type>.` (`TypeError`): a name or
+target an `Identifier`; a param a `Param`; notes `Note`s; variables
+`Variable`s; alternatives `Alternative`s; choices `Choice`s; conditions
+`Condition`s; forbidden clauses `Forbidden`s; `when` a `ConstraintSystem`
+or an iterable of `Constraint`s; a space a `Space`; entries a `Mapping` or
+an iterable of pairs whose names are `Identifier`s.
+
+| Class (`_rs` name) | Construction | Attributes and methods | Errors |
+|---|---|---|---|
+| `Variable` (`PyVariableBase`, `subclass`) | `_rs.Variable.__new__(cls, *args, **kwargs)` takes anything; the public `Variable.__init__(self, param, name=None, notes=())` calls `_rs.Variable._initialize(self, param, name, notes)`, which sets the base fields once | `name`, `param`, `notes` (tuple), `kind` (`"search_space.variable"`, a subclass's registered type id); the equivalences; the serialization methods; the hooks (below) | `TypeError` for an argument; `RuntimeError` for `_initialize` called twice and for using a subclass instance whose `__init__` never called `Variable.__init__` |
+| `Alternative` (`PyAlternativeBase`, `subclass`) | as `Variable`: `Alternative.__init__(self, variables=(), choices=(), name=None, notes=())` calls `_rs.Alternative._initialize` | `name`, `variables`, `choices`, `notes`, `kind`; the equivalences; the serialization methods; the hooks | as `Variable`; `DuplicateNameError` as `PlainAlternative::new` refuses its names, for a subclass too; `RecursionError` (depth) |
+| `Choice` (`PyChoice`) | `Choice(alternatives, name=None, notes=())` | `name`, `alternatives`, `notes`; the equivalences; the serialization methods | `SearchSpaceError` (empty), `DuplicateNameError`, a hook's exception, `RecursionError` |
+| `Condition` (`PyCondition`) | `Condition(target, when)` | `target`, `when` (a `ConstraintSystem`: the one given, or one built from the constraints given) | `TypeError` |
+| `Forbidden` (`PyForbidden`) | `Forbidden(when)` | `when` | `TypeError` |
+| `Space` (`PySpace`) | `Space(variables=(), choices=(), conditions=(), forbidden=(), name=None, notes=())` | `name`, `variables`, `choices`, `conditions` (one per target in canonical order of the targets, as the core keeps them: a target's one condition is the object given, merged ones are built), `forbidden`, `notes`, `decisions` (the decision objects in canonical order), `decision(name)` (or `None`), `decision_order` (the decisions' name objects); the equivalences; the serialization methods | `SearchSpaceError` for each `SpaceError` but `DuplicateName` (`DuplicateNameError`), `Hook` (the hook's exception itself) and `Constraint` (the constraint error, as the constraint module raises it); `RecursionError` |
+| `Configuration` (`PyConfiguration`) | `Configuration(space, entries=())`: a choice's value is the chosen alternative's name, an `Identifier`; checked under the default solver's context (`with_param_context`) | `space`, `entries` (`(name, value)` pairs in canonical order, the names the decisions' own objects and the values the objects given), `value(name)`, `alternative(choice)` (the alternative object), `activity(name)` (an `Activity` or `None`), `is_complete()`, `key()`, `with_entry(name, value)`, `with_entries(entries)` (both keep the other entries' objects); the equivalences; the serialization methods | `ConfigurationError` carrying every problem; a Python-defined constraint's exception itself when one raised; `TypeError` |
+| `ConfigurationKey` (`PyConfigurationKey`, no public subclass: `fhy_core.search_space.ConfigurationKey` is `_rs.ConfigurationKey`) | no constructor; `Configuration.key()` builds it | structural `==` and `hash` (another type is `NotImplemented`); `repr` `ConfigurationKey(...)` | pickling raises `TypeError`: a key is meaningful only within its space |
+| `Activity` (Python `StrEnum`) | `ACTIVE = "active"`, `INACTIVE = "inactive"`, `PENDING = "pending"` | | |
+
+**The equivalences** of `Variable`, `Alternative`, `Choice`, `Space` and
+`Configuration`: `is_structurally_equivalent(other)`,
+`is_alpha_equivalent(other)` and `is_alpha_equivalent_under(other,
+renaming)`, over the core's relations. An `other` that is not of the same
+class (`Variable` and its subclasses and kinds count as one) answers
+`False`. `renaming` must be an `AlphaRenaming` (`TypeError`). A hook's
+exception propagates as itself; a failing custom constraint raises as the
+constraint module raises it.
+
+**The serialization methods:** `serialize_to_dict()`, `to_json(*,
+indent=None, sort_keys=None)`, the class methods `deserialize_from_dict(data)`
+and `from_json(payload)`; `Variable` and `Alternative` add
+`serialize_data_to_dict()` and the class method
+`deserialize_data_from_dict(data)` (see "Wire").
+
+**Representation:** `repr` lists the fields as a dataclass's does,
+`<Class>(name=..., ...)`, with the class's own name for a subclass; a
+configuration shows its space by name: `Configuration(space=s::1,
+entries=(...))`.
+
+**Pickling:** a call of the class with its fields
+(`(cls, (fields...))`). A `Variable` or `Alternative` subclass pickles
+through `copyreg.__newobj__` with the state `(base fields, __dict__)`,
+which the public base's `__setstate__` restores, frozen.
+
+**Freezing:** the pyclasses refuse attribute assignment and deletion
+(`FrozenMutationError`). `Variable` and `Alternative` freeze a subclass
+after its outermost `__init__`, through `_FrozenAfterInit`, as `Type` does,
+and are virtual subclasses of `FrozenMixin`.
+
+**Errors** (`fhy_core.search_space.errors`, re-exported):
+`SearchSpaceError(ValueError)`; `DuplicateNameError(SearchSpaceError)`;
+`ConfigurationError(SearchSpaceError)` with `problems: tuple[str, ...]`,
+each problem's `Display` text in the core's order, and `str` the
+`ConfigurationErrors` text. Every message is the core error's `Display`,
+which names identifiers as their `repr`, `name::id`.
+
+### Path 1: Python subclasses and their adapters
+
+- **Hooks**, defined on the public `Variable` and `Alternative` with their
+  defaults:
+  - `extension_is_structurally_equivalent(self, other) -> bool` (`True`);
+  - `extension_is_alpha_equivalent_under(self, other, renaming:
+    AlphaRenaming) -> bool` (`True`);
+  - `Alternative.extension_bound_identifiers(self) -> Iterable[Identifier]`
+    (`()`).
+- **The adapters** `PythonVariable` and `PythonAlternative` implement the
+  core traits for a subclass instance. A container builds one when it
+  reads such an object, inside its `collect_slots`, and owns the slot
+  holding the object.
+  - An adapter copies the base fields from the pyclass, with no Python
+    call, and reads the kind once: the class's
+    `get_serialization_class_type_id()`.
+  - Each hook calls the method of the same name once per call of the core
+    (once per pair of extended nodes); `other` is the other side's object
+    and `renaming` a new `AlphaRenaming` of the core's.
+  - A result of the wrong type raises `TypeError`: `<Class>.<hook> must
+    return a bool, got <type>.`, and `<Class>.extension_bound_identifiers
+    must return Identifiers, got <type>.`.
+  - An exception a hook raises is boxed as the hook's error and raised by
+    the entry point as the same object; `KeyboardInterrupt` passes
+    through the same way.
+  - `eq_part` and `hash_part` are the object's identity.
+  - `to_foreign` is `util::foreign::read_foreign(object, family=True)`:
+    the class's type id and its `serialize_data_to_dict()` text.
+
+### Path 2: downstream Rust kinds and the kind registry
+
+`convert::search_space` (public):
+
+```rust
+pub type VariableFromPython = fn(&Bound<'_, PyAny>) -> PyResult<Part<dyn Variable>>;
+pub type VariableToPython = for<'py> fn(Python<'py>, &Part<dyn Variable>) -> PyResult<Bound<'py, PyAny>>;
+pub type VariableResolver = fn(&Foreign) -> Result<Part<dyn Variable>, ForeignError>;
+pub type AlternativeFromPython = fn(&Bound<'_, PyAny>) -> PyResult<Part<dyn Alternative>>;
+pub type AlternativeToPython = for<'py> fn(Python<'py>, &Part<dyn Alternative>) -> PyResult<Bound<'py, PyAny>>;
+pub type AlternativeResolver = fn(&Foreign) -> Result<Part<dyn Alternative>, ForeignError>;
+
+pub fn variable_from_python(object: &Bound<'_, PyAny>) -> PyResult<Part<dyn Variable>>;
+pub fn variable_to_python<'py>(py: Python<'py>, variable: &Part<dyn Variable>) -> PyResult<Bound<'py, PyAny>>;
+pub fn alternative_from_python(object: &Bound<'_, PyAny>) -> PyResult<Part<dyn Alternative>>;
+pub fn alternative_to_python<'py>(py: Python<'py>, alternative: &Part<dyn Alternative>) -> PyResult<Bound<'py, PyAny>>;
+pub fn choice_from_python(object: &Bound<'_, PyAny>) -> PyResult<Choice>;
+pub fn choice_to_python<'py>(py: Python<'py>, choice: &Choice) -> PyResult<Bound<'py, PyAny>>;
+pub fn register_variable_kind(module: &Bound<'_, PyModule>, kind: &str, class: &Bound<'_, PyType>,
+    from_python: VariableFromPython, to_python: VariableToPython, resolve: VariableResolver) -> PyResult<()>;
+pub fn register_alternative_kind(module: &Bound<'_, PyModule>, kind: &str, class: &Bound<'_, PyType>,
+    from_python: AlternativeFromPython, to_python: AlternativeToPython, resolve: AlternativeResolver) -> PyResult<()>;
+```
+
+- **Reading** an object (`*_from_python`, and every container reading
+  its arguments) tries, in order: the public plain class (exactly
+  `Variable`, read to a `PlainVariable`); a registered kind, whose
+  `class` the object is an instance of (its `from_python`); a Python
+  subclass of `_rs.Variable` (the adapter). Anything else is `TypeError`.
+  `choice_from_python` reads a `Choice` (its core value, shared).
+- **Writing** a part (`*_to_python`, and every getter of a part built from
+  a core value) is: a `PlainVariable` as a new public `Variable`; an
+  adapter's own object; a registered kind's `to_python`; an unregistered
+  kind is `TypeError` naming the kind.
+- **Decoding** a foreign part, `PyResolver` tries a registered kind's
+  `resolve` by the part's type id, then the Python registry
+  (`_resolve_foreign`, which must give an instance of the family).
+- **The registry** is append-only module state: the attribute
+  `fhy_core._rs._search_space_kinds`, a private pyclass
+  (`_SearchSpaceKindRegistry`) holding a `Mutex<Arc<KindRegistryState>>`
+  of one map per family from kind to its class and three functions.
+  `register` creates it beside the verification registry. A registration
+  swaps in a new state; a lookup takes the current `Arc` and releases the
+  lock before any Python call; the binding reaches it through a
+  write-once import cache, as it does the verification registry. No Rust
+  `static` holds kinds.
+- **Registration refuses** (`ValueError`): a built-in kind
+  (`search_space.variable`, `search_space.alternative`), a kind registered
+  already, a class registered already; and (`RuntimeError`) a module
+  without `fhy_core`'s binding. It never replaces an entry.
+- **Virtual subclass:** the class is registered as a virtual subclass of
+  the public `Variable` or `Alternative` once both exist: at registration,
+  if the public class is registered, and otherwise by
+  `_register_public_class()` when `fhy_core.search_space` is imported, since
+  an aggregate registers its kinds while `fhy_core` itself is being
+  imported.
+- **Why a resolver:** the design listed `(module, kind, class,
+  from_python, to_python)`. Decoding a Rust kind's foreign part without
+  a call into Python needs the kind's own resolver, which its contract
+  (clause 6) already requires it to have.
+- **The example aggregate** gains `TiledVariable` (a `Variable` kind
+  `example.tiled_variable` with index symbols, compared by its hooks as
+  `ArrayTileKnob` is) and `AxisAlternative` (an `Alternative` kind
+  `example.axis_alternative` binding its axes, as `RealizationOption`
+  does), their `#[pyclass]`es in `module = "fhy_example_aggregate"`, and
+  their registration from its `#[pymodule]`. It depends on `serde` and
+  `serde_json` (workspace crates, no new crate in the lock file) for their
+  foreign payloads.
+
+### Wire
+
+| Class | Type id | V2 dict (`serialize_to_dict`) |
+|---|---|---|
+| `Variable` | `search_space.variable` | the tagged part, `{"plain": {"identifier", "param", "notes"}}` or `{"foreign": {"type_id", "data"}}` (`VariableData`) |
+| `Alternative` | `search_space.alternative` | `{"plain": {"identifier", "variables", "choices", "notes"}}` or `{"foreign": ..}` (`AlternativeData`) |
+| `Choice` | `search_space.choice` | `{"identifier", "alternatives", "notes"}` |
+| `Space` | `search_space.space` | `{"identifier", "variables", "choices", "conditions", "forbidden", "notes"}` |
+| `Configuration` | `search_space.configuration` | `{"space", "entries"}` |
+
+- The text is the core's serde text; `to_json()` is byte-identical to the
+  core's `serde_json` text, and the dict is what `json.loads` makes of it.
+- `serialize_data_to_dict()` of a `Variable` is the plain fields
+  `{"identifier", "param", "notes"}` (an `Alternative`'s likewise), which
+  a subclass extends with its own keys: it is the `data` of the subclass's
+  foreign part. `deserialize_data_from_dict(data)` reads exactly those
+  keys (`DeserializationValueError` for another) and calls
+  `cls(param=, name=, notes=)`, so a subclass with data of its own
+  overrides it.
+- `deserialize_from_dict` and `from_json` build through the constructors
+  with `PyResolver` under the default solver's context; they return an
+  instance of the class they are called on, else `SerializationError`; a
+  payload of another shape is `DeserializationValueError` (`Invalid V2
+  payload for "<Class>": ..`), and an exception a part's hook raises
+  propagates as itself.
+- **Depth:** a container records its depth, the levels of choices it
+  nests (a variable 0, an alternative its deepest sub-choice, a choice
+  one more). Building one deeper than `sys.getrecursionlimit()` raises
+  `RecursionError` (`maximum recursion depth exceeded: the <class> is N
+  levels deep`), and so does decoding a payload whose choices nest deeper,
+  measured on the payload before any of it reaches the core, as
+  `provenance.rs` refuses a deep provenance.
+- **No V1 form.** These classes are new, so no V1 payload of them exists:
+  `serialize_to_dict` and `to_json` raise `SerializationError` inside
+  `wire_version(WireVersion.V1)`, and the readers read V2 only. (The
+  design's "V1 is read until 0.3.0" concerns classes that had one.)
+
+### GC
+
+Every class but `ConfigurationKey` has `__traverse__` visiting the objects
+it keeps (its field objects, its built and kept objects, and the `Slots`
+of the adapters its construction made). The registry visits its classes
+under `try_lock`. A cycle through a Python subclass instance, such as an
+alternative whose attribute holds the choice holding it, is collected.
+
+### `_rs.pyi`
+
+`Variable`, `Alternative` (each with `__init__(self, *_args, **_kwargs)`,
+`_initialize`, the getters, the equivalences, the serialization methods,
+`_register_public_class`), `Choice`, `Condition`, `Forbidden`, `Space`,
+`Configuration` (with their constructors, getters and methods) and
+`ConfigurationKey`.
+
+### `fhy_core.search_space`
+
+```python
+__all__ = ["Activity", "Alternative", "Choice", "Condition", "Configuration",
+           "ConfigurationError", "ConfigurationKey", "DuplicateNameError",
+           "Forbidden", "SearchSpaceError", "Space", "Variable"]
+```
+
+`Variable(_rs.Variable, _FrozenAfterInit, WrappedFamilySerializable,
+Generic[_T])`, `Alternative(_rs.Alternative, _FrozenAfterInit,
+WrappedFamilySerializable)`, and `Choice`, `Space`, `Configuration` as
+`@final` subclasses of their pyclasses and `Serializable`, each
+`@register_serializable(type_id=...)` with its id; `Condition` and
+`Forbidden` are `@final` thin subclasses. The package imports
+`fhy_core.symbolic` (params, constraints, the default solver) and
+`fhy_core.diagnostic`, and never `fhy_core.types`, `symbol_table` or
+`pass_infrastructure` (layer 11).
+
+### Test plan (SS1.5)
+
+In `tests/search_space/`, through the public API:
+
+- `test_search_space.py`, the interface suite: construction and every
+  argument check; every error class and message; activity, completeness,
+  values and alternatives; `with_entry`/`with_entries`; the key; the
+  equivalences; and the ported MOGA-VM tests (the Python half of
+  "Traceability" below), each docstring citing its MOGA-VM test.
+- `test_search_space_rust_binding.py`: the class structure, frozen-ness,
+  identity `==`/`hash`, `ConfigurationKey`'s structural `==`/`hash`, kept
+  objects, `repr`, pickling, the V2 shapes and type ids and round trips,
+  the refusals of the readers, depth refusal, GC.
+- `test_extension.py`: subclasses modelled on `ArrayTileKnob`,
+  `PortBoundKnob`, a marker knob and `RealizationOption`, through their
+  hooks, nested and standalone, round-tripping under their own type ids;
+  each hook's exception, `KeyboardInterrupt` and wrong result type; the
+  call counts.
+- `test_composed_search_space.py` (slow, subprocess): the example
+  aggregate's two Rust kinds read, compared, nested, written and decoded,
+  their virtual subclassing, and the registry's refusals.
+- `test_search_space_properties.py` (Hypothesis): round trips of random
+  spaces and configurations; reflexive and symmetric relations;
+  structural implies alpha; a relabeled copy is alpha-equivalent and its
+  configurations' keys are equal.
+
 ## Semantics
 
 ### Structure and names

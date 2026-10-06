@@ -403,6 +403,13 @@ param observer that logs to `fhy_core`'s loggers), detached from the
 interpreter when `detach`, and re-raises after the question the Python
 exception a hook raised during it. `fhy_core`'s methods run over the same
 code, so a downstream crate decides a question as `fhy_core` does.
+Its `convert::search_space` module converts the objects of
+`fhy_core.search_space` (`variable_*`, `alternative_*` and `choice_*`
+`_from_python`/`_to_python`) and registers the `Variable` and `Alternative`
+kinds a downstream crate defines (`register_variable_kind`,
+`register_alternative_kind`: the kind, its `#[pyclass]`, and the functions
+that read an object, build an object and resolve a foreign part), which the
+binding then reads, writes and decodes as it does its own.
 Its `util` module is the public surface for writing a Rust-backed class the
 way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
 downstream `-py` crate builds on:
@@ -594,7 +601,7 @@ that `AlphaRenaming.empty()` returns is a write-once slot
 first use, as a public class slot is; the derived-equivalence plans stay in
 the Python module's `_PLAN_CACHE` dict.
 
-The binding holds three shared registries for the Python API. The function
+The binding holds four shared registries for the Python API. The function
 registry behind `register_function` and the lookups of
 `fhy_core.symbolic.expression.registry` is a `Mutex<Arc<_>>` of the core's
 owned `FunctionRegistry` and each entry's Python object
@@ -615,8 +622,16 @@ core's owned `VerificationRegistry` and the Python objects its keys stand
 for (`rust/fhy-core-py/src/pass/verification.rs`), which the binding
 reaches through a write-once import cache. A registration swaps in a new
 state whole, and the lock is never held across a call into Python. It is
-append-only and adds no Rust `static` with interior mutability. The core
-crate stays free of all three, as of all global state beyond identity.
+append-only and adds no Rust `static` with interior mutability. The kind
+registry of `fhy_core.search_space`, the `Variable` and `Alternative` kinds
+downstream Rust crates define, lives in the module state the same way:
+`register` sets the private attribute `fhy_core._rs._search_space_kinds` to
+a `Mutex<Arc<_>>` of one map per family from a kind to its class and
+functions (`rust/fhy-core-py/src/search_space/kinds.rs`). A downstream crate
+registers through `convert::search_space`, each kind and each class once; a
+registration swaps in a new state whole, and the lock is never held across
+a call into Python. The core crate stays free of all four, as of all global
+state beyond identity.
 
 The rest of the binding's state is thread-local and lives only for one
 call:

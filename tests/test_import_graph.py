@@ -48,6 +48,7 @@ _ENTRY_POINTS = [
     "fhy_core.types",
     "fhy_core.types.checking",
     "fhy_core.symbol_table",
+    "fhy_core.search_space",
     "fhy_core.pass_infrastructure",
     "fhy_core.symbolic",
     "fhy_core.symbolic.expression",

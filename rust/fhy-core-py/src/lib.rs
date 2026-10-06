@@ -39,8 +39,9 @@
 //!
 //! # Module state and version
 //!
-//! [`register`] creates the verification registry of the Python API in the
-//! module's state, and sets [`VERSION_ATTRIBUTE`], the version of this crate,
+//! [`register`] creates the verification registry of the Python API and
+//! the kind registry of `fhy_core.search_space` in the module's state, and
+//! sets [`VERSION_ATTRIBUTE`], the version of this crate,
 //! which the loader compares with the installed package's. It refuses a
 //! module it has registered into already.
 
@@ -56,6 +57,7 @@ mod op_attribute;
 mod param;
 mod pass;
 mod provenance;
+mod search_space;
 mod solver;
 mod symbol_table;
 mod term;
@@ -97,10 +99,15 @@ pub fn register(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_part_1(module)?;
     register_part_2(module)?;
     register_part_3(module)?;
+    register_part_4(module)?;
     module.add(VERSION_ATTRIBUTE, env!("CARGO_PKG_VERSION"))?;
     module.add(
         pass::REGISTRY_ATTRIBUTE,
         Py::new(py, pass::PyVerificationRegistry::new())?,
+    )?;
+    module.add(
+        search_space::KIND_REGISTRY_ATTRIBUTE,
+        Py::new(py, search_space::PyKindRegistry::new())?,
     )
 }
 
@@ -356,5 +363,18 @@ fn register_part_3(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(wire::encode_wire_dict, module)?)?;
     module.add_function(wrap_pyfunction!(wire::encode_wire_json, module)?)?;
     module.add_function(wrap_pyfunction!(wire::serialize_wire_value, module)?)?;
+    Ok(())
+}
+
+/// Add the classes of the `search_space` module.
+fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<search_space::PyAlternativeBase>()?;
+    module.add_class::<search_space::PyChoice>()?;
+    module.add_class::<search_space::PyCondition>()?;
+    module.add_class::<search_space::PyConfiguration>()?;
+    module.add_class::<search_space::PyConfigurationKey>()?;
+    module.add_class::<search_space::PyForbidden>()?;
+    module.add_class::<search_space::PySpace>()?;
+    module.add_class::<search_space::PyVariableBase>()?;
     Ok(())
 }
