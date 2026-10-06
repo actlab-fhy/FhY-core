@@ -123,10 +123,11 @@ impl Recorder {
             .preset
             .as_ref()
             .and_then(|preset| preset.value(decision));
-        let coordinate = if let Some(value) = preset {
-            domain
+        let (coordinate, admitted) = if let Some(value) = preset {
+            let coordinate = domain
                 .coordinate_of(value)
-                .ok_or(TraceError::CoordinateOutOfDomain { position })?
+                .ok_or(TraceError::CoordinateOutOfDomain { position })?;
+            (coordinate, None)
         } else {
             let step = PendingStep::of_decision(
                 &kind,
@@ -137,18 +138,25 @@ impl Recorder {
                 context,
             )
             .ok_or_else(unknown)?;
-            ask(oracle, &step)?
+            let coordinate = ask(oracle, &step)?;
+            // An oracle that checked its answer's admissibility, as the
+            // shipped ones do, left the grown configuration on the step.
+            let admitted = step.take_admitted(&coordinate);
+            (coordinate, admitted)
         };
         let value = domain
             .value_at(&coordinate)
             .ok_or(TraceError::CoordinateOutOfDomain { position })?;
         let extended =
-            try_extend(configuration, decision, value.clone(), context)?.ok_or_else(|| {
-                TraceError::Inadmissible {
-                    position,
-                    coordinate: coordinate.clone(),
-                }
-            })?;
+            match admitted {
+                Some(extended) => extended,
+                None => try_extend(configuration, decision, value.clone(), context)?.ok_or_else(
+                    || TraceError::Inadmissible {
+                        position,
+                        coordinate: coordinate.clone(),
+                    },
+                )?,
+            };
         let signature = domain.signature_in(Some(space));
         self.steps.push(TraceStep::of_decision(
             kind,

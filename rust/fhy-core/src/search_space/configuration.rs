@@ -187,6 +187,32 @@ impl Configuration {
         )
     }
 
+    /// Return this configuration with the decision `name` given `value`,
+    /// checked as [`with_entry`](Self::with_entry) checks it, except that
+    /// the values this configuration holds are not checked against their
+    /// params again: its own check accepted them, and a search run checks
+    /// every step under the one context. Activity, conditions and
+    /// forbidden clauses are checked anew, since the new value can change
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigurationErrors`] holding every problem found.
+    pub(super) fn extended(
+        &self,
+        name: Identifier,
+        value: Value,
+        context: &ParamContext<'_>,
+    ) -> Result<Self, ConfigurationErrors> {
+        check(
+            &self.0.space,
+            self.0.values.clone(),
+            [(name, value)],
+            context,
+            ValueCheck::Extend,
+        )
+    }
+
     /// Return the space the configuration is a point of.
     #[must_use]
     pub fn space(&self) -> &Space {
@@ -453,6 +479,10 @@ enum ValueCheck {
     New,
     /// As [`ParamAssignment::restore`] checks them.
     Restore,
+    /// The entries' values as [`ParamAssignment::new`] checks them; the
+    /// base values, which a check of the base configuration accepted, as
+    /// they are.
+    Extend,
 }
 
 /// The state of one check of a configuration's entries: each decision's
@@ -463,6 +493,8 @@ struct Checker<'a> {
     context: &'a ParamContext<'a>,
     value_check: ValueCheck,
     values: Vec<Option<Value>>,
+    /// Per position, whether an entry gave the decision its value.
+    is_given: Vec<bool>,
     activities: Vec<Activity>,
     chosen: Vec<Option<usize>>,
     problems: Vec<ConfigurationError>,
@@ -488,6 +520,7 @@ fn check(
         } else {
             base
         },
+        is_given: vec![false; count],
         activities: vec![Activity::Pending; count],
         chosen: vec![None; count],
         problems: Vec::new(),
@@ -504,19 +537,18 @@ impl Checker<'_> {
     /// Give each entry's decision its value, refusing an entry that names
     /// no decision or one an earlier entry named.
     fn read_entries(&mut self, entries: impl IntoIterator<Item = (Identifier, Value)>) {
-        let mut is_given = vec![false; self.values.len()];
         for (name, value) in entries {
             let Some(position) = self.space.position(&name) else {
                 self.problems
                     .push(ConfigurationError::UnknownDecision { name });
                 continue;
             };
-            if is_given[position] {
+            if self.is_given[position] {
                 self.problems
                     .push(ConfigurationError::DuplicateEntry { name });
                 continue;
             }
-            is_given[position] = true;
+            self.is_given[position] = true;
             self.values[position] = Some(value);
         }
     }
@@ -537,6 +569,11 @@ impl Checker<'_> {
         }
         let accepted = match self.space.decision_at(position) {
             Decision::Choice(choice) => self.check_choice_value(position, choice, value),
+            Decision::Variable(_)
+                if self.value_check == ValueCheck::Extend && !self.is_given[position] =>
+            {
+                Some(value)
+            }
             Decision::Variable(variable) => self.check_variable_value(variable, value),
         };
         self.values[position] = accepted;
@@ -577,7 +614,9 @@ impl Checker<'_> {
         let variable = variable.get();
         let param = variable.param().clone();
         let assigned = match self.value_check {
-            ValueCheck::New => ParamAssignment::new(param, value, self.context),
+            ValueCheck::New | ValueCheck::Extend => {
+                ParamAssignment::new(param, value, self.context)
+            }
             ValueCheck::Restore => ParamAssignment::restore(param, value, self.context),
         };
         match assigned {

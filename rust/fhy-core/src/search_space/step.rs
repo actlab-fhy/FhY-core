@@ -176,7 +176,7 @@ pub(super) fn try_extend(
     value: Value,
     context: &ParamContext<'_>,
 ) -> Result<Option<Configuration>, TraceError> {
-    match configuration.with_entry(name.clone(), value, context) {
+    match configuration.extended(name.clone(), value, context) {
         Ok(extended) => Ok(Some(extended)),
         Err(errors) => {
             let is_inadmissible = errors.errors().iter().all(|problem| {

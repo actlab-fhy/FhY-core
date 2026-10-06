@@ -2,6 +2,7 @@
 //! [`PendingStep`] it is asked, and the oracles this module ships:
 //! [`RandomOracle`], [`ReplayOracle`] and [`ExhaustiveOracle`].
 
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
@@ -72,6 +73,10 @@ pub struct PendingStep<'a> {
     decision: Option<(Decision<'a>, usize)>,
     configuration: Option<&'a Configuration>,
     context: &'a ParamContext<'a>,
+    /// The last coordinate [`admits`](Self::admits) accepted, with the
+    /// configuration it extended the run's to, so the recorder that asked
+    /// the step need not check that configuration again.
+    admitted: RefCell<Option<(Coordinate, Configuration)>>,
 }
 
 impl<'a> PendingStep<'a> {
@@ -96,6 +101,7 @@ impl<'a> PendingStep<'a> {
             decision: None,
             configuration: None,
             context,
+            admitted: RefCell::new(None),
         }
     }
 
@@ -128,6 +134,7 @@ impl<'a> PendingStep<'a> {
             decision: Some((decision, canonical)),
             configuration: Some(configuration),
             context,
+            admitted: RefCell::new(None),
         })
     }
 
@@ -190,13 +197,31 @@ impl<'a> PendingStep<'a> {
     /// Returns [`TraceError::Configuration`] when the configuration with
     /// that value is refused for a reason other than its admissibility.
     pub fn admits(&self, coordinate: &Coordinate) -> Result<bool, TraceError> {
+        let Some(configuration) = self.configuration else {
+            return Ok(self.domain.contains(coordinate));
+        };
         let Some(value) = self.domain.value_at(coordinate) else {
             return Ok(false);
         };
-        let Some(configuration) = self.configuration else {
-            return Ok(true);
-        };
-        Ok(try_extend(configuration, self.subject, value, self.context)?.is_some())
+        let extended = try_extend(configuration, self.subject, value, self.context)?;
+        let is_admissible = extended.is_some();
+        if let Some(extended) = extended {
+            *self.admitted.borrow_mut() = Some((coordinate.clone(), extended));
+        }
+        Ok(is_admissible)
+    }
+
+    /// Return the configuration the run's grows to with `coordinate`'s value,
+    /// if [`admits`](Self::admits) accepted that coordinate last.
+    pub(super) fn take_admitted(&self, coordinate: &Coordinate) -> Option<Configuration> {
+        let mut admitted = self.admitted.borrow_mut();
+        match admitted.take() {
+            Some((accepted, extended)) if accepted == *coordinate => Some(extended),
+            other => {
+                *admitted = other;
+                None
+            }
+        }
     }
 
     /// Return an admissible coordinate drawn uniformly from the domain's
