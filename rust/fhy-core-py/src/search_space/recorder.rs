@@ -104,27 +104,21 @@ impl PyRecorder {
         name: &Identifier,
         value: &Value,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let chosen = match (&self.space, value) {
-            (Some(space), Value::Identifier(chosen)) => {
-                let space = space.bind(py).get();
-                match space.position(name) {
-                    Some(position) => Some((space.decision_at(py, position)?, chosen)),
-                    None => None,
+        if let (Some(space), Value::Identifier(chosen)) = (&self.space, value) {
+            let space = space.bind(py).get();
+            if let Some(position) = space.position(name) {
+                let decision = space.decision_at(py, position)?;
+                if let Ok(choice) = decision.cast::<PyChoice>() {
+                    let index = choice
+                        .get()
+                        .core()
+                        .alternatives()
+                        .iter()
+                        .position(|alternative| alternative.get().name() == chosen);
+                    if let Some(index) = index {
+                        return choice.get().alternative_objects(py).get_item(index);
+                    }
                 }
-            }
-            _ => None,
-        };
-        if let Some((decision, chosen)) = chosen
-            && let Ok(choice) = decision.cast::<PyChoice>()
-        {
-            let index = choice
-                .get()
-                .core()
-                .alternatives()
-                .iter()
-                .position(|alternative| alternative.get().name() == chosen);
-            if let Some(index) = index {
-                return choice.get().alternative_objects(py).get_item(index);
             }
         }
         value_to_python(py, value)
