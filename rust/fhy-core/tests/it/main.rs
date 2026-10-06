@@ -19,6 +19,8 @@ mod provenance_diagnostic_properties;
 mod provenance_stories;
 mod scope_stack_properties;
 mod scope_stories;
+mod search_space;
+mod search_space_golden;
 mod serde_format_stories;
 mod serialization_golden;
 mod solver;
