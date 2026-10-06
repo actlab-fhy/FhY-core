@@ -901,3 +901,53 @@ fn space_mutate_swaps_two_positions_of_an_ordering(#[case] seed: u64) {
     assert_eq!(elements[moved[0]], before[moved[1]]);
     assert_eq!(elements[moved[1]], before[moved[0]]);
 }
+
+/// Test a seeded random sample of the tiling space draws the pinned
+/// coordinates and leaves its generator where it is pinned to: per seed,
+/// the trace's coordinates and the generator's next number after the run.
+///
+/// The tiling space's forbidden clause makes some draws inadmissible, so
+/// the pin covers the redraws as well as the answers.
+#[test]
+fn space_sample_with_a_random_oracle_follows_the_pinned_stream() {
+    let tiling = build_tiling_space();
+
+    let observed: Vec<(Vec<u64>, u64)> = (0..12)
+        .map(|seed| {
+            let mut oracle = RandomOracle::new(seed);
+            let recorded = with_context(|context| tiling.space.sample(&mut oracle, context))
+                .expect("the tiling space is sampled");
+            let coordinates = recorded
+                .trace()
+                .coordinates()
+                .map(|coordinate| match coordinate {
+                    fhy_core::search_space::Coordinate::Index(index) => *index,
+                    fhy_core::search_space::Coordinate::Order(_) => u64::MAX,
+                })
+                .collect();
+            (coordinates, oracle.rng().clone().next_u64())
+        })
+        .collect();
+
+    assert_eq!(
+        observed,
+        PINNED_TILING_SAMPLES.map(|(c, n)| (c.to_vec(), n)).to_vec()
+    );
+}
+
+/// What `space_sample_with_a_random_oracle_follows_the_pinned_stream`
+/// expects, per seed from 0.
+const PINNED_TILING_SAMPLES: [(&[u64], u64); 12] = [
+    (&[1, 0], 0x06C4_5D18_8009_454F),
+    (&[1, 0], 0x71BB_54D8_D101_B5B9),
+    (&[1, 0], 0x58BC_3CB3_7BC7_B2B3),
+    (&[0, 1], 0x9CEB_E8A6_D050_DD01),
+    (&[0, 1], 0xDBEF_19FC_8E7B_845F),
+    (&[0, 1], 0x3B92_D3F0_106B_C147),
+    (&[1, 0], 0x0E6C_7D03_72AA_2F46),
+    (&[0, 0, 2], 0x953A_EB70_673E_29CB),
+    (&[1, 0], 0x5FF7_6408_568A_C010),
+    (&[1, 0], 0xC8E9_8CD6_9731_6060),
+    (&[0, 1], 0x2187_6E7A_2AEC_4A3D),
+    (&[0, 0, 1], 0x812E_6299_272E_6DF0),
+];
