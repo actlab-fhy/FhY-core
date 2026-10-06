@@ -2714,11 +2714,16 @@ the plan, with these refinements:
    data does, so a key holding another crate's opaque value is read with
    a resolver; `Measurement`'s own `serde` builds with `NoForeign`.
 6. **Constructors:** `infeasible` and `failed` take `impl Into<String>`.
+   A payload of a measurement that did not succeed holding values is
+   refused with a seventh error, `UnexpectedValues` (added with the
+   tests).
 7. **Python:** `Objective(name, direction)` takes a `Direction` or its
    value; `Measurement` has no constructor (`TypeError`): `ok`,
    `infeasible`, `failed`, `timeout` build it; `is_ok()` is a method, as
    `Configuration.is_complete()` is; `reason` is `None` for `OK` and
-   `TIMEOUT`. `Objective` and `Measurement` are public subclasses
+   `TIMEOUT`; `value(objective)` matches an `Objective` by name and
+   direction and a `str` by name; `values` is a new `dict` each time.
+   `Objective` and `Measurement` are public subclasses
    registered as `search_space.objective` and `search_space.measurement`,
    as `Trace` is.
 

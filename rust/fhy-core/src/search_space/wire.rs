@@ -783,8 +783,9 @@ impl MeasurementData {
     /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
     /// refuses, and [`BuildError::Invalid`] with the
     /// [`MeasurementError`](super::MeasurementError) of values a
-    /// constructor refuses or of values held by a measurement that did not
-    /// succeed.
+    /// constructor refuses, or
+    /// [`UnexpectedValues`](super::MeasurementError::UnexpectedValues) for
+    /// values held by a measurement that did not succeed.
     #[expect(
         unused_variables,
         reason = "interface stub: the body is todo!() until the implementation"

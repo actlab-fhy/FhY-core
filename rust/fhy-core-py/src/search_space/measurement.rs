@@ -316,8 +316,8 @@ impl PyMeasurement {
         todo!()
     }
 
-    /// Return the value of `objective`, an `Objective` or a name, or
-    /// `None`.
+    /// Return the value of `objective`, an `Objective` (matched by name
+    /// and direction) or a name, or `None`.
     ///
     /// Raises `TypeError` for another argument.
     fn value(&self, objective: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {

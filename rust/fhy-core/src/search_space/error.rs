@@ -690,6 +690,9 @@ pub enum MeasurementError {
         /// The objective's name.
         objective: String,
     },
+    /// A measurement that did not succeed holds values: read from a
+    /// payload, since no constructor builds one.
+    UnexpectedValues,
     /// `dominates` was asked of a measurement that is not successful.
     NotOk,
     /// `dominates` was asked of measurements over different objectives.
@@ -706,6 +709,9 @@ impl fmt::Display for MeasurementError {
             }
             Self::NonFiniteValue { objective } => {
                 write!(f, "the value of the objective {objective:?} is not finite")
+            }
+            Self::UnexpectedValues => {
+                f.write_str("a measurement that did not succeed holds no values")
             }
             Self::NotOk => f.write_str("only successful measurements are compared"),
             Self::DifferentObjectives => {
