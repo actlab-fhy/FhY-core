@@ -1,20 +1,16 @@
 //! [`Alternative`]: one option of a choice, the trait other crates
 //! implement, and [`PlainAlternative`], this module's own implementation.
 
-#![expect(
-    unused_variables,
-    reason = "interface stub: the bodies are todo!() until the implementation"
-)]
-
 use std::borrow::Cow;
-use std::hash::Hasher;
+use std::hash::{Hash, Hasher};
 
 use crate::diagnostic::Note;
 use crate::foreign::{BoxError, ForeignPart, Part, impl_part, is_same_part};
 use crate::identifier::Identifier;
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
-use super::choice::Choice;
+use super::choice::{Choice, first_repeat};
+use super::equivalence::{is_alternative_alpha_equivalent, is_alternative_structurally_equivalent};
 use super::error::{EquivalenceError, SpaceError};
 use super::variable::Variable;
 
@@ -147,7 +143,7 @@ impl Part<dyn Alternative> {
     /// Returns [`EquivalenceError::Extension`] for a hook that fails,
     /// [`bound_identifiers`](Alternative::bound_identifiers) included.
     pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError> {
-        todo!()
+        is_alternative_structurally_equivalent(self.get(), other.get())
     }
 }
 
@@ -173,7 +169,7 @@ impl AlphaEquivalence for Part<dyn Alternative> {
         other: &Self,
         renaming: &AlphaRenaming,
     ) -> Result<bool, EquivalenceError> {
-        todo!()
+        is_alternative_alpha_equivalent(self, other, renaming)
     }
 }
 
@@ -209,52 +205,75 @@ impl PlainAlternative {
         variables: Vec<Part<dyn Variable>>,
         choices: Vec<Choice>,
     ) -> Result<Self, SpaceError> {
-        todo!()
+        let mut labels = vec![name.clone()];
+        labels.extend(
+            variables
+                .iter()
+                .map(|variable| variable.get().name().clone()),
+        );
+        for choice in &choices {
+            labels.extend(choice.labels().iter().cloned());
+        }
+        if let Some(repeated) = first_repeat(&labels) {
+            return Err(SpaceError::DuplicateName {
+                name: repeated.clone(),
+            });
+        }
+        Ok(Self {
+            name,
+            variables,
+            choices,
+            notes: Vec::new(),
+        })
     }
 
     /// Return this alternative with `notes` in place of its notes.
     #[must_use]
     pub fn with_notes(self, notes: Vec<Note>) -> Self {
-        todo!()
+        Self { notes, ..self }
     }
 }
 
 impl ForeignPart for PlainAlternative {
     /// Return `"PlainAlternative"`.
     fn type_name(&self) -> Cow<'_, str> {
-        todo!()
+        Cow::Borrowed("PlainAlternative")
     }
 }
 
 impl Alternative for PlainAlternative {
     /// Return [`PlainAlternative::KIND`].
     fn kind(&self) -> Cow<'_, str> {
-        todo!()
+        Cow::Borrowed(Self::KIND)
     }
 
     fn name(&self) -> &Identifier {
-        todo!()
+        &self.name
     }
 
     fn variables(&self) -> &[Part<dyn Variable>] {
-        todo!()
+        &self.variables
     }
 
     fn choices(&self) -> &[Choice] {
-        todo!()
+        &self.choices
     }
 
     fn notes(&self) -> &[Note] {
-        todo!()
+        &self.notes
     }
 
     /// Compare as `==` does, with a plain alternative only.
     fn eq_part(&self, other: &dyn Alternative) -> bool {
-        todo!()
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
     }
 
     /// Feed the hash `Hash` feeds.
     fn hash_part(&self, state: &mut dyn Hasher) {
-        todo!()
+        let mut state = state;
+        self.hash(&mut state);
     }
 }

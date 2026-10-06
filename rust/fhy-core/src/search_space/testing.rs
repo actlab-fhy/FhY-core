@@ -28,19 +28,19 @@
 //! Clause 5, that every identifier the data binds is declared, cannot be
 //! checked from outside the implementation.
 
-#![expect(
-    unused_variables,
-    dead_code,
-    reason = "interface stub: the bodies are todo!() until the implementation"
-)]
-
+use std::any::TypeId;
 use std::error::Error;
 use std::fmt;
 
-use crate::foreign::{BoxError, Part, Resolve};
+use crate::foreign::{BoxError, Foreign, ForeignError, Part, Resolve};
+use crate::identifier::Identifier;
+use crate::term::AlphaRenaming;
 
-use super::alternative::Alternative;
-use super::variable::Variable;
+use super::alternative::{Alternative, PlainAlternative};
+use super::choice::first_repeat;
+use super::equivalence::{alternative_labels, enter_frame};
+use super::error::EquivalenceError;
+use super::variable::{PlainVariable, Variable};
 
 /// A clause of the implementor contract, numbered as the
 /// [module documentation](super#implementing-variable-and-alternative)
@@ -77,25 +77,38 @@ impl ConformanceViolation {
     /// Return the clause the sample breaks.
     #[must_use]
     pub fn clause(&self) -> ContractClause {
-        todo!()
+        self.clause
     }
 
     /// Return the kind of the sample that breaks it.
     #[must_use]
     pub fn kind(&self) -> &str {
-        todo!()
+        &self.kind
     }
 }
 
 impl fmt::Display for ConformanceViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        let number = match self.clause {
+            ContractClause::StableGetters => 1,
+            ContractClause::UniqueKind => 2,
+            ContractClause::DistinctBoundIdentifiers => 3,
+            ContractClause::EquivalenceHooks => 4,
+            ContractClause::WireForm => 6,
+        };
+        write!(
+            f,
+            "the implementation of kind `{}` breaks clause {number}: {}",
+            self.kind, self.message
+        )
     }
 }
 
 impl Error for ConformanceViolation {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        todo!()
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn Error + 'static))
     }
 }
 
@@ -114,7 +127,7 @@ pub fn check_variable_conformance<R: Resolve<Part<dyn Variable>> + ?Sized>(
     samples: &[Part<dyn Variable>],
     resolver: &R,
 ) -> Result<(), ConformanceViolation> {
-    todo!()
+    check_samples(samples, |foreign| resolver.resolve(foreign))
 }
 
 /// Check that the alternatives `samples` keep the implementor contract,
@@ -132,5 +145,411 @@ pub fn check_alternative_conformance<R: Resolve<Part<dyn Alternative>> + ?Sized>
     samples: &[Part<dyn Alternative>],
     resolver: &R,
 ) -> Result<(), ConformanceViolation> {
-    todo!()
+    check_samples(samples, |foreign| resolver.resolve(foreign))
+}
+
+/// What the checks read of a sample, a variable or an alternative.
+trait Sample: Sized {
+    /// The kind of this module's own implementation.
+    const PLAIN_KIND: &'static str;
+
+    /// Return the sample's kind.
+    fn kind(&self) -> String;
+
+    /// Return the id of the sample's implementing type.
+    fn type_id(&self) -> TypeId;
+
+    /// Return the getter that answers differently on a second call, if
+    /// one does.
+    fn find_unstable_getter(&self) -> Option<&'static str>;
+
+    /// Return the sample's bound identifiers.
+    fn bound_identifiers(&self) -> Result<Vec<Identifier>, BoxError>;
+
+    /// Return the names the sample binds compared on its own, in order.
+    fn labels(&self) -> Result<Vec<Identifier>, BoxError>;
+
+    /// Return the structural hook's answer for `other`.
+    fn structural_hook(&self, other: &Self) -> Result<bool, BoxError>;
+
+    /// Return the alpha hook's answer for `other` under `renaming`.
+    fn alpha_hook(&self, other: &Self, renaming: &AlphaRenaming) -> Result<bool, BoxError>;
+
+    /// Return the sample's foreign part.
+    fn to_foreign(&self) -> Result<Foreign, ForeignError>;
+
+    /// Return whether `other` is structurally equivalent, as the core
+    /// compares them.
+    fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>;
+}
+
+impl Sample for Part<dyn Variable> {
+    const PLAIN_KIND: &'static str = PlainVariable::KIND;
+
+    fn kind(&self) -> String {
+        self.get().kind().into_owned()
+    }
+
+    fn type_id(&self) -> TypeId {
+        self.get().as_any().type_id()
+    }
+
+    fn find_unstable_getter(&self) -> Option<&'static str> {
+        let part = self.get();
+        if part.name() != part.name() {
+            return Some("name");
+        }
+        if part.kind() != part.kind() {
+            return Some("kind");
+        }
+        if part.param() != part.param() {
+            return Some("param");
+        }
+        if part.notes() != part.notes() {
+            return Some("notes");
+        }
+        None
+    }
+
+    fn bound_identifiers(&self) -> Result<Vec<Identifier>, BoxError> {
+        Ok(Vec::new())
+    }
+
+    fn labels(&self) -> Result<Vec<Identifier>, BoxError> {
+        Ok(vec![self.get().name().clone()])
+    }
+
+    fn structural_hook(&self, other: &Self) -> Result<bool, BoxError> {
+        self.get().is_extension_structurally_equivalent(other.get())
+    }
+
+    fn alpha_hook(&self, other: &Self, renaming: &AlphaRenaming) -> Result<bool, BoxError> {
+        self.get()
+            .is_extension_alpha_equivalent_under(other.get(), renaming)
+    }
+
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        self.get().to_foreign()
+    }
+
+    fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError> {
+        Self::is_structurally_equivalent(self, other)
+    }
+}
+
+impl Sample for Part<dyn Alternative> {
+    const PLAIN_KIND: &'static str = PlainAlternative::KIND;
+
+    fn kind(&self) -> String {
+        self.get().kind().into_owned()
+    }
+
+    fn type_id(&self) -> TypeId {
+        self.get().as_any().type_id()
+    }
+
+    fn find_unstable_getter(&self) -> Option<&'static str> {
+        let part = self.get();
+        if part.name() != part.name() {
+            return Some("name");
+        }
+        if part.kind() != part.kind() {
+            return Some("kind");
+        }
+        if part.variables() != part.variables() {
+            return Some("variables");
+        }
+        if part.choices() != part.choices() {
+            return Some("choices");
+        }
+        if part.notes() != part.notes() {
+            return Some("notes");
+        }
+        match (part.bound_identifiers(), part.bound_identifiers()) {
+            (Ok(first), Ok(second)) if first != second => Some("bound_identifiers"),
+            _ => None,
+        }
+    }
+
+    fn bound_identifiers(&self) -> Result<Vec<Identifier>, BoxError> {
+        self.get().bound_identifiers()
+    }
+
+    fn labels(&self) -> Result<Vec<Identifier>, BoxError> {
+        alternative_labels(self.get())
+    }
+
+    fn structural_hook(&self, other: &Self) -> Result<bool, BoxError> {
+        self.get().is_extension_structurally_equivalent(other.get())
+    }
+
+    fn alpha_hook(&self, other: &Self, renaming: &AlphaRenaming) -> Result<bool, BoxError> {
+        self.get()
+            .is_extension_alpha_equivalent_under(other.get(), renaming)
+    }
+
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        self.get().to_foreign()
+    }
+
+    fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError> {
+        Self::is_structurally_equivalent(self, other)
+    }
+}
+
+/// Return the violation of `clause` by the sample of `kind`.
+fn violation(
+    clause: ContractClause,
+    kind: &str,
+    message: impl Into<String>,
+) -> ConformanceViolation {
+    ConformanceViolation {
+        clause,
+        kind: kind.to_owned(),
+        message: message.into(),
+        source: None,
+    }
+}
+
+/// Return the violation of `clause` by the sample of `kind` whose hook
+/// failed with `source`.
+fn failure(
+    clause: ContractClause,
+    kind: &str,
+    message: impl Into<String>,
+    source: impl Into<BoxError>,
+) -> ConformanceViolation {
+    ConformanceViolation {
+        source: Some(source.into()),
+        ..violation(clause, kind, message)
+    }
+}
+
+/// Return the mapping of a hook's failure with `source` to a violation of
+/// the hooks' clause by the sample of `kind`.
+fn hook_failed<'a>(
+    kind: &'a str,
+    message: &'static str,
+) -> impl FnOnce(BoxError) -> ConformanceViolation + 'a {
+    move |source| failure(ContractClause::EquivalenceHooks, kind, message, source)
+}
+
+/// Check `samples` against the contract, reading their foreign parts back
+/// with `resolve`.
+fn check_samples<T: Sample>(
+    samples: &[T],
+    resolve: impl Fn(&Foreign) -> Result<T, ForeignError>,
+) -> Result<(), ConformanceViolation> {
+    for (position, sample) in samples.iter().enumerate() {
+        check_sample(sample, &samples[..position], &resolve)?;
+    }
+    for (position, left) in samples.iter().enumerate() {
+        for right in &samples[position + 1..] {
+            if left.kind() == right.kind() {
+                check_pair(left, right)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check the clauses that `sample` keeps on its own, and its kind against
+/// the `earlier` samples'.
+fn check_sample<T: Sample>(
+    sample: &T,
+    earlier: &[T],
+    resolve: &impl Fn(&Foreign) -> Result<T, ForeignError>,
+) -> Result<(), ConformanceViolation> {
+    let kind = sample.kind();
+    if let Some(getter) = sample.find_unstable_getter() {
+        return Err(violation(
+            ContractClause::StableGetters,
+            &kind,
+            format!("`{getter}` answers differently on a second call"),
+        ));
+    }
+
+    if kind.is_empty() {
+        return Err(violation(
+            ContractClause::UniqueKind,
+            &kind,
+            "the kind is empty",
+        ));
+    }
+    if kind == T::PLAIN_KIND {
+        return Err(violation(
+            ContractClause::UniqueKind,
+            &kind,
+            "the kind is this module's plain kind",
+        ));
+    }
+    for other in earlier {
+        let same_type = other.type_id() == sample.type_id();
+        let same_kind = other.kind() == kind;
+        if same_type && !same_kind {
+            return Err(violation(
+                ContractClause::UniqueKind,
+                &kind,
+                format!("one type answers the kinds `{}` and `{kind}`", other.kind()),
+            ));
+        }
+        if !same_type && same_kind {
+            return Err(violation(
+                ContractClause::UniqueKind,
+                &kind,
+                "two types answer this kind",
+            ));
+        }
+    }
+
+    let bound = sample.bound_identifiers().map_err(|source| {
+        failure(
+            ContractClause::DistinctBoundIdentifiers,
+            &kind,
+            "the bound identifiers fail",
+            source,
+        )
+    })?;
+    if let Some(repeated) = first_repeat(&bound) {
+        return Err(violation(
+            ContractClause::DistinctBoundIdentifiers,
+            &kind,
+            format!("the bound identifiers repeat {repeated:?}"),
+        ));
+    }
+
+    let labels = sample.labels().map_err(|source| {
+        failure(
+            ContractClause::DistinctBoundIdentifiers,
+            &kind,
+            "the bound identifiers fail",
+            source,
+        )
+    })?;
+    if !sample
+        .structural_hook(sample)
+        .map_err(hook_failed(&kind, "the structural hook fails"))?
+    {
+        return Err(violation(
+            ContractClause::EquivalenceHooks,
+            &kind,
+            "the structural hook refuses a sample and itself",
+        ));
+    }
+    let frame = enter_frame(&AlphaRenaming::default(), &labels, &labels).ok_or_else(|| {
+        violation(
+            ContractClause::DistinctBoundIdentifiers,
+            &kind,
+            "the names the sample binds repeat",
+        )
+    })?;
+    if !sample
+        .alpha_hook(sample, &frame)
+        .map_err(hook_failed(&kind, "the alpha hook fails"))?
+    {
+        return Err(violation(
+            ContractClause::EquivalenceHooks,
+            &kind,
+            "the alpha hook refuses a sample and itself",
+        ));
+    }
+
+    let foreign = sample.to_foreign().map_err(|source| {
+        failure(
+            ContractClause::WireForm,
+            &kind,
+            "`to_foreign` fails",
+            source,
+        )
+    })?;
+    if foreign.type_id() != kind {
+        return Err(violation(
+            ContractClause::WireForm,
+            &kind,
+            format!("`to_foreign` writes the type id `{}`", foreign.type_id()),
+        ));
+    }
+    let resolved = resolve(&foreign).map_err(|source| {
+        failure(
+            ContractClause::WireForm,
+            &kind,
+            "the resolver refuses the part",
+            source,
+        )
+    })?;
+    let is_equivalent = resolved.kind() == kind
+        && sample
+            .is_structurally_equivalent(&resolved)
+            .map_err(|source| {
+                failure(
+                    ContractClause::WireForm,
+                    &kind,
+                    "comparing the part read back fails",
+                    source,
+                )
+            })?;
+    if !is_equivalent {
+        return Err(violation(
+            ContractClause::WireForm,
+            &kind,
+            "the part read back is not structurally equivalent to the sample",
+        ));
+    }
+    Ok(())
+}
+
+/// Check that the hooks answer `left` and `right`, two samples of one
+/// kind, as equivalence relations do.
+fn check_pair<T: Sample>(left: &T, right: &T) -> Result<(), ConformanceViolation> {
+    let kind = left.kind();
+    let forward = left
+        .structural_hook(right)
+        .map_err(hook_failed(&kind, "the structural hook fails"))?;
+    let backward = right
+        .structural_hook(left)
+        .map_err(hook_failed(&kind, "the structural hook fails"))?;
+    if forward != backward {
+        return Err(violation(
+            ContractClause::EquivalenceHooks,
+            &kind,
+            "the structural hook answers differently in the two directions",
+        ));
+    }
+    if forward
+        && !left
+            .alpha_hook(right, &AlphaRenaming::default())
+            .map_err(hook_failed(&kind, "the alpha hook fails"))?
+    {
+        return Err(violation(
+            ContractClause::EquivalenceHooks,
+            &kind,
+            "the structural hook accepts what the alpha hook refuses under the empty renaming",
+        ));
+    }
+    let left_labels = left
+        .labels()
+        .map_err(hook_failed(&kind, "the bound identifiers fail"))?;
+    let right_labels = right
+        .labels()
+        .map_err(hook_failed(&kind, "the bound identifiers fail"))?;
+    let renaming = AlphaRenaming::default();
+    if let (Some(forward_frame), Some(backward_frame)) = (
+        enter_frame(&renaming, &left_labels, &right_labels),
+        enter_frame(&renaming, &right_labels, &left_labels),
+    ) {
+        let forward = left
+            .alpha_hook(right, &forward_frame)
+            .map_err(hook_failed(&kind, "the alpha hook fails"))?;
+        let backward = right
+            .alpha_hook(left, &backward_frame)
+            .map_err(hook_failed(&kind, "the alpha hook fails"))?;
+        if forward != backward {
+            return Err(violation(
+                ContractClause::EquivalenceHooks,
+                &kind,
+                "the alpha hook answers differently in the two directions",
+            ));
+        }
+    }
+    Ok(())
 }

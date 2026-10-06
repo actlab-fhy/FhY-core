@@ -1,11 +1,5 @@
 //! Errors of building spaces and configurations and of comparing them.
 
-#![expect(
-    unused_variables,
-    dead_code,
-    reason = "interface stub: the bodies are todo!() until the implementation"
-)]
-
 use std::error::Error;
 use std::fmt;
 
@@ -268,19 +262,26 @@ pub struct ConfigurationErrors(Vec<ConfigurationError>);
 impl ConfigurationErrors {
     /// Return the problems, which `problems` must not be empty of.
     pub(super) fn new(problems: Vec<ConfigurationError>) -> Self {
-        todo!()
+        Self(problems)
     }
 
     /// Return the problems, in the order found.
     #[must_use]
     pub fn errors(&self) -> &[ConfigurationError] {
-        todo!()
+        &self.0
     }
 }
 
 impl fmt::Display for ConfigurationErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        f.write_str("the configuration is invalid: ")?;
+        for (position, problem) in self.0.iter().enumerate() {
+            if position > 0 {
+                f.write_str("; ")?;
+            }
+            write!(f, "{problem}")?;
+        }
+        Ok(())
     }
 }
 
