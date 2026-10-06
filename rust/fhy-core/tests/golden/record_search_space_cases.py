@@ -601,8 +601,18 @@ def _relabel(left: Point, labels: list[str], shared: bool) -> Point:
         options.append(_option(rename(option["name"]), knobs))
     selection = None
     if left["selection"] is not None:
-        names = [option["name"] for option in left["options"]]
-        position = names.index(left["selection"]["option"])
+        # Two options may share a name; the chosen one is the first of that
+        # name that holds every knob the selection assigns.
+        assigned = [label for label, _ in left["selection"]["values"]]
+        position = next(
+            index
+            for index, option in enumerate(left["options"])
+            if option["name"] == left["selection"]["option"]
+            and all(
+                label in [knob["name"] for knob in option["knobs"]]
+                for label in assigned
+            )
+        )
         knob_names = [knob["name"] for knob in left["options"][position]["knobs"]]
         values = [
             (copied_knobs[position][knob_names.index(label)], value)
