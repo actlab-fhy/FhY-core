@@ -22,18 +22,18 @@ use super::state;
 
 /// Return the `EntryRegistrationError` carrying `message`.
 pub(super) fn registration_error(py: Python<'_>, message: &str) -> PyErr {
-    crate::exceptions::ENTRY_REGISTRATION_ERROR.err(py, (message,))
+    crate::util::exceptions::ENTRY_REGISTRATION_ERROR.err(py, (message,))
 }
 
 /// Return the `EntryLookupError` carrying `message`.
 pub(in crate::expression) fn lookup_error(py: Python<'_>, message: &str) -> PyErr {
-    crate::exceptions::ENTRY_LOOKUP_ERROR.err(py, (message,))
+    crate::util::exceptions::ENTRY_LOOKUP_ERROR.err(py, (message,))
 }
 
 /// Return the `FunctionArityError` of `fhy_core.symbolic.expression.passes
 /// .inline` carrying `message`.
 pub(in crate::expression) fn arity_error(py: Python<'_>, message: &str) -> PyErr {
-    crate::exceptions::FUNCTION_ARITY_ERROR.err(py, (message,))
+    crate::util::exceptions::FUNCTION_ARITY_ERROR.err(py, (message,))
 }
 
 /// Return the Python exception of the inlining error `error`: the core's

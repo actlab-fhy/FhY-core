@@ -182,7 +182,6 @@ fn join(up: &[u32; COUNT], left: CoreDataType, right: CoreDataType) -> Option<Co
 
 impl CoreDataType {
     /// Return every core data type, in declaration order.
-    #[must_use]
     pub fn all() -> impl ExactSizeIterator<Item = Self> {
         ALL.into_iter()
     }

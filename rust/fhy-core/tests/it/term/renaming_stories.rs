@@ -4,7 +4,7 @@
 //! expressions compared under frames the way a binder term compares its
 //! body.
 //!
-//! Most cases are ported from the Python suites of `AlphaRenaming`
+//! Most cases mirror the Python suites of `AlphaRenaming`
 //! (`tests/test_alpha_equivalence.py`, `tests/test_binder.py` and
 //! `tests/test_derived_equivalence.py`). A Rust expression has no binder, so
 //! where Python compares two binder terms, these tests enter one frame per

@@ -32,22 +32,23 @@ use crate::expression::{
     PyExpression, PyIdentifierExpression, decimal_class, materialize_with_known, read_decimal,
     registry_snapshot,
 };
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::gc::{Slots, collect_slots};
 use crate::identifier::{deserialize_identifier, read_identifier_id, restore_identifier};
-use crate::serialization::{
+use crate::solver::get_default_solver;
+use crate::term::read_renaming;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::{Slots, collect_slots};
+use crate::util::serialization::{
     FieldShape, construct_from_decoded_fields, read_constructor_fields, read_payload_fields,
     serialize_nested,
 };
-use crate::solver::get_default_solver;
-use crate::term::read_renaming;
 
 use super::error::constraint_error_to_py;
 use super::observer::LoggingObserver;
 use super::value::{
     constraint_error, member_to_python, read_bound_value, read_member, read_member_value,
-    repr_text, type_name, with_pending_errors,
+    read_type_name, repr_text,
 };
+use crate::util::pending::with_pending_errors;
 
 /// Return the `ConstraintOutcome` member of `outcome`.
 pub(crate) fn outcome_to_python(py: Python<'_>, outcome: Outcome) -> PyResult<Bound<'_, PyAny>> {
@@ -119,7 +120,7 @@ pub(crate) fn read_scoped_bindings<'py>(
             let mapping = mapping.cast::<PyMapping>().map_err(|_not_a_mapping| {
                 PyTypeError::new_err(format!(
                     "bindings must be a mapping, got {}.",
-                    type_name(mapping)
+                    read_type_name(mapping)
                 ))
             })?;
             mapping
@@ -227,7 +228,7 @@ impl PyEquationConstraint {
                     "EquationConstraint requires an `Expression` instance, but got value {} of \
                      type {}.",
                     repr_text(expression),
-                    type_name(expression)
+                    read_type_name(expression)
                 ),
             ));
         };
@@ -455,7 +456,7 @@ impl SetState {
                      canonical ordering, and evaluation all key on the identifier, so a \
                      non-identifier fails far from here.",
                     repr_text(variable),
-                    type_name(variable)
+                    read_type_name(variable)
                 ),
             ));
         }
@@ -579,7 +580,7 @@ impl SetState {
 
     /// Return the data payload `{"variable": .., "values": [..]}`.
     fn serialize_data_to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let serialize = crate::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
+        let serialize = crate::util::python::cached_attr!(py, "fhy_core.serialization", "serialize_registry_wrapped_value" => PyAny)?;
         let members = self
             .values
             .bind(py)
@@ -609,7 +610,7 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
         || values.is_instance_of::<PyBytes>()
         || values.is_instance_of::<PyByteArray>()
     {
-        let class = type_name(values);
+        let class = read_type_name(values);
         return Err(constraint_error(
             py,
             format!(
@@ -627,7 +628,7 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
                 "Constraint members must be given as a collection of members, not a {}, whose \
                  values would be silently discarded and only its keys kept as members. Pass \
                  the intended members directly, e.g. as a set or tuple.",
-                type_name(values)
+                read_type_name(values)
             ),
         ));
     }
@@ -647,8 +648,9 @@ fn read_member_collection(values: &Bound<'_, PyAny>) -> PyResult<MemberSet> {
 /// does not decode, and `ConstraintError` for one that cannot be a member.
 fn decode_members<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
     let py = values.py();
-    let deserialize = crate::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
-    let structure_error = crate::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.class(py)?;
+    let deserialize = crate::util::python::cached_attr!(py, "fhy_core.serialization", "deserialize_registry_wrapped_value" => PyAny)?;
+    let structure_error =
+        crate::util::exceptions::DESERIALIZATION_DICT_STRUCTURE_ERROR.class(py)?;
     let decoded = PyList::empty(py);
     for payload in values.try_iter()? {
         let member = match deserialize.call1((payload?,)) {
@@ -657,10 +659,10 @@ fn decode_members<'py>(values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList
                 if error.is_instance(py, structure_error)
                     || error.is_instance(
                         py,
-                        crate::exceptions::DESERIALIZATION_VALUE_ERROR.class(py)?,
+                        crate::util::exceptions::DESERIALIZATION_VALUE_ERROR.class(py)?,
                     ) =>
             {
-                let wrapped = crate::exceptions::DESERIALIZATION_VALUE_ERROR.err(
+                let wrapped = crate::util::exceptions::DESERIALIZATION_VALUE_ERROR.err(
                     py,
                     (format!(
                         "Invalid serialized member in field \"values\": {}",

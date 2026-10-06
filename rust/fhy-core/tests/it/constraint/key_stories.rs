@@ -2,7 +2,7 @@
 //! constraints, distinct otherwise, and computed on a small stack for a
 //! deep expression.
 //!
-//! The cases are ported from `test_ordering_key.py`.
+//! The cases mirror `test_ordering_key.py`.
 
 use fhy_core::constraint::{
     Constraint, ConstraintSystem, EquationConstraint, Polarity, SetConstraint, Value,

@@ -109,19 +109,16 @@ impl TypeUnificationEnvironment {
     }
 
     /// Return the data-type bindings, in no particular order.
-    #[must_use]
     pub fn data_type_bindings(&self) -> impl ExactSizeIterator<Item = (&Identifier, &DataType)> {
         self.data_type_bindings.iter()
     }
 
     /// Return the type bindings, in no particular order.
-    #[must_use]
     pub fn type_bindings(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Type)> {
         self.type_bindings.iter()
     }
 
     /// Return the expression bindings, in no particular order.
-    #[must_use]
     pub fn expression_bindings(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Expression)> {
         self.expression_bindings.iter()
     }

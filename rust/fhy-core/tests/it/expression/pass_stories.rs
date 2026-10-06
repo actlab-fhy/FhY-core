@@ -146,7 +146,7 @@ fn rewrite_rule_applier_execute_without_a_firing_returns_the_input_unchanged() {
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::all());
-    assert!(applier.fired().is_empty());
+    assert_eq!(applier.fired(), []);
 }
 
 /// Test a run in which a rule fires preserves no analysis.
@@ -208,7 +208,7 @@ fn rewrite_rule_applier_fired_lists_the_firings_of_the_last_run() {
             (0, Some("x + 0 -> x".to_owned()))
         ]
     );
-    assert!(applier.fired().is_empty());
+    assert_eq!(applier.fired(), []);
 }
 
 /// Test each firing of a named rule reports an informational diagnostic

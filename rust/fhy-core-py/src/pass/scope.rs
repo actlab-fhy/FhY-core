@@ -17,9 +17,9 @@ use pyo3::prelude::*;
 
 use fhy_core::diagnostic::Diagnostic;
 
-use crate::dataclass::hash_value;
 use crate::diagnostic::borrow_python_diagnostic;
-use crate::scoped::{ScopedGuard, ScopedStack};
+use crate::util::dataclass::hash_value;
+use crate::util::scoped::{ScopedGuard, ScopedStack};
 
 /// A nested run error that a hook raised, recorded when the adapter handed
 /// its Rust error to the core, which nests it.

@@ -27,7 +27,7 @@ from fhy_core.symbol_table import (
 from fhy_core.symbolic.expression import Expression, FunctionSort, NativeFunction
 from fhy_core.symbolic.expression.pattern import RewriteRule, WildcardPattern
 from fhy_core.symbolic.param import CategoricalDomain, OrdinalDomain, Param
-from fhy_core.symbolic.solver import Simplifier, Solver
+from fhy_core.symbolic.solver import GroundSimplifier, Simplifier, Solver
 from fhy_core.types import (
     CoreDataType,
     NumericalType,
@@ -146,6 +146,18 @@ def test_a_simplifier_holding_its_solver_is_collected() -> None:
         simplifier = _SolverHoldingSimplifier()
         simplifier.solver = Solver(simplifier=simplifier)
         return simplifier
+
+    assert _collects(build)
+
+
+def test_a_fallback_holding_its_ground_simplifier_is_collected() -> None:
+    """Test a ground simplifier and the Python fallback that points back at it."""
+
+    def build() -> object:
+        fallback = _SolverHoldingSimplifier()
+        ground = GroundSimplifier(fallback)
+        fallback.solver = Solver(simplifier=ground)
+        return fallback
 
     assert _collects(build)
 

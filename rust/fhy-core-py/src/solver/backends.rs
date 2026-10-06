@@ -29,20 +29,14 @@ use fhy_core::solver::{
 };
 
 use crate::expression::{PyExpression, materialize_expression, materialize_substituted};
-use crate::gc::Slot;
 use crate::object_table::ObjectTable;
 use crate::pass::refuse_unused_arguments;
-use crate::scoped::ScopedStack;
+use crate::util::gc::Slot;
+pub(super) use crate::util::python::read_type_name;
+use crate::util::scoped::ScopedStack;
 
+use super::error::backend_error_to_py;
 use super::values::{PySatResult, PySmtScript};
-
-/// Return the name of the type of `value`, for messages.
-pub(super) fn type_name(value: &Bound<'_, PyAny>) -> String {
-    value
-        .get_type()
-        .name()
-        .map_or_else(|_| "?".to_owned(), |name| name.to_string())
-}
 
 /// Return the `name` of the Python backend `object`, or its class name if
 /// reading it fails or gives no `str`.
@@ -51,14 +45,41 @@ fn read_name(object: &Bound<'_, PyAny>) -> String {
         .getattr(intern!(object.py(), "name"))
         .ok()
         .and_then(|name| name.extract::<String>().ok())
-        .unwrap_or_else(|| type_name(object))
+        .unwrap_or_else(|| read_type_name(object))
+}
+
+/// Return `timeout` in whole milliseconds, rounding a non-zero remainder
+/// below one millisecond up to one, so a bound that is not exhausted never
+/// reads as zero.
+fn whole_milliseconds(timeout: Duration) -> u64 {
+    let milliseconds = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+    if milliseconds == 0 && !timeout.is_zero() {
+        1
+    } else {
+        milliseconds
+    }
 }
 
 /// Return `limits`' timeout in whole milliseconds.
 fn timeout_milliseconds(limits: &CheckLimits) -> Option<u64> {
-    limits
-        .timeout()
-        .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX))
+    limits.timeout().map(whole_milliseconds)
+}
+
+/// Return `value`, an `Expression`, as its Python object, or raise the
+/// `TypeError` naming `owner`.
+pub(super) fn read_expression<'py>(
+    value: &Bound<'py, PyAny>,
+    owner: &str,
+) -> PyResult<Bound<'py, PyExpression>> {
+    value
+        .cast::<PyExpression>()
+        .cloned()
+        .map_err(|_not_an_expression| {
+            PyTypeError::new_err(format!(
+                "{owner} expression must be an Expression, got {}.",
+                read_type_name(value)
+            ))
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -153,11 +174,12 @@ impl PySimplifyContext {
 
     /// Return how long the simplification may run, in whole milliseconds,
     /// or `None` when it is unbounded.
+    ///
+    /// A remainder below one millisecond reads as 1, and only a bound that
+    /// is exhausted reads as 0.
     #[getter]
     fn timeout_milliseconds(&self) -> Option<u64> {
-        self.limits
-            .timeout()
-            .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX))
+        self.limits.timeout().map(whole_milliseconds)
     }
 
     fn __repr__(&self) -> String {
@@ -209,8 +231,8 @@ impl SmtSolver for PythonSmtSolver {
                 Ok(result) => Ok(result.get().result().clone()),
                 Err(_not_a_result) => Err(PyTypeError::new_err(format!(
                     "{}.check must return a SatResult, got {}.",
-                    type_name(object),
-                    type_name(&result)
+                    read_type_name(object),
+                    read_type_name(&result)
                 ))),
             }
         })
@@ -339,8 +361,8 @@ impl Simplifier for PythonSimplifier {
                 Err(_not_an_expression) => {
                     return Err(PyTypeError::new_err(format!(
                         "{}.simplify must return an Expression, got {}.",
-                        type_name(object),
-                        type_name(&result)
+                        read_type_name(object),
+                        read_type_name(&result)
                     )));
                 }
             };
@@ -368,18 +390,22 @@ pub(super) fn build_smt_solver(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Sm
     }
     Err(PyTypeError::new_err(format!(
         "Solver smt_solver must be an SmtSolver, got {}.",
-        type_name(object)
+        read_type_name(object)
     )))
 }
 
 /// Return the core backend of the Python `Simplifier` `object`: the native
-/// backend of a `SympySimplifier`, or an adapter calling `object`.
+/// backend of a `SympySimplifier` or a `GroundSimplifier`, or an adapter
+/// calling `object`.
 ///
 /// # Errors
 ///
 /// Raises `TypeError` for an object that is not a `SimplifierBase`.
 pub(super) fn build_simplifier(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Simplifier>> {
     if let Ok(native) = object.cast::<super::sympy::PySympySimplifier>() {
+        return Ok(native.get().backend());
+    }
+    if let Ok(native) = object.cast::<super::ground::PyGroundSimplifier>() {
         return Ok(native.get().backend());
     }
     if object.is_instance_of::<PySimplifierBase>() {
@@ -389,7 +415,7 @@ pub(super) fn build_simplifier(object: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Si
     }
     Err(PyTypeError::new_err(format!(
         "Solver simplifier must be a Simplifier, got {}.",
-        type_name(object)
+        read_type_name(object)
     )))
 }
 
@@ -444,7 +470,7 @@ impl PySmtLib2ProcessSolver {
             .map_err(|_not_a_path| {
                 PyTypeError::new_err(format!(
                     "SmtLib2ProcessSolver program must be a str or a path, got {}.",
-                    type_name(program)
+                    read_type_name(program)
                 ))
             })?;
         let mut arguments: Vec<Bound<'_, PyString>> = Vec::new();
@@ -454,7 +480,7 @@ impl PySmtLib2ProcessSolver {
                 arguments.push(argument.cast_into::<PyString>().map_err(|error| {
                     PyTypeError::new_err(format!(
                         "SmtLib2ProcessSolver args must be strs, got {}.",
-                        type_name(&error.into_inner())
+                        read_type_name(&error.into_inner())
                     ))
                 })?);
             }
@@ -508,15 +534,9 @@ impl PySmtLib2ProcessSolver {
         });
         let script = script.get();
         let result = py.detach(|| self.backend.check(script.script(), &limits));
-        result.map(PySatResult::from).map_err(|source| {
-            super::error::solve_error_to_py(
-                py,
-                fhy_core::solver::SolveError::Backend {
-                    backend: self.backend.name().into_owned(),
-                    source,
-                },
-            )
-        })
+        result
+            .map(PySatResult::from)
+            .map_err(|source| backend_error_to_py(py, self.backend.name(), source))
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {

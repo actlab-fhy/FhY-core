@@ -61,7 +61,7 @@ fn union_of_ordinal_domains_bakes_both_effective_value_sets() {
         .expect("the ordinal kind represents a union");
 
     assert_eq!(values_of(&domain), ["int:2", "int:3", "int:5", "int:6"]);
-    assert!(constraints.is_empty());
+    assert_eq!(constraints, [] as [Constraint; 0]);
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn intersection_of_finite_domains_bakes_the_common_effective_values() {
         .expect("intersects");
 
     assert_eq!(values_of(&domain), ["int:2", "int:4"]);
-    assert!(constraints.is_empty());
+    assert_eq!(constraints, [] as [Constraint; 0]);
 }
 
 #[test]

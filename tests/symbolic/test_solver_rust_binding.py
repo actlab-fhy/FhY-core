@@ -836,6 +836,35 @@ def test_missing_package_raises_solver_backend_unavailable_error(
 
 
 @pytest.mark.subprocess
+def test_missing_sympy_leaves_the_ground_backend_available() -> None:
+    """Test ``GROUND`` folds without SymPy, and ``GROUND_THEN_SYMPY`` needs it."""
+    completed = _run_python(
+        """
+        import sys
+        sys.modules["sympy"] = None
+        import fhy_core
+        from fhy_core.symbolic.expression import LiteralExpression
+        from fhy_core.symbolic.solver import (
+            SolverBackend,
+            is_backend_available,
+            simplify_expression,
+        )
+
+        assert not is_backend_available(SolverBackend.GROUND_THEN_SYMPY)
+        assert is_backend_available(SolverBackend.GROUND)
+        folded = simplify_expression(
+            LiteralExpression(2) + LiteralExpression(3), backend=SolverBackend.GROUND
+        )
+        assert folded == LiteralExpression(5), folded
+        print("folded")
+        """
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == ["folded"]
+
+
+@pytest.mark.subprocess
 def test_importing_fhy_core_imports_neither_sympy_nor_z3() -> None:
     """Test a fresh ``import fhy_core`` leaves both packages unimported."""
     completed = _run_python(

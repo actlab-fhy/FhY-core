@@ -35,14 +35,14 @@ impl IntoPyErr for RewriteError {
         Python::attach(|py| {
             let (class, cause) = match self {
                 Self::Callback { source, .. } => {
-                    let cause = crate::exceptions::boxed_error_to_py(source);
+                    let cause = crate::util::exceptions::boxed_error_to_py(source);
                     if !cause.is_instance_of::<PyException>(py) {
                         return cause;
                     }
-                    (&crate::exceptions::REWRITE_CALLBACK_ERROR, cause)
+                    (&crate::util::exceptions::REWRITE_CALLBACK_ERROR, cause)
                 }
                 Self::Rebuild { source, .. } => (
-                    &crate::exceptions::REWRITE_REBUILD_ERROR,
+                    &crate::util::exceptions::REWRITE_REBUILD_ERROR,
                     source.into_py_err(),
                 ),
                 _ => return PyRuntimeError::new_err(message),

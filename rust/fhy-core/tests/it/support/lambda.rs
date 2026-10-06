@@ -185,7 +185,7 @@ pub(crate) trait Alpha: AlphaEquivalence {
     fn alpha_equivalent_under(&self, other: &Self, renaming: &AlphaRenaming) -> bool;
 }
 
-impl<T: AlphaEquivalence> Alpha for T {
+impl<T: ?Sized + AlphaEquivalence> Alpha for T {
     fn alpha_equivalent(&self, other: &Self) -> bool {
         self.is_alpha_equivalent(other)
             .expect("the comparison does not fail")

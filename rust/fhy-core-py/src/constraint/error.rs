@@ -19,16 +19,16 @@ use crate::error::IntoPyErr;
 use crate::expression::{decimal_class, non_boolean_operand_error};
 use crate::solver::solve_error_to_py;
 
-use super::value::{constraint_error, read_member_value, repr_text, type_name};
+use super::value::{constraint_error, read_member_value, read_type_name, repr_text};
 
 /// Return `fhy_core.symbolic.expression.LiteralExpression`.
 fn literal_expression_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.expression", "LiteralExpression" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.expression", "LiteralExpression" => PyType)
 }
 
 /// Return the `MissingSymbolTypeError` with `message`.
 fn missing_symbol_type_error(py: Python<'_>, message: String) -> PyErr {
-    crate::exceptions::MISSING_SYMBOL_TYPE_ERROR.err(py, (message,))
+    crate::util::exceptions::MISSING_SYMBOL_TYPE_ERROR.err(py, (message,))
 }
 
 /// Return whether `value` is a `LiteralType`: a `str`, `float`, `int`,
@@ -58,7 +58,7 @@ pub(crate) fn constraint_error_to_py(
         ConstraintError::NonBooleanResult { .. } => non_boolean_operand_error(py, text),
         ConstraintError::Solve(error) => solve_error_to_py(py, error),
         ConstraintError::MissingSymbolTypes(_) => missing_symbol_type_error(py, text),
-        ConstraintError::Custom(error) => crate::exceptions::unbox_py_err(error)
+        ConstraintError::Custom(error) => crate::util::exceptions::unbox_py_err(error)
             .unwrap_or_else(|error| PyRuntimeError::new_err(format!("{text}: {error}"))),
         ConstraintError::Substitution(error) => PyValueError::new_err(format!("{text}: {error}")),
         _ => constraint_error(py, text),
@@ -75,7 +75,7 @@ fn unusable_binding_error(
     let py = identifier.py();
     let identifier_repr = repr_text(identifier);
     let value_repr = repr_text(value);
-    let value_type = type_name(value);
+    let value_type = read_type_name(value);
     match reason {
         UnusableBindingReason::NotMemberShaped => {
             let cause = read_member_value(value).err();
@@ -106,7 +106,7 @@ fn unusable_binding_error(
             );
             // Every opaque value in the binding is a Python object, so the
             // source is the exception its hash raised.
-            error.set_cause(py, Some(crate::exceptions::boxed_error_to_py(source)));
+            error.set_cause(py, Some(crate::util::exceptions::boxed_error_to_py(source)));
             error
         }
         UnusableBindingReason::NotALiteral if !is_literal_type(value).unwrap_or(false) => {

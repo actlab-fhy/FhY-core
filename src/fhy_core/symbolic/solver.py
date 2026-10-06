@@ -17,6 +17,29 @@ three logical questions and a :class:`Simplifier` for simplification:
   :class:`~fhy_core.symbolic.expression.passes.sympy.SympySimplifier`, which
   lowers to SymPy, simplifies and lifts back in Rust and needs the ``sympy``
   package (``pip install fhy_core[sympy]``);
+- ``SolverBackend.GROUND`` is the Rust core's ground simplifier,
+  :class:`~fhy_core.symbolic.solver.GroundSimplifier`, which needs neither
+  Python packages nor SymPy: it folds an expression with no free identifier
+  in exact arithmetic, returns exactly what the SymPy backend returns
+  wherever it folds, and returns the expression unchanged wherever it
+  cannot match SymPy exactly (a free identifier, a float, a user function,
+  an irrational value, a composed built-in such as ``max`` or ``abs`` that
+  SymPy refuses until it is inlined, an expression nested more than 256
+  deep, such as a sum built by 300 repeated additions), so it never
+  approximates. Alone, it returns an undefined or ill-typed ground
+  expression (``1/0``, ``True + 1``) unchanged rather than raising, where
+  ``GROUND_THEN_SYMPY`` raises as SymPy does. It honors the
+  ``timeout_milliseconds`` of ``Solver.simplify_expression``: when the
+  time is up it returns the expression unchanged, never a partial result. A
+  single operation is not interrupted, but its size is bounded (a power or
+  an integer result of at most a million bits, a fraction with parts of at
+  most 4096 bits), which keeps one to milliseconds;
+- ``SolverBackend.GROUND_THEN_SYMPY`` is the ground simplifier in front of
+  the SymPy backend, ``GroundSimplifier(SympySimplifier())``: SymPy answers
+  what the ground fold declines, so the answer is SymPy's, faster where the
+  expression is ground. The timeout bounds the ground part, and SymPy is
+  asked under what is left of it, but SymPy cannot be cancelled and runs to
+  its end;
 - :class:`SmtLib2ProcessSolver` drives any SMT-LIB2 executable, such as
   ``z3 -in`` or ``cvc5 --lang=smt2``, from Rust;
 - a Python subclass of :class:`SmtSolver` or :class:`Simplifier` plugs in any
@@ -25,10 +48,14 @@ three logical questions and a :class:`Simplifier` for simplification:
 The module functions below take ``backend``: ``None`` (the default) asks the
 default solver, which :func:`get_default_solver` returns and
 :func:`set_default_solver` replaces; the constraints and params ask it too.
-Its initial value holds the z3-solver adapter and the SymPy backend. A
-:class:`SolverBackend` member asks its adapter. Neither package is imported
-until a question needs it; a question whose backend's package is missing
-raises :class:`SolverBackendUnavailableError`, never a degraded answer.
+Its initial value holds the z3-solver adapter and the SymPy backend; the
+ground simplifier is selected with ``backend=SolverBackend.GROUND`` or
+``SolverBackend.GROUND_THEN_SYMPY`` for one question, or for every default
+question with ``set_default_solver(Solver(simplifier=GroundSimplifier(...)))``.
+A :class:`SolverBackend` member asks its adapter. Neither z3-solver nor SymPy
+is imported until a question needs it; a question whose backend's package is
+missing raises :class:`SolverBackendUnavailableError`, never a degraded
+answer.
 
 The order of checks of a logical question, which every entry point shares:
 the backend's capability (:class:`SolverCapabilityError`), then
@@ -59,6 +86,7 @@ find it ``False``.
 """
 
 __all__ = [
+    "GroundSimplifier",
     "SatResult",
     "SatStatus",
     "Simplifier",
@@ -106,6 +134,7 @@ Solver = _rs.Solver
 SmtScript = _rs.SmtScript
 SatResult = _rs.SatResult
 SmtLib2ProcessSolver = _rs.SmtLib2ProcessSolver
+GroundSimplifier = _rs.GroundSimplifier
 get_default_solver = _rs.get_default_solver
 set_default_solver = _rs.set_default_solver
 
@@ -115,6 +144,8 @@ class SolverBackend(StrEnum):
 
     SYMPY = "sympy"
     Z3 = "z3"
+    GROUND = "ground"
+    GROUND_THEN_SYMPY = "ground_then_sympy"
 
 
 class SolverQueryKind(StrEnum):
@@ -200,7 +231,9 @@ class Simplifier(_rs.SimplifierBase, ABC):
     before it calls ``simplify`` from Rust, once per question. During the
     call, :attr:`context` gives the simplification's limits: its
     ``timeout`` in seconds and ``timeout_milliseconds``, or ``None`` when it
-    is unbounded, as it is outside a simplification.
+    is unbounded, as it is outside a simplification. ``timeout_milliseconds``
+    is a positive integer: a remainder below one millisecond reads as 1, and
+    a simplification with no time left is not handed to a chained fallback.
     :class:`~fhy_core.symbolic.expression.passes.sympy.SympySimplifier`, a
     backend implemented in Rust, is registered as a virtual subclass.
     """
@@ -228,12 +261,19 @@ class Simplifier(_rs.SimplifierBase, ABC):
 
 
 Simplifier.register(_rs.SympySimplifier)
+Simplifier.register(_rs.GroundSimplifier)
 
+
+_SIMPLIFICATION_ONLY: frozenset[SolverQueryKind] = frozenset(
+    {SolverQueryKind.SIMPLIFICATION}
+)
 
 _BACKEND_CAPABILITIES: immutabledict[SolverBackend, frozenset[SolverQueryKind]] = (
     immutabledict(
         {
-            SolverBackend.SYMPY: frozenset({SolverQueryKind.SIMPLIFICATION}),
+            SolverBackend.SYMPY: _SIMPLIFICATION_ONLY,
+            SolverBackend.GROUND: _SIMPLIFICATION_ONLY,
+            SolverBackend.GROUND_THEN_SYMPY: _SIMPLIFICATION_ONLY,
             SolverBackend.Z3: frozenset(
                 {
                     SolverQueryKind.SATISFIABILITY,
@@ -304,16 +344,21 @@ def _resolve_adapter(backend: SolverBackend) -> SmtSolver | Simplifier:
 
     Raises:
         SolverBackendUnavailableError: If the backend's package is not
-            installed.
+            installed. ``GROUND`` needs none; ``GROUND_THEN_SYMPY`` needs
+            ``sympy``.
 
     """
     if backend is SolverBackend.Z3:
         from .expression.passes.z3 import Z3Solver  # noqa: PLC0415
 
         return Z3Solver()
+    if backend is SolverBackend.GROUND:
+        # The Rust backends are registered virtual subclasses of `Simplifier`.
+        return cast(Simplifier, GroundSimplifier())
     from .expression.passes.sympy import SympySimplifier  # noqa: PLC0415
 
-    # The Rust backend is a registered virtual subclass of `Simplifier`.
+    if backend is SolverBackend.GROUND_THEN_SYMPY:
+        return cast(Simplifier, GroundSimplifier(SympySimplifier()))
     return cast(Simplifier, SympySimplifier())
 
 

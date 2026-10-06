@@ -295,8 +295,7 @@ def test_add_constraint_rejects_constraint_with_foreign_only_scope() -> None:
 
     Under the scope-based attachment rule, a constraint attaches by
     `get_free_identifiers()` membership rather than a designated `variable`
-    field; this retargets the old variable-mismatch rejection test to that
-    rule (a constraint referencing only a foreign identifier is rejected).
+    field, so a constraint referencing only a foreign identifier is rejected.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
     other = mock_identifier("y", 2)
@@ -357,9 +356,8 @@ def test_constructor_constraints_kwarg_stores_validated_constraints() -> None:
 def test_constructor_constraints_kwarg_rejects_foreign_only_scope() -> None:
     """Test `Param.__init__` validates each constraint's scope against its variable.
 
-    Retargets the old variable-mismatch rejection test to the scope-based
-    attachment rule: a constraint referencing only a foreign identifier is
-    rejected.
+    Under the scope-based attachment rule, a constraint referencing only a
+    foreign identifier is rejected.
     """
     variable = mock_identifier("x", 1)
     other = mock_identifier("y", 2)
@@ -477,9 +475,8 @@ def test_replace_constraints_deduplicates_structurally_equivalent_constraints() 
 def test_replace_constraints_rejects_constraint_with_foreign_only_scope() -> None:
     """Test ``replace_constraints`` validates each constraint's scope.
 
-    Retargets the old variable-mismatch rejection test to the scope-based
-    attachment rule: a constraint referencing only a foreign identifier is
-    rejected.
+    Under the scope-based attachment rule, a constraint referencing only a
+    foreign identifier is rejected.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
     mismatched = EquationConstraint(IdentifierExpression(mock_identifier("y", 2)) >= 0)

@@ -541,7 +541,6 @@ impl Expression {
     /// The iterator knows its exact length, so
     /// [`len`](ExactSizeIterator::len) is the node's child count, and it is
     /// fused.
-    #[must_use]
     pub fn children(
         &self,
     ) -> impl DoubleEndedIterator<Item = &Self> + ExactSizeIterator + std::iter::FusedIterator {

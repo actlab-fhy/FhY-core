@@ -30,6 +30,8 @@ mod substitute;
 #[cfg(test)]
 mod error_stories;
 #[cfg(test)]
+mod ground_differential;
+#[cfg(test)]
 mod lifting_stories;
 #[cfg(test)]
 mod lowering_stories;
@@ -58,12 +60,10 @@ use fhy_core::identifier::Identifier;
 use fhy_core::solver::SimplifyContext;
 
 use crate::error::IntoPyErr;
-use crate::expression::{
-    PyExpression, materialize_expression, materialize_substituted, registry_snapshot,
-};
+use crate::expression::{materialize_expression, materialize_substituted, registry_snapshot};
 use crate::identifier::{read_identifier_id, restore_identifier};
 
-use super::backends::{PySimplifierBase, type_name};
+use super::backends::{PySimplifierBase, read_expression};
 
 /// The registered name of the bridge's pass for each phase that runs as a
 /// pass.
@@ -86,8 +86,8 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
     let text = error.to_string();
     match error.into_kind() {
         SympyErrorKind::Unavailable(unavailable) => {
-            let error =
-                crate::exceptions::SOLVER_BACKEND_UNAVAILABLE_ERROR.err(py, (UNAVAILABLE_MESSAGE,));
+            let error = crate::util::exceptions::SOLVER_BACKEND_UNAVAILABLE_ERROR
+                .err(py, (UNAVAILABLE_MESSAGE,));
             let (SympyUnavailableError::MissingSympy(cause)
             | SympyUnavailableError::Incompatible(cause)) = unavailable;
             error.set_cause(py, Some(cause));
@@ -95,13 +95,13 @@ fn exception_of(py: Python<'_>, error: SympyError) -> PyErr {
         }
         SympyErrorKind::IllTyped(error) => error.into_py_err(),
         SympyErrorKind::BoundNativeConstant(_) => {
-            crate::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
+            crate::util::exceptions::NATIVE_CONSTANT_BINDING_ERROR.err(py, (text,))
         }
         SympyErrorKind::ComplexInfinity => {
-            crate::exceptions::COMPLEX_INFINITY_LIFT_ERROR.err(py, (text,))
+            crate::util::exceptions::COMPLEX_INFINITY_LIFT_ERROR.err(py, (text,))
         }
         SympyErrorKind::PartialPiecewise(_) => {
-            crate::exceptions::PARTIAL_PIECEWISE_ERROR.err(py, (text,))
+            crate::util::exceptions::PARTIAL_PIECEWISE_ERROR.err(py, (text,))
         }
         SympyErrorKind::Arity(_) => PyValueError::new_err(text),
         SympyErrorKind::Implies(node) => {
@@ -179,7 +179,7 @@ pub(super) fn sympy_error_to_py(py: Python<'_>, error: SympyError, wrap: bool) -
     {
         return error;
     }
-    match crate::exceptions::PASS_EXECUTION_ERROR.build(
+    match crate::util::exceptions::PASS_EXECUTION_ERROR.build(
         py,
         (format!("pass {name:?} failed in run_pass"),),
         Some(&keywords),
@@ -209,22 +209,6 @@ impl PySympySimplifier {
     pub(super) fn backend(&self) -> Arc<SympySimplifier> {
         Arc::clone(&self.backend)
     }
-}
-
-/// Return the Rust expression of `value`, an `Expression`.
-fn read_expression<'py>(
-    value: &Bound<'py, PyAny>,
-    owner: &str,
-) -> PyResult<Bound<'py, PyExpression>> {
-    value
-        .cast::<PyExpression>()
-        .cloned()
-        .map_err(|_not_an_expression| {
-            PyTypeError::new_err(format!(
-                "{owner} expression must be an Expression, got {}.",
-                type_name(value)
-            ))
-        })
 }
 
 #[pymethods]

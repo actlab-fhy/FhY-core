@@ -12,7 +12,12 @@ use pyo3::prelude::*;
 /// `FrozenMutationError`.
 ///
 /// Matches the Python implementation: `FrozenMixin.__setattr__`.
-pub(crate) fn refuse_attribute_assignment(object: &Bound<'_, PyAny>, name: &str) -> PyResult<()> {
+///
+/// # Errors
+///
+/// Always returns `FrozenMutationError` with the message `Cannot modify
+/// "<name>" on frozen <type>.`, or what reading the type's name raises.
+pub fn refuse_attribute_assignment(object: &Bound<'_, PyAny>, name: &str) -> PyResult<()> {
     Err(build_frozen_mutation_error(object, "modify", name)?)
 }
 
@@ -20,7 +25,12 @@ pub(crate) fn refuse_attribute_assignment(object: &Bound<'_, PyAny>, name: &str)
 /// `FrozenMutationError`.
 ///
 /// Matches the Python implementation: `FrozenMixin.__delattr__`.
-pub(crate) fn refuse_attribute_deletion(object: &Bound<'_, PyAny>, name: &str) -> PyResult<()> {
+///
+/// # Errors
+///
+/// Always returns `FrozenMutationError` with the message `Cannot delete
+/// "<name>" on frozen <type>.`, or what reading the type's name raises.
+pub fn refuse_attribute_deletion(object: &Bound<'_, PyAny>, name: &str) -> PyResult<()> {
     Err(build_frozen_mutation_error(object, "delete", name)?)
 }
 
@@ -35,5 +45,8 @@ fn build_frozen_mutation_error(
         "Cannot {action} \"{name}\" on frozen {}.",
         object.get_type().name()?
     );
-    Ok(crate::exceptions::FROZEN_MUTATION_ERROR.err(object.py(), (message,)))
+    Ok(super::exceptions::FROZEN_MUTATION_ERROR.err(object.py(), (message,)))
 }
+
+#[cfg(test)]
+mod tests;

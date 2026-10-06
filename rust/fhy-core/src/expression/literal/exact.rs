@@ -9,6 +9,7 @@
 //! truncated or replaced by a fallback.
 
 use std::cmp::Ordering;
+use std::ops::Neg;
 
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
@@ -102,13 +103,11 @@ impl Rational {
     }
 
     /// Return the numerator, of the rational's sign.
-    #[cfg(test)]
     pub(crate) fn numerator(&self) -> &BigInt {
         &self.numerator
     }
 
     /// Return the denominator, positive.
-    #[cfg(test)]
     pub(crate) fn denominator(&self) -> &BigInt {
         &self.denominator
     }
@@ -211,6 +210,19 @@ impl Rational {
             * power(5, digits_after_point - fives);
         let exponent = i64::try_from(digits_after_point).ok()?;
         Decimal::from_parts(coefficient, -exponent).ok()
+    }
+}
+
+impl Neg for Rational {
+    type Output = Self;
+
+    /// Return the rational with the numerator negated, which keeps the
+    /// lowest terms and the positive denominator.
+    fn neg(self) -> Self {
+        Self {
+            numerator: -self.numerator,
+            denominator: self.denominator,
+        }
     }
 }
 
@@ -328,6 +340,28 @@ mod tests {
 
         assert_eq!(rational.numerator().to_string(), numerator);
         assert_eq!(rational.denominator().to_string(), denominator);
+    }
+
+    #[rstest]
+    #[case::positive(3, 4, -3, 4)]
+    #[case::negative(-3, 4, 3, 4)]
+    #[case::zero(0, 1, 0, 1)]
+    #[case::integer(7, 1, -7, 1)]
+    fn negating_a_rational_flips_the_numerator_and_keeps_the_denominator(
+        #[case] numerator: i64,
+        #[case] denominator: i64,
+        #[case] negated_numerator: i64,
+        #[case] negated_denominator: i64,
+    ) {
+        let rational =
+            Rational::new(BigInt::from(numerator), BigInt::from(denominator)).expect("non-zero");
+        let expected = Rational::new(
+            BigInt::from(negated_numerator),
+            BigInt::from(negated_denominator),
+        )
+        .expect("non-zero");
+
+        assert_eq!(-rational, expected);
     }
 
     #[rstest]

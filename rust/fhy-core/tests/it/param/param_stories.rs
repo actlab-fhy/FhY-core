@@ -558,7 +558,7 @@ fn union_of_finite_params_bakes_their_effective_values() {
     let union = left.union(&right, z.clone(), &context).expect("unions");
 
     assert_eq!(union.variable(), &z);
-    assert!(union.constraints().is_empty());
+    assert_eq!(union.constraints(), []);
     let ParamDomain::Ordinal(domain) = union.domain() else {
         panic!("an ordinal domain");
     };

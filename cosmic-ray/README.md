@@ -1,9 +1,10 @@
 # Mutation testing configs
 
-One `cosmic-ray.toml` per targeted module, named after the module. Each
-config differs from the others only in `module-path`. Splitting per module keeps a run
-scoped, since cosmic-ray mutates and re-tests one file at a time and a
-combined config would force every mutation through the whole target list.
+One config per targeted module, named after the module (`lattice.toml`,
+`poset.toml`, ...). Each config differs from the others only in
+`module-path`. Splitting per module keeps a run scoped, since cosmic-ray
+mutates and re-tests one file at a time and a combined config would force
+every mutation through the whole target list.
 
 Run one config from the repo root:
 

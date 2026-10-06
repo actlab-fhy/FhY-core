@@ -282,11 +282,23 @@ pub fn try_advance_counter_past(id: u64) -> Result<(), IdOutOfRange> {
 /// At [`ID_CAP`] this fails and leaves `counter` unchanged, so no id it
 /// issues is refused as a payload id, and it never wraps.
 fn take_next_id(counter: &AtomicU64) -> Result<u64, IdSpaceExhausted> {
-    counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next_id| {
-            (next_id < ID_CAP).then(|| next_id + 1)
-        })
-        .map_err(|_exhausted_value| IdSpaceExhausted)
+    // A compare-exchange loop rather than `fetch_update`, which newer
+    // toolchains deprecate in favour of a `try_update` the MSRV lacks.
+    let mut next_id = counter.load(Ordering::Relaxed);
+    loop {
+        if next_id >= ID_CAP {
+            return Err(IdSpaceExhausted);
+        }
+        match counter.compare_exchange_weak(
+            next_id,
+            next_id + 1,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(taken) => return Ok(taken),
+            Err(current) => next_id = current,
+        }
+    }
 }
 
 /// Accept the payload id `id` against `counter`: below [`ADVANCE_CAP`],

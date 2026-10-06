@@ -62,8 +62,14 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
         # What maturin sets: leave libpython unlinked in an extension.
         "PYO3_BUILD_EXTENSION_MODULE": "1",
     }
+    command = ["cargo", "rustc", "-p", PACKAGE, "--lib", "--locked"]
+    if sys.platform == "darwin":
+        # What maturin passes on macOS: an extension resolves the
+        # interpreter's symbols when it is loaded, so the linker must not
+        # require them.
+        command += ["--", "-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
     built = subprocess.run(
-        ["cargo", "build", "-p", PACKAGE, "--lib", "--locked"],
+        command,
         cwd=ROOT,
         env=environment,
         capture_output=True,

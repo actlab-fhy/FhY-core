@@ -15,6 +15,13 @@
 //! building it raises. All of them need the GIL, and none holds a lock across
 //! a call into Python.
 //!
+//! The values of `NumPy` arrays, which the evaluators take and return, are
+//! converted in the [`numpy`] submodule, which has its own rules and needs
+//! `NumPy` at run time, unlike the functions above.
+//!
+//! The context in which `fhy_core` asks a param question, for a downstream
+//! binding crate that asks its own, is [`param::with_param_context`].
+//!
 //! # Identity
 //!
 //! - An identifier is converted by id and name hint, in both directions,
@@ -27,6 +34,9 @@
 //!   one to Python builds new objects for it, and converting those back
 //!   gives a value equal to the original, sharing its structure.
 
+pub mod numpy;
+pub mod param;
+
 use pyo3::prelude::*;
 
 use fhy_core::diagnostic::Diagnostic;
@@ -38,7 +48,7 @@ use fhy_core::param::{Param, ParamAssignment};
 use fhy_core::types::Type;
 use fhy_core::value_domain::ValueDomain;
 
-use crate::{diagnostic, expression, identifier, op_attribute, param, types, value_domain};
+use crate::{diagnostic, expression, identifier, op_attribute, types, value_domain};
 
 /// Return the Rust identifier with the id and name hint of the Python
 /// `Identifier` `object`.
@@ -133,7 +143,7 @@ pub fn type_to_python<'py>(py: Python<'py>, value: &Type) -> PyResult<Bound<'py,
 ///
 /// Raises `TypeError` if `object` is not a `Param`.
 pub fn param_from_python(object: &Bound<'_, PyAny>) -> PyResult<Param> {
-    param::param_from_python(object)
+    crate::param::param_from_python(object)
 }
 
 /// Return a new Python `Param` of `param`, over new objects of its domain,
@@ -143,7 +153,7 @@ pub fn param_from_python(object: &Bound<'_, PyAny>) -> PyResult<Param> {
 ///
 /// Raises whatever building an object of a part raises.
 pub fn param_to_python<'py>(py: Python<'py>, param: &Param) -> PyResult<Bound<'py, PyAny>> {
-    param::param_to_python(py, param)
+    crate::param::param_to_python(py, param)
 }
 
 /// Return the Rust assignment of the Python `ParamAssignment` `object`.
@@ -152,7 +162,7 @@ pub fn param_to_python<'py>(py: Python<'py>, param: &Param) -> PyResult<Bound<'p
 ///
 /// Raises `TypeError` if `object` is not a `ParamAssignment`.
 pub fn param_assignment_from_python(object: &Bound<'_, PyAny>) -> PyResult<ParamAssignment> {
-    param::assignment_from_python(object)
+    crate::param::assignment_from_python(object)
 }
 
 /// Return a new Python `ParamAssignment` of `assignment`, over new objects
@@ -166,7 +176,7 @@ pub fn param_assignment_to_python<'py>(
     py: Python<'py>,
     assignment: &ParamAssignment,
 ) -> PyResult<Bound<'py, PyAny>> {
-    param::assignment_to_python(py, assignment)
+    crate::param::assignment_to_python(py, assignment)
 }
 
 /// Return the canonical domain of the Python `ValueDomain` `object`.

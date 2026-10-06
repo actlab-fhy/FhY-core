@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 
-use super::backends::type_name;
+use super::backends::read_type_name;
 use super::facade::PySolver;
 
 /// The default solver, once set.
@@ -49,7 +49,7 @@ pub(crate) fn set_default_solver(solver: &Bound<'_, PyAny>) -> PyResult<()> {
     let solver = solver.cast::<PySolver>().map_err(|_not_a_solver| {
         PyTypeError::new_err(format!(
             "set_default_solver solver must be a Solver, got {}.",
-            type_name(solver)
+            read_type_name(solver)
         ))
     })?;
     let replaced = lock().replace(solver.clone().unbind());

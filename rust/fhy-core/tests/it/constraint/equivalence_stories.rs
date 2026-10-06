@@ -1,6 +1,6 @@
 //! Tests for the structural and alpha equivalence of constraints.
 //!
-//! The cases are ported from `test_structural_equivalence.py`.
+//! The cases mirror `test_structural_equivalence.py`.
 
 use std::collections::HashMap;
 

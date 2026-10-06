@@ -3,7 +3,7 @@
 //! index-type algebra, calls, checking against an expected type, the error
 //! frame, and depth.
 //!
-//! Ported from `tests/types/checking/test_type_checker.py`,
+//! Mirrors `tests/types/checking/test_type_checker.py`,
 //! `test_type_checker_booleans.py` and `test_type_checker_sorts.py`.
 
 use crate::support::expression::build_call_or_panic;

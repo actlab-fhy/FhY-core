@@ -29,12 +29,14 @@ use fhy_core::identifier::Identifier;
 use fhy_core::term::AlphaRenaming;
 
 use crate::expression::{PyExpression, materialize_expression};
-use crate::gc::Slot;
 use crate::identifier::{identifier_to_python, restore_identifier};
 use crate::term::PyAlphaRenaming;
+use crate::util::gc::Slot;
 
 use super::kinds::outcome_to_python;
-use super::value::{has_pending_error, record_pending_error, type_name, value_to_python};
+use super::value::{read_type_name, value_to_python};
+use crate::util::hook::ask;
+use crate::util::pending::has_pending_error;
 
 /// The Python form of a system's bindings: the snapshot of the caller's
 /// mapping.
@@ -64,8 +66,8 @@ impl PyCustomConstraint {
             .map_err(|_not_a_string| {
                 PyTypeError::new_err(format!(
                     "{}.build_ordering_key must return a str, got {}.",
-                    type_name(object),
-                    type_name(&key)
+                    read_type_name(object),
+                    read_type_name(&key)
                 ))
             })?
             .to_str()?
@@ -148,18 +150,18 @@ pub(crate) fn read_outcome(
     }
     Err(PyTypeError::new_err(format!(
         "{}.evaluate_with_bindings must return a ConstraintOutcome, got {}.",
-        type_name(object),
-        type_name(value)
+        read_type_name(object),
+        read_type_name(value)
     )))
 }
 
 impl ForeignPart for PyCustomConstraint {
     fn type_name(&self) -> Cow<'_, str> {
-        Cow::Owned(Python::attach(|py| type_name(&self.object.get(py))))
+        Cow::Owned(Python::attach(|py| read_type_name(&self.object.get(py))))
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), true))
+        Python::attach(|py| crate::util::foreign::read_foreign(&self.object.object(py), true))
     }
 }
 
@@ -213,8 +215,8 @@ impl CustomConstraint for PyCustomConstraint {
                 .map_err(|_not_an_expression| {
                     PyTypeError::new_err(format!(
                         "{}.convert_to_expression must return an Expression, got {}.",
-                        type_name(object),
-                        type_name(&expression)
+                        read_type_name(object),
+                        read_type_name(&expression)
                     ))
                 })
         })
@@ -233,10 +235,7 @@ impl CustomConstraint for PyCustomConstraint {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
-        if has_pending_error() {
-            return false;
-        }
-        Python::attach(|py| {
+        ask(false, |py| {
             self.object
                 .get(py)
                 .call_method1(
@@ -244,10 +243,6 @@ impl CustomConstraint for PyCustomConstraint {
                     (other.object.get(py),),
                 )
                 .and_then(|answer| answer.is_truthy())
-                .unwrap_or_else(|error| {
-                    record_pending_error(error);
-                    false
-                })
         })
     }
 

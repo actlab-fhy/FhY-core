@@ -215,7 +215,7 @@ impl RegistryState {
                     }
                 }
                 let class =
-                    crate::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)?;
+                    crate::util::python::cached_attr!(py, "immutabledict", "immutabledict" => PyType)?;
                 class.call1((entries,)).map(Bound::unbind)
             })
             .map(|view| view.bind(py).clone())
@@ -235,6 +235,23 @@ fn lock() -> MutexGuard<'static, Arc<RegistryState>> {
 /// Return the current state, a snapshot no registration changes.
 pub(crate) fn snapshot() -> Arc<RegistryState> {
     Arc::clone(&lock())
+}
+
+/// Make `registry`, a core registry with no Python objects, the current
+/// state, and return the state it replaces, for a story that needs a
+/// registered function without the Python classes of the entries.
+#[cfg(test)]
+pub(crate) fn install_core_registry(registry: FunctionRegistry) -> Arc<RegistryState> {
+    let mut state = RegistryState::new();
+    state.registry = registry;
+    std::mem::replace(&mut *lock(), Arc::new(state))
+}
+
+/// Make `state`, one a story took from [`install_core_registry`], the
+/// current state.
+#[cfg(test)]
+pub(crate) fn reinstall(state: Arc<RegistryState>) {
+    *lock() = state;
 }
 
 /// Register the entry `object` into the current state.

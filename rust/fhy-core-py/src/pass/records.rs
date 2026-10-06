@@ -13,14 +13,14 @@ use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyInt, PyString, PyTuple, PyType};
 
-use crate::dataclass::{
+use crate::diagnostic::borrow_python_diagnostic;
+use crate::identifier::read_identifier_id;
+use crate::util::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, compare_as_dataclass,
     format_dataclass_repr,
 };
-use crate::diagnostic::borrow_python_diagnostic;
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::identifier::read_identifier_id;
-use crate::public_class::PublicClass;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
 
 use super::analysis::{PyPreservedAnalyses, preserved_to_python};
 

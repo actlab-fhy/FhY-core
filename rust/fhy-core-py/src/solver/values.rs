@@ -22,7 +22,7 @@ use super::error::lowering_error_to_py;
 
 /// Return `fhy_core.symbolic.symbol_type.SymbolType`.
 fn symbol_type_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.symbol_type", "SymbolType" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.symbol_type", "SymbolType" => PyType)
 }
 
 /// Return the Python `SymbolType` member of `symbol_type`.
@@ -249,7 +249,7 @@ impl PySmtScript {
 
 /// Return `fhy_core.symbolic.solver.SatStatus`.
 fn sat_status_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.symbolic.solver", "SatStatus" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.symbolic.solver", "SatStatus" => PyType)
 }
 
 /// The answer of a `check-sat`: `SatResult.SAT`, `SatResult.UNSAT`, or

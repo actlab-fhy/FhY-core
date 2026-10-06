@@ -11,7 +11,7 @@ git clone https://github.com/actlab-fhy/FhY-core.git -b dev
 cd FhY-core
 ```
 
-2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management) and a Rust toolchain (stable, 1.85 or newer; [rustup](https://rustup.rs/) picks the channel from `rust-toolchain.toml`), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group, and compiles the Rust extension `fhy_core._rs` with maturin.
+2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management) and [rustup](https://rustup.rs/), which installs the Rust version `rust-toolchain.toml` pins, the one CI lints with (the crates themselves build on 1.85 or newer), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group, and compiles the Rust extension `fhy_core._rs` with maturin.
 
 ```bash
 uv sync
@@ -338,9 +338,9 @@ the same machine.
 A class's benchmark must be run before it switches to Rust and again
 after. A class without a benchmark gets one in `benchmarks/` first,
 covering construction, attribute access, `==`, `hash` and the module's main
-operations. The port records the numbers behind its pattern choice, and a
-switch that makes a hot path slower either changes pattern or is recorded
-as an accepted cost.
+operations. The pull request description gives the numbers before and
+after, and a switch that makes a hot path slower either changes pattern or
+states the accepted cost there.
 
 ## Porting to Rust
 
@@ -350,7 +350,8 @@ no Python at build or test time. `rust/fhy-core-py` holds the PyO3
 bindings, as a library: it builds no extension module, and its
 `register(py, module)` adds the bindings to a module it is given. It also
 holds the SymPy backend, `solver::sympy`, a `fhy_core::solver::Simplifier`
-that drives SymPy in the interpreter the extension runs in.
+that drives SymPy in the interpreter the extension runs in, and the Python
+class of the pure-Rust ground simplifier, `solver::ground`.
 `rust/fhy-core-ext` is the thin `cdylib` that maturin builds into the
 extension module `fhy_core._rs`, and `rust/example-aggregate` is a
 test-only aggregate extension (see "One extension module per process").
@@ -381,7 +382,99 @@ already. Its `convert` module is the public conversion surface: for an
 `…_from_python` reads a Python object as the Rust value and `…_to_python`
 builds the object of a Rust value through the public class. A downstream
 binding crate calls them at the boundary of its own `#[pyfunction]`s and
-`#[pymethods]`. A conversion that another crate needs and `convert` lacks is
+`#[pymethods]`. Its `convert::numpy` module is the public conversion surface
+for `NumPy` arrays, the one `evaluate_expression_with_numpy` is written over:
+`require_numpy` imports `NumPy` or raises the `ImportError` naming the
+caller's entry point; `NumpyValue::from_python` converts a Python number or
+anything `numpy.asarray` accepts to a scalar or an array of the core's three
+domains (`bool`, `i64`, `f64`), borrowing `bool_`, `int64` and `float64`
+arrays in native byte order and casting every other admitted dtype once;
+`NumpyValue::as_binding`, `to_array_value` and `as_scalar` hand the value to
+the core's evaluators; `NumpyKernels` computes the 14 transcendental natives
+with `NumPy`'s ufuncs; `array_value_to_numpy` and `scalar_to_numpy` convert
+results back; and `evaluation_error_to_python` raises the same exceptions
+`evaluate_expression_with_numpy` does. No `rust-numpy` type appears in its
+signatures, so a downstream crate needs no `numpy` dependency of its own.
+Its `convert::param` module is the public entry to the param questions:
+`with_param_context(py, detach, question)` runs `question` with the
+`ParamContext` that `fhy_core`'s own param methods use (the default solver
+`set_default_solver` chose, a snapshot of the function registry, and the
+param observer that logs to `fhy_core`'s loggers), detached from the
+interpreter when `detach`, and re-raises after the question the Python
+exception a hook raised during it. `fhy_core`'s methods run over the same
+code, so a downstream crate decides a question as `fhy_core` does.
+Its `util` module is the public surface for writing a Rust-backed class the
+way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
+downstream `-py` crate builds on:
+
+- `util::python` has `Seed` (the contents a private seed class hands a
+  class's `__new__`, taken once), `ImportedAttr` and the `cached_attr!`
+  macro (an attribute of a Python module, imported on first use and kept;
+  the macro is exported at the crate root and re-exported there) and
+  `read_type_name`.
+- `util::exceptions` has `ExceptionClass` (`new`, `class`, `build`, `err`,
+  `is_instance_of`, declared as a `static`), `unbox_py_err`,
+  `boxed_error_to_py` and the framework's classes `SERIALIZATION_ERROR`,
+  `DESERIALIZATION_VALUE_ERROR`, `DESERIALIZATION_DICT_STRUCTURE_ERROR`,
+  `MALFORMED_PAYLOAD_ERROR`, `FROZEN_MUTATION_ERROR` and
+  `EQUIVALENCE_DERIVATION_ERROR`.
+- `util::interned` has `IdentityCache<K>`, the `is` identity of canonical
+  values, generic over its key (the identifier id, `u64`, by default, and a
+  `String` or tuple for a downstream class, read by the borrowed form), and
+  the `InternedMixin` helpers `raise_registry_append_only`,
+  `build_not_interned_error`, `warn_if_description_ignored` and
+  `build_conflict_error`.
+- `util::public_class` has `PublicClass::new` and `PublicClass::in_module`,
+  which names a downstream module in its messages.
+- `util::frozen` has the `FrozenMixin` refusals,
+  `refuse_attribute_assignment` and `refuse_attribute_deletion`.
+- `util::dataclass` has `compare_as_dataclass` (the equality answers a
+  `bool` or a `PyResult<bool>`, through `Outcome`), `is_same_or_equal`,
+  `hash_value`, `collect_tuple`, `format_dataclass_repr`, the argument
+  checks `build_argument_type_error` and `read_str`, and `OptionalArgument`.
+- `util::serialization` has the payload readers: `read_payload_fields` over
+  an array of `(name, FieldShape)` pairs or `PayloadFields::allowing_extra`
+  for a reader that ignores other keys, `read_constructor_fields`,
+  `read_nested_value`, `read_nested_list`, `keep_fields`, `serialize_nested`,
+  `is_serialized_dict` and `construct_from_decoded_fields`, with
+  `construct_from_decoded_fields_reporting_overflow` for a class that takes
+  machine integers.
+- `util::scoped` has `ScopedStack` and `ScopedGuard`.
+- `util::pending` has the pending exception of an infallible hook:
+  `record_pending_error`, `has_pending_error`, `with_pending_errors` and
+  `capture_pending_errors`.
+- `util::hook` has `ask`, which answers a Python hook behind a trait method
+  that cannot fail: it answers the fallback while an exception is pending,
+  and keeps the exception the hook raises as the pending one.
+- `util::frames` has `Frames<T>`, the per-call context a hook reads: `push`
+  returns the guard that pops it, and a `read`, `read_or` or `cloned` that
+  finds no frame records a `RuntimeError` as the pending exception, so a
+  missed push is an error and never a silent default.
+- `util::integers` has `read_unsigned` and `read_unsigned_lenient`, which
+  read a Python `int` as a `u8`, `u16`, `u32`, `u64`, `u128` or `usize`: a
+  `bool` or float is a `TypeError`, a negative number (or zero under
+  `Minimum::Positive`) a `ValueError` worded by a `Label` and a `Minimum`,
+  and a number above the maximum an `OverflowError`; the lenient reader
+  answers `None` for a negative or oversized `int`. `classify_unsigned` and
+  `Reading` serve a caller that chooses its own errors (`build_too_large_error`
+  words the overflow one; `UnsignedInteger` is sealed).
+- `util::gc` has `Slot`, `Slots`, `collect_slots`, `traverse_locked`,
+  `clear_locked` and `traverse_all`.
+- `util::foreign` has `read_foreign`, `record_foreign_failure` and
+  `RaisedError`, which turn a Python-defined part into a core `Foreign`.
+
+Each item is documented with its errors and panics, and the stories beside
+each module run them in the embedded interpreter against small stand-ins for
+the `fhy_core` modules the util module imports (`util::testing`, since
+`fhy_core` itself is not importable there). `util::testing` is public behind
+the test-only `testing` cargo feature, which a downstream crate enables in
+`[dev-dependencies]` and never in `[dependencies]`, so its
+embedded-interpreter tests share the stand-ins: `with_stand_ins` (the
+interpreter, with the stand-ins installed once), `install_module` (a
+downstream crate's own stand-ins, parents created), `evaluate`, `define` and
+`entry`.
+
+A conversion that another crate needs and `convert` lacks is
 added there, as a documented `pub fn` over the `pub(crate)` one, and no
 `#[pyclass]` becomes `pub`. The crate is a library and not a `cdylib` with
 an `rlib` beside it because a `#[pymodule]` exports a `PyInit_<name>`
@@ -494,7 +587,7 @@ Each Rust-backed interned class has an identity cache from canonical keys
 to their Python objects, which is append-only like the registry it
 mirrors. Each Rust-backed class has a write-once slot for the public
 Python class that registers itself at import
-(`rust/fhy-core-py/src/public_class.rs`), so a value the binding builds
+(`rust/fhy-core-py/src/util/public_class.rs`), so a value the binding builds
 from Rust is an instance of that class. The shared empty `AlphaRenaming`
 that `AlphaRenaming.empty()` returns is a write-once slot
 (`rust/fhy-core-py/src/term/renaming.rs`), an immutable value built on
@@ -545,7 +638,7 @@ call:
   Python objects the call was given, the class of its environment, and the
   first exception a Python-defined type's `==` or `hash` raised inside the
   core's infallible equality or hashing;
-- a pending-exception slot (`rust/fhy-core-py/src/constraint/value.rs`)
+- a pending-exception slot (`rust/fhy-core-py/src/util/pending.rs`)
   holding the first exception a Python member's `==`, or a Python-defined
   constraint's or domain's structural equivalence, raised during one call
   into the core, which the call raises when the core returns: those back
@@ -554,9 +647,9 @@ call:
   `KeyboardInterrupt`, replaces a kept `Exception`, and once one is kept no
   comparison calls Python again during that call. The same slot holds the
   exception a Python-defined part's serialization hook raises while the
-  core serializes or resolves it (`rust/fhy-core-py/src/wire.rs`); the wire
+  core serializes or resolves it (`rust/fhy-core-py/src/util/foreign.rs`); the wire
   version is a Python context variable, not Rust state;
-- a stack of slot collections (`rust/fhy-core-py/src/gc.rs`): a Python
+- a stack of slot collections (`rust/fhy-core-py/src/util/gc.rs`): a Python
   object the binding keeps inside a Rust closure or a core trait object,
   where the cycle collector cannot see it, is held in a `Slot`, and the
   construction that makes it runs inside `collect_slots`, so the object it
@@ -565,7 +658,7 @@ call:
 
 Each frame lives only for its call, so every stack is empty whenever no
 such call runs. Every one of these, the pending-exception slot included,
-is a `ScopedStack` (`rust/fhy-core-py/src/scoped.rs`): a frame is pushed
+is a `ScopedStack` (`rust/fhy-core-py/src/util/scoped.rs`): a frame is pushed
 only through a guard that pops it when dropped, on unwind included, so a
 panic, which PyO3 raises as `PanicException`, never leaves a stale frame
 for the thread's next call; the slot keeps an exception raised outside
@@ -727,6 +820,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
 | `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | the binding (`fhy-core-py`'s `solver::sympy`), a `fhy_core::solver::Simplifier` |
+| `fhy_core.symbolic.solver.GroundSimplifier` (`SolverBackend.GROUND`, `GROUND_THEN_SYMPY`) | `fhy_core::solver::{GroundSimplifier, GroundWithFallback}`; the binding's `solver::ground` is the Python class |
 | `fhy_core.term` | `fhy_core::term`; the derived-equivalence engine, which reads Python dataclasses, is in the binding |
 | `fhy_core.lattice`, `fhy_core.utils.poset` | `fhy_core::lattice` |
 | `fhy_core.types` (`core`, `dispatch`) | `fhy_core::types`; the `singledispatch` registration of Python-defined types stays in Python |
@@ -764,6 +858,22 @@ the workspace lints `clippy::exhaustive_enums` and
 `clippy::exhaustive_structs` reject any other exhaustive public enum, or
 struct with only public fields.
 
+### Comparing term fields
+
+`AlphaEquivalence` is implemented for `Option<T>`, `[T]`, `Vec<T>`, `[T; N]`
+and tuples of up to eight terms. A type with term fields implements the
+trait by calling those on its fields, `&&`-ing the answers in field order
+with `?`, under the renaming it was given, rather than writing a comparison
+loop. Elements compare in order, lengths must match, and `None` matches only
+`None`. Do not add impls for `HashSet` or `HashMap`: the answer would depend
+on iteration order. A map keyed by identifiers goes through
+`is_mapping_alpha_equivalent_under`.
+
+The impls live in `rust/fhy-core/src/term/containers.rs`. There is no impl
+for `&T`, `Box<T>`, `Rc<T>` or `Arc<T>`, because it would change which
+method `value.is_alpha_equivalent_under(..)` resolves to on a `&&T` or on a
+pointer to a term with an inherent method such as `Expression`.
+
 ### Python parity is limited to dual-defined concepts
 
 Rust matches the Python implementation's behavior and text only for
@@ -800,25 +910,100 @@ converts: `fn …_to_py(…, context)` for an error and
 `fn …_to_python(…, context)` for a value.
 
 Shared helpers live in their own files, and no module writes its own:
-- `python.rs`: `cached_attr!` and `ImportedAttr`, for an attribute of a
+- `util/python.rs`: `cached_attr!` and `ImportedAttr`, for an attribute of a
   Python module imported on first use, and `Seed`, the contents a private
   seed class hands a class's `__new__`, taken once;
-- `exceptions.rs`: one `ExceptionClass` per Python exception class the
+- `util/exceptions.rs`: one `ExceptionClass` per Python exception class the
   binding raises, and `unbox_py_err` for a Python exception a core error
   boxed;
 - `object_table.rs`: `ObjectTable`, the Python objects of the nodes and
   identifiers a call has seen, so that a node the call returns keeps its
   object;
-- `scoped.rs`: `ScopedStack`, a thread-local stack whose guard pops its
+- `util/scoped.rs`: `ScopedStack`, a thread-local stack whose guard pops its
   frame, on unwind included;
-- `gc.rs`: the slots through which a class takes part in cyclic garbage
+- `util/gc.rs`: the slots through which a class takes part in cyclic garbage
   collection.
+
+The `util` modules are described under "One extension module per process".
 
 An imported attribute is kept for the life of the process, so
 monkeypatching or reloading its module afterwards does not reach the
 binding.
 `src/fhy_core/_rs.pyi` is written by hand, and `tests/test_rs_stub.py`
 checks its names and parameters against the built extension.
+
+### The ground simplifier
+
+`fhy_core::solver::GroundSimplifier` is a `Simplifier` that needs neither
+Python nor SymPy. It is a driver over an ordered list of strategies
+(`fhy_core::solver::strategy`): each strategy is a local rewrite of one
+node whose children are already simplified, one concern each, and the
+default list is exact integer and rational arithmetic, comparisons, logical
+operators, a decided `piecewise`, the exact built-ins SymPy folds itself,
+registered constants and the form of decimal literals. The composed
+built-ins (`max`, `abs`, `clamp`, `xor`, ...), which SymPy refuses until
+they are inlined, are the opt-in `ComposedBuiltins` strategy, an extension
+added with `with_strategy`: it is not in the default list, so the default
+pipeline is SymPy's answer or a decline. The driver rewrites bottom-up,
+tries the strategies in order on each node until none rewrites it, and stops
+at a documented bound of rewrites (`with_max_rewrites`, 100 000 by default)
+and at the `timeout` of the context's `SimplifyLimits`, read from the clock
+once per node and per rewrite and only when a timeout is set; a run out of
+time declines whole and never returns a partial result; a run at the
+rewrite bound stops rewriting and keeps what it has. An expression nested
+more than 256 deep is declined, which keeps a deep tree from exhausting the
+stack. One rewrite is not interrupted, so a strategy that can be slow on a
+large number guards its sizes (the default ones: integers of at most 2^20
+bits, fractions with parts of at most 4096 bits, since reducing a fraction
+is quadratic) and declines past them. A caller adds, removes and reorders
+strategies with `with_strategy`, `with_strategy_first`, `without` and
+`empty`, without touching the driver.
+
+The contract every strategy keeps, and every change to one:
+
+- **A rewrite is exactly what the SymPy backend returns for the node it
+  rewrites, or the strategy declines.** Exactly means the same expression,
+  in the form the SymPy lifting gives: an `Int` literal, a `Bool`, a decimal
+  literal for a rational some binary float equals (negated when negative),
+  and the quotient of two integers otherwise.
+- It never approximates. It declines a float, a free identifier, a user
+  function, an irrational or undefined value, and anything else it is not
+  sure SymPy answers alike.
+- It is local, deterministic and assumes nothing about the other
+  strategies; it returns `None` when it has nothing to rewrite.
+- A strategy that is not sure of SymPy's form of a partly folded
+  expression leaves it: the driver returns a rewritten expression only when
+  it is decided, a literal in SymPy's form (`with_partial_rewrites` is for
+  strategies that match SymPy's form of a larger one). It folds every
+  branch of a piecewise, the ones it does not take too, because SymPy lowers
+  them all and raises on a modulo by zero in any.
+
+`GroundWithFallback` is the composition that asks another simplifier for
+what the ground one declines; the Python class `GroundSimplifier`
+(`SolverBackend.GROUND`) is the ground simplifier with its default
+strategies, and `GroundSimplifier(fallback)` (`SolverBackend.GROUND_THEN_SYMPY`
+with SymPy) is the chain. The chain's timeout is one budget: the fallback
+is asked under what the ground part left of it, though SymPy cannot be
+cancelled. SymPy stays the default solver's simplifier.
+
+To add a strategy:
+
+1. Implement `SimplificationStrategy` in a file of
+   `rust/fhy-core/src/solver/strategy/`, with rustdoc that says what it
+   rewrites and declines, and add it to `default_strategies` and the table
+   in `strategy.rs` if it should run by default.
+2. Test it alone in `rust/fhy-core/tests/it/solver/ground_strategy_stories.rs`
+   (what it rewrites and what it declines through `rewrite`, and in a
+   simplifier holding only it), and add to
+   `ground_stories.rs` what the whole pipeline does with it.
+3. Add its cases to the differential tests in
+   `rust/fhy-core-py/src/solver/sympy/ground_differential.rs`, which check
+   each strategy's rewrites against SymPy as the oracle, on tables of nodes
+   and on random nodes, and the default pipeline on random trees. They need
+   Python with SymPy, as the SymPy backend's stories do:
+   `cargo test -p fhy-core-py ground_differential` (see "Rust test layout").
+   `... ground_differential::timing -- --ignored --nocapture`, in a release
+   build, prints the cost of the strategies' pipeline against SymPy's.
 
 ### Rust test layout
 
@@ -842,8 +1027,8 @@ the SymPy backend's stories are `#[cfg(test)]` modules of `fhy-core-py`'s
 `solver::sympy`, and `cargo test -p fhy-core-py`, and so `cargo test
 --workspace`, builds a test binary that links libpython, embeds an
 interpreter and imports SymPy, and fails them, with the recipe, when SymPy
-cannot be imported. Build and run them with `PYO3_PYTHON` naming a Python
-that has a shared libpython and the `sympy` package, `PYTHONPATH` naming
+cannot be imported. The `convert::numpy` stories likewise need `numpy`; the `convert::param` stories need only the standard library. Build and run them with `PYO3_PYTHON` naming a Python
+that has a shared libpython and the `sympy` and `numpy` packages, `PYTHONPATH` naming
 that Python's `site-packages` (an embedded interpreter does not read a
 virtualenv's `pyvenv.cfg`), and `LD_LIBRARY_PATH` naming its libpython's
 directory when the loader does not find it. A Python built without a
@@ -855,7 +1040,7 @@ shared libpython, such as a distribution's `python3.11` without
 G=$PWD/target/gate-python
 uv python install --no-bin --install-dir "$G/pythons" 3.11
 uv venv --python "$G"/pythons/cpython-3.11*/bin/python3.11 "$G/venv"
-VIRTUAL_ENV="$G/venv" uv pip install sympy
+VIRTUAL_ENV="$G/venv" uv pip install sympy numpy
 export PYO3_PYTHON="$G/venv/bin/python"
 export PYTHONPATH="$G/venv/lib/python3.11/site-packages"
 export LD_LIBRARY_PATH="$(echo "$G"/pythons/cpython-3.11*/lib)"
@@ -867,7 +1052,7 @@ When a canonical Rust value, such as an interned `OpAttribute`, reaches
 Python, the binding returns the same Python object for the same canonical
 instance every time, so `is` holds exactly as it does for values interned
 in Python. The binding crate keeps that cache, an `IdentityCache` per
-interned class in `rust/fhy-core-py/src/interned.rs`; the core crate holds
+interned class in `rust/fhy-core-py/src/util/interned.rs`; the core crate holds
 no Python objects.
 
 ## Creating a new Pull Request

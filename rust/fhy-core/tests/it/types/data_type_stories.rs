@@ -2,7 +2,7 @@
 //! promotion against the promotion lattices, literal resolution, text and
 //! serde.
 //!
-//! Ported from the promotion, literal and qualifier tests of
+//! Mirrors the promotion, literal and qualifier tests of
 //! `tests/types/test_core.py`.
 
 use fhy_core::expression::{BigInt, Decimal, LiteralValue};

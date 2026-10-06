@@ -556,7 +556,7 @@ def test_get_analysis_restores_pass_state_between_runs() -> None:
     manager.add_pass(compiler_pass)
     manager.run(Box(5))
 
-    # After the run the pass should no longer be bound to the manager.
+    # After the run the pass is not bound to the manager.
     assert compiler_pass.get_analysis_manager() is None
 
     # Using the pass standalone afterward must fall back to uncached execution.

@@ -1,4 +1,4 @@
-//! Tests for the body checks and the sweep, ported from
+//! Tests for the body checks and the sweep, mirroring
 //! `tests/types/checking/test_body_type_checker.py`,
 //! `test_registry_body_sweep.py` and `test_builtin_bodies.py`.
 

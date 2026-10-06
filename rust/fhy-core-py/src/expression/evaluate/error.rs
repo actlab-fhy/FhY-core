@@ -16,9 +16,9 @@ use super::super::registry::{arity_error, inline_error_to_python, lookup_error};
 /// `fhy_core.symbolic.expression.errors`, carrying `message`.
 macro_rules! expression_error_fn {
     ($function:ident, $class:ident) => {
-        #[doc = concat!("Return the [`crate::exceptions::", stringify!($class), "`] exception carrying `message`.")]
+        #[doc = concat!("Return the [`crate::util::exceptions::", stringify!($class), "`] exception carrying `message`.")]
         pub(super) fn $function(py: Python<'_>, message: &str) -> PyErr {
-            crate::exceptions::$class.err(py, (message,))
+            crate::util::exceptions::$class.err(py, (message,))
         }
     };
 }
@@ -34,7 +34,7 @@ expression_error_fn!(unbound_variable_error, UNBOUND_VARIABLE_ERROR);
 expression_error_fn!(unsupported_lowering_error, UNSUPPORTED_NUMPY_LOWERING_ERROR);
 
 /// Return the Python exception of the evaluation error `error`.
-pub(super) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError) -> PyErr {
+pub(crate) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError) -> PyErr {
     let message = error.to_string();
     match error {
         EvaluationError::Inline(error) => inline_error_to_python(py, &error),
@@ -59,7 +59,9 @@ pub(super) fn evaluation_error_to_python(py: Python<'_>, error: EvaluationError)
             LaneFailure::NonFiniteCast => non_finite_cast_error(py, &message),
             _ => PyValueError::new_err(message),
         },
-        EvaluationError::Kernel { source, .. } => crate::exceptions::boxed_error_to_py(source),
+        EvaluationError::Kernel { source, .. } => {
+            crate::util::exceptions::boxed_error_to_py(source)
+        }
         _ => PyRuntimeError::new_err(message),
     }
 }
@@ -75,7 +77,7 @@ pub(super) fn fold_error_to_python(py: Python<'_>, error: FoldError) -> PyErr {
         FoldError::InexactDecimal(_) => string_literal_precision_error(py, &message),
         FoldError::NonFiniteCast { .. } => non_finite_cast_error(py, &message),
         FoldError::Piecewise(source) => PyValueError::new_err(format!("{message}: {source}")),
-        FoldError::Native { source, .. } => crate::exceptions::boxed_error_to_py(source),
+        FoldError::Native { source, .. } => crate::util::exceptions::boxed_error_to_py(source),
         _ => PyRuntimeError::new_err(message),
     }
 }

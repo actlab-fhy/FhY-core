@@ -274,7 +274,6 @@ impl AlphaRenaming {
     }
 
     /// Return a view of each binder frame, outermost first.
-    #[must_use]
     pub fn frames(&self) -> impl ExactSizeIterator<Item = RenamingMap<'_>> + DoubleEndedIterator {
         self.frames
             .iter()
@@ -311,7 +310,6 @@ impl<'a> RenamingMap<'a> {
 
     /// Return the pairs of the map, each identifier with its image, in no
     /// particular order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&'a Identifier, &'a Identifier)> + 'a {
         self.bijection.images_by_identifier.iter()
     }

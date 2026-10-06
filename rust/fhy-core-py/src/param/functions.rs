@@ -13,7 +13,7 @@ use fhy_core::param::{AssignmentError, ParamError, Side};
 
 use crate::constraint::{
     PyConstraintSystem, PythonBindings, ReadBindings, constraint_error_to_py, outcome_to_python,
-    read_binding, read_scoped_bindings, type_name,
+    read_binding, read_scoped_bindings, read_type_name,
 };
 use crate::expression::PyExpression;
 use crate::identifier::restore_identifier;
@@ -70,7 +70,7 @@ pub(crate) fn compute_constraint_implication_subset<'py>(
         .ok_or_else(|| {
             PyTypeError::new_err(format!(
                 "symbol_type must be a SymbolType, got {}.",
-                type_name(symbol_type)
+                read_type_name(symbol_type)
             ))
         })?;
     let outcome = run_question(py, true, None, |context| {
@@ -100,7 +100,7 @@ pub(crate) fn evaluate_system_outcome<'py>(
         .map_err(|_not_a_system| {
             PyTypeError::new_err(format!(
                 "evaluate_system_outcome system must be a ConstraintSystem, got {}.",
-                type_name(system)
+                read_type_name(system)
             ))
         })?;
     let snapshot = PyDict::new(py);

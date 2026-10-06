@@ -124,7 +124,7 @@ fn finite_domain_never_asks_a_custom_other_side() {
 
     assert_eq!(outcome, Outcome::Violated);
     assert!(!own.is_structurally_equivalent(&other));
-    assert!(handle.calls().is_empty());
+    assert_eq!(handle.calls(), [] as [String; 0]);
 }
 
 #[test]

@@ -2,10 +2,10 @@
 //!
 //! A class that holds Python objects implements `__traverse__`, which
 //! visits each Python object it holds a strong reference to, so the
-//! interpreter's cycle collector can free a cycle that runs through it. The collector
-//! subtracts one visit per reference, so each reference must be visited at
-//! most once, by the object that holds it: visiting it twice could free an
-//! object that is still referenced from outside the cycle, while not
+//! interpreter's cycle collector can free a cycle that runs through it. The
+//! collector subtracts one visit per reference, so each reference must be
+//! visited at most once, by the object that holds it: visiting it twice could
+//! free an object that is still referenced from outside the cycle, while not
 //! visiting it only keeps the cycle alive. Every rule here follows from
 //! that.
 //!
@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, TryLockError};
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 
-use crate::scoped::ScopedStack;
+use super::scoped::ScopedStack;
 
 /// A Python object held where no traversal can see it, visible to the one
 /// object that owns it (see the [module docs](self)).
@@ -43,7 +43,7 @@ use crate::scoped::ScopedStack;
 /// A slot made outside any collection has no owner, so it holds the object
 /// directly: no allocation, and nothing to visit. A slot is never emptied,
 /// so it needs no lock.
-pub(crate) struct Slot(SlotKind);
+pub struct Slot(SlotKind);
 
 enum SlotKind {
     /// Shared with the [`Slots`] of the object that owns it.
@@ -61,7 +61,8 @@ impl std::fmt::Debug for Slot {
 impl Slot {
     /// Return the slot of `object`, registered with the innermost
     /// [`collect_slots`] of this thread, if any.
-    pub(crate) fn new(object: Py<PyAny>) -> Self {
+    #[must_use]
+    pub fn new(object: Py<PyAny>) -> Self {
         ScopedStack::with_top_mut(&COLLECTORS, |innermost| match innermost {
             Some(innermost) => {
                 let object = Arc::new(object);
@@ -72,13 +73,24 @@ impl Slot {
         })
     }
 
+    /// Return a slot for `object` that no collection owns, wherever it is
+    /// made: the temporary of one call, which the collector needs not visit.
+    /// The slot must not outlive the call: nothing visits it, so a cycle
+    /// that runs through a slot kept longer is never collected.
+    #[must_use]
+    pub const fn unowned(object: Py<PyAny>) -> Self {
+        Self(SlotKind::Unowned(object))
+    }
+
     /// Return the object.
-    pub(crate) fn get<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+    #[must_use]
+    pub fn get<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
         self.py_object().bind(py).clone()
     }
 
     /// Return a new reference to the object.
-    pub(crate) fn object(&self, py: Python<'_>) -> Py<PyAny> {
+    #[must_use]
+    pub fn object(&self, py: Python<'_>) -> Py<PyAny> {
         self.py_object().clone_ref(py)
     }
 
@@ -91,13 +103,33 @@ impl Slot {
 }
 
 /// The slots one object owns: the ones its construction made.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Slots(Vec<Arc<Py<PyAny>>>);
+///
+/// The object keeps them in a field and visits them from its
+/// `__traverse__` with [`traverse`](Self::traverse). It is not `Clone`: a
+/// copy would let two objects visit one strong reference.
+#[derive(Debug, Default)]
+pub struct Slots(Vec<Arc<Py<PyAny>>>);
 
 impl Slots {
     /// Visit the object of each slot.
-    pub(crate) fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns the error the visit returns, which stops the traversal.
+    pub fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         self.0.iter().try_for_each(|object| visit.call(&**object))
+    }
+
+    /// Return the number of slots.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Return whether the object owns no slot.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -112,7 +144,12 @@ thread_local! {
 ///
 /// A nested collection keeps its own slots, so each slot has at most one
 /// owner. The collection is popped when `build` returns or unwinds.
-pub(crate) fn collect_slots<T>(build: impl FnOnce() -> T) -> (T, Slots) {
+///
+/// # Panics
+///
+/// Panics if the thread's local storage is being destroyed.
+#[must_use]
+pub fn collect_slots<T>(build: impl FnOnce() -> T) -> (T, Slots) {
     let scope = ScopedStack::push(&COLLECTORS, Vec::new());
     let value = build();
     (value, Slots(scope.pop()))
@@ -120,7 +157,13 @@ pub(crate) fn collect_slots<T>(build: impl FnOnce() -> T) -> (T, Slots) {
 
 /// Visit the objects `mutex` holds with `traverse`, unless another thread
 /// holds the lock.
-pub(crate) fn traverse_locked<T>(
+///
+/// A poisoned lock is traversed as it is.
+///
+/// # Errors
+///
+/// Returns the error `traverse` returns, which stops the traversal.
+pub fn traverse_locked<T>(
     mutex: &Mutex<T>,
     traverse: impl FnOnce(&T) -> Result<(), PyTraverseError>,
 ) -> Result<(), PyTraverseError> {
@@ -135,7 +178,7 @@ pub(crate) fn traverse_locked<T>(
 /// Replace what `mutex` holds with its default, dropping the old value after
 /// the lock is released, since dropping a Python object can run Python
 /// code that takes the lock again.
-pub(crate) fn clear_locked<T: Default>(mutex: &Mutex<T>) {
+pub fn clear_locked<T: Default>(mutex: &Mutex<T>) {
     let old = std::mem::take(
         &mut *mutex
             .lock()
@@ -145,7 +188,11 @@ pub(crate) fn clear_locked<T: Default>(mutex: &Mutex<T>) {
 }
 
 /// Visit every object of `objects`.
-pub(crate) fn traverse_all<'a, T: 'a>(
+///
+/// # Errors
+///
+/// Returns the error a visit returns, which stops the traversal.
+pub fn traverse_all<'a, T: 'a>(
     visit: &PyVisit<'_>,
     objects: impl IntoIterator<Item = &'a Py<T>>,
 ) -> Result<(), PyTraverseError> {
@@ -155,52 +202,4 @@ pub(crate) fn traverse_all<'a, T: 'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn with_python<T>(run: impl FnOnce(Python<'_>) -> T) -> T {
-        Python::initialize();
-        Python::attach(run)
-    }
-
-    #[test]
-    fn a_slot_made_inside_a_collection_is_owned_by_it_alone() {
-        with_python(|py| {
-            let (outer, outer_slots) = collect_slots(|| {
-                let first = Slot::new(py.None());
-                let ((), inner_slots) = collect_slots(|| {
-                    Slot::new(py.None());
-                });
-                (first, inner_slots)
-            });
-            let (_first, inner_slots) = outer;
-
-            assert_eq!(outer_slots.0.len(), 1);
-            assert_eq!(inner_slots.0.len(), 1);
-        });
-    }
-
-    #[test]
-    fn a_slot_made_outside_any_collection_has_no_owner() {
-        with_python(|py| {
-            let slot = Slot::new(py.None());
-
-            assert!(matches!(slot.0, SlotKind::Unowned(_)));
-            assert!(slot.get(py).is_none());
-        });
-    }
-
-    #[test]
-    fn a_collection_that_panics_leaves_no_collector_behind() {
-        with_python(|py| {
-            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                collect_slots(|| -> () { panic!("inside a collection") })
-            }));
-
-            let _panic = unwound.unwrap_err();
-            assert_eq!(ScopedStack::depth(&COLLECTORS), 0);
-            let slot = Slot::new(py.None());
-            assert!(matches!(slot.0, SlotKind::Unowned(_)));
-        });
-    }
-}
+mod tests;

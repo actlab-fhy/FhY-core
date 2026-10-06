@@ -278,7 +278,7 @@ fn validation_manager_returns_a_clean_report_when_every_validator_is_clean() {
     let report = manager.validate(&BoxIr::new(0));
 
     assert!(!report.has_errors());
-    assert!(report.diagnostics().is_empty());
+    assert_eq!(report.diagnostics(), []);
     assert_eq!(
         collect_validator_names(&report),
         ["tests.vm.clean_a", "tests.vm.clean_b"]
@@ -292,8 +292,8 @@ fn validation_manager_without_validators_returns_an_empty_report() {
 
     let report = manager.validate(&BoxIr::new(0));
 
-    assert!(report.diagnostics().is_empty());
-    assert!(report.records().is_empty());
+    assert_eq!(report.diagnostics(), []);
+    assert_eq!(report.records(), []);
 }
 
 /// Test every diagnostic of one validator is kept, in emission order, in the
@@ -345,7 +345,7 @@ fn validation_manager_records_each_validator_with_its_diagnostics() {
         [(DiagnosticLevel::Warning, "msg")]
     );
     assert!(!records[1].is_failed());
-    assert!(own_diagnostics(&report, 1).is_empty());
+    assert_eq!(own_diagnostics(&report, 1), []);
 }
 
 /// Test the report holds every diagnostic once, and the records' slices of
@@ -407,7 +407,7 @@ fn a_record_against_a_shorter_report_is_none() {
     assert_eq!(shorter.diagnostics_of(&record), None);
     let pairs: Vec<_> = shorter.records_with_diagnostics().collect();
     assert_eq!(pairs.len(), 1);
-    assert!(pairs[0].1.is_empty());
+    assert_eq!(pairs[0].1, []);
 }
 
 /// Test the report pairs each validator's record with its own diagnostics,
@@ -756,7 +756,7 @@ fn pass_validator_ends_the_check_at_a_skip() {
     let report = manager.validate(&BoxIr::new(-1));
     drop(manager);
 
-    assert!(report.diagnostics().is_empty());
+    assert_eq!(report.diagnostics(), []);
     assert_eq!(validator.pass().calls, ["validate_input", "skip"]);
     assert_eq!(validator.pass_mut().calls.len(), 2);
     assert_eq!(validator.into_pass().calls.len(), 2);

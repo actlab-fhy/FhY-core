@@ -2,7 +2,7 @@
 //! bound values and literal expressions, the refused values, the native
 //! constant refusal, its events, and its expression.
 //!
-//! The cases are ported from `test_set_constraints.py`,
+//! The cases mirror `test_set_constraints.py`,
 //! `test_bindings_evaluation.py` and `test_convert_to_expression.py`.
 
 use fhy_core::constraint::{

@@ -35,7 +35,7 @@ use fhy_core::tree::{NodeHandle, NodeIdentity};
 
 use super::super::node::{PyExpression, build_node};
 use crate::object_table::ObjectTable;
-use crate::scoped::{ScopedGuard, ScopedStack};
+use crate::util::scoped::{ScopedGuard, ScopedStack};
 
 /// The last bindings object a table built: the identities of its captures'
 /// nodes, in binding order, and the object.

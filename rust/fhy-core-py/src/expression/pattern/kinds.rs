@@ -24,14 +24,15 @@ use fhy_core::expression::pattern::Pattern;
 use fhy_core::expression::{BinaryOperation, Callee, LogicalOperation, UnaryOperation};
 use fhy_core::foreign::BoxError;
 
-use crate::dataclass::{
+use crate::error::IntoPyResult;
+use crate::identifier::restore_identifier;
+use crate::util::dataclass::{
     OptionalArgument, build_argument_type_error, collect_tuple, compare_as_dataclass,
     format_dataclass_repr, read_str,
 };
-use crate::error::IntoPyResult;
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::identifier::restore_identifier;
-use crate::public_class::PublicClass;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
+pub(super) use crate::util::python::read_type_name;
 
 use super::super::literal::read_literal;
 use super::super::node::read_expression;
@@ -236,7 +237,7 @@ impl PyPattern {
     )]
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.fields)?;
-        crate::gc::traverse_all(&visit, &self.sub_patterns)?;
+        crate::util::gc::traverse_all(&visit, &self.sub_patterns)?;
         // `captures` holds `Capture` objects, which hold only their names,
         // and can be read only with the interpreter attached.
         visit.call(self.capture.as_ref())
@@ -260,7 +261,7 @@ impl PyPattern {
         let bindings = self
             .pattern
             .matches(expression.get().expression())
-            .map_err(crate::exceptions::boxed_error_to_py)?;
+            .map_err(crate::util::exceptions::boxed_error_to_py)?;
         let result = match bindings {
             Some(bindings) => Some(PyMatchBindings::build(py, &bindings, self.captures(py)?)?),
             None => None,
@@ -1093,7 +1094,7 @@ pub(crate) struct PyPredicatePattern {
     predicate: Py<PyAny>,
     /// The slot the Rust predicate reads the callable from, which this
     /// object owns.
-    slots: crate::gc::Slots,
+    slots: crate::util::gc::Slots,
 }
 
 impl_public_class!(PyPredicatePattern, "PredicatePattern");
@@ -1101,7 +1102,7 @@ impl_public_class!(PyPredicatePattern, "PredicatePattern");
 /// Return the Rust predicate calling the Python callable `predicate` with
 /// the candidate's node object, read by truthiness.
 fn build_predicate(predicate: Py<PyAny>) -> Pattern {
-    let predicate = crate::gc::Slot::new(predicate);
+    let predicate = crate::util::gc::Slot::new(predicate);
     Pattern::try_predicate(move |node| {
         Python::attach(|py| -> PyResult<bool> {
             let object = current_object_of(py, node)?;
@@ -1139,7 +1140,7 @@ impl PyPredicatePattern {
             )?);
         }
         let (pattern, slots) =
-            crate::gc::collect_slots(|| build_predicate(predicate.clone().unbind()));
+            crate::util::gc::collect_slots(|| build_predicate(predicate.clone().unbind()));
         let fields = build_fields(py, &[predicate])?;
         Ok(
             PyPattern::initializer(pattern, fields, &["predicate"], &[], None).add_subclass(Self {
@@ -1221,14 +1222,6 @@ impl PyAlternativesPattern {
     }
 }
 
-/// Return the `str` of `value`'s type name, for messages.
-pub(super) fn type_name(value: &Bound<'_, PyAny>) -> String {
-    value
-        .get_type()
-        .name()
-        .map_or_else(|_| "?".to_owned(), |name| name.to_string())
-}
-
 /// Raise the `TypeError` for a value `value` of the argument `field` of
 /// `owner` that is not an `expected`, as a `PyErr`.
 pub(super) fn argument_type_error(
@@ -1239,7 +1232,7 @@ pub(super) fn argument_type_error(
 ) -> PyErr {
     PyTypeError::new_err(format!(
         "{owner} {field} must be {expected}, got {}.",
-        type_name(value)
+        read_type_name(value)
     ))
 }
 

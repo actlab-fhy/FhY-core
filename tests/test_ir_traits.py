@@ -127,7 +127,7 @@ def test_has_results_returns_results() -> None:
 
 
 def test_foldable_is_removed_from_public_api() -> None:
-    """Test `Foldable` is no longer exported by the traits package."""
+    """Test `Foldable` is not exported by the traits package."""
     assert not hasattr(traits_package, "Foldable")
     assert "Foldable" not in traits_package.__all__
 

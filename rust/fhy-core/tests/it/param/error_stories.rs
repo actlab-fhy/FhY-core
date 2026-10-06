@@ -68,7 +68,10 @@ fn building_and_narrowing_a_param_return_build_errors() {
     validated.expect("validates");
     assert!(matches!(ordered, Err(ParamBuildError::UnorderedBounds)));
     refused.expect("allowed");
-    assert!(implied.expect("implies").is_empty());
+    assert_eq!(
+        implied.expect("implies"),
+        [] as [fhy_core::constraint::Constraint; 0]
+    );
 }
 
 #[test]

@@ -284,7 +284,10 @@ fn finite_feasibility_enumerates_the_values_without_the_solver() {
             .expect("decides"),
         Outcome::Violated
     );
-    assert!(smt.checks().is_empty());
+    assert_eq!(
+        smt.checks(),
+        [] as [(String, fhy_core::solver::CheckLimits); 0]
+    );
 }
 
 #[test]
@@ -389,7 +392,10 @@ fn numeric_feasibility_enumerates_in_set_candidates() {
             .expect("decides"),
         Outcome::Violated
     );
-    assert!(smt.checks().is_empty());
+    assert_eq!(
+        smt.checks(),
+        [] as [(String, fhy_core::solver::CheckLimits); 0]
+    );
 }
 
 #[test]
@@ -456,7 +462,10 @@ fn numeric_feasibility_asks_the_solver_about_the_screened_system() {
     assert_eq!(outcome, Outcome::Satisfied);
     let script = smt.only_script();
     assert!(script.contains(&format!("(declare-const {} Int)", quoted_symbol(&x))));
-    assert!(observer.param_events().is_empty());
+    assert_eq!(
+        observer.param_events(),
+        [] as [crate::support::param::RecordedParamEvent; 0]
+    );
 }
 
 #[test]
@@ -714,7 +723,10 @@ fn numeric_subset_of_another_sort_is_violated_without_asking() {
         .expect("decides");
 
     assert_eq!(outcome, Outcome::Violated);
-    assert!(smt.checks().is_empty());
+    assert_eq!(
+        smt.checks(),
+        [] as [(String, fhy_core::solver::CheckLimits); 0]
+    );
 }
 
 #[test]
@@ -742,7 +754,10 @@ fn implication_enumerates_the_own_in_set_candidates() {
 
     assert_eq!(decide(&loose), Outcome::Satisfied);
     assert_eq!(decide(&tight), Outcome::Violated);
-    assert!(smt.checks().is_empty());
+    assert_eq!(
+        smt.checks(),
+        [] as [(String, fhy_core::solver::CheckLimits); 0]
+    );
 }
 
 #[test]
@@ -1054,7 +1069,10 @@ fn integer_implication_leaves_a_float_member_to_the_membership_screen() {
     // layer's membership screen refuses, so the question is undecided
     // without a downgrade.
     assert_eq!(outcome, Outcome::Undecided);
-    assert!(smt.checks().is_empty());
+    assert_eq!(
+        smt.checks(),
+        [] as [(String, fhy_core::solver::CheckLimits); 0]
+    );
     assert!(
         observer
             .events()

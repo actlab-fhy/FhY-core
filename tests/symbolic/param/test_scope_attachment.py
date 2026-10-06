@@ -1,8 +1,7 @@
 """Tests for scope-based `Constraint` attachment on `Param`.
 
-Under the scope-based rewrite, a constraint no longer carries a designated
-`variable`; instead a constraint attaches to a parameter exactly when the
-parameter's variable is a member of the constraint's scope
+A constraint carries no designated `variable`; it attaches to a parameter
+exactly when the parameter's variable is a member of the constraint's scope
 (`get_free_identifiers()`). These tests exercise that attachment rule for
 equation constraints (including dependent, multi-variable ones and ground,
 variable-free ones) and confirm set constraints keep their simpler

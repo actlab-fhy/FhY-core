@@ -12,7 +12,8 @@ use fhy_core::constraint::{ConstraintEvent, ConstraintObserver};
 
 use crate::expression::render_expression_repr;
 
-use super::value::{record_pending_error, repr_text};
+use super::value::repr_text;
+use crate::util::pending::record_pending_error;
 
 /// `logging.DEBUG`.
 pub(crate) const DEBUG: u8 = 10;

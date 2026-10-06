@@ -1,9 +1,8 @@
-"""Pins for API surface deliberately removed by the scope-based rewrite.
+"""Pins that `Constraint` declares no unary contract.
 
-The old designated-`variable` unary contract (`evaluate(value)`,
-`is_satisfied(value)`, `__call__(value)`, and a base-level `variable`
-declaration) no longer exists. These tests pin its absence so a future
-change cannot silently reintroduce it.
+`Constraint` declares no unary `evaluate(value)`, `is_satisfied(value)` or
+`__call__(value)`, and no base-level `variable`. These tests pin that
+absence so a future change cannot silently introduce it.
 """
 
 import pytest
@@ -20,12 +19,12 @@ def test_equation_constraint_rejects_zero_arguments() -> None:
         EquationConstraint()  # type: ignore[call-arg]
 
 
-def test_equation_constraint_rejects_the_old_two_argument_signature() -> None:
-    """Test the old `EquationConstraint(variable, expression)` shape is rejected."""
+def test_equation_constraint_rejects_a_two_argument_signature() -> None:
+    """Test a two-argument `EquationConstraint(variable, expression)` is rejected."""
     x = mock_identifier("x", 0)
 
     with pytest.raises(TypeError):
-        EquationConstraint(x, LiteralExpression(True))  # type: ignore[arg-type, call-arg]  # test: old two-argument signature
+        EquationConstraint(x, LiteralExpression(True))  # type: ignore[arg-type, call-arg]  # test: two-argument signature
 
 
 def test_equation_constraint_accepts_exactly_one_positional_argument() -> None:
@@ -38,8 +37,8 @@ def test_equation_constraint_accepts_exactly_one_positional_argument() -> None:
 def test_equation_constraint_instance_has_no_variable_attribute() -> None:
     """Test an `EquationConstraint` instance carries no `variable` field.
 
-    The old designated-variable attachment key is gone; a constraint's
-    scope is `get_free_identifiers()`, never a single privileged field.
+    A constraint's scope is `get_free_identifiers()`, never a single
+    privileged field.
     """
     constraint = EquationConstraint(IdentifierExpression(mock_identifier("x", 0)))
 
@@ -47,12 +46,12 @@ def test_equation_constraint_instance_has_no_variable_attribute() -> None:
 
 
 def test_constraint_base_class_exposes_no_evaluate_method() -> None:
-    """Test `Constraint` no longer declares a unary `evaluate` method."""
+    """Test `Constraint` declares no unary `evaluate` method."""
     assert not hasattr(Constraint, "evaluate")
 
 
 def test_constraint_base_class_exposes_no_is_satisfied_method() -> None:
-    """Test `Constraint` no longer declares a unary `is_satisfied` method."""
+    """Test `Constraint` declares no unary `is_satisfied` method."""
     assert not hasattr(Constraint, "is_satisfied")
 
 

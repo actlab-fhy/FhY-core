@@ -126,7 +126,7 @@ fn an_empty_registry_has_no_registrations() {
 
     assert!(registry.is_empty());
     assert_eq!(registry.len(), 0);
-    assert!(registry.ids_for([&Kind::Any]).is_empty());
+    assert_eq!(registry.ids_for([&Kind::Any]), [] as [VerifierId; 0]);
 }
 
 #[test]
@@ -135,8 +135,8 @@ fn an_empty_registry_verifies_to_an_empty_report() {
 
     let report = registry.verify([&Kind::Any, &Kind::Loop], &BoxIr::new(-1));
 
-    assert!(report.diagnostics().is_empty());
-    assert!(report.records().is_empty());
+    assert_eq!(report.diagnostics(), []);
+    assert_eq!(report.records(), []);
 }
 
 #[test]
@@ -274,8 +274,8 @@ fn kinds_without_registrations_are_skipped() {
     let mut registry = VerificationRegistry::new();
     registry.register(Kind::Loop, || Check::<1>);
 
-    assert!(registry.ids_for([&Kind::Call]).is_empty());
-    assert!(registry.ids_for(std::iter::empty()).is_empty());
+    assert_eq!(registry.ids_for([&Kind::Call]), [] as [VerifierId; 0]);
+    assert_eq!(registry.ids_for(std::iter::empty()), [] as [VerifierId; 0]);
     assert_eq!(
         registry.ids_for([&Kind::Any, &Kind::Call, &Kind::Loop]),
         [VerifierId::of::<Check<1>>()]
@@ -301,7 +301,7 @@ fn every_lookup_builds_new_validators() {
     assert_eq!(validators.len(), 1);
     assert_eq!(verifier.validator_names().count(), 1);
     assert_eq!(report.records().len(), 1);
-    assert!(empty_report.records().is_empty());
+    assert_eq!(empty_report.records(), []);
     assert_eq!(after_registration, 0);
     assert_eq!(builds.load(Ordering::Relaxed), 3);
 }

@@ -25,7 +25,7 @@ use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{PassContext, ValidationManager, Validator, VerificationRegistry, VerifierId};
 
-use crate::dataclass::build_argument_type_error;
+use crate::util::dataclass::build_argument_type_error;
 
 use super::compiler_pass::{
     HookFailure, PyCompilerPassBase, PythonPass, build_interrupted_failure,
@@ -217,7 +217,7 @@ fn build_not_a_pass_error(pass_class: &Bound<'_, PyAny>) -> PyResult<PyErr> {
         Ok(qualname) => qualname.str()?.to_string(),
         Err(_no_qualname) => pass_class.repr()?.to_string(),
     };
-    Ok(crate::exceptions::PASS_REGISTRATION_ERROR.err(
+    Ok(crate::util::exceptions::PASS_REGISTRATION_ERROR.err(
         py,
         (format!(
             "Cannot register non-CompilerPass type as a verification pass: {qualname}."

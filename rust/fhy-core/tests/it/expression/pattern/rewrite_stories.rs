@@ -444,7 +444,7 @@ fn apply_rewrite_rules_with_no_rules_returns_the_input_itself() {
 
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
-    assert!(outcome.fired().is_empty());
+    assert_eq!(outcome.fired(), []);
 }
 
 #[test]
@@ -456,7 +456,7 @@ fn apply_rewrite_rules_preserves_identity_when_no_rule_fires() {
 
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert!(!outcome.is_changed());
-    assert!(outcome.fired().is_empty());
+    assert_eq!(outcome.fired(), []);
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn apply_rewrite_rules_with_an_identity_rule_on_a_doubling_dag_is_unchanged() {
 
     assert!(Expression::ptr_eq(outcome.output(), &dag));
     assert!(!outcome.is_changed());
-    assert!(outcome.fired().is_empty());
+    assert_eq!(outcome.fired(), []);
 }
 
 #[test]

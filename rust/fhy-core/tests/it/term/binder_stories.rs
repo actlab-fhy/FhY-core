@@ -4,7 +4,7 @@
 //! substitution, and the refusal of a binder list that repeats an
 //! identifier. Also `Expression` through the term traits.
 //!
-//! The lambda cases are ported from `tests/test_binder.py` and the binder
+//! The lambda cases mirror `tests/test_binder.py` and the binder
 //! cases of `tests/test_alpha_equivalence.py`.
 
 use std::collections::{HashMap, HashSet};

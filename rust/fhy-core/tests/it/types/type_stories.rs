@@ -38,7 +38,7 @@ fn scalar_has_the_empty_shape() {
     let numerical = NumericalType::scalar(CoreDataType::Float32);
 
     assert!(numerical.is_scalar());
-    assert!(numerical.shape().is_empty());
+    assert_eq!(numerical.shape(), []);
 }
 
 #[test]

@@ -45,8 +45,8 @@ SetConstraintType = type[Constraint]
 def test_equation_constraint_round_trip_dict_serialization() -> None:
     """Test an `EquationConstraint` round-trips through dict serialization.
 
-    The serialized shape drops the ``variable`` field the old API carried:
-    an ``EquationConstraint``'s only data is its wrapped expression.
+    The serialized shape has no ``variable`` field: an
+    ``EquationConstraint``'s only data is its wrapped expression.
     """
     x = mock_identifier("x", 0)
     expression = make_binary_expression(
@@ -116,8 +116,8 @@ def test_set_constraint_serialized_payload_uses_the_unified_values_key(
 
     Both set-constraint kinds are implemented by one shared base with a
     single ``values`` field, so the serialized shape has to reflect that
-    for both kinds rather than the retired ``valid_values``/
-    ``invalid_values`` split.
+    for both kinds rather than separate ``valid_values``/``invalid_values``
+    fields.
     """
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2})  # type: ignore[call-arg]
@@ -264,8 +264,7 @@ def _replace(key: str, value: Any) -> Callable[[dict[str, Any]], dict[str, Any]]
 def equation_payload() -> dict[str, Any]:
     """Return a well-formed serialized `EquationConstraint` data payload.
 
-    The payload carries only ``expression``: the old ``variable`` field is
-    gone from the shape entirely.
+    The payload carries only ``expression``, with no ``variable`` field.
     """
     return {
         "expression": LiteralExpression(True).serialize_to_dict(),
@@ -288,13 +287,11 @@ def test_equation_constraint_rejects_malformed_payload(
         EquationConstraint.deserialize_data_from_dict(mutate(equation_payload))
 
 
-def test_equation_constraint_rejects_a_payload_carrying_the_old_variable_field() -> (
-    None
-):
-    """Test a payload carrying the retired `variable` field is rejected.
+def test_equation_constraint_rejects_a_payload_carrying_a_variable_field() -> None:
+    """Test a payload carrying a `variable` field is rejected.
 
     The derived deserialization path enforces an exact key set, so a
-    payload shaped like the old two-field form is a structure error, not
+    payload with a `variable` key beside `expression` is a structure error, not
     a silently-ignored extra key.
     """
     x = mock_identifier("x", 0)

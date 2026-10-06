@@ -354,7 +354,7 @@ fn execute_returns_the_output_of_a_changing_run() {
     assert_eq!(*outcome.output(), 2);
     assert!(outcome.is_changed());
     assert!(!outcome.is_skipped());
-    assert!(outcome.diagnostics().is_empty());
+    assert_eq!(outcome.diagnostics(), []);
     assert_eq!(outcome.preserved_analyses(), &PreservedAnalyses::none());
 }
 
@@ -517,7 +517,7 @@ fn execute_wraps_a_hook_error_naming_the_pass_and_hook(
     );
     assert_eq!(error.class(), class);
     assert_eq!(error.pass_name(), Some("FailingHookPass"));
-    assert!(error.records().is_empty());
+    assert_eq!(error.records(), []);
     let chained = error.source().expect("the hook's error is the source");
     assert!(
         chained.downcast_ref::<HookFailure>().is_some(),
@@ -1139,6 +1139,10 @@ fn borrowed_pass_forwards_every_hook_and_keeps_its_state() {
     let mut pass = RecordingPass::default();
     let mut borrowed = &mut pass;
 
+    #[expect(
+        clippy::mut_mut,
+        reason = "the pass under test is the `&mut P` impl, whose receiver is `&mut &mut P`"
+    )]
     let outcome = ExecutePass::execute(&mut borrowed, &0).expect("the run succeeds");
 
     assert_eq!(*outcome.output(), 1);

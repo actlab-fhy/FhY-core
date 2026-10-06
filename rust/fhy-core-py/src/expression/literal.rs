@@ -37,7 +37,7 @@ impl IntoPyErr for LiteralTextError {
 
 /// Return `decimal.Decimal`.
 pub(crate) fn decimal_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "decimal", "Decimal" => PyType)
+    crate::util::python::cached_attr!(py, "decimal", "Decimal" => PyType)
 }
 
 /// Return the `int` of the Python int `value`, which may be of any size.

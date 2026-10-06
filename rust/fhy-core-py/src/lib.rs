@@ -17,6 +17,7 @@
 //! - an aggregate extension for a downstream product is a `cdylib` whose
 //!   `#[pymodule]` calls [`register`] and then its own crates' registration
 //!   functions, and takes and returns `fhy-core` values through [`convert`].
+//!   Its classes are written over the building blocks of [`util`], as `fhy_core`'s are.
 //!
 //! The split into a library and a thin `cdylib` is deliberate. A `#[pymodule]`
 //! exports a `PyInit_<name>` symbol, which an `rlib` that is linked into an
@@ -44,26 +45,17 @@
 //! module it has registered into already.
 
 mod constraint;
-mod dataclass;
 mod described_tag;
 mod diagnostic;
 mod error;
-mod exceptions;
 mod expression;
-mod frozen;
-mod gc;
 mod identifier;
-mod interned;
 mod lattice;
 mod object_table;
 mod op_attribute;
 mod param;
 mod pass;
 mod provenance;
-mod public_class;
-mod python;
-mod scoped;
-mod serialization;
 mod solver;
 mod symbol_table;
 mod term;
@@ -72,6 +64,7 @@ mod value_domain;
 mod wire;
 
 pub mod convert;
+pub mod util;
 
 use pyo3::prelude::*;
 
@@ -263,6 +256,7 @@ fn register_part_2(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<provenance::PyProvenance>()?;
     module.add_class::<provenance::PySpan>()?;
     module.add_class::<provenance::PyUnknownProvenance>()?;
+    module.add_class::<solver::PyGroundSimplifier>()?;
     module.add_class::<solver::PySatResult>()?;
     module.add_class::<solver::PySimplifierBase>()?;
     module.add_class::<solver::PySimplifyContext>()?;

@@ -15,8 +15,8 @@ use fhy_core::param::{ParamEvent, ParamObserver, ScreenReason};
 use fhy_core::solver::QueryKind;
 
 use crate::constraint::{
-    DEBUG, LoggingObserver, WARNING, core_logger, join_items, log, member_to_python,
-    record_pending_error, repr_text, system_logger,
+    DEBUG, LoggingObserver, WARNING, core_logger, join_items, log, member_to_python, repr_text,
+    system_logger,
 };
 use crate::solver::{is_pass_execution_failure, warn_hazard, warn_unknown};
 
@@ -24,6 +24,7 @@ use super::objects::{
     bindings_to_python, bound_identifiers_text, constraint_class_name, constraint_repr,
     identifier_object,
 };
+use crate::util::pending::record_pending_error;
 
 /// Return `fhy_core.symbolic.param.domains`'s logger.
 fn domains_logger(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
@@ -269,7 +270,7 @@ fn log_domain_event(py: Python<'_>, event: &ParamEvent<'_>) -> PyResult<()> {
 }
 
 /// The observer of one param question.
-pub(super) struct PyParamObserver {
+pub(crate) struct PyParamObserver {
     /// The name of the solver's SMT backend, for the `unknown` warning.
     backend: String,
 }
@@ -277,7 +278,7 @@ pub(super) struct PyParamObserver {
 impl PyParamObserver {
     /// Return the observer of a question of a solver whose SMT backend is
     /// named `backend`.
-    pub(super) const fn new(backend: String) -> Self {
+    pub(crate) const fn new(backend: String) -> Self {
         Self { backend }
     }
 

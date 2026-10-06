@@ -13,19 +13,19 @@ use fhy_core::expression::Expression;
 use fhy_core::expression::pattern::RewriteRule;
 use fhy_core::foreign::BoxError;
 
-use crate::dataclass::{compare_as_dataclass, format_dataclass_repr, hash_value};
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
-use crate::public_class::PublicClass;
+use crate::util::dataclass::{compare_as_dataclass, format_dataclass_repr, hash_value};
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::public_class::PublicClass;
 
 use super::super::node::{PyExpression, read_expression};
 use super::bindings::PyMatchBindings;
 use super::kinds::{
     PyPattern, argument_type_error, ensure_depth_within_recursion_limit, into_callback_error,
-    read_optional_str, type_name,
+    read_optional_str, read_type_name,
 };
 use super::objects::{ActiveTable, current_adopt, current_object_of};
-use crate::gc::{Slot, Slots, collect_slots};
-use crate::python::Seed;
+use crate::util::gc::{Slot, Slots, collect_slots};
+use crate::util::python::Seed;
 
 // ---------------------------------------------------------------------------
 // RewriteRule
@@ -170,7 +170,7 @@ fn read_rewrite_result(
         Err(_not_an_expression) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "{label} rewrite must return an Expression{}, got {}.",
             if is_partial { " or None" } else { "" },
-            type_name(result)
+            read_type_name(result)
         ))),
     }
 }
@@ -327,7 +327,7 @@ impl PyRewriteRule {
         name: &Bound<'py, PyAny>,
         is_partial: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let guards = crate::dataclass::collect_tuple(guards)?;
+        let guards = crate::util::dataclass::collect_tuple(guards)?;
         let rule = RuleFields::read(pattern, rewrite, &guards, name, is_partial)?.into_rule()?;
         Self::build_object(cls, rule)
     }
@@ -388,7 +388,7 @@ impl PyRewriteRule {
         let replacement = self
             .rule
             .apply(expression.get().expression())
-            .map_err(crate::exceptions::boxed_error_to_py)?;
+            .map_err(crate::util::exceptions::boxed_error_to_py)?;
         let result = match replacement {
             Some(replacement) => Some(table.object_of(py, &replacement)?),
             None => None,
@@ -518,7 +518,7 @@ impl PythonRule {
                 Err(_not_an_expression) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
                     "{}.apply must return an Expression or None, got {}.",
                     rule.get_type().qualname()?,
-                    type_name(&result)
+                    read_type_name(&result)
                 ))),
             }
         })

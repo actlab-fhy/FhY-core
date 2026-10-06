@@ -24,7 +24,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::OnceLock;
 
-use pyo3::exceptions::{PyException, PyRecursionError, PyTypeError};
+use pyo3::exceptions::{PyRecursionError, PyTypeError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple, PyType};
@@ -33,107 +33,30 @@ use fhy_core::constraint::{Member, MemberKind, OpaqueValue, Value};
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
-use crate::gc::Slot;
-use crate::scoped::ScopedStack;
-
-thread_local! {
-    /// The first exception an opaque value's `==` raised during each call
-    /// into the core in progress on this thread, innermost last; a base
-    /// frame, pushed on first use, keeps one raised outside every call.
-    static PENDING_ERROR: ScopedStack<Option<PyErr>> = const { ScopedStack::new() };
-}
-
-/// Return whether `error` should replace the kept exception `kept`: only an
-/// exception that is not an `Exception`, such as `KeyboardInterrupt` or
-/// `SystemExit`, outranks one that is.
-fn outranks(py: Python<'_>, error: &PyErr, kept: &PyErr) -> bool {
-    kept.is_instance_of::<PyException>(py) && !error.is_instance_of::<PyException>(py)
-}
-
-/// Keep `error` as the pending exception, unless one is kept already that
-/// it does not outrank: an exception that is not an `Exception` replaces a
-/// kept `Exception`, and otherwise the first one is kept.
-pub(crate) fn record_pending_error(error: PyErr) {
-    Python::attach(|py| {
-        let mut error = Some(error);
-        let replaced = ScopedStack::with_top_or_base_mut(
-            &PENDING_ERROR,
-            || None,
-            |pending| {
-                let replaces = match (pending.as_ref(), error.as_ref()) {
-                    (None, _) => true,
-                    (Some(kept), Some(error)) => outranks(py, error, kept),
-                    (Some(_), None) => false,
-                };
-                if replaces {
-                    pending.replace(error.take()?)
-                } else {
-                    None
-                }
-            },
-        );
-        // Dropped outside the borrow: a finalizer may run Python.
-        drop((replaced, error));
-    });
-}
-
-/// Return whether an exception is pending on this thread, so no further
-/// comparison may call Python during the current call.
-pub(crate) fn has_pending_error() -> bool {
-    ScopedStack::with_top(&PENDING_ERROR, |pending| {
-        pending.is_some_and(Option::is_some)
-    })
-}
-
-/// Run `call`, and return the exception an opaque value raised during it,
-/// if any, in place of its result.
-pub(crate) fn with_pending_errors<T>(call: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
-    // A frame of its own, popped when the guard drops, on unwind included,
-    // so the outer frame is restored.
-    let scope = ScopedStack::push(&PENDING_ERROR, None);
-    let result = call();
-    let raised = scope.pop();
-    match raised {
-        Some(error) => Err(error),
-        None => result,
-    }
-}
-
-/// Run `call`, and return its result with the exception an opaque value
-/// raised during it, if any.
-pub(crate) fn capture_pending_errors<T>(call: impl FnOnce() -> T) -> (T, Option<PyErr>) {
-    let scope = ScopedStack::push(&PENDING_ERROR, None);
-    let result = call();
-    (result, scope.pop())
-}
+use crate::util::gc::Slot;
+use crate::util::hook::ask;
+use crate::util::pending::has_pending_error;
+pub(crate) use crate::util::python::read_type_name;
 
 /// Return the `ConstraintError` with `message`.
 pub(crate) fn constraint_error(py: Python<'_>, message: impl Into<String>) -> PyErr {
-    crate::exceptions::CONSTRAINT_ERROR.err(py, (message.into(),))
+    crate::util::exceptions::CONSTRAINT_ERROR.err(py, (message.into(),))
 }
 
 /// Return `fhy_core.serialization.Serializable`.
 fn serializable_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "fhy_core.serialization", "Serializable" => PyType)
+    crate::util::python::cached_attr!(py, "fhy_core.serialization", "Serializable" => PyType)
 }
 
 /// Return `collections.abc.Hashable`.
 fn hashable_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
-    crate::python::cached_attr!(py, "collections.abc", "Hashable" => PyType)
+    crate::util::python::cached_attr!(py, "collections.abc", "Hashable" => PyType)
 }
 
 /// Return whether `value` is both `Serializable` and `Hashable`.
 fn is_serializable_hashable(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     let py = value.py();
     Ok(value.is_instance(serializable_class(py)?)? && value.is_instance(hashable_class(py)?)?)
-}
-
-/// Return the name of `value`'s type.
-pub(crate) fn type_name(value: &Bound<'_, PyAny>) -> String {
-    value
-        .get_type()
-        .name()
-        .map_or_else(|_| "?".to_owned(), |name| name.to_string())
 }
 
 /// Return `repr(value)`, or `?` if it raises.
@@ -175,7 +98,7 @@ impl PyOpaqueValue {
         Self {
             object: Slot::new(object.clone().unbind()),
             class: Slot::new(object.get_type().into_any().unbind()),
-            type_name: type_name(object),
+            type_name: read_type_name(object),
             is_member_shaped,
             key: key.map_or_else(OnceLock::new, OnceLock::from),
         }
@@ -205,7 +128,7 @@ fn build_ordering_key(value: &Bound<'_, PyAny>) -> PyResult<String> {
     let module: String = class.getattr(intern!(py, "__module__"))?.str()?.to_string();
     let qualified_name = class.qualname()?;
     let payload = if value.is_instance(serializable_class(py)?)? {
-        crate::python::cached_attr!(py, "fhy_core.serialization", "_serialize_ordering_payload" => PyAny)?
+        crate::util::python::cached_attr!(py, "fhy_core.serialization", "_serialize_ordering_payload" => PyAny)?
             .call1((value,))?
     } else {
         value.clone()
@@ -219,7 +142,7 @@ impl ForeignPart for PyOpaqueValue {
     }
 
     fn to_foreign(&self) -> Result<fhy_core::foreign::Foreign, fhy_core::foreign::ForeignError> {
-        Python::attach(|py| crate::wire::foreign_of(&self.object.object(py), false))
+        Python::attach(|py| crate::util::foreign::read_foreign(&self.object.object(py), false))
     }
 }
 
@@ -236,20 +159,11 @@ impl OpaqueValue for PyOpaqueValue {
         let Some(other) = other.as_any().downcast_ref::<Self>() else {
             return false;
         };
-        if has_pending_error() {
-            return false;
-        }
-        Python::attach(|py| {
+        ask(false, |py| {
             if !self.class.get(py).is(other.class.get(py)) {
-                return false;
+                return Ok(false);
             }
-            match self.object.get(py).eq(other.object.get(py)) {
-                Ok(is_equal) => is_equal,
-                Err(error) => {
-                    record_pending_error(error);
-                    false
-                }
-            }
+            self.object.get(py).eq(other.object.get(py))
         })
     }
 
@@ -474,12 +388,12 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
                             "Constraint member is unhashable after validation: value {} of \
                              type {}.",
                             repr_text(value),
-                            type_name(value)
+                            read_type_name(value)
                         ),
                     );
                     // The opaque value is a Python object, so the error is
                     // the exception its hash raised.
-                    refused.set_cause(py, Some(crate::exceptions::boxed_error_to_py(error)));
+                    refused.set_cause(py, Some(crate::util::exceptions::boxed_error_to_py(error)));
                     return Err(refused);
                 }
             }
@@ -660,65 +574,9 @@ pub(crate) fn member_to_python<'py>(
 
 #[cfg(test)]
 mod tests {
-    use pyo3::exceptions::{PyKeyboardInterrupt, PySystemExit, PyValueError};
+    use pyo3::exceptions::PyValueError;
 
     use super::*;
-
-    /// Return the type name of the exception `raised`, or `None`.
-    fn raised_name(py: Python<'_>, raised: Option<&PyErr>) -> Option<String> {
-        raised.map(|error| error.get_type(py).name().unwrap().to_string())
-    }
-
-    #[test]
-    fn the_first_exception_is_kept_until_an_interrupt_replaces_it() {
-        Python::initialize();
-        Python::attach(|py| {
-            let ((), raised) = capture_pending_errors(|| {
-                record_pending_error(PyValueError::new_err("first"));
-                record_pending_error(PyTypeError::new_err("second"));
-            });
-            assert_eq!(
-                raised_name(py, raised.as_ref()).as_deref(),
-                Some("ValueError")
-            );
-
-            let ((), raised) = capture_pending_errors(|| {
-                record_pending_error(PyValueError::new_err("first"));
-                record_pending_error(PyKeyboardInterrupt::new_err(()));
-                record_pending_error(PySystemExit::new_err(()));
-                record_pending_error(PyTypeError::new_err("later"));
-            });
-            assert_eq!(
-                raised_name(py, raised.as_ref()).as_deref(),
-                Some("KeyboardInterrupt")
-            );
-        });
-    }
-
-    #[test]
-    fn a_pending_exception_is_reported_and_restored_around_a_call() {
-        Python::initialize();
-        Python::attach(|py| {
-            let ((), outer) = capture_pending_errors(|| {
-                record_pending_error(PyValueError::new_err("outer"));
-                let ((), inner) = capture_pending_errors(|| {
-                    assert!(!has_pending_error());
-                    record_pending_error(PyTypeError::new_err("inner"));
-                    assert!(has_pending_error());
-                });
-                assert_eq!(
-                    raised_name(py, inner.as_ref()).as_deref(),
-                    Some("TypeError")
-                );
-                assert!(has_pending_error());
-            });
-            assert_eq!(
-                raised_name(py, outer.as_ref()).as_deref(),
-                Some("ValueError")
-            );
-            assert!(!has_pending_error());
-        });
-    }
 
     #[test]
     fn a_failed_key_is_not_kept() {
@@ -731,37 +589,5 @@ mod tests {
         let key = cached_key(&cell, || Ok("real".to_owned())).expect("computes");
         assert_eq!(key, "real");
         assert_eq!(cell.get().map(String::as_str), Some("real"));
-    }
-}
-
-#[cfg(test)]
-mod scoped_stack_tests {
-    use super::*;
-
-    /// Test a panic inside a call restores the outer pending exception, and
-    /// leaves only the base frame behind.
-    #[test]
-    fn a_panic_inside_a_call_restores_the_outer_pending_exception() {
-        Python::initialize();
-        Python::attach(|py| {
-            let ((), outer) = capture_pending_errors(|| {
-                record_pending_error(PyTypeError::new_err("outer"));
-                let unwound = std::panic::catch_unwind(|| {
-                    with_pending_errors(|| -> PyResult<()> {
-                        record_pending_error(PyTypeError::new_err("inner"));
-                        panic!("inside a call")
-                    })
-                });
-                let _panic = unwound.unwrap_err();
-                assert!(has_pending_error());
-            });
-
-            assert_eq!(
-                outer.map(|error| error.value(py).to_string()).as_deref(),
-                Some("outer")
-            );
-            assert!(ScopedStack::depth(&PENDING_ERROR) <= 1);
-            assert!(!has_pending_error());
-        });
     }
 }

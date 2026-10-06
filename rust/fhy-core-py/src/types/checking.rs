@@ -29,7 +29,6 @@ use fhy_core::types::checking::{
 };
 use fhy_core::types::{CoreDataType, Type, TypeQualifier};
 
-use crate::dataclass::build_argument_type_error;
 use crate::diagnostic::diagnostic_class;
 use crate::error::IntoPyResult;
 use crate::expression::{
@@ -38,6 +37,7 @@ use crate::expression::{
 };
 use crate::identifier::restore_identifier;
 use crate::object_table::ObjectTable;
+use crate::util::dataclass::build_argument_type_error;
 
 use super::adapter::{Context, run_in_context};
 use super::convert::{identifier_to_python, read_type, type_to_python};
@@ -54,7 +54,7 @@ const SWEEP_SOURCE: &str = "fhy_core.types.checking.check_all_registered_functio
 
 /// Return whether `resolver` is the registry's `get_registered_entry`.
 fn is_registry_resolver(resolver: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let registry_resolver = crate::python::cached_attr!(resolver.py(), "fhy_core.symbolic.expression.registry", "get_registered_entry" => PyAny)?;
+    let registry_resolver = crate::util::python::cached_attr!(resolver.py(), "fhy_core.symbolic.expression.registry", "get_registered_entry" => PyAny)?;
     Ok(resolver.is(registry_resolver))
 }
 
@@ -249,7 +249,7 @@ impl CallTargets for PythonCallTargets<'_, '_> {
                     Ok(entry) => entry,
                     Err(error) => {
                         let is_lookup_error =
-                            crate::exceptions::ENTRY_LOOKUP_ERROR.is_instance_of(py, &error);
+                            crate::util::exceptions::ENTRY_LOOKUP_ERROR.is_instance_of(py, &error);
                         return Err(if is_lookup_error {
                             Self::unknown(py, name, error)
                         } else {
@@ -290,10 +290,10 @@ fn type_check_error_to_python(py: Python<'_>, error: TypeCheckError) -> PyErr {
             PyNotImplementedError::new_err(error.to_string())
         }
         error @ TypeCheckError::Rule { .. } => {
-            crate::exceptions::CORE_TYPE_ERROR.err(py, (error.to_string(),))
+            crate::util::exceptions::CORE_TYPE_ERROR.err(py, (error.to_string(),))
         }
         TypeCheckError::UnknownCall(error) => call_target_error_to_python(py, error),
-        TypeCheckError::Callback(source) => crate::exceptions::boxed_error_to_py(source),
+        TypeCheckError::Callback(source) => crate::util::exceptions::boxed_error_to_py(source),
         other => PyRuntimeError::new_err(other.to_string()),
     }
 }
@@ -305,9 +305,9 @@ fn call_target_error_to_python(py: Python<'_>, error: CallTargetError) -> PyErr 
             source: Some(source),
             ..
         }
-        | CallTargetError::Callback(source) => crate::exceptions::boxed_error_to_py(source),
+        | CallTargetError::Callback(source) => crate::util::exceptions::boxed_error_to_py(source),
         CallTargetError::Unknown { message, .. } => {
-            crate::exceptions::ENTRY_LOOKUP_ERROR.err(py, (message,))
+            crate::util::exceptions::ENTRY_LOOKUP_ERROR.err(py, (message,))
         }
         other => PyRuntimeError::new_err(other.to_string()),
     }
@@ -319,14 +319,16 @@ fn call_target_error_to_python(py: Python<'_>, error: CallTargetError) -> PyErr 
 fn body_check_error_to_python(py: Python<'_>, error: BodyCheckError) -> PyErr {
     let message = error.to_string();
     let cause = match error {
-        BodyCheckError::Callback(source) => return crate::exceptions::boxed_error_to_py(source),
+        BodyCheckError::Callback(source) => {
+            return crate::util::exceptions::boxed_error_to_py(source);
+        }
         BodyCheckError::UnknownCall { error, .. } => Some(call_target_error_to_python(py, error)),
         BodyCheckError::Unsupported { error, .. } | BodyCheckError::IllTyped { error, .. } => {
             Some(type_check_error_to_python(py, error))
         }
         _ => None,
     };
-    let registration_error = crate::exceptions::ENTRY_REGISTRATION_ERROR.err(py, (message,));
+    let registration_error = crate::util::exceptions::ENTRY_REGISTRATION_ERROR.err(py, (message,));
     if cause.is_some() {
         registration_error.set_cause(py, cause);
     }
@@ -561,7 +563,7 @@ pub(crate) fn get_core_data_type_from_literal_type<'py>(
     } else if let Ok(float) = literal.cast::<PyFloat>() {
         LiteralValue::Float(float.value())
     } else if literal
-        .is_instance(crate::python::cached_attr!(py, "decimal", "Decimal" => PyType)?)?
+        .is_instance(crate::util::python::cached_attr!(py, "decimal", "Decimal" => PyType)?)?
     {
         return Err(PyNotImplementedError::new_err(
             fhy_core::types::LiteralTypeError::UnsupportedDecimal.to_string(),

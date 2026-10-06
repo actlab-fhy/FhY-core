@@ -65,7 +65,7 @@ fn a_function_frame_takes_its_signature_from_any_iterable() {
     let empty = FunctionFrame::new(name, FunctionKeyword::Operation, []);
 
     assert_eq!(from_array, from_iterator);
-    assert!(empty.signature().is_empty());
+    assert_eq!(empty.signature(), []);
 }
 
 #[test]

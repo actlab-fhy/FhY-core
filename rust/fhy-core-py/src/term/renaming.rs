@@ -22,10 +22,10 @@ use pyo3::types::{PyDict, PyList, PyMapping, PyTuple, PyType};
 use fhy_core::identifier::Identifier;
 use fhy_core::term::{AlphaRenaming, NonInjectiveRenamingError, RenamingMap};
 
-use crate::dataclass::hash_value;
 use crate::error::{IntoPyErr, IntoPyResult};
-use crate::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::identifier::{identifier_to_python, restore_identifier};
+use crate::util::dataclass::hash_value;
+use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 
 /// Raises `ValueError` with the core's text.
 impl IntoPyErr for NonInjectiveRenamingError {
@@ -87,7 +87,7 @@ impl ObjectTable {
             if Arc::strong_count(current) != 1 {
                 break;
             }
-            crate::gc::traverse_all(visit, current.objects.values())?;
+            crate::util::gc::traverse_all(visit, current.objects.values())?;
             node = current.parent.0.as_ref();
         }
         Ok(())

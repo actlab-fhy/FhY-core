@@ -100,7 +100,7 @@ impl Elements {
     /// Visit the positions `dict` and every element.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.positions)?;
-        crate::gc::traverse_all(visit, &self.objects)
+        crate::util::gc::traverse_all(visit, &self.objects)
     }
 
     /// Return the objects at `positions`, as a list.
@@ -342,7 +342,8 @@ fn reduce<'py, T: Order>(
         Err(_no_dict) => py.None().into_bound(py),
     };
     let state = PyTuple::new(py, [elements.into_any(), orders.into_any(), instance_dict])?;
-    let new_object = crate::python::cached_attr!(py, "copyreg", "__newobj__" => PyAny)?.clone();
+    let new_object =
+        crate::util::python::cached_attr!(py, "copyreg", "__newobj__" => PyAny)?.clone();
     Ok((
         new_object,
         PyTuple::new(py, [slf.as_any().get_type()])?,

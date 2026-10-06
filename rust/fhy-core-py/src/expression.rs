@@ -29,7 +29,7 @@ mod text;
 
 pub(crate) use evaluate::{
     PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
-    fold_expression, is_decimal_text_exactly_binary,
+    evaluation_error_to_python, fold_expression, is_decimal_text_exactly_binary,
 };
 pub(crate) use literal::{big_int_to_python, decimal_class, read_big_int, read_decimal};
 pub(crate) use materialize::{
@@ -56,6 +56,8 @@ pub(crate) use registry::{
     register_native_function, set_registry_state, try_get_native_constant_for_identifier,
     try_get_registered_result_sort,
 };
+#[cfg(test)]
+pub(crate) use registry::{install_core_registry, reinstall};
 pub(crate) use screen::{non_boolean_operand_error, validate_logical_operands, validate_predicate};
 
 /// Return the `repr` of the Python object of `expression`, such as

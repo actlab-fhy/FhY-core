@@ -460,23 +460,21 @@ fn lifting_a_depth_16_sin_cos_dag_is_linear() {
     }
     let context = SimplifyContext::new(&NoRegisteredSorts);
 
-    let (lifted, elapsed, small_lifted) = attached(|py| {
+    let (lifted, visited, small_lifted) = attached(|py| {
         let lowered = backend().lower(py, &dag, &context).expect("lowered");
-        let started = Instant::now();
-        let lifted = backend().lift(&lowered).expect("lifted");
-        let elapsed = started.elapsed();
+        let (lifted, visited) = backend().lift_counting(&lowered).expect("lifted");
         let small_lowered = backend().lower(py, &small, &context).expect("lowered");
         (
             lifted,
-            elapsed,
+            visited,
             backend().lift(&small_lowered).expect("lifted"),
         )
     });
 
-    assert!(
-        elapsed < Duration::from_millis(100),
-        "lifting took {elapsed:?}"
-    );
+    // Linearity is asserted by count: the lifting visits each distinct node
+    // once (a node is the symbol, or a sine, cosine or sum of a level), so
+    // 49 visits. Without the memo it would visit every path, about 2^17.
+    assert_eq!(visited, 3 * 16 + 1, "each distinct node is lifted once");
     assert_eq!(
         count_distinct_nodes(&lifted),
         3 * 16 + 1,

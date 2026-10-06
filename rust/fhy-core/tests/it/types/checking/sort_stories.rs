@@ -1,5 +1,5 @@
 //! Tests for the mapping between function sorts and core data types,
-//! ported from `tests/types/checking/test_sort_compatibility.py`.
+//! mirroring `tests/types/checking/test_sort_compatibility.py`.
 
 use fhy_core::expression::FunctionSort;
 use fhy_core::types::CoreDataType;
