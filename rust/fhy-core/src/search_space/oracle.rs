@@ -2,13 +2,11 @@
 //! [`PendingStep`] it is asked, and the oracles this module ships:
 //! [`RandomOracle`], [`ReplayOracle`] and [`ExhaustiveOracle`].
 
-#![expect(
-    unused_variables,
-    dead_code,
-    reason = "interface stub: the bodies are todo!() until the implementation"
-)]
-
+use std::error::Error;
 use std::fmt;
+use std::num::NonZeroU64;
+
+use num_bigint::BigUint;
 
 use crate::foreign::BoxError;
 use crate::identifier::Identifier;
@@ -19,7 +17,16 @@ use super::domain::{Coordinate, DecisionKind, DomainSignature, StepDomain};
 use super::error::{ReplayError, TraceError};
 use super::rng::Rng;
 use super::space::Decision;
+use super::step::{draw_coordinate, first_coordinate, next_coordinate, try_extend};
 use super::trace::Trace;
+
+/// The most coordinates [`PendingStep::draw_uniform`] draws before it lists
+/// the admissible ones.
+const DRAWS_BEFORE_LISTING: usize = 64;
+
+/// The largest domain [`PendingStep::draw_uniform`] lists the admissible
+/// coordinates of.
+const LISTED_DOMAIN_SIZE: u32 = 1 << 16;
 
 /// Answers the steps of a run, one at a time.
 ///
@@ -61,7 +68,8 @@ pub struct PendingStep<'a> {
     subject: &'a Identifier,
     domain: &'a StepDomain,
     position: usize,
-    decision: Option<Decision<'a>>,
+    /// A static step's decision and its canonical position.
+    decision: Option<(Decision<'a>, usize)>,
     configuration: Option<&'a Configuration>,
     context: &'a ParamContext<'a>,
 }
@@ -80,7 +88,15 @@ impl<'a> PendingStep<'a> {
         position: usize,
         context: &'a ParamContext<'a>,
     ) -> Self {
-        todo!()
+        Self {
+            kind,
+            subject,
+            domain,
+            position,
+            decision: None,
+            configuration: None,
+            context,
+        }
     }
 
     /// Return the static step of `kind` over `domain` asking the decision
@@ -101,44 +117,67 @@ impl<'a> PendingStep<'a> {
         position: usize,
         context: &'a ParamContext<'a>,
     ) -> Option<Self> {
-        todo!()
+        let space = configuration.space();
+        let canonical = space.position(decision)?;
+        let decision = space.decision_at(canonical);
+        Some(Self {
+            kind,
+            subject: decision.name(),
+            domain,
+            position,
+            decision: Some((decision, canonical)),
+            configuration: Some(configuration),
+            context,
+        })
     }
 
     /// Return what the step is about.
     #[must_use]
     pub fn kind(&self) -> &'a DecisionKind {
-        todo!()
+        self.kind
     }
 
     /// Return the step's subject: a static step's decision name.
     #[must_use]
     pub fn subject(&self) -> &'a Identifier {
-        todo!()
+        self.subject
     }
 
     /// Return the domain the step may be answered from.
     #[must_use]
     pub fn domain(&self) -> &'a StepDomain {
-        todo!()
+        self.domain
     }
 
     /// Return the step's position in its run's trace.
     #[must_use]
     pub fn position(&self) -> usize {
-        todo!()
+        self.position
     }
 
     /// Return a static step's decision, or `None` for a dynamic step.
     #[must_use]
     pub fn decision(&self) -> Option<Decision<'a>> {
-        todo!()
+        self.decision.map(|(decision, _)| decision)
+    }
+
+    /// Return a static step's decision's canonical position in its space.
+    pub(super) fn decision_position(&self) -> Option<usize> {
+        self.decision.map(|(_, position)| position)
+    }
+
+    /// Return the signature of the step's domain, the names its space binds
+    /// written by position for a static step.
+    pub(super) fn signature(&self) -> DomainSignature {
+        self.domain
+            .signature_in(self.configuration.map(Configuration::space))
     }
 
     /// Return the run's configuration so far, for a static step, or
     /// `None`.
     #[must_use]
     pub fn configuration(&self) -> Option<&'a Configuration> {
-        todo!()
+        self.configuration
     }
 
     /// Return whether `coordinate` is an admissible answer: it names a
@@ -151,7 +190,13 @@ impl<'a> PendingStep<'a> {
     /// Returns [`TraceError::Configuration`] when the configuration with
     /// that value is refused for a reason other than its admissibility.
     pub fn admits(&self, coordinate: &Coordinate) -> Result<bool, TraceError> {
-        todo!()
+        let Some(value) = self.domain.value_at(coordinate) else {
+            return Ok(false);
+        };
+        let Some(configuration) = self.configuration else {
+            return Ok(true);
+        };
+        Ok(try_extend(configuration, self.subject, value, self.context)?.is_some())
     }
 
     /// Return an admissible coordinate drawn uniformly from the domain's
@@ -168,19 +213,77 @@ impl<'a> PendingStep<'a> {
     /// Returns [`TraceError::DeadEnd`] when no coordinate is found
     /// admissible, and what [`admits`](Self::admits) returns.
     pub fn draw_uniform(&self, rng: &mut Rng) -> Result<Coordinate, TraceError> {
-        todo!()
+        for _ in 0..DRAWS_BEFORE_LISTING {
+            let coordinate = draw_coordinate(self.domain, rng);
+            if self.admits(&coordinate)? {
+                return Ok(coordinate);
+            }
+        }
+        let dead_end = || TraceError::DeadEnd {
+            decision: self.subject.clone(),
+        };
+        if self.domain.cardinality() > BigUint::from(LISTED_DOMAIN_SIZE) {
+            return Err(dead_end());
+        }
+        let admissible = self.list_admissible()?;
+        let count = u64::try_from(admissible.len()).unwrap_or(u64::MAX);
+        let bound = NonZeroU64::new(count).ok_or_else(dead_end)?;
+        let chosen = usize::try_from(rng.below(bound)).unwrap_or(0);
+        admissible.into_iter().nth(chosen).ok_or_else(dead_end)
+    }
+
+    /// Return the admissible coordinates of the step's domain, in
+    /// lexicographic order.
+    fn list_admissible(&self) -> Result<Vec<Coordinate>, TraceError> {
+        let mut admissible = Vec::new();
+        let mut coordinate = Some(first_coordinate(self.domain));
+        while let Some(current) = coordinate {
+            if self.admits(&current)? {
+                admissible.push(current.clone());
+            }
+            coordinate = next_coordinate(self.domain, &current);
+        }
+        Ok(admissible)
+    }
+
+    /// Return the first admissible coordinate at or after `start`, in
+    /// lexicographic order.
+    pub(super) fn first_admissible_from(
+        &self,
+        start: Coordinate,
+    ) -> Result<Option<Coordinate>, TraceError> {
+        let mut coordinate = Some(start);
+        while let Some(current) = coordinate {
+            if self.admits(&current)? {
+                return Ok(Some(current));
+            }
+            coordinate = next_coordinate(self.domain, &current);
+        }
+        Ok(None)
     }
 }
 
 impl fmt::Debug for PendingStep<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        f.debug_struct("PendingStep")
+            .field("kind", self.kind)
+            .field("subject", self.subject)
+            .field("domain", self.domain)
+            .field("position", &self.position)
+            .field("decision", &self.decision_position())
+            .finish_non_exhaustive()
     }
 }
 
 impl fmt::Display for PendingStep<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        write!(
+            f,
+            "{} step for {} over {} value(s)",
+            self.kind,
+            self.subject,
+            self.domain.cardinality()
+        )
     }
 }
 
@@ -200,25 +303,25 @@ impl RandomOracle {
     /// Return the oracle drawing from a generator seeded with `seed`.
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        todo!()
+        Self::from_rng(Rng::new(seed))
     }
 
     /// Return the oracle drawing from `rng`.
     #[must_use]
     pub fn from_rng(rng: Rng) -> Self {
-        todo!()
+        Self { rng }
     }
 
     /// Return the generator, in its current state.
     #[must_use]
     pub fn rng(&self) -> &Rng {
-        todo!()
+        &self.rng
     }
 }
 
 impl SearchOracle for RandomOracle {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
-        todo!()
+        Ok(step.draw_uniform(&mut self.rng)?)
     }
 }
 
@@ -247,19 +350,19 @@ impl ReplayOracle {
     /// Return the oracle replaying `trace` from its first step.
     #[must_use]
     pub fn new(trace: Trace) -> Self {
-        todo!()
+        Self { trace, position: 0 }
     }
 
     /// Return the trace replayed.
     #[must_use]
     pub fn trace(&self) -> &Trace {
-        todo!()
+        &self.trace
     }
 
     /// Return whether every recorded step was answered.
     #[must_use]
     pub fn is_exhausted(&self) -> bool {
-        todo!()
+        self.position >= self.trace.len()
     }
 
     /// Finish the replay.
@@ -269,13 +372,52 @@ impl ReplayOracle {
     /// Returns [`ReplayError::Unconsumed`] naming the first recorded step
     /// no run asked.
     pub fn finish(self) -> Result<(), ReplayError> {
-        todo!()
+        if self.is_exhausted() {
+            Ok(())
+        } else {
+            Err(ReplayError::Unconsumed {
+                position: self.position,
+            })
+        }
+    }
+
+    /// Return the answer to `step`, the recorded step at this position,
+    /// checked as the type documents.
+    fn answer(&self, step: &PendingStep<'_>) -> Result<Coordinate, ReplayError> {
+        let position = self.position;
+        let recorded = self
+            .trace
+            .steps()
+            .get(position)
+            .ok_or(ReplayError::Exhausted { position })?;
+        if recorded.kind() != step.kind() {
+            return Err(ReplayError::KindMismatch { position });
+        }
+        if recorded.decision() != step.decision_position() {
+            return Err(ReplayError::DecisionMismatch { position });
+        }
+        if *recorded.signature() != step.signature() {
+            return Err(ReplayError::DomainMismatch { position });
+        }
+        let coordinate = recorded.coordinate();
+        if !step.domain().contains(coordinate) {
+            return Err(ReplayError::CoordinateOutOfDomain { position });
+        }
+        let is_admissible = step
+            .admits(coordinate)
+            .map_err(|error| ReplayError::Trace(Box::new(error)))?;
+        if !is_admissible {
+            return Err(ReplayError::Inadmissible { position });
+        }
+        Ok(coordinate.clone())
     }
 }
 
 impl SearchOracle for ReplayOracle {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
-        todo!()
+        let coordinate = self.answer(step)?;
+        self.position += 1;
+        Ok(coordinate)
     }
 }
 
@@ -296,34 +438,83 @@ impl SearchOracle for ReplayOracle {
 /// stream is not deterministic.
 #[derive(Debug, Clone, Default)]
 pub struct ExhaustiveOracle {
-    path: Vec<(Coordinate, DomainSignature)>,
+    /// Per position of the current path: the coordinate answered, the
+    /// signature of the domain it was answered over, and that domain.
+    path: Vec<(Coordinate, DomainSignature, StepDomain)>,
     position: usize,
 }
+
+/// The error an [`ExhaustiveOracle`] abandons a run with at a step that has
+/// no admissible coordinate left.
+#[derive(Debug)]
+struct Backtrack;
+
+impl fmt::Display for Backtrack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the branch has no admissible coordinate left")
+    }
+}
+
+impl Error for Backtrack {}
 
 impl ExhaustiveOracle {
     /// Return the oracle at its first path.
     #[must_use]
     pub fn new() -> Self {
-        todo!()
+        Self::default()
     }
 
     /// Move to the next path: the next coordinate of the deepest position
     /// that has one, every later position dropped. Return `false` when
     /// every path was taken.
     pub fn advance(&mut self) -> bool {
-        todo!()
+        self.position = 0;
+        while let Some((coordinate, signature, domain)) = self.path.pop() {
+            if let Some(next) = next_coordinate(&domain, &coordinate) {
+                self.path.push((next, signature, domain));
+                return true;
+            }
+        }
+        false
     }
 
     /// Return whether `error` stopped a run because this oracle abandoned
     /// it at an exhausted branch.
     #[must_use]
     pub fn is_backtrack(error: &TraceError) -> bool {
-        todo!()
+        matches!(error, TraceError::Oracle { source, .. } if source.is::<Backtrack>())
+    }
+
+    /// Return the answer to `step`: the path's coordinate at this position
+    /// or after it, or the first admissible coordinate of a new position.
+    fn answer(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
+        let position = self.position;
+        let signature = step.signature();
+        let start = match self.path.get(position) {
+            Some((coordinate, recorded, _)) => {
+                if *recorded != signature {
+                    return Err(Box::new(ReplayError::DomainMismatch { position }));
+                }
+                coordinate.clone()
+            }
+            None => first_coordinate(step.domain()),
+        };
+        let Some(coordinate) = step.first_admissible_from(start)? else {
+            self.path.truncate(position);
+            return Err(Box::new(Backtrack));
+        };
+        let entry = (coordinate.clone(), signature, step.domain().clone());
+        match self.path.get_mut(position) {
+            Some(slot) => *slot = entry,
+            None => self.path.push(entry),
+        }
+        self.position += 1;
+        Ok(coordinate)
     }
 }
 
 impl SearchOracle for ExhaustiveOracle {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
-        todo!()
+        self.answer(step)
     }
 }

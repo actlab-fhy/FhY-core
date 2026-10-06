@@ -162,6 +162,7 @@
 mod alternative;
 mod choice;
 mod configuration;
+mod counting;
 mod domain;
 mod equivalence;
 mod error;
@@ -170,6 +171,7 @@ mod oracle;
 mod recorder;
 mod rng;
 mod space;
+mod step;
 #[cfg(feature = "testing")]
 #[cfg_attr(docsrs, doc(cfg(feature = "testing")))]
 pub mod testing;

@@ -12,6 +12,7 @@ use crate::constraint::{Binding, Bindings, ConstraintError, ConstraintSystem, Ou
 use crate::foreign::Part;
 use crate::identifier::Identifier;
 use crate::param::{ParamAssignment, ParamContext};
+use crate::solver::Solver;
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::alternative::Alternative;
@@ -132,6 +133,19 @@ impl Configuration {
         context: &ParamContext<'_>,
     ) -> Result<Self, ConfigurationErrors> {
         check(space, Vec::new(), entries, context, ValueCheck::Restore)
+    }
+
+    /// Return the configuration of `space` assigning nothing.
+    pub(super) fn empty(space: &Space) -> Self {
+        let solver = Solver::new();
+        check(
+            space,
+            Vec::new(),
+            [],
+            &ParamContext::new(&solver),
+            ValueCheck::New,
+        )
+        .expect("a configuration assigning nothing evaluates no constraint, so is valid")
     }
 
     /// Return this configuration with the decision `name` given `value`,

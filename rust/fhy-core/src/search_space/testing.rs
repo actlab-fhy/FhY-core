@@ -37,14 +37,18 @@ use std::any::TypeId;
 use std::error::Error;
 use std::fmt;
 
+use crate::constraint::Value;
 use crate::foreign::{BoxError, Foreign, ForeignError, Part, Resolve};
 use crate::identifier::Identifier;
+use crate::param::ParamDomain;
 use crate::term::AlphaRenaming;
 
 use super::alternative::{Alternative, PlainAlternative};
 use super::choice::first_repeat;
+use super::domain::StepDomain;
 use super::equivalence::{alternative_labels, enter_frame};
 use super::error::EquivalenceError;
+use super::step::{ParamStepDomain, param_step_domain};
 use super::variable::{PlainVariable, Variable};
 
 /// A clause of the implementor contract, numbered as the
@@ -190,6 +194,11 @@ trait Sample: Sized {
     /// Return whether `other` is structurally equivalent, as the core
     /// compares them.
     fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>;
+
+    /// Check clause 7: a search domain the sample offers is the same on a
+    /// second call and, over a categorical, ordinal or permutation param,
+    /// holds exactly the param's values.
+    fn check_search_domain(&self, kind: &str) -> Result<(), ConformanceViolation>;
 }
 
 impl Sample for Part<dyn Variable> {
@@ -243,6 +252,62 @@ impl Sample for Part<dyn Variable> {
 
     fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError> {
         Self::is_structurally_equivalent(self, other)
+    }
+
+    fn check_search_domain(&self, kind: &str) -> Result<(), ConformanceViolation> {
+        let part = self.get();
+        let failed = |source| {
+            failure(
+                ContractClause::SearchDomain,
+                kind,
+                "the search domain fails",
+                source,
+            )
+        };
+        let first = part.search_domain().map_err(failed)?;
+        let second = part.search_domain().map_err(failed)?;
+        if first != second {
+            return Err(violation(
+                ContractClause::SearchDomain,
+                kind,
+                "the search domain answers differently on a second call",
+            ));
+        }
+        let Some(offered) = first else {
+            return Ok(());
+        };
+        let is_listed = matches!(
+            part.param().domain(),
+            ParamDomain::Categorical(_) | ParamDomain::Ordinal(_) | ParamDomain::Permutation(_)
+        );
+        let ParamStepDomain::Finite(derived) = param_step_domain(part.param()) else {
+            return Ok(());
+        };
+        if is_listed && !hold_same_values(&offered, &derived) {
+            return Err(violation(
+                ContractClause::SearchDomain,
+                kind,
+                "the search domain holds other values than the param's domain",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Return whether `left` and `right` are of one shape and hold the same
+/// values or elements, in any order.
+fn hold_same_values(left: &StepDomain, right: &StepDomain) -> bool {
+    let same = |left: &[Value], right: &[Value]| {
+        left.len() == right.len() && left.iter().all(|value| right.contains(value))
+    };
+    match (left, right) {
+        (StepDomain::Choice(left), StepDomain::Choice(right)) => {
+            same(left.values(), right.values())
+        }
+        (StepDomain::Order(left), StepDomain::Order(right)) => {
+            same(left.elements(), right.elements())
+        }
+        _ => false,
     }
 }
 
@@ -303,6 +368,10 @@ impl Sample for Part<dyn Alternative> {
 
     fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError> {
         Self::is_structurally_equivalent(self, other)
+    }
+
+    fn check_search_domain(&self, _kind: &str) -> Result<(), ConformanceViolation> {
+        Ok(())
     }
 }
 
@@ -389,7 +458,8 @@ fn check_sample<T: Sample>(
     check_kind(sample, &kind, earlier)?;
     let labels = check_bound_identifiers(sample, &kind)?;
     check_reflexive_hooks(sample, &kind, &labels)?;
-    check_wire_form(sample, &kind, resolve)
+    check_wire_form(sample, &kind, resolve)?;
+    sample.check_search_domain(&kind)
 }
 
 /// Check that `kind`, `sample`'s, is not empty, not a plain kind, and the

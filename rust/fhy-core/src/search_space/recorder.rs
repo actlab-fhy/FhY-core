@@ -2,21 +2,16 @@
 //! checking and recording the answers, and, over a space, growing the
 //! run's configuration; and [`Recorded`], what a finished run gives.
 
-#![expect(
-    unused_variables,
-    dead_code,
-    reason = "interface stub: the bodies are todo!() until the implementation"
-)]
-
 use crate::constraint::Value;
 use crate::identifier::Identifier;
 use crate::param::ParamContext;
 
-use super::configuration::Configuration;
+use super::configuration::{Activity, Configuration};
 use super::domain::{Coordinate, DecisionKind, StepDomain};
 use super::error::TraceError;
-use super::oracle::SearchOracle;
+use super::oracle::{PendingStep, SearchOracle};
 use super::space::Space;
+use super::step::{decision_domain, decision_kind, try_extend};
 use super::trace::{Trace, TraceStep};
 
 /// One run of a search: every step asked through it is put to the oracle
@@ -43,8 +38,9 @@ use super::trace::{Trace, TraceStep};
 /// stops it as that error.
 #[derive(Debug, Clone, Default)]
 pub struct Recorder {
-    space: Option<Space>,
+    /// The run's configuration so far, for a run over a space.
     configuration: Option<Configuration>,
+    /// The configuration a realizing run answers from.
     preset: Option<Configuration>,
     steps: Vec<TraceStep>,
 }
@@ -53,14 +49,18 @@ impl Recorder {
     /// Return the recorder of a run of dynamic steps.
     #[must_use]
     pub fn new() -> Self {
-        todo!()
+        Self::default()
     }
 
     /// Return the recorder of a run over `space`, from its empty
     /// configuration.
     #[must_use]
     pub fn over(space: &Space) -> Self {
-        todo!()
+        Self {
+            configuration: Some(Configuration::empty(space)),
+            preset: None,
+            steps: Vec::new(),
+        }
     }
 
     /// Return the recorder of a run realizing `configuration`: a decision
@@ -68,7 +68,11 @@ impl Recorder {
     /// oracle.
     #[must_use]
     pub fn realizing(configuration: &Configuration) -> Self {
-        todo!()
+        Self {
+            configuration: Some(Configuration::empty(configuration.space())),
+            preset: Some(configuration.clone()),
+            steps: Vec::new(),
+        }
     }
 
     /// Ask the decision `decision` of the space of `oracle`, checked under
@@ -90,7 +94,73 @@ impl Recorder {
         oracle: &mut dyn SearchOracle,
         context: &ParamContext<'_>,
     ) -> Result<Value, TraceError> {
-        todo!()
+        let configuration = self.configuration.as_ref().ok_or(TraceError::NoSpace)?;
+        let space = configuration.space();
+        let unknown = || TraceError::UnknownDecision {
+            name: decision.clone(),
+        };
+        let canonical = space.position(decision).ok_or_else(unknown)?;
+        if configuration.value(decision).is_some() {
+            return Err(TraceError::AlreadyDecided {
+                name: decision.clone(),
+            });
+        }
+        match configuration.activity(decision) {
+            Some(Activity::Active) => {}
+            Some(activity) => {
+                return Err(TraceError::NotActive {
+                    name: decision.clone(),
+                    activity,
+                });
+            }
+            None => return Err(unknown()),
+        }
+        let node = space.decision_at(canonical);
+        let kind = decision_kind(node);
+        let domain = decision_domain(node)?;
+        let position = self.steps.len();
+        let preset = self
+            .preset
+            .as_ref()
+            .and_then(|preset| preset.value(decision));
+        let coordinate = match preset {
+            Some(value) => domain
+                .coordinate_of(value)
+                .ok_or(TraceError::CoordinateOutOfDomain { position })?,
+            None => {
+                let step = PendingStep::of_decision(
+                    &kind,
+                    configuration,
+                    decision,
+                    &domain,
+                    position,
+                    context,
+                )
+                .ok_or_else(unknown)?;
+                ask(oracle, &step)?
+            }
+        };
+        let value = domain
+            .value_at(&coordinate)
+            .ok_or(TraceError::CoordinateOutOfDomain { position })?;
+        let extended =
+            try_extend(configuration, decision, value.clone(), context)?.ok_or_else(|| {
+                TraceError::Inadmissible {
+                    position,
+                    coordinate: coordinate.clone(),
+                }
+            })?;
+        let signature = domain.signature_in(Some(space));
+        self.steps.push(TraceStep::of_decision(
+            kind,
+            decision.clone(),
+            canonical,
+            signature,
+            coordinate,
+            value.clone(),
+        ));
+        self.configuration = Some(extended);
+        Ok(value)
     }
 
     /// Ask `oracle` the dynamic step of `kind` about `subject` over
@@ -108,20 +178,27 @@ impl Recorder {
         oracle: &mut dyn SearchOracle,
         context: &ParamContext<'_>,
     ) -> Result<Coordinate, TraceError> {
-        todo!()
+        let position = self.steps.len();
+        let step = PendingStep::dynamic(kind, subject, domain, position, context);
+        let coordinate = ask(oracle, &step)?;
+        let recorded =
+            TraceStep::dynamic(kind.clone(), subject.clone(), domain, coordinate.clone())
+                .map_err(|_outside| TraceError::CoordinateOutOfDomain { position })?;
+        self.steps.push(recorded);
+        Ok(coordinate)
     }
 
     /// Return the steps recorded so far, also after a refused step.
     #[must_use]
     pub fn trace(&self) -> Trace {
-        todo!()
+        Trace::new(self.steps.clone())
     }
 
     /// Return the run's configuration so far, or `None` for a recorder over
     /// no space.
     #[must_use]
     pub fn configuration(&self) -> Option<&Configuration> {
-        todo!()
+        self.configuration.as_ref()
     }
 
     /// Finish the run.
@@ -131,8 +208,35 @@ impl Recorder {
     /// Returns [`TraceError::Unasked`] for a realizing recorder that never
     /// asked a decision its configuration assigns.
     pub fn finish(self) -> Result<Recorded, TraceError> {
-        todo!()
+        if let (Some(preset), Some(configuration)) = (&self.preset, &self.configuration) {
+            let unasked: Vec<Identifier> = preset
+                .entries()
+                .map(|(name, _)| name)
+                .filter(|name| configuration.value(name).is_none())
+                .cloned()
+                .collect();
+            if !unasked.is_empty() {
+                return Err(TraceError::Unasked { decisions: unasked });
+            }
+        }
+        Ok(Recorded {
+            trace: Trace::new(self.steps),
+            configuration: self.configuration,
+        })
     }
+}
+
+/// Ask `oracle` `step`, its error stopping the run as the type documents.
+fn ask(oracle: &mut dyn SearchOracle, step: &PendingStep<'_>) -> Result<Coordinate, TraceError> {
+    oracle
+        .decide(step)
+        .map_err(|source| match source.downcast::<TraceError>() {
+            Ok(error) => *error,
+            Err(source) => TraceError::Oracle {
+                position: step.position(),
+                source,
+            },
+        })
 }
 
 /// A finished run: its trace and, over a space, its configuration.
@@ -143,21 +247,29 @@ pub struct Recorded {
 }
 
 impl Recorded {
+    /// Return the run of `trace` and `configuration`.
+    pub(super) fn new(trace: Trace, configuration: Option<Configuration>) -> Self {
+        Self {
+            trace,
+            configuration,
+        }
+    }
+
     /// Return the run's trace.
     #[must_use]
     pub fn trace(&self) -> &Trace {
-        todo!()
+        &self.trace
     }
 
     /// Return the run's configuration, or `None` for a run over no space.
     #[must_use]
     pub fn configuration(&self) -> Option<&Configuration> {
-        todo!()
+        self.configuration.as_ref()
     }
 
     /// Return the trace and the configuration.
     #[must_use]
     pub fn into_parts(self) -> (Trace, Option<Configuration>) {
-        todo!()
+        (self.trace, self.configuration)
     }
 }
