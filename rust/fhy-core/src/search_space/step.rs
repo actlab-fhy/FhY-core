@@ -203,15 +203,16 @@ pub(super) fn first_coordinate(domain: &StepDomain) -> Coordinate {
     }
 }
 
-/// Return the coordinate of `domain` after `coordinate`, in lexicographic
-/// order, or `None` after the last.
-pub(super) fn next_coordinate(domain: &StepDomain, coordinate: &Coordinate) -> Option<Coordinate> {
+/// Return the coordinate after `coordinate`, in lexicographic order, of
+/// the domain whose coordinates `contains` holds, or `None` after the last.
+pub(super) fn next_coordinate(
+    contains: impl Fn(&Coordinate) -> bool,
+    coordinate: &Coordinate,
+) -> Option<Coordinate> {
     match coordinate {
         Coordinate::Index(index) => {
-            let next = index.checked_add(1)?;
-            domain
-                .contains(&Coordinate::Index(next))
-                .then_some(Coordinate::Index(next))
+            let next = Coordinate::Index(index.checked_add(1)?);
+            contains(&next).then_some(next)
         }
         Coordinate::Order(positions) => {
             let mut next = positions.clone();

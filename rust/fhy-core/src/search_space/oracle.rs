@@ -241,7 +241,7 @@ impl<'a> PendingStep<'a> {
             if self.admits(&current)? {
                 admissible.push(current.clone());
             }
-            coordinate = next_coordinate(self.domain, &current);
+            coordinate = next_coordinate(|next| self.domain.contains(next), &current);
         }
         Ok(admissible)
     }
@@ -257,7 +257,7 @@ impl<'a> PendingStep<'a> {
             if self.admits(&current)? {
                 return Ok(Some(current));
             }
-            coordinate = next_coordinate(self.domain, &current);
+            coordinate = next_coordinate(|next| self.domain.contains(next), &current);
         }
         Ok(None)
     }
@@ -438,9 +438,11 @@ impl SearchOracle for ReplayOracle {
 /// stream is not deterministic.
 #[derive(Debug, Clone, Default)]
 pub struct ExhaustiveOracle {
-    /// Per position of the current path: the coordinate answered, the
-    /// signature of the domain it was answered over, and that domain.
-    path: Vec<(Coordinate, DomainSignature, StepDomain)>,
+    /// Per position of the current path: the coordinate answered and the
+    /// signature of the domain it was answered over, which also says which
+    /// coordinate comes next. No domain is kept, so the oracle holds none
+    /// of a domain's values.
+    path: Vec<(Coordinate, DomainSignature)>,
     position: usize,
 }
 
@@ -469,9 +471,9 @@ impl ExhaustiveOracle {
     /// every path was taken.
     pub fn advance(&mut self) -> bool {
         self.position = 0;
-        while let Some((coordinate, signature, domain)) = self.path.pop() {
-            if let Some(next) = next_coordinate(&domain, &coordinate) {
-                self.path.push((next, signature, domain));
+        while let Some((coordinate, signature)) = self.path.pop() {
+            if let Some(next) = next_coordinate(|next| signature.contains(next), &coordinate) {
+                self.path.push((next, signature));
                 return true;
             }
         }
@@ -491,7 +493,7 @@ impl ExhaustiveOracle {
         let position = self.position;
         let signature = step.signature();
         let start = match self.path.get(position) {
-            Some((coordinate, recorded, _)) => {
+            Some((coordinate, recorded)) => {
                 if *recorded != signature {
                     return Err(Box::new(ReplayError::DomainMismatch { position }));
                 }
@@ -503,7 +505,7 @@ impl ExhaustiveOracle {
             self.path.truncate(position);
             return Err(Box::new(Backtrack));
         };
-        let entry = (coordinate.clone(), signature, step.domain().clone());
+        let entry = (coordinate.clone(), signature);
         match self.path.get_mut(position) {
             Some(slot) => *slot = entry,
             None => self.path.push(entry),
