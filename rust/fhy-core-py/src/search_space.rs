@@ -20,16 +20,9 @@
 //! that the container builds and whose slot the container owns, so the
 //! cycle collector sees through it. `==` and `hash` are identity, except
 //! `ConfigurationKey`'s, which are structural.
-#![expect(
-    dead_code,
-    unused_variables,
-    clippy::todo,
-    clippy::needless_pass_by_value,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
-
 mod adapter;
 mod alternative;
+mod arguments;
 mod choice;
 mod configuration;
 mod errors;

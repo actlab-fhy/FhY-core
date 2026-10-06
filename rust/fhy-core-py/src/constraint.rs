@@ -20,6 +20,7 @@ pub(crate) use custom::{PyCustomConstraint, PythonBindings, read_outcome};
 pub(crate) use error::constraint_error_to_py;
 pub(crate) use kinds::{
     PyEquationConstraint, PyInSetConstraint, PyNotInSetConstraint, does_member_lift_to_expression,
+    read_native_constraint,
 };
 pub(crate) use kinds::{ReadBindings, outcome_to_python, read_binding, read_scoped_bindings};
 pub(crate) use observer::{DEBUG, LoggingObserver, WARNING, core_logger, join_items, log};

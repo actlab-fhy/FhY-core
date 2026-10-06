@@ -139,7 +139,7 @@ pub fn choice_from_python(object: &Bound<'_, PyAny>) -> PyResult<Choice> {
 ///
 /// Raises what building the object of a part raises.
 pub fn choice_to_python<'py>(py: Python<'py>, choice: &Choice) -> PyResult<Bound<'py, PyAny>> {
-    crate::search_space::choice_to_python(py, choice)
+    crate::search_space::choice_to_python(py, choice, crate::util::gc::Slots::default())
 }
 
 /// Register the `Variable` kind `kind` of the class `class` in the kind

@@ -627,13 +627,14 @@ impl ConfigurationKeyData {
     ///
     /// Returns the error of an opaque value that cannot give its foreign
     /// form.
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; the body is todo!() until implementation"
-    )]
     pub fn of(key: &ConfigurationKey) -> Result<Self, ForeignError> {
-        let _: (&[KeyEntry], Option<&KeyValue>) = (key.entries(), None);
-        todo!()
+        Ok(Self {
+            entries: key
+                .entries()
+                .iter()
+                .map(KeyEntryRepr::of)
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     /// Return the key, its opaque values resolved by `resolver`.
@@ -642,17 +643,82 @@ impl ConfigurationKeyData {
     ///
     /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
     /// refuses.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; the body is todo!() until implementation"
-    )]
     pub fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
         self,
         resolver: &R,
     ) -> Result<ConfigurationKey, BuildError> {
-        let _ = ConfigurationKey::from_entries;
-        todo!()
+        let entries = self
+            .entries
+            .into_iter()
+            .map(|entry| entry.build(resolver))
+            .collect::<Result<_, _>>()?;
+        Ok(ConfigurationKey::from_entries(entries))
+    }
+}
+
+impl KeyEntryRepr {
+    /// Return the wire form of `entry`.
+    fn of(entry: &KeyEntry) -> Result<Self, ForeignError> {
+        Ok(match entry {
+            KeyEntry::Inactive => Self::Inactive {},
+            KeyEntry::Unassigned => Self::Unassigned {},
+            KeyEntry::Alternative(index) => Self::Alternative { index: *index },
+            KeyEntry::Value(value) => Self::Value(KeyValueRepr::of(value)?),
+        })
+    }
+
+    /// Return the entry, its opaque values resolved by `resolver`.
+    fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<KeyEntry, BuildError> {
+        Ok(match self {
+            Self::Inactive {} => KeyEntry::Inactive,
+            Self::Unassigned {} => KeyEntry::Unassigned,
+            Self::Alternative { index } => KeyEntry::Alternative(index),
+            Self::Value(value) => KeyEntry::Value(value.build(resolver)?),
+        })
+    }
+}
+
+impl KeyValueRepr {
+    /// Return the wire form of `value`.
+    fn of(value: &KeyValue) -> Result<Self, ForeignError> {
+        Ok(match value {
+            KeyValue::Leaf(value) => Self::Leaf(ValueData::of_value(value)?),
+            KeyValue::Bound(position) => Self::Bound {
+                position: *position,
+            },
+            KeyValue::Tuple(values) => {
+                Self::Tuple(values.iter().map(Self::of).collect::<Result<_, _>>()?)
+            }
+            KeyValue::FrozenSet(values) => {
+                Self::FrozenSet(values.iter().map(Self::of).collect::<Result<_, _>>()?)
+            }
+        })
+    }
+
+    /// Return the value, its opaque values resolved by `resolver`.
+    fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<KeyValue, BuildError> {
+        Ok(match self {
+            Self::Leaf(value) => KeyValue::Leaf(value.build(resolver)?),
+            Self::Bound { position } => KeyValue::Bound(position),
+            Self::Tuple(values) => KeyValue::Tuple(
+                values
+                    .into_iter()
+                    .map(|value| value.build(resolver))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::FrozenSet(values) => KeyValue::FrozenSet(
+                values
+                    .into_iter()
+                    .map(|value| value.build(resolver))
+                    .collect::<Result<_, _>>()?,
+            ),
+        })
     }
 }
 

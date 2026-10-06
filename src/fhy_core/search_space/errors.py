@@ -33,8 +33,9 @@ class ConfigurationError(SearchSpaceError):
     problems: tuple[str, ...]
 
     def __init__(self, message: str, problems: tuple[str, ...] = ()) -> None:
-        raise NotImplementedError
+        super().__init__(message, tuple(problems))
+        self.problems = tuple(problems)
 
     @override
     def __str__(self) -> str:
-        raise NotImplementedError
+        return str(self.args[0])

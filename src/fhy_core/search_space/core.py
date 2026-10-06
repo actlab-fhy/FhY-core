@@ -96,7 +96,8 @@ class Variable(_rs.Variable, _FrozenAfterInit, WrappedFamilySerializable, Generi
         calls this only for ``other`` of the same kind. The default has no
         data of its own and answers ``True``.
         """
-        raise NotImplementedError
+        del other
+        return True
 
     def extension_is_alpha_equivalent_under(
         self, other: Any, renaming: AlphaRenaming
@@ -108,12 +109,16 @@ class Variable(_rs.Variable, _FrozenAfterInit, WrappedFamilySerializable, Generi
         ``renaming.are_identifiers_alpha_equivalent``. The default answers
         ``True``.
         """
-        raise NotImplementedError
+        del other, renaming
+        return True
 
     @override
     def __setstate__(self, state: Any) -> None:
         """Restore a pickled subclass instance: its base fields, then its data."""
-        raise NotImplementedError
+        base, data = state
+        _rs.Variable._initialize(self, *base)
+        for name, attribute in (data or {}).items():
+            object.__setattr__(self, name, attribute)
 
 
 @register_serializable(type_id="search_space.alternative")
@@ -152,7 +157,7 @@ class Alternative(_rs.Alternative, _FrozenAfterInit, WrappedFamilySerializable):
         They must be distinct, the same on every call, and as many for two
         alternatives that should correspond. The default binds none.
         """
-        raise NotImplementedError
+        return ()
 
     def extension_is_structurally_equivalent(self, other: Any) -> bool:
         """Return whether this subclass's own data equals ``other``'s.
@@ -161,7 +166,8 @@ class Alternative(_rs.Alternative, _FrozenAfterInit, WrappedFamilySerializable):
         notes itself, and calls this only for ``other`` of the same kind.
         The default answers ``True``.
         """
-        raise NotImplementedError
+        del other
+        return True
 
     def extension_is_alpha_equivalent_under(
         self, other: Any, renaming: AlphaRenaming
@@ -171,12 +177,16 @@ class Alternative(_rs.Alternative, _FrozenAfterInit, WrappedFamilySerializable):
         ``renaming`` already pairs the names of the space, the bound
         identifiers included. The default answers ``True``.
         """
-        raise NotImplementedError
+        del other, renaming
+        return True
 
     @override
     def __setstate__(self, state: Any) -> None:
         """Restore a pickled subclass instance: its base fields, then its data."""
-        raise NotImplementedError
+        base, data = state
+        _rs.Alternative._initialize(self, *base)
+        for name, attribute in (data or {}).items():
+            object.__setattr__(self, name, attribute)
 
 
 @final

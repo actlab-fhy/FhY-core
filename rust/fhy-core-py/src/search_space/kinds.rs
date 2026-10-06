@@ -143,6 +143,61 @@ impl PyKindRegistry {
     }
 }
 
+/// Return the registered `Variable` kind whose class `object` is an
+/// instance of, if any.
+///
+/// # Errors
+///
+/// Raises what importing the registry or an `isinstance` check raises.
+pub(super) fn variable_kind_of(object: &Bound<'_, PyAny>) -> PyResult<Option<Arc<VariableKind>>> {
+    let state = registry(object.py())?.get().current();
+    for entry in state.variables() {
+        if object.is_instance(entry.class.bind(object.py()))? {
+            return Ok(Some(Arc::clone(entry)));
+        }
+    }
+    Ok(None)
+}
+
+/// Return the registered `Alternative` kind whose class `object` is an
+/// instance of, if any.
+///
+/// # Errors
+///
+/// Raises what importing the registry or an `isinstance` check raises.
+pub(super) fn alternative_kind_of(
+    object: &Bound<'_, PyAny>,
+) -> PyResult<Option<Arc<AlternativeKind>>> {
+    let state = registry(object.py())?.get().current();
+    for entry in state.alternatives() {
+        if object.is_instance(entry.class.bind(object.py()))? {
+            return Ok(Some(Arc::clone(entry)));
+        }
+    }
+    Ok(None)
+}
+
+/// Return the registered `Variable` kind `kind`, if any.
+///
+/// # Errors
+///
+/// Raises what importing the registry raises.
+pub(super) fn variable_kind(py: Python<'_>, kind: &str) -> PyResult<Option<Arc<VariableKind>>> {
+    Ok(registry(py)?.get().current().variable(kind).cloned())
+}
+
+/// Return the registered `Alternative` kind `kind`, if any.
+///
+/// # Errors
+///
+/// Raises what importing the registry raises.
+pub(super) fn alternative_kind(
+    py: Python<'_>,
+    kind: &str,
+) -> PyResult<Option<Arc<AlternativeKind>>> {
+    Ok(registry(py)?.get().current().alternative(kind).cloned())
+}
+
 /// Return the kind registry of `fhy_core._rs`.
 ///
 /// # Errors
