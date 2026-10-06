@@ -21,7 +21,7 @@
 //! aggregate's `#[pymodule]`, after [`register`](crate::register):
 //!
 //! - `kind` is the type id the kind's parts write
-//!   ([`Variable::kind`](fhy_core::search_space::Variable::kind)), and
+//!   ([`Variable::kind`]), and
 //!   the type id a foreign part of the kind is resolved by;
 //! - `class` is the kind's `#[pyclass]`, which becomes a virtual subclass
 //!   of the public `Variable` (or `Alternative`) as soon as both exist;
