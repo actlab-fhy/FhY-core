@@ -10,6 +10,7 @@
 //! feature, and otherwise when `FHY_SMT_SOLVER` names an SMT-LIB2
 //! executable, such as `z3 -in`; without either, it passes trivially.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +24,7 @@ use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{CheckLimits, SmtSolver, Solver};
 use proptest::prelude::*;
+use serde_json::Value as Json;
 
 use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{describe, int, member, text};
@@ -384,7 +386,6 @@ proptest! {
         b in build_built_in_constraint_strategy(),
         c in build_built_in_constraint_strategy(),
     ) {
-        use std::cmp::Ordering;
         prop_assert_eq!(a.cmp(&b) == Ordering::Equal, a == b);
         prop_assert_eq!(a.cmp(&b), b.cmp(&a).reverse());
         prop_assert_eq!(a.partial_cmp(&b), Some(a.cmp(&b)));
@@ -424,8 +425,7 @@ proptest! {
 
 /// Return `wire` with every identifier written as 0.2.0 wrote it, an opaque
 /// part of type id `id` whose payload is the identifier's JSON text.
-fn to_legacy_form(wire: serde_json::Value) -> serde_json::Value {
-    use serde_json::Value as Json;
+fn to_legacy_form(wire: Json) -> Json {
     match wire {
         Json::Object(fields) => Json::Object(
             fields
@@ -463,7 +463,7 @@ proptest! {
     /// the same value, which writes the current form again.
     #[test]
     fn legacy_opaque_identifiers_read_as_identifiers(value in build_value_strategy()) {
-        let wire: serde_json::Value = serde_json::to_value(&value).expect("encodes");
+        let wire: Json = serde_json::to_value(&value).expect("encodes");
         let legacy = to_legacy_form(wire.clone());
 
         let data: ValueData = serde_json::from_value(legacy).expect("reads");
@@ -497,7 +497,6 @@ proptest! {
         b in build_value_strategy(),
         c in build_value_strategy(),
     ) {
-        use std::cmp::Ordering;
         let [a, b, c] = [a, b, c].map(member);
         let ab = a.partial_cmp(&b);
 

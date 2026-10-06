@@ -507,7 +507,7 @@ fn opaque_part_that_reports_no_identifier_stays_opaque() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn categorical_domain_over_identifiers_orders_them_by_id_and_admits_by_id() {
+fn categorical_domain_orders_identifier_categories_by_id() {
     let domain = CategoricalDomain::new(vec![
         identifier(1_000, "a"),
         identifier(100, "b"),
@@ -516,7 +516,15 @@ fn categorical_domain_over_identifiers_orders_them_by_id_and_admits_by_id() {
     .expect("identifiers are categories");
 
     let names: Vec<String> = domain.values().iter().map(ToString::to_string).collect();
+
     assert_eq!(names, ["c", "b", "a"]);
+}
+
+#[test]
+fn categorical_domain_admits_an_identifier_category_by_id_only() {
+    let domain = CategoricalDomain::new(vec![identifier(100, "b"), identifier(99, "c")])
+        .expect("identifiers are categories");
+
     assert!(domain.contains_value(&identifier(100, "renamed")));
     assert!(!domain.contains_value(&text("b")));
     let domain = ParamDomain::from(domain);
