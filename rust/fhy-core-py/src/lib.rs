@@ -376,5 +376,17 @@ fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<search_space::PyForbidden>()?;
     module.add_class::<search_space::PySpace>()?;
     module.add_class::<search_space::PyVariableBase>()?;
+    module.add_class::<search_space::PyRng>()?;
+    module.add_class::<search_space::PyChoiceDomain>()?;
+    module.add_class::<search_space::PyOrderDomain>()?;
+    module.add_class::<search_space::PyStridedRun>()?;
+    module.add_class::<search_space::PyStridedDomain>()?;
+    module.add_class::<search_space::PyPendingStep>()?;
+    module.add_class::<search_space::PyRandomOracle>()?;
+    module.add_class::<search_space::PyReplayOracle>()?;
+    module.add_class::<search_space::PyExhaustiveOracle>()?;
+    module.add_class::<search_space::PyRecorder>()?;
+    module.add_class::<search_space::PyTraceStep>()?;
+    module.add_class::<search_space::PyTrace>()?;
     Ok(())
 }

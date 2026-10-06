@@ -10,6 +10,7 @@ use crate::identifier::Identifier;
 use crate::param::Param;
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
+use super::domain::StepDomain;
 use super::equivalence::{is_variable_alpha_equivalent, is_variable_structurally_equivalent};
 use super::error::EquivalenceError;
 
@@ -94,6 +95,23 @@ pub trait Variable: ForeignPart {
     /// [`eq_part`](Self::eq_part). The default feeds nothing.
     fn hash_part(&self, state: &mut dyn Hasher) {
         let _ = state;
+    }
+
+    /// Return the domain a static step over the variable offers, or `None`
+    /// to derive it from the param: a categorical or ordinal param's
+    /// values as a choice domain, a permutation param's as an order domain,
+    /// and an integer param bounded at both ends as one strided run.
+    ///
+    /// An implementation whose param has a custom domain offers one here.
+    /// It must hold exactly the values the param's domain admits, before
+    /// its constraints, in an order that is the same for the value's life
+    /// (contract clause 7). The default derives it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the implementation's error, which stops the run asking it.
+    fn search_domain(&self) -> Result<Option<StepDomain>, BoxError> {
+        Ok(None)
     }
 }
 

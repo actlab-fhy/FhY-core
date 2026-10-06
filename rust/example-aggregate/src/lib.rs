@@ -23,6 +23,7 @@
 //!    is imported, because `fhy_core` imports it while `fhy_core` itself is
 //!    being imported.
 
+mod oracle;
 mod search_space;
 
 use fhy_core::identifier::Identifier;
@@ -88,7 +89,8 @@ impl PyTagger {
 /// Raises whatever adding a class raises.
 fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyTagger>()?;
-    search_space::register(module)
+    search_space::register(module)?;
+    oracle::register(module)
 }
 
 /// The aggregate: `fhy_core`'s binding and this crate's, in one module.

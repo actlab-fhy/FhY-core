@@ -307,6 +307,18 @@ impl PyConfiguration {
         self.configuration.is_complete()
     }
 
+    /// Return the `Trace` of the assigned decisions, in decision order.
+    ///
+    /// Raises `NotEnumerableError` for an assigned variable with no finite
+    /// domain.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    fn trace<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        todo!()
+    }
+
     /// Return the key that identifies the configuration within its space.
     fn key(&self) -> PyConfigurationKey {
         PyConfigurationKey {

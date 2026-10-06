@@ -1,5 +1,6 @@
-//! The registry of the `Variable` and `Alternative` kinds a downstream Rust
-//! crate defines: append-only module state of the extension.
+//! The registry of the `Variable`, `Alternative` and oracle kinds a
+//! downstream Rust crate defines: append-only module state of the
+//! extension.
 //!
 //! A downstream binding crate registers each of its kinds once, from its
 //! aggregate's `#[pymodule]`, with the functions of
@@ -28,8 +29,8 @@ use pyo3::types::PyType;
 use fhy_core::search_space::{PlainAlternative, PlainVariable};
 
 use crate::convert::search_space::{
-    AlternativeFromPython, AlternativeResolver, AlternativeToPython, VariableFromPython,
-    VariableResolver, VariableToPython,
+    AlternativeFromPython, AlternativeResolver, AlternativeToPython, OracleLease,
+    VariableFromPython, VariableResolver, VariableToPython,
 };
 
 /// The attribute of `fhy_core._rs` that holds the kind registry.
@@ -50,11 +51,22 @@ pub(super) type VariableKind = KindEntry<VariableFromPython, VariableToPython, V
 pub(super) type AlternativeKind =
     KindEntry<AlternativeFromPython, AlternativeToPython, AlternativeResolver>;
 
+/// A registered oracle kind: its class and its lease.
+pub(super) struct OracleKind {
+    pub(super) class: Py<PyType>,
+    #[expect(
+        dead_code,
+        reason = "interface stub: the oracle reader uses it once implemented"
+    )]
+    pub(super) lease: OracleLease,
+}
+
 /// One version of the registry.
 #[derive(Default)]
 pub(super) struct KindRegistryState {
     variables: HashMap<String, Arc<VariableKind>>,
     alternatives: HashMap<String, Arc<AlternativeKind>>,
+    oracles: HashMap<String, Arc<OracleKind>>,
 }
 
 impl KindRegistryState {
@@ -78,13 +90,26 @@ impl KindRegistryState {
         self.alternatives.values()
     }
 
-    /// Return whether `class` is registered for a kind of either family.
+    /// Return the registered oracle kinds' entries.
+    #[expect(
+        dead_code,
+        reason = "interface stub: the oracle reader uses it once implemented"
+    )]
+    pub(super) fn oracles(&self) -> impl Iterator<Item = &Arc<OracleKind>> {
+        self.oracles.values()
+    }
+
+    /// Return whether `class` is registered for a kind of any family.
     fn holds_class(&self, class: &Bound<'_, PyType>) -> bool {
         self.variables
             .values()
             .any(|entry| entry.class.bind(class.py()).is(class))
             || self
                 .alternatives
+                .values()
+                .any(|entry| entry.class.bind(class.py()).is(class))
+            || self
+                .oracles
                 .values()
                 .any(|entry| entry.class.bind(class.py()).is(class))
     }
@@ -136,6 +161,9 @@ impl PyKindRegistry {
                 visit.call(&entry.class)?;
             }
             for entry in state.alternatives.values() {
+                visit.call(&entry.class)?;
+            }
+            for entry in state.oracles.values() {
                 visit.call(&entry.class)?;
             }
             Ok(())
@@ -302,6 +330,7 @@ pub(crate) fn register_variable_kind(
         Ok(KindRegistryState {
             variables,
             alternatives: state.alternatives.clone(),
+            oracles: state.oracles.clone(),
         })
     })?;
     register_virtual_subclass(super::variable::registered_public_class(module.py()), class)
@@ -349,10 +378,69 @@ pub(crate) fn register_alternative_kind(
         Ok(KindRegistryState {
             variables: state.variables.clone(),
             alternatives,
+            oracles: state.oracles.clone(),
         })
     })?;
     register_virtual_subclass(
         super::alternative::registered_public_class(module.py()),
         class,
     )
+}
+
+/// Return the registered oracle kind whose class `object` is an instance
+/// of, if any.
+///
+/// # Errors
+///
+/// Raises what importing the registry or an `isinstance` check raises.
+#[expect(
+    dead_code,
+    reason = "interface stub: the oracle reader uses it once implemented"
+)]
+pub(super) fn oracle_kind_of(object: &Bound<'_, PyAny>) -> PyResult<Option<Arc<OracleKind>>> {
+    let state = registry(object.py())?.get().current();
+    for entry in state.oracles() {
+        if object.is_instance(entry.class.bind(object.py()))? {
+            return Ok(Some(Arc::clone(entry)));
+        }
+    }
+    Ok(None)
+}
+
+/// Register the oracle kind `kind` of the downstream class `class`, whose
+/// instances `lease` borrows the oracle out of, in the registry of
+/// `module`.
+///
+/// # Errors
+///
+/// Raises `ValueError` for a kind registered already or a class registered
+/// already, and `RuntimeError` for a module without `fhy_core`'s binding.
+pub(crate) fn register_oracle_kind(
+    module: &Bound<'_, PyModule>,
+    kind: &str,
+    class: &Bound<'_, PyType>,
+    lease: OracleLease,
+) -> PyResult<()> {
+    let registry = registry_of(module)?;
+    registry.get().update(|state| {
+        if state.oracles.contains_key(kind) {
+            return Err(refuse("oracle", kind, "it is registered already"));
+        }
+        if state.holds_class(class) {
+            return Err(refuse_class("oracle", kind, class));
+        }
+        let mut oracles = state.oracles.clone();
+        oracles.insert(
+            kind.to_owned(),
+            Arc::new(OracleKind {
+                class: class.clone().unbind(),
+                lease,
+            }),
+        );
+        Ok(KindRegistryState {
+            variables: state.variables.clone(),
+            alternatives: state.alternatives.clone(),
+            oracles,
+        })
+    })
 }

@@ -25,6 +25,11 @@
 //!   whose type id is the kind, which the resolver builds back into a
 //!   value of the kind structurally equivalent to the sample.
 //!
+//! - clause 7, [`ContractClause::SearchDomain`]: a variable's
+//!   [`search_domain`](super::Variable::search_domain), where it offers one
+//!   and its param's domain is finite, holds exactly the values that domain
+//!   admits, and is the same on a second call.
+//!
 //! Clause 5, that every identifier the data binds is declared, cannot be
 //! checked from outside the implementation.
 
@@ -59,6 +64,9 @@ pub enum ContractClause {
     EquivalenceHooks,
     /// Clause 6: `to_foreign` round-trips through the resolver.
     WireForm,
+    /// Clause 7: a variable's search domain holds exactly the values its
+    /// param's finite domain admits, the same on every call.
+    SearchDomain,
 }
 
 /// A sample that breaks a clause of the implementor contract.
@@ -95,6 +103,7 @@ impl fmt::Display for ConformanceViolation {
             ContractClause::DistinctBoundIdentifiers => 3,
             ContractClause::EquivalenceHooks => 4,
             ContractClause::WireForm => 6,
+            ContractClause::SearchDomain => 7,
         };
         write!(
             f,

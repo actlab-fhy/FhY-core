@@ -80,6 +80,29 @@
 //!    `bound_identifiers`; any other identifier in it is a reference.
 //! 6. `to_foreign` gives a part that the implementation's resolver turns
 //!    back into an equivalent value.
+//! 7. A variable's `search_domain`, when it offers one, holds exactly the
+//!    values its param's domain admits, before the param's constraints, in
+//!    an order that is the same for the value's life.
+//!
+//! # Searching
+//!
+//! A search runs as a sequence of **steps**, each a decision offered to a
+//! [`SearchOracle`] with the [`StepDomain`] it may be answered from and
+//! answered with a [`Coordinate`], a position in that domain. A **static**
+//! step asks a decision of a [`Space`] and takes its domain from it; a
+//! **dynamic** step asks about something the space does not declare and
+//! carries its own domain. A [`Recorder`] drives a run: it asks each step,
+//! checks the answer, records it in a [`Trace`], and, over a space, grows
+//! the run's [`Configuration`].
+//!
+//! [`RandomOracle`] draws, [`ReplayOracle`] answers a recorded trace back
+//! and refuses a run that leaves its path, and [`ExhaustiveOracle`] takes
+//! every path of a stream once over successive runs. Over a space alone,
+//! [`Space::sample`], [`Space::sample_uniform`], [`Space::replay`],
+//! [`Space::enumerate`], [`Space::cardinality`] and [`Space::mutate`] do
+//! the rest. Every random draw takes its numbers from an [`Rng`] the caller
+//! passes, whose stream is the same in every release and on every
+//! platform.
 //!
 //! # Examples
 //!
@@ -139,18 +162,36 @@
 mod alternative;
 mod choice;
 mod configuration;
+mod domain;
 mod equivalence;
 mod error;
+mod exploration;
+mod oracle;
+mod recorder;
+mod rng;
 mod space;
 #[cfg(feature = "testing")]
 #[cfg_attr(docsrs, doc(cfg(feature = "testing")))]
 pub mod testing;
+mod trace;
 mod variable;
 pub mod wire;
 
 pub use alternative::{Alternative, PlainAlternative};
 pub use choice::Choice;
 pub use configuration::{Activity, Configuration, ConfigurationKey};
-pub use error::{ConfigurationError, ConfigurationErrors, EquivalenceError, SpaceError};
+pub use domain::{
+    ChoiceDomain, Coordinate, DecisionKind, DomainSignature, OrderDomain, StepDomain,
+    StridedDomain, StridedRun,
+};
+pub use error::{
+    ConfigurationError, ConfigurationErrors, EmptyKind, EquivalenceError, ReplayError, SpaceError,
+    StepDomainError, TraceError,
+};
+pub use exploration::{Cardinality, Enumeration};
+pub use oracle::{ExhaustiveOracle, PendingStep, RandomOracle, ReplayOracle, SearchOracle};
+pub use recorder::{Recorded, Recorder};
+pub use rng::Rng;
 pub use space::{Condition, Decision, Forbidden, Space};
+pub use trace::{Trace, TraceStep};
 pub use variable::{PlainVariable, Variable};

@@ -32,6 +32,18 @@
 //! The registry is append-only module state of the extension: a kind, or
 //! a class, is registered once and never replaced.
 //!
+//! # Oracles and step domains
+//!
+//! A downstream Rust oracle registers its `#[pyclass]` with
+//! [`register_oracle_kind`] and a lease, which borrows the oracle out of an
+//! instance for one call, so a run asks it with no Python call per step.
+//! An oracle argument is read as one of `fhy_core`'s oracle classes, as an
+//! instance of a registered oracle class, or as any object with a callable
+//! `decide`. [`step_domain_from_python`] and [`step_domain_to_python`]
+//! convert the domain objects (`ChoiceDomain`, `OrderDomain`,
+//! `StridedDomain`), for a kind whose
+//! [`search_domain`](Variable::search_domain) is written in Python.
+//!
 //! # Examples
 //!
 //! ```ignore
@@ -53,7 +65,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use fhy_core::foreign::{Foreign, ForeignError, Part};
-use fhy_core::search_space::{Alternative, Choice, Variable};
+use fhy_core::search_space::{Alternative, Choice, SearchOracle, StepDomain, Variable};
 
 /// Read an object of a registered `Variable` kind's class as its part.
 pub type VariableFromPython = fn(&Bound<'_, PyAny>) -> PyResult<Part<dyn Variable>>;
@@ -192,4 +204,50 @@ pub fn register_alternative_kind(
         to_python,
         resolve,
     )
+}
+
+/// Borrow the Rust oracle out of an instance of a registered oracle class,
+/// for one call: typically a `PyRefMut` of the class in a type that
+/// forwards [`SearchOracle::decide`] to it.
+pub type OracleLease =
+    for<'a, 'py> fn(&'a Bound<'py, PyAny>) -> PyResult<Box<dyn SearchOracle + 'a>>;
+
+/// Register the oracle kind `kind` of the class `class`, whose instances
+/// `lease` borrows the oracle out of, in the kind registry of `module`, the
+/// module [`register`](crate::register) built.
+///
+/// # Errors
+///
+/// Raises `ValueError` if `kind` is registered already or `class` is
+/// registered for a kind already, and `RuntimeError` if `module` holds no
+/// `fhy_core` binding.
+pub fn register_oracle_kind(
+    module: &Bound<'_, PyModule>,
+    kind: &str,
+    class: &Bound<'_, PyType>,
+    lease: OracleLease,
+) -> PyResult<()> {
+    crate::search_space::register_oracle_kind(module, kind, class, lease)
+}
+
+/// Return the core domain of the domain object `object`: a `ChoiceDomain`,
+/// an `OrderDomain` or a `StridedDomain`.
+///
+/// # Errors
+///
+/// Raises `TypeError` for any other object.
+pub fn step_domain_from_python(object: &Bound<'_, PyAny>) -> PyResult<StepDomain> {
+    crate::search_space::step_domain_from_python(object)
+}
+
+/// Return a new domain object of the core domain `domain`.
+///
+/// # Errors
+///
+/// Raises what writing a value of the domain raises.
+pub fn step_domain_to_python<'py>(
+    py: Python<'py>,
+    domain: &StepDomain,
+) -> PyResult<Bound<'py, PyAny>> {
+    crate::search_space::step_domain_to_python(py, domain)
 }

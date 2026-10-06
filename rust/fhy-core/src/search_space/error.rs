@@ -8,6 +8,9 @@ use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 use crate::param::AssignmentError;
 
+use super::configuration::Activity;
+use super::domain::Coordinate;
+
 /// Why a [`Space`](super::Space), a [`Choice`](super::Choice) or a
 /// [`PlainAlternative`](super::PlainAlternative) cannot be built.
 #[derive(Debug)]
@@ -315,6 +318,359 @@ impl Error for EquivalenceError {
         match self {
             Self::Constraint(error) => Some(error),
             Self::Extension(error) => Some(&**error),
+        }
+    }
+}
+
+/// The name of a [`DecisionKind`](super::DecisionKind) is empty.
+///
+/// Displays as `a decision kind needs a name`.
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a unit error with nothing to add"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmptyKind;
+
+impl fmt::Display for EmptyKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a decision kind needs a name")
+    }
+}
+
+impl Error for EmptyKind {}
+
+/// Why a step's domain cannot be built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StepDomainError {
+    /// A choice domain has no value.
+    EmptyChoice,
+    /// An order domain has no element.
+    EmptyOrder,
+    /// A strided domain has no run.
+    EmptyRuns,
+    /// A value or element is, or holds, a NaN float.
+    NanValue {
+        /// Its position, in the order given.
+        index: usize,
+    },
+    /// Two values or elements are equal.
+    RepeatedValue {
+        /// The first one's position.
+        first: usize,
+        /// The second one's position.
+        second: usize,
+    },
+    /// A strided run's stop is not above its start.
+    EmptyRun,
+    /// A strided run's stride is zero.
+    ZeroStride,
+    /// A strided run starts below the previous run's stop.
+    UnorderedRuns {
+        /// The run's position, in the order given.
+        index: usize,
+    },
+    /// The domain holds more values than its coordinates can number.
+    TooLarge,
+}
+
+impl fmt::Display for StepDomainError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyChoice => f.write_str("a choice domain needs at least one value"),
+            Self::EmptyOrder => f.write_str("an order domain needs at least one element"),
+            Self::EmptyRuns => f.write_str("a strided domain needs at least one run"),
+            Self::NanValue { index } => write!(f, "the value at {index} is or holds a NaN"),
+            Self::RepeatedValue { first, second } => {
+                write!(f, "the values at {first} and {second} are equal")
+            }
+            Self::EmptyRun => f.write_str("a strided run's stop must be above its start"),
+            Self::ZeroStride => f.write_str("a strided run's stride must be at least 1"),
+            Self::UnorderedRuns { index } => {
+                write!(f, "the run at {index} starts below the previous run's stop")
+            }
+            Self::TooLarge => f.write_str("the domain holds more values than coordinates number"),
+        }
+    }
+}
+
+impl Error for StepDomainError {}
+
+/// Why a run of a search stopped: building a step, asking it, checking the
+/// answer, or growing the run's configuration.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum TraceError {
+    /// A step's domain cannot be built.
+    Domain(StepDomainError),
+    /// A static step names no decision of the space.
+    UnknownDecision {
+        /// The name.
+        name: Identifier,
+    },
+    /// A static step asks a decision the run decided already.
+    AlreadyDecided {
+        /// The decision's name.
+        name: Identifier,
+    },
+    /// A static step asks a decision that is not active in the run's
+    /// configuration so far.
+    NotActive {
+        /// The decision's name.
+        name: Identifier,
+        /// Its activity.
+        activity: Activity,
+    },
+    /// A static step asks a variable whose domain is not finite: an
+    /// unbounded integer, a real, or a custom domain its variable offers no
+    /// [`search_domain`](super::Variable::search_domain) for.
+    NotEnumerable {
+        /// The variable's name.
+        decision: Identifier,
+    },
+    /// A static step was asked of a recorder over no space.
+    NoSpace,
+    /// The oracle's answer names no value of the step's domain.
+    CoordinateOutOfDomain {
+        /// The step's position in the run.
+        position: usize,
+    },
+    /// The oracle's answer names a value the run's configuration refuses.
+    Inadmissible {
+        /// The step's position in the run.
+        position: usize,
+        /// The answer.
+        coordinate: Coordinate,
+    },
+    /// A step has no admissible value.
+    DeadEnd {
+        /// The decision's name, or the dynamic step's subject.
+        decision: Identifier,
+    },
+    /// The oracle failed.
+    Oracle {
+        /// The step's position in the run.
+        position: usize,
+        /// The oracle's error.
+        source: BoxError,
+    },
+    /// A variable's [`search_domain`](super::Variable::search_domain)
+    /// failed.
+    Hook {
+        /// The variable's name.
+        decision: Identifier,
+        /// The implementation's error.
+        source: BoxError,
+    },
+    /// The run's configuration refused a value for a reason other than its
+    /// admissibility: an undecided or failing condition or clause.
+    Configuration(ConfigurationErrors),
+    /// A realizing recorder finished before every decision its
+    /// configuration assigns was asked.
+    Unasked {
+        /// Those decisions, in canonical order.
+        decisions: Vec<Identifier>,
+    },
+    /// The configuration to mutate is not complete.
+    Incomplete,
+    /// The configuration to mutate is of another space.
+    OtherSpace,
+    /// The configuration to mutate has no decision with a second admissible
+    /// value.
+    NothingToMutate,
+    /// A sampler or a mutation was refused as many times as it may try.
+    AttemptsExhausted {
+        /// The attempts made.
+        attempts: u32,
+    },
+}
+
+impl fmt::Display for TraceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Domain(error) => write!(f, "the step's domain is invalid: {error}"),
+            Self::UnknownDecision { name } => write!(f, "{name:?} is not a decision of the space"),
+            Self::AlreadyDecided { name } => {
+                write!(f, "the decision {name:?} was decided already in this run")
+            }
+            Self::NotActive { name, activity } => {
+                write!(f, "the decision {name:?} is {activity:?}, not active")
+            }
+            Self::NotEnumerable { decision } => {
+                write!(
+                    f,
+                    "the variable {decision:?} has no finite domain to search"
+                )
+            }
+            Self::NoSpace => f.write_str("a static step needs a recorder over a space"),
+            Self::CoordinateOutOfDomain { position } => {
+                write!(
+                    f,
+                    "the answer to step {position} names no value of its domain"
+                )
+            }
+            Self::Inadmissible {
+                position,
+                coordinate,
+            } => write!(
+                f,
+                "the answer {coordinate:?} to step {position} is not admissible"
+            ),
+            Self::DeadEnd { decision } => {
+                write!(f, "the step for {decision:?} has no admissible value")
+            }
+            Self::Oracle { position, .. } => write!(f, "the oracle failed at step {position}"),
+            Self::Hook { decision, .. } => {
+                write!(f, "the search domain of the variable {decision:?} failed")
+            }
+            Self::Configuration(errors) => write!(f, "{errors}"),
+            Self::Unasked { decisions } => {
+                f.write_str("the run never asked the assigned decisions ")?;
+                for (position, name) in decisions.iter().enumerate() {
+                    if position > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{name:?}")?;
+                }
+                Ok(())
+            }
+            Self::Incomplete => f.write_str("the configuration to mutate is not complete"),
+            Self::OtherSpace => f.write_str("the configuration is of another space"),
+            Self::NothingToMutate => {
+                f.write_str("no decision of the configuration has another admissible value")
+            }
+            Self::AttemptsExhausted { attempts } => {
+                write!(f, "every one of the {attempts} attempts was refused")
+            }
+        }
+    }
+}
+
+impl Error for TraceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Domain(error) => Some(error),
+            Self::Oracle { source, .. } | Self::Hook { source, .. } => Some(&**source),
+            Self::Configuration(errors) => Some(errors),
+            _ => None,
+        }
+    }
+}
+
+/// Why a replay does not describe the run replaying it.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ReplayError {
+    /// The run asked a step past the trace's last.
+    Exhausted {
+        /// The step's position in the run.
+        position: usize,
+    },
+    /// The step asked and the step recorded differ in kind.
+    KindMismatch {
+        /// The step's position.
+        position: usize,
+    },
+    /// The step asked and the step recorded are not both dynamic, or are
+    /// static over different decisions; or a trace holds a step for a
+    /// decision that is inactive in the configuration it describes.
+    DecisionMismatch {
+        /// The step's position.
+        position: usize,
+    },
+    /// The domain offered and the domain recorded have different
+    /// signatures.
+    DomainMismatch {
+        /// The step's position.
+        position: usize,
+    },
+    /// The recorded coordinate names no value of the domain offered.
+    CoordinateOutOfDomain {
+        /// The step's position.
+        position: usize,
+    },
+    /// The recorded coordinate names a value the run's configuration
+    /// refuses.
+    Inadmissible {
+        /// The step's position.
+        position: usize,
+    },
+    /// The run ended before the step at `position` was asked.
+    Unconsumed {
+        /// The first unasked step's position.
+        position: usize,
+    },
+    /// The trace holds no step for an active decision.
+    MissingStep {
+        /// The decision's name.
+        decision: Identifier,
+    },
+    /// The trace holds two steps for one decision.
+    RepeatedStep {
+        /// The decision's name.
+        decision: Identifier,
+    },
+    /// The configuration the steps describe is refused.
+    Configuration(ConfigurationErrors),
+    /// Building a step failed.
+    Trace(Box<TraceError>),
+}
+
+impl fmt::Display for ReplayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Exhausted { position } => {
+                write!(f, "the trace has no step {position} for the run to replay")
+            }
+            Self::KindMismatch { position } => {
+                write!(
+                    f,
+                    "step {position} is of another kind than the one recorded"
+                )
+            }
+            Self::DecisionMismatch { position } => {
+                write!(
+                    f,
+                    "step {position} asks another decision than the one recorded"
+                )
+            }
+            Self::DomainMismatch { position } => write!(
+                f,
+                "step {position} is offered another domain than the one recorded"
+            ),
+            Self::CoordinateOutOfDomain { position } => write!(
+                f,
+                "the recorded answer to step {position} names no value of the domain offered"
+            ),
+            Self::Inadmissible { position } => write!(
+                f,
+                "the recorded answer to step {position} is not admissible in this run"
+            ),
+            Self::Unconsumed { position } => {
+                write!(
+                    f,
+                    "the run ended before asking the recorded step {position}"
+                )
+            }
+            Self::MissingStep { decision } => {
+                write!(f, "the trace holds no step for the decision {decision:?}")
+            }
+            Self::RepeatedStep { decision } => {
+                write!(f, "the trace holds two steps for the decision {decision:?}")
+            }
+            Self::Configuration(errors) => write!(f, "{errors}"),
+            Self::Trace(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl Error for ReplayError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Configuration(errors) => Some(errors),
+            Self::Trace(error) => Some(&**error),
+            _ => None,
         }
     }
 }

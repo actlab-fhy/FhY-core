@@ -17,17 +17,33 @@ serializes as its type id and its ``serialize_data_to_dict()``.
 __all__ = [
     "Activity",
     "Alternative",
+    "Cardinality",
+    "CardinalityKind",
     "Choice",
+    "ChoiceDomain",
     "Condition",
     "Configuration",
     "ConfigurationKey",
+    "ExhaustiveOracle",
     "Forbidden",
+    "OrderDomain",
+    "PendingStep",
+    "RandomOracle",
+    "Recorder",
+    "ReplayOracle",
+    "Rng",
+    "SearchOracle",
     "Space",
+    "StridedDomain",
+    "StridedRun",
+    "Trace",
+    "TraceStep",
     "Variable",
 ]
 
 from collections.abc import Iterable
-from typing import Any, Generic, TypeVar, final
+from dataclasses import dataclass
+from typing import Any, Generic, Protocol, TypeVar, final, runtime_checkable
 
 from fhy_core import _rs
 from fhy_core.diagnostic import Note
@@ -111,6 +127,19 @@ class Variable(_rs.Variable, _FrozenAfterInit, WrappedFamilySerializable, Generi
         """
         del other, renaming
         return True
+
+    def extension_search_domain(
+        self,
+    ) -> "ChoiceDomain | OrderDomain | StridedDomain | None":
+        """Return the domain a step over this variable offers, or ``None``.
+
+        ``None``, the default, derives it from the param: a categorical or
+        ordinal param's values, a permutation param's orderings, or an
+        integer param bounded at both ends. A subclass whose param has a
+        custom domain returns one holding exactly the values that domain
+        admits, in an order that never changes.
+        """
+        return None
 
     @override
     def __setstate__(self, state: Any) -> None:
@@ -271,6 +300,21 @@ class Space(_rs.Space, Serializable):
 
     __slots__ = ()
 
+    def cardinality(self, *, budget: int = 100_000) -> "Cardinality":
+        """Return how many complete configurations the space has.
+
+        Args:
+            budget: The most configurations checked in each part of the
+                space that has no closed-form count.
+
+        Returns:
+            The count: exact, a lower bound when the budget ran out,
+            unbounded, or unknown.
+
+        """
+        kind, count, decision = self._cardinality(budget=budget)
+        return Cardinality(CardinalityKind(kind), count, decision)
+
 
 @final
 @register_serializable(type_id="search_space.configuration")
@@ -298,6 +342,103 @@ class Configuration(_rs.Configuration, Serializable):
 ConfigurationKey = _rs.ConfigurationKey
 """The identity of a configuration within its space; hashable, compared structurally."""
 
+Rng = _rs.Rng
+"""A seeded generator, SplitMix64, whose stream is the same from Python and Rust."""
+
+ChoiceDomain = _rs.ChoiceDomain
+"""A step's domain of one or more distinct values, the objects given."""
+
+OrderDomain = _rs.OrderDomain
+"""A step's domain of the orderings of one or more distinct elements."""
+
+StridedRun = _rs.StridedRun
+"""A run of integers below a stop by a stride."""
+
+StridedDomain = _rs.StridedDomain
+"""A step's domain of the integers of disjoint, ascending strided runs."""
+
+PendingStep = _rs.PendingStep
+"""A step as an oracle is asked it."""
+
+RandomOracle = _rs.RandomOracle
+"""Answers each step uniformly among its admissible coordinates."""
+
+ReplayOracle = _rs.ReplayOracle
+"""Answers the steps of a recorded trace back, refusing a run that leaves it."""
+
+ExhaustiveOracle = _rs.ExhaustiveOracle
+"""Takes every path of a deterministic stream once, over successive runs."""
+
+Recorder = _rs.Recorder
+"""One run of a search: asks each step of an oracle, checks and records it."""
+
+TraceStep = _rs.TraceStep
+"""One recorded step: its kind, subject, domain signature and answer."""
+
+
+@runtime_checkable
+class SearchOracle(Protocol):
+    """Answers the steps of a run, one at a time.
+
+    Any object with a ``decide`` method is an oracle; no base class is
+    needed. An exception it raises stops the run and propagates as itself.
+    """
+
+    def decide(self, step: PendingStep) -> int | tuple[int, ...]:
+        """Return the answer to ``step``: a coordinate of its domain."""
+        ...
+
+
+@final
+@register_serializable(type_id="search_space.trace")
+class Trace(_rs.Trace, Serializable):
+    """The steps of one run, in the order asked.
+
+    ``==`` and ``hash`` are structural. Two traces recorded over different
+    modules differ in their subjects; compare their ``coordinates`` to ask
+    whether they took the same answers.
+
+    Args:
+        steps: The ``TraceStep``s, in order.
+
+    Raises:
+        TypeError: If a step is no ``TraceStep``.
+
+    """
+
+    __slots__ = ()
+
+
+class CardinalityKind(StrEnum):
+    """What a :class:`Cardinality` says of a space's count."""
+
+    EXACT = "exact"
+    """The count is exact."""
+    AT_LEAST = "at_least"
+    """The count is at least this: the budget ran out."""
+    UNBOUNDED = "unbounded"
+    """A configuration activates a variable over unbounded integers or reals."""
+    UNKNOWN = "unknown"
+    """A configuration activates a variable whose domain cannot be enumerated."""
+
+
+@dataclass(frozen=True)
+class Cardinality:
+    """How many complete configurations a space has.
+
+    Attributes:
+        kind: Whether the count is exact, a lower bound, unbounded or unknown.
+        count: The count, or its lower bound; ``None`` when unbounded or
+            unknown.
+        decision: The variable that makes it unbounded or unknown, else
+            ``None``.
+
+    """
+
+    kind: CardinalityKind
+    count: int | None
+    decision: Identifier | None
+
 
 # The classes are registered, not derived: `FrozenMixin` carries an instance
 # layout a Rust-backed class cannot share.
@@ -310,6 +451,7 @@ for _frozen_class in (
     Space,
     Configuration,
     ConfigurationKey,
+    Trace,
 ):
     FrozenMixin.register(_frozen_class)
 
@@ -320,3 +462,4 @@ Condition._register_public_class()
 Forbidden._register_public_class()
 Space._register_public_class()
 Configuration._register_public_class()
+Trace._register_public_class()

@@ -2229,6 +2229,59 @@ binds MOGA-VM's adoption, as for SS1.
   (`policies.py:202-214`), so MOGA-VM's extractor builds the space per
   module and target.
 
+### SS2.2: the stub, as built (2026-10-06)
+
+The stub (`rust/fhy-core/src/search_space/{rng,domain,trace,oracle,recorder,exploration}.rs`,
+the binding's `search_space/{rng,domain,trace,oracle,recorder}.rs`, the
+Python classes and `_rs.pyi`) follows this plan, with these changes:
+
+1. **`Recorder` holds only the run's state.** It has no lifetimes: each
+   `decide` and `decide_dynamic` takes the oracle and the context, so a
+   run can span calls that each borrow them anew, which the Python
+   `Recorder` needs (its oracle is a Python object, leased per call).
+   `Recorder::new()`, `over(&Space)` and `realizing(&Configuration)` build
+   it; it is `Clone` and `Default`.
+2. **`PendingStep` has two public constructors,** `dynamic(kind, subject,
+   domain, position, context)` and `of_decision(kind, configuration,
+   decision, domain, position, context)`, so an oracle can be asked
+   outside a recorder: a downstream oracle's own tests, and the Python
+   `decide` of the core's oracles on a step snapshot.
+3. **No `wire::TraceData`.** A trace holds no foreign part, so `Trace`
+   implements `Serialize` and `Deserialize` itself and the binding uses
+   them; `DomainSignature` likewise.
+4. **Domain API details:** `StepDomain::contains(&Coordinate)` and
+   `DomainSignature::contains`, `admits` on every domain and run; a run's
+   own refusals (`EmptyRun`, `ZeroStride`) carry no index;
+   `ExhaustiveOracle::is_backtrack` takes a `&TraceError`;
+   `TraceError::OtherSpace` refuses a configuration of another space to
+   `mutate`.
+5. **Python:** the new classes are `_rs` classes exported as they are,
+   as `ConfigurationKey` is, except `Trace`, a public subclass registered
+   under `search_space.trace`; `Cardinality` (a frozen dataclass) and
+   `CardinalityKind` are Python classes that the public `Space.cardinality`
+   builds from the private `_rs.Space._cardinality`; `TraceStep.signature`
+   is the signature's V2 text; `Rng.below` takes any positive `int`.
+6. **The example aggregate** gains `OracleRegistrar` beside
+   `CountingOracle`, for the registry's refusals, as `KindRegistrar` does
+   for the kinds.
+7. `param::interval::effective_interval` and its `Interval` are
+   `pub(crate)` (approved); the re-export from `param` lands with the code
+   that calls it.
+
+**Encapsulation checklist** (fhy-development-rs), on the stub:
+
+| Check | Result |
+|---|---|
+| every `pub` item has a caller outside the crate | the binding and MOGA-VM call every one; `PendingStep`'s constructors serve downstream oracle tests and the binding |
+| no `pub` fields | none: `Recorder`, `TraceStep`, `Trace`, the domains and oracles hold private fields |
+| public enums are intended API | `Coordinate` and `Cardinality` (exhaustive: callers match them), `StepDomain` (`#[non_exhaustive]`), the error enums (`#[non_exhaustive]`); `DomainSignature` wraps a private representation |
+| public traits | `SearchOracle`, one method, open by design; `Variable` gains a provided method |
+| invariant-carrying types in leaf modules | `domain`, `trace`, `rng` and `recorder` are leaves |
+| no `&mut` to internals, no `&Vec` | accessors return slices and references |
+| `Default`, `From` | `Default` builds a valid empty `Recorder`, `Trace` and `ExhaustiveOracle`; `From` wraps a validated domain into `StepDomain`; `DecisionKind` reads a string through `TryFrom`, which refuses an empty one |
+| one public path per item | the `pub use` list of `search_space` |
+| no visibility widened for tests | none; the one widening (`effective_interval`) is for the implementation |
+
 ## SS3: objectives and measurements (plan)
 
 The concrete plan for SS3, in the same template.

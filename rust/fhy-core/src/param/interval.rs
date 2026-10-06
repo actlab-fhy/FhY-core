@@ -231,9 +231,9 @@ fn decode_bound(
 
 /// The effective integer interval of a param's bounds: each end `None` when
 /// unbounded.
-pub(super) struct Interval {
-    pub(super) min: Option<BigInt>,
-    pub(super) max: Option<BigInt>,
+pub(crate) struct Interval {
+    pub(crate) min: Option<BigInt>,
+    pub(crate) max: Option<BigInt>,
 }
 
 /// Return the effective integer interval the bound `constraints` of
@@ -244,7 +244,7 @@ pub(super) struct Interval {
 /// Returns [`IntervalError::MalformedBound`] for a constraint that is no
 /// bound, and [`IntervalError::EmptyInterval`] for bounds that enclose no
 /// integer.
-pub(super) fn effective_interval(
+pub(crate) fn effective_interval(
     constraints: &[Constraint],
     variable: &Identifier,
 ) -> Result<Interval, IntervalError> {

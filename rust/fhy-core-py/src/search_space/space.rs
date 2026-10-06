@@ -680,6 +680,96 @@ impl PySpace {
         })
     }
 
+    /// Ask every active decision of `oracle`, in decision order, and return
+    /// `(configuration, trace)`.
+    ///
+    /// Raises what `Recorder.decide` raises.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    fn sample<'py>(
+        slf: &Bound<'py, Self>,
+        oracle: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Draw a complete configuration uniformly from all of them with the
+    /// `Rng` `rng`, and return `(configuration, trace)`.
+    ///
+    /// Raises `NotEnumerableError` for a variable with no finite domain and
+    /// `TraceError` after `attempts` refused draws.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    #[pyo3(signature = (rng, *, attempts = 1000))]
+    fn sample_uniform<'py>(
+        slf: &Bound<'py, Self>,
+        rng: &Bound<'py, PyAny>,
+        attempts: u32,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Return the `Configuration` the static steps of the `Trace` `trace`
+    /// describe.
+    ///
+    /// Raises `ReplayMismatchError` for a trace that does not describe a
+    /// configuration of this space.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    fn replay<'py>(
+        slf: &Bound<'py, Self>,
+        trace: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        todo!()
+    }
+
+    /// Return an iterator over the complete configurations, in
+    /// lexicographic order of their coordinates.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    fn enumerate<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        todo!()
+    }
+
+    /// Return the count of complete configurations as `(kind, count,
+    /// decision)`, which the public `Space.cardinality` wraps.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    #[pyo3(signature = (*, budget = 100_000))]
+    fn _cardinality<'py>(slf: &Bound<'py, Self>, budget: u64) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Return `configuration` with one decision changed and the rest
+    /// repaired, with the `Rng` `rng`, as `(configuration, trace)`.
+    ///
+    /// Raises `TraceError` for a configuration that is incomplete, of
+    /// another space or has nothing to change, and after `attempts` dead
+    /// ends.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    #[pyo3(signature = (configuration, rng, *, attempts = 16))]
+    fn mutate<'py>(
+        slf: &Bound<'py, Self>,
+        configuration: &Bound<'py, PyAny>,
+        rng: &Bound<'py, PyAny>,
+        attempts: u32,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
     /// Return whether `other` is the same space up to the renaming of the
     /// names it binds, under no renaming.
     fn is_alpha_equivalent(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<bool> {

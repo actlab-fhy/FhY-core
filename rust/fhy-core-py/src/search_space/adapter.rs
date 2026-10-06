@@ -31,7 +31,7 @@ use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BoxError, Foreign, ForeignError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::Param;
-use fhy_core::search_space::{Alternative, Choice, Variable};
+use fhy_core::search_space::{Alternative, Choice, StepDomain, Variable};
 use fhy_core::term::AlphaRenaming;
 
 use crate::identifier::{is_python_identifier, restore_identifier};
@@ -221,6 +221,13 @@ impl Variable for PythonVariable {
 
     fn hash_part(&self, state: &mut dyn Hasher) {
         state.write_usize(self.instance.address);
+    }
+
+    /// Call `extension_search_domain` once: `None` derives the domain from
+    /// the param, a domain object is read as its core domain, and anything
+    /// else is `TypeError`.
+    fn search_domain(&self) -> Result<Option<StepDomain>, BoxError> {
+        todo!()
     }
 }
 
