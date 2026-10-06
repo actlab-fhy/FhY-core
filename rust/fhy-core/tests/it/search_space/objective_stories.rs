@@ -2,20 +2,12 @@
 //! and `Objective::compare` per direction, NaN included (F-SS-023).
 
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 use fhy_core::search_space::{Direction, MeasurementError, Objective};
 use rstest::rstest;
 
+use crate::support::hashing::hash_of;
 use crate::support::measurement::objective;
-
-/// Return the hash of `value`.
-fn hash_of<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Return the value of `values` that `objective` ranks best, the first of
 /// equals: a running best that takes a value only when it is better.

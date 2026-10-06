@@ -24,7 +24,7 @@ fn json_of<T: Serialize>(value: &T) -> serde_json::Value {
 
 /// Return the JSON payload of a measurement of tiling configuration 0 with
 /// the status `status` and the values `values`.
-fn payload(status: serde_json::Value, values: serde_json::Value) -> String {
+fn payload(status: &serde_json::Value, values: &serde_json::Value) -> String {
     json!({
         "key": json_of(&tiling_key(0)),
         "status": status,
@@ -177,22 +177,22 @@ fn measurement_data_builds_back_the_measurement() {
 /// Test a payload breaking a constructor's rule is refused with the
 /// constructor's error.
 #[rstest]
-#[case::ok_without_values(payload(json!("ok"), json!([])), MeasurementError::NoValues)]
+#[case::ok_without_values(payload(&json!("ok"), &json!([])), MeasurementError::NoValues)]
 #[case::repeated_objective(
-    payload(json!("ok"), json!([
+    payload(&json!("ok"), &json!([
         {"objective": {"name": "a", "direction": "minimize"}, "value": 1.0},
         {"objective": {"name": "a", "direction": "maximize"}, "value": 2.0},
     ])),
     MeasurementError::RepeatedObjective { name: "a".to_owned() }
 )]
 #[case::values_on_a_failure(
-    payload(json!({"failed": {"reason": "r"}}), json!([
+    payload(&json!({"failed": {"reason": "r"}}), &json!([
         {"objective": {"name": "a", "direction": "minimize"}, "value": 1.0},
     ])),
     MeasurementError::UnexpectedValues
 )]
 #[case::values_on_a_timeout(
-    payload(json!("timeout"), json!([
+    payload(&json!("timeout"), &json!([
         {"objective": {"name": "a", "direction": "minimize"}, "value": 1.0},
     ])),
     MeasurementError::UnexpectedValues
@@ -208,9 +208,9 @@ fn measurement_decoding_refuses_what_a_constructor_refuses(
 
 /// Test a payload of another shape is refused.
 #[rstest]
-#[case::unknown_status(payload(json!("crashed"), json!([])))]
-#[case::untagged_reason(payload(json!({"reason": "r"}), json!([])))]
-#[case::value_as_text(payload(json!("ok"), json!([
+#[case::unknown_status(payload(&json!("crashed"), &json!([])))]
+#[case::untagged_reason(payload(&json!({"reason": "r"}), &json!([])))]
+#[case::value_as_text(payload(&json!("ok"), &json!([
     {"objective": {"name": "a", "direction": "minimize"}, "value": "1.0"},
 ])))]
 #[case::extra_field(json!({

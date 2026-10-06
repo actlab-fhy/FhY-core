@@ -3,8 +3,6 @@
 //! `Measurer` measuring the configurations of a space.
 
 use std::cmp::Ordering;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 use fhy_core::constraint::Value;
 use fhy_core::diagnostic::Note;
@@ -16,15 +14,9 @@ use fhy_core::search_space::{
 };
 use rstest::rstest;
 
+use crate::support::hashing::hash_of;
 use crate::support::measurement::{measured, objective, tiling_key};
 use crate::support::search::{build_tiling_space, with_context};
-
-/// Return the hash of `value`.
-fn hash_of<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Return latency (minimize), throughput (maximize) and a reported note.
 fn three_objectives() -> [Objective; 3] {
