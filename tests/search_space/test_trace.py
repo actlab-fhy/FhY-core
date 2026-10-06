@@ -1190,8 +1190,8 @@ def test_trace_coordinates_are_a_bare_tuple() -> None:
     assert trace.coordinates == (1, (1, 2, 0))
 
 
-def test_trace_coordinates_serialize_as_integers_and_arrays() -> None:
-    """Test a choice's coordinate is written an integer and an order's an array.
+def test_trace_coordinates_serialize_tagged_by_their_shape() -> None:
+    """Test a choice's coordinate is written as an index and an order's as positions.
 
     Ports MOGA-VM
     test_observers.py::test_coordinates_serialize_choice_and_order_decisions_faithfully.
@@ -1203,7 +1203,10 @@ def test_trace_coordinates_serialize_as_integers_and_arrays() -> None:
 
     steps = json.loads(trace.to_json())["steps"]
 
-    assert [step["coordinate"] for step in steps] == [1, [1, 2, 0]]
+    assert [step["coordinate"] for step in steps] == [
+        {"index": 1},
+        {"order": [1, 2, 0]},
+    ]
 
 
 def test_trace_steps_are_written_with_their_fields() -> None:

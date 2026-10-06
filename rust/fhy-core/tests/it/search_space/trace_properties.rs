@@ -13,8 +13,7 @@ use std::num::NonZeroU32;
 use fhy_core::constraint::{Constraint, Value};
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{
-    Cardinality, Choice, Configuration, ConfigurationKey, RandomOracle, Rng, Space, Trace,
-    TraceError,
+    Cardinality, Choice, Configuration, ConfigurationKey, RandomOracle, Rng, Space, TraceError,
 };
 use num_bigint::BigUint;
 use proptest::prelude::*;
@@ -30,6 +29,7 @@ use crate::support::search_space::{
     bare_alternative, choice_of, chooses, chosen, condition, forbidden, int_variable,
     plain_alternative, try_configure,
 };
+use crate::support::serde::check_serde_round_trip;
 
 // ---------------------------------------------------------------------------
 // The model
@@ -517,9 +517,9 @@ proptest! {
         }
     }
 
-    /// Test a configuration's trace round-trips through JSON.
+    /// Test a configuration's trace round-trips through JSON and postcard.
     #[test]
-    fn a_configurations_trace_round_trips_through_json(
+    fn a_configurations_trace_round_trips_through_json_and_postcard(
         model in generate_model(),
         pick in any::<prop::sample::Index>(),
     ) {
@@ -529,10 +529,7 @@ proptest! {
         let configuration = &configurations[pick.index(configurations.len())];
         let trace = with_context(|context| configuration.trace(context)).expect("a trace");
 
-        let text = serde_json::to_string(&trace).expect("the trace serializes");
-        let decoded: Trace = serde_json::from_str(&text).expect("the text decodes");
-
-        prop_assert_eq!(decoded, trace);
+        check_serde_round_trip(&trace)?;
     }
 }
 

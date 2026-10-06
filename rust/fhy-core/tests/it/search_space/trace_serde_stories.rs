@@ -4,7 +4,7 @@
 
 use fhy_core::constraint::Value;
 use fhy_core::identifier::Identifier;
-use fhy_core::search_space::{ChoiceDomain, Recorder, StepDomain, Trace, TraceStep};
+use fhy_core::search_space::{ChoiceDomain, Coordinate, Recorder, StepDomain, Trace, TraceStep};
 use rstest::rstest;
 use serde_json::json;
 
@@ -13,6 +13,7 @@ use crate::support::search::{
     ScriptedOracle, TilingSpace, build_tiling_space, index, kind, order, order_of, strided,
     with_context,
 };
+use crate::support::serde::check_serde_round_trip;
 
 /// Return the JSON of `value`, as a value is written.
 fn json_of<T: serde::Serialize>(value: &T) -> serde_json::Value {
@@ -56,7 +57,7 @@ fn trace_serializes_to_the_pinned_shape() {
             "subject": json_of(&tiling.t),
             "decision": 0,
             "domain": {"choice": [{"value": {"int": 1}}, {"value": {"int": 2}}]},
-            "coordinate": 0,
+            "coordinate": {"index": 0},
             "value": {"int": 1},
         },
         {
@@ -64,7 +65,7 @@ fn trace_serializes_to_the_pinned_shape() {
             "subject": json_of(&tiling.c),
             "decision": 1,
             "domain": {"choice": [{"bound": 3}, {"bound": 5}]},
-            "coordinate": 0,
+            "coordinate": {"index": 0},
             "value": json_of(&Value::Identifier(tiling.a.clone())),
         },
         {
@@ -72,7 +73,7 @@ fn trace_serializes_to_the_pinned_shape() {
             "subject": json_of(&tiling.x),
             "decision": null,
             "domain": {"strided": [{"start": 0, "stop": 64, "stride": 1}]},
-            "coordinate": 17,
+            "coordinate": {"index": 17},
             "value": {"int": 17},
         },
         {
@@ -82,14 +83,14 @@ fn trace_serializes_to_the_pinned_shape() {
             "domain": {"choice": [
                 {"value": {"int": 1}}, {"value": {"int": 2}}, {"value": {"int": 3}},
             ]},
-            "coordinate": 1,
+            "coordinate": {"index": 1},
             "value": {"int": 2},
         },
     ]});
     assert_eq!(written, expected);
 }
 
-/// Test an order coordinate is an array of positions, and free
+/// Test an order coordinate is tagged `order` and holds its positions, and free
 /// identifiers in a signature are written as `identifier`.
 #[test]
 fn trace_writes_an_order_coordinate_as_an_array() {
@@ -104,7 +105,10 @@ fn trace_writes_an_order_coordinate_as_an_array() {
 
     let written = json_of(&Trace::new(vec![step]));
 
-    assert_eq!(written["steps"][0]["coordinate"], json!([1, 2, 0]));
+    assert_eq!(
+        written["steps"][0]["coordinate"],
+        json!({"order": [1, 2, 0]})
+    );
     assert_eq!(
         written["steps"][0]["domain"],
         json!({"order": ["identifier", "identifier", "identifier"]})
@@ -198,7 +202,7 @@ fn build_step_text(kind: &str, start: i64, stop: i64, coordinate: serde_json::Va
 /// Test a well-formed step decodes, the control of the refusals below.
 #[test]
 fn trace_decoding_reads_a_well_formed_step() {
-    let text = build_step_text("k", 0, 4, json!(3));
+    let text = build_step_text("k", 0, 4, json!({"index": 3}));
 
     let decoded: Trace = serde_json::from_str(&text).expect("a valid step");
 
@@ -209,12 +213,76 @@ fn trace_decoding_reads_a_well_formed_step() {
 /// Test reading refuses a coordinate its signature does not contain, an
 /// empty kind, and an empty run.
 #[rstest]
-#[case::past_the_end(build_step_text("k", 0, 4, json!(4)))]
-#[case::wrong_shape(build_step_text("k", 0, 4, json!([0])))]
-#[case::empty_kind(build_step_text("", 0, 4, json!(0)))]
-#[case::empty_run(build_step_text("k", 4, 4, json!(0)))]
+#[case::past_the_end(build_step_text("k", 0, 4, json!({"index": 4})))]
+#[case::wrong_shape(build_step_text("k", 0, 4, json!({"order": [0]})))]
+#[case::untagged(build_step_text("k", 0, 4, json!(3)))]
+#[case::empty_kind(build_step_text("", 0, 4, json!({"index": 0})))]
+#[case::empty_run(build_step_text("k", 4, 4, json!({"index": 0})))]
 fn trace_decoding_refuses_a_malformed_step(#[case] text: String) {
     let result = serde_json::from_str::<Trace>(&text);
 
-    assert!(result.is_err(), "{result:?}");
+    result.expect_err("a malformed step is refused");
+}
+
+/// Test a coordinate round-trips through JSON and postcard.
+#[rstest]
+#[case::index(index(7))]
+#[case::large_index(index(u64::MAX))]
+#[case::order(order(&[2, 0, 1]))]
+#[case::empty_order(order(&[]))]
+fn coordinate_round_trips_through_json_and_postcard(#[case] coordinate: Coordinate) {
+    let result = check_serde_round_trip(&coordinate);
+
+    result.unwrap_or_else(|failure| panic!("{failure}"));
+}
+
+/// Test a coordinate is written tagged by its shape.
+#[rstest]
+#[case::index(index(7), json!({"index": 7}))]
+#[case::order(order(&[2, 0, 1]), json!({"order": [2, 0, 1]}))]
+fn coordinate_serializes_tagged_by_its_shape(
+    #[case] coordinate: Coordinate,
+    #[case] expected: serde_json::Value,
+) {
+    let written = json_of(&coordinate);
+
+    assert_eq!(written, expected);
+}
+
+/// Test static and dynamic steps round-trip through JSON and postcard.
+#[test]
+fn trace_step_round_trips_through_json_and_postcard() {
+    let tiling = build_tiling_space();
+    let trace = record_tiling_trace(&tiling);
+
+    let failures: Vec<String> = trace
+        .steps()
+        .iter()
+        .filter_map(|step| check_serde_round_trip(step).err())
+        .map(|failure| failure.to_string())
+        .collect();
+
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// Test a trace round-trips through JSON and postcard.
+#[test]
+fn trace_round_trips_through_json_and_postcard() {
+    let tiling = build_tiling_space();
+    let trace = record_tiling_trace(&tiling);
+
+    let result = check_serde_round_trip(&trace);
+
+    result.unwrap_or_else(|failure| panic!("{failure}"));
+}
+
+/// Test a step serializes as it does inside a trace.
+#[test]
+fn trace_step_serializes_as_inside_a_trace() {
+    let tiling = build_tiling_space();
+    let trace = record_tiling_trace(&tiling);
+
+    let written = json_of(&trace.steps()[2]);
+
+    assert_eq!(written, json_of(&trace)["steps"][2]);
 }
