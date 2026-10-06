@@ -3165,7 +3165,7 @@ class Measurement:
     def ok(
         cls,
         key: ConfigurationKey,
-        values: Mapping[Objective, float] | Iterable[tuple[Objective, float]],
+        values: Mapping[Any, float] | Iterable[tuple[Objective, float]],
     ) -> Self: ...
     @classmethod
     def infeasible(cls, key: ConfigurationKey, reason: str) -> Self: ...
