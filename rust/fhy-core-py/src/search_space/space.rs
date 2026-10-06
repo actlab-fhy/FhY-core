@@ -344,7 +344,8 @@ struct SpaceObjects<'py> {
 
 /// Append the decision objects of `variables` and `choices` to `decisions`,
 /// in canonical order: the variables, then each choice followed by each of
-/// its alternatives' variables and sub-choices.
+/// its alternatives' variables and sub-choices. It recurses once per level
+/// of choices, which the depth guard bounds by the recursion limit.
 fn collect_decisions<'py>(
     variables: &Bound<'py, PyTuple>,
     choices: &Bound<'py, PyTuple>,

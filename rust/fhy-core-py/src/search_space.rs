@@ -12,10 +12,14 @@
 //!   downstream Rust crate defines, append-only module state of the
 //!   extension.
 //! - `errors.rs`: the exceptions the classes raise for the core's errors.
-//! - `wire.rs`: the foreign parts of a payload, and the depth check of a
-//!   payload before it reaches the core.
+//! - `wire.rs`: the V2 payloads, the foreign parts they hold, and the
+//!   depth check of a payload before it reaches the core.
+//! - `arguments.rs`: the constructors' argument readers, the depth guard of
+//!   a value built from Python, and the seed through which the binding
+//!   builds a public instance from a core value without checking it again.
 //!
 //! Every container keeps the Python objects it was built from and returns
+//! them; one built from a core value builds its objects once and keeps
 //! them. A Python subclass instance reaches the core through an adapter
 //! that the container builds and whose slot the container owns, so the
 //! cycle collector sees through it. `==` and `hash` are identity, except
