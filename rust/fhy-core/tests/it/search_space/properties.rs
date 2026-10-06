@@ -28,6 +28,8 @@ use fhy_core::search_space::{
 use fhy_core::solver::Solver;
 use fhy_core::term::AlphaEquivalence;
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
+use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
 use crate::support::constraint::{int, member_set};
 use crate::support::hashing::hash_of;
@@ -779,6 +781,18 @@ fn collect_variables<'a>(
     }
 }
 
+/// Return a strategy of pairs of models: a model and itself, half the
+/// time, and otherwise the model and a perturbation of it, which is itself
+/// when the perturbation does not apply.
+fn model_pair() -> impl Strategy<Value = (Model, Model)> {
+    (model(), prop::option::of(perturbation())).prop_map(|(model, change)| {
+        let other = change
+            .and_then(|change| perturb(&model, change))
+            .unwrap_or_else(|| model.clone());
+        (model, other)
+    })
+}
+
 /// Return a strategy of perturbations.
 fn perturbation() -> impl Strategy<Value = Perturbation> {
     prop_oneof![
@@ -832,8 +846,7 @@ proptest! {
 
     #[test]
     fn structural_equivalence_implies_alpha_equivalence(
-        left_model in model(),
-        right_model in model(),
+        (left_model, right_model) in model_pair(),
     ) {
         let table = Table::fresh();
         let left = build_valid(&left_model, &table);
@@ -1117,4 +1130,132 @@ fn set_first_member(model: &mut Model, position: usize, member: Member) {
         variable.members[0] = member;
     }
     variable.narrowed = None;
+}
+
+// ---------------------------------------------------------------------------
+// Non-vacuity guards
+// ---------------------------------------------------------------------------
+
+/// The cases each guard draws.
+const GUARD_CASES: usize = 256;
+
+/// Return `GUARD_CASES` values of `strategy`, drawn by a runner with a
+/// fixed seed, so a guard's count is the same on every run.
+fn draw<S: Strategy>(strategy: &S) -> Vec<S::Value> {
+    let mut runner = TestRunner::new_with_rng(
+        Config::default(),
+        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
+    );
+    (0..GUARD_CASES)
+        .map(|_| {
+            strategy
+                .new_tree(&mut runner)
+                .expect("the strategy draws")
+                .current()
+        })
+        .collect()
+}
+
+/// Return whether `model` holds a variable at some depth.
+fn has_variable(model: &Model) -> bool {
+    model
+        .decisions()
+        .0
+        .iter()
+        .any(|decision| matches!(decision.kind, DecisionKind::Variable(_)))
+}
+
+/// Return whether the repaired configuration of `raw` is accepted for the
+/// space of `model`.
+fn is_repaired_configuration_accepted(model: &Model, raw: &[Option<u8>]) -> bool {
+    let table = Table::fresh();
+    let (decisions, _) = model.decisions();
+    let space = build_valid(model, &table);
+    let assignment = repair(model, &decisions, &reduce(&decisions, raw));
+    try_configuration(&space, entries(&decisions, &assignment, &table)).is_ok()
+}
+
+#[test]
+fn most_generated_models_hold_a_variable() {
+    let models = draw(&model());
+
+    let count = models.iter().filter(|model| has_variable(model)).count();
+
+    assert!(
+        count * 10 >= GUARD_CASES * 6,
+        "{count} of {GUARD_CASES} models hold a variable; a model lacks one only when it \
+         has no top-level variable and no alternative holds one"
+    );
+}
+
+#[test]
+fn most_perturbations_apply() {
+    let drawn = draw(&(model(), perturbation()));
+
+    let count = drawn
+        .iter()
+        .filter(|(model, change)| perturb(model, *change).is_some())
+        .count();
+
+    assert!(
+        count * 2 >= GUARD_CASES,
+        "{count} of {GUARD_CASES} perturbations apply; two of the four kinds need only a \
+         variable"
+    );
+}
+
+#[test]
+fn many_repaired_configurations_are_accepted() {
+    let drawn = draw(&(model(), raw_assignment()));
+
+    let count = drawn
+        .iter()
+        .filter(|(model, raw)| is_repaired_configuration_accepted(model, raw))
+        .count();
+
+    assert!(
+        count * 4 >= GUARD_CASES,
+        "{count} of {GUARD_CASES} repaired configurations are accepted; only a holding \
+         forbidden clause refuses one, and a third of the models have none"
+    );
+}
+
+#[test]
+fn many_repaired_configuration_pairs_are_both_accepted() {
+    let drawn = draw(&(model(), raw_assignment(), raw_assignment()));
+
+    let count = drawn
+        .iter()
+        .filter(|(model, first, second)| {
+            is_repaired_configuration_accepted(model, first)
+                && is_repaired_configuration_accepted(model, second)
+        })
+        .count();
+
+    assert!(
+        count * 5 >= GUARD_CASES,
+        "{count} of {GUARD_CASES} pairs are both accepted; both are whenever the model \
+         has no forbidden clause"
+    );
+}
+
+#[test]
+fn many_model_pairs_are_structurally_equivalent() {
+    let drawn = draw(&model_pair());
+
+    let count = drawn
+        .iter()
+        .filter(|(left, right)| {
+            let table = Table::fresh();
+            build_valid(left, &table)
+                .is_structurally_equivalent(&build_valid(right, &table))
+                .expect("plain parts")
+        })
+        .count();
+
+    assert!(
+        count * 10 >= GUARD_CASES * 3,
+        "{count} of {GUARD_CASES} pairs are structurally equivalent; half are a model and \
+         itself"
+    );
 }
