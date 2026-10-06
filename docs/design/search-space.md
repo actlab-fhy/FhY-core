@@ -2,11 +2,12 @@
 
 - **Status:** designed 2026-10-05 on `feat/search-space` (`6548984`), revised
   the same day for the user's decisions. Every decision is recorded under
-  "Decisions". Implementation starts with SS0. SS0 and SS1 are landed;
-  SS2 and SS3 were planned on 2026-10-06 ("SS2: traces, oracles,
-  enumeration and sampling (plan)", "SS3: objectives and measurements
-  (plan)"); their choices (N-S1 to N-S5) were decided by the user the same
-  day, under "Decisions".
+  "Decisions". **SS0 to SS3 are implemented on `feat/search-space`
+  (2026-10-06)**; "As built: SS0 to SS3" at the end of this document sums
+  up where the result differs from the plans. SS2 and SS3 were planned on
+  2026-10-06 ("SS2: traces, oracles, enumeration and sampling (plan)",
+  "SS3: objectives and measurements (plan)"); their choices (N-S1 to N-S6)
+  were decided by the user the same day, under "Decisions".
 - **Decided by the user (2026-10-05):**
   - Only generic parts move into fhy-core. Everything CIR-specific stays in
     MOGA-VM as subclasses or implementors of the generic vocabulary.
@@ -2776,6 +2777,48 @@ the plan, with these refinements:
   failed measurement's empty reason round-tripping, a non-ASCII name, and
   a key with an opaque value that cannot be written.
 
+### SS3.3 and SS3.4: as built, equivalence and benchmarks (2026-10-06)
+
+- **Implementation** (`d19aa36`, then `a1f8b68`): as the stub and the
+  tests pin it. `Objective::compare` ranks a NaN last before applying the
+  direction; `Measurement::ok` checks no value, then repeated names, then
+  finiteness, in that order; `==` and `Hash` compare the values' bits,
+  which finite values without `-0.0` make `==` on them; `MeasurementData`
+  builds through the constructors. The binding's `Measurement` holds only
+  the core measurement (notes converted both ways), so it is exempt from
+  GC, as `Objective` is (`tests/test_gc_cycles.py` says why).
+- **`serde_json`'s `float_roundtrip` feature**, enabled for the
+  workspace: the round-trip property found a value that serde_json's
+  default parser reads one unit in the last place off
+  (`-443035207.43394965`); with the feature a float read back from JSON
+  is the float written. It adds no crate. The other wire forms write
+  floats as text, so nothing else changes.
+- **Encapsulation checklist**, on the implementation: no public item
+  beyond the stub's; `MeasurementInner` private behind an `Arc`; one
+  private helper (`Measurement::of`); in the binding the measurement
+  module's helpers and the two classes' `core` accessors are private, and
+  `PyConfigurationKey` gains `of` and `core`, `pub(super)`, for the
+  measurement's key; no `unwrap`, `expect` or `#[expect]` was added.
+- **Equivalence** (`target/scratch/search-space-ss2/ss3_equivalence.py`,
+  over MOGA-VM `3d93ba3`'s `records.py`, unmodified): 507 cases, 503
+  agree. They are the two ported record tests (a score on a rejected
+  record is refused; a lowered record keeps its score), 500 random score
+  lists whose best, "lower is better", MOGA-VM's `SearchHistory.best` and
+  a running best over `Objective::compare` agree on, and five F-SS-023
+  cases, of which the four that differ are tagged D-SS3-1 (below); the
+  fifth, a NaN between numbers, agrees by accident of `min`'s order. The
+  script fails on an untagged difference or a tag with no difference.
+- **Benchmarks** (pytest-benchmark, median): building a measurement of
+  four objectives 1.6 µs; serializing it 6.4 µs. No MOGA-VM counterpart.
+
+### Intended divergences (SS3)
+
+| # | Behavior | MOGA-VM | After |
+|---|---|---|---|
+| D-SS3-1 | a NaN or infinite score (F-SS-023) | recorded; a NaN first stays `best` and blocks every later best | refused by `Measurement::ok` and every reader; `Objective::compare` ranks a NaN last, so a running best reaches the best number |
+| D-SS3-2 | a benefit | negated by the caller (`harness.py:122-123`) | `Direction::Maximize` |
+| D-SS3-3 | an infeasible configuration versus a broken measurement | `CandidateOutcome` rejections versus an exception | `Infeasible` versus `Failed` and `Timeout`, all `Ok(Measurement)` from a `Measurer` |
+
 ### MOGA-VM migration map (SS2 and SS3)
 
 None of this is done by the port; it is what MOGA-VM changes to use it.
@@ -2802,6 +2845,8 @@ None of this is done by the port; it is what MOGA-VM changes to use it.
 ### Implementation checklist (SS2, SS3)
 
 Every step ends with the S16 gate, as SS1's did.
+
+Every item below is done (2026-10-06).
 
 1. **SS2.0:** the user's choices under "Needs the user (SS2/SS3)" (decided
    2026-10-06); N-S1
@@ -2832,12 +2877,14 @@ Every step ends with the S16 gate, as SS1's did.
 9. **SS2.8:** equivalence runs, the benchmarks after, the divergence log
    (done, "SS2.8" below the SS2 plan).
 10. **SS2.9:** the MOGA-VM migration note (the map above; done, "SS2.9").
-11. **SS3.1:** (stub done, "SS3.1" above) the stub (`measurement`, `MeasurementError`,
-    `wire::MeasurementData`) and its tests; red.
-12. **SS3.2:** the core.
+11. **SS3.1:** the stub (`measurement`, `MeasurementError`,
+    `wire::MeasurementData`) and its tests; red (done: `914eac9`,
+    `287fca3`, `963da56`, `d2688a2`, `1df8477`).
+12. **SS3.2:** the core (done: `d19aa36`).
 13. **SS3.3:** the binding and `fhy_core.search_space`'s classes; the
-    Python tests.
-14. **SS3.4:** benchmarks; the migration note's SS3 rows.
+    Python tests (done: `d19aa36`, `a1f8b68`, `60858c8`).
+14. **SS3.4:** benchmarks; the migration note's SS3 rows (done: the
+    benchmark commit `0b6bc60`; "SS3.3 and SS3.4" above).
 
 ## Serialization and type ids
 
@@ -3474,6 +3521,9 @@ Every step ends with the S16 gate:
 12. **SS3:** SS3.1 to SS3.4, in the same list; `Estimate` deferred
     (N-S3).
 
+All twelve steps are done on `feat/search-space` (2026-10-06), each
+closed by the S16 gate.
+
 ## Decisions
 
 All decided by the user on 2026-10-05, except N-C5 and D-SS-3's resolution,
@@ -3526,3 +3576,37 @@ The choices SS2's and SS3's plans left open, with the options weighed.
 | N-S3 | `Estimate`, the declared-estimate role of `Metric` | (a) defer: nothing produces or reads one, and one is a `Measurer<Configuration>` over an expression when it appears; (b) `Estimate { objective, expression }` on a `Space` in SS3, as this design first sketched | **(a)** |
 | N-S4 | multi-objective comparison | (a) `Measurement::dominates` alone; (b) nothing: MOGA-VM's harness is single-objective (MOGA is its machine model); (c) a Pareto front and ranking utilities | **(a)**: generic, about 30 lines, and what any multi-objective search builds on |
 | N-S5 | measurement statuses | (a) `Ok`, `Infeasible`, `Failed`, `Timeout`; (b) `Ok`, `Failed`, `Timeout`, with infeasibility folded into `Failed` | **(a)**: MOGA-VM's harness separates a rejected configuration (data about the space) from a defect (`harness.py:26-37`) |
+
+## As built: SS0 to SS3
+
+What the implementation changed from the plans, by slice; each change is
+recorded where it was made and was accepted by the coordinator or, where
+marked, the user.
+
+- **SS0:** as planned.
+- **SS1** ("Deviations of SS1.5 to SS1.7"): the kind registry takes each
+  kind's resolver; the classes have no V1 form; the binding is one file
+  per class; `_FrozenAfterInit` moves to `fhy_core.traits.frozen`; the
+  example aggregate uses `serde` and `serde_json`; `ConfigurationKey`
+  pickles through `wire::ConfigurationKeyData`. Two benchmark rows slower
+  (B-SS1, accepted by the user).
+- **SS2** ("SS2.2: the stub, as built", "SS2.4 to SS2.7: as built"): the
+  `Recorder` holds only the run's state; `PendingStep` has public
+  constructors; `Trace` and `DomainSignature` serialize themselves (no
+  `wire::TraceData`); `Coordinate`'s serde is externally tagged; integers
+  in traces are decimal strings; `ExhaustiveOracle` keeps signatures, not
+  domains; Python oracles are read at each step, `Recorder(None)` builds,
+  a refused `ReplayOracle.finish` leaves the replay open, and
+  `Space.enumerate` returns `_rs.SpaceEnumeration`; the performance pass
+  checks a static step's configuration once and shares a plain domain's
+  values with its signature. Two benchmark rows slower (B-SS2, accepted by
+  the user).
+- **SS3** ("SS3.1: the stub, as built", "SS3.3 and SS3.4"): a NaN is
+  refused by measurements and ranked last by `compare`; `-0.0` is kept as
+  `0.0`; `dominates` matches objective sets in any order; the status
+  serializes as `"ok"`, `"timeout"` or a tagged reason; a seventh error,
+  `UnexpectedValues`; `wire::MeasurementData` has `of` and `build`;
+  `Measurement` has no Python constructor and `is_ok()` is a method;
+  serde_json's `float_roundtrip` feature is enabled for the workspace.
+- **Deferred:** `Estimate` (N-S3); a registered Rust measurer kind (no
+  fhy-core entry point takes a measurer yet).
