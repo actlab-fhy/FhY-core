@@ -534,7 +534,7 @@ fn choices_with_different_notes_are_not_alpha_equivalent() {
 
 #[test]
 fn alternatives_order_is_significant_for_alpha_equivalence() {
-    // F-SS-018.
+    // Option order is significant: the options are not a set.
     let left = build_two_way_choice(["c", "a", "x", "b", "y"], false);
     let right = build_two_way_choice(["d", "p", "u", "q", "w"], true);
 

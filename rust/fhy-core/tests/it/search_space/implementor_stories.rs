@@ -819,7 +819,7 @@ fn realizations_binding_different_numbers_of_axes_are_not_structurally_equivalen
 }
 
 // ---------------------------------------------------------------------------
-// C-4 (F-SS-003): a free identifier never matches a bound one
+// A free identifier never matches a bound one
 // ---------------------------------------------------------------------------
 
 #[rstest]

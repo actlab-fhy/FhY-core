@@ -8,8 +8,8 @@ binding answers as the corpus says: what it builds or refuses, the
 structural and alpha verdicts both ways, and the V2 texts of the space and
 the configuration, written and read back byte for byte.
 
-An expanded corpus, recorded by hand from the oracle (see
-`docs/design/search-space.md`, "Equivalence plan"), replays the same way
+An expanded corpus, recorded by hand from the oracle (see the
+recorder's docstring), replays the same way
 when the environment variable `FHY_SEARCH_SPACE_CORPUS` names it.
 """
 

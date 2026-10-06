@@ -136,7 +136,7 @@
      }
     ]
    },
-   "divergence": "D-SS2-3",
+   "divergence": "type-strict-distinct-choices",
    "oracle": {
     "outcome": "built",
     "cardinality": 3,
@@ -182,7 +182,7 @@
      }
     ]
    },
-   "divergence": "D-SS2-3",
+   "divergence": "type-strict-distinct-choices",
    "oracle": {
     "outcome": "built",
     "cardinality": 2,
@@ -220,7 +220,7 @@
     ],
     "probes": []
    },
-   "divergence": "D-SS2-3",
+   "divergence": "type-strict-distinct-choices",
    "oracle": {
     "outcome": "built",
     "cardinality": 2,
@@ -2560,7 +2560,7 @@
   {
    "name": "order_of_0",
    "shape": "order",
-   "divergence": "D-SS2-7",
+   "divergence": "empty-order-domain-refused",
    "spec": {
     "size": 0,
     "permutations": [
@@ -6475,7 +6475,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -6509,7 +6509,7 @@
     ]
    },
    "coordinate": 1,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 1
@@ -6699,7 +6699,7 @@
     ]
    },
    "coordinate": 28,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 28
@@ -6767,7 +6767,7 @@
     ]
    },
    "coordinate": 63,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 63
@@ -6900,7 +6900,7 @@
     ]
    },
    "coordinate": 1,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 1
@@ -6932,7 +6932,7 @@
     ]
    },
    "coordinate": 2,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 2
@@ -7030,7 +7030,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -7095,7 +7095,7 @@
     ]
    },
    "coordinate": 3,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 3
@@ -7226,7 +7226,7 @@
     ]
    },
    "coordinate": 3,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 3
@@ -7291,7 +7291,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -7323,7 +7323,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -7355,7 +7355,7 @@
     ]
    },
    "coordinate": 1,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 1
@@ -7420,7 +7420,7 @@
     ]
    },
    "coordinate": 2,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 2
@@ -7452,7 +7452,7 @@
     ]
    },
    "coordinate": 3,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 3
@@ -7649,7 +7649,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -7780,7 +7780,7 @@
     ]
    },
    "coordinate": 4,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 4
@@ -7812,7 +7812,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -7877,7 +7877,7 @@
     ]
    },
    "coordinate": 0,
-   "divergence": "D-SS2-1",
+   "divergence": "replay-compares-signatures",
    "oracle": {
     "outcome": "replayed",
     "coordinate": 0
@@ -8151,7 +8151,7 @@
    "name": "recorded_3_asked_1",
    "recorded": 3,
    "asked": 1,
-   "divergence": "D-SS2-2",
+   "divergence": "finish-refuses-shorter-stream",
    "oracle": {
     "refused_at": null,
     "unconsumed_at_finish": null
@@ -8179,7 +8179,7 @@
    "name": "recorded_2_asked_0",
    "recorded": 2,
    "asked": 0,
-   "divergence": "D-SS2-2",
+   "divergence": "finish-refuses-shorter-stream",
    "oracle": {
     "refused_at": null,
     "unconsumed_at_finish": null

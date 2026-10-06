@@ -267,7 +267,7 @@ fn a_forged_postcard_measurement_with_a_finite_value_decodes() {
 }
 
 /// Test a non-finite value read through postcard, which carries one, is
-/// refused (F-SS-023).
+/// refused.
 #[rstest]
 #[case::nan(f64::NAN)]
 #[case::infinity(f64::INFINITY)]

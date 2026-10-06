@@ -117,8 +117,7 @@ fn an_ok_measurement_refuses_a_repeated_objective(#[case] second: Direction) {
     );
 }
 
-/// Test a NaN or an infinite value is refused, naming its objective
-/// (F-SS-023).
+/// Test a NaN or an infinite value is refused, naming its objective.
 #[rstest]
 #[case::nan(f64::NAN)]
 #[case::infinity(f64::INFINITY)]

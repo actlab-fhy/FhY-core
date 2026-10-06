@@ -364,7 +364,7 @@ fn a_bounded_variable_is_not_alpha_equivalent_to_an_unbounded_one() {
 
 #[test]
 fn categorical_variables_whose_set_constraints_differ_are_not_alpha_equivalent() {
-    // F-SS-001: the constraint `p in {1}` narrows the second variable only.
+    // The constraint `p in {1}` narrows the second variable only.
     let plain = categorical(vec![int(1), int(2)]);
     let narrowed = categorical_where(vec![int(1), int(2)], |p| vec![in_set(p, [int(1)])]);
     let left = plain_variable(&Identifier::new("x"), plain);
@@ -381,7 +381,7 @@ fn variables_over_values_of_different_types_are_not_alpha_equivalent(
     #[case] left: Value,
     #[case] right: Value,
 ) {
-    // F-SS-004: members other than identifiers compare type-strictly.
+    // Members other than identifiers compare type-strictly.
     let left = plain_variable(&Identifier::new("x"), build_category_param(vec![left]));
     let right = plain_variable(&Identifier::new("y"), build_category_param(vec![right]));
 
@@ -416,7 +416,7 @@ fn identifier_members_naming_the_same_free_identifier_are_equivalent() {
 
 #[test]
 fn a_variable_named_like_a_free_member_does_not_capture_it() {
-    // F-SS-003: `Z` is free in the first variable and bound by the name `Z`
+    // `Z` is free in the first variable and bound by the name `Z`
     // in the second.
     let z = Identifier::new("Z");
     let left = plain_variable(&Identifier::new("k"), build_identifier_param(&[&z]));
@@ -485,7 +485,7 @@ fn permutation_identifier_domains_compare_in_order() {
 
 #[test]
 fn set_constraint_members_that_are_identifiers_resolve_through_the_renaming() {
-    // D-SS-3.
+    // A free identifier member never matches a bound name.
     let (a, b) = (Identifier::new("a"), Identifier::new("b"));
     let (a_renamed, b_renamed) = (Identifier::new("a2"), Identifier::new("b2"));
     let pairs = [(&a, &a_renamed), (&b, &b_renamed)];
@@ -580,7 +580,7 @@ fn variables_with_different_notes_are_not_structurally_equivalent() {
 
 #[test]
 fn categorical_variables_whose_set_constraints_differ_are_not_structurally_equivalent() {
-    // F-SS-001.
+    // The constraints are compared, not just the members.
     let name = Identifier::new("x");
     let left = plain_variable(&name, categorical(vec![int(1), int(2)]));
     let right = plain_variable(
@@ -598,7 +598,7 @@ fn variables_over_values_of_different_types_are_not_structurally_equivalent(
     #[case] left: Value,
     #[case] right: Value,
 ) {
-    // F-SS-004.
+    // Members of different types are different categories.
     let name = Identifier::new("x");
     let left = plain_variable(&name, build_category_param(vec![left]));
     let right = plain_variable(&name, build_category_param(vec![right]));

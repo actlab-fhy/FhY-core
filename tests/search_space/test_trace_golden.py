@@ -49,7 +49,12 @@ _CORPUS = (
     / "trace_cases.json"
 )
 _FAMILIES = ("domains", "replays", "streams", "extractions")
-_DIVERGENCES = ("D-SS2-1", "D-SS2-2", "D-SS2-3", "D-SS2-7")
+_DIVERGENCES = (
+    "replay-compares-signatures",
+    "finish-refuses-shorter-stream",
+    "type-strict-distinct-choices",
+    "empty-order-domain-refused",
+)
 
 Case = dict[str, Any]
 

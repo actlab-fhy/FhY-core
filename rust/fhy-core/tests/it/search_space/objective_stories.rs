@@ -1,5 +1,5 @@
 //! Tests for `Direction` and `Objective`: their names, equality and text,
-//! and `Objective::compare` per direction, NaN included (F-SS-023).
+//! and `Objective::compare` per direction, NaN included.
 
 use std::cmp::Ordering;
 
@@ -141,7 +141,7 @@ fn infinities_order_as_numbers() {
     );
 }
 
-/// Test a NaN loses to every number, in either direction (F-SS-023).
+/// Test a NaN loses to every number, in either direction.
 #[rstest]
 #[case::minimize_zero(Direction::Minimize, 0.0)]
 #[case::minimize_huge(Direction::Minimize, f64::MAX)]
@@ -167,7 +167,7 @@ fn two_nans_tie(#[case] direction: Direction) {
     );
 }
 
-/// Test a NaN first in a run never blocks a later best (F-SS-023: MOGA-VM's
+/// Test a NaN first in a run never blocks a later best (MOGA-VM's
 /// history kept a first NaN as its best forever).
 #[rstest]
 #[case::minimize_after_nan(Direction::Minimize, &[f64::NAN, 3.0, 1.0, 2.0], 1.0)]

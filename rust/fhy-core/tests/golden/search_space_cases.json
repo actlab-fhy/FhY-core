@@ -16,7 +16,7 @@
   {
    "name": "a1_one_name_for_two_alternatives",
    "origin": "probe",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "the oracle answers asymmetrically; the port refuses the repeated name",
    "id_base": 70000,
    "labels": [
@@ -82,7 +82,7 @@
   {
    "name": "a1b_one_knob_twice_in_an_option",
    "origin": "probe",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "the oracle answers asymmetrically; the port refuses the repeated name",
    "id_base": 70064,
    "labels": [
@@ -199,7 +199,7 @@
   {
    "name": "a2_one_knob_in_two_alternatives",
    "origin": "probe",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "names are unique space-wide, so one knob cannot serve two alternatives",
    "id_base": 70128,
    "labels": [
@@ -510,7 +510,7 @@
   {
    "name": "a5_constraint_of_a_categorical_knob",
    "origin": "probe",
-   "divergence": "D-SS-1",
+   "divergence": "constraints-compared-under-variable-frame",
    "note": "the oracle ignores a categorical knob's constraints in alpha mode",
    "id_base": 70256,
    "labels": [
@@ -613,7 +613,7 @@
   {
    "name": "a6_one_and_true_as_categories",
    "origin": "probe",
-   "divergence": "D-SS-4",
+   "divergence": "type-strict-values",
    "note": "Python's == unifies 1 and True; the port compares type-strictly",
    "id_base": 70320,
    "labels": [
@@ -728,7 +728,7 @@
   {
    "name": "a7_free_category_and_bound_name",
    "origin": "probe",
-   "divergence": "D-SS-3",
+   "divergence": "identifier-members-never-captured",
    "note": "the oracle resolves the left category on the left only, which captures it",
    "id_base": 70384,
    "labels": [
@@ -898,7 +898,7 @@
   {
    "name": "v2_one_name_for_two_knobs",
    "origin": "probe",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "the oracle accepts a repeated knob name",
    "id_base": 70512,
    "labels": [
@@ -958,7 +958,7 @@
   {
    "name": "v3_one_knob_assigned_twice",
    "origin": "probe",
-   "divergence": "D-SS-5",
+   "divergence": "space-and-configuration-checks",
    "note": "the oracle accepts conflicting assignments",
    "id_base": 70576,
    "labels": [
@@ -1022,7 +1022,7 @@
   {
    "name": "v4_value_outside_the_domain",
    "origin": "probe",
-   "divergence": "D-SS-5",
+   "divergence": "space-and-configuration-checks",
    "note": "the oracle accepts an assignment from a foreign param",
    "id_base": 70640,
    "labels": [
@@ -1249,7 +1249,7 @@
   {
    "name": "v6_no_alternative",
    "origin": "probe",
-   "divergence": "D-SS-6",
+   "divergence": "empty-choice-refused",
    "note": "the oracle accepts an empty decision space",
    "id_base": 70896,
    "labels": [
@@ -1404,7 +1404,7 @@
   {
    "name": "unselected_with_an_assignment",
    "origin": "probe",
-   "divergence": "D-SS-18",
+   "divergence": "configuration-compared-with-its-space",
    "note": "the status is gone: a configuration assigning a chosen alternative's knob is valid",
    "id_base": 71088,
    "labels": [
@@ -1465,7 +1465,7 @@
   {
    "name": "random_0_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71152,
    "labels": [
@@ -1599,7 +1599,7 @@
   {
    "name": "random_0_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71216,
    "labels": [
@@ -1737,7 +1737,7 @@
   {
    "name": "random_1_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71280,
    "labels": [
@@ -1900,7 +1900,7 @@
   {
    "name": "random_1_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71344,
    "labels": [
@@ -2070,7 +2070,7 @@
   {
    "name": "random_2_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71408,
    "labels": [
@@ -2193,7 +2193,7 @@
   {
    "name": "random_2_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71472,
    "labels": [
@@ -2321,7 +2321,7 @@
   {
    "name": "random_3_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71536,
    "labels": [
@@ -2523,7 +2523,7 @@
   {
    "name": "random_3_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71600,
    "labels": [
@@ -2880,7 +2880,7 @@
   {
    "name": "random_5_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71792,
    "labels": [
@@ -3010,7 +3010,7 @@
   {
    "name": "random_5_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 71856,
    "labels": [
@@ -3285,7 +3285,7 @@
   {
    "name": "random_7_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72048,
    "labels": [
@@ -3404,7 +3404,7 @@
   {
    "name": "random_7_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72112,
    "labels": [
@@ -3773,7 +3773,7 @@
   {
    "name": "random_9_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72304,
    "labels": [
@@ -3874,7 +3874,7 @@
   {
    "name": "random_9_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72368,
    "labels": [
@@ -3979,7 +3979,7 @@
   {
    "name": "random_10_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72432,
    "labels": [
@@ -4149,7 +4149,7 @@
   {
    "name": "random_10_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72496,
    "labels": [
@@ -4325,7 +4325,7 @@
   {
    "name": "random_11_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72560,
    "labels": [
@@ -4522,7 +4522,7 @@
   {
    "name": "random_11_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72624,
    "labels": [
@@ -4725,7 +4725,7 @@
   {
    "name": "random_12_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72688,
    "labels": [
@@ -4975,7 +4975,7 @@
   {
    "name": "random_12_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72752,
    "labels": [
@@ -5232,7 +5232,7 @@
   {
    "name": "random_13_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72816,
    "labels": [
@@ -5317,7 +5317,7 @@
   {
    "name": "random_13_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72880,
    "labels": [
@@ -5406,7 +5406,7 @@
   {
    "name": "random_14_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 72944,
    "labels": [
@@ -5660,7 +5660,7 @@
   {
    "name": "random_14_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73008,
    "labels": [
@@ -5924,7 +5924,7 @@
   {
    "name": "random_15_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73072,
    "labels": [
@@ -6081,7 +6081,7 @@
   {
    "name": "random_15_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73136,
    "labels": [
@@ -6245,7 +6245,7 @@
   {
    "name": "random_16_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73200,
    "labels": [
@@ -6400,7 +6400,7 @@
   {
    "name": "random_16_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73264,
    "labels": [
@@ -6559,7 +6559,7 @@
   {
    "name": "random_17_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73328,
    "labels": [
@@ -6672,7 +6672,7 @@
   {
    "name": "random_17_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73392,
    "labels": [
@@ -6789,7 +6789,7 @@
   {
    "name": "random_18_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73456,
    "labels": [
@@ -6939,7 +6939,7 @@
   {
    "name": "random_18_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73520,
    "labels": [
@@ -7094,7 +7094,7 @@
   {
    "name": "random_19_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73584,
    "labels": [
@@ -7288,7 +7288,7 @@
   {
    "name": "random_19_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73648,
    "labels": [
@@ -7488,7 +7488,7 @@
   {
    "name": "random_20_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73712,
    "labels": [
@@ -7676,7 +7676,7 @@
   {
    "name": "random_20_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73776,
    "labels": [
@@ -7870,7 +7870,7 @@
   {
    "name": "random_21_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73840,
    "labels": [
@@ -7971,7 +7971,7 @@
   {
    "name": "random_21_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73904,
    "labels": [
@@ -8077,7 +8077,7 @@
   {
    "name": "random_22_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 73968,
    "labels": [
@@ -8299,7 +8299,7 @@
   {
    "name": "random_22_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74032,
    "labels": [
@@ -8527,7 +8527,7 @@
   {
    "name": "random_23_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74096,
    "labels": [
@@ -8609,7 +8609,7 @@
   {
    "name": "random_23_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74160,
    "labels": [
@@ -8695,7 +8695,7 @@
   {
    "name": "random_24_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74224,
    "labels": [
@@ -8780,7 +8780,7 @@
   {
    "name": "random_24_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74288,
    "labels": [
@@ -8869,7 +8869,7 @@
   {
    "name": "random_25_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74352,
    "labels": [
@@ -8955,7 +8955,7 @@
   {
    "name": "random_25_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74416,
    "labels": [
@@ -9045,7 +9045,7 @@
   {
    "name": "random_26_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74480,
    "labels": [
@@ -9154,7 +9154,7 @@
   {
    "name": "random_26_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74544,
    "labels": [
@@ -9425,7 +9425,7 @@
   {
    "name": "random_28_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74736,
    "labels": [
@@ -9541,7 +9541,7 @@
   {
    "name": "random_28_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74800,
    "labels": [
@@ -9662,7 +9662,7 @@
   {
    "name": "random_29_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74864,
    "labels": [
@@ -9795,7 +9795,7 @@
   {
    "name": "random_29_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 74928,
    "labels": [
@@ -10629,7 +10629,7 @@
   {
    "name": "random_33_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 75376,
    "labels": [
@@ -10765,7 +10765,7 @@
   {
    "name": "random_33_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 75440,
    "labels": [
@@ -11070,7 +11070,7 @@
   {
    "name": "random_35_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 75632,
    "labels": [
@@ -11172,7 +11172,7 @@
   {
    "name": "random_35_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 75696,
    "labels": [
@@ -12003,7 +12003,7 @@
   {
    "name": "random_39_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76144,
    "labels": [
@@ -12190,7 +12190,7 @@
   {
    "name": "random_39_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76208,
    "labels": [
@@ -12558,7 +12558,7 @@
   {
    "name": "random_41_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76400,
    "labels": [
@@ -12718,7 +12718,7 @@
   {
    "name": "random_41_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76464,
    "labels": [
@@ -12882,7 +12882,7 @@
   {
    "name": "random_42_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76528,
    "labels": [
@@ -12982,7 +12982,7 @@
   {
    "name": "random_42_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76592,
    "labels": [
@@ -13087,7 +13087,7 @@
   {
    "name": "random_43_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76656,
    "labels": [
@@ -13255,7 +13255,7 @@
   {
    "name": "random_43_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76720,
    "labels": [
@@ -13429,7 +13429,7 @@
   {
    "name": "random_44_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76784,
    "labels": [
@@ -13585,7 +13585,7 @@
   {
    "name": "random_44_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76848,
    "labels": [
@@ -13746,7 +13746,7 @@
   {
    "name": "random_45_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76912,
    "labels": [
@@ -13892,7 +13892,7 @@
   {
    "name": "random_45_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 76976,
    "labels": [
@@ -14042,7 +14042,7 @@
   {
    "name": "random_46_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77040,
    "labels": [
@@ -14258,7 +14258,7 @@
   {
    "name": "random_46_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77104,
    "labels": [
@@ -14735,7 +14735,7 @@
   {
    "name": "random_48_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77296,
    "labels": [
@@ -14873,7 +14873,7 @@
   {
    "name": "random_48_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77360,
    "labels": [
@@ -15017,7 +15017,7 @@
   {
    "name": "random_49_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77424,
    "labels": [
@@ -15117,7 +15117,7 @@
   {
    "name": "random_49_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77488,
    "labels": [
@@ -15221,7 +15221,7 @@
   {
    "name": "random_50_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77552,
    "labels": [
@@ -15294,7 +15294,7 @@
   {
    "name": "random_50_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77616,
    "labels": [
@@ -15511,7 +15511,7 @@
   {
    "name": "random_52_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77808,
    "labels": [
@@ -15647,7 +15647,7 @@
   {
    "name": "random_52_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77872,
    "labels": [
@@ -15788,7 +15788,7 @@
   {
    "name": "random_53_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 77936,
    "labels": [
@@ -15879,7 +15879,7 @@
   {
    "name": "random_53_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78000,
    "labels": [
@@ -16280,7 +16280,7 @@
   {
    "name": "random_55_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78192,
    "labels": [
@@ -16372,7 +16372,7 @@
   {
    "name": "random_55_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78256,
    "labels": [
@@ -16468,7 +16468,7 @@
   {
    "name": "random_56_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78320,
    "labels": [
@@ -16650,7 +16650,7 @@
   {
    "name": "random_56_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78384,
    "labels": [
@@ -16838,7 +16838,7 @@
   {
    "name": "random_57_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78448,
    "labels": [
@@ -17036,7 +17036,7 @@
   {
    "name": "random_57_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78512,
    "labels": [
@@ -17241,7 +17241,7 @@
   {
    "name": "random_58_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78576,
    "labels": [
@@ -17315,7 +17315,7 @@
   {
    "name": "random_58_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78640,
    "labels": [
@@ -17394,7 +17394,7 @@
   {
    "name": "random_59_shared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78704,
    "labels": [
@@ -17517,7 +17517,7 @@
   {
    "name": "random_59_unshared",
    "origin": "random",
-   "divergence": "D-SS-19",
+   "divergence": "names-unique-space-wide",
    "note": "",
    "id_base": 78768,
    "labels": [

@@ -7,14 +7,27 @@ constraint), and an optional selection. The recorder builds each
 description as a MOGA-VM ``DecisionPoint`` on fhy_core v0.1.8 (the
 oracle) and records whether it constructs and, for a pair, its
 structural and alpha verdicts in both directions. Beside them it writes
-what the port answers by its rules (``docs/design/search-space.md``,
-"SS1: the Rust core"): the point as a ``Space`` holding one ``Choice`` of
-``PlainAlternative``s and a ``Configuration`` of its selection. A case
-whose answers differ carries the divergence that explains it; any other
-difference stops the recorder for review. For each point the port builds,
-the case also holds the V2 texts of the space and the configuration, with
-every label at a fixed id. ``tests/it/search_space_golden.rs`` replays the
-corpus through the Rust port.
+what the port answers by its own rules: the point as a ``Space`` holding
+one ``Choice`` of ``PlainAlternative``s and a ``Configuration`` of its
+selection. A case whose answers differ carries the divergence that
+explains it; any other difference stops the recorder for review. For each
+point the port builds, the case also holds the V2 texts of the space and
+the configuration, with every label at a fixed id.
+``tests/it/search_space_golden.rs`` replays the corpus through the Rust port.
+
+The divergences a case can carry:
+
+- ``constraints-compared-under-variable-frame``: a categorical knob's constraint is
+  compared under its param's variable
+- ``identifier-members-never-captured``: a free identifier member never matches a
+  bound name
+- ``type-strict-values``: ``1`` and ``True`` are different categories
+- ``space-and-configuration-checks``: refuses a knob assigned twice and a value
+  outside its domain
+- ``empty-choice-refused``: a choice needs one or more alternatives
+- ``configuration-compared-with-its-space``: a configuration is compared with its
+  space, not on its own
+- ``names-unique-space-wide``: refuses a space repeating a name
 
 The oracle is MOGA-VM's ``moga_vm.cir.space`` at ``3d93ba3`` (its
 ``origin/dev`` when the audit ran) on fhy_core v0.1.8, the version MOGA-VM
@@ -235,7 +248,7 @@ def _probes() -> list[Case]:
             ["L_s", "L", "A", "B", "R_s", "R", "S"],
             _point(0, 1, [_option(2, []), _option(3, [])]),
             _point(4, 5, [_option(6, []), _option(6, [])]),
-            "D-SS-19",
+            "names-unique-space-wide",
             "the oracle answers asymmetrically; the port refuses the repeated name",
         )
     )
@@ -247,7 +260,7 @@ def _probes() -> list[Case]:
             ["L_s", "L", "o", "k", "p", "R_s", "R", "o2", "k1", "k2", "q1", "q2"],
             _point(0, 1, [_option(2, [_knob(3, 4, one_two), _knob(3, 4, one_two)])]),
             _point(5, 6, [_option(7, [_knob(8, 10, one_two), _knob(9, 11, one_two)])]),
-            "D-SS-19",
+            "names-unique-space-wide",
             "the oracle answers asymmetrically; the port refuses the repeated name",
         )
     )
@@ -290,7 +303,7 @@ def _probes() -> list[Case]:
                 ],
                 _selection(8, [(10, _int(1))]),
             ),
-            "D-SS-19",
+            "names-unique-space-wide",
             "names are unique space-wide, so one knob cannot serve two alternatives",
         )
     )
@@ -342,7 +355,7 @@ def _probes() -> list[Case]:
             ["L_s", "L", "o", "k", "p", "R_s", "R", "o2", "k2", "q"],
             _point(0, 1, [_option(2, [_knob(3, 4, one_two)])]),
             _point(5, 6, [_option(7, [_knob(8, 9, one_two, [_int(1)])])]),
-            "D-SS-1",
+            "constraints-compared-under-variable-frame",
             "the oracle ignores a categorical knob's constraints in alpha mode",
         )
     )
@@ -364,7 +377,7 @@ def _probes() -> list[Case]:
                 [_option(7, [_knob(8, 9, [_bool(True)])])],
                 _selection(7, [(8, _bool(True))]),
             ),
-            "D-SS-4",
+            "type-strict-values",
             "Python's == unifies 1 and True; the port compares type-strictly",
         )
     )
@@ -376,7 +389,7 @@ def _probes() -> list[Case]:
             ["Lz_s", "Lz", "A", "kz", "p", "Z", "Rz_s", "Rz", "kz2", "q"],
             _point(0, 1, [_option(2, [_knob(3, 4, [_label(5)])])]),
             _point(6, 7, [_option(5, [_knob(8, 9, [_label(5)])])]),
-            "D-SS-3",
+            "identifier-members-never-captured",
             "the oracle resolves the left category on the left only, which captures it",
         )
     )
@@ -408,7 +421,7 @@ def _probes() -> list[Case]:
             "probe",
             ["s", "d", "o", "kx", "p"],
             _point(0, 1, [_option(2, [_knob(3, 4, one_two), _knob(3, 4, one_two)])]),
-            divergence="D-SS-19",
+            divergence="names-unique-space-wide",
             note="the oracle accepts a repeated knob name",
         )
     )
@@ -424,7 +437,7 @@ def _probes() -> list[Case]:
                 [_option(2, [_knob(3, 4, one_two)])],
                 _selection(2, [(3, _int(1)), (3, _int(2))]),
             ),
-            divergence="D-SS-5",
+            divergence="space-and-configuration-checks",
             note="the oracle accepts conflicting assignments",
         )
     )
@@ -440,7 +453,7 @@ def _probes() -> list[Case]:
                 [_option(2, [_knob(3, 4, one_two)])],
                 _selection(2, [(3, _int(99))]),
             ),
-            divergence="D-SS-5",
+            divergence="space-and-configuration-checks",
             note="the oracle accepts an assignment from a foreign param",
         )
     )
@@ -470,7 +483,7 @@ def _probes() -> list[Case]:
             "probe",
             ["s", "d"],
             _point(0, 1, []),
-            divergence="D-SS-6",
+            divergence="empty-choice-refused",
             note="the oracle accepts an empty decision space",
         )
     )
@@ -510,7 +523,7 @@ def _probes() -> list[Case]:
                 [_option(2, [_knob(3, 4, one_two)])],
                 _selection(2, [(3, _int(1))], "unselected"),
             ),
-            divergence="D-SS-18",
+            divergence="configuration-compared-with-its-space",
             note=(
                 "the status is gone: a configuration assigning a chosen "
                 "alternative's knob is valid"
@@ -914,7 +927,11 @@ def _random_divergence(
             and port.get(side) != "built"
         ):
             names = _names(point)
-            return "D-SS-19" if len(set(names)) != len(names) else "D-SS-5"
+            return (
+                "names-unique-space-wide"
+                if len(set(names)) != len(names)
+                else "space-and-configuration-checks"
+            )
     return None
 
 

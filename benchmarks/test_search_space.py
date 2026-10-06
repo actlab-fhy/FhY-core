@@ -4,10 +4,9 @@ They measure ``fhy_core.search_space``, which the Rust core backs, through
 the public API only, on the shape MOGA-VM's audit baseline measured: one
 choice of eight alternatives, each holding four variables over the
 categories ``{1, 2, 3, 4}``. The before numbers are MOGA-VM's Python core
-on fhy_core 0.2.0 (``docs/design/search-space.md``, "Benchmark plan").
+on fhy_core 0.2.0.
 
-The Python API lands in SS1.7, which adapts these rows to its final
-signatures; until then the module is absent and every row skips.
+The rows skip while the Python API is absent.
 """
 
 from typing import Any
@@ -189,7 +188,7 @@ def test_variable_serialize_to_dict(benchmark: Benchmark) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The search stream (SS2)
+# The search stream
 # ---------------------------------------------------------------------------
 
 _STEP_KIND = "bench.step"
@@ -380,7 +379,7 @@ def test_one_step_through_a_python_oracle(benchmark: Benchmark) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Objectives and measurements (SS3)
+# Objectives and measurements
 # ---------------------------------------------------------------------------
 
 

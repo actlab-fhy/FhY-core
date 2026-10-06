@@ -18,7 +18,7 @@ repository = "https://github.com/actlab-fhy/FhY-core"
 pyo3 = { version = "0.29", default-features = false }
 serde = { version = "1", features = ["derive", "rc"] }
 # `float_roundtrip`: a float read back is the float written, as a measurement's
-# values must be (SS3); the default parser can be one unit in the last place off.
+# values must be; the default parser can be one unit in the last place off.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 num-bigint = "0.5"
 num-traits = "0.2"

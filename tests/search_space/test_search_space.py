@@ -3,8 +3,7 @@
 Construction and its refusals, activity, completeness, configurations and
 their keys, and the equivalences, through the public API. The tests ported
 from MOGA-VM's `tests/cir/space/` (on its `origin/dev`) cite the MOGA-VM
-test in their docstrings; `docs/design/search-space.md`, "Traceability",
-maps each one.
+test in their docstrings.
 """
 
 from collections.abc import Callable
@@ -1123,8 +1122,9 @@ def test_configurations_of_relabeled_spaces_have_equal_keys() -> None:
 
     Ported from MOGA-VM
     `test_alpha_standalone.py::test_selection_alpha_equivalent_when_space_labels_seeded`
-    (divergence D-SS-18: a configuration is compared with its space, and
-    its key is renaming-invariant without a seeded renaming).
+    (divergence configuration-compared-with-its-space: a configuration is
+    compared with its space, and its key is renaming-invariant without a
+    seeded renaming).
     """
     left, right = (
         build_complete_configuration(build_tiling_space()),
@@ -1325,8 +1325,9 @@ def test_configurations_of_unrelated_spaces_are_not_alpha_equivalent() -> None:
 
     Ported from MOGA-VM
     `test_alpha_standalone.py::test_selection_not_alpha_equivalent_without_seeding`
-    (divergence D-SS-18: a configuration's names resolve through its own
-    space, so what fails to correspond is the spaces).
+    (divergence configuration-compared-with-its-space: a configuration's
+    names resolve through its own space, so what fails to correspond is the
+    spaces).
     """
     tiling = build_tiling_space()
     other_choice = make_choice("other", make_alternative("only"))
@@ -1603,7 +1604,8 @@ def test_structural_equivalence_is_reflexive(
 
     Ported from MOGA-VM
     `test_structural_equivalence.py::test_structural_equivalence_is_reflexive`
-    (the `metric` case moves to SS3; `knobbed-option` is in `test_extension.py`).
+    (the `metric` case is covered with the measurements; `knobbed-option` is in
+    `test_extension.py`).
     """
     obj = build()
 

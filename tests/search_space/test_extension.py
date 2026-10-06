@@ -1,8 +1,7 @@
 """Python subclasses of `Variable` and `Alternative`, through their hooks.
 
 The subclasses are modelled on MOGA-VM's `ArrayTileKnob`, `PortBoundKnob`,
-a marker knob such as `NamespaceKnob`, and `RealizationOption`, as
-`docs/design/search-space.md`, "Implementors", shows them. The core compares
+a marker knob such as `NamespaceKnob`, and `RealizationOption`. The core compares
 their base fields itself and calls their `extension_*` hooks for their own
 data, once per pair of nodes of one kind; their own type ids are their
 kinds, and they round-trip through them.

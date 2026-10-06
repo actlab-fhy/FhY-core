@@ -155,7 +155,12 @@ fn the_corpus_holds_every_family_and_divergence() {
             "{family}"
         );
     }
-    for tag in ["D-SS2-1", "D-SS2-2", "D-SS2-3", "D-SS2-7"] {
+    for tag in [
+        "replay-compares-signatures",
+        "finish-refuses-shorter-stream",
+        "type-strict-distinct-choices",
+        "empty-order-domain-refused",
+    ] {
         assert!(tags.contains(&tag), "no case of {tag}");
     }
 }

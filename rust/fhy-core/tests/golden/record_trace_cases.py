@@ -1,8 +1,7 @@
 r"""Record the search-stream golden corpus from the MOGA-VM oracle.
 
 Four families of cases, each described once, answered by the oracle and,
-beside it, by the port's rules (``docs/design/search-space.md``, "SS2:
-traces, oracles, enumeration and sampling (plan)"):
+beside it, by the port's own rules:
 
 - **domains**: a choice domain over integers, strings and Booleans, an
   order domain over labels, or a strided domain over runs; the oracle's
@@ -21,9 +20,19 @@ traces, oracles, enumeration and sampling (plan)"):
   corresponding space must give exactly.
 
 A case whose port answer differs from the oracle's names the divergence
-that explains it (D-SS2-1, D-SS2-2, D-SS2-3, D-SS2-7); any other
-difference stops the recorder for review. ``tests/it/search_space_trace_golden.rs``
-replays the corpus through the Rust port.
+that explains it; any other difference stops the recorder for review.
+``tests/it/search_space_trace_golden.rs`` replays the corpus through the
+Rust port. The divergences:
+
+- ``replay-compares-signatures``: a replay refuses a domain whose signature differs,
+  such as a moved run of one width or reordered plain choices; the oracle compared
+  shape and size only
+- ``finish-refuses-shorter-stream``: ``finish`` refuses a stream shorter than the
+  recorded one
+- ``type-strict-distinct-choices``: choice values are type-strict (``1``, ``True``
+  and ``1.0`` differ) and a repeated choice is refused
+- ``empty-order-domain-refused``: an empty order domain is refused; the oracle
+  counted one ordering
 
 The oracle is MOGA-VM's ``cir/lowering/search/{decisions,oracle,errors,extraction}.py``
 at ``3d93ba3`` on fhy_core v0.1.8, assembled in a temporary directory:
@@ -331,15 +340,20 @@ def _domain_cases(
         "choice_of_one_true_and_one_point_zero",
         [{"int": 1}, {"bool": True}, {"float": 1.0}],
         [{"bool": True}, {"float": 1.0}],
-        "D-SS2-3",
+        "type-strict-distinct-choices",
     )
     choice(
         "choice_of_one_admitting_true",
         [{"int": 1}, {"int": 2}],
         [{"bool": True}],
-        "D-SS2-3",
+        "type-strict-distinct-choices",
     )
-    choice("choice_with_a_repeat", [{"str": "x"}, {"str": "x"}], [], "D-SS2-3")
+    choice(
+        "choice_with_a_repeat",
+        [{"str": "x"}, {"str": "x"}],
+        [],
+        "type-strict-distinct-choices",
+    )
     choice("choice_of_nothing", [], [])
     for index in range(count):
         size = rng.randint(1, 5)
@@ -353,7 +367,7 @@ def _domain_cases(
             {
                 "name": f"order_of_{size}",
                 "shape": "order",
-                "divergence": "D-SS2-7" if size == 0 else None,
+                "divergence": "empty-order-domain-refused" if size == 0 else None,
                 **answers,
             }
         )
@@ -464,15 +478,35 @@ def _replay_cases(
 
     described = [
         ("same_integers", ints([1, 2, 3]), ints([1, 2, 3]), None),
-        ("reordered_integers", ints([1, 2, 3]), ints([3, 2, 1]), "D-SS2-1"),
-        ("other_integers_of_one_size", ints([1, 2]), ints([1, 4]), "D-SS2-1"),
+        (
+            "reordered_integers",
+            ints([1, 2, 3]),
+            ints([3, 2, 1]),
+            "replay-compares-signatures",
+        ),
+        (
+            "other_integers_of_one_size",
+            ints([1, 2]),
+            ints([1, 4]),
+            "replay-compares-signatures",
+        ),
         ("fewer_integers", ints([1, 2, 3]), ints([1, 2]), None),
         ("fresh_labels_of_one_size", labels(4), labels(4), None),
         ("fresh_labels_of_another_size", labels(4), labels(3), None),
         ("same_run", runs((0, 64)), runs((0, 64)), None),
-        ("moved_run_of_one_size", runs((0, 64)), runs((64, 128)), "D-SS2-1"),
+        (
+            "moved_run_of_one_size",
+            runs((0, 64)),
+            runs((64, 128)),
+            "replay-compares-signatures",
+        ),
         ("run_of_another_size", runs((0, 64)), runs((0, 32)), None),
-        ("split_runs_of_one_size", runs((0, 32), (64, 96)), runs((0, 64)), "D-SS2-1"),
+        (
+            "split_runs_of_one_size",
+            runs((0, 32), (64, 96)),
+            runs((0, 64)),
+            "replay-compares-signatures",
+        ),
         ("another_shape", ints([0, 1, 2]), runs((0, 3)), None),
     ]
     for index in range(count):
@@ -484,7 +518,7 @@ def _replay_cases(
                 f"random_run_{index}",
                 runs((start, start + size)),
                 runs((moved, moved + size)),
-                None if moved == start else "D-SS2-1",
+                None if moved == start else "replay-compares-signatures",
             )
         )
     cases = []
@@ -553,7 +587,9 @@ def _stream_cases(modules: dict[str, types.ModuleType]) -> list[Json]:
                 "name": f"recorded_{recorded}_asked_{asked}",
                 "recorded": recorded,
                 "asked": asked,
-                "divergence": "D-SS2-2" if asked < recorded else None,
+                "divergence": "finish-refuses-shorter-stream"
+                if asked < recorded
+                else None,
                 "oracle": oracle,
                 "port": port,
             }

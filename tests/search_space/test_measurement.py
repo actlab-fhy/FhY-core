@@ -1,7 +1,7 @@
 """The interface suite of objectives and measurements.
 
 `Direction` and `MeasurementStatus`, `Objective` and its `compare` (NaN
-included, F-SS-023), the constructors of `Measurement` and every refusal,
+included), the constructors of `Measurement` and every refusal,
 its values, notes and `dominates`, and the `Measurer` protocol. The tests
 ported from MOGA-VM's `tests/cir/lowering/search/test_records.py` carry the
 name of the test they port in their docstrings.
@@ -189,7 +189,7 @@ def test_report_is_never_compared() -> None:
 def test_a_nan_loses_to_every_number(
     build: Callable[[], Objective], number: float
 ) -> None:
-    """Test a NaN is worse than any number in either direction (F-SS-023)."""
+    """Test a NaN is worse than any number in either direction."""
     objective = build()
 
     assert objective.compare(math.nan, number) == -1
@@ -213,7 +213,7 @@ def test_two_nans_tie() -> None:
 def test_a_nan_never_blocks_a_later_best(
     build: Callable[[], Objective], values: list[float], best: float
 ) -> None:
-    """Test a running best is not stuck on a NaN that came first (F-SS-023)."""
+    """Test a running best is not stuck on a NaN that came first."""
     assert _running_best(build(), values) == best
 
 
@@ -309,7 +309,7 @@ def test_an_ok_measurement_refuses_a_repeated_objective() -> None:
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_an_ok_measurement_refuses_a_non_finite_value(value: float) -> None:
-    """Test a NaN or an infinity is refused, naming the objective (F-SS-023)."""
+    """Test a NaN or an infinity is refused, naming the objective."""
     with pytest.raises(MeasurementError, match='"power" is not finite'):
         Measurement.ok(_key(), [(_latency(), 1.0), (_power(), value)])
 
