@@ -796,6 +796,9 @@ module depends only on the layers before it:
    on `constraint` and never on `pass`
 10. `stack` and `scope`, the last-in, first-out stack and the lexical
     scope, which depend on no other module, each other included
+11. `search_space`, the decisions of a compiler search and the points it
+    visits, which depends on `param`, `constraint` and `expression`, and
+    never on `pass`, `types` or `symbol_table`
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -830,6 +833,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbol_table` | `fhy_core::symbol_table`; the abstract `SymbolTableFrame` that Python-defined frames subclass stays in Python |
 | `fhy_core.utils.stack` | `fhy_core::stack`, for Rust users; the Python `Stack` stays a separate Python implementation with the same behavior |
 | `fhy_core.utils.scope` | `fhy_core::scope`, for Rust users; the Python `Scope` stays a separate Python implementation with the same behavior |
+| `fhy_core.search_space` | `fhy_core::search_space`; MOGA-VM's `moga_vm.cir.space.core`, ported, whose CIR-specific kinds implement its traits in MOGA-VM |
 
 ### Errors belong to their module
 

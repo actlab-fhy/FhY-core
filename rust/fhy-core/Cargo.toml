@@ -45,6 +45,10 @@ z3 = { workspace = true, optional = true }
 z3 = ["dep:z3"]
 # The array backend of `expression::evaluate`.
 ndarray = ["dep:ndarray"]
+# Test-only, not stable API: `search_space::testing`, the checks that an
+# implementation of `Variable` or `Alternative` keeps their contract, for
+# the implementing crate's tests.
+testing = []
 
 [dev-dependencies]
 postcard = { workspace = true }

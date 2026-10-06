@@ -4,8 +4,10 @@
 //! a [`Type::Extension`](crate::types::Type::Extension), a
 //! [`DataType::Extension`](crate::types::DataType::Extension), a
 //! [`Constraint::Custom`](crate::constraint::Constraint::Custom), a
-//! [`ParamDomain::Custom`](crate::param::ParamDomain::Custom), and an
-//! opaque [`Value`](crate::constraint::Value) or member. Such a part
+//! [`ParamDomain::Custom`](crate::param::ParamDomain::Custom), an
+//! opaque [`Value`](crate::constraint::Value) or member, and a search
+//! space's [`Variable`](crate::search_space::Variable) or
+//! [`Alternative`](crate::search_space::Alternative). Such a part
 //! serializes as a [`Foreign`]: the type id its implementation registered
 //! under, and its own payload as text. Serializing asks the part for it
 //! through its trait's `to_foreign`; a part whose implementation answers
@@ -99,8 +101,10 @@ impl<T: Any> AsAny for T {
 /// [`OpaqueValue`](crate::constraint::OpaqueValue),
 /// [`CustomConstraint`](crate::constraint::CustomConstraint),
 /// [`CustomDomain`](crate::param::CustomDomain),
-/// [`TypeExtension`](crate::types::TypeExtension) and
-/// [`DataTypeExtension`](crate::types::DataTypeExtension). A part is shared
+/// [`TypeExtension`](crate::types::TypeExtension),
+/// [`DataTypeExtension`](crate::types::DataTypeExtension),
+/// [`Variable`](crate::search_space::Variable) and
+/// [`Alternative`](crate::search_space::Alternative). A part is shared
 /// across threads, so it is `Send` and `Sync`:
 ///
 /// ```compile_fail
