@@ -114,7 +114,7 @@ are MOGA-VM modules outside the core (`git grep` on `origin/dev`).
 | frames | `term::AlphaRenaming::{enter_binders, extended, is_corresponding}`, `term::AlphaEquivalence` | alpha equivalence |
 | domains | `param::Param` (domain, constraints over its variable, alpha binding its variable), finite domains' `values()`, `ParamAssignment::new` / `restore` | a variable's domain; checking a configuration's values |
 | conditions, forbidden clauses | `constraint::Constraint` (`Equation`: a Boolean `expression::Expression` over identifiers; `Set`: membership of one identifier's value; `Custom(Part<dyn CustomConstraint>)`), `ConstraintSystem::{new, evaluate, is_structurally_equivalent}` and its `AlphaEquivalence`, `Constraint::free_identifiers`, `constraint::Bindings`, `ConstraintContext`, `Outcome` | the condition and forbidden semantics below; evaluated with the configuration's values as bindings |
-| choice values in constraints | SS0's identifier `Value` and member | a choice's value is the name of its chosen alternative, so `Set(choice in {a, b})` and `Equation(choice == a)` work unchanged |
+| choice values in constraints | SS0's identifier `Value` and member | a choice's value is the identifier value of its chosen alternative's name, so `Set(choice in {a, b})` works unchanged (equality is `in {a}`); an `Equation` cannot name a choice, since SS0 refuses an identifier binding in an equation (`UnusableBinding { reason: NotALiteral }`), and `Space::new` refuses one that does (N-C5) |
 | notes | `diagnostic::Note` | on every component |
 | implementor parts | `foreign::{ForeignPart, Part, Foreign, Resolve, NoForeign, BoxError}`, `impl_part!` | `Part<dyn Variable>`, `Part<dyn Alternative>` |
 | big counts | `num-bigint` (already a dependency) | SS2's cardinality |
@@ -259,6 +259,329 @@ holds it by value. Nothing else changes.
 None. The breaking change to `MemberKind` is the price of the decided
 first-class kind; the commit is marked `!`.
 
+## SS1: the Rust core (plan)
+
+The concrete plan for SS1.1 to SS1.4, in fhy-development-rs's planning
+template. The stub (`rust/fhy-core/src/search_space.rs` and
+`search_space/`) follows it; where it differs from the "Rust sketch"
+below, this plan holds. SS1.5 onward (the binding and Python) is planned
+with its own slice.
+
+### Summary
+
+`fhy_core::search_space`: the `Variable` and `Alternative` traits with
+their plain implementations, `Choice`, `Space` with its conditions and
+forbidden clauses, `Configuration` with its validation, activity,
+completeness and `ConfigurationKey`, the equivalence walk, and the wire
+forms. Every name in a space is a binder, and every identifier member is a
+reference resolved through the renaming.
+
+### Module tree and visibility
+
+| Path | Visibility | Contents |
+|---|---|---|
+| `search_space` | `pub mod` | module docs (the activity rules, equivalence, the implementor contract), explicit `pub use` |
+| `search_space::variable` | private | `Variable`, `PlainVariable`; the inherent and `AlphaEquivalence` relations of `Part<dyn Variable>` |
+| `search_space::alternative` | private | `Alternative`, `PlainAlternative`; the relations of `Part<dyn Alternative>` |
+| `search_space::choice` | private, leaf | `Choice`; caches each choice's names in canonical order |
+| `search_space::space` | private, leaf | `Space`, `Condition`, `Forbidden`, `Decision`; the checks of `Space::new`, the canonical and decision orders; `pub(super)` read-only views of the decision graph for the walk and the configuration |
+| `search_space::configuration` | private, leaf | `Configuration`, `ConfigurationKey`, `Activity`; the three validation passes; `pub(super) fn restore` for `wire` |
+| `search_space::equivalence` | private | the frame, member, domain and system correspondence, the structural and alpha walks (`pub(super)` functions only) |
+| `search_space::error` | private | `SpaceError`, `ConfigurationError`, `ConfigurationErrors` (its `new` is `pub(super)`), `EquivalenceError` |
+| `search_space::wire` | `pub mod` | `SearchSpaceResolver`, `VariableData`, `AlternativeData`, `ChoiceData`, `SpaceData`, `ConfigurationData`; the serde impls |
+| `search_space::testing` | `pub mod`, `testing` feature | `check_variable_conformance`, `check_alternative_conformance`, `ConformanceViolation`, `ContractClause` |
+
+Each public item has one path: `search_space::{Variable, PlainVariable,
+Alternative, PlainAlternative, Choice, Space, Condition, Forbidden,
+Decision, Configuration, ConfigurationKey, Activity, SpaceError,
+ConfigurationError, ConfigurationErrors, EquivalenceError}`, and the
+`wire` and `testing` items in their modules. No field is public. The
+`testing` feature is new and adds nothing to the default build; it is
+test-only API, as `fhy-core-py`'s `testing` feature is.
+
+Layer 11 in CONTRIBUTING and in the crate docs: `search_space` depends on
+`param`, `constraint`, `solver` (for the ground simplifier of a decoded
+configuration), `expression`, `term`, `diagnostic`, `foreign` and
+`identifier`, and never on `pass`, `types`, `symbol_table`, `stack` or
+`scope`.
+
+### Public API
+
+```rust
+pub trait Variable: ForeignPart {
+    fn kind(&self) -> Cow<'_, str>;
+    fn name(&self) -> &Identifier;
+    fn param(&self) -> &Param;
+    fn notes(&self) -> &[Note] { &[] }
+    fn is_extension_structurally_equivalent(&self, other: &dyn Variable) -> Result<bool, BoxError> { Ok(true) }
+    fn is_extension_alpha_equivalent_under(&self, other: &dyn Variable, renaming: &AlphaRenaming) -> Result<bool, BoxError> { Ok(true) }
+    fn eq_part(&self, other: &dyn Variable) -> bool { is_same_part(self, other) }
+    fn hash_part(&self, state: &mut dyn Hasher) {}
+}
+impl Part<dyn Variable> { pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>; }
+impl AlphaEquivalence for Part<dyn Variable> { type Error = EquivalenceError; }   // binds the names standalone
+pub struct PlainVariable { /* name, param, notes */ }                          // Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize
+impl PlainVariable {
+    pub const KIND: &'static str = "search_space.variable";
+    pub fn new(name: Identifier, param: Param) -> Self;
+    pub fn with_notes(self, notes: Vec<Note>) -> Self;
+}
+
+pub trait Alternative: ForeignPart {
+    fn kind(&self) -> Cow<'_, str>;
+    fn name(&self) -> &Identifier;
+    fn variables(&self) -> &[Part<dyn Variable>];
+    fn choices(&self) -> &[Choice] { &[] }
+    fn notes(&self) -> &[Note] { &[] }
+    fn bound_identifiers(&self) -> Result<Vec<Identifier>, BoxError> { Ok(Vec::new()) }
+    fn is_extension_structurally_equivalent(&self, other: &dyn Alternative) -> Result<bool, BoxError> { Ok(true) }
+    fn is_extension_alpha_equivalent_under(&self, other: &dyn Alternative, renaming: &AlphaRenaming) -> Result<bool, BoxError> { Ok(true) }
+    fn eq_part(&self, other: &dyn Alternative) -> bool { is_same_part(self, other) }
+    fn hash_part(&self, state: &mut dyn Hasher) {}
+}
+impl Part<dyn Alternative> { pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>; }
+impl AlphaEquivalence for Part<dyn Alternative> { type Error = EquivalenceError; }
+pub struct PlainAlternative { /* name, variables, choices, notes */ }        // Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize
+impl PlainAlternative {
+    pub const KIND: &'static str = "search_space.alternative";
+    pub fn new(name: Identifier, variables: Vec<Part<dyn Variable>>, choices: Vec<Choice>) -> Result<Self, SpaceError>;
+    pub fn with_notes(self, notes: Vec<Note>) -> Self;
+}
+
+pub struct Choice(Arc<..>);                                                  // Debug, Clone, PartialEq, Eq, Hash, AlphaEquivalence, serde
+impl Choice {
+    pub fn new(name: Identifier, alternatives: Vec<Part<dyn Alternative>>) -> Result<Self, SpaceError>;
+    pub fn with_notes(self, notes: Vec<Note>) -> Self;
+    pub fn name(&self) -> &Identifier;
+    pub fn alternatives(&self) -> &[Part<dyn Alternative>];
+    pub fn notes(&self) -> &[Note];
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>;
+}
+
+pub struct Condition { /* target, when */ }                                   // Debug, Clone, PartialEq, Eq, Hash
+impl Condition { pub fn new(target: Identifier, when: ConstraintSystem) -> Self; pub fn target(&self) -> &Identifier; pub fn when(&self) -> &ConstraintSystem; }
+pub struct Forbidden { /* when */ }                                           // Debug, Clone, PartialEq, Eq, Hash
+impl Forbidden { pub fn new(when: ConstraintSystem) -> Self; pub fn when(&self) -> &ConstraintSystem; }
+pub enum Decision<'a> { Variable(&'a Part<dyn Variable>), Choice(&'a Choice) }  // Debug, Clone, Copy; exhaustive
+impl<'a> Decision<'a> { pub fn name(&self) -> &'a Identifier; }
+
+pub struct Space(Arc<..>);                                                   // Debug, Clone, PartialEq, Eq, Hash, AlphaEquivalence, serde
+impl Space {
+    pub fn new(name: Identifier, variables: Vec<Part<dyn Variable>>, choices: Vec<Choice>,
+               conditions: Vec<Condition>, forbidden: Vec<Forbidden>) -> Result<Self, SpaceError>;
+    pub fn with_notes(self, notes: Vec<Note>) -> Self;
+    pub fn name(&self) -> &Identifier;
+    pub fn variables(&self) -> &[Part<dyn Variable>];
+    pub fn choices(&self) -> &[Choice];
+    pub fn conditions(&self) -> &[Condition];            // one per target, canonical order of targets
+    pub fn forbidden(&self) -> &[Forbidden];             // as given
+    pub fn notes(&self) -> &[Note];
+    pub fn decisions(&self) -> impl ExactSizeIterator<Item = Decision<'_>> + '_;   // canonical order
+    pub fn decision(&self, name: &Identifier) -> Option<Decision<'_>>;
+    pub fn decision_order(&self) -> &[Identifier];      // topological, ties in canonical order
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>;
+}
+
+pub enum Activity { Active, Inactive, Pending }                              // Debug, Clone, Copy, PartialEq, Eq, Hash; exhaustive
+pub struct Configuration(Arc<..>);                                           // Debug, Clone, PartialEq, Eq, Hash, AlphaEquivalence, serde
+impl Configuration {
+    pub fn new(space: &Space, entries: impl IntoIterator<Item = (Identifier, Value)>, context: &ParamContext<'_>) -> Result<Self, ConfigurationErrors>;
+    pub(super) fn restore(..) -> Result<Self, ConfigurationErrors>;           // ParamAssignment::restore for values
+    pub fn with_entry(&self, name: Identifier, value: Value, context: &ParamContext<'_>) -> Result<Self, ConfigurationErrors>;
+    pub fn with_entries(&self, entries: impl IntoIterator<Item = (Identifier, Value)>, context: &ParamContext<'_>) -> Result<Self, ConfigurationErrors>;
+    pub fn space(&self) -> &Space;
+    pub fn value(&self, name: &Identifier) -> Option<&Value>;
+    pub fn alternative(&self, choice: &Identifier) -> Option<&Part<dyn Alternative>>;
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Value)> + '_;   // canonical order
+    pub fn activity(&self, name: &Identifier) -> Option<Activity>;
+    pub fn is_complete(&self) -> bool;
+    pub fn key(&self) -> ConfigurationKey;
+    pub fn is_structurally_equivalent(&self, other: &Self) -> Result<bool, EquivalenceError>;
+}
+pub struct ConfigurationKey(Arc<[KeyEntry]>);                                // Debug, Clone, PartialEq, Eq, Hash
+
+#[non_exhaustive] pub enum SpaceError {
+    DuplicateName { name }, EmptyChoice { choice }, UnknownConditionTarget { target },
+    UnknownReference { name }, EquationOverChoice { choice }, ConditionReferencesSubtree { target, name },
+    EmptyForbidden { index }, CyclicDependency { cycle: Vec<Identifier> },
+    Hook { alternative: Identifier, source: BoxError }, Constraint(ConstraintError),
+}
+#[non_exhaustive] pub enum ConfigurationError {
+    UnknownDecision { name }, DuplicateEntry { name }, InactiveDecision { name },
+    UnknownAlternative { choice, value: Value }, Assignment { variable, error: AssignmentError },
+    Forbidden { index }, UndecidedCondition { target }, UndecidedForbidden { index },
+    FailedCondition { target, error: ConstraintError }, FailedForbidden { index, error: ConstraintError },
+}
+pub struct ConfigurationErrors(Vec<ConfigurationError>);                     // pub fn errors(&self) -> &[ConfigurationError]
+#[non_exhaustive] pub enum EquivalenceError { Constraint(ConstraintError), Extension(BoxError) }
+
+pub mod wire {
+    pub trait SearchSpaceResolver: ParamResolver + Resolve<Part<dyn Variable>> + Resolve<Part<dyn Alternative>> {}  // blanket impl
+    pub struct VariableData;    // of(&Part<dyn Variable>), foreign(), build(resolver, context) -> Part<dyn Variable>
+    pub struct AlternativeData; // of, foreign, build -> Part<dyn Alternative>
+    pub struct ChoiceData;      // of, build -> Choice (Choice::new)
+    pub struct SpaceData;       // of, build -> Space (Space::new)
+    pub struct ConfigurationData; // of, build -> Configuration (restore semantics)
+}
+
+#[cfg(feature = "testing")] pub mod testing {
+    pub fn check_variable_conformance<R: Resolve<Part<dyn Variable>> + ?Sized>(samples: &[Part<dyn Variable>], resolver: &R) -> Result<(), ConformanceViolation>;
+    pub fn check_alternative_conformance<R: Resolve<Part<dyn Alternative>> + ?Sized>(samples: &[Part<dyn Alternative>], resolver: &R) -> Result<(), ConformanceViolation>;
+    pub struct ConformanceViolation; // clause() -> ContractClause, kind() -> &str; Display, Error
+    #[non_exhaustive] pub enum ContractClause { StableGetters, UniqueKind, DistinctBoundIdentifiers, EquivalenceHooks, WireForm }
+}
+```
+
+The `Display` texts are decided in the stub (`search_space/error.rs`), one
+lowercase line each, naming identifiers as `name::id`.
+
+### Ownership and data model
+
+- `Choice`, `Space` and `Configuration` are an `Arc` of their data:
+  clones share, and a configuration holds its `Space` by value (a
+  reference count). `PlainVariable` and `PlainAlternative` are plain
+  structs; a container holds them as `Part`s.
+- `Choice::new` reads each alternative's `bound_identifiers` once and keeps
+  the choice's names in canonical order, so `Space::new`, the walk and the
+  key never call the hook again. The space keeps its names (its own name
+  first), its decisions in canonical order with each one's parent (choice
+  and alternative position), a name index, one merged condition per
+  target with the decisions it names, each forbidden clause's decisions,
+  and the decision order.
+- A configuration keeps one optional value and one `Activity` per
+  decision, in canonical order; `activity`, `value` and `is_complete` are
+  lookups.
+- Every type is `Send + Sync`: parts are, through `ForeignPart`.
+
+### Extensibility decisions
+
+- `Variable` and `Alternative` are open, object-safe traits held as
+  `Part<dyn _>` (decided). Not sealed: downstream crates implement them.
+  New methods get defaults.
+- The relations are inherent on `Part<dyn Variable>` and
+  `Part<dyn Alternative>` (`is_structurally_equivalent`) and
+  `AlphaEquivalence` impls, not trait methods, so no implementation
+  overrides the base comparison (C-8). The design's sketch put them on
+  `dyn Variable`; on the `Part` they read like `Choice`'s and `Space`'s.
+- `Decision` and `Activity` are exhaustive (callers match every case);
+  the error enums and `ContractClause` are `#[non_exhaustive]`.
+
+### Error model
+
+- Construction of a `Choice`, `PlainAlternative` or `Space` stops at the
+  first problem, in the documented order (`SpaceError`).
+- `Configuration::new` collects every problem (`ConfigurationErrors`),
+  as fhy_core's validators do, in three passes: the entries in the order
+  given (`UnknownDecision`, `DuplicateEntry`); the decisions in decision
+  order (`UndecidedCondition`, `FailedCondition`, `InactiveDecision`,
+  `UnknownAlternative`, `Assignment`); the forbidden clauses in order
+  (`Forbidden`, `UndecidedForbidden`, `FailedForbidden`). A refused entry
+  counts as unassigned for every later check.
+- Comparisons return `EquivalenceError` for a failing hook or custom
+  constraint. Two spaces of different shapes, or a standalone alternative
+  whose bound identifiers repeat, answer `false`, not an error.
+- No panics on input. `expect` only for the documented invariant that a
+  space's names are distinct, which makes pairing two spaces of one shape
+  infallible.
+
+### Behavior
+
+| Question | Answer |
+|---|---|
+| a space's names | its own name, then each decision's, alternative's and bound identifier's in canonical order (an alternative's: its name, its bound identifiers, its variables, its sub-choices); all distinct, else `DuplicateName` naming the first repeat |
+| canonical order of decisions | top-level variables, then top-level choices, each choice followed by its alternatives' variables then sub-choices, depth first |
+| a condition's references | its free identifiers, checked in id order: each a decision (`UnknownReference`), not a choice inside an equation (`EquationOverChoice`), not the target or under it (`ConditionReferencesSubtree`) |
+| several conditions on one target | conjoined into one condition (one `ConstraintSystem` holding all their members) |
+| a forbidden clause with no reference | refused (`EmptyForbidden`): it would forbid every configuration |
+| dependency | a decision depends on its choice and on every decision its condition names; a cycle is `CyclicDependency`, listed from its decision first in canonical order |
+| decision order | Kahn's order taking, at each step, the ready decision first in canonical order |
+| activity | as `Configuration`'s docs state: inactive wins over pending, pending over active |
+| a condition naming a choice | `ch in {a}` reads the choice's value, the identifier value of the chosen alternative's name |
+| an undecided or failing condition | reported (N-C2), and its target counts as pending, so an entry for it is also `InactiveDecision` |
+| completeness | every decision is assigned or inactive |
+| `with_entry`, `with_entries` | replace or add entries, then check the whole configuration as `new` does; no entry is dropped implicitly |
+| key | per decision: inactive, unassigned, the chosen alternative's position, or the value with each identifier the space binds written as its position among the space's names; an identifier the space does not bind stays itself |
+| structural equivalence | the walk with names by `==`, params by `Param::is_structurally_equivalent`, systems by `ConstraintSystem::is_structurally_equivalent`, hooks for the implementation's data |
+| alpha equivalence | equal shapes; one frame pairing the two spaces' names in canonical order; under it each part, the conditions by target position and the forbidden clauses in order; notes by `==` |
+| identifier members (D-SS-3) | resolved by the walk itself through `is_corresponding`: a categorical domain's and a set constraint's members as a bijection, a permutation's and an ordinal's in order, inside tuples and frozen sets too; every other member type-strictly by `==`. A free identifier never matches a bound one |
+| constraint systems in the walk | members paired up in any order (greedy matching, sound because correspondence under one renaming is an equivalence), since canonical order follows ids; equations and custom constraints through `Constraint`'s alpha equivalence, set constraints by polarity, corresponding variables and members |
+| params in the walk | domains as above, then the constraints under one more frame pairing the params' variables |
+| standalone `Choice`, alternative, variable | binds its own names (same order) on top of the renaming given, then compares as nested |
+| configuration equivalence | spaces as above; values under the spaces' frame: same alternative position for a choice, corresponding values for a variable |
+| `==`, `Hash` | structural through `eq_part`/`hash_part`; a configuration's include its space |
+| wire | as `wire`'s docs; decoding a configuration checks values with `restore` semantics; `Configuration`'s own `Deserialize` uses a solver holding the ground simplifier, so ground equations in conditions evaluate |
+
+### Non-goals
+
+- The binding, Python, `Trace`, `Measurement` (SS1.5 on, SS2, SS3).
+- Enumeration, cardinality, sampling (SS2).
+- Checking that a set constraint's members on a choice name its
+  alternatives: such a member never matches, and is allowed.
+- Bounding the nesting depth of a decoded space: serde recurses once per
+  choice level, as the space that wrote it did. (Values keep their
+  `MAX_VALUE_DEPTH`.)
+
+### Test plan (SS1.3)
+
+In `rust/fhy-core/tests/it/search_space/`, through the public API, with
+builders, strategies and the test implementors in
+`tests/it/support/search_space.rs`:
+
+- `variable_stories.rs`, `alternative_stories.rs`, `choice_stories.rs`:
+  construction, kinds, `==`/`Hash`, standalone equivalence, identifier
+  members as references, constraints in alpha mode, type-strict members;
+- `space_stories.rs`: every `SpaceError` in its documented order, names
+  across levels, merged conditions, canonical and decision orders,
+  `decision`, `decisions`, `with_notes`;
+- `activity_stories.rs`: each activity rule (hierarchy, conditions,
+  pending, undecided and failing conditions);
+- `forbidden_stories.rs`: inactive, pending, holding, violated, undecided
+  and failing clauses;
+- `configuration_stories.rs`: every `ConfigurationError`, collect-all and
+  its order, completeness, `with_entry`/`with_entries`, accessors, the key;
+- `implementor_stories.rs`: test implementors shaped like `ArrayTileKnob`
+  and `RealizationOption`, in spaces, standalone and nested, and one
+  breaking each checkable contract clause; the conformance checks run
+  under the `testing` feature;
+- `equivalence_stories.rs`: the audit's A1 to A7, C-1, C-2, C-4, both
+  directions, configurations;
+- `error_text_stories.rs`: every `Display` text;
+- `serde_stories.rs`: JSON and postcard round trips, the pinned shapes,
+  foreign parts through a resolver, refusals;
+- `properties.rs` (proptest): reflexive, symmetric (the F-SS-002 sweep with
+  label reuse), structural implies alpha, invariant under bijective
+  relabeling, a perturbation breaks it, constraint-aware (F-SS-001), no
+  capture (F-SS-003), no `1`/`true`/`1.0` conflation (F-SS-004), equal
+  keys for corresponding configurations and `Eq`/`Hash` agreement, activity
+  against a brute-force reference evaluator, serde round trips;
+- `tests/it/search_space_golden.rs`: the oracle corpus, below.
+
+### Changes to the design's sketch
+
+- `Configuration::is_active(name) -> Activity` is
+  `activity(name) -> Option<Activity>`: three answers are not a predicate,
+  and a name the space lacks answers `None`.
+- `ConfigurationError::Undecided { at }` is `UndecidedCondition { target }`
+  and `UndecidedForbidden { index }`, since a clause has no name;
+  `Constraint(ConstraintError)` is `FailedCondition` and `FailedForbidden`,
+  which say where. `DuplicateEntry` is new: the constructor takes a list of
+  entries, which can repeat a decision (F-SS-005, C-6).
+- `SpaceError` gains `EquationOverChoice` (N-C5) and `EmptyForbidden`, and
+  `Hook` names its alternative. `EquivalenceError::Param` is dropped: the
+  walk compares params itself, so nothing returns a `ParamError`.
+- The relations are on `Part<dyn _>`, not on `dyn _`.
+- The key writes a bound identifier as its position among the space's
+  names, not in the variable's domain (see "`ConfigurationKey`").
+- `Configuration::with_entries` is added, which MOGA-VM's migration map
+  uses; conditions on one target are merged into one.
+- The golden corpus has a recorder, not a generator (see "Equivalence
+  plan").
+
+### Open questions
+
+None. The lead's decision on conditions over choices and D-SS-3's
+resolution are recorded under "Decisions".
+
 ## Semantics
 
 ### Structure and names
@@ -325,11 +648,13 @@ status, or every problem found (collect-all, as validators in fhy_core do).
 | Problem | Refused when |
 |---|---|
 | `UnknownDecision` | an entry names no decision of the space |
+| `DuplicateEntry` | an entry names a decision an earlier entry named (F-SS-005, C-6) |
 | `InactiveDecision` | an entry assigns a decision that is inactive or pending (replaces "UNSELECTED with assignments") |
 | `UnknownAlternative` | a choice's value names no alternative of that choice |
-| `Inadmissible`, `ViolatedConstraint`, `UnverifiedConstraint` | a variable's value fails `ParamAssignment::new` (`restore` semantics when built from a payload) |
+| `Assignment` (`Inadmissible`, `ViolatedConstraint`, `UnverifiedConstraint`) | a variable's value fails `ParamAssignment::new` (`restore` semantics when built from a payload) |
 | `Forbidden { index }` | a forbidden clause applies and holds |
-| `Undecided { decision or clause }` | a condition or clause evaluates `Undecided` |
+| `UndecidedCondition`, `UndecidedForbidden` | a condition or clause evaluates `Undecided` |
+| `FailedCondition`, `FailedForbidden` | a condition or clause fails to evaluate |
 
 - A **valid** configuration has none of these problems.
 - A **complete** configuration is valid and assigns every active decision.
@@ -347,14 +672,18 @@ The key is one entry per decision in canonical order:
 - `Inactive`;
 - `Unassigned` (active or pending, no value);
 - `Alternative(index)`, the chosen alternative's position in its choice;
-- `Value(key value)`: the value, with every identifier member replaced by
-  its position in the variable's finite domain.
+- `Value(key value)`: the value, with every identifier the space binds
+  replaced by its position among the space's names. (A position in the
+  variable's finite domain would not do: a categorical domain keeps its
+  members in id order, which a renaming changes.) An identifier the space
+  does not bind stays itself.
 
 Properties:
 
-- It mentions no identifier, so it is invariant under renaming. Two
-  configurations of alpha-equivalent spaces whose values correspond under
-  the spaces' pairing have equal keys (a property test).
+- It mentions no identifier the space binds, so it is invariant under
+  renaming them. Two configurations of alpha-equivalent spaces whose
+  values correspond under the spaces' pairing have equal keys (a property
+  test).
 - It is `Eq + Hash`, and the Python object is hashable with structural `==`
   (N-7 translated).
 - A key is meaningful within its space. Caches and measurements are keyed by
@@ -401,7 +730,7 @@ The audit's fixes carry over:
 |---|---|
 | D-SS-1 | constraints compared under the variable frame |
 | D-SS-2 | one frame from unique lists; standalone nodes re-enter the same pairs |
-| D-SS-3 | `is_corresponding` for members (SS0) |
+| D-SS-3 | the walk resolves identifier members, in domains and in set constraints, through `is_corresponding` (SS1 plan, "Behavior") |
 | D-SS-4 | type-strict `Value`s |
 | D-SS-5 | the checks of `Space::new` and `Configuration::new` |
 | D-SS-6 | a choice needs one or more alternatives |
@@ -426,6 +755,7 @@ which depends on `param`, `constraint` and `expression`, and never on
 | `search_space/equivalence.rs` | private: frames, member matching, the walk |
 | `search_space/error.rs` | `SpaceError`, `ConfigurationError(s)`, `EquivalenceError` |
 | `search_space/wire.rs` | wire forms with `Foreign` parts; `build(resolver)` |
+| `search_space/testing.rs` | behind the `testing` feature: the conformance checks of the implementor contract |
 | SS2: `search_space/trace.rs`, `domain.rs`, `oracle.rs` | the trace and the stream |
 | SS3: `search_space/measurement.rs` | `Objective`, `Direction`, `Measurement`, `Measurer` |
 
@@ -504,6 +834,9 @@ pub trait Alternative: ForeignPart {
   `eq_part`/`hash_part` are structural.
 
 ## Rust sketch
+
+The direction the design started from. The SS1 plan above supersedes it
+where they differ.
 
 ```rust
 pub struct Choice(/* Arc: name, alternatives: Vec<Part<dyn Alternative>> (non-empty, unique names), notes */);
@@ -956,8 +1289,14 @@ the status), 2 `metric` cases moved to SS3, 1 replaced, 48 stay in MOGA-VM.
 The oracle (MOGA-VM `3d93ba3` on fhy_core v0.1.8, with stand-ins, as the
 audit ran it) still defines the behavior (C) keeps.
 
-- **Golden corpus:** `rust/fhy-core/tests/golden/generate_search_space_cases.py`,
-  run by hand with `--moga-vm-src`.
+- **Golden corpus:** `rust/fhy-core/tests/golden/record_search_space_cases.py`,
+  run by hand with `--moga-vm-src` naming the oracle's import paths, writes
+  `search_space_cases.json`, which `tests/it/search_space_golden.rs`
+  replays. It is a recorder, not a `generate_*.py` generator: the drift
+  check (`tests/test_golden_corpora.py`) and the `golden_expanded` session
+  rerun every generator in CI, which cannot install MOGA-VM, and this
+  oracle is frozen (MOGA-VM `3d93ba3` on fhy_core v0.1.8), so its corpus is
+  a fixed regression corpus, as a deleted Python implementation's is.
   - Each case is described once (labels with sharing indices, finite
     domains with constraints, a commitment and values) and built twice: as
     a MOGA-VM `DecisionPoint` (the oracle) and as the corresponding `Choice`
@@ -966,8 +1305,15 @@ audit ran it) still defines the behavior (C) keeps.
     directions) and validation outcomes, with provenance.
   - Each verdict a divergence changes (A1 to A7, duplicates, status) is
     tagged, its expected value written from the rule, and reviewed by hand.
+  - Each case the port builds also carries its V2 texts, the space's and
+    the configuration's, written by the recorder from the documented
+    shapes with identifiers at fixed ids: the golden rows the serde replay
+    reads and writes back byte-identically.
 - **Expanded corpus:** the audit sweep's distribution (`--seed 7
-  --random-count 2000`) in `noxfile.py`'s `EXPANDED_GOLDEN_CORPORA`.
+  --random-count 2000`), recorded by hand and replayed by the ignored
+  `search_space_golden` test from the file `FHY_SEARCH_SPACE_CORPUS`
+  names. It is not in `noxfile.py`'s `EXPANDED_GOLDEN_CORPORA`, for the
+  reason above.
 - **Not oracle-backed:** conditions, forbidden clauses and hierarchy beyond
   one level, which MOGA-VM lacks. These are checked against a brute-force
   reference evaluator written in the test (proptest), not the oracle.
@@ -977,7 +1323,9 @@ audit ran it) still defines the behavior (C) keeps.
 
 ## Benchmark plan
 
-`benchmarks/test_search_space.py`. The before numbers are MOGA-VM's Python
+`benchmarks/test_search_space.py`, written in SS1.1 against the planned
+Python API; it skips until `fhy_core.search_space` exists (SS1.7), which
+adapts it to the final signatures. The before numbers are MOGA-VM's Python
 core on fhy_core 0.2.0 (audit oracle, 2026-10-05, CPython 3.11): building
 8×4 options with params 660 µs; validating a decision point 9.8 µs;
 structural self-equivalence 33 µs; alpha against a relabeled copy 184 µs;
@@ -1008,7 +1356,7 @@ Every step ends with the S16 gate:
    `Condition`, `Forbidden`, `Configuration`, `ConfigurationKey`, errors,
    wire), with rustdoc carrying the implementor contract; the layer 11 and
    mapping rows.
-4. **SS1.3:** Rust tests, conformance helpers, the golden generator and
+4. **SS1.3:** Rust tests, conformance helpers, the golden recorder and
    corpus; red.
 5. **SS1.4:** the core, in this order:
    1. variables and alternatives;
@@ -1031,7 +1379,8 @@ Every step ends with the S16 gate:
 
 ## Decisions
 
-All decided by the user on 2026-10-05. Nothing is open.
+All decided by the user on 2026-10-05, except N-C5 and D-SS-3's resolution,
+decided on 2026-10-06 for SS1. Nothing is open.
 
 | # | Question | Decision |
 |---|---|---|
@@ -1050,6 +1399,8 @@ All decided by the user on 2026-10-05. Nothing is open.
 | N-C2 | undecided conditions and forbidden clauses | a `ConfigurationError` |
 | N-C3 | `Metric` | dropped from the space; `Direction` and `Objective` come with `Measurement` in SS3 |
 | N-C4 | first slice | SS1 without `Trace` and `Measurement` |
+| N-C5 | choices in conditions and forbidden clauses (decided 2026-10-06, for SS1) | a condition or forbidden clause names a choice only in a set constraint (`choice in {a, b}`; equality is `in {a}`); an `Equation` naming a choice is a `SpaceError` (`EquationOverChoice`) from `Space::new`, never a failure at evaluation; equations over variables with numeric or Boolean params are fine |
+| D-SS-3 | capture-free identifier matching (settled in SS1's plan) | the search-space walk resolves identifier members itself, through `is_corresponding`, in domains and in the set constraints of params, conditions and forbidden clauses; `constraint`'s own set-constraint alpha equivalence still compares members by value |
 
 **A recommendation for MOGA-VM, not decided here** (it is MOGA-VM's call):
 the committed configuration becomes a field of `Function`, and the
