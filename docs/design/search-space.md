@@ -2740,6 +2740,42 @@ the plan, with these refinements:
 | panics | none planned |
 | binding | `PyObjective` and `PyMeasurement` `pub(crate)` for the module registration; their helpers `pub(super)` |
 
+### SS3.2: the red tests, as written (2026-10-06)
+
+| Where | Files | Tests |
+|---|---|---|
+| Rust, `tests/it/search_space/` | `objective_stories`, `measurement_stories`, `measurement_serde_stories`, `measurement_properties`; builders in `support/measurement.rs` | 112: 96 failing, 16 passing |
+| Python, `tests/search_space/` | `test_measurement.py`, `test_measurement_rust_binding.py`, `test_measurement_properties.py`; `Objective` and `Measurement` added to `tests/test_gc_cycles.py`'s exemptions | 150: 140 failing, 10 passing |
+
+- **Red for the right reason:** every failing test fails at a `todo!()`
+  (in Python, `PanicException: not yet implemented`; the module-level
+  objectives are built lazily so each test fails on its own).
+- **Green against the stub, by design:** the `Direction` names and texts
+  (derived), the error texts (decided in the stub), payloads of another
+  shape (refused by the derived wire form), the Python enums, the
+  exception's base and the class structure.
+- **F-SS-023:** a NaN is refused by every constructor and every reader
+  (JSON cannot carry one; a forged postcard payload, with a control that
+  decodes the same payload with a finite value, can); `compare` ranks a
+  NaN last in both directions, and a running best that meets a NaN first
+  still reaches the best number, in Rust and in Python.
+- **Properties** (Rust proptest, 256 cases; Python hypothesis, 200):
+  `dominates` is irreflexive, asymmetric and transitive; reversing every
+  direction reverses it; over one compared objective it is `<` or `>`;
+  it ignores reported values and the order of the values; measurements
+  round-trip through JSON and postcard. Values come from `{0, 1, 2, 3}`,
+  so ties are common, and a guard checks a fixed sample holds both
+  dominating and non-dominating comparable pairs.
+- **Ported:** `test_records.py`'s two record tests and the comparison of
+  its `best` test, named in their docstrings.
+- **Fake-test pass:** one test passed whatever the value's sign (a
+  `-0.0 or 0.0` that is falsy); fixed before the commit.
+- **Persona pass:** added that `value` matches an `Objective` by name and
+  direction (a `str` by name), that `values` is a copy, the extreme finite
+  values kept bit for bit, a repeated objective reported before a NaN, a
+  failed measurement's empty reason round-tripping, a non-ASCII name, and
+  a key with an opaque value that cannot be written.
+
 ### MOGA-VM migration map (SS2 and SS3)
 
 None of this is done by the port; it is what MOGA-VM changes to use it.
