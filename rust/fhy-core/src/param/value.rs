@@ -16,7 +16,7 @@ pub(crate) fn member_value(member: &Member) -> Value {
         MemberKind::Int(value) => Value::Int(value.clone()),
         MemberKind::Float(value) => Value::Float(value),
         MemberKind::Str(value) => Value::Str(value.to_owned()),
-        MemberKind::Identifier(_) => todo!(),
+        MemberKind::Identifier(value) => Value::Identifier(value.clone()),
         MemberKind::Tuple(members) => Value::Tuple(members.iter().map(member_value).collect()),
         MemberKind::FrozenSet(members) => {
             Value::FrozenSet(members.iter().map(member_value).collect())
@@ -33,8 +33,10 @@ fn tie_rank(member: &Member) -> u8 {
         MemberKind::Float(_) => 1,
         MemberKind::Int(_) => 2,
         MemberKind::Str(_) => 3,
-        MemberKind::Identifier(_) => todo!(),
-        MemberKind::Tuple(_) | MemberKind::FrozenSet(_) | MemberKind::Opaque(_) => 4,
+        MemberKind::Identifier(_)
+        | MemberKind::Tuple(_)
+        | MemberKind::FrozenSet(_)
+        | MemberKind::Opaque(_) => 4,
     }
 }
 
@@ -157,6 +159,7 @@ pub(crate) fn are_values_equal(left: &Value, right: &Value) -> bool {
         (Value::Float(left), Value::Float(right)) => left == right,
         (Value::Decimal(left), Value::Decimal(right)) => left == right,
         (Value::Str(left), Value::Str(right)) => left == right,
+        (Value::Identifier(left), Value::Identifier(right)) => left == right,
         (Value::Tuple(left), Value::Tuple(right)) => {
             left.len() == right.len()
                 && left

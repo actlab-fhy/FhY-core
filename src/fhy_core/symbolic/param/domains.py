@@ -555,7 +555,8 @@ class OrdinalDomain(_rs.OrdinalDomain, WrappedFamilySerializable):
     ``0.0``.
 
     A NaN value is refused: it is unequal to itself, so it could never be
-    admitted, and it has no place in a total order. An infinity is kept.
+    admitted, and it has no place in a total order. An infinity is kept. An
+    ``Identifier`` is refused: identifiers do not order.
     """
 
     _WIRE_FAMILY: ClassVar[str | None] = "param_domain"
@@ -571,8 +572,9 @@ class CategoricalDomain(_rs.CategoricalDomain, WrappedFamilySerializable):
     """Finite, unordered set of admissible category values.
 
     Categories are stored as a strict-unique tuple in the constraint
-    members' canonical order: by kind (``bool``, ``int``, ``str``, then
-    ``Serializable`` values), then by value. Native ``frozenset`` storage
+    members' canonical order: by kind (``bool``, ``Identifier``, ``int``,
+    ``str``, then other ``Serializable`` values), then by value, identifiers
+    by id. Native ``frozenset`` storage
     would collapse values that compare ``==`` but are distinct kinds
     (``True`` and ``1``).
     """

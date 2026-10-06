@@ -24,12 +24,12 @@ use pyo3::types::{PyByteArray, PyBytes, PyDict, PyString, PyType};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use fhy_core::constraint::{Constraint, CustomConstraint, OpaqueValue, Value};
+use fhy_core::constraint::{Constraint, CustomConstraint, OpaqueValue};
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, Part, Resolve};
 use fhy_core::param::{CustomDomain, ParamDomain};
 use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 
-use crate::constraint::{read_constraint, read_opaque_member};
+use crate::constraint::{read_constraint, read_resolved_part};
 use crate::util::exceptions::{
     DESERIALIZATION_VALUE_ERROR, MALFORMED_PAYLOAD_ERROR, SERIALIZATION_ERROR,
 };
@@ -360,11 +360,8 @@ impl Resolve<Part<dyn OpaqueValue>> for PyResolver {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, false)?;
-            match read_opaque_member(&object) {
-                Ok(Value::Opaque(opaque)) => Ok(opaque),
-                Ok(_) => Err(wrong_kind(py, foreign, "Serializable value")),
-                Err(error) => Err(record_foreign_failure(py, foreign.type_id(), error)),
-            }
+            read_resolved_part(&object)
+                .map_err(|error| record_foreign_failure(py, foreign.type_id(), error))
         })
     }
 }

@@ -11,8 +11,9 @@ use pyo3::types::{PyBool, PyByteArray, PyBytes, PyFloat, PyInt, PyString, PyType
 use fhy_core::constraint::Value;
 use fhy_core::param::DomainKind;
 
-use crate::constraint::{read_bound_value, read_opaque_member};
+use crate::constraint::{read_bound_value, read_identifier, read_opaque_member};
 use crate::expression::read_big_int;
+use crate::identifier::read_identifier_id;
 
 /// Return whether `value` is a `Serializable`.
 fn is_serializable(value: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -89,7 +90,9 @@ pub(super) const fn value_kind_message(kind: DomainKind) -> &'static str {
 ///
 /// A `bool`, `int` or `str` is one, and a `float` unless the kind is
 /// categorical; a number of a subclass is read as the exact number it
-/// denotes. A `Serializable` is one when its class supports the ordering
+/// denotes. An `Identifier` is one, read as the core's identifier, unless
+/// the kind is ordinal, since identifiers do not order. Another
+/// `Serializable` is one when its class supports the ordering
 /// (ordinal) or the equality (categorical, permutation) the kind needs, and
 /// is read as an opaque value Python compares.
 fn read_finite_value(kind: DomainKind, value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
@@ -104,6 +107,12 @@ fn read_finite_value(kind: DomainKind, value: &Bound<'_, PyAny>) -> PyResult<Opt
     }
     if let Ok(text) = value.cast::<PyString>() {
         return Ok(Some(Value::Str(text.to_str()?.to_owned())));
+    }
+    if read_identifier_id(value)?.is_some() {
+        if kind == DomainKind::Ordinal {
+            return Ok(None);
+        }
+        return read_identifier(value).map(|identifier| Some(Value::Identifier(identifier)));
     }
     if !is_serializable(value)? {
         return Ok(None);

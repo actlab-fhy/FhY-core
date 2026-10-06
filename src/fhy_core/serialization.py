@@ -823,8 +823,9 @@ def serialize_value(value: RegistryWrappedValue) -> SerializedDict:
     """Return the V2 form of a member value, as the Rust core writes a value.
 
     ``{"bool": b}``, ``{"int": "12"}``, ``{"float": "1.5"}``, ``{"str": ..}``,
+    ``{"identifier": {"id": .., "name_hint": ..}}`` for an ``Identifier``,
     ``{"tuple": [..]}``, ``{"frozen_set": [..]}`` (in the canonical member
-    order), or ``{"opaque": <foreign part>}`` for a ``Serializable``.
+    order), or ``{"opaque": <foreign part>}`` for another ``Serializable``.
 
     Raises:
         SerializationTypeError: If ``value`` is not a supported leaf,
@@ -837,6 +838,9 @@ def serialize_value(value: RegistryWrappedValue) -> SerializedDict:
 
 def deserialize_value(data: SerializedDict) -> RegistryWrappedValue:
     """Return the member value of its V2 form, the inverse of `serialize_value`.
+
+    An identifier written as an opaque part, ``{"opaque": {"type_id": "id",
+    ..}}``, as 0.2.0 wrote it, reads as an ``Identifier`` too.
 
     Raises:
         DeserializationValueError: If ``data`` is not the V2 form of a value.

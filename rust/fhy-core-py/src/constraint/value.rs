@@ -2,15 +2,18 @@
 //! values.
 //!
 //! A member is read strictly: the value must be a `str`, `int`, `float` or
-//! `bool`, a hashable `tuple` or `frozenset` of members, or a `Serializable`
-//! that is also `Hashable`, and anything else raises `ConstraintError` with
-//! the Python implementation's text. A number whose type subclasses `int`
-//! or `float` becomes the exact number it denotes. A bound value is read
-//! leniently: every value becomes a core value, and one the core cannot
-//! hold, such as `None`, a list or an object, becomes an opaque value that
-//! is not member-shaped, so only the constraint that reads it judges it.
+//! `bool`, an `Identifier`, a hashable `tuple` or `frozenset` of members, or
+//! a `Serializable` that is also `Hashable`, and anything else raises
+//! `ConstraintError` with the Python implementation's text. A number whose
+//! type subclasses `int` or `float` becomes the exact number it denotes, and
+//! an `Identifier`, of its class or a subclass, the core identifier with its
+//! id and name hint. A bound value is read leniently: every value becomes a
+//! core value, and one the core cannot hold, such as `None`, a list or an
+//! object, becomes an opaque value that is not member-shaped, so only the
+//! constraint that reads it judges it. A core identifier becomes a new
+//! Python `Identifier`, equal to the one read.
 //!
-//! A `Serializable` member is an opaque value: [`PyOpaqueValue`]
+//! Any other `Serializable` member is an opaque value: [`PyOpaqueValue`]
 //! compares it with Python's `==`, after `type(a) is type(b)`. A comparison
 //! that raises answers `false` and keeps its exception in a per-thread
 //! slot, which the entry point that started the comparison raises when the
@@ -34,6 +37,7 @@ use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
+use crate::identifier::{identifier_to_python, read_identifier_id, restore_identifier};
 use crate::util::gc::Slot;
 use crate::util::hook::ask;
 use crate::util::pending::has_pending_error;
@@ -90,6 +94,9 @@ pub(crate) struct PyOpaqueValue {
     is_member_shaped: bool,
     /// The ordering key, computed when a member is read, or on first use.
     key: OnceLock<String>,
+    /// The identifier the object is, for an `Identifier` a resolver read
+    /// from the opaque form 0.2.0 writes.
+    identifier: Option<Identifier>,
 }
 
 impl PyOpaqueValue {
@@ -102,6 +109,7 @@ impl PyOpaqueValue {
             type_name: read_type_name(object),
             is_member_shaped,
             key: key.map_or_else(OnceLock::new, OnceLock::from),
+            identifier: None,
         }
     }
 
@@ -217,7 +225,7 @@ impl OpaqueValue for PyOpaqueValue {
     /// Return the identifier the object is, for a Python `Identifier` that
     /// a resolver read from the opaque form 0.2.0 writes.
     fn identifier(&self) -> Option<Identifier> {
-        todo!()
+        self.identifier.clone()
     }
 }
 
@@ -251,9 +259,39 @@ pub(crate) fn read_opaque_member(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     ))))
 }
 
+/// Return the opaque value of the `Serializable` `object` a resolver read
+/// from a foreign part: one keyed as a constraint member's, or, for an
+/// `Identifier`, one that reports its identifier, which the core reads as
+/// an identifier value.
+///
+/// # Errors
+///
+/// Raises what computing the key raises, and `OverflowError` for an
+/// identifier whose id is outside the payload range.
+pub(crate) fn read_resolved_part(object: &Bound<'_, PyAny>) -> PyResult<Part<dyn OpaqueValue>> {
+    if read_identifier_id(object)?.is_some() {
+        return Ok(Part::new(PyOpaqueValue {
+            identifier: Some(read_identifier(object)?),
+            ..PyOpaqueValue::new(object, true, None)
+        }));
+    }
+    let key = build_ordering_key(object)?;
+    Ok(Part::new(PyOpaqueValue::new(object, true, Some(key))))
+}
+
+/// Return the core identifier of the Python `Identifier` `object`.
+///
+/// # Errors
+///
+/// Raises `OverflowError` if its id is outside the payload range, which no
+/// identifier this process built or read is.
+pub(crate) fn read_identifier(object: &Bound<'_, PyAny>) -> PyResult<Identifier> {
+    restore_identifier(object, "value", "identifier")
+}
+
 /// Return the Python value of the core `value`: a `bool`, an `int`, a
-/// `float`, a `Decimal`, a `str`, a `tuple`, a `frozenset`, or the object of
-/// an opaque value.
+/// `float`, a `Decimal`, a `str`, an `Identifier`, a `tuple`, a
+/// `frozenset`, or the object of an opaque value.
 ///
 /// # Errors
 ///
@@ -314,7 +352,7 @@ fn value_to_python_at<'py>(
         Value::Float(value) => Ok(PyFloat::new(py, *value).into_any()),
         Value::Decimal(value) => decimal_class(py)?.call1((value.to_string(),)),
         Value::Str(value) => Ok(PyString::new(py, value).into_any()),
-        Value::Identifier(_) => todo!(),
+        Value::Identifier(value) => identifier_to_python(py, value),
         Value::Tuple(values) => {
             let elements = values
                 .iter()
@@ -410,8 +448,8 @@ fn check_member_hash(value: &Bound<'_, PyAny>, member: &Member) -> PyResult<()> 
             MemberKind::Bool(_)
             | MemberKind::Int(_)
             | MemberKind::Float(_)
-            | MemberKind::Str(_) => {}
-            MemberKind::Identifier(_) => todo!(),
+            | MemberKind::Str(_)
+            | MemberKind::Identifier(_) => {}
         }
     }
     Ok(())
@@ -467,6 +505,9 @@ fn read_member_value_at(
     }
     if let Ok(text) = value.cast::<PyString>() {
         return Ok(Value::Str(text.to_str()?.to_owned()));
+    }
+    if read_identifier_id(value)?.is_some() {
+        return read_identifier(value).map(Value::Identifier);
     }
     if is_serializable_hashable(value)? {
         let key = build_ordering_key(value)?;
@@ -538,12 +579,16 @@ fn read_bound_value_at(
     if value.is_none() {
         return Ok(build_opaque(value, false));
     }
+    if read_identifier_id(value)?.is_some() {
+        return read_identifier(value).map(Value::Identifier);
+    }
     let is_member_shaped = is_serializable_hashable(value)?;
     Ok(build_opaque(value, is_member_shaped))
 }
 
 /// Return the Python value of `member`: a `bool`, an `int`, a `float`, a
-/// `str`, a `tuple`, a `frozenset`, or the object of an opaque member.
+/// `str`, an `Identifier`, a `tuple`, a `frozenset`, or the object of an
+/// opaque member.
 ///
 /// # Errors
 ///
@@ -558,7 +603,7 @@ pub(crate) fn member_to_python<'py>(
         MemberKind::Int(value) => big_int_to_python(py, value),
         MemberKind::Float(value) => Ok(PyFloat::new(py, value).into_any()),
         MemberKind::Str(value) => Ok(PyString::new(py, value).into_any()),
-        MemberKind::Identifier(_) => todo!(),
+        MemberKind::Identifier(value) => identifier_to_python(py, value),
         MemberKind::Tuple(members) => {
             let elements = members
                 .iter()
