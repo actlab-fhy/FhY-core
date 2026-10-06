@@ -653,7 +653,7 @@ an iterable of pairs whose names are `Identifier`s.
 | `Choice` (`PyChoice`) | `Choice(alternatives, name=None, notes=())` | `name`, `alternatives`, `notes`; the equivalences; the serialization methods | `SearchSpaceError` (empty), `DuplicateNameError`, a hook's exception, `RecursionError` |
 | `Condition` (`PyCondition`) | `Condition(target, when)` | `target`, `when` (a `ConstraintSystem`: the one given, or one built from the constraints given) | `TypeError` |
 | `Forbidden` (`PyForbidden`) | `Forbidden(when)` | `when` | `TypeError` |
-| `Space` (`PySpace`) | `Space(variables=(), choices=(), conditions=(), forbidden=(), name=None, notes=())` | `name`, `variables`, `choices`, `conditions` (one per target in canonical order of the targets, as the core keeps them: a target's one condition is the object given, merged ones are built), `forbidden`, `notes`, `decisions` (the decision objects in canonical order), `decision(name)` (or `None`), `decision_order` (the decisions' name objects); the equivalences; the serialization methods | `SearchSpaceError` for each `SpaceError` but `DuplicateName` (`DuplicateNameError`), `Hook` (the hook's exception itself) and `Constraint` (the constraint error, as the constraint module raises it); `RecursionError` |
+| `Space` (`PySpace`) | `Space(variables=(), choices=(), conditions=(), forbidden=(), name=None, notes=())` | `name`, `variables`, `choices`, `conditions` (one per target in canonical order of the targets, as the core keeps them: a target's one condition is the object given, a merged one is built over the constraint objects given), `forbidden`, `notes`, `decisions` (the decision objects in canonical order), `decision(name)` (or `None`), `decision_order` (the decisions' name objects); the equivalences; the serialization methods | `SearchSpaceError` for each `SpaceError` but `DuplicateName` (`DuplicateNameError`), `Hook` (the hook's exception itself) and `Constraint` (the constraint error, as the constraint module raises it); `RecursionError` |
 | `Configuration` (`PyConfiguration`) | `Configuration(space, entries=())`: a choice's value is the chosen alternative's name, an `Identifier`; checked under the default solver's context (`with_param_context`) | `space`, `entries` (`(name, value)` pairs in canonical order, the names the decisions' own objects and the values the objects given), `value(name)`, `alternative(choice)` (the alternative object), `activity(name)` (an `Activity` or `None`), `is_complete()`, `key()`, `with_entry(name, value)`, `with_entries(entries)` (both keep the other entries' objects); the equivalences; the serialization methods | `ConfigurationError` carrying every problem; a Python-defined constraint's exception itself when one raised; `TypeError` |
 | `ConfigurationKey` (`PyConfigurationKey`, no public subclass: `fhy_core.search_space.ConfigurationKey` is `_rs.ConfigurationKey`) | no constructor; `Configuration.key()` builds it | structural `==` and `hash` (another type is `NotImplemented`); `repr` `ConfigurationKey(...)` | pickling raises `TypeError`: a key is meaningful only within its space |
 | `Activity` (Python `StrEnum`) | `ACTIVE = "active"`, `INACTIVE = "inactive"`, `PENDING = "pending"` | | |
@@ -1591,6 +1591,48 @@ test-local implementor standing in for MOGA-VM's.
 Counts over the 82 tests (50 in scope, 48 staying in MOGA-VM, the
 parametrized cases counted singly): 38 ported, 3 divergences (D-SS-18 and
 the status), 2 `metric` cases moved to SS3, 1 replaced, 48 stay in MOGA-VM.
+
+### Traceability, Python half
+
+The same MOGA-VM tests, ported to the Python interface in
+`tests/search_space/` (`test_search_space.py` unless noted); each test's
+docstring cites the MOGA-VM test.
+
+| MOGA-VM test | Python test(s) | Status |
+|---|---|---|
+| `test_alpha_standalone.py::test_knob_alpha_equivalent_standalone_with_distinct_names` | `test_variables_with_distinct_names_are_alpha_equivalent_standalone` | ported |
+| `::test_knob_not_alpha_equivalent_when_param_domain_differs_standalone` | `test_variables_over_different_domains_are_not_alpha_equivalent` | ported |
+| `::test_array_option_alpha_equivalent_standalone_with_distinct_names` | `test_alternatives_with_distinct_labels_are_alpha_equivalent_standalone`; `test_extension.py::test_realizations_are_alpha_equivalent_standalone` | ported (plain alternative; a `RealizationOption`-shaped subclass) |
+| `::test_array_option_not_alpha_equivalent_when_knob_param_differs_standalone` | `test_alternatives_with_different_variable_domains_are_not_alpha_equivalent` | ported |
+| `::test_array_decision_space_alpha_equivalent_standalone_with_distinct_names` | `test_choices_with_distinct_labels_are_alpha_equivalent_standalone` | ported |
+| `::test_array_decision_space_not_alpha_equivalent_when_option_param_differs` | `test_choices_with_different_variable_domains_are_not_alpha_equivalent` | ported |
+| `::test_options_not_alpha_equivalent_when_param_domains_differ` | `test_alternatives_differing_only_in_a_domain_are_not_alpha_equivalent` | ported |
+| `::test_selection_alpha_equivalent_when_space_labels_seeded` | `test_configurations_of_relabeled_spaces_have_equal_keys`, `test_configurations_of_relabeled_spaces_are_alpha_equivalent` | divergence D-SS-18 |
+| `::test_selection_not_alpha_equivalent_without_seeding` | `test_configurations_of_unrelated_spaces_are_not_alpha_equivalent` | divergence D-SS-18 |
+| `::test_selection_not_alpha_equivalent_when_status_differs_under_seeding` | `test_complete_and_incomplete_configurations_have_different_keys` | divergence (status replaced by completeness) |
+| `::test_selection_not_alpha_equivalent_when_knob_value_differs_under_seeding` | `test_different_values_give_different_keys`, `test_configurations_with_different_values_are_not_alpha_equivalent` | ported |
+| `::test_address_knobs_alpha_equivalent_when_bounds_match_under_renaming` | `test_bounded_variables_whose_names_are_renamed_are_alpha_equivalent_under_it` | ported (an integer-range param stands for `WordAddressKnob`'s) |
+| `test_selection_validation.py::test_decision_point_accepts_fully_covered_selection` | `test_complete_configuration_is_valid_and_complete` | ported |
+| `::test_decision_point_without_selection_is_unconstrained` | `test_empty_configuration_is_valid_and_incomplete` | ported |
+| `::test_decision_point_accepts_partial_status_with_some_coverage` | `test_partial_configuration_is_valid_and_incomplete` | ported |
+| `::test_decision_point_rejects_unknown_selected_option` | `test_unknown_alternative_is_refused_naming_it` | ported; the message names the choice and the value, not the alternatives offered |
+| `::test_decision_point_rejects_assignment_to_unknown_knob` | `test_value_for_an_inactive_variable_is_refused` | ported (now "inactive decision") |
+| `::test_decision_point_accepts_selected_status_with_incomplete_coverage` | `test_chosen_alternative_with_unassigned_variables_is_valid_and_incomplete` | ported |
+| `::test_decision_point_rejects_unselected_status_with_assignments` | `test_values_under_an_unchosen_choice_are_refused` | ported (status gone) |
+| `test_structural_equivalence.py::test_structural_equivalence_is_reflexive[7]` | `test_structural_equivalence_is_reflexive[6]` (variable, empty alternative, choice, space, two configurations); `knobbed-option` in `test_extension.py::test_tile_knobs_with_equal_data_are_structurally_equivalent` | ported; `metric` to SS3 |
+| `::test_structural_equivalence_discriminates_a_perturbed_field[7]` | `test_structural_equivalence_discriminates_a_perturbed_field[6]`; `test_extension.py::test_alternatives_with_different_own_data_are_not_structurally_equivalent` | ported; `metric` to SS3 |
+| `::test_options_structurally_equivalent_when_sharing_all_identifiers` | `test_alternatives_sharing_all_parts_are_structurally_equivalent` | ported |
+| `::test_options_not_structurally_equivalent_when_name_differs` | `test_alternatives_with_different_names_are_not_structurally_equivalent` | ported |
+| `::test_options_not_structurally_equivalent_when_realization_domain_differs` | `test_extension.py::test_alternatives_with_different_own_data_are_not_structurally_equivalent` | ported (subclass) |
+| `::test_decision_point_structural_equivalence_symmetric_for_selection_presence` | `test_assigning_a_choice_changes_the_configuration` | ported (configuration) |
+| `::test_decision_space_not_equivalent_to_shorter_option_list` | `test_choice_is_not_structurally_equivalent_to_a_prefix[longer]` | ported |
+| `::test_decision_space_not_equivalent_to_longer_option_list` | `test_choice_is_not_structurally_equivalent_to_a_prefix[shorter]` | ported |
+| `::test_option_not_equivalent_to_shorter_knob_list` | `test_alternative_is_not_structurally_equivalent_to_a_variable_prefix[longer]` | ported |
+| `::test_option_not_equivalent_to_longer_knob_list` | `test_alternative_is_not_structurally_equivalent_to_a_variable_prefix[shorter]` | ported |
+| `::test_distinct_knob_kinds_not_structurally_equivalent` | `test_extension.py::test_variables_of_different_kinds_are_not_structurally_equivalent` | ported (marker subclass) |
+| `::test_same_knob_kind_structurally_equivalent_for_shared_name_and_param` | `test_variables_of_one_kind_sharing_parts_are_structurally_equivalent`; `test_extension.py::test_variables_of_one_subclass_kind_sharing_parts_are_structurally_equivalent` | ported |
+| `test_core_import_boundary.py::test_core_modules_import_only_fhy_core_stdlib_or_core_siblings` | `tests/test_import_graph.py` (`fhy_core.search_space` entry point) | replaced: the package's import graph |
+| `tests/cir/test_space.py`, `test_table.py`, `test_table_partition.py` | - | stay in MOGA-VM |
 
 ## Equivalence plan
 

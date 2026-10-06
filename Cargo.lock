@@ -110,6 +110,8 @@ dependencies = [
  "fhy-core",
  "fhy-core-py",
  "pyo3",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

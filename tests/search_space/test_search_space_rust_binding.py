@@ -1,0 +1,823 @@
+"""Tests of what the binding adds around the Rust search space.
+
+The class structure and freezing, identity `==` and `hash` beside
+`ConfigurationKey`'s structural ones, `repr`, pickling, the V2 payloads and
+their type ids, the refusals of the readers, the depth guard and cyclic
+garbage collection.
+"""
+
+import copy
+import gc
+import json
+import pickle
+import sys
+import textwrap
+import weakref
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+
+from fhy_core import _rs
+from fhy_core.diagnostic import Note
+from fhy_core.identifier import Identifier
+from fhy_core.search_space import (
+    Alternative,
+    Choice,
+    Condition,
+    Configuration,
+    ConfigurationError,
+    ConfigurationKey,
+    DuplicateNameError,
+    Forbidden,
+    SearchSpaceError,
+    Space,
+    Variable,
+)
+from fhy_core.serialization import (
+    DeserializationValueError,
+    MalformedPayloadError,
+    Serializable,
+    SerializationError,
+    WireVersion,
+    WrappedFamilySerializable,
+    serialize_value,
+    wire_version,
+)
+from fhy_core.traits import FrozenMixin, FrozenMutationError
+from tests.native_modules import run_python
+
+from .conftest import (
+    TilingSpace,
+    build_chain,
+    build_tiling_space,
+    categorical,
+    make_alternative,
+    make_choice,
+    make_variable,
+)
+
+
+def _complete(tiling: TilingSpace) -> Configuration:
+    """Return the complete configuration of `tiling` choosing `tiled`."""
+    return Configuration(
+        tiling.space,
+        {
+            tiling.unroll.name: 2,
+            tiling.layout.name: tiling.tiled.name,
+            tiling.tile.name: 4,
+        },
+    )
+
+
+def _canonical_text(payload: object) -> str:
+    """Return the canonical JSON text of a payload dict."""
+    return json.dumps(payload, separators=(",", ":"))
+
+
+# ===========================================================================
+# Class structure
+# ===========================================================================
+
+
+def test_public_classes_subclass_their_rust_classes() -> None:
+    """Test each public class is a thin subclass of its `_rs` class."""
+    assert issubclass(Variable, _rs.Variable)
+    assert issubclass(Variable, WrappedFamilySerializable)
+    assert issubclass(Alternative, _rs.Alternative)
+    assert issubclass(Alternative, WrappedFamilySerializable)
+    for public, native in (
+        (Choice, _rs.Choice),
+        (Space, _rs.Space),
+        (Configuration, _rs.Configuration),
+    ):
+        assert issubclass(public, native)
+        assert issubclass(public, Serializable)
+    assert issubclass(Condition, _rs.Condition)
+    assert issubclass(Forbidden, _rs.Forbidden)
+    assert ConfigurationKey is _rs.ConfigurationKey
+    assert issubclass(DuplicateNameError, SearchSpaceError)
+    assert issubclass(ConfigurationError, SearchSpaceError)
+    assert issubclass(SearchSpaceError, ValueError)
+
+
+def test_values_are_frozen_mixin_instances() -> None:
+    """Test every object the package builds counts as a `FrozenMixin`."""
+    tiling = build_tiling_space(unroll_on_tiled_only=True, forbid_unroll_four=True)
+    configuration = Configuration(tiling.space)
+
+    for value in (
+        tiling.unroll,
+        tiling.tiled,
+        tiling.layout,
+        tiling.conditions[0],
+        tiling.forbidden[0],
+        tiling.space,
+        configuration,
+        configuration.key(),
+    ):
+        assert isinstance(value, FrozenMixin)
+
+
+@pytest.mark.parametrize(
+    ("value", "type_id"),
+    [
+        (lambda: make_variable("k"), "search_space.variable"),
+        (lambda: make_alternative("a"), "search_space.alternative"),
+        (lambda: make_choice("c", make_alternative("a")), "search_space.choice"),
+        (lambda: build_tiling_space().space, "search_space.space"),
+        (
+            lambda: Configuration(build_tiling_space().space),
+            "search_space.configuration",
+        ),
+    ],
+    ids=["variable", "alternative", "choice", "space", "configuration"],
+)
+def test_classes_serialize_under_their_type_ids(
+    value: Callable[[], Serializable], type_id: str
+) -> None:
+    """Test each serializable class is registered under its `search_space.*` id."""
+    assert value().get_serialization_class_type_id() == type_id
+
+
+# ===========================================================================
+# Freezing
+# ===========================================================================
+
+
+def _frozen_values() -> list[tuple[str, Any]]:
+    """Return one value of each class, with its class name."""
+    tiling = build_tiling_space(unroll_on_tiled_only=True, forbid_unroll_four=True)
+    return [
+        ("Variable", tiling.unroll),
+        ("Alternative", tiling.tiled),
+        ("Choice", tiling.layout),
+        ("Condition", tiling.conditions[0]),
+        ("Forbidden", tiling.forbidden[0]),
+        ("Space", tiling.space),
+        ("Configuration", Configuration(tiling.space)),
+    ]
+
+
+def test_assigning_an_attribute_raises() -> None:
+    """Test every class refuses a new attribute with `FrozenMutationError`."""
+    for class_name, value in _frozen_values():
+        with pytest.raises(FrozenMutationError) as excinfo:
+            value.extra = 1
+        assert str(excinfo.value) == f'Cannot modify "extra" on frozen {class_name}.'
+
+
+def test_assigning_a_field_raises() -> None:
+    """Test a field cannot be replaced either."""
+    for class_name, value in _frozen_values():
+        with pytest.raises(FrozenMutationError) as excinfo:
+            value.name = Identifier("other")
+        assert str(excinfo.value) == f'Cannot modify "name" on frozen {class_name}.'
+
+
+def test_deleting_an_attribute_raises() -> None:
+    """Test every class refuses to delete an attribute."""
+    for class_name, value in _frozen_values():
+        with pytest.raises(FrozenMutationError) as excinfo:
+            del value.name
+        assert str(excinfo.value) == f'Cannot delete "name" on frozen {class_name}.'
+
+
+def test_variable_and_alternative_report_being_frozen() -> None:
+    """Test the open bases report the frozen state of `FrozenMixin`."""
+    variable, alternative = make_variable("k"), make_alternative("a")
+
+    assert variable.is_frozen
+    assert alternative.is_frozen
+    variable.assert_frozen()
+
+
+def test_initializing_a_variable_twice_is_refused() -> None:
+    """Test the base fields are set once: a second `__init__` raises."""
+    variable = make_variable("k")
+
+    with pytest.raises(RuntimeError, match="initialized already"):
+        _rs.Variable._initialize(variable, categorical(3))
+
+    domain: Any = variable.param.domain
+    assert domain.categories == (1, 2)
+
+
+# ===========================================================================
+# Equality and hashing
+# ===========================================================================
+
+
+def test_equality_and_hashing_are_identity() -> None:
+    """Test two structurally equivalent values are distinct under `==`."""
+    name = Identifier("k")
+    param = categorical()
+    left, right = Variable(param=param, name=name), Variable(param=param, name=name)
+    tiling = build_tiling_space()
+    first, second = Configuration(tiling.space), Configuration(tiling.space)
+
+    assert left.is_structurally_equivalent(right)
+    assert left != right
+    assert left == left  # noqa: PLR0124
+    assert len({left, right}) == 2
+    assert first != second
+    assert len({first, second, tiling.space}) == 3
+
+
+def test_configuration_keys_compare_structurally() -> None:
+    """Test equal configurations' keys are equal, hash alike and key a dict."""
+    tiling = build_tiling_space()
+    left, right = _complete(tiling), _complete(tiling)
+    other = Configuration(tiling.space)
+
+    assert left.key() is not right.key()
+    assert left.key() == right.key()
+    assert not left.key() != right.key()
+    assert hash(left.key()) == hash(right.key())
+    assert left.key() != other.key()
+    assert len({left.key(), right.key(), other.key()}) == 2
+
+
+def test_configuration_key_is_not_equal_to_another_type() -> None:
+    """Test a key compared with something else is `NotImplemented`, so unequal."""
+    key = Configuration(build_tiling_space().space).key()
+
+    assert key.__eq__(3) is NotImplemented
+    assert key != 3
+    assert key != Configuration(build_tiling_space().space)
+
+
+def test_configuration_key_has_no_constructor() -> None:
+    """Test a key is only made by `Configuration.key`."""
+    with pytest.raises(TypeError):
+        ConfigurationKey()
+
+
+def test_configuration_key_does_not_pickle() -> None:
+    """Test pickling a key is refused: it is meaningful only within its space."""
+    key = Configuration(build_tiling_space().space).key()
+
+    with pytest.raises(TypeError, match="within its space"):
+        pickle.dumps(key)
+
+
+# ===========================================================================
+# repr
+# ===========================================================================
+
+
+def test_variable_repr_lists_its_fields() -> None:
+    """Test a variable's `repr` is dataclass-like."""
+    note = Note("hot")
+    variable = Variable(param=categorical(), name=Identifier("k"), notes=(note,))
+
+    assert repr(variable) == (
+        f"Variable(name={variable.name!r}, param={variable.param!r}, notes=({note!r},))"
+    )
+
+
+def test_alternative_and_choice_reprs_nest() -> None:
+    """Test an alternative's and a choice's `repr` hold their parts' reprs."""
+    tile = make_variable("tile")
+    tiled = make_alternative("tiled", (tile,))
+    layout = make_choice("layout", tiled)
+
+    assert repr(tiled) == (
+        f"Alternative(name={tiled.name!r}, variables=({tile!r},), choices=(), notes=())"
+    )
+    assert repr(layout) == (
+        f"Choice(name={layout.name!r}, alternatives=({tiled!r},), notes=())"
+    )
+
+
+def test_condition_and_forbidden_reprs() -> None:
+    """Test a condition's and a clause's `repr` show their fields."""
+    tiling = build_tiling_space(unroll_on_tiled_only=True, forbid_unroll_four=True)
+    condition, clause = tiling.conditions[0], tiling.forbidden[0]
+
+    assert repr(condition) == (
+        f"Condition(target={condition.target!r}, when={condition.when!r})"
+    )
+    assert repr(clause) == f"Forbidden(when={clause.when!r})"
+
+
+def test_space_repr_lists_its_fields() -> None:
+    """Test a space's `repr` lists its parts."""
+    tiling = build_tiling_space(forbid_unroll_four=True)
+    space = tiling.space
+
+    assert repr(space) == (
+        f"Space(name={space.name!r}, variables=({tiling.unroll!r},), "
+        f"choices=({tiling.layout!r},), conditions=(), "
+        f"forbidden=({tiling.forbidden[0]!r},), notes=())"
+    )
+
+
+def test_configuration_repr_names_its_space() -> None:
+    """Test a configuration shows its space by name and its entries."""
+    tiling = build_tiling_space()
+    configuration = Configuration(tiling.space, {tiling.unroll.name: 2})
+
+    assert repr(configuration) == (
+        f"Configuration(space={tiling.space.name!r}, "
+        f"entries=(({tiling.unroll.name!r}, 2),))"
+    )
+
+
+def test_configuration_key_repr() -> None:
+    """Test a key's `repr` names its class."""
+    key = Configuration(build_tiling_space().space).key()
+
+    assert repr(key).startswith("ConfigurationKey(")
+
+
+# ===========================================================================
+# Pickling
+# ===========================================================================
+
+
+def _round_trip_pickle(value: Any) -> Any:
+    """Return `value` pickled and unpickled."""
+    return pickle.loads(pickle.dumps(value))
+
+
+def test_variable_pickles_as_a_call() -> None:
+    """Test a variable pickles to a frozen equivalent variable with the same name."""
+    variable = Variable(param=categorical(), name=Identifier("k"), notes=(Note("n"),))
+
+    restored = _round_trip_pickle(variable)
+
+    assert type(restored) is Variable
+    assert restored.is_structurally_equivalent(variable)
+    assert restored.name == variable.name
+    assert restored.is_frozen
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: make_alternative("a", (make_variable("v"),)),
+        lambda: build_tiling_space().layout,
+        lambda: (
+            build_tiling_space(unroll_on_tiled_only=True, forbid_unroll_four=True).space
+        ),
+    ],
+    ids=["alternative", "choice", "space"],
+)
+def test_containers_pickle_to_structurally_equivalent_copies(
+    build: Callable[[], Any],
+) -> None:
+    """Test an alternative, a choice and a space survive pickling."""
+    value = build()
+
+    restored = _round_trip_pickle(value)
+
+    assert type(restored) is type(value)
+    assert restored is not value
+    assert restored.is_structurally_equivalent(value)
+
+
+def test_condition_and_forbidden_pickle() -> None:
+    """Test a condition and a clause pickle to their fields."""
+    tiling = build_tiling_space(unroll_on_tiled_only=True, forbid_unroll_four=True)
+
+    condition = _round_trip_pickle(tiling.conditions[0])
+    clause = _round_trip_pickle(tiling.forbidden[0])
+
+    assert type(condition) is Condition
+    assert condition.target == tiling.unroll.name
+    assert condition.when.is_structurally_equivalent(tiling.conditions[0].when)
+    assert type(clause) is Forbidden
+    assert clause.when.is_structurally_equivalent(tiling.forbidden[0].when)
+
+
+def test_configuration_pickles_with_its_space() -> None:
+    """Test a configuration pickles to one with an equal key and its values."""
+    tiling = build_tiling_space()
+    configuration = _complete(tiling)
+
+    restored = _round_trip_pickle(configuration)
+
+    assert restored.is_structurally_equivalent(configuration)
+    assert restored.key() == configuration.key()
+    assert restored.value(tiling.tile.name) == 4
+
+
+def test_deep_copy_builds_an_equivalent_space() -> None:
+    """Test `copy.deepcopy` works through pickling."""
+    space = build_tiling_space(forbid_unroll_four=True).space
+
+    copied = copy.deepcopy(space)
+
+    assert copied is not space
+    assert copied.is_structurally_equivalent(space)
+
+
+# ===========================================================================
+# V2 payloads
+# ===========================================================================
+
+
+def test_variable_payload_is_the_tagged_plain_part() -> None:
+    """Test a plain variable's V2 dict is `{"plain": {identifier, param, notes}}`."""
+    note = Note("n")
+    variable = Variable(param=categorical(1, 2), name=Identifier("k"), notes=(note,))
+
+    payload = variable.serialize_to_dict()
+
+    assert payload == {
+        "plain": {
+            "identifier": variable.name.serialize_to_dict(),
+            "param": variable.param.serialize_to_dict(),
+            "notes": [note.serialize_to_dict()],
+        }
+    }
+    assert variable.serialize_data_to_dict() == payload["plain"]
+    assert variable.to_json() == _canonical_text(payload)
+
+
+def test_alternative_payload_nests_its_variables_tagged() -> None:
+    """Test an alternative's V2 dict tags its plain variables."""
+    tile = make_variable("tile")
+    inner = make_choice("inner", make_alternative("only"))
+    tiled = make_alternative("tiled", (tile,), (inner,))
+
+    payload = tiled.serialize_to_dict()
+
+    assert payload == {
+        "plain": {
+            "identifier": tiled.name.serialize_to_dict(),
+            "variables": [tile.serialize_to_dict()],
+            "choices": [inner.serialize_to_dict()],
+            "notes": [],
+        }
+    }
+
+
+def test_choice_payload() -> None:
+    """Test a choice's V2 dict holds its tagged alternatives."""
+    tiling = build_tiling_space()
+
+    payload = tiling.layout.serialize_to_dict()
+
+    assert payload == {
+        "identifier": tiling.layout.name.serialize_to_dict(),
+        "alternatives": [
+            tiling.tiled.serialize_to_dict(),
+            tiling.flat.serialize_to_dict(),
+        ],
+        "notes": [],
+    }
+    assert tiling.layout.to_json() == _canonical_text(payload)
+
+
+def test_space_payload() -> None:
+    """Test a space's V2 dict holds its parts, conditions and clauses."""
+    tiling = build_tiling_space(unroll_on_tiled_only=True, forbid_unroll_four=True)
+
+    payload = tiling.space.serialize_to_dict()
+
+    assert payload == {
+        "identifier": tiling.space.name.serialize_to_dict(),
+        "variables": [tiling.unroll.serialize_to_dict()],
+        "choices": [tiling.layout.serialize_to_dict()],
+        "conditions": [
+            {
+                "target": tiling.unroll.name.serialize_to_dict(),
+                "when": tiling.conditions[0].when.serialize_to_dict(),
+            }
+        ],
+        "forbidden": [{"when": tiling.forbidden[0].when.serialize_to_dict()}],
+        "notes": [],
+    }
+    assert tiling.space.to_json() == _canonical_text(payload)
+
+
+def test_configuration_payload_lists_entries_in_canonical_order() -> None:
+    """Test a configuration's V2 dict holds its space and its entries in order."""
+    tiling = build_tiling_space()
+    configuration = Configuration(
+        tiling.space,
+        [(tiling.tile.name, 8), (tiling.layout.name, tiling.tiled.name)],
+    )
+
+    payload = configuration.serialize_to_dict()
+
+    assert payload == {
+        "space": tiling.space.serialize_to_dict(),
+        "entries": [
+            {
+                "name": tiling.layout.name.serialize_to_dict(),
+                "value": serialize_value(tiling.tiled.name),
+            },
+            {
+                "name": tiling.tile.name.serialize_to_dict(),
+                "value": serialize_value(8),
+            },
+        ],
+    }
+    assert configuration.to_json() == _canonical_text(payload)
+
+
+def test_to_json_reformats_for_indent_and_sorted_keys() -> None:
+    """Test `indent` and `sort_keys` re-format the same payload."""
+    space = build_tiling_space().space
+
+    indented = space.to_json(indent=2, sort_keys=True)
+
+    assert "\n" in indented
+    assert json.loads(indented) == space.serialize_to_dict()
+
+
+def _round_trips() -> list[tuple[type[Any], Callable[[], Any]]]:
+    """Return each class with a builder of one of its values."""
+    return [
+        (Variable, lambda: make_variable("k", 1, 2)),
+        (Alternative, lambda: make_alternative("a", (make_variable("v"),))),
+        (Choice, lambda: build_tiling_space().layout),
+        (
+            Space,
+            lambda: (
+                build_tiling_space(
+                    unroll_on_tiled_only=True, forbid_unroll_four=True
+                ).space
+            ),
+        ),
+        (Configuration, lambda: _complete(build_tiling_space())),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cls", "build"),
+    _round_trips(),
+    ids=["variable", "alternative", "choice", "space", "configuration"],
+)
+def test_payload_dict_round_trips(cls: type[Any], build: Callable[[], Any]) -> None:
+    """Test decoding a value's V2 dict gives an equivalent value of its class."""
+    value = build()
+
+    decoded = cls.deserialize_from_dict(value.serialize_to_dict())
+
+    assert type(decoded) is cls
+    assert decoded.is_structurally_equivalent(value)
+    assert decoded.serialize_to_dict() == value.serialize_to_dict()
+
+
+@pytest.mark.parametrize(
+    ("cls", "build"),
+    _round_trips(),
+    ids=["variable", "alternative", "choice", "space", "configuration"],
+)
+def test_payload_text_round_trips(cls: type[Any], build: Callable[[], Any]) -> None:
+    """Test decoding a value's JSON text writes the same text back."""
+    value = build()
+    text = value.to_json()
+
+    decoded = cls.from_json(text)
+
+    assert type(decoded) is cls
+    assert decoded.to_json() == text
+    assert cls.from_json(text.encode()).to_json() == text
+
+
+def test_decoded_configuration_keeps_its_key() -> None:
+    """Test a decoded configuration has the key of the one written."""
+    configuration = _complete(build_tiling_space())
+
+    decoded = Configuration.from_json(configuration.to_json())
+
+    assert decoded.key() == configuration.key()
+    assert decoded.is_complete()
+
+
+def test_reader_refuses_a_payload_of_another_shape() -> None:
+    """Test a payload missing a field names the class it was read for."""
+    payload = build_tiling_space().space.serialize_to_dict()
+    del payload["forbidden"]
+
+    with pytest.raises(
+        DeserializationValueError, match='Invalid V2 payload for "Space"'
+    ):
+        Space.deserialize_from_dict(payload)
+
+
+def test_reader_refuses_a_payload_of_another_class() -> None:
+    """Test a choice's payload is not a space's."""
+    choice = build_tiling_space().layout
+
+    with pytest.raises(
+        DeserializationValueError, match='Invalid V2 payload for "Space"'
+    ):
+        Space.deserialize_from_dict(choice.serialize_to_dict())
+
+
+def test_reader_refuses_a_payload_the_constructor_refuses() -> None:
+    """Test a payload with an empty choice fails as the constructor would."""
+    payload = build_tiling_space().layout.serialize_to_dict()
+    payload["alternatives"] = []
+
+    with pytest.raises(DeserializationValueError, match="has no alternative"):
+        Choice.deserialize_from_dict(payload)
+
+
+def test_reader_refuses_a_configuration_the_space_refuses() -> None:
+    """Test a decoded entry naming no alternative of its choice is refused."""
+    tiling = build_tiling_space()
+    payload: Any = Configuration(
+        tiling.space, {tiling.layout.name: tiling.flat.name}
+    ).serialize_to_dict()
+    payload["entries"][0]["value"] = serialize_value(Identifier("ghost"))
+
+    with pytest.raises(DeserializationValueError, match="has no alternative ghost"):
+        Configuration.deserialize_from_dict(payload)
+
+
+def test_reader_refuses_text_that_is_no_json() -> None:
+    """Test a text that is not JSON raises `MalformedPayloadError`."""
+    with pytest.raises(MalformedPayloadError):
+        Space.from_json("{not json")
+
+
+def test_variable_reader_refuses_an_alternative_payload() -> None:
+    """Test a variable is not read from an alternative's payload."""
+    with pytest.raises(DeserializationValueError):
+        Variable.deserialize_from_dict(make_alternative("a").serialize_to_dict())
+
+
+def test_variable_data_reader_builds_a_variable() -> None:
+    """Test `deserialize_data_from_dict` reads the base fields' data."""
+    variable = make_variable("k", 1, 2)
+
+    decoded: Variable[Any] = Variable.deserialize_data_from_dict(
+        variable.serialize_data_to_dict()
+    )
+
+    assert type(decoded) is Variable
+    assert decoded.is_structurally_equivalent(variable)
+
+
+def test_variable_data_reader_refuses_another_key() -> None:
+    """Test the base fields' data reader refuses a key it does not know."""
+    data = make_variable("k").serialize_data_to_dict()
+    data["extra"] = 1
+
+    with pytest.raises(DeserializationValueError):
+        Variable.deserialize_data_from_dict(data)
+
+
+def test_writing_v1_is_refused() -> None:
+    """Test the classes have no V1 form: writing one raises."""
+    space = build_tiling_space().space
+
+    with wire_version(WireVersion.V1), pytest.raises(SerializationError, match="V1"):
+        space.serialize_to_dict()
+    with wire_version(WireVersion.V1), pytest.raises(SerializationError, match="V1"):
+        make_variable("k").serialize_to_dict()
+
+
+# ===========================================================================
+# Depth
+# ===========================================================================
+
+
+@pytest.mark.slow
+def test_choices_nested_to_the_recursion_limit_build() -> None:
+    """Test a chain as deep as the recursion limit builds and compares."""
+    limit = sys.getrecursionlimit()
+
+    chain = build_chain(limit)
+    space = Space(choices=(chain,))
+
+    assert space.is_structurally_equivalent(space)
+
+
+@pytest.mark.slow
+def test_choices_nested_deeper_than_the_recursion_limit_are_refused() -> None:
+    """Test one more level than the recursion limit raises `RecursionError`."""
+    limit = sys.getrecursionlimit()
+    chain = build_chain(limit)
+    holder = make_alternative("holder", choices=(chain,))
+
+    with pytest.raises(RecursionError) as excinfo:
+        make_choice("top", holder)
+
+    assert str(excinfo.value) == (
+        f"maximum recursion depth exceeded: the choice is {limit + 1} levels deep"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_payload_deeper_than_the_recursion_limit_is_refused() -> None:
+    """Test decoding a payload nesting more choices than the limit allows raises.
+
+    The payload is written under the default limit and read under a lower
+    one, so the reader refuses it before it reaches the core; a payload
+    within the lower limit still decodes.
+    """
+    program = textwrap.dedent(
+        """
+        import sys
+
+        from fhy_core.identifier import Identifier
+        from fhy_core.search_space import Alternative, Choice, Space
+
+        def chain(depth):
+            choice = Choice((Alternative(name=Identifier("leaf")),))
+            for _ in range(depth - 1):
+                choice = Choice((Alternative(choices=(choice,)),))
+            return Space(choices=(choice,))
+
+        deep, shallow = chain(23), chain(12)
+        deep_dict, deep_text = deep.serialize_to_dict(), deep.to_json()
+        shallow_text = shallow.to_json()
+        sys.setrecursionlimit(22)
+        for read in (
+            lambda: Space.deserialize_from_dict(deep_dict),
+            lambda: Space.from_json(deep_text),
+        ):
+            try:
+                read()
+            except RecursionError as error:
+                print("refused:", error)
+        print("decoded:", Space.from_json(shallow_text).to_json() == shallow_text)
+        """
+    )
+
+    completed = run_python(program)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "refused: maximum recursion depth exceeded: the payload nests choices "
+        "23 levels deep",
+        "refused: maximum recursion depth exceeded: the payload nests choices "
+        "23 levels deep",
+        "decoded: True",
+    ]
+
+
+# ===========================================================================
+# Cyclic garbage collection
+# ===========================================================================
+
+
+class _Holder(Alternative):
+    """An alternative holding a mutable box, through which a cycle runs."""
+
+    def __init__(self, *, box: list[Any], **fields: Any) -> None:
+        super().__init__(**fields)
+        self.box = box
+
+
+class _HeldVariable(Variable[Any]):
+    """A variable holding a mutable box, through which a cycle runs."""
+
+    def __init__(self, *, box: list[Any], **fields: Any) -> None:
+        super().__init__(**fields)
+        self.box = box
+
+
+def _collects(build: Callable[[], object]) -> bool:
+    """Return whether the cycle `build` makes is freed by `gc.collect()`."""
+    watched = weakref.ref(build())
+    gc.collect()
+    return watched() is None
+
+
+def test_cycle_through_a_choice_and_a_subclass_alternative_is_collected() -> None:
+    """Test a choice holding an alternative whose box holds the choice is freed."""
+
+    def build() -> object:
+        box: list[Any] = []
+        alternative = _Holder(box=box, name=Identifier("held"))
+        box.append(Choice((alternative,)))
+        return alternative
+
+    assert _collects(build)
+
+
+def test_cycle_through_a_space_and_a_subclass_variable_is_collected() -> None:
+    """Test a space holding a variable whose box holds the space is freed."""
+
+    def build() -> object:
+        box: list[Any] = []
+        variable = _HeldVariable(box=box, param=categorical(), name=Identifier("v"))
+        space = Space(variables=(variable,))
+        box.append(Configuration(space, {variable.name: 1}))
+        return variable
+
+    assert _collects(build)
+
+
+def test_cycle_through_an_alternative_holding_a_subclass_variable_is_collected() -> (
+    None
+):
+    """Test an alternative holding a variable whose box holds it is freed."""
+
+    def build() -> object:
+        box: list[Any] = []
+        variable = _HeldVariable(box=box, param=categorical(), name=Identifier("v"))
+        box.append(Alternative(variables=(variable,)))
+        return variable
+
+    assert _collects(build)

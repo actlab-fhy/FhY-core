@@ -2,10 +2,11 @@
 //! composes with `fhy_core`, and the template for one.
 //!
 //! The module registers all of `fhy_core`'s binding
-//! ([`fhy_core_py::register`]) and then one extra class, `Tagger`, that
-//! takes and returns `fhy-core` values through [`fhy_core_py::convert`]: an
-//! `Identifier`, whose ids come from the one counter, and an interned
-//! `OpAttribute`, which lives in the one registry. It is a workspace member
+//! ([`fhy_core_py::register`]), two downstream kinds of
+//! `fhy_core.search_space` (the `search_space` module), and one extra class,
+//! `Tagger`, that takes and returns `fhy-core` values through
+//! [`fhy_core_py::convert`]: an `Identifier`, whose ids come from the one
+//! counter, and an interned `OpAttribute`, which lives in the one registry. It is a workspace member
 //! so the gate builds it, `publish = false`, and no wheel ships it. The
 //! Python test `tests/test_composed_extension.py` builds it, installs it as
 //! the extension of a fresh interpreter through the `fhy_core.native` entry
@@ -21,6 +22,8 @@
 //! 3. it is a top-level module that imports no `fhy_core` Python code when it
 //!    is imported, because `fhy_core` imports it while `fhy_core` itself is
 //!    being imported.
+
+mod search_space;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::op_attribute::OpAttribute;
@@ -84,7 +87,8 @@ impl PyTagger {
 ///
 /// Raises whatever adding a class raises.
 fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<PyTagger>()
+    module.add_class::<PyTagger>()?;
+    search_space::register(module)
 }
 
 /// The aggregate: `fhy_core`'s binding and this crate's, in one module.
