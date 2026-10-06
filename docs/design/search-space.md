@@ -2459,8 +2459,8 @@ times slower):
   dynamic step went from 0.60 to 0.21 µs, and one draw from 1.07 to
   0.88 µs.
 
-**The two rows that stay slower**, for the user's decision (as B-SS1
-was):
+**The two rows that stay slower**, accepted by the user on 2026-10-06 as
+recorded costs (B-SS2 under "Decisions"):
 
 - **One choice draw (1.49x):** the core's part is 0.21 µs; the rest is
   the binding: each step builds the param context (the default solver,
@@ -3498,6 +3498,7 @@ and SS3's choices, decided 2026-10-06, are N-S1 to N-S5 below.
 | N-S5 | measurement statuses (2026-10-06) | `Ok`, `Infeasible`, `Failed`, `Timeout` |
 | N-S6 | decision kinds and objective names (2026-10-06) | strings, stable across processes, not `Identifier`-keyed tags |
 | B-SS1 | SS1's two slower benchmark rows (2026-10-06) | accepted as recorded costs: serializing a configuration (4.3x, its payload carries the space) and `with_entry` (1.21x, it re-validates the whole configuration) |
+| B-SS2 | SS2's two slower benchmark rows (2026-10-06) | accepted as recorded costs: one recorded choice draw (1.49x: the binding's per-step context and kept objects; recording a stream is 3.6x faster) and one point draw (2.09x: each static step re-derives the configuration's activity, conditions and clauses) |
 | N-9 | selection status | replaced by configuration validity and `is_complete()` |
 | N-10 | name vs param variable | a `Variable`'s name and its param's variable stay distinct; constraints outside the param name the `Variable` |
 | N-C1 | name scope | names unique across the whole `Space`; a duplicate is a `SpaceError` |

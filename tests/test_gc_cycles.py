@@ -326,8 +326,9 @@ _NOT_TRACKED = {
     "ExhaustiveOracle": "holds only its path's coordinates and domain "
     "signatures, which keep no value of a domain, so no Python object",
     "Objective": "holds only its name and direction, no Python object",
-    "Measurement": "holds only core values: its key's opaque values are the "
-    "configuration's, as a ConfigurationKey's are, and its notes are core notes",
+    "Measurement": "holds only the core measurement, no Py field: its notes are "
+    "converted to core notes when given and to new Note objects when read, and "
+    "its key's opaque values are the configuration's, as a ConfigurationKey's are",
     "SympySimplifier": "holds only the SymPy module and its classes, which "
     "`sys.modules` keeps reachable, so no garbage cycle runs through them",
 }
