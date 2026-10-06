@@ -38,6 +38,7 @@ mod choice;
 mod configuration;
 mod domain;
 mod errors;
+mod exploration;
 mod kinds;
 mod oracle;
 mod recorder;

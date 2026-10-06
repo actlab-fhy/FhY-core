@@ -99,6 +99,16 @@ impl PyConfiguration {
         })
     }
 
+    /// Return the core configuration.
+    pub(super) const fn core(&self) -> &Configuration {
+        &self.configuration
+    }
+
+    /// Return the `Space` object the configuration is a point of.
+    pub(super) fn space_object<'py>(&self, py: Python<'py>) -> &Bound<'py, PySpace> {
+        self.space.bind(py)
+    }
+
     /// Return a new instance of the public class of `self`'s values.
     fn into_python(self, py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
         instantiate(
@@ -311,12 +321,8 @@ impl PyConfiguration {
     ///
     /// Raises `NotEnumerableError` for an assigned variable with no finite
     /// domain.
-    #[expect(
-        unused_variables,
-        reason = "interface stub: the body is todo!() until the implementation"
-    )]
     fn trace<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
-        todo!()
+        super::exploration::configuration_trace(slf)
     }
 
     /// Return the key that identifies the configuration within its space.

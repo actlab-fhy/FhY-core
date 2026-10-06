@@ -54,10 +54,6 @@ pub(super) type AlternativeKind =
 /// A registered oracle kind: its class and its lease.
 pub(super) struct OracleKind {
     pub(super) class: Py<PyType>,
-    #[expect(
-        dead_code,
-        reason = "interface stub: the oracle reader uses it once implemented"
-    )]
     pub(super) lease: OracleLease,
 }
 
@@ -91,10 +87,6 @@ impl KindRegistryState {
     }
 
     /// Return the registered oracle kinds' entries.
-    #[expect(
-        dead_code,
-        reason = "interface stub: the oracle reader uses it once implemented"
-    )]
     pub(super) fn oracles(&self) -> impl Iterator<Item = &Arc<OracleKind>> {
         self.oracles.values()
     }
@@ -393,10 +385,6 @@ pub(crate) fn register_alternative_kind(
 /// # Errors
 ///
 /// Raises what importing the registry or an `isinstance` check raises.
-#[expect(
-    dead_code,
-    reason = "interface stub: the oracle reader uses it once implemented"
-)]
 pub(super) fn oracle_kind_of(object: &Bound<'_, PyAny>) -> PyResult<Option<Arc<OracleKind>>> {
     let state = registry(object.py())?.get().current();
     for entry in state.oracles() {

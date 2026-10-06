@@ -26,6 +26,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
 use fhy_core::constraint::ConstraintError;
+use fhy_core::foreign::BoxError;
 use fhy_core::search_space::{
     ConfigurationError, ConfigurationErrors, EquivalenceError, ReplayError, SpaceError,
     StepDomainError, TraceError,
@@ -47,46 +48,22 @@ static DUPLICATE_NAME_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "Dupli
 static CONFIGURATION_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "ConfigurationError");
 
 /// `StepDomainError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static STEP_DOMAIN_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "StepDomainError");
 
 /// `TraceError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static TRACE_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "TraceError");
 
 /// `InadmissibleAnswerError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static INADMISSIBLE_ANSWER_ERROR: ExceptionClass =
     ExceptionClass::new(MODULE, "InadmissibleAnswerError");
 
 /// `ReplayMismatchError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static REPLAY_MISMATCH_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "ReplayMismatchError");
 
 /// `NotEnumerableError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static NOT_ENUMERABLE_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "NotEnumerableError");
 
 /// `DeadEndError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static DEAD_END_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "DeadEndError");
 
 /// Return the Python exception of the core's refusal to build a space, a
@@ -149,13 +126,8 @@ pub(super) fn equivalence_error_to_py(py: Python<'_>, error: EquivalenceError) -
 
 /// Return the Python exception of a domain the core refuses to build:
 /// `StepDomainError`.
-#[expect(
-    dead_code,
-    unused_variables,
-    reason = "interface stub: the body is todo!() until the implementation"
-)]
 pub(super) fn step_domain_error_to_py(py: Python<'_>, error: &StepDomainError) -> PyErr {
-    todo!()
+    STEP_DOMAIN_ERROR.err(py, (error.to_string(),))
 }
 
 /// Return the Python exception of a run the core stopped:
@@ -164,23 +136,55 @@ pub(super) fn step_domain_error_to_py(py: Python<'_>, error: &StepDomainError) -
 /// oracle's or the hook's exception as itself, `ReplayMismatchError` for a
 /// replay's mismatch, the configuration's errors as
 /// [`configuration_errors_to_py`] raises them, and `TraceError` otherwise.
-#[expect(
-    dead_code,
-    unused_variables,
-    reason = "interface stub: the body is todo!() until the implementation"
-)]
 pub(super) fn trace_error_to_py(py: Python<'_>, error: TraceError) -> PyErr {
-    todo!()
+    let text = error.to_string();
+    match error {
+        TraceError::Domain(error) => step_domain_error_to_py(py, &error),
+        TraceError::CoordinateOutOfDomain { .. } | TraceError::Inadmissible { .. } => {
+            INADMISSIBLE_ANSWER_ERROR.err(py, (text,))
+        }
+        TraceError::NotEnumerable { .. } => NOT_ENUMERABLE_ERROR.err(py, (text,)),
+        TraceError::DeadEnd { .. } => DEAD_END_ERROR.err(py, (text,)),
+        TraceError::Oracle { source, .. } | TraceError::Hook { source, .. } => {
+            boxed_error_to_py(py, source, &text)
+        }
+        TraceError::Configuration(errors) => configuration_errors_to_py(py, &errors),
+        _ => TRACE_ERROR.err(py, (text,)),
+    }
+}
+
+/// Return the Python exception of the error `source` an oracle or a hook
+/// returned: a Python exception as itself, a replay's mismatch as
+/// [`replay_error_to_py`] raises it, a run's error as
+/// [`trace_error_to_py`] raises it, and anything else as `TraceError`,
+/// `text` followed by the error's own.
+pub(super) fn boxed_error_to_py(py: Python<'_>, source: BoxError, text: &str) -> PyErr {
+    let source = match unbox_py_err(source) {
+        Ok(raised) => return raised,
+        Err(source) => source,
+    };
+    let source = match source.downcast::<ReplayError>() {
+        Ok(error) => return replay_error_to_py(py, *error),
+        Err(source) => source,
+    };
+    match source.downcast::<TraceError>() {
+        Ok(error) => trace_error_to_py(py, *error),
+        Err(source) => TRACE_ERROR.err(py, (format!("{text}: {source}"),)),
+    }
+}
+
+/// Return the `TraceError` of the text `text`.
+pub(super) fn trace_error_text_to_py(py: Python<'_>, text: &str) -> PyErr {
+    TRACE_ERROR.err(py, (text.to_owned(),))
 }
 
 /// Return the Python exception of a replay's mismatch:
 /// `ReplayMismatchError`, or what [`trace_error_to_py`] and
 /// [`configuration_errors_to_py`] raise for the errors it holds.
-#[expect(
-    dead_code,
-    unused_variables,
-    reason = "interface stub: the body is todo!() until the implementation"
-)]
 pub(super) fn replay_error_to_py(py: Python<'_>, error: ReplayError) -> PyErr {
-    todo!()
+    match error {
+        ReplayError::Configuration(errors) => configuration_errors_to_py(py, &errors),
+        ReplayError::Trace(error) => trace_error_to_py(py, *error),
+        error => REPLAY_MISMATCH_ERROR.err(py, (error.to_string(),)),
+    }
 }

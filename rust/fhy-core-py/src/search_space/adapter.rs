@@ -11,7 +11,9 @@
 //! - `extension_is_structurally_equivalent(other)`;
 //! - `extension_is_alpha_equivalent_under(other, renaming)`, `renaming` a
 //!   new Python `AlphaRenaming` of the core's;
-//! - `extension_bound_identifiers()`, an alternative's.
+//! - `extension_bound_identifiers()`, an alternative's;
+//! - `extension_search_domain()`, a variable's: `None`, or a
+//!   `ChoiceDomain`, `OrderDomain` or `StridedDomain`.
 //!
 //! An exception a hook raises is the hook's error, boxed, and the entry
 //! point raises it as the same object; `KeyboardInterrupt` too. A result of
@@ -41,6 +43,7 @@ use crate::util::gc::Slot;
 use crate::util::python::read_type_name;
 
 use super::alternative::PyAlternativeBase;
+use super::domain::step_domain_from_python;
 use super::variable::{PyVariableBase, read_kind};
 
 /// Return the core error of a hook's Python exception.
@@ -227,7 +230,25 @@ impl Variable for PythonVariable {
     /// the param, a domain object is read as its core domain, and anything
     /// else is `TypeError`.
     fn search_domain(&self) -> Result<Option<StepDomain>, BoxError> {
-        todo!()
+        Python::attach(|py| -> PyResult<Option<StepDomain>> {
+            let object = self.instance.object.get(py);
+            let hook = "extension_search_domain";
+            let result = object.call_method0(PyString::new(py, hook))?;
+            if result.is_none() {
+                return Ok(None);
+            }
+            step_domain_from_python(&result)
+                .map(Some)
+                .map_err(|_not_a_domain| {
+                    PyTypeError::new_err(format!(
+                        "{}.{hook} must return a ChoiceDomain, an OrderDomain, a StridedDomain or \
+                     None, got {}.",
+                        read_type_name(&object),
+                        read_type_name(&result)
+                    ))
+                })
+        })
+        .map_err(boxed)
     }
 }
 

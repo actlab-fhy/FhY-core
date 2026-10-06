@@ -18,6 +18,7 @@ use crate::util::python::{Seed, read_type_name};
 use super::choice::PyChoice;
 use super::configuration::PyConfiguration;
 use super::space::{PyCondition, PyForbidden, PySpace};
+use super::trace::PyTrace;
 
 /// Return the `TypeError` of the argument `field` of `owner` that is not
 /// `expected`: `<owner> <field> must be <expected>, got <type>.`.
@@ -158,6 +159,7 @@ pub(super) enum Seeded {
     Forbidden(PyForbidden),
     Space(PySpace),
     Configuration(PyConfiguration),
+    Trace(PyTrace),
 }
 
 /// The seed of an instance the binding builds from a core value.
