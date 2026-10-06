@@ -214,6 +214,23 @@ def _foreign_cases() -> dict[str, Serializable]:
     }
 
 
+def _identifier_member_cases() -> dict[str, Serializable]:
+    """Return values holding identifiers as members, ordered by id.
+
+    The ids order opposite to their decimal texts (``99`` before ``100``),
+    and opposite to their name hints.
+    """
+    x = _identifier(61_910, "x")
+    late = _identifier(100, "a")
+    early = _identifier(99, "b")
+    return {
+        "identifier_members": InSetConstraint(x, [late, 3, early]),
+        "identifier_categorical_param": Param(
+            CategoricalDomain((late, early)), _identifier(61_911, "p")
+        ),
+    }
+
+
 _LEAF_FLOATS = (0.5, -2.25, 1e300, 5e-324, float("inf"), float("nan"))
 
 
@@ -286,6 +303,7 @@ def _value_cases() -> dict[str, Any]:
         "value_frozenset_of_tuples": frozenset(
             {(1, "a"), (2.5, True), (1e300, -0.0), ((), (3,))}
         ),
+        "value_tuple_of_an_identifier": (_identifier(61_912, "a"), 1),
     }
 
 
@@ -346,6 +364,7 @@ def main() -> None:
     cases = {
         **build_fixtures(),
         **_foreign_cases(),
+        **_identifier_member_cases(),
         **_random_cases(arguments.seed, arguments.random_count, arguments.max_ops),
     }
     document = {

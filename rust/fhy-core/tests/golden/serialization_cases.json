@@ -519,6 +519,20 @@
    "foreign": []
   },
   {
+   "name": "identifier_members",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":61910,\"name_hint\":\"x\"},\"values\":[{\"identifier\":{\"id\":99,\"name_hint\":\"b\"}},{\"identifier\":{\"id\":100,\"name_hint\":\"a\"}},{\"int\":\"3\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "identifier_categorical_param",
+   "class": "fhy_core.symbolic.param.core.Param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":{\"categorical\":{\"categories\":[{\"identifier\":{\"id\":99,\"name_hint\":\"b\"}},{\"identifier\":{\"id\":100,\"name_hint\":\"a\"}}]}},\"variable\":{\"id\":61911,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": []
+  },
+  {
    "name": "random_0000",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
@@ -663,6 +677,13 @@
    "class": "builtins.frozenset",
    "rust_type": "Value",
    "v2": "{\"frozen_set\":[{\"tuple\":[{\"float\":\"2.5\"},{\"bool\":true}]},{\"tuple\":[{\"float\":\"1e300\"},{\"float\":\"0\"}]},{\"tuple\":[{\"int\":\"1\"},{\"str\":\"a\"}]},{\"tuple\":[{\"tuple\":[]},{\"tuple\":[{\"int\":\"3\"}]}]}]}",
+   "foreign": []
+  },
+  {
+   "name": "value_tuple_of_an_identifier",
+   "class": "builtins.tuple",
+   "rust_type": "Value",
+   "v2": "{\"tuple\":[{\"identifier\":{\"id\":61912,\"name_hint\":\"a\"}},{\"int\":\"1\"}]}",
    "foreign": []
   }
  ]

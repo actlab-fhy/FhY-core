@@ -415,3 +415,100 @@ impl Resolve<Part<dyn CustomDomain>> for TestResolver {
         Ok(Part::new(WireDomain(read(foreign, DOMAIN)?.to_owned())))
     }
 }
+
+/// The type id 0.2.0 writes an identifier member's opaque part under.
+pub(crate) const LEGACY_IDENTIFIER: &str = "id";
+
+/// An identifier as 0.2.0 held it, an opaque value whose foreign part is
+/// the identifier's payload, `{"id": .., "name_hint": ..}`, and which
+/// reports the identifier it stands for.
+#[derive(Debug)]
+pub(crate) struct LegacyIdentifier(pub(crate) Identifier);
+
+impl LegacyIdentifier {
+    /// Return the opaque value of `identifier`.
+    pub(crate) fn value(identifier: &Identifier) -> Value {
+        Value::Opaque(Part::new(Self(identifier.clone())))
+    }
+
+    /// Return the legacy wire form of `identifier`, as 0.2.0 writes it.
+    pub(crate) fn wire(identifier: &Identifier) -> String {
+        let payload = serde_json::to_string(identifier).expect("an identifier encodes");
+        serde_json::json!({"opaque": {"type_id": LEGACY_IDENTIFIER, "data": payload}}).to_string()
+    }
+}
+
+impl ForeignPart for LegacyIdentifier {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("Identifier")
+    }
+
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        let payload = serde_json::to_string(&self.0).map_err(|error| ForeignError::Failed {
+            type_id: LEGACY_IDENTIFIER.to_owned(),
+            source: Box::new(error),
+        })?;
+        Ok(Foreign::new(LEGACY_IDENTIFIER, payload))
+    }
+}
+
+impl OpaqueValue for LegacyIdentifier {
+    fn is_member_shaped(&self) -> bool {
+        true
+    }
+
+    fn eq_part(&self, other: &dyn OpaqueValue) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| other.0 == self.0)
+    }
+
+    fn hash_part(&self, mut state: &mut dyn Hasher) {
+        std::hash::Hash::hash(&self.0, &mut state);
+    }
+
+    fn check_hashable(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    fn ordering_key(&self) -> Result<Cow<'_, str>, BoxError> {
+        Ok(Cow::Owned(format!("Identifier:{}", self.0.id())))
+    }
+
+    fn identifier(&self) -> Option<Identifier> {
+        Some(self.0.clone())
+    }
+}
+
+/// The resolver of 0.2.0's payloads: it reads a [`LEGACY_IDENTIFIER`] part
+/// as a [`LegacyIdentifier`], and every other part as [`TestResolver`]
+/// does.
+#[derive(Debug, Default)]
+pub(crate) struct LegacyResolver;
+
+impl Resolve<Part<dyn OpaqueValue>> for LegacyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
+        if foreign.type_id() != LEGACY_IDENTIFIER {
+            return TestResolver.resolve(foreign);
+        }
+        let identifier: Identifier =
+            serde_json::from_str(foreign.data()).map_err(|error| ForeignError::Failed {
+                type_id: LEGACY_IDENTIFIER.to_owned(),
+                source: Box::new(error),
+            })?;
+        Ok(Part::new(LegacyIdentifier(identifier)))
+    }
+}
+
+impl Resolve<Part<dyn CustomConstraint>> for LegacyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
+        TestResolver.resolve(foreign)
+    }
+}
+
+impl Resolve<Part<dyn CustomDomain>> for LegacyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
+        TestResolver.resolve(foreign)
+    }
+}

@@ -249,12 +249,14 @@ fn an_inadmissible_assignment_payload_fails_to_decode() {
 }
 
 /// Return a strategy for domain members: integers, Booleans, short strings,
-/// and tuples and frozen sets of those.
+/// identifiers, and tuples and frozen sets of those.
 fn member_value_strategy() -> BoxedStrategy<Value> {
     let leaf = prop_oneof![
         (-3_i64..6).prop_map(|value| Value::Int(value.into())),
         any::<bool>().prop_map(Value::Bool),
         "[ab]{1,2}".prop_map(Value::Str),
+        prop::sample::select(vec![(62_200, "a"), (62_201, "b"), (62_202, "c")])
+            .prop_map(|(id, name)| Value::Identifier(restored(id, name))),
     ];
     leaf.prop_recursive(2, 6, 3, |inner| {
         prop_oneof![
@@ -299,8 +301,8 @@ fn domain_strategy() -> impl Strategy<Value = ParamDomain> {
 
 proptest::proptest! {
     /// Every built-in domain round-trips through JSON and postcard, members
-    /// of kind bool, tuple and frozen set included, and its JSON re-encodes
-    /// byte-identically.
+    /// of kind bool, identifier, tuple and frozen set included, and its JSON
+    /// re-encodes byte-identically.
     #[test]
     fn a_domain_round_trips_through_serde(domain in domain_strategy()) {
         crate::support::serde::check_serde_round_trip(&domain)?;
