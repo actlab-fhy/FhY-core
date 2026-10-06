@@ -28,10 +28,10 @@
 //! checks it. [`VariableData`], [`AlternativeData`], [`ChoiceData`],
 //! [`SpaceData`] and [`ConfigurationData`] read the same shapes and resolve
 //! the foreign parts in `build`; the types' own `Deserialize` builds with
-//! [`NoForeign`](crate::foreign::NoForeign), which refuses them, under a
+//! [`NoForeign`], which refuses them, under a
 //! context of a solver without backends, and a configuration's under a
 //! solver holding the
-//! [`GroundSimplifier`](crate::solver::GroundSimplifier), so its
+//! [`GroundSimplifier`], so its
 //! conditions' equations evaluate.
 
 use serde::de::{self, Deserializer};
@@ -579,7 +579,7 @@ impl Serialize for Configuration {
 
 /// Deserializes `{"space", "entries"}`, refusing a foreign part, under a
 /// context of a solver holding the
-/// [`GroundSimplifier`](crate::solver::GroundSimplifier).
+/// [`GroundSimplifier`].
 impl<'de> Deserialize<'de> for Configuration {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let solver = Solver::new().with_simplifier(GroundSimplifier::new());
