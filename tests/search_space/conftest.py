@@ -14,6 +14,7 @@ from fhy_core.search_space import (
     Alternative,
     Choice,
     Condition,
+    Configuration,
     Forbidden,
     Space,
     Variable,
@@ -34,6 +35,7 @@ __all__ = [
     "Explosion",
     "TilingSpace",
     "build_chain",
+    "build_complete_configuration",
     "build_tiling_space",
     "categorical",
     "make_alternative",
@@ -129,6 +131,18 @@ def build_tiling_space(
         tile=tile,
         conditions=conditions,
         forbidden=forbidden,
+    )
+
+
+def build_complete_configuration(tiling: TilingSpace, tile: int = 4) -> Configuration:
+    """Return the complete configuration of `tiling` choosing `tiled`."""
+    return Configuration(
+        tiling.space,
+        {
+            tiling.unroll.name: 2,
+            tiling.layout.name: tiling.tiled.name,
+            tiling.tile.name: tile,
+        },
     )
 
 

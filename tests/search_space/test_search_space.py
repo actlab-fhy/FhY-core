@@ -43,6 +43,7 @@ from .conftest import (
     EXPLOSIONS,
     ExplodingConstraint,
     Explosion,
+    build_complete_configuration,
     build_tiling_space,
     categorical,
     make_alternative,
@@ -1117,18 +1118,6 @@ def test_with_entries_refuses_a_duplicate_pair() -> None:
 # ===========================================================================
 
 
-def _complete(tiling: Any, tile: int = 4) -> Configuration:
-    """Return the complete configuration of `tiling` choosing `tiled`."""
-    return Configuration(
-        tiling.space,
-        {
-            tiling.unroll.name: 2,
-            tiling.layout.name: tiling.tiled.name,
-            tiling.tile.name: tile,
-        },
-    )
-
-
 def test_configurations_of_relabeled_spaces_have_equal_keys() -> None:
     """Test corresponding configurations of two relabeled spaces share a key.
 
@@ -1137,7 +1126,10 @@ def test_configurations_of_relabeled_spaces_have_equal_keys() -> None:
     (divergence D-SS-18: a configuration is compared with its space, and
     its key is renaming-invariant without a seeded renaming).
     """
-    left, right = _complete(build_tiling_space()), _complete(build_tiling_space())
+    left, right = (
+        build_complete_configuration(build_tiling_space()),
+        build_complete_configuration(build_tiling_space()),
+    )
 
     assert isinstance(left.key(), ConfigurationKey)
     assert left.key() == right.key()
@@ -1153,7 +1145,10 @@ def test_different_values_give_different_keys() -> None:
     """
     tiling = build_tiling_space()
 
-    assert _complete(tiling, 4).key() != _complete(tiling, 8).key()
+    assert (
+        build_complete_configuration(tiling, 4).key()
+        != build_complete_configuration(tiling, 8).key()
+    )
 
 
 def test_complete_and_incomplete_configurations_have_different_keys() -> None:
@@ -1164,7 +1159,7 @@ def test_complete_and_incomplete_configurations_have_different_keys() -> None:
     (divergence: the status is replaced by completeness).
     """
     tiling = build_tiling_space()
-    complete = _complete(tiling)
+    complete = build_complete_configuration(tiling)
     incomplete = Configuration(
         tiling.space, {tiling.unroll.name: 2, tiling.layout.name: tiling.tiled.name}
     )
@@ -1315,7 +1310,10 @@ def test_configurations_of_relabeled_spaces_are_alpha_equivalent() -> None:
     `test_alpha_standalone.py::test_selection_alpha_equivalent_when_space_labels_seeded`,
     both directions.
     """
-    left, right = _complete(build_tiling_space()), _complete(build_tiling_space())
+    left, right = (
+        build_complete_configuration(build_tiling_space()),
+        build_complete_configuration(build_tiling_space()),
+    )
 
     assert not left.is_structurally_equivalent(right)
     assert left.is_alpha_equivalent(right)
@@ -1348,7 +1346,10 @@ def test_configurations_with_different_values_are_not_alpha_equivalent() -> None
     Ported from MOGA-VM
     `test_alpha_standalone.py::test_selection_not_alpha_equivalent_when_knob_value_differs_under_seeding`.
     """
-    left, right = _complete(build_tiling_space(), 4), _complete(build_tiling_space(), 8)
+    left, right = (
+        build_complete_configuration(build_tiling_space(), 4),
+        build_complete_configuration(build_tiling_space(), 8),
+    )
 
     assert not left.is_alpha_equivalent(right)
     assert not right.is_alpha_equivalent(left)

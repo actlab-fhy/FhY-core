@@ -47,26 +47,14 @@ from tests.native_modules import run_python
 from tests.v1 import writing_v1
 
 from .conftest import (
-    TilingSpace,
     build_chain,
+    build_complete_configuration,
     build_tiling_space,
     categorical,
     make_alternative,
     make_choice,
     make_variable,
 )
-
-
-def _complete(tiling: TilingSpace) -> Configuration:
-    """Return the complete configuration of `tiling` choosing `tiled`."""
-    return Configuration(
-        tiling.space,
-        {
-            tiling.unroll.name: 2,
-            tiling.layout.name: tiling.tiled.name,
-            tiling.tile.name: 4,
-        },
-    )
 
 
 def _canonical_text(payload: object) -> str:
@@ -226,7 +214,10 @@ def test_equality_and_hashing_are_identity() -> None:
 def test_configuration_keys_compare_structurally() -> None:
     """Test equal configurations' keys are equal, hash alike and key a dict."""
     tiling = build_tiling_space()
-    left, right = _complete(tiling), _complete(tiling)
+    left, right = (
+        build_complete_configuration(tiling),
+        build_complete_configuration(tiling),
+    )
     other = Configuration(tiling.space)
 
     assert left.key() is not right.key()
@@ -255,7 +246,7 @@ def test_configuration_key_has_no_constructor() -> None:
 @pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
 def test_configuration_key_pickles_to_an_equal_key(protocol: int) -> None:
     """Test a key pickles, under every protocol, to an equal key of one hash."""
-    key = _complete(build_tiling_space()).key()
+    key = build_complete_configuration(build_tiling_space()).key()
 
     restored = pickle.loads(pickle.dumps(key, protocol=protocol))
 
@@ -268,7 +259,7 @@ def test_configuration_key_pickles_to_an_equal_key(protocol: int) -> None:
 def test_pickled_key_keeps_telling_configurations_apart() -> None:
     """Test a restored key equals its own configuration's key only."""
     tiling = build_tiling_space()
-    key = _complete(tiling).key()
+    key = build_complete_configuration(tiling).key()
     other = Configuration(tiling.space, {tiling.layout.name: tiling.flat.name}).key()
 
     restored = pickle.loads(pickle.dumps(key))
@@ -279,8 +270,8 @@ def test_pickled_key_keeps_telling_configurations_apart() -> None:
 
 def test_keys_of_relabeled_configurations_stay_equal_after_pickling() -> None:
     """Test corresponding configurations' keys stay equal across a pickle."""
-    left = _complete(build_tiling_space()).key()
-    right = _complete(build_tiling_space()).key()
+    left = build_complete_configuration(build_tiling_space()).key()
+    right = build_complete_configuration(build_tiling_space()).key()
 
     restored_left = pickle.loads(pickle.dumps(left))
     restored_right = pickle.loads(pickle.dumps(right))
@@ -445,7 +436,7 @@ def test_condition_and_forbidden_pickle() -> None:
 def test_configuration_pickles_with_its_space() -> None:
     """Test a configuration pickles to one with an equal key and its values."""
     tiling = build_tiling_space()
-    configuration = _complete(tiling)
+    configuration = build_complete_configuration(tiling)
 
     restored = _round_trip_pickle(configuration)
 
@@ -594,7 +585,7 @@ def _round_trips() -> list[tuple[type[Any], Callable[[], Any]]]:
                 ).space
             ),
         ),
-        (Configuration, lambda: _complete(build_tiling_space())),
+        (Configuration, lambda: build_complete_configuration(build_tiling_space())),
     ]
 
 
@@ -633,7 +624,7 @@ def test_payload_text_round_trips(cls: type[Any], build: Callable[[], Any]) -> N
 
 def test_decoded_configuration_keeps_its_key() -> None:
     """Test a decoded configuration has the key of the one written."""
-    configuration = _complete(build_tiling_space())
+    configuration = build_complete_configuration(build_tiling_space())
 
     decoded = Configuration.from_json(configuration.to_json())
 
