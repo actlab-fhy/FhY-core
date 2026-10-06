@@ -215,9 +215,10 @@ holds it by value. Nothing else changes.
 
 ### Test plan
 
-- **Rust unit** (in `constraint/value.rs`'s tests): rank and order of
-  identifiers among kinds; `Display`; `kind_name`; `lifts_to_expression`.
-- **Rust integration** (`tests/it/constraint/identifier_value_stories.rs`):
+- **Rust integration** (`tests/it/constraint/identifier_value_stories.rs`,
+  through the public API, as the other constraint tests are):
+  - the order of identifiers among kinds; `Display`; `kind_name`;
+    `lifts_to_expression`;
   - type-strict equality (identifier vs string, vs another id);
   - hash agreeing with `==`;
   - `MemberSet` order by id and kind;
@@ -231,10 +232,13 @@ holds it by value. Nothing else changes.
     an identifier;
   - categorical and permutation domains over identifiers;
   - an ordinal domain's comparison answering `None`.
-- **Properties** (proptest): serde round trips of identifier-bearing values
-  and members; `Member` order is total and agrees with `==` and `hash`;
-  `MemberSet::new` is independent of input order; `Value` equality is
-  reflexive and symmetric on identifier-bearing values.
+- **Properties** (proptest, `constraint_properties.rs`, whose value
+  strategy draws identifiers, and `param/serde_stories.rs`'s domain round
+  trip): serde round trips of identifier-bearing values and members; the
+  legacy opaque rewrite of any value; `Member` order is total and agrees
+  with `==` and `hash`; `MemberSet::new` is independent of input order;
+  `Value` equality is reflexive and symmetric on identifier-bearing values;
+  an identifier never equals a string or an integer.
 - **Python** (`tests/symbolic/constraint/test_identifier_members.py`):
   - the V2 shapes of `serialize_value`, a set constraint and a categorical
     param pinned;
