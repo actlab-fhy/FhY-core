@@ -2413,41 +2413,72 @@ statistically above), `sample_uniform`, and the trace's type id.
 
 "Before" is MOGA-VM `3d93ba3`'s modules on fhy_core v0.1.8, assembled as
 the corpus recorder does (`target/scratch/search-space-ss2/bench_compare.py
-before`); "after" is the same rows through `fhy_core.search_space`.
-`benchmarks/test_search_space.py` under pytest-benchmark agrees within
-12%. Median per call, µs.
+before`); "after" is the same rows through `fhy_core.search_space`, after
+the two `perf(search_space)` commits (`4889e98`, `a369668`). The machine
+drifts by up to 15% between runs, so the table is one back-to-back pair;
+`benchmarks/test_search_space.py` under pytest-benchmark gives the new
+rows. Median per call, µs.
 
 | Row | Before (MOGA-VM) | After (port) | Ratio |
 |---|---|---|---|
-| **one draw, choice of 8** | 0.56 | 1.08 | **1.93, slower** |
-| one draw, strided, 4 runs × 2^16 | 2.67 | 0.93 | 0.35 |
-| one draw, order of 4 | 2.34 | 1.47 | 0.63 |
-| record a 100-step stream | 472 | 165 | 0.35 |
-| replay a 100-step stream | 190 | 130 | 0.68 |
-| `value_at` and `coordinate_of`, 64 strided runs | 22.5 | 0.42 | 0.019 |
-| count 8 option axes × 4 options × 2 axes | 240 | 34.8 | 0.15 |
-| **draw one point of that space** | 31.0 | 205 | **6.6, slower** |
-| (new) `sample_uniform`, that space | - | 187 | |
-| (new) `mutate`, that space | - | 12 000 | |
-| (new) enumerate 10 000 configurations | - | 156 000 | |
-| (new) count with a condition and a clause | - | 38 200 | |
-| (new) trace JSON round trip, 100 steps | - | 778 | |
-| (new) one step through a Python oracle | - | 1.32 | |
+| **one draw, choice of 8** | 0.59 | 0.88 | **1.49, slower** |
+| one draw, strided, 4 runs × 2^16 | 3.11 | 0.86 | 0.28 |
+| one draw, order of 4 | 2.71 | 1.39 | 0.51 |
+| record a 100-step stream | 547 | 152 | 0.28 |
+| replay a 100-step stream | 226 | 117 | 0.52 |
+| `value_at` and `coordinate_of`, 64 strided runs | 21.9 | 0.42 | 0.019 |
+| count 8 option axes × 4 options × 2 axes | 230 | 34.3 | 0.15 |
+| **draw one point of that space** | 30.7 | 64.0 | **2.09, slower** |
+| (new) `sample_uniform`, that space | - | 131 | |
+| (new) `mutate`, that space | - | 4 140 | |
+| (new) enumerate 10 000 configurations | - | 84 400 | |
+| (new) count with a condition and a clause | - | 20 400 | |
+| (new) trace JSON round trip, 100 steps | - | 789 | |
+| (new) one step through a Python oracle | - | 1.13 | |
 
-The two slower rows, for the user's decision (as B-SS1 was):
+**The performance pass** (before it, the two rows were 1.93 and 6.6
+times slower):
 
-- **One choice draw:** the port's draw is a recorded step (the
-  signature and the value are kept, through the binding), where
-  `UniformRandomOracle.decide` records nothing; the honest comparison,
-  recording a stream, is 2.9 times faster in the port.
-- **One point of the option space:** its 24 static steps each check the
-  run's configuration twice, once when `RandomOracle` asks whether the
-  drawn coordinate is admissible and once when the recorder extends the
-  configuration, and each check validates the whole configuration
-  (activity, conditions, clauses), so a point costs quadratically in its
-  decisions; `draw_uniform` checks nothing. Remedy, not done: let the
-  recorder keep the configuration the admissibility check built.
-- `mutate` (12 ms) searches the space's completions per candidate value
+- `4889e98`: a static step's configuration was checked twice per step
+  (when the oracle asked whether its answer is admissible, and when the
+  recorder grew the configuration), and each check ran every assigned
+  value's param check again. The step now hands the recorder the
+  configuration its admitted answer grew to, and a run grows its
+  configuration checking only the new value against its param. A
+  dynamic step's `admits` no longer builds the value. Draw one point:
+  205 to 64 µs. `space_sample_with_a_random_oracle_follows_the_pinned_stream`
+  (new, `a775487`, written first; green before and after, as a
+  behavior-preserving change must be) pins the coordinates and the
+  generator's next number for seeds 0 to 11; the corpus replays, the
+  Rng golden vectors and the `RandomOracle` stream stories
+  (`oracle_stories.rs`, `test_random_oracle_draws_*`) pin the dynamic
+  stream.
+- `a369668`: a signature copied each member of its domain, so each
+  recorded step allocated its domain's values again; a plain domain's
+  signature now shares them. With the dynamic `admits`, the core's
+  dynamic step went from 0.60 to 0.21 µs, and one draw from 1.07 to
+  0.88 µs.
+
+**The two rows that stay slower**, for the user's decision (as B-SS1
+was):
+
+- **One choice draw (1.49x):** the core's part is 0.21 µs; the rest is
+  the binding: each step builds the param context (the default solver,
+  the registry snapshot, the observer's backend name; about 0.2 µs, as
+  `PendingStep.admits` against `ChoiceDomain.admits` shows), reads the
+  subject `Identifier` from Python and keeps the step's objects for its
+  trace. MOGA-VM's `UniformRandomOracle.decide` records nothing; recording
+  a stream, the row that compares like with like, is 3.6 times faster in
+  the port.
+- **One point of the option space (2.09x):** each of its 24 static steps
+  still re-derives the activity of every decision (72 here), the
+  conditions and the forbidden clauses when the configuration grows, so a
+  point costs quadratically in its decisions; `draw_uniform` checks
+  nothing. An incremental check (re-deriving only the dependents of the
+  new decision) would remove most of it, but rewrites the configuration
+  checker, so it is not done here. `sample_uniform` (131 µs) draws the
+  same space uniformly per configuration.
+- `mutate` (4.1 ms) searches the space's completions per candidate value
   (1024 runs at most each); counting with a condition and a clause
   enumerates its component (2048 configurations). Neither has a MOGA-VM
   counterpart.
@@ -2466,7 +2497,7 @@ SS2, with these changes from the implementation:
 - `Space.enumerate()` is an iterator (`_rs.SpaceEnumeration`); a
   `sampling.py` strategy that enumerates small spaces iterates it.
 - `sampling.py`'s draws through `space.sample` pay the static steps'
-  checks (the 6.6x row above): CONTRIBUTING's 10% rule binds that
+  checks (the 2.09x row above): CONTRIBUTING's 10% rule binds that
   adoption, as it did SS1's.
 - Seeds are re-baselined (D-SS2-6); `Rng` pickles mid-stream, so a
   harness that checkpoints its generator keeps its stream.
