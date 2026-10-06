@@ -16,19 +16,25 @@ the case also holds the V2 texts of the space and the configuration, with
 every label at a fixed id. ``tests/it/search_space_golden.rs`` replays the
 corpus through the Rust port.
 
-The oracle is MOGA-VM ``origin/dev`` at ``3d93ba3`` with the audit's
-stand-ins for its ``moga`` dependencies, on fhy_core v0.1.8. It is frozen,
-so the committed corpus is a fixed regression corpus; this recorder is not
-one of the ``generate_*.py`` generators the drift check and the
-``golden_expanded`` session rerun, since neither can install MOGA-VM. Run
-it by hand from the repository root, naming the oracle's import paths, in
-order, with ``--moga-vm-src`` (the MOGA-VM export with its stand-ins, the
-``moga`` shim, its third-party dependencies, and fhy_core v0.1.8's
-``src``)::
+The oracle is MOGA-VM's ``moga_vm.cir.space`` at ``3d93ba3`` (its
+``origin/dev`` when the audit ran) on fhy_core v0.1.8, the version MOGA-VM
+pins. The recorder assembles it in a temporary directory, so nothing of it
+is installed or committed: ``git archive`` of ``src/moga_vm/cir/space`` at
+``3d93ba3`` from the MOGA-VM checkout ``--moga-vm-repo`` names, ``git
+archive`` of ``src/fhy_core`` at this repository's tag ``v0.1.8``, and the
+audit's stand-ins for the rest of ``moga_vm.cir`` and for ``moga``, which
+are written below (``_STAND_INS``): an empty hardware DFG equivalent only to
+itself, and the enums and aliases the space package imports. fhy_core
+v0.1.8 imports ``networkx``, which ``--with networkx`` provides.
 
-    uv run --no-sync python rust/fhy-core/tests/golden/record_search_space_cases.py \\
-        --moga-vm-src <export> --moga-vm-src <shim> --moga-vm-src <deps> \\
-        --moga-vm-src <fhy_core-0.1.8/src>
+The oracle is frozen, so the committed corpus is a fixed regression
+corpus: this recorder is not one of the ``generate_*.py`` generators that
+the drift check and the ``golden_expanded`` session rerun, and CI only
+replays the corpus. Run it by hand from the repository root::
+
+    uv run --no-sync --with networkx python \\
+        rust/fhy-core/tests/golden/record_search_space_cases.py \\
+        --moga-vm-repo <MOGA-VM checkout>
 
 This overwrites ``rust/fhy-core/tests/golden/search_space_cases.json``. The
 expanded corpus is ``--seed 7 --random-count 2000 --output <file>``, which
@@ -40,9 +46,13 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import io
 import json
 import random
+import subprocess
 import sys
+import tarfile
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,10 +60,83 @@ from typing import Any
 from _golden_support import build_provenance, write_document
 
 GENERATOR_COMMAND = (
-    "uv run --no-sync python rust/fhy-core/tests/golden/record_search_space_cases.py"
-    " --moga-vm-src <paths>"
+    "uv run --no-sync --with networkx python"
+    " rust/fhy-core/tests/golden/record_search_space_cases.py"
+    " --moga-vm-repo <MOGA-VM checkout>"
 )
 ORACLE = {"moga_vm": "origin/dev 3d93ba3", "fhy_core": "v0.1.8 (ad9a311)"}
+# The MOGA-VM commit and the fhy_core tag the oracle is built from.
+_MOGA_VM_COMMIT = "3d93ba3"
+_FHY_CORE_TAG = "v0.1.8"
+# The audit's stand-ins, by path in the oracle's import root: the parts of
+# `moga_vm` other than `moga_vm.cir.space`, and of `moga`, that the space
+# package imports.
+_STAND_INS = {
+    "moga_vm/__init__.py": '"""Oracle root: moga_vm.cir.space is MOGA-VM code."""\n',
+    "moga_vm/cir/__init__.py": (
+        '"""Oracle moga_vm.cir: the space package over stand-in IR."""\n'
+        "from .ir import HardwareDFG\n"
+        "from .space import *  # noqa: F403\n"
+        "from .space import __all__ as _space_all\n"
+        '__all__ = ["HardwareDFG", *_space_all]\n'
+    ),
+    "moga_vm/cir/ir/__init__.py": (
+        "from .immutable_dfg import HardwareDFG, ImmutableHardwareDFG\n"
+        '__all__ = ["HardwareDFG", "ImmutableHardwareDFG"]\n'
+    ),
+    "moga_vm/cir/ir/immutable_dfg.py": (
+        "from dataclasses import dataclass\n"
+        "import fhy_core\n"
+        "@dataclass(frozen=True, eq=False)\n"
+        "class ImmutableHardwareDFG(fhy_core.traits.FrozenMixin):\n"
+        "    def iter_in_topological_order(self):\n"
+        "        return iter(())\n"
+        "    def is_structurally_equivalent(self, other):\n"
+        "        return other is self\n"
+        "    def is_alpha_equivalent_under(self, other, renaming):\n"
+        "        return other is self\n"
+        "    def has_vertex(self, vertex_id):\n"
+        "        return False\n"
+        "class HardwareDFG:\n"
+        "    def freeze(self):\n"
+        "        return ImmutableHardwareDFG()\n"
+        "    def has_vertex(self, vertex_id):\n"
+        "        return False\n"
+    ),
+    "moga_vm/cir/ir/ports.py": (
+        "from enum import Enum\n"
+        "class PortRole(str, Enum):\n"
+        '    INPUT = "input"\n'
+        '    OUTPUT = "output"\n'
+    ),
+    "moga_vm/cir/ir/vertex.py": "class NestedWalkVertex:\n    pass\n",
+    "moga_vm/cir/ir/memory.py": (
+        "from enum import Enum\n"
+        "class ArrayLayoutKind(str, Enum):\n"
+        '    ROW_MAJOR = "row_major"\n'
+    ),
+    "moga_vm/cir/ir/alias.py": (
+        "from fhy_core import Identifier\nVertexId = Identifier\n"
+    ),
+    "moga/__init__.py": "",
+    "moga/alias.py": (
+        "from fhy_core import Identifier\n"
+        "NamespaceName = Identifier\n"
+        "SymbolName = Identifier\n"
+    ),
+    "moga/abstraction/__init__.py": "",
+    "moga/abstraction/namespace/__init__.py": "",
+    "moga/abstraction/namespace/addressing.py": (
+        "from dataclasses import dataclass\n"
+        "@dataclass(frozen=True)\n"
+        "class WordIndexedAddressingScheme:\n"
+        "    word_count: int\n"
+        "    word_width_in_bits: int\n"
+        "    @property\n"
+        "    def size_in_bytes(self):\n"
+        "        return self.word_count * self.word_width_in_bits // 8\n"
+    ),
+}
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 _DEFAULT_OUTPUT = Path(__file__).with_name("search_space_cases.json")
 _DEFAULT_SEED = 0
@@ -1013,16 +1096,49 @@ def _record_case(case_index: int, case: Case, oracle: Oracle) -> dict[str, Any]:
     }
 
 
+def _extract(repository: Path, revision: str, path: str, destination: Path) -> Path:
+    """Extract `path` at `revision` of `repository` into `destination`."""
+    archive = subprocess.run(
+        ["git", "-C", str(repository), "archive", "--format=tar", revision, path],
+        capture_output=True,
+        check=True,
+    ).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(destination, filter="data")
+    return destination / path
+
+
+def _assemble_oracle(moga_vm_repository: Path, root: Path) -> None:
+    """Assemble the oracle's import root under `root` and put it on the path."""
+    space = _extract(moga_vm_repository, _MOGA_VM_COMMIT, "src/moga_vm/cir/space", root)
+    imports = root / "oracle"
+    (imports / "moga_vm" / "cir").mkdir(parents=True)
+    space.rename(imports / "moga_vm" / "cir" / "space")
+    for relative, text in _STAND_INS.items():
+        target = imports / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    fhy_core = _extract(
+        _REPOSITORY_ROOT, _FHY_CORE_TAG, "src/fhy_core", root / "fhy_core"
+    )
+    sys.path[:0] = [str(imports), str(fhy_core.parent)]
+
+
 def main() -> None:
     """Record the corpus."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--moga-vm-src", action="append", type=Path, required=True)
+    parser.add_argument("--moga-vm-repo", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=_DEFAULT_SEED)
     parser.add_argument("--random-count", type=int, default=_DEFAULT_RANDOM_COUNT)
     parser.add_argument("--output", type=Path, default=_DEFAULT_OUTPUT)
     arguments = parser.parse_args()
-    for path in reversed(arguments.moga_vm_src):
-        sys.path.insert(0, str(path.resolve()))
+    with tempfile.TemporaryDirectory() as directory:
+        _assemble_oracle(arguments.moga_vm_repo.resolve(), Path(directory))
+        _record(arguments)
+
+
+def _record(arguments: argparse.Namespace) -> None:
+    """Record the corpus `arguments` describe with the assembled oracle."""
     oracle = Oracle()
     cases = _probes() + _random_cases(arguments.seed, arguments.random_count)
     if len(cases) * _ID_STRIDE + _ID_BASE >= 2**40:

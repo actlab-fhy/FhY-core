@@ -2,9 +2,9 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "eb8b895ca1fc41a8da7181bd48a829e968da6182",
+  "git_commit": "9c6f7fafa5d524527c877a447625bbb56d6f3a7a",
   "python_version": "3.11.13 (main, Jun  4 2025, 08:57:30) [GCC 9.4.0]",
-  "generator_command": "uv run --no-sync python rust/fhy-core/tests/golden/record_search_space_cases.py --moga-vm-src <paths>",
+  "generator_command": "uv run --no-sync --with networkx python rust/fhy-core/tests/golden/record_search_space_cases.py --moga-vm-repo <MOGA-VM checkout>",
   "oracle": {
    "moga_vm": "origin/dev 3d93ba3",
    "fhy_core": "v0.1.8 (ad9a311)"
