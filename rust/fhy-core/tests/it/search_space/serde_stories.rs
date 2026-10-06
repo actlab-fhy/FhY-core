@@ -1,7 +1,7 @@
 //! Tests for the serde form of variables, alternatives, choices, spaces and
 //! configurations (`fhy_core::search_space::wire`).
 
-use fhy_core::constraint::ConstraintError;
+use fhy_core::constraint::{ConstraintError, Value};
 use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part};
 use fhy_core::identifier::Identifier;
@@ -11,8 +11,8 @@ use fhy_core::param::{
 };
 use fhy_core::search_space::wire::{AlternativeData, ConfigurationData, SpaceData, VariableData};
 use fhy_core::search_space::{
-    Choice, Condition, Configuration, ConfigurationError, ConfigurationErrors, PlainAlternative,
-    PlainVariable, Space, SpaceError, Variable,
+    Choice, Condition, Configuration, ConfigurationError, ConfigurationErrors, ConfigurationKey,
+    PlainAlternative, PlainVariable, Space, SpaceError, Variable,
 };
 use fhy_core::solver::Solver;
 use rstest::rstest;
@@ -24,8 +24,8 @@ use crate::support::constraint::int;
 use crate::support::param::{at_least, at_most, in_set, ints};
 use crate::support::search_space::{
     ImplementorResolver, REALIZATION, Realization, TILE_KNOB, TileKnob, bare_alternative,
-    choice_of, chooses, chosen, condition, configure, forbidden, ground_solver, int_param,
-    int_variable, natural_param, plain_alternative, plain_variable, space_of,
+    categorical, choice_of, chooses, chosen, condition, configure, forbidden, ground_solver,
+    int_param, int_variable, natural_param, plain_alternative, plain_variable, space_of,
 };
 use crate::support::serde::{check_serde_round_trip, restored};
 
@@ -948,4 +948,122 @@ fn a_configuration_payload_giving_a_value_to_a_decision_its_condition_leaves_ina
     value["entries"][0]["value"] = json!({"int": "1"});
 
     serde_json::from_value::<Configuration>(value).expect_err("an inactive decision is refused");
+}
+
+// -- configuration keys -----------------------------------------------------
+
+/// A space whose variable `m` takes the name of the alternative `a`, which
+/// the space binds, or the free name `f`: its names are `s`, `m`, `c`, `a`.
+struct Mirrored {
+    space: Space,
+    m: Identifier,
+    c: Identifier,
+    a: Identifier,
+    f: Identifier,
+}
+
+/// Return a [`Mirrored`] space, its names fresh.
+fn build_mirrored() -> Mirrored {
+    let [m, c, a, f] = ["m", "c", "a", "f"].map(Identifier::new);
+    let space = Space::new(
+        Identifier::new("s"),
+        vec![plain_variable(
+            &m,
+            categorical(vec![
+                Value::Identifier(a.clone()),
+                Value::Identifier(f.clone()),
+            ]),
+        )],
+        vec![choice_of(&c, vec![bare_alternative(&a)])],
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the space is valid");
+    Mirrored { space, m, c, a, f }
+}
+
+#[test]
+fn configuration_key_serializes_its_entries_in_canonical_order() {
+    let pinned = build_pinned();
+    let configuration = configure(
+        &pinned.space,
+        [
+            (pinned.t.clone(), int(1)),
+            (pinned.c.clone(), chosen(&pinned.a)),
+        ],
+    );
+
+    assert_pinned(
+        &configuration.key(),
+        r#"{"entries":[{"value":{"leaf":{"int":"1"}}},{"alternative":{"index":0}},{"unassigned":{}}]}"#,
+    );
+}
+
+#[test]
+fn configuration_key_writes_an_inactive_decision() {
+    let (space, x, _) = build_gated_space();
+    let configuration = configure(&space, [(x, int(0))]);
+
+    assert_pinned(
+        &configuration.key(),
+        r#"{"entries":[{"value":{"leaf":{"int":"0"}}},{"inactive":{}}]}"#,
+    );
+}
+
+#[test]
+fn configuration_key_writes_a_bound_identifier_as_its_position() {
+    let mirrored = build_mirrored();
+    let configuration = configure(&mirrored.space, [(mirrored.m.clone(), chosen(&mirrored.a))]);
+
+    assert_pinned(
+        &configuration.key(),
+        r#"{"entries":[{"value":{"bound":{"position":3}}},{"unassigned":{}}]}"#,
+    );
+}
+
+#[test]
+fn configuration_key_writes_a_free_identifier_as_itself() {
+    let mirrored = build_mirrored();
+    let configuration = configure(&mirrored.space, [(mirrored.m.clone(), chosen(&mirrored.f))]);
+    let text = format!(
+        r#"{{"entries":[{{"value":{{"leaf":{{"identifier":{}}}}}}},{{"unassigned":{{}}}}]}}"#,
+        build_id_text(mirrored.f.id(), mirrored.f.name_hint()),
+    );
+
+    assert_pinned(&configuration.key(), &text);
+}
+
+#[rstest]
+#[case::bound(true)]
+#[case::free(false)]
+fn configuration_key_round_trips_through_json_and_postcard(#[case] bound: bool) {
+    let mirrored = build_mirrored();
+    let value = if bound { &mirrored.a } else { &mirrored.f };
+    let configuration = configure(
+        &mirrored.space,
+        [
+            (mirrored.m.clone(), chosen(value)),
+            (mirrored.c.clone(), chosen(&mirrored.a)),
+        ],
+    );
+
+    check_serde_round_trip(&configuration.key()).expect("the key round-trips");
+}
+
+#[test]
+fn keys_of_relabeled_configurations_stay_equal_after_a_round_trip() {
+    let [left, right] = [build_mirrored(), build_mirrored()];
+    let left_key = configure(&left.space, [(left.m.clone(), chosen(&left.a))]).key();
+    let right_key = configure(&right.space, [(right.m.clone(), chosen(&right.a))]).key();
+
+    let decoded: ConfigurationKey =
+        serde_json::from_str(&serde_json::to_string(&left_key).expect("encodes")).expect("decodes");
+
+    assert_eq!(decoded, right_key);
+}
+
+#[test]
+fn configuration_key_refuses_an_unknown_entry() {
+    serde_json::from_str::<ConfigurationKey>(r#"{"entries":[{"chosen":{}}]}"#)
+        .expect_err("an unknown entry is refused");
 }

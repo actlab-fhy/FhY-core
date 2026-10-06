@@ -336,9 +336,21 @@ impl AlphaEquivalence for Configuration {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConfigurationKey(Arc<[KeyEntry]>);
 
+impl ConfigurationKey {
+    /// Return the key of `entries`, one per decision in canonical order.
+    pub(super) fn from_entries(entries: Vec<KeyEntry>) -> Self {
+        Self(entries.into())
+    }
+
+    /// Return the entries, one per decision in canonical order.
+    pub(super) fn entries(&self) -> &[KeyEntry] {
+        &self.0
+    }
+}
+
 /// One decision's entry in a [`ConfigurationKey`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum KeyEntry {
+pub(super) enum KeyEntry {
     Inactive,
     Unassigned,
     Alternative(usize),
@@ -351,7 +363,7 @@ enum KeyEntry {
 /// `==` and `Hash` follow [`Value`]'s: type-strict, a frozen set's elements
 /// in any order.
 #[derive(Debug, Clone)]
-enum KeyValue {
+pub(super) enum KeyValue {
     Leaf(Value),
     Bound(usize),
     Tuple(Vec<KeyValue>),

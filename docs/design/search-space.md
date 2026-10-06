@@ -655,7 +655,7 @@ an iterable of pairs whose names are `Identifier`s.
 | `Forbidden` (`PyForbidden`) | `Forbidden(when)` | `when` | `TypeError` |
 | `Space` (`PySpace`) | `Space(variables=(), choices=(), conditions=(), forbidden=(), name=None, notes=())` | `name`, `variables`, `choices`, `conditions` (one per target in canonical order of the targets, as the core keeps them: a target's one condition is the object given, a merged one is built over the constraint objects given), `forbidden`, `notes`, `decisions` (the decision objects in canonical order), `decision(name)` (or `None`), `decision_order` (the decisions' name objects); the equivalences; the serialization methods | `SearchSpaceError` for each `SpaceError` but `DuplicateName` (`DuplicateNameError`), `Hook` (the hook's exception itself) and `Constraint` (the constraint error, as the constraint module raises it); `RecursionError` |
 | `Configuration` (`PyConfiguration`) | `Configuration(space, entries=())`: a choice's value is the chosen alternative's name, an `Identifier`; checked under the default solver's context (`with_param_context`) | `space`, `entries` (`(name, value)` pairs in canonical order, the names the decisions' own objects and the values the objects given), `value(name)`, `alternative(choice)` (the alternative object), `activity(name)` (an `Activity` or `None`), `is_complete()`, `key()`, `with_entry(name, value)`, `with_entries(entries)` (both keep the other entries' objects); the equivalences; the serialization methods | `ConfigurationError` carrying every problem; a Python-defined constraint's exception itself when one raised; `TypeError` |
-| `ConfigurationKey` (`PyConfigurationKey`, no public subclass: `fhy_core.search_space.ConfigurationKey` is `_rs.ConfigurationKey`) | no constructor; `Configuration.key()` builds it | structural `==` and `hash` (another type is `NotImplemented`); `repr` `ConfigurationKey(...)` | pickling raises `TypeError`: a key is meaningful only within its space |
+| `ConfigurationKey` (`PyConfigurationKey`, no public subclass: `fhy_core.search_space.ConfigurationKey` is `_rs.ConfigurationKey`) | no constructor; `Configuration.key()` builds it | structural `==` and `hash` (another type is `NotImplemented`); `repr` `ConfigurationKey(...)`; pickles, under every protocol, as `(ConfigurationKey._from_wire, (<V2 text>,))` to an equal key of one hash | `_from_wire` raises `DeserializationValueError` for a text of another shape |
 | `Activity` (Python `StrEnum`) | `ACTIVE = "active"`, `INACTIVE = "inactive"`, `PENDING = "pending"` | | |
 
 **The equivalences** of `Variable`, `Alternative`, `Choice`, `Space` and
@@ -802,6 +802,7 @@ pub fn register_alternative_kind(module: &Bound<'_, PyModule>, kind: &str, class
 | `Choice` | `search_space.choice` | `{"identifier", "alternatives", "notes"}` |
 | `Space` | `search_space.space` | `{"identifier", "variables", "choices", "conditions", "forbidden", "notes"}` |
 | `Configuration` | `search_space.configuration` | `{"space", "entries"}` |
+| `ConfigurationKey` | (none: pickled, not a `Serializable`) | the core's `{"entries": [..]}`, one per decision in canonical order (see `fhy_core::search_space::wire`) |
 
 - The text is the core's serde text; `to_json()` is byte-identical to the
   core's `serde_json` text, and the dict is what `json.loads` makes of it.
@@ -825,6 +826,12 @@ pub fn register_alternative_kind(module: &Bound<'_, PyModule>, kind: &str, class
   levels deep`), and so does decoding a payload whose choices nest deeper,
   measured on the payload before any of it reaches the core, as
   `provenance.rs` refuses a deep provenance.
+- **The key's wire form.** A key is self-contained: every identifier its
+  space binds is already written as its position among the space's names,
+  and any other value as itself. So the core gains `Serialize` and
+  `Deserialize` for `ConfigurationKey` and `wire::ConfigurationKeyData`
+  (`of`, `build(resolver)` for opaque values), the binding's only change to
+  the core's public API, and the key pickles through its V2 text.
 - **No V1 form.** These classes are new, so no V1 payload of them exists:
   `serialize_to_dict` and `to_json` raise `SerializationError` inside
   `wire_version(WireVersion.V1)`, and the readers read V2 only. (The
@@ -1492,6 +1499,27 @@ None of this is done by the port; it is what MOGA-VM changes to use it.
 | N-8 dependencies | none | none in SS0 and SS1; SS2's random draws use a small in-house PRNG or the stdlib, never Python's `random.Random` stream (a divergence) |
 | N-9 status | parity, documented | moot: validity (by construction) and `is_complete()` replace the status |
 | N-10 name vs variable | keep both, check against the knob | a `Variable`'s name and its param's variable stay distinct. Conditions, forbidden clauses, configuration entries and traces name the `Variable`; the param's constraints name the param's variable. A configuration value is checked with `ParamAssignment::new` against the variable's param. No separate assignment param exists to mismatch. |
+
+### Deviations of SS1.5 to SS1.7 from this design (accepted 2026-10-06)
+
+1. `register_variable_kind` and `register_alternative_kind` take a sixth
+   argument, the kind's resolver, so decoding a Rust kind needs no call
+   into Python.
+2. The search-space classes have no V1 form: writing one inside
+   `wire_version(WireVersion.V1)` raises `SerializationError`, since no V1
+   payload of them can exist.
+3. The binding's `classes.rs` is split into one file per class, and the
+   adapters are named `PythonVariable` and `PythonAlternative`.
+4. `_FrozenAfterInit` moves from `fhy_core.types.core` to
+   `fhy_core.traits.frozen`, shared by the types and the search space.
+5. The example aggregate depends on `serde` and `serde_json`, workspace
+   crates already in the lock file, for its kinds' foreign payloads.
+6. Two existing tests change with the new subsystem: the pinned top-level
+   `fhy_core.__all__` and the GC-flag exemption of `ConfigurationKey`.
+7. `ConfigurationKey` pickles through its wire form (not a deviation from
+   the design, but from the first plan, which refused to pickle it), which
+   adds `Serialize`/`Deserialize` and `wire::ConfigurationKeyData` to the
+   core's public API.
 
 ## Intended divergences from MOGA-VM
 

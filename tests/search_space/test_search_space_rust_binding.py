@@ -253,12 +253,64 @@ def test_configuration_key_has_no_constructor() -> None:
         ConfigurationKey()
 
 
-def test_configuration_key_does_not_pickle() -> None:
-    """Test pickling a key is refused: it is meaningful only within its space."""
-    key = Configuration(build_tiling_space().space).key()
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+def test_configuration_key_pickles_to_an_equal_key(protocol: int) -> None:
+    """Test a key pickles, under every protocol, to an equal key of one hash."""
+    key = _complete(build_tiling_space()).key()
 
-    with pytest.raises(TypeError, match="within its space"):
-        pickle.dumps(key)
+    restored = pickle.loads(pickle.dumps(key, protocol=protocol))
+
+    assert type(restored) is ConfigurationKey
+    assert restored is not key
+    assert restored == key
+    assert hash(restored) == hash(key)
+
+
+def test_pickled_key_keeps_telling_configurations_apart() -> None:
+    """Test a restored key equals its own configuration's key only."""
+    tiling = build_tiling_space()
+    key = _complete(tiling).key()
+    other = Configuration(tiling.space, {tiling.layout.name: tiling.flat.name}).key()
+
+    restored = pickle.loads(pickle.dumps(key))
+
+    assert restored != other
+    assert {restored: "measured"}[key] == "measured"
+
+
+def test_keys_of_relabeled_configurations_stay_equal_after_pickling() -> None:
+    """Test corresponding configurations' keys stay equal across a pickle."""
+    left = _complete(build_tiling_space()).key()
+    right = _complete(build_tiling_space()).key()
+
+    restored_left = pickle.loads(pickle.dumps(left))
+    restored_right = pickle.loads(pickle.dumps(right))
+
+    assert restored_left == right
+    assert restored_left == restored_right
+    assert hash(restored_left) == hash(right)
+
+
+def test_pickled_key_with_a_bound_identifier_value_round_trips() -> None:
+    """Test a key whose value is a name the space binds survives a pickle."""
+
+    def build() -> ConfigurationKey:
+        tiled, flat = make_alternative("tiled"), make_alternative("flat")
+        mirror = Variable(
+            param=categorical(tiled.name, flat.name), name=Identifier("m")
+        )
+        space = Space(variables=(mirror,), choices=(make_choice("c", tiled, flat),))
+        return Configuration(space, {mirror.name: flat.name}).key()
+
+    left, right = build(), build()
+
+    assert pickle.loads(pickle.dumps(left)) == right
+
+
+def test_key_is_restored_from_its_wire_text_only() -> None:
+    """Test the restoring function refuses a text of another shape."""
+    with pytest.raises(DeserializationValueError):
+        ConfigurationKey._from_wire('{"entries": [{"chosen": {}}]}')
 
 
 # ===========================================================================

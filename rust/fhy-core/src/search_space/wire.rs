@@ -15,6 +15,7 @@
 //! | [`Choice`] | `{"identifier", "alternatives", "notes"}` |
 //! | [`Space`] | `{"identifier", "variables", "choices", "conditions": [{"target", "when"}, ..], "forbidden": [{"when"}, ..], "notes"}` |
 //! | [`Configuration`] | `{"space", "entries": [{"name", "value"}, ..]}` |
+//! | [`ConfigurationKey`] | `{"entries": [..]}`, one per decision in canonical order: `{"inactive": {}}`, `{"unassigned": {}}`, `{"alternative": {"index"}}` or `{"value": ..}`, a value being `{"leaf": <value>}`, `{"bound": {"position"}}`, `{"tuple": [..]}` or `{"frozen_set": [..]}` |
 //!
 //! Params, constraint systems and values are in their own modules' forms,
 //! conditions are written one per target in canonical order of the
@@ -38,6 +39,7 @@ use serde::de::{self, Deserializer};
 use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
+use crate::constraint::OpaqueValue;
 use crate::constraint::wire::{ConstraintSystemData, ValueData};
 use crate::diagnostic::Note;
 use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
@@ -48,7 +50,7 @@ use crate::solver::{GroundSimplifier, Solver};
 
 use super::alternative::{Alternative, PlainAlternative};
 use super::choice::Choice;
-use super::configuration::Configuration;
+use super::configuration::{Configuration, ConfigurationKey, KeyEntry, KeyValue};
 use super::space::{Condition, Forbidden, Space};
 use super::variable::{PlainVariable, Variable};
 
@@ -585,6 +587,89 @@ impl<'de> Deserialize<'de> for Configuration {
         let solver = Solver::new().with_simplifier(GroundSimplifier::new());
         ConfigurationData::deserialize(deserializer)?
             .build(&NoForeign, &ParamContext::new(&solver))
+            .map_err(de::Error::custom)
+    }
+}
+
+/// The wire form of a [`ConfigurationKey`], its opaque values unresolved.
+///
+/// A key is self-contained: every identifier its space binds is written as
+/// its position among the space's names, and any other value as the value
+/// itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "ConfigurationKey", deny_unknown_fields)]
+pub struct ConfigurationKeyData {
+    entries: Vec<KeyEntryRepr>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "KeyEntry", rename_all = "snake_case")]
+enum KeyEntryRepr {
+    Inactive {},
+    Unassigned {},
+    Alternative { index: usize },
+    Value(KeyValueRepr),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "KeyValue", rename_all = "snake_case")]
+enum KeyValueRepr {
+    Leaf(ValueData),
+    Bound { position: usize },
+    Tuple(Vec<KeyValueRepr>),
+    FrozenSet(Vec<KeyValueRepr>),
+}
+
+impl ConfigurationKeyData {
+    /// Return the wire form of `key`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of an opaque value that cannot give its foreign
+    /// form.
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; the body is todo!() until implementation"
+    )]
+    pub fn of(key: &ConfigurationKey) -> Result<Self, ForeignError> {
+        let _: (&[KeyEntry], Option<&KeyValue>) = (key.entries(), None);
+        todo!()
+    }
+
+    /// Return the key, its opaque values resolved by `resolver`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
+    /// refuses.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; the body is todo!() until implementation"
+    )]
+    pub fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<ConfigurationKey, BuildError> {
+        let _ = ConfigurationKey::from_entries;
+        todo!()
+    }
+}
+
+/// Serializes as `{"entries"}`.
+impl Serialize for ConfigurationKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ConfigurationKeyData::of(self)
+            .map_err(ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+/// Deserializes `{"entries"}`, refusing an opaque value.
+impl<'de> Deserialize<'de> for ConfigurationKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ConfigurationKeyData::deserialize(deserializer)?
+            .build(&NoForeign)
             .map_err(de::Error::custom)
     }
 }

@@ -231,8 +231,9 @@ impl PyConfiguration {
 /// spaces whose values correspond.
 ///
 /// It is hashable and compares structurally, so it keys a dict. It has no
-/// constructor and does not pickle: a key is meaningful only within its
-/// space.
+/// constructor; it pickles through its wire form, which is self-contained:
+/// each identifier the space binds is written as its position among the
+/// space's names.
 #[pyclass(frozen, module = "fhy_core._rs", name = "ConfigurationKey")]
 pub(crate) struct PyConfigurationKey {
     key: ConfigurationKey,
@@ -260,8 +261,17 @@ impl PyConfigurationKey {
         todo!()
     }
 
-    /// Refuse to pickle: a key is meaningful only within its space.
-    fn __reduce__(&self) -> PyResult<()> {
+    /// Pickle as a call of `_from_wire` with the key's V2 text.
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Return the key of its V2 text `text`, the inverse of the text
+    /// `__reduce__` writes.
+    ///
+    /// Raises `DeserializationValueError` for a text of another shape.
+    #[staticmethod]
+    fn _from_wire(text: &str) -> PyResult<Self> {
         todo!()
     }
 }
