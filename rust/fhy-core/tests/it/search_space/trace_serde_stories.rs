@@ -187,7 +187,7 @@ fn trace_empty_serializes_as_no_steps() {
 
 /// Return the JSON text of a trace of one dynamic step of `kind` over
 /// the one run `[start, stop)`, answered with `coordinate`.
-fn build_step_text(kind: &str, start: i64, stop: i64, coordinate: serde_json::Value) -> String {
+fn build_step_text(kind: &str, start: i64, stop: i64, coordinate: &serde_json::Value) -> String {
     json!({"steps": [{
         "kind": kind,
         "subject": json_of(&Identifier::new("s")),
@@ -206,7 +206,7 @@ fn build_step_text(kind: &str, start: i64, stop: i64, coordinate: serde_json::Va
 /// Test a well-formed step decodes, the control of the refusals below.
 #[test]
 fn trace_decoding_reads_a_well_formed_step() {
-    let text = build_step_text("k", 0, 4, json!({"index": 3}));
+    let text = build_step_text("k", 0, 4, &json!({"index": 3}));
 
     let decoded: Trace = serde_json::from_str(&text).expect("a valid step");
 
@@ -217,11 +217,11 @@ fn trace_decoding_reads_a_well_formed_step() {
 /// Test reading refuses a coordinate its signature does not contain, an
 /// empty kind, and an empty run.
 #[rstest]
-#[case::past_the_end(build_step_text("k", 0, 4, json!({"index": 4})))]
-#[case::wrong_shape(build_step_text("k", 0, 4, json!({"order": [0]})))]
-#[case::untagged(build_step_text("k", 0, 4, json!(3)))]
-#[case::empty_kind(build_step_text("", 0, 4, json!({"index": 0})))]
-#[case::empty_run(build_step_text("k", 4, 4, json!({"index": 0})))]
+#[case::past_the_end(build_step_text("k", 0, 4, &json!({"index": 4})))]
+#[case::wrong_shape(build_step_text("k", 0, 4, &json!({"order": [0]})))]
+#[case::untagged(build_step_text("k", 0, 4, &json!(3)))]
+#[case::empty_kind(build_step_text("", 0, 4, &json!({"index": 0})))]
+#[case::empty_run(build_step_text("k", 4, 4, &json!({"index": 0})))]
 fn trace_decoding_refuses_a_malformed_step(#[case] text: String) {
     let result = serde_json::from_str::<Trace>(&text);
 

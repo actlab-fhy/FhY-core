@@ -99,7 +99,8 @@ def _extract(repository: Path, revision: str, path: str, destination: Path) -> P
 
 def _identifier_class() -> type:
     """Return the oracle's ``Identifier``, from fhy_core v0.1.8 once assembled."""
-    return importlib.import_module("fhy_core").Identifier
+    identifier: type = importlib.import_module("fhy_core").Identifier
+    return identifier
 
 
 class _Placeholder:
@@ -108,7 +109,7 @@ class _Placeholder:
 
 def _stub_module(name: str, **attributes: object) -> types.ModuleType:
     module = types.ModuleType(name)
-    module.__path__ = []  # type: ignore[attr-defined]
+    module.__path__ = []
     for key, value in attributes.items():
         setattr(module, key, value)
     sys.modules[name] = module
@@ -145,7 +146,7 @@ def _assemble_oracle(
         TableEntry=_Placeholder,
     )
     package = _stub_module("moga_vm.cir.lowering.search")
-    package.__path__ = [str(search)]  # type: ignore[attr-defined]
+    package.__path__ = [str(search)]
     modules = {}
     for short in _MODULES:
         full = f"moga_vm.cir.lowering.search.{short}"
@@ -200,7 +201,7 @@ def _record_choice(
             tuple(_python_value(value, []) for value in values)
         )
     except ValueError:
-        oracle = {"outcome": "refused", "error": "empty_choice"}
+        oracle: dict[str, Any] = {"outcome": "refused", "error": "empty_choice"}
     else:
         oracle = {
             "outcome": "built",
@@ -366,16 +367,16 @@ def _domain_cases(
         (f"random_runs_{index}", _random_runs(rng)) for index in range(count)
     ]
     for name, runs in fixed_runs + random_runs:
-        values = _strided_values(runs)
-        probes: list[Any] = [values[0], values[-1], values[-1] + 1, -1, True]
-        probes += [rng.randrange(0, values[-1] + 2) for _ in range(3)]
+        integers = _strided_values(runs)
+        run_probes: list[Any] = [integers[0], integers[-1], integers[-1] + 1, -1, True]
+        run_probes += [rng.randrange(0, integers[-1] + 2) for _ in range(3)]
         cases.append(
             {
                 "name": name,
                 "shape": "strided",
-                "spec": {"runs": runs, "probes": probes},
+                "spec": {"runs": runs, "probes": run_probes},
                 "divergence": None,
-                **_record_strided(decisions, runs, probes),
+                **_record_strided(decisions, runs, run_probes),
             }
         )
     return cases

@@ -1,11 +1,11 @@
-//! Tests for `Rng`: the stream SplitMix64 gives for a seed, the draws
+//! Tests for `Rng`: the stream `SplitMix64` gives for a seed, the draws
 //! `below`, `below_big` and `shuffle` take from it, `split`, cloning, and
 //! the wire form a stream resumes from.
 //!
 //! The pinned numbers come from an independent reference implementation of
-//! the documented algorithms (Vigna's SplitMix64, Lemire's method, the
+//! the documented algorithms (Vigna's `SplitMix64`, Lemire's method, the
 //! limb-drawing rejection and Fisher-Yates from the last index down); the
-//! first number of seed 0 is SplitMix64's published `0xe220a8397b1dcdaf`.
+//! first number of seed 0 is `SplitMix64`'s published `0xe220a8397b1dcdaf`.
 
 use std::num::NonZeroU64;
 
@@ -24,7 +24,7 @@ fn draw_below(rng: &mut Rng, bound: u64, count: usize) -> Vec<u64> {
     (0..count).map(|_| rng.below(bound)).collect()
 }
 
-/// Test the stream of seed 0 is SplitMix64's.
+/// Test the stream of seed 0 is `SplitMix64`'s.
 #[test]
 fn rng_stream_of_seed_zero_is_splitmix64s() {
     let mut rng = Rng::new(0);

@@ -203,7 +203,7 @@ def test_rng_shuffle_follows_the_golden_permutation(
     """Test `Rng.shuffle` permutes a list in place as the reference does."""
     rng = Rng(seed)
 
-    result = rng.shuffle(items)
+    result = rng.shuffle(items)  # type: ignore[func-returns-value]
 
     assert result is None
     assert items == expected
@@ -1078,7 +1078,9 @@ def test_replay_answers_options_rebuilt_fresh_with_the_same_size(
 
     _, replayed = _record(ReplayOracle(trace), [(_OPTION, fresh)])
 
-    assert replayed == [fresh.value_at(trace.coordinates[0])]
+    (index,) = trace.coordinates
+    assert isinstance(index, int)
+    assert replayed == [fresh.value_at(index)]
 
 
 def test_replay_answers_repeated_subjects_in_ask_order() -> None:

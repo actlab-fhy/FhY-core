@@ -240,7 +240,7 @@ fn static_step_reports_a_failing_search_domain() {
         source.downcast_ref::<TestValueError>(),
         Some(&TestValueError("no domain today".to_owned()))
     );
-    assert!(oracle.seen.is_empty());
+    assert_eq!(oracle.seen, []);
 }
 
 /// Test a static step's signature writes the names its space binds by

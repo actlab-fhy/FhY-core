@@ -24,6 +24,7 @@ from fhy_core.search_space import (
     StridedRun,
     Variable,
 )
+from fhy_core.utils.override import override
 
 from .conftest import Explosion, build_tiling_space, categorical, make_variable
 
@@ -338,6 +339,7 @@ class _Answering(Variable[Any]):
         super().__init__(**fields)
         self.answer = answer
 
+    @override
     def extension_search_domain(self) -> Any:
         _Answering.calls.append(self.name)
         if isinstance(self.answer, BaseException):

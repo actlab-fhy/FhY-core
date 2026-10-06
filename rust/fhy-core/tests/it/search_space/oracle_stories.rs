@@ -247,7 +247,7 @@ fn replay_reproduces_a_stream() {
 #[test]
 fn replay_refuses_another_kind() {
     let domain = int_choices(&[1, 2]);
-    let trace = record_stream(&mut RandomOracle::new(1), &[domain.clone()]);
+    let trace = record_stream(&mut RandomOracle::new(1), std::slice::from_ref(&domain));
     let mut replay = ReplayOracle::new(trace);
     let mut recorder = Recorder::new();
 
@@ -319,7 +319,7 @@ fn replay_answers_fresh_identifier_choices_of_one_size() {
 #[test]
 fn replay_ignores_a_dynamic_steps_subject() {
     let domain = int_choices(&[1, 2, 3]);
-    let trace = record_stream(&mut RandomOracle::new(4), &[domain.clone()]);
+    let trace = record_stream(&mut RandomOracle::new(4), std::slice::from_ref(&domain));
     let mut replay = ReplayOracle::new(trace.clone());
     let mut recorder = Recorder::new();
 
@@ -368,7 +368,7 @@ fn replay_answers_repeated_subjects_in_ask_order() {
 #[test]
 fn replay_refuses_a_longer_stream() {
     let domain = int_choices(&[1, 2]);
-    let trace = record_stream(&mut RandomOracle::new(1), &[domain.clone()]);
+    let trace = record_stream(&mut RandomOracle::new(1), std::slice::from_ref(&domain));
 
     let result = run_stream(&mut ReplayOracle::new(trace), &[domain.clone(), domain]);
 

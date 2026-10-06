@@ -56,7 +56,8 @@ Case = dict[str, Any]
 
 def _read_corpus() -> dict[str, Any]:
     """Return the parsed corpus."""
-    return json.loads(_CORPUS.read_text(encoding="utf-8"))
+    corpus: dict[str, Any] = json.loads(_CORPUS.read_text(encoding="utf-8"))
+    return corpus
 
 
 class _Scripted:
@@ -209,6 +210,7 @@ def _alternative(axes: list[dict[str, int]]) -> Alternative:
     """Return the alternative holding a variable per extracted axis."""
     variables = []
     for axis in axes:
+        param: Any
         if "choice" in axis:
             param = create_categorical_param(frozenset(range(axis["choice"])))
         else:
@@ -310,7 +312,7 @@ def test_changing_one_expected_answer_makes_the_replay_report_it(
     corpus = copy.deepcopy(_read_corpus())
     case = next(case for case in corpus[family] if field in case["port"])
     case["port"][field] = change(case["port"][field])
-    only = {name: [] for name in _FAMILIES}
+    only: dict[str, list[Case]] = {name: [] for name in _FAMILIES}
     only[family] = [case]
 
     mismatches = _find_mismatches(only)

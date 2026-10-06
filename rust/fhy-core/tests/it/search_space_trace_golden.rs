@@ -82,11 +82,11 @@ fn read_runs(json: &Json) -> Vec<StridedRun> {
         .expect("runs")
         .iter()
         .map(|run| {
-            let [start, stop, step] = [0, 1, 2].map(|at| run[at].as_i64().expect("an integer"));
+            let [start, stop, stride] = [0, 1, 2].map(|at| run[at].as_i64().expect("an integer"));
             StridedRun::new(
                 BigInt::from(start),
                 BigInt::from(stop),
-                BigUint::from(u64::try_from(step).expect("a positive step")),
+                BigUint::from(u64::try_from(stride).expect("a positive stride")),
             )
             .expect("a recorded run is valid")
         })
@@ -165,107 +165,120 @@ fn the_corpus_holds_every_family_and_divergence() {
 #[test]
 fn every_domain_case_replays_as_recorded() {
     for case in read_family("domains") {
-        let name = &case["name"];
-        let port = &case["port"];
         match case["shape"].as_str().expect("a shape") {
-            "choice" => {
-                let values: Vec<Value> = case["spec"]["values"]
-                    .as_array()
-                    .expect("values")
-                    .iter()
-                    .map(|value| read_value(value, &[]))
-                    .collect();
-                let built = ChoiceDomain::new(values.clone());
-                if port["outcome"] == "refused" {
-                    let error = built.expect_err("the case is refused");
-                    assert_eq!(name_domain_error(&error), port["error"], "{name}");
-                    continue;
-                }
-                let domain = built.unwrap_or_else(|error| panic!("{name}: {error}"));
-                assert_eq!(
-                    domain.cardinality(),
-                    read_u64(&port["cardinality"]),
-                    "{name}"
-                );
-                let coordinates: Vec<Json> = (0..domain.cardinality())
-                    .map(|index| {
-                        let value = domain.value_at(index).expect("in range");
-                        Json::from(domain.coordinate_of(value).expect("its own value"))
-                    })
-                    .collect();
-                assert_eq!(Json::from(coordinates), port["coordinates"], "{name}");
-                let admits: Vec<Json> = case["spec"]["probes"]
-                    .as_array()
-                    .expect("probes")
-                    .iter()
-                    .map(|probe| Json::from(domain.admits(&read_value(probe, &[]))))
-                    .collect();
-                assert_eq!(Json::from(admits), port["admits"], "{name}");
-            }
-            "order" => {
-                let size = read_u64(&case["spec"]["size"]);
-                let elements: Vec<Value> = (0..size)
-                    .map(|_| Value::Identifier(Identifier::new("element")))
-                    .collect();
-                let built = OrderDomain::new(elements);
-                if port["outcome"] == "refused" {
-                    let error = built.expect_err("the case is refused");
-                    assert_eq!(name_domain_error(&error), port["error"], "{name}");
-                    continue;
-                }
-                let domain = built.unwrap_or_else(|error| panic!("{name}: {error}"));
-                assert_eq!(
-                    domain.cardinality(),
-                    BigUint::from(read_u64(&port["cardinality"])),
-                    "{name}"
-                );
-                for (positions, ordering) in case["spec"]["permutations"]
-                    .as_array()
-                    .expect("permutations")
-                    .iter()
-                    .zip(port["orderings"].as_array().expect("orderings"))
-                {
-                    let positions: Vec<u32> = positions
-                        .as_array()
-                        .expect("positions")
-                        .iter()
-                        .map(|position| u32::try_from(read_u64(position)).expect("small"))
-                        .collect();
-                    let value = domain.value_at(&positions).expect("a permutation");
-                    let coordinate = domain.coordinate_of(&value).expect("an ordering");
-                    let found: Vec<Json> = coordinate
-                        .iter()
-                        .map(|&position| Json::from(position))
-                        .collect();
-                    assert_eq!(&Json::from(found), ordering, "{name}");
-                }
-            }
-            "strided" => {
-                let domain = StridedDomain::new(read_runs(&case["spec"]["runs"]))
-                    .unwrap_or_else(|error| panic!("{name}: {error}"));
-                assert_eq!(
-                    domain.cardinality(),
-                    read_u64(&port["cardinality"]),
-                    "{name}"
-                );
-                let values: Vec<Json> = (0..domain.cardinality())
-                    .map(|index| {
-                        let value = domain.value_at(index).expect("in range");
-                        Json::from(i64::try_from(value).expect("a small address"))
-                    })
-                    .collect();
-                assert_eq!(Json::from(values), port["values"], "{name}");
-                let admits: Vec<Json> = case["spec"]["probes"]
-                    .as_array()
-                    .expect("probes")
-                    .iter()
-                    .map(|probe| Json::from(domain.admits(&read_probe(probe))))
-                    .collect();
-                assert_eq!(Json::from(admits), port["admits"], "{name}");
-            }
-            other => panic!("{name}: unknown shape {other}"),
+            "choice" => replay_choice_case(&case),
+            "order" => replay_order_case(&case),
+            "strided" => replay_strided_case(&case),
+            other => panic!("{}: unknown shape {other}", case["name"]),
         }
     }
+}
+
+/// Check the choice domain case `case` against its recorded answers.
+fn replay_choice_case(case: &Json) {
+    let name = &case["name"];
+    let port = &case["port"];
+    let values: Vec<Value> = case["spec"]["values"]
+        .as_array()
+        .expect("values")
+        .iter()
+        .map(|value| read_value(value, &[]))
+        .collect();
+    let built = ChoiceDomain::new(values.clone());
+    if port["outcome"] == "refused" {
+        let error = built.expect_err("the case is refused");
+        assert_eq!(name_domain_error(&error), port["error"], "{name}");
+        return;
+    }
+    let domain = built.unwrap_or_else(|error| panic!("{name}: {error}"));
+    assert_eq!(
+        domain.cardinality(),
+        read_u64(&port["cardinality"]),
+        "{name}"
+    );
+    let coordinates: Vec<Json> = (0..domain.cardinality())
+        .map(|index| {
+            let value = domain.value_at(index).expect("in range");
+            Json::from(domain.coordinate_of(value).expect("its own value"))
+        })
+        .collect();
+    assert_eq!(Json::from(coordinates), port["coordinates"], "{name}");
+    let admits: Vec<Json> = case["spec"]["probes"]
+        .as_array()
+        .expect("probes")
+        .iter()
+        .map(|probe| Json::from(domain.admits(&read_value(probe, &[]))))
+        .collect();
+    assert_eq!(Json::from(admits), port["admits"], "{name}");
+}
+
+/// Check the order domain case `case` against its recorded answers.
+fn replay_order_case(case: &Json) {
+    let name = &case["name"];
+    let port = &case["port"];
+    let size = read_u64(&case["spec"]["size"]);
+    let elements: Vec<Value> = (0..size)
+        .map(|_| Value::Identifier(Identifier::new("element")))
+        .collect();
+    let built = OrderDomain::new(elements);
+    if port["outcome"] == "refused" {
+        let error = built.expect_err("the case is refused");
+        assert_eq!(name_domain_error(&error), port["error"], "{name}");
+        return;
+    }
+    let domain = built.unwrap_or_else(|error| panic!("{name}: {error}"));
+    assert_eq!(
+        domain.cardinality(),
+        BigUint::from(read_u64(&port["cardinality"])),
+        "{name}"
+    );
+    for (positions, ordering) in case["spec"]["permutations"]
+        .as_array()
+        .expect("permutations")
+        .iter()
+        .zip(port["orderings"].as_array().expect("orderings"))
+    {
+        let positions: Vec<u32> = positions
+            .as_array()
+            .expect("positions")
+            .iter()
+            .map(|position| u32::try_from(read_u64(position)).expect("small"))
+            .collect();
+        let value = domain.value_at(&positions).expect("a permutation");
+        let coordinate = domain.coordinate_of(&value).expect("an ordering");
+        let found: Vec<Json> = coordinate
+            .iter()
+            .map(|&position| Json::from(position))
+            .collect();
+        assert_eq!(&Json::from(found), ordering, "{name}");
+    }
+}
+
+/// Check the strided domain case `case` against its recorded answers.
+fn replay_strided_case(case: &Json) {
+    let name = &case["name"];
+    let port = &case["port"];
+    let domain = StridedDomain::new(read_runs(&case["spec"]["runs"]))
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+    assert_eq!(
+        domain.cardinality(),
+        read_u64(&port["cardinality"]),
+        "{name}"
+    );
+    let values: Vec<Json> = (0..domain.cardinality())
+        .map(|index| {
+            let value = domain.value_at(index).expect("in range");
+            Json::from(i64::try_from(value).expect("a small address"))
+        })
+        .collect();
+    assert_eq!(Json::from(values), port["values"], "{name}");
+    let admits: Vec<Json> = case["spec"]["probes"]
+        .as_array()
+        .expect("probes")
+        .iter()
+        .map(|probe| Json::from(domain.admits(&read_probe(probe))))
+        .collect();
+    assert_eq!(Json::from(admits), port["admits"], "{name}");
 }
 
 /// Test every replay case replays or is refused as recorded.
@@ -273,13 +286,13 @@ fn every_domain_case_replays_as_recorded() {
 fn every_replay_case_replays_as_recorded() {
     for case in read_family("replays") {
         let name = &case["name"];
-        let recorded = build_domain(&case["recorded"]);
+        let recorded_domain = build_domain(&case["recorded"]);
         let offered = build_domain(&case["offered"]);
         let coordinate = Coordinate::Index(read_u64(&case["coordinate"]));
         let step = TraceStep::dynamic(
             kind("moga.cir.option"),
             Identifier::new("s"),
-            &recorded,
+            &recorded_domain,
             coordinate,
         )
         .unwrap_or_else(|error| panic!("{name}: {error}"));

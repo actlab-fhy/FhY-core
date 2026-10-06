@@ -230,32 +230,33 @@ pub(crate) struct TilingSpace {
 ///
 /// Panics if the space is refused.
 pub(crate) fn build_tiling_space() -> TilingSpace {
-    let [name, t, c, a, x, b] = ["tiling", "t", "c", "a", "x", "b"].map(Identifier::new);
+    let [name, top, layout, tiled, tile, flat] =
+        ["tiling", "t", "c", "a", "x", "b"].map(Identifier::new);
     let choice = choice_of(
-        &c,
+        &layout,
         vec![
-            plain_alternative(&a, vec![int_variable(&x, &[1, 2, 3])], Vec::new()),
-            bare_alternative(&b),
+            plain_alternative(&tiled, vec![int_variable(&tile, &[1, 2, 3])], Vec::new()),
+            bare_alternative(&flat),
         ],
     );
     let space = Space::new(
         name,
-        vec![int_variable(&t, &[1, 2])],
+        vec![int_variable(&top, &[1, 2])],
         vec![choice],
-        vec![condition(&x, [super::param::in_set(&t, [int(1)])])],
+        vec![condition(&tile, [super::param::in_set(&top, [int(1)])])],
         vec![forbidden([
-            super::param::in_set(&t, [int(2)]),
-            chooses(&c, &[&b]),
+            super::param::in_set(&top, [int(2)]),
+            chooses(&layout, &[&flat]),
         ])],
     )
     .expect("the tiling space is valid");
     TilingSpace {
         space,
-        t,
-        c,
-        a,
-        x,
-        b,
+        t: top,
+        c: layout,
+        a: tiled,
+        x: tile,
+        b: flat,
     }
 }
 

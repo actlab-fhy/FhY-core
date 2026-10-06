@@ -238,7 +238,7 @@ fn recorder_without_a_space_refuses_a_static_step() {
         with_context(|context| recorder.decide(&Identifier::new("t"), &mut oracle, context));
 
     assert!(matches!(result, Err(TraceError::NoSpace)), "{result:?}");
-    assert!(oracle.seen.is_empty());
+    assert_eq!(oracle.seen, []);
 }
 
 // ---------------------------------------------------------------------------
@@ -353,7 +353,7 @@ fn recorder_refuses_a_decision_under_an_undecided_choice_as_pending() {
     };
     assert_eq!(name, &tiling.x);
     assert_eq!(*activity, Activity::Pending);
-    assert!(oracle.seen.is_empty());
+    assert_eq!(oracle.seen, []);
 }
 
 /// Test a decision under an alternative the choice did not choose, or whose
@@ -502,7 +502,7 @@ fn recorder_refuses_a_variable_without_a_finite_domain() {
         matches!(&result, Err(TraceError::NotEnumerable { decision }) if *decision == n),
         "{result:?}"
     );
-    assert!(oracle.seen.is_empty());
+    assert_eq!(oracle.seen, []);
 }
 
 /// Test a failed step leaves the earlier steps in the trace.
@@ -538,13 +538,13 @@ fn recorder_finish_gives_the_trace_and_the_configuration() {
         .expect("an admissible answer");
     let trace = recorder.trace();
 
-    let recorded = recorder.finish().expect("a run over a space finishes");
+    let finished = recorder.finish().expect("a run over a space finishes");
 
-    assert_eq!(recorded.trace(), &trace);
-    let configuration = recorded.configuration().expect("a run over a space");
+    assert_eq!(finished.trace(), &trace);
+    let configuration = finished.configuration().expect("a run over a space");
     assert!(!configuration.is_complete());
     assert_eq!(configuration.value(&tiling.t), Some(&int(1)));
-    let (into_trace, into_configuration) = recorded.into_parts();
+    let (into_trace, into_configuration) = finished.into_parts();
     assert_eq!(into_trace, trace);
     assert!(into_configuration.is_some());
 }
@@ -565,10 +565,10 @@ fn recorder_of_dynamic_steps_finishes_without_a_configuration() {
     })
     .expect("an admissible answer");
 
-    let recorded = recorder.finish().expect("a dynamic run finishes");
+    let finished = recorder.finish().expect("a dynamic run finishes");
 
-    assert_eq!(recorded.trace().len(), 1);
-    assert!(recorded.configuration().is_none());
+    assert_eq!(finished.trace().len(), 1);
+    assert!(finished.configuration().is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -602,15 +602,15 @@ fn realizing_answers_assigned_decisions_from_the_configuration() {
     .expect("every decision is answered from the configuration");
 
     assert_eq!(values, [int(1), chosen(&tiling.a), int(2)]);
-    let recorded = recorder
+    let finished = recorder
         .finish()
         .expect("every assigned decision was asked");
     assert_eq!(
-        recorded.trace().coordinates().cloned().collect::<Vec<_>>(),
+        finished.trace().coordinates().cloned().collect::<Vec<_>>(),
         [index(0), index(0), index(1)]
     );
     assert_eq!(
-        recorded
+        finished
             .configuration()
             .map(fhy_core::search_space::Configuration::key),
         Some(configuration.key())

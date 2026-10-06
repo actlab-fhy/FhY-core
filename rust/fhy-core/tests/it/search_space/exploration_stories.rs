@@ -194,7 +194,7 @@ fn configuration_trace_replays_into_the_configuration() {
         trace
             .steps()
             .iter()
-            .map(|step| step.decision())
+            .map(fhy_core::search_space::TraceStep::decision)
             .collect::<Vec<_>>(),
         [Some(0), Some(1), Some(2)]
     );
@@ -875,7 +875,7 @@ fn space_mutate_swaps_two_positions_of_an_ordering(#[case] seed: u64) {
         )],
         Vec::new(),
     );
-    let original = Value::Tuple([&i, &j, &k, &l].map(|element| chosen(element)).to_vec());
+    let original = Value::Tuple([&i, &j, &k, &l].map(chosen).to_vec());
     let configuration = configure(&space, [(order.clone(), original.clone())]);
 
     let mutated = with_context(|context| {

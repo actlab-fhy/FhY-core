@@ -145,7 +145,7 @@ fn trace_of_kind_keeps_ask_order() {
 
     assert_eq!(addresses, [&first_address, &second_address]);
     assert_eq!(options, [&option]);
-    assert!(tiles.is_empty());
+    assert_eq!(tiles, Vec::<&TraceStep>::new());
 }
 
 /// Test the coordinates are the bare answers, in ask order.

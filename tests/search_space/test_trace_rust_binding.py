@@ -200,7 +200,7 @@ def test_a_trace_keeps_the_step_objects_it_was_built_from() -> None:
 def test_trace_refuses_a_step_that_is_no_trace_step() -> None:
     """Test a non-`TraceStep` among the steps raises `TypeError`."""
     with pytest.raises(TypeError):
-        Trace(("not a step",))
+        Trace(("not a step",))  # type: ignore[arg-type]
 
 
 # ===========================================================================
