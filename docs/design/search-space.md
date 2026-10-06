@@ -1726,6 +1726,137 @@ Added for the port:
 
 Rule 5 of python-switch's cross-cutting rules applies.
 
+## SS1.8: equivalence runs, benchmarks and the divergence log
+
+### Equivalence runs (2026-10-06)
+
+| Corpus | Cases | Rust core (`search_space_golden.rs`) | Python binding (`test_search_space_golden.py`) |
+|---|---|---|---|
+| committed (`--seed 0 --random-count 60`) | 138 (18 probes, 120 random) | all replay | all replay |
+| expanded (`--seed 7 --random-count 2000`, recorded by hand into `target/`, not committed) | 4018 | all replay (`FHY_SEARCH_SPACE_CORPUS`) | all replay (`FHY_SEARCH_SPACE_CORPUS`) |
+
+Each replay checks the outcome (built, space refused, configuration
+refused), the structural and alpha verdicts in both directions, and the V2
+texts of the space and the configuration, written and read back byte for
+byte. A case without a tagged divergence must agree with the oracle.
+
+- **Harness honesty:** flipping one case's recorded alpha verdict, and
+  adding one space to one recorded text, each fails the Python replay
+  naming the case.
+- **Recorder fix:** the recorder picked a selected option by its name
+  alone, and failed on a seed-7 draw whose options share a name. It now
+  picks the first option of that name holding every assigned knob; the
+  committed corpus records identically.
+
+### Divergence log
+
+Every case where the port answers otherwise than the oracle is tagged
+with an approved divergence, and its expected answer is written from the
+rule. Counts over the committed (expanded) corpus:
+
+| Divergence | Cases | What the port does instead |
+|---|---|---|
+| D-SS-19 (names unique space-wide) | 94 (2896) | refuses a space repeating a name, where MOGA-VM built it and answered asymmetrically |
+| D-SS-5 (validation) | 2 (7) | refuses a configuration MOGA-VM's three checks accepted (a knob assigned twice; a value outside the kept categories) |
+| D-SS-1 (constraints under the variable frame) | 1 (1) | a categorical knob's constraint compares under its param's variable |
+| D-SS-3 (capture-free identifier members) | 1 (1) | a free category no longer matches a bound name |
+| D-SS-4 (type-strict values) | 1 (1) | `1` and `True` are different categories |
+| D-SS-6 (empty choice) | 1 (1) | an empty choice is refused |
+| D-SS-18 (selection outside the space) | 1 (1) | a configuration is compared with its space |
+| none | 37 (1110) | answers as the oracle does |
+
+No untagged case disagrees with the oracle, in either corpus or either
+language.
+
+### Benchmarks (CPython 3.11, this machine, back to back)
+
+"Before" is MOGA-VM `3d93ba3` on fhy_core v0.1.8, the recorder's oracle
+(`target/scratch/search-space-py/bench_compare.py before`); the design's
+earlier numbers were on fhy_core 0.2.0. "After" is the same rows through
+`fhy_core.search_space`, and `benchmarks/test_search_space.py` under
+`nox -s benchmark-3.11` agrees within 8%. Median per call, µs.
+
+| Row | Before (MOGA-VM) | After (port) | Ratio |
+|---|---|---|---|
+| build 8×4 options with params | 640 | 599 | 0.94 |
+| validate a decision point / build a configuration | 8.8 | 4.0 | 0.46 |
+| structural self-equivalence | 853 | 4.8 | 0.006 |
+| alpha against a relabeled copy | 187 | 18.0 | 0.10 |
+| **serialize a selection / a configuration** | 17.4 | 75.2 | **4.3, slower** |
+| serialize a knob / a variable | 3.8 | 2.1 | 0.54 |
+| **`knob.assign` / `with_entry`** | 3.4 | 4.2 | **1.21, slower** |
+| (new) space with a condition and a clause | - | 34.4 | |
+| (new) `key()` | - | 0.34 | |
+| (new) alpha through a Python subclass's hooks | - | 0.86 | |
+
+The two slower rows are inherent to the design, not the binding:
+
+- A configuration's payload holds its whole space (`{"space",
+  "entries"}`), 8×4 params here, where MOGA-VM's selection wrote only its
+  assignments. Writing only the entries would need the space supplied
+  separately when reading; a cache keyed by `ConfigurationKey` with the
+  space beside it avoids writing the space at all.
+- `with_entry` checks the whole configuration again (activity, conditions,
+  forbidden clauses), where `knob.assign` checked one value. The absolute
+  cost is under 5 µs.
+
+The maintainer decides whether to accept them (CONTRIBUTING, "Replacing a
+Python class": more than 10% slower on a row). Neither path replaces a
+fhy_core Python class, so the rule binds MOGA-VM's adoption rather than
+this package.
+
+## SS1.9: the MOGA-VM migration note
+
+What MOGA-VM changes to use `fhy_core.search_space` (fhy_core 0.2.x with
+SS1), in order; the map above lists every site.
+
+1. **Depend** on the fhy_core release with SS1, and import from
+   `fhy_core.search_space`, never from `moga_vm.cir.space.core`, whose
+   modules are deleted with their tests (the port's tests replace them; see
+   "Traceability").
+2. **Knobs** become `Variable` subclasses, each `@register_serializable`
+   under its existing `moga.cir.*` id, so knob payloads still decode:
+   - `ArrayTileKnob` keeps `index_symbols` and overrides the two
+     `extension_*` hooks, comparing the symbols through
+     `renaming.are_identifiers_alpha_equivalent` (see "Implementors");
+   - `PortBoundKnob` compares `port_role` and `port_index` by `==`;
+   - the marker knobs subclass with no hooks: their kind tells them apart;
+   - each subclass with data of its own extends `serialize_data_to_dict`
+     and overrides `deserialize_data_from_dict`, reading the base keys
+     through `Variable.deserialize_data_from_dict`.
+3. **`RealizationOption`** becomes an `Alternative` subclass:
+   `extension_bound_identifiers` returns the realization's walk axes in
+   topological order (C-1), and both hooks compare the realization.
+4. **`TableEntry` and `CandidateTable`** wrap a `Choice` named by the
+   vertex id and a `Space` of those choices; the committed selections leave
+   the entries for one `Configuration` of the function's space (recommended
+   as a field of `Function`).
+5. **Writers of selections** become `configuration.with_entry(choice,
+   option.name)` or `with_entries(...)` (`dsl.py`, `mlir_to_cir/lower.py`,
+   `mapping/operations.py`, `memory/bind.py`, `memory/tiles.py`).
+6. **Readers of selections** become `configuration.alternative(vertex_id)`
+   (the five memory passes), and `SelectionStatus` checks become
+   `is_complete()` and `activity(name)`.
+7. **Comparisons** of candidate tables (`cir/program.py`) compare the
+   spaces by `is_alpha_equivalent` and the configurations by `key()` or
+   `is_alpha_equivalent`. Caches of measured configurations key on
+   `(space, configuration.key())`; keys pickle, so they cross processes.
+8. **Renderers** (`render/text.py`, `render/explorer/graphs.py`) format
+   `Choice`, `Space`, `Configuration` and the variables.
+9. **Errors:** `SelectionConsistencyError` becomes `ConfigurationError`,
+   whose `problems` lists every problem; a repeated name anywhere in a space
+   is `DuplicateNameError` (D-SS-19), so a table that reused a knob name
+   across options must rename before it migrates.
+10. **Payloads:** decision-point, decision-space, selection, table-entry
+    and candidate-table payloads change shape; MOGA-VM stores none, so no
+    conversion is needed. Knob payloads are unchanged.
+11. **A Rust MOGA-VM crate**, when it exists, implements `Variable` and
+    `Alternative` for its kinds and registers each from its aggregate's
+    `#[pymodule]` with `convert::search_space::register_variable_kind` or
+    `register_alternative_kind`, passing the kind's resolver;
+    `rust/example-aggregate`'s `TiledVariable` and `AxisAlternative` are
+    the template.
+
 ## Implementation checklist
 
 Every step ends with the S16 gate:
