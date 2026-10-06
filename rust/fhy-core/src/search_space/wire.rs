@@ -791,10 +791,9 @@ impl MeasurementData {
     ///
     /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
     /// refuses, and [`BuildError::Invalid`] with the
-    /// [`MeasurementError`](super::MeasurementError) of values a
-    /// constructor refuses, or
-    /// [`UnexpectedValues`](super::MeasurementError::UnexpectedValues) for
-    /// values held by a measurement that did not succeed.
+    /// [`MeasurementError`] of values a constructor refuses, or
+    /// [`UnexpectedValues`](MeasurementError::UnexpectedValues) for values
+    /// held by a measurement that did not succeed.
     pub fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
         self,
         resolver: &R,

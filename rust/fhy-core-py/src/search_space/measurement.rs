@@ -66,10 +66,7 @@ fn read_direction(direction: &Bound<'_, PyAny>) -> PyResult<Direction> {
 /// # Errors
 ///
 /// Raises what importing `fhy_core.search_space` raises.
-fn direction_to_python(
-    py: Python<'_>,
-    direction: Direction,
-) -> PyResult<Bound<'_, PyAny>> {
+fn direction_to_python(py: Python<'_>, direction: Direction) -> PyResult<Bound<'_, PyAny>> {
     crate::cached_attr!(py, PUBLIC_MODULE, "Direction")?.call1((direction.as_str(),))
 }
 
@@ -119,10 +116,7 @@ impl PyObjective {
 /// # Errors
 ///
 /// Raises what building the object raises.
-fn objective_to_python<'py>(
-    py: Python<'py>,
-    objective: &Objective,
-) -> PyResult<Bound<'py, PyAny>> {
+fn objective_to_python<'py>(py: Python<'py>, objective: &Objective) -> PyResult<Bound<'py, PyAny>> {
     instantiate(
         PyObjective::public_class().get(py)?,
         0,
