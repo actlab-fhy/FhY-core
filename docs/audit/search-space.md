@@ -716,3 +716,300 @@ F-SS-018 (component set (C)), F-SS-010 (the status gives way to
 configuration validity and completeness), F-SS-011 (a `Variable`'s name vs
 its param's variable), F-SS-012 (`Metric` leaves the space), F-SS-014 (empty
 choices refused), F-SS-015 (default names kept in Python).
+
+---
+
+## The decision stream (SS2 and SS3)
+
+### Scope
+
+- **Audited:** MOGA-VM `origin/dev` at `3d93ba3`, read-only:
+  `cir/lowering/search/{decisions,oracle,errors,extraction,sampling,records,harness,observers,policies,placement}.py`,
+  their tests in `tests/cir/lowering/search/` (152 tests in 10 files) and
+  `docs/design/search_based_lowering_strategy.md`.
+- **Question asked:** is the stream sound as the generic half of a search
+  space, and what must change when its generic parts move into fhy-core.
+  `docs/design/search-space.md` ("SS2" and "SS3") turns the answers into
+  decisions.
+- **Probes:** `target/scratch/search-space-ss2/probes.py` (untracked) loads
+  `decisions.py`, `oracle.py`, `errors.py`, `extraction.py` and
+  `records.py` unmodified, from `git show`, with stand-ins for the MOGA
+  imports, on this repository's fhy_core 0.2.0
+  (`.venv/bin/python -I target/scratch/search-space-ss2/probes.py`). Every
+  verdict below is its output.
+
+### Inferred purpose
+
+A lowering is a sequence of free choices, conditional on one another, so
+MOGA-VM exposes them as a stream: each `Decision` carries its kind, a
+subject and the domain it may be answered from; a `SearchOracle` answers;
+a `RecordingOracle` checks and records the answer's coordinate, its
+position in the domain; a `ReplayOracle` answers a recorded
+`SearchPoint` back by coordinate, against a freshly built module whose
+objects differ (`decisions.py:39-51`, `oracle.py:211-236`).
+`extraction.py` derives the stream's structural prefix up front, one level
+deep, and `harness.py` owns a single-objective ask/tell loop over it.
+
+### Is the stream the right vocabulary?
+
+- **Yes, for its generic half.** Domains numbered by coordinates, a
+  recorded path, replay by coordinate and an oracle seam are the
+  MetaSchedule trace design, and none of `decisions.py` or `oracle.py`
+  depends on MOGA.
+- **Coordinates are what makes it work**, and the audit's main findings
+  are where the stream trusts a coordinate without checking what it
+  indexes (F-SS-020, F-SS-022) or stops checking early (F-SS-021).
+- **The static prefix is a `Space`.** `ExtractedSearchSpace` (option per
+  entry; walk order and tile per option, under an `AxisCondition`) is a
+  space of choices whose alternatives hold variables, and its axis keys
+  are names, which a space makes unique (F-SS-026).
+- **The objective is single and scalar** (`harness.py:119-124`). MOGA is
+  the target-machine model (`docs/design/moga_vm_design.md:22-24`), not a
+  multi-objective search; nothing in the stream needs Pareto dominance.
+
+### Summary
+
+| ID | Title | Sev | Category | Triage |
+|---|---|---|---|---|
+| F-SS-020 | Replay checks a domain's type and size only; a moved or reordered domain of the same size replays silently | High | Correctness | a |
+| F-SS-021 | Replay accepts a stream shorter than its point | Medium | Correctness | a |
+| F-SS-022 | Choice domains match by Python `==` and allow repeats; a recorded coordinate can name another value than the one drawn | Medium | Correctness | a |
+| F-SS-023 | A NaN score wins `best` and blocks every later new best | Medium | Correctness | c |
+| F-SS-024 | A point has no persistent, replayable form; the trace-row replay test replays the in-memory point | Medium | Serialization | a |
+| F-SS-025 | Seeds reproduce only under one CPython's `random` algorithms; an unseeded run cannot be reproduced | Low | Determinism | a |
+| F-SS-026 | Realization pairs repeated axis keys across alternatives | Low | Correctness | a |
+| F-SS-027 | Documentation claims checks and orders the code does not have | Low | Documentation | c |
+| F-SS-028 | `assert` statements guard runtime conditions | Low | Robustness | c |
+| F-SS-029 | Sampling is uniform per decision, never per point | Info | Generality | a |
+
+Totals: 1 High, 4 Medium, 4 Low, 1 Info. Triage: **a** = fixed in the
+port (the design's D-SS2-*); **c** = MOGA-VM's to fix in its own code
+(it stays there), with the port removing the cause where it can.
+
+### Findings
+
+#### F-SS-020: Replay checks a domain's type and size only; a moved or reordered domain of the same size replays silently
+
+- **Severity:** High · **Confidence:** High
+- **Location:** `cir/lowering/search/oracle.py:287-317`
+  (`_require_agreement`), `:278-285`; the same check in
+  `extraction.py:414-428` (`ExtractedPointOracle.decide`).
+
+**Issue:** A recorded position is accepted when the kind, the domain's
+class and its cardinality agree, and the recorded coordinate is then
+indexed into whatever domain is offered. Two domains of one size with
+different contents pass.
+
+**Evidence (probes R1, R2):**
+- an address recorded over `[0, 64)` (value 17) replays over `[64, 128)`
+  as 81, with no error;
+- a choice recorded over `("a", "b", "c")` (value `"a"`) replays over
+  `("c", "b", "a")` as `"c"`.
+
+`test_replay_oracle_refuses_the_same_decision_over_a_different_domain`
+(`tests/.../test_oracle.py:193-206`) says "A domain that has changed means
+the space has", but tests only a domain of another size.
+
+**Why it matters:** Replay is how a recorded point is said to reproduce
+its lowering (`oracle.py:23-29`). The check exists to catch drift, and the
+drift it misses is the one the address axis produces: earlier placements
+landing elsewhere move the free runs without changing their total width.
+The comparison is limited to sizes because options and walk levels are
+module objects (`oracle.py:287-295`); address runs and plain choices are
+not, and could be compared exactly.
+
+**Suggested fix:** Compare what means the same thing in every module:
+integers exactly, plain values exactly, identifiers and opaque objects by
+position only (the design's `DomainSignature`, D-SS2-1).
+
+#### F-SS-021: Replay accepts a stream shorter than its point
+
+- **Severity:** Medium · **Confidence:** High
+- **Location:** `oracle.py:242-285` (`ReplayOracle`): `is_exhausted` is
+  read only by `decide` and by tests; no source module calls it after a
+  run (`git grep is_exhausted`).
+
+**Issue:** A replay that ends before every recorded decision was asked
+completes normally. `errors.py:35-46` says the mismatch error exists so
+that a point is not "silently replaying a prefix into a different space";
+only the longer direction is refused.
+
+**Why it matters:** A replay whose stream asks fewer decisions took a
+different path (an earlier answer removed decisions), and the lowering it
+produced is reported as the point's.
+
+**Suggested fix:** A `finish` that refuses unasked steps, called by every
+replay path (D-SS2-2).
+
+#### F-SS-022: Choice domains match by Python `==` and allow repeats; a recorded coordinate can name another value than the one drawn
+
+- **Severity:** Medium · **Confidence:** High
+- **Location:** `decisions.py:146-148` (only emptiness is checked),
+  `:155-163` and `:181-190` (`value is choice or value == choice`, first
+  match), `:493-500` (`RecordedDecision.of` records `coordinate_of`);
+  `:363-367` against `:411-422` (`AddressDomain`).
+
+**Evidence (probes C1, C1b, C2, C3):**
+- `ChoiceDomain((1, True, 1.0))` constructs; `coordinate_of(True)` and
+  `coordinate_of(1.0)` are both 0;
+- a value drawn at coordinate 1 of that domain is recorded at coordinate
+  0, so its replay answers `1`, not `True`;
+- `ChoiceDomain(("x", "x"))` constructs;
+- an `AddressDomain` refuses `True` in `admits` and accepts it in
+  `coordinate_of` (coordinate 1).
+
+**Why it matters:** The audit's F-SS-004 again, in the stream: Boolean
+and integer choices (an unroll flag, a factor of 1) are common, and a
+recorded coordinate is the point.
+
+**Suggested fix:** Type-strict, distinct values (D-SS2-3).
+
+#### F-SS-023: A NaN score wins `best` and blocks every later new best
+
+- **Severity:** Medium · **Confidence:** High
+- **Location:** `harness.py:643-652` (the objective's result is used
+  unchecked; `was_new_best` is `all(score < existing.score ...)`),
+  `records.py:337-353` (`best` is `min` over `(score, index)`), `:466-472`.
+
+**Evidence (probe S1):** a history whose first feasible record scores NaN
+and whose second scores 1.0 reports `best.score` NaN, and 1.0 is not a new
+best after it.
+
+**Why it matters:** An objective that divides by a zero measurement or
+reads a failed simulator returns NaN, and the run's winner is then the
+broken draw. `JsonlTraceObserver` also writes it as the non-standard
+token `NaN` (`observers.py:150, 159`).
+
+**Suggested fix:** MOGA-VM refuses a non-finite score; SS3's
+`Measurement` refuses one at construction, so adopting it fixes this.
+
+#### F-SS-024: A point has no persistent, replayable form; the trace-row replay test replays the in-memory point
+
+- **Severity:** Medium · **Confidence:** High
+- **Location:** `decisions.py:474-580` (`RecordedDecision` and
+  `SearchPoint` hold module objects and have no serialization);
+  `observers.py:99-160` (rows hold coordinates, kinds and cardinalities,
+  not domain shapes); `tests/.../test_search_strategy_integration.py:226-252`.
+
+**Issue:** `ReplayOracle` needs a `SearchPoint` whose decisions carry
+domains, and compares their classes (`oracle.py:302-309`); a JSONL row
+cannot rebuild one, and no reader exists. The test named "a trace row
+replays to the same committed addresses" checks that the row's
+coordinates equal the record's, then replays `record.point`, the object
+in memory. The observer's docstring calls rows replayable
+(`observers.py:15-20`).
+
+**Why it matters:** "Replayable without keeping the module" is the
+stream's stated reason to exist (`oracle.py:211-217`); within one process
+only, it is not yet true.
+
+**Suggested fix:** A wire form of the trace holding what replay compares
+(D-SS2-9).
+
+#### F-SS-025: Seeds reproduce only under one CPython's `random` algorithms; an unseeded run cannot be reproduced
+
+- **Severity:** Low · **Confidence:** High
+- **Location:** `oracle.py:123, 153-158`, `extraction.py:315-344`,
+  `sampling.py:119, 370` (`random.Random`, `randrange`, `shuffle`).
+
+**Issue:** Python promises a stable stream only for `random()` under a
+given seed; `randrange` and `shuffle` are CPython's algorithms and have
+changed between versions (Python's `random` documentation, "Notes on
+Reproducibility"). A run with `seed=None` draws its seed from the system
+and keeps no record of it.
+
+**Suggested fix:** A generator and draws whose stream fhy-core documents
+and pins, the same from Python and Rust; an unseeded oracle exposes the
+seed it drew (D-SS2-6).
+
+#### F-SS-026: Realization pairs repeated axis keys across alternatives
+
+- **Severity:** Low (too strict, not unsound) · **Confidence:** High
+- **Location:** `extraction.py:381-394`: `axes_by_key` holds every axis of
+  a key, including those under options the point did not choose, while
+  `occurrence` counts the point's assignments only; `__post_init__`
+  (`:233-259`) requires only option keys to be unique.
+
+**Evidence (probe X1):** a tile key under option 0 (3 tiles) and under
+option 1 (2 tiles), with option 1 chosen, raises
+`ExtractedSpaceMismatchError` when the stream asks the tile over 2
+values: the assignment was paired with option 0's axis.
+
+**Why it matters:** Today's subjects are fresh per option, so the pipeline
+does not hit it; the space accepts the shape that does.
+
+**Suggested fix:** Unique names in the space (D-SS2-4).
+
+#### F-SS-027: Documentation claims checks and orders the code does not have
+
+- **Severity:** Low · **Confidence:** High
+- **Location:**
+  - `oracle.py:265-268` and `errors.py:38-41` say replay checks the
+    subject; `_require_agreement` (`:287-317`) does not, by design
+    (`:290-295`), and probe R3 replays a step with another subject;
+  - `extraction.py:179-181` says an `ExtractedPoint`'s assignments are in
+    the space's axis order; `draw_uniform` (`:324-344`) puts every option
+    first;
+  - `observers.py:15-20` calls a row replayable (F-SS-024).
+
+**Suggested fix:** State the actual rule (the port documents that a
+dynamic step's subject is not compared).
+
+#### F-SS-028: `assert` statements guard runtime conditions
+
+- **Severity:** Low · **Confidence:** High
+- **Location:** `extraction.py:555`, `policies.py:203`,
+  `sampling.py:300, 411`, `harness.py:707`.
+
+**Issue:** Under `python -O` they vanish: a non-categorical tile knob then
+fails later with an `AttributeError`, and `build_pipeline` before
+`propose` with one on `None`.
+
+**Suggested fix:** Raise a typed error. MOGA-VM's code; the port has no
+such guard.
+
+#### F-SS-029: Sampling is uniform per decision, never per point
+
+- **Severity:** Info · **Confidence:** High
+- **Location:** `oracle.py:85-96`, `extraction.py:315-323` (both say so).
+
+**Evidence (probe X3):** with one option exposing 3 tiles and another
+exposing 2, 20 000 draws pick each option about half the time (0.505,
+0.495), where uniform over the 5 points is 0.6 and 0.4.
+
+**Why it matters:** Documented honestly, and the right default for a
+stream whose later domains do not exist yet. Over a static space, uniform
+over points is computable and is what a sweep or a baseline wants.
+
+**Suggested fix:** Offer both over a `Space` (D-SS2-8).
+
+### Existing tests review
+
+- **Strong:** `test_decisions.py` pins every domain's cardinality,
+  admission and index flattening, including unequal runs (the bias
+  `address_at` avoids) and strides; `test_oracle.py` covers coverage,
+  reproducibility and the refusals of the recorder and the replay.
+- **Gaps that hid the findings:** no replay over a same-size domain with
+  other contents (F-SS-020); no shorter stream (F-SS-021); no mixed
+  `1`/`True` or repeated choices (F-SS-022); no non-finite score
+  (F-SS-023); the trace-row test replays the in-memory point (F-SS-024);
+  no key shared across options (F-SS-026).
+- **Generic and pipeline-bound:** 40 of the 152 tests exercise the
+  generic stream and are ported; the other 112 test the harness, the
+  records, the observers and the pipeline, and stay in MOGA-VM (the
+  design's traceability table).
+
+### Triage
+
+| ID | In the port | Visible to MOGA-VM |
+|---|---|---|
+| F-SS-020 | `DomainSignature` compared by `ReplayOracle` and `Space::replay` | replays over moved runs or reordered plain choices refused |
+| F-SS-021 | `ReplayOracle::finish` | shorter replays refused |
+| F-SS-022 | type-strict, distinct choice values | a domain repeating a value refused; `True` and `1` distinct |
+| F-SS-023 | `Measurement` refuses non-finite values | MOGA-VM's harness, once it records `Measurement`s |
+| F-SS-024 | `search_space.trace` | rows carry a trace |
+| F-SS-025 | fhy-core's `Rng`; `RandomOracle.seed` | seed-pinned tests re-baselined |
+| F-SS-026 | names unique in a space | none (keys are fresh today) |
+| F-SS-027 | the port's documentation | MOGA-VM's docstrings |
+| F-SS-028 | none needed | MOGA-VM's code |
+| F-SS-029 | `Space::sample` and `Space::sample_uniform` | a choice of sampler |

@@ -2,7 +2,11 @@
 
 - **Status:** designed 2026-10-05 on `feat/search-space` (`6548984`), revised
   the same day for the user's decisions. Every decision is recorded under
-  "Decisions". Implementation starts with SS0.
+  "Decisions". Implementation starts with SS0. SS0 and SS1 are landed;
+  SS2 and SS3 were planned on 2026-10-06 ("SS2: traces, oracles,
+  enumeration and sampling (plan)", "SS3: objectives and measurements
+  (plan)"); their choices (N-S1 to N-S5) were decided by the user the same
+  day, under "Decisions".
 - **Decided by the user (2026-10-05):**
   - Only generic parts move into fhy-core. Everything CIR-specific stays in
     MOGA-VM as subclasses or implementors of the generic vocabulary.
@@ -61,11 +65,14 @@
   producing them (a profiler, a simulator, a cost model), which is a
   `Measurer` trait in a later slice. A downstream record (MOGA-VM's
   `CandidateRecord`) wraps a `Measurement`.
-- **Trace steps: structs.** A step is data: a decision, its domain's shape,
-  and a coordinate. The open parts are the decision *kind*, an open
-  vocabulary (an interned tag, as `OpAttribute` is), and, in SS2, dynamic
-  domains (`Domain::Custom(Part<dyn CustomDomain>)`) and the `SearchOracle`
-  trait that answers steps.
+- **Trace steps: structs.** A step is data: a decision, its domain's
+  signature, and a coordinate. The open parts are the decision *kind*, an
+  open vocabulary (a namespaced string, stable across processes; SS2's
+  plan says why not an interned tag), the `SearchOracle` trait that
+  answers steps, and `Variable::search_domain` for a variable whose param
+  has a custom domain. The domain shapes (choice, order, strided runs) are
+  closed.
+- **`Measurer`: a trait** (SS3), generic over what it measures.
 - **Conditions and forbidden clauses: structs** over `constraint::Constraint`,
   whose `Custom` variant is already fhy_core's extension point for
   Python-defined and Rust-defined constraints.
@@ -76,8 +83,8 @@
 |---|---|
 | **SS0** | identifier values and members in `fhy_core::constraint` (N-5 (a)) |
 | **SS1** (recommended first (C) slice) | `Variable`, `Alternative` (traits and plain implementations), `Choice`, `Space` with hierarchy, `Condition`, `Forbidden`, `Configuration` with validation, completeness and `ConfigurationKey`; equivalence; serialization; the Python interface with both extension paths |
-| **SS2** | `Trace` and `TraceStep` over the static space *and* over dynamic decisions (choice, order and strided-run domains, an open decision kind); `SearchOracle`, uniform, recording and replay oracles; enumeration and cardinality; sampling and mutation hooks |
-| **SS3** | `Objective`, `Direction`, `Measurement`, a `Measurer` trait, and declared estimates (N-C3) |
+| **SS2** | `Trace` and `TraceStep` over the static space *and* over dynamic decisions (choice, order and strided-run domains, an open decision kind); `SearchOracle`, the random, replay and exhaustive oracles, the `Recorder`; enumeration and cardinality; sampling (per step and uniform) and mutation; the `Rng` |
+| **SS3** | `Objective`, `Direction`, `Measurement`, a `Measurer` trait; declared estimates deferred (N-S3) |
 | stays in MOGA-VM | its knob classes, `RealizationOption`, `TableEntry`, `CandidateTable` (as wrappers of `Choice` and `Space`), the lowering policies, placement, harness, records and observers |
 
 **Why `Trace` and `Measurement` are not in SS1** (N-C4). MOGA-VM's real use
@@ -1071,8 +1078,8 @@ which depends on `param`, `constraint` and `expression`, and never on
 | `search_space/error.rs` | `SpaceError`, `ConfigurationError(s)`, `EquivalenceError` |
 | `search_space/wire.rs` | wire forms with `Foreign` parts; `build(resolver)` |
 | `search_space/testing.rs` | behind the `testing` feature: the conformance checks of the implementor contract |
-| SS2: `search_space/trace.rs`, `domain.rs`, `oracle.rs` | the trace and the stream |
-| SS3: `search_space/measurement.rs` | `Objective`, `Direction`, `Measurement`, `Measurer` |
+| SS2: `search_space/rng.rs`, `domain.rs`, `trace.rs`, `oracle.rs`, `recorder.rs`, `exploration.rs` | the generator, the stream, and sampling, replay, enumeration, counting and mutation over a `Space` (SS2's plan) |
+| SS3: `search_space/measurement.rs` | `Objective`, `Direction`, `MeasurementStatus`, `Measurement`, `Measurer` |
 
 **Binding:** `rust/fhy-core-py/src/search_space.rs` with
 `search_space/{classes,adapter,kinds,errors,wire}.rs`, and
@@ -1218,46 +1225,1258 @@ pub struct Objective { /* name: Identifier, direction: Direction */ }
 pub struct Measurement { /* key: ConfigurationKey, values: Vec<(Objective, Value)>, status: MeasurementStatus, notes */ }
 ```
 
-## `Trace` and MOGA-VM's decision stream (SS2)
+## SS2: traces, oracles, enumeration and sampling (plan)
 
-- **A trace is the stream, recorded.** `TraceStep` generalizes MOGA-VM's
-  `RecordedDecision` (`cir/lowering/search/decisions.py:474-500`):
-  - the decision's name (MOGA's `subject`);
-  - an open kind, an interned tag replacing MOGA's closed `DecisionKind`
-    (`decisions.py:93-120`);
-  - the domain's shape and cardinality (what `ReplayOracle` checks,
-    `oracle.py:287-317`);
-  - the coordinate (the replayable half);
-  - the value (for reading back).
-- **Two kinds of step.**
-  - A step about a decision of the `Space` takes its domain from the space:
-    a choice's alternatives, or a finite variable's values.
-  - A step about a decision the space does not declare (MOGA's addresses
-    and boundary namespaces) carries its own domain: a choice, order or
-    strided-run domain, ported from `ChoiceDomain`, `OrderDomain` and
-    `AddressDomain`.
-- **Replay** is positional and by coordinate, as `ReplayOracle` is.
-  `Space::replay` turns the static steps of a trace into a `Configuration`;
-  dynamic steps are answered back to the pipeline.
-- **`SearchPoint`** becomes `Trace`. `ExtractedSearchSpace` becomes
-  unnecessary: the static prefix MOGA-VM extracts (option per entry, walk
-  order and tile per option) *is* a `Space`, with hierarchy where MOGA-VM
-  had `AxisCondition`.
+The concrete plan for SS2, in fhy-development-rs's planning template, as
+SS1's plan is. It replaces this design's first sketch of the slice; where
+it differs from the "SS2 and SS3 sketches" above, this plan holds. Its
+choices were decided by the user on 2026-10-06 (N-S1 to N-S6 under
+"Decisions"; the options weighed under "Needs the user (SS2/SS3)").
 
-## `Measurement` and where `Metric` goes (SS3)
+### Summary
 
-- `Metric` disappears from the space (N-C3). It was declared on options and
-  selections, and nothing produced or read it.
-- Its kind becomes `Direction`: COST is `Minimize`, BENEFIT is `Maximize`,
-  DIAGNOSTIC is `Report`.
-- Its name becomes an `Objective`, a shared vocabulary, as the audit
-  recommended (F-SS-012).
-- Measured values are `Measurement`s keyed by `ConfigurationKey`, with a
-  status (feasible, infeasible, failed).
-- A declared estimate, an expression over variable names, becomes an
-  `Estimate { objective, expression }` attached to a `Space` and evaluated
-  against a complete configuration into a `Measurement` marked estimated.
-  It lands in SS3, not SS1.
+SS2 gives a `Space` the second half of MOGA-VM's search vocabulary: the
+decision stream.
+
+- A **step** is one decision offered to an oracle with the set it may be
+  answered from (its **domain**) and answered by a **coordinate**, a
+  position in that domain. A **static** step asks a decision of a `Space`
+  and takes its domain from the space. A **dynamic** step asks a decision
+  the space does not declare (MOGA-VM's addresses and boundary
+  namespaces) and carries its own domain.
+- A `Trace` is the steps of one run, recorded in ask order; it is
+  MOGA-VM's `SearchPoint` (`cir/lowering/search/decisions.py:503-580`).
+- A `SearchOracle` answers steps. fhy-core ships a random, a replay and an
+  exhaustive oracle; MOGA-VM's searches and Python oracles implement the
+  same trait.
+- A `Recorder` drives one run: it builds each step, asks the oracle,
+  checks the answer and records it, and, over a space, grows the run's
+  `Configuration`.
+- Over a `Space` alone, fhy-core samples (per step, or uniformly over the
+  complete configurations), replays a trace into a configuration,
+  enumerates, counts and mutates.
+
+### Motivation
+
+- MOGA-VM's search does not read its static space at all. It re-derives
+  the domains in `extraction.py:450-569`, numbers them with coordinates and
+  replays by position (audit F-SS-013). SS1 gave the static space; SS2
+  lays the coordinates over it, so a search can name its axes, count them
+  and replay a point against a relabeled copy.
+- The stream itself is generic: nothing in `decisions.py` or `oracle.py`
+  imports MOGA, and the audit of it (F-SS-020 to F-SS-029) finds defects
+  a generic core fixes once: a replay check that compares sizes only,
+  Python equality in choice domains, and no persistent form of a point.
+
+### What is generic and what stays in MOGA-VM
+
+| Generic, in fhy-core | Stays in MOGA-VM |
+|---|---|
+| the domain shapes: choice, order, strided runs (`ChoiceDomain`, `OrderDomain`, `AddressDomain` generalized) | what each shape is built from: options, walk levels, fitting tiles, free address runs, boundary pools (`policies.py`, `placement.py`) |
+| the open decision kind, a string; fhy-core's own kinds for static steps | MOGA's kinds (`moga.cir.address`, `moga.cir.boundary_namespace`) as constants |
+| `TraceStep`, `Trace`, their wire form | `CandidateRecord`, `SearchHistory`, `SearchStatistics`, `JsonlTraceObserver` (which embeds a trace's wire form) |
+| `SearchOracle`; the random, replay and exhaustive oracles | `SearchBasedLoweringStrategy`, `SearchBudget`, `RandomSearch`, `SampledPointLoweringStrategy`, the policies and the allocator |
+| `Recorder`: driving, checking, recording, realizing a configuration | `build_oracle_driven_strategy` and the pipeline wiring |
+| over a `Space`: sampling, replay, enumeration, cardinality, mutation | `StructuralSearchSpaceExtractor`, which now returns a `Space` |
+| the random-number generator | seeds and budgets of MOGA's runs |
+
+### Module tree and visibility
+
+| Path | Visibility | Contents |
+|---|---|---|
+| `search_space::rng` | private, leaf | `Rng`: SplitMix64 (N-S1) |
+| `search_space::domain` | private, leaf | `DecisionKind`, `Coordinate`, `ChoiceDomain`, `OrderDomain`, `StridedRun`, `StridedDomain`, `StepDomain`, `DomainSignature`; a static step's domain from a decision (`pub(super)`) |
+| `search_space::trace` | private, leaf | `TraceStep`, `Trace` |
+| `search_space::oracle` | private | `SearchOracle`, `PendingStep`, `RandomOracle`, `ReplayOracle`, `ExhaustiveOracle` |
+| `search_space::recorder` | private, leaf | `Recorder`, `Recorded` |
+| `search_space::exploration` | private | `impl Space { sample, sample_uniform, replay, enumerate, cardinality, mutate }`, `impl Configuration { trace }`, `Cardinality`, `Enumeration`; the relaxed counts (private) |
+| `search_space::error` | private | adds `StepDomainError`, `EmptyKind`, `TraceError`, `ReplayError` |
+| `search_space::wire` | `pub mod` | adds `TraceData` (the trace's shape; no resolver: a trace holds no foreign part) |
+| `search_space::testing` | `pub mod`, `testing` feature | `ContractClause::SearchDomain`, checked by `check_variable_conformance` |
+
+- New public paths: `search_space::{Rng, DecisionKind, Coordinate,
+  ChoiceDomain, OrderDomain, StridedRun, StridedDomain, StepDomain,
+  DomainSignature, TraceStep, Trace, SearchOracle, PendingStep,
+  RandomOracle, ReplayOracle, ExhaustiveOracle, Recorder, Recorded,
+  Cardinality, Enumeration, StepDomainError, EmptyKind, TraceError,
+  ReplayError}` and `wire::TraceData`. No field is public.
+- One existing trait gains a provided method: `Variable::search_domain`
+  (below). Additive: it has a default.
+- One crate-internal widening: `param::interval::effective_interval`
+  (`rust/fhy-core/src/param/interval.rs:247`) goes from `pub(super)` to
+  `pub(crate)`, so a bounded integer variable's domain is its interval.
+- Layer 11 is unchanged: the new modules depend on `param`, `constraint`,
+  `identifier`, `foreign` and `num-bigint`, and the `Space` and
+  `Configuration` of SS1.
+
+### Public API
+
+```rust
+// search_space::rng (SplitMix64, N-S1)
+pub struct Rng { /* state */ }                         // Debug, Clone, PartialEq, Eq, Serialize, Deserialize
+impl Rng {
+    pub const ALGORITHM: &'static str = "splitmix64";
+    pub fn new(seed: u64) -> Self;
+    pub fn next_u64(&mut self) -> u64;
+    pub fn below(&mut self, bound: NonZeroU64) -> u64;  // uniform in [0, bound), no modulo bias
+    pub fn below_big(&mut self, bound: &BigUint) -> BigUint;   // panics on 0: documented bug
+    pub fn shuffle<T>(&mut self, items: &mut [T]);      // Fisher-Yates, last index first
+    pub fn split(&mut self) -> Self;                    // an independent stream
+}
+
+// search_space::domain
+pub struct DecisionKind(Arc<str>);                     // Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Display, serde
+impl DecisionKind {
+    pub const CHOICE: &'static str = "search_space.choice";
+    pub fn new(kind: &str) -> Result<Self, EmptyKind>;
+    pub fn choice() -> Self;
+    pub fn as_str(&self) -> &str;
+}
+pub enum Coordinate { Index(u64), Order(Box<[u32]>) }   // Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde; exhaustive
+pub struct ChoiceDomain(Arc<[Value]>);                  // Debug, Clone, PartialEq, Eq, Hash
+impl ChoiceDomain {
+    pub fn new(values: Vec<Value>) -> Result<Self, StepDomainError>;
+    pub fn values(&self) -> &[Value];
+    pub fn cardinality(&self) -> u64;
+    pub fn value_at(&self, index: u64) -> Option<&Value>;
+    pub fn coordinate_of(&self, value: &Value) -> Option<u64>;
+}
+pub struct OrderDomain(Arc<[Value]>);                   // the same derives
+impl OrderDomain {
+    pub fn new(elements: Vec<Value>) -> Result<Self, StepDomainError>;
+    pub fn elements(&self) -> &[Value];
+    pub fn cardinality(&self) -> BigUint;               // n!
+    pub fn value_at(&self, positions: &[u32]) -> Option<Value>;   // a Value::Tuple
+    pub fn coordinate_of(&self, value: &Value) -> Option<Box<[u32]>>;
+}
+pub struct StridedRun { /* start: BigInt, stop: BigInt, stride: BigUint */ }   // Debug, Clone, PartialEq, Eq, Hash
+impl StridedRun {
+    pub fn new(start: BigInt, stop: BigInt, stride: BigUint) -> Result<Self, StepDomainError>;
+    pub fn start(&self) -> &BigInt; pub fn stop(&self) -> &BigInt; pub fn stride(&self) -> &BigUint;
+    pub fn width(&self) -> BigUint;
+}
+pub struct StridedDomain(Arc<[StridedRun]>);            // the same derives
+impl StridedDomain {
+    pub fn new(runs: Vec<StridedRun>) -> Result<Self, StepDomainError>;
+    pub fn runs(&self) -> &[StridedRun];
+    pub fn cardinality(&self) -> u64;
+    pub fn value_at(&self, index: u64) -> Option<BigInt>;
+    pub fn coordinate_of(&self, value: &BigInt) -> Option<u64>;
+}
+#[non_exhaustive]
+pub enum StepDomain { Choice(ChoiceDomain), Order(OrderDomain), Strided(StridedDomain) }   // Debug, Clone, PartialEq, Eq, Hash
+impl StepDomain {
+    pub fn cardinality(&self) -> BigUint;
+    pub fn value_at(&self, coordinate: &Coordinate) -> Option<Value>;
+    pub fn coordinate_of(&self, value: &Value) -> Option<Coordinate>;
+    pub fn signature(&self) -> DomainSignature;         // identifiers as `identifier`
+}
+pub struct DomainSignature(/* private repr */);          // Debug, Clone, PartialEq, Eq, Hash, serde
+impl DomainSignature { pub fn cardinality(&self) -> BigUint; pub fn shape(&self) -> &'static str; }
+
+// search_space::variable (SS1's trait gains one provided method)
+pub trait Variable: ForeignPart {
+    // ... SS1's methods ...
+    /// The domain a static step over this variable offers, or `None` to derive it from the param.
+    fn search_domain(&self) -> Result<Option<StepDomain>, BoxError> { Ok(None) }
+}
+
+// search_space::trace
+pub struct TraceStep { /* kind, subject, decision: Option<u32>, signature, coordinate, value: Option<Value> */ }  // Debug, Clone, PartialEq, Eq, Hash
+impl TraceStep {
+    pub fn dynamic(kind: DecisionKind, subject: Identifier, domain: &StepDomain, coordinate: Coordinate)
+        -> Result<Self, TraceError>;                   // refuses a coordinate outside the domain
+    pub fn kind(&self) -> &DecisionKind;
+    pub fn subject(&self) -> &Identifier;               // a static step's decision name
+    pub fn decision(&self) -> Option<usize>;            // a static step's canonical position in its space
+    pub fn signature(&self) -> &DomainSignature;
+    pub fn cardinality(&self) -> BigUint;
+    pub fn coordinate(&self) -> &Coordinate;
+    pub fn value(&self) -> Option<&Value>;
+}
+pub struct Trace(Arc<[TraceStep]>);                     // Debug, Clone, PartialEq, Eq, Hash, Default, Display, Serialize, Deserialize
+impl Trace {
+    pub fn new(steps: Vec<TraceStep>) -> Self;
+    pub fn steps(&self) -> &[TraceStep];
+    pub fn len(&self) -> usize; pub fn is_empty(&self) -> bool;
+    pub fn coordinates(&self) -> impl ExactSizeIterator<Item = &Coordinate> + '_;
+    pub fn of_kind<'a>(&'a self, kind: &'a DecisionKind) -> impl Iterator<Item = &'a TraceStep> + 'a;
+    pub fn traversed_cardinality(&self) -> BigUint;
+}
+
+// search_space::oracle
+pub trait SearchOracle {
+    fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError>;
+}
+impl<O: SearchOracle + ?Sized> SearchOracle for &mut O;
+impl<O: SearchOracle + ?Sized> SearchOracle for Box<O>;
+pub struct PendingStep<'a> { /* ... */ }
+impl<'a> PendingStep<'a> {
+    pub fn kind(&self) -> &'a DecisionKind;
+    pub fn subject(&self) -> &'a Identifier;
+    pub fn domain(&self) -> &'a StepDomain;
+    pub fn position(&self) -> usize;                    // the step's index in the run's trace
+    pub fn decision(&self) -> Option<Decision<'a>>;     // a static step's decision
+    pub fn configuration(&self) -> Option<&'a Configuration>;   // the run's configuration so far
+    pub fn admits(&self, coordinate: &Coordinate) -> Result<bool, TraceError>;
+    pub fn draw_uniform(&self, rng: &mut Rng) -> Result<Coordinate, TraceError>;
+}
+pub struct RandomOracle { /* rng */ }                   // Debug, Clone
+impl RandomOracle { pub fn new(seed: u64) -> Self; pub fn from_rng(rng: Rng) -> Self; pub fn rng(&self) -> &Rng; }
+pub struct ReplayOracle { /* trace, position */ }       // Debug, Clone
+impl ReplayOracle {
+    pub fn new(trace: Trace) -> Self;
+    pub fn trace(&self) -> &Trace;
+    pub fn is_exhausted(&self) -> bool;
+    pub fn finish(self) -> Result<(), ReplayError>;     // refuses unasked steps
+}
+pub struct ExhaustiveOracle { /* path */ }              // Debug, Clone, Default
+impl ExhaustiveOracle {
+    pub fn new() -> Self;
+    pub fn advance(&mut self) -> bool;                  // the next run's path; false when every path was taken
+    pub fn is_backtrack(error: &BoxError) -> bool;      // a run abandoned on an exhausted branch
+}
+
+// search_space::recorder
+pub struct Recorder<'r, 'c> { /* oracle, context, space, configuration, preset, steps */ }
+impl<'r, 'c> Recorder<'r, 'c> {
+    pub fn new(oracle: &'r mut dyn SearchOracle, context: &'r ParamContext<'c>) -> Self;          // dynamic steps only
+    pub fn over(space: &Space, oracle: &'r mut dyn SearchOracle, context: &'r ParamContext<'c>) -> Self;
+    pub fn realizing(configuration: &Configuration, oracle: &'r mut dyn SearchOracle,
+                     context: &'r ParamContext<'c>) -> Self;
+    pub fn decide(&mut self, decision: &Identifier) -> Result<Value, TraceError>;
+    pub fn decide_dynamic(&mut self, kind: &DecisionKind, subject: &Identifier, domain: &StepDomain)
+        -> Result<Coordinate, TraceError>;
+    pub fn trace(&self) -> Trace;                       // the steps so far, also after a failure
+    pub fn configuration(&self) -> Option<&Configuration>;
+    pub fn finish(self) -> Result<Recorded, TraceError>;
+}
+pub struct Recorded { /* trace, configuration */ }      // Debug, Clone; trace(), configuration(), into_parts()
+
+// search_space::exploration
+impl Space {
+    pub fn sample(&self, oracle: &mut dyn SearchOracle, context: &ParamContext<'_>) -> Result<Recorded, TraceError>;
+    pub fn sample_uniform(&self, rng: &mut Rng, context: &ParamContext<'_>, attempts: NonZeroU32) -> Result<Recorded, TraceError>;
+    pub fn replay(&self, trace: &Trace, context: &ParamContext<'_>) -> Result<Configuration, ReplayError>;
+    pub fn enumerate<'s>(&'s self, context: &'s ParamContext<'s>) -> Enumeration<'s>;
+    pub fn cardinality(&self, context: &ParamContext<'_>, budget: u64) -> Result<Cardinality, TraceError>;
+    pub fn mutate(&self, configuration: &Configuration, rng: &mut Rng, context: &ParamContext<'_>, attempts: NonZeroU32)
+        -> Result<Recorded, TraceError>;
+}
+impl Configuration { pub fn trace(&self, context: &ParamContext<'_>) -> Result<Trace, TraceError>; }
+pub enum Cardinality { Exact(BigUint), AtLeast(BigUint), Unbounded { decision: Identifier }, Unknown { decision: Identifier } }  // Debug, Clone, PartialEq, Eq; exhaustive
+pub struct Enumeration<'s> { /* ... */ }                // Iterator<Item = Result<Configuration, TraceError>>
+
+// search_space::error
+pub struct EmptyKind;                                   // Debug, Clone, Copy, PartialEq, Eq, Display, Error
+#[non_exhaustive] pub enum StepDomainError {
+    EmptyChoice, EmptyOrder, EmptyRuns, NanValue { index: usize }, RepeatedValue { first: usize, second: usize },
+    EmptyRun { index: usize }, ZeroStride { index: usize }, UnorderedRuns { index: usize }, TooLarge,
+}
+#[non_exhaustive] pub enum TraceError {
+    Domain(StepDomainError), UnknownDecision { name: Identifier }, AlreadyDecided { name: Identifier },
+    NotActive { name: Identifier, activity: Activity }, NotEnumerable { decision: Identifier },
+    NoSpace, CoordinateOutOfDomain { position: usize }, Inadmissible { position: usize, coordinate: Coordinate },
+    DeadEnd { decision: Identifier }, Oracle { position: usize, source: BoxError },
+    Hook { decision: Identifier, source: BoxError }, Configuration(ConfigurationErrors),
+    Unasked { decisions: Vec<Identifier> }, Incomplete, OtherSpace, NothingToMutate, AttemptsExhausted { attempts: u32 },
+}
+#[non_exhaustive] pub enum ReplayError {
+    Exhausted { position: usize }, KindMismatch { position: usize }, DecisionMismatch { position: usize },
+    DomainMismatch { position: usize }, CoordinateOutOfDomain { position: usize },
+    Inadmissible { position: usize }, Unconsumed { position: usize },
+    MissingStep { decision: Identifier }, RepeatedStep { decision: Identifier },
+    Configuration(ConfigurationErrors), Trace(Box<TraceError>),
+}
+```
+
+The `Display` texts are decided in the stub, one lowercase line each,
+naming identifiers as `name::id` and positions as `step <n>`.
+
+### Ownership and data model
+
+- Domains, `Trace` and `DomainSignature` are `Arc`s of immutable data;
+  clones share. A `TraceStep` holds a signature, not its domain: a
+  recorded step never holds a dynamic domain's values beyond the one
+  answered, so a trace of an address stream stays as small as its
+  coordinates.
+- A `Recorder` borrows its oracle mutably and its context; it owns a clone
+  of its space (a reference count), the configuration it grows, and its
+  steps. `trace()` copies the steps out, so a failed run still reports its
+  prefix (MOGA's `last_point` convention, `sampling.py:139-146`).
+- `PendingStep` borrows from the recorder; an oracle cannot keep it. A
+  Python oracle receives an owned snapshot (see "Python interface").
+- `SearchOracle` has no `Send` bound: an oracle answers one run on one
+  thread. `RandomOracle`, `ReplayOracle`, `ExhaustiveOracle` and `Rng`
+  are `Send + Sync`.
+- `SearchOracle` is not a `ForeignPart`: oracles are never stored in a
+  space, compared or serialized.
+
+### Extensibility decisions
+
+- **The decision kind is open and is a string**, not an interned
+  identifier tag. A `DescribedTag` is keyed by an `Identifier`
+  (`rust/fhy-core/src/described_tag.rs:1-17`), and only fhy-core's
+  reserved identifiers have the same id in every process
+  (`rust/fhy-core/src/identifier.rs:7-10`): a MOGA-VM kind minted in one
+  process would not equal the same kind decoded from another process's
+  trace. A namespaced string is stable everywhere, as a part's `kind()` is
+  (`search_space/variable.rs:33`). Its only check is non-emptiness.
+- **Kinds of static steps** are fhy-core's: `search_space.choice` for a
+  choice and the variable's own `kind()` for a variable
+  (`search_space.variable`, or an implementor's such as
+  `moga.cir.array_tile_knob`). A dynamic step's kind is the caller's.
+- **The domain shapes are closed** (`StepDomain` is `#[non_exhaustive]`, no
+  custom shape). Every shipped oracle, the replay check and the wire form
+  must understand every shape; MOGA-VM's three shapes cover every free
+  choice it makes (`decisions.py:425-432`). A new shape is additive.
+- **`SearchOracle` is open and object safe**; not sealed. Its one method
+  answers a coordinate, not a value: coordinates are what a trace records
+  and what makes an oracle independent of the objects a domain holds.
+  `PendingStep::domain().coordinate_of(value)` turns a value into one.
+- **`Variable::search_domain`** lets an implementor whose param has a
+  custom domain offer a step domain (or narrow nothing: the default
+  derives one from the param). Contract clause 7: the domain holds exactly
+  the values the param's domain admits, before its constraints, in an
+  order fixed for the value's life; checked by `ContractClause::SearchDomain`
+  where the param's domain is finite.
+- `Coordinate` and `Cardinality` are exhaustive (two shapes of answer;
+  four answers to "how many"). The error enums are `#[non_exhaustive]`.
+
+### Domains
+
+| Shape | Values | Coordinate | Cardinality | Refused |
+|---|---|---|---|---|
+| choice | one or more `Value`s, distinct by `Value`'s type-strict `==` | `Index(i)`, `i < n` | `n` | none (`EmptyChoice`), a NaN float (`NanValue`), a repeat (`RepeatedValue`) |
+| order | the permutations of one or more distinct `Value`s; a value is a `Value::Tuple` holding each element once | `Order(p)`: `p[k]` is the position among the elements of the one placed `k`-th, as `decisions.py:225-248` | `n!` (a `BigUint`) | none (`EmptyOrder`), NaN, a repeat |
+| strided | the integers `start + k * stride` below `stop`, for each run; runs disjoint and ascending | `Index(i)` over the runs flattened in order (`decisions.py:369-396`), so a uniform index is uniform over the union | the sum of the widths | no run (`EmptyRuns`), `stop <= start` (`EmptyRun`), a zero stride (`ZeroStride`), a run starting below the previous run's stop (`UnorderedRuns`), more than `u64::MAX` values (`TooLarge`) |
+
+- `admits` is `coordinate_of(value).is_some()`. Values compare
+  type-strictly: `true` is not the integer `1` (F-SS-022), and a strided
+  domain admits only `Value::Int`.
+- A static step's domain:
+  - a choice: a choice domain over its alternatives' names, as identifier
+    values, in declared order;
+  - a variable: `search_domain()` if it gives one; else from the param's
+    domain (`rust/fhy-core/src/param/domain.rs:562-576`): categorical and
+    ordinal as a choice domain over `values()` (`domain.rs:467, 503`),
+    permutation as an order domain over `values()` (`domain.rs:531`),
+    integer and interval integer as one strided run over the effective
+    interval of the param's bound constraints when both ends are finite;
+    an unbounded integer, a real or a custom domain has none
+    (`TraceError::NotEnumerable`).
+- **Admissible coordinates.** A coordinate of a static step is admissible
+  when the run's configuration with that value (`Configuration::with_entry`,
+  `search_space/configuration.rs:144`) is accepted: the param's
+  constraints hold for it, and no forbidden clause it completes holds. Any
+  other refusal (an undecided condition or clause, a failing custom
+  constraint) is an error of the run, not an inadmissible value. Every
+  coordinate of a dynamic step is admissible: its domain is the
+  admissible set, as MOGA-VM's are built (`placement.py:423-500`).
+  Coordinates index the declared domain, not the admissible subset, so a
+  coordinate means the same value whatever a forbidden clause filters.
+
+### Signatures and replay
+
+A `DomainSignature` is what replay compares: the parts of a domain that
+mean the same thing in every module and every process.
+
+- Its shape and cardinality.
+- A choice's values and an order's elements, each written as:
+  - itself, if it is a plain value (Boolean, integer, float, decimal,
+    string, or a tuple or frozen set of plain values);
+  - its position among the space's names, if it is an identifier the
+    step's space binds (static steps; as `ConfigurationKey` writes one,
+    `search_space/configuration.rs:414-420`);
+  - `identifier`, for any other identifier;
+  - `opaque`, for an opaque value (a Python object such as MOGA's
+    `RealizationOption`, whose `==` is identity).
+- A strided domain's runs, exactly.
+
+So a replay against a module whose free address runs moved, or whose
+plain choices were reordered, is refused (F-SS-020), while a replay of
+options or walk levels against a freshly built module, whose objects are
+new, still works, which is the reason MOGA-VM compares sizes only
+(`oracle.py:287-295`). Two alpha-equivalent spaces give equal signatures
+for corresponding static steps.
+
+**`ReplayOracle`** answers the `n`-th step asked with the `n`-th step
+recorded, checking, in order:
+
+1. a recorded step exists (`Exhausted`);
+2. equal kinds (`KindMismatch`);
+3. both static over the same canonical position, or both dynamic
+   (`DecisionMismatch`); a dynamic step's subject is not compared, as
+   MOGA-VM's is not (an address's subject repeats, and subjects are
+   module objects), and the documentation now says so (F-SS-027);
+4. equal signatures (`DomainMismatch`);
+5. the recorded coordinate lies in the offered domain
+   (`CoordinateOutOfDomain`) and is admissible (`Inadmissible`).
+
+`finish()` refuses a replay that left recorded steps unasked
+(`Unconsumed`): a stream shorter than its trace is a different path
+(F-SS-021). `Space::replay` and `Recorder::finish` over a `ReplayOracle`
+call it.
+
+**`Space::replay(trace)`** builds the configuration a trace's static steps
+describe, whatever order they were asked in (a pipeline asks every option
+before any tile, while decision order interleaves them):
+
+- each static step names a canonical position; two steps for one decision
+  are `RepeatedStep`;
+- it walks the space in decision order; each active decision takes its
+  step (`MissingStep` if none), checked by kind, signature and coordinate
+  as above, and an inactive decision must have none (`DecisionMismatch`);
+- dynamic steps are skipped: they are answered back to whatever asked
+  them, by a `ReplayOracle` in a `Recorder`.
+
+The result is the configuration of this space, so a trace recorded over
+one space replays into a relabeled copy, and the two configurations have
+equal keys (a property test).
+
+### The recorder
+
+- `Recorder::new(oracle, context)` records dynamic steps only;
+  `decide` is `NoSpace`.
+- `Recorder::over(space, ...)` starts from the empty configuration of
+  `space`. `decide(name)`:
+  - the name is a decision of the space (`UnknownDecision`), not decided
+    yet in this run (`AlreadyDecided`), and active in the configuration so
+    far (`NotActive` with its activity: a decision whose choice is still
+    undecided is pending);
+  - it builds the step and its `PendingStep`, asks the oracle (`Oracle`
+    wraps the oracle's error, which a Python oracle's exception is), and
+    refuses a coordinate outside the domain (`CoordinateOutOfDomain`) or
+    not admissible (`Inadmissible`); a refused answer is not recorded
+    (`oracle.py:188-208`);
+  - it records the step, extends the configuration, and returns the value
+    (a choice's value is its alternative's name).
+- `decide_dynamic(kind, subject, domain)` does the same for a domain the
+  caller built, and returns the coordinate; the caller maps it to its own
+  object.
+- `Recorder::realizing(configuration, ...)` is MOGA-VM's
+  `ExtractedPointOracle` (`extraction.py:358-428`) made generic: a static
+  decision the configuration assigns is answered from it, without asking
+  the oracle, and recorded with its coordinate; any other decision, static
+  or dynamic, goes to the oracle. Because names are unique in a space, the
+  first-in-first-out matching of repeated axis keys disappears, and with
+  it F-SS-026.
+- `finish()` returns the trace and, over a space, the configuration
+  (complete or not: `is_complete()` says). A realizing recorder refuses to
+  finish while a decision its configuration assigns was never asked
+  (`Unasked`, naming them in canonical order): MOGA-VM's strict mode
+  (`sampling.py:194-214`), always on. A caller that tolerates it reads
+  `trace()` and `configuration()` instead.
+
+### Oracles fhy-core ships
+
+| Oracle | Answers | Notes |
+|---|---|---|
+| `RandomOracle` | `step.draw_uniform(rng)`: uniform over the step's admissible coordinates | uniform per step, not per configuration, as MOGA-VM's (`oracle.py:85-96`) |
+| `ReplayOracle` | the recorded step at the same position | checks above; `finish` |
+| `ExhaustiveOracle` | the paths of a conditional stream in lexicographic order of coordinates | across runs: `advance()` between them |
+
+- **`draw_uniform`**: for a finite domain of `n` coordinates, draw
+  `rng.below(n)` (an order domain: shuffle the positions); if the
+  coordinate is not admissible, draw again, up to 64 draws; then list the
+  admissible coordinates (when `n <= 2^16`) and draw among them; none is
+  `DeadEnd`. Rejection keeps the draw exactly uniform over the admissible
+  set; the cap bounds the work on a domain that is mostly forbidden.
+- **`ExhaustiveOracle`** keeps the path of the last run: per position, the
+  coordinate answered and the domain's cardinality. A run answers the
+  path's coordinates in order and then, at each new position, the first
+  admissible coordinate. At a position whose remaining coordinates are all
+  inadmissible it answers with a backtrack error (`is_backtrack`), which
+  abandons the run. `advance()` moves to the next coordinate of the
+  deepest position with one left (an order domain's next permutation in
+  lexicographic order), drops the positions after it, and returns `false`
+  when none is left. A run whose shape differs from the path at a
+  replayed position is a `ReplayError` (the stream is not deterministic).
+  Over a space it enumerates every complete configuration once; over
+  MOGA-VM's pipeline it is the sweep its design names
+  (`docs/design/search_based_lowering_strategy.md`, "Behavior").
+
+### Sampling, enumeration, cardinality and mutation over a `Space`
+
+**`Space::sample(oracle)`**: a `Recorder::over` asking every active
+decision in decision order (`search_space/space.rs:290`). Decision order
+puts every decision after those it depends on, so each decision is active
+or inactive when reached, never pending; an undecided or failing
+condition is `TraceError::Configuration`. The configuration returned is
+complete.
+
+**`Space::sample_uniform(rng, attempts)`** draws a complete configuration
+uniformly from all of them, by constructive proposal and rejection:
+
+1. The **relaxation** of the space drops its conditions and forbidden
+   clauses and its params' constraints. Its count `R(d)` is closed form:
+   a variable's declared cardinality; a choice's sum over its
+   alternatives of the product of their decisions' counts; the space's the
+   product of its top-level decisions'. `R` must be finite
+   (`NotEnumerable` otherwise).
+2. Draw an index uniformly below `R(space)` (`rng.below_big`) and decode
+   it, mixed radix, into a relaxed point: an alternative per reached
+   choice, a coordinate per reached variable.
+3. Apply the space: walk decision order, keep the relaxed values of
+   active decisions, drop those of decisions a condition makes inactive.
+   Reject if a value is refused (a param constraint) or a forbidden clause
+   holds.
+4. A configuration `c` is the image of `m(c)` relaxed points: the product
+   of `R(d)` over the decisions `d` that are inactive in `c` by a
+   condition while their parent is active. Accept with probability
+   `1/m(c)` (draw below `m(c)`, accept on zero).
+
+Each complete configuration is then proposed with probability `m(c)/R`
+and accepted with `1/m(c)`: exactly uniform. With no conditions every
+`m(c)` is 1. After `attempts` rejections, `AttemptsExhausted`. The trace
+returned holds the accepted configuration's steps, as
+`Configuration::trace` gives them. MOGA-VM's `draw_uniform`
+(`extraction.py:315-344`) is the per-step sampler, `sample` with a
+`RandomOracle`; the probe X3 shows the difference (an option exposing 3
+tiles against one exposing 2 is drawn 0.5/0.5 per step, 0.6/0.4 per
+configuration).
+
+**`Space::enumerate()`** drives `sample` with an `ExhaustiveOracle` and
+yields each complete configuration in lexicographic order of its
+coordinates in decision order. A backtrack yields nothing; a decision
+with no finite domain yields one `NotEnumerable` and ends.
+
+**`Space::cardinality(budget)`** counts the complete configurations:
+
+- The space splits into **components**: top-level decisions are in one
+  component when a condition or a forbidden clause names decisions of
+  both. Components multiply.
+- A component with no condition, forbidden clause or param constraint
+  beyond the bounds that define a strided domain has a closed-form count
+  (as the relaxation's); otherwise it is counted by enumerating it,
+  checking at most `budget` configurations.
+- Each component answers:
+  - `Exact(n)`;
+  - `AtLeast(n)`: the budget ran out after `n`;
+  - `Unbounded { decision }`: a valid configuration activates a variable
+    whose domain is an unbounded integer or a real, so the count is
+    infinite unless a constraint the count does not solve excludes every
+    value, which it does not try;
+  - `Unknown { decision }`: a custom domain with no `search_domain`.
+- Combined: any `Exact(0)` is `Exact(0)`; else any `Unknown` is
+  `Unknown`; else any `Unbounded` is `Unbounded` if every other component
+  has at least one configuration, and `Unknown` otherwise; else any
+  `AtLeast` is `AtLeast` of the product; else `Exact` of the product.
+- MOGA-VM's one-level count (`extraction.py:293-313`) is the closed form
+  of a space whose choices hold variables only; the equivalence corpus
+  checks the two agree.
+
+**`Space::mutate(configuration, rng, attempts)`** changes one decision and
+repairs the rest, the MetaSchedule mutator shape:
+
+1. `configuration` must be complete (`Incomplete`) and belong to this
+   space by `Space`'s `==` (`OtherSpace`).
+2. Pick uniformly an active decision with two or more admissible values
+   (`NothingToMutate` if none).
+3. Its new value: an order domain swaps two positions drawn uniformly; any
+   other shape draws uniformly among the other admissible coordinates.
+4. Re-walk decision order with a private oracle that answers the mutated
+   decision with its new coordinate, every other decision with its old
+   coordinate while that stays admissible, and anything else (a decision
+   the change activated, or an old value now inadmissible) by
+   `draw_uniform`.
+5. A dead end retries from 2, up to `attempts` (`AttemptsExhausted`).
+
+**`Configuration::trace()`** is the trace of a configuration's assigned
+decisions, in decision order: the steps `Space::replay` turns back into
+it.
+
+### Determinism and the random-number generator
+
+- Every random draw in fhy-core comes from one `Rng` passed in by the
+  caller: nothing reads a clock, the environment or a global.
+- **The stream contract:** for a seed, `Rng`'s outputs, and for each
+  operation (`below`, `below_big`, `shuffle`, `draw_uniform`, `sample`,
+  `sample_uniform`, `mutate`), which draws it takes, in which order. Both
+  are documented and pinned by golden vectors in the tests; changing
+  either is a breaking change noted in the changelog. Arithmetic is
+  integer only (wrapping `u64`, `u128` products), so the streams are the
+  same on every platform.
+- `below(n)` is Lemire's multiply-and-reject method; `below_big` draws
+  whole 64-bit limbs, masks the top limb to the bound's bit length and
+  rejects at or above the bound; `shuffle` is Fisher-Yates from the last
+  index down; `split` seeds a new generator from one output.
+- **Python.** The binding exposes the same `Rng`, so a seed reproduces the
+  same run from Python and from Rust. Python's `random.Random` stream
+  (MT19937, and CPython's `randrange` and `shuffle`, which the language
+  does not promise to keep) cannot be reproduced by either option below:
+  MOGA-VM's existing seeds do not carry over, and its seed-pinned tests
+  are re-baselined when it migrates (a divergence, D-SS2-6).
+- **The generator (N-S1, decided: (b), SplitMix64):**
+
+  | | (a) `rand` + `rand_chacha` | (b) in house (recommended) |
+  |---|---|---|
+  | generator | ChaCha12 (`rand_chacha` documents its streams as portable and reproducible) | SplitMix64 (64-bit state; passes BigCrush; Java's `SplittableRandom`) or PCG64 |
+  | new dependencies | two normal dependencies of the published crate. Both are in `Cargo.lock` already at 0.9.5 and 0.9.0, as `proptest`'s dev dependencies (`Cargo.lock:515-533`), so the lock does not change, but fhy-core's users then build them, and `rand_core`'s `os_rng` feature pulls `getrandom` unless default features are off | none |
+  | stream stability | the generator's, yes; `rand`'s range sampling and shuffling can change value output in a minor (0.x) release, as 0.9 did for integer ranges, so fhy-core would write `below` and `shuffle` itself over `RngCore::next_u64` to keep its contract across `rand` bumps | fhy-core owns the algorithm and the draws; golden vectors pin them |
+  | code | the newtype and the draws (about 80 lines) | the generator, the newtype and the draws (about 120 lines) |
+  | API | `Rng` wraps the third-party type; nothing of `rand` in fhy-core's signatures | `Rng` |
+  | Python interop | the same binding either way | the same |
+
+  The recommendation is (b): the draws must be written in house under
+  (a) as well to keep the contract, which leaves `rand` providing only a
+  generator that is a few lines of code, at the cost of two published
+  dependencies. `Rng::ALGORITHM` names the generator, so a stronger one
+  can be added later without changing old streams.
+
+### Error model
+
+- Domain construction stops at the first problem (`StepDomainError`, in the
+  table's order).
+- A run stops at the first problem (`TraceError`): a run is a path, and a
+  later step depends on the earlier ones. The oracle's own error is
+  boxed in `Oracle { position, source }`; through Python it is the
+  exception itself.
+- Replay stops at the first mismatch (`ReplayError`), naming the step's
+  position. Through a `Recorder`, the `ReplayOracle`'s error arrives as
+  `TraceError::Oracle` with the `ReplayError` as its source; the binding
+  raises it as `ReplayMismatchError`.
+- A configuration refused while being grown is
+  `TraceError::Configuration`, holding SS1's collected errors.
+- No panics on input. `Rng::below_big` with a zero bound panics: every
+  caller passes a cardinality, which is at least one by construction.
+
+### Behavior
+
+| Question | Answer |
+|---|---|
+| a step whose domain has one value | asked and recorded, as MOGA-VM's are (a fact is a decision with cardinality 1, C-7) |
+| `traversed_cardinality` of an empty trace | 1 |
+| a choice domain over `1` and `true` | two values; `coordinate_of(true)` is 1 (MOGA-VM: 0, F-SS-022) |
+| a strided domain and `true` | not admitted (MOGA-VM's `coordinate_of` accepts it, probe C3) |
+| an order domain over no element | refused (MOGA-VM accepts it with cardinality 1; its policies never ask one) |
+| a dynamic step's subject in replay | not compared |
+| a replay against a same-size domain with other plain values | refused (`DomainMismatch`) |
+| a replay that asks fewer steps than recorded | refused by `finish` (`Unconsumed`) |
+| `Space::replay` and step order | static steps by canonical position, any order |
+| a trace's equality | structural over its steps; traces from two modules differ in their subjects, so compare `coordinates()` |
+| `Trace`'s `Display` | `0 steps`, or `5 steps (2 search_space.choice, 3 moga.cir.address)`, kinds in first-seen order (MOGA's `summarize`, `decisions.py:567-575`) |
+
+### Serialization
+
+- Type id `search_space.trace`. The core's serde shape (V2, no V1 form):
+
+  ```json
+  {"steps": [
+    {"kind": "search_space.choice", "subject": {"id": 60001, "name_hint": "layout"},
+     "decision": 3, "domain": {"choice": [{"bound": 4}, {"bound": 5}]},
+     "coordinate": 1, "value": {"identifier": {"id": 60005, "name_hint": "flat"}}},
+    {"kind": "moga.cir.address", "subject": {"id": 70210, "name_hint": "x"}, "decision": null,
+     "domain": {"strided": [{"start": 0, "stop": 64, "stride": 1}]},
+     "coordinate": 17, "value": {"int": 17}}
+  ]}
+  ```
+
+  A coordinate is an integer or an array of integers; a signature member is
+  `{"value": <value>}`, `{"bound": n}`, `"identifier"` or `"opaque"`.
+- A step's value is written unless it is or holds an opaque value, which
+  is written `null`: an opaque value is a module's object, which another
+  process cannot read back. Replay never reads values.
+- A trace holds no foreign part, so `Trace` implements `Serialize` and
+  `Deserialize` itself; decoding checks each coordinate against its
+  signature. `wire::TraceData` is the shape, for the binding.
+- `Rng` serializes its algorithm and state, so a `RandomOracle` resumes.
+- So a MOGA-VM trace row can carry `trace.to_json()`, and a row replays
+  without the process that wrote it (F-SS-024).
+
+### Python interface
+
+New in `fhy_core.search_space` (the `_rs` pyclasses behind thin public
+classes, as SS1's):
+
+| Class | Construction | Attributes and methods |
+|---|---|---|
+| `Rng` | `Rng(seed)`: an `int` in `[0, 2**64)` (`ValueError` otherwise) | `seed`, `next_u64()`, `below(n)`, `shuffle(list)` (in place), `split()`; pickles with its state |
+| `ChoiceDomain` | `ChoiceDomain(choices)`: any objects; each is read as a `Value`, else as an opaque value compared by its own `==` (identity for an `eq=False` dataclass, as MOGA-VM's options) | `choices` (the objects given), `cardinality`, `admits(value)`, `value_at(i)` (the object given: `domain.value_at(0) is choices[0]`), `coordinate_of(value)` |
+| `OrderDomain` | `OrderDomain(elements)` | `elements`, `cardinality`, `admits`, `value_at(positions)` (a tuple of the objects given), `coordinate_of` |
+| `StridedRun` | `StridedRun(start, stop, stride=1)` | `start`, `stop`, `stride`, `width`, `admits` |
+| `StridedDomain` | `StridedDomain(runs)` | `runs`, `cardinality`, `admits`, `value_at`, `coordinate_of` |
+| `PendingStep` | none (the binding builds it) | `kind` (a `str`), `subject`, `domain` (the domain object a dynamic step was given; a built one for a static step), `position`, `decision` (the `Variable` or `Choice` object, or `None`), `configuration` (or `None`), `admits(coordinate)`, `coordinate_of(value)`, `draw_uniform(rng)` |
+| `SearchOracle` | a `typing.Protocol`, runtime checkable: `decide(self, step: PendingStep) -> int \| tuple[int, ...]` | |
+| `RandomOracle` | `RandomOracle(seed=None, *, rng=None)`; both given is `ValueError`; `seed=None` draws a seed from `os.urandom` | `seed` (the seed used, so an unseeded run can be reproduced, unlike MOGA-VM's, F-SS-025), `rng`, `decide` |
+| `ReplayOracle` | `ReplayOracle(trace)` | `trace`, `is_exhausted`, `finish()`, `decide` |
+| `ExhaustiveOracle` | `ExhaustiveOracle()` | `advance()`, `decide` |
+| `Recorder` | `Recorder(oracle, *, space=None, configuration=None)`: `configuration` makes it realizing; `space` and `configuration` together is `ValueError` | `decide(name)` (the value: for a choice the alternative object), `decide_dynamic(kind, subject, domain)` (the domain's object at the answered coordinate), `trace`, `configuration`, `finish()` (a `(trace, configuration)` pair) |
+| `TraceStep` | none | `kind`, `subject`, `decision`, `signature` (read only, `repr` only), `cardinality`, `coordinate`, `value` (the object answered, kept, for a trace recorded in this process; the decoded value otherwise, `None` for an opaque one) |
+| `Trace` | `Trace(steps=())` | `steps`, `len`, iteration, `coordinates`, `of_kind(kind)`, `traversed_cardinality`, `str` (the `Display` text); structural `==` and `hash` (N-S2); the serialization methods; pickles through its V2 text |
+| `Cardinality` | none | `kind` (`CardinalityKind`, a `StrEnum`: `EXACT`, `AT_LEAST`, `UNBOUNDED`, `UNKNOWN`), `count` (`int` or `None`), `decision` (or `None`) |
+
+- `Space` gains `sample(oracle)`, `sample_uniform(rng, *, attempts=1000)`,
+  `replay(trace)`, `enumerate()` (an iterator), `cardinality(*,
+  budget=100_000)` and `mutate(configuration, rng, *, attempts=16)`;
+  `sample`, `sample_uniform` and `mutate` return a `(configuration,
+  trace)` pair. `Configuration` gains `trace()`. Each runs under the
+  default solver's context, as `Configuration(space, entries)` does.
+- `Variable` gains the hook `extension_search_domain(self) -> ChoiceDomain
+  | OrderDomain | StridedDomain | None` (default `None`), adapted as SS1's
+  hooks are: called once per step built, a wrong result type is
+  `TypeError`, an exception propagates as itself.
+- **Errors:** `StepDomainError(SearchSpaceError)`;
+  `TraceError(SearchSpaceError)` with `InadmissibleAnswerError`,
+  `ReplayMismatchError`, `NotEnumerableError` and `DeadEndError` beneath
+  it. As MOGA-VM's (`errors.py:1-19`), none of them derives from anything
+  a search catches as an infeasible program.
+
+**Path 1: a Python oracle.** Any object with a callable `decide` (the
+`SearchOracle` protocol; no base class to subclass). The binding wraps it
+in an adapter, `PythonOracle`, which implements the trait:
+
+- each `decide` call receives an owned `PendingStep` snapshot (it holds
+  the space and the configuration so far, so `admits` and `draw_uniform`
+  still work after the call, under the default solver's context);
+- the result must be an `int` or a tuple of `int`s (`bool` refused):
+  `TypeError: <Class>.decide must return an int or a tuple of ints, got
+  <type>.`;
+- an exception it raises is boxed and raised by the entry point as the same
+  object; `KeyboardInterrupt` passes through (D-S8-11's rules);
+- a Python oracle drawing randomly can use the step's
+  `draw_uniform(rng)` with an `Rng` to stay on fhy-core's stream.
+
+**Path 2: a downstream Rust oracle.** `convert::search_space` gains:
+
+```rust
+pub type OracleLease = for<'a, 'py> fn(&'a Bound<'py, PyAny>) -> PyResult<Box<dyn SearchOracle + 'a>>;
+pub fn register_oracle_kind(module: &Bound<'_, PyModule>, kind: &str, class: &Bound<'_, PyType>,
+    lease: OracleLease) -> PyResult<()>;
+pub fn variable_search_domain_to_python<'py>(py: Python<'py>, domain: &StepDomain) -> PyResult<Bound<'py, PyAny>>;
+pub fn step_domain_from_python(object: &Bound<'_, PyAny>) -> PyResult<StepDomain>;
+```
+
+- A lease borrows the oracle out of its pyclass for one run, typically a
+  `PyRefMut` wrapped in a forwarding type, so the run calls the Rust
+  oracle with no Python call per step. A second lease while the first is
+  held fails as `PyRefMut` does (`RuntimeError`).
+- Reading an oracle argument tries, in order: fhy-core's own oracle
+  classes (native); a registered kind, of whose class the object is an
+  instance (its lease); any object with a callable `decide` (the adapter);
+  anything else is `TypeError`.
+- The registry is SS1's (`rust/fhy-core-py/src/search_space/kinds.rs:96`),
+  gaining a third family; its refusals are SS1's (a kind or a class
+  registered twice, a built-in kind). Oracles are never decoded, so the
+  family has no resolver.
+- `rust/example-aggregate` gains `CountingOracle`, a Rust oracle kind
+  answering every step with coordinate 0 and counting the steps, and its
+  registration.
+
+### Non-goals
+
+- A custom domain shape; a step over an unbounded integer or a real domain
+  (its param must bound it, or `search_domain` must offer one).
+- Crossover and other operators over two configurations: a caller builds
+  one from coordinates by canonical position and `Space::replay`.
+- Learned or model-based oracles, budgets, harnesses, records, observers:
+  MOGA-VM's (or a later slice's).
+- Parallel runs: an oracle answers one run on one thread; `Rng::split`
+  gives independent streams for runs a caller parallelizes.
+- An incremental configuration check for `Recorder::decide`: each step
+  re-checks the configuration through `with_entry` (4.2 µs at SS1.8's
+  8×4 space). A `pub(super)` incremental path is an implementation choice
+  if the benchmarks need it, not API.
+
+### Test plan (SS2.3)
+
+In `rust/fhy-core/tests/it/search_space/`, through the public API:
+
+- `rng_stories.rs`: golden vectors (the first 16 outputs for seeds 0, 1
+  and `u64::MAX`; `below` for bounds 1, 3, `2^63 + 1`; `below_big`;
+  `shuffle` of 0..10; `split`); `below` never reaches its bound; a
+  chi-square bound on 60 000 draws of `below(6)`; serde resumes a stream.
+- `domain_stories.rs`: every `StepDomainError` in order; cardinalities;
+  `value_at`/`coordinate_of` round trips and refusals; type-strict
+  admission; strided flattening, gaps, strides; `TooLarge`; signatures
+  (plain, bound, free identifier, opaque).
+- `trace_stories.rs`: `TraceStep::dynamic` refusals; `traversed_cardinality`,
+  `of_kind`, `coordinates`, `Display`; equality.
+- `recorder_stories.rs`: every `TraceError` a recorder raises; nothing
+  recorded on a refused answer; the prefix kept after an oracle's error;
+  activity order (a variable under an undecided choice is pending);
+  forbidden clauses filtering the completing step; `realizing` answering
+  from the configuration and `Unasked`.
+- `oracle_stories.rs`: `RandomOracle` reproducible, seed-sensitive,
+  covering every choice, both runs of a split strided domain, every
+  permutation of a small order domain, never an inadmissible coordinate;
+  `ReplayOracle`'s five checks and `finish`; `ExhaustiveOracle` over a
+  conditional stream visiting each path once, backtracking over an
+  exhausted branch, refusing a nondeterministic stream.
+- `exploration_stories.rs`: `sample` complete and valid; `replay` of a
+  pipeline-ordered trace, `MissingStep`, `RepeatedStep`, a step for an
+  inactive decision; `Configuration::trace` round trip; `enumerate` order;
+  `cardinality` in each answer and each combination; `mutate`'s
+  refusals and its locality (one decision changed when nothing depends on
+  it).
+- `properties.rs` (proptest, on the brute-force spaces SS1's properties
+  draw): `replay(c.trace()) == c`; a relabeled space replays a trace into a
+  configuration with an equal key; `enumerate` yields `Exact` many
+  distinct, valid, complete configurations, each once; `sample` and
+  `mutate` give valid complete configurations; `sample_uniform`'s
+  frequencies over a small conditional space with a forbidden clause pass
+  a chi-square test at a fixed seed (the non-vacuity guard draws spaces
+  where conditions deactivate something); serde round trips of traces and
+  of `Rng`.
+- `serde_stories.rs`: the pinned trace shape above; `null` for opaque
+  values; refusal of a coordinate outside its signature.
+- `implementor_stories.rs`: a variable whose param has a custom domain
+  offering `search_domain`; `ContractClause::SearchDomain`.
+- `tests/it/search_space_trace_golden.rs`: the oracle corpus (below).
+
+In `tests/search_space/`: `test_trace.py` (the interface suite and the
+ported MOGA-VM tests, each docstring citing its MOGA-VM test),
+`test_trace_rust_binding.py` (class structure, kept objects, pickling,
+the V2 shape, GC), `test_oracle_extension.py` (Python oracles, their
+result types, exceptions and `KeyboardInterrupt`; the
+`extension_search_domain` hook), `test_composed_search_space.py` (the
+example aggregate's `CountingOracle`), `test_trace_properties.py`
+(Hypothesis: replay round trips, enumeration counts).
+
+### Traceability (SS2 and SS3)
+
+Every test in MOGA-VM's `tests/cir/lowering/search/` (152 tests over 10
+files). "Rust" is `rust/fhy-core/tests/it/search_space/`; "Python" is
+`tests/search_space/`.
+
+| MOGA-VM test | Behavior | Port test(s) | Status |
+|---|---|---|---|
+| `test_decisions.py::test_choice_domain_rejects_an_empty_candidate_set` | no empty choice | Rust `domain_stories::choice_domain_refuses_no_values`; Python `test_trace.py::test_choice_domain_refuses_no_choices` | ported |
+| `::test_choice_domain_admits_by_identity_for_eq_less_values` | `eq=False` objects match themselves | Python `test_choice_domain_admits_eq_less_objects_by_identity`; Rust `domain_stories::choice_domain_admits_opaque_values_by_their_own_equality` | ported |
+| `::test_order_domain_counts_permutations_and_admits_only_permutations` | `n!`; prefixes, repeats and lists refused | `domain_stories::order_domain_counts_and_admits_only_permutations`; Python the same | ported |
+| `::test_order_domain_rejects_repeated_elements` | distinct elements | `domain_stories::order_domain_refuses_a_repeat`; Python | ported |
+| `::test_address_interval_rejects_an_empty_run` | no empty run | `domain_stories::strided_run_refuses_an_empty_run`; Python | ported |
+| `::test_address_domain_flattens_disjoint_runs_into_one_index_space` | flattening | `domain_stories::strided_domain_flattens_its_runs`; Python | ported |
+| `::test_address_domain_admits_nothing_between_its_runs` | gaps, `True` refused | `domain_stories::strided_domain_admits_nothing_between_runs_nor_a_boolean`; Python | ported |
+| `::test_address_domain_index_out_of_range_raises` | out of range | `domain_stories::strided_value_at_past_the_end_is_none`; Python `IndexError` | ported |
+| `::test_address_domain_rejects_overlapping_or_unsorted_runs` | disjoint, ascending | `domain_stories::strided_domain_refuses_unordered_runs`; Python | ported |
+| `::test_address_domain_rejects_an_empty_union` | no runs | `domain_stories::strided_domain_refuses_no_runs`; Python | ported |
+| `::test_search_point_traversed_cardinality_multiplies_along_the_path` | product of sizes | `trace_stories::traversed_cardinality_multiplies_the_steps`; Python | ported |
+| `::test_search_point_groups_by_kind_in_ask_order` | `of_kind` | `trace_stories::of_kind_keeps_ask_order`; Python | ported |
+| `::test_empty_search_point_has_a_traversed_cardinality_of_one` | empty product; "0 decisions" | `trace_stories::empty_trace_counts_one_and_displays_zero_steps`; Python | ported ("0 steps") |
+| `::test_choice_domain_round_trips_a_value_through_its_coordinate` | inverse maps | `domain_stories::choice_coordinates_round_trip`; the property; Python | ported |
+| `::test_order_domain_round_trips_a_permutation_through_its_coordinate` | positions replay onto fresh elements | `domain_stories::order_coordinates_round_trip_onto_fresh_elements`; Python | ported |
+| `::test_order_domain_rejects_a_coordinate_that_is_not_a_permutation` | `(0, 0)` refused | `domain_stories::order_value_at_refuses_a_non_permutation`; Python `ValueError` | ported |
+| `::test_strided_address_interval_admits_only_aligned_addresses` | strides | `domain_stories::strided_run_admits_only_its_stride`; Python | ported |
+| `::test_strided_address_domain_counts_and_indexes_only_aligned_addresses` | strided union | `domain_stories::strided_domain_indexes_only_its_strides`; Python | ported |
+| `::test_address_domain_round_trips_an_address_through_its_coordinate` | inverse maps | `domain_stories::strided_coordinates_round_trip`; Python | ported |
+| `::test_address_interval_rejects_a_non_positive_step` | stride at least 1 | `domain_stories::strided_run_refuses_a_zero_stride`; Python (negative and zero) | ported (a negative stride is unrepresentable in Rust) |
+| `::test_search_point_coordinates_are_a_bare_vector` | coordinates only | `trace_stories::coordinates_are_the_bare_vector`; Python | ported |
+| `test_oracle.py::test_uniform_oracle_is_a_search_oracle` | protocol conformance | Python `test_shipped_oracles_are_search_oracles` | ported (Rust: the trait impls, compile time) |
+| `::test_uniform_oracle_reproduces_a_whole_stream_from_its_seed` | seed reproduces | `oracle_stories::random_oracle_reproduces_a_stream_from_its_seed`; Python | ported |
+| `::test_uniform_oracle_differs_across_seeds` | seeds differ | `oracle_stories::random_oracle_differs_across_seeds`; Python | ported |
+| `::test_uniform_oracle_covers_every_admissible_choice` | coverage | `oracle_stories::random_oracle_covers_every_choice`; Python | ported |
+| `::test_uniform_oracle_reaches_both_runs_of_a_split_address_domain` | flattened draw | `oracle_stories::random_oracle_reaches_every_run`; Python | ported |
+| `::test_uniform_oracle_draws_every_permutation_of_a_small_order_domain` | permutations | `oracle_stories::random_oracle_draws_every_permutation`; Python | ported |
+| `::test_uniform_oracle_refuses_a_seed_and_a_generator_together` | one source | Python `test_random_oracle_refuses_a_seed_and_an_rng` | ported (Rust: two constructors) |
+| `::test_recording_oracle_records_what_was_asked_and_what_was_answered` | the step as offered | `recorder_stories::recorder_records_the_step_and_its_answer`; Python | ported (`Recorder`) |
+| `::test_recording_oracle_rejects_an_answer_outside_the_offered_domain` | refused, not recorded | `recorder_stories::an_answer_outside_the_domain_is_refused_and_not_recorded`; Python `InadmissibleAnswerError` | ported |
+| `::test_replay_oracle_reproduces_a_recorded_stream_exactly` | replay, exhausted | `oracle_stories::replay_reproduces_a_stream`; Python | ported |
+| `::test_replay_oracle_refuses_a_stream_that_asks_a_different_decision` | shape mismatch | `oracle_stories::replay_refuses_another_shape`; Python | ported |
+| `::test_replay_oracle_refuses_the_same_decision_over_a_different_domain` | size mismatch | `oracle_stories::replay_refuses_another_size`, `::replay_refuses_a_moved_run_of_the_same_size`, `::replay_refuses_reordered_plain_choices` | ported, strengthened (F-SS-020, D-SS2-1) |
+| `::test_replay_oracle_refuses_a_stream_longer_than_the_recorded_point` | longer stream | `oracle_stories::replay_refuses_a_longer_stream`, `::replay_finish_refuses_a_shorter_stream` | ported, strengthened (F-SS-021, D-SS2-2) |
+| `test_extraction.py::test_realization_refuses_a_drifted_domain` | drift refused; unmatched decisions go to the tail | `recorder_stories::realizing_asks_the_oracle_for_unassigned_decisions`; `oracle_stories::replay_refuses_another_size` | ported (a space's own domains cannot drift; the tail is the oracle) |
+| `::test_strict_lowering_refuses_an_unconsumed_assignment` | unasked assignment refused | `recorder_stories::realizing_refuses_to_finish_with_unasked_decisions` | ported (strict always; tolerant callers read `trace()`) |
+| `::test_same_key_axes_are_consumed_first_in_first_out` | repeated keys in order | `oracle_stories::replay_answers_repeated_subjects_in_ask_order` | divergence D-SS2-4: static names are unique; repeated dynamic subjects replay positionally |
+| `::test_extraction_names_the_single_shot_option_axis`, `::test_extraction_conditions_walk_and_tile_axes_on_their_option` | extraction against the pipeline | analogs `exploration_stories::cardinality_of_a_single_choice`, `::cardinality_of_a_choice_sums_its_alternatives_products` | stay in MOGA-VM |
+| `::test_a_sampled_point_lowers_and_the_stream_realizes_its_assignments`, `::test_the_same_seed_reproduces_the_same_lowering` | pipeline | - | stay in MOGA-VM |
+| `test_observers.py::test_coordinates_serialize_choice_and_order_decisions_faithfully` | `[1, [1, 2, 0]]` | `serde_stories::trace_coordinates_serialize_as_integers_and_arrays`; Python | ported (the trace's wire form) |
+| `test_observers.py` (9 others) | logging and JSONL files | - | stay in MOGA-VM |
+| `test_records.py::test_a_score_on_an_infeasible_record_is_invalid` | no score without success | SS3 `measurement_stories::a_failed_measurement_holds_no_values`; Python | ported (SS3) |
+| `::test_a_score_on_a_lowered_record_is_valid` | score kept | SS3 `measurement_stories::an_ok_measurement_keeps_its_values`; Python | ported (SS3) |
+| `::test_best_returns_the_lowest_scored_feasible_record_with_earliest_tie_break` | lower is better | SS3 `objective_stories::minimize_prefers_the_lower_value` (the comparison only) | stays in MOGA-VM (selection); the comparison ported |
+| `test_records.py` (31 others) | `CandidateRecord`, `SearchHistory`, `SearchStatistics` | - | stay in MOGA-VM |
+| `test_search_budget.py` (8) | `SearchBudget` | - | stay in MOGA-VM |
+| `test_search_harness.py` (34) | the harness, unwrapping, gates, selection | - | stay in MOGA-VM |
+| `test_random_search.py::test_a_recorded_point_replays_onto_a_freshly_built_module` | replay onto a fresh copy | analog `properties.rs::a_relabeled_space_replays_to_an_equal_key`; Python `test_trace_replays_onto_a_relabeled_space` | stays in MOGA-VM (pipeline); the generic property ported |
+| `test_random_search.py` (14 others), `test_random_search_seed_sweep.py` (3) | the pipeline's axes, addresses, seeds | - | stay in MOGA-VM (seed-pinned ones re-baselined, D-SS2-6) |
+| `test_search_strategy_integration.py::test_a_trace_row_replays_to_the_same_committed_addresses` | a trace row replays | analog `test_trace.py::test_a_trace_replays_from_its_json` | stays in MOGA-VM; the generic round trip ported, and the row now carries a trace (F-SS-024) |
+| `test_search_strategy_integration.py` (6 others) | the harness end to end | - | stay in MOGA-VM |
+
+Counts: 40 ported (21 domain and trace, 13 oracle, 3 extraction, 1
+observer, 2 records; one of them a divergence), 112 stay in MOGA-VM, 5 of
+which have a generic analog.
+
+### Equivalence plan
+
+The oracle is MOGA-VM `3d93ba3`'s `cir/lowering/search/{decisions,oracle,
+errors,extraction}.py`, which import only `fhy_core` and, for
+`extraction.py`, MOGA types that stand-ins replace (the audit's probes do
+exactly this: `target/scratch/search-space-ss2/probes.py`).
+
+- **Golden corpus:** `rust/fhy-core/tests/golden/record_trace_cases.py`
+  writes `trace_cases.json`, replayed by
+  `tests/it/search_space_trace_golden.rs` and
+  `tests/search_space/test_trace_golden.py`; a recorder, not a generator,
+  for SS1's reason (it needs a MOGA-VM checkout; CI only replays). It
+  assembles the oracle as SS1's recorder does, with `git archive` of the
+  four modules at `3d93ba3`.
+- **Cases:**
+  - domains: random choice domains over distinct plain values, order
+    domains of 1 to 6 elements, strided domains of 1 to 5 runs with
+    strides 1 to 64; recorded: cardinality, every `value_at`, every
+    `coordinate_of`, `admits` on members, gaps, out-of-range values and
+    Booleans;
+  - traces: random step lists; recorded: `traversed_cardinality`,
+    `of_kind`, `coordinates`;
+  - replay: a recorded domain against an offered one (equal; another
+    shape; another size; a moved run of one size; reordered plain
+    choices; identifier choices rebuilt fresh) and streams longer and
+    shorter than the point; recorded: refuse or the values replayed;
+  - extraction: random one-level `ExtractedSearchSpace`s (option axes over
+    1 to 4 options, each exposing 0 to 3 choice or order axes), recorded
+    with `cardinality()`, and translated to a `Space` (a choice per option
+    axis, a categorical or permutation variable per conditioned axis);
+    `Space::cardinality` must be `Exact` of the same number.
+- **Tagged divergences**, expected values written from the rule: F-SS-020
+  (moved runs, reordered plain choices), F-SS-021 (shorter streams),
+  F-SS-022 (mixed `1`/`True`/`1.0` and repeated choices), the empty order
+  domain.
+- **Not stream-equivalent:** draws (D-SS2-6). The per-step sampler is
+  checked statistically instead: over the corpus's extraction cases,
+  MOGA-VM's `draw_uniform` marginal frequency of each option and the
+  port's `sample` with a `RandomOracle` agree within a chi-square bound at
+  10 000 draws each (both are per-step uniform).
+- **Not oracle-backed:** `sample_uniform`, `enumerate`, `cardinality` with
+  conditions and forbidden clauses, `mutate`, deeper hierarchy: checked
+  against the brute-force evaluator of SS1's properties.
+- Harness honesty as SS1.8: flip one recorded verdict and see the replay
+  name the case.
+
+### Benchmark plan
+
+`benchmarks/test_search_space.py` gains the rows below in SS2.1, skipping
+until the API exists. "Before" is MOGA-VM `3d93ba3`'s modules, measured as
+SS1.8's were (`target/scratch/search-space-ss2/bench_compare.py before`).
+
+| Row | Before (MOGA-VM) | After |
+|---|---|---|
+| one random draw: choice of 8, strided of 4 runs × 2^16, order of 4 | `UniformRandomOracle.decide` | `RandomOracle` through a `Recorder` |
+| record a 100-step dynamic stream | `RecordingOracle(UniformRandomOracle)` | `Recorder` with `RandomOracle` |
+| replay a 100-step stream | `ReplayOracle` | `ReplayOracle` |
+| `value_at` and `coordinate_of` over 64 strided runs | `AddressDomain` | `StridedDomain` |
+| count 8 option axes × 4 options × 2 axes | `ExtractedSearchSpace.cardinality` | `Space::cardinality` |
+| draw one point of that space | `draw_uniform` | `Space::sample` (`RandomOracle`) |
+| (new) `sample_uniform`, `mutate`, `enumerate` 10 000 configurations, `cardinality` with a condition and a clause, a trace's JSON round trip, one step through a Python oracle | - | |
+
+Expected cost: a static step re-checks the configuration (`with_entry`,
+4.2 µs at SS1.8), and a Python oracle adds a Python call per step, where
+MOGA-VM's dynamic steps were plain Python. The 10% rule of CONTRIBUTING
+binds MOGA-VM's adoption, as for SS1.
+
+### Symbol and visibility mapping (SS2)
+
+| MOGA-VM (`cir.lowering.search`) | Rust (`fhy_core::search_space`) | Visibility | Public Python | Notes |
+|---|---|---|---|---|
+| `Coordinate` (`int \| tuple[int, ...]`) | `Coordinate` (enum) | pub | `int` or `tuple[int, ...]` | |
+| `DecisionKind` (closed `StrEnum`) | `DecisionKind` (open string) | pub | `str` | MOGA keeps its five as constants |
+| `ChoiceDomain` | `ChoiceDomain` | pub | `ChoiceDomain` | distinct, type-strict |
+| `OrderDomain` | `OrderDomain` | pub | `OrderDomain` | non-empty |
+| `AddressInterval` | `StridedRun` | pub | `StridedRun` | |
+| `AddressDomain` | `StridedDomain` | pub | `StridedDomain` | |
+| `DecisionDomain` (union) | `StepDomain` | pub | the three classes | |
+| `Decision` | `PendingStep` | pub | `PendingStep` | built by the recorder |
+| `Decision.describe` | `Display` of `PendingStep` | | `str(step)` | |
+| `RecordedDecision`, `RecordedDecision.of` | `TraceStep`, `TraceStep::dynamic` | pub | `TraceStep` | holds a signature, not the domain |
+| `SearchPoint` | `Trace` | pub | `Trace` | serializable |
+| `SearchPoint.traversed_cardinality`, `of_kind`, `coordinates`, `from_records` | `traversed_cardinality`, `of_kind`, `coordinates`, `Trace::new` | pub | same | |
+| `SearchPoint.extended_with` | (none) | - | - | the recorder appends |
+| `SearchPoint.summarize` | `Display` of `Trace` | | `str(trace)` | |
+| `SearchOracle` | `SearchOracle` (trait) | pub | `SearchOracle` (Protocol) | answers coordinates |
+| `UniformRandomOracle` | `RandomOracle` | pub | `RandomOracle` | other stream (D-SS2-6) |
+| `RecordingOracle` | `Recorder` | pub | `Recorder` | also drives a space |
+| `ReplayOracle` | `ReplayOracle` | pub | `ReplayOracle` | `finish` |
+| (none) | `ExhaustiveOracle`, `Rng`, `Cardinality`, `Enumeration` | pub | same | |
+| `InadmissibleDecisionError` | `TraceError::Inadmissible`, `CoordinateOutOfDomain` | pub | `InadmissibleAnswerError` | |
+| `SearchPointMismatchError` | `ReplayError` | pub | `ReplayMismatchError` | |
+| `ExtractedSpaceMismatchError` | `TraceError::Unasked`; `ReplayError` | pub | `TraceError`, `ReplayMismatchError` | |
+| `SearchSpaceError` (MOGA) | (the binding's `SearchSpaceError`) | | `SearchSpaceError` | SS1's base |
+| `ExtractedSearchSpace` | `Space` | pub | `Space` | built by MOGA's extractor |
+| `ExtractedSearchSpace.cardinality`, `draw_uniform`, `option_axes`, `conditioned_under`, `axis`, `axes_for` | `Space::cardinality`, `Space::sample`, `Space::choices`, `Choice::alternatives`, `Space::decision` | pub | same | |
+| `SearchAxis`, `AxisKey`, `AxisCondition` | `Decision`, its name, hierarchy | pub (SS1) | | |
+| `ExtractedPoint` | `Configuration` (and its `trace()`) | pub (SS1) | | |
+| `ExtractedPointOracle` | `Recorder::realizing` | pub | `Recorder(oracle, configuration=...)` | strict |
+| a domain's derivation for a static decision | `domain::static_step_domain` | `pub(super)` | - | |
+| `_require_agreement` | `oracle::check_agreement` | private | - | |
+| `SearchSpaceExtractor`, `StructuralSearchSpaceExtractor`, the policies, the allocator, the harness, records, observers, sampling strategies | - | - | - | stay in MOGA-VM |
+
+### Intended divergences (SS2)
+
+| # | Behavior | MOGA-VM | After |
+|---|---|---|---|
+| D-SS2-1 | replay's domain check | shape and size (F-SS-020) | equal signatures |
+| D-SS2-2 | a shorter stream | accepted (F-SS-021) | `finish` refuses it |
+| D-SS2-3 | choice values | Python `==`, repeats allowed (F-SS-022) | type-strict, distinct |
+| D-SS2-4 | repeated axis keys | first in, first out over all axes of a key (F-SS-026) | names unique; dynamic steps positional |
+| D-SS2-5 | an oracle's answer | a value | a coordinate |
+| D-SS2-6 | the random stream | `random.Random` | fhy-core's `Rng`; seeds re-baselined |
+| D-SS2-7 | an empty order domain | cardinality 1 | refused |
+| D-SS2-8 | uniform sampling | per axis only | per step (`sample`) and per configuration (`sample_uniform`) |
+| D-SS2-9 | a point's persistence | none (F-SS-024) | `search_space.trace` |
+
+### Changes to the design's sketch
+
+- `TraceStep` holds a `DomainSignature`, not the domain's shape and
+  cardinality alone, and an optional value; its kind is a string, not a
+  `Canonical` tag (see "Extensibility decisions").
+- `SearchOracle::decide` takes `&PendingStep` and answers a `Coordinate`,
+  as sketched; `RecordingOracle` becomes the `Recorder`, which also
+  drives a space.
+- `Space::replay` reads static steps by canonical position, not
+  positionally.
+- `ExtractedSearchSpace` becomes a `Space`, but not the candidate table's
+  own space: a tile variable's domain is the fitting set for the target
+  (`policies.py:202-214`), so MOGA-VM's extractor builds the space per
+  module and target.
+
+## SS3: objectives and measurements (plan)
+
+The concrete plan for SS3, in the same template.
+
+### Summary
+
+`Objective`, `Direction`, `Measurement` and `Measurer`: the vocabulary of
+what a search measures and which way is better, and the record of one
+measured configuration. `Metric` left the space in SS1 (N-C3); this is
+where its kind and its name go.
+
+### What MOGA-VM needs
+
+- **MOGA is the target-machine model, not a multi-objective search.** The
+  MOGA of MOGA-VM is "the description of the target machine"
+  (`docs/design/moga_vm_design.md:8-9, 22-24`), and the search harness is
+  single-objective: an `Objective` is a callable returning one `float`,
+  lower better (`harness.py:119-124`), a record holds one `score`
+  (`records.py:224`), and `best` is the minimum (`records.py:337-353`). No
+  source mentions Pareto dominance.
+- What it needs from fhy-core: a direction, so a benefit is no longer
+  negated by the caller (`harness.py:122-123`); a record of a measured
+  configuration that is keyed by `ConfigurationKey`, refuses a NaN
+  (F-SS-023), and distinguishes an infeasible configuration (data about
+  the space) from a failure of the measurement; and a trait for what
+  measures.
+
+### Module tree and visibility
+
+| Path | Visibility | Contents |
+|---|---|---|
+| `search_space::measurement` | private, leaf | `Direction`, `Objective`, `MeasurementStatus`, `Measurement`, `Measurer` |
+| `search_space::error` | private | adds `MeasurementError` |
+| `search_space::wire` | `pub mod` | adds `MeasurementData`, `ConfigurationKeyData` reused |
+
+New public paths: `search_space::{Direction, Objective,
+MeasurementStatus, Measurement, Measurer, MeasurementError}` and
+`wire::MeasurementData`.
+
+### Public API
+
+```rust
+pub enum Direction { Minimize, Maximize, Report }        // Debug, Clone, Copy, PartialEq, Eq, Hash, Display, serde; exhaustive
+pub struct Objective { /* name: Arc<str>, direction */ }  // Debug, Clone, PartialEq, Eq, Hash, Display, serde
+impl Objective {
+    pub fn new(name: &str, direction: Direction) -> Result<Self, MeasurementError>;
+    pub fn name(&self) -> &str;
+    pub fn direction(&self) -> Direction;
+    pub fn compare(&self, left: f64, right: f64) -> Option<Ordering>;   // Greater: left is better; None for Report
+}
+#[non_exhaustive]
+pub enum MeasurementStatus { Ok, Infeasible { reason: String }, Failed { reason: String }, Timeout }   // Debug, Clone, PartialEq, Eq, Hash, serde
+pub struct Measurement(Arc<..>);                         // Debug, Clone, PartialEq, Eq, Hash, serde
+impl Measurement {
+    pub fn ok(key: ConfigurationKey, values: Vec<(Objective, f64)>) -> Result<Self, MeasurementError>;
+    pub fn infeasible(key: ConfigurationKey, reason: String) -> Self;
+    pub fn failed(key: ConfigurationKey, reason: String) -> Self;
+    pub fn timeout(key: ConfigurationKey) -> Self;
+    pub fn with_notes(self, notes: Vec<Note>) -> Self;
+    pub fn key(&self) -> &ConfigurationKey;
+    pub fn status(&self) -> &MeasurementStatus;
+    pub fn is_ok(&self) -> bool;
+    pub fn values(&self) -> &[(Objective, f64)];          // in the order given
+    pub fn value(&self, objective: &str) -> Option<f64>;
+    pub fn notes(&self) -> &[Note];
+    pub fn dominates(&self, other: &Self) -> Result<bool, MeasurementError>;   // N-S4
+}
+pub trait Measurer<S: ?Sized> {
+    fn objectives(&self) -> &[Objective];
+    fn measure(&mut self, key: &ConfigurationKey, subject: &S) -> Result<Measurement, BoxError>;
+}
+#[non_exhaustive] pub enum MeasurementError {
+    EmptyName, NoValues, RepeatedObjective { name: String }, NonFiniteValue { objective: String },
+    NotOk, DifferentObjectives,
+}
+```
+
+### Decisions in this plan
+
+- **A measurement records** its configuration's key, its status, one
+  finite value per objective when the status is `Ok` and none otherwise
+  (`records.py:111-168`'s rule), and notes.
+- **Statuses:** `Ok`; `Infeasible`, the configuration cannot be realized
+  (MOGA-VM's pipeline, validation and acceptance rejections, with the
+  stage in the reason); `Failed`, the measurement was attempted and broke
+  (a crashed simulator); `Timeout`. The brief named ok, failed and timeout;
+  `Infeasible` is added because MOGA-VM's harness keeps exactly that
+  distinction: a rejection is data about the space, a failure is not
+  (`harness.py:26-37`).
+- **Values are `f64`**, finite: NaN and the infinities are
+  `NonFiniteValue`, so `min` and dominance are total and the JSON is
+  standard (F-SS-023). Integers such as cycles and bytes are exact up to
+  2^53.
+- **An objective's name is a string**, for the reason a decision kind is:
+  measurements are keyed by `ConfigurationKey`, which pickles across
+  processes, and an `Identifier` name would not match across them. It is
+  a shared vocabulary, the role the audit gave metric names (F-SS-012).
+  Two objectives are equal when their names and directions are.
+- **`Direction`:** `MetricKind.COST` is `Minimize`, `BENEFIT` is
+  `Maximize`, `DIAGNOSTIC` is `Report` (recorded, never compared).
+- **`Measurer<S>`** is the extension trait, generic over what it measures
+  (MOGA-VM measures a `LoweredProgram` and its trace, `harness.py:119`;
+  another caller a configuration). An `Err` is a defect of the measurer
+  and propagates; a subject that cannot be measured is an
+  `Ok(Measurement)` with a failing status (MOGA-VM's doctrine,
+  `harness.py:26-37`). Not object-safe across subjects by design; `dyn
+  Measurer<S>` is object-safe for one `S`.
+- **`Estimate`** (the old declared-estimate role of `Metric`) is not in
+  SS3 (N-S3): nothing in MOGA-VM produces or reads an estimate
+  (`decisions.py:33-37`, audit F-SS-012), and when one appears it is a
+  `Measurer<Configuration>` over an expression, needing no new type.
+- **Multi-objective comparison** is `dominates` alone (N-S4): both
+  measurements `Ok` (`NotOk`), over the same objectives by name and
+  direction (`DifferentObjectives`); `Report` objectives ignored; at least
+  as good on every compared objective and better on one. No Pareto
+  archive, crowding or ranking: MOGA-VM needs none, and a search that
+  does builds them on `dominates`.
+
+### Error model
+
+`MeasurementError` from the constructors (stop at the first problem: an
+empty name, no value for an `Ok`, a repeated objective, a non-finite
+value) and from `dominates`. Nothing panics.
+
+### Serialization
+
+Type ids `search_space.objective` and `search_space.measurement`:
+
+```json
+{"key": {"entries": [..]}, "status": {"ok": null},
+ "values": [{"objective": {"name": "latency_cycles", "direction": "minimize"}, "value": 1532.0}],
+ "notes": []}
+```
+
+A failing status is `{"infeasible": {"reason": ".."}}`, `{"failed":
+{"reason": ".."}}` or `{"timeout": null}`, with no values. The key is
+`wire::ConfigurationKeyData`'s shape (SS1.5's deviation 7). A measurement
+means nothing without its space, as its key does not; a cache keeps the
+space beside it.
+
+### Python interface
+
+| Class | Construction | Attributes and methods |
+|---|---|---|
+| `Direction` | `StrEnum`: `MINIMIZE = "minimize"`, `MAXIMIZE = "maximize"`, `REPORT = "report"` | |
+| `Objective` | `Objective(name, direction)` | `name`, `direction`, `compare(left, right)` (`1`, `0`, `-1` or `None`); structural `==` and `hash` (N-S2); serialization methods; pickles |
+| `MeasurementStatus` | `StrEnum`: `OK`, `INFEASIBLE`, `FAILED`, `TIMEOUT` | |
+| `Measurement` | class methods `ok(key, values)` (a mapping of `Objective` to `float`, or pairs), `infeasible(key, reason)`, `failed(key, reason)`, `timeout(key)` | `key`, `status`, `reason` (or `None`), `is_ok`, `values` (a `dict` in the order given), `value(objective)` (an `Objective` or a name), `notes`, `with_notes(notes)`, `dominates(other)`; identity `==`; serialization methods; pickles |
+| `Measurer` | a `typing.Protocol`, generic in the subject: `objectives: Sequence[Objective]`, `measure(key, subject) -> Measurement` | |
+
+- Errors: `MeasurementError(SearchSpaceError)`; a `bool` value is refused
+  (`TypeError`), as is a non-number.
+- **Extension paths.** A Python measurer is any object of the protocol
+  (path 1). No fhy-core entry point calls a measurer in SS3, so path 2
+  (a registered Rust measurer kind) has no reader yet; it is added, as
+  the oracle family is, with the first fhy-core function that takes a
+  measurer.
+
+### Test plan (SS3)
+
+- Rust `measurement_stories.rs`: constructors and every
+  `MeasurementError`; values kept in order; `value`; `with_notes`;
+  `==`/`Hash`; serde shapes pinned and round trips; `dominates` over
+  minimize, maximize and report objectives, ties, mixed objective sets,
+  non-ok measurements. `objective_stories.rs`: `compare` per direction.
+  A property: `dominates` is irreflexive, asymmetric and transitive.
+- Python `tests/search_space/test_measurement.py`: the interface,
+  type-strict values, pickling, the V2 shapes, and the two ported
+  MOGA-VM record tests (traceability above).
+- Equivalence: no MOGA-VM behavior is ported beyond the record rule and
+  "lower is better", which the stories pin; no corpus.
+- Benchmarks: building and serializing a measurement of 4 objectives (new
+  rows; no before).
+
+### Symbol and visibility mapping (SS3)
+
+| MOGA-VM | Rust | Visibility | Public Python |
+|---|---|---|---|
+| `MetricKind` (`cir.space.core`, gone in SS1) | `Direction` | pub | `Direction` |
+| `Metric.name` | `Objective` | pub | `Objective` |
+| `Metric.value` (a declared expression) | (none; N-S3) | - | - |
+| `Objective` (`harness.py:119`, a callable) | `Measurer<S>` | pub | `Measurer` |
+| `CandidateRecord.score` | `Measurement::values` | pub | `Measurement.values` |
+| `CandidateOutcome.LOWERED`, `REJECTED_BY_*` | `MeasurementStatus::Ok`, `Infeasible` (stage in the reason) | pub | `MeasurementStatus` |
+| `SearchHistory.best`'s ordering | `Objective::compare` | pub | `Objective.compare` |
+| `CandidateRecord`, `CandidateTimings`, `SearchHistory`, `SearchStatistics` | - | - | stay in MOGA-VM, holding a `Measurement` |
+
+### MOGA-VM migration map (SS2 and SS3)
+
+None of this is done by the port; it is what MOGA-VM changes to use it.
+
+| Site | Today | After |
+|---|---|---|
+| `decisions.py` | domains, `Decision`, `RecordedDecision`, `SearchPoint`, `DecisionKind` | deleted; `fhy_core.search_space`'s domains, `Trace`; MOGA's kinds become string constants (`moga.cir.address`, `moga.cir.boundary_namespace`), and the static ones become the space's (`search_space.choice` for options, the knob kinds for tiles and walk orders) |
+| `oracle.py` | three oracles | deleted; `RandomOracle`, `ReplayOracle`, `Recorder` |
+| `errors.py` | `SearchSpaceError` family | `fhy_core.search_space`'s `TraceError` family; MOGA's harness lets it propagate as today |
+| `policies.py:64-114` (`RandomMapOperationsPolicy`) | builds a `ChoiceDomain` of options, asks the oracle | `recorder.decide(entry.vertex_id)` over the function's space; returns the `RealizationOption` |
+| `policies.py:117-153` (walk order) | `OrderDomain` of level indices | `recorder.decide(walk_order_variable.name)` if the space declares it, else `recorder.decide_dynamic("moga.cir.walk_order", levels[0], OrderDomain(levels))` |
+| `policies.py:156-214` (tile) | `ChoiceDomain(fitting)` | `recorder.decide(tile_variable.name)` (the space's tile variable holds the fitting set) |
+| `placement.py:250-323` (address) | `AddressDomain(intervals)` | `recorder.decide_dynamic("moga.cir.address", value.symbol_name, StridedDomain(runs))`; `_append_run` builds `StridedRun`s |
+| `placement.py:603-623` (boundary namespace) | `ChoiceDomain(pool)` | `decide_dynamic("moga.cir.boundary_namespace", vertex, ChoiceDomain(pool))` |
+| `extraction.py` | `ExtractedSearchSpace` and its oracle | `StructuralSearchSpaceExtractor.extract` returns a `Space` (a choice per uncommitted entry named by its vertex id; per option a permutation variable per walk and a categorical variable of fitting tiles); `ExtractedPointOracle` becomes `Recorder(oracle, configuration=point)` |
+| `sampling.py` | `draw_uniform(rng)` with `random.Random` | `space.sample(RandomOracle(rng=rng))` or `space.sample_uniform(rng)`; the strategies keep their shape; `strict` is always on (`finish`) |
+| `harness.py:568-571` | `RecordingOracle(oracle)` around each draw | a `Recorder` over the draw's space; `CandidateRecord.point` becomes a `Trace` |
+| `harness.py:119-124`, `643-655` | `Objective` returns a float, lower better | a `Measurer[LoweredProgram]` with an `Objective`; `score` becomes a `Measurement`; `was_new_best` through `Objective.compare`; NaN refused |
+| `records.py` | `CandidateRecord`, statistics | keep; `point: Trace`, `score` from the measurement; `rejection_depth` is `len(trace)`, `last_decided_kind` the last step's kind |
+| `observers.py:125-160` | coordinates, kinds, cardinalities | add `"trace": trace.serialize_to_dict()`, so a row replays through `ReplayOracle(Trace.deserialize_from_dict(row["trace"]))` |
+| seeds | `random.Random(seed)` | `Rng(seed)`; seed-pinned expectations re-recorded |
+| tests | `tests/cir/lowering/search/` | the 40 ported tests are deleted with their modules; the 112 stay and move to the new API |
+
+### Implementation checklist (SS2, SS3)
+
+Every step ends with the S16 gate, as SS1's did.
+
+1. **SS2.0:** the user's choices under "Needs the user (SS2/SS3)" (decided
+   2026-10-06); N-S1
+   blocks SS2.2.
+2. **SS2.1:** the benchmark rows; the before numbers.
+3. **SS2.2:** the Rust stub: `rng`, `domain`, `trace`, `oracle`,
+   `recorder`, `exploration`, the errors, `wire::TraceData`,
+   `Variable::search_domain`, `ContractClause::SearchDomain`; the
+   `effective_interval` widening; rustdoc with the stream contract.
+4. **SS2.3:** the Rust tests, the golden recorder and corpus; red.
+5. **SS2.4:** the core, in order:
+   1. `Rng` and its golden vectors;
+   2. domains, signatures, coordinates;
+   3. `TraceStep`, `Trace`, serde;
+   4. `PendingStep`, admissibility, `draw_uniform`, `Recorder`;
+   5. `RandomOracle`, `ReplayOracle`, `ExhaustiveOracle`;
+   6. `Space::sample`, `Space::replay`, `Configuration::trace`;
+   7. `enumerate` and `cardinality`;
+   8. `sample_uniform`;
+   9. `mutate`.
+6. **SS2.5:** the binding stub, `convert::search_space`'s oracle and
+   domain functions, `_rs.pyi`; the Python suites; red.
+7. **SS2.6:** the binding: the pyclasses, `PythonOracle`, the
+   `extension_search_domain` adapter, the oracle family of the registry,
+   `CountingOracle` in the example aggregate, errors, wire, GC.
+8. **SS2.7:** `fhy_core.search_space`'s new classes; the ported Python
+   tests.
+9. **SS2.8:** equivalence runs, the benchmarks after, the divergence log.
+10. **SS2.9:** the MOGA-VM migration note (the map above).
+11. **SS3.1:** the stub (`measurement`, `MeasurementError`,
+    `wire::MeasurementData`) and its tests; red.
+12. **SS3.2:** the core.
+13. **SS3.3:** the binding and `fhy_core.search_space`'s classes; the
+    Python tests.
+14. **SS3.4:** benchmarks; the migration note's SS3 rows.
 
 ## Serialization and type ids
 
@@ -1458,8 +2677,8 @@ subclasses with no hooks, distinguished by kind.
 | `is_structurally_equivalent`, `is_alpha_equivalent(_under)` | inherent on `dyn` parts; `AlphaEquivalence` for containers | methods | |
 | subclass overrides of the relations | `is_extension_*` | `extension_*` hooks | |
 | `equivalence.py` helpers, `is_valid_*`, `*Data` | private `equivalence.rs` | deleted | |
-| `cir/lowering/search`: `RecordedDecision`, `SearchPoint`, `DecisionKind` | SS2 `TraceStep`, `Trace`, an interned kind | SS2 | `search_space.trace` |
-| `cir/lowering/search`: `ChoiceDomain`, `OrderDomain`, `AddressDomain`, `SearchOracle`, `ReplayOracle` | SS2 domains, `SearchOracle`, oracles | SS2 | |
+| `cir/lowering/search`: `RecordedDecision`, `SearchPoint`, `DecisionKind` | SS2 `TraceStep`, `Trace`, `DecisionKind` (a string) | SS2 | `search_space.trace` |
+| `cir/lowering/search`: `ChoiceDomain`, `OrderDomain`, `AddressDomain`, `SearchOracle`, `ReplayOracle` | SS2 domains, `SearchOracle`, oracles; the full table is "Symbol and visibility mapping (SS2)" | SS2 | |
 
 The `Option` vs `Alternative` naming question (old N-2) disappears: (C)
 names it `Alternative` in both languages.
@@ -1485,7 +2704,7 @@ None of this is done by the port; it is what MOGA-VM changes to use it.
 | `cir/program.py:114-140` | compares candidate tables | compares the spaces and the configurations (keys, under the spaces' equivalence) |
 | knob classes (`cir/space/knobs.py`) | `Knob` subclasses | `Variable` subclasses or Rust implementors, as above |
 | `RealizationOption` | `Option` subclass | `Alternative` subclass or Rust implementor, as above |
-| `lowering/search` | its own stream | SS2's `Trace` and oracles; `ExtractedSearchSpace` becomes the `Space` |
+| `lowering/search` | its own stream | SS2's `Trace`, oracles and `Recorder`; `ExtractedSearchSpace` becomes a `Space` built by MOGA's extractor; site by site in "MOGA-VM migration map (SS2 and SS3)" |
 | payloads | `moga.cir.decision_point`, `decision_space`, `array_selection`, `table_entry`, `candidate_table` shapes | MOGA's table and entry payloads hold a `search_space.choice` and a partition; the function holds a `search_space.space` and a `search_space.configuration`; knob payloads unchanged |
 
 ## Earlier decisions, translated to (C)
@@ -1782,9 +3001,9 @@ earlier numbers were on fhy_core 0.2.0. "After" is the same rows through
 | validate a decision point / build a configuration | 8.8 | 4.0 | 0.46 |
 | structural self-equivalence | 853 | 4.8 | 0.006 |
 | alpha against a relabeled copy | 187 | 18.0 | 0.10 |
-| **serialize a selection / a configuration** | 17.4 | 75.2 | **4.3, slower** |
+| **serialize a selection / a configuration** | 17.4 | 75.2 | **4.3, slower (accepted)** |
 | serialize a knob / a variable | 3.8 | 2.1 | 0.54 |
-| **`knob.assign` / `with_entry`** | 3.4 | 4.2 | **1.21, slower** |
+| **`knob.assign` / `with_entry`** | 3.4 | 4.2 | **1.21, slower (accepted)** |
 | (new) space with a condition and a clause | - | 34.4 | |
 | (new) `key()` | - | 0.34 | |
 | (new) alpha through a Python subclass's hooks | - | 0.86 | |
@@ -1800,10 +3019,11 @@ The two slower rows are inherent to the design, not the binding:
   forbidden clauses), where `knob.assign` checked one value. The absolute
   cost is under 5 µs.
 
-The maintainer decides whether to accept them (CONTRIBUTING, "Replacing a
-Python class": more than 10% slower on a row). Neither path replaces a
-fhy_core Python class, so the rule binds MOGA-VM's adoption rather than
-this package.
+The user accepted both on 2026-10-06 as recorded costs of the design
+(B-SS1 under "Decisions"). The rule they were measured against is
+CONTRIBUTING's "Replacing a Python class" (more than 10% slower on a
+row); neither path replaces a fhy_core Python class, so it binds
+MOGA-VM's adoption rather than this package.
 
 ## SS1.9: the MOGA-VM migration note
 
@@ -1888,15 +3108,16 @@ Every step ends with the S16 gate:
 8. **SS1.7:** `fhy_core.search_space`; the ported Python tests.
 9. **SS1.8:** equivalence runs, benchmarks after, the divergence log.
 10. **SS1.9:** the MOGA-VM migration note (the map above).
-11. **SS2** (designed separately): `Trace`, domains, oracles, enumeration
-    and cardinality, sampling and mutation.
-12. **SS3** (designed separately): `Objective`, `Direction`,
-    `Measurement`, `Measurer`, `Estimate`.
+11. **SS2:** SS2.0 to SS2.9, under "Implementation checklist (SS2,
+    SS3)".
+12. **SS3:** SS3.1 to SS3.4, in the same list; `Estimate` deferred
+    (N-S3).
 
 ## Decisions
 
 All decided by the user on 2026-10-05, except N-C5 and D-SS-3's resolution,
-decided on 2026-10-06 for SS1. Nothing is open.
+decided on 2026-10-06 for SS1. Nothing is open for SS0 and SS1; SS2's
+and SS3's choices, decided 2026-10-06, are N-S1 to N-S5 below.
 
 | # | Question | Decision |
 |---|---|---|
@@ -1908,7 +3129,14 @@ decided on 2026-10-06 for SS1. Nothing is open.
 | N-5 | identifier members | (a) the SS0 slice: a first-class identifier kind in `fhy_core::constraint`'s values and members |
 | N-6 | type ids | generic `search_space.*`; MOGA-VM owns any aliases; no migration tool, since MOGA-VM stores no payloads |
 | N-7 | Python `==` | identity, except `ConfigurationKey` (structural, hashable) |
-| N-8 | dependencies | none new |
+| N-8 | dependencies | none new; SS2's random-number generator is in house (N-S1) |
+| N-S1 | SS2's random-number generator (decided 2026-10-06) | in-house SplitMix64, with fhy-core's own range sampling (`below`, `below_big`) and shuffle; the stream is pinned by golden tests; no new dependency |
+| N-S2 | Python `==` of `Trace` and `Objective` (2026-10-06) | structural `==` and `hash` for both, exceptions to N-7 beside `ConfigurationKey` |
+| N-S3 | `Estimate` (2026-10-06) | deferred; a later `Measurer<Configuration>` over an expression if a producer appears |
+| N-S4 | multi-objective comparison (2026-10-06) | `Measurement::dominates` only |
+| N-S5 | measurement statuses (2026-10-06) | `Ok`, `Infeasible`, `Failed`, `Timeout` |
+| N-S6 | decision kinds and objective names (2026-10-06) | strings, stable across processes, not `Identifier`-keyed tags |
+| B-SS1 | SS1's two slower benchmark rows (2026-10-06) | accepted as recorded costs: serializing a configuration (4.3x, its payload carries the space) and `with_entry` (1.21x, it re-validates the whole configuration) |
 | N-9 | selection status | replaced by configuration validity and `is_complete()` |
 | N-10 | name vs param variable | a `Variable`'s name and its param's variable stay distinct; constraints outside the param name the `Variable` |
 | N-C1 | name scope | names unique across the whole `Space`; a duplicate is a `SpaceError` |
@@ -1922,3 +3150,17 @@ decided on 2026-10-06 for SS1. Nothing is open.
 the committed configuration becomes a field of `Function`, and the
 walk-order and tile knobs stay variables until a pass needs them as
 sub-choices of the realization alternative.
+
+## Needs the user (SS2/SS3)
+
+The choices SS2's and SS3's plans left open, with the options weighed.
+**All five were decided by the user on 2026-10-06 as recommended**
+(recorded under "Decisions" as N-S1 to N-S6).
+
+| # | Question | Options | Recommendation |
+|---|---|---|---|
+| N-S1 | the random-number generator (N-8 deferred it to SS2; it blocks SS2.2) | (a) `rand` 0.9 + `rand_chacha` 0.9 (ChaCha12): two new normal dependencies of the published crate, already in `Cargo.lock` through `proptest`; fhy-core still writes its own `below` and `shuffle` to keep its stream across `rand` releases. (b) In house: SplitMix64 (or PCG64), about 120 lines, no dependency, the stream fhy-core's alone. Either way the binding exposes the same `Rng` to Python, and Python's `random.Random` streams cannot be reproduced | **(b)**, SplitMix64, with `Rng::ALGORITHM` naming it so a later generator is additive (see "Determinism and the random-number generator") |
+| N-S2 | Python `==` of `Trace` and `Objective` (N-7 made everything identity but `ConfigurationKey`) | (a) structural `==` and `hash` for both: a trace is a point's data (MOGA-VM compares points' coordinates, and caches dedupe them), an objective a vocabulary value used as a dictionary key; (b) identity, as N-7 | **(a)**; `Measurement`, `Recorder` and the domains stay identity |
+| N-S3 | `Estimate`, the declared-estimate role of `Metric` | (a) defer: nothing produces or reads one, and one is a `Measurer<Configuration>` over an expression when it appears; (b) `Estimate { objective, expression }` on a `Space` in SS3, as this design first sketched | **(a)** |
+| N-S4 | multi-objective comparison | (a) `Measurement::dominates` alone; (b) nothing: MOGA-VM's harness is single-objective (MOGA is its machine model); (c) a Pareto front and ranking utilities | **(a)**: generic, about 30 lines, and what any multi-objective search builds on |
+| N-S5 | measurement statuses | (a) `Ok`, `Infeasible`, `Failed`, `Timeout`; (b) `Ok`, `Failed`, `Timeout`, with infeasibility folded into `Failed` | **(a)**: MOGA-VM's harness separates a rejected configuration (data about the space) from a defect (`harness.py:26-37`) |
