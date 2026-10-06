@@ -121,20 +121,139 @@ are MOGA-VM modules outside the core (`git grep` on `origin/dev`).
 | Python classes | binding `util::{public_class, frozen, foreign, gc, hook, serialization, exceptions}`; D-S11-11's subclassable pyclass base | P2 classes, P3 adapters |
 | serialization | `WrappedFamilySerializable`, `register_serializable(type_id=, alias=)`; V2 from the core's serde shape, foreign parts as `{"type_id", "data"}` | as below |
 
-## SS0: identifier values and members
+## SS0: identifier values and members (plan)
 
-- `constraint::Value` and the member kinds gain an identifier kind. It
-  matches only an identifier with the same id (type-strict), orders by id
-  within its kind, and serializes as `{"identifier": {"id", "name_hint"}}`.
-- The binding reads a Python `Identifier` as that kind, and still reads the
-  opaque `{"opaque": {"type_id": "id", ...}}` form that 0.2.0 writes.
-- An identifier value counts as a free identifier of the constraints that
-  mention it, so `Constraint::free_identifiers` reports it.
-- `Param`'s own alpha equivalence is unchanged: it compares domain members
-  as values. `search_space` treats a variable's identifier members as
-  references (below).
-- Tests: Rust stories for the value and member; the param and constraint
-  suites stay green; a V2 golden row for the new shape.
+The concrete plan for SS0, in fhy-development-rs's planning template. The
+stub follows it.
+
+### Summary
+
+`fhy_core::constraint`'s values and members gain an identifier kind. A
+Python `Identifier` used as a param category, a permutation member, a
+set-constraint member or a bound value reaches the core as that kind,
+instead of as an opaque Python object.
+
+### Motivation
+
+- In 0.2.0 an identifier member is a `PyOpaqueValue`
+  (`{"opaque": {"type_id": "id", ...}}`). The core cannot see it as an
+  identifier: Rust code cannot build such a domain, and SS1 cannot compare
+  members by correspondence (audit F-SS-009).
+- Its canonical order follows the `repr` text of its payload, so id `100`
+  sorts before id `99`.
+
+### Placement
+
+| Crate | Files |
+|---|---|
+| `fhy-core` | `constraint/value.rs` (`Value`, `Member`, `MemberKind`, `OpaqueValue`, order, equality, hash, display); `constraint/wire.rs` (the shape, legacy normalization); `constraint/equation.rs` (an identifier binding is no literal); `constraint/key.rs` (member key); `param/value.rs`, `param/domain.rs`, `param/wire.rs` (member conversion, leaf check, ordinal order) |
+| `fhy-core-py` | `constraint/value.rs` (readers and writers; `PyOpaqueValue::identifier`); `param/value.rs` (the finite-domain reader) |
+| Python | docstrings only: `serialization.serialize_value`'s V2 shapes and `symbolic/constraint/members.py`'s canonical order |
+
+No new modules and no new dependencies.
+
+### Public API
+
+| Item | Change | Semver |
+|---|---|---|
+| `constraint::Value::Identifier(Identifier)` | new variant | additive: `Value` is `#[non_exhaustive]` |
+| `constraint::MemberKind::Identifier(&'a Identifier)` | new variant | **breaking**: `MemberKind` is exhaustive (its `#[expect(clippy::exhaustive_enums)]` says the binding converts every kind) |
+| `constraint::OpaqueValue::identifier(&self) -> Option<Identifier>` | new provided method, default `None` | additive for implementors |
+| wire shape `{"identifier": {"id": .., "name_hint": ..}}` | new tag of `ValueData` and of members in `ConstraintData` and `param::wire`, declared last so the other tags keep their indices in non-self-describing formats | additive for readers; writers now write it |
+
+`OpaqueValue::identifier` is the identifier an opaque value stands for.
+
+- It exists for payloads written before this kind: a resolver turns
+  `{"opaque": {"type_id": "id"}}` into an opaque value, and the wire
+  forms' `build` reads every opaque value that reports an identifier as the
+  identifier kind.
+- The core's own decoding cannot parse the foreign text, since it does not
+  depend on `serde_json`.
+
+### Visibility
+
+- No new `pub` item other than those above.
+- The rank table and comparisons stay private.
+
+### Behavior
+
+| Question | Answer |
+|---|---|
+| equality | type-strict: an identifier equals an identifier with the same id (`Identifier`'s `==`), and nothing else, not a string with its name hint |
+| hash | the identifier's hash, after the kind |
+| canonical member order | kinds by name: `bool`, `float`, `frozenset`, `identifier`, `int`, `str`, `tuple`, then opaque values; identifiers by id ascending |
+| `Display` | the name hint, as `Identifier`'s `Display` |
+| `Member::kind_name` | `"identifier"` |
+| member-shaped | yes; no NaN, decimal or ordering-key concerns |
+| lifts to an expression | no. An identifier expression names a variable, not a constant, so `x in {a}` does not lower to `x == a`, and `SetConstraint::to_expression` refuses it with `UnliftableMember` |
+| a constraint's free identifiers | unchanged: a member identifier is a constant, not a variable occurrence. (This revises the design's first sketch, which counted it; counting it would make a param treat `x in {a}` as depending on `a`, and leave it undecided.) |
+| alpha equivalence of set constraints | unchanged: members compare by value. SS1 decides correspondence for its conditions. |
+| an equation's binding | an identifier value is not a literal: `UnusableBinding { reason: NotALiteral }`, as a tuple's |
+| ordinal domains | identifiers do not order: `compare_ordinal` answers `None`, as for unrelated kinds. Python's ordinal reader still refuses an `Identifier`, as today. |
+| categorical and permutation domains | an identifier is a leaf value |
+| member key (`constraint/key.rs`) | `identifier:<id>` |
+| wire, writing | `{"identifier": {"id": 60000, "name_hint": "a"}}`, in both value and member positions |
+| wire, reading | the new tag, and `{"opaque": <part>}` whose resolved part reports an identifier |
+| Python reading | an `Identifier` (exact class or subclass, by `read_identifier_id`) becomes the identifier kind in member and bound-value readers |
+| Python writing | an identifier value or member becomes a Python `Identifier` through `identifier_to_python`. It is equal by id to the one given, not the same object. |
+
+### Ownership and data model
+
+`Identifier` is a cheap clone (an id and a shared name hint). The variant
+holds it by value. Nothing else changes.
+
+### Error model
+
+- No new error types.
+- `MemberError` is unchanged: an identifier is always a valid member.
+
+### Non-goals
+
+- Identifier members as references in alpha equivalence (SS1).
+- Free-identifier reporting of members.
+- Any change to `Param`'s or `ConstraintSystem`'s alpha equivalence.
+
+### Test plan
+
+- **Rust unit** (in `constraint/value.rs`'s tests): rank and order of
+  identifiers among kinds; `Display`; `kind_name`; `lifts_to_expression`.
+- **Rust integration** (`tests/it/constraint/identifier_value_stories.rs`):
+  - type-strict equality (identifier vs string, vs another id);
+  - hash agreeing with `==`;
+  - `MemberSet` order by id and kind;
+  - `contains_value`;
+  - an identifier binding refused by an equation;
+  - an in-set constraint over identifiers decided under bindings;
+  - `to_expression` refusing an identifier member;
+  - JSON and postcard round trips of values, members, set constraints and
+    categorical and permutation params;
+  - the legacy opaque form read through a test resolver whose part reports
+    an identifier;
+  - categorical and permutation domains over identifiers;
+  - an ordinal domain's comparison answering `None`.
+- **Properties** (proptest): serde round trips of identifier-bearing values
+  and members; `Member` order is total and agrees with `==` and `hash`;
+  `MemberSet::new` is independent of input order; `Value` equality is
+  reflexive and symmetric on identifier-bearing values.
+- **Python** (`tests/symbolic/constraint/test_identifier_members.py`):
+  - the V2 shapes of `serialize_value`, a set constraint and a categorical
+    param pinned;
+  - the legacy opaque form decoding to an equal `Identifier`;
+  - V1 round trip;
+  - `serialization_upgrade` writing the new form;
+  - type-strict admission (an `Identifier` vs its name);
+  - category order by id;
+  - an ordinal param still refusing identifiers;
+  - pickling;
+  - a user `Identifier` subclass read as an identifier.
+- **Golden row** (`generate_serialization_cases.py`): a set constraint and
+  a categorical param over identifiers, and an identifier value, replayed
+  by `serialization_golden.rs`.
+
+### Open questions
+
+None. The breaking change to `MemberKind` is the price of the decided
+first-class kind; the commit is marked `!`.
 
 ## Semantics
 
