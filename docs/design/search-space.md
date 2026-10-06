@@ -1757,12 +1757,12 @@ rule. Counts over the committed (expanded) corpus:
 | Divergence | Cases | What the port does instead |
 |---|---|---|
 | D-SS-19 (names unique space-wide) | 94 (2896) | refuses a space repeating a name, where MOGA-VM built it and answered asymmetrically |
-| D-SS-5 (validation) | 2 (7) | refuses a configuration MOGA-VM's three checks accepted (a knob assigned twice; a value outside the kept categories) |
+| D-SS-5 (validation) | 2 (7) | refuses a configuration MOGA-VM's three checks accepted (a knob assigned twice; a value outside the domain, assigned from another param) |
 | D-SS-1 (constraints under the variable frame) | 1 (1) | a categorical knob's constraint compares under its param's variable |
 | D-SS-3 (capture-free identifier members) | 1 (1) | a free category no longer matches a bound name |
 | D-SS-4 (type-strict values) | 1 (1) | `1` and `True` are different categories |
 | D-SS-6 (empty choice) | 1 (1) | an empty choice is refused |
-| D-SS-18 (selection outside the space) | 1 (1) | a configuration is compared with its space |
+| D-SS-18 (selection outside the space) | 1 (1) | the status is gone: an UNSELECTED selection assigning its chosen alternative's knob is a valid configuration |
 | none | 37 (1110) | answers as the oracle does |
 
 No untagged case disagrees with the oracle, in either corpus or either
