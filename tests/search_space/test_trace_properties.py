@@ -16,11 +16,13 @@ from hypothesis import HealthCheck, Phase, given, settings
 from hypothesis import strategies as st
 
 from fhy_core.search_space import (
+    Cardinality,
     CardinalityKind,
     Configuration,
     RandomOracle,
     Rng,
     Trace,
+    TraceError,
 )
 
 from ..strategies.settings import cap_max_examples
@@ -50,6 +52,8 @@ _SMALL_SHAPES: st.SearchStrategy[_SpaceShape] = st.tuples(
 )
 
 _SAMPLE_SIZE = 60
+
+_NOTHING_TO_MUTATE = "no decision of the configuration has another admissible value"
 
 
 def _has_a_choice(shape: _SpaceShape) -> bool:
@@ -176,13 +180,23 @@ def test_a_uniformly_sampled_configuration_is_complete(
 def test_a_mutated_configuration_is_complete(
     shape: _SpaceShape, picks: list[int], seed: int
 ) -> None:
-    """Test `mutate` of a complete configuration gives a complete one."""
+    """Test `mutate` gives another complete configuration of the space.
+
+    A space with one complete configuration, the empty space included, has
+    nothing to mutate: `mutate` refuses it, as the Rust property checks.
+    """
     space = _build_space(shape)
     configuration = Configuration(space, _entries(space, picks))
 
+    if space.cardinality() == Cardinality(CardinalityKind.EXACT, 1, None):
+        with pytest.raises(TraceError, match=_NOTHING_TO_MUTATE):
+            space.mutate(configuration, Rng(seed))
+        return
     mutated, _ = space.mutate(configuration, Rng(seed))
 
     assert mutated.is_complete()
+    assert mutated.space is space
+    assert mutated.key() != configuration.key()
 
 
 @cap_max_examples(30)

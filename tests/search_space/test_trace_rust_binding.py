@@ -368,3 +368,20 @@ def test_cycle_through_a_replay_oracle_held_by_its_trace_value_is_collected() ->
         return option
 
     assert _collects(build)
+
+
+def test_an_exhaustive_oracle_keeps_no_value_of_a_domain_alive() -> None:
+    """Test the exhaustive oracle's path holds no object of a domain it walked.
+
+    `ExhaustiveOracle` is exempt from GC because it holds no Python object.
+    """
+    oracle = public.ExhaustiveOracle()
+    option = _Opaque()
+    Recorder(oracle).decide_dynamic(_OPTION, _SUBJECT, ChoiceDomain((option,)))
+    watched = weakref.ref(option)
+
+    del option
+    gc.collect()
+
+    assert watched() is None
+    assert oracle.advance() is False

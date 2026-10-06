@@ -321,6 +321,10 @@ _NOT_TRACKED = {
     "through a `PyOnceLock`, which cannot be read without the interpreter",
     "PreservedAnalyses": "caches only the preserved analyses' names",
     "ConfigurationKey": "holds only the core key, no Python object",
+    "Rng": "holds only its seed and the generator's state, no Python object",
+    "StridedRun": "holds only the run's integers, no Python object",
+    "ExhaustiveOracle": "holds only its path's coordinates and domain "
+    "signatures, which keep no value of a domain, so no Python object",
     "SympySimplifier": "holds only the SymPy module and its classes, which "
     "`sys.modules` keeps reachable, so no garbage cycle runs through them",
 }

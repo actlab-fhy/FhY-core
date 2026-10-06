@@ -489,7 +489,8 @@ proptest! {
     }
 
     /// Test a mutation of a complete configuration is another reference
-    /// configuration, unless nothing can change.
+    /// configuration, and that it is refused as nothing to mutate exactly
+    /// when the space has one complete configuration.
     #[test]
     fn mutation_gives_another_reference_configuration(
         model in generate_model(),
@@ -508,11 +509,12 @@ proptest! {
 
         match result {
             Ok(recorded) => {
+                prop_assert!(configurations.len() > 1, "the only configuration was mutated");
                 let key = recorded.configuration().expect("over a space").key();
                 prop_assert!(expected.contains(&key));
                 prop_assert_ne!(key, original.key());
             }
-            Err(TraceError::NothingToMutate) => {}
+            Err(TraceError::NothingToMutate) => prop_assert_eq!(configurations.len(), 1),
             Err(error) => prop_assert!(false, "mutation failed: {error}"),
         }
     }
