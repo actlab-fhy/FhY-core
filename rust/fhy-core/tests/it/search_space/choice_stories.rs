@@ -13,11 +13,12 @@ use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{Alternative, Choice, SpaceError, Variable};
-use fhy_core::term::AlphaEquivalence;
 use rstest::rstest;
 
 use crate::support::hashing::hash_of;
-use crate::support::search_space::{bare_alternative, choice_of, int_variable, plain_alternative};
+use crate::support::search_space::{
+    bare_alternative, choice_of, compare_alpha_both_ways, int_variable, plain_alternative,
+};
 
 /// An alternative that binds the identifiers it is given, or fails to
 /// report them, and holds only the variables it is given.
@@ -72,18 +73,9 @@ impl Alternative for Binder {
     }
 }
 
-/// Return the alpha comparison of `left` with `right` and of `right` with
-/// `left`, with no binder in scope.
-fn alpha_both_ways(left: &Choice, right: &Choice) -> [bool; 2] {
-    [
-        left.is_alpha_equivalent(right).expect("compares"),
-        right.is_alpha_equivalent(left).expect("compares"),
-    ]
-}
-
 /// Return the structural comparison of `left` with `right` and of `right`
 /// with `left`.
-fn structural_both_ways(left: &Choice, right: &Choice) -> [bool; 2] {
+fn compare_structural_both_ways(left: &Choice, right: &Choice) -> [bool; 2] {
     [
         left.is_structurally_equivalent(right).expect("compares"),
         right.is_structurally_equivalent(left).expect("compares"),
@@ -95,7 +87,7 @@ fn structural_both_ways(left: &Choice, right: &Choice) -> [bool; 2] {
 /// # Panics
 ///
 /// Panics if `result` is not [`SpaceError::DuplicateName`].
-fn duplicate_name(result: Result<Choice, SpaceError>) -> Identifier {
+fn find_duplicate_name(result: Result<Choice, SpaceError>) -> Identifier {
     let Err(SpaceError::DuplicateName { name }) = result else {
         panic!("expected DuplicateName, got {result:?}");
     };
@@ -104,18 +96,22 @@ fn duplicate_name(result: Result<Choice, SpaceError>) -> Identifier {
 
 /// Return the alternative `name` holding the variable `variable` over
 /// `{value}`.
-fn holding(name: &Identifier, variable: &Identifier, value: i64) -> Part<dyn Alternative> {
+fn build_holding_alternative(
+    name: &Identifier,
+    variable: &Identifier,
+    value: i64,
+) -> Part<dyn Alternative> {
     plain_alternative(name, vec![int_variable(variable, &[value])], Vec::new())
 }
 
 /// Return the choice of the given names: `choice` among `first` holding
 /// `first_variable` over `{1}` and `second` holding `second_variable` over
 /// `{2}`, in that order, or the reverse if `swapped`.
-fn two_way(names: [&str; 5], swapped: bool) -> Choice {
+fn build_two_way_choice(names: [&str; 5], swapped: bool) -> Choice {
     let [choice, first, first_variable, second, second_variable] = names.map(Identifier::new);
     let mut alternatives = vec![
-        holding(&first, &first_variable, 1),
-        holding(&second, &second_variable, 2),
+        build_holding_alternative(&first, &first_variable, 1),
+        build_holding_alternative(&second, &second_variable, 2),
     ];
     if swapped {
         alternatives.reverse();
@@ -126,7 +122,7 @@ fn two_way(names: [&str; 5], swapped: bool) -> Choice {
 /// Return a two-level choice from the given names: `top` among `outer`,
 /// holding `inner` whose alternative `leaf` holds `leaf_variable`, and
 /// `plain`.
-fn hierarchy(names: [&str; 6]) -> Choice {
+fn build_hierarchy(names: [&str; 6]) -> Choice {
     let [top, outer, inner, leaf, leaf_variable, plain] = names.map(Identifier::new);
     choice_of(
         &top,
@@ -134,7 +130,10 @@ fn hierarchy(names: [&str; 6]) -> Choice {
             plain_alternative(
                 &outer,
                 Vec::new(),
-                vec![choice_of(&inner, vec![holding(&leaf, &leaf_variable, 1)])],
+                vec![choice_of(
+                    &inner,
+                    vec![build_holding_alternative(&leaf, &leaf_variable, 1)],
+                )],
             ),
             bare_alternative(&plain),
         ],
@@ -204,7 +203,7 @@ fn choice_new_refuses_an_alternative_named_like_the_choice() {
 
     let result = Choice::new(name.clone(), vec![bare_alternative(&name)]);
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 #[test]
@@ -217,7 +216,7 @@ fn choice_new_refuses_one_identifier_for_two_alternatives() {
         vec![bare_alternative(&shared), bare_alternative(&shared)],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -226,10 +225,13 @@ fn choice_new_refuses_a_variable_named_like_another_alternative() {
 
     let result = Choice::new(
         Identifier::new("c"),
-        vec![holding(&first, &shared, 1), bare_alternative(&shared)],
+        vec![
+            build_holding_alternative(&first, &shared, 1),
+            bare_alternative(&shared),
+        ],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -239,12 +241,12 @@ fn choice_new_refuses_one_variable_name_in_two_alternatives() {
     let result = Choice::new(
         Identifier::new("c"),
         vec![
-            holding(&Identifier::new("a"), &shared, 1),
-            holding(&Identifier::new("b"), &shared, 2),
+            build_holding_alternative(&Identifier::new("a"), &shared, 1),
+            build_holding_alternative(&Identifier::new("b"), &shared, 2),
         ],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -255,16 +257,23 @@ fn choice_new_refuses_a_name_repeated_at_depth() {
         Vec::new(),
         vec![choice_of(
             &Identifier::new("inner"),
-            vec![holding(&Identifier::new("leaf"), &shared, 1)],
+            vec![build_holding_alternative(
+                &Identifier::new("leaf"),
+                &shared,
+                1,
+            )],
         )],
     );
 
     let result = Choice::new(
         Identifier::new("c"),
-        vec![nested, holding(&Identifier::new("b"), &shared, 2)],
+        vec![
+            nested,
+            build_holding_alternative(&Identifier::new("b"), &shared, 2),
+        ],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -274,10 +283,13 @@ fn choice_new_refuses_a_bound_identifier_named_like_a_variable() {
 
     let result = Choice::new(
         Identifier::new("c"),
-        vec![binding, holding(&Identifier::new("b"), &shared, 1)],
+        vec![
+            binding,
+            build_holding_alternative(&Identifier::new("b"), &shared, 1),
+        ],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -289,7 +301,7 @@ fn choice_new_refuses_a_bound_identifier_named_like_the_choice() {
         vec![Binder::binding(&Identifier::new("a"), &[&name])],
     );
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 #[test]
@@ -304,7 +316,7 @@ fn choice_new_refuses_a_bound_identifier_shared_by_two_alternatives() {
         ],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -314,14 +326,14 @@ fn choice_new_names_the_first_repeat_in_canonical_order() {
     let result = Choice::new(
         Identifier::new("c"),
         vec![
-            holding(&Identifier::new("a1"), &first, 1),
-            holding(&Identifier::new("a2"), &first, 1),
-            holding(&Identifier::new("a3"), &second, 1),
-            holding(&Identifier::new("a4"), &second, 1),
+            build_holding_alternative(&Identifier::new("a1"), &first, 1),
+            build_holding_alternative(&Identifier::new("a2"), &first, 1),
+            build_holding_alternative(&Identifier::new("a3"), &second, 1),
+            build_holding_alternative(&Identifier::new("a4"), &second, 1),
         ],
     );
 
-    assert_eq!(duplicate_name(result), first);
+    assert_eq!(find_duplicate_name(result), first);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +345,7 @@ fn choice_exposes_its_name_alternatives_in_order_and_no_notes_by_default() {
     let name = Identifier::new("c");
     let alternatives = vec![
         bare_alternative(&Identifier::new("a")),
-        holding(&Identifier::new("b"), &Identifier::new("x"), 1),
+        build_holding_alternative(&Identifier::new("b"), &Identifier::new("x"), 1),
         bare_alternative(&Identifier::new("d")),
     ];
 
@@ -384,7 +396,7 @@ fn with_notes_replaces_earlier_notes() {
 fn choices_with_equal_fields_are_equal_and_hash_alike() {
     let name = Identifier::new("c");
     let alternatives = vec![
-        holding(&Identifier::new("a"), &Identifier::new("x"), 1),
+        build_holding_alternative(&Identifier::new("a"), &Identifier::new("x"), 1),
         bare_alternative(&Identifier::new("b")),
     ];
     let notes = vec![Note::with_other_kind("note")];
@@ -398,13 +410,13 @@ fn choices_with_equal_fields_are_equal_and_hash_alike() {
 
 #[test]
 fn a_clone_of_a_choice_is_equal_hashes_alike_and_is_structurally_equivalent() {
-    let choice = two_way(["c", "a", "x", "b", "y"], false);
+    let choice = build_two_way_choice(["c", "a", "x", "b", "y"], false);
 
     let clone = choice.clone();
 
     assert_eq!(clone, choice);
     assert_eq!(hash_of(&clone), hash_of(&choice));
-    assert_eq!(structural_both_ways(&choice, &clone), [true, true]);
+    assert_eq!(compare_structural_both_ways(&choice, &clone), [true, true]);
 }
 
 #[test]
@@ -463,17 +475,20 @@ fn choices_with_different_notes_are_unequal() {
 
 #[test]
 fn choices_with_distinct_labels_are_alpha_equivalent_standalone() {
-    let left = two_way(["c", "a", "x", "b", "y"], false);
-    let right = two_way(["d", "p", "u", "q", "w"], false);
+    let left = build_two_way_choice(["c", "a", "x", "b", "y"], false);
+    let right = build_two_way_choice(["d", "p", "u", "q", "w"], false);
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
 fn a_choice_is_alpha_equivalent_to_itself() {
-    let choice = two_way(["c", "a", "x", "b", "y"], false);
+    let choice = build_two_way_choice(["c", "a", "x", "b", "y"], false);
 
-    assert_eq!(alpha_both_ways(&choice, &choice.clone()), [true, true]);
+    assert_eq!(
+        compare_alpha_both_ways(&choice, &choice.clone()),
+        [true, true]
+    );
 }
 
 #[test]
@@ -484,14 +499,17 @@ fn choices_with_different_variable_domains_are_not_alpha_equivalent() {
         choice_of(
             &choice,
             vec![
-                holding(&first, &first_variable, 1),
-                holding(&second, &second_variable, second_domain),
+                build_holding_alternative(&first, &first_variable, 1),
+                build_holding_alternative(&second, &second_variable, second_domain),
             ],
         )
     };
 
-    assert_eq!(alpha_both_ways(&build(2), &build(3)), [false, false]);
-    assert_eq!(alpha_both_ways(&build(2), &build(2)), [true, true]);
+    assert_eq!(
+        compare_alpha_both_ways(&build(2), &build(3)),
+        [false, false]
+    );
+    assert_eq!(compare_alpha_both_ways(&build(2), &build(2)), [true, true]);
 }
 
 #[test]
@@ -505,11 +523,11 @@ fn choices_with_different_notes_are_not_alpha_equivalent() {
     };
 
     assert_eq!(
-        alpha_both_ways(&part("c", "one"), &part("d", "two")),
+        compare_alpha_both_ways(&part("c", "one"), &part("d", "two")),
         [false, false]
     );
     assert_eq!(
-        alpha_both_ways(&part("c", "same"), &part("d", "same")),
+        compare_alpha_both_ways(&part("c", "same"), &part("d", "same")),
         [true, true]
     );
 }
@@ -517,10 +535,10 @@ fn choices_with_different_notes_are_not_alpha_equivalent() {
 #[test]
 fn alternatives_order_is_significant_for_alpha_equivalence() {
     // F-SS-018.
-    let left = two_way(["c", "a", "x", "b", "y"], false);
-    let right = two_way(["d", "p", "u", "q", "w"], true);
+    let left = build_two_way_choice(["c", "a", "x", "b", "y"], false);
+    let right = build_two_way_choice(["d", "p", "u", "q", "w"], true);
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[rstest]
@@ -551,21 +569,24 @@ fn choice_is_not_equivalent_to_a_prefix(#[case] prefix_first: bool) {
         ((longer, prefix), (fresh_longer, fresh_prefix))
     };
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
-    assert_eq!(alpha_both_ways(&fresh_left, &fresh_right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(
+        compare_alpha_both_ways(&fresh_left, &fresh_right),
+        [false, false]
+    );
 }
 
 #[test]
 fn a_relabeled_two_level_hierarchy_is_alpha_equivalent() {
-    let left = hierarchy(["top", "outer", "inner", "leaf", "x", "plain"]);
-    let right = hierarchy(["top2", "outer2", "inner2", "leaf2", "x2", "plain2"]);
+    let left = build_hierarchy(["top", "outer", "inner", "leaf", "x", "plain"]);
+    let right = build_hierarchy(["top2", "outer2", "inner2", "leaf2", "x2", "plain2"]);
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
 fn a_hierarchy_that_differs_below_the_top_level_is_not_alpha_equivalent() {
-    let left = hierarchy(["top", "outer", "inner", "leaf", "x", "plain"]);
+    let left = build_hierarchy(["top", "outer", "inner", "leaf", "x", "plain"]);
     let [top, outer, inner, leaf, leaf_variable, plain] =
         ["top2", "outer2", "inner2", "leaf2", "x2", "plain2"].map(Identifier::new);
     let right = choice_of(
@@ -574,13 +595,16 @@ fn a_hierarchy_that_differs_below_the_top_level_is_not_alpha_equivalent() {
             plain_alternative(
                 &outer,
                 Vec::new(),
-                vec![choice_of(&inner, vec![holding(&leaf, &leaf_variable, 2)])],
+                vec![choice_of(
+                    &inner,
+                    vec![build_holding_alternative(&leaf, &leaf_variable, 2)],
+                )],
             ),
             bare_alternative(&plain),
         ],
     );
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +615,7 @@ fn a_hierarchy_that_differs_below_the_top_level_is_not_alpha_equivalent() {
 fn choices_sharing_their_alternatives_are_structurally_equivalent() {
     let name = Identifier::new("c");
     let alternatives = vec![
-        holding(&Identifier::new("a"), &Identifier::new("x"), 1),
+        build_holding_alternative(&Identifier::new("a"), &Identifier::new("x"), 1),
         bare_alternative(&Identifier::new("b")),
     ];
     let notes = vec![Note::with_other_kind("note")];
@@ -599,7 +623,7 @@ fn choices_sharing_their_alternatives_are_structurally_equivalent() {
     let left = choice_of(&name, alternatives.clone()).with_notes(notes.clone());
     let right = choice_of(&name, alternatives).with_notes(notes);
 
-    assert_eq!(structural_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -609,7 +633,7 @@ fn choices_with_different_names_are_not_structurally_equivalent() {
     let left = choice_of(&Identifier::new("c"), alternatives.clone());
     let right = choice_of(&Identifier::new("d"), alternatives);
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -621,7 +645,7 @@ fn choices_with_different_notes_are_not_structurally_equivalent() {
         choice_of(&name, alternatives.clone()).with_notes(vec![Note::with_other_kind("one")]);
     let right = choice_of(&name, alternatives).with_notes(vec![Note::with_other_kind("two")]);
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -631,7 +655,7 @@ fn choices_with_different_alternatives_are_not_structurally_equivalent() {
     let left = choice_of(&name, vec![bare_alternative(&Identifier::new("a"))]);
     let right = choice_of(&name, vec![bare_alternative(&Identifier::new("b"))]);
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -645,15 +669,21 @@ fn choices_with_the_same_alternatives_in_another_order_are_not_structurally_equi
     let left = choice_of(&name, vec![first.clone(), second.clone()]);
     let right = choice_of(&name, vec![second, first]);
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
 fn a_hierarchy_is_structurally_equivalent_to_itself_and_its_clone_only() {
-    let choice = hierarchy(["top", "outer", "inner", "leaf", "x", "plain"]);
-    let relabeled = hierarchy(["top2", "outer2", "inner2", "leaf2", "x2", "plain2"]);
+    let choice = build_hierarchy(["top", "outer", "inner", "leaf", "x", "plain"]);
+    let relabeled = build_hierarchy(["top2", "outer2", "inner2", "leaf2", "x2", "plain2"]);
 
-    assert_eq!(structural_both_ways(&choice, &choice), [true, true]);
-    assert_eq!(structural_both_ways(&choice, &choice.clone()), [true, true]);
-    assert_eq!(structural_both_ways(&choice, &relabeled), [false, false]);
+    assert_eq!(compare_structural_both_ways(&choice, &choice), [true, true]);
+    assert_eq!(
+        compare_structural_both_ways(&choice, &choice.clone()),
+        [true, true]
+    );
+    assert_eq!(
+        compare_structural_both_ways(&choice, &relabeled),
+        [false, false]
+    );
 }

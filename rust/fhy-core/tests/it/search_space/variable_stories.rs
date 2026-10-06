@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use fhy_core::constraint::Value;
 use fhy_core::diagnostic::Note;
-use fhy_core::foreign::Part;
+use fhy_core::foreign::{ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
     CategoricalDomain, IntegerDomain, Param, ParamContext, ParamDomain, PermutationDomain, Sign,
@@ -28,22 +28,14 @@ use crate::support::constraint::{int, text};
 use crate::support::hashing::hash_of;
 use crate::support::param::{at_most, in_set};
 use crate::support::search_space::{
-    categorical, categorical_where, chosen, int_param, int_variable, plain_variable,
+    categorical, categorical_where, chosen, compare_alpha_both_ways, int_param, int_variable,
+    plain_variable,
 };
-
-/// Return the alpha comparison of `left` with `right` and of `right` with
-/// `left`, with no binder in scope.
-fn alpha_both_ways(left: &Part<dyn Variable>, right: &Part<dyn Variable>) -> [bool; 2] {
-    [
-        left.is_alpha_equivalent(right).expect("compares"),
-        right.is_alpha_equivalent(left).expect("compares"),
-    ]
-}
 
 /// Return the alpha comparison of `left` with `right` under the free
 /// renaming of `pairs` (each `(left, right)`), and of `right` with `left`
 /// under the same pairs reversed.
-fn alpha_under_both_ways(
+fn compare_alpha_under_both_ways(
     left: &Part<dyn Variable>,
     right: &Part<dyn Variable>,
     pairs: &[(&Identifier, &Identifier)],
@@ -73,7 +65,10 @@ fn alpha_under_both_ways(
 
 /// Return the structural comparison of `left` with `right` and of `right`
 /// with `left`.
-fn structural_both_ways(left: &Part<dyn Variable>, right: &Part<dyn Variable>) -> [bool; 2] {
+fn compare_structural_both_ways(
+    left: &Part<dyn Variable>,
+    right: &Part<dyn Variable>,
+) -> [bool; 2] {
     [
         left.is_structurally_equivalent(right).expect("compares"),
         right.is_structurally_equivalent(left).expect("compares"),
@@ -82,7 +77,7 @@ fn structural_both_ways(left: &Part<dyn Variable>, right: &Part<dyn Variable>) -
 
 /// Return the param over the non-negative integers whose variable is
 /// fresh, bounded above by `bound` on that variable.
-fn bounded_param(bound: i64) -> Param {
+fn build_bounded_param(bound: i64) -> Param {
     let variable = Identifier::new("p");
     let constraint = at_most(&variable, bound);
     let solver = Solver::new();
@@ -99,12 +94,12 @@ fn bounded_param(bound: i64) -> Param {
 }
 
 /// Return the param over the identifiers `members` as categories.
-fn identifier_param(members: &[&Identifier]) -> Param {
+fn build_identifier_param(members: &[&Identifier]) -> Param {
     categorical(members.iter().map(|&member| chosen(member)).collect())
 }
 
 /// Return the param over the identifiers `members`, a permutation domain.
-fn permutation_param(members: &[&Identifier]) -> Param {
+fn build_permutation_param(members: &[&Identifier]) -> Param {
     let solver = Solver::new();
     Param::new(
         ParamDomain::from(
@@ -119,7 +114,7 @@ fn permutation_param(members: &[&Identifier]) -> Param {
 }
 
 /// Return the param over the categories `values`, its variable fresh.
-fn category_param(values: Vec<Value>) -> Param {
+fn build_category_param(values: Vec<Value>) -> Param {
     let solver = Solver::new();
     Param::new(
         ParamDomain::from(CategoricalDomain::new(values).expect("the categories are valid")),
@@ -156,8 +151,6 @@ fn plain_variable_kind_is_the_search_space_variable_kind() {
 
 #[test]
 fn plain_variable_type_name_is_plain_variable() {
-    use fhy_core::foreign::ForeignPart;
-
     let variable = PlainVariable::new(Identifier::new("x"), int_param(&[1]));
 
     assert_eq!(variable.type_name(), "PlainVariable");
@@ -279,14 +272,17 @@ fn variables_with_distinct_names_are_alpha_equivalent_standalone() {
     let left = int_variable(&Identifier::new("x"), &[1, 2]);
     let right = int_variable(&Identifier::new("y"), &[1, 2]);
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
 fn a_variable_is_alpha_equivalent_to_itself() {
     let variable = int_variable(&Identifier::new("x"), &[1, 2]);
 
-    assert_eq!(alpha_both_ways(&variable, &variable.clone()), [true, true]);
+    assert_eq!(
+        compare_alpha_both_ways(&variable, &variable.clone()),
+        [true, true]
+    );
 }
 
 #[test]
@@ -295,11 +291,11 @@ fn variables_over_different_domains_are_not_alpha_equivalent() {
     let left = int_variable(&name, &[1, 2]);
 
     assert_eq!(
-        alpha_both_ways(&left, &int_variable(&Identifier::new("y"), &[1, 3])),
+        compare_alpha_both_ways(&left, &int_variable(&Identifier::new("y"), &[1, 3])),
         [false, false]
     );
     assert_eq!(
-        alpha_both_ways(&left, &int_variable(&Identifier::new("z"), &[1, 2, 3])),
+        compare_alpha_both_ways(&left, &int_variable(&Identifier::new("z"), &[1, 2, 3])),
         [false, false]
     );
 }
@@ -316,7 +312,7 @@ fn variables_with_different_notes_are_not_alpha_equivalent() {
             .with_notes(vec![Note::with_other_kind("two")]),
     );
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -328,23 +324,23 @@ fn variables_with_equal_notes_are_alpha_equivalent() {
     let right =
         Part::new(PlainVariable::new(Identifier::new("y"), int_param(&[1, 2])).with_notes(notes));
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
 fn bounded_variables_whose_param_variables_are_renamed_are_alpha_equivalent() {
-    let left = plain_variable(&Identifier::new("x"), bounded_param(10));
-    let right = plain_variable(&Identifier::new("y"), bounded_param(10));
+    let left = plain_variable(&Identifier::new("x"), build_bounded_param(10));
+    let right = plain_variable(&Identifier::new("y"), build_bounded_param(10));
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
 fn bounded_variables_whose_bounds_differ_are_not_alpha_equivalent() {
-    let left = plain_variable(&Identifier::new("x"), bounded_param(10));
-    let right = plain_variable(&Identifier::new("y"), bounded_param(11));
+    let left = plain_variable(&Identifier::new("x"), build_bounded_param(10));
+    let right = plain_variable(&Identifier::new("y"), build_bounded_param(11));
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -360,10 +356,10 @@ fn a_bounded_variable_is_not_alpha_equivalent_to_an_unbounded_one() {
         &ParamContext::new(&solver),
     )
     .expect("the param is valid");
-    let left = plain_variable(&Identifier::new("x"), bounded_param(10));
+    let left = plain_variable(&Identifier::new("x"), build_bounded_param(10));
     let right = plain_variable(&Identifier::new("y"), unbounded);
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -374,7 +370,7 @@ fn categorical_variables_whose_set_constraints_differ_are_not_alpha_equivalent()
     let left = plain_variable(&Identifier::new("x"), plain);
     let right = plain_variable(&Identifier::new("y"), narrowed);
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[rstest]
@@ -386,10 +382,10 @@ fn variables_over_values_of_different_types_are_not_alpha_equivalent(
     #[case] right: Value,
 ) {
     // F-SS-004: members other than identifiers compare type-strictly.
-    let left = plain_variable(&Identifier::new("x"), category_param(vec![left]));
-    let right = plain_variable(&Identifier::new("y"), category_param(vec![right]));
+    let left = plain_variable(&Identifier::new("x"), build_category_param(vec![left]));
+    let right = plain_variable(&Identifier::new("y"), build_category_param(vec![right]));
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 // ---------------------------------------------------------------------------
@@ -399,12 +395,12 @@ fn variables_over_values_of_different_types_are_not_alpha_equivalent(
 #[test]
 fn identifier_members_correspond_only_through_the_renaming() {
     let (a, b) = (Identifier::new("a"), Identifier::new("b"));
-    let left = plain_variable(&Identifier::new("x"), identifier_param(&[&a]));
-    let right = plain_variable(&Identifier::new("y"), identifier_param(&[&b]));
+    let left = plain_variable(&Identifier::new("x"), build_identifier_param(&[&a]));
+    let right = plain_variable(&Identifier::new("y"), build_identifier_param(&[&b]));
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
     assert_eq!(
-        alpha_under_both_ways(&left, &right, &[(&a, &b)]),
+        compare_alpha_under_both_ways(&left, &right, &[(&a, &b)]),
         [true, true]
     );
 }
@@ -412,10 +408,10 @@ fn identifier_members_correspond_only_through_the_renaming() {
 #[test]
 fn identifier_members_naming_the_same_free_identifier_are_equivalent() {
     let a = Identifier::new("a");
-    let left = plain_variable(&Identifier::new("x"), identifier_param(&[&a]));
-    let right = plain_variable(&Identifier::new("y"), identifier_param(&[&a]));
+    let left = plain_variable(&Identifier::new("x"), build_identifier_param(&[&a]));
+    let right = plain_variable(&Identifier::new("y"), build_identifier_param(&[&a]));
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -423,19 +419,19 @@ fn a_variable_named_like_a_free_member_does_not_capture_it() {
     // F-SS-003: `Z` is free in the first variable and bound by the name `Z`
     // in the second.
     let z = Identifier::new("Z");
-    let left = plain_variable(&Identifier::new("k"), identifier_param(&[&z]));
-    let right = plain_variable(&z, identifier_param(&[&z]));
+    let left = plain_variable(&Identifier::new("k"), build_identifier_param(&[&z]));
+    let right = plain_variable(&z, build_identifier_param(&[&z]));
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
 fn a_variable_over_its_own_name_is_alpha_equivalent_to_one_over_its_own_renamed_name() {
     let (z, w) = (Identifier::new("Z"), Identifier::new("W"));
-    let left = plain_variable(&z, identifier_param(&[&z]));
-    let right = plain_variable(&w, identifier_param(&[&w]));
+    let left = plain_variable(&z, build_identifier_param(&[&z]));
+    let right = plain_variable(&w, build_identifier_param(&[&w]));
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -445,18 +441,18 @@ fn categorical_identifier_domains_compare_as_a_bijection_whatever_the_id_order()
     // canonical order of its members differs from the first side's.
     let b_renamed = Identifier::new("b2");
     let a_renamed = Identifier::new("a2");
-    let left = plain_variable(&Identifier::new("x"), identifier_param(&[&a, &b]));
+    let left = plain_variable(&Identifier::new("x"), build_identifier_param(&[&a, &b]));
     let right = plain_variable(
         &Identifier::new("y"),
-        identifier_param(&[&a_renamed, &b_renamed]),
+        build_identifier_param(&[&a_renamed, &b_renamed]),
     );
 
     assert_eq!(
-        alpha_under_both_ways(&left, &right, &[(&a, &a_renamed), (&b, &b_renamed)]),
+        compare_alpha_under_both_ways(&left, &right, &[(&a, &a_renamed), (&b, &b_renamed)]),
         [true, true]
     );
     assert_eq!(
-        alpha_under_both_ways(&left, &right, &[(&a, &a_renamed)]),
+        compare_alpha_under_both_ways(&left, &right, &[(&a, &a_renamed)]),
         [false, false]
     );
 }
@@ -467,22 +463,22 @@ fn permutation_identifier_domains_compare_in_order() {
     let b_renamed = Identifier::new("b2");
     let a_renamed = Identifier::new("a2");
     let pairs = [(&a, &a_renamed), (&b, &b_renamed)];
-    let left = plain_variable(&Identifier::new("x"), permutation_param(&[&a, &b]));
+    let left = plain_variable(&Identifier::new("x"), build_permutation_param(&[&a, &b]));
     let in_order = plain_variable(
         &Identifier::new("y"),
-        permutation_param(&[&a_renamed, &b_renamed]),
+        build_permutation_param(&[&a_renamed, &b_renamed]),
     );
     let swapped = plain_variable(
         &Identifier::new("z"),
-        permutation_param(&[&b_renamed, &a_renamed]),
+        build_permutation_param(&[&b_renamed, &a_renamed]),
     );
 
     assert_eq!(
-        alpha_under_both_ways(&left, &in_order, &pairs),
+        compare_alpha_under_both_ways(&left, &in_order, &pairs),
         [true, true]
     );
     assert_eq!(
-        alpha_under_both_ways(&left, &swapped, &pairs),
+        compare_alpha_under_both_ways(&left, &swapped, &pairs),
         [false, false]
     );
 }
@@ -507,11 +503,11 @@ fn set_constraint_members_that_are_identifiers_resolve_through_the_renaming() {
     let crossed = over(&a_renamed, &b_renamed, &b_renamed);
 
     assert_eq!(
-        alpha_under_both_ways(&left, &corresponding, &pairs),
+        compare_alpha_under_both_ways(&left, &corresponding, &pairs),
         [true, true]
     );
     assert_eq!(
-        alpha_under_both_ways(&left, &crossed, &pairs),
+        compare_alpha_under_both_ways(&left, &crossed, &pairs),
         [false, false]
     );
 }
@@ -528,7 +524,7 @@ fn variables_of_one_kind_sharing_parts_are_structurally_equivalent() {
     let left = Part::new(PlainVariable::new(name.clone(), param.clone()).with_notes(notes.clone()));
     let right = Part::new(PlainVariable::new(name, param).with_notes(notes));
 
-    assert_eq!(structural_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -536,7 +532,7 @@ fn a_variable_is_structurally_equivalent_to_its_clone() {
     let variable = int_variable(&Identifier::new("x"), &[1, 2]);
 
     assert_eq!(
-        structural_both_ways(&variable, &variable.clone()),
+        compare_structural_both_ways(&variable, &variable.clone()),
         [true, true]
     );
 }
@@ -547,7 +543,7 @@ fn variables_with_different_names_are_not_structurally_equivalent() {
     let left = plain_variable(&Identifier::new("x"), param.clone());
     let right = plain_variable(&Identifier::new("y"), param);
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -556,16 +552,16 @@ fn variables_with_different_params_are_not_structurally_equivalent() {
     let left = plain_variable(&name, int_param(&[1, 2]));
     let right = plain_variable(&name, int_param(&[1, 3]));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
 fn variables_whose_params_differ_only_in_their_variable_are_not_structurally_equivalent() {
     let name = Identifier::new("x");
-    let left = plain_variable(&name, bounded_param(10));
-    let right = plain_variable(&name, bounded_param(10));
+    let left = plain_variable(&name, build_bounded_param(10));
+    let right = plain_variable(&name, build_bounded_param(10));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -579,7 +575,7 @@ fn variables_with_different_notes_are_not_structurally_equivalent() {
     let right =
         Part::new(PlainVariable::new(name, param).with_notes(vec![Note::with_other_kind("two")]));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -592,7 +588,7 @@ fn categorical_variables_whose_set_constraints_differ_are_not_structurally_equiv
         categorical_where(vec![int(1), int(2)], |p| vec![in_set(p, [int(1)])]),
     );
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[rstest]
@@ -604,18 +600,18 @@ fn variables_over_values_of_different_types_are_not_structurally_equivalent(
 ) {
     // F-SS-004.
     let name = Identifier::new("x");
-    let left = plain_variable(&name, category_param(vec![left]));
-    let right = plain_variable(&name, category_param(vec![right]));
+    let left = plain_variable(&name, build_category_param(vec![left]));
+    let right = plain_variable(&name, build_category_param(vec![right]));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
 fn variables_over_different_identifier_members_are_not_structurally_equivalent() {
     let (a, b) = (Identifier::new("a"), Identifier::new("b"));
     let name = Identifier::new("x");
-    let left = plain_variable(&name, identifier_param(&[&a]));
-    let right = plain_variable(&name, identifier_param(&[&b]));
+    let left = plain_variable(&name, build_identifier_param(&[&a]));
+    let right = plain_variable(&name, build_identifier_param(&[&b]));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }

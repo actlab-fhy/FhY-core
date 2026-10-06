@@ -40,7 +40,7 @@ const _: () = {
 };
 
 /// Return the error `Space::new` refuses its arguments with.
-fn refusal(
+fn refuse_space(
     name: &Identifier,
     variables: Vec<Part<dyn Variable>>,
     choices: Vec<Choice>,
@@ -54,7 +54,7 @@ fn refusal(
 }
 
 /// Return the names of `space`'s decisions, in canonical order.
-fn decision_names(space: &Space) -> Vec<Identifier> {
+fn list_decision_names(space: &Space) -> Vec<Identifier> {
     space
         .decisions()
         .map(|decision| decision.name().clone())
@@ -162,7 +162,7 @@ fn build_hierarchy() -> Hierarchy {
 
 /// Return the error the hierarchy's space is refused with, given
 /// `conditions` and `forbidden_clauses`.
-fn hierarchy_refusal(
+fn refuse_hierarchy(
     conditions: impl FnOnce(&Names) -> Vec<Condition>,
     forbidden_clauses: impl FnOnce(&Names) -> Vec<Forbidden>,
 ) -> SpaceError {
@@ -333,7 +333,7 @@ fn space_new_refuses_a_name_used_twice(#[case] shape: &str) {
         _ => unreachable!("unknown shape {shape}"),
     };
 
-    let error = refusal(&space, variables, choices, Vec::new(), Vec::new());
+    let error = refuse_space(&space, variables, choices, Vec::new(), Vec::new());
 
     let SpaceError::DuplicateName { name } = &error else {
         panic!("expected DuplicateName, got {error:?}");
@@ -352,7 +352,7 @@ fn space_new_names_the_first_repeat_in_canonical_order() {
     ];
     let choices = vec![choice_of(&c, vec![bare_alternative(&first)])];
 
-    let error = refusal(
+    let error = refuse_space(
         &Identifier::new("space"),
         variables,
         choices,
@@ -394,7 +394,7 @@ fn space_new_reads_a_param_variable_as_no_name_of_the_space() {
 fn space_decisions_walk_the_hierarchy_in_canonical_order() {
     let h = build_hierarchy();
 
-    let names = decision_names(&h.space);
+    let names = list_decision_names(&h.space);
 
     assert_eq!(
         names,
@@ -459,7 +459,7 @@ fn space_decision_order_is_canonical_without_conditions() {
 
     let order = h.space.decision_order();
 
-    assert_eq!(order, decision_names(&h.space).as_slice());
+    assert_eq!(order, list_decision_names(&h.space).as_slice());
 }
 
 #[test]
@@ -542,7 +542,7 @@ fn space_new_accepts_a_condition_on_a_nested_decision() {
 #[case::an_unknown_name("unknown")]
 fn space_new_refuses_a_condition_on_a_name_that_is_no_decision(#[case] which: &str) {
     let mut target = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             let name = match which {
                 "alternative" => n.a2.clone(),
@@ -568,7 +568,7 @@ fn space_new_refuses_a_condition_on_a_name_that_is_no_decision(#[case] which: &s
 #[case::the_space_name("space")]
 fn space_new_refuses_a_condition_naming_no_decision(#[case] which: &str) {
     let mut referenced = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             let name = match which {
                 "unknown" => Identifier::new("unknown"),
@@ -591,7 +591,7 @@ fn space_new_refuses_a_condition_naming_no_decision(#[case] which: &str) {
 #[test]
 fn space_new_reports_the_unknown_reference_with_the_smallest_id_first() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             let (low, high) = (Identifier::new("low"), Identifier::new("high"));
             expected = Some(low.clone());
@@ -628,7 +628,7 @@ fn space_new_reads_a_member_identifier_as_no_reference() {
 #[test]
 fn space_new_refuses_an_equation_naming_a_choice_in_a_condition() {
     let mut choice = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             choice = Some(n.c2.clone());
             vec![condition(&n.v1, [at_least(&n.c2, 1)])]
@@ -649,7 +649,7 @@ fn space_new_refuses_an_equation_naming_a_choice_in_a_condition() {
 #[case::a_variable_two_levels_down("grandchild")]
 fn space_new_refuses_a_condition_naming_its_own_subtree(#[case] which: &str) {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             let named = match which {
                 "itself" => n.c1.clone(),
@@ -681,7 +681,7 @@ fn space_new_refuses_a_condition_naming_its_own_subtree(#[case] which: &str) {
 #[test]
 fn space_new_refuses_a_variable_conditioned_on_itself() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             expected = Some(n.v1.clone());
             vec![condition(&n.v1, [in_set(&n.v1, [int(1)])])]
@@ -698,7 +698,7 @@ fn space_new_refuses_a_variable_conditioned_on_itself() {
 
 #[test]
 fn space_new_reports_a_custom_constraint_whose_scope_fails() {
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             vec![Condition::new(
                 n.v1.clone(),
@@ -773,7 +773,7 @@ fn space_conditions_follow_the_canonical_order_of_their_targets() {
 
 #[test]
 fn space_new_refuses_a_forbidden_clause_naming_no_decision() {
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |_| Vec::new(),
         |n| {
             vec![
@@ -792,7 +792,7 @@ fn space_new_refuses_a_forbidden_clause_naming_no_decision() {
 #[test]
 fn space_new_refuses_a_forbidden_clause_naming_an_unknown_identifier() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |_| Vec::new(),
         |n| {
             let name = n.b1.clone();
@@ -813,7 +813,7 @@ fn space_new_refuses_a_forbidden_clause_naming_an_unknown_identifier() {
 #[test]
 fn space_new_refuses_an_equation_naming_a_choice_in_a_forbidden_clause() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |_| Vec::new(),
         |n| {
             expected = Some(n.s.clone());
@@ -856,7 +856,7 @@ fn space_new_accepts_a_forbidden_clause_across_levels() {
 #[test]
 fn space_new_refuses_two_decisions_conditioned_on_each_other() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             expected = Some(vec![n.v1.clone(), n.v2.clone()]);
             vec![
@@ -876,7 +876,7 @@ fn space_new_refuses_two_decisions_conditioned_on_each_other() {
 #[test]
 fn space_new_refuses_a_cycle_through_a_choice_and_its_child() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             expected = Some(vec![n.v2.clone(), n.c1.clone(), n.x1.clone()]);
             vec![
@@ -906,7 +906,7 @@ fn space_new_refuses_a_cycle_through_a_choice_and_its_child() {
 fn space_new_checks_names_before_conditions() {
     let x = Identifier::new("x");
 
-    let error = refusal(
+    let error = refuse_space(
         &Identifier::new("space"),
         vec![int_variable(&x, &[1]), int_variable(&x, &[1])],
         Vec::new(),
@@ -925,7 +925,7 @@ fn space_new_checks_names_before_conditions() {
 
 #[test]
 fn space_new_checks_a_condition_target_before_its_references() {
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |_| {
             vec![condition(
                 &Identifier::new("no_target"),
@@ -944,7 +944,7 @@ fn space_new_checks_a_condition_target_before_its_references() {
 #[test]
 fn space_new_checks_conditions_in_the_order_given() {
     let mut expected = None;
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             let (first, second) = (Identifier::new("first"), Identifier::new("second"));
             expected = Some(second.clone());
@@ -964,7 +964,7 @@ fn space_new_checks_conditions_in_the_order_given() {
 
 #[test]
 fn space_new_checks_conditions_before_forbidden_clauses() {
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             vec![condition(
                 &n.v1,
@@ -982,7 +982,7 @@ fn space_new_checks_conditions_before_forbidden_clauses() {
 
 #[test]
 fn space_new_checks_forbidden_clauses_before_cycles() {
-    let error = hierarchy_refusal(
+    let error = refuse_hierarchy(
         |n| {
             vec![
                 condition(&n.v2, [in_set(&n.v1, [int(1)])]),
@@ -1030,13 +1030,13 @@ fn build_guarded(names: &[Identifier; 6], param: &Param, notes: &[&str]) -> Spac
 }
 
 /// Return the six names of a guarded space.
-fn guarded_names() -> [Identifier; 6] {
+fn build_guarded_names() -> [Identifier; 6] {
     ["space", "v", "c", "a", "b", "x"].map(Identifier::new)
 }
 
 #[test]
 fn spaces_built_apart_from_equal_parts_are_equal_and_hash_alike() {
-    let names = guarded_names();
+    let names = build_guarded_names();
     let param = int_param(&[1, 2]);
 
     let left = build_guarded(&names, &param, &["note"]);
@@ -1052,7 +1052,7 @@ fn spaces_built_apart_from_equal_parts_are_equal_and_hash_alike() {
 
 #[test]
 fn space_clone_is_equal_and_structurally_equivalent() {
-    let space = build_guarded(&guarded_names(), &int_param(&[1, 2]), &[]);
+    let space = build_guarded(&build_guarded_names(), &int_param(&[1, 2]), &[]);
 
     let copy = space.clone();
 
@@ -1069,7 +1069,7 @@ fn space_clone_is_equal_and_structurally_equivalent() {
 #[case::another_alternative_name("alternative")]
 #[case::other_notes("notes")]
 fn spaces_differing_in_one_name_are_unequal_and_not_structurally_equivalent(#[case] field: &str) {
-    let names = guarded_names();
+    let names = build_guarded_names();
     let param = int_param(&[1, 2]);
     let mut changed = names.clone();
     let mut notes = ["note"];
@@ -1100,7 +1100,7 @@ fn spaces_differing_in_one_name_are_unequal_and_not_structurally_equivalent(#[ca
 #[test]
 fn spaces_differing_in_a_condition_are_unequal_and_not_structurally_equivalent() {
     let param = int_param(&[1, 2, 3]);
-    let [space, v, c, a, b, x] = guarded_names();
+    let [space, v, c, a, b, x] = build_guarded_names();
     let build = |chosen: &Identifier| {
         let choice = choice_of(
             &c,
@@ -1132,7 +1132,7 @@ fn spaces_differing_in_a_condition_are_unequal_and_not_structurally_equivalent()
 #[test]
 fn spaces_differing_in_a_forbidden_clause_are_unequal_and_not_structurally_equivalent() {
     let param = int_param(&[1, 2, 3]);
-    let [space, v, ..] = guarded_names();
+    let [space, v, ..] = build_guarded_names();
     let build = |value: i64| {
         Space::new(
             space.clone(),

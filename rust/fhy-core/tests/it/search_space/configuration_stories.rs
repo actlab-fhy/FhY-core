@@ -76,7 +76,7 @@ fn build_selection() -> Selection {
 }
 
 /// Return the problems `Configuration::new` refuses `entries` with.
-fn problems(space: &Space, entries: Vec<(Identifier, Value)>) -> ConfigurationErrors {
+fn collect_problems(space: &Space, entries: Vec<(Identifier, Value)>) -> ConfigurationErrors {
     match try_configure(space, entries) {
         Ok(configuration) => panic!("expected a refusal, got {configuration:?}"),
         Err(errors) => errors,
@@ -212,7 +212,7 @@ fn configuration_new_refuses_an_entry_naming_no_decision(#[case] which: &str) {
         _ => unreachable!("unknown case {which}"),
     };
 
-    let errors = problems(&s.space, vec![(name.clone(), int(1))]);
+    let errors = collect_problems(&s.space, vec![(name.clone(), int(1))]);
 
     let [ConfigurationError::UnknownDecision { name: reported }] = errors.errors() else {
         panic!("expected one UnknownDecision, got {errors:?}");
@@ -227,7 +227,7 @@ fn configuration_new_refuses_an_entry_naming_no_decision(#[case] which: &str) {
 fn configuration_new_refuses_a_second_entry_for_one_decision(#[case] second: i64) {
     let s = build_selection();
 
-    let errors = problems(
+    let errors = collect_problems(
         &s.space,
         vec![(s.t.clone(), int(1)), (s.t.clone(), int(second))],
     );
@@ -242,7 +242,7 @@ fn configuration_new_refuses_a_second_entry_for_one_decision(#[case] second: i64
 fn configuration_new_keeps_the_first_of_two_entries_for_one_decision() {
     let s = build_selection();
 
-    let errors = problems(
+    let errors = collect_problems(
         &s.space,
         vec![(s.t.clone(), int(99)), (s.t.clone(), int(1))],
     );
@@ -266,7 +266,7 @@ fn unknown_alternative_is_refused() {
     let s = build_selection();
     let stranger = Identifier::new("stranger");
 
-    let errors = problems(&s.space, vec![(s.c.clone(), chosen(&stranger))]);
+    let errors = collect_problems(&s.space, vec![(s.c.clone(), chosen(&stranger))]);
 
     let [ConfigurationError::UnknownAlternative { choice, value }] = errors.errors() else {
         panic!("expected one UnknownAlternative, got {errors:?}");
@@ -292,7 +292,7 @@ fn configuration_new_refuses_a_choice_value_that_names_none_of_its_alternatives(
         _ => unreachable!("unknown case {which}"),
     };
 
-    let errors = problems(&s.space, vec![(s.c.clone(), value.clone())]);
+    let errors = collect_problems(&s.space, vec![(s.c.clone(), value.clone())]);
 
     let [
         ConfigurationError::UnknownAlternative {
@@ -310,7 +310,7 @@ fn configuration_new_refuses_a_choice_value_that_names_none_of_its_alternatives(
 fn value_for_an_inactive_variable_is_refused() {
     let s = build_selection();
 
-    let errors = problems(
+    let errors = collect_problems(
         &s.space,
         vec![(s.c.clone(), chosen(&s.a)), (s.m.clone(), int(1))],
     );
@@ -325,7 +325,7 @@ fn value_for_an_inactive_variable_is_refused() {
 fn values_under_an_unchosen_choice_are_refused() {
     let s = build_selection();
 
-    let errors = problems(
+    let errors = collect_problems(
         &s.space,
         vec![(s.k1.clone(), int(1)), (s.m.clone(), int(1))],
     );
@@ -352,7 +352,7 @@ fn configuration_new_refuses_a_value_its_param_refuses(
 ) {
     let s = build_selection();
 
-    let errors = problems(
+    let errors = collect_problems(
         &s.space,
         vec![(s.c.clone(), chosen(&s.a)), (s.k2.clone(), value)],
     );
@@ -378,7 +378,7 @@ fn configuration_new_refuses_a_value_its_param_refuses(
 fn refused_choice_value_leaves_its_alternatives_variables_pending() {
     let s = build_selection();
 
-    let errors = problems(
+    let errors = collect_problems(
         &s.space,
         vec![(s.c.clone(), int(1)), (s.k1.clone(), int(1))],
     );
@@ -405,7 +405,7 @@ fn refused_variable_value_counts_as_unassigned_for_conditions() {
     )
     .expect("the space is valid");
 
-    let errors = problems(&space, vec![(x.clone(), int(9)), (w.clone(), int(1))]);
+    let errors = collect_problems(&space, vec![(x.clone(), int(9)), (w.clone(), int(1))]);
 
     let [
         ConfigurationError::Assignment { variable, .. },
@@ -436,7 +436,7 @@ fn configuration_new_collects_every_problem_in_the_documented_order() {
     .expect("the space is valid");
     let ghost = Identifier::new("ghost");
 
-    let errors = problems(
+    let errors = collect_problems(
         &space,
         vec![
             (w.clone(), int(1)),

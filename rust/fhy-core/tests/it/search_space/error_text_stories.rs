@@ -17,13 +17,13 @@ use crate::support::serde::restored;
 
 /// Return the identifier `name` at the fixed id `id`, so a table's text can
 /// name it as `name::id`.
-fn named(id: u64, name: &str) -> Identifier {
+fn build_identifier(id: u64, name: &str) -> Identifier {
     restored(63_400 + id, name)
 }
 
 /// Return the error a custom constraint reports: `a custom constraint
 /// failed`.
-fn constraint_error() -> ConstraintError {
+fn build_constraint_error() -> ConstraintError {
     ConstraintError::Custom(test_error())
 }
 
@@ -42,33 +42,33 @@ fn assert_error_text(error: &(dyn Error + 'static), text: &str, source: Option<&
 
 #[rstest]
 #[case::duplicate_name(
-    SpaceError::DuplicateName { name: named(1, "x") },
+    SpaceError::DuplicateName { name: build_identifier(1, "x") },
     "the name x::63401 is used more than once",
     None
 )]
 #[case::empty_choice(
-    SpaceError::EmptyChoice { choice: named(2, "c") },
+    SpaceError::EmptyChoice { choice: build_identifier(2, "c") },
     "the choice c::63402 has no alternative",
     None
 )]
 #[case::unknown_condition_target(
-    SpaceError::UnknownConditionTarget { target: named(3, "t") },
+    SpaceError::UnknownConditionTarget { target: build_identifier(3, "t") },
     "the condition's target t::63403 is not a decision of the space",
     None
 )]
 #[case::unknown_reference(
-    SpaceError::UnknownReference { name: named(4, "r") },
+    SpaceError::UnknownReference { name: build_identifier(4, "r") },
     "r::63404 is not a decision of the space",
     None
 )]
 #[case::equation_over_choice(
-    SpaceError::EquationOverChoice { choice: named(5, "c") },
+    SpaceError::EquationOverChoice { choice: build_identifier(5, "c") },
     "an equation names the choice c::63405, which conditions and forbidden clauses name only \
      in set constraints",
     None
 )]
 #[case::condition_references_subtree(
-    SpaceError::ConditionReferencesSubtree { target: named(6, "t"), name: named(7, "u") },
+    SpaceError::ConditionReferencesSubtree { target: build_identifier(6, "t"), name: build_identifier(7, "u") },
     "the condition on t::63406 names u::63407, which is the target or under it",
     None
 )]
@@ -78,22 +78,22 @@ fn assert_error_text(error: &(dyn Error + 'static), text: &str, source: Option<&
     None
 )]
 #[case::cyclic_dependency_of_one(
-    SpaceError::CyclicDependency { cycle: vec![named(8, "a")] },
+    SpaceError::CyclicDependency { cycle: vec![build_identifier(8, "a")] },
     "the decisions a::63408 depend on each other in a cycle",
     None
 )]
 #[case::cyclic_dependency_of_three(
-    SpaceError::CyclicDependency { cycle: vec![named(8, "a"), named(9, "b"), named(10, "c")] },
+    SpaceError::CyclicDependency { cycle: vec![build_identifier(8, "a"), build_identifier(9, "b"), build_identifier(10, "c")] },
     "the decisions a::63408, b::63409, c::63410 depend on each other in a cycle",
     None
 )]
 #[case::hook(
-    SpaceError::Hook { alternative: named(11, "alt"), source: test_error() },
+    SpaceError::Hook { alternative: build_identifier(11, "alt"), source: test_error() },
     "the bound identifiers of the alternative alt::63411 failed",
     Some("no")
 )]
 #[case::constraint(
-    SpaceError::Constraint(constraint_error()),
+    SpaceError::Constraint(build_constraint_error()),
     "a custom constraint failed",
     Some("a custom constraint failed")
 )]
@@ -104,7 +104,7 @@ fn space_error_text(#[case] error: SpaceError, #[case] text: &str, #[case] sourc
 #[test]
 fn space_error_hook_source_is_the_implementations_error() {
     let error = SpaceError::Hook {
-        alternative: named(11, "alt"),
+        alternative: build_identifier(11, "alt"),
         source: test_error(),
     };
 
@@ -118,7 +118,7 @@ fn space_error_hook_source_is_the_implementations_error() {
 
 #[test]
 fn space_error_constraint_source_is_the_constraint_error() {
-    let error = SpaceError::Constraint(constraint_error());
+    let error = SpaceError::Constraint(build_constraint_error());
 
     let source = error.source().expect("a constraint error has a source");
 
@@ -135,31 +135,31 @@ fn space_error_constraint_source_is_the_constraint_error() {
 
 #[rstest]
 #[case::unknown_decision(
-    ConfigurationError::UnknownDecision { name: named(20, "x") },
+    ConfigurationError::UnknownDecision { name: build_identifier(20, "x") },
     "x::63420 is not a decision of the space",
     None
 )]
 #[case::duplicate_entry(
-    ConfigurationError::DuplicateEntry { name: named(21, "x") },
+    ConfigurationError::DuplicateEntry { name: build_identifier(21, "x") },
     "the decision x::63421 is given more than one value",
     None
 )]
 #[case::inactive_decision(
-    ConfigurationError::InactiveDecision { name: named(22, "x") },
+    ConfigurationError::InactiveDecision { name: build_identifier(22, "x") },
     "the decision x::63422 is given a value but is not active",
     None
 )]
 #[case::unknown_alternative(
     ConfigurationError::UnknownAlternative {
-        choice: named(23, "c"),
-        value: Value::Identifier(named(24, "a")),
+        choice: build_identifier(23, "c"),
+        value: Value::Identifier(build_identifier(24, "a")),
     },
     "the choice c::63423 has no alternative a",
     None
 )]
 #[case::unknown_alternative_of_a_number(
     ConfigurationError::UnknownAlternative {
-        choice: named(23, "c"),
+        choice: build_identifier(23, "c"),
         value: int(3),
     },
     "the choice c::63423 has no alternative 3",
@@ -167,7 +167,7 @@ fn space_error_constraint_source_is_the_constraint_error() {
 )]
 #[case::assignment(
     ConfigurationError::Assignment {
-        variable: named(25, "v"),
+        variable: build_identifier(25, "v"),
         error: AssignmentError::Inadmissible,
     },
     "the value of the variable v::63425 cannot be assigned to its param",
@@ -179,7 +179,7 @@ fn space_error_constraint_source_is_the_constraint_error() {
     None
 )]
 #[case::undecided_condition(
-    ConfigurationError::UndecidedCondition { target: named(26, "t") },
+    ConfigurationError::UndecidedCondition { target: build_identifier(26, "t") },
     "the condition on t::63426 could not be decided",
     None
 )]
@@ -189,12 +189,12 @@ fn space_error_constraint_source_is_the_constraint_error() {
     None
 )]
 #[case::failed_condition(
-    ConfigurationError::FailedCondition { target: named(27, "t"), error: constraint_error() },
+    ConfigurationError::FailedCondition { target: build_identifier(27, "t"), error: build_constraint_error() },
     "the condition on t::63427 failed to evaluate",
     Some("a custom constraint failed")
 )]
 #[case::failed_forbidden(
-    ConfigurationError::FailedForbidden { index: 4, error: constraint_error() },
+    ConfigurationError::FailedForbidden { index: 4, error: build_constraint_error() },
     "the forbidden clause 4 failed to evaluate",
     Some("a custom constraint failed")
 )]
@@ -209,7 +209,7 @@ fn configuration_error_text(
 #[test]
 fn configuration_error_assignment_source_is_the_assignment_error() {
     let error = ConfigurationError::Assignment {
-        variable: named(25, "v"),
+        variable: build_identifier(25, "v"),
         error: AssignmentError::UnverifiedConstraint { member: 0 },
     };
 
@@ -226,12 +226,12 @@ fn configuration_error_assignment_source_is_the_assignment_error() {
 
 #[rstest]
 #[case::failed_condition(ConfigurationError::FailedCondition {
-    target: named(27, "t"),
-    error: constraint_error(),
+    target: build_identifier(27, "t"),
+    error: build_constraint_error(),
 })]
 #[case::failed_forbidden(ConfigurationError::FailedForbidden {
     index: 4,
-    error: constraint_error(),
+    error: build_constraint_error(),
 })]
 fn configuration_error_failed_evaluation_source_is_the_constraint_error(
     #[case] error: ConfigurationError,
@@ -251,17 +251,21 @@ fn configuration_error_failed_evaluation_source_is_the_constraint_error(
 
 #[test]
 fn configuration_errors_display_every_problem_in_the_order_found() {
-    let known = named(30, "a");
-    let unknown = named(31, "ghost");
+    let known = build_identifier(30, "a");
+    let unknown = build_identifier(31, "ghost");
     let space = space_of(
-        &named(32, "space"),
+        &build_identifier(32, "space"),
         vec![int_variable(&known, &[1, 2])],
         Vec::new(),
     );
 
     let Err(errors) = try_configure(
         &space,
-        [(unknown, int(1)), (known, int(1)), (named(30, "a"), int(2))],
+        [
+            (unknown, int(1)),
+            (known, int(1)),
+            (build_identifier(30, "a"), int(2)),
+        ],
     ) else {
         panic!("an unknown decision and a duplicate entry are refused");
     };
@@ -278,18 +282,21 @@ fn configuration_errors_display_every_problem_in_the_order_found() {
     else {
         panic!("two problems in the order found: {errors:?}");
     };
-    assert_eq!((first, second), (&named(31, "ghost"), &named(30, "a")));
+    assert_eq!(
+        (first, second),
+        (&build_identifier(31, "ghost"), &build_identifier(30, "a"))
+    );
 }
 
 #[test]
 fn configuration_errors_display_a_single_problem_without_a_separator() {
     let space = space_of(
-        &named(32, "space"),
-        vec![int_variable(&named(30, "a"), &[1, 2])],
+        &build_identifier(32, "space"),
+        vec![int_variable(&build_identifier(30, "a"), &[1, 2])],
         Vec::new(),
     );
 
-    let Err(errors) = try_configure(&space, [(named(31, "ghost"), int(1))]) else {
+    let Err(errors) = try_configure(&space, [(build_identifier(31, "ghost"), int(1))]) else {
         panic!("an unknown decision is refused");
     };
 
@@ -304,7 +311,7 @@ fn configuration_errors_display_a_single_problem_without_a_separator() {
 
 #[rstest]
 #[case::constraint(
-    EquivalenceError::Constraint(constraint_error()),
+    EquivalenceError::Constraint(build_constraint_error()),
     "a custom constraint failed during the comparison",
     Some("a custom constraint failed")
 )]
@@ -323,7 +330,7 @@ fn equivalence_error_text(
 
 #[test]
 fn equivalence_error_constraint_source_is_the_constraint_error() {
-    let error = EquivalenceError::Constraint(constraint_error());
+    let error = EquivalenceError::Constraint(build_constraint_error());
 
     let source = error.source().expect("a constraint error has a source");
 

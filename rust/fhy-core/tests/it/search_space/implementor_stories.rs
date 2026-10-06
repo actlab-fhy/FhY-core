@@ -30,8 +30,8 @@ use rstest::rstest;
 use crate::support::constraint::int;
 use crate::support::hashing::hash_of;
 use crate::support::search_space::{
-    Realization, TileKnob, bare_alternative, choice_of, chosen, configure, int_param,
-    plain_variable, space_of,
+    Realization, TileKnob, bare_alternative, choice_of, chosen, compare_alpha_both_ways, configure,
+    int_param, plain_variable, space_of,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ use crate::support::search_space::{
 
 /// Return the verdicts of `compare` on `left` with `right` and on `right`
 /// with `left`.
-fn both<T>(
+fn compare_both_ways<T>(
     left: &T,
     right: &T,
     compare: impl Fn(&T, &T) -> Result<bool, EquivalenceError>,
@@ -52,34 +52,27 @@ fn both<T>(
 }
 
 /// Return the structural comparison of two variables, both ways.
-fn structural_variables(left: &Part<dyn Variable>, right: &Part<dyn Variable>) -> [bool; 2] {
-    both(
+fn compare_structural_variables(
+    left: &Part<dyn Variable>,
+    right: &Part<dyn Variable>,
+) -> [bool; 2] {
+    compare_both_ways(
         left,
         right,
         <Part<dyn Variable>>::is_structurally_equivalent,
     )
 }
 
-/// Return the alpha comparison of two variables, both ways.
-fn alpha_variables(left: &Part<dyn Variable>, right: &Part<dyn Variable>) -> [bool; 2] {
-    both(left, right, AlphaEquivalence::is_alpha_equivalent)
-}
-
 /// Return the structural comparison of two alternatives, both ways.
-fn structural_alternatives(
+fn compare_structural_alternatives(
     left: &Part<dyn Alternative>,
     right: &Part<dyn Alternative>,
 ) -> [bool; 2] {
-    both(
+    compare_both_ways(
         left,
         right,
         <Part<dyn Alternative>>::is_structurally_equivalent,
     )
-}
-
-/// Return the alpha comparison of two alternatives, both ways.
-fn alpha_alternatives(left: &Part<dyn Alternative>, right: &Part<dyn Alternative>) -> [bool; 2] {
-    both(left, right, AlphaEquivalence::is_alpha_equivalent)
 }
 
 /// Where an alternative is compared: on its own, inside the choice that
@@ -94,7 +87,7 @@ enum Level {
 /// Return the alpha comparison, both ways, of `left` with `right`, each
 /// the only alternative of a choice named afresh (and of a space named
 /// afresh) when `level` says so.
-fn alpha_at(
+fn compare_alpha_at(
     level: Level,
     left: &Part<dyn Alternative>,
     right: &Part<dyn Alternative>,
@@ -106,11 +99,11 @@ fn alpha_at(
         space_of(&Identifier::new("s"), Vec::new(), vec![choice(alternative)])
     };
     match level {
-        Level::Alone => alpha_alternatives(left, right),
-        Level::InChoice => both(&choice(left), &choice(right), |a, b| {
+        Level::Alone => compare_alpha_both_ways(left, right),
+        Level::InChoice => compare_both_ways(&choice(left), &choice(right), |a, b| {
             a.is_alpha_equivalent(b)
         }),
-        Level::InSpace => both(
+        Level::InSpace => compare_both_ways(
             &space(left),
             &space(right),
             AlphaEquivalence::is_alpha_equivalent,
@@ -120,13 +113,17 @@ fn alpha_at(
 
 /// Return the realization `name` binding `axes`, with walk order `order`
 /// and tag 0, holding nothing else.
-fn walk(name: &Identifier, axes: &[&Identifier], order: &[&Identifier]) -> Part<dyn Alternative> {
+fn build_walk_realization(
+    name: &Identifier,
+    axes: &[&Identifier],
+    order: &[&Identifier],
+) -> Part<dyn Alternative> {
     Realization::new(name, Vec::new(), axes, order, 0).into_part()
 }
 
 /// Return the realization `name` binding `axes`, with walk order `order`
 /// and tag `tag`.
-fn tagged(
+fn build_tagged_realization(
     name: &Identifier,
     axes: &[&Identifier],
     order: &[&Identifier],
@@ -140,7 +137,7 @@ fn tagged(
 /// # Panics
 ///
 /// Panics if `result` is anything else.
-fn extension_text(result: Result<bool, EquivalenceError>) -> String {
+fn render_extension_text(result: Result<bool, EquivalenceError>) -> String {
     match result {
         Err(EquivalenceError::Extension(source)) => source.to_string(),
         other => panic!("expected an Extension error, got {other:?}"),
@@ -152,7 +149,7 @@ fn extension_text(result: Result<bool, EquivalenceError>) -> String {
 /// # Panics
 ///
 /// Panics if `result` is anything else.
-fn duplicate_name<T>(result: Result<T, SpaceError>) -> Identifier {
+fn find_duplicate_name<T>(result: Result<T, SpaceError>) -> Identifier {
     match result {
         Err(SpaceError::DuplicateName { name }) => name,
         Err(other) => panic!("expected DuplicateName, got {other:?}"),
@@ -376,7 +373,10 @@ impl Alternative for FailingAlternative {
 
 /// Return the failing alternative `name`, whose bound identifiers fail
 /// when `fails_bound_identifiers`.
-fn failing_alternative(name: &Identifier, fails_bound_identifiers: bool) -> Part<dyn Alternative> {
+fn build_failing_alternative(
+    name: &Identifier,
+    fails_bound_identifiers: bool,
+) -> Part<dyn Alternative> {
     Part::new(FailingAlternative {
         name: name.clone(),
         fails_bound_identifiers,
@@ -394,43 +394,49 @@ fn variables_of_different_kinds_are_not_structurally_equivalent() {
     let knob = TileKnob::part(&name, param.clone(), &[]);
     let plain = plain_variable(&name, param);
 
-    assert_eq!(structural_variables(&knob, &plain), [false, false]);
-    assert_eq!(alpha_variables(&knob, &plain), [false, false]);
+    assert_eq!(compare_structural_variables(&knob, &plain), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&knob, &plain), [false, false]);
 }
 
 #[test]
 fn alternatives_with_different_implementor_data_are_not_structurally_equivalent() {
     let name = Identifier::new("r");
     let axis = Identifier::new("i");
-    let one = tagged(&name, &[&axis], &[&axis], 1);
-    let two = tagged(&name, &[&axis], &[&axis], 2);
-    let one_again = tagged(&name, &[&axis], &[&axis], 1);
+    let one = build_tagged_realization(&name, &[&axis], &[&axis], 1);
+    let two = build_tagged_realization(&name, &[&axis], &[&axis], 2);
+    let one_again = build_tagged_realization(&name, &[&axis], &[&axis], 1);
 
-    assert_eq!(structural_alternatives(&one, &two), [false, false]);
-    assert_eq!(structural_alternatives(&one, &one_again), [true, true]);
+    assert_eq!(compare_structural_alternatives(&one, &two), [false, false]);
+    assert_eq!(
+        compare_structural_alternatives(&one, &one_again),
+        [true, true]
+    );
 }
 
 #[test]
 fn alternatives_with_different_implementor_data_are_not_alpha_equivalent() {
     let name = Identifier::new("r");
     let axis = Identifier::new("i");
-    let one = tagged(&name, &[&axis], &[&axis], 1);
-    let two = tagged(&name, &[&axis], &[&axis], 2);
+    let one = build_tagged_realization(&name, &[&axis], &[&axis], 1);
+    let two = build_tagged_realization(&name, &[&axis], &[&axis], 2);
 
-    assert_eq!(alpha_alternatives(&one, &two), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&one, &two), [false, false]);
 }
 
 #[test]
 fn alternatives_of_different_kinds_are_not_equivalent() {
     let name = Identifier::new("r");
-    let realization = walk(&name, &[], &[]);
+    let realization = build_walk_realization(&name, &[], &[]);
     let plain = bare_alternative(&name);
 
     assert_eq!(
-        structural_alternatives(&realization, &plain),
+        compare_structural_alternatives(&realization, &plain),
         [false, false]
     );
-    assert_eq!(alpha_alternatives(&realization, &plain), [false, false]);
+    assert_eq!(
+        compare_alpha_both_ways(&realization, &plain),
+        [false, false]
+    );
 }
 
 #[test]
@@ -443,8 +449,14 @@ fn tile_knobs_over_different_index_symbols_are_not_structurally_equivalent() {
     let over_j = TileKnob::part(&name, param.clone(), &[&j]);
     let over_i_again = TileKnob::part(&name, param, &[&i]);
 
-    assert_eq!(structural_variables(&over_i, &over_j), [false, false]);
-    assert_eq!(structural_variables(&over_i, &over_i_again), [true, true]);
+    assert_eq!(
+        compare_structural_variables(&over_i, &over_j),
+        [false, false]
+    );
+    assert_eq!(
+        compare_structural_variables(&over_i, &over_i_again),
+        [true, true]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -459,8 +471,11 @@ fn hooks_are_not_called_for_variables_of_different_kinds() {
     let recording = RecordingVariable::part(&name, &param, &calls);
     let plain = plain_variable(&name, param);
 
-    assert_eq!(structural_variables(&recording, &plain), [false, false]);
-    assert_eq!(alpha_variables(&recording, &plain), [false, false]);
+    assert_eq!(
+        compare_structural_variables(&recording, &plain),
+        [false, false]
+    );
+    assert_eq!(compare_alpha_both_ways(&recording, &plain), [false, false]);
     assert_eq!((calls.structural(), calls.alpha()), (0, 0));
 }
 
@@ -471,8 +486,11 @@ fn hooks_are_not_called_for_alternatives_of_different_kinds() {
     let recording = RecordingAlternative::part(&name, &calls);
     let plain = bare_alternative(&name);
 
-    assert_eq!(structural_alternatives(&recording, &plain), [false, false]);
-    assert_eq!(alpha_alternatives(&recording, &plain), [false, false]);
+    assert_eq!(
+        compare_structural_alternatives(&recording, &plain),
+        [false, false]
+    );
+    assert_eq!(compare_alpha_both_ways(&recording, &plain), [false, false]);
     assert_eq!((calls.structural(), calls.alpha()), (0, 0));
 }
 
@@ -528,8 +546,8 @@ fn tile_knobs_with_equal_index_symbols_but_different_params_are_not_equivalent()
     let small = TileKnob::part(&name, int_param(&[1, 2]), &[&i]);
     let large = TileKnob::part(&name, int_param(&[1, 3]), &[&i]);
 
-    assert_eq!(structural_variables(&small, &large), [false, false]);
-    assert_eq!(alpha_variables(&small, &large), [false, false]);
+    assert_eq!(compare_structural_variables(&small, &large), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&small, &large), [false, false]);
 }
 
 #[test]
@@ -539,18 +557,24 @@ fn tile_knobs_with_equal_index_symbols_but_different_names_differ_structurally_o
     let first = TileKnob::part(&Identifier::new("t"), param.clone(), &[&z]);
     let second = TileKnob::part(&Identifier::new("u"), param, &[&z]);
 
-    assert_eq!(structural_variables(&first, &second), [false, false]);
-    assert_eq!(alpha_variables(&first, &second), [true, true]);
+    assert_eq!(
+        compare_structural_variables(&first, &second),
+        [false, false]
+    );
+    assert_eq!(compare_alpha_both_ways(&first, &second), [true, true]);
 }
 
 #[test]
 fn realizations_with_equal_data_but_different_names_differ_structurally_only() {
     let axis = Identifier::new("i");
-    let first = walk(&Identifier::new("r"), &[&axis], &[&axis]);
-    let second = walk(&Identifier::new("q"), &[&axis], &[&axis]);
+    let first = build_walk_realization(&Identifier::new("r"), &[&axis], &[&axis]);
+    let second = build_walk_realization(&Identifier::new("q"), &[&axis], &[&axis]);
 
-    assert_eq!(structural_alternatives(&first, &second), [false, false]);
-    assert_eq!(alpha_alternatives(&first, &second), [true, true]);
+    assert_eq!(
+        compare_structural_alternatives(&first, &second),
+        [false, false]
+    );
+    assert_eq!(compare_alpha_both_ways(&first, &second), [true, true]);
 }
 
 // ---------------------------------------------------------------------------
@@ -568,7 +592,7 @@ fn a_failing_structural_hook_of_a_variable_fails_the_comparison() {
     let right = Part::<dyn Variable>::new(FailingVariable { name, param });
 
     assert_eq!(
-        extension_text(left.is_structurally_equivalent(&right)),
+        render_extension_text(left.is_structurally_equivalent(&right)),
         STRUCTURAL_FAILURE
     );
 }
@@ -586,7 +610,7 @@ fn a_failing_alpha_hook_of_a_variable_fails_the_comparison() {
     });
 
     assert_eq!(
-        extension_text(left.is_alpha_equivalent(&right)),
+        render_extension_text(left.is_alpha_equivalent(&right)),
         ALPHA_FAILURE
     );
 }
@@ -594,22 +618,22 @@ fn a_failing_alpha_hook_of_a_variable_fails_the_comparison() {
 #[test]
 fn a_failing_structural_hook_of_an_alternative_fails_the_comparison() {
     let name = Identifier::new("a");
-    let left = failing_alternative(&name, false);
-    let right = failing_alternative(&name, false);
+    let left = build_failing_alternative(&name, false);
+    let right = build_failing_alternative(&name, false);
 
     assert_eq!(
-        extension_text(left.is_structurally_equivalent(&right)),
+        render_extension_text(left.is_structurally_equivalent(&right)),
         STRUCTURAL_FAILURE
     );
 }
 
 #[test]
 fn a_failing_alpha_hook_of_an_alternative_fails_the_comparison() {
-    let left = failing_alternative(&Identifier::new("a"), false);
-    let right = failing_alternative(&Identifier::new("b"), false);
+    let left = build_failing_alternative(&Identifier::new("a"), false);
+    let right = build_failing_alternative(&Identifier::new("b"), false);
 
     assert_eq!(
-        extension_text(left.is_alpha_equivalent(&right)),
+        render_extension_text(left.is_alpha_equivalent(&right)),
         ALPHA_FAILURE
     );
 }
@@ -619,20 +643,20 @@ fn a_failing_hook_fails_the_comparison_of_the_choices_that_hold_it() {
     let name = Identifier::new("a");
     let left = choice_of(
         &Identifier::new("c"),
-        vec![failing_alternative(&name, false)],
+        vec![build_failing_alternative(&name, false)],
     );
     let right = choice_of(
         &Identifier::new("d"),
-        vec![failing_alternative(&name, false)],
+        vec![build_failing_alternative(&name, false)],
     );
-    let same = choice_of(left.name(), vec![failing_alternative(&name, false)]);
+    let same = choice_of(left.name(), vec![build_failing_alternative(&name, false)]);
 
     assert_eq!(
-        extension_text(left.is_alpha_equivalent(&right)),
+        render_extension_text(left.is_alpha_equivalent(&right)),
         ALPHA_FAILURE
     );
     assert_eq!(
-        extension_text(left.is_structurally_equivalent(&same)),
+        render_extension_text(left.is_structurally_equivalent(&same)),
         STRUCTURAL_FAILURE
     );
 }
@@ -656,11 +680,11 @@ fn a_failing_hook_of_a_variable_fails_the_comparison_of_the_spaces_that_hold_it(
     let right = build();
 
     assert_eq!(
-        extension_text(left.is_alpha_equivalent(&right)),
+        render_extension_text(left.is_alpha_equivalent(&right)),
         ALPHA_FAILURE
     );
     assert_eq!(
-        extension_text(left.is_structurally_equivalent(&right)),
+        render_extension_text(left.is_structurally_equivalent(&right)),
         STRUCTURAL_FAILURE
     );
 }
@@ -674,7 +698,7 @@ fn a_failing_hook_of_an_alternative_fails_the_comparison_of_the_spaces_that_hold
             Vec::new(),
             vec![choice_of(
                 &Identifier::new("c"),
-                vec![failing_alternative(&name, false)],
+                vec![build_failing_alternative(&name, false)],
             )],
         )
     };
@@ -682,7 +706,7 @@ fn a_failing_hook_of_an_alternative_fails_the_comparison_of_the_spaces_that_hold
     let right = build("t");
 
     assert_eq!(
-        extension_text(left.is_alpha_equivalent(&right)),
+        render_extension_text(left.is_alpha_equivalent(&right)),
         ALPHA_FAILURE
     );
 }
@@ -690,7 +714,10 @@ fn a_failing_hook_of_an_alternative_fails_the_comparison_of_the_spaces_that_hold
 #[test]
 fn failing_bound_identifiers_refuse_the_choice_that_holds_the_alternative() {
     let name = Identifier::new("a");
-    let result = Choice::new(Identifier::new("c"), vec![failing_alternative(&name, true)]);
+    let result = Choice::new(
+        Identifier::new("c"),
+        vec![build_failing_alternative(&name, true)],
+    );
 
     let Err(SpaceError::Hook {
         alternative,
@@ -706,15 +733,15 @@ fn failing_bound_identifiers_refuse_the_choice_that_holds_the_alternative() {
 #[test]
 fn failing_bound_identifiers_fail_the_comparison_of_the_alternative_on_its_own() {
     let name = Identifier::new("a");
-    let left = failing_alternative(&name, true);
-    let right = failing_alternative(&name, true);
+    let left = build_failing_alternative(&name, true);
+    let right = build_failing_alternative(&name, true);
 
     assert_eq!(
-        extension_text(left.is_structurally_equivalent(&right)),
+        render_extension_text(left.is_structurally_equivalent(&right)),
         BOUND_FAILURE
     );
     assert_eq!(
-        extension_text(left.is_alpha_equivalent(&right)),
+        render_extension_text(left.is_alpha_equivalent(&right)),
         BOUND_FAILURE
     );
 }
@@ -730,10 +757,10 @@ fn failing_bound_identifiers_fail_the_comparison_of_the_alternative_on_its_own()
 fn a_realization_matches_its_relabeled_copy(#[case] level: Level) {
     let (i, j) = (Identifier::new("i"), Identifier::new("j"));
     let (i2, j2) = (Identifier::new("i2"), Identifier::new("j2"));
-    let left = walk(&Identifier::new("r"), &[&i, &j], &[&j, &i]);
-    let right = walk(&Identifier::new("r2"), &[&i2, &j2], &[&j2, &i2]);
+    let left = build_walk_realization(&Identifier::new("r"), &[&i, &j], &[&j, &i]);
+    let right = build_walk_realization(&Identifier::new("r2"), &[&i2, &j2], &[&j2, &i2]);
 
-    assert_eq!(alpha_at(level, &left, &right), [true, true]);
+    assert_eq!(compare_alpha_at(level, &left, &right), [true, true]);
 }
 
 #[rstest]
@@ -743,10 +770,10 @@ fn a_realization_matches_its_relabeled_copy(#[case] level: Level) {
 fn a_realization_does_not_match_a_copy_whose_order_is_not_the_relabeled_one(#[case] level: Level) {
     let (i, j) = (Identifier::new("i"), Identifier::new("j"));
     let (i2, j2) = (Identifier::new("i2"), Identifier::new("j2"));
-    let left = walk(&Identifier::new("r"), &[&i, &j], &[&j, &i]);
-    let right = walk(&Identifier::new("r2"), &[&i2, &j2], &[&i2, &j2]);
+    let left = build_walk_realization(&Identifier::new("r"), &[&i, &j], &[&j, &i]);
+    let right = build_walk_realization(&Identifier::new("r2"), &[&i2, &j2], &[&i2, &j2]);
 
-    assert_eq!(alpha_at(level, &left, &right), [false, false]);
+    assert_eq!(compare_alpha_at(level, &left, &right), [false, false]);
 }
 
 // ---------------------------------------------------------------------------
@@ -758,10 +785,14 @@ fn choice_new_refuses_a_realization_that_repeats_an_axis() {
     let axis = Identifier::new("i");
     let result = Choice::new(
         Identifier::new("c"),
-        vec![walk(&Identifier::new("r"), &[&axis, &axis], &[&axis])],
+        vec![build_walk_realization(
+            &Identifier::new("r"),
+            &[&axis, &axis],
+            &[&axis],
+        )],
     );
 
-    assert_eq!(duplicate_name(result), axis);
+    assert_eq!(find_duplicate_name(result), axis);
 }
 
 #[rstest]
@@ -771,20 +802,20 @@ fn choice_new_refuses_a_realization_that_repeats_an_axis() {
 fn realizations_binding_different_numbers_of_axes_are_not_equivalent(#[case] level: Level) {
     let (i, j) = (Identifier::new("i"), Identifier::new("j"));
     let k = Identifier::new("k");
-    let two = walk(&Identifier::new("r"), &[&i, &j], &[&i]);
-    let one = walk(&Identifier::new("r2"), &[&k], &[&k]);
+    let two = build_walk_realization(&Identifier::new("r"), &[&i, &j], &[&i]);
+    let one = build_walk_realization(&Identifier::new("r2"), &[&k], &[&k]);
 
-    assert_eq!(alpha_at(level, &two, &one), [false, false]);
+    assert_eq!(compare_alpha_at(level, &two, &one), [false, false]);
 }
 
 #[test]
 fn realizations_binding_different_numbers_of_axes_are_not_structurally_equivalent() {
     let name = Identifier::new("r");
     let (i, j) = (Identifier::new("i"), Identifier::new("j"));
-    let two = walk(&name, &[&i, &j], &[&i]);
-    let one = walk(&name, &[&i], &[&i]);
+    let two = build_walk_realization(&name, &[&i, &j], &[&i]);
+    let one = build_walk_realization(&name, &[&i], &[&i]);
 
-    assert_eq!(structural_alternatives(&two, &one), [false, false]);
+    assert_eq!(compare_structural_alternatives(&two, &one), [false, false]);
 }
 
 // ---------------------------------------------------------------------------
@@ -797,10 +828,10 @@ fn realizations_binding_different_numbers_of_axes_are_not_structurally_equivalen
 #[case::in_a_space(Level::InSpace)]
 fn a_free_identifier_in_the_order_does_not_match_an_axis_of_the_same_name(#[case] level: Level) {
     let (i, z) = (Identifier::new("i"), Identifier::new("z"));
-    let free = walk(&Identifier::new("r"), &[&i], &[&z]);
-    let bound = walk(&Identifier::new("r2"), &[&z], &[&z]);
+    let free = build_walk_realization(&Identifier::new("r"), &[&i], &[&z]);
+    let bound = build_walk_realization(&Identifier::new("r2"), &[&z], &[&z]);
 
-    assert_eq!(alpha_at(level, &free, &bound), [false, false]);
+    assert_eq!(compare_alpha_at(level, &free, &bound), [false, false]);
 }
 
 #[rstest]
@@ -813,10 +844,10 @@ fn the_same_free_identifier_in_both_orders_matches(#[case] level: Level) {
         Identifier::new("i2"),
         Identifier::new("z"),
     );
-    let left = walk(&Identifier::new("r"), &[&i], &[&z]);
-    let right = walk(&Identifier::new("r2"), &[&i2], &[&z]);
+    let left = build_walk_realization(&Identifier::new("r"), &[&i], &[&z]);
+    let right = build_walk_realization(&Identifier::new("r2"), &[&i2], &[&z]);
 
-    assert_eq!(alpha_at(level, &left, &right), [true, true]);
+    assert_eq!(compare_alpha_at(level, &left, &right), [true, true]);
 }
 
 // ---------------------------------------------------------------------------
@@ -825,7 +856,7 @@ fn the_same_free_identifier_in_both_orders_matches(#[case] level: Level) {
 
 /// Return the space `space` whose one choice holds a realization binding
 /// `axis`, walking `[axis]`, and holding a tile knob over `symbol`.
-fn framed_space(space: &str, axis: &Identifier, symbol: &Identifier) -> Space {
+fn build_framed_space(space: &str, axis: &Identifier, symbol: &Identifier) -> Space {
     let knob = TileKnob::part(&Identifier::new("t"), int_param(&[1, 2]), &[symbol]);
     let realization =
         Realization::new(&Identifier::new("r"), vec![knob], &[axis], &[axis], 0).into_part();
@@ -839,11 +870,11 @@ fn framed_space(space: &str, axis: &Identifier, symbol: &Identifier) -> Space {
 #[test]
 fn a_knob_over_an_axis_matches_a_relabeled_copy_over_the_relabeled_axis() {
     let (i, i2) = (Identifier::new("i"), Identifier::new("i2"));
-    let left = framed_space("s", &i, &i);
-    let right = framed_space("s2", &i2, &i2);
+    let left = build_framed_space("s", &i, &i);
+    let right = build_framed_space("s2", &i2, &i2);
 
     assert_eq!(
-        both(&left, &right, AlphaEquivalence::is_alpha_equivalent),
+        compare_both_ways(&left, &right, AlphaEquivalence::is_alpha_equivalent),
         [true, true]
     );
 }
@@ -855,11 +886,11 @@ fn a_knob_over_an_axis_does_not_match_a_copy_over_a_free_identifier() {
         Identifier::new("i2"),
         Identifier::new("k"),
     );
-    let left = framed_space("s", &i, &i);
-    let right = framed_space("s2", &i2, &k);
+    let left = build_framed_space("s", &i, &i);
+    let right = build_framed_space("s2", &i2, &k);
 
     assert_eq!(
-        both(&left, &right, AlphaEquivalence::is_alpha_equivalent),
+        compare_both_ways(&left, &right, AlphaEquivalence::is_alpha_equivalent),
         [false, false]
     );
 }
@@ -871,11 +902,11 @@ fn a_knob_over_a_free_identifier_matches_a_copy_over_the_same_one() {
         Identifier::new("i2"),
         Identifier::new("z"),
     );
-    let left = framed_space("s", &i, &z);
-    let right = framed_space("s2", &i2, &z);
+    let left = build_framed_space("s", &i, &z);
+    let right = build_framed_space("s2", &i2, &z);
 
     assert_eq!(
-        both(&left, &right, AlphaEquivalence::is_alpha_equivalent),
+        compare_both_ways(&left, &right, AlphaEquivalence::is_alpha_equivalent),
         [true, true]
     );
 }
@@ -892,7 +923,7 @@ fn choice_new_refuses_an_axis_equal_to_the_name_of_a_variable_of_its_realization
 
     let result = Choice::new(Identifier::new("c"), vec![realization.into_part()]);
 
-    assert_eq!(duplicate_name(result), axis);
+    assert_eq!(find_duplicate_name(result), axis);
 }
 
 #[test]
@@ -902,19 +933,22 @@ fn choice_new_refuses_an_axis_equal_to_the_name_of_another_alternative() {
         Identifier::new("c"),
         vec![
             bare_alternative(&other),
-            walk(&Identifier::new("r"), &[&other], &[]),
+            build_walk_realization(&Identifier::new("r"), &[&other], &[]),
         ],
     );
 
-    assert_eq!(duplicate_name(result), other);
+    assert_eq!(find_duplicate_name(result), other);
 }
 
 #[test]
 fn choice_new_refuses_an_axis_equal_to_the_name_of_its_own_alternative() {
     let name = Identifier::new("r");
-    let result = Choice::new(Identifier::new("c"), vec![walk(&name, &[&name], &[])]);
+    let result = Choice::new(
+        Identifier::new("c"),
+        vec![build_walk_realization(&name, &[&name], &[])],
+    );
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 #[test]
@@ -922,10 +956,10 @@ fn choice_new_refuses_an_axis_equal_to_the_name_of_the_choice() {
     let name = Identifier::new("c");
     let result = Choice::new(
         name.clone(),
-        vec![walk(&Identifier::new("r"), &[&name], &[])],
+        vec![build_walk_realization(&Identifier::new("r"), &[&name], &[])],
     );
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 #[test]
@@ -933,7 +967,7 @@ fn space_new_refuses_an_axis_equal_to_the_name_of_a_top_level_variable() {
     let axis = Identifier::new("i");
     let choice = choice_of(
         &Identifier::new("c"),
-        vec![walk(&Identifier::new("r"), &[&axis], &[])],
+        vec![build_walk_realization(&Identifier::new("r"), &[&axis], &[])],
     );
     let result = Space::new(
         Identifier::new("s"),
@@ -943,7 +977,7 @@ fn space_new_refuses_an_axis_equal_to_the_name_of_a_top_level_variable() {
         Vec::new(),
     );
 
-    assert_eq!(duplicate_name(result), axis);
+    assert_eq!(find_duplicate_name(result), axis);
 }
 
 #[test]
@@ -951,7 +985,7 @@ fn space_new_refuses_an_axis_equal_to_the_name_of_the_space() {
     let name = Identifier::new("s");
     let choice = choice_of(
         &Identifier::new("c"),
-        vec![walk(&Identifier::new("r"), &[&name], &[])],
+        vec![build_walk_realization(&Identifier::new("r"), &[&name], &[])],
     );
     let result = Space::new(
         name.clone(),
@@ -961,7 +995,7 @@ fn space_new_refuses_an_axis_equal_to_the_name_of_the_space() {
         Vec::new(),
     );
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,7 +1034,12 @@ fn choices_holding_equal_realizations_are_equal_and_hash_alike() {
         Identifier::new("r"),
         Identifier::new("i"),
     );
-    let build = |tag: i64| choice_of(&choice, vec![tagged(&name, &[&axis], &[&axis], tag)]);
+    let build = |tag: i64| {
+        choice_of(
+            &choice,
+            vec![build_tagged_realization(&name, &[&axis], &[&axis], tag)],
+        )
+    };
     let left = build(1);
     let right = build(1);
     let other = build(2);
@@ -1040,7 +1079,7 @@ fn a_tile_knob_is_never_equal_to_a_plain_variable() {
 #[test]
 fn a_realization_is_never_equal_to_a_plain_alternative() {
     let name = Identifier::new("a");
-    let realization = walk(&name, &[], &[]);
+    let realization = build_walk_realization(&name, &[], &[]);
     let plain: Part<dyn Alternative> = Part::new(
         PlainAlternative::new(name, Vec::new(), Vec::new()).expect("the names are distinct"),
     );
@@ -1079,8 +1118,8 @@ impl SpaceNames {
 
 /// Return the space of a choice between a realization binding one axis
 /// and a plain alternative, and a tile knob over that axis.
-fn implementor_space(names: &SpaceNames) -> Space {
-    let realization = walk(&names.realization, &[&names.axis], &[&names.axis]);
+fn build_implementor_space(names: &SpaceNames) -> Space {
+    let realization = build_walk_realization(&names.realization, &[&names.axis], &[&names.axis]);
     let choice = choice_of(
         &names.choice,
         vec![realization, bare_alternative(&names.plain)],
@@ -1090,7 +1129,11 @@ fn implementor_space(names: &SpaceNames) -> Space {
 }
 
 /// Return the entries choosing `alternative` and giving the knob `size`.
-fn entries(names: &SpaceNames, alternative: &Identifier, size: i64) -> [(Identifier, Value); 2] {
+fn build_entries(
+    names: &SpaceNames,
+    alternative: &Identifier,
+    size: i64,
+) -> [(Identifier, Value); 2] {
     [
         (names.choice.clone(), chosen(alternative)),
         (names.knob.clone(), int(size)),
@@ -1100,11 +1143,11 @@ fn entries(names: &SpaceNames, alternative: &Identifier, size: i64) -> [(Identif
 #[test]
 fn corresponding_configurations_of_relabeled_implementor_spaces_have_equal_keys() {
     let (left, right) = (SpaceNames::fresh("_l"), SpaceNames::fresh("_r"));
-    let left_space = implementor_space(&left);
-    let right_space = implementor_space(&right);
+    let left_space = build_implementor_space(&left);
+    let right_space = build_implementor_space(&right);
 
-    let left_key = configure(&left_space, entries(&left, &left.realization, 2)).key();
-    let right_key = configure(&right_space, entries(&right, &right.realization, 2)).key();
+    let left_key = configure(&left_space, build_entries(&left, &left.realization, 2)).key();
+    let right_key = configure(&right_space, build_entries(&right, &right.realization, 2)).key();
 
     assert_eq!(left_key, right_key);
 }
@@ -1112,11 +1155,11 @@ fn corresponding_configurations_of_relabeled_implementor_spaces_have_equal_keys(
 #[test]
 fn different_configurations_of_an_implementor_space_have_different_keys() {
     let names = SpaceNames::fresh("");
-    let space = implementor_space(&names);
+    let space = build_implementor_space(&names);
 
-    let realized = configure(&space, entries(&names, &names.realization, 2)).key();
-    let plain = configure(&space, entries(&names, &names.plain, 2)).key();
-    let resized = configure(&space, entries(&names, &names.realization, 3)).key();
+    let realized = configure(&space, build_entries(&names, &names.realization, 2)).key();
+    let plain = configure(&space, build_entries(&names, &names.plain, 2)).key();
+    let resized = configure(&space, build_entries(&names, &names.realization, 3)).key();
 
     assert_ne!(realized, plain);
     assert_ne!(realized, resized);
@@ -1183,7 +1226,7 @@ mod conformance {
     }
 
     /// Return the structural hook's verdict on tags `left` and `right`.
-    fn structural_verdict(flaw: Flaw, left: i64, right: i64) -> Result<bool, BoxError> {
+    fn compute_structural_verdict(flaw: Flaw, left: i64, right: i64) -> Result<bool, BoxError> {
         match flaw {
             Flaw::NonReflexive => Ok(false),
             Flaw::StructuralWithoutAlpha => Ok(true),
@@ -1194,7 +1237,7 @@ mod conformance {
     }
 
     /// Return the alpha hook's verdict on tags `left` and `right`.
-    fn alpha_verdict(flaw: Flaw, left: i64, right: i64) -> bool {
+    fn compute_alpha_verdict(flaw: Flaw, left: i64, right: i64) -> bool {
         match flaw {
             Flaw::Asymmetric => left <= right,
             _ => left == right,
@@ -1202,7 +1245,7 @@ mod conformance {
     }
 
     /// Return the kind a flawed value of `own` answers.
-    fn kind_of(flaw: Flaw, own: &str, plain: &str, borrowed: &str, tag: i64) -> String {
+    fn compute_kind(flaw: Flaw, own: &str, plain: &str, borrowed: &str, tag: i64) -> String {
         match flaw {
             Flaw::EmptyKind => String::new(),
             Flaw::PlainKind => plain.to_owned(),
@@ -1222,7 +1265,7 @@ mod conformance {
     }
 
     /// Return the foreign part of `payload`, under `type_id`.
-    fn foreign_of(type_id: &str, payload: &FlawedPayload) -> Result<Foreign, ForeignError> {
+    fn build_foreign(type_id: &str, payload: &FlawedPayload) -> Result<Foreign, ForeignError> {
         let data = serde_json::to_string(payload).map_err(|error| ForeignError::Failed {
             type_id: type_id.to_owned(),
             source: Box::new(error),
@@ -1231,7 +1274,7 @@ mod conformance {
     }
 
     /// Return the payload `foreign` holds.
-    fn payload_of(foreign: &Foreign) -> Result<FlawedPayload, ForeignError> {
+    fn read_payload(foreign: &Foreign) -> Result<FlawedPayload, ForeignError> {
         serde_json::from_str(foreign.data()).map_err(|error| ForeignError::Failed {
             type_id: foreign.type_id().to_owned(),
             source: Box::new(error),
@@ -1273,7 +1316,7 @@ mod conformance {
             } else {
                 self.kind().into_owned()
             };
-            foreign_of(
+            build_foreign(
                 &type_id,
                 &FlawedPayload {
                     name: self.names[0].clone(),
@@ -1287,7 +1330,7 @@ mod conformance {
 
     impl Variable for FlawedVariable {
         fn kind(&self) -> Cow<'_, str> {
-            Cow::Owned(kind_of(
+            Cow::Owned(compute_kind(
                 self.flaw,
                 FLAWED_VARIABLE,
                 PlainVariable::KIND,
@@ -1323,7 +1366,7 @@ mod conformance {
             let Some(other) = other.as_any().downcast_ref::<Self>() else {
                 return Ok(false);
             };
-            structural_verdict(self.flaw, self.tag, other.tag)
+            compute_structural_verdict(self.flaw, self.tag, other.tag)
         }
 
         fn is_extension_alpha_equivalent_under(
@@ -1334,7 +1377,7 @@ mod conformance {
             let Some(other) = other.as_any().downcast_ref::<Self>() else {
                 return Ok(false);
             };
-            Ok(alpha_verdict(self.flaw, self.tag, other.tag))
+            Ok(compute_alpha_verdict(self.flaw, self.tag, other.tag))
         }
     }
 
@@ -1374,7 +1417,7 @@ mod conformance {
             } else {
                 self.kind().into_owned()
             };
-            foreign_of(
+            build_foreign(
                 &type_id,
                 &FlawedPayload {
                     name: self.names[0].clone(),
@@ -1388,7 +1431,7 @@ mod conformance {
 
     impl Alternative for FlawedAlternative {
         fn kind(&self) -> Cow<'_, str> {
-            Cow::Owned(kind_of(
+            Cow::Owned(compute_kind(
                 self.flaw,
                 FLAWED_ALTERNATIVE,
                 PlainAlternative::KIND,
@@ -1428,7 +1471,7 @@ mod conformance {
             let Some(other) = other.as_any().downcast_ref::<Self>() else {
                 return Ok(false);
             };
-            structural_verdict(self.flaw, self.tag, other.tag)
+            compute_structural_verdict(self.flaw, self.tag, other.tag)
         }
 
         fn is_extension_alpha_equivalent_under(
@@ -1439,7 +1482,7 @@ mod conformance {
             let Some(other) = other.as_any().downcast_ref::<Self>() else {
                 return Ok(false);
             };
-            Ok(alpha_verdict(self.flaw, self.tag, other.tag))
+            Ok(compute_alpha_verdict(self.flaw, self.tag, other.tag))
         }
     }
 
@@ -1513,7 +1556,7 @@ mod conformance {
 
     impl Resolve<Part<dyn Variable>> for FlawedResolver {
         fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
-            let payload = payload_of(foreign)?;
+            let payload = read_payload(foreign)?;
             let param = payload.param.ok_or_else(|| ForeignError::Failed {
                 type_id: foreign.type_id().to_owned(),
                 source: BoxError::from("a variable payload holds a param"),
@@ -1529,7 +1572,7 @@ mod conformance {
 
     impl Resolve<Part<dyn Alternative>> for FlawedResolver {
         fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
-            let payload = payload_of(foreign)?;
+            let payload = read_payload(foreign)?;
             Ok(Part::new(FlawedAlternative::build(
                 self.flaw,
                 payload.name,
@@ -1540,7 +1583,7 @@ mod conformance {
     }
 
     /// Return three flawed variables of tags 1, 2 and 1, under fresh names.
-    fn flawed_variables(flaw: Flaw) -> Vec<Part<dyn Variable>> {
+    fn build_flawed_variables(flaw: Flaw) -> Vec<Part<dyn Variable>> {
         [1, 2, 1]
             .into_iter()
             .map(|tag| {
@@ -1556,7 +1599,7 @@ mod conformance {
 
     /// Return three flawed alternatives of tags 1, 2 and 1, each binding
     /// two fresh identifiers, or one twice for [`Flaw::RepeatedBound`].
-    fn flawed_alternatives(flaw: Flaw) -> Vec<Part<dyn Alternative>> {
+    fn build_flawed_alternatives(flaw: Flaw) -> Vec<Part<dyn Alternative>> {
         [1, 2, 1]
             .into_iter()
             .map(|tag| {
@@ -1581,7 +1624,7 @@ mod conformance {
     /// # Panics
     ///
     /// Panics if they conform.
-    fn variable_violation<R: Resolve<Part<dyn Variable>>>(
+    fn find_variable_violation<R: Resolve<Part<dyn Variable>>>(
         samples: &[Part<dyn Variable>],
         resolver: &R,
     ) -> fhy_core::search_space::testing::ConformanceViolation {
@@ -1596,7 +1639,7 @@ mod conformance {
     /// # Panics
     ///
     /// Panics if they conform.
-    fn alternative_violation<R: Resolve<Part<dyn Alternative>>>(
+    fn find_alternative_violation<R: Resolve<Part<dyn Alternative>>>(
         samples: &[Part<dyn Alternative>],
         resolver: &R,
     ) -> fhy_core::search_space::testing::ConformanceViolation {
@@ -1645,7 +1688,7 @@ mod conformance {
 
     #[test]
     fn a_flawed_variable_without_its_flaw_conforms() {
-        let samples = flawed_variables(Flaw::Sound);
+        let samples = build_flawed_variables(Flaw::Sound);
 
         let result = check_variable_conformance(&samples, &FlawedResolver::faithful(Flaw::Sound));
 
@@ -1654,7 +1697,7 @@ mod conformance {
 
     #[test]
     fn a_flawed_alternative_without_its_flaw_conforms() {
-        let samples = flawed_alternatives(Flaw::Sound);
+        let samples = build_flawed_alternatives(Flaw::Sound);
 
         let result =
             check_alternative_conformance(&samples, &FlawedResolver::faithful(Flaw::Sound));
@@ -1683,9 +1726,9 @@ mod conformance {
         #[case] clause: ContractClause,
         #[case] kind: &str,
     ) {
-        let samples = flawed_variables(flaw);
+        let samples = build_flawed_variables(flaw);
 
-        let violation = variable_violation(&samples, &FlawedResolver::faithful(flaw));
+        let violation = find_variable_violation(&samples, &FlawedResolver::faithful(flaw));
 
         assert_eq!(violation.clause(), clause);
         assert_eq!(violation.kind(), kind);
@@ -1693,9 +1736,10 @@ mod conformance {
 
     #[test]
     fn a_variable_answering_a_kind_per_sample_breaks_the_unique_kind_clause() {
-        let samples = flawed_variables(Flaw::KindPerTag);
+        let samples = build_flawed_variables(Flaw::KindPerTag);
 
-        let violation = variable_violation(&samples, &FlawedResolver::faithful(Flaw::KindPerTag));
+        let violation =
+            find_variable_violation(&samples, &FlawedResolver::faithful(Flaw::KindPerTag));
 
         assert_eq!(violation.clause(), ContractClause::UniqueKind);
         assert!(
@@ -1711,9 +1755,9 @@ mod conformance {
             TileKnob::part(&Identifier::new("a"), int_param(&[1]), &[]),
             TileKnob::part(&Identifier::new("b"), int_param(&[1]), &[]),
         ];
-        samples.extend(flawed_variables(Flaw::BorrowedKind));
+        samples.extend(build_flawed_variables(Flaw::BorrowedKind));
 
-        let violation = variable_violation(&samples, &ImplementorResolver);
+        let violation = find_variable_violation(&samples, &ImplementorResolver);
 
         assert_eq!(violation.clause(), ContractClause::UniqueKind);
         assert_eq!(violation.kind(), TILE_KNOB);
@@ -1731,7 +1775,7 @@ mod conformance {
             })
             .collect();
 
-        let violation = variable_violation(&samples, &FlawedResolver::faithful(Flaw::Sound));
+        let violation = find_variable_violation(&samples, &FlawedResolver::faithful(Flaw::Sound));
 
         assert_eq!(violation.clause(), ContractClause::WireForm);
         assert_eq!(violation.kind(), UNSERIALIZABLE);
@@ -1739,13 +1783,13 @@ mod conformance {
 
     #[test]
     fn a_resolver_rebuilding_a_variable_that_is_not_equivalent_breaks_the_wire_form_clause() {
-        let samples = flawed_variables(Flaw::Sound);
+        let samples = build_flawed_variables(Flaw::Sound);
         let lossy = FlawedResolver {
             flaw: Flaw::Sound,
             tag_shift: 1,
         };
 
-        let violation = variable_violation(&samples, &lossy);
+        let violation = find_variable_violation(&samples, &lossy);
 
         assert_eq!(violation.clause(), ContractClause::WireForm);
         assert_eq!(violation.kind(), FLAWED_VARIABLE);
@@ -1785,9 +1829,9 @@ mod conformance {
         #[case] clause: ContractClause,
         #[case] kind: &str,
     ) {
-        let samples = flawed_alternatives(flaw);
+        let samples = build_flawed_alternatives(flaw);
 
-        let violation = alternative_violation(&samples, &FlawedResolver::faithful(flaw));
+        let violation = find_alternative_violation(&samples, &FlawedResolver::faithful(flaw));
 
         assert_eq!(violation.clause(), clause);
         assert_eq!(violation.kind(), kind);
@@ -1800,9 +1844,9 @@ mod conformance {
             Realization::new(&Identifier::new("r"), Vec::new(), &[&i], &[&i], 1).into_part(),
             Realization::new(&Identifier::new("q"), Vec::new(), &[&j], &[&j], 1).into_part(),
         ];
-        samples.extend(flawed_alternatives(Flaw::BorrowedKind));
+        samples.extend(build_flawed_alternatives(Flaw::BorrowedKind));
 
-        let violation = alternative_violation(&samples, &ImplementorResolver);
+        let violation = find_alternative_violation(&samples, &ImplementorResolver);
 
         assert_eq!(violation.clause(), ContractClause::UniqueKind);
         assert_eq!(violation.kind(), REALIZATION);
@@ -1819,7 +1863,8 @@ mod conformance {
             })
             .collect();
 
-        let violation = alternative_violation(&samples, &FlawedResolver::faithful(Flaw::Sound));
+        let violation =
+            find_alternative_violation(&samples, &FlawedResolver::faithful(Flaw::Sound));
 
         assert_eq!(violation.clause(), ContractClause::WireForm);
         assert_eq!(violation.kind(), UNSERIALIZABLE);
@@ -1827,13 +1872,13 @@ mod conformance {
 
     #[test]
     fn a_resolver_rebuilding_an_alternative_that_is_not_equivalent_breaks_the_wire_form_clause() {
-        let samples = flawed_alternatives(Flaw::Sound);
+        let samples = build_flawed_alternatives(Flaw::Sound);
         let lossy = FlawedResolver {
             flaw: Flaw::Sound,
             tag_shift: 1,
         };
 
-        let violation = alternative_violation(&samples, &lossy);
+        let violation = find_alternative_violation(&samples, &lossy);
 
         assert_eq!(violation.clause(), ContractClause::WireForm);
         assert_eq!(violation.kind(), FLAWED_ALTERNATIVE);
@@ -1850,9 +1895,9 @@ mod conformance {
         #[case] flaw: Flaw,
         #[case] number: u8,
     ) {
-        let samples = flawed_variables(flaw);
+        let samples = build_flawed_variables(flaw);
 
-        let violation = variable_violation(&samples, &FlawedResolver::faithful(flaw));
+        let violation = find_variable_violation(&samples, &FlawedResolver::faithful(flaw));
 
         let expected = format!(
             "the implementation of kind `{}` breaks clause {number}: ",
@@ -1867,10 +1912,10 @@ mod conformance {
 
     #[test]
     fn a_violation_of_the_distinct_bound_identifiers_names_clause_3() {
-        let samples = flawed_alternatives(Flaw::RepeatedBound);
+        let samples = build_flawed_alternatives(Flaw::RepeatedBound);
 
         let violation =
-            alternative_violation(&samples, &FlawedResolver::faithful(Flaw::RepeatedBound));
+            find_alternative_violation(&samples, &FlawedResolver::faithful(Flaw::RepeatedBound));
 
         let expected =
             format!("the implementation of kind `{FLAWED_ALTERNATIVE}` breaks clause 3: ");

@@ -68,14 +68,14 @@ impl Built {
 }
 
 /// Return the integer `json` holds.
-fn index(json: &Json) -> usize {
+fn read_index(json: &Json) -> usize {
     usize::try_from(json.as_u64().expect("an index")).expect("a small index")
 }
 
 /// Return the value of the member `json` with `pool`'s identifiers.
-fn member_value(json: &Json, pool: &[Identifier]) -> Value {
+fn read_member_value(json: &Json, pool: &[Identifier]) -> Value {
     if let Some(label) = json.get("label") {
-        return Value::Identifier(pool[index(label)].clone());
+        return Value::Identifier(pool[read_index(label)].clone());
     }
     if let Some(value) = json.get("bool") {
         return Value::Bool(value.as_bool().expect("a Boolean"));
@@ -84,24 +84,24 @@ fn member_value(json: &Json, pool: &[Identifier]) -> Value {
 }
 
 /// Return the values of the members `json` lists.
-fn member_values(json: &Json, pool: &[Identifier]) -> Vec<Value> {
+fn read_member_values(json: &Json, pool: &[Identifier]) -> Vec<Value> {
     json.as_array()
         .expect("a list of members")
         .iter()
-        .map(|member| member_value(member, pool))
+        .map(|member| read_member_value(member, pool))
         .collect()
 }
 
 /// Return the param of the knob `json`, whose variable is its param's
 /// label.
 fn build_param(json: &Json, pool: &[Identifier]) -> Param {
-    let variable = pool[index(&json["param"])].clone();
+    let variable = pool[read_index(&json["param"])].clone();
     let constraints: Vec<Constraint> = json["kept"]
         .as_array()
         .map(|_| {
             Constraint::from(SetConstraint::new(
                 variable.clone(),
-                member_set(member_values(&json["kept"], pool)),
+                member_set(read_member_values(&json["kept"], pool)),
                 Polarity::In,
             ))
         })
@@ -110,7 +110,7 @@ fn build_param(json: &Json, pool: &[Identifier]) -> Param {
     let solver = Solver::new();
     Param::new(
         ParamDomain::from(
-            CategoricalDomain::new(member_values(&json["categories"], pool))
+            CategoricalDomain::new(read_member_values(&json["categories"], pool))
                 .expect("the categories are valid"),
         ),
         variable,
@@ -122,7 +122,7 @@ fn build_param(json: &Json, pool: &[Identifier]) -> Param {
 
 /// Return what the port makes of the point `json`.
 fn build_point(json: &Json, pool: &[Identifier]) -> Built {
-    let name = |key: &str| pool[index(&json[key])].clone();
+    let name = |key: &str| pool[read_index(&json[key])].clone();
     let mut alternatives: Vec<Part<dyn Alternative>> = Vec::new();
     for option in json["options"].as_array().expect("a list of options") {
         let variables: Vec<Part<dyn Variable>> = option["knobs"]
@@ -131,14 +131,16 @@ fn build_point(json: &Json, pool: &[Identifier]) -> Built {
             .iter()
             .map(|knob| {
                 Part::new(PlainVariable::new(
-                    pool[index(&knob["name"])].clone(),
+                    pool[read_index(&knob["name"])].clone(),
                     build_param(knob, pool),
                 ))
             })
             .collect();
-        let Ok(alternative) =
-            PlainAlternative::new(pool[index(&option["name"])].clone(), variables, Vec::new())
-        else {
+        let Ok(alternative) = PlainAlternative::new(
+            pool[read_index(&option["name"])].clone(),
+            variables,
+            Vec::new(),
+        ) else {
             return Built::SpaceRefused;
         };
         alternatives.push(Part::new(alternative));
@@ -159,10 +161,13 @@ fn build_point(json: &Json, pool: &[Identifier]) -> Built {
     if let Some(selection) = json["selection"].as_object() {
         entries.push((
             name("choice"),
-            Value::Identifier(pool[index(&selection["option"])].clone()),
+            Value::Identifier(pool[read_index(&selection["option"])].clone()),
         ));
         for pair in selection["values"].as_array().expect("a list of values") {
-            entries.push((pool[index(&pair[0])].clone(), member_value(&pair[1], pool)));
+            entries.push((
+                pool[read_index(&pair[0])].clone(),
+                read_member_value(&pair[1], pool),
+            ));
         }
     }
     let solver = ground_solver();
@@ -174,7 +179,7 @@ fn build_point(json: &Json, pool: &[Identifier]) -> Built {
 
 /// Return whether `left` and `right` are related by `relation`, in each
 /// direction.
-fn both_ways(
+fn compare_both_ways(
     left: &Configuration,
     right: &Configuration,
     relation: impl Fn(&Configuration, &Configuration) -> bool,
@@ -184,7 +189,7 @@ fn both_ways(
 
 /// Return the outcome the oracle's answer `outcome` stands for when the
 /// port's is compared with it: built or refused.
-fn as_built_or_refused(outcome: &Json) -> &str {
+fn classify_outcome(outcome: &Json) -> &str {
     match outcome.as_str().expect("an outcome") {
         "built" => "built",
         _ => "refused",
@@ -252,11 +257,11 @@ fn replay_case(case: &Json) -> Vec<String> {
     if let (Some(Built::Configuration(left)), Some(Built::Configuration(right))) =
         (built.get("left"), built.get("right"))
     {
-        let structural = both_ways(left, right, |left, right| {
+        let structural = compare_both_ways(left, right, |left, right| {
             left.is_structurally_equivalent(right)
                 .expect("plain parts compare")
         });
-        let alpha = both_ways(left, right, |left, right| {
+        let alpha = compare_both_ways(left, right, |left, right| {
             left.is_alpha_equivalent(right)
                 .expect("plain parts compare")
         });
@@ -270,8 +275,7 @@ fn replay_case(case: &Json) -> Vec<String> {
 
     if case["divergence"].is_null() {
         let sides_agree = ["left", "right"].into_iter().all(|side| {
-            case[side].is_null()
-                || as_built_or_refused(&oracle[side]) == as_built_or_refused(&port[side])
+            case[side].is_null() || classify_outcome(&oracle[side]) == classify_outcome(&port[side])
         });
         if !sides_agree
             || oracle.get("structural") != port.get("structural")

@@ -30,8 +30,8 @@ use crate::support::constraint::{TestCustom, int};
 use crate::support::param::{in_set, less_than};
 use crate::support::search_space::{
     Realization, TileKnob, bare_alternative, categorical, categorical_of, categorical_where,
-    choice_of, chooses, chosen, condition, configure, forbidden, int_param, int_values,
-    plain_alternative, plain_variable,
+    choice_of, chooses, chosen, compare_alpha_both_ways, condition, configure, forbidden,
+    int_param, int_values, plain_alternative, plain_variable,
 };
 
 /// The names of the standard space.
@@ -166,24 +166,9 @@ fn build_standard(labels: &Labels, params: &Params, shape: &Shape) -> Space {
     )
 }
 
-/// Return whether `left` and `right` are alpha-equivalent, in each
-/// direction.
-fn alpha_both_ways<T: AlphaEquivalence<Error = EquivalenceError>>(
-    left: &T,
-    right: &T,
-) -> [bool; 2] {
-    [
-        left.is_alpha_equivalent(right)
-            .expect("the comparison succeeds"),
-        right
-            .is_alpha_equivalent(left)
-            .expect("the comparison succeeds"),
-    ]
-}
-
 /// Return whether the spaces `left` and `right` are structurally
 /// equivalent, in each direction.
-fn structural_both_ways(left: &Space, right: &Space) -> [bool; 2] {
+fn compare_structural_both_ways(left: &Space, right: &Space) -> [bool; 2] {
     [
         left.is_structurally_equivalent(right)
             .expect("the comparison succeeds"),
@@ -278,8 +263,8 @@ fn spaces_built_apart_from_one_description_are_structurally_equivalent() {
     let left = build_standard(&labels, &params, &Shape::standard());
     let right = build_standard(&labels, &params, &Shape::standard());
 
-    assert_eq!(structural_both_ways(&left, &right), [true, true]);
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[rstest]
@@ -304,7 +289,7 @@ fn structural_equivalence_discriminates_a_perturbed_field(#[case] field: &str) {
     let left = build_standard(&labels, &params, &Shape::standard());
     let right = build_standard(&perturbed_labels, &perturbed_params, &shape);
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[rstest]
@@ -326,7 +311,7 @@ fn alpha_equivalence_discriminates_a_perturbed_field_of_a_relabeled_space(#[case
     let left = build_standard(&Labels::fresh(), &Params::new(), &Shape::standard());
     let right = build_standard(&Labels::fresh(), &params, &shape);
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,8 +331,8 @@ fn relabeled_spaces_are_alpha_equivalent_but_not_structurally(#[case] reversed: 
     let left = build_standard(&Labels::fresh(), &Params::new(), &Shape::standard());
     let right = build_standard(&other, &Params::new(), &Shape::standard());
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -375,7 +360,7 @@ fn relabeled_conditions_with_several_members_correspond_in_any_canonical_order()
     let right = build(&backward);
 
     assert_eq!(
-        alpha_both_ways(&left, &right),
+        compare_alpha_both_ways(&left, &right),
         [true, true],
         "the systems sort by ids, which the relabeling reverses"
     );
@@ -401,7 +386,7 @@ fn relabeled_equation_conditions_are_alpha_equivalent() {
 
     let (left, right) = (build(), build());
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -429,7 +414,7 @@ fn equation_conditions_with_swapped_operands_are_not_alpha_equivalent() {
 
     let (left, right) = (build(false), build(true));
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -452,7 +437,7 @@ fn conditions_on_corresponding_targets_only_correspond() {
 
     let (left, right) = (build(true), build(false));
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -481,8 +466,8 @@ fn forbidden_clauses_correspond_in_order() {
 
     let (left, same, reversed) = (build(false), build(false), build(true));
 
-    assert_eq!(alpha_both_ways(&left, &same), [true, true]);
-    assert_eq!(alpha_both_ways(&left, &reversed), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &same), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &reversed), [false, false]);
 }
 
 #[test]
@@ -502,8 +487,11 @@ fn spaces_of_different_shapes_are_not_equivalent_without_an_error() {
     )
     .expect("the space is valid");
 
-    assert_eq!(alpha_both_ways(&standard, &larger), [false, false]);
-    assert_eq!(structural_both_ways(&standard, &larger), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&standard, &larger), [false, false]);
+    assert_eq!(
+        compare_structural_both_ways(&standard, &larger),
+        [false, false]
+    );
 }
 
 #[test]
@@ -558,9 +546,9 @@ fn audit_a1_relabeled_alternatives_are_equivalent_in_both_directions() {
 
     let (left, right) = (build(), build());
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
     assert_eq!(
-        alpha_both_ways(&left.choices()[0], &right.choices()[0]),
+        compare_alpha_both_ways(&left.choices()[0], &right.choices()[0]),
         [true, true],
         "the choice compared on its own agrees with the space"
     );
@@ -589,7 +577,7 @@ fn audit_a5_constraints_of_a_categorical_variable_count() {
 
     let (plain, narrowed) = (build(false), build(true));
 
-    assert_eq!(alpha_both_ways(&plain, &narrowed), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&plain, &narrowed), [false, false]);
 }
 
 #[rstest]
@@ -616,9 +604,12 @@ fn audit_a6_members_of_different_types_never_correspond(
     let (left_space, left_configuration) = build(&left_value);
     let (right_space, right_configuration) = build(&right_value);
 
-    assert_eq!(alpha_both_ways(&left_space, &right_space), [false, false]);
     assert_eq!(
-        alpha_both_ways(&left_configuration, &right_configuration),
+        compare_alpha_both_ways(&left_space, &right_space),
+        [false, false]
+    );
+    assert_eq!(
+        compare_alpha_both_ways(&left_configuration, &right_configuration),
         [false, false]
     );
 }
@@ -663,7 +654,7 @@ fn audit_a7_a_free_member_never_matches_a_bound_name() {
     )
     .expect("the space is valid");
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -698,7 +689,7 @@ fn members_naming_alternatives_correspond_to_the_relabeled_alternatives() {
     };
 
     assert_eq!(
-        alpha_both_ways(&left, &swapped),
+        compare_alpha_both_ways(&left, &swapped),
         [false, false],
         "y's categories name {{a, b}} on the left and {{b, c}} on the right"
     );
@@ -736,8 +727,8 @@ fn configuration_entries_correspond_under_the_space_frame() {
         ],
     );
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
-    assert_eq!(alpha_both_ways(&left, &mismatched), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &mismatched), [false, false]);
     assert_eq!(left.key(), right.key());
 }
 
@@ -764,7 +755,7 @@ fn configurations_over_unrelated_spaces_are_not_equivalent() {
     );
     let right = configure(&other, [(q.clone(), int(1))]);
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
     assert!(
         !left
             .is_structurally_equivalent(&right)
@@ -800,7 +791,7 @@ fn configurations_of_one_space_with_different_entries_are_not_equivalent(#[case]
         _ => unreachable!("unknown case {which}"),
     };
 
-    assert_eq!(alpha_both_ways(&base, &other), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&base, &other), [false, false]);
     assert!(
         !base
             .is_structurally_equivalent(&other)
@@ -825,7 +816,7 @@ fn configurations_of_relabeled_spaces_are_not_structurally_equivalent() {
             .is_structurally_equivalent(&right)
             .expect("plain parts")
     );
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 // ---------------------------------------------------------------------------
@@ -860,8 +851,8 @@ fn custom_conditions_correspond_through_their_own_alpha_equivalence() {
 
     let (left, same, other) = (build("one"), build("one"), build("two"));
 
-    assert_eq!(alpha_both_ways(&left, &same), [true, true]);
-    assert_eq!(alpha_both_ways(&left, &other), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &same), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &other), [false, false]);
 }
 
 /// A custom constraint naming one identifier whose alpha equivalence
@@ -962,7 +953,7 @@ fn realization_with_sub_choices_relabeled_is_alpha_equivalent() {
     let (left, right) = (build(), build());
 
     assert_eq!(
-        alpha_both_ways(&left, &right),
+        compare_alpha_both_ways(&left, &right),
         [true, true],
         "the knob two levels down names the realization's axis"
     );

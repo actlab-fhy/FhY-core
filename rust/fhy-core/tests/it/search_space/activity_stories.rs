@@ -30,7 +30,7 @@ use crate::support::search_space::{
 /// # Panics
 ///
 /// Panics if the space has no decision `name`.
-fn activity_of(configuration: &Configuration, name: &Identifier) -> Activity {
+fn find_activity_of(configuration: &Configuration, name: &Identifier) -> Activity {
     configuration
         .activity(name)
         .unwrap_or_else(|| panic!("{name:?} is a decision"))
@@ -104,8 +104,8 @@ fn top_level_decision_without_a_condition_is_active() {
 
     let empty = configure(&space, []);
 
-    assert_eq!(activity_of(&empty, &v), Activity::Active);
-    assert_eq!(activity_of(&empty, &c), Activity::Active);
+    assert_eq!(find_activity_of(&empty, &v), Activity::Active);
+    assert_eq!(find_activity_of(&empty, &c), Activity::Active);
 }
 
 #[test]
@@ -114,10 +114,10 @@ fn decision_under_an_unassigned_choice_is_pending() {
 
     let empty = configure(&n.space, []);
 
-    assert_eq!(activity_of(&empty, &n.c), Activity::Active);
-    assert_eq!(activity_of(&empty, &n.x), Activity::Pending);
-    assert_eq!(activity_of(&empty, &n.s), Activity::Pending);
-    assert_eq!(activity_of(&empty, &n.y), Activity::Pending);
+    assert_eq!(find_activity_of(&empty, &n.c), Activity::Active);
+    assert_eq!(find_activity_of(&empty, &n.x), Activity::Pending);
+    assert_eq!(find_activity_of(&empty, &n.s), Activity::Pending);
+    assert_eq!(find_activity_of(&empty, &n.y), Activity::Pending);
 }
 
 #[test]
@@ -126,10 +126,10 @@ fn decision_under_its_chosen_alternative_is_active() {
 
     let chose_a = configure(&n.space, [(n.c.clone(), chosen(&n.a))]);
 
-    assert_eq!(activity_of(&chose_a, &n.x), Activity::Active);
-    assert_eq!(activity_of(&chose_a, &n.s), Activity::Active);
+    assert_eq!(find_activity_of(&chose_a, &n.x), Activity::Active);
+    assert_eq!(find_activity_of(&chose_a, &n.s), Activity::Active);
     assert_eq!(
-        activity_of(&chose_a, &n.y),
+        find_activity_of(&chose_a, &n.y),
         Activity::Pending,
         "y waits for the sub-choice s"
     );
@@ -144,7 +144,7 @@ fn decision_under_a_chosen_sub_alternative_is_active() {
         [(n.c.clone(), chosen(&n.a)), (n.s.clone(), chosen(&n.b))],
     );
 
-    assert_eq!(activity_of(&chose_b, &n.y), Activity::Active);
+    assert_eq!(find_activity_of(&chose_b, &n.y), Activity::Active);
 }
 
 #[test]
@@ -153,10 +153,10 @@ fn decisions_under_another_alternative_are_inactive_at_every_depth() {
 
     let chose_other = configure(&n.space, [(n.c.clone(), chosen(&n.other))]);
 
-    assert_eq!(activity_of(&chose_other, &n.c), Activity::Active);
-    assert_eq!(activity_of(&chose_other, &n.x), Activity::Inactive);
-    assert_eq!(activity_of(&chose_other, &n.s), Activity::Inactive);
-    assert_eq!(activity_of(&chose_other, &n.y), Activity::Inactive);
+    assert_eq!(find_activity_of(&chose_other, &n.c), Activity::Active);
+    assert_eq!(find_activity_of(&chose_other, &n.x), Activity::Inactive);
+    assert_eq!(find_activity_of(&chose_other, &n.s), Activity::Inactive);
+    assert_eq!(find_activity_of(&chose_other, &n.y), Activity::Inactive);
 }
 
 #[rstest]
@@ -231,8 +231,8 @@ fn condition_on_a_choice_reads_the_chosen_alternative() {
     let chose_a = configure(&g.space, [(g.c.clone(), chosen(&g.a))]);
     let chose_b = configure(&g.space, [(g.c.clone(), chosen(&g.b))]);
 
-    assert_eq!(activity_of(&chose_a, &g.w), Activity::Active);
-    assert_eq!(activity_of(&chose_b, &g.w), Activity::Inactive);
+    assert_eq!(find_activity_of(&chose_a, &g.w), Activity::Active);
+    assert_eq!(find_activity_of(&chose_b, &g.w), Activity::Inactive);
 }
 
 #[test]
@@ -241,8 +241,8 @@ fn condition_naming_an_unassigned_active_decision_leaves_its_target_pending() {
 
     let empty = configure(&g.space, []);
 
-    assert_eq!(activity_of(&empty, &g.c), Activity::Active);
-    assert_eq!(activity_of(&empty, &g.w), Activity::Pending);
+    assert_eq!(find_activity_of(&empty, &g.c), Activity::Active);
+    assert_eq!(find_activity_of(&empty, &g.w), Activity::Pending);
 }
 
 #[rstest]
@@ -254,7 +254,7 @@ fn condition_on_a_variable_reads_its_value(#[case] value: i64, #[case] expected:
 
     let configuration = configure(&g.space, [(g.x.clone(), int(value))]);
 
-    assert_eq!(activity_of(&configuration, &g.w), expected);
+    assert_eq!(find_activity_of(&configuration, &g.w), expected);
 }
 
 #[test]
@@ -270,8 +270,8 @@ fn condition_holds_only_while_every_member_holds() {
         [(g.c.clone(), chosen(&g.a)), (g.x.clone(), int(3))],
     );
 
-    assert_eq!(activity_of(&both, &g.w), Activity::Active);
-    assert_eq!(activity_of(&one, &g.w), Activity::Inactive);
+    assert_eq!(find_activity_of(&both, &g.w), Activity::Active);
+    assert_eq!(find_activity_of(&one, &g.w), Activity::Inactive);
 }
 
 #[test]
@@ -295,8 +295,8 @@ fn conditions_on_one_target_conjoin() {
     let both = configure(&space, [(c.clone(), chosen(&a)), (x.clone(), int(1))]);
     let first_only = configure(&space, [(c.clone(), chosen(&a)), (x.clone(), int(2))]);
 
-    assert_eq!(activity_of(&both, &w), Activity::Active);
-    assert_eq!(activity_of(&first_only, &w), Activity::Inactive);
+    assert_eq!(find_activity_of(&both, &w), Activity::Active);
+    assert_eq!(find_activity_of(&first_only, &w), Activity::Inactive);
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn condition_naming_an_inactive_decision_is_false() {
     let chose_other = configure(&space, [(n.c.clone(), chosen(&n.other))]);
 
     assert_eq!(
-        activity_of(&chose_other, &w),
+        find_activity_of(&chose_other, &w),
         Activity::Inactive,
         "x is inactive, so the condition is false whatever x's value would be"
     );
@@ -337,7 +337,7 @@ fn inactive_wins_over_pending() {
     let configuration = configure(&space, [(gate.clone(), int(2))]);
 
     assert_eq!(
-        activity_of(&configuration, &n.y),
+        find_activity_of(&configuration, &n.y),
         Activity::Inactive,
         "y's choices are unassigned, but its condition is already false"
     );
@@ -358,7 +358,7 @@ fn pending_parent_keeps_a_target_whose_condition_holds_pending() {
 
     let configuration = configure(&space, [(gate.clone(), int(1))]);
 
-    assert_eq!(activity_of(&configuration, &n.y), Activity::Pending);
+    assert_eq!(find_activity_of(&configuration, &n.y), Activity::Pending);
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn condition_reads_a_decision_declared_after_its_target() {
 
     let configuration = configure(&space, [(late.clone(), int(2)), (early.clone(), int(1))]);
 
-    assert_eq!(activity_of(&configuration, &early), Activity::Active);
+    assert_eq!(find_activity_of(&configuration, &early), Activity::Active);
     assert_eq!(configuration.value(&early), Some(&int(1)));
 }
 
@@ -399,7 +399,7 @@ fn condition_with_an_equation_over_a_number_is_decided(
 
     let configuration = configure(&space, [(n.clone(), int(value))]);
 
-    assert_eq!(activity_of(&configuration, &w), expected);
+    assert_eq!(find_activity_of(&configuration, &w), expected);
 }
 
 #[test]
@@ -425,14 +425,14 @@ fn decision_activated_by_a_condition_chain_follows_each_link() {
     let pending = configure(&space, [(p.clone(), int(1))]);
     let active = configure(&space, [(p.clone(), int(1)), (q.clone(), int(1))]);
 
-    assert_eq!(activity_of(&deactivated, &q), Activity::Inactive);
+    assert_eq!(find_activity_of(&deactivated, &q), Activity::Inactive);
     assert_eq!(
-        activity_of(&deactivated, &r),
+        find_activity_of(&deactivated, &r),
         Activity::Inactive,
         "r's condition names q, which is inactive"
     );
-    assert_eq!(activity_of(&pending, &r), Activity::Pending);
-    assert_eq!(activity_of(&active, &r), Activity::Active);
+    assert_eq!(find_activity_of(&pending, &r), Activity::Pending);
+    assert_eq!(find_activity_of(&active, &r), Activity::Active);
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +525,7 @@ fn condition_naming_an_unassigned_decision_is_not_evaluated() {
 
     let empty = configure(&space, []);
 
-    assert_eq!(activity_of(&empty, &w), Activity::Pending);
+    assert_eq!(find_activity_of(&empty, &w), Activity::Pending);
     assert!(
         log.lock().expect("the log").is_empty(),
         "the condition names an unassigned decision, so it is not evaluated"

@@ -32,13 +32,13 @@ use crate::support::serde::{check_serde_round_trip, restored};
 // -- helpers ----------------------------------------------------------------
 
 /// Return the JSON text of the identifier `name` at `id`.
-fn id_text(id: u64, name: &str) -> String {
+fn build_id_text(id: u64, name: &str) -> String {
     format!(r#"{{"id":{id},"name_hint":"{name}"}}"#)
 }
 
 /// Return the categorical param over the integers 1 and 2 whose variable
 /// is `variable`.
-fn categorical_param(variable: Identifier) -> Param {
+fn build_categorical_param(variable: Identifier) -> Param {
     let solver = Solver::new();
     Param::new(
         ParamDomain::from(CategoricalDomain::new(ints([1, 2])).expect("the categories are valid")),
@@ -50,39 +50,42 @@ fn categorical_param(variable: Identifier) -> Param {
 }
 
 /// Return the JSON text of [`categorical_param`] over the variable `id`.
-fn param_text(id: u64, name: &str) -> String {
+fn build_param_text(id: u64, name: &str) -> String {
     format!(
         r#"{{"domain":{{"categorical":{{"categories":[{{"int":"1"}},{{"int":"2"}}]}}}},"variable":{},"constraint_system":{{"constraints":[]}}}}"#,
-        id_text(id, name)
+        build_id_text(id, name)
     )
 }
 
 /// Return the plain variable `name` at `id` over [`categorical_param`] of
 /// the variable `param` at `param_id`.
-fn plain(id: u64, name: &str, param_id: u64, param: &str) -> PlainVariable {
+fn build_plain_variable(id: u64, name: &str, param_id: u64, param: &str) -> PlainVariable {
     PlainVariable::new(
         restored(id, name),
-        categorical_param(restored(param_id, param)),
+        build_categorical_param(restored(param_id, param)),
     )
 }
 
 /// Return the JSON text of [`plain`].
-fn plain_text(id: u64, name: &str, param_id: u64, param: &str) -> String {
+fn build_plain_text(id: u64, name: &str, param_id: u64, param: &str) -> String {
     format!(
         r#"{{"identifier":{},"param":{},"notes":[]}}"#,
-        id_text(id, name),
-        param_text(param_id, param)
+        build_id_text(id, name),
+        build_param_text(param_id, param)
     )
 }
 
 /// Return [`plain`] as a part.
-fn variable_part(id: u64, name: &str, param_id: u64, param: &str) -> Part<dyn Variable> {
-    Part::new(plain(id, name, param_id, param))
+fn build_variable_part(id: u64, name: &str, param_id: u64, param: &str) -> Part<dyn Variable> {
+    Part::new(build_plain_variable(id, name, param_id, param))
 }
 
 /// Return the JSON text of [`plain`] as a variable in a container.
-fn tagged_variable_text(id: u64, name: &str, param_id: u64, param: &str) -> String {
-    format!(r#"{{"plain":{}}}"#, plain_text(id, name, param_id, param))
+fn build_tagged_variable_text(id: u64, name: &str, param_id: u64, param: &str) -> String {
+    format!(
+        r#"{{"plain":{}}}"#,
+        build_plain_text(id, name, param_id, param)
+    )
 }
 
 /// Assert that `value` writes `text` and that `text` reads back as `value`.
@@ -96,7 +99,7 @@ where
 }
 
 /// Return the note every noted part of [`Rich`] carries.
-fn notes() -> Vec<Note> {
+fn build_notes() -> Vec<Note> {
     vec![Note::with_other_kind("a note")]
 }
 
@@ -116,13 +119,13 @@ struct Rich {
 }
 
 /// Return the [`Rich`] space.
-fn rich() -> Rich {
+fn build_rich() -> Rich {
     let [x, y, z, choice, a1, a2, av, sub, s1, s2, sv] = [
         "x", "y", "z", "ch", "a1", "a2", "av", "sub", "s1", "s2", "sv",
     ]
     .map(Identifier::new);
     let noted_variable =
-        Part::new(PlainVariable::new(av.clone(), int_param(&[1, 2])).with_notes(notes()));
+        Part::new(PlainVariable::new(av.clone(), int_param(&[1, 2])).with_notes(build_notes()));
     let sub_choice = choice_of(
         &sub,
         vec![
@@ -133,9 +136,10 @@ fn rich() -> Rich {
     let first = Part::new(
         PlainAlternative::new(a1.clone(), vec![noted_variable], vec![sub_choice])
             .expect("the names are distinct")
-            .with_notes(notes()),
+            .with_notes(build_notes()),
     );
-    let top_choice = choice_of(&choice, vec![first, bare_alternative(&a2)]).with_notes(notes());
+    let top_choice =
+        choice_of(&choice, vec![first, bare_alternative(&a2)]).with_notes(build_notes());
     let space = Space::new(
         Identifier::new("rich"),
         vec![
@@ -151,7 +155,7 @@ fn rich() -> Rich {
         vec![forbidden([chooses(&choice, &[&a2]), in_set(&y, ints([2]))])],
     )
     .expect("the space is valid")
-    .with_notes(notes());
+    .with_notes(build_notes());
     Rich {
         space,
         x,
@@ -201,44 +205,44 @@ struct Pinned {
 }
 
 /// Return the [`Pinned`] space.
-fn pinned() -> Pinned {
+fn build_pinned() -> Pinned {
     let t = restored(63_341, "t");
     let c = restored(63_343, "c");
     let a = restored(63_344, "a");
     let v = restored(63_345, "v");
     let alternative = plain_alternative(
         &a,
-        vec![variable_part(63_345, "v", 63_346, "p")],
+        vec![build_variable_part(63_345, "v", 63_346, "p")],
         Vec::new(),
     );
     let space = space_of(
         &restored(63_340, "space"),
-        vec![variable_part(63_341, "t", 63_342, "p")],
+        vec![build_variable_part(63_341, "t", 63_342, "p")],
         vec![choice_of(&c, vec![alternative])],
     );
     Pinned { space, t, c, a, v }
 }
 
 /// Return the JSON text of [`pinned`]'s space.
-fn pinned_space_text() -> String {
+fn build_pinned_space_text() -> String {
     format!(
         r#"{{"identifier":{},"variables":[{}],"choices":[{{"identifier":{},"alternatives":[{{"plain":{{"identifier":{},"variables":[{}],"choices":[],"notes":[]}}}}],"notes":[]}}],"conditions":[],"forbidden":[],"notes":[]}}"#,
-        id_text(63_340, "space"),
-        tagged_variable_text(63_341, "t", 63_342, "p"),
-        id_text(63_343, "c"),
-        id_text(63_344, "a"),
-        tagged_variable_text(63_345, "v", 63_346, "p"),
+        build_id_text(63_340, "space"),
+        build_tagged_variable_text(63_341, "t", 63_342, "p"),
+        build_id_text(63_343, "c"),
+        build_id_text(63_344, "a"),
+        build_tagged_variable_text(63_345, "v", 63_346, "p"),
     )
 }
 
 /// Return the names `x`, `y` and `z`.
-fn numeric_names() -> [Identifier; 3] {
+fn build_numeric_names() -> [Identifier; 3] {
     ["x", "y", "z"].map(Identifier::new)
 }
 
 /// Return the space of three variables `names` over the non-negative
 /// integers, with `conditions`.
-fn numeric_space(names: &[Identifier; 3], conditions: Vec<Condition>) -> Space {
+fn build_numeric_space(names: &[Identifier; 3], conditions: Vec<Condition>) -> Space {
     Space::new(
         Identifier::new("numeric"),
         names
@@ -254,7 +258,7 @@ fn numeric_space(names: &[Identifier; 3], conditions: Vec<Condition>) -> Space {
 
 /// Return `value` with the field `extra` added to the object at the JSON
 /// pointer `pointer`.
-fn with_extra_field(mut value: serde_json::Value, pointer: &str) -> serde_json::Value {
+fn add_extra_field(mut value: serde_json::Value, pointer: &str) -> serde_json::Value {
     value
         .pointer_mut(pointer)
         .expect("the pointer names a value")
@@ -266,14 +270,14 @@ fn with_extra_field(mut value: serde_json::Value, pointer: &str) -> serde_json::
 
 /// Return the two-variable space with a condition and a forbidden clause
 /// the pinned text of the space shows.
-fn conditioned_space() -> Space {
+fn build_conditioned_space() -> Space {
     let x = restored(63_331, "x");
     let y = restored(63_333, "y");
     Space::new(
         restored(63_330, "space"),
         vec![
-            variable_part(63_331, "x", 63_332, "p"),
-            variable_part(63_333, "y", 63_334, "p"),
+            build_variable_part(63_331, "x", 63_332, "p"),
+            build_variable_part(63_333, "y", 63_334, "p"),
         ],
         Vec::new(),
         vec![condition(&y, [in_set(&x, ints([1]))])],
@@ -287,19 +291,19 @@ fn conditioned_space() -> Space {
 #[test]
 fn plain_variable_serializes_as_its_fields() {
     assert_pinned(
-        &plain(63_300, "v", 63_301, "p"),
-        &plain_text(63_300, "v", 63_301, "p"),
+        &build_plain_variable(63_300, "v", 63_301, "p"),
+        &build_plain_text(63_300, "v", 63_301, "p"),
     );
 }
 
 #[test]
 fn plain_variable_serializes_its_notes() {
-    let variable = plain(63_300, "v", 63_301, "p").with_notes(notes());
+    let variable = build_plain_variable(63_300, "v", 63_301, "p").with_notes(build_notes());
     let note = r#"{"message":"a note","kind":{"name":{"id":3,"name_hint":"other"},"description":"Uncategorized note."}}"#;
 
     assert_pinned(
         &variable,
-        &plain_text(63_300, "v", 63_301, "p")
+        &build_plain_text(63_300, "v", 63_301, "p")
             .replace(r#""notes":[]"#, &format!(r#""notes":[{note}]"#)),
     );
 }
@@ -308,14 +312,14 @@ fn plain_variable_serializes_its_notes() {
 fn plain_alternative_serializes_as_its_fields() {
     let alternative = PlainAlternative::new(
         restored(63_310, "alt"),
-        vec![variable_part(63_311, "av", 63_312, "p")],
+        vec![build_variable_part(63_311, "av", 63_312, "p")],
         Vec::new(),
     )
     .expect("the names are distinct");
     let text = format!(
         r#"{{"identifier":{},"variables":[{}],"choices":[],"notes":[]}}"#,
-        id_text(63_310, "alt"),
-        tagged_variable_text(63_311, "av", 63_312, "p"),
+        build_id_text(63_310, "alt"),
+        build_tagged_variable_text(63_311, "av", 63_312, "p"),
     );
 
     assert_pinned(&alternative, &text);
@@ -325,7 +329,7 @@ fn plain_alternative_serializes_as_its_fields() {
 fn choice_serializes_as_its_fields() {
     let alternative = PlainAlternative::new(
         restored(63_321, "a1"),
-        vec![variable_part(63_322, "av", 63_323, "p")],
+        vec![build_variable_part(63_322, "av", 63_323, "p")],
         Vec::new(),
     )
     .expect("the names are distinct");
@@ -333,9 +337,9 @@ fn choice_serializes_as_its_fields() {
         .expect("the choice is valid");
     let text = format!(
         r#"{{"identifier":{},"alternatives":[{{"plain":{{"identifier":{},"variables":[{}],"choices":[],"notes":[]}}}}],"notes":[]}}"#,
-        id_text(63_320, "c"),
-        id_text(63_321, "a1"),
-        tagged_variable_text(63_322, "av", 63_323, "p"),
+        build_id_text(63_320, "c"),
+        build_id_text(63_321, "a1"),
+        build_tagged_variable_text(63_322, "av", 63_323, "p"),
     );
 
     assert_pinned(&choice, &text);
@@ -345,20 +349,20 @@ fn choice_serializes_as_its_fields() {
 fn space_serializes_with_its_condition_and_its_forbidden_clause() {
     let text = format!(
         r#"{{"identifier":{},"variables":[{},{}],"choices":[],"conditions":[{{"target":{},"when":{{"constraints":[{{"in_set":{{"variable":{},"values":[{{"int":"1"}}]}}}}]}}}}],"forbidden":[{{"when":{{"constraints":[{{"in_set":{{"variable":{},"values":[{{"int":"1"}}]}}}}]}}}}],"notes":[]}}"#,
-        id_text(63_330, "space"),
-        tagged_variable_text(63_331, "x", 63_332, "p"),
-        tagged_variable_text(63_333, "y", 63_334, "p"),
-        id_text(63_333, "y"),
-        id_text(63_331, "x"),
-        id_text(63_333, "y"),
+        build_id_text(63_330, "space"),
+        build_tagged_variable_text(63_331, "x", 63_332, "p"),
+        build_tagged_variable_text(63_333, "y", 63_334, "p"),
+        build_id_text(63_333, "y"),
+        build_id_text(63_331, "x"),
+        build_id_text(63_333, "y"),
     );
 
-    assert_pinned(&conditioned_space(), &text);
+    assert_pinned(&build_conditioned_space(), &text);
 }
 
 #[test]
 fn configuration_serializes_its_space_and_its_entries_in_canonical_order() {
-    let pinned = pinned();
+    let pinned = build_pinned();
     let configuration = configure(
         &pinned.space,
         [
@@ -369,11 +373,11 @@ fn configuration_serializes_its_space_and_its_entries_in_canonical_order() {
     );
     let text = format!(
         r#"{{"space":{},"entries":[{{"name":{},"value":{{"int":"1"}}}},{{"name":{},"value":{{"identifier":{}}}}},{{"name":{},"value":{{"int":"2"}}}}]}}"#,
-        pinned_space_text(),
-        id_text(63_341, "t"),
-        id_text(63_343, "c"),
-        id_text(63_344, "a"),
-        id_text(63_345, "v"),
+        build_pinned_space_text(),
+        build_id_text(63_341, "t"),
+        build_id_text(63_343, "c"),
+        build_id_text(63_344, "a"),
+        build_id_text(63_345, "v"),
     );
 
     assert_pinned(&configuration, &text);
@@ -381,12 +385,12 @@ fn configuration_serializes_its_space_and_its_entries_in_canonical_order() {
 
 #[test]
 fn partial_configuration_serializes_only_its_entries() {
-    let pinned = pinned();
+    let pinned = build_pinned();
     let configuration = configure(&pinned.space, [(pinned.t.clone(), int(2))]);
     let text = format!(
         r#"{{"space":{},"entries":[{{"name":{},"value":{{"int":"2"}}}}]}}"#,
-        pinned_space_text(),
-        id_text(63_341, "t"),
+        build_pinned_space_text(),
+        build_id_text(63_341, "t"),
     );
 
     assert_pinned(&configuration, &text);
@@ -394,7 +398,7 @@ fn partial_configuration_serializes_only_its_entries() {
 
 #[test]
 fn a_payload_listing_entries_in_another_order_decodes_to_the_same_configuration() {
-    let pinned = pinned();
+    let pinned = build_pinned();
     let configuration = configure(
         &pinned.space,
         [
@@ -418,9 +422,9 @@ fn a_payload_listing_entries_in_another_order_decodes_to_the_same_configuration(
 
 #[test]
 fn two_conditions_on_one_target_serialize_as_one_condition_holding_both() {
-    let names = numeric_names();
+    let names = build_numeric_names();
     let [x, y, _] = &names;
-    let space = numeric_space(
+    let space = build_numeric_space(
         &names,
         vec![
             condition(y, [at_least(x, 1)]),
@@ -448,9 +452,9 @@ fn two_conditions_on_one_target_serialize_as_one_condition_holding_both() {
 
 #[test]
 fn conditions_serialize_in_canonical_order_of_their_targets() {
-    let names = numeric_names();
+    let names = build_numeric_names();
     let [x, y, z] = &names;
-    let space = numeric_space(
+    let space = build_numeric_space(
         &names,
         vec![
             condition(z, [at_least(x, 1)]),
@@ -480,7 +484,7 @@ fn conditions_serialize_in_canonical_order_of_their_targets() {
 #[test]
 fn plain_variable_round_trips() {
     let variable =
-        PlainVariable::new(Identifier::new("v"), int_param(&[1, 2, 3])).with_notes(notes());
+        PlainVariable::new(Identifier::new("v"), int_param(&[1, 2, 3])).with_notes(build_notes());
 
     check_serde_round_trip(&variable).expect("round trips");
 }
@@ -497,7 +501,7 @@ fn plain_alternative_round_trips() {
         vec![sub],
     )
     .expect("the names are distinct")
-    .with_notes(notes());
+    .with_notes(build_notes());
 
     check_serde_round_trip(&alternative).expect("round trips");
 }
@@ -515,24 +519,24 @@ fn choice_round_trips() {
             bare_alternative(&Identifier::new("b")),
         ],
     )
-    .with_notes(notes());
+    .with_notes(build_notes());
 
     check_serde_round_trip(&choice).expect("round trips");
 }
 
 #[test]
 fn space_with_nested_choices_conditions_forbidden_clauses_and_notes_round_trips() {
-    check_serde_round_trip(&rich().space).expect("round trips");
+    check_serde_round_trip(&build_rich().space).expect("round trips");
 }
 
 #[test]
 fn partial_configuration_round_trips() {
-    check_serde_round_trip(&rich().partial()).expect("round trips");
+    check_serde_round_trip(&build_rich().partial()).expect("round trips");
 }
 
 #[test]
 fn complete_configuration_round_trips() {
-    let configuration = rich().complete();
+    let configuration = build_rich().complete();
 
     assert!(configuration.is_complete());
     check_serde_round_trip(&configuration).expect("round trips");
@@ -542,7 +546,7 @@ fn complete_configuration_round_trips() {
 
 /// Return a space holding a tile knob and a realization, and a
 /// configuration of it.
-fn foreign_space() -> (Space, Configuration) {
+fn build_foreign_space() -> (Space, Configuration) {
     let [knob, index, choice, realization, axis, inner] =
         ["knob", "index", "c", "r", "axis", "inner"].map(Identifier::new);
     let space = space_of(
@@ -600,7 +604,7 @@ fn a_foreign_alternative_has_a_foreign_wire_form_and_a_plain_one_has_none() {
 
 #[test]
 fn a_space_with_foreign_parts_builds_back_through_a_resolver() {
-    let (space, _) = foreign_space();
+    let (space, _) = build_foreign_space();
     let solver = Solver::new();
 
     let built = SpaceData::of(&space)
@@ -614,7 +618,7 @@ fn a_space_with_foreign_parts_builds_back_through_a_resolver() {
 
 #[test]
 fn a_configuration_with_foreign_parts_builds_back_through_a_resolver() {
-    let (_, configuration) = foreign_space();
+    let (_, configuration) = build_foreign_space();
     let solver = ground_solver();
 
     let built = ConfigurationData::of(&configuration)
@@ -632,7 +636,7 @@ fn a_configuration_with_foreign_parts_builds_back_through_a_resolver() {
 
 #[test]
 fn a_space_with_foreign_parts_refuses_a_resolver_that_does_not_know_them() {
-    let (space, _) = foreign_space();
+    let (space, _) = build_foreign_space();
     let solver = Solver::new();
 
     let result = SpaceData::of(&space)
@@ -647,7 +651,7 @@ fn a_space_with_foreign_parts_refuses_a_resolver_that_does_not_know_them() {
 
 #[test]
 fn a_configuration_with_foreign_parts_refuses_a_resolver_that_does_not_know_them() {
-    let (_, configuration) = foreign_space();
+    let (_, configuration) = build_foreign_space();
     let solver = ground_solver();
 
     let result = ConfigurationData::of(&configuration)
@@ -662,7 +666,7 @@ fn a_configuration_with_foreign_parts_refuses_a_resolver_that_does_not_know_them
 
 #[test]
 fn a_space_deserializes_no_foreign_part() {
-    let (space, _) = foreign_space();
+    let (space, _) = build_foreign_space();
     let text = serde_json::to_string(&space).expect("encodes");
 
     let error = serde_json::from_str::<Space>(&text).expect_err("a foreign part is refused");
@@ -672,7 +676,7 @@ fn a_space_deserializes_no_foreign_part() {
 
 #[test]
 fn a_configuration_deserializes_no_foreign_part() {
-    let (_, configuration) = foreign_space();
+    let (_, configuration) = build_foreign_space();
     let text = serde_json::to_string(&configuration).expect("encodes");
 
     let error =
@@ -685,12 +689,12 @@ fn a_configuration_deserializes_no_foreign_part() {
 
 /// Return the JSON of a space whose second variable repeats the name of
 /// its first, and that name.
-fn space_with_a_repeated_name() -> (serde_json::Value, Identifier) {
+fn build_space_with_a_repeated_name() -> (serde_json::Value, Identifier) {
     let space = Space::new(
         restored(63_330, "space"),
         vec![
-            variable_part(63_331, "x", 63_332, "p"),
-            variable_part(63_333, "y", 63_334, "p"),
+            build_variable_part(63_331, "x", 63_332, "p"),
+            build_variable_part(63_333, "y", 63_334, "p"),
         ],
         Vec::new(),
         Vec::new(),
@@ -705,7 +709,7 @@ fn space_with_a_repeated_name() -> (serde_json::Value, Identifier) {
 
 #[test]
 fn a_space_payload_with_a_repeated_name_fails_to_decode() {
-    let (value, _) = space_with_a_repeated_name();
+    let (value, _) = build_space_with_a_repeated_name();
 
     let error = serde_json::from_value::<Space>(value).expect_err("a repeated name is refused");
 
@@ -717,7 +721,7 @@ fn a_space_payload_with_a_repeated_name_fails_to_decode() {
 
 #[test]
 fn a_space_payload_with_a_repeated_name_builds_to_a_duplicate_name_error() {
-    let (value, x) = space_with_a_repeated_name();
+    let (value, x) = build_space_with_a_repeated_name();
     let data: SpaceData = serde_json::from_value(value).expect("the shape reads");
     let solver = Solver::new();
 
@@ -734,8 +738,8 @@ fn a_space_payload_with_a_repeated_name_builds_to_a_duplicate_name_error() {
 
 /// Return the JSON of a configuration of [`pinned`]'s space whose value
 /// for `t` is 9, outside its domain.
-fn configuration_outside_the_domain() -> serde_json::Value {
-    let pinned = pinned();
+fn build_configuration_outside_the_domain() -> serde_json::Value {
+    let pinned = build_pinned();
     let configuration = configure(&pinned.space, [(pinned.t.clone(), int(1))]);
     let mut value = serde_json::to_value(&configuration).expect("encodes");
     value["entries"][0]["value"] = json!({"int": "9"});
@@ -744,7 +748,7 @@ fn configuration_outside_the_domain() -> serde_json::Value {
 
 #[test]
 fn a_configuration_payload_with_a_value_outside_the_domain_fails_to_decode() {
-    let value = configuration_outside_the_domain();
+    let value = build_configuration_outside_the_domain();
 
     serde_json::from_value::<Configuration>(value).expect_err("the value is refused");
 }
@@ -752,7 +756,7 @@ fn a_configuration_payload_with_a_value_outside_the_domain_fails_to_decode() {
 #[test]
 fn a_configuration_payload_with_a_value_outside_the_domain_builds_to_an_assignment_problem() {
     let data: ConfigurationData =
-        serde_json::from_value(configuration_outside_the_domain()).expect("the shape reads");
+        serde_json::from_value(build_configuration_outside_the_domain()).expect("the shape reads");
     let solver = ground_solver();
 
     let result = data.build(&NoForeign, &ParamContext::new(&solver));
@@ -775,8 +779,8 @@ fn a_configuration_payload_with_a_value_outside_the_domain_builds_to_an_assignme
 #[case::condition("/conditions/0")]
 #[case::forbidden("/forbidden/0")]
 fn a_space_payload_refuses_an_unknown_field(#[case] pointer: &str) {
-    let value = with_extra_field(
-        serde_json::to_value(conditioned_space()).expect("encodes"),
+    let value = add_extra_field(
+        serde_json::to_value(build_conditioned_space()).expect("encodes"),
         pointer,
     );
 
@@ -794,9 +798,9 @@ fn a_space_payload_refuses_an_unknown_field(#[case] pointer: &str) {
 #[case::entry("/entries/0")]
 #[case::space("/space")]
 fn a_configuration_payload_refuses_an_unknown_field(#[case] pointer: &str) {
-    let pinned = pinned();
+    let pinned = build_pinned();
     let configuration = configure(&pinned.space, [(pinned.t.clone(), int(1))]);
-    let value = with_extra_field(
+    let value = add_extra_field(
         serde_json::to_value(&configuration).expect("encodes"),
         pointer,
     );
@@ -812,8 +816,8 @@ fn a_configuration_payload_refuses_an_unknown_field(#[case] pointer: &str) {
 
 #[test]
 fn a_plain_variable_payload_refuses_an_unknown_field() {
-    let value = with_extra_field(
-        serde_json::to_value(plain(63_300, "v", 63_301, "p")).expect("encodes"),
+    let value = add_extra_field(
+        serde_json::to_value(build_plain_variable(63_300, "v", 63_301, "p")).expect("encodes"),
         "",
     );
 
@@ -841,7 +845,7 @@ impl ParamObserver for SolveIsUndecided {
 
 /// Return the space of one variable over the non-negative integers
 /// constrained by `p <= 10`, and the variable's name.
-fn bounded_space() -> (Space, Identifier) {
+fn build_bounded_space() -> (Space, Identifier) {
     let name = Identifier::new("n");
     let variable = Identifier::new("p");
     let solver = ground_solver();
@@ -865,7 +869,7 @@ fn bounded_space() -> (Space, Identifier) {
 
 #[test]
 fn building_a_configuration_refuses_a_value_its_params_equation_leaves_undecided() {
-    let (space, name) = bounded_space();
+    let (space, name) = build_bounded_space();
     let solver = Solver::new();
     let observer = SolveIsUndecided;
     let context = ParamContext::new(&solver).with_observer(&observer);
@@ -889,7 +893,7 @@ fn building_a_configuration_refuses_a_value_its_params_equation_leaves_undecided
 
 #[test]
 fn restoring_a_configuration_accepts_a_value_its_params_equation_leaves_undecided() {
-    let (space, name) = bounded_space();
+    let (space, name) = build_bounded_space();
     let configuration = configure(&space, [(name, int(3))]);
     let data = ConfigurationData::of(&configuration).expect("has a wire form");
     let solver = Solver::new();
@@ -907,7 +911,7 @@ fn restoring_a_configuration_accepts_a_value_its_params_equation_leaves_undecide
 
 /// Return a space whose variable `y` is active while `x >= 2`, and the
 /// names `x` and `y`.
-fn gated_space() -> (Space, Identifier, Identifier) {
+fn build_gated_space() -> (Space, Identifier, Identifier) {
     let x = Identifier::new("x");
     let y = Identifier::new("y");
     let space = Space::new(
@@ -926,7 +930,7 @@ fn gated_space() -> (Space, Identifier, Identifier) {
 
 #[test]
 fn a_configuration_deserializes_with_a_condition_its_equation_decides() {
-    let (space, x, y) = gated_space();
+    let (space, x, y) = build_gated_space();
     let configuration = configure(&space, [(x, int(3)), (y, int(1))]);
     let text = serde_json::to_string(&configuration).expect("encodes");
 
@@ -938,7 +942,7 @@ fn a_configuration_deserializes_with_a_condition_its_equation_decides() {
 #[test]
 fn a_configuration_payload_giving_a_value_to_a_decision_its_condition_leaves_inactive_fails_to_decode()
  {
-    let (space, x, y) = gated_space();
+    let (space, x, y) = build_gated_space();
     let configuration = configure(&space, [(x, int(3)), (y, int(1))]);
     let mut value = serde_json::to_value(&configuration).expect("encodes");
     value["entries"][0]["value"] = json!({"int": "1"});

@@ -130,9 +130,12 @@ fn clause_naming_an_unassigned_active_decision_does_not_apply_yet() {
     );
 
     assert!(!configuration.is_complete());
+
     let completed =
         configuration.with_entry(s.y.clone(), int(2), &ParamContext::new(&ground_solver()));
+
     let errors = completed.expect_err("completing it takes the forbidden combination");
+
     assert!(
         matches!(
             errors.errors(),

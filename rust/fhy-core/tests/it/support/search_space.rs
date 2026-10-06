@@ -23,7 +23,7 @@ use fhy_core::search_space::{
     PlainAlternative, PlainVariable, Space, Variable,
 };
 use fhy_core::solver::{GroundSimplifier, Solver};
-use fhy_core::term::AlphaRenaming;
+use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
 use serde::{Deserialize, Serialize};
 
 use super::constraint::{int, member_set};
@@ -38,6 +38,25 @@ pub(crate) fn ground_solver() -> Solver {
 /// alternative named `alternative`.
 pub(crate) fn chosen(alternative: &Identifier) -> Value {
     Value::Identifier(alternative.clone())
+}
+
+/// Return whether `left` and `right` are alpha-equivalent with no binder in
+/// scope, in each direction.
+///
+/// # Panics
+///
+/// Panics if a comparison fails.
+pub(crate) fn compare_alpha_both_ways<T: AlphaEquivalence>(left: &T, right: &T) -> [bool; 2]
+where
+    T::Error: std::fmt::Debug,
+{
+    [
+        left.is_alpha_equivalent(right)
+            .expect("the comparison succeeds"),
+        right
+            .is_alpha_equivalent(left)
+            .expect("the comparison succeeds"),
+    ]
 }
 
 /// Return the integer values of `values`.

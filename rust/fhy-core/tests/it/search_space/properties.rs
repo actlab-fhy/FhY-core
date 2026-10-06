@@ -26,14 +26,13 @@ use fhy_core::search_space::{
     PlainAlternative, PlainVariable, Space, SpaceError, Variable,
 };
 use fhy_core::solver::Solver;
-use fhy_core::term::AlphaEquivalence;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
 use crate::support::constraint::{int, member_set};
 use crate::support::hashing::hash_of;
-use crate::support::search_space::{ground_solver, system};
+use crate::support::search_space::{compare_alpha_both_ways, ground_solver, system};
 use crate::support::serde::check_serde_round_trip;
 
 /// The labels a model may name, and so the size of a label table.
@@ -412,7 +411,7 @@ fn build_valid(model: &Model, table: &Table) -> Space {
 // ---------------------------------------------------------------------------
 
 /// Return a strategy of distinct categories.
-fn members() -> impl Strategy<Value = Vec<Member>> {
+fn generate_members() -> impl Strategy<Value = Vec<Member>> {
     let member = prop_oneof![
         3 => (1_i64..=3).prop_map(Member::Int),
         1 => any::<bool>().prop_map(Member::Bool),
@@ -429,8 +428,8 @@ fn members() -> impl Strategy<Value = Vec<Member>> {
 }
 
 /// Return a strategy of variables.
-fn variable() -> impl Strategy<Value = VariableModel> {
-    (members(), any::<Option<u8>>()).prop_map(|(members, narrowing)| {
+fn generate_variable() -> impl Strategy<Value = VariableModel> {
+    (generate_members(), any::<Option<u8>>()).prop_map(|(members, narrowing)| {
         let narrowed = narrowing.map(|mask| {
             (0..members.len())
                 .filter(|index| mask & (1 << index) != 0)
@@ -441,9 +440,9 @@ fn variable() -> impl Strategy<Value = VariableModel> {
 }
 
 /// Return a strategy of choices nested at most `depth` levels below.
-fn choice(depth: u32) -> BoxedStrategy<ChoiceModel> {
+fn generate_choice(depth: u32) -> BoxedStrategy<ChoiceModel> {
     let leaf = prop::collection::vec(
-        prop::collection::vec(variable(), 0..=2).prop_map(|variables| AlternativeModel {
+        prop::collection::vec(generate_variable(), 0..=2).prop_map(|variables| AlternativeModel {
             variables,
             choices: Vec::new(),
         }),
@@ -455,8 +454,8 @@ fn choice(depth: u32) -> BoxedStrategy<ChoiceModel> {
     }
     prop::collection::vec(
         (
-            prop::collection::vec(variable(), 0..=2),
-            prop::collection::vec(choice(depth - 1), 0..=1),
+            prop::collection::vec(generate_variable(), 0..=2),
+            prop::collection::vec(generate_choice(depth - 1), 0..=1),
         )
             .prop_map(|(variables, choices)| AlternativeModel { variables, choices }),
         1..=3,
@@ -466,10 +465,10 @@ fn choice(depth: u32) -> BoxedStrategy<ChoiceModel> {
 }
 
 /// Return a strategy of models with conditions and forbidden clauses.
-fn model() -> impl Strategy<Value = Model> {
+fn generate_model() -> impl Strategy<Value = Model> {
     (
-        prop::collection::vec(variable(), 0..=3),
-        prop::collection::vec(choice(1), 0..=2),
+        prop::collection::vec(generate_variable(), 0..=3),
+        prop::collection::vec(generate_choice(1), 0..=2),
     )
         .prop_flat_map(|(variables, choices)| {
             let structure = Model {
@@ -513,7 +512,7 @@ fn model() -> impl Strategy<Value = Model> {
 
 /// Return a strategy of assignments of `count` decisions: per decision,
 /// none or a raw index reduced modulo its categories or alternatives.
-fn raw_assignment() -> impl Strategy<Value = Vec<Option<u8>>> {
+fn generate_raw_assignment() -> impl Strategy<Value = Vec<Option<u8>>> {
     prop::collection::vec(prop::option::weighted(0.7, any::<u8>()), 0..=24)
 }
 
@@ -522,7 +521,7 @@ fn raw_assignment() -> impl Strategy<Value = Vec<Option<u8>>> {
 // ---------------------------------------------------------------------------
 
 /// Return the number of categories or alternatives of `decision`.
-fn arity(decision: &DecisionModel) -> usize {
+fn compute_arity(decision: &DecisionModel) -> usize {
     match &decision.kind {
         DecisionKind::Variable(variable) => variable.members.len(),
         DecisionKind::Choice(labels) => labels.len(),
@@ -539,7 +538,7 @@ fn reduce(decisions: &[DecisionModel], raw: &[Option<u8>]) -> Vec<Option<usize>>
             raw.get(position)
                 .copied()
                 .flatten()
-                .map(|index| usize::from(index) % arity(decision))
+                .map(|index| usize::from(index) % compute_arity(decision))
         })
         .collect()
 }
@@ -576,7 +575,7 @@ fn judge(clauses: &[ClauseModel], activity: &[Activity], assignment: &[Option<us
 /// Return each decision's activity under `assignment`, by the documented
 /// rules, in canonical order: every decision a decision depends on comes
 /// before it in canonical order in a generated model.
-fn reference_activity(
+fn compute_reference_activity(
     model: &Model,
     decisions: &[DecisionModel],
     assignment: &[Option<usize>],
@@ -618,7 +617,7 @@ fn reference_activity(
 /// Return whether `assignment` is a valid configuration of `model`: every
 /// assigned decision active with a value its param keeps, and no forbidden
 /// clause applying and holding.
-fn reference_is_valid(
+fn is_reference_valid(
     model: &Model,
     decisions: &[DecisionModel],
     assignment: &[Option<usize>],
@@ -655,7 +654,7 @@ fn repair(
     let mut repaired: Vec<Option<usize>> = vec![None; decisions.len()];
     for position in 0..decisions.len() {
         repaired[position] = assignment[position];
-        let activity = reference_activity(model, decisions, &repaired);
+        let activity = compute_reference_activity(model, decisions, &repaired);
         let keeps = repaired[position].is_some_and(|index| {
             activity[position] == Activity::Active
                 && match &decisions[position].kind {
@@ -674,7 +673,7 @@ fn repair(
 }
 
 /// Return the entries of `assignment` with `table`'s identifiers.
-fn entries(
+fn build_entries(
     decisions: &[DecisionModel],
     assignment: &[Option<usize>],
     table: &Table,
@@ -702,21 +701,6 @@ fn try_configuration(
 ) -> Result<Configuration, fhy_core::search_space::ConfigurationErrors> {
     let solver = ground_solver();
     Configuration::new(space, entries, &ParamContext::new(&solver))
-}
-
-/// Return whether `left` and `right` are alpha-equivalent, in each
-/// direction.
-fn alpha<T: AlphaEquivalence>(left: &T, right: &T) -> [bool; 2]
-where
-    T::Error: std::fmt::Debug,
-{
-    [
-        left.is_alpha_equivalent(right)
-            .expect("the comparison succeeds"),
-        right
-            .is_alpha_equivalent(left)
-            .expect("the comparison succeeds"),
-    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -789,8 +773,8 @@ fn collect_variables<'a>(
 /// Return a strategy of pairs of models: a model and itself, half the
 /// time, and otherwise the model and a perturbation of it, which is itself
 /// when the perturbation does not apply.
-fn model_pair() -> impl Strategy<Value = (Model, Model)> {
-    (model(), prop::option::of(perturbation())).prop_map(|(model, change)| {
+fn generate_model_pair() -> impl Strategy<Value = (Model, Model)> {
+    (generate_model(), prop::option::of(generate_perturbation())).prop_map(|(model, change)| {
         let other = change
             .and_then(|change| perturb(&model, change))
             .unwrap_or_else(|| model.clone());
@@ -799,7 +783,7 @@ fn model_pair() -> impl Strategy<Value = (Model, Model)> {
 }
 
 /// Return a strategy of perturbations.
-fn perturbation() -> impl Strategy<Value = Perturbation> {
+fn generate_perturbation() -> impl Strategy<Value = Perturbation> {
     prop_oneof![
         any::<usize>().prop_map(Perturbation::AddCategory),
         any::<usize>().prop_map(Perturbation::ToggleNarrowing),
@@ -814,16 +798,16 @@ fn perturbation() -> impl Strategy<Value = Perturbation> {
 
 proptest! {
     #[test]
-    fn space_equivalences_are_reflexive(model in model()) {
+    fn space_equivalences_are_reflexive(model in generate_model()) {
         let space = build_valid(&model, &Table::fresh());
 
         prop_assert!(space.is_structurally_equivalent(&space).expect("plain parts"));
-        prop_assert_eq!(alpha(&space, &space), [true, true]);
+        prop_assert_eq!(compare_alpha_both_ways(&space, &space), [true, true]);
     }
 
     #[test]
     fn relabeled_space_is_alpha_equivalent_and_not_structurally(
-        model in model(),
+        model in generate_model(),
         reversed in any::<bool>(),
     ) {
         let table = Table::fresh();
@@ -833,12 +817,12 @@ proptest! {
         let left = build_valid(&model, &table);
         let right = build_valid(&model, &relabeled);
 
-        prop_assert_eq!(alpha(&left, &right), [true, true]);
+        prop_assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
         prop_assert!(!left.is_structurally_equivalent(&right).expect("plain parts"));
     }
 
     #[test]
-    fn spaces_built_apart_from_one_model_and_table_are_structurally_equivalent(model in model()) {
+    fn spaces_built_apart_from_one_model_and_table_are_structurally_equivalent(model in generate_model()) {
         let table = Table::fresh();
 
         let left = build_valid(&model, &table);
@@ -851,7 +835,7 @@ proptest! {
 
     #[test]
     fn structural_equivalence_implies_alpha_equivalence(
-        (left_model, right_model) in model_pair(),
+        (left_model, right_model) in generate_model_pair(),
     ) {
         let table = Table::fresh();
         let left = build_valid(&left_model, &table);
@@ -864,14 +848,14 @@ proptest! {
             right.is_structurally_equivalent(&left).expect("plain parts")
         );
         if structural {
-            prop_assert_eq!(alpha(&left, &right), [true, true]);
+            prop_assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
         }
     }
 
     #[test]
     fn alpha_equivalence_is_symmetric_when_labels_are_reused(
-        left_model in model(),
-        right_model in model(),
+        left_model in generate_model(),
+        right_model in generate_model(),
         pool_size in 2_usize..6,
         left_choices in prop::collection::vec(0_usize..6, 1..=LABEL_COUNT),
         right_choices in prop::collection::vec(0_usize..6, 1..=LABEL_COUNT),
@@ -906,7 +890,7 @@ proptest! {
         }
 
         if let [left, right] = spaces.as_slice() {
-            let [forward, backward] = alpha(left, right);
+            let [forward, backward] = compare_alpha_both_ways(left, right);
             prop_assert_eq!(forward, backward);
             prop_assert_eq!(
                 left.is_structurally_equivalent(right).expect("plain parts"),
@@ -917,8 +901,8 @@ proptest! {
 
     #[test]
     fn a_perturbation_breaks_alpha_equivalence(
-        model in model(),
-        change in perturbation(),
+        model in generate_model(),
+        change in generate_perturbation(),
     ) {
         let Some(changed) = perturb(&model, change) else {
             return Ok(());
@@ -929,12 +913,12 @@ proptest! {
         let left = build_valid(&model, &table);
         let right = build_valid(&changed, &table.relabeled(used, false));
 
-        prop_assert_eq!(alpha(&left, &right), [false, false]);
+        prop_assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
     }
 
     #[test]
     fn a_free_member_never_corresponds_to_a_bound_name(
-        model in model(),
+        model in generate_model(),
         target in any::<usize>(),
         name in any::<usize>(),
     ) {
@@ -961,14 +945,14 @@ proptest! {
         let right = build_valid(&right_model, &right_table);
 
         prop_assert_eq!(
-            alpha(&left, &right),
+            compare_alpha_both_ways(&left, &right),
             [false, false],
             "the left member is free and the right one, the same identifier, is a name"
         );
     }
 
     #[test]
-    fn integer_and_boolean_members_never_correspond(model in model(), target in any::<usize>()) {
+    fn integer_and_boolean_members_never_correspond(model in generate_model(), target in any::<usize>()) {
         let (decisions, used) = model.decisions();
         let variables: Vec<usize> = decisions
             .iter()
@@ -988,13 +972,13 @@ proptest! {
         let left = build_valid(&left_model, &table);
         let right = build_valid(&right_model, &table.relabeled(used, false));
 
-        prop_assert_eq!(alpha(&left, &right), [false, false]);
+        prop_assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
     }
 
     #[test]
     fn activity_agrees_with_the_reference_evaluator(
-        model in model(),
-        raw in raw_assignment(),
+        model in generate_model(),
+        raw in generate_raw_assignment(),
         repaired in any::<bool>(),
     ) {
         let table = Table::fresh();
@@ -1004,10 +988,10 @@ proptest! {
         if repaired {
             assignment = repair(&model, &decisions, &assignment);
         }
-        let activity = reference_activity(&model, &decisions, &assignment);
-        let expected_valid = reference_is_valid(&model, &decisions, &assignment, &activity);
+        let activity = compute_reference_activity(&model, &decisions, &assignment);
+        let expected_valid = is_reference_valid(&model, &decisions, &assignment, &activity);
 
-        let result = try_configuration(&space, entries(&decisions, &assignment, &table));
+        let result = try_configuration(&space, build_entries(&decisions, &assignment, &table));
 
         match result {
             Ok(configuration) => {
@@ -1043,8 +1027,8 @@ proptest! {
 
     #[test]
     fn corresponding_configurations_of_relabeled_spaces_have_equal_keys(
-        model in model(),
-        raw in raw_assignment(),
+        model in generate_model(),
+        raw in generate_raw_assignment(),
         reversed in any::<bool>(),
     ) {
         let table = Table::fresh();
@@ -1054,14 +1038,14 @@ proptest! {
         let left_space = build_valid(&model, &table);
         let right_space = build_valid(&model, &relabeled);
 
-        let left = try_configuration(&left_space, entries(&decisions, &assignment, &table));
-        let right = try_configuration(&right_space, entries(&decisions, &assignment, &relabeled));
+        let left = try_configuration(&left_space, build_entries(&decisions, &assignment, &table));
+        let right = try_configuration(&right_space, build_entries(&decisions, &assignment, &relabeled));
 
         match (left, right) {
             (Ok(left), Ok(right)) => {
                 prop_assert_eq!(left.key(), right.key());
                 prop_assert_eq!(hash_of(&left.key()), hash_of(&right.key()));
-                prop_assert_eq!(alpha(&left, &right), [true, true]);
+                prop_assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
             }
             (Err(_), Err(_)) => {}
             (left, right) => prop_assert!(
@@ -1073,16 +1057,16 @@ proptest! {
 
     #[test]
     fn keys_of_one_space_are_equal_exactly_when_configurations_are(
-        model in model(),
-        first in raw_assignment(),
-        second in raw_assignment(),
+        model in generate_model(),
+        first in generate_raw_assignment(),
+        second in generate_raw_assignment(),
     ) {
         let table = Table::fresh();
         let (decisions, _) = model.decisions();
         let space = build_valid(&model, &table);
         let build = |raw: &[Option<u8>]| {
             let assignment = repair(&model, &decisions, &reduce(&decisions, raw));
-            try_configuration(&space, entries(&decisions, &assignment, &table)).ok()
+            try_configuration(&space, build_entries(&decisions, &assignment, &table)).ok()
         };
 
         if let (Some(left), Some(right)) = (build(&first), build(&second)) {
@@ -1096,8 +1080,8 @@ proptest! {
 
     #[test]
     fn spaces_and_configurations_round_trip_through_serde(
-        model in model(),
-        raw in raw_assignment(),
+        model in generate_model(),
+        raw in generate_raw_assignment(),
     ) {
         let table = Table::fresh();
         let (decisions, _) = model.decisions();
@@ -1105,7 +1089,7 @@ proptest! {
         let assignment = repair(&model, &decisions, &reduce(&decisions, &raw));
 
         check_serde_round_trip(&space)?;
-        if let Ok(configuration) = try_configuration(&space, entries(&decisions, &assignment, &table)) {
+        if let Ok(configuration) = try_configuration(&space, build_entries(&decisions, &assignment, &table)) {
             check_serde_round_trip(&configuration)?;
         }
     }
@@ -1149,7 +1133,7 @@ const GUARD_CASES: usize = 256;
 
 /// Return `GUARD_CASES` values of `strategy`, drawn by a runner with a
 /// fixed seed, so a guard's count is the same on every run.
-fn draw<S: Strategy>(strategy: &S) -> Vec<S::Value> {
+fn draw_cases<S: Strategy>(strategy: &S) -> Vec<S::Value> {
     let mut runner = TestRunner::new_with_rng(
         Config::default(),
         TestRng::deterministic_rng(RngAlgorithm::ChaCha),
@@ -1180,12 +1164,12 @@ fn is_repaired_configuration_accepted(model: &Model, raw: &[Option<u8>]) -> bool
     let (decisions, _) = model.decisions();
     let space = build_valid(model, &table);
     let assignment = repair(model, &decisions, &reduce(&decisions, raw));
-    try_configuration(&space, entries(&decisions, &assignment, &table)).is_ok()
+    try_configuration(&space, build_entries(&decisions, &assignment, &table)).is_ok()
 }
 
 #[test]
 fn most_generated_models_hold_a_variable() {
-    let models = draw(&model());
+    let models = draw_cases(&generate_model());
 
     let count = models.iter().filter(|model| has_variable(model)).count();
 
@@ -1198,7 +1182,7 @@ fn most_generated_models_hold_a_variable() {
 
 #[test]
 fn most_perturbations_apply() {
-    let drawn = draw(&(model(), perturbation()));
+    let drawn = draw_cases(&(generate_model(), generate_perturbation()));
 
     let count = drawn
         .iter()
@@ -1214,7 +1198,7 @@ fn most_perturbations_apply() {
 
 #[test]
 fn many_repaired_configurations_are_accepted() {
-    let drawn = draw(&(model(), raw_assignment()));
+    let drawn = draw_cases(&(generate_model(), generate_raw_assignment()));
 
     let count = drawn
         .iter()
@@ -1230,7 +1214,11 @@ fn many_repaired_configurations_are_accepted() {
 
 #[test]
 fn many_repaired_configuration_pairs_are_both_accepted() {
-    let drawn = draw(&(model(), raw_assignment(), raw_assignment()));
+    let drawn = draw_cases(&(
+        generate_model(),
+        generate_raw_assignment(),
+        generate_raw_assignment(),
+    ));
 
     let count = drawn
         .iter()
@@ -1249,7 +1237,7 @@ fn many_repaired_configuration_pairs_are_both_accepted() {
 
 #[test]
 fn many_model_pairs_are_structurally_equivalent() {
-    let drawn = draw(&model_pair());
+    let drawn = draw_cases(&generate_model_pair());
 
     let count = drawn
         .iter()

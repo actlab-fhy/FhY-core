@@ -22,22 +22,16 @@ use rstest::rstest;
 
 use crate::support::hashing::hash_of;
 use crate::support::search_space::{
-    bare_alternative, categorical, choice_of, int_param, int_variable, plain_alternative,
-    plain_variable,
+    bare_alternative, categorical, choice_of, compare_alpha_both_ways, int_param, int_variable,
+    plain_alternative, plain_variable,
 };
-
-/// Return the alpha comparison of `left` with `right` and of `right` with
-/// `left`, with no binder in scope.
-fn alpha_both_ways(left: &Part<dyn Alternative>, right: &Part<dyn Alternative>) -> [bool; 2] {
-    [
-        left.is_alpha_equivalent(right).expect("compares"),
-        right.is_alpha_equivalent(left).expect("compares"),
-    ]
-}
 
 /// Return the structural comparison of `left` with `right` and of `right`
 /// with `left`.
-fn structural_both_ways(left: &Part<dyn Alternative>, right: &Part<dyn Alternative>) -> [bool; 2] {
+fn compare_structural_both_ways(
+    left: &Part<dyn Alternative>,
+    right: &Part<dyn Alternative>,
+) -> [bool; 2] {
     [
         left.is_structurally_equivalent(right).expect("compares"),
         right.is_structurally_equivalent(left).expect("compares"),
@@ -46,7 +40,7 @@ fn structural_both_ways(left: &Part<dyn Alternative>, right: &Part<dyn Alternati
 
 /// Return the variable `name` over the identifiers `members` as
 /// categories.
-fn variable_over(name: &Identifier, members: &[&Identifier]) -> Part<dyn Variable> {
+fn build_variable_over(name: &Identifier, members: &[&Identifier]) -> Part<dyn Variable> {
     plain_variable(
         name,
         categorical(
@@ -63,7 +57,7 @@ fn variable_over(name: &Identifier, members: &[&Identifier]) -> Part<dyn Variabl
 /// # Panics
 ///
 /// Panics if `result` is not [`SpaceError::DuplicateName`].
-fn duplicate_name(result: Result<PlainAlternative, SpaceError>) -> Identifier {
+fn find_duplicate_name(result: Result<PlainAlternative, SpaceError>) -> Identifier {
     let Err(SpaceError::DuplicateName { name }) = result else {
         panic!("expected DuplicateName, got {result:?}");
     };
@@ -72,7 +66,7 @@ fn duplicate_name(result: Result<PlainAlternative, SpaceError>) -> Identifier {
 
 /// Return the choice `name` among one alternative `alternative`, holding
 /// the variable `variable` over `{1}`.
-fn sub_choice(name: &Identifier, alternative: &Identifier, variable: &Identifier) -> Choice {
+fn build_sub_choice(name: &Identifier, alternative: &Identifier, variable: &Identifier) -> Choice {
     choice_of(
         name,
         vec![plain_alternative(
@@ -94,7 +88,7 @@ fn plain_alternative_exposes_its_name_variables_and_choices() {
         int_variable(&Identifier::new("x"), &[1, 2]),
         int_variable(&Identifier::new("y"), &[3]),
     ];
-    let choices = vec![sub_choice(
+    let choices = vec![build_sub_choice(
         &Identifier::new("c"),
         &Identifier::new("s"),
         &Identifier::new("u"),
@@ -180,7 +174,7 @@ fn plain_alternative_new_refuses_a_variable_named_like_the_alternative() {
 
     let result = PlainAlternative::new(name.clone(), vec![int_variable(&name, &[1])], Vec::new());
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 #[test]
@@ -197,7 +191,7 @@ fn plain_alternative_new_refuses_two_variables_with_one_name() {
         Vec::new(),
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -207,14 +201,14 @@ fn plain_alternative_new_refuses_a_variable_named_like_a_name_in_a_sub_choice() 
     let result = PlainAlternative::new(
         Identifier::new("o"),
         vec![int_variable(&shared, &[1])],
-        vec![sub_choice(
+        vec![build_sub_choice(
             &Identifier::new("c"),
             &Identifier::new("s"),
             &shared,
         )],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -230,7 +224,7 @@ fn plain_alternative_new_refuses_a_sub_choice_alternative_named_like_a_variable(
         )],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -246,7 +240,7 @@ fn plain_alternative_new_refuses_a_sub_choice_named_like_the_alternative() {
         )],
     );
 
-    assert_eq!(duplicate_name(result), name);
+    assert_eq!(find_duplicate_name(result), name);
 }
 
 #[test]
@@ -262,7 +256,7 @@ fn plain_alternative_new_refuses_two_sub_choices_sharing_a_name() {
         ],
     );
 
-    assert_eq!(duplicate_name(result), shared);
+    assert_eq!(find_duplicate_name(result), shared);
 }
 
 #[test]
@@ -280,7 +274,7 @@ fn plain_alternative_new_names_the_first_repeat_in_canonical_order() {
         Vec::new(),
     );
 
-    assert_eq!(duplicate_name(result), first);
+    assert_eq!(find_duplicate_name(result), first);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +283,7 @@ fn plain_alternative_new_names_the_first_repeat_in_canonical_order() {
 
 /// Return the alternative `o` holding `x` over `{1}` and a sub-choice, all
 /// from the given identifiers, with the shared `variable` part.
-fn built(
+fn build_alternative(
     name: &Identifier,
     variable: &Part<dyn Variable>,
     choices: Vec<Choice>,
@@ -302,15 +296,15 @@ fn built(
 fn plain_alternatives_with_equal_fields_are_equal_and_hash_alike() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
-    let choice = sub_choice(
+    let choice = build_sub_choice(
         &Identifier::new("c"),
         &Identifier::new("s"),
         &Identifier::new("u"),
     );
     let notes = vec![Note::with_other_kind("note")];
 
-    let left = built(&name, &variable, vec![choice.clone()]).with_notes(notes.clone());
-    let right = built(&name, &variable, vec![choice]).with_notes(notes);
+    let left = build_alternative(&name, &variable, vec![choice.clone()]).with_notes(notes.clone());
+    let right = build_alternative(&name, &variable, vec![choice]).with_notes(notes);
 
     assert_eq!(left, right);
     assert_eq!(hash_of(&left), hash_of(&right));
@@ -321,8 +315,8 @@ fn separately_built_equal_alternatives_are_equal_as_parts_and_hash_alike() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
 
-    let left = Part::new(built(&name, &variable, Vec::new()));
-    let right = Part::new(built(&name, &variable, Vec::new()));
+    let left = Part::new(build_alternative(&name, &variable, Vec::new()));
+    let right = Part::new(build_alternative(&name, &variable, Vec::new()));
 
     assert!(!Part::ptr_eq(&left, &right));
     assert_eq!(left, right);
@@ -333,8 +327,8 @@ fn separately_built_equal_alternatives_are_equal_as_parts_and_hash_alike() {
 fn alternatives_with_different_names_are_unequal() {
     let variable = int_variable(&Identifier::new("x"), &[1]);
 
-    let left = built(&Identifier::new("o"), &variable, Vec::new());
-    let right = built(&Identifier::new("p"), &variable, Vec::new());
+    let left = build_alternative(&Identifier::new("o"), &variable, Vec::new());
+    let right = build_alternative(&Identifier::new("p"), &variable, Vec::new());
 
     assert_ne!(left, right);
     assert_ne!(hash_of(&left), hash_of(&right));
@@ -344,12 +338,12 @@ fn alternatives_with_different_names_are_unequal() {
 fn alternatives_with_different_variables_are_unequal() {
     let name = Identifier::new("o");
 
-    let left = built(
+    let left = build_alternative(
         &name,
         &int_variable(&Identifier::new("x"), &[1]),
         Vec::new(),
     );
-    let right = built(
+    let right = build_alternative(
         &name,
         &int_variable(&Identifier::new("x"), &[1]),
         Vec::new(),
@@ -364,16 +358,16 @@ fn alternatives_with_different_sub_choices_are_unequal() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
 
-    let left = built(
+    let left = build_alternative(
         &name,
         &variable,
-        vec![sub_choice(
+        vec![build_sub_choice(
             &Identifier::new("c"),
             &Identifier::new("s"),
             &Identifier::new("u"),
         )],
     );
-    let right = built(&name, &variable, Vec::new());
+    let right = build_alternative(&name, &variable, Vec::new());
 
     assert_ne!(left, right);
     assert_ne!(hash_of(&left), hash_of(&right));
@@ -384,8 +378,10 @@ fn alternatives_with_different_notes_are_unequal() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
 
-    let left = built(&name, &variable, Vec::new()).with_notes(vec![Note::with_other_kind("one")]);
-    let right = built(&name, &variable, Vec::new()).with_notes(vec![Note::with_other_kind("two")]);
+    let left = build_alternative(&name, &variable, Vec::new())
+        .with_notes(vec![Note::with_other_kind("one")]);
+    let right = build_alternative(&name, &variable, Vec::new())
+        .with_notes(vec![Note::with_other_kind("two")]);
 
     assert_ne!(left, right);
     assert_ne!(hash_of(&left), hash_of(&right));
@@ -414,7 +410,7 @@ fn alternatives_with_distinct_labels_are_alpha_equivalent_standalone() {
         Vec::new(),
     );
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -422,7 +418,7 @@ fn bare_alternatives_with_distinct_names_are_alpha_equivalent() {
     let left = bare_alternative(&Identifier::new("o"));
     let right = bare_alternative(&Identifier::new("p"));
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -438,7 +434,7 @@ fn alternatives_with_different_variable_domains_are_not_alpha_equivalent() {
         Vec::new(),
     );
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -456,8 +452,14 @@ fn alternatives_differing_only_in_a_domain_are_not_alpha_equivalent() {
     };
     let left = build(&[5, 6]);
 
-    assert_eq!(alpha_both_ways(&left, &build(&[5, 6])), [true, true]);
-    assert_eq!(alpha_both_ways(&left, &build(&[5, 7])), [false, false]);
+    assert_eq!(
+        compare_alpha_both_ways(&left, &build(&[5, 6])),
+        [true, true]
+    );
+    assert_eq!(
+        compare_alpha_both_ways(&left, &build(&[5, 7])),
+        [false, false]
+    );
 }
 
 #[test]
@@ -471,11 +473,11 @@ fn alternatives_with_different_notes_are_not_alpha_equivalent() {
     };
 
     assert_eq!(
-        alpha_both_ways(&part("o", "one"), &part("p", "two")),
+        compare_alpha_both_ways(&part("o", "one"), &part("p", "two")),
         [false, false]
     );
     assert_eq!(
-        alpha_both_ways(&part("o", "same"), &part("p", "same")),
+        compare_alpha_both_ways(&part("o", "same"), &part("p", "same")),
         [true, true]
     );
 }
@@ -499,7 +501,7 @@ fn alternatives_with_variables_in_a_different_order_are_not_alpha_equivalent() {
         Vec::new(),
     );
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -516,23 +518,23 @@ fn names_inside_an_alternative_bind_the_references_inside_it() {
     );
     let left = plain_alternative(
         &o,
-        vec![int_variable(&x, &[1]), variable_over(&y, &[&x])],
+        vec![int_variable(&x, &[1]), build_variable_over(&y, &[&x])],
         Vec::new(),
     );
     let renamed = plain_alternative(
         &p,
-        vec![int_variable(&x2, &[1]), variable_over(&y2, &[&x2])],
+        vec![int_variable(&x2, &[1]), build_variable_over(&y2, &[&x2])],
         Vec::new(),
     );
     let free = Identifier::new("z");
     let dangling = plain_alternative(
         &p,
-        vec![int_variable(&x2, &[1]), variable_over(&y2, &[&free])],
+        vec![int_variable(&x2, &[1]), build_variable_over(&y2, &[&free])],
         Vec::new(),
     );
 
-    assert_eq!(alpha_both_ways(&left, &renamed), [true, true]);
-    assert_eq!(alpha_both_ways(&left, &dangling), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &renamed), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &dangling), [false, false]);
 }
 
 #[test]
@@ -555,7 +557,7 @@ fn an_alternative_with_a_relabeled_sub_choice_is_alpha_equivalent() {
     let left = build(["o", "c", "s", "t", "u", "w"]);
     let right = build(["o2", "c2", "s2", "t2", "u2", "w2"]);
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -583,14 +585,17 @@ fn an_alternative_whose_sub_choice_alternatives_are_swapped_is_not_alpha_equival
         )
     };
 
-    assert_eq!(alpha_both_ways(&build(false), &build(true)), [false, false]);
+    assert_eq!(
+        compare_alpha_both_ways(&build(false), &build(true)),
+        [false, false]
+    );
 }
 
 #[test]
 fn a_sub_choice_name_binds_references_inside_the_alternative() {
     let build = |names: [&str; 4]| {
         let [outer, variable, choice, inner] = names.map(Identifier::new);
-        let reference = variable_over(&variable, &[&choice]);
+        let reference = build_variable_over(&variable, &[&choice]);
         plain_alternative(
             &outer,
             vec![reference],
@@ -601,7 +606,7 @@ fn a_sub_choice_name_binds_references_inside_the_alternative() {
     let left = build(["o", "x", "c", "s"]);
     let right = build(["o2", "x2", "c2", "s2"]);
 
-    assert_eq!(alpha_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [true, true]);
 }
 
 #[rstest]
@@ -642,8 +647,11 @@ fn alternative_is_not_equivalent_to_a_variable_prefix(#[case] prefix_first: bool
         ),
     );
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
-    assert_eq!(alpha_both_ways(&fresh_left, &fresh_right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(
+        compare_alpha_both_ways(&fresh_left, &fresh_right),
+        [false, false]
+    );
 }
 
 #[rstest]
@@ -651,13 +659,13 @@ fn alternative_is_not_equivalent_to_a_variable_prefix(#[case] prefix_first: bool
 #[case::prefix_second(false)]
 fn alternative_is_not_equivalent_to_a_sub_choice_prefix(#[case] prefix_first: bool) {
     let make = |extra: bool| {
-        let mut choices = vec![sub_choice(
+        let mut choices = vec![build_sub_choice(
             &Identifier::new("c"),
             &Identifier::new("s"),
             &Identifier::new("u"),
         )];
         if extra {
-            choices.push(sub_choice(
+            choices.push(build_sub_choice(
                 &Identifier::new("d"),
                 &Identifier::new("t"),
                 &Identifier::new("w"),
@@ -671,7 +679,7 @@ fn alternative_is_not_equivalent_to_a_sub_choice_prefix(#[case] prefix_first: bo
         (make(true), make(false))
     };
 
-    assert_eq!(alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
 // ---------------------------------------------------------------------------
@@ -682,16 +690,18 @@ fn alternative_is_not_equivalent_to_a_sub_choice_prefix(#[case] prefix_first: bo
 fn alternatives_sharing_all_parts_are_structurally_equivalent() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
-    let choice = sub_choice(
+    let choice = build_sub_choice(
         &Identifier::new("c"),
         &Identifier::new("s"),
         &Identifier::new("u"),
     );
     let notes = vec![Note::with_other_kind("note")];
-    let left = Part::new(built(&name, &variable, vec![choice.clone()]).with_notes(notes.clone()));
-    let right = Part::new(built(&name, &variable, vec![choice]).with_notes(notes));
+    let left = Part::new(
+        build_alternative(&name, &variable, vec![choice.clone()]).with_notes(notes.clone()),
+    );
+    let right = Part::new(build_alternative(&name, &variable, vec![choice]).with_notes(notes));
 
-    assert_eq!(structural_both_ways(&left, &right), [true, true]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [true, true]);
 }
 
 #[test]
@@ -703,7 +713,7 @@ fn an_alternative_is_structurally_equivalent_to_its_clone() {
     );
 
     assert_eq!(
-        structural_both_ways(&alternative, &alternative.clone()),
+        compare_structural_both_ways(&alternative, &alternative.clone()),
         [true, true]
     );
 }
@@ -711,45 +721,53 @@ fn an_alternative_is_structurally_equivalent_to_its_clone() {
 #[test]
 fn alternatives_with_different_names_are_not_structurally_equivalent() {
     let variable = int_variable(&Identifier::new("x"), &[1]);
-    let left = Part::new(built(&Identifier::new("o"), &variable, Vec::new()));
-    let right = Part::new(built(&Identifier::new("p"), &variable, Vec::new()));
+    let left = Part::new(build_alternative(
+        &Identifier::new("o"),
+        &variable,
+        Vec::new(),
+    ));
+    let right = Part::new(build_alternative(
+        &Identifier::new("p"),
+        &variable,
+        Vec::new(),
+    ));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
 fn alternatives_with_different_variables_are_not_structurally_equivalent() {
     let name = Identifier::new("o");
-    let left = Part::new(built(
+    let left = Part::new(build_alternative(
         &name,
         &int_variable(&Identifier::new("x"), &[1]),
         Vec::new(),
     ));
-    let right = Part::new(built(
+    let right = Part::new(build_alternative(
         &name,
         &int_variable(&Identifier::new("y"), &[1]),
         Vec::new(),
     ));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
 fn alternatives_with_different_sub_choices_are_not_structurally_equivalent() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
-    let left = Part::new(built(
+    let left = Part::new(build_alternative(
         &name,
         &variable,
-        vec![sub_choice(
+        vec![build_sub_choice(
             &Identifier::new("c"),
             &Identifier::new("s"),
             &Identifier::new("u"),
         )],
     ));
-    let right = Part::new(built(&name, &variable, Vec::new()));
+    let right = Part::new(build_alternative(&name, &variable, Vec::new()));
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -757,13 +775,15 @@ fn alternatives_with_different_notes_are_not_structurally_equivalent() {
     let name = Identifier::new("o");
     let variable = int_variable(&Identifier::new("x"), &[1]);
     let left = Part::new(
-        built(&name, &variable, Vec::new()).with_notes(vec![Note::with_other_kind("one")]),
+        build_alternative(&name, &variable, Vec::new())
+            .with_notes(vec![Note::with_other_kind("one")]),
     );
     let right = Part::new(
-        built(&name, &variable, Vec::new()).with_notes(vec![Note::with_other_kind("two")]),
+        build_alternative(&name, &variable, Vec::new())
+            .with_notes(vec![Note::with_other_kind("two")]),
     );
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[rstest]
@@ -773,7 +793,7 @@ fn an_alternative_is_not_structurally_equivalent_to_one_with_an_extra_sub_choice
     #[case] prefix_first: bool,
 ) {
     let name = Identifier::new("o");
-    let choice = sub_choice(
+    let choice = build_sub_choice(
         &Identifier::new("c"),
         &Identifier::new("s"),
         &Identifier::new("u"),
@@ -786,7 +806,7 @@ fn an_alternative_is_not_structurally_equivalent_to_one_with_an_extra_sub_choice
         (extended, bare)
     };
 
-    assert_eq!(structural_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_structural_both_ways(&left, &right), [false, false]);
 }
 
 #[test]
@@ -794,12 +814,12 @@ fn alpha_comparison_under_a_renaming_pairs_the_free_names_too() {
     let (a, b) = (Identifier::new("a"), Identifier::new("b"));
     let left = plain_alternative(
         &Identifier::new("o"),
-        vec![variable_over(&Identifier::new("x"), &[&a])],
+        vec![build_variable_over(&Identifier::new("x"), &[&a])],
         Vec::new(),
     );
     let right = plain_alternative(
         &Identifier::new("p"),
-        vec![variable_over(&Identifier::new("y"), &[&b])],
+        vec![build_variable_over(&Identifier::new("y"), &[&b])],
         Vec::new(),
     );
     let renaming = AlphaRenaming::new(HashMap::from([(a, b)])).expect("injective");
