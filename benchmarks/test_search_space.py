@@ -377,3 +377,33 @@ def test_one_step_through_a_python_oracle(benchmark: Benchmark) -> None:
     recorder = search_space.Recorder(_FirstOracle())
     subject = Identifier("subject")
     benchmark(recorder.decide_dynamic, _STEP_KIND, subject, choice)
+
+
+# ---------------------------------------------------------------------------
+# Objectives and measurements (SS3)
+# ---------------------------------------------------------------------------
+
+
+def _measurement_parts() -> tuple[Any, dict[Any, float]]:
+    """Return a configuration key and values for four objectives."""
+    space = _build_space("measured")
+    key = search_space.Configuration(space, _first_entries(space)).key()
+    directions = ("minimize", "maximize", "minimize", "report")
+    values = {
+        search_space.Objective(f"objective_{index}", direction): float(index) + 0.5
+        for index, direction in enumerate(directions)
+    }
+    return key, values
+
+
+def test_measurement_construction(benchmark: Benchmark) -> None:
+    """Benchmark building a measurement of four objectives."""
+    key, values = _measurement_parts()
+    benchmark(search_space.Measurement.ok, key, values)
+
+
+def test_measurement_serialize_to_dict(benchmark: Benchmark) -> None:
+    """Benchmark serializing a measurement of four objectives."""
+    key, values = _measurement_parts()
+    measurement = search_space.Measurement.ok(key, values)
+    benchmark(measurement.serialize_to_dict)
