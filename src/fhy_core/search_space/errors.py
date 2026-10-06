@@ -9,6 +9,7 @@ __all__ = [
     "DeadEndError",
     "DuplicateNameError",
     "InadmissibleAnswerError",
+    "MeasurementError",
     "NotEnumerableError",
     "ReplayMismatchError",
     "SearchSpaceError",
@@ -83,3 +84,8 @@ class NotEnumerableError(TraceError):
 @register_error
 class DeadEndError(TraceError):
     """A step has no admissible value."""
+
+
+@register_error
+class MeasurementError(SearchSpaceError):
+    """An objective or a measurement cannot be built, or two cannot be compared."""

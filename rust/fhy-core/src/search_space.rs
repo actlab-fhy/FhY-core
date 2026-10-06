@@ -104,6 +104,15 @@
 //! passes, whose stream is the same in every release and on every
 //! platform.
 //!
+//! # Measuring
+//!
+//! A [`Measurer`] measures a realization of a configuration and returns a
+//! [`Measurement`]: the configuration's key, its [`MeasurementStatus`]
+//! and, when it succeeded, a finite value per [`Objective`], whose
+//! [`Direction`] says which way is better. [`Objective::compare`] orders
+//! two values of one objective, and [`Measurement::dominates`] compares
+//! two measurements over the same objectives.
+//!
 //! # Examples
 //!
 //! A choice between tiling and not, with a tile size that exists only
@@ -167,6 +176,7 @@ mod domain;
 mod equivalence;
 mod error;
 mod exploration;
+mod measurement;
 mod oracle;
 mod recorder;
 mod rng;
@@ -187,10 +197,11 @@ pub use domain::{
     StridedDomain, StridedRun,
 };
 pub use error::{
-    ConfigurationError, ConfigurationErrors, EmptyKind, EquivalenceError, ReplayError, SpaceError,
-    StepDomainError, TraceError,
+    ConfigurationError, ConfigurationErrors, EmptyKind, EquivalenceError, MeasurementError,
+    ReplayError, SpaceError, StepDomainError, TraceError,
 };
 pub use exploration::{Cardinality, Enumeration};
+pub use measurement::{Direction, Measurement, MeasurementStatus, Measurer, Objective};
 pub use oracle::{ExhaustiveOracle, PendingStep, RandomOracle, ReplayOracle, SearchOracle};
 pub use recorder::{Recorded, Recorder};
 pub use rng::Rng;

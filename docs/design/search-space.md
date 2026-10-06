@@ -2689,6 +2689,52 @@ space beside it.
 | `SearchHistory.best`'s ordering | `Objective::compare` | pub | `Objective.compare` |
 | `CandidateRecord`, `CandidateTimings`, `SearchHistory`, `SearchStatistics` | - | - | stay in MOGA-VM, holding a `Measurement` |
 
+### SS3.1: the stub, as built (2026-10-06)
+
+The stub (`rust/fhy-core/src/search_space/measurement.rs`, the
+`MeasurementError` in `error.rs`, `wire::MeasurementData`, the binding's
+`search_space/measurement.rs`, the Python classes and `_rs.pyi`) follows
+the plan, with these refinements:
+
+1. **NaN (F-SS-023).** A measurement refuses a NaN or an infinity
+   (`NonFiniteValue`), and `Objective::compare`, which takes any two
+   `f64`s, ranks a NaN worse than every number in either direction and
+   equal to another NaN: it never wins a comparison, and a number after it
+   is better, so a running best never sticks on it.
+2. **`-0.0` is kept as `0.0`**, so `==` and `Hash` (over the values'
+   bits) agree.
+3. **`dominates` compares objective sets, not orders:** the two
+   measurements must hold the same objectives by name and direction, in
+   any order; `Report` objectives are matched but not compared, so two
+   measurements of only `Report` objectives never dominate.
+4. **The status's serde** is serde's external tagging: `"ok"`,
+   `"timeout"`, `{"infeasible": {"reason"}}`, `{"failed": {"reason"}}`
+   (the plan's sketch wrote `{"ok": null}`).
+5. **`wire::MeasurementData`** has `of` and `build`, as the key's own
+   data does, so a key holding another crate's opaque value is read with
+   a resolver; `Measurement`'s own `serde` builds with `NoForeign`.
+6. **Constructors:** `infeasible` and `failed` take `impl Into<String>`.
+7. **Python:** `Objective(name, direction)` takes a `Direction` or its
+   value; `Measurement` has no constructor (`TypeError`): `ok`,
+   `infeasible`, `failed`, `timeout` build it; `is_ok()` is a method, as
+   `Configuration.is_complete()` is; `reason` is `None` for `OK` and
+   `TIMEOUT`. `Objective` and `Measurement` are public subclasses
+   registered as `search_space.objective` and `search_space.measurement`,
+   as `Trace` is.
+
+**Encapsulation checklist**, on the stub:
+
+| Check | Result |
+|---|---|
+| every `pub` item has a caller outside the crate | the binding and MOGA-VM's harness |
+| fields | none public: `Objective` (name, direction), `Measurement` (an `Arc` of private fields) |
+| public enums | `Direction` exhaustive (three directions by nature, matched by callers); `MeasurementStatus` and `MeasurementError` `#[non_exhaustive]` |
+| public trait | `Measurer<S: ?Sized>`, open by design; object-safe for one `S` |
+| leaf module | `measurement` imports only `configuration`'s key, `error` and `diagnostic` |
+| one public path per item | the `pub use` list of `search_space` and `wire::MeasurementData` |
+| panics | none planned |
+| binding | `PyObjective` and `PyMeasurement` `pub(crate)` for the module registration; their helpers `pub(super)` |
+
 ### MOGA-VM migration map (SS2 and SS3)
 
 None of this is done by the port; it is what MOGA-VM changes to use it.
@@ -2745,7 +2791,7 @@ Every step ends with the S16 gate, as SS1's did.
 9. **SS2.8:** equivalence runs, the benchmarks after, the divergence log
    (done, "SS2.8" below the SS2 plan).
 10. **SS2.9:** the MOGA-VM migration note (the map above; done, "SS2.9").
-11. **SS3.1:** the stub (`measurement`, `MeasurementError`,
+11. **SS3.1:** (stub done, "SS3.1" above) the stub (`measurement`, `MeasurementError`,
     `wire::MeasurementData`) and its tests; red.
 12. **SS3.2:** the core.
 13. **SS3.3:** the binding and `fhy_core.search_space`'s classes; the

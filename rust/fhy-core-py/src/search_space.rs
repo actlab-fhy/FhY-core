@@ -40,6 +40,7 @@ mod domain;
 mod errors;
 mod exploration;
 mod kinds;
+mod measurement;
 mod oracle;
 mod recorder;
 mod rng;
@@ -59,6 +60,7 @@ pub(crate) use kinds::{
     KIND_REGISTRY_ATTRIBUTE, PyKindRegistry, register_alternative_kind, register_oracle_kind,
     register_variable_kind,
 };
+pub(crate) use measurement::{PyMeasurement, PyObjective};
 pub(crate) use oracle::{PyExhaustiveOracle, PyPendingStep, PyRandomOracle, PyReplayOracle};
 pub(crate) use recorder::PyRecorder;
 pub(crate) use rng::PyRng;

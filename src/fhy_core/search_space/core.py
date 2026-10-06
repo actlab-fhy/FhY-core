@@ -24,8 +24,13 @@ __all__ = [
     "Condition",
     "Configuration",
     "ConfigurationKey",
+    "Direction",
     "ExhaustiveOracle",
     "Forbidden",
+    "Measurement",
+    "MeasurementStatus",
+    "Measurer",
+    "Objective",
     "OrderDomain",
     "PendingStep",
     "RandomOracle",
@@ -41,7 +46,7 @@ __all__ = [
     "Variable",
 ]
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeVar, final, runtime_checkable
 
@@ -65,6 +70,7 @@ from fhy_core.utils import StrEnum
 from fhy_core.utils.override import override
 
 _T = TypeVar("_T")
+_S_contra = TypeVar("_S_contra", contravariant=True)
 
 
 class Activity(StrEnum):
@@ -440,6 +446,89 @@ class Cardinality:
     decision: Identifier | None
 
 
+class Direction(StrEnum):
+    """Which way an objective's values are better."""
+
+    MINIMIZE = "minimize"
+    """Lower is better: a cost."""
+    MAXIMIZE = "maximize"
+    """Higher is better: a benefit."""
+    REPORT = "report"
+    """Recorded, never compared: a diagnostic."""
+
+
+class MeasurementStatus(StrEnum):
+    """How a measurement of a configuration went."""
+
+    OK = "ok"
+    """The configuration was measured: a value per objective."""
+    INFEASIBLE = "infeasible"
+    """The configuration cannot be realized: data about the space."""
+    FAILED = "failed"
+    """The measurement was attempted and broke: a fault of the measuring."""
+    TIMEOUT = "timeout"
+    """The measurement ran out of time."""
+
+
+@final
+@register_serializable(type_id="search_space.objective")
+class Objective(_rs.Objective, Serializable):
+    """A named quantity a search measures, and which way it is better.
+
+    Its name is a string, stable across processes. ``==`` and ``hash`` are
+    structural: two objectives are equal when their names and directions
+    are.
+
+    Args:
+        name: The objective's name.
+        direction: Which way its values are better: a :class:`Direction` or
+            its value.
+
+    Raises:
+        TypeError: If an argument has the wrong type.
+        ValueError: If ``direction`` names no direction.
+        MeasurementError: If ``name`` is empty.
+
+    """
+
+    __slots__ = ()
+
+
+@final
+@register_serializable(type_id="search_space.measurement")
+class Measurement(_rs.Measurement, Serializable):
+    """The record of one measured configuration.
+
+    It holds the configuration's :class:`ConfigurationKey`, a
+    :class:`MeasurementStatus` and, when the status is ``OK``, a finite
+    value per objective, and notes. Build one with :meth:`ok`,
+    :meth:`infeasible`, :meth:`failed` or :meth:`timeout`. ``==`` and
+    ``hash`` are identity.
+    """
+
+    __slots__ = ()
+
+
+@runtime_checkable
+class Measurer(Protocol[_S_contra]):
+    """Measures subjects, such as a lowered program, as configurations of a space.
+
+    A subject that cannot be measured is a :class:`Measurement` with a
+    failing status; an exception is a fault of the measurer, which stops
+    the search. A successful measurement holds a value for each of
+    :attr:`objectives`, and only those.
+    """
+
+    @property
+    def objectives(self) -> Sequence[Objective]:
+        """The objectives every successful measurement holds a value for."""
+        ...
+
+    def measure(self, key: ConfigurationKey, subject: _S_contra) -> Measurement:
+        """Return the measurement of ``subject``, which realizes ``key``."""
+        ...
+
+
 # The classes are registered, not derived: `FrozenMixin` carries an instance
 # layout a Rust-backed class cannot share.
 for _frozen_class in (
@@ -452,6 +541,8 @@ for _frozen_class in (
     Configuration,
     ConfigurationKey,
     Trace,
+    Objective,
+    Measurement,
 ):
     FrozenMixin.register(_frozen_class)
 
@@ -463,3 +554,5 @@ Forbidden._register_public_class()
 Space._register_public_class()
 Configuration._register_public_class()
 Trace._register_public_class()
+Objective._register_public_class()
+Measurement._register_public_class()

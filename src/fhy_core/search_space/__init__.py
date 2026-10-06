@@ -23,6 +23,11 @@ coordinate in the domain, and records it in a :class:`Trace`.
 answers a recorded trace back, and :class:`ExhaustiveOracle` takes every
 path once over successive runs; a :class:`Space` also samples, replays,
 enumerates, counts (:class:`Cardinality`) and mutates on its own.
+
+A :class:`Measurer` measures a realization of a configuration and returns a
+:class:`Measurement`: the configuration's key, a :class:`MeasurementStatus`
+and, when it succeeded, a value per :class:`Objective`, whose
+:class:`Direction` says which way is better.
 """
 
 __all__ = [
@@ -37,11 +42,17 @@ __all__ = [
     "ConfigurationError",
     "ConfigurationKey",
     "DeadEndError",
+    "Direction",
     "DuplicateNameError",
     "ExhaustiveOracle",
     "Forbidden",
     "InadmissibleAnswerError",
+    "Measurement",
+    "MeasurementError",
+    "MeasurementStatus",
+    "Measurer",
     "NotEnumerableError",
+    "Objective",
     "OrderDomain",
     "PendingStep",
     "RandomOracle",
@@ -71,8 +82,13 @@ from .core import (
     Condition,
     Configuration,
     ConfigurationKey,
+    Direction,
     ExhaustiveOracle,
     Forbidden,
+    Measurement,
+    MeasurementStatus,
+    Measurer,
+    Objective,
     OrderDomain,
     PendingStep,
     RandomOracle,
@@ -92,6 +108,7 @@ from .errors import (
     DeadEndError,
     DuplicateNameError,
     InadmissibleAnswerError,
+    MeasurementError,
     NotEnumerableError,
     ReplayMismatchError,
     SearchSpaceError,

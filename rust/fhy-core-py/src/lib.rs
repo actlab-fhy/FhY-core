@@ -388,5 +388,7 @@ fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<search_space::PyRecorder>()?;
     module.add_class::<search_space::PyTraceStep>()?;
     module.add_class::<search_space::PyTrace>()?;
+    module.add_class::<search_space::PyObjective>()?;
+    module.add_class::<search_space::PyMeasurement>()?;
     Ok(())
 }

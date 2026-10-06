@@ -18,6 +18,7 @@
 //! | `TraceError::Configuration` | as `ConfigurationErrors` |
 //! | any other `TraceError` | `TraceError` |
 //! | `ReplayError` | `ReplayMismatchError` |
+//! | `MeasurementError` | `MeasurementError` |
 //!
 //! Each message is the core error's `Display` text.
 
@@ -28,8 +29,8 @@ use pyo3::types::PyTuple;
 use fhy_core::constraint::ConstraintError;
 use fhy_core::foreign::BoxError;
 use fhy_core::search_space::{
-    ConfigurationError, ConfigurationErrors, EquivalenceError, ReplayError, SpaceError,
-    StepDomainError, TraceError,
+    ConfigurationError, ConfigurationErrors, EquivalenceError, MeasurementError, ReplayError,
+    SpaceError, StepDomainError, TraceError,
 };
 
 use crate::constraint::constraint_error_to_py;
@@ -62,6 +63,13 @@ static REPLAY_MISMATCH_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "Repl
 
 /// `NotEnumerableError`.
 static NOT_ENUMERABLE_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "NotEnumerableError");
+
+/// `MeasurementError`.
+#[expect(
+    dead_code,
+    reason = "interface stub: used once the conversions are implemented"
+)]
+static MEASUREMENT_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "MeasurementError");
 
 /// `DeadEndError`.
 static DEAD_END_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "DeadEndError");
@@ -187,4 +195,15 @@ pub(super) fn replay_error_to_py(py: Python<'_>, error: ReplayError) -> PyErr {
         ReplayError::Trace(error) => trace_error_to_py(py, *error),
         error => REPLAY_MISMATCH_ERROR.err(py, (error.to_string(),)),
     }
+}
+
+/// Return the Python exception of an objective or a measurement the core
+/// refuses: `MeasurementError`.
+#[expect(
+    dead_code,
+    unused_variables,
+    reason = "interface stub: the body is todo!() until the implementation"
+)]
+pub(super) fn measurement_error_to_py(py: Python<'_>, error: &MeasurementError) -> PyErr {
+    todo!()
 }

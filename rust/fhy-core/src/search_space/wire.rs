@@ -16,6 +16,7 @@
 //! | [`Space`] | `{"identifier", "variables", "choices", "conditions": [{"target", "when"}, ..], "forbidden": [{"when"}, ..], "notes"}` |
 //! | [`Configuration`] | `{"space", "entries": [{"name", "value"}, ..]}` |
 //! | [`ConfigurationKey`] | `{"entries": [..]}`, one per decision in canonical order: `{"inactive": {}}`, `{"unassigned": {}}`, `{"alternative": {"index"}}` or `{"value": ..}`, a value being `{"leaf": <value>}`, `{"bound": {"position"}}`, `{"tuple": [..]}` or `{"frozen_set": [..]}` |
+//! | [`Measurement`] | `{"key", "status", "values": [{"objective": {"name", "direction"}, "value"}, ..], "notes"}`, the status `"ok"`, `{"infeasible": {"reason"}}`, `{"failed": {"reason"}}` or `"timeout"` |
 //!
 //! Params, constraint systems and values are in their own modules' forms,
 //! conditions are written one per target in canonical order of the
@@ -51,6 +52,7 @@ use crate::solver::{GroundSimplifier, Solver};
 use super::alternative::{Alternative, PlainAlternative};
 use super::choice::Choice;
 use super::configuration::{Configuration, ConfigurationKey, KeyEntry, KeyValue};
+use super::measurement::{Measurement, MeasurementStatus, Objective};
 use super::space::{Condition, Forbidden, Space};
 use super::variable::{PlainVariable, Variable};
 
@@ -735,6 +737,80 @@ impl Serialize for ConfigurationKey {
 impl<'de> Deserialize<'de> for ConfigurationKey {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         ConfigurationKeyData::deserialize(deserializer)?
+            .build(&NoForeign)
+            .map_err(de::Error::custom)
+    }
+}
+
+/// The wire form of a [`Measurement`], its key's opaque values unresolved:
+/// `{"key", "status", "values": [{"objective", "value"}, ..], "notes"}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "Measurement", deny_unknown_fields)]
+pub struct MeasurementData {
+    key: ConfigurationKeyData,
+    status: MeasurementStatus,
+    values: Vec<MeasuredValueRepr>,
+    notes: Vec<Note>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "MeasuredValue", deny_unknown_fields)]
+struct MeasuredValueRepr {
+    objective: Objective,
+    value: f64,
+}
+
+impl MeasurementData {
+    /// Return the wire form of `measurement`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of an opaque value of the key that cannot give
+    /// its foreign form.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    pub fn of(measurement: &Measurement) -> Result<Self, ForeignError> {
+        todo!()
+    }
+
+    /// Return the measurement, its key's opaque values resolved by
+    /// `resolver`, checked as its constructor checks it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
+    /// refuses, and [`BuildError::Invalid`] with the
+    /// [`MeasurementError`](super::MeasurementError) of values a
+    /// constructor refuses or of values held by a measurement that did not
+    /// succeed.
+    #[expect(
+        unused_variables,
+        reason = "interface stub: the body is todo!() until the implementation"
+    )]
+    pub fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<Measurement, BuildError> {
+        todo!()
+    }
+}
+
+/// Serializes `{"key", "status", "values", "notes"}`.
+impl Serialize for Measurement {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        MeasurementData::of(self)
+            .map_err(ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+/// Deserializes `{"key", "status", "values", "notes"}`, refusing an opaque
+/// value in the key.
+impl<'de> Deserialize<'de> for Measurement {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        MeasurementData::deserialize(deserializer)?
             .build(&NoForeign)
             .map_err(de::Error::custom)
     }

@@ -670,3 +670,49 @@ impl Error for ReplayError {
         }
     }
 }
+
+/// Why an objective or a measurement cannot be built, or two measurements
+/// cannot be compared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MeasurementError {
+    /// An objective's name is empty.
+    EmptyName,
+    /// A successful measurement holds no value.
+    NoValues,
+    /// A measurement holds two values for one objective name.
+    RepeatedObjective {
+        /// The name.
+        name: String,
+    },
+    /// A value is a NaN or infinite.
+    NonFiniteValue {
+        /// The objective's name.
+        objective: String,
+    },
+    /// `dominates` was asked of a measurement that is not successful.
+    NotOk,
+    /// `dominates` was asked of measurements over different objectives.
+    DifferentObjectives,
+}
+
+impl fmt::Display for MeasurementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => f.write_str("an objective needs a name"),
+            Self::NoValues => f.write_str("a successful measurement needs at least one value"),
+            Self::RepeatedObjective { name } => {
+                write!(f, "the objective {name:?} has two values")
+            }
+            Self::NonFiniteValue { objective } => {
+                write!(f, "the value of the objective {objective:?} is not finite")
+            }
+            Self::NotOk => f.write_str("only successful measurements are compared"),
+            Self::DifferentObjectives => {
+                f.write_str("the measurements are over different objectives")
+            }
+        }
+    }
+}
+
+impl Error for MeasurementError {}
