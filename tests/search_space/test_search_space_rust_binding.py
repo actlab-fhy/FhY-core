@@ -39,13 +39,12 @@ from fhy_core.serialization import (
     MalformedPayloadError,
     Serializable,
     SerializationError,
-    WireVersion,
     WrappedFamilySerializable,
     serialize_value,
-    wire_version,
 )
 from fhy_core.traits import FrozenMixin, FrozenMutationError
 from tests.native_modules import run_python
+from tests.v1 import writing_v1
 
 from .conftest import (
     TilingSpace,
@@ -721,9 +720,9 @@ def test_writing_v1_is_refused() -> None:
     """Test the classes have no V1 form: writing one raises."""
     space = build_tiling_space().space
 
-    with wire_version(WireVersion.V1), pytest.raises(SerializationError, match="V1"):
+    with writing_v1(), pytest.raises(SerializationError, match="V1"):
         space.serialize_to_dict()
-    with wire_version(WireVersion.V1), pytest.raises(SerializationError, match="V1"):
+    with writing_v1(), pytest.raises(SerializationError, match="V1"):
         make_variable("k").serialize_to_dict()
 
 

@@ -40,6 +40,7 @@ from fhy_core.term import AlphaRenaming
 
 from ..serialization.foreign_parts import GoldenEven
 from .conftest import (
+    EXPLOSIONS,
     ExplodingConstraint,
     Explosion,
     build_tiling_space,
@@ -906,10 +907,11 @@ def test_failing_condition_raises_the_constraint_exception() -> None:
     """Test a Python-defined constraint's exception propagates as itself."""
     source, gated = make_variable("source"), make_variable("gated")
     explosion = Explosion("condition")
+    EXPLOSIONS["condition"] = explosion
     space = Space(
         variables=(source, gated),
         conditions=(
-            Condition(gated.name, (ExplodingConstraint(source.name, explosion),)),
+            Condition(gated.name, (ExplodingConstraint(source.name, "condition"),)),
         ),
     )
 
@@ -923,9 +925,10 @@ def test_failing_forbidden_clause_raises_the_constraint_exception() -> None:
     """Test a raising forbidden clause's exception propagates as itself."""
     source = make_variable("source")
     explosion = Explosion("forbidden")
+    EXPLOSIONS["forbidden"] = explosion
     space = Space(
         variables=(source,),
-        forbidden=(Forbidden((ExplodingConstraint(source.name, explosion),)),),
+        forbidden=(Forbidden((ExplodingConstraint(source.name, "forbidden"),)),),
     )
 
     with pytest.raises(Explosion) as excinfo:

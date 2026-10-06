@@ -29,6 +29,7 @@ from fhy_core.symbolic.param import Param, create_categorical_param
 from fhy_core.utils.override import override
 
 __all__ = [
+    "EXPLOSIONS",
     "ExplodingConstraint",
     "Explosion",
     "TilingSpace",
@@ -145,12 +146,20 @@ class Explosion(Exception):
     """The exception the test hooks and constraints raise."""
 
 
+EXPLOSIONS: dict[str, Explosion] = {}
+"""The exceptions `ExplodingConstraint`s raise, by their labels."""
+
+
 @dataclass(frozen=True, eq=False)
 class ExplodingConstraint(Constraint):
-    """A Python-defined constraint whose evaluation raises `error`."""
+    """A Python-defined constraint whose evaluation raises `EXPLOSIONS[label]`.
+
+    The exception lives in a module dict, not in a field: a constraint's
+    fields must be immutable and serializable.
+    """
 
     variable: Identifier
-    error: Explosion
+    label: str
 
     @override
     def get_free_identifiers(self) -> frozenset[Identifier]:
@@ -158,7 +167,7 @@ class ExplodingConstraint(Constraint):
 
     @override
     def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
-        raise self.error
+        raise EXPLOSIONS[self.label]
 
     @override
     def convert_to_expression(self) -> Expression:

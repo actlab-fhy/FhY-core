@@ -119,15 +119,29 @@ def test_kinds_round_trip_through_their_type_ids(site: pathlib.Path) -> None:  #
         """
         space, choice, realized, tiled = realized_space()
         text = space.to_json()
-        print('"example.tiled_variable"' in text, '"example.axis_alternative"' in text)
+        print('"example.axis_alternative"' in text)
         decoded = Space.from_json(text)
         print(decoded.to_json() == text, decoded.is_structurally_equivalent(space))
         (decoded_realized, _) = decoded.choices[0].alternatives
         print(type(decoded_realized).__name__, decoded_realized.axes == realized.axes)
+        (decoded_tiled,) = decoded_realized.variables
+        print(type(decoded_tiled).__name__, decoded_tiled.kind)
+        print(decoded_tiled.name == tiled.name)
+        print(decoded_tiled.index_symbols == tiled.index_symbols)
         """,
     )
 
-    assert output == ["True", "True", "True", "True", "AxisAlternative", "True"]
+    assert output == [
+        "True",
+        "True",
+        "True",
+        "AxisAlternative",
+        "True",
+        "TiledVariable",
+        "example.tiled_variable",
+        "True",
+        "True",
+    ]
 
 
 def test_a_foreign_kind_decodes_as_a_variable(site: pathlib.Path) -> None:  # noqa: F811
