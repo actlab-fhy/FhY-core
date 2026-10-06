@@ -81,7 +81,9 @@ pub enum Activity {
 ///    a pending or unassigned decision does not apply yet.
 ///
 /// An entry refused in one pass counts as unassigned in every check after
-/// it. Conditions and clauses are evaluated with each decision they name
+/// it. So a condition or forbidden clause naming a variable whose value is
+/// refused is not evaluated: its target is pending, or the clause does not
+/// apply yet, and only the value's problem is reported for it. Conditions and clauses are evaluated with each decision they name
 /// bound to its value, through the context's constraint context.
 ///
 /// Cloning one shares it. `==` and `Hash` compare the spaces, as

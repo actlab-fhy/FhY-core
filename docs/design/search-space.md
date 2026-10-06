@@ -476,7 +476,11 @@ lowercase line each, naming identifiers as `name::id`.
   order (`UndecidedCondition`, `FailedCondition`, `InactiveDecision`,
   `UnknownAlternative`, `Assignment`); the forbidden clauses in order
   (`Forbidden`, `UndecidedForbidden`, `FailedForbidden`). A refused entry
-  counts as unassigned for every later check.
+  counts as unassigned for every later check, so a condition or clause
+  naming a variable whose value is refused is not evaluated (its target is
+  pending, the clause does not apply yet), and only the value's problem is
+  reported: a failing simplifier that fails both a value's check and a
+  condition over that value reports the `Assignment` alone.
 - Comparisons return `EquivalenceError` for a failing hook or custom
   constraint. Two spaces of different shapes, or a standalone alternative
   whose bound identifiers repeat, answer `false`, not an error.
