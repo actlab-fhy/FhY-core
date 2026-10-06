@@ -512,15 +512,9 @@ impl StepDomain {
     /// Return the domain's signature, every identifier `space` binds written
     /// as its position among the space's names.
     pub(super) fn signature_in(&self, space: Option<&Space>) -> DomainSignature {
-        let members = |values: &[Value]| -> Arc<[MemberSignature]> {
-            values
-                .iter()
-                .map(|value| MemberSignature::of(value, space))
-                .collect()
-        };
         DomainSignature(match self {
-            Self::Choice(domain) => SignatureRepr::Choice(members(domain.values())),
-            Self::Order(domain) => SignatureRepr::Order(members(domain.elements())),
+            Self::Choice(domain) => SignatureRepr::Choice(Members::of(&domain.0, space)),
+            Self::Order(domain) => SignatureRepr::Order(Members::of(&domain.0, space)),
             Self::Strided(domain) => SignatureRepr::Strided(domain.clone()),
         })
     }
@@ -569,9 +563,75 @@ pub struct DomainSignature(SignatureRepr);
 /// The parts of a [`DomainSignature`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum SignatureRepr {
-    Choice(Arc<[MemberSignature]>),
-    Order(Arc<[MemberSignature]>),
+    Choice(Members),
+    Order(Members),
     Strided(StridedDomain),
+}
+
+/// A choice's values or an order's elements, in a signature.
+///
+/// Members that are all plain are the domain's own values, shared, so
+/// taking the signature of a plain domain copies nothing; any other
+/// members are listed one by one. The form is normalized, plain whenever
+/// every member is a plain value, so the derived `==` and `Hash` compare
+/// what the members mean.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Members {
+    Plain(Arc<[Value]>),
+    Listed(Arc<[MemberSignature]>),
+}
+
+impl Members {
+    /// Return the members of the domain values `values`, an identifier
+    /// `space` binds written as its position among the space's names.
+    fn of(values: &Arc<[Value]>, space: Option<&Space>) -> Self {
+        if values.iter().all(is_plain) {
+            return Self::Plain(Arc::clone(values));
+        }
+        Self::Listed(
+            values
+                .iter()
+                .map(|value| MemberSignature::of(value, space))
+                .collect(),
+        )
+    }
+
+    /// Return the members read from their wire forms, in normal form.
+    fn from_wire(members: Vec<MemberWire>) -> Self {
+        let members: Vec<MemberSignature> =
+            members.into_iter().map(MemberSignature::from).collect();
+        let is_plain_only = members
+            .iter()
+            .all(|member| matches!(member, MemberSignature::Value(value) if is_plain(value)));
+        if !is_plain_only {
+            return Self::Listed(members.into());
+        }
+        Self::Plain(
+            members
+                .into_iter()
+                .filter_map(|member| match member {
+                    MemberSignature::Value(value) => Some(value),
+                    _ => None,
+                })
+                .collect(),
+        )
+    }
+
+    /// Return the number of members.
+    fn len(&self) -> usize {
+        match self {
+            Self::Plain(values) => values.len(),
+            Self::Listed(members) => members.len(),
+        }
+    }
+
+    /// Return the members' wire forms.
+    fn to_wire(&self) -> Vec<MemberWire> {
+        match self {
+            Self::Plain(values) => values.iter().cloned().map(MemberWire::Value).collect(),
+            Self::Listed(members) => members.iter().map(MemberWire::from).collect(),
+        }
+    }
 }
 
 /// One value of a choice or element of an order, in a signature.
@@ -704,10 +764,9 @@ impl From<MemberWire> for MemberSignature {
 /// Serializes the shape of the type's documentation.
 impl Serialize for DomainSignature {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let members = |members: &[MemberSignature]| members.iter().map(MemberWire::from).collect();
         let wire = match &self.0 {
-            SignatureRepr::Choice(choices) => SignatureWire::Choice(members(choices)),
-            SignatureRepr::Order(elements) => SignatureWire::Order(members(elements)),
+            SignatureRepr::Choice(choices) => SignatureWire::Choice(choices.to_wire()),
+            SignatureRepr::Order(elements) => SignatureWire::Order(elements.to_wire()),
             SignatureRepr::Strided(domain) => SignatureWire::Strided(
                 domain
                     .runs()
@@ -727,12 +786,9 @@ impl Serialize for DomainSignature {
 /// Deserializes the shape of the type's documentation.
 impl<'de> Deserialize<'de> for DomainSignature {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let members = |members: Vec<MemberWire>| -> Arc<[MemberSignature]> {
-            members.into_iter().map(MemberSignature::from).collect()
-        };
         Ok(Self(match SignatureWire::deserialize(deserializer)? {
-            SignatureWire::Choice(choices) => SignatureRepr::Choice(members(choices)),
-            SignatureWire::Order(elements) => SignatureRepr::Order(members(elements)),
+            SignatureWire::Choice(choices) => SignatureRepr::Choice(Members::from_wire(choices)),
+            SignatureWire::Order(elements) => SignatureRepr::Order(Members::from_wire(elements)),
             SignatureWire::Strided(runs) => {
                 let runs = runs
                     .into_iter()
