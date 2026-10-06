@@ -8,8 +8,8 @@
 //! `{"identifier": {"id", "name_hint"}}`, `{"tuple": [..]}`,
 //! `{"frozen_set": [..]}` or `{"opaque": <foreign part>}`; a member's sets
 //! are written in canonical order. An opaque part whose resolved value
-//! reports an [`identifier`](OpaqueValue::identifier), as the binding's
-//! reading of 0.2.0's `{"opaque": {"type_id": "id", ..}}` does, builds the
+//! reports an [`identifier`](OpaqueValue::identifier), such as an
+//! identifier written as `{"opaque": {"type_id": "id", ..}}`, builds that
 //! identifier value. A
 //! [`Constraint`] serializes as `{"equation": {"expression"}}`, `{"in_set":
 //! {"variable", "values"}}`, `{"not_in_set": {"variable", "values"}}` or

@@ -2,13 +2,13 @@
 //! constraint holds.
 //!
 //! A [`Value`] is any value a caller can bind to an identifier besides an
-//! expression, an [`Identifier`] included: a name used as a constant, such
-//! as a category of a param, compares by its id. A [`Member`] is a value a set constraint can hold. It has no
+//! expression. A [`Member`] is a value a set constraint can hold. It has no
 //! decimal and no NaN at any depth, and its zeros are positive. A
 //! [`MemberSet`] holds distinct members in one canonical order.
 //!
 //! Equality is type-strict: a Boolean, an integer and a float never compare
-//! equal, whatever they hold. A value only its producer can compare, such as
+//! equal, whatever they hold, and an [`Identifier`] used as a constant, such
+//! as a category of a param, equals only the identifier with its id. A value only its producer can compare, such as
 //! a user object of the Python binding, is an opaque value: a
 //! [`Part<dyn OpaqueValue>`](Part).
 
@@ -88,10 +88,9 @@ pub trait OpaqueValue: ForeignPart {
     /// Return the identifier the value stands for, or `None` for a value
     /// that is no identifier.
     ///
-    /// It serves payloads written before identifiers were a value kind,
-    /// which hold an identifier as an opaque part: the wire forms read
-    /// every opaque value that reports an identifier as
-    /// [`Value::Identifier`]. The default reports none.
+    /// The wire forms build an opaque part whose value reports an
+    /// identifier as that [`Value::Identifier`], so a resolver reads an
+    /// identifier written as an opaque part. The default reports none.
     fn identifier(&self) -> Option<Identifier> {
         None
     }
@@ -214,11 +213,11 @@ impl Hash for Value {
 impl fmt::Display for Value {
     /// Write the value for people, as a literal expression writes the
     /// kinds it shares (`true`, `3`, `0.5`): a string quoted and escaped, an
-    /// identifier as its name hint,
-    /// a tuple as `(1, 2)`, `(1,)` or `()`, a frozen set as `{1, 2}` or
-    /// `{}`, and an opaque value as its type name in angle brackets. The
-    /// text is not parsed back, and distinct values may write alike (the
-    /// integer `1` and the float `1.0`).
+    /// identifier as its name hint, a tuple as `(1, 2)`, `(1,)` or `()`, a
+    /// frozen set as `{1, 2}` or `{}`, and an opaque value as its type name
+    /// in angle brackets. The text is not parsed back, and distinct values
+    /// may write alike (the integer `1` and the float `1.0`, or two
+    /// identifiers with one name hint).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Bool(value) => write!(f, "{value}"),
@@ -740,10 +739,10 @@ fn is_value_equal_to_member(value: &Value, member: &Member) -> bool {
 /// The order is by kind, `bool`, `float`, `frozenset`, `identifier`,
 /// `int`, `str`, `tuple`, then opaque values, and within a kind by value:
 /// `false` before `true`, numbers numerically, identifiers by id, strings
-/// by code point, tuples element by
-/// element, sets by their members in canonical order, and opaque values by
-/// their ordering keys, keeping the order they were given in among equal
-/// keys. Two sets are equal when they hold equal members.
+/// by code point, tuples element by element, sets by their members in
+/// canonical order, and opaque values by their ordering keys, keeping the
+/// order they were given in among equal keys. Two sets are equal when they
+/// hold equal members.
 #[derive(Debug, Clone, Default)]
 pub struct MemberSet {
     members: Vec<Member>,

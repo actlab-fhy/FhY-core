@@ -13,7 +13,6 @@ use fhy_core::param::DomainKind;
 
 use crate::constraint::{read_bound_value, read_identifier, read_opaque_member};
 use crate::expression::read_big_int;
-use crate::identifier::read_identifier_id;
 
 /// Return whether `value` is a `Serializable`.
 fn is_serializable(value: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -108,11 +107,8 @@ fn read_finite_value(kind: DomainKind, value: &Bound<'_, PyAny>) -> PyResult<Opt
     if let Ok(text) = value.cast::<PyString>() {
         return Ok(Some(Value::Str(text.to_str()?.to_owned())));
     }
-    if read_identifier_id(value)?.is_some() {
-        if kind == DomainKind::Ordinal {
-            return Ok(None);
-        }
-        return read_identifier(value).map(|identifier| Some(Value::Identifier(identifier)));
+    if let Some(identifier) = read_identifier(value)? {
+        return Ok((kind != DomainKind::Ordinal).then_some(Value::Identifier(identifier)));
     }
     if !is_serializable(value)? {
         return Ok(None);

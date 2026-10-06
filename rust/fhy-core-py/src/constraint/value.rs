@@ -37,7 +37,7 @@ use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 
 use crate::expression::{big_int_to_python, decimal_class, read_big_int, read_decimal};
-use crate::identifier::{identifier_to_python, read_identifier_id, restore_identifier};
+use crate::identifier::{identifier_to_python, is_python_identifier, restore_identifier};
 use crate::util::gc::Slot;
 use crate::util::hook::ask;
 use crate::util::pending::has_pending_error;
@@ -95,7 +95,7 @@ pub(crate) struct PyOpaqueValue {
     /// The ordering key, computed when a member is read, or on first use.
     key: OnceLock<String>,
     /// The identifier the object is, for an `Identifier` a resolver read
-    /// from the opaque form 0.2.0 writes.
+    /// from an opaque part.
     identifier: Option<Identifier>,
 }
 
@@ -223,7 +223,7 @@ impl OpaqueValue for PyOpaqueValue {
     }
 
     /// Return the identifier the object is, for a Python `Identifier` that
-    /// a resolver read from the opaque form 0.2.0 writes.
+    /// a resolver read from an opaque part.
     fn identifier(&self) -> Option<Identifier> {
         self.identifier.clone()
     }
@@ -269,9 +269,9 @@ pub(crate) fn read_opaque_member(value: &Bound<'_, PyAny>) -> PyResult<Value> {
 /// Raises what computing the key raises, and `OverflowError` for an
 /// identifier whose id is outside the payload range.
 pub(crate) fn read_resolved_part(object: &Bound<'_, PyAny>) -> PyResult<Part<dyn OpaqueValue>> {
-    if read_identifier_id(object)?.is_some() {
+    if let Some(identifier) = read_identifier(object)? {
         return Ok(Part::new(PyOpaqueValue {
-            identifier: Some(read_identifier(object)?),
+            identifier: Some(identifier),
             ..PyOpaqueValue::new(object, true, None)
         }));
     }
@@ -279,14 +279,18 @@ pub(crate) fn read_resolved_part(object: &Bound<'_, PyAny>) -> PyResult<Part<dyn
     Ok(Part::new(PyOpaqueValue::new(object, true, Some(key))))
 }
 
-/// Return the core identifier of the Python `Identifier` `object`.
+/// Return the core identifier of `object` if it is a Python `Identifier`,
+/// of its class or a subclass, or `None` for any other object.
 ///
 /// # Errors
 ///
-/// Raises `OverflowError` if its id is outside the payload range, which no
-/// identifier this process built or read is.
-pub(crate) fn read_identifier(object: &Bound<'_, PyAny>) -> PyResult<Identifier> {
-    restore_identifier(object, "value", "identifier")
+/// Raises `OverflowError` for an identifier whose id is outside the payload
+/// range, which no identifier this process built or read is.
+pub(crate) fn read_identifier(object: &Bound<'_, PyAny>) -> PyResult<Option<Identifier>> {
+    if !is_python_identifier(object)? {
+        return Ok(None);
+    }
+    restore_identifier(object, "value", "identifier").map(Some)
 }
 
 /// Return the Python value of the core `value`: a `bool`, an `int`, a
@@ -506,8 +510,8 @@ fn read_member_value_at(
     if let Ok(text) = value.cast::<PyString>() {
         return Ok(Value::Str(text.to_str()?.to_owned()));
     }
-    if read_identifier_id(value)?.is_some() {
-        return read_identifier(value).map(Value::Identifier);
+    if let Some(identifier) = read_identifier(value)? {
+        return Ok(Value::Identifier(identifier));
     }
     if is_serializable_hashable(value)? {
         let key = build_ordering_key(value)?;
@@ -579,8 +583,8 @@ fn read_bound_value_at(
     if value.is_none() {
         return Ok(build_opaque(value, false));
     }
-    if read_identifier_id(value)?.is_some() {
-        return read_identifier(value).map(Value::Identifier);
+    if let Some(identifier) = read_identifier(value)? {
+        return Ok(Value::Identifier(identifier));
     }
     let is_member_shaped = is_serializable_hashable(value)?;
     Ok(build_opaque(value, is_member_shaped))
