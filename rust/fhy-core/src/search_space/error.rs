@@ -510,13 +510,9 @@ impl fmt::Display for TraceError {
                     "the answer to step {position} names no value of its domain"
                 )
             }
-            Self::Inadmissible {
-                position,
-                coordinate,
-            } => write!(
-                f,
-                "the answer {coordinate:?} to step {position} is not admissible"
-            ),
+            Self::Inadmissible { position, .. } => {
+                write!(f, "the answer to step {position} is not admissible")
+            }
             Self::DeadEnd { decision } => {
                 write!(f, "the step for {decision:?} has no admissible value")
             }

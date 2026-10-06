@@ -35,6 +35,12 @@ use super::trace::{Trace, TraceStep};
 /// may span calls that each borrow them anew. A step whose answer is
 /// refused stops the run and is not recorded; [`trace`](Self::trace) still
 /// gives the steps recorded before it. Cloning copies the run's state.
+///
+/// An oracle's error stops the run as [`TraceError::Oracle`], except one
+/// that is itself a [`TraceError`], such as the
+/// [`DeadEnd`](TraceError::DeadEnd) of
+/// [`PendingStep::draw_uniform`](super::PendingStep::draw_uniform), which
+/// stops it as that error.
 #[derive(Debug, Clone, Default)]
 pub struct Recorder {
     space: Option<Space>,

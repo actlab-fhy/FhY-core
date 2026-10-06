@@ -150,11 +150,9 @@ impl Trace {
     }
 
     /// Return the steps of `kind`, in the order asked.
-    pub fn of_kind<'a>(
-        &'a self,
-        kind: &'a DecisionKind,
-    ) -> impl Iterator<Item = &'a TraceStep> + 'a {
-        self.steps().iter().filter(move |step| step.kind() == kind)
+    pub fn of_kind(&self, kind: &DecisionKind) -> impl Iterator<Item = &TraceStep> + use<'_> {
+        let kind = kind.clone();
+        self.steps().iter().filter(move |step| *step.kind() == kind)
     }
 
     /// Return the product of the steps' cardinalities: the number of points

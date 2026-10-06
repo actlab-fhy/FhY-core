@@ -388,7 +388,8 @@ impl From<StridedDomain> for StepDomain {
 /// - A strided domain's runs.
 ///
 /// `serde` writes `{"choice": [..]}`, `{"order": [..]}` or `{"strided":
-/// [{"start", "stop", "stride"}, ..]}`, a member as `{"value": <value>}`,
+/// [{"start", "stop", "stride"}, ..]}`, each integer of a run as a
+/// value's integer is written, and a member as `{"value": <value>}`,
 /// `{"bound": <position>}`, `"identifier"` or `"opaque"`; reading refuses
 /// a run that [`StridedRun::new`] or [`StridedDomain::new`] refuses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

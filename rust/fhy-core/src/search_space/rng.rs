@@ -52,7 +52,8 @@ impl From<Rng> for RngWire {
 impl TryFrom<RngWire> for Rng {
     type Error = String;
 
-    /// Refuse an algorithm other than [`Rng::ALGORITHM`].
+    /// Refuse an algorithm other than [`Rng::ALGORITHM`], with a message
+    /// naming it.
     fn try_from(wire: RngWire) -> Result<Self, Self::Error> {
         todo!()
     }
@@ -91,8 +92,8 @@ impl Rng {
     ///
     /// # Panics
     ///
-    /// Panics if `bound` is zero: every caller passes a cardinality, which
-    /// is at least one.
+    /// Panics with `the bound of below_big must be positive` if `bound` is
+    /// zero: every caller passes a cardinality, which is at least one.
     pub fn below_big(&mut self, bound: &BigUint) -> BigUint {
         todo!()
     }
