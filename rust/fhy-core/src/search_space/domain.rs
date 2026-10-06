@@ -80,14 +80,14 @@ impl fmt::Display for DecisionKind {
 
 /// A step's answer: a position in its domain.
 ///
-/// `serde` writes an index as an integer and an order as an array of
-/// integers.
+/// `serde` writes `{"index": <integer>}` or `{"order": [<integer>, ..]}`,
+/// externally tagged, so non-self-describing formats read it too.
 #[expect(
     clippy::exhaustive_enums,
     reason = "an answer is an index or a permutation of positions"
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum Coordinate {
     /// The position of a value in a choice domain, or of an integer among a
     /// strided domain's runs flattened in order.

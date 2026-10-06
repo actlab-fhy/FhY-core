@@ -1865,14 +1865,15 @@ it.
   {"steps": [
     {"kind": "search_space.choice", "subject": {"id": 60001, "name_hint": "layout"},
      "decision": 3, "domain": {"choice": [{"bound": 4}, {"bound": 5}]},
-     "coordinate": 1, "value": {"identifier": {"id": 60005, "name_hint": "flat"}}},
+     "coordinate": {"index": 1}, "value": {"identifier": {"id": 60005, "name_hint": "flat"}}},
     {"kind": "moga.cir.address", "subject": {"id": 70210, "name_hint": "x"}, "decision": null,
      "domain": {"strided": [{"start": 0, "stop": 64, "stride": 1}]},
-     "coordinate": 17, "value": {"int": 17}}
+     "coordinate": {"index": 17}, "value": {"int": 17}}
   ]}
   ```
 
-  A coordinate is an integer or an array of integers; a signature member is
+  A coordinate is `{"index": n}` or `{"order": [..]}`, externally tagged so
+  non-self-describing formats (postcard) read it; a signature member is
   `{"value": <value>}`, `{"bound": n}`, `"identifier"` or `"opaque"`.
 - A step's value is written unless it is or holds an opaque value, which
   is written `null`: an opaque value is a module's object, which another
@@ -2080,7 +2081,7 @@ files). "Rust" is `rust/fhy-core/tests/it/search_space/`; "Python" is
 | `::test_same_key_axes_are_consumed_first_in_first_out` | repeated keys in order | `oracle_stories::replay_answers_repeated_subjects_in_ask_order` | divergence D-SS2-4: static names are unique; repeated dynamic subjects replay positionally |
 | `::test_extraction_names_the_single_shot_option_axis`, `::test_extraction_conditions_walk_and_tile_axes_on_their_option` | extraction against the pipeline | analogs `exploration_stories::cardinality_of_a_single_choice`, `::cardinality_of_a_choice_sums_its_alternatives_products` | stay in MOGA-VM |
 | `::test_a_sampled_point_lowers_and_the_stream_realizes_its_assignments`, `::test_the_same_seed_reproduces_the_same_lowering` | pipeline | - | stay in MOGA-VM |
-| `test_observers.py::test_coordinates_serialize_choice_and_order_decisions_faithfully` | `[1, [1, 2, 0]]` | `serde_stories::trace_coordinates_serialize_as_integers_and_arrays`; Python | ported (the trace's wire form) |
+| `test_observers.py::test_coordinates_serialize_choice_and_order_decisions_faithfully` | `[1, [1, 2, 0]]` | `trace_serde_stories::trace_writes_an_order_coordinate_as_an_array`, `::coordinate_serializes_tagged_by_its_shape`; Python `test_trace_coordinates_serialize_tagged_by_their_shape` | ported, tagged (`{"index": 1}`, `{"order": [1, 2, 0]}`), so postcard reads it |
 | `test_observers.py` (9 others) | logging and JSONL files | - | stay in MOGA-VM |
 | `test_records.py::test_a_score_on_an_infeasible_record_is_invalid` | no score without success | SS3 `measurement_stories::a_failed_measurement_holds_no_values`; Python | ported (SS3) |
 | `::test_a_score_on_a_lowered_record_is_valid` | score kept | SS3 `measurement_stories::an_ok_measurement_keeps_its_values`; Python | ported (SS3) |

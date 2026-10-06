@@ -27,6 +27,11 @@ use super::error::TraceError;
 /// declare, over a domain its caller built.
 ///
 /// `==` and `Hash` compare every field.
+///
+/// `serde` writes `{"kind", "subject", "decision", "domain", "coordinate",
+/// "value"}`, `decision` and `value` `null` when absent, a value that is
+/// or holds an opaque value `null`; reading refuses a coordinate its
+/// signature does not contain.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraceStep {
     kind: DecisionKind,
@@ -165,6 +170,20 @@ impl Trace {
 
 impl fmt::Display for Trace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+/// Serializes the shape of the type's documentation.
+impl Serialize for TraceStep {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        todo!()
+    }
+}
+
+/// Deserializes the shape of the type's documentation.
+impl<'de> Deserialize<'de> for TraceStep {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         todo!()
     }
 }
