@@ -250,3 +250,69 @@ def test_a_kind_registered_after_import_is_a_virtual_subclass(
     )
 
     assert output == ["True"]
+
+
+def test_a_registered_oracle_answers_a_recorder_and_counts_its_steps(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test `CountingOracle` answers coordinate 0 to three steps and counts them."""
+    output = _run(
+        site,
+        """
+        from fhy_core.search_space import ChoiceDomain, Recorder
+
+        oracle = aggregate.CountingOracle()
+        recorder = Recorder(oracle)
+        subject = Identifier("subject")
+        for _ in range(3):
+            recorder.decide_dynamic(
+                "moga.cir.option", subject, ChoiceDomain(("a", "b", "c"))
+            )
+        print(recorder.trace.coordinates)
+        print(oracle.count)
+        """,
+    )
+
+    assert output == ["(0,", "0,", "0)", "3"]
+
+
+def test_a_registered_oracle_samples_a_space_through_its_lease(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test `Space.sample` runs a registered oracle and the oracle counts the steps."""
+    output = _run(
+        site,
+        """
+        oracle = aggregate.CountingOracle()
+        realized_space_, *_ = realized_space()
+        configuration, trace = realized_space_.sample(oracle)
+        print(configuration.is_complete(), oracle.count == len(trace))
+        print(set(trace.coordinates))
+        """,
+    )
+
+    assert output == ["True", "True", "{0}"]
+
+
+def test_oracle_registry_refusals(site: pathlib.Path) -> None:  # noqa: F811
+    """Test a kind or a class registered twice is a `ValueError`."""
+    output = _run(
+        site,
+        """
+        register = aggregate.OracleRegistrar.register_oracle
+
+        class Other:
+            pass
+
+        for attempt in (
+            lambda: register(_rs, "example.counting_oracle", Other),
+            lambda: register(_rs, "example.other_counting", aggregate.CountingOracle),
+        ):
+            try:
+                attempt()
+            except ValueError as error:
+                print(type(error).__name__)
+        """,
+    )
+
+    assert output == ["ValueError", "ValueError"]

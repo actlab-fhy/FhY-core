@@ -21,6 +21,7 @@ mod scope_stack_properties;
 mod scope_stories;
 mod search_space;
 mod search_space_golden;
+mod search_space_trace_golden;
 mod serde_format_stories;
 mod serialization_golden;
 mod solver;

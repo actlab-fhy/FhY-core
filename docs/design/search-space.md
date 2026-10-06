@@ -2282,6 +2282,43 @@ Python classes and `_rs.pyi`) follows this plan, with these changes:
 | one public path per item | the `pub use` list of `search_space` |
 | no visibility widened for tests | none; the one widening (`effective_interval`) is for the implementation |
 
+### SS2.3: the red tests, as written (2026-10-06)
+
+| Where | Files | Tests |
+|---|---|---|
+| Rust, `tests/it/search_space/` | `rng_stories`, `domain_stories`, `trace_stories`, `recorder_stories`, `oracle_stories`, `exploration_stories`, `search_domain_stories`, `trace_serde_stories`, `stream_error_text_stories`, `trace_properties`; helpers in `support/search.rs` | 269: 231 failing, 38 passing |
+| Rust, the oracle corpus | `tests/golden/record_trace_cases.py` writes `trace_cases.json` (95 domain, 51 replay, 5 stream and 40 extraction cases, 24 of them tagged D-SS2-1, -2, -3 or -7); `tests/it/search_space_trace_golden.rs` replays it | 6: 4 failing, 2 passing |
+| Python, `tests/search_space/` | `test_trace.py`, `test_trace_rust_binding.py`, `test_oracle_extension.py`, `test_trace_properties.py`, and three tests added to `test_composed_search_space.py` | 230 failing, 22 passing |
+
+- **Red for the right reason:** every failing test fails at a `todo!()`
+  (in Python, `PanicException: not yet implemented`, in a subprocess for
+  the composed tests), except the two clause-7 conformance tests, which
+  fail because the implemented `check_variable_conformance` does not yet
+  check clause 7.
+- **Green against the stub, by design:** the error texts (decided in the
+  stub), the property and strategy guards, the two conformance controls
+  (a faithful and a derived search domain conform), the corpus's own
+  checks (every untagged case agrees with the oracle; every family and
+  tag is present), and in Python the class-structure tests, the
+  Python-only `Cardinality` and `CardinalityKind`, the hook's default,
+  and the oracle registry's refusals (real plumbing).
+- **Statistical tests** use fixed seeds and a 0.001 chi-square critical
+  value: `below(6)` over 60 000 draws (5 degrees of freedom, 20.52),
+  `sample_uniform` over the five configurations of a space with a
+  condition and a forbidden clause (4, 18.47), and per-step sampling
+  against its per-step probabilities (4, 18.47).
+- **Golden vectors** of the generator come from an independent reference
+  of the documented algorithms; seed 0's first number is SplitMix64's
+  published `0xe220a8397b1dcdaf`.
+- **Not written:** the corpus's Python replay (`test_trace_golden.py` in the
+  plan): the Rust replay covers the corpus, and the Python suite replays
+  the same behaviors through the binding.
+- **Small API changes the tests settled:** `Trace::of_kind` borrows its
+  kind only for the call; `TraceError::Inadmissible`'s text no longer
+  writes the coordinate; `Rng`'s refusal of another algorithm names it;
+  `below_big`'s panic message is pinned; an oracle error that is itself a
+  `TraceError` stops a run as that error.
+
 ## SS3: objectives and measurements (plan)
 
 The concrete plan for SS3, in the same template.
