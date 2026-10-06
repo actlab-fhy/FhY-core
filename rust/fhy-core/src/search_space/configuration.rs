@@ -8,16 +8,18 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
-use crate::constraint::{Binding, Bindings, ConstraintSystem, Outcome, Value};
+use crate::constraint::{Binding, Bindings, ConstraintError, ConstraintSystem, Outcome, Value};
 use crate::foreign::Part;
 use crate::identifier::Identifier;
 use crate::param::{ParamAssignment, ParamContext};
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::alternative::Alternative;
+use super::choice::Choice;
 use super::equivalence::{do_spaces_correspond, do_values_correspond, space_frame};
 use super::error::{ConfigurationError, ConfigurationErrors, EquivalenceError};
 use super::space::{Decision, Space};
+use super::variable::Variable;
 
 /// Whether a decision exists in a configuration.
 #[expect(
@@ -100,8 +102,6 @@ struct ConfigurationInner {
     activities: Vec<Activity>,
     /// Each choice's chosen alternative's position, in canonical order.
     chosen: Vec<Option<usize>>,
-    /// The canonical positions of the assigned decisions, ascending.
-    assigned: Vec<usize>,
 }
 
 impl Configuration {
@@ -201,14 +201,11 @@ impl Configuration {
 
     /// Return each assigned decision's name and value, in canonical order.
     pub fn entries(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Value)> + '_ {
-        self.0.assigned.iter().map(|&position| {
-            (
-                self.0.space.decision_at(position).name(),
-                self.0.values[position]
-                    .as_ref()
-                    .expect("an assigned position holds a value"),
-            )
-        })
+        Entries {
+            space: &self.0.space,
+            values: self.0.values.iter().enumerate(),
+            remaining: self.0.values.iter().flatten().count(),
+        }
     }
 
     /// Return the activity of the decision `name`, or `None` if the space
@@ -432,6 +429,19 @@ enum ValueCheck {
     Restore,
 }
 
+/// The state of one check of a configuration's entries: each decision's
+/// value, activity and chosen alternative, in canonical order, and the
+/// problems found so far.
+struct Checker<'a> {
+    space: &'a Space,
+    context: &'a ParamContext<'a>,
+    value_check: ValueCheck,
+    values: Vec<Option<Value>>,
+    activities: Vec<Activity>,
+    chosen: Vec<Option<usize>>,
+    problems: Vec<ConfigurationError>,
+}
+
 /// Return the configuration of `space` holding `base` (each decision's
 /// value, in canonical order, or none) with `entries` given on top, checked
 /// as [`Configuration`] documents.
@@ -443,171 +453,213 @@ fn check(
     value_check: ValueCheck,
 ) -> Result<Configuration, ConfigurationErrors> {
     let count = space.decision_count();
-    let mut problems = Vec::new();
-    let mut values = if base.is_empty() {
-        vec![None; count]
-    } else {
-        base
+    let mut checker = Checker {
+        space,
+        context,
+        value_check,
+        values: if base.is_empty() {
+            vec![None; count]
+        } else {
+            base
+        },
+        activities: vec![Activity::Pending; count],
+        chosen: vec![None; count],
+        problems: Vec::new(),
     };
-    let mut is_given = vec![false; count];
-    for (name, value) in entries {
-        let Some(position) = space.position(&name) else {
-            problems.push(ConfigurationError::UnknownDecision { name });
-            continue;
-        };
-        if is_given[position] {
-            problems.push(ConfigurationError::DuplicateEntry { name });
-            continue;
-        }
-        is_given[position] = true;
-        values[position] = Some(value);
-    }
-
-    let mut activities = vec![Activity::Pending; count];
-    let mut chosen: Vec<Option<usize>> = vec![None; count];
+    checker.read_entries(entries);
     for &position in space.order_positions() {
-        let activity = find_activity(
-            space,
-            position,
-            &activities,
-            &values,
-            &chosen,
-            context,
-            &mut problems,
-        );
-        activities[position] = activity;
-        let Some(value) = values[position].take() else {
-            continue;
-        };
-        let name = space.decision_at(position).name();
-        if activity != Activity::Active {
-            problems.push(ConfigurationError::InactiveDecision { name: name.clone() });
-            continue;
-        }
-        match space.decision_at(position) {
-            Decision::Choice(choice) => {
-                let index = match &value {
-                    Value::Identifier(identifier) => choice
-                        .alternatives()
-                        .iter()
-                        .position(|alternative| alternative.get().name() == identifier),
-                    _ => None,
-                };
-                let Some(index) = index else {
-                    problems.push(ConfigurationError::UnknownAlternative {
-                        choice: name.clone(),
-                        value,
-                    });
-                    continue;
-                };
-                chosen[position] = Some(index);
-            }
-            Decision::Variable(variable) => {
-                let param = variable.get().param().clone();
-                let assigned = match value_check {
-                    ValueCheck::New => ParamAssignment::new(param, value.clone(), context),
-                    ValueCheck::Restore => ParamAssignment::restore(param, value.clone(), context),
-                };
-                if let Err(error) = assigned {
-                    problems.push(ConfigurationError::Assignment {
-                        variable: name.clone(),
-                        error,
-                    });
-                    continue;
-                }
-            }
-        }
-        values[position] = Some(value);
+        checker.check_decision(position);
     }
-
-    for (index, clause) in space.forbidden().iter().enumerate() {
-        let references = space.forbidden_references(index);
-        let Some(bindings) = bind_if_decided(space, references, &activities, &values) else {
-            continue;
-        };
-        match evaluate(clause.when(), &bindings, context) {
-            Ok(Outcome::Satisfied) => problems.push(ConfigurationError::Forbidden { index }),
-            Ok(Outcome::Violated) => {}
-            Ok(Outcome::Undecided) => {
-                problems.push(ConfigurationError::UndecidedForbidden { index });
-            }
-            Err(error) => problems.push(ConfigurationError::FailedForbidden { index, error }),
-        }
-    }
-
-    if !problems.is_empty() {
-        return Err(ConfigurationErrors::new(problems));
-    }
-    let assigned = (0..count)
-        .filter(|&position| values[position].is_some())
-        .collect();
-    Ok(Configuration(Arc::new(ConfigurationInner {
-        space: space.clone(),
-        values,
-        activities,
-        chosen,
-        assigned,
-    })))
+    checker.check_forbidden_clauses();
+    checker.finish()
 }
 
-/// Return the activity of the decision at `position`, given the activities
-/// and values of the decisions before it in decision order, reporting an
-/// undecided or failing condition to `problems`.
-fn find_activity(
-    space: &Space,
-    position: usize,
-    activities: &[Activity],
-    values: &[Option<Value>],
-    chosen: &[Option<usize>],
-    context: &ParamContext<'_>,
-    problems: &mut Vec<ConfigurationError>,
-) -> Activity {
-    let from_parent = match space.parent_at(position) {
-        None => Activity::Active,
-        Some((choice, alternative)) => match activities[choice] {
-            Activity::Active => match chosen[choice] {
-                None => Activity::Pending,
-                Some(index) if index == alternative => Activity::Active,
-                Some(_) => Activity::Inactive,
-            },
-            other => other,
-        },
-    };
-    if from_parent == Activity::Inactive {
-        return Activity::Inactive;
-    }
-    let Some((when, references)) = space.condition_with_references_at(position) else {
-        return from_parent;
-    };
-    if references
-        .iter()
-        .any(|&reference| activities[reference] == Activity::Inactive)
-    {
-        return Activity::Inactive;
-    }
-    let Some(bindings) = bind_if_decided(space, references, activities, values) else {
-        return Activity::Pending;
-    };
-    let target = || space.decision_at(position).name().clone();
-    let from_condition = match evaluate(when, &bindings, context) {
-        Ok(Outcome::Satisfied) => Activity::Active,
-        Ok(Outcome::Violated) => Activity::Inactive,
-        Ok(Outcome::Undecided) => {
-            problems.push(ConfigurationError::UndecidedCondition { target: target() });
-            Activity::Pending
+impl Checker<'_> {
+    /// Give each entry's decision its value, refusing an entry that names
+    /// no decision or one an earlier entry named.
+    fn read_entries(&mut self, entries: impl IntoIterator<Item = (Identifier, Value)>) {
+        let mut is_given = vec![false; self.values.len()];
+        for (name, value) in entries {
+            let Some(position) = self.space.position(&name) else {
+                self.problems
+                    .push(ConfigurationError::UnknownDecision { name });
+                continue;
+            };
+            if is_given[position] {
+                self.problems
+                    .push(ConfigurationError::DuplicateEntry { name });
+                continue;
+            }
+            is_given[position] = true;
+            self.values[position] = Some(value);
         }
-        Err(error) => {
-            problems.push(ConfigurationError::FailedCondition {
-                target: target(),
-                error,
+    }
+
+    /// Find the activity of the decision at `position` and check its value,
+    /// dropping a refused one.
+    fn check_decision(&mut self, position: usize) {
+        let activity = self.find_activity(position);
+        self.activities[position] = activity;
+        let Some(value) = self.values[position].take() else {
+            return;
+        };
+        let name = self.space.decision_at(position).name();
+        if activity != Activity::Active {
+            self.problems
+                .push(ConfigurationError::InactiveDecision { name: name.clone() });
+            return;
+        }
+        let accepted = match self.space.decision_at(position) {
+            Decision::Choice(choice) => self.check_choice_value(position, choice, value),
+            Decision::Variable(variable) => self.check_variable_value(variable, value),
+        };
+        self.values[position] = accepted;
+    }
+
+    /// Return `value` if it names an alternative of `choice`, at
+    /// `position`, recording which.
+    fn check_choice_value(
+        &mut self,
+        position: usize,
+        choice: &Choice,
+        value: Value,
+    ) -> Option<Value> {
+        let index = match &value {
+            Value::Identifier(identifier) => choice
+                .alternatives()
+                .iter()
+                .position(|alternative| alternative.get().name() == identifier),
+            _ => None,
+        };
+        let Some(index) = index else {
+            self.problems.push(ConfigurationError::UnknownAlternative {
+                choice: choice.name().clone(),
+                value,
             });
-            Activity::Pending
+            return None;
+        };
+        self.chosen[position] = Some(index);
+        Some(value)
+    }
+
+    /// Return `value` if `variable`'s param takes it.
+    fn check_variable_value(
+        &mut self,
+        variable: &Part<dyn Variable>,
+        value: Value,
+    ) -> Option<Value> {
+        let variable = variable.get();
+        let param = variable.param().clone();
+        let assigned = match self.value_check {
+            ValueCheck::New => ParamAssignment::new(param, value, self.context),
+            ValueCheck::Restore => ParamAssignment::restore(param, value, self.context),
+        };
+        match assigned {
+            Ok(assignment) => Some(assignment.value().clone()),
+            Err(error) => {
+                self.problems.push(ConfigurationError::Assignment {
+                    variable: variable.name().clone(),
+                    error,
+                });
+                None
+            }
         }
-    };
-    match (from_parent, from_condition) {
-        (_, Activity::Inactive) => Activity::Inactive,
-        (Activity::Active, Activity::Active) => Activity::Active,
-        _ => Activity::Pending,
+    }
+
+    /// Return the activity of the decision at `position`, given the
+    /// decisions before it in decision order, reporting an undecided or
+    /// failing condition.
+    fn find_activity(&mut self, position: usize) -> Activity {
+        let from_parent = match self.space.parent_at(position) {
+            None => Activity::Active,
+            Some((choice, alternative)) => match self.activities[choice] {
+                Activity::Active => match self.chosen[choice] {
+                    None => Activity::Pending,
+                    Some(index) if index == alternative => Activity::Active,
+                    Some(_) => Activity::Inactive,
+                },
+                other => other,
+            },
+        };
+        if from_parent == Activity::Inactive {
+            return Activity::Inactive;
+        }
+        let Some((when, references)) = self.space.condition_with_references_at(position) else {
+            return from_parent;
+        };
+        if references
+            .iter()
+            .any(|&reference| self.activities[reference] == Activity::Inactive)
+        {
+            return Activity::Inactive;
+        }
+        let Some(bindings) =
+            bind_if_decided(self.space, references, &self.activities, &self.values)
+        else {
+            return Activity::Pending;
+        };
+        let target = self.space.decision_at(position).name();
+        let from_condition = match evaluate(when, &bindings, self.context) {
+            Ok(Outcome::Satisfied) => Activity::Active,
+            Ok(Outcome::Violated) => Activity::Inactive,
+            Ok(Outcome::Undecided) => {
+                self.problems.push(ConfigurationError::UndecidedCondition {
+                    target: target.clone(),
+                });
+                Activity::Pending
+            }
+            Err(error) => {
+                self.problems.push(ConfigurationError::FailedCondition {
+                    target: target.clone(),
+                    error,
+                });
+                Activity::Pending
+            }
+        };
+        match (from_parent, from_condition) {
+            (_, Activity::Inactive) => Activity::Inactive,
+            (Activity::Active, Activity::Active) => Activity::Active,
+            _ => Activity::Pending,
+        }
+    }
+
+    /// Check every forbidden clause whose decisions are all active and
+    /// assigned.
+    fn check_forbidden_clauses(&mut self) {
+        for (index, clause) in self.space.forbidden().iter().enumerate() {
+            let references = self.space.forbidden_references(index);
+            let Some(bindings) =
+                bind_if_decided(self.space, references, &self.activities, &self.values)
+            else {
+                continue;
+            };
+            match evaluate(clause.when(), &bindings, self.context) {
+                Ok(Outcome::Satisfied) => {
+                    self.problems.push(ConfigurationError::Forbidden { index });
+                }
+                Ok(Outcome::Violated) => {}
+                Ok(Outcome::Undecided) => {
+                    self.problems
+                        .push(ConfigurationError::UndecidedForbidden { index });
+                }
+                Err(error) => self
+                    .problems
+                    .push(ConfigurationError::FailedForbidden { index, error }),
+            }
+        }
+    }
+
+    /// Return the configuration, or every problem found.
+    fn finish(self) -> Result<Configuration, ConfigurationErrors> {
+        if !self.problems.is_empty() {
+            return Err(ConfigurationErrors::new(self.problems));
+        }
+        Ok(Configuration(Arc::new(ConfigurationInner {
+            space: self.space.clone(),
+            values: self.values,
+            activities: self.activities,
+            chosen: self.chosen,
+        })))
     }
 }
 
@@ -640,6 +692,32 @@ fn evaluate(
     system: &ConstraintSystem,
     bindings: &Bindings,
     context: &ParamContext<'_>,
-) -> Result<Outcome, crate::constraint::ConstraintError> {
+) -> Result<Outcome, ConstraintError> {
     system.evaluate(bindings, context.constraint_context())
 }
+
+/// The assigned decisions of a configuration, in canonical order.
+struct Entries<'a> {
+    space: &'a Space,
+    values: std::iter::Enumerate<std::slice::Iter<'a, Option<Value>>>,
+    remaining: usize,
+}
+
+impl<'a> Iterator for Entries<'a> {
+    type Item = (&'a Identifier, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (position, value) = self
+            .values
+            .by_ref()
+            .find_map(|(position, value)| Some((position, value.as_ref()?)))?;
+        self.remaining -= 1;
+        Some((self.space.decision_at(position).name(), value))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for Entries<'_> {}

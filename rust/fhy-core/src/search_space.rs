@@ -81,6 +81,54 @@
 //! 6. `to_foreign` gives a part that the implementation's resolver turns
 //!    back into an equivalent value.
 //!
+//! # Examples
+//!
+//! A choice between tiling and not, with a tile size that exists only
+//! while tiling is chosen:
+//!
+//! ```
+//! use fhy_core::constraint::Value;
+//! use fhy_core::foreign::Part;
+//! use fhy_core::identifier::Identifier;
+//! use fhy_core::param::{CategoricalDomain, Param, ParamContext, ParamDomain};
+//! use fhy_core::search_space::{
+//!     Activity, Choice, Configuration, PlainAlternative, PlainVariable, Space,
+//! };
+//! use fhy_core::solver::Solver;
+//!
+//! let solver = Solver::new();
+//! let context = ParamContext::new(&solver);
+//! let [space, layout, tiled, flat, tile] =
+//!     ["space", "layout", "tiled", "flat", "tile"].map(Identifier::new);
+//! let sizes = Param::new(
+//!     ParamDomain::from(CategoricalDomain::new(vec![Value::Int(4.into()), Value::Int(8.into())])?),
+//!     Identifier::new("size"),
+//!     [],
+//!     &context,
+//! )?;
+//! let choice = Choice::new(
+//!     layout.clone(),
+//!     vec![
+//!         Part::new(PlainAlternative::new(
+//!             tiled.clone(),
+//!             vec![Part::new(PlainVariable::new(tile.clone(), sizes))],
+//!             vec![],
+//!         )?),
+//!         Part::new(PlainAlternative::new(flat.clone(), vec![], vec![])?),
+//!     ],
+//! )?;
+//! let space = Space::new(space, vec![], vec![choice], vec![], vec![])?;
+//!
+//! let chose_flat = Configuration::new(&space, [(layout.clone(), Value::Identifier(flat))], &context)?;
+//! assert_eq!(chose_flat.activity(&tile), Some(Activity::Inactive));
+//! assert!(chose_flat.is_complete());
+//!
+//! let chose_tiled = Configuration::new(&space, [(layout, Value::Identifier(tiled))], &context)?;
+//! assert_eq!(chose_tiled.activity(&tile), Some(Activity::Active));
+//! assert!(!chose_tiled.is_complete());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! # Serialization
 //!
 //! [`wire`] gives the shapes and builds them with a resolver of the parts

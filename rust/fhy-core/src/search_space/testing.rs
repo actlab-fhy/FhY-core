@@ -334,6 +334,15 @@ fn hook_failed<'a>(
     move |source| failure(ContractClause::EquivalenceHooks, kind, message, source)
 }
 
+/// Return the mapping of a wire form's failure with `source` to a
+/// violation of the wire-form clause by the sample of `kind`.
+fn wire_failed<'a, E: Into<BoxError>>(
+    kind: &'a str,
+    message: &'static str,
+) -> impl FnOnce(E) -> ConformanceViolation + 'a {
+    move |source| failure(ContractClause::WireForm, kind, message, source)
+}
+
 /// Check `samples` against the contract, reading their foreign parts back
 /// with `resolve`.
 fn check_samples<T: Sample>(
@@ -368,130 +377,142 @@ fn check_sample<T: Sample>(
             format!("`{getter}` answers differently on a second call"),
         ));
     }
+    check_kind(sample, &kind, earlier)?;
+    let labels = check_bound_identifiers(sample, &kind)?;
+    check_reflexive_hooks(sample, &kind, &labels)?;
+    check_wire_form(sample, &kind, resolve)
+}
 
+/// Check that `kind`, `sample`'s, is not empty, not a plain kind, and the
+/// kind of the `earlier` samples of its type only.
+fn check_kind<T: Sample>(
+    sample: &T,
+    kind: &str,
+    earlier: &[T],
+) -> Result<(), ConformanceViolation> {
     if kind.is_empty() {
         return Err(violation(
             ContractClause::UniqueKind,
-            &kind,
+            kind,
             "the kind is empty",
         ));
     }
     if kind == T::PLAIN_KIND {
         return Err(violation(
             ContractClause::UniqueKind,
-            &kind,
+            kind,
             "the kind is this module's plain kind",
         ));
     }
     for other in earlier {
-        let same_type = other.type_id() == sample.type_id();
-        let same_kind = other.kind() == kind;
-        if same_type && !same_kind {
+        let is_same_type = other.type_id() == sample.type_id();
+        let is_same_kind = other.kind() == kind;
+        if is_same_type && !is_same_kind {
             return Err(violation(
                 ContractClause::UniqueKind,
-                &kind,
+                kind,
                 format!("one type answers the kinds `{}` and `{kind}`", other.kind()),
             ));
         }
-        if !same_type && same_kind {
+        if !is_same_type && is_same_kind {
             return Err(violation(
                 ContractClause::UniqueKind,
-                &kind,
+                kind,
                 "two types answer this kind",
             ));
         }
     }
+    Ok(())
+}
 
-    let bound = sample.bound_identifiers().map_err(|source| {
+/// Check that `sample`'s bound identifiers are distinct, and return the
+/// names it binds compared on its own.
+fn check_bound_identifiers<T: Sample>(
+    sample: &T,
+    kind: &str,
+) -> Result<Vec<Identifier>, ConformanceViolation> {
+    let bound_failed = |source| {
         failure(
             ContractClause::DistinctBoundIdentifiers,
-            &kind,
+            kind,
             "the bound identifiers fail",
             source,
         )
-    })?;
+    };
+    let bound = sample.bound_identifiers().map_err(bound_failed)?;
     if let Some(repeated) = first_repeat(&bound) {
         return Err(violation(
             ContractClause::DistinctBoundIdentifiers,
-            &kind,
+            kind,
             format!("the bound identifiers repeat {repeated:?}"),
         ));
     }
+    sample.labels().map_err(bound_failed)
+}
 
-    let labels = sample.labels().map_err(|source| {
-        failure(
-            ContractClause::DistinctBoundIdentifiers,
-            &kind,
-            "the bound identifiers fail",
-            source,
-        )
-    })?;
+/// Check that the hooks accept `sample` and itself, the alpha hook under
+/// the frame pairing its `labels` with themselves.
+fn check_reflexive_hooks<T: Sample>(
+    sample: &T,
+    kind: &str,
+    labels: &[Identifier],
+) -> Result<(), ConformanceViolation> {
     if !sample
         .structural_hook(sample)
-        .map_err(hook_failed(&kind, "the structural hook fails"))?
+        .map_err(hook_failed(kind, "the structural hook fails"))?
     {
         return Err(violation(
             ContractClause::EquivalenceHooks,
-            &kind,
+            kind,
             "the structural hook refuses a sample and itself",
         ));
     }
-    let frame = enter_frame(&AlphaRenaming::default(), &labels, &labels).ok_or_else(|| {
+    let frame = enter_frame(&AlphaRenaming::default(), labels, labels).ok_or_else(|| {
         violation(
             ContractClause::DistinctBoundIdentifiers,
-            &kind,
+            kind,
             "the names the sample binds repeat",
         )
     })?;
     if !sample
         .alpha_hook(sample, &frame)
-        .map_err(hook_failed(&kind, "the alpha hook fails"))?
+        .map_err(hook_failed(kind, "the alpha hook fails"))?
     {
         return Err(violation(
             ContractClause::EquivalenceHooks,
-            &kind,
+            kind,
             "the alpha hook refuses a sample and itself",
         ));
     }
+    Ok(())
+}
 
-    let foreign = sample.to_foreign().map_err(|source| {
-        failure(
-            ContractClause::WireForm,
-            &kind,
-            "`to_foreign` fails",
-            source,
-        )
-    })?;
+/// Check that `sample`'s foreign part carries its kind and reads back, by
+/// `resolve`, into a structurally equivalent value.
+fn check_wire_form<T: Sample>(
+    sample: &T,
+    kind: &str,
+    resolve: &impl Fn(&Foreign) -> Result<T, ForeignError>,
+) -> Result<(), ConformanceViolation> {
+    let foreign = sample
+        .to_foreign()
+        .map_err(wire_failed(kind, "`to_foreign` fails"))?;
     if foreign.type_id() != kind {
         return Err(violation(
             ContractClause::WireForm,
-            &kind,
+            kind,
             format!("`to_foreign` writes the type id `{}`", foreign.type_id()),
         ));
     }
-    let resolved = resolve(&foreign).map_err(|source| {
-        failure(
-            ContractClause::WireForm,
-            &kind,
-            "the resolver refuses the part",
-            source,
-        )
-    })?;
+    let resolved = resolve(&foreign).map_err(wire_failed(kind, "the resolver refuses the part"))?;
     let is_equivalent = resolved.kind() == kind
         && sample
             .is_structurally_equivalent(&resolved)
-            .map_err(|source| {
-                failure(
-                    ContractClause::WireForm,
-                    &kind,
-                    "comparing the part read back fails",
-                    source,
-                )
-            })?;
+            .map_err(wire_failed(kind, "comparing the part read back fails"))?;
     if !is_equivalent {
         return Err(violation(
             ContractClause::WireForm,
-            &kind,
+            kind,
             "the part read back is not structurally equivalent to the sample",
         ));
     }

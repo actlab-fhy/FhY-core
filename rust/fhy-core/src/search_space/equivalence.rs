@@ -11,7 +11,7 @@
 //! ids, which a renaming changes.
 
 use crate::constraint::{Constraint, ConstraintError, ConstraintSystem, Member, MemberKind, Value};
-use crate::foreign::Part;
+use crate::foreign::{BoxError, Part};
 use crate::identifier::Identifier;
 use crate::param::{Param, ParamDomain};
 use crate::term::{AlphaEquivalence, AlphaRenaming};
@@ -43,7 +43,7 @@ pub(super) fn enter_frame(
 /// bound identifiers, its variables' names, then its sub-choices' names.
 pub(super) fn alternative_labels(
     alternative: &dyn Alternative,
-) -> Result<Vec<Identifier>, crate::foreign::BoxError> {
+) -> Result<Vec<Identifier>, BoxError> {
     let mut labels = vec![alternative.name().clone()];
     labels.extend(alternative.bound_identifiers()?);
     labels.extend(

@@ -428,6 +428,10 @@ impl Space {
     }
 }
 
+/// The conditions on one target, gathered: their members, and the
+/// canonical positions of the decisions they name.
+type Gathered = (Vec<Constraint>, BTreeSet<usize>);
+
 /// Return the data of the space `Space::new` builds, checked as it
 /// documents.
 fn build(
@@ -437,82 +441,20 @@ fn build(
     conditions: Vec<Condition>,
     forbidden: Vec<Forbidden>,
 ) -> Result<SpaceInner, SpaceError> {
-    let mut labels = vec![name.clone()];
-    labels.extend(
-        variables
-            .iter()
-            .map(|variable| variable.get().name().clone()),
-    );
-    for choice in &choices {
-        labels.extend(choice.labels().iter().cloned());
-    }
-    if let Some(repeated) = first_repeat(&labels) {
-        return Err(SpaceError::DuplicateName {
-            name: repeated.clone(),
-        });
-    }
-    let mut nodes = Vec::new();
-    for variable in &variables {
-        nodes.push(Node {
-            part: NodePart::Variable(variable.clone()),
-            parent: None,
-            subtree_end: nodes.len() + 1,
-            condition: None,
-        });
-    }
-    for choice in &choices {
-        push_choice(&mut nodes, choice, None);
-    }
+    let labels = collect_labels(&name, &variables, &choices)?;
+    let mut nodes = lay_out(&variables, &choices);
     let positions: HashMap<Identifier, usize> = nodes
         .iter()
         .enumerate()
         .map(|(position, node)| (node.decision().name().clone(), position))
         .collect();
-
-    let mut by_target: Vec<Option<(Vec<Constraint>, BTreeSet<usize>)>> = vec![None; nodes.len()];
-    for condition in &conditions {
-        let Some(&target) = positions.get(condition.target()) else {
-            return Err(SpaceError::UnknownConditionTarget {
-                target: condition.target().clone(),
-            });
-        };
-        let references = find_references(condition.when(), &positions, &nodes)?;
-        if let Some(&inside) = references
-            .iter()
-            .find(|&&position| (target..nodes[target].subtree_end).contains(&position))
-        {
-            return Err(SpaceError::ConditionReferencesSubtree {
-                target: condition.target().clone(),
-                name: nodes[inside].decision().name().clone(),
-            });
-        }
-        let (constraints, referenced) =
-            by_target[target].get_or_insert_with(|| (Vec::new(), BTreeSet::new()));
-        constraints.extend(condition.when().constraints().iter().cloned());
-        referenced.extend(references);
-    }
-    let mut forbidden_references = Vec::with_capacity(forbidden.len());
-    for (index, clause) in forbidden.iter().enumerate() {
-        if free_identifiers(clause.when())?.is_empty() {
-            return Err(SpaceError::EmptyForbidden { index });
-        }
-        let mut references = find_references(clause.when(), &positions, &nodes)?;
-        references.sort_unstable();
-        forbidden_references.push(references);
-    }
-
-    let mut merged = Vec::new();
-    for (target, entry) in by_target.into_iter().enumerate() {
-        let Some((constraints, referenced)) = entry else {
-            continue;
-        };
-        let when = ConstraintSystem::new(constraints).map_err(SpaceError::Constraint)?;
-        nodes[target].condition = Some((merged.len(), referenced.into_iter().collect()));
-        merged.push(Condition::new(
-            nodes[target].decision().name().clone(),
-            when,
-        ));
-    }
+    let gathered = gather_conditions(conditions, &positions, &nodes)?;
+    let forbidden_references = forbidden
+        .iter()
+        .enumerate()
+        .map(|(index, clause)| check_forbidden(index, clause, &positions, &nodes))
+        .collect::<Result<Vec<_>, _>>()?;
+    let merged = merge_conditions(gathered, &mut nodes)?;
     let order_positions = find_decision_order(&nodes)?;
     let label_positions = labels
         .iter()
@@ -537,6 +479,119 @@ fn build(
         positions,
         forbidden_references,
     })
+}
+
+/// Return the space's names, its own first, refusing a repeated one.
+fn collect_labels(
+    name: &Identifier,
+    variables: &[Part<dyn Variable>],
+    choices: &[Choice],
+) -> Result<Vec<Identifier>, SpaceError> {
+    let mut labels = vec![name.clone()];
+    labels.extend(
+        variables
+            .iter()
+            .map(|variable| variable.get().name().clone()),
+    );
+    for choice in choices {
+        labels.extend(choice.labels().iter().cloned());
+    }
+    match first_repeat(&labels) {
+        Some(repeated) => Err(SpaceError::DuplicateName {
+            name: repeated.clone(),
+        }),
+        None => Ok(labels),
+    }
+}
+
+/// Return the decisions of the top-level `variables` and `choices`, in
+/// canonical order, with no condition yet.
+fn lay_out(variables: &[Part<dyn Variable>], choices: &[Choice]) -> Vec<Node> {
+    let mut nodes = Vec::new();
+    for variable in variables {
+        nodes.push(Node {
+            part: NodePart::Variable(variable.clone()),
+            parent: None,
+            subtree_end: nodes.len() + 1,
+            condition: None,
+        });
+    }
+    for choice in choices {
+        push_choice(&mut nodes, choice, None);
+    }
+    nodes
+}
+
+/// Return each decision's gathered conditions, by canonical position,
+/// checking each condition's target and the names it refers to.
+fn gather_conditions(
+    conditions: Vec<Condition>,
+    positions: &HashMap<Identifier, usize>,
+    nodes: &[Node],
+) -> Result<Vec<Option<Gathered>>, SpaceError> {
+    let mut gathered: Vec<Option<Gathered>> = vec![None; nodes.len()];
+    for condition in conditions {
+        let Some(&target) = positions.get(&condition.target) else {
+            return Err(SpaceError::UnknownConditionTarget {
+                target: condition.target,
+            });
+        };
+        let references = find_references(&condition.when, positions, nodes)?;
+        let subtree = target..nodes[target].subtree_end;
+        if let Some(&inside) = references
+            .iter()
+            .find(|&position| subtree.contains(position))
+        {
+            return Err(SpaceError::ConditionReferencesSubtree {
+                target: condition.target,
+                name: nodes[inside].decision().name().clone(),
+            });
+        }
+        let (members, named) =
+            gathered[target].get_or_insert_with(|| (Vec::new(), BTreeSet::new()));
+        members.extend(condition.when.constraints().iter().cloned());
+        named.extend(references);
+    }
+    Ok(gathered)
+}
+
+/// Return the canonical positions of the decisions the forbidden clause at
+/// `index` names, ascending, checking that it names at least one and only
+/// decisions.
+fn check_forbidden(
+    index: usize,
+    clause: &Forbidden,
+    positions: &HashMap<Identifier, usize>,
+    nodes: &[Node],
+) -> Result<Vec<usize>, SpaceError> {
+    if free_identifiers(clause.when())?.is_empty() {
+        return Err(SpaceError::EmptyForbidden { index });
+    }
+    let mut references = find_references(clause.when(), positions, nodes)?;
+    references.sort_unstable();
+    Ok(references)
+}
+
+/// Return one condition per target, in canonical order of the targets,
+/// from the gathered conditions, and point each target's node at its
+/// condition.
+fn merge_conditions(
+    gathered: Vec<Option<Gathered>>,
+    nodes: &mut [Node],
+) -> Result<Vec<Condition>, SpaceError> {
+    let mut merged = Vec::new();
+    for (target, entry) in gathered.into_iter().enumerate() {
+        let Some((members, named)) = entry else {
+            continue;
+        };
+        let when = ConstraintSystem::new(members).map_err(SpaceError::Constraint)?;
+        nodes[target].condition = Some((merged.len(), named.into_iter().collect()));
+        merged.push(Condition::new(
+            nodes[target].decision().name().clone(),
+            when,
+        ));
+    }
+    Ok(merged)
 }
 
 /// Append the decisions of `choice` to `nodes`, in canonical order, under
@@ -683,19 +738,16 @@ fn find_cycle(
             }
             if dependent == start {
                 let mut cycle = vec![position];
-                while let Some(&before) =
-                    previous.get(cycle.last().expect("the cycle is not empty"))
-                {
+                let mut current = position;
+                while let Some(&before) = previous.get(&current) {
                     cycle.push(before);
-                }
-                if cycle.last() != Some(&start) {
-                    cycle.push(start);
+                    current = before;
                 }
                 cycle.reverse();
                 return Some(cycle);
             }
-            if dependent != start && !previous.contains_key(&dependent) {
-                previous.insert(dependent, position);
+            if let std::collections::hash_map::Entry::Vacant(entry) = previous.entry(dependent) {
+                entry.insert(position);
                 queue.push_back(dependent);
             }
         }
