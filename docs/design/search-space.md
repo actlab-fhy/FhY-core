@@ -2197,8 +2197,8 @@ binds MOGA-VM's adoption, as for SS1.
 | `SearchAxis`, `AxisKey`, `AxisCondition` | `Decision`, its name, hierarchy | pub (SS1) | | |
 | `ExtractedPoint` | `Configuration` (and its `trace()`) | pub (SS1) | | |
 | `ExtractedPointOracle` | `Recorder::realizing` | pub | `Recorder(oracle, configuration=...)` | strict |
-| a domain's derivation for a static decision | `domain::static_step_domain` | `pub(super)` | - | |
-| `_require_agreement` | `oracle::check_agreement` | private | - | |
+| a domain's derivation for a static decision | `step::decision_domain` | `pub(super)` | - | |
+| `_require_agreement` | `ReplayOracle::answer` | private | - | |
 | `SearchSpaceExtractor`, `StructuralSearchSpaceExtractor`, the policies, the allocator, the harness, records, observers, sampling strategies | - | - | - | stay in MOGA-VM |
 
 ### Intended divergences (SS2)
@@ -2311,14 +2311,165 @@ Python classes and `_rs.pyi`) follows this plan, with these changes:
 - **Golden vectors** of the generator come from an independent reference
   of the documented algorithms; seed 0's first number is SplitMix64's
   published `0xe220a8397b1dcdaf`.
-- **Not written:** the corpus's Python replay (`test_trace_golden.py` in the
-  plan): the Rust replay covers the corpus, and the Python suite replays
-  the same behaviors through the binding.
+- **Written later in phase 2 (coordinator's addition):** the corpus's
+  Python replay, `tests/search_space/test_trace_golden.py`, checking every
+  divergence tag both ways, with a control that changes one expected
+  answer per family and sees the replay name the case; and `Coordinate`'s
+  serde, now externally tagged so postcard (not self-describing) reads it,
+  with postcard and JSON round trips of `Coordinate`, `TraceStep` and
+  `Trace`.
 - **Small API changes the tests settled:** `Trace::of_kind` borrows its
   kind only for the call; `TraceError::Inadmissible`'s text no longer
   writes the coordinate; `Rng`'s refusal of another algorithm names it;
   `below_big`'s panic message is pinned; an oracle error that is itself a
   `TraceError` stops a run as that error.
+
+### SS2.4 to SS2.7: as built (2026-10-06)
+
+- **Core** (`680b268`, then `6a0ca1a` and `b1e4478`): as planned, in the
+  plan's order. Two private modules beyond the plan's tree: `step` (a
+  static step's kind and domain, growing a configuration by one value,
+  the coordinate walk the oracles share) and `counting` (components,
+  closed forms, bounded enumeration, the relaxed counts of
+  `sample_uniform`). `ExhaustiveOracle` keeps only each position's
+  coordinate and domain signature, and finds the next coordinate from the
+  signature, so it holds no value of a domain.
+- **Binding** (`140f1ad`): every class of the stub; an oracle argument is
+  read at each step (a core oracle class, a registered lease, then any
+  object with a callable `decide`), so `Recorder(None)` builds and its
+  first step raises `TypeError`. `ReplayOracle.finish` raises
+  `ReplayMismatchError` and leaves the replay open when a recorded step
+  was never asked; after a successful `finish`, `decide` and `finish`
+  raise `RuntimeError`. A core oracle class locked by a run refuses to be
+  asked again from inside it (`RuntimeError`), as does a busy `Recorder`.
+  `Space.enumerate` returns `_rs.SpaceEnumeration`, an iterator that runs
+  one exhaustive pass per configuration.
+- **GC:** `ChoiceDomain` and `OrderDomain` own the references their
+  opaque values keep; a `Recorder` owns those of the steps it recorded;
+  a `TraceStep` recorded in this process re-reads its domain's objects
+  when its value holds an opaque one, so it owns its value's references.
+  `Rng`, `StridedRun` and `ExhaustiveOracle` hold no Python object and
+  are exempt in `tests/test_gc_cycles.py`, with reasons;
+  `test_an_exhaustive_oracle_keeps_no_value_of_a_domain_alive` pins the
+  last.
+- **Test corrections** (`5f42dde`, accepted by the coordinator): the
+  mutation property asserts `mutate`'s documented refusal exactly when
+  the space has one complete configuration (the empty space included),
+  in Python and in Rust; the GC exemptions above.
+
+**Encapsulation checklist**, on the implementation:
+
+| Check | Result |
+|---|---|
+| public items | exactly the stub's: no item was added or widened; the one crate widening stays `effective_interval` |
+| fields | none public; `Recorder`, `TraceStep`, `Trace`, the domains, the oracles and `Enumeration` keep theirs private |
+| new modules | `step` and `counting`, private, their helpers `pub(super)` |
+| leaves | `rng`, `domain`, `trace` and `recorder` hold the invariants and import no sibling but `error` and `domain` |
+| panics | `Rng::below_big` asserts a positive bound (documented); no `unwrap` or `expect` in library code; unreachable conversions fall back with `unwrap_or` |
+| casts | none: the 128-bit product and the limbs go through bytes |
+| binding | new helpers are `pub(super)` within `search_space`; crate-wide additions are `PyRng`'s `seeded`, `from_seed_object`, `seed`, `snapshot`, `restore` and `with_rng`, and `convert::param::run_attached_with_context` (a context question that holds the interpreter, for a Python oracle) |
+
+## SS2.8: equivalence runs, benchmarks and the divergence log
+
+### Equivalence runs (2026-10-06)
+
+| Corpus | Cases | Rust core (`search_space_trace_golden.rs`) | Python binding (`test_trace_golden.py`) |
+|---|---|---|---|
+| committed (`--seed 0 --random-count 40`) | 191 (95 domain, 51 replay, 5 stream, 40 extraction) | all replay | all replay |
+| expanded (`--seed 7 --random-count 2000`, in `target/` only) | 8031 (4015, 2011, 5, 2000) | all replay (the corpus swapped in for one run) | all replay (`_find_mismatches` and `_find_mistagged` on it) |
+
+- **Recorder check:** re-recording the committed corpus after the
+  recorder's typing changes gives the committed file but for the
+  provenance commit.
+- **Harness honesty:** changing one replay case's recorded outcome fails
+  both Rust replays naming `same_integers`; the Python suite's control
+  test does the same for one case per family.
+- **Draws** (not stream-equivalent, D-SS2-6): over the 40 committed
+  extraction cases, 10 000 draws each, MOGA-VM's `draw_uniform` and the
+  port's `Space.sample` with a `RandomOracle` choose each option with
+  frequencies a two-sample chi-square test does not tell apart: 58
+  entries with two or more options, none above the 0.001 critical value,
+  the largest statistic 0.59 of it
+  (`target/scratch/search-space-ss2/eq/draws_{moga,port}.py`).
+
+### Divergence log
+
+Counts over the committed (expanded) corpus; every other case agrees
+with the oracle, in both languages.
+
+| Divergence | Cases | What the port does instead |
+|---|---|---|
+| D-SS2-1 (replay compares signatures) | 18 (992) | refuses a replay over a moved run of one width or reordered plain choices, which MOGA-VM accepted by shape and size |
+| D-SS2-2 (`finish` refuses a shorter stream) | 2 (2) | names the first recorded step never asked |
+| D-SS2-3 (type-strict, distinct choices) | 3 (3) | tells `1`, `True` and `1.0` apart and refuses a repeated choice |
+| D-SS2-7 (empty order domain) | 1 (1) | refuses it, where MOGA-VM counted one ordering |
+| none | 167 (7033) | answers as the oracle does |
+
+D-SS2-4, -5, -6, -8 and -9 are API changes no corpus case can exercise:
+positional dynamic steps, coordinates as answers, the stream (checked
+statistically above), `sample_uniform`, and the trace's type id.
+
+### Benchmarks (CPython 3.11, this machine, back to back)
+
+"Before" is MOGA-VM `3d93ba3`'s modules on fhy_core v0.1.8, assembled as
+the corpus recorder does (`target/scratch/search-space-ss2/bench_compare.py
+before`); "after" is the same rows through `fhy_core.search_space`.
+`benchmarks/test_search_space.py` under pytest-benchmark agrees within
+12%. Median per call, µs.
+
+| Row | Before (MOGA-VM) | After (port) | Ratio |
+|---|---|---|---|
+| **one draw, choice of 8** | 0.56 | 1.08 | **1.93, slower** |
+| one draw, strided, 4 runs × 2^16 | 2.67 | 0.93 | 0.35 |
+| one draw, order of 4 | 2.34 | 1.47 | 0.63 |
+| record a 100-step stream | 472 | 165 | 0.35 |
+| replay a 100-step stream | 190 | 130 | 0.68 |
+| `value_at` and `coordinate_of`, 64 strided runs | 22.5 | 0.42 | 0.019 |
+| count 8 option axes × 4 options × 2 axes | 240 | 34.8 | 0.15 |
+| **draw one point of that space** | 31.0 | 205 | **6.6, slower** |
+| (new) `sample_uniform`, that space | - | 187 | |
+| (new) `mutate`, that space | - | 12 000 | |
+| (new) enumerate 10 000 configurations | - | 156 000 | |
+| (new) count with a condition and a clause | - | 38 200 | |
+| (new) trace JSON round trip, 100 steps | - | 778 | |
+| (new) one step through a Python oracle | - | 1.32 | |
+
+The two slower rows, for the user's decision (as B-SS1 was):
+
+- **One choice draw:** the port's draw is a recorded step (the
+  signature and the value are kept, through the binding), where
+  `UniformRandomOracle.decide` records nothing; the honest comparison,
+  recording a stream, is 2.9 times faster in the port.
+- **One point of the option space:** its 24 static steps each check the
+  run's configuration twice, once when `RandomOracle` asks whether the
+  drawn coordinate is admissible and once when the recorder extends the
+  configuration, and each check validates the whole configuration
+  (activity, conditions, clauses), so a point costs quadratically in its
+  decisions; `draw_uniform` checks nothing. Remedy, not done: let the
+  recorder keep the configuration the admissibility check built.
+- `mutate` (12 ms) searches the space's completions per candidate value
+  (1024 runs at most each); counting with a condition and a clause
+  enumerates its component (2048 configurations). Neither has a MOGA-VM
+  counterpart.
+
+## SS2.9: the MOGA-VM migration note
+
+The map under "MOGA-VM migration map (SS2 and SS3)" holds as written for
+SS2, with these changes from the implementation:
+
+- `Recorder(oracle, ...)` reads the oracle at each step: a MOGA-VM
+  oracle class needs only a callable `decide` answering a coordinate (an
+  `int`, or a tuple of `int`s for an order); `step.draw_uniform(rng)`
+  stays on an `Rng`'s stream.
+- `ReplayOracle.finish()` leaves the replay open when it refuses, so a
+  harness may report the unconsumed step and keep the oracle.
+- `Space.enumerate()` is an iterator (`_rs.SpaceEnumeration`); a
+  `sampling.py` strategy that enumerates small spaces iterates it.
+- `sampling.py`'s draws through `space.sample` pay the static steps'
+  checks (the 6.6x row above): CONTRIBUTING's 10% rule binds that
+  adoption, as it did SS1's.
+- Seeds are re-baselined (D-SS2-6); `Rng` pickles mid-stream, so a
+  harness that checkpoints its generator keeps its stream.
 
 ## SS3: objectives and measurements (plan)
 
@@ -2560,8 +2711,9 @@ Every step ends with the S16 gate, as SS1's did.
    `CountingOracle` in the example aggregate, errors, wire, GC.
 8. **SS2.7:** `fhy_core.search_space`'s new classes; the ported Python
    tests.
-9. **SS2.8:** equivalence runs, the benchmarks after, the divergence log.
-10. **SS2.9:** the MOGA-VM migration note (the map above).
+9. **SS2.8:** equivalence runs, the benchmarks after, the divergence log
+   (done, "SS2.8" below the SS2 plan).
+10. **SS2.9:** the MOGA-VM migration note (the map above; done, "SS2.9").
 11. **SS3.1:** the stub (`measurement`, `MeasurementError`,
     `wire::MeasurementData`) and its tests; red.
 12. **SS3.2:** the core.

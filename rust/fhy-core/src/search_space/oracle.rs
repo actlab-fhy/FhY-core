@@ -425,7 +425,7 @@ impl SearchOracle for ReplayOracle {
 /// take every path once, in lexicographic order of their coordinates.
 ///
 /// It keeps the path of the current run: per position, the coordinate
-/// answered and the domain's cardinality. A run answers the path's
+/// answered and the domain's signature, and no value of the domain. A run answers the path's
 /// coordinates in order, then the first admissible coordinate of each new
 /// step (the lowest index; an order's lexicographically first admissible
 /// permutation). At a step with no admissible coordinate left it fails
