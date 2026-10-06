@@ -384,14 +384,17 @@ impl From<StridedDomain> for StepDomain {
 ///   plain (a Boolean, integer, float, decimal or string, or a tuple or
 ///   frozen set of plain values), as its position among the space's names
 ///   if it is an identifier the step's space binds, as `identifier` for
-///   any other identifier, and as `opaque` for an opaque value.
+///   any other identifier, and as `opaque` for any other value: an opaque
+///   value, or a tuple or frozen set holding an identifier or an opaque
+///   value.
 /// - A strided domain's runs.
 ///
 /// `serde` writes `{"choice": [..]}`, `{"order": [..]}` or `{"strided":
-/// [{"start", "stop", "stride"}, ..]}`, each integer of a run as a
-/// value's integer is written, and a member as `{"value": <value>}`,
-/// `{"bound": <position>}`, `"identifier"` or `"opaque"`; reading refuses
-/// a run that [`StridedRun::new`] or [`StridedDomain::new`] refuses.
+/// [{"start", "stop", "stride"}, ..]}`, each integer of a run as its
+/// decimal digits in a string, as a value's integer is written, and a
+/// member as `{"value": <value>}`, `{"bound": <position>}`, `"identifier"`
+/// or `"opaque"`; reading refuses a run that [`StridedRun::new`] or
+/// [`StridedDomain::new`] refuses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DomainSignature(SignatureRepr);
 

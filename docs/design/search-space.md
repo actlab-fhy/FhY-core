@@ -1867,8 +1867,8 @@ it.
      "decision": 3, "domain": {"choice": [{"bound": 4}, {"bound": 5}]},
      "coordinate": {"index": 1}, "value": {"identifier": {"id": 60005, "name_hint": "flat"}}},
     {"kind": "moga.cir.address", "subject": {"id": 70210, "name_hint": "x"}, "decision": null,
-     "domain": {"strided": [{"start": 0, "stop": 64, "stride": 1}]},
-     "coordinate": {"index": 17}, "value": {"int": 17}}
+     "domain": {"strided": [{"start": "0", "stop": "64", "stride": "1"}]},
+     "coordinate": {"index": 17}, "value": {"int": "17"}}
   ]}
   ```
 

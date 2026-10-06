@@ -56,9 +56,9 @@ fn trace_serializes_to_the_pinned_shape() {
             "kind": "search_space.variable",
             "subject": json_of(&tiling.t),
             "decision": 0,
-            "domain": {"choice": [{"value": {"int": 1}}, {"value": {"int": 2}}]},
+            "domain": {"choice": [{"value": {"int": "1"}}, {"value": {"int": "2"}}]},
             "coordinate": {"index": 0},
-            "value": {"int": 1},
+            "value": {"int": "1"},
         },
         {
             "kind": "search_space.choice",
@@ -72,19 +72,19 @@ fn trace_serializes_to_the_pinned_shape() {
             "kind": "moga.cir.address",
             "subject": json_of(&tiling.x),
             "decision": null,
-            "domain": {"strided": [{"start": 0, "stop": 64, "stride": 1}]},
+            "domain": {"strided": [{"start": "0", "stop": "64", "stride": "1"}]},
             "coordinate": {"index": 17},
-            "value": {"int": 17},
+            "value": {"int": "17"},
         },
         {
             "kind": "search_space.variable",
             "subject": json_of(&tiling.x),
             "decision": 2,
             "domain": {"choice": [
-                {"value": {"int": 1}}, {"value": {"int": 2}}, {"value": {"int": 3}},
+                {"value": {"int": "1"}}, {"value": {"int": "2"}}, {"value": {"int": "3"}},
             ]},
             "coordinate": {"index": 1},
-            "value": {"int": 2},
+            "value": {"int": "2"},
         },
     ]});
     assert_eq!(written, expected);
@@ -192,7 +192,11 @@ fn build_step_text(kind: &str, start: i64, stop: i64, coordinate: serde_json::Va
         "kind": kind,
         "subject": json_of(&Identifier::new("s")),
         "decision": null,
-        "domain": {"strided": [{"start": start, "stop": stop, "stride": 1}]},
+        "domain": {"strided": [{
+            "start": start.to_string(),
+            "stop": stop.to_string(),
+            "stride": "1",
+        }]},
         "coordinate": coordinate,
         "value": null,
     }]})
